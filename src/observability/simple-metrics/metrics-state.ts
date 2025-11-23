@@ -1,0 +1,126 @@
+/**
+ * Metrics state management
+ * @module
+ */
+
+import type { MetricsState, VeryfrontMetrics } from "./types.ts";
+
+/**
+ * Duration histogram boundaries in milliseconds
+ * Inlined to avoid circular dependency with @veryfront/config
+ */
+const SSR_BOUNDARIES_MS = [5, 10, 25, 50, 75, 100, 250, 500, 750, 1000, 2500, 5000, 7500, 10000];
+
+/**
+ * Internal metrics state
+ */
+export const state: MetricsState = {
+  requests: 0,
+  jitHttpResolved: 0,
+  jitHttpBlocked: 0,
+  jitHttpFetchMsTotal: 0,
+  rscManifest: 0,
+  rscPage: 0,
+  rscStream: 0,
+  rscAction: 0,
+  rscErrors: 0,
+  cacheGets: 0,
+  cacheHits: 0,
+  cacheMisses: 0,
+  cacheSets: 0,
+  cacheInvalidations: 0,
+  ssrHistogram: undefined,
+  rscStreamHistogram: undefined,
+  corsRejections: 0,
+  securityHeadersApplied: 0,
+  _ssrCounts: Array.from({ length: SSR_BOUNDARIES_MS.length + 1 }, () => 0),
+};
+
+/**
+ * Get SSR histogram boundaries
+ *
+ * @returns SSR histogram boundaries in milliseconds
+ */
+export function getSSRBoundaries(): number[] {
+  return SSR_BOUNDARIES_MS;
+}
+
+/**
+ * Create a snapshot of current metrics
+ *
+ * @returns Immutable snapshot of metrics
+ *
+ * @example
+ * ```ts
+ * const snapshot = createSnapshot()
+ * console.log(snapshot.requests)
+ * ```
+ */
+export function createSnapshot(): VeryfrontMetrics {
+  return {
+    requests: state.requests,
+    jitHttpResolved: state.jitHttpResolved,
+    jitHttpBlocked: state.jitHttpBlocked,
+    jitHttpFetchMsTotal: state.jitHttpFetchMsTotal,
+    rscManifest: state.rscManifest,
+    rscPage: state.rscPage,
+    rscStream: state.rscStream,
+    rscAction: state.rscAction,
+    rscErrors: state.rscErrors,
+    cacheGets: state.cacheGets,
+    cacheHits: state.cacheHits,
+    cacheMisses: state.cacheMisses,
+    cacheSets: state.cacheSets,
+    cacheInvalidations: state.cacheInvalidations,
+    corsRejections: state.corsRejections,
+    securityHeadersApplied: state.securityHeadersApplied,
+    ssrHistogram: {
+      boundaries: [...SSR_BOUNDARIES_MS],
+      counts: [...state._ssrCounts],
+    },
+    rscStreamHistogram: state.rscStreamHistogram
+      ? {
+        boundaries: [...state.rscStreamHistogram.boundaries],
+        counts: [...state.rscStreamHistogram.counts],
+      }
+      : undefined,
+  };
+}
+
+/**
+ * Reset all metrics to zero
+ *
+ * @example
+ * ```ts
+ * resetMetrics()
+ * ```
+ */
+export function resetMetrics(): void {
+  state.requests = 0;
+  state.jitHttpResolved = 0;
+  state.jitHttpBlocked = 0;
+  state.jitHttpFetchMsTotal = 0;
+  state.rscManifest = 0;
+  state.rscPage = 0;
+  state.rscStream = 0;
+  state.rscAction = 0;
+  state.rscErrors = 0;
+  state.cacheGets = 0;
+  state.cacheHits = 0;
+  state.cacheMisses = 0;
+  state.cacheSets = 0;
+  state.cacheInvalidations = 0;
+  state.corsRejections = 0;
+  state.securityHeadersApplied = 0;
+  state._ssrCounts.fill(0);
+  state.rscStreamHistogram = undefined;
+}
+
+/**
+ * Get current request count
+ *
+ * @returns Current request count
+ */
+export function getRequestCount(): number {
+  return state.requests;
+}

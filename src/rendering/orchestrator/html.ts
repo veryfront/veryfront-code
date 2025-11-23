@@ -1,0 +1,131 @@
+/**
+ * HTML Generator - Generates full HTML documents and fragments
+ *
+ * Location: src/render/orchestrator/html.ts (formerly src/render/core/renderer/html-generator.ts)
+ */
+
+import { join } from "https://deno.land/std@0.220.0/path/mod.ts";
+import { rendererLogger as logger } from "@veryfront/utils";
+import type { EntityInfo } from "@veryfront/types";
+import type { LayoutItem, MdxBundle, MDXFrontmatter, PageBundle } from "@veryfront/types";
+import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
+import type { VeryfrontConfig } from "@veryfront/config";
+import { type HTMLGenerationOptions, wrapInHTMLShell } from "@veryfront/html";
+import { extractHTMLMetadata, injectHTMLContent, isFullHTMLDocument } from "@veryfront/html";
+
+import { detectAppRouter } from "../router-detection.ts";
+import { DEFAULT_DASHBOARD_PORT } from "@veryfront/utils";
+import type { RenderOptions } from "./types.ts";
+
+export interface HTMLGeneratorConfig {
+  projectDir: string;
+  adapter: RuntimeAdapter;
+  config: VeryfrontConfig;
+  mode: "development" | "production";
+}
+
+export interface HTMLGenerationContext {
+  html: string;
+  pageInfo: EntityInfo;
+  pageBundle: PageBundle;
+  layoutBundle: MdxBundle | undefined;
+  nestedLayouts: LayoutItem[];
+  providerInfos: EntityInfo[];
+  collectedMetadata: Record<string, unknown>;
+  slug: string;
+  ssrHash: string;
+  options?: RenderOptions;
+}
+
+export class HTMLGenerator {
+  private config: HTMLGeneratorConfig;
+
+  constructor(config: HTMLGeneratorConfig) {
+    this.config = config;
+  }
+
+  async generateFullHTML(context: HTMLGenerationContext): Promise<string> {
+    if (isFullHTMLDocument(context.html)) {
+      return this.handleFullHTMLDocument(context);
+    }
+
+    return await this.wrapHTMLFragment(context);
+  }
+
+  private handleFullHTMLDocument(context: HTMLGenerationContext): string {
+    const metadata = extractHTMLMetadata(
+      (context.pageInfo.entity.frontmatter || {}) as MDXFrontmatter,
+      (context.layoutBundle?.frontmatter || {}) as MDXFrontmatter,
+    );
+
+    const injectedHtml = injectHTMLContent(context.html, "", metadata, {
+      mode: this.config.mode,
+      slug: context.slug,
+      devPort: this.config.config?.dev?.port || DEFAULT_DASHBOARD_PORT,
+    });
+
+    return injectedHtml.trimStart().toLowerCase().startsWith("<!doctype")
+      ? injectedHtml
+      : `<!DOCTYPE html>\n${injectedHtml}`;
+  }
+
+  private async wrapHTMLFragment(context: HTMLGenerationContext): Promise<string> {
+    const mergedFrontmatter = this.mergeFrontmatter(context);
+    logger.info("Merged frontmatter for wrapInHTMLShell:", mergedFrontmatter);
+
+    const useAppRouter = await detectAppRouter(
+      this.config.projectDir,
+      this.config.config,
+      this.config.adapter,
+    );
+
+    const appComponentPath = await this.resolveAppComponentPath(useAppRouter);
+
+    const htmlOptions: HTMLGenerationOptions = {
+      mode: this.config.mode,
+      config: this.config.config,
+      nestedLayouts: context.nestedLayouts.map((l) => ({
+        kind: l.kind,
+        path: l.path,
+        componentPath: l.componentPath,
+      })),
+      providerPaths: context.providerInfos.map((p) => p.entity.id),
+      appPath: appComponentPath,
+      pagePath: context.pageInfo.entity.id,
+      nonce: context.options?.nonce,
+    };
+
+    return await wrapInHTMLShell(
+      context.html,
+      {
+        title: mergedFrontmatter.title || "Veryfront App",
+        description: mergedFrontmatter.description || "",
+        slug: context.slug,
+        frontmatter: mergedFrontmatter,
+        layoutFrontmatter: context.layoutBundle?.frontmatter,
+        ssrHash: context.ssrHash,
+      },
+      htmlOptions,
+      context.options?.params,
+      context.options?.props,
+    );
+  }
+
+  private mergeFrontmatter(context: HTMLGenerationContext): MDXFrontmatter {
+    return {
+      ...context.pageInfo.entity.frontmatter,
+      ...(context.pageBundle as MdxBundle).frontmatter,
+      ...(context.collectedMetadata || {}),
+    } as MDXFrontmatter;
+  }
+
+  private async resolveAppComponentPath(useAppRouter: boolean): Promise<string | undefined> {
+    if (useAppRouter) {
+      return undefined;
+    }
+
+    const appPath = join(this.config.projectDir, "components/app.tsx");
+    const appExists = await this.config.adapter.fs.exists(appPath);
+    return appExists ? appPath : undefined;
+  }
+}

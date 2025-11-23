@@ -1,0 +1,125 @@
+/**
+ * Docs template - API reference page template
+ * @module
+ */
+
+import type { TemplateFile } from "./types.ts";
+
+/**
+ * API reference documentation template
+ *
+ * Provides:
+ * - Core API functions
+ * - Component documentation
+ * - Hook documentation
+ * - Usage examples
+ * - Parameter descriptions
+ * - Return type information
+ *
+ * @returns Template file for app/docs/api/page.mdx
+ */
+export const apiReferenceTemplate: TemplateFile = {
+  path: "app/docs/api/page.mdx",
+  content: `# API Reference
+
+Complete API documentation for all available functions and components.
+
+## Core API
+
+### \`createApp()\`
+
+Creates a new application instance.
+
+\`\`\`typescript
+import { createApp } from '@example/core';
+
+const app = createApp({
+  name: 'My App',
+  version: '1.0.0',
+});
+\`\`\`
+
+**Parameters:**
+- \`config\` - Application configuration object
+  - \`name\` (string) - Application name
+  - \`version\` (string) - Application version
+  - \`plugins?\` (Plugin[]) - Optional plugins
+
+**Returns:** \`Application\` instance
+
+### \`defineRoute()\`
+
+Defines a new route handler.
+
+\`\`\`typescript
+export const route = defineRoute({
+  path: '/api/users/:id',
+  method: 'GET',
+  handler: async (req, params) => {
+    const user = await getUser(params.id);
+    return Response.json(user);
+  },
+});
+\`\`\`
+
+## Components
+
+### \`<Layout>\`
+
+Base layout component for pages.
+
+\`\`\`tsx
+import { Layout } from '@example/ui';
+
+export default function Page() {
+  return (
+    <Layout title="My Page">
+      <h1>Content</h1>
+    </Layout>
+  );
+}
+\`\`\`
+
+**Props:**
+- \`title\` (string) - Page title
+- \`children\` (ReactNode) - Page content
+- \`sidebar?\` (boolean) - Show sidebar
+
+### \`<Button>\`
+
+Styled button component.
+
+\`\`\`tsx
+<Button
+  variant="primary"
+  size="lg"
+  onClick={handleClick}
+>
+  Click me
+</Button>
+\`\`\`
+
+**Props:**
+- \`variant\` - "primary" | "secondary" | "danger"
+- \`size\` - "sm" | "md" | "lg"
+- \`disabled?\` (boolean)
+- \`onClick?\` (function)
+
+## Hooks
+
+### \`useData()\`
+
+Fetches and caches data.
+
+\`\`\`typescript
+const { data, error, loading } = useData('/api/users');
+\`\`\`
+
+### \`useAuth()\`
+
+Authentication hook.
+
+\`\`\`typescript
+const { user, login, logout } = useAuth();
+\`\`\``,
+};

@@ -1,0 +1,13 @@
+{
+  "imports": {
+    "veryfront/ai": "../../src/ai/index.ts",
+    "veryfront/ai/": "../../src/ai/",
+    "react": "https://esm.sh/react@18.3.1",
+    "react-dom": "https://esm.sh/react-dom@18.3.1",
+    "react-dom/": "https://esm.sh/react-dom@18.3.1/"
+  },
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "jsxImportSource": "react"
+  }
+}

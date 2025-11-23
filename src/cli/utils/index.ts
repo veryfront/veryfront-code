@@ -1,0 +1,134 @@
+/**
+ * Consolidated CLI utility functions
+ * Merges cli/utils.ts and cli/index/process-utils.ts
+ */
+
+import { VERSION } from "@veryfront/utils";
+import { bold, cyan, dim, yellow } from "std/fmt/colors.ts";
+import { cliLogger } from "@veryfront/utils";
+
+// Logo and help display
+export function showLogo() {
+  cliLogger.info(`
+${cyan("⚡")} ${bold(cyan("Veryfront"))} ${dim(`v${VERSION}`)}
+${dim("──────────────────────")}
+`);
+}
+
+export function showHelp() {
+  showLogo();
+  cliLogger.info(`
+${yellow("Usage:")} veryfront <command> [options]
+
+${cyan("Commands:")}
+  init          Initialize a new Veryfront project
+    -t, --template <name>  Template: app-router | app-router-api | pages-router | rsc-demo (default: pages-router)
+  dev           Start development server
+  build         Build for production
+  serve         Start universal production server (no build required)
+                 - Honors security.cors (CORS for API routes)
+                 - Merges CSP with nonce per request
+                 - Exposes /_metrics (requests, SSR, cache, RSC)
+                 - Optional Redis cache via VERYFRONT_USE_REDIS_CACHE=1
+
+  doctor        Check system requirements
+               --strict, -s    Treat warnings as failures
+  clean         Clean build cache
+
+  routes        Print discovered routes (pages + API)
+                --json, -j      Output JSON
+  generate, g   Generate scaffolds (page|layout|provider|api|rsc)
+
+${cyan("Options:")}
+  --version     Show version information
+  --help        Show this help message
+
+${cyan("Examples:")}
+  veryfront init my-app -t app-router
+  veryfront init my-app-api -t app-router-api
+  veryfront dev --port 3000
+  veryfront build --minify
+  veryfront build --no-ssg            # disable static site generation
+  veryfront build --include /docs --exclude /blog
+  veryfront build --dry-run           # list SSG routes without writing files
+  # HMR: browser reloads on file save; logs show ws path
+
+  veryfront routes
+  veryfront generate api users/[id]
+  # Production server (CSP/CORS, APIs, RSC)
+  veryfront serve --port 3000
+  # With Redis cache adapter enabled
+  VERYFRONT_USE_REDIS_CACHE=1 veryfront serve --port 3000
+  # Try experimental RSC demo template (RSC is behind a flag)
+  veryfront init my-rsc-app -t rsc-demo && (cd my-rsc-app && VERYFRONT_EXPERIMENTAL_RSC=1 veryfront dev)
+  # RSC production server (preview)
+  VERYFRONT_EXPERIMENTAL_RSC=1 deno run -A src/server/production-server.ts
+
+${cyan("Config tips:")}
+  // veryfront.config.js
+  export default {
+    generate: { preferredRouter: "app-router" },
+    security: { remoteHosts: ["https://esm.sh", "https://deno.land"] }
+  }
+
+${cyan("Docs:")}
+  RSC Security & Actions: docs/RSC_SECURITY_AND_ACTIONS.md
+  Server Actions: docs/server-actions.md
+  Caching: docs/caching.md
+  Security (CSP/CORS): docs/security.md
+  Migration (Beta→v1): MIGRATION.md
+
+Version: ${VERSION}
+`);
+}
+
+export function showVersion() {
+  cliLogger.info(`Veryfront v${VERSION}`);
+}
+
+// Logging utilities
+export function logSuccess(message: string) {
+  cliLogger.info(`✅ ${message}`);
+}
+
+export function logError(message: string) {
+  console.error(`❌ ${message}`);
+}
+
+export function logWarning(message: string) {
+  console.warn(`⚠️  ${message}`);
+}
+
+export function logInfo(message: string) {
+  cliLogger.info(`ℹ️  ${message}`);
+}
+
+// User interaction
+export async function promptUser(message: string): Promise<string> {
+  cliLogger.info(message);
+  const buf = new Uint8Array(1024);
+  const n = await Deno.stdin.read(buf);
+  if (n === null) {
+    return "";
+  }
+  const input = new TextDecoder().decode(buf.subarray(0, n));
+  return input.trim();
+}
+
+// Process utilities
+/**
+ * Exit the process with a given code
+ * @param code - Exit code
+ */
+export function exitProcess(code: number): void {
+  if (import.meta.main) {
+    try {
+      Deno.exit(code);
+    } catch (error) {
+      cliLogger.warn("[cli] Deno.exit failed", error);
+    }
+  }
+}
+
+// Re-export formatBytes from shared format utils for backward compatibility
+export { formatBytes } from "@veryfront/utils";

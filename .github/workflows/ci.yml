@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Clone repository
+        uses: actions/checkout@v4
+
+      - name: Setup Deno
+        uses: denoland/setup-deno@v1
+        with:
+          deno-version: v2.x
+
+      - name: Verify Formatting
+        run: deno fmt --check
+
+      - name: Lint
+        run: deno task lint
+
+      - name: Type Check
+        run: deno task typecheck
+
+      - name: Check Circular Dependencies
+        continue-on-error: true
+        run: deno task check:circular
+
+      - name: Run Unit Tests
+        run: deno task test:unit --no-lock
+
+      - name: Run Integration Tests
+        timeout-minutes: 10
+        env:
+          DENO_JOBS: 1
+        run: deno task test:integration --no-lock

@@ -1,0 +1,243 @@
+/**
+ * CSS Optimizer Service
+ *
+ * Main orchestrator for CSS optimization using pluggable strategies.
+ * Coordinates between different optimization strategies and manages the
+ * optimization pipeline.
+ */
+
+import { dirname, relative } from "std/path/mod.ts";
+import { ensureDir } from "std/fs/mod.ts";
+import { logger } from "@veryfront/utils";
+import type {
+  CSSBundle,
+  CSSOptimizationOptions,
+  CSSOptimizationStrategy,
+  CSSOptimizerStats,
+} from "@veryfront/types";
+import { LightningCSSStrategy, MinificationStrategy, PurgeStrategy } from "./strategies/index.ts";
+import { CacheManager } from "./css-bundle-cache.ts";
+import { basicMinify, calculateSavings, findCSSFiles, getOutputPath } from "./utils.ts";
+
+const DEFAULT_OPTIONS: Required<CSSOptimizationOptions> = {
+  enabled: true,
+  minify: true,
+  autoprefixer: true,
+  purge: false,
+  criticalCSS: false,
+  inputFiles: [],
+  inputDir: "./styles",
+  outputDir: "./.veryfront/optimized-css",
+  browsers: ["defaults", "not IE 11"],
+  purgeContent: ["./app/**/*.{tsx,jsx,ts,js}", "./pages/**/*.{tsx,jsx,ts,js}"],
+  sourceMap: false,
+};
+
+/**
+ * CSS Optimizer Service using Strategy Pattern
+ */
+export class CSSOptimizerService {
+  private options: Required<CSSOptimizationOptions>;
+  private strategies: CSSOptimizationStrategy[] = [];
+  private cacheManager: CacheManager;
+  private lightningStrategy: LightningCSSStrategy;
+  private minificationStrategy: MinificationStrategy;
+  private purgeStrategy: PurgeStrategy;
+
+  constructor(options: CSSOptimizationOptions = {}) {
+    this.options = { ...DEFAULT_OPTIONS, ...options };
+    this.cacheManager = new CacheManager();
+
+    // Initialize strategies
+    this.lightningStrategy = new LightningCSSStrategy();
+    this.minificationStrategy = new MinificationStrategy();
+    this.purgeStrategy = new PurgeStrategy();
+
+    this.strategies = [
+      this.lightningStrategy,
+      this.purgeStrategy,
+      this.minificationStrategy,
+    ];
+  }
+
+  /**
+   * Initialize the optimizer (loads external dependencies)
+   */
+  async init(): Promise<boolean> {
+    if (!this.options.enabled) {
+      logger.info("CSS optimization is disabled");
+      return false;
+    }
+
+    // Try to initialize Lightning CSS
+    const lightningReady = await this.lightningStrategy.init();
+
+    if (lightningReady) {
+      logger.info("Using Lightning CSS for optimization");
+    } else {
+      logger.info("Using fallback CSS minification");
+    }
+
+    return true;
+  }
+
+  /**
+   * Optimize all CSS files
+   */
+  async optimize(): Promise<Map<string, CSSBundle>> {
+    const _isReady = await this.init();
+
+    if (!this.options.enabled) {
+      return new Map();
+    }
+
+    logger.info("Starting CSS optimization", {
+      inputDir: this.options.inputDir,
+      outputDir: this.options.outputDir,
+      minify: this.options.minify,
+      autoprefixer: this.options.autoprefixer,
+      purge: this.options.purge,
+    });
+
+    await ensureDir(this.options.outputDir);
+
+    // Find all CSS files
+    const cssFiles = this.options.inputFiles.length > 0
+      ? this.options.inputFiles
+      : await findCSSFiles(this.options.inputDir);
+
+    logger.info(`Found ${cssFiles.length} CSS files to optimize`);
+
+    // Process CSS files
+    for (const cssFile of cssFiles) {
+      await this.optimizeFile(cssFile);
+    }
+
+    // Write manifest
+    await this.cacheManager.writeManifest(this.options.outputDir);
+
+    logger.info("CSS optimization complete", {
+      totalBundles: this.cacheManager.size(),
+      totalSavings: this.cacheManager.getTotalSavings(),
+    });
+
+    return this.cacheManager.getAllBundles();
+  }
+
+  /**
+   * Optimize a single CSS file
+   */
+  private async optimizeFile(cssPath: string): Promise<void> {
+    const relPath = relative(this.options.inputDir, cssPath);
+    logger.debug(`Optimizing: ${relPath}`);
+
+    try {
+      const content = await Deno.readTextFile(cssPath);
+      const originalSize = new TextEncoder().encode(content).length;
+
+      let optimized = content;
+      let sourceMap: string | undefined;
+
+      // Select and apply the best strategy
+      const strategy = this.selectStrategy();
+
+      if (strategy) {
+        try {
+          const result = await strategy.process(content, cssPath, this.options);
+          optimized = result.code;
+          sourceMap = result.sourceMap;
+        } catch (error) {
+          logger.warn(`Strategy ${strategy.name} failed, using fallback`, {
+            error: error instanceof Error ? error.message : String(error),
+          });
+          // Fallback to basic minification
+          optimized = basicMinify(content);
+        }
+      } else {
+        // No strategy available, keep original or use basic minification
+        if (this.options.minify) {
+          optimized = basicMinify(content);
+        }
+      }
+
+      // Write optimized file
+      const outputPath = getOutputPath(relPath, this.options.outputDir);
+      await ensureDir(dirname(outputPath));
+      await Deno.writeTextFile(outputPath, optimized);
+
+      // Write source map if enabled
+      if (sourceMap && this.options.sourceMap) {
+        await Deno.writeTextFile(`${outputPath}.map`, sourceMap);
+      }
+
+      const minifiedSize = new TextEncoder().encode(optimized).length;
+      const savings = calculateSavings(originalSize, minifiedSize);
+
+      // Store bundle info
+      this.cacheManager.addBundle(relPath, {
+        file: relPath,
+        content: optimized,
+        sourceMap,
+        size: originalSize,
+        minifiedSize,
+        savings,
+      });
+
+      logger.debug(
+        `Optimized ${relPath}: ${originalSize} → ${minifiedSize} bytes (${
+          savings.toFixed(1)
+        }% reduction)`,
+      );
+    } catch (error) {
+      logger.error(`Failed to optimize ${relPath}`, {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  /**
+   * Select the best strategy for the current options
+   */
+  private selectStrategy(): CSSOptimizationStrategy | null {
+    // Sort strategies by priority (descending)
+    const sortedStrategies = [...this.strategies].sort((a, b) => b.priority - a.priority);
+
+    // Find the first strategy that can process
+    for (const strategy of sortedStrategies) {
+      if (strategy.canProcess(this.options)) {
+        logger.debug(`Selected strategy: ${strategy.name}`);
+        return strategy;
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * Get optimization statistics
+   */
+  getStats(): CSSOptimizerStats {
+    return this.cacheManager.getStats();
+  }
+
+  /**
+   * Get the current options
+   */
+  getOptions(): Required<CSSOptimizationOptions> {
+    return this.options;
+  }
+
+  /**
+   * Get the cache manager (for advanced use cases)
+   */
+  getCacheManager(): CacheManager {
+    return this.cacheManager;
+  }
+
+  /**
+   * Get the purge strategy (for testing/debugging)
+   */
+  getPurgeStrategy(): PurgeStrategy {
+    return this.purgeStrategy;
+  }
+}

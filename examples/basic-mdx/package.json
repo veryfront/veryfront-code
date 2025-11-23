@@ -1,0 +1,10 @@
+{
+  "name": "veryfront-basic-mdx-example",
+  "version": "1.0.0",
+  "description": "Basic MDX example for Veryfront",
+  "scripts": {
+    "dev": "veryfront dev",
+    "build": "veryfront build",
+    "preview": "veryfront preview"
+  }
+}

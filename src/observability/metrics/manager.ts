@@ -1,0 +1,147 @@
+/**
+ * Metrics Manager
+ * Main OpenTelemetry metrics initialization and management
+ */
+
+import type { Meter } from "npm:@opentelemetry/api@1";
+import { serverLogger as logger } from "@veryfront/utils";
+import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
+import { loadConfig } from "./config.ts";
+import { initializeInstruments } from "../instruments/index.ts";
+import { MetricsRecorder } from "./recorder.ts";
+import type { MetricsConfig, MetricsInstruments, OpenTelemetryAPI, RuntimeState } from "./types.ts";
+
+/**
+ * Metrics manager singleton state
+ */
+class MetricsManager {
+  private initialized = false;
+  private meter: Meter | null = null;
+  private api: OpenTelemetryAPI | null = null;
+  private instruments: MetricsInstruments;
+  private runtimeState: RuntimeState;
+  private recorder: MetricsRecorder | null = null;
+
+  constructor() {
+    this.instruments = this.createEmptyInstruments();
+    this.runtimeState = {
+      cacheSize: 0,
+      activeRequests: 0,
+    };
+    // Create recorder immediately so state tracking works even before initialization
+    // The recorder gracefully handles null instruments (optional chaining)
+    this.recorder = new MetricsRecorder(this.instruments, this.runtimeState);
+  }
+
+  private createEmptyInstruments(): MetricsInstruments {
+    return {
+      httpRequestCounter: null,
+      httpRequestDuration: null,
+      httpActiveRequests: null,
+      cacheGetCounter: null,
+      cacheHitCounter: null,
+      cacheMissCounter: null,
+      cacheSetCounter: null,
+      cacheInvalidateCounter: null,
+      cacheSizeGauge: null,
+      renderDuration: null,
+      renderCounter: null,
+      renderErrorCounter: null,
+      rscRenderDuration: null,
+      rscStreamDuration: null,
+      rscManifestCounter: null,
+      rscPageCounter: null,
+      rscStreamCounter: null,
+      rscActionCounter: null,
+      rscErrorCounter: null,
+      buildDuration: null,
+      bundleSizeHistogram: null,
+      bundleCounter: null,
+      dataFetchDuration: null,
+      dataFetchCounter: null,
+      dataFetchErrorCounter: null,
+      corsRejectionCounter: null,
+      securityHeadersCounter: null,
+      memoryUsageGauge: null,
+      heapUsageGauge: null,
+    };
+  }
+
+  async initialize(
+    config: Partial<MetricsConfig> = {},
+    adapter?: RuntimeAdapter,
+  ): Promise<void> {
+    if (this.initialized) {
+      logger.debug("[metrics] Already initialized");
+      return;
+    }
+
+    const finalConfig = loadConfig(config, adapter);
+
+    if (!finalConfig.enabled) {
+      logger.debug("[metrics] Metrics collection disabled");
+      this.initialized = true;
+      return;
+    }
+
+    try {
+      // Load OpenTelemetry API
+      this.api = await import("npm:@opentelemetry/api@1");
+
+      // Get or create meter
+      this.meter = this.api.metrics.getMeter(finalConfig.prefix, "0.1.0");
+
+      // Initialize all metric instruments
+      this.instruments = await initializeInstruments(
+        this.meter,
+        finalConfig,
+        this.runtimeState,
+      );
+
+      // Update recorder with initialized instruments
+      // Recorder was already created in constructor, just update its instruments reference
+      if (this.recorder) {
+        (this.recorder as any).instruments = this.instruments;
+      }
+
+      this.initialized = true;
+      logger.info("[metrics] OpenTelemetry metrics initialized", {
+        exporter: finalConfig.exporter,
+        endpoint: finalConfig.endpoint,
+        prefix: finalConfig.prefix,
+      });
+    } catch (error) {
+      logger.warn("[metrics] Failed to initialize OpenTelemetry metrics", error);
+      this.initialized = true; // Mark as initialized to prevent retry loops
+    }
+  }
+
+  isEnabled(): boolean {
+    return this.initialized && this.meter !== null;
+  }
+
+  getRecorder(): MetricsRecorder | null {
+    return this.recorder;
+  }
+
+  getState() {
+    return {
+      initialized: this.initialized,
+      cacheSize: this.runtimeState.cacheSize,
+      activeRequests: this.runtimeState.activeRequests,
+    };
+  }
+
+  shutdown(): void {
+    if (!this.initialized) return;
+
+    try {
+      logger.info("[metrics] Metrics shutdown initiated");
+    } catch (error) {
+      logger.warn("[metrics] Error during metrics shutdown", error);
+    }
+  }
+}
+
+// Export singleton instance
+export const metricsManager = new MetricsManager();

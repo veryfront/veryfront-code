@@ -1,0 +1,309 @@
+/**
+ * Test Data Factory
+ *
+ * Centralized factory for creating test data across all tests.
+ * This ensures consistency and reduces duplication.
+ */
+
+export class TestDataFactory {
+  /**
+   * Creates MDX page content with optional frontmatter
+   */
+  static createMDXPage(options: {
+    title: string;
+    content: string;
+    frontmatter?: Record<string, any>;
+  }): string {
+    let frontmatterStr = "";
+    if (options.frontmatter && Object.keys(options.frontmatter).length > 0) {
+      frontmatterStr = "---\n";
+      for (const [key, value] of Object.entries(options.frontmatter)) {
+        if (typeof value === "string") {
+          frontmatterStr += `${key}: ${value}\n`;
+        } else if (Array.isArray(value)) {
+          frontmatterStr += `${key}: [${value.join(", ")}]\n`;
+        } else {
+          frontmatterStr += `${key}: ${JSON.stringify(value)}\n`;
+        }
+      }
+      frontmatterStr += "---\n\n";
+    }
+
+    return `${frontmatterStr}# ${options.title}\n\n${options.content}`;
+  }
+
+  /**
+   * Creates a React component with TypeScript
+   */
+  static createReactComponent(name: string, props: string[] = []): string {
+    const propsInterface = props.length > 0
+      ? `interface ${name}Props {
+${props.map((p) => `  ${p}: any;`).join("\n")}
+}`
+      : "";
+
+    const propsParam = props.length > 0 ? `{ ${props.join(", ")} }: ${name}Props` : "()";
+
+    return `import React from 'react';
+
+${propsInterface}
+
+export default function ${name}${propsParam} {
+  return (
+    <div data-testid="${name.toLowerCase()}" className="${name.toLowerCase()}">
+      ${name} Component
+      ${props.map((p) => `<span>{${p}}</span>`).join("\n      ")}
+    </div>
+  );
+}
+
+export { ${name} };`;
+  }
+
+  /**
+   * Creates an App Router layout component
+   */
+  static createAppLayout(options: { title?: string; includeMetadata?: boolean } = {}): string {
+    const title = options.title || "Test App";
+    const metadata = options.includeMetadata
+      ? `
+export const metadata = {
+  title: '${title}',
+  description: 'Test application'
+};
+`
+      : "";
+
+    return `${metadata}
+export default function RootLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
+  return (
+    <html lang="en">
+      <head>
+        <title>${title}</title>
+      </head>
+      <body>
+        <div id="app">
+          {children}
+        </div>
+      </body>
+    </html>
+  );
+}`;
+  }
+
+  /**
+   * Creates a Next.js API route handler
+   */
+  static createAPIHandler(options: { methods?: string[]; useContext?: boolean } = {}): string {
+    const methods = options.methods || ["GET"];
+    const handlers = methods
+      .map((method) => {
+        const bodyHandling = ["POST", "PUT", "PATCH"].includes(method)
+          ? `
+    const body = await request.json();`
+          : "";
+
+        return `export async function ${method}(request: Request${
+          options.useContext ? ", context: any" : ""
+        }) {${bodyHandling}
+  
+  return Response.json({
+    method: '${method}',
+    timestamp: new Date().toISOString(),${bodyHandling ? "\n    body," : ""}${
+          options.useContext ? "\n    context," : ""
+        }
+  });
+}`;
+      })
+      .join("\n\n");
+
+    return handlers;
+  }
+
+  /**
+   * Creates a custom hook for testing
+   */
+  static createCustomHook(name: string, returnValue: any = { value: 0 }): string {
+    return `import { useState, useEffect } from 'react';
+
+export function ${name}() {
+  const [state, setState] = useState(${JSON.stringify(returnValue)});
+  
+  useEffect(() => {
+    // Simulate async operation
+    const timer = setTimeout(() => {
+      setState(prev => ({ ...prev, loaded: true }));
+    }, 100);
+    
+    return () => clearTimeout(timer);
+  }, []);
+  
+  return state;
+}`;
+  }
+
+  /**
+   * Creates a CSS module file
+   */
+  static createCSSModule(className: string): string {
+    return `.${className} {
+  display: flex;
+  flex-direction: column;
+  padding: 1rem;
+  margin: 0;
+  background-color: #f0f0f0;
+}
+
+.${className}__title {
+  font-size: 2rem;
+  font-weight: bold;
+  color: #333;
+}
+
+.${className}__content {
+  margin-top: 1rem;
+  line-height: 1.6;
+}
+
+@media (max-width: 768px) {
+  .${className} {
+    padding: 0.5rem;
+  }
+  
+  .${className}__title {
+    font-size: 1.5rem;
+  }
+}`;
+  }
+
+  /**
+   * Creates a veryfront.config.js file
+   */
+  static createConfig(
+    options: {
+      title?: string;
+      port?: number;
+      security?: Record<string, any>;
+      features?: string[];
+    } = {},
+  ): string {
+    const config: any = {
+      title: options.title || "Test Site",
+      description: "Test site for automated testing",
+      cache: {
+        dir: ".veryfront/cache",
+        render: {
+          type: "memory",
+          ttl: 60_000,
+          maxEntries: 200,
+        },
+      },
+    };
+
+    if (options.port) {
+      config.dev = { port: options.port };
+    }
+
+    if (options.security) {
+      config.security = options.security;
+    }
+
+    if (options.features && options.features.length > 0) {
+      config.experimental = {};
+      options.features.forEach((feature) => {
+        config.experimental[feature] = true;
+      });
+    }
+
+    return `export default ${JSON.stringify(config, null, 2)};`;
+  }
+
+  /**
+   * Creates a middleware function for testing
+   */
+  static createMiddleware(name: string): string {
+    return `export async function ${name}(request: Request, next: () => Promise<Response>) {
+  const start = Date.now();
+  
+  // Add custom header
+  request.headers.set('X-${name}-Start', start.toString());
+  
+  // Call next middleware
+  const response = await next();
+  
+  // Add timing header
+  response.headers.set('X-${name}-Duration', (Date.now() - start).toString());
+  
+  return response;
+}`;
+  }
+
+  /**
+   * Creates test user data
+   */
+  static createUser(
+    overrides: Partial<{
+      id: string;
+      name: string;
+      email: string;
+      role: string;
+    }> = {},
+  ): any {
+    return {
+      id: crypto.randomUUID(),
+      name: "Test User",
+      email: "test@example.com",
+      role: "user",
+      createdAt: new Date().toISOString(),
+      ...overrides,
+    };
+  }
+
+  /**
+   * Creates a mock Redis response
+   */
+  static createRedisResponse<T>(
+    value: T,
+    ttl?: number,
+  ): {
+    value: T;
+    ttl: number;
+    type: string;
+  } {
+    return {
+      value,
+      ttl: ttl || -1,
+      type: typeof value,
+    };
+  }
+
+  /**
+   * Creates a mock HTTP response
+   */
+  static createMockResponse(
+    options: { status?: number; body?: any; headers?: Record<string, string> } = {},
+  ): Response {
+    const status = options.status || 200;
+    const headers = new Headers(options.headers || {});
+
+    if (options.body && !headers.has("content-type")) {
+      headers.set("content-type", "application/json");
+    }
+
+    return new Response(options.body ? JSON.stringify(options.body) : null, { status, headers });
+  }
+}
+
+/**
+ * Note: createMockAdapter has been moved to src/platform/adapters/mock.ts
+ *
+ * Use the following import instead:
+ * import { createMockAdapter } from "@veryfront/platform/adapters/mock.ts";
+ *
+ * This change was made to fix the architectural issue where src/ test files
+ * were importing from tests/, which violates clean architecture principles.
+ */

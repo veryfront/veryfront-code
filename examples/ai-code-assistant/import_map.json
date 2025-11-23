@@ -1,0 +1,6 @@
+{
+  "imports": {
+    "veryfront/ai": "../../src/ai/index.ts",
+    "veryfront/ai/": "../../src/ai/"
+  }
+}

@@ -1,0 +1,186 @@
+{
+  "name": "veryfront",
+  "version": "0.1.0",
+  "nodeModulesDir": "auto",
+  "workspace": [
+    "./examples/async-worker-redis",
+    "./examples/knowledge-base",
+    "./examples/form-handling",
+    "./examples/middleware-demo",
+    "./examples/coding-agent"
+  ],
+  "exports": {
+    ".": "./src/index.ts",
+    "./cli": "./src/cli/main.ts",
+    "./server": "./src/server/index.ts",
+    "./middleware": "./src/middleware/index.ts",
+    "./components": "./src/react/components/index.ts",
+    "./data": "./src/data/index.ts",
+    "./config": "./src/core/config/index.ts",
+    "./ai": "./src/ai/index.ts",
+    "./ai/client": "./src/ai/client.ts",
+    "./ai/react": "./src/ai/react/index.ts",
+    "./ai/primitives": "./src/ai/react/primitives/index.ts",
+    "./ai/components": "./src/ai/react/components/index.ts",
+    "./ai/production": "./src/ai/production/index.ts",
+    "./ai/dev": "./src/ai/dev/index.ts"
+  },
+  "imports": {
+    "@veryfront": "./src/index.ts",
+    "@veryfront/": "./src/",
+    "@veryfront/ai": "./src/ai/index.ts",
+    "@veryfront/ai/": "./src/ai/",
+    "@veryfront/platform": "./src/platform/index.ts",
+    "@veryfront/platform/": "./src/platform/",
+    "@veryfront/types": "./src/core/types/index.ts",
+    "@veryfront/types/": "./src/core/types/",
+    "@veryfront/utils": "./src/core/utils/index.ts",
+    "@veryfront/utils/": "./src/core/utils/",
+    "@veryfront/middleware": "./src/middleware/index.ts",
+    "@veryfront/middleware/": "./src/middleware/",
+    "@veryfront/errors": "./src/core/errors/index.ts",
+    "@veryfront/errors/": "./src/core/errors/",
+    "@veryfront/config": "./src/core/config/index.ts",
+    "@veryfront/config/": "./src/core/config/",
+    "@veryfront/observability": "./src/observability/index.ts",
+    "@veryfront/observability/": "./src/observability/",
+    "@veryfront/routing": "./src/routing/index.ts",
+    "@veryfront/routing/": "./src/routing/",
+    "@veryfront/transforms": "./src/build/transforms/index.ts",
+    "@veryfront/transforms/": "./src/build/transforms/",
+    "@veryfront/data": "./src/data/index.ts",
+    "@veryfront/data/": "./src/data/",
+    "@veryfront/security": "./src/security/index.ts",
+    "@veryfront/security/": "./src/security/",
+    "@veryfront/components": "./src/react/components/index.ts",
+    "@veryfront/react": "./src/react/index.ts",
+    "@veryfront/react/": "./src/react/",
+    "@veryfront/html": "./src/html/index.ts",
+    "@veryfront/html/": "./src/html/",
+    "@veryfront/rendering": "./src/rendering/index.ts",
+    "@veryfront/rendering/": "./src/rendering/",
+    "@veryfront/build": "./src/build/index.ts",
+    "@veryfront/build/": "./src/build/",
+    "@veryfront/server": "./src/server/index.ts",
+    "@veryfront/server/": "./src/server/",
+    "@veryfront/modules": "./src/module-system/index.ts",
+    "@veryfront/modules/": "./src/module-system/",
+    "std/": "https://deno.land/std@0.220.0/",
+    "@std/path": "https://deno.land/std@0.220.0/path/mod.ts",
+    "@std/testing/bdd.ts": "https://deno.land/std@0.220.0/testing/bdd.ts",
+    "@std/expect": "https://deno.land/std@0.220.0/expect/mod.ts",
+    "csstype": "https://esm.sh/csstype@3.2.3",
+    "@types/react": "https://esm.sh/@types/react@18.3.27?deps=csstype@3.2.3",
+    "@types/react-dom": "https://esm.sh/@types/react-dom@18.3.7?deps=csstype@3.2.3",
+    "react": "https://esm.sh/react@18.3.1",
+    "react-dom": "https://esm.sh/react-dom@18.3.1",
+    "react-dom/server": "https://esm.sh/react-dom@18.3.1/server",
+    "react-dom/client": "https://esm.sh/react-dom@18.3.1/client",
+    "react/jsx-runtime": "https://esm.sh/react@18.3.1/jsx-runtime",
+    "react/jsx-dev-runtime": "https://esm.sh/react@18.3.1/jsx-dev-runtime",
+    "@mdx-js/mdx": "https://esm.sh/@mdx-js/mdx@3.0.0?deps=react@18.3.1,react-dom@18.3.1",
+    "@mdx-js/react": "https://esm.sh/@mdx-js/react@3.0.0?deps=react@18.3.1,react-dom@18.3.1",
+    "unist-util-visit": "https://esm.sh/unist-util-visit@5.0.0",
+    "mdast-util-to-string": "https://esm.sh/mdast-util-to-string@4.0.0",
+    "github-slugger": "https://esm.sh/github-slugger@2.0.0",
+    "remark-gfm": "https://esm.sh/remark-gfm@4.0.1",
+    "remark-frontmatter": "https://esm.sh/remark-frontmatter@5.0.0",
+    "rehype-highlight": "https://esm.sh/rehype-highlight@7.0.2",
+    "rehype-slug": "https://esm.sh/rehype-slug@6.0.0",
+    "esbuild": "https://deno.land/x/esbuild@v0.20.1/wasm.js",
+    "esbuild/mod.js": "https://deno.land/x/esbuild@v0.20.1/mod.js",
+    "zod": "https://esm.sh/zod@3.22.0",
+    "mime-types": "https://esm.sh/mime-types@2.1.35",
+    "mdast": "https://esm.sh/@types/mdast@4.0.3",
+    "hast": "https://esm.sh/@types/hast@3.0.3",
+    "unist": "https://esm.sh/@types/unist@3.0.2",
+    "unified": "https://esm.sh/unified@11.0.5?dts",
+    "ai": "https://esm.sh/ai@5.0.76",
+    "ai/react": "https://esm.sh/@ai-sdk/react@2.0.59",
+    "@ai-sdk/openai": "https://esm.sh/@ai-sdk/openai@2.0.1",
+    "@ai-sdk/anthropic": "https://esm.sh/@ai-sdk/anthropic@2.0.4",
+    "unocss": "https://esm.sh/unocss@0.59.0",
+    "@unocss/core": "https://esm.sh/@unocss/core@0.59.0",
+    "@unocss/preset-wind": "https://esm.sh/@unocss/preset-wind@0.59.0"
+  },
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "jsxImportSource": "react",
+    "strict": true,
+    "noImplicitAny": true,
+    "noUncheckedIndexedAccess": true,
+    "types": [],
+    "lib": [
+      "deno.window",
+      "dom",
+      "dom.iterable",
+      "dom.asynciterable",
+      "deno.ns"
+    ]
+  },
+  "tasks": {
+    "setup": "deno run --allow-all scripts/setup.ts",
+    "dev": "deno run --allow-all --no-lock src/cli/main.ts dev",
+    "build": "deno compile --allow-all --output ../../bin/veryfront src/cli/main.ts",
+    "test": "DENO_JOBS=1 deno test --parallel --fail-fast --allow-all --unstable-worker-options --unstable-net",
+    "test:unit": "DENO_JOBS=1 deno test --parallel --allow-all --v8-flags=--max-old-space-size=8192 --ignore=tests --unstable-worker-options --unstable-net",
+    "test:integration": "DENO_JOBS=1 deno test --parallel --fail-fast --allow-all tests --unstable-worker-options --unstable-net",
+    "test:batches": "deno run --allow-all scripts/test-batches.ts",
+    "test:unsafe": "DENO_JOBS=1 deno test --parallel --fail-fast --allow-all --coverage=coverage --unstable-worker-options --unstable-net",
+    "test:coverage": "rm -rf coverage && DENO_JOBS=1 deno test --parallel --fail-fast --allow-all --coverage=coverage --unstable-worker-options --unstable-net || exit 1",
+    "test:coverage:unit": "rm -rf coverage && DENO_JOBS=1 deno test --parallel --fail-fast --allow-all --coverage=coverage --ignore=tests --unstable-worker-options --unstable-net || exit 1",
+    "test:coverage:integration": "rm -rf coverage && DENO_JOBS=1 deno test --parallel --fail-fast --allow-all --coverage=coverage tests --unstable-worker-options --unstable-net || exit 1",
+    "coverage:report": "deno coverage coverage --include=src/ --exclude=tests --exclude=src/**/*_test.ts --exclude=src/**/*_test.tsx --exclude=src/**/*.test.ts --exclude=src/**/*.test.tsx --lcov > coverage/lcov.info && deno run --allow-read scripts/check-coverage.ts 80",
+    "coverage:html": "deno coverage coverage --include=src/ --exclude=tests --exclude=src/**/*_test.ts --exclude=src/**/*_test.tsx --exclude=src/**/*.test.ts --exclude=src/**/*.test.tsx --html",
+    "lint": "deno lint src/",
+    "fmt": "deno fmt src/",
+    "typecheck": "deno check src/index.ts src/cli/main.ts src/server/index.ts src/routing/api/index.ts src/rendering/index.ts src/platform/index.ts src/platform/adapters/index.ts src/build/index.ts src/build/production-build/index.ts src/build/transforms/index.ts src/core/config/index.ts src/core/utils/index.ts src/data/index.ts src/security/index.ts src/middleware/index.ts src/server/handlers/dev/index.ts src/server/handlers/request/api/index.ts src/rendering/cache/index.ts src/rendering/cache/stores/index.ts src/rendering/rsc/actions/index.ts src/html/index.ts src/module-system/index.ts",
+    "docs:check-links": "deno run -A scripts/check-doc-links.ts",
+    "lint:ban-console": "deno run --allow-read scripts/ban-console.ts",
+    "lint:ban-deep-imports": "deno run --allow-read scripts/ban-deep-imports.ts",
+    "lint:ban-internal-root-imports": "deno run --allow-read scripts/ban-internal-root-imports.ts",
+    "lint:check-awaits": "deno run --allow-read scripts/check-unawaited-promises.ts",
+    "check:circular": "deno run -A jsr:@cunarist/deno-circular-deps src/index.ts"
+  },
+  "lint": {
+    "include": [
+      "src/**/*.ts",
+      "src/**/*.tsx"
+    ],
+    "exclude": [
+      "dist/",
+      "coverage/"
+    ],
+    "rules": {
+      "tags": [
+        "recommended"
+      ],
+      "include": [
+        "ban-untagged-todo"
+      ],
+      "exclude": [
+        "no-explicit-any",
+        "no-process-global",
+        "no-console"
+      ]
+    }
+  },
+  "fmt": {
+    "include": [
+      "src/**/*.ts",
+      "src/**/*.tsx"
+    ],
+    "exclude": [
+      "dist/",
+      "coverage/"
+    ],
+    "options": {
+      "useTabs": false,
+      "lineWidth": 100,
+      "indentWidth": 2,
+      "semiColons": true,
+      "singleQuote": false,
+      "proseWrap": "preserve"
+    }
+  }
+}

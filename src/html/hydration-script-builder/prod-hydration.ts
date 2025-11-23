@@ -1,0 +1,29 @@
+import type { ComponentProps } from "@veryfront/types";
+
+export function generateProdHydrationScript(
+  slug: string,
+  _params?: Record<string, string | string[]>,
+  props?: ComponentProps,
+  nonce?: string,
+): string {
+  const nonceAttr = nonce ? ` nonce="${nonce}"` : "";
+  return `
+  <script type="module"${nonceAttr}>
+    import * as React from 'react';
+    import * as ReactDOM from 'react-dom/client';
+    import { App } from '@/components/app';
+    import { Layout } from '@/components/layout';
+    import { Page } from '@/pages/${slug}';
+
+    const tree = React.createElement(App, {},
+      React.createElement(Layout, {},
+        React.createElement(Page, ${JSON.stringify(props || {})})
+      )
+    );
+
+    const root = document.getElementById('root');
+    if (root) {
+      ReactDOM.hydrateRoot(root, tree);
+    }
+  </script>`;
+}

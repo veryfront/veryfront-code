@@ -1,0 +1,516 @@
+/**
+ * TestContext - Comprehensive test environment management
+ *
+ * Provides a bulletproof testing context that handles:
+ * - Server lifecycle (start, ready, stop)
+ * - Port allocation without conflicts
+ * - Temporary directory management
+ * - Resource cleanup guarantees
+ * - Environment isolation
+ *
+ * Usage:
+ * ```typescript
+ * const context = new TestContext("my-test");
+ * await context.setup();
+ * try {
+ *   const server = await context.createDevServer();
+ *   // Run tests...
+ * } finally {
+ *   await context.cleanup();
+ * }
+ * ```
+ */
+
+import { join } from "std/path/mod.ts";
+import { createDevServer } from "../../src/server/dev-server.ts";
+import { startProductionServer } from "../../src/server/production-server.ts";
+import { resetApiHandler } from "../../src/server/handlers/request/api/index.ts";
+import type { TestServer } from "./server.ts";
+import { getFreePort } from "./utils.ts";
+
+// Initialize esbuild without worker to prevent hanging tests
+try {
+  const { initialize } = await import("esbuild");
+  await initialize({
+    worker: false,
+  });
+} catch {
+  // Ignore if already initialized or module missing
+}
+
+function safeGetEnv(key: string): string | undefined {
+  try {
+    return process.env[key];
+  } catch (_error) {
+    return undefined;
+  }
+}
+
+function safeSetEnv(key: string, value: string | undefined): void {
+  try {
+    if (value === undefined) {
+      delete process.env[key];
+    } else {
+      process.env[key] = value;
+    }
+  } catch (_error) {
+    // ignore if env access is restricted
+  }
+}
+
+const _ORIGINAL_DISABLE_LRU_INTERVAL = safeGetEnv("VF_DISABLE_LRU_INTERVAL");
+const _ORIGINAL_DISABLE_LRU_GLOBAL = (globalThis as Record<string, unknown>).__vfDisableLruInterval;
+safeSetEnv("VF_DISABLE_LRU_INTERVAL", "1");
+(globalThis as Record<string, unknown>).__vfDisableLruInterval = true;
+const _activeLruDisableContexts = 0;
+
+// Global port allocator to prevent conflicts
+class PortAllocator {
+  private static instance: PortAllocator;
+  private usedPorts = new Set<number>();
+  private readonly MIN_PORT = 9000;
+  private readonly MAX_PORT = 12000;
+
+  static getInstance(): PortAllocator {
+    if (!PortAllocator.instance) {
+      PortAllocator.instance = new PortAllocator();
+    }
+    return PortAllocator.instance;
+  }
+
+  allocate(): Promise<number> {
+    // Delegate to shared helper for consistency across tests
+    const port = getFreePort(this.MIN_PORT, this.MAX_PORT);
+    if (this.usedPorts.has(port)) {
+      // Extremely unlikely, but ensure uniqueness within this process
+      for (let p = this.MIN_PORT; p <= this.MAX_PORT; p++) {
+        if (this.usedPorts.has(p)) continue;
+        this.usedPorts.add(p);
+        return Promise.resolve(p);
+      }
+    }
+    this.usedPorts.add(port);
+    return Promise.resolve(port);
+  }
+
+  release(port: number): void {
+    this.usedPorts.delete(port);
+  }
+}
+
+export class TestContext {
+  private readonly testName: string;
+  private tempDir?: string;
+  private servers: TestServer[] = [];
+  private allocatedPorts: number[] = [];
+  private originalEnv: Map<string, string | undefined> = new Map();
+  private originalDisableLru?: string;
+  private originalDisableLruGlobal?: unknown;
+  private cleanupHandlers: Array<() => Promise<void>> = [];
+
+  constructor(testName: string) {
+    this.testName = testName;
+
+    try {
+      this.originalDisableLru = process.env["VF_DISABLE_LRU_INTERVAL"];
+      process.env["VF_DISABLE_LRU_INTERVAL"] = "1";
+    } catch (_error) {
+      // Environment modifications may be disallowed in some contexts
+    }
+    this.originalDisableLruGlobal = (globalThis as Record<string, unknown>).__vfDisableLruInterval;
+    (globalThis as Record<string, unknown>).__vfDisableLruInterval = true;
+  }
+
+  /**
+   * Sets up the test context
+   * Must be called before any other operations
+   */
+  async setup(): Promise<void> {
+    // Create isolated temp directory
+    const prefix = `veryfront_test_${this.testName}_`;
+    this.tempDir = await Deno.makeTempDir({ prefix });
+
+    // Set up standard project structure
+    await this.createProjectStructure();
+  }
+
+  /**
+   * Gets the test project directory
+   */
+  get projectDir(): string {
+    if (!this.tempDir) {
+      throw new Error("TestContext not set up. Call setup() first.");
+    }
+    return this.tempDir;
+  }
+
+  /**
+   * Allocates a free port for testing
+   */
+  async allocatePort(): Promise<number> {
+    const port = await PortAllocator.getInstance().allocate();
+    this.allocatedPorts.push(port);
+    return port;
+  }
+
+  /**
+   * Sets environment variables with automatic cleanup
+   *
+   * WARNING: Environment variables are global across all parallel test workers.
+   * Tests that modify env vars may experience race conditions when run with DENO_JOBS > 1.
+   * Use DENO_JOBS=1 or ensure tests with different env requirements don't run in parallel.
+   */
+  setEnv(vars: Record<string, string>): void {
+    for (const [key, value] of Object.entries(vars)) {
+      if (!this.originalEnv.has(key)) {
+        // Store original value from Deno.env if available, fallback to process.env
+        const originalValue = typeof Deno !== "undefined" && Deno.env
+          ? Deno.env.get(key)
+          : process.env[key];
+        this.originalEnv.set(key, originalValue);
+      }
+      // Set in both Deno.env and process.env for maximum compatibility
+      if (typeof Deno !== "undefined" && Deno.env) {
+        Deno.env.set(key, value);
+      }
+      process.env[key] = value;
+    }
+  }
+
+  /**
+   * Creates a development server with automatic cleanup
+   */
+  async createDevServer(options: {
+    port?: number;
+    enableHMR?: boolean;
+    fileWatcherDebounceMs?: number;
+    signal?: AbortSignal;
+  } = {}): Promise<TestServer> {
+    const port = options.port || (await this.allocatePort());
+
+    const server = await createDevServer({
+      projectDir: this.projectDir,
+      port,
+      enableHMR: options.enableHMR ?? false,
+      fileWatcherDebounceMs: options.fileWatcherDebounceMs,
+      signal: options.signal,
+    });
+
+    // Add to tracked servers
+    const testServer = server as TestServer;
+    testServer.port = port;
+    testServer.hostname = "localhost";
+    this.servers.push(testServer);
+
+    // Wait for server to be ready
+    await this.waitForServerReady(testServer);
+
+    return testServer;
+  }
+
+  /**
+   * Creates a production server with automatic cleanup
+   */
+  async createProductionServer(
+    options: { port?: number; hostname?: string } = {},
+  ): Promise<TestServer> {
+    const port = options.port || (await this.allocatePort());
+    const hostname = options.hostname || "127.0.0.1";
+
+    const server = await startProductionServer({
+      projectDir: this.projectDir,
+      port,
+      hostname,
+    });
+
+    // Add to tracked servers
+    const testServer = server as TestServer;
+    testServer.port = port;
+    testServer.hostname = hostname;
+    this.servers.push(testServer);
+
+    // Wait for server to be ready
+    await this.waitForServerReady(testServer);
+
+    return testServer;
+  }
+
+  /**
+   * Adds a cleanup handler to be run during cleanup
+   */
+  addCleanup(handler: () => Promise<void> | void): void {
+    this.cleanupHandlers.push(async () => await handler());
+  }
+
+  /**
+   * Tracks a resource with automatic cleanup
+   */
+  trackResource<T extends { close?: () => any; stop?: () => any; terminate?: () => any }>(
+    resource: T,
+    name?: string,
+  ): T {
+    this.addCleanup(async () => {
+      try {
+        if (resource.stop) await resource.stop();
+        if (resource.close) await resource.close();
+        if (resource.terminate) await resource.terminate();
+      } catch (error) {
+        console.error(`Failed to cleanup resource ${name || "unknown"}:`, error);
+      }
+    });
+    return resource;
+  }
+
+  /**
+   * Cleans up all resources
+   * MUST be called in a finally block
+   */
+  async cleanup(): Promise<void> {
+    const errors: Error[] = [];
+
+    // Run custom cleanup handlers
+    for (const handler of this.cleanupHandlers) {
+      try {
+        await handler();
+      } catch (error) {
+        errors.push(error as Error);
+      }
+    }
+
+    // Stop all servers
+    for (const server of this.servers) {
+      try {
+        await server.stop();
+        await this.waitForServerStopped(server);
+      } catch (error) {
+        errors.push(error as Error);
+      }
+    }
+
+    // Clean up renderers and caches to prevent resource leaks
+    try {
+      const { cleanupBundler } = await import("../../src/rendering/cleanup.ts");
+      await cleanupBundler();
+    } catch (error) {
+      errors.push(error as Error);
+    }
+
+    try {
+      await resetApiHandler(this.projectDir);
+    } catch (error) {
+      errors.push(error as Error);
+    }
+
+    // Release all ports
+    const portAllocator = PortAllocator.getInstance();
+    for (const port of this.allocatedPorts) {
+      portAllocator.release(port);
+    }
+
+    // Restore environment variables
+    for (const [key, originalValue] of this.originalEnv) {
+      if (originalValue === undefined) {
+        delete process.env[key];
+        // Also delete from Deno.env if available
+        if (typeof Deno !== "undefined" && Deno.env) {
+          Deno.env.delete(key);
+        }
+      } else {
+        process.env[key] = originalValue;
+        // Also restore in Deno.env if available
+        if (typeof Deno !== "undefined" && Deno.env) {
+          Deno.env.set(key, originalValue);
+        }
+      }
+    }
+
+    try {
+      if (this.originalDisableLru === undefined) {
+        delete process.env["VF_DISABLE_LRU_INTERVAL"];
+      } else {
+        process.env["VF_DISABLE_LRU_INTERVAL"] = this.originalDisableLru;
+      }
+    } catch (_error) {
+      // ignore if env cannot be restored
+    }
+
+    if (this.originalDisableLruGlobal === undefined) {
+      delete (globalThis as Record<string, unknown>).__vfDisableLruInterval;
+    } else {
+      (globalThis as Record<string, unknown>).__vfDisableLruInterval =
+        this.originalDisableLruGlobal;
+    }
+
+    // Remove temp directory
+    if (this.tempDir) {
+      try {
+        await Deno.remove(this.tempDir, { recursive: true });
+      } catch (error) {
+        if (!(error instanceof Deno.errors.NotFound)) {
+          errors.push(error as Error);
+        }
+      }
+    }
+
+    // Report any cleanup errors
+    if (errors.length > 0) {
+      console.error(`[TestContext] Cleanup errors for ${this.testName}:`, errors);
+    }
+  }
+
+  /**
+   * Creates a standard project structure for testing
+   */
+  private async createProjectStructure(): Promise<void> {
+    const dirs = [
+      "pages",
+      "app",
+      "components",
+      "public",
+      "styles",
+      "islands",
+      "src/components",
+      "src/islands",
+    ];
+    for (const dir of dirs) {
+      await Deno.mkdir(join(this.projectDir, dir), { recursive: true });
+    }
+
+    // Create default config
+    await Deno.writeTextFile(
+      join(this.projectDir, "veryfront.config.js"),
+      `export default {
+  title: "Test Site",
+  description: "Test site for ${this.testName}"
+};`,
+    );
+  }
+
+  /**
+   * Waits for a server to be ready with exponential backoff
+   */
+  private async waitForServerReady(server: TestServer): Promise<void> {
+    const maxAttempts = 20;
+    const baseDelay = 100;
+    const maxDelay = 2000;
+
+    // First, wait for the ready promise if available
+    if (server.ready && typeof server.ready.then === "function") {
+      let timeoutId: number | undefined;
+      const timeout = new Promise((_, reject) => {
+        timeoutId = setTimeout(() => reject(new Error("Server ready timeout")), 10000);
+      });
+
+      try {
+        await Promise.race([server.ready, timeout]);
+      } finally {
+        if (timeoutId !== undefined) {
+          clearTimeout(timeoutId);
+        }
+      }
+    }
+
+    // Then verify with HTTP requests
+    const port = server.port || 3000;
+    const hostname = server.hostname || "localhost";
+    const url = `http://${hostname}:${port}/`;
+
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      let response: Response | null = null;
+      try {
+        response = await fetch(url, {
+          signal: AbortSignal.timeout(2000),
+        });
+
+        if (response.status >= 200 && response.status < 600) {
+          // Consume the response body
+          await response.body?.cancel();
+          response = null; // Mark as consumed
+
+          // Verify with one more request
+          let verify: Response | null = null;
+          try {
+            verify = await fetch(url, {
+              signal: AbortSignal.timeout(2000),
+            });
+
+            if (verify.status >= 200 && verify.status < 600) {
+              // Consume the verify response body
+              await verify.body?.cancel();
+              return;
+            }
+            // Consume body if verification failed
+            await verify.body?.cancel();
+            verify = null;
+          } catch {
+            // Verification request failed, ensure body is consumed
+            await verify?.body?.cancel();
+          }
+        } else {
+          // Consume body if status check failed
+          await response.body?.cancel();
+          response = null;
+        }
+      } catch {
+        // Server not ready yet, ensure body is consumed if fetch succeeded
+        await response?.body?.cancel();
+      }
+
+      // Exponential backoff with jitter
+      const delay = Math.min(baseDelay * 1.5 ** attempt + Math.random() * 100, maxDelay);
+
+      await new Promise<void>((resolve) => {
+        const timeoutId = setTimeout(resolve, delay);
+        // Clear immediately after resolution
+        Promise.resolve().then(() => clearTimeout(timeoutId));
+      });
+    }
+
+    throw new Error(`Server at ${url} not ready after ${maxAttempts} attempts`);
+  }
+
+  /**
+   * Waits for a server to stop
+   */
+  private async waitForServerStopped(server: TestServer): Promise<void> {
+    const port = server.port || 3000;
+    const hostname = server.hostname || "localhost";
+    const url = `http://${hostname}:${port}/`;
+
+    const maxAttempts = 10;
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      try {
+        const response = await fetch(url, { signal: AbortSignal.timeout(100) });
+        // Consume the response body
+        await response.body?.cancel();
+        // If fetch succeeds, server is still running
+        await new Promise<void>((resolve) => {
+          const timeoutId = setTimeout(resolve, 100);
+          Promise.resolve().then(() => clearTimeout(timeoutId));
+        });
+      } catch {
+        // Server has stopped
+        return;
+      }
+    }
+
+    // Server might still be running, but we've waited enough
+  }
+}
+
+/**
+ * Test helper function that automatically manages context
+ */
+export async function withTestContext<T>(
+  testName: string,
+  fn: (context: TestContext) => Promise<T>,
+): Promise<T> {
+  const context = new TestContext(testName);
+  await context.setup();
+
+  try {
+    return await fn(context);
+  } finally {
+    await context.cleanup();
+  }
+}

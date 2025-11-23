@@ -1,0 +1,39 @@
+/**
+ * Retry and error handling constants
+ *
+ * These constants define default retry behavior for various operations
+ * that may fail temporarily (network requests, file I/O, etc.)
+ */
+
+/** Default number of retry attempts before giving up */
+export const DEFAULT_RETRY_MAX_ATTEMPTS = 3;
+
+/** Initial delay between retry attempts (in milliseconds) */
+export const DEFAULT_RETRY_INITIAL_DELAY_MS = 100;
+
+/** Maximum delay between retry attempts (in milliseconds) */
+export const DEFAULT_RETRY_MAX_DELAY_MS = 5000;
+
+/** Exponential backoff multiplier (delay *= this value each retry) */
+export const DEFAULT_RETRY_BACKOFF_MULTIPLIER = 2;
+
+/**
+ * API client retry configuration defaults
+ */
+export const API_RETRY_MAX_ATTEMPTS = 3;
+export const API_RETRY_INITIAL_DELAY_MS = 1000;
+export const API_RETRY_MAX_DELAY_MS = 10000;
+
+/**
+ * File system operation retry defaults
+ */
+export const FS_RETRY_MAX_ATTEMPTS = 3;
+export const FS_RETRY_INITIAL_DELAY_MS = 1000;
+export const FS_RETRY_MAX_DELAY_MS = 10000;
+
+/**
+ * WebSocket reconnection defaults
+ */
+export const WS_RECONNECT_MAX_ATTEMPTS = 5;
+export const WS_RECONNECT_INITIAL_DELAY_MS = 1000;
+export const WS_RECONNECT_MAX_DELAY_MS = 30000;

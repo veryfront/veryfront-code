@@ -1,0 +1,50 @@
+{
+  "name": "veryfront",
+  "version": "0.0.4",
+  "description": "React meta-framework with AI-native capabilities",
+  "keywords": [
+    "deno",
+    "framework",
+    "react",
+    "rsc",
+    "server-components",
+    "ai",
+    "agents",
+    "mcp",
+    "llm",
+    "anthropic",
+    "openai"
+  ],
+  "homepage": "https://github.com/veryfront/veryfront#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/veryfront/veryfront.git"
+  },
+  "bugs": {
+    "url": "https://github.com/veryfront/veryfront/issues"
+  },
+  "license": "MIT",
+  "author": "Veryfront",
+  "bin": {
+    "veryfront": "./bin/veryfront"
+  },
+  "files": [
+    "scripts/postinstall.js",
+    "bin/"
+  ],
+  "scripts": {
+    "postinstall": "node scripts/postinstall.js"
+  },
+  "engines": {
+    "node": ">=16.0.0"
+  },
+  "os": [
+    "darwin",
+    "linux",
+    "win32"
+  ],
+  "cpu": [
+    "x64",
+    "arm64"
+  ]
+}

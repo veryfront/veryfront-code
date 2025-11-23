@@ -1,0 +1,9 @@
+{
+  "tasks": {
+    "dev": "deno run --allow-all ../../src/cli/main.ts dev",
+    "ingest": "deno run --allow-read --allow-write --allow-net --allow-env scripts/ingest.ts"
+  },
+  "imports": {
+    "veryfront": "../../src/index.ts"
+  }
+}

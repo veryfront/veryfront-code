@@ -1,0 +1,36 @@
+# Test coverage
+coverage/
+tests/render/cov_profile/
+
+# Logs
+server.log
+*.log
+
+# Environment
+.envrc
+.env
+.env.*
+
+# Build artifacts
+.veryfront/
+dist/
+*.backup/
+
+# IDE
+.claude/
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+__test_project__/
+
+# Dependencies
+node_modules/
+
+# Binaries
+bin/
+
+# NPM config
+.npmrc

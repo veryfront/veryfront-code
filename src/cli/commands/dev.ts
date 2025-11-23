@@ -1,0 +1,123 @@
+/**
+ * Dev Command - Development server with HMR and Client-Side Features
+ */
+
+import { compileAllMDX, watchMDX } from "@veryfront/build/compiler/mdx-compiler/index.ts";
+import { ErrorCode, VeryfrontError } from "@veryfront/errors/index.ts";
+import { LOCALHOST } from "@veryfront/config";
+import { bold, cyan, dim, green } from "std/fmt/colors.ts";
+import { join } from "std/path/mod.ts";
+import { getAdapter } from "@veryfront/platform/adapters/detect.ts";
+import { cliLogger } from "@veryfront/utils";
+import { getConfig } from "@veryfront/config";
+import { createDevServer } from "@veryfront/server/dev-server.ts";
+
+export interface DevOptions {
+  port: number;
+  projectDir: string;
+  hmr?: boolean;
+}
+
+// Alias for backward compatibility
+export type DevCommandOptions = DevOptions;
+
+function getLocalIP(): string {
+  try {
+    const interfaces = Deno.networkInterfaces();
+    for (const iface of interfaces) {
+      if (iface.family === "IPv4" && !iface.address.startsWith("127.")) {
+        return iface.address;
+      }
+    }
+  } catch (error) {
+    // Network interface enumeration may fail due to permissions
+    cliLogger.debug("Failed to get network interfaces:", error);
+  }
+  return LOCALHOST.HOSTNAME;
+}
+
+export async function devCommand(options: DevOptions) {
+  const { port, projectDir, hmr = true } = options;
+
+  // Get adapter first
+  const adapter = await getAdapter();
+
+  // Load config with better error handling
+  let config;
+  try {
+    config = await getConfig(projectDir, adapter);
+  } catch (error) {
+    if (error instanceof Error && error.message.includes("not found")) {
+      throw new VeryfrontError(
+        "No veryfront.config.js found in project directory",
+        ErrorCode.CONFIG_ERROR,
+        { projectDir },
+      );
+    }
+    throw error;
+  }
+
+  // Use config port if specified
+  const finalPort = config?.dev?.port || port;
+  const enableHMR = config?.dev?.hmr !== false && hmr;
+
+  // Pre-compile MDX files if enabled
+  const usePrecompiledMDX = config?.experimental?.precompileMDX === true;
+  if (usePrecompiledMDX) {
+    const outputDir = join(projectDir, ".veryfront", "compiled");
+
+    try {
+      // Compile all MDX files
+      await compileAllMDX({
+        projectDir,
+        outputDir,
+        mode: "development",
+      });
+
+      // Start watching for changes
+      void watchMDX({
+        projectDir,
+        outputDir,
+        mode: "development",
+      });
+    } catch (error) {
+      // MDX compilation is non-critical, log but continue
+      cliLogger.warn("MDX pre-compilation failed, continuing without it:", error);
+    }
+  }
+
+  // Start dev server with new features
+  try {
+    await createDevServer({
+      port: finalPort,
+      projectDir,
+      hmrPort: finalPort + 1,
+      enableHMR,
+      enableFastRefresh: true,
+    });
+  } catch (error) {
+    if (error instanceof Error) {
+      // Check for common errors
+      const message = error.message.toLowerCase();
+      if (message.includes("eaddrinuse") || message.includes("address already in use")) {
+        throw new VeryfrontError(
+          `Port ${finalPort} is already in use`,
+          ErrorCode.INITIALIZATION_ERROR,
+          {
+            port: finalPort,
+          },
+        );
+      }
+    }
+    throw error;
+  }
+
+  // Enhanced startup message
+  cliLogger.info(`${green("✓")} Server started successfully!\n`);
+
+  cliLogger.info(`  ${bold("Local:")}    ${cyan(`http://${LOCALHOST.HOSTNAME}:${finalPort}`)}`);
+  cliLogger.info(`  ${bold("Network:")}  ${cyan(`http://${getLocalIP()}:${finalPort}`)}`);
+  cliLogger.info(`  ${bold("HMR:")}      ${dim(`ws://${LOCALHOST.HOSTNAME}:${finalPort}/_ws`)}\n`);
+
+  cliLogger.info(dim("  Press ") + bold("Ctrl+C") + dim(" to stop the server\n"));
+}
