@@ -4,24 +4,95 @@
 
 import type { BuildManifest } from "../build/production-build/manifest.ts";
 
+function sanitizeCacheKey(value: string): string {
+  return value.replace(/[^a-zA-Z0-9._-]/g, "");
+}
+
+function buildCacheVersion(manifest: BuildManifest): string {
+  const manifestVersion = sanitizeCacheKey(manifest.version || "dev");
+  const buildStamp = sanitizeCacheKey(manifest.buildTime || new Date().toISOString());
+  return `veryfront-${manifestVersion}-${buildStamp}`;
+}
+
+function normalizeChunkPath(value: string | null | undefined, base: string): string | null {
+  if (!value) return null;
+  if (value.startsWith("http://") || value.startsWith("https://")) return null;
+
+  const candidate = value.replace(/^\.\//, "");
+
+  if (candidate.startsWith("/")) {
+    return candidate;
+  }
+
+  if (candidate.startsWith("_veryfront/")) {
+    return `/${candidate}`;
+  }
+
+  if (candidate.startsWith("chunks/")) {
+    return `/_veryfront/${candidate}`;
+  }
+
+  return `${base}/${candidate}`;
+}
+
+function buildManifestAssets(manifest: BuildManifest): string[] {
+  const assets = new Set<string>([
+    "/",
+    "/_veryfront/router.js",
+    "/_veryfront/prefetch.js",
+    "/_veryfront/manifest.json",
+    "/sw.js",
+  ]);
+
+  const addAsset = (requestPath: string | null | undefined) => {
+    if (!requestPath) return;
+    const normalized = requestPath.startsWith("/") ? requestPath : `/${requestPath}`;
+    assets.add(normalized);
+  };
+
+  if (manifest.chunks) {
+    for (const chunkInfo of Object.values(manifest.chunks.chunks || {})) {
+      const chunk = chunkInfo as any;
+      addAsset(normalizeChunkPath(chunk.file, "/_veryfront"));
+      if (chunk.css) {
+        addAsset(normalizeChunkPath(chunk.css, "/_veryfront"));
+      }
+      for (const dependency of chunk.imports || []) {
+        addAsset(normalizeChunkPath(dependency, "/_veryfront/chunks"));
+      }
+    }
+
+    for (const shared of manifest.chunks.shared || []) {
+      addAsset(normalizeChunkPath(shared, "/_veryfront/chunks"));
+    }
+  }
+
+  for (const route of manifest.routes || []) {
+    if (Array.isArray(route.chunks)) {
+      for (const chunk of route.chunks) {
+        addAsset(normalizeChunkPath(chunk, "/_veryfront/chunks"));
+      }
+    }
+  }
+
+  return Array.from(assets).sort();
+}
+
 /**
  * Generate service worker with advanced caching
  */
-export function generateServiceWorker(_manifest: BuildManifest): string {
+export function generateServiceWorker(manifest: BuildManifest): string {
+  const cacheVersion = buildCacheVersion(manifest);
+  const staticAssets = buildManifestAssets(manifest);
+
   return `// Veryfront Service Worker
 // Generated at: ${new Date().toISOString()}
 
-const CACHE_VERSION = 'veryfront-v2';
+const CACHE_VERSION = '${cacheVersion}';
 const RUNTIME_CACHE = 'veryfront-runtime';
 
 // Static resources to cache
-const STATIC_CACHE_URLS = [
-  '/',
-  '/_veryfront/router.js',
-  '/_veryfront/prefetch.js',
-  '/_veryfront/manifest.json',
-  '/sw.js',
-];
+const STATIC_CACHE_URLS = ${JSON.stringify(staticAssets, null, 2)};
 
 // Cache strategies
 const CACHE_STRATEGIES = {
