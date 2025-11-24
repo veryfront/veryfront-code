@@ -7,7 +7,6 @@
  * - Page file loading with frontmatter extraction
  */
 
-// join import removed as unused
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import type { EntityInfo, Frontmatter } from "@veryfront/types";
 
