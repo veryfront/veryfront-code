@@ -122,6 +122,41 @@ veryfront dev
 # Your AI app is running!
 ```
 
+### Agentic workflows
+
+Combine planners, executors, and MCP resources for multi-step automation:
+
+```typescript
+import { agent, createWorkflow } from 'veryfront/ai';
+import { z } from 'zod';
+
+const planner = agent({
+  model: 'openai/gpt-4o-mini',
+  system: 'Plan the work and delegate to tools',
+  tools: { search: true, browseWeb: true },
+});
+
+const executor = agent({
+  model: 'openai/gpt-4o',
+  system: 'Execute the plan and ship the artifact',
+  tools: { writeMarkdown: true },
+  resources: 'auto', // ai/resources/* + connected MCP servers are injected
+});
+
+const workflow = createWorkflow({
+  inputSchema: z.object({ goal: z.string() }),
+  steps: [
+    { name: 'plan', agent: planner },
+    { name: 'deliver', agent: executor, input: ({ plan }) => plan.tasks },
+  ],
+});
+
+const { result, transcript } = await workflow.run({
+  goal: 'Publish a launch brief',
+  resources: ['mcp://github/issues', 'mcp://notion/notes'], // merged with auto-discovered resources
+});
+```
+
 ---
 
 ## 📚 Core Concepts
