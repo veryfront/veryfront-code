@@ -79,7 +79,11 @@ export class RequestHandler {
       });
 
     if (normalized === DEV_SERVER_ENDPOINTS.HMR_RUNTIME && this.hmrServer) {
-      const runtime = isHeadRequest ? null : this.getHMRRuntime();
+      if (isHeadRequest) {
+        return builder.withContentType(HTTP_CONTENT_TYPES.JS, "", HTTP_OK);
+      }
+
+      const runtime = this.getHMRRuntime();
       if (runtime === null) {
         return null;
       }
