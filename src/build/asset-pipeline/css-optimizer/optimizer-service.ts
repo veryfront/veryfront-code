@@ -4,10 +4,12 @@
  * Main orchestrator for CSS optimization using pluggable strategies.
  * Coordinates between different optimization strategies and manages the
  * optimization pipeline.
+ *
+ * Updated to use RuntimeAdapter for cross-platform compatibility and
+ * path validation for security.
  */
 
 import { dirname, relative } from "std/path/mod.ts";
-import { ensureDir } from "std/fs/mod.ts";
 import { logger } from "@veryfront/utils";
 import type {
   CSSBundle,
@@ -15,6 +17,8 @@ import type {
   CSSOptimizationStrategy,
   CSSOptimizerStats,
 } from "@veryfront/types";
+import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
+import { createSecureFs, type SecureFs } from "@veryfront/security/secure-fs.ts";
 import { LightningCSSStrategy, MinificationStrategy, PurgeStrategy } from "./strategies/index.ts";
 import { CacheManager } from "./css-bundle-cache.ts";
 import { basicMinify, calculateSavings, findCSSFiles, getOutputPath } from "./utils.ts";
@@ -43,10 +47,27 @@ export class CSSOptimizerService {
   private lightningStrategy: LightningCSSStrategy;
   private minificationStrategy: MinificationStrategy;
   private purgeStrategy: PurgeStrategy;
+  private adapter: RuntimeAdapter;
+  private secureFs: SecureFs;
+  private baseDir: string;
 
-  constructor(options: CSSOptimizationOptions = {}) {
+  constructor(
+    adapter: RuntimeAdapter,
+    baseDir: string,
+    options: CSSOptimizationOptions = {},
+  ) {
+    this.adapter = adapter;
+    this.baseDir = baseDir;
     this.options = { ...DEFAULT_OPTIONS, ...options };
     this.cacheManager = new CacheManager();
+
+    // Initialize secure filesystem with build context
+    this.secureFs = createSecureFs({
+      baseDir,
+      adapter,
+      context: "build",
+      throwOnError: true,
+    });
 
     // Initialize strategies
     this.lightningStrategy = new LightningCSSStrategy();
@@ -99,7 +120,8 @@ export class CSSOptimizerService {
       purge: this.options.purge,
     });
 
-    await ensureDir(this.options.outputDir);
+    // Create output directory using secure filesystem
+    await this.secureFs.mkdir(this.options.outputDir, { recursive: true });
 
     // Find all CSS files
     const cssFiles = this.options.inputFiles.length > 0
@@ -132,7 +154,8 @@ export class CSSOptimizerService {
     logger.debug(`Optimizing: ${relPath}`);
 
     try {
-      const content = await Deno.readTextFile(cssPath);
+      // Read file using secure filesystem (with path validation)
+      const content = await this.secureFs.readFile(cssPath);
       const originalSize = new TextEncoder().encode(content).length;
 
       let optimized = content;
@@ -160,14 +183,14 @@ export class CSSOptimizerService {
         }
       }
 
-      // Write optimized file
+      // Write optimized file using secure filesystem
       const outputPath = getOutputPath(relPath, this.options.outputDir);
-      await ensureDir(dirname(outputPath));
-      await Deno.writeTextFile(outputPath, optimized);
+      await this.secureFs.mkdir(dirname(outputPath), { recursive: true });
+      await this.secureFs.writeFile(outputPath, optimized);
 
       // Write source map if enabled
       if (sourceMap && this.options.sourceMap) {
-        await Deno.writeTextFile(`${outputPath}.map`, sourceMap);
+        await this.secureFs.writeFile(`${outputPath}.map`, sourceMap);
       }
 
       const minifiedSize = new TextEncoder().encode(optimized).length;
