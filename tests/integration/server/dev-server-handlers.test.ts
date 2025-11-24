@@ -173,6 +173,55 @@ describe(
       });
     });
 
+    it("responds to HEAD requests for HMR runtime", async () => {
+      await withTestContext("dev-server-hmr-head", async (context) => {
+        const { server, port } = await createTestDevServer(context, {
+          enableHMR: true,
+          hmrPort: await context.allocatePort(),
+        });
+
+        const response = await fetch(`http://localhost:${port}/_veryfront/hmr-runtime.js`, {
+          method: "HEAD",
+        });
+
+        assertEquals(response.status, 200);
+        const contentType = response.headers.get("content-type");
+        assert(
+          contentType?.startsWith("application/javascript"),
+          `Expected content-type to start with "application/javascript" but got "${contentType}"`,
+        );
+
+        // HEAD requests should not fall through to application router
+        assertEquals(await response.text(), "");
+
+        await server.stop();
+        await drainEventLoop();
+      });
+    });
+
+    it("responds to HEAD requests for error overlay runtime", async () => {
+      await withTestContext("dev-server-error-overlay-head", async (context) => {
+        const { server, port } = await createTestDevServer(context);
+
+        const response = await fetch(`http://localhost:${port}/_veryfront/error-overlay.js`, {
+          method: "HEAD",
+        });
+
+        assertEquals(response.status, 200);
+        const contentType = response.headers.get("content-type");
+        assert(
+          contentType?.startsWith("application/javascript"),
+          `Expected content-type to start with "application/javascript" but got "${contentType}"`,
+        );
+
+        // HEAD requests should not fall through to application router
+        assertEquals(await response.text(), "");
+
+        await server.stop();
+        await drainEventLoop();
+      });
+    });
+
     it("handles virtual module requests", async () => {
       await withTestContext("dev-server-virtual-modules", async (context) => {
         const { server, port } = await createTestDevServer(context);
