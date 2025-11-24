@@ -13,7 +13,7 @@ afterAll(async () => {
 function createTestManifest(overrides?: Partial<BuildManifest>): BuildManifest {
   return {
     version: "2.0.0",
-    buildTime: new Date().toISOString(),
+    buildTime: "2024-01-01T00:00:00.000Z",
     features: {
       streaming: true,
       codeSplitting: false,
@@ -46,9 +46,10 @@ describe("Service Worker Generation", () => {
     });
 
     it("should include cache version constant", () => {
-      const code = generateServiceWorker(createTestManifest());
+      const manifest = createTestManifest();
+      const code = generateServiceWorker(manifest);
 
-      assert(code.includes("const CACHE_VERSION = 'veryfront-v2'"));
+      assert(code.includes("const CACHE_VERSION = 'veryfront-2.0.0-2024-01-01T000000.000Z'"));
     });
 
     it("should include runtime cache constant", () => {
@@ -61,11 +62,38 @@ describe("Service Worker Generation", () => {
       const code = generateServiceWorker(createTestManifest());
 
       assert(code.includes("STATIC_CACHE_URLS"));
-      assert(code.includes("'/'"));
-      assert(code.includes("'/_veryfront/router.js'"));
-      assert(code.includes("'/_veryfront/prefetch.js'"));
-      assert(code.includes("'/_veryfront/manifest.json'"));
-      assert(code.includes("'/sw.js'"));
+      assert(code.includes("\"/\""));
+      assert(code.includes("\"/_veryfront/router.js\""));
+      assert(code.includes("\"/_veryfront/prefetch.js\""));
+      assert(code.includes("\"/_veryfront/manifest.json\""));
+      assert(code.includes("\"/sw.js\""));
+    });
+
+    it("should include manifest assets in static cache", () => {
+      const manifest = createTestManifest({
+        routes: [
+          { path: "/", slug: "index", chunks: ["chunks/home-abc123.js"] },
+        ],
+        chunks: {
+          version: "1",
+          routes: { "/": { chunks: ["chunks/home-abc123.js"] } },
+          chunks: {
+            "chunks/home-abc123.js": {
+              file: "chunks/home-abc123.js",
+              css: "chunks/home-abc123.css",
+              imports: ["chunks/vendor-xyz.js"],
+            },
+          },
+          shared: ["chunks/shared-1.js"],
+        },
+      });
+
+      const code = generateServiceWorker(manifest);
+
+      assert(code.includes("\"/_veryfront/chunks/home-abc123.js\""));
+      assert(code.includes("\"/_veryfront/chunks/home-abc123.css\""));
+      assert(code.includes("\"/_veryfront/chunks/vendor-xyz.js\""));
+      assert(code.includes("\"/_veryfront/chunks/shared-1.js\""));
     });
 
     it("should define cache strategies object", () => {
@@ -404,11 +432,30 @@ describe("Service Worker Generation", () => {
       const code = generateServiceWorker(createTestManifest());
 
       // Should have versioned cache
-      assert(code.includes("const CACHE_VERSION = 'veryfront-v2'"));
+      assert(code.includes("const CACHE_VERSION = 'veryfront-2.0.0-2024-01-01T000000.000Z'"));
       // Should use it for static cache
       assert(code.includes("caches.open(CACHE_VERSION)"));
       // Version should be used in cleanup logic
       assert(code.includes("name !== CACHE_VERSION"));
+    });
+
+    it("should bump cache version when manifest changes", () => {
+      const extractCacheVersion = (source: string) => {
+        const match = source.match(/const CACHE_VERSION = '([^']+)'/);
+        return match?.[1] ?? null;
+      };
+
+      const firstManifest = createTestManifest({ buildTime: "2024-01-01T00:00:00.000Z" });
+      const secondManifest = createTestManifest({ buildTime: "2024-02-02T00:00:00.000Z" });
+
+      const firstCode = generateServiceWorker(firstManifest);
+      const secondCode = generateServiceWorker(secondManifest);
+
+      const firstVersion = extractCacheVersion(firstCode);
+      const secondVersion = extractCacheVersion(secondCode);
+
+      assert(firstVersion && secondVersion);
+      assert(firstVersion !== secondVersion);
     });
 
     it("should store responses only when response.ok is true", () => {
