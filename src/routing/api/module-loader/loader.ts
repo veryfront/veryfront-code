@@ -74,6 +74,14 @@ function createImportMapPlugin(
           return { path: args.path, external: true };
         }
 
+        // Mark optional bundle manifest stores as external (they may not exist)
+        if (
+          args.path.includes("bundle-manifest-kv") ||
+          args.path.includes("bundle-manifest-redis")
+        ) {
+          return { path: args.path, external: true };
+        }
+
         // Handle relative imports from files in the import-map namespace
         if (args.namespace === "import-map" && args.path.startsWith(".")) {
           // Resolve relative to the importer's directory
@@ -113,6 +121,12 @@ function createImportMapPlugin(
         }
 
         if (resolvedPath) {
+          // If resolved path is an HTTP(S) URL, let it pass through to be handled by HTTP plugin
+          if (resolvedPath.startsWith("http://") || resolvedPath.startsWith("https://")) {
+            logger.debug(`[API] Import map resolved to HTTP URL: ${args.path} -> ${resolvedPath}`);
+            return undefined; // Let HTTP plugin handle it
+          }
+
           // Resolve relative to project directory
           const absolutePath = isAbsolute(resolvedPath)
             ? resolvedPath
@@ -174,6 +188,8 @@ function createImportMapPlugin(
             ? "ts"
             : ext === "js"
             ? "js"
+            : ext === "json"
+            ? "json"
             : "js"; // default
 
           return {
@@ -224,6 +240,8 @@ async function loadAndTranspileModule(
     "@ai-sdk/*",
     "zod",
     "node:*",
+    "std/*", // Deno standard library
+    "@std/*", // Deno standard library (new format)
     "https://deno.land/*",
   ];
 
