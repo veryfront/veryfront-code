@@ -2,7 +2,7 @@ export const getLoaderScript = () => `
     async function loadComponent(path) {
       if (!path) return null;
       try {
-        const match = path.match(/\/(pages|components|app|lib)\\/(.+)\\.(tsx|ts|jsx)$/);
+        const match = path.match(/\\/(pages|components|app|lib)\\/(.+)\\.(tsx|ts|jsx)$/);
         if (!match) {
           console.error('[Veryfront] Invalid component path:', path);
           return null;

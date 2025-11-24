@@ -120,7 +120,7 @@
   },
   "tasks": {
     "setup": "deno run --allow-all scripts/setup.ts",
-    "dev": "deno run --allow-all --no-lock src/cli/main.ts dev",
+    "dev": "deno run --allow-all --no-lock --unstable-net --unstable-worker-options src/cli/main.ts dev",
     "build": "deno compile --allow-all --output ../../bin/veryfront src/cli/main.ts",
     "test": "DENO_JOBS=1 deno test --parallel --fail-fast --allow-all --unstable-worker-options --unstable-net",
     "test:unit": "DENO_JOBS=1 deno test --parallel --allow-all --v8-flags=--max-old-space-size=8192 --ignore=tests --unstable-worker-options --unstable-net",

@@ -19,7 +19,7 @@ export const getRendererScript = () => `
           // Use the server-provided page path
           // Convert: /project/app/page.tsx -> /app/page.js
           // Convert: /project/pages/index.tsx -> /pages/index.js
-          const match = data.pagePath.match(/\/(pages|app|components|lib)\\/(.+)\.(tsx|ts|jsx|js)$/);
+          const match = data.pagePath.match(/\\/(pages|app|components|lib)\\/(.+)\\.(tsx|ts|jsx|js)$/);
           if (match) {
             pagePath = \`\${MODULE_SERVER_URL}/\${match[1]}/\${match[2]}.js\`;
             console.log('[Veryfront] Loading page from hydration data:', pagePath);
