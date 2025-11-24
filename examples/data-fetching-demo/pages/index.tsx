@@ -19,9 +19,12 @@ export default function Home({ message, timestamp }: HomeProps) {
       <h1>Data Fetching Demo</h1>
       <p>{message}</p>
       <p>Rendered at: {new Date(timestamp).toLocaleString()}</p>
-      <p>
-        <a href="/static">View Static Generation Example</a>
-      </p>
+
+      <h2>Examples</h2>
+      <ul>
+        <li><a href="/static">View Static Generation Example</a></li>
+        <li><a href="/docs/getting-started">View Documentation (with nested layout)</a></li>
+      </ul>
     </div>
   );
 }
