@@ -4,7 +4,6 @@
  * @module
  */
 
-import type * as React from "react";
 import { getCacheNamespace } from "@veryfront/utils/cache/keys/namespace.ts";
 import { CompilationError, wrapError } from "@veryfront/errors/index.ts";
 import { getAdapter } from "@veryfront/platform/adapters/index.ts";
@@ -28,7 +27,6 @@ export function clearMDXModuleCache(): void {
  * Loads an MDX module from the given path with caching support.
  *
  * @param modulePath - Absolute path to the MDX module
- * @param _components - Optional custom components (currently unused, reserved for future use)
  * @returns Promise resolving to the loaded MDX module
  * @throws {CompilationError} If the module has no default export
  * @throws {Error} If the module fails to load
@@ -41,7 +39,6 @@ export function clearMDXModuleCache(): void {
  */
 export async function loadMDXModule(
   modulePath: string,
-  _components: Record<string, React.ComponentType<unknown>> = {},
 ): Promise<MDXModule> {
   try {
     const ns = getCacheNamespace() || "default";
