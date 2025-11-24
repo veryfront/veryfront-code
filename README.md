@@ -1,15 +1,15 @@
 # Veryfront
 
-**Build AI agents with React** - Auto-discover tools and agents from your file structure, built-in MCP server, production-ready UI components.
+**React framework for agentic applications** – Multi-step, tool-using workflows with default agent orchestration, tool discovery, and production-ready UI components.
 
 ---
 
 ## What is Veryfront?
 
-Veryfront is a **modern React framework** for building AI-native applications with **zero configuration**. Create agents, tools, and conversational UIs using file-based conventions - just drop files in the right directories and they're automatically discovered.
+Veryfront is a **modern React framework** for building **agentic applications** with **zero configuration**. Create multi-step agents, orchestrate tool use by default, and build conversational UIs using file-based conventions—just drop files in the right directories and they're automatically discovered.
 
 **Perfect for:**
-- **AI Applications** - Agents, tools, chat interfaces with auto-discovery
+- **Agentic Applications** - Multi-step, tool-using workflows with auto-discovered agents and tools
 - **Multi-Runtime Apps** - Deploy to Deno, Node.js, Bun, or Cloudflare Workers
 - **Full-Stack React** - SSR, SSG, ISR, JIT rendering modes with App Router
 
