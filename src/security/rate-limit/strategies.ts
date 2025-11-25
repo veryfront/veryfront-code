@@ -32,7 +32,7 @@ export async function fixedWindowStrategy(
  * More accurate than fixed window, prevents burst attacks.
  * Tracks individual request timestamps.
  */
-export async function slidingWindowStrategy(
+export function slidingWindowStrategy(
   key: string,
   config: RateLimitConfig,
   store: RateLimitStore,
@@ -76,7 +76,7 @@ export async function slidingWindowStrategy(
   const allowed = state.count <= config.maxRequests;
   const remaining = Math.max(0, config.maxRequests - state.count);
 
-  return { allowed, remaining, resetTime: state.resetTime };
+  return Promise.resolve({ allowed, remaining, resetTime: state.resetTime });
 }
 
 /**
@@ -85,7 +85,7 @@ export async function slidingWindowStrategy(
  * Allows burst traffic up to bucket capacity.
  * Tokens refill at a constant rate.
  */
-export async function tokenBucketStrategy(
+export function tokenBucketStrategy(
   key: string,
   config: RateLimitConfig,
   store: RateLimitStore,
@@ -125,5 +125,5 @@ export async function tokenBucketStrategy(
   const remaining = Math.floor(state.count);
   const resetTime = now + (config.maxRequests - remaining) / refillRate;
 
-  return { allowed, remaining, resetTime: Math.floor(resetTime) };
+  return Promise.resolve({ allowed, remaining, resetTime: Math.floor(resetTime) });
 }

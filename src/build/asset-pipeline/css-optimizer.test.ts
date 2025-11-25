@@ -147,7 +147,7 @@ Deno.test("CSSOptimizer - getStats", async () => {
 
   await optimizer.optimize();
 
-  const stats = optimizer.getStats();
+  const stats = await optimizer.getStats();
 
   assertEquals(typeof stats.totalFiles, "number");
   assertEquals(typeof stats.originalSize, "number");
@@ -912,7 +912,7 @@ Deno.test("CSSOptimizer - total savings calculation", async () => {
 
   await optimizer.optimize();
 
-  const stats = optimizer.getStats();
+  const stats = await optimizer.getStats();
 
   if (stats.totalFiles > 0) {
     assertEquals(stats.totalSavings, stats.originalSize - stats.minifiedSize);
@@ -934,7 +934,7 @@ Deno.test("CSSOptimizer - stats with no savings", async () => {
 
   await optimizer.optimize();
 
-  const stats = optimizer.getStats();
+  const stats = await optimizer.getStats();
 
   assertEquals(typeof stats.averageSavings, "number");
 

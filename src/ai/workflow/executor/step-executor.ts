@@ -1,0 +1,361 @@
+/**
+ * Step Executor
+ *
+ * Executes individual workflow steps (agents and tools)
+ */
+
+import type { Agent, AgentResponse } from "../../types/agent.ts";
+import type { Tool } from "../../types/tool.ts";
+import type {
+  NodeState,
+  StepNodeConfig,
+  WorkflowContext,
+  WorkflowNode,
+} from "../types.ts";
+import { parseDuration } from "../types.ts";
+
+/** Default timeout for workflow steps (5 minutes) */
+const DEFAULT_STEP_TIMEOUT_MS = 5 * 60 * 1000;
+
+/**
+ * Agent registry for looking up agents by ID
+ */
+export interface AgentRegistry {
+  get(id: string): Agent | undefined;
+}
+
+/**
+ * Tool registry for looking up tools by ID
+ */
+export interface ToolRegistry {
+  get(id: string): Tool | undefined;
+}
+
+/**
+ * Step executor configuration
+ */
+export interface StepExecutorConfig {
+  /** Agent registry for looking up agents */
+  agentRegistry?: AgentRegistry;
+  /** Tool registry for looking up tools */
+  toolRegistry?: ToolRegistry;
+  /** Default timeout for steps (in milliseconds) */
+  defaultTimeout?: number;
+  /** Callback when step starts */
+  onStepStart?: (nodeId: string, input: unknown) => void;
+  /** Callback when step completes */
+  onStepComplete?: (nodeId: string, output: unknown) => void;
+  /** Callback when step fails */
+  onStepError?: (nodeId: string, error: Error) => void;
+}
+
+/**
+ * Result of executing a step
+ */
+export interface StepResult {
+  /** Whether the step succeeded */
+  success: boolean;
+  /** Output from the step (if successful) */
+  output?: unknown;
+  /** Error message (if failed) */
+  error?: string;
+  /** Execution time in milliseconds */
+  executionTime: number;
+}
+
+/**
+ * Step Executor class
+ *
+ * Responsible for executing individual workflow steps by invoking
+ * the appropriate agent or tool.
+ */
+export class StepExecutor {
+  private config: StepExecutorConfig;
+
+  constructor(config: StepExecutorConfig = {}) {
+    this.config = {
+      defaultTimeout: DEFAULT_STEP_TIMEOUT_MS,
+      ...config,
+    };
+  }
+
+  /**
+   * Execute a step node
+   */
+  async execute(
+    node: WorkflowNode,
+    context: WorkflowContext,
+  ): Promise<StepResult> {
+    const startTime = Date.now();
+    const config = node.config as StepNodeConfig;
+
+    if (config.type !== "step") {
+      throw new Error(`StepExecutor can only execute 'step' nodes, got '${config.type}'`);
+    }
+
+    try {
+      // Notify start
+      const resolvedInput = await this.resolveInput(config.input, context);
+      this.config.onStepStart?.(node.id, resolvedInput);
+
+      // Execute with timeout
+      const timeout = config.timeout
+        ? parseDuration(config.timeout)
+        : this.config.defaultTimeout!;
+
+      const output = await this.executeWithTimeout(
+        () => this.executeStep(config, resolvedInput, context),
+        timeout,
+        node.id,
+      );
+
+      // Notify completion
+      this.config.onStepComplete?.(node.id, output);
+
+      return {
+        success: true,
+        output,
+        executionTime: Date.now() - startTime,
+      };
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+
+      // Notify error
+      this.config.onStepError?.(node.id, error as Error);
+
+      return {
+        success: false,
+        error: errorMessage,
+        executionTime: Date.now() - startTime,
+      };
+    }
+  }
+
+  /**
+   * Resolve step input from context
+   */
+  private async resolveInput(
+    input: StepNodeConfig["input"],
+    context: WorkflowContext,
+  ): Promise<unknown> {
+    if (input === undefined) {
+      // Default to the original workflow input
+      return context.input;
+    }
+
+    if (typeof input === "function") {
+      return await input(context);
+    }
+
+    return input;
+  }
+
+  /**
+   * Execute step with timeout
+   */
+  private executeWithTimeout<T>(
+    fn: () => Promise<T>,
+    timeout: number,
+    _nodeId: string,
+  ): Promise<T> {
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        reject(new Error(`Step "${_nodeId}" timed out after ${timeout}ms`));
+      }, timeout);
+
+      fn()
+        .then((result) => {
+          clearTimeout(timer);
+          resolve(result);
+        })
+        .catch((error) => {
+          clearTimeout(timer);
+          reject(error);
+        });
+    });
+  }
+
+  /**
+   * Execute the actual step (agent or tool)
+   */
+  private async executeStep(
+    config: StepNodeConfig,
+    input: unknown,
+    context: WorkflowContext,
+  ): Promise<unknown> {
+    if (config.agent) {
+      return await this.executeAgent(config.agent, input, context);
+    }
+
+    if (config.tool) {
+      return await this.executeTool(config.tool, input);
+    }
+
+    throw new Error("Step must have either 'agent' or 'tool' specified");
+  }
+
+  /**
+   * Execute an agent
+   */
+  private async executeAgent(
+    agent: string | Agent,
+    input: unknown,
+    context: WorkflowContext,
+  ): Promise<unknown> {
+    // Resolve agent from registry if string
+    const resolvedAgent = typeof agent === "string"
+      ? this.getAgent(agent)
+      : agent;
+
+    // Prepare input for agent
+    const agentInput = typeof input === "string" ? input : JSON.stringify(input);
+
+    // Execute agent
+    const response: AgentResponse = await resolvedAgent.generate({
+      input: agentInput,
+      context,
+    });
+
+    // Return the agent's response
+    return {
+      text: response.text,
+      toolCalls: response.toolCalls,
+      status: response.status,
+      usage: response.usage,
+    };
+  }
+
+  /**
+   * Execute a tool
+   */
+  private async executeTool(
+    tool: string | Tool,
+    input: unknown,
+  ): Promise<unknown> {
+    // Resolve tool from registry if string
+    const resolvedTool = typeof tool === "string"
+      ? this.getTool(tool)
+      : tool;
+
+    // Execute tool
+    const result = await resolvedTool.execute(
+      input as Record<string, unknown>,
+      { agentId: "workflow" },
+    );
+
+    return result;
+  }
+
+  /**
+   * Get agent from registry
+   */
+  private getAgent(id: string): Agent {
+    if (!this.config.agentRegistry) {
+      throw new Error(
+        `Agent registry not configured. Cannot resolve agent "${id}"`,
+      );
+    }
+
+    const agent = this.config.agentRegistry.get(id);
+    if (!agent) {
+      throw new Error(`Agent not found: ${id}`);
+    }
+
+    return agent;
+  }
+
+  /**
+   * Get tool from registry
+   */
+  private getTool(id: string): Tool {
+    if (!this.config.toolRegistry) {
+      throw new Error(
+        `Tool registry not configured. Cannot resolve tool "${id}"`,
+      );
+    }
+
+    const tool = this.config.toolRegistry.get(id);
+    if (!tool) {
+      throw new Error(`Tool not found: ${id}`);
+    }
+
+    return tool;
+  }
+
+  /**
+   * Check if a step should be skipped
+   */
+  async shouldSkip(
+    node: WorkflowNode,
+    context: WorkflowContext,
+  ): Promise<boolean> {
+    const config = node.config;
+
+    if (!config.skip) {
+      return false;
+    }
+
+    return await config.skip(context);
+  }
+
+  /**
+   * Create initial node state
+   */
+  createInitialState(nodeId: string): NodeState {
+    return {
+      nodeId,
+      status: "pending",
+      attempt: 0,
+    };
+  }
+
+  /**
+   * Update node state for running
+   */
+  createRunningState(nodeId: string, input: unknown, attempt: number): NodeState {
+    return {
+      nodeId,
+      status: "running",
+      input,
+      attempt,
+      startedAt: new Date(),
+    };
+  }
+
+  /**
+   * Update node state for completion
+   */
+  createCompletedState(
+    _nodeId: string,
+    result: StepResult,
+    previousState: NodeState,
+  ): NodeState {
+    if (result.success) {
+      return {
+        ...previousState,
+        status: "completed",
+        output: result.output,
+        completedAt: new Date(),
+      };
+    }
+
+    return {
+      ...previousState,
+      status: "failed",
+      error: result.error,
+      completedAt: new Date(),
+    };
+  }
+
+  /**
+   * Update node state for skip
+   */
+  createSkippedState(nodeId: string): NodeState {
+    return {
+      nodeId,
+      status: "skipped",
+      attempt: 0,
+      completedAt: new Date(),
+    };
+  }
+}

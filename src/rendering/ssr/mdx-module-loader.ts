@@ -189,9 +189,10 @@ async function writeTempMDXModule(
   const adapter = await getAdapter();
   const tempDir = await ensureTempDir();
 
-  // Generate unique filename
+  // Generate unique filename using crypto for collision resistance
   const safeKey = cacheKey.replace(/[^a-zA-Z0-9-_]/g, "_").substring(0, 50);
-  const filename = `mdx-${safeKey}-${Date.now()}.mjs`;
+  const uniqueId = crypto.randomUUID().slice(0, 8);
+  const filename = `mdx-${safeKey}-${uniqueId}.mjs`;
   const modulePath = `${tempDir}/${filename}`;
 
   // Wrap code in proper ESM format with React imports

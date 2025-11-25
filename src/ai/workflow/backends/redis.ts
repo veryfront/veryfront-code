@@ -1,0 +1,733 @@
+/**
+ * Redis Workflow Backend
+ *
+ * Production-grade Redis implementation of WorkflowBackend.
+ * Uses Redis hashes for state storage and Redis Streams for job queuing.
+ */
+
+import type {
+  ApprovalDecision,
+  Checkpoint,
+  PendingApproval,
+  RunFilter,
+  WorkflowJob,
+  WorkflowRun,
+  WorkflowStatus,
+} from "../types.ts";
+import type { BackendConfig, WorkflowBackend } from "./types.ts";
+
+/**
+ * Redis client interface (compatible with deno-redis)
+ */
+export interface RedisClient {
+  // Hash operations
+  hset(key: string, fields: Record<string, string>): Promise<number>;
+  hgetall(key: string): Promise<string[]>;
+  hdel(key: string, ...fields: string[]): Promise<number>;
+  del(...keys: string[]): Promise<number>;
+
+  // Set operations (for indexing)
+  sadd(key: string, ...members: string[]): Promise<number>;
+  srem(key: string, ...members: string[]): Promise<number>;
+  smembers(key: string): Promise<string[]>;
+
+  // List operations (for checkpoints)
+  rpush(key: string, ...values: string[]): Promise<number>;
+  lrange(key: string, start: number, stop: number): Promise<string[]>;
+  lindex(key: string, index: number): Promise<string | null>;
+  llen(key: string): Promise<number>;
+
+  // Stream operations
+  xadd(key: string, id: string, fields: Record<string, string>): Promise<string>;
+  xgroupCreate(key: string, group: string, id: string, mkstream?: boolean): Promise<string>;
+  xreadgroup(
+    streams: Array<{ key: string; xid: string }>,
+    options: { group: string; consumer: string; block?: number; count?: number },
+  ): Promise<Array<{ key: string; messages: Array<{ xid: string; fieldValues: string[] }> }> | null>;
+  xack(key: string, group: string, ...ids: string[]): Promise<number>;
+
+  // Key operations
+  keys(pattern: string): Promise<string[]>;
+  exists(...keys: string[]): Promise<number>;
+  expire(key: string, seconds: number): Promise<number>;
+
+  // Lock operations (using SET with NX and PX)
+  set(
+    key: string,
+    value: string,
+    options?: { nx?: boolean; px?: number; ex?: number },
+  ): Promise<string | null>;
+  get(key: string): Promise<string | null>;
+
+  // Connection
+  close(): void;
+}
+
+/**
+ * Redis backend configuration
+ */
+export interface RedisBackendConfig extends BackendConfig {
+  /** Redis connection URL or config */
+  url?: string;
+  /** Redis hostname */
+  hostname?: string;
+  /** Redis port */
+  port?: number;
+  /** Key prefix for namespacing */
+  prefix?: string;
+  /** Stream name for job queue */
+  streamKey?: string;
+  /** Consumer group name */
+  groupName?: string;
+  /** Consumer name (unique per worker) */
+  consumerName?: string;
+  /** Default TTL for runs (in seconds) */
+  runTtl?: number;
+  /** Enable debug logging */
+  debug?: boolean;
+  /** Existing Redis client (optional) */
+  client?: RedisClient;
+}
+
+/**
+ * Redis Workflow Backend
+ *
+ * @example
+ * ```typescript
+ * import { RedisBackend } from 'veryfront/ai/workflow/backends/redis';
+ *
+ * const backend = new RedisBackend({
+ *   hostname: 'localhost',
+ *   port: 6379,
+ *   prefix: 'myapp:workflow:',
+ * });
+ *
+ * await backend.initialize();
+ * ```
+ */
+export class RedisBackend implements WorkflowBackend {
+  private client: RedisClient | null = null;
+  private config: Required<
+    Pick<RedisBackendConfig, "prefix" | "streamKey" | "groupName" | "consumerName" | "debug">
+  > & RedisBackendConfig;
+  private initialized = false;
+
+  constructor(config: RedisBackendConfig = {}) {
+    this.config = {
+      prefix: "vf:workflow:",
+      streamKey: "vf:workflow:stream",
+      groupName: "vf:workflow:workers",
+      consumerName: `worker-${crypto.randomUUID().slice(0, 8)}`,
+      debug: false,
+      ...config,
+    };
+
+    // Use provided client if available
+    if (config.client) {
+      this.client = config.client;
+    }
+  }
+
+  // =========================================================================
+  // Key Generation
+  // =========================================================================
+
+  private runKey(runId: string): string {
+    return `${this.config.prefix}run:${runId}`;
+  }
+
+  private checkpointsKey(runId: string): string {
+    return `${this.config.prefix}checkpoints:${runId}`;
+  }
+
+  private approvalsKey(runId: string): string {
+    return `${this.config.prefix}approvals:${runId}`;
+  }
+
+  private statusIndexKey(status: WorkflowStatus): string {
+    return `${this.config.prefix}index:status:${status}`;
+  }
+
+  private workflowIndexKey(workflowId: string): string {
+    return `${this.config.prefix}index:workflow:${workflowId}`;
+  }
+
+  private lockKey(runId: string): string {
+    return `${this.config.prefix}lock:${runId}`;
+  }
+
+  // =========================================================================
+  // Serialization
+  // =========================================================================
+
+  private serializeRun(run: WorkflowRun): Record<string, string> {
+    return {
+      id: run.id,
+      workflowId: run.workflowId,
+      version: run.version || "",
+      status: run.status,
+      input: JSON.stringify(run.input),
+      output: run.output !== undefined ? JSON.stringify(run.output) : "",
+      nodeStates: JSON.stringify(run.nodeStates),
+      currentNodes: JSON.stringify(run.currentNodes),
+      context: JSON.stringify(run.context),
+      error: run.error ? JSON.stringify(run.error) : "",
+      createdAt: run.createdAt.toISOString(),
+      startedAt: run.startedAt?.toISOString() || "",
+      completedAt: run.completedAt?.toISOString() || "",
+    };
+  }
+
+  private deserializeRun(data: Record<string, string>): WorkflowRun {
+    return {
+      id: data.id ?? "",
+      workflowId: data.workflowId ?? "",
+      version: data.version || undefined,
+      status: (data.status as WorkflowStatus) ?? "pending",
+      input: data.input ? JSON.parse(data.input) : undefined,
+      output: data.output ? JSON.parse(data.output) : undefined,
+      nodeStates: data.nodeStates ? JSON.parse(data.nodeStates) : {},
+      currentNodes: data.currentNodes ? JSON.parse(data.currentNodes) : [],
+      context: data.context ? JSON.parse(data.context) : {},
+      checkpoints: [], // Loaded separately
+      pendingApprovals: [], // Loaded separately
+      error: data.error ? JSON.parse(data.error) : undefined,
+      createdAt: data.createdAt ? new Date(data.createdAt) : new Date(),
+      startedAt: data.startedAt ? new Date(data.startedAt) : undefined,
+      completedAt: data.completedAt ? new Date(data.completedAt) : undefined,
+    };
+  }
+
+  private arrayToObject(arr: string[]): Record<string, string> {
+    const obj: Record<string, string> = {};
+    for (let i = 0; i < arr.length; i += 2) {
+      const key = arr[i];
+      const value = arr[i + 1];
+      if (key && value !== undefined) {
+        obj[key] = value;
+      }
+    }
+    return obj;
+  }
+
+  // =========================================================================
+  // Connection Management
+  // =========================================================================
+
+  private async ensureClient(): Promise<RedisClient> {
+    if (this.client) {
+      return this.client;
+    }
+
+    // Dynamic import for redis
+    const { connect } = await import("redis");
+
+    const hostname = this.config.hostname || "127.0.0.1";
+    const port = this.config.port || 6379;
+
+    if (this.config.debug) {
+      console.log(`[RedisBackend] Connecting to ${hostname}:${port}`);
+    }
+
+    this.client = await connect({ hostname, port }) as RedisClient;
+    return this.client;
+  }
+
+  async initialize(): Promise<void> {
+    if (this.initialized) return;
+
+    const client = await this.ensureClient();
+
+    // Create consumer group for stream
+    try {
+      await client.xgroupCreate(
+        this.config.streamKey,
+        this.config.groupName,
+        "0",
+        true,
+      );
+      if (this.config.debug) {
+        console.log(`[RedisBackend] Created consumer group: ${this.config.groupName}`);
+      }
+    } catch (e) {
+      const msg = String(e instanceof Error ? e.message : e);
+      if (!msg.includes("BUSYGROUP")) {
+        console.error("[RedisBackend] Error creating consumer group:", e);
+      }
+    }
+
+    this.initialized = true;
+  }
+
+  // =========================================================================
+  // Run Management
+  // =========================================================================
+
+  async createRun(run: WorkflowRun): Promise<void> {
+    const client = await this.ensureClient();
+
+    if (this.config.debug) {
+      console.log(`[RedisBackend] Creating run: ${run.id}`);
+    }
+
+    // Store run in hash
+    await client.hset(this.runKey(run.id), this.serializeRun(run));
+
+    // Add to indexes
+    await client.sadd(this.statusIndexKey(run.status), run.id);
+    await client.sadd(this.workflowIndexKey(run.workflowId), run.id);
+
+    // Set TTL if configured
+    if (this.config.runTtl) {
+      await client.expire(this.runKey(run.id), this.config.runTtl);
+    }
+  }
+
+  async getRun(runId: string): Promise<WorkflowRun | null> {
+    const client = await this.ensureClient();
+    const rawData = await client.hgetall(this.runKey(runId));
+
+    if (!rawData || rawData.length === 0) {
+      return null;
+    }
+
+    const data = this.arrayToObject(rawData);
+    if (Object.keys(data).length === 0) {
+      return null;
+    }
+
+    const run = this.deserializeRun(data);
+
+    // Load approvals
+    run.pendingApprovals = await this.getPendingApprovals(runId);
+
+    return run;
+  }
+
+  async updateRun(runId: string, patch: Partial<WorkflowRun>): Promise<void> {
+    const client = await this.ensureClient();
+
+    if (this.config.debug) {
+      console.log(`[RedisBackend] Updating run: ${runId}`);
+    }
+
+    // Get current status for index update
+    const currentRun = await this.getRun(runId);
+    const oldStatus = currentRun?.status;
+
+    // Build fields to update
+    const fields: Record<string, string> = {};
+
+    if (patch.status !== undefined) fields.status = patch.status;
+    if (patch.output !== undefined) fields.output = JSON.stringify(patch.output);
+    if (patch.nodeStates !== undefined) fields.nodeStates = JSON.stringify(patch.nodeStates);
+    if (patch.currentNodes !== undefined) fields.currentNodes = JSON.stringify(patch.currentNodes);
+    if (patch.context !== undefined) fields.context = JSON.stringify(patch.context);
+    if (patch.error !== undefined) fields.error = JSON.stringify(patch.error);
+    if (patch.startedAt !== undefined) fields.startedAt = patch.startedAt.toISOString();
+    if (patch.completedAt !== undefined) fields.completedAt = patch.completedAt.toISOString();
+
+    if (Object.keys(fields).length > 0) {
+      await client.hset(this.runKey(runId), fields);
+    }
+
+    // Update status index
+    if (patch.status && oldStatus && patch.status !== oldStatus) {
+      await client.srem(this.statusIndexKey(oldStatus), runId);
+      await client.sadd(this.statusIndexKey(patch.status), runId);
+    }
+  }
+
+  async deleteRun(runId: string): Promise<void> {
+    const client = await this.ensureClient();
+
+    // Get run for index cleanup
+    const run = await this.getRun(runId);
+    if (!run) return;
+
+    // Delete run data
+    await client.del(
+      this.runKey(runId),
+      this.checkpointsKey(runId),
+      this.approvalsKey(runId),
+    );
+
+    // Remove from indexes
+    await client.srem(this.statusIndexKey(run.status), runId);
+    await client.srem(this.workflowIndexKey(run.workflowId), runId);
+  }
+
+  async listRuns(filter: RunFilter): Promise<WorkflowRun[]> {
+    const client = await this.ensureClient();
+    let runIds: string[] = [];
+
+    // Get run IDs from indexes
+    if (filter.workflowId) {
+      runIds = await client.smembers(this.workflowIndexKey(filter.workflowId));
+    } else if (filter.status) {
+      const statuses = Array.isArray(filter.status) ? filter.status : [filter.status];
+      for (const status of statuses) {
+        const ids = await client.smembers(this.statusIndexKey(status));
+        runIds.push(...ids);
+      }
+      // Deduplicate
+      runIds = [...new Set(runIds)];
+    } else {
+      // Get all runs (expensive - should use cursor in production)
+      const keys = await client.keys(`${this.config.prefix}run:*`);
+      runIds = keys.map((k) => k.replace(`${this.config.prefix}run:`, ""));
+    }
+
+    // Load runs
+    const runs: WorkflowRun[] = [];
+    for (const runId of runIds) {
+      const run = await this.getRun(runId);
+      if (!run) continue;
+
+      // Apply filters
+      if (filter.status) {
+        const statuses = Array.isArray(filter.status) ? filter.status : [filter.status];
+        if (!statuses.includes(run.status)) continue;
+      }
+
+      if (filter.createdAfter && run.createdAt < filter.createdAfter) continue;
+      if (filter.createdBefore && run.createdAt > filter.createdBefore) continue;
+
+      runs.push(run);
+    }
+
+    // Sort by creation date (newest first)
+    runs.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+
+    // Apply pagination
+    let result = runs;
+    if (filter.offset) {
+      result = result.slice(filter.offset);
+    }
+    if (filter.limit) {
+      result = result.slice(0, filter.limit);
+    }
+
+    return result;
+  }
+
+  async countRuns(filter: RunFilter): Promise<number> {
+    const runs = await this.listRuns({ ...filter, limit: undefined, offset: undefined });
+    return runs.length;
+  }
+
+  // =========================================================================
+  // Checkpointing
+  // =========================================================================
+
+  async saveCheckpoint(runId: string, checkpoint: Checkpoint): Promise<void> {
+    const client = await this.ensureClient();
+
+    if (this.config.debug) {
+      console.log(`[RedisBackend] Saving checkpoint: ${checkpoint.id}`);
+    }
+
+    const serialized = JSON.stringify({
+      ...checkpoint,
+      timestamp: checkpoint.timestamp.toISOString(),
+    });
+
+    await client.rpush(this.checkpointsKey(runId), serialized);
+  }
+
+  async getLatestCheckpoint(runId: string): Promise<Checkpoint | null> {
+    const client = await this.ensureClient();
+
+    // Get last element
+    const raw = await client.lindex(this.checkpointsKey(runId), -1);
+    if (!raw) return null;
+
+    const data = JSON.parse(raw);
+    return {
+      ...data,
+      timestamp: new Date(data.timestamp),
+    };
+  }
+
+  async getCheckpoints(runId: string): Promise<Checkpoint[]> {
+    const client = await this.ensureClient();
+
+    const rawList = await client.lrange(this.checkpointsKey(runId), 0, -1);
+
+    return rawList.map((raw) => {
+      const data = JSON.parse(raw);
+      return {
+        ...data,
+        timestamp: new Date(data.timestamp),
+      };
+    });
+  }
+
+  // =========================================================================
+  // Approvals
+  // =========================================================================
+
+  async savePendingApproval(runId: string, approval: PendingApproval): Promise<void> {
+    const client = await this.ensureClient();
+
+    if (this.config.debug) {
+      console.log(`[RedisBackend] Saving approval: ${approval.id}`);
+    }
+
+    const serialized = JSON.stringify({
+      ...approval,
+      requestedAt: approval.requestedAt.toISOString(),
+      expiresAt: approval.expiresAt?.toISOString(),
+      decidedAt: approval.decidedAt?.toISOString(),
+    });
+
+    await client.rpush(this.approvalsKey(runId), serialized);
+  }
+
+  async getPendingApprovals(runId: string): Promise<PendingApproval[]> {
+    const client = await this.ensureClient();
+
+    const rawList = await client.lrange(this.approvalsKey(runId), 0, -1);
+
+    return rawList
+      .map((raw) => {
+        const data = JSON.parse(raw);
+        return {
+          ...data,
+          requestedAt: new Date(data.requestedAt),
+          expiresAt: data.expiresAt ? new Date(data.expiresAt) : undefined,
+          decidedAt: data.decidedAt ? new Date(data.decidedAt) : undefined,
+        } as PendingApproval;
+      })
+      .filter((a) => a.status === "pending");
+  }
+
+  async getPendingApproval(runId: string, approvalId: string): Promise<PendingApproval | null> {
+    const approvals = await this.getPendingApprovals(runId);
+    return approvals.find((a) => a.id === approvalId) || null;
+  }
+
+  async updateApproval(
+    runId: string,
+    approvalId: string,
+    decision: ApprovalDecision,
+  ): Promise<void> {
+    const client = await this.ensureClient();
+
+    // Get all approvals
+    const rawList = await client.lrange(this.approvalsKey(runId), 0, -1);
+
+    // Find and update the approval
+    const updated: string[] = [];
+    for (const raw of rawList) {
+      const data = JSON.parse(raw);
+      if (data.id === approvalId) {
+        data.status = decision.approved ? "approved" : "rejected";
+        data.decidedBy = decision.approver;
+        data.decidedAt = new Date().toISOString();
+        data.comment = decision.comment;
+      }
+      updated.push(JSON.stringify(data));
+    }
+
+    // Replace the list
+    await client.del(this.approvalsKey(runId));
+    if (updated.length > 0) {
+      await client.rpush(this.approvalsKey(runId), ...updated);
+    }
+  }
+
+  async listPendingApprovals(filter?: {
+    workflowId?: string;
+    approver?: string;
+    status?: "pending" | "expired";
+  }): Promise<Array<{ runId: string; approval: PendingApproval }>> {
+    const client = await this.ensureClient();
+    const result: Array<{ runId: string; approval: PendingApproval }> = [];
+
+    // Get all approval keys
+    const keys = await client.keys(`${this.config.prefix}approvals:*`);
+
+    for (const key of keys) {
+      const runId = key.replace(`${this.config.prefix}approvals:`, "");
+
+      // Check workflow filter
+      if (filter?.workflowId) {
+        const run = await this.getRun(runId);
+        if (!run || run.workflowId !== filter.workflowId) continue;
+      }
+
+      const rawList = await client.lrange(key, 0, -1);
+
+      for (const raw of rawList) {
+        const data = JSON.parse(raw);
+        const approval: PendingApproval = {
+          ...data,
+          requestedAt: new Date(data.requestedAt),
+          expiresAt: data.expiresAt ? new Date(data.expiresAt) : undefined,
+          decidedAt: data.decidedAt ? new Date(data.decidedAt) : undefined,
+        };
+
+        // Check status filter
+        if (filter?.status === "pending" && approval.status !== "pending") continue;
+        if (filter?.status === "expired") {
+          const isExpired = approval.expiresAt && new Date() > approval.expiresAt;
+          if (!isExpired) continue;
+        }
+
+        // Check approver filter
+        if (filter?.approver && approval.approvers && !approval.approvers.includes(filter.approver)) {
+          continue;
+        }
+
+        result.push({ runId, approval });
+      }
+    }
+
+    return result;
+  }
+
+  // =========================================================================
+  // Queue Operations
+  // =========================================================================
+
+  async enqueue(job: WorkflowJob): Promise<void> {
+    const client = await this.ensureClient();
+
+    if (this.config.debug) {
+      console.log(`[RedisBackend] Enqueueing job: ${job.runId}`);
+    }
+
+    await client.xadd(this.config.streamKey, "*", {
+      runId: job.runId,
+      workflowId: job.workflowId,
+      input: JSON.stringify(job.input),
+      priority: String(job.priority || 0),
+      createdAt: job.createdAt.toISOString(),
+    });
+  }
+
+  async dequeue(): Promise<WorkflowJob | null> {
+    const client = await this.ensureClient();
+
+    const streams = await client.xreadgroup(
+      [{ key: this.config.streamKey, xid: ">" }],
+      {
+        group: this.config.groupName,
+        consumer: this.config.consumerName,
+        block: 5000, // 5 second timeout
+        count: 1,
+      },
+    );
+
+    if (!streams || streams.length === 0) {
+      return null;
+    }
+
+    const stream = streams[0];
+    if (!stream || !stream.messages || stream.messages.length === 0) {
+      return null;
+    }
+
+    const message = stream.messages[0];
+    if (!message) {
+      return null;
+    }
+
+    const data = this.arrayToObject(message.fieldValues);
+
+    return {
+      runId: data.runId ?? "",
+      workflowId: data.workflowId ?? "",
+      input: data.input ? JSON.parse(data.input) : undefined,
+      priority: data.priority ? parseInt(data.priority) : undefined,
+      createdAt: data.createdAt ? new Date(data.createdAt) : new Date(),
+    };
+  }
+
+  acknowledge(runId: string): Promise<void> {
+    // Note: In a full implementation, we'd need to track the message ID
+    // For now, this is a placeholder
+    if (this.config.debug) {
+      console.log(`[RedisBackend] Acknowledged: ${runId}`);
+    }
+    return Promise.resolve();
+  }
+
+  async nack(runId: string): Promise<void> {
+    // Re-enqueue the job
+    const run = await this.getRun(runId);
+    if (run) {
+      await this.enqueue({
+        runId: run.id,
+        workflowId: run.workflowId,
+        input: run.input,
+        createdAt: new Date(),
+      });
+    }
+  }
+
+  // =========================================================================
+  // Distributed Locking
+  // =========================================================================
+
+  async acquireLock(runId: string, duration: number): Promise<boolean> {
+    const client = await this.ensureClient();
+    const lockValue = crypto.randomUUID();
+
+    const result = await client.set(this.lockKey(runId), lockValue, {
+      nx: true,
+      px: duration,
+    });
+
+    return result === "OK";
+  }
+
+  async releaseLock(runId: string): Promise<void> {
+    const client = await this.ensureClient();
+    await client.del(this.lockKey(runId));
+  }
+
+  async extendLock(runId: string, duration: number): Promise<boolean> {
+    const client = await this.ensureClient();
+    const exists = await client.exists(this.lockKey(runId));
+
+    if (exists === 0) return false;
+
+    await client.expire(this.lockKey(runId), Math.ceil(duration / 1000));
+    return true;
+  }
+
+  async isLocked(runId: string): Promise<boolean> {
+    const client = await this.ensureClient();
+    const exists = await client.exists(this.lockKey(runId));
+    return exists > 0;
+  }
+
+  // =========================================================================
+  // Lifecycle
+  // =========================================================================
+
+  async healthCheck(): Promise<boolean> {
+    try {
+      const client = await this.ensureClient();
+      await client.set("__health_check__", "ok", { ex: 1 });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  destroy(): Promise<void> {
+    if (this.client) {
+      this.client.close();
+      this.client = null;
+    }
+    this.initialized = false;
+
+    if (this.config.debug) {
+      console.log("[RedisBackend] Destroyed");
+    }
+    return Promise.resolve();
+  }
+}

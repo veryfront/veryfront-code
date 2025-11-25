@@ -1,4 +1,5 @@
 import { rscLogger } from "../client/browser-logger.ts";
+import { validateTrustedHtml } from "@veryfront/security/client/html-sanitizer.ts";
 
 export type SlotMessage = { type: "slot"; id: string; html: string };
 
@@ -25,7 +26,8 @@ export function getContainer(doc: Document, id: string): HTMLElement {
 export function applySlotMessage(doc: Document, msg: SlotMessage) {
   if (msg.type !== "slot") return;
   const el = getContainer(doc, msg.id);
-  el.innerHTML = String(msg.html || "");
+  // Server-rendered RSC HTML is trusted; validateTrustedHtml provides defense-in-depth
+  el.innerHTML = validateTrustedHtml(String(msg.html || ""));
 }
 
 /**
@@ -174,13 +176,19 @@ export function findClientBoundaries(doc: Document, slotId: string): HTMLElement
   return out;
 }
 
+/**
+ * Mark client boundaries as seen during streaming.
+ * This is a lightweight marker to track elements for hydration.
+ * Actual React component hydration happens in hydrate-client.ts via bootHydration()
+ * after streaming completes (called from script-handlers.ts boot function).
+ */
 export function hydrateClientBoundaries(doc: Document, slotId: string) {
   const nodes = findClientBoundaries(doc, slotId);
   for (const el of nodes) {
     if (!el.dataset) continue;
     const ref = el.dataset.clientRef as string;
-    // Minimal marker to avoid duplicate work; real impl would import and render
+    // Mark as seen - real hydration happens via hydrate-client.ts after streaming
     el.dataset.hydrated = "true";
-    rscLogger.debug("hydrate stub", ref);
+    rscLogger.debug("[client-dom] marked for hydration", ref);
   }
 }
