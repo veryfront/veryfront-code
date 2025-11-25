@@ -22,7 +22,7 @@ export class MemoryRateLimitStore implements RateLimitStore {
     }
   }
 
-  async increment(key: string): Promise<number> {
+  increment(key: string): Promise<number> {
     const state = this.store.get(key);
     const now = Date.now();
 
@@ -33,7 +33,7 @@ export class MemoryRateLimitStore implements RateLimitStore {
         resetTime: now + 60000, // Default 1 minute window
         requestTimestamps: [now],
       });
-      return 1;
+      return Promise.resolve(1);
     }
 
     // Increment existing count
@@ -42,23 +42,25 @@ export class MemoryRateLimitStore implements RateLimitStore {
       state.requestTimestamps.push(now);
     }
 
-    return state.count;
+    return Promise.resolve(state.count);
   }
 
-  async get(key: string): Promise<number> {
+  get(key: string): Promise<number> {
     const state = this.store.get(key);
     if (!state || Date.now() > state.resetTime) {
-      return 0;
+      return Promise.resolve(0);
     }
-    return state.count;
+    return Promise.resolve(state.count);
   }
 
-  async reset(key: string): Promise<void> {
+  reset(key: string): Promise<void> {
     this.store.delete(key);
+    return Promise.resolve();
   }
 
-  async resetAll(): Promise<void> {
+  resetAll(): Promise<void> {
     this.store.clear();
+    return Promise.resolve();
   }
 
   /**

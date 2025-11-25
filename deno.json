@@ -7,7 +7,8 @@
     "./examples/knowledge-base",
     "./examples/form-handling",
     "./examples/middleware-demo",
-    "./examples/coding-agent"
+    "./examples/coding-agent",
+    "./examples/durable-workflows"
   ],
   "exports": {
     ".": "./src/index.ts",
@@ -23,7 +24,9 @@
     "./ai/primitives": "./src/ai/react/primitives/index.ts",
     "./ai/components": "./src/ai/react/components/index.ts",
     "./ai/production": "./src/ai/production/index.ts",
-    "./ai/dev": "./src/ai/dev/index.ts"
+    "./ai/dev": "./src/ai/dev/index.ts",
+    "./ai/workflow": "./src/ai/workflow/index.ts",
+    "./ai/workflow/react": "./src/ai/workflow/react/index.ts"
   },
   "imports": {
     "@veryfront": "./src/index.ts",

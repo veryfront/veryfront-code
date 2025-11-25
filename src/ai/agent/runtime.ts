@@ -25,6 +25,12 @@ import { detectPlatform, getPlatformCapabilities } from "../runtime/platform.ts"
 import { createMemory, type Memory } from "./memory.ts";
 import { serverLogger as logger } from "@veryfront/utils";
 
+/** Default max tokens for LLM responses */
+const DEFAULT_MAX_TOKENS = 4096;
+
+/** Default temperature for LLM responses (0.7 = balanced creativity) */
+const DEFAULT_TEMPERATURE = 0.7;
+
 export class AgentRuntime {
   private id: string;
   private config: AgentConfig;
@@ -231,8 +237,8 @@ export class AgentRuntime {
           return msg;
         }),
         tools: tools.length > 0 ? tools : undefined,
-        maxTokens: this.config.memory?.maxTokens || 4096,
-        temperature: 0.7,
+        maxTokens: this.config.memory?.maxTokens || DEFAULT_MAX_TOKENS,
+        temperature: DEFAULT_TEMPERATURE,
       });
 
       // Update usage
@@ -394,8 +400,8 @@ export class AgentRuntime {
           tool_call_id: m.toolCallId,
         })),
         tools: tools.length > 0 ? tools : undefined,
-        maxTokens: this.config.memory?.maxTokens || 4096,
-        temperature: 0.7,
+        maxTokens: this.config.memory?.maxTokens || DEFAULT_MAX_TOKENS,
+        temperature: DEFAULT_TEMPERATURE,
       });
 
       // Read stream - now it returns structured JSON chunks

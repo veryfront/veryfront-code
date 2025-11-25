@@ -18,7 +18,7 @@ describe("Rate Limiting Middleware", () => {
     });
 
     const request = new Request("http://localhost/test");
-    const next = async () => new Response("OK");
+    const next = () => Promise.resolve(new Response("OK"));
 
     // First 5 requests should succeed
     for (let i = 0; i < 5; i++) {
@@ -40,7 +40,7 @@ describe("Rate Limiting Middleware", () => {
     });
 
     const request = new Request("http://localhost/test");
-    const next = async () => new Response("OK");
+    const next = () => Promise.resolve(new Response("OK"));
 
     // First 3 requests should succeed
     for (let i = 0; i < 3; i++) {
@@ -66,7 +66,7 @@ describe("Rate Limiting Middleware", () => {
     });
 
     const request = new Request("http://localhost/test");
-    const next = async () => new Response("OK");
+    const next = () => Promise.resolve(new Response("OK"));
 
     const response = await limiter(request, next);
 
@@ -82,14 +82,14 @@ describe("Rate Limiting Middleware", () => {
     const limiter = createRateLimiter({
       maxRequests: 1,
       windowMs: 60000,
-      skip: async (request) => request.headers.get("x-skip") === "true",
+      skip: (request) => request.headers.get("x-skip") === "true",
       store,
     });
 
     const request = new Request("http://localhost/test", {
       headers: { "x-skip": "true" },
     });
-    const next = async () => new Response("OK");
+    const next = () => Promise.resolve(new Response("OK"));
 
     // Should allow unlimited requests when skip returns true
     for (let i = 0; i < 10; i++) {
@@ -109,7 +109,7 @@ describe("Rate Limiting Middleware", () => {
       store,
     });
 
-    const next = async () => new Response("OK");
+    const next = () => Promise.resolve(new Response("OK"));
 
     // User 1 makes 2 requests
     const req1 = new Request("http://localhost/test", {
@@ -133,12 +133,15 @@ describe("Rate Limiting Middleware", () => {
   });
 
   it("should work with preset configurations", async () => {
-    const limiter = RateLimitPresets.strict();
+    const store = new MemoryRateLimitStore();
+    const limiter = RateLimitPresets.strict(store);
     const request = new Request("http://localhost/test");
-    const next = async () => new Response("OK");
+    const next = () => Promise.resolve(new Response("OK"));
 
     const response = await limiter(request, next);
     assertEquals(response.status, 200);
     assertEquals(response.headers.get("X-RateLimit-Limit"), "10");
+
+    store.destroy();
   });
 });

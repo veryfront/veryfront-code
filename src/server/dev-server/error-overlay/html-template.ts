@@ -6,17 +6,52 @@
 import { type ErrorInfo, formatErrorType } from "./error-formatter.ts";
 
 /**
+ * Escape HTML entities to prevent XSS (server-side).
+ * Used for error messages, stack traces, and file paths.
+ */
+function escapeHtml(str: string): string {
+  return str
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+/**
  * Generates runtime script for browser error overlay
  */
 export function generateRuntimeScript(): string {
   return `
     // Veryfront Error Overlay Runtime
+
+    // Escape HTML to prevent XSS (client-side)
+    function escapeHtml(str) {
+      if (typeof str !== 'string') return String(str);
+      return str
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
     window.showErrorOverlay = function(errorInfo) {
       // Remove any existing overlay
       const existing = document.getElementById('veryfront-error-overlay');
       if (existing) {
         existing.remove();
       }
+
+      // Safely extract and escape error info
+      const errorType = escapeHtml(errorInfo.type || 'unknown');
+      const errorName = escapeHtml(errorInfo.error?.name || 'Error');
+      const errorMessage = escapeHtml(errorInfo.error?.message || 'Unknown error');
+      const errorFile = errorInfo.file ? escapeHtml(String(errorInfo.file)) : '';
+      const errorLine = errorInfo.line ? escapeHtml(String(errorInfo.line)) : '';
+      const errorColumn = errorInfo.column ? escapeHtml(String(errorInfo.column)) : '';
+      const errorSuggestion = errorInfo.suggestion ? escapeHtml(errorInfo.suggestion) : '';
+      const errorStack = errorInfo.error?.stack ? escapeHtml(errorInfo.error.stack) : '';
 
       // Create error display
       const overlay = document.createElement('div');
@@ -38,7 +73,7 @@ export function generateRuntimeScript(): string {
         ">
           <div style="max-width: 800px; margin: 0 auto;">
             <h1 style="color: #ff6b6b; font-size: 24px; margin-bottom: 10px;">
-              \${errorInfo.type.charAt(0).toUpperCase() + errorInfo.type.slice(1)} Error
+              \${errorType.charAt(0).toUpperCase() + errorType.slice(1)} Error
             </h1>
 
             <div style="
@@ -49,19 +84,19 @@ export function generateRuntimeScript(): string {
               margin: 20px 0;
             ">
               <div style="color: #ff6b6b; font-weight: bold; margin-bottom: 10px;">
-                \${errorInfo.error.name}
+                \${errorName}
               </div>
               <div style="color: #ccc; margin-bottom: 20px;">
-                \${errorInfo.error.message}
+                \${errorMessage}
               </div>
 
-              \${errorInfo.file ? \`
+              \${errorFile ? \`
                 <div style="color: #666; margin-bottom: 10px;">
-                  File: \${errorInfo.file}\${errorInfo.line ? \`:\${errorInfo.line}\` : ''}\${errorInfo.column ? \`:\${errorInfo.column}\` : ''}
+                  File: \${errorFile}\${errorLine ? \`:\${errorLine}\` : ''}\${errorColumn ? \`:\${errorColumn}\` : ''}
                 </div>
               \` : ''}
 
-              \${errorInfo.suggestion ? \`
+              \${errorSuggestion ? \`
                 <div style="
                   background: #2a2a2a;
                   border-left: 3px solid #4fc3f7;
@@ -72,12 +107,12 @@ export function generateRuntimeScript(): string {
                     Suggestion:
                   </div>
                   <div style="color: #ccc;">
-                    \${errorInfo.suggestion}
+                    \${errorSuggestion}
                   </div>
                 </div>
               \` : ''}
 
-              \${errorInfo.error.stack ? \`
+              \${errorStack ? \`
                 <details style="margin-top: 20px;">
                   <summary style="cursor: pointer; color: #666;">Stack Trace</summary>
                   <pre style="
@@ -85,7 +120,7 @@ export function generateRuntimeScript(): string {
                     margin-top: 10px;
                     overflow-x: auto;
                     font-size: 12px;
-                  ">\${errorInfo.error.stack}</pre>
+                  ">\${errorStack}</pre>
                 </details>
               \` : ''}
             </div>
@@ -132,7 +167,14 @@ export function generateRuntimeScript(): string {
  * Generates full HTML page for error display
  */
 export function generateErrorHTML(errorInfo: ErrorInfo, suggestion?: string): string {
-  const errorType = formatErrorType(errorInfo.type);
+  const errorType = escapeHtml(formatErrorType(errorInfo.type));
+  const errorName = escapeHtml(errorInfo.error.name);
+  const errorMessage = escapeHtml(errorInfo.error.message);
+  const errorFile = errorInfo.file ? escapeHtml(errorInfo.file) : "";
+  const errorLine = errorInfo.line ? escapeHtml(String(errorInfo.line)) : "";
+  const errorColumn = errorInfo.column ? escapeHtml(String(errorInfo.column)) : "";
+  const errorSuggestion = suggestion ? escapeHtml(suggestion) : "";
+  const errorStack = errorInfo.error.stack ? escapeHtml(errorInfo.error.stack) : "";
 
   return `
 <!DOCTYPE html>
@@ -212,38 +254,36 @@ export function generateErrorHTML(errorInfo: ErrorInfo, suggestion?: string): st
     <h1 class="error-header">${errorType} Error</h1>
 
     <div class="error-box">
-      <div class="error-name">${errorInfo.error.name}</div>
-      <div class="error-message">${errorInfo.error.message}</div>
+      <div class="error-name">${errorName}</div>
+      <div class="error-message">${errorMessage}</div>
 
       ${
-    errorInfo.file
+    errorFile
       ? `
       <div class="error-file">
-        File: ${errorInfo.file}${errorInfo.line ? `:${errorInfo.line}` : ""}${
-        errorInfo.column ? `:${errorInfo.column}` : ""
-      }
+        File: ${errorFile}${errorLine ? `:${errorLine}` : ""}${errorColumn ? `:${errorColumn}` : ""}
       </div>
     `
       : ""
   }
 
       ${
-    suggestion
+    errorSuggestion
       ? `
       <div class="suggestion">
         <div class="suggestion-title">Suggestion:</div>
-        <div class="suggestion-text">${suggestion}</div>
+        <div class="suggestion-text">${errorSuggestion}</div>
       </div>
     `
       : ""
   }
 
       ${
-    errorInfo.error.stack
+    errorStack
       ? `
       <details class="stack-trace">
         <summary>Stack Trace</summary>
-        <pre>${errorInfo.error.stack}</pre>
+        <pre>${errorStack}</pre>
       </details>
     `
       : ""

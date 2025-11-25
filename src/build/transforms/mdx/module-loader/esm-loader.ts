@@ -17,7 +17,7 @@ export async function loadESMModule(
   });
 
   const tmpDir = await adapter.fs.makeTempDir("veryfront-mdx-esm-");
-  const tmpFile = `${tmpDir}/${Math.random().toString(36).slice(2)}.mjs`;
+  const tmpFile = `${tmpDir}/${crypto.randomUUID()}.mjs`;
 
   await adapter.fs.writeFile(tmpFile, transformed);
 

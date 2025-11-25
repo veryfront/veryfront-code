@@ -159,7 +159,12 @@ export function createMockAdapter(): MockRuntimeAdapter {
     },
     server: {
       upgradeWebSocket: (_request) => {
-        throw new Error("WebSocket upgrade not implemented in mock adapter");
+        throw new Error(
+          "WebSocket upgrade not available in mock adapter. " +
+            "The mock adapter is designed for unit testing filesystem and environment operations. " +
+            "For WebSocket testing, use integration tests with the actual Deno/Node/Bun adapter, " +
+            "or mock the WebSocket behavior at a higher level in your tests.",
+        );
       },
     },
     features: {

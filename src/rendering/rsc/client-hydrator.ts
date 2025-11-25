@@ -11,6 +11,7 @@ import * as React from "react";
 import { createRoot, hydrateRoot } from "react-dom/client";
 import { rscLogger } from "../client/browser-logger.ts";
 import { CompilationError, FileSystemError, NetworkError } from "@veryfront/errors/index.ts";
+import { createErrorDisplay } from "@veryfront/security/client/html-sanitizer.ts";
 import type { RSCHydratorOptions } from "./types.ts";
 
 export class RSCHydrator {
@@ -93,15 +94,16 @@ export class RSCHydrator {
       rscLogger.error(`Failed to hydrate component ${componentName}:`, error);
       this.onError?.(error as Error);
 
-      // Show error in development
+      // Show error in development (using safe DOM APIs to prevent XSS)
       if (this.isDevelopment()) {
-        element.innerHTML = `
-          <div style="color: red; border: 2px solid red; padding: 10px; margin: 5px;">
-            <strong>RSC Hydration Error</strong><br>
-            Component: ${componentName}<br>
-            Error: ${(error as Error).message}
-          </div>
-        `;
+        element.textContent = ""; // Clear safely
+        element.appendChild(
+          createErrorDisplay({
+            title: "RSC Hydration Error",
+            message: `Component: ${componentName}`,
+            details: (error as Error).message,
+          }),
+        );
       }
     }
   }

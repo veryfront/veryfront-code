@@ -160,7 +160,7 @@ export async function runAssetPipeline(
     try {
       const cssOptimizer = new CSSOptimizer(options.css);
       await cssOptimizer.optimize();
-      const cssStats = cssOptimizer.getStats();
+      const cssStats = await cssOptimizer.getStats();
 
       result.css = {
         optimized: cssStats.totalFiles,
