@@ -3,7 +3,7 @@
  * @module
  */
 
-import { cyan, dim, yellow } from "std/fmt/colors.ts";
+import { cyan, dim, yellow } from "@veryfront/compat/console";
 import { cliLogger } from "@veryfront/utils";
 import { COMMANDS } from "./command-definitions.ts";
 import {

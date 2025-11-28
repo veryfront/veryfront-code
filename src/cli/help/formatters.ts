@@ -3,7 +3,7 @@
  * @module
  */
 
-import { bold, cyan, dim, green, yellow } from "std/fmt/colors.ts";
+import { bold, cyan, dim, green, yellow } from "@veryfront/compat/console";
 import { VERSION } from "@veryfront/utils";
 import type { CommandHelp, CommandOption } from "./types.ts";
 

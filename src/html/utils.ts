@@ -1,4 +1,4 @@
-import { escapeHTML } from "./index.ts";
+import { escapeHTML } from "./html-escape.ts";
 
 export function buildRootAttributes(
   slug: string,

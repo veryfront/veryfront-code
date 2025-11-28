@@ -4,8 +4,9 @@
  */
 
 import { VERSION } from "@veryfront/utils";
-import { bold, cyan, dim, yellow } from "std/fmt/colors.ts";
+import { bold, cyan, dim, yellow } from "@veryfront/compat/console";
 import { cliLogger } from "@veryfront/utils";
+import { exit } from "../../platform/compat/process.ts";
 
 // Logo and help display
 export function showLogo() {
@@ -106,13 +107,31 @@ export function logInfo(message: string) {
 // User interaction
 export async function promptUser(message: string): Promise<string> {
   cliLogger.info(message);
-  const buf = new Uint8Array(1024);
-  const n = await Deno.stdin.read(buf);
-  if (n === null) {
-    return "";
+
+  // Cross-platform stdin reading
+  if (typeof Deno !== "undefined" && Deno.stdin) {
+    const buf = new Uint8Array(1024);
+    const n = await Deno.stdin.read(buf);
+    if (n === null) {
+      return "";
+    }
+    const input = new TextDecoder().decode(buf.subarray(0, n));
+    return input.trim();
   }
-  const input = new TextDecoder().decode(buf.subarray(0, n));
-  return input.trim();
+
+  // Node.js/Bun fallback using readline
+  const readline = await import("node:readline");
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout,
+  });
+
+  return new Promise((resolve) => {
+    rl.question("", (answer: string) => {
+      rl.close();
+      resolve(answer.trim());
+    });
+  });
 }
 
 // Process utilities
@@ -121,13 +140,7 @@ export async function promptUser(message: string): Promise<string> {
  * @param code - Exit code
  */
 export function exitProcess(code: number): void {
-  if (import.meta.main) {
-    try {
-      Deno.exit(code);
-    } catch (error) {
-      cliLogger.warn("[cli] Deno.exit failed", error);
-    }
-  }
+  exit(code);
 }
 
 // Re-export formatBytes from shared format utils for backward compatibility

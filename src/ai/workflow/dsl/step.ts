@@ -63,6 +63,11 @@ export interface StepOptions extends Omit<BaseNodeConfig, "checkpoint"> {
  * ```
  */
 export function step(id: string, options: StepOptions): WorkflowNode {
+  // Validate node ID
+  if (!id || typeof id !== "string" || id.trim() === "") {
+    throw new Error("Node ID must be a non-empty string");
+  }
+
   // Validate that either agent or tool is specified
   if (!options.agent && !options.tool) {
     throw new Error(`Step "${id}" must specify either 'agent' or 'tool'`);

@@ -22,7 +22,7 @@ export async function executeMiddlewarePipeline(
       return defaultNext();
     });
   } catch (error) {
-    const { serverLogger } = await import("../../../utils/logger.ts");
+    const { serverLogger } = await import("../../../core/utils/logger/logger.ts");
     serverLogger.error("Middleware pipeline error:", {
       url: req.url,
       method: req.method,

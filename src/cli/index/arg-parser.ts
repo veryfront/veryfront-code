@@ -1,11 +1,74 @@
 /**
  * Argument parsing utilities for CLI
  *
+ * Cross-platform argument parser that works on Deno, Node.js, and Bun.
+ *
  * @module cli/index/arg-parser
  */
 
-import { parse } from "std/flags/mod.ts";
 import type { ParsedArgs } from "./types.ts";
+
+// Simple cross-platform argument parser
+// Compatible with Deno std/flags, minimist, and mri APIs
+function parse(
+  args: string[],
+  options: {
+    alias?: Record<string, string>;
+    default?: Record<string, unknown>;
+  } = {}
+): Record<string, unknown> {
+  const result: Record<string, unknown> = { _: [] as string[], ...options.default };
+  const aliasMap = new Map<string, string>();
+
+  // Build reverse alias map
+  if (options.alias) {
+    for (const [short, long] of Object.entries(options.alias)) {
+      aliasMap.set(short, long);
+    }
+  }
+
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (!arg) continue;
+
+    if (arg.startsWith("--")) {
+      // Long flag: --flag or --flag=value
+      const eqIdx = arg.indexOf("=");
+      if (eqIdx !== -1) {
+        const key = arg.slice(2, eqIdx);
+        result[key] = arg.slice(eqIdx + 1);
+      } else {
+        const key = arg.slice(2);
+        const next = args[i + 1];
+        if (next && !next.startsWith("-")) {
+          result[key] = next;
+          i++;
+        } else {
+          result[key] = true;
+        }
+      }
+    } else if (arg.startsWith("-") && arg.length === 2) {
+      // Short flag: -f or -f value
+      const short = arg.slice(1);
+      const key = aliasMap.get(short) || short;
+      const next = args[i + 1];
+      if (next && !next.startsWith("-")) {
+        result[key] = next;
+        i++;
+      } else {
+        result[key] = true;
+      }
+    } else if (!result._) {
+      // Positional argument - command
+      result._ = [arg];
+    } else {
+      // Additional positional arguments
+      (result._ as string[]).push(arg);
+    }
+  }
+
+  return result;
+}
 
 /**
  * Parse an argument that may be a string or array of strings
@@ -29,5 +92,5 @@ export function parseCliArgs(args: string[]): ParsedArgs {
   return parse(args, {
     alias: { p: "port", h: "help", v: "version" },
     default: { port: 3002 },
-  });
+  }) as ParsedArgs;
 }

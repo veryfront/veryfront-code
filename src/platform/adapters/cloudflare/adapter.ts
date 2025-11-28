@@ -2,7 +2,9 @@ import type { ExecutionContext as _ExecutionContext } from "@veryfront/middlewar
 import type {
   FileSystemAdapter,
   RuntimeAdapter,
+  RuntimeCapabilities,
   RuntimeFeatures,
+  RuntimeId,
   ServeOptions,
   Server,
 } from "../base.ts";
@@ -13,6 +15,8 @@ import { CloudflareShellAdapter } from "./shell.ts";
 import type { CloudflareEnv, KVNamespace } from "./types.ts";
 
 export class CloudflareAdapter implements RuntimeAdapter {
+  readonly id: RuntimeId = "cloudflare";
+
   name = "cloudflare";
 
   platform = "cloudflare" as const;
@@ -24,6 +28,18 @@ export class CloudflareAdapter implements RuntimeAdapter {
   server = new CloudflareServerAdapter();
 
   shell = new CloudflareShellAdapter();
+
+  readonly capabilities: RuntimeCapabilities = {
+    typescript: false,
+    jsx: false,
+    http2: true,
+    websocket: true,
+    workers: false,
+    fileWatching: false,
+    shell: false,
+    kvStore: true,
+    writableFs: false,
+  };
 
   features: RuntimeFeatures = {
     websocket: true,

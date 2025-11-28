@@ -37,8 +37,21 @@ export function createMockAdapter(): MockRuntimeAdapter {
   const envVars = new Map<string, string>();
 
   return {
+    id: "memory" as const,
     name: "mock",
-    platform: "deno" as const,
+    /** @deprecated Use `id` instead */
+    platform: "memory" as const,
+    capabilities: {
+      typescript: false,
+      jsx: false,
+      http2: false,
+      websocket: false,
+      workers: false,
+      fileWatching: false,
+      shell: false,
+      kvStore: false,
+      writableFs: true, // In-memory writes work
+    },
     serve: (_handler, _options) => {
       return Promise.resolve({
         stop: () => Promise.resolve(),

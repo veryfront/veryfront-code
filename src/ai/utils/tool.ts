@@ -30,19 +30,72 @@ export function tool<TInput = any, TOutput = any>(
 ): Tool<TInput, TOutput> {
   const id = config.id || generateToolId();
 
+  // Check if we have a valid zod schema (has _def property)
+  const hasValidZodSchema = config.inputSchema &&
+    typeof config.inputSchema === "object" &&
+    "_def" in config.inputSchema &&
+    (config.inputSchema as { _def?: { typeName?: string } })._def?.typeName;
+
   // Pre-convert Zod schema to JSON Schema immediately
   // This happens BEFORE any bundling, in a clean environment
   let inputSchemaJson: JsonSchema | undefined;
-  try {
-    inputSchemaJson = zodToJsonSchema(config.inputSchema);
-    agentLogger.info(
-      `[TOOL] Pre-converted schema for "${id}": ${
-        Object.keys(inputSchemaJson.properties || {}).length
-      } properties`,
-    );
-  } catch (error) {
-    agentLogger.warn(`[TOOL] Failed to pre-convert schema for "${id}":`, error);
-    // Continue without pre-converted schema - will fall back to runtime conversion
+  if (hasValidZodSchema) {
+    try {
+      inputSchemaJson = zodToJsonSchema(config.inputSchema);
+      agentLogger.info(
+        `[TOOL] Pre-converted schema for "${id}": ${
+          Object.keys(inputSchemaJson.properties || {}).length
+        } properties`,
+      );
+    } catch (error) {
+      agentLogger.warn(`[TOOL] Failed to pre-convert schema for "${id}":`, error);
+      // Continue without pre-converted schema - will fall back to runtime conversion
+    }
+  } else {
+    // Try to introspect the schema from external zod instance
+    const externalSchema = config.inputSchema as {
+      _def?: {
+        typeName?: string;
+        shape?: (() => Record<string, unknown>) | Record<string, unknown>;
+      };
+    };
+
+    if (externalSchema?._def?.shape) {
+      try {
+        const shape = typeof externalSchema._def.shape === "function"
+          ? externalSchema._def.shape()
+          : externalSchema._def.shape;
+
+        // Build JSON Schema from shape inspection
+        const properties: Record<string, JsonSchema> = {};
+        for (const key of Object.keys(shape || {})) {
+          // Default to string type for unknown schemas
+          properties[key] = { type: "string" as const };
+        }
+        inputSchemaJson = {
+          type: "object" as const,
+          properties,
+          required: Object.keys(properties),
+        };
+        agentLogger.info(
+          `[TOOL] Introspected schema for "${id}" from external zod: ${
+            Object.keys(properties).length
+          } properties`,
+        );
+      } catch {
+        inputSchemaJson = { type: "object", properties: {} };
+        agentLogger.warn(
+          `[TOOL] Schema for "${id}" could not be introspected. Using empty schema.`,
+        );
+      }
+    } else {
+      agentLogger.warn(
+        `[TOOL] Schema for "${id}" is not a valid Zod schema (different zod instance?). ` +
+          `Skipping pre-conversion. Input validation may be limited.`,
+      );
+      // Create a basic schema from inspection if possible
+      inputSchemaJson = { type: "object", properties: {} };
+    }
   }
 
   return {
@@ -51,16 +104,35 @@ export function tool<TInput = any, TOutput = any>(
     inputSchema: config.inputSchema,
     inputSchemaJson, // Store pre-converted schema
     execute: async (input: TInput, context?: ToolExecutionContext) => {
-      // Validate input
-      try {
-        config.inputSchema.parse(input);
-      } catch (error) {
-        throw toError(createError({
-          type: "agent",
-          message: `Tool "${id}" input validation failed: ${
-            error instanceof Error ? error.message : String(error)
-          }`,
-        }));
+      // Validate input if zod schema is available
+      if (hasValidZodSchema) {
+        try {
+          config.inputSchema.parse(input);
+        } catch (error) {
+          throw toError(createError({
+            type: "agent",
+            message: `Tool "${id}" input validation failed: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          }));
+        }
+      } else if (
+        config.inputSchema &&
+        typeof config.inputSchema === "object" &&
+        "parse" in config.inputSchema &&
+        typeof (config.inputSchema as { parse?: unknown }).parse === "function"
+      ) {
+        // Try to use parse method if available (external zod instance)
+        try {
+          (config.inputSchema as { parse: (input: unknown) => void }).parse(input);
+        } catch (error) {
+          throw toError(createError({
+            type: "agent",
+            message: `Tool "${id}" input validation failed: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          }));
+        }
       }
 
       // Execute tool

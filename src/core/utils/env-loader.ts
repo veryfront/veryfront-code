@@ -5,6 +5,34 @@
  */
 
 import { serverLogger as logger } from "@veryfront/utils";
+import { cwd as getCwd, getEnv, setEnv } from "../../platform/compat/process.ts";
+import { createFileSystem, type FileSystem } from "../../platform/compat/fs.ts";
+
+// Lazy-initialized filesystem for cross-platform support
+let _fs: FileSystem | null = null;
+function getFs(): FileSystem {
+  if (!_fs) {
+    _fs = createFileSystem();
+  }
+  return _fs;
+}
+
+/**
+ * Check if an error is a "file not found" error across platforms
+ */
+function isNotFoundError(error: unknown): boolean {
+  if (error instanceof Error) {
+    // Deno error
+    if (typeof Deno !== "undefined" && error instanceof Deno.errors.NotFound) {
+      return true;
+    }
+    // Node.js error
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return true;
+    }
+  }
+  return false;
+}
 
 /**
  * Load environment variables from .env file
@@ -24,10 +52,10 @@ export async function loadEnv(options: {
   /** Whether to log loaded variables (defaults to false for security) */
   debug?: boolean;
 } = {}): Promise<void> {
-  const { cwd = Deno.cwd(), override = false, debug = false } = options;
+  const { cwd = getCwd(), override = false, debug = false } = options;
 
   // Determine environment
-  const env = Deno.env.get("NODE_ENV") || Deno.env.get("DENO_ENV") || "development";
+  const env = getEnv("NODE_ENV") || getEnv("DENO_ENV") || "development";
 
   // Files to load in order (later files override earlier ones if override=true)
   const envFiles = [
@@ -38,17 +66,18 @@ export async function loadEnv(options: {
 
   let loadedCount = 0;
   let totalVars = 0;
+  const fs = getFs();
 
   for (const file of envFiles) {
     try {
-      const content = await Deno.readTextFile(file);
+      const content = await fs.readTextFile(file);
       const vars = parseEnvFile(content);
 
       for (const [key, value] of Object.entries(vars)) {
-        const existing = Deno.env.get(key);
+        const existing = getEnv(key);
 
         if (!existing || override) {
-          Deno.env.set(key, value);
+          setEnv(key, value);
           totalVars++;
 
           if (debug) {
@@ -63,7 +92,7 @@ export async function loadEnv(options: {
       }
     } catch (error) {
       // Ignore if file doesn't exist
-      if (!(error instanceof Deno.errors.NotFound)) {
+      if (!isNotFoundError(error)) {
         logger.warn(`[env] Failed to load ${file}:`, error);
       }
     }
@@ -168,12 +197,12 @@ function parseEnvFile(content: string): Record<string, string> {
 function expandVariables(value: string, vars: Record<string, string>): string {
   // Expand ${VAR} syntax
   value = value.replace(/\$\{([^}]+)\}/g, (_, varName) => {
-    return vars[varName] || Deno.env.get(varName) || "";
+    return vars[varName] || getEnv(varName) || "";
   });
 
   // Expand $VAR syntax (word boundary)
   value = value.replace(/\$([A-Z_][A-Z0-9_]*)/g, (_, varName) => {
-    return vars[varName] || Deno.env.get(varName) || "";
+    return vars[varName] || getEnv(varName) || "";
   });
 
   return value;
@@ -184,10 +213,18 @@ function expandVariables(value: string, vars: Record<string, string>): string {
  * (Deno, Node.js, Bun - not Cloudflare Workers)
  */
 export function supportsEnvFiles(): boolean {
-  try {
-    // Check if we have file system access
-    return typeof Deno !== "undefined" && typeof Deno.readTextFile === "function";
-  } catch {
-    return false;
+  // Check for Deno
+  if (typeof Deno !== "undefined" && typeof Deno.readTextFile === "function") {
+    return true;
   }
+  // Check for Node.js (has process and fs modules)
+  if (typeof process !== "undefined" && process.versions?.node) {
+    return true;
+  }
+  // Check for Bun
+  if ("Bun" in globalThis) {
+    return true;
+  }
+  // Cloudflare Workers and other environments don't support file system
+  return false;
 }

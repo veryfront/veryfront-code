@@ -1,6 +1,15 @@
 import type { ServeOptions, Server } from "../base.ts";
-import type { NodeHttpServer } from "./types.ts";
+import type { NodeHttpServer, WSWebSocket, WSWebSocketServer } from "./types.ts";
 import { DEFAULT_DEV_PORT } from "@veryfront/config";
+
+// Track pending WebSocket upgrades by request ID
+const pendingWebSocketUpgrades = new Map<string, {
+  resolve: (ws: WSWebSocket) => void;
+  reject: (error: Error) => void;
+}>();
+
+// Singleton WebSocket server instance (one per HTTP server)
+let wsServer: WSWebSocketServer | null = null;
 
 export class NodeServer implements Server {
   constructor(
@@ -11,6 +20,11 @@ export class NodeServer implements Server {
 
   stop(): Promise<void> {
     return new Promise((resolve) => {
+      // Close WebSocket server first
+      if (wsServer) {
+        wsServer.close();
+        wsServer = null;
+      }
       this.server.close(() => resolve());
     });
   }
@@ -18,6 +32,31 @@ export class NodeServer implements Server {
   get addr() {
     return { hostname: this.hostname, port: this.port };
   }
+}
+
+/**
+ * Create a request ID for matching WebSocket upgrades
+ */
+function createRequestId(req: { headers: Record<string, string | string[] | undefined> }): string {
+  const key = req.headers["sec-websocket-key"];
+  return typeof key === "string" ? key : (Array.isArray(key) ? key[0] : "") || crypto.randomUUID();
+}
+
+/**
+ * Register a pending WebSocket upgrade
+ * Called by NodeServerAdapter.upgradeWebSocket
+ */
+export function registerWebSocketUpgrade(requestId: string): Promise<WSWebSocket> {
+  return new Promise((resolve, reject) => {
+    pendingWebSocketUpgrades.set(requestId, { resolve, reject });
+    // Cleanup after timeout (30 seconds)
+    setTimeout(() => {
+      if (pendingWebSocketUpgrades.has(requestId)) {
+        pendingWebSocketUpgrades.delete(requestId);
+        reject(new Error("WebSocket upgrade timed out"));
+      }
+    }, 30000);
+  });
 }
 
 export async function createNodeServer(
@@ -49,6 +88,13 @@ export async function createNodeServer(
 
       const response = await handler(request);
 
+      // Check if this is a WebSocket upgrade response (status 101)
+      // The actual WebSocket handling is done in the 'upgrade' event
+      if (response.status === 101) {
+        // Don't end the response - the upgrade handler will take over
+        return;
+      }
+
       _res.statusCode = response.status;
       _res.statusMessage = response.statusText;
 
@@ -74,8 +120,45 @@ export async function createNodeServer(
     }
   });
 
+  // Handle WebSocket upgrades
+  server.on("upgrade", async (request, socket, head) => {
+    try {
+      // Lazy load ws package
+      const { WebSocketServer } = await import("ws");
+
+      // Create WebSocket server if not exists
+      if (!wsServer) {
+        wsServer = new WebSocketServer({ noServer: true }) as unknown as WSWebSocketServer;
+      }
+
+      // Get request ID to match with pending upgrade
+      const requestId = createRequestId(request);
+
+      // Handle the upgrade
+      (wsServer as unknown as { handleUpgrade: (req: unknown, socket: unknown, head: unknown, callback: (ws: WSWebSocket) => void) => void })
+        .handleUpgrade(request, socket, head, (ws: WSWebSocket) => {
+          const pending = pendingWebSocketUpgrades.get(requestId);
+          if (pending) {
+            pendingWebSocketUpgrades.delete(requestId);
+            pending.resolve(ws);
+          }
+          // Emit connection event
+          (wsServer as unknown as { emit: (event: string, ws: WSWebSocket, req: unknown) => void })
+            .emit("connection", ws, request);
+        });
+    } catch (error) {
+      const { serverLogger } = await import("@veryfront/utils");
+      serverLogger.error("WebSocket upgrade error:", error);
+      socket.destroy();
+    }
+  });
+
   if (options.signal) {
     options.signal.addEventListener("abort", () => {
+      if (wsServer) {
+        wsServer.close();
+        wsServer = null;
+      }
       server.close();
     });
   }

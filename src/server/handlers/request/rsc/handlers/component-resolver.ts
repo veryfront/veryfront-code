@@ -1,4 +1,5 @@
 import { join } from "std/path/mod.ts";
+import type { FileSystemAdapter } from "../../../../../platform/adapters/base.ts";
 
 const FILE_PATTERNS = [
   "app/{path}/page.tsx",
@@ -21,6 +22,7 @@ const ROOT_PATTERNS = [
 export async function resolveComponentPath(
   pathname: string,
   projectDir: string,
+  fs?: FileSystemAdapter,
 ): Promise<string | null> {
   const cleanPath = cleanPathname(pathname);
 
@@ -28,7 +30,7 @@ export async function resolveComponentPath(
   if (cleanPath === "index" || cleanPath === "") {
     for (const pattern of ROOT_PATTERNS) {
       const fullPath = join(projectDir, pattern);
-      if (await fileExists(fullPath)) {
+      if (await fileExists(fullPath, fs)) {
         return fullPath;
       }
     }
@@ -37,7 +39,7 @@ export async function resolveComponentPath(
   // Then check regular patterns
   for (const pattern of FILE_PATTERNS) {
     const fullPath = join(projectDir, pattern.replace("{path}", cleanPath));
-    if (await fileExists(fullPath)) {
+    if (await fileExists(fullPath, fs)) {
       return fullPath;
     }
   }
@@ -50,8 +52,12 @@ function cleanPathname(pathname: string): string {
   return cleaned || "index";
 }
 
-async function fileExists(path: string): Promise<boolean> {
+async function fileExists(path: string, fs?: FileSystemAdapter): Promise<boolean> {
   try {
+    if (fs) {
+      const stat = await fs.stat(path);
+      return stat.isFile;
+    }
     const stat = await Deno.stat(path);
     return stat.isFile;
   } catch {

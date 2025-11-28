@@ -184,6 +184,14 @@ export class WorkflowExecutor {
       fromCheckpoint,
     );
 
+    // If an explicit checkpoint was requested but not found, throw error
+    if (fromCheckpoint && !resumeInfo) {
+      throw new Error(
+        `Checkpoint "${fromCheckpoint}" not found for run "${runId}". ` +
+        `Cannot resume from non-existent checkpoint.`
+      );
+    }
+
     if (resumeInfo) {
       // Update run state from checkpoint
       await this.config.backend.updateRun(runId, {
@@ -302,8 +310,11 @@ export class WorkflowExecutor {
 
   /**
    * Execute with optional timeout
+   *
+   * Uses Promise.race() to properly handle timeout cleanup.
+   * The timeout is always cleared in the finally block to prevent memory leaks.
    */
-  private executeWithTimeout<T>(
+  private async executeWithTimeout<T>(
     fn: () => Promise<T>,
     timeout?: string | number,
   ): Promise<T> {
@@ -312,22 +323,21 @@ export class WorkflowExecutor {
     }
 
     const timeoutMs = parseDuration(timeout);
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
 
-    return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timeoutId = setTimeout(() => {
         reject(new Error(`Workflow timed out after ${timeoutMs}ms`));
       }, timeoutMs);
-
-      fn()
-        .then((result) => {
-          clearTimeout(timer);
-          resolve(result);
-        })
-        .catch((error) => {
-          clearTimeout(timer);
-          reject(error);
-        });
     });
+
+    try {
+      return await Promise.race([fn(), timeoutPromise]);
+    } finally {
+      if (timeoutId !== undefined) {
+        clearTimeout(timeoutId);
+      }
+    }
   }
 
   /**

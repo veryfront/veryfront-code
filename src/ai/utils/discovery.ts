@@ -17,9 +17,13 @@ import type { Agent } from "../types/agent.ts";
 import { agentLogger } from "../../core/utils/logger/logger.ts";
 import { getConfig } from "../../core/config/loader.ts";
 import { createMockAdapter } from "../../platform/adapters/mock.ts";
+import type { FileSystemAdapter } from "../../platform/adapters/base.ts";
 
 interface FileDiscoveryContext {
   platform: Platform;
+  /** Optional filesystem adapter for cross-platform support */
+  fsAdapter?: FileSystemAdapter;
+  /** Cached node dependencies (lazy loaded) */
   nodeDeps?: {
     fs: typeof import("node:fs");
     path: typeof import("node:path");
@@ -47,6 +51,9 @@ export interface DiscoveryConfig {
 
   /** Enable verbose logging */
   verbose?: boolean;
+
+  /** Optional filesystem adapter for cross-platform support (Cloudflare Workers, etc.) */
+  fsAdapter?: FileSystemAdapter;
 }
 
 export interface DiscoveryResult {
@@ -81,6 +88,7 @@ export async function discoverAll(
 
   const context: FileDiscoveryContext = {
     platform: detectPlatform(),
+    fsAdapter: config.fsAdapter,
   };
 
   const result: DiscoveryResult = {
@@ -336,7 +344,24 @@ async function findTypeScriptFiles(
   const files: string[] = [];
 
   try {
-    if (context.platform === "deno") {
+    // If a filesystem adapter is provided, use it (works on all platforms including Workers)
+    if (context.fsAdapter) {
+      const exists = await context.fsAdapter.exists(dir);
+      if (!exists) {
+        return files;
+      }
+
+      for await (const entry of context.fsAdapter.readDir(dir)) {
+        const filePath = `${dir}/${entry.name}`;
+
+        if (entry.isFile && (entry.name.endsWith(".ts") || entry.name.endsWith(".tsx"))) {
+          files.push(`file://${filePath}`);
+        } else if (entry.isDirectory) {
+          const subFiles = await findTypeScriptFiles(filePath, context);
+          files.push(...subFiles);
+        }
+      }
+    } else if (context.platform === "deno") {
       // Use Deno's file system API
       for await (const entry of Deno.readDir(dir)) {
         const filePath = `${dir}/${entry.name}`;
@@ -351,6 +376,7 @@ async function findTypeScriptFiles(
         }
       }
     } else {
+      // Fallback to Node.js fs for Node/Bun (lazy load to avoid bundling issues)
       const { fs, path } = await getNodeDeps(context);
 
       if (!fs.existsSync(dir)) {

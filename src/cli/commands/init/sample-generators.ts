@@ -7,6 +7,9 @@ import { cliLogger as logger } from "@veryfront/utils";
 import { PATHS } from "@veryfront/utils/paths.ts";
 import { ensureDir } from "std/fs/mod.ts";
 import { join } from "std/path/mod.ts";
+import { createFileSystem, type FileSystem } from "../../../platform/compat/fs.ts";
+
+let fs: FileSystem;
 
 /**
  * Creates sample files for pages-router template
@@ -20,6 +23,7 @@ import { join } from "std/path/mod.ts";
  * ```
  */
 export async function createSampleFiles(projectDir: string): Promise<void> {
+  fs = createFileSystem();
   // Create index.mdx
   const indexMdx = `---
 title: Welcome
@@ -50,7 +54,7 @@ This is your first Veryfront page! Edit this file to see live changes.
 4. Run \`veryfront dev\` to start the development server
 `;
 
-  await Deno.writeTextFile(join(projectDir, PATHS.PAGES_DIR, "index.mdx"), indexMdx);
+  await fs.writeTextFile(join(projectDir, PATHS.PAGES_DIR, "index.mdx"), indexMdx);
 
   // Create example API route: pages/api/hello.ts
   try {
@@ -65,7 +69,7 @@ export async function POST(ctx) {
   return Response.json({ ok: true, body });
 }
 `;
-    await Deno.writeTextFile(join(projectDir, PATHS.PAGES_DIR, "api", "hello.ts"), apiHello);
+    await fs.writeTextFile(join(projectDir, PATHS.PAGES_DIR, "api", "hello.ts"), apiHello);
   } catch (error) {
     logger.debug("Creating sample API route failed (non-fatal)", error);
   }
@@ -82,7 +86,7 @@ export default function Button({ children = "Click me" }) {
 }
 `;
 
-  await Deno.writeTextFile(join(projectDir, PATHS.COMPONENTS_DIR, "Button.jsx"), buttonComponent);
+  await fs.writeTextFile(join(projectDir, PATHS.COMPONENTS_DIR, "Button.jsx"), buttonComponent);
 
   // Create global styles
   const globalStyles = `@tailwind base;
@@ -90,7 +94,7 @@ export default function Button({ children = "Click me" }) {
 @tailwind utilities;
 `;
 
-  await Deno.writeTextFile(join(projectDir, PATHS.STYLES_DIR, "globals.css"), globalStyles);
+  await fs.writeTextFile(join(projectDir, PATHS.STYLES_DIR, "globals.css"), globalStyles);
 
   logger.debug("Created sample files");
 }
@@ -107,6 +111,7 @@ export default function Button({ children = "Click me" }) {
  * ```
  */
 export async function createAppRouterSample(projectDir: string): Promise<void> {
+  if (!fs) fs = createFileSystem();
   // Create app directories
   await ensureDir(join(projectDir, "app"));
   await ensureDir(join(projectDir, "app", "api", "echo"));
@@ -119,13 +124,13 @@ export async function createAppRouterSample(projectDir: string): Promise<void> {
   );
 }
 `;
-  await Deno.writeTextFile(join(projectDir, "app", "layout.tsx"), layout);
+  await fs.writeTextFile(join(projectDir, "app", "layout.tsx"), layout);
 
   const page = `export default function Page() {
   return <h1>Veryfront App Router</h1>;
 }
 `;
-  await Deno.writeTextFile(join(projectDir, "app", "page.tsx"), page);
+  await fs.writeTextFile(join(projectDir, "app", "page.tsx"), page);
 
   const apiRoute = `export const GET = (req: Request) => {
   const url = new URL(req.url);
@@ -137,7 +142,7 @@ export const POST = async (req: Request) => {
   return Response.json({ ok: true, body });
 };
 `;
-  await Deno.writeTextFile(join(projectDir, "app", "api", "echo", "route.ts"), apiRoute);
+  await fs.writeTextFile(join(projectDir, "app", "api", "echo", "route.ts"), apiRoute);
 
   // Keep the App Router scaffold minimal; no pages/ or legacy scaffolds
   logger.debug("Created App Router sample files (minimal)");
@@ -156,14 +161,15 @@ export const POST = async (req: Request) => {
  * ```
  */
 export async function createAppRouterApiSample(projectDir: string): Promise<void> {
+  if (!fs) fs = createFileSystem();
   await createAppRouterSample(projectDir);
   // Add reserved component samples
   const loading =
     `export default function Loading(){ return <p style={{padding:12}}>Loading…</p>; }`;
-  await Deno.writeTextFile(join(projectDir, "app", "loading.tsx"), loading);
+  await fs.writeTextFile(join(projectDir, "app", "loading.tsx"), loading);
   const error =
     `export default function ErrorBoundary({ error }:{ error: Error }){ return <div style={{color:'#b91c1c'}}>Error: {error.message}</div>; }`;
-  await Deno.writeTextFile(join(projectDir, "app", "error.tsx"), error);
+  await fs.writeTextFile(join(projectDir, "app", "error.tsx"), error);
 }
 
 /**
@@ -179,6 +185,7 @@ export async function createAppRouterApiSample(projectDir: string): Promise<void
  * ```
  */
 export async function createRscDemoSample(projectDir: string): Promise<void> {
+  if (!fs) fs = createFileSystem();
   // Create an App Router scaffold first
   await createAppRouterSample(projectDir);
   // Overwrite root page with links to the RSC demo shell
@@ -196,5 +203,5 @@ export async function createRscDemoSample(projectDir: string): Promise<void> {
   );
 }
 `;
-  await Deno.writeTextFile(join(projectDir, "app", "page.tsx"), page);
+  await fs.writeTextFile(join(projectDir, "app", "page.tsx"), page);
 }

@@ -1,16 +1,33 @@
-import type { RuntimeAdapter, RuntimeFeatures, ServeOptions, Server } from "../base.ts";
+import type { RuntimeAdapter, RuntimeCapabilities, RuntimeFeatures, ServeOptions, Server } from "../base.ts";
 import { BunFileSystemAdapter } from "./filesystem-adapter.ts";
 import { BunEnvironmentAdapter } from "./environment-adapter.ts";
 import { BunServerAdapter } from "./websocket-adapter.ts";
 import { createBunServer } from "./http-server.ts";
 
 export class BunAdapter implements RuntimeAdapter {
-  name = "bun";
-  platform = "bun" as const;
+  readonly id = "bun" as const;
+  readonly name = "bun";
+  /** @deprecated Use `id` instead */
+  readonly platform = "bun" as const;
+
   fs = new BunFileSystemAdapter();
   env = new BunEnvironmentAdapter();
   server = new BunServerAdapter();
-  features: RuntimeFeatures = {
+
+  readonly capabilities: RuntimeCapabilities = {
+    typescript: true,
+    jsx: true,
+    http2: false, // Bun's HTTP/2 support is experimental
+    websocket: true,
+    workers: true,
+    fileWatching: true,
+    shell: true,
+    kvStore: false,
+    writableFs: true,
+  };
+
+  /** @deprecated Use `capabilities` instead */
+  readonly features: RuntimeFeatures = {
     websocket: true,
     http2: false,
     workers: true,

@@ -3,7 +3,7 @@
  * @module
  */
 
-import { cyan, green, yellow } from "std/fmt/colors.ts";
+import { cyan, green, yellow } from "@veryfront/compat/console";
 
 /**
  * Tips for the 'dev' command

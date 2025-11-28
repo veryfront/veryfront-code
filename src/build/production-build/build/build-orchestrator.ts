@@ -14,6 +14,7 @@
 import { serverLogger as logger } from "@veryfront/utils";
 import type { BuildOptions, BuildStats } from "@veryfront/server/build-types.ts";
 import { createError, toError } from "../../../core/errors/veryfront-error.ts";
+import { createFileSystem } from "../../../platform/compat/fs.ts";
 import {
   cleanupCaches,
   cleanupRenderer,
@@ -36,9 +37,13 @@ export async function buildProduction(options: BuildOptions): Promise<BuildStats
   // Normalize options
   const normalizedOptions = normalizeBuildOptions(options);
 
-  // Validate project directory exists
+  // Validate project directory exists (using cross-platform filesystem)
   try {
-    await Deno.stat(normalizedOptions.projectDir);
+    const fs = createFileSystem();
+    const exists = await fs.exists(normalizedOptions.projectDir);
+    if (!exists) {
+      throw new Error("Directory does not exist");
+    }
   } catch (error) {
     logger.error(`Project directory check failed: ${error}`);
     throw toError(createError({

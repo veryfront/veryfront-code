@@ -8,6 +8,7 @@ import { join } from "std/path/mod.ts";
 import { getReactImportMap, REACT_DEFAULT_VERSION } from "@veryfront/utils";
 import type { SplitOptions } from "./types.ts";
 import { createSplitterPlugin } from "./esbuild-plugin.ts";
+import { createFileSystem } from "../../../platform/compat/fs.ts";
 
 /**
  * Gets list of external dependencies to exclude from bundle
@@ -48,7 +49,8 @@ if (typeof window !== 'undefined' && !window.__veryfront_react_imports) {
 }
 `;
 
-  await Deno.writeTextFile(shimPath, shimContent);
+  const fs = createFileSystem();
+  await fs.writeTextFile(shimPath, shimContent);
   return shimPath;
 }
 

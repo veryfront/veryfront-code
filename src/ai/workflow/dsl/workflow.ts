@@ -192,23 +192,37 @@ export function dag(
   nodes: Record<string, WorkflowNode | { node: WorkflowNode; dependsOn: string[] }>,
 ): WorkflowNode[] {
   const result: WorkflowNode[] = [];
+  const seenIds = new Set<string>();
 
   for (const [id, value] of Object.entries(nodes)) {
+    let nodeId: string;
+    let node: WorkflowNode;
+
     if ("node" in value && "dependsOn" in value) {
       // Object with explicit dependencies
-      result.push({
+      nodeId = value.node.id || id;
+      node = {
         ...value.node,
-        id: value.node.id || id,
+        id: nodeId,
         dependsOn: value.dependsOn,
-      });
+      };
     } else {
       // Plain WorkflowNode
-      const node = value as WorkflowNode;
-      result.push({
-        ...node,
-        id: node.id || id,
-      });
+      const workflowNode = value as WorkflowNode;
+      nodeId = workflowNode.id || id;
+      node = {
+        ...workflowNode,
+        id: nodeId,
+      };
     }
+
+    // Check for duplicate IDs
+    if (seenIds.has(nodeId)) {
+      throw new Error(`Duplicate node ID detected in dag: "${nodeId}"`);
+    }
+    seenIds.add(nodeId);
+
+    result.push(node);
   }
 
   return result;

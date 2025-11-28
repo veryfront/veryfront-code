@@ -152,27 +152,30 @@ export class StepExecutor {
 
   /**
    * Execute step with timeout
+   *
+   * Uses Promise.race() to properly handle timeout cleanup.
+   * The timeout is always cleared in the finally block to prevent memory leaks.
    */
-  private executeWithTimeout<T>(
+  private async executeWithTimeout<T>(
     fn: () => Promise<T>,
     timeout: number,
-    _nodeId: string,
+    nodeId: string,
   ): Promise<T> {
-    return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
-        reject(new Error(`Step "${_nodeId}" timed out after ${timeout}ms`));
-      }, timeout);
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
 
-      fn()
-        .then((result) => {
-          clearTimeout(timer);
-          resolve(result);
-        })
-        .catch((error) => {
-          clearTimeout(timer);
-          reject(error);
-        });
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timeoutId = setTimeout(() => {
+        reject(new Error(`Step "${nodeId}" timed out after ${timeout}ms`));
+      }, timeout);
     });
+
+    try {
+      return await Promise.race([fn(), timeoutPromise]);
+    } finally {
+      if (timeoutId !== undefined) {
+        clearTimeout(timeoutId);
+      }
+    }
   }
 
   /**

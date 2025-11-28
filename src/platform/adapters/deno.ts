@@ -230,13 +230,30 @@ class DenoServer implements Server {
 }
 
 export class DenoAdapter implements RuntimeAdapter {
-  name = "deno";
-  platform = "deno" as const;
+  readonly id = "deno" as const;
+  readonly name = "deno";
+  /** @deprecated Use `id` instead */
+  readonly platform = "deno" as const;
+
   fs = new DenoFileSystemAdapter();
   env = new DenoEnvironmentAdapter();
   server = new DenoServerAdapter();
   shell = new DenoShellAdapter();
-  features: RuntimeFeatures = {
+
+  readonly capabilities = {
+    typescript: true,
+    jsx: true,
+    http2: true,
+    websocket: true,
+    workers: true,
+    fileWatching: true,
+    shell: true,
+    kvStore: true, // Deno KV available
+    writableFs: true,
+  };
+
+  /** @deprecated Use `capabilities` instead */
+  readonly features: RuntimeFeatures = {
     websocket: true,
     http2: true,
     workers: true,

@@ -21,6 +21,7 @@ import { exitProcess } from "../utils/index.ts";
 import type { ParsedArgs } from "./types.ts";
 import type { CacheBackend, InitTemplate } from "../commands/init/types.ts";
 import { createError, toError } from "../../core/errors/veryfront-error.ts";
+import { cwd } from "../../platform/compat/process.ts";
 
 /**
  * Show basic help information
@@ -101,7 +102,7 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
           const adapter = await getAdapter();
           const { startUniversalServer } = await import("../../server/production-server.ts");
 
-          const projectDir = Deno.cwd();
+          const projectDir = cwd();
           const port = args.port ?? DEFAULT_DEV_SERVER_PORT;
           const hostname = String(args.hostname || args.host || "0.0.0.0");
           const debug = Boolean(args.debug);
@@ -122,7 +123,7 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
 
       case "doctor":
         showLogo();
-        await doctorCommand(Deno.cwd(), {
+        await doctorCommand(cwd(), {
           strict: Boolean(args.strict) || Boolean(args.s),
         });
         break;
@@ -130,7 +131,7 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
       case "clean":
         showLogo();
         await cleanCommand({
-          projectDir: Deno.cwd(),
+          projectDir: cwd(),
           cache: Boolean(args.cache),
           build: Boolean(args.build),
           all: Boolean(args.all),
@@ -140,14 +141,14 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
       case "analyze-chunks":
         showLogo();
         await analyzeChunksCommand({
-          projectDir: Deno.cwd(),
+          projectDir: cwd(),
           output: args.output ? String(args.output) : args.o ? String(args.o) : undefined,
         });
         break;
 
       case "routes":
         showLogo();
-        await routesCommand(Deno.cwd(), {
+        await routesCommand(cwd(), {
           json: Boolean(args.json) || Boolean(args.j),
         });
         break;

@@ -1,4 +1,4 @@
-import { bold, cyan, dim, red, yellow } from "std/fmt/colors.ts";
+import { bold, cyan, dim, red, yellow } from "@veryfront/compat/console";
 import { ERROR_SOLUTIONS } from "./error-catalog.ts";
 import { identifyError } from "./error-identifier.ts";
 

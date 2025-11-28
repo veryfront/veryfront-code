@@ -1,30 +1,71 @@
 import type { DiagnosticResult } from "./types.ts";
+import { getRuntimeVersion } from "../../../platform/compat/process.ts";
 
 /**
- * Check Deno version compatibility
- * Minimum recommended version: 1.40.0
+ * Check runtime version compatibility
+ * Supports Deno 1.40.0+, Node.js 18+, Bun 1.0+
  */
 export function checkDenoVersion(): Promise<DiagnosticResult> {
   try {
-    const denoVersion = Deno.version.deno;
-    if (denoVersion >= "1.40.0") {
+    const runtimeVersion = getRuntimeVersion();
+
+    // Deno runtime check
+    if (runtimeVersion.startsWith("Deno")) {
+      const versionNum = runtimeVersion.replace("Deno ", "");
+      if (versionNum >= "1.40.0") {
+        return Promise.resolve({
+          name: "Runtime Version",
+          status: "pass",
+          message: runtimeVersion,
+        });
+      } else {
+        return Promise.resolve({
+          name: "Runtime Version",
+          status: "warn",
+          message: `${runtimeVersion} (recommended: Deno 1.40.0+)`,
+        });
+      }
+    }
+
+    // Node.js runtime check
+    if (runtimeVersion.startsWith("Node.js")) {
+      const versionNum = runtimeVersion.replace("Node.js v", "");
+      const major = parseInt(versionNum.split(".")[0] || "0", 10);
+      if (major >= 18) {
+        return Promise.resolve({
+          name: "Runtime Version",
+          status: "pass",
+          message: runtimeVersion,
+        });
+      } else {
+        return Promise.resolve({
+          name: "Runtime Version",
+          status: "warn",
+          message: `${runtimeVersion} (recommended: Node.js 18+)`,
+        });
+      }
+    }
+
+    // Bun runtime check
+    if (runtimeVersion.startsWith("Bun")) {
       return Promise.resolve({
-        name: "Deno Version",
+        name: "Runtime Version",
         status: "pass",
-        message: `Deno ${denoVersion}`,
-      });
-    } else {
-      return Promise.resolve({
-        name: "Deno Version",
-        status: "warn",
-        message: `Deno ${denoVersion} (recommended: 1.40.0+)`,
+        message: runtimeVersion,
       });
     }
+
+    // Unknown runtime
+    return Promise.resolve({
+      name: "Runtime Version",
+      status: "pass",
+      message: runtimeVersion,
+    });
   } catch (_error) {
     return Promise.resolve({
-      name: "Deno Version",
+      name: "Runtime Version",
       status: "fail",
-      message: "Could not detect Deno version",
+      message: "Could not detect runtime version",
     });
   }
 }
@@ -35,7 +76,7 @@ export function checkDenoVersion(): Promise<DiagnosticResult> {
 export async function checkReactCompatibility(): Promise<DiagnosticResult> {
   try {
     const { getReactVersionInfo } = await import(
-      "@veryfront/runtime/react/version-detector/index.ts"
+      "../../../react/compat/version-detector/index.ts"
     );
     const reactInfo = getReactVersionInfo();
     return {

@@ -3,6 +3,11 @@ import { ZodFirstPartyTypeKind } from "zod";
 import type { JsonSchema } from "../types/json-schema.ts";
 
 export function zodToJsonSchema(schema: z.ZodTypeAny): JsonSchema {
+  // Guard against invalid schemas (can happen with different zod instances in npm bundle)
+  if (!schema || typeof schema !== "object" || !("_def" in schema)) {
+    throw new Error("Invalid Zod schema: missing _def property");
+  }
+
   const details = unwrapSchema(schema);
   const json = convert(details.schema);
   if (details.nullable) {

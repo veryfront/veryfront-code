@@ -1,8 +1,11 @@
 import { dirname, fromFileUrl } from "std/path/mod.ts";
 import { serverLogger as logger } from "@veryfront/utils";
 import { createError, toError } from "../../../../../core/errors/veryfront-error.ts";
+import type { FileSystemAdapter } from "../../../../../platform/adapters/base.ts";
 
 export class HydratorHandler {
+  constructor(private fs?: FileSystemAdapter) {}
+
   async handle(): Promise<Response> {
     // Use correct path to hydrate-client.ts in rendering/rsc
     const hydratorPath = fromFileUrl(
@@ -25,7 +28,9 @@ export class HydratorHandler {
     const { build, stop } = await import("esbuild/mod.js");
 
     try {
-      const source = await Deno.readTextFile(path);
+      const source = this.fs
+        ? await this.fs.readFile(path)
+        : await Deno.readTextFile(path);
 
       const result = await build({
         bundle: true,
@@ -65,7 +70,9 @@ export class HydratorHandler {
 
   private async fallbackToSource(path: string): Promise<Response> {
     try {
-      const source = await Deno.readTextFile(path);
+      const source = this.fs
+        ? await this.fs.readFile(path)
+        : await Deno.readTextFile(path);
       return this.createTypeScriptResponse(source);
     } catch (readError) {
       logger.error("[RSC] Failed to read hydrator file:", readError);

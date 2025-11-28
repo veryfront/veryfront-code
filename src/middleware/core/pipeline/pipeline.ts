@@ -46,7 +46,7 @@ export class MiddlewarePipeline {
       try {
         await cb();
       } catch (e) {
-        const { serverLogger } = await import("../../../utils/logger.ts");
+        const { serverLogger } = await import("../../../core/utils/logger/logger.ts");
         serverLogger.warn("middleware teardown failed", e);
       }
     }

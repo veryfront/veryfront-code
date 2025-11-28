@@ -1,4 +1,4 @@
-import { red } from "std/fmt/colors.ts";
+import { red } from "@veryfront/compat/console";
 import { exit } from "@veryfront/platform/compat/process.ts";
 import { cliLogger } from "@veryfront/utils/logger/logger.ts";
 import { formatUserError } from "./error-formatter.ts";
