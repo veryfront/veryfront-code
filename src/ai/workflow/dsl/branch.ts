@@ -62,6 +62,11 @@ export interface BranchOptions extends Omit<BaseNodeConfig, "checkpoint"> {
  * ```
  */
 export function branch(id: string, options: BranchOptions): WorkflowNode {
+  // Validate node ID
+  if (!id || typeof id !== "string" || id.trim() === "") {
+    throw new Error("Node ID must be a non-empty string");
+  }
+
   if (!options.condition) {
     throw new Error(`Branch "${id}" must specify a condition`);
   }

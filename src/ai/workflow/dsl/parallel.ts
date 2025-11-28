@@ -58,15 +58,26 @@ export function parallel(
   nodes: WorkflowNode[],
   options: ParallelOptions = {},
 ): WorkflowNode {
+  // Validate node ID
+  if (!id || typeof id !== "string" || id.trim() === "") {
+    throw new Error("Node ID must be a non-empty string");
+  }
+
   if (!nodes || nodes.length === 0) {
     throw new Error(`Parallel node "${id}" must have at least one child node`);
   }
 
   // Generate unique IDs for child nodes if they're nested under this parallel
-  const prefixedNodes = nodes.map((node) => ({
-    ...node,
-    id: node.id.startsWith(`${id}/`) ? node.id : `${id}/${node.id}`,
-  }));
+  // Also validate child node IDs
+  const prefixedNodes = nodes.map((node, index) => {
+    if (!node.id || typeof node.id !== "string") {
+      throw new Error(`Child node at index ${index} in parallel "${id}" has invalid ID`);
+    }
+    return {
+      ...node,
+      id: node.id.startsWith(`${id}/`) ? node.id : `${id}/${node.id}`,
+    };
+  });
 
   const config: ParallelNodeConfig = {
     type: "parallel",

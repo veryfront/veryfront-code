@@ -8,6 +8,7 @@ import { cliLogger } from "@veryfront/utils";
 import { buildCommand } from "../commands/build.ts";
 import { parseArrayArg } from "./arg-parser.ts";
 import type { BuildCommandArgs } from "./types.ts";
+import { cwd } from "../../platform/compat/process.ts";
 
 /**
  * Handle the build command execution
@@ -15,7 +16,7 @@ import type { BuildCommandArgs } from "./types.ts";
  * @param args - Build command arguments
  */
 export async function handleBuildCommand(args: BuildCommandArgs): Promise<void> {
-  const projectDir = Deno.cwd();
+  const projectDir = cwd();
   const outputDir = args.output || args.o;
   const preset = args.preset ? String(args.preset).toLowerCase() : undefined;
 

@@ -1,4 +1,3 @@
-import { exists } from "std/fs/mod.ts";
 import { join } from "std/path/mod.ts";
 import { getConfig } from "@veryfront/config";
 import { getAdapter } from "@veryfront/platform/adapters/detect.ts";
@@ -11,6 +10,7 @@ import {
   RedisCacheStore,
 } from "@veryfront/rendering/cache/stores/index.ts";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
+import { createFileSystem } from "../../platform/compat/fs.ts";
 
 interface RenderCacheConfig {
   type?: "memory" | "filesystem" | "kv" | "redis";
@@ -46,10 +46,11 @@ export async function cleanCommand(options: CleanOptions) {
 }
 
 async function cleanDirectory(path: string): Promise<void> {
-  if (!(await exists(path))) return;
+  const fs = createFileSystem();
+  if (!(await fs.exists(path))) return;
 
   try {
-    await Deno.remove(path, { recursive: true });
+    await fs.remove(path, { recursive: true });
   } catch (error) {
     // Log the error but don't throw - cleanup should be best effort
     cliLogger.error(`Failed to clean directory ${path}:`, error);

@@ -99,3 +99,59 @@ export function memoryUsage(): {
     external: usage.external || 0,
   };
 }
+
+/**
+ * Check if stdin is a TTY (terminal)
+ */
+export function isInteractive(): boolean {
+  if (IS_DENO) {
+    return Deno.stdin.isTerminal();
+  }
+  return process.stdin.isTTY ?? false;
+}
+
+/**
+ * Get network interfaces
+ */
+export async function getNetworkInterfaces(): Promise<
+  Array<{ name: string; address: string; family: "IPv4" | "IPv6" }>
+> {
+  if (IS_DENO) {
+    const interfaces = Deno.networkInterfaces();
+    return interfaces.map((iface) => ({
+      name: iface.name,
+      address: iface.address,
+      family: iface.family as "IPv4" | "IPv6",
+    }));
+  }
+
+  const os = await import("node:os");
+  const interfaces = os.networkInterfaces();
+  const result: Array<{ name: string; address: string; family: "IPv4" | "IPv6" }> = [];
+
+  for (const [name, addrs] of Object.entries(interfaces)) {
+    if (!addrs) continue;
+    for (const addr of addrs) {
+      result.push({
+        name,
+        address: addr.address,
+        family: addr.family as "IPv4" | "IPv6",
+      });
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Get runtime version string
+ */
+export function getRuntimeVersion(): string {
+  if (IS_DENO) {
+    return `Deno ${Deno.version.deno}`;
+  }
+  if ("Bun" in globalThis) {
+    return `Bun ${(globalThis as unknown as { Bun: { version: string } }).Bun.version}`;
+  }
+  return `Node.js ${process.version}`;
+}

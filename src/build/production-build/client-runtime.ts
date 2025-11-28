@@ -10,6 +10,44 @@ import type { OnResolveArgs, Plugin } from "esbuild";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import { createError, toError } from "../../core/errors/veryfront-error.ts";
 
+const IS_DENO = typeof Deno !== "undefined" && "stat" in Deno;
+
+interface FileStatResult {
+  isFile: boolean;
+}
+
+async function statFile(path: string): Promise<FileStatResult | null> {
+  if (IS_DENO) {
+    try {
+      const stat = await Deno.stat(path);
+      return { isFile: stat.isFile };
+    } catch (error) {
+      if (error instanceof Deno.errors.NotFound || error instanceof Deno.errors.PermissionDenied) {
+        return null;
+      }
+      throw error;
+    }
+  }
+  const fs = await import("node:fs/promises");
+  try {
+    const stat = await fs.stat(path);
+    return { isFile: stat.isFile() };
+  } catch (error: unknown) {
+    if (error && typeof error === "object" && "code" in error && (error as { code: string }).code === "ENOENT") {
+      return null;
+    }
+    throw error;
+  }
+}
+
+async function readTextFile(path: string): Promise<string> {
+  if (IS_DENO) {
+    return await Deno.readTextFile(path);
+  }
+  const fs = await import("node:fs/promises");
+  return await fs.readFile(path, "utf8");
+}
+
 const moduleDir = dirname(fromFileUrl(import.meta.url));
 const packageRoot = join(moduleDir, "..", "..", "..");
 const vfSrcPrefix = "@vf-src/";
@@ -161,24 +199,9 @@ async function resolveFromCandidates(basePath: string): Promise<string | null> {
   const candidates = buildCandidatePaths(basePath);
 
   for (const candidate of candidates) {
-    try {
-      const stat = await Deno.stat(candidate);
-      // Only accept regular files, reject directories to prevent directory reads
-      if (stat.isFile) {
-        return candidate;
-      }
-      // If it's a directory or other non-file type, skip it
-      continue;
-    } catch (error) {
-      // NotFound is expected for candidates that don't exist
-      if (error instanceof Deno.errors.NotFound) {
-        continue;
-      }
-      // PermissionDenied or other errors should also be skipped gracefully
-      if (error instanceof Deno.errors.PermissionDenied) {
-        continue;
-      }
-      throw error;
+    const stat = await statFile(candidate);
+    if (stat && stat.isFile) {
+      return candidate;
     }
   }
 
@@ -233,7 +256,7 @@ function createFsLoaderPlugin(): Plugin {
     setup(build) {
       build.onLoad({ filter: /.*/ }, async (args) => {
         try {
-          const contents = await Deno.readTextFile(args.path);
+          const contents = await readTextFile(args.path);
           const ext = extname(args.path).toLowerCase();
           let loader: "js" | "ts" | "tsx" | "jsx" | "json" = "js";
           if (ext === ".ts") loader = "ts";
@@ -261,7 +284,7 @@ async function bundleClientEntry(entryRelative: string): Promise<string> {
   const entryPath = fromFileUrl(entryUrl);
   const entryDir = dirname(entryPath);
   const shimPath = fromFileUrl(shimUrl);
-  const source = await Deno.readTextFile(entryPath);
+  const source = await readTextFile(entryPath);
   const loader = entryPath.endsWith(".tsx") ? "tsx" : "ts";
 
   let result;

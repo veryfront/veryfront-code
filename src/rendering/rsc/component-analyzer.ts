@@ -6,12 +6,20 @@
 import { join, relative } from "std/path/mod.ts";
 import { serverLogger } from "@veryfront/utils";
 import type { ComponentAnalysis, ComponentType } from "./types.ts";
+import type { FileSystemAdapter } from "../../platform/adapters/base.ts";
 
 /**
  * Analyze a component file to determine its type
+ * @param filePath - Path to the component file
+ * @param fs - Optional filesystem adapter for cross-platform support
  */
-export async function analyzeComponent(filePath: string): Promise<ComponentAnalysis> {
-  const content = await Deno.readTextFile(filePath);
+export async function analyzeComponent(
+  filePath: string,
+  fs?: FileSystemAdapter,
+): Promise<ComponentAnalysis> {
+  const content = fs
+    ? await fs.readFile(filePath)
+    : await Deno.readTextFile(filePath);
 
   // Check for directives
   const hasUseClient = detectDirective(content, "use client");
@@ -133,10 +141,14 @@ function toPascalCase(str: string): string {
 
 /**
  * Build a manifest of client components in a directory
+ * @param projectDir - Project root directory
+ * @param appDir - App directory name (default: "app")
+ * @param fs - Optional filesystem adapter for cross-platform support
  */
 export async function buildClientManifest(
   projectDir: string,
   appDir: string = "app",
+  fs?: FileSystemAdapter,
 ): Promise<Map<string, import("./types.ts").ClientComponentMeta>> {
   const manifest = new Map<string, import("./types.ts").ClientComponentMeta>();
   const appPath = join(projectDir, appDir);
@@ -146,7 +158,7 @@ export async function buildClientManifest(
       // Only process JS/TS files
       if (!/\.(tsx?|jsx?)$/.test(filePath)) return;
 
-      const analysis = await analyzeComponent(filePath);
+      const analysis = await analyzeComponent(filePath, fs);
 
       if (analysis.type === "client") {
         const relativePath = relative(projectDir, filePath);
@@ -159,7 +171,7 @@ export async function buildClientManifest(
 
         serverLogger.debug(`Found client component: ${analysis.id} at ${relativePath}`);
       }
-    });
+    }, fs);
   } catch (error) {
     serverLogger.warn(`Failed to build client manifest:`, error);
   }
@@ -169,13 +181,18 @@ export async function buildClientManifest(
 
 /**
  * Walk directory recursively
+ * @param dir - Directory to walk
+ * @param callback - Callback for each file
+ * @param fs - Optional filesystem adapter for cross-platform support
  */
 async function walkDirectory(
   dir: string,
   callback: (path: string) => Promise<void>,
+  fs?: FileSystemAdapter,
 ): Promise<void> {
   try {
-    for await (const entry of Deno.readDir(dir)) {
+    const entries = fs ? fs.readDir(dir) : Deno.readDir(dir);
+    for await (const entry of entries) {
       const path = join(dir, entry.name);
 
       if (entry.isDirectory) {
@@ -183,14 +200,18 @@ async function walkDirectory(
         if (entry.name.startsWith(".") || entry.name === "node_modules") {
           continue;
         }
-        await walkDirectory(path, callback);
+        await walkDirectory(path, callback, fs);
       } else if (entry.isFile) {
         await callback(path);
       }
     }
   } catch (error) {
-    // Directory might not exist
-    if (error instanceof Deno.errors.NotFound) {
+    // Directory might not exist - handle cross-platform
+    if (typeof Deno !== "undefined" && error instanceof Deno.errors.NotFound) {
+      return;
+    }
+    // Node.js ENOENT
+    if ((error as { code?: string })?.code === "ENOENT") {
       return;
     }
     throw error;

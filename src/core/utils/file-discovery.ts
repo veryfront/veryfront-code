@@ -7,6 +7,7 @@
 
 import { join } from "std/path/mod.ts";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
+import { denoAdapter } from "@veryfront/platform/adapters/deno.ts";
 
 export interface FileDiscoveryOptions {
   /**
@@ -57,7 +58,7 @@ export interface FileDiscoveryOptions {
 
   /**
    * Runtime adapter for filesystem operations
-   * If not provided, uses Deno.readDir
+   * If not provided, uses the default Deno adapter (for backward compatibility)
    */
   adapter?: RuntimeAdapter;
 }
@@ -146,7 +147,7 @@ export async function* discoverFiles(
     ignorePatterns,
     includeDirs = false,
     followSymlinks = false,
-    adapter,
+    adapter = denoAdapter,
   } = options;
 
   yield* walkDirectory(
@@ -176,7 +177,7 @@ async function* walkDirectory(
   includeDirs: boolean,
   recursive: boolean,
   followSymlinks: boolean,
-  adapter: RuntimeAdapter | undefined,
+  adapter: RuntimeAdapter,
 ): AsyncGenerator<FileDiscoveryResult> {
   // Check depth limit
   if (currentDepth > maxDepth) {
@@ -184,8 +185,8 @@ async function* walkDirectory(
   }
 
   try {
-    // Use adapter if provided, otherwise fall back to Deno.readDir
-    const entries = adapter ? adapter.fs.readDir(dir) : Deno.readDir(dir);
+    // Use adapter for cross-platform filesystem access
+    const entries = adapter.fs.readDir(dir);
 
     for await (const entry of entries) {
       const fullPath = join(dir, entry.name);
@@ -242,7 +243,7 @@ async function* walkDirectory(
       else if (entry.isSymlink && followSymlinks) {
         // For symlinks, we need to check what they point to
         try {
-          const stat = adapter ? await adapter.fs.stat(fullPath) : await Deno.stat(fullPath);
+          const stat = await adapter.fs.stat(fullPath);
 
           if (stat.isDirectory && recursive) {
             yield* walkDirectory(

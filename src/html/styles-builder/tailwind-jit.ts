@@ -12,7 +12,9 @@ export function generateTailwindCSS(htmlContent: string): string {
 
   let match;
   while ((match = classPattern.exec(htmlContent)) !== null) {
-    const classes = match[1].split(/\s+/);
+    const classAttr = match[1];
+    if (!classAttr) continue;
+    const classes = classAttr.split(/\s+/);
     classes.forEach((cls) => {
       if (cls.trim()) classNames.add(cls.trim());
     });

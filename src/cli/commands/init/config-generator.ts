@@ -7,6 +7,7 @@ import { cliLogger as logger } from "@veryfront/utils";
 import { PATHS } from "@veryfront/utils/paths.ts";
 import { join } from "std/path/mod.ts";
 import type { CacheBackend, InitTemplate } from "./types.ts";
+import { createFileSystem } from "../../../platform/compat/fs.ts";
 
 /**
  * Creates the veryfront.config.js file with default settings
@@ -88,7 +89,8 @@ export async function createConfigFile(
 };
 `;
 
-  await Deno.writeTextFile(join(projectDir, PATHS.CONFIG_FILE), config);
+  const fs = createFileSystem();
+  await fs.writeTextFile(join(projectDir, PATHS.CONFIG_FILE), config);
   logger.debug(`Created config file: ${PATHS.CONFIG_FILE}`);
 }
 
@@ -102,11 +104,12 @@ export async function updateConfigCacheBlock(
   projectDir: string,
   backend: CacheBackend,
 ): Promise<void> {
+  const fs = createFileSystem();
   const configPath = join(projectDir, PATHS.CONFIG_FILE);
 
   let content: string;
   try {
-    content = await Deno.readTextFile(configPath);
+    content = await fs.readTextFile(configPath);
   } catch (error) {
     logger.warn(
       `Could not read ${PATHS.CONFIG_FILE} to update cache backend: ${
@@ -131,6 +134,6 @@ export async function updateConfigCacheBlock(
     return;
   }
 
-  await Deno.writeTextFile(configPath, updated);
+  await fs.writeTextFile(configPath, updated);
   logger.debug(`Updated cache.render.type to "${backend}" in ${PATHS.CONFIG_FILE}`);
 }

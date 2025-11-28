@@ -1,11 +1,14 @@
 import { join } from "@std/path";
-import { exists } from "std/fs/mod.ts";
 import { getAdapter } from "@veryfront/platform/adapters/detect.ts";
 import { APIRouteHandler, DynamicRouter } from "@veryfront/routing/api/index.ts";
 import { getConfig } from "@veryfront/config";
 import { cliLogger } from "@veryfront/utils";
+import { createFileSystem, type FileSystem } from "../../platform/compat/fs.ts";
+
+let fs: FileSystem;
 
 export async function routesCommand(projectDir: string, options: { json?: boolean } = {}) {
+  fs = createFileSystem();
   const adapter = await getAdapter();
   const _config = await getConfig(projectDir, adapter);
   const pagesDir = join(projectDir, "pages");
@@ -15,7 +18,8 @@ export async function routesCommand(projectDir: string, options: { json?: boolea
   const router = new DynamicRouter();
   // naive page scan
   try {
-    for await (const entry of Deno.readDir(pagesDir)) {
+    const entries = await fs.readDir(pagesDir);
+    for (const entry of entries) {
       if (!entry.isFile) continue;
       if (entry.name.endsWith(".mdx") || entry.name.endsWith(".tsx")) {
         const slug = entry.name.replace(/\.(mdx|tsx)$/i, "");
@@ -36,7 +40,7 @@ export async function routesCommand(projectDir: string, options: { json?: boolea
   const apis: string[] = [];
   // Re-discover API files and print patterns without depending on internal state
   const apiDir = join(projectDir, "pages", "api");
-  if (await exists(apiDir)) {
+  if (await fs.exists(apiDir)) {
     await collectApiPatterns(apiDir, "/api", apis);
   }
 
@@ -56,7 +60,8 @@ export async function routesCommand(projectDir: string, options: { json?: boolea
 }
 
 async function collectApiPatterns(dir: string, prefix: string, out: string[]) {
-  for await (const entry of Deno.readDir(dir)) {
+  const entries = await fs.readDir(dir);
+  for (const entry of entries) {
     const fullPath = join(dir, entry.name);
     const routePath = `${prefix}/${entry.name.replace(/\.(ts|js|tsx|jsx)$/i, "")}`;
     if (entry.isDirectory) {

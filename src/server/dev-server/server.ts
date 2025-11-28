@@ -79,6 +79,7 @@ export class DevServer {
         port: this.options.hmrPort || this.options.port + 1,
         projectDir: this.options.projectDir,
         reactRefresh: this.options.enableFastRefresh,
+        adapter: this.adapter,
       });
       await this.hmrServer.start();
       await this.setupFileWatchers();

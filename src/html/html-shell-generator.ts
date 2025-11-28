@@ -7,7 +7,7 @@ import {
   buildRootAttributes,
   shouldDisableLayout,
 } from "./utils.ts";
-import { escapeHTML } from "./index.ts";
+import { escapeHTML } from "./html-escape.ts";
 import { processMetadata } from "./metadata-builder.ts";
 import {
   generateHydrationData,

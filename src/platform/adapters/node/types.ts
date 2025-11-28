@@ -29,3 +29,14 @@ export interface NodeHttpServer {
   listen(port: number, hostname: string, callback: () => void): void;
   close(callback: () => void): void;
 }
+
+export interface WSWebSocketServer {
+  close(): void;
+  handleUpgrade(
+    request: unknown,
+    socket: unknown,
+    head: unknown,
+    callback: (ws: WSWebSocket) => void,
+  ): void;
+  emit(event: string, ws: WSWebSocket, request: unknown): void;
+}

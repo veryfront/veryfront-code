@@ -2,6 +2,7 @@ import type { ServerAdapter, WebSocketUpgrade } from "../base.ts";
 import type { WSMessageData, WSWebSocket } from "./types.ts";
 import { createError, toError } from "../../../core/errors/veryfront-error.ts";
 import { serverLogger } from "@veryfront/utils";
+import { registerWebSocketUpgrade } from "./http-server.ts";
 
 export class NodeServerAdapter implements ServerAdapter {
   upgradeWebSocket(request: Request): WebSocketUpgrade {
@@ -15,7 +16,18 @@ export class NodeServerAdapter implements ServerAdapter {
       }));
     }
 
+    // Create a proxy WebSocket that will be connected when the upgrade completes
     const socket = new NodeWebSocket();
+
+    // Register the upgrade and connect when complete
+    registerWebSocketUpgrade(key).then((ws) => {
+      socket._attachRealSocket(ws);
+    }).catch((error) => {
+      serverLogger.error("WebSocket upgrade failed:", error);
+      socket._emitError(error);
+    });
+
+    // Return 101 response - the http-server upgrade handler will complete the handshake
     const response = new Response(null, {
       status: 101,
       statusText: "Switching Protocols",
@@ -37,12 +49,16 @@ export class NodeServerAdapter implements ServerAdapter {
   }
 }
 
+/**
+ * NodeWebSocket - A WebSocket wrapper that works with Node.js
+ * Proxies to the real ws WebSocket once the upgrade completes
+ */
 export class NodeWebSocket {
   private ws: WSWebSocket | null = null;
-  public readyState = 0;
+  public readyState = 0; // CONNECTING
 
   public onopen: ((event: Event) => void) | null = null;
-  public onclose: ((event: Event) => void) | null = null;
+  public onclose: ((event: CloseEvent) => void) | null = null;
   public onerror: ((event: Event) => void) | null = null;
   public onmessage: ((event: MessageEvent) => void) | null = null;
 
@@ -51,50 +67,109 @@ export class NodeWebSocket {
   static readonly CLOSING = 2;
   static readonly CLOSED = 3;
 
-  async _connect(url: string) {
-    try {
-      const { WebSocket: WS } = await import("ws");
-      this.ws = new WS(url) as unknown as WSWebSocket;
+  // Queue messages sent before the socket is ready
+  private pendingMessages: Array<string | ArrayBuffer> = [];
 
-      this.ws.on("open", () => {
-        this.readyState = 1;
-        this.onopen?.(new Event("open"));
-      });
+  /**
+   * Attach the real WebSocket after upgrade completes
+   * Called by NodeServerAdapter
+   */
+  _attachRealSocket(ws: WSWebSocket) {
+    this.ws = ws;
+    this.readyState = 1; // OPEN
 
-      this.ws.on("message", (data: WSMessageData) => {
-        this.onmessage?.(new MessageEvent("message", { data: data.toString() }));
-      });
+    // Set up event handlers
+    ws.on("open", () => {
+      this.readyState = 1;
+      this.onopen?.(new Event("open"));
+    });
 
-      this.ws.on("close", () => {
-        this.readyState = 3;
-        this.onclose?.(new Event("close"));
-      });
+    ws.on("message", (data: WSMessageData) => {
+      this.onmessage?.(new MessageEvent("message", { data: data.toString() }));
+    });
 
-      this.ws.on("error", (error: Error) => {
-        this.onerror?.(new ErrorEvent("error", { error }));
-      });
-    } catch (error) {
+    ws.on("close", () => {
       this.readyState = 3;
-      const wsError = error instanceof Error
-        ? error
-        : new Error('WebSocket not available in Node.js. Install "ws" package.');
-      serverLogger.error("Failed to initialize WebSocket:", wsError);
-      this.onerror?.(new ErrorEvent("error", { error: wsError }));
+      this.onclose?.(new CloseEvent("close"));
+    });
+
+    ws.on("error", (error: Error) => {
+      this.onerror?.(new ErrorEvent("error", { error }));
+    });
+
+    // Send any pending messages
+    for (const msg of this.pendingMessages) {
+      ws.send(msg);
     }
+    this.pendingMessages = [];
+
+    // The socket is already open when we get it from handleUpgrade
+    this.onopen?.(new Event("open"));
+  }
+
+  /**
+   * Emit an error when upgrade fails
+   * Called by NodeServerAdapter
+   */
+  _emitError(error: Error) {
+    this.readyState = 3; // CLOSED
+    this.onerror?.(new ErrorEvent("error", { error }));
   }
 
   send(data: string | ArrayBuffer) {
-    if (this.readyState !== 1) {
+    if (this.ws && this.readyState === 1) {
+      this.ws.send(data);
+    } else if (this.readyState === 0) {
+      // Queue the message until the socket is ready
+      this.pendingMessages.push(data);
+    } else {
       throw toError(createError({
         type: "network",
         message: "WebSocket is not open",
       }));
     }
-    this.ws?.send(data);
   }
 
   close(code?: number, reason?: string) {
-    this.ws?.close(code, reason);
-    this.readyState = 2;
+    if (this.ws) {
+      this.ws.close(code, reason);
+    }
+    this.readyState = 2; // CLOSING
+  }
+
+  // WebSocket standard interface
+  addEventListener(type: string, listener: EventListener) {
+    switch (type) {
+      case "open":
+        this.onopen = listener as (event: Event) => void;
+        break;
+      case "close":
+        this.onclose = listener as (event: CloseEvent) => void;
+        break;
+      case "error":
+        this.onerror = listener as (event: Event) => void;
+        break;
+      case "message":
+        this.onmessage = listener as (event: MessageEvent) => void;
+        break;
+    }
+  }
+
+  removeEventListener(_type: string, _listener: EventListener) {
+    // Simplified - just null out the handler
+    switch (_type) {
+      case "open":
+        this.onopen = null;
+        break;
+      case "close":
+        this.onclose = null;
+        break;
+      case "error":
+        this.onerror = null;
+        break;
+      case "message":
+        this.onmessage = null;
+        break;
+    }
   }
 }

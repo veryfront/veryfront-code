@@ -60,6 +60,11 @@ export function waitForApproval(
   id: string,
   options: WaitForApprovalOptions = {},
 ): WorkflowNode {
+  // Validate node ID
+  if (!id || typeof id !== "string" || id.trim() === "") {
+    throw new Error("Node ID must be a non-empty string");
+  }
+
   const config: WaitNodeConfig = {
     type: "wait",
     waitType: "approval",
@@ -117,6 +122,11 @@ export function waitForEvent(
   id: string,
   options: WaitForEventOptions,
 ): WorkflowNode {
+  // Validate node ID
+  if (!id || typeof id !== "string" || id.trim() === "") {
+    throw new Error("Node ID must be a non-empty string");
+  }
+
   if (!options.eventName) {
     throw new Error(`waitForEvent "${id}" must specify an eventName`);
   }
@@ -148,6 +158,11 @@ export function waitForEvent(
  * ```
  */
 export function delay(id: string, duration: string | number): WorkflowNode {
+  // Validate node ID
+  if (!id || typeof id !== "string" || id.trim() === "") {
+    throw new Error("Node ID must be a non-empty string");
+  }
+
   const config: WaitNodeConfig = {
     type: "wait",
     waitType: "event",

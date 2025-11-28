@@ -2,13 +2,20 @@ import { join } from "@std/path";
 import { getConfig } from "@veryfront/config";
 import { cliLogger } from "@veryfront/utils";
 import { createError, toError } from "../../core/errors/veryfront-error.ts";
+import { createFileSystem, type FileSystem } from "../../platform/compat/fs.ts";
+
+let fs: FileSystem;
 
 async function ensureDir(path: string) {
+  if (!fs) fs = createFileSystem();
   try {
-    await Deno.mkdir(path, { recursive: true });
+    await fs.mkdir(path, { recursive: true });
   } catch (error) {
     // Directory might already exist, which is fine
-    const isAlreadyExists = error instanceof Deno.errors.AlreadyExists;
+    // Check for EEXIST/AlreadyExists errors cross-platform
+    const code = (error as { code?: string })?.code;
+    const isAlreadyExists = code === "EEXIST" ||
+      (typeof Deno !== "undefined" && error instanceof Deno.errors.AlreadyExists);
     if (!isAlreadyExists) {
       throw error;
     }
@@ -23,6 +30,7 @@ function toSlug(name: string) {
 }
 
 export async function generateCommand(projectDir: string, type: string, name: string) {
+  fs = createFileSystem();
   let preferred: "pages-router" | "app-router" = "pages-router";
   try {
     const { getAdapter } = await import("@veryfront/platform/adapters/detect.ts");
@@ -53,7 +61,7 @@ export async function generateCommand(projectDir: string, type: string, name: st
   );
 }
 `;
-      await Deno.writeTextFile(file, content);
+      await fs.writeTextFile(file, content);
       cliLogger.info(`Created ${file}`);
       break;
     }
@@ -69,7 +77,7 @@ export async function generateCommand(projectDir: string, type: string, name: st
             title,
           )
         }(){ return <div>${title}</div>; }\n`;
-        await Deno.writeTextFile(file, content);
+        await fs.writeTextFile(file, content);
         cliLogger.info(`Created ${file}`);
         break;
       }
@@ -80,7 +88,7 @@ export async function generateCommand(projectDir: string, type: string, name: st
       const file = join(base, subdir ? `${subdir}/${fname}` : fname);
       const title = slug.split("/").pop() || "Page";
       const content = `---\ntitle: ${title}\n---\n\n# ${title}\n\nThis is a new page.\n`;
-      await Deno.writeTextFile(file, content);
+      await fs.writeTextFile(file, content);
       cliLogger.info(`Created ${file}`);
       break;
     }
@@ -93,7 +101,7 @@ export async function generateCommand(projectDir: string, type: string, name: st
           `export default function Layout({ children }: { children: React.ReactNode }){ return (<section>${
             slug || "root"
           }{children}</section>); }\n`;
-        await Deno.writeTextFile(file, content);
+        await fs.writeTextFile(file, content);
         cliLogger.info(`Created ${file}`);
       } else {
         const dir = join(projectDir, "layouts");
@@ -104,7 +112,7 @@ export async function generateCommand(projectDir: string, type: string, name: st
             slug,
           )
         }({ children }) {\n  return (<div className="${slug}-layout"><main>{children}</main></div>);\n}\n`;
-        await Deno.writeTextFile(file, content);
+        await fs.writeTextFile(file, content);
         cliLogger.info(`Created ${file}`);
       }
       break;
@@ -118,7 +126,7 @@ export async function generateCommand(projectDir: string, type: string, name: st
           slug,
         )
       }({ children }) {\n  return (<div className="${slug}-provider">{children}</div>);\n}\n`;
-      await Deno.writeTextFile(file, content);
+      await fs.writeTextFile(file, content);
       cliLogger.info(`Created ${file}`);
       break;
     }
@@ -129,7 +137,7 @@ export async function generateCommand(projectDir: string, type: string, name: st
         await ensureDir(routeDir);
         const file = join(routeDir, "route.ts");
         const content = `export const GET = (_req: Request) => Response.json({ ok: true });\n`;
-        await Deno.writeTextFile(file, content);
+        await fs.writeTextFile(file, content);
         cliLogger.info(`Created ${file}`);
         break;
       }
@@ -140,7 +148,7 @@ export async function generateCommand(projectDir: string, type: string, name: st
       const file = join(apiBase, subdir ? `${subdir}/${fname}` : fname);
       const content =
         `export function GET(_req: Request) {\n  return new Response(JSON.stringify({ ok: true }), { headers: { 'content-type': 'application/json' } });\n}\n`;
-      await Deno.writeTextFile(file, content);
+      await fs.writeTextFile(file, content);
       cliLogger.info(`Created ${file}`);
       break;
     }

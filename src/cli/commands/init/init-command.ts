@@ -5,7 +5,7 @@
 
 import { cliLogger as logger } from "@veryfront/utils";
 import { FileSystemError } from "@veryfront/errors";
-import { cyan, green } from "std/fmt/colors.ts";
+import { cyan, green } from "@veryfront/compat/console";
 import { ensureDir } from "std/fs/mod.ts";
 import { join } from "std/path/mod.ts";
 import { createConfigFile, updateConfigCacheBlock } from "./config-generator.ts";
@@ -18,6 +18,8 @@ import {
   createSampleFiles,
 } from "./sample-generators.ts";
 import type { CacheBackend, InitOptions, InitTemplate } from "./types.ts";
+import { cwd, getEnv, isInteractive as checkIsInteractive } from "../../../platform/compat/process.ts";
+import { createFileSystem } from "../../../platform/compat/fs.ts";
 
 const CACHE_BACKENDS: CacheBackend[] = ["memory", "filesystem", "kv", "redis"];
 
@@ -40,12 +42,10 @@ function resolveCacheBackend(provided?: string): Promise<CacheBackend> {
 
   try {
     // Prompt only when stdin is interactive and we are not inside CI/tests
-    const disablePrompt = Deno.env.get("CI") === "1" || Deno.env.get("DENO_TESTING") === "1";
-    const isInteractive = !disablePrompt &&
-      typeof Deno.stdin.isTerminal === "function" &&
-      Deno.stdin.isTerminal();
+    const disablePrompt = getEnv("CI") === "1" || getEnv("DENO_TESTING") === "1";
+    const interactive = !disablePrompt && checkIsInteractive();
 
-    if (isInteractive) {
+    if (interactive) {
       const answer = prompt(
         `Select cache backend [memory/filesystem/kv/redis] (default: memory)`,
       );
@@ -89,8 +89,9 @@ export async function initCommand(options: InitOptions): Promise<void> {
     : options.appRouter
     ? "app-router"
     : "pages-router";
-  const projectDir = name ? join(Deno.cwd(), name) : Deno.cwd();
+  const projectDir = name ? join(cwd(), name) : cwd();
   const cacheBackend = await resolveCacheBackend(options.cacheBackend);
+  const fs = createFileSystem();
 
   logger.info(
     `Creating new Veryfront project${name ? ` in ${name}` : ""} with template: ${template}`,
@@ -99,13 +100,9 @@ export async function initCommand(options: InitOptions): Promise<void> {
 
   // Check if directory exists
   if (name) {
-    try {
-      await Deno.stat(projectDir);
+    const exists = await fs.exists(projectDir);
+    if (exists) {
       throw new FileSystemError(`Directory ${name} already exists`);
-    } catch (error) {
-      if (!(error instanceof Deno.errors.NotFound)) {
-        throw error;
-      }
     }
   }
 
@@ -135,7 +132,7 @@ export async function initCommand(options: InitOptions): Promise<void> {
         await ensureDir(fileDir);
       }
 
-      await Deno.writeTextFile(filePath, file.content);
+      await fs.writeTextFile(filePath, file.content);
       logger.debug(`Created file: ${file.path}`);
     }
 

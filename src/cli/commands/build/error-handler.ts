@@ -5,8 +5,9 @@
  */
 
 import process from "node:process";
-import { bold, cyan, dim, red } from "std/fmt/colors.ts";
+import { bold, cyan, dim, red } from "@veryfront/compat/console";
 import { cliLogger } from "@veryfront/utils";
+import { exit } from "../../../platform/compat/process.ts";
 
 /**
  * Handle build error with user-friendly messaging
@@ -30,7 +31,7 @@ export function handleBuildError(error: unknown): never {
   cliLogger.error(`\n${dim("For help, run: ")}${cyan("veryfront build --help")}`);
 
   if (import.meta.main) {
-    Deno.exit(1);
+    exit(1);
   }
   throw error;
 }

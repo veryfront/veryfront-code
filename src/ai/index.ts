@@ -117,11 +117,13 @@ export { BufferMemory, ConversationMemory, createMemory, SummaryMemory } from ".
 export type { Memory, MemoryPersistence, MemoryStats } from "./agent/memory.ts";
 
 // ============================================================================
-// Public API - Auto-Discovery
+// Public API - Auto-Discovery & Setup
 // ============================================================================
 
 export { discoverAll } from "./utils/discovery.ts";
 export type { DiscoveryConfig, DiscoveryResult } from "./utils/discovery.ts";
+
+export { setupAI, type SetupAIOptions, type SetupAIResult } from "./utils/setup.ts";
 
 // ============================================================================
 // Public API - MCP Server

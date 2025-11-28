@@ -16,6 +16,17 @@ import type {
 import type { BackendConfig, WorkflowBackend } from "./types.ts";
 
 /**
+ * Memory backend configuration
+ */
+export interface MemoryBackendConfig extends BackendConfig {
+  /** Maximum queue size (default: 10000) */
+  maxQueueSize?: number;
+}
+
+/** Default max queue size */
+const DEFAULT_MAX_QUEUE_SIZE = 10000;
+
+/**
  * In-memory workflow backend
  *
  * @example
@@ -31,12 +42,13 @@ export class MemoryBackend implements WorkflowBackend {
   private approvals = new Map<string, PendingApproval[]>();
   private queue: WorkflowJob[] = [];
   private locks = new Map<string, { lockId: string; expiresAt: number }>();
-  private config: BackendConfig;
+  private config: MemoryBackendConfig;
 
-  constructor(config: BackendConfig = {}) {
+  constructor(config: MemoryBackendConfig = {}) {
     this.config = {
       prefix: "wf:",
       debug: false,
+      maxQueueSize: DEFAULT_MAX_QUEUE_SIZE,
       ...config,
     };
   }
@@ -114,14 +126,10 @@ export class MemoryBackend implements WorkflowBackend {
     // Sort by creation date (newest first)
     runs.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
 
-    // Apply pagination
-    if (filter.offset) {
-      runs = runs.slice(filter.offset);
-    }
-
-    if (filter.limit) {
-      runs = runs.slice(0, filter.limit);
-    }
+    // Apply pagination (offset and limit together)
+    const start = filter.offset ?? 0;
+    const end = filter.limit ? start + filter.limit : undefined;
+    runs = runs.slice(start, end);
 
     return Promise.resolve(runs.map((r) => structuredClone(r)));
   }
@@ -269,6 +277,14 @@ export class MemoryBackend implements WorkflowBackend {
   // =========================================================================
 
   enqueue(job: WorkflowJob): Promise<void> {
+    // Check queue size limit
+    const maxSize = this.config.maxQueueSize ?? DEFAULT_MAX_QUEUE_SIZE;
+    if (this.queue.length >= maxSize) {
+      return Promise.reject(
+        new Error(`Queue full (max: ${maxSize}). Cannot enqueue job: ${job.runId}`),
+      );
+    }
+
     if (this.config.debug) {
       console.log(`[MemoryBackend] Enqueueing job: ${job.runId}`);
     }

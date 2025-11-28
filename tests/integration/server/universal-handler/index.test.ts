@@ -41,8 +41,10 @@ function createMockAdapter(envVars: Record<string, string> = {}): typeof denoAda
   };
 
   return {
+    id: denoAdapter.id,
     name: denoAdapter.name,
     platform: denoAdapter.platform,
+    capabilities: denoAdapter.capabilities,
     serve: denoAdapter.serve,
     fs: denoAdapter.fs,
     env: customEnv,

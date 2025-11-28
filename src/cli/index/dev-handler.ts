@@ -9,6 +9,8 @@ import { cliLogger, DEFAULT_DEV_SERVER_PORT } from "@veryfront/utils";
 import { devCommand } from "../commands/dev.ts";
 import { showLogo } from "../utils/index.ts";
 import type { ParsedArgs } from "./types.ts";
+import { cwd } from "../../platform/compat/process.ts";
+import { createFileSystem } from "../../platform/compat/fs.ts";
 
 /**
  * Detect the project directory by checking for config files
@@ -16,25 +18,20 @@ import type { ParsedArgs } from "./types.ts";
  * @returns Project directory path
  */
 async function detectProjectDir(): Promise<string> {
-  const projectDir = Deno.cwd();
+  const projectDir = cwd();
   const configPath = join(projectDir, "veryfront.config.ts");
   const altConfigPath = join(projectDir, "veryfront.config.js");
 
-  try {
-    await Deno.stat(configPath);
+  const fs = createFileSystem();
+  if (await fs.exists(configPath)) {
     return projectDir;
-  } catch (error) {
-    // Config not found at default location
-    cliLogger.debug("No veryfront.config.ts found:", error);
-    try {
-      await Deno.stat(altConfigPath);
-      return projectDir;
-    } catch (altError) {
-      // No config file found, but that's okay - we'll use defaults
-      cliLogger.debug("No veryfront.config.js found, using defaults:", altError);
-      return projectDir;
-    }
   }
+  if (await fs.exists(altConfigPath)) {
+    return projectDir;
+  }
+  // No config file found, but that's okay - we'll use defaults
+  cliLogger.debug("No veryfront config found, using defaults");
+  return projectDir;
 }
 
 /**

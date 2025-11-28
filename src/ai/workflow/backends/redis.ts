@@ -35,6 +35,7 @@ export interface RedisClient {
   rpush(key: string, ...values: string[]): Promise<number>;
   lrange(key: string, start: number, stop: number): Promise<string[]>;
   lindex(key: string, index: number): Promise<string | null>;
+  lset(key: string, index: number, value: string): Promise<string>;
   llen(key: string): Promise<number>;
 
   // Stream operations
@@ -107,6 +108,7 @@ export interface RedisBackendConfig extends BackendConfig {
  */
 export class RedisBackend implements WorkflowBackend {
   private client: RedisClient | null = null;
+  private connectionPromise: Promise<RedisClient> | null = null;
   private config: Required<
     Pick<RedisBackendConfig, "prefix" | "streamKey" | "groupName" | "consumerName" | "debug">
   > & RedisBackendConfig;
@@ -214,11 +216,25 @@ export class RedisBackend implements WorkflowBackend {
   // Connection Management
   // =========================================================================
 
-  private async ensureClient(): Promise<RedisClient> {
+  private ensureClient(): Promise<RedisClient> {
+    // Return existing client if available
     if (this.client) {
-      return this.client;
+      return Promise.resolve(this.client);
     }
 
+    // Use existing connection promise to prevent race conditions
+    // Multiple concurrent calls will share the same connection promise
+    if (!this.connectionPromise) {
+      this.connectionPromise = this.createConnection();
+    }
+
+    return this.connectionPromise;
+  }
+
+  /**
+   * Create a new Redis connection
+   */
+  private async createConnection(): Promise<RedisClient> {
     // Dynamic import for redis
     const { connect } = await import("redis");
 
@@ -513,28 +529,35 @@ export class RedisBackend implements WorkflowBackend {
     decision: ApprovalDecision,
   ): Promise<void> {
     const client = await this.ensureClient();
+    const key = this.approvalsKey(runId);
 
-    // Get all approvals
-    const rawList = await client.lrange(this.approvalsKey(runId), 0, -1);
+    // Get all approvals to find the index
+    const rawList = await client.lrange(key, 0, -1);
 
-    // Find and update the approval
-    const updated: string[] = [];
-    for (const raw of rawList) {
-      const data = JSON.parse(raw);
+    // Find the index of the approval to update
+    let targetIndex = -1;
+    for (let i = 0; i < rawList.length; i++) {
+      const data = JSON.parse(rawList[i]!);
       if (data.id === approvalId) {
-        data.status = decision.approved ? "approved" : "rejected";
-        data.decidedBy = decision.approver;
-        data.decidedAt = new Date().toISOString();
-        data.comment = decision.comment;
+        targetIndex = i;
+        break;
       }
-      updated.push(JSON.stringify(data));
     }
 
-    // Replace the list
-    await client.del(this.approvalsKey(runId));
-    if (updated.length > 0) {
-      await client.rpush(this.approvalsKey(runId), ...updated);
+    if (targetIndex === -1) {
+      throw new Error(`Approval not found: ${approvalId}`);
     }
+
+    // Parse and update the approval data
+    const data = JSON.parse(rawList[targetIndex]!);
+    data.status = decision.approved ? "approved" : "rejected";
+    data.decidedBy = decision.approver;
+    data.decidedAt = new Date().toISOString();
+    data.comment = decision.comment;
+
+    // Use LSET to atomically update the specific index
+    // This is more atomic than del + rpush as it only modifies one element
+    await client.lset(key, targetIndex, JSON.stringify(data));
   }
 
   async listPendingApprovals(filter?: {
@@ -723,6 +746,7 @@ export class RedisBackend implements WorkflowBackend {
       this.client.close();
       this.client = null;
     }
+    this.connectionPromise = null;
     this.initialized = false;
 
     if (this.config.debug) {

@@ -3,8 +3,9 @@
  * Analyzes MDX files and creates optimized shared chunks
  */
 
-import { join } from "https://deno.land/std@0.220.0/path/mod.ts";
+import { join } from "std/path/mod.ts";
 import { bundlerLogger as logger } from "@veryfront/utils";
+import type { FileSystemAdapter } from "../platform/adapters/base.ts";
 // Note: import analysis hooks can be reintroduced if chunking strategy evolves in the future.
 
 const SIZE_LIMITS = {
@@ -72,8 +73,13 @@ export interface ChunkManifest {
 
 /**
  * Analyze all MDX pages for optimal chunking
+ * @param projectDir - Project root directory
+ * @param fs - Optional filesystem adapter for cross-platform support
  */
-export async function analyzeProjectChunks(projectDir: string): Promise<ChunkAnalysis> {
+export async function analyzeProjectChunks(
+  projectDir: string,
+  fs?: FileSystemAdapter,
+): Promise<ChunkAnalysis> {
   const pages = new Map<string, PageImports>();
   const sharedDeps = new Map<string, number>();
 
@@ -82,7 +88,8 @@ export async function analyzeProjectChunks(projectDir: string): Promise<ChunkAna
 
   async function findMDX(dir: string) {
     try {
-      for await (const entry of Deno.readDir(dir)) {
+      const entries = fs ? fs.readDir(dir) : Deno.readDir(dir);
+      for await (const entry of entries) {
         const path = join(dir, entry.name);
         if (entry.isFile && entry.name.endsWith(".mdx")) {
           mdxFiles.push(path);
@@ -100,7 +107,9 @@ export async function analyzeProjectChunks(projectDir: string): Promise<ChunkAna
   // Analyze each MDX file
   for (const mdxPath of mdxFiles) {
     try {
-      const content = await Deno.readTextFile(mdxPath);
+      const content = fs
+        ? await fs.readFile(mdxPath)
+        : await Deno.readTextFile(mdxPath);
       const imports = analyzeImports(content);
 
       const pageImports: PageImports = {

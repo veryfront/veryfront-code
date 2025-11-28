@@ -12,7 +12,8 @@ export interface HMRServerOptions {
   port: number;
   projectDir: string;
   reactRefresh?: boolean;
-  adapter?: RuntimeAdapter;
+  /** Runtime adapter - required for cross-platform server support */
+  adapter: RuntimeAdapter;
   maxMessageSize?: number;
   maxMessagesPerMinute?: number;
   signal?: AbortSignal;

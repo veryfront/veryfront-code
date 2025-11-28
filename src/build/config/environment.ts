@@ -3,6 +3,8 @@
  * Consolidates all environment variable access to reduce proliferation
  */
 
+import { getEnv } from "../../platform/compat/process.ts";
+
 export type Environment = "development" | "production" | "test";
 
 /**
@@ -11,19 +13,19 @@ export type Environment = "development" | "production" | "test";
  */
 export function getEnvironment(): Environment {
   // Check framework-specific env first (highest priority)
-  const veryfrontEnv = Deno.env.get("VERYFRONT_ENV");
+  const veryfrontEnv = getEnv("VERYFRONT_ENV");
   if (veryfrontEnv === "production" || veryfrontEnv === "development" || veryfrontEnv === "test") {
     return veryfrontEnv as Environment;
   }
 
   // Check Node.js standard env
-  const nodeEnv = Deno.env.get("NODE_ENV");
+  const nodeEnv = getEnv("NODE_ENV");
   if (nodeEnv === "production" || nodeEnv === "development" || nodeEnv === "test") {
     return nodeEnv as Environment;
   }
 
   // Check Deno env
-  const denoEnv = Deno.env.get("DENO_ENV");
+  const denoEnv = getEnv("DENO_ENV");
   if (denoEnv === "production" || denoEnv === "development" || denoEnv === "test") {
     return denoEnv as Environment;
   }

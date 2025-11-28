@@ -4,10 +4,10 @@
  */
 
 import { serverLogger as logger } from "@veryfront/utils";
-import { createError, toError } from "../../core/errors/veryfront-error.ts";
 import { HTTP_NOT_FOUND, HTTP_NOT_IMPLEMENTED, HTTP_SERVER_ERROR } from "@veryfront/utils";
 import { HMR_MAX_MESSAGE_SIZE_BYTES, HMR_MAX_MESSAGES_PER_MINUTE } from "@veryfront/utils";
 import type { HMRServerOptions, HMRUpdate } from "./hmr-types.ts";
+import type { Server } from "../../platform/adapters/base.ts";
 import {
   closeAllConnections,
   RateLimiter,
@@ -24,7 +24,7 @@ export type { HMRServerOptions, HMRUpdate } from "./hmr-types.ts";
  */
 export class HMRServer {
   private clients = new Set<WebSocket>();
-  private server?: { shutdown(): Promise<void> };
+  private server?: Server;
   private cachedRuntime?: string;
   private rateLimiter: RateLimiter;
   private readonly maxMessageSize: number;
@@ -39,7 +39,7 @@ export class HMRServer {
    * Start the HMR server
    * Sets up HTTP server with WebSocket upgrade and runtime script serving
    */
-  start(): void {
+  async start(): Promise<void> {
     const _handler = (req: Request): Response => {
       const url = new URL(req.url);
 
@@ -96,14 +96,9 @@ export class HMRServer {
       return new Response("Not Found", { status: HTTP_NOT_FOUND });
     };
 
-    // Runtime check for Deno.serve
-    const globalDeno = (globalThis as { Deno?: { serve?: unknown } }).Deno;
-    if (!globalDeno?.serve || typeof globalDeno.serve !== "function") {
-      logger.error("HMR server requires Deno runtime with Deno.serve support");
-      throw toError(createError({
-        type: "config",
-        message: "HMR server is only supported in Deno runtime",
-      }));
+    // Ensure we have an adapter
+    if (!this.options.adapter) {
+      throw new Error("HMR server requires a runtime adapter");
     }
 
     // Create AbortController if no signal provided for fast shutdown
@@ -111,15 +106,14 @@ export class HMRServer {
     const signal = this.options.signal || controller.signal;
     this.abortController = this.options.signal ? undefined : controller;
 
-    this.server = globalDeno.serve({
+    // Use the adapter's serve method - works on any runtime (Deno, Node, Bun)
+    this.server = await this.options.adapter.serve(_handler, {
       port: this.options.port,
-      reusePort: true,
       signal,
-      handler: _handler,
       onListen: ({ port }: { port: number }) => {
         logger.info(`HMR server running on port ${port}`);
       },
-    }) as { shutdown(): Promise<void> };
+    });
   }
 
   /**
@@ -140,7 +134,7 @@ export class HMRServer {
       // Stop the HTTP server
       // Called AFTER WebSocket close handshake completes to avoid aborting connections
       if (this.server) {
-        await this.server.shutdown();
+        await this.server.stop();
       }
 
       logger.info("HMR server stopped");

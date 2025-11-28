@@ -3,6 +3,8 @@ import {
   generateChunkManifest,
 } from "@veryfront/rendering/chunk-optimizer.ts";
 import { cliLogger } from "@veryfront/utils";
+import { createFileSystem } from "../../platform/compat/fs.ts";
+import { exit } from "../../platform/compat/process.ts";
 
 export interface AnalyzeChunksOptions {
   projectDir: string;
@@ -40,8 +42,9 @@ export async function analyzeChunksCommand(options: AnalyzeChunksOptions) {
     }
 
     if (output) {
+      const fs = createFileSystem();
       const _manifest = generateChunkManifest(analysis);
-      await Deno.writeTextFile(output, JSON.stringify(_manifest, null, 2));
+      await fs.writeTextFile(output, JSON.stringify(_manifest, null, 2));
       cliLogger.info(`Saved chunk manifest to ${output}`);
     }
 
@@ -69,6 +72,6 @@ export async function analyzeChunksCommand(options: AnalyzeChunksOptions) {
       );
     }
   } catch (_error) {
-    Deno.exit(1);
+    exit(1);
   }
 }

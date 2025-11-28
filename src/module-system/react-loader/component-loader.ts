@@ -7,6 +7,7 @@ import { getGlobalTmpDir } from "./temp-directory.ts";
 import { normalizeModulePath, resolveRelativePath } from "./path-resolver.ts";
 import type { LoadComponentOptions } from "./types.ts";
 import { createError, toError } from "../../core/errors/veryfront-error.ts";
+import { createFileSystem } from "../../platform/compat/fs.ts";
 
 export async function loadComponentFromSource(
   source: string,
@@ -43,9 +44,10 @@ export async function loadComponentFromSource(
   const componentFile = join(tmpDir, normalizeModulePath(relativeFilePath));
 
   const componentDir = componentFile.substring(0, componentFile.lastIndexOf("/"));
-  await Deno.mkdir(componentDir, { recursive: true });
+  const fs = createFileSystem();
+  await fs.mkdir(componentDir, { recursive: true });
 
-  await Deno.writeTextFile(componentFile, transformedCode);
+  await fs.writeTextFile(componentFile, transformedCode);
 
   const cacheBuster = Date.now();
   const mod = await import(`file://${componentFile}?t=${cacheBuster}`);

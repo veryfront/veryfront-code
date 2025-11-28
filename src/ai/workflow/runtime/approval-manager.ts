@@ -69,6 +69,7 @@ export interface ApprovalRequest {
 export class ApprovalManager {
   private config: ApprovalManagerConfig;
   private expirationTimer?: ReturnType<typeof setInterval>;
+  private destroyed = false;
 
   constructor(config: ApprovalManagerConfig) {
     this.config = {
@@ -319,6 +320,11 @@ export class ApprovalManager {
    * Check and expire stale approvals
    */
   async checkExpiredApprovals(): Promise<void> {
+    // Guard against post-stop execution
+    if (this.destroyed) {
+      return;
+    }
+
     if (!this.config.backend.listPendingApprovals) {
       return;
     }
@@ -369,6 +375,7 @@ export class ApprovalManager {
    * Stop the approval manager
    */
   stop(): void {
+    this.destroyed = true;
     if (this.expirationTimer) {
       clearInterval(this.expirationTimer);
       this.expirationTimer = undefined;

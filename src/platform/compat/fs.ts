@@ -1,7 +1,34 @@
+/**
+ * Cross-platform filesystem abstraction for CLI commands and standalone utilities.
+ *
+ * This module provides a synchronous-style API for filesystem operations that works
+ * across Deno, Node.js, and Bun runtimes. It's designed for CLI commands and scripts
+ * where you don't have access to a RuntimeAdapter context.
+ *
+ * For server/rendering contexts where you have an adapter, prefer using adapter.fs directly:
+ * ```ts
+ * const adapter = await getAdapter();
+ * const content = await adapter.fs.readFile(path);
+ * ```
+ *
+ * For CLI commands and standalone utilities, use createFileSystem():
+ * ```ts
+ * import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
+ * const fs = createFileSystem();
+ * const content = await fs.readTextFile(path);
+ * ```
+ *
+ * @module
+ */
+
 import { isDeno } from "./runtime.ts";
 import type { FileInfo } from "@veryfront/platform/adapters/base.ts";
 import { createError, toError } from "../../core/errors/veryfront-error.ts";
 
+/**
+ * Cross-platform filesystem interface for CLI commands and standalone utilities.
+ * Compatible with RuntimeAdapter.fs (FileSystemAdapter) for easy interoperability.
+ */
 export interface FileSystem {
   readTextFile(path: string): Promise<string>;
   writeTextFile(path: string, data: string): Promise<void>;
@@ -164,7 +191,19 @@ class NodeFileSystem implements FileSystem {
   }
 }
 
-export function createFileSystem() {
+/**
+ * Create a cross-platform filesystem instance for CLI commands and standalone utilities.
+ *
+ * Use this for CLI commands that don't have access to a RuntimeAdapter context:
+ * ```ts
+ * const fs = createFileSystem();
+ * const content = await fs.readTextFile(path);
+ * await fs.writeTextFile(outputPath, result);
+ * ```
+ *
+ * For server/rendering contexts, prefer using adapter.fs directly.
+ */
+export function createFileSystem(): FileSystem {
   if (isDeno) {
     return new DenoFileSystem();
   } else {

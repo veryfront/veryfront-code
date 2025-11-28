@@ -5,12 +5,13 @@
 import { compileAllMDX, watchMDX } from "@veryfront/build/compiler/mdx-compiler/index.ts";
 import { ErrorCode, VeryfrontError } from "@veryfront/errors/index.ts";
 import { LOCALHOST } from "@veryfront/config";
-import { bold, cyan, dim, green } from "std/fmt/colors.ts";
+import { bold, cyan, dim, green } from "@veryfront/compat/console";
 import { join } from "std/path/mod.ts";
 import { getAdapter } from "@veryfront/platform/adapters/detect.ts";
 import { cliLogger } from "@veryfront/utils";
 import { getConfig } from "@veryfront/config";
 import { createDevServer } from "@veryfront/server/dev-server.ts";
+import { getNetworkInterfaces } from "../../platform/compat/process.ts";
 
 export interface DevOptions {
   port: number;
@@ -21,9 +22,9 @@ export interface DevOptions {
 // Alias for backward compatibility
 export type DevCommandOptions = DevOptions;
 
-function getLocalIP(): string {
+async function getLocalIP(): Promise<string> {
   try {
-    const interfaces = Deno.networkInterfaces();
+    const interfaces = await getNetworkInterfaces();
     for (const iface of interfaces) {
       if (iface.family === "IPv4" && !iface.address.startsWith("127.")) {
         return iface.address;
@@ -115,8 +116,9 @@ export async function devCommand(options: DevOptions) {
   // Enhanced startup message
   cliLogger.info(`${green("✓")} Server started successfully!\n`);
 
+  const localIP = await getLocalIP();
   cliLogger.info(`  ${bold("Local:")}    ${cyan(`http://${LOCALHOST.HOSTNAME}:${finalPort}`)}`);
-  cliLogger.info(`  ${bold("Network:")}  ${cyan(`http://${getLocalIP()}:${finalPort}`)}`);
+  cliLogger.info(`  ${bold("Network:")}  ${cyan(`http://${localIP}:${finalPort}`)}`);
   cliLogger.info(`  ${bold("HMR:")}      ${dim(`ws://${LOCALHOST.HOSTNAME}:${finalPort}/_ws`)}\n`);
 
   cliLogger.info(dim("  Press ") + bold("Ctrl+C") + dim(" to stop the server\n"));

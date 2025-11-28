@@ -1,7 +1,10 @@
 import process from "node:process";
 import { logger } from "@veryfront/utils";
-import type { RuntimeAdapter } from "./base.ts";
+import type { RuntimeAdapter, RuntimeId } from "./base.ts";
 import { createError, toError } from "../../core/errors/veryfront-error.ts";
+
+// Re-export the registry for convenient access
+export { runtime } from "./registry.ts";
 
 interface DenoGlobal {
   Deno: {
@@ -34,7 +37,11 @@ function isCloudflare(global: typeof globalThis): global is typeof globalThis & 
   return "caches" in global && "WebSocketPair" in global;
 }
 
-export function detectRuntime() {
+/**
+ * Detect the current runtime environment
+ * @returns Runtime identifier
+ */
+export function detectRuntime(): RuntimeId | "unknown" {
   if (isDeno(globalThis)) {
     return "deno";
   }
@@ -54,10 +61,25 @@ export function detectRuntime() {
   return "unknown";
 }
 
+/**
+ * Get the runtime adapter for the current environment
+ *
+ * @deprecated Use `runtime.get()` from `./registry.ts` instead for singleton management
+ *
+ * @example
+ * ```ts
+ * // Old way (deprecated)
+ * const adapter = await getAdapter();
+ *
+ * // New way (recommended)
+ * import { runtime } from "@veryfront/platform/adapters/registry.ts";
+ * const adapter = await runtime.get();
+ * ```
+ */
 export async function getAdapter(): Promise<RuntimeAdapter> {
-  const runtime = detectRuntime();
+  const runtimeId = detectRuntime();
 
-  switch (runtime) {
+  switch (runtimeId) {
     case "deno": {
       const { denoAdapter } = await import("./deno.ts");
       return denoAdapter;
@@ -85,7 +107,7 @@ export async function getAdapter(): Promise<RuntimeAdapter> {
 
     default: {
       const supportedRuntimes = ["deno", "bun", "node", "cloudflare"];
-      const errorMsg = `Unsupported runtime: ${runtime}. Supported runtimes: ${
+      const errorMsg = `Unsupported runtime: ${runtimeId}. Supported runtimes: ${
         supportedRuntimes.join(", ")
       }`;
       logger.error("[Adapter Detection]", errorMsg);
@@ -105,5 +127,7 @@ export type {
   EnvironmentAdapter,
   FileSystemAdapter,
   RuntimeAdapter,
+  RuntimeCapabilities,
   RuntimeFeatures,
+  RuntimeId,
 } from "./base.ts";
