@@ -250,13 +250,28 @@ export class CheckpointManager {
     // Sort by timestamp (newest first)
     all.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
 
-    // Keep only the most recent ones
-    // Note: This requires a deleteCheckpoint method on the backend
-    // which we haven't implemented. For now, this is a no-op.
+    // Get checkpoints to delete (all except the newest keepCount)
+    const toDelete = all.slice(keepCount);
+    const idsToDelete = toDelete.map((c) => c.id);
+
+    if (idsToDelete.length === 0) {
+      return;
+    }
+
     if (this.config.debug) {
       console.log(
-        `[CheckpointManager] Would clean up ${all.length - keepCount} old checkpoints for run ${runId}`,
+        `[CheckpointManager] Cleaning up ${idsToDelete.length} old checkpoints for run ${runId}`,
       );
     }
+
+    // Use batch delete if available, otherwise delete one by one
+    if (this.config.backend.deleteCheckpoints) {
+      await this.config.backend.deleteCheckpoints(runId, idsToDelete);
+    } else if (this.config.backend.deleteCheckpoint) {
+      for (const id of idsToDelete) {
+        await this.config.backend.deleteCheckpoint(runId, id);
+      }
+    }
+    // If neither method is available, cleanup is a no-op
   }
 }

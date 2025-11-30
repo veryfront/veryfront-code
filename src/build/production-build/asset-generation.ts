@@ -7,6 +7,7 @@ import { serverLogger as logger } from "@veryfront/utils";
 import { dirname, join, relative } from "node:path";
 import { walk } from "std/fs/mod.ts";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
+import { CLIENT_STYLES } from "./templates.ts";
 
 export interface AssetStats {
   assets: number;
@@ -263,17 +264,8 @@ export async function copyStaticAssets(
 }
 
 /**
- * Load CSS template from file
+ * Load CSS template (embedded for npm compatibility)
  */
-export async function loadClientStyles(adapter: RuntimeAdapter): Promise<string> {
-  const currentFileUrl = import.meta.url;
-  const currentDir = dirname(new URL(currentFileUrl).pathname);
-  const stylesPath = join(currentDir, "templates/client-styles.css");
-
-  try {
-    return await adapter.fs.readFile(stylesPath);
-  } catch (error) {
-    logger.warn("Could not load client styles template:", error);
-    return ""; // Return empty string as fallback
-  }
+export function loadClientStyles(): string {
+  return CLIENT_STYLES;
 }

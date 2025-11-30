@@ -493,8 +493,9 @@ describe(
       expect(typeof loadClientStyles).toBe("function");
     });
 
-    it("loads CSS template successfully", async () => {
-      const css = await loadClientStyles(denoAdapter);
+    it("loads embedded CSS successfully", () => {
+      // Function is now synchronous and returns embedded CSS
+      const css = loadClientStyles();
 
       expect(typeof css).toBe("string");
       expect(css.length).toBeGreaterThan(0);
@@ -504,31 +505,31 @@ describe(
       expect(css.includes("margin")).toBe(true);
     });
 
-    it("CSS contains loading spinner styles", async () => {
-      const css = await loadClientStyles(denoAdapter);
+    it("CSS contains loading spinner styles", () => {
+      const css = loadClientStyles();
 
       expect(css.includes("loading-spinner")).toBe(true);
       expect(css.includes("@keyframes")).toBe(true);
       expect(css.includes("spin")).toBe(true);
     });
 
-    it("CSS contains error container styles", async () => {
-      const css = await loadClientStyles(denoAdapter);
+    it("CSS contains error container styles", () => {
+      const css = loadClientStyles();
 
       expect(css.includes("error-container")).toBe(true);
       expect(css.includes("border")).toBe(true);
     });
 
-    it("CSS contains prose styles", async () => {
-      const css = await loadClientStyles(denoAdapter);
+    it("CSS contains prose styles", () => {
+      const css = loadClientStyles();
 
       expect(css.includes(".prose")).toBe(true);
       expect(css.includes("max-width")).toBe(true);
       expect(css.includes("code")).toBe(true);
     });
 
-    it("returns valid CSS syntax", async () => {
-      const css = await loadClientStyles(denoAdapter);
+    it("returns valid CSS syntax", () => {
+      const css = loadClientStyles();
 
       // Basic CSS validation
       const openBraces = (css.match(/\{/g) || []).length;
@@ -539,42 +540,22 @@ describe(
       expect(css.includes("#")).toBe(true);
     });
 
-    it("handles missing template file gracefully", async () => {
-      // Create a mock adapter that simulates missing file
-      const mockAdapter = {
-        ...denoAdapter,
-        fs: {
-          ...denoAdapter.fs,
-          readFile: (_path: string) => {
-            throw new Error("File not found");
-          },
-        },
-      } as any;
-
-      // Should return empty string as fallback
-      const css = await loadClientStyles(mockAdapter as any);
-      expect(css).toBe("");
+    it("always returns embedded CSS (no file I/O)", () => {
+      // CSS is embedded as a constant, no adapter or file system needed
+      const css = loadClientStyles();
+      expect(typeof css).toBe("string");
+      expect(css.length).toBeGreaterThan(0);
     });
 
-    it("handles read errors gracefully", async () => {
-      // Create a mock adapter that simulates read error
-      const mockAdapter = {
-        ...denoAdapter,
-        fs: {
-          ...denoAdapter.fs,
-          readFile: (_path: string) => {
-            throw new Error("Permission denied");
-          },
-        },
-      } as any;
-
-      // Should not throw, return empty string
-      const css = await loadClientStyles(mockAdapter as any);
-      expect(css).toBe("");
+    it("returns consistent CSS across calls", () => {
+      // Embedded CSS should be identical on every call
+      const css1 = loadClientStyles();
+      const css2 = loadClientStyles();
+      expect(css1).toBe(css2);
     });
 
-    it("CSS contains expected selectors", async () => {
-      const css = await loadClientStyles(denoAdapter);
+    it("CSS contains expected selectors", () => {
+      const css = loadClientStyles();
 
       const expectedSelectors = [
         "body",
@@ -594,8 +575,8 @@ describe(
       }
     });
 
-    it("CSS is minification-ready", async () => {
-      const css = await loadClientStyles(denoAdapter);
+    it("CSS is minification-ready", () => {
+      const css = loadClientStyles();
 
       // Should not contain obvious syntax errors
       expect(css.includes(";;")).toBe(false);

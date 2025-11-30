@@ -279,7 +279,10 @@ export class DAGExecutor {
         );
 
       default:
-        throw new Error(`Unknown node type: ${(config as WorkflowNodeConfig).type}`);
+        throw new Error(
+          `Unknown node type "${(config as WorkflowNodeConfig).type}" for node "${node.id}". ` +
+          `Valid types are: step, parallel, branch, wait, subWorkflow`
+        );
     }
   }
 
@@ -515,10 +518,16 @@ export class DAGExecutor {
     // If dependsOn is explicitly set (even to []), respect that choice
     let prevNodeId: string | null = null;
     for (const node of nodes) {
-      // Only add implicit deps if dependsOn is undefined (not explicitly set)
-      if (node.dependsOn === undefined) {
-        if (prevNodeId && !this.hasAnyDependents(nodes, node.id)) {
-          // This node has no deps and isn't depended on by previous nodes
+      // Only add implicit deps if:
+      // 1. dependsOn is undefined (not explicitly set)
+      // 2. No other node explicitly depends on this node
+      // 3. This node has no incoming edges yet
+      if (node.dependsOn === undefined && prevNodeId) {
+        const isDependent = this.hasAnyDependents(nodes, node.id);
+        const currentInDegree = inDegree.get(node.id) ?? 0;
+
+        if (!isDependent && currentInDegree === 0) {
+          // This node is "floating" - no explicit deps and nothing depends on it
           // Create implicit dependency on previous node
           adjList.get(prevNodeId)!.push(node.id);
           inDegree.set(node.id, inDegree.get(node.id)! + 1);
@@ -531,7 +540,7 @@ export class DAGExecutor {
   }
 
   /**
-   * Check if a node has any dependents
+   * Check if any node explicitly depends on the given node
    */
   private hasAnyDependents(nodes: WorkflowNode[], nodeId: string): boolean {
     return nodes.some((n) => n.dependsOn?.includes(nodeId));

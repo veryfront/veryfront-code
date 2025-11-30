@@ -181,19 +181,50 @@ export class RedisBackend implements WorkflowBackend {
   }
 
   private deserializeRun(data: Record<string, string>): WorkflowRun {
+    // Validate required fields
+    if (!data.id) {
+      throw new Error("Invalid workflow run data: missing 'id' field");
+    }
+    if (!data.workflowId) {
+      throw new Error(`Invalid workflow run data for run "${data.id}": missing 'workflowId' field`);
+    }
+
+    // Validate status is a known value
+    const validStatuses: WorkflowStatus[] = ["pending", "running", "completed", "failed", "cancelled", "waiting"];
+    const status = data.status as WorkflowStatus;
+    if (data.status && !validStatuses.includes(status)) {
+      throw new Error(
+        `Invalid workflow run data for run "${data.id}": unknown status "${data.status}". ` +
+        `Expected one of: ${validStatuses.join(", ")}`
+      );
+    }
+
+    // Safely parse JSON fields with error context
+    const safeJsonParse = <T>(field: string, value: string | undefined, defaultValue: T): T => {
+      if (!value) return defaultValue;
+      try {
+        return JSON.parse(value) as T;
+      } catch (e) {
+        throw new Error(
+          `Invalid workflow run data for run "${data.id}": failed to parse '${field}' as JSON. ` +
+          `Error: ${e instanceof Error ? e.message : String(e)}`
+        );
+      }
+    };
+
     return {
-      id: data.id ?? "",
-      workflowId: data.workflowId ?? "",
+      id: data.id,
+      workflowId: data.workflowId,
       version: data.version || undefined,
-      status: (data.status as WorkflowStatus) ?? "pending",
-      input: data.input ? JSON.parse(data.input) : undefined,
-      output: data.output ? JSON.parse(data.output) : undefined,
-      nodeStates: data.nodeStates ? JSON.parse(data.nodeStates) : {},
-      currentNodes: data.currentNodes ? JSON.parse(data.currentNodes) : [],
-      context: data.context ? JSON.parse(data.context) : {},
+      status: status ?? "pending",
+      input: safeJsonParse("input", data.input, undefined),
+      output: safeJsonParse("output", data.output, undefined),
+      nodeStates: safeJsonParse("nodeStates", data.nodeStates, {}),
+      currentNodes: safeJsonParse("currentNodes", data.currentNodes, []),
+      context: safeJsonParse("context", data.context, { input: undefined }),
       checkpoints: [], // Loaded separately
       pendingApprovals: [], // Loaded separately
-      error: data.error ? JSON.parse(data.error) : undefined,
+      error: safeJsonParse("error", data.error, undefined),
       createdAt: data.createdAt ? new Date(data.createdAt) : new Date(),
       startedAt: data.startedAt ? new Date(data.startedAt) : undefined,
       completedAt: data.completedAt ? new Date(data.completedAt) : undefined,

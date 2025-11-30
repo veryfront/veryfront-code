@@ -135,14 +135,22 @@ describe("WorkflowClient", () => {
 
   describe("approve() and reject()", () => {
     it("should approve a pending approval", async () => {
-      const handle = await client.start("approval-workflow", {});
-
-      // Manually add a pending approval and set workflow to waiting state
-      await backend.updateRun(handle.runId, {
+      // Create run directly in waiting state (avoid async execution race)
+      const runId = "test-run-approval";
+      await backend.createRun({
+        id: runId,
+        workflowId: "approval-workflow",
         status: "waiting",
+        input: {},
+        nodeStates: {},
+        currentNodes: ["review"],
+        context: { input: {} },
+        checkpoints: [],
+        pendingApprovals: [],
+        createdAt: new Date(),
       });
 
-      await backend.savePendingApproval(handle.runId, {
+      await backend.savePendingApproval(runId, {
         id: "approval-1",
         nodeId: "review",
         status: "pending",
@@ -151,23 +159,31 @@ describe("WorkflowClient", () => {
         requestedAt: new Date(),
       });
 
-      await client.approve(handle.runId, "approval-1", "admin@test.com", "Looks good!");
+      await client.approve(runId, "approval-1", "admin@test.com", "Looks good!");
 
-      const approval = await backend.getPendingApproval(handle.runId, "approval-1");
+      const approval = await backend.getPendingApproval(runId, "approval-1");
       assertEquals(approval?.status, "approved");
       assertEquals(approval?.decidedBy, "admin@test.com");
       assertEquals(approval?.comment, "Looks good!");
     });
 
     it("should reject a pending approval", async () => {
-      const handle = await client.start("approval-workflow", {});
-
-      // Set workflow to waiting state
-      await backend.updateRun(handle.runId, {
+      // Create run directly in waiting state (avoid async execution race)
+      const runId = "test-run-rejection";
+      await backend.createRun({
+        id: runId,
+        workflowId: "approval-workflow",
         status: "waiting",
+        input: {},
+        nodeStates: {},
+        currentNodes: ["review"],
+        context: { input: {} },
+        checkpoints: [],
+        pendingApprovals: [],
+        createdAt: new Date(),
       });
 
-      await backend.savePendingApproval(handle.runId, {
+      await backend.savePendingApproval(runId, {
         id: "approval-2",
         nodeId: "review",
         status: "pending",
@@ -176,9 +192,9 @@ describe("WorkflowClient", () => {
         requestedAt: new Date(),
       });
 
-      await client.reject(handle.runId, "approval-2", "reviewer@test.com", "Needs changes");
+      await client.reject(runId, "approval-2", "reviewer@test.com", "Needs changes");
 
-      const approval = await backend.getPendingApproval(handle.runId, "approval-2");
+      const approval = await backend.getPendingApproval(runId, "approval-2");
       assertEquals(approval?.status, "rejected");
       assertEquals(approval?.comment, "Needs changes");
     });

@@ -72,8 +72,8 @@ export async function buildPagesRoutes(
     ssgPaths: [],
   };
 
-  // Load client styles once
-  const clientStyles = await loadClientStyles(adapter);
+  // Load client styles once (embedded, no I/O)
+  const clientStyles = loadClientStyles();
 
   for (const route of routes) {
     try {

@@ -8,7 +8,7 @@ import { FileSystemError } from "@veryfront/errors";
 import { cyan, green } from "@veryfront/compat/console";
 import { ensureDir } from "std/fs/mod.ts";
 import { join } from "std/path/mod.ts";
-import { createConfigFile, updateConfigCacheBlock } from "./config-generator.ts";
+import { createConfigFile, createPackageJson, updateConfigCacheBlock } from "./config-generator.ts";
 import { createProjectStructure } from "./project-structure.ts";
 import { createError, toError } from "../../../core/errors/veryfront-error.ts";
 import {
@@ -136,11 +136,15 @@ export async function initCommand(options: InitOptions): Promise<void> {
       logger.debug(`Created file: ${file.path}`);
     }
 
+    // Create package.json with ES module support
+    await createPackageJson(projectDir, name);
     await updateConfigCacheBlock(projectDir, cacheBackend);
   } else {
     // Legacy template handling
     await createProjectStructure(projectDir, template);
     await createConfigFile(projectDir, name, template, cacheBackend);
+    // Create package.json with ES module support
+    await createPackageJson(projectDir, name);
 
     if (template === "app-router") await createAppRouterSample(projectDir);
     else if (template === "app-router-api") {

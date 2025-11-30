@@ -95,6 +95,35 @@ export async function createConfigFile(
 }
 
 /**
+ * Creates a package.json file with ES module support
+ *
+ * @param projectDir - Root directory of the project
+ * @param projectName - Name of the project
+ */
+export async function createPackageJson(
+  projectDir: string,
+  projectName?: string,
+): Promise<void> {
+  const packageJson = {
+    name: projectName || "veryfront-project",
+    version: "0.1.0",
+    type: "module",
+    scripts: {
+      dev: "veryfront dev",
+      build: "veryfront build",
+      preview: "veryfront preview",
+    },
+  };
+
+  const fs = createFileSystem();
+  await fs.writeTextFile(
+    join(projectDir, "package.json"),
+    JSON.stringify(packageJson, null, 2),
+  );
+  logger.debug(`Created package.json with "type": "module"`);
+}
+
+/**
  * Updates the render cache backend inside veryfront.config.js
  *
  * @param projectDir - Root directory containing the config file

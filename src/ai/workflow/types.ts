@@ -412,9 +412,14 @@ export type DurationString = string;
 
 /**
  * Parse duration string to milliseconds
+ *
+ * @throws Error if duration is invalid, zero, or negative
  */
 export function parseDuration(duration: string | number): number {
   if (typeof duration === "number") {
+    if (duration < 0) {
+      throw new Error(`Duration cannot be negative: ${duration}`);
+    }
     return duration;
   }
 
@@ -432,6 +437,11 @@ export function parseDuration(duration: string | number): number {
 
   const num = parseFloat(value);
 
+  // Reject zero and negative values
+  if (num <= 0) {
+    throw new Error(`Duration must be positive: ${duration}`);
+  }
+
   switch (unit) {
     case "ms":
       return num;
@@ -445,6 +455,46 @@ export function parseDuration(duration: string | number): number {
       return num * 24 * 60 * 60 * 1000;
     default:
       throw new Error(`Unknown duration unit: ${unit}`);
+  }
+}
+
+/**
+ * Validate retry configuration
+ *
+ * @throws Error if retry config has invalid values
+ */
+export function validateRetryConfig(config: RetryConfig): void {
+  if (config.maxAttempts !== undefined) {
+    if (!Number.isInteger(config.maxAttempts) || config.maxAttempts < 1) {
+      throw new Error(`maxAttempts must be a positive integer, got: ${config.maxAttempts}`);
+    }
+  }
+
+  if (config.initialDelay !== undefined) {
+    if (config.initialDelay < 0) {
+      throw new Error(`initialDelay cannot be negative: ${config.initialDelay}`);
+    }
+  }
+
+  if (config.maxDelay !== undefined) {
+    if (config.maxDelay < 0) {
+      throw new Error(`maxDelay cannot be negative: ${config.maxDelay}`);
+    }
+  }
+
+  if (config.initialDelay !== undefined && config.maxDelay !== undefined) {
+    if (config.initialDelay > config.maxDelay) {
+      throw new Error(
+        `initialDelay (${config.initialDelay}) cannot be greater than maxDelay (${config.maxDelay})`
+      );
+    }
+  }
+
+  if (config.backoff !== undefined) {
+    const validBackoffs = ["fixed", "linear", "exponential"];
+    if (!validBackoffs.includes(config.backoff)) {
+      throw new Error(`Invalid backoff strategy: ${config.backoff}. Must be one of: ${validBackoffs.join(", ")}`);
+    }
   }
 }
 
