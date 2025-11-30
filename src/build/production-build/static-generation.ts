@@ -92,7 +92,7 @@ export async function buildPagesRoutes(
       }
 
       // Add import map and styles
-      const importMap = generateImportMap();
+      const importMap = await generateImportMap();
       enhancedHtml = enhancedHtml.replace(
         "</head>",
         `
@@ -218,6 +218,11 @@ export async function buildAppRoutes(
 
 /**
  * Generate client runtime script for a page
+ *
+ * Note: We intentionally exclude `html` from pageData because:
+ * 1. The SSR content is already in the DOM
+ * 2. Including the full HTML causes content duplication when hydration scripts parse it
+ * 3. It significantly increases bundle size
  */
 function generateClientRuntime(
   route: RouteInfo,
@@ -228,7 +233,7 @@ function generateClientRuntime(
     slug: route.slug,
     frontmatter: result.frontmatter,
     headings: result.headings,
-    html: result.html,
+    // Note: html field is intentionally omitted to prevent content duplication
   };
 
   return `
