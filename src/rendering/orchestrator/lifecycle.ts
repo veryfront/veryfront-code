@@ -18,14 +18,6 @@ import {
   RedisCacheStore,
 } from "../cache/stores/index.ts";
 import type { CacheStore } from "../cache/types.ts";
-// Removed: deleted module - rendering/caching/ directory was deleted
-// import {
-//   CacheCoordinator,
-//   RenderCache,
-//   LayoutComponentCache,
-//   PageModuleCache,
-//   CachePersistence,
-// } from "../caching/index.ts";
 import { LayoutCollector, LayoutCompiler, ProviderManager } from "../layouts/index.ts";
 import { PageRenderer } from "../page-renderer.ts";
 import { PageResolver } from "../page-resolution/index.ts";
@@ -34,6 +26,7 @@ import { SSRRenderer } from "../ssr-renderer.ts";
 import type { ConfigurationManager } from "./config.ts";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import type { MdxBundle } from "@veryfront/types";
+import { CompilerService } from "./compiler-service.ts";
 
 export interface LifecycleOptions {
   configManager: ConfigurationManager;
@@ -53,6 +46,7 @@ export interface RendererServices {
   ssrRenderer: SSRRenderer;
   pageRenderer: PageRenderer;
   pageResolver: PageResolver;
+  compilerService: CompilerService;
 }
 
 /**
@@ -141,32 +135,27 @@ export class RendererLifecycle {
       mode: this.configManager.getMode(),
     });
 
-    // Create compileMDX function that will be bound to renderer
-    // We'll pass a placeholder for now and the renderer will bind it
-    const compileMDXPlaceholder = () => {
-      throw toError(createError({
-        type: "render",
-        message: "compileMDX not bound yet",
-      }));
-    };
+    // Initialize compiler service to handle late binding
+    const compilerService = new CompilerService();
+    const compileMDXProxy = compilerService.getCompileFunction();
 
     // Initialize layout system components
     const layoutCollector = new LayoutCollector({
       projectDir: this.configManager.getProjectDir(),
       adapter: this.adapter,
       config,
-      compileMDX: compileMDXPlaceholder,
+      compileMDX: compileMDXProxy,
     });
 
     const layoutCompiler = new LayoutCompiler({
       adapter: this.adapter,
-      compileMDX: compileMDXPlaceholder,
+      compileMDX: compileMDXProxy,
     });
 
     const providerManager = new ProviderManager({
       projectDir: this.configManager.getProjectDir(),
       adapter: this.adapter,
-      compileMDX: compileMDXPlaceholder,
+      compileMDX: compileMDXProxy,
     });
 
     // Initialize rendering pipeline components
@@ -188,7 +177,7 @@ export class RendererLifecycle {
       config,
       adapter: this.adapter,
       componentRegistry: componentRegistry,
-      compileMDX: compileMDXPlaceholder,
+      compileMDX: compileMDXProxy,
       moduleServerUrl: this.moduleServerUrl,
     });
 
@@ -211,6 +200,7 @@ export class RendererLifecycle {
       ssrRenderer,
       pageRenderer,
       pageResolver,
+      compilerService,
     };
 
     // Skip eager component loading in compiled binaries to avoid @mdx-js/mdx Worker issues
@@ -254,12 +244,8 @@ export class RendererLifecycle {
       }));
     }
 
-    // Update all services that use compileMDX
-    // Use 'any' to bypass TypeScript's strict checking for internal property update
-    (this.services.layoutCollector as any).compileMDX = compileMDX;
-    (this.services.layoutCompiler as any).compileMDX = compileMDX;
-    (this.services.providerManager as any).compileMDX = compileMDX;
-    (this.services.pageRenderer as any).compileMDX = compileMDX;
+    // Update the compiler service, which updates the proxy function used by all services
+    this.services.compilerService.setCompileMDX(compileMDX);
   }
 
   /**

@@ -1,8 +1,10 @@
-export function resolvePathAliases(
+import { replaceSpecifiers } from "./lexer.ts";
+
+export async function resolvePathAliases(
   code: string,
   filePath: string,
   projectDir: string,
-): string {
+): Promise<string> {
   const _normalizedProjectDir = projectDir.replace(/\\/g, "/").replace(/\/$/, "");
 
   let relativeFilePath = filePath;
@@ -12,7 +14,7 @@ export function resolvePathAliases(
     const pathParts = filePath.split("/");
     const projectParts = _normalizedProjectDir.split("/");
     const lastProjectPart = projectParts[projectParts.length - 1];
-    const projectIndex = pathParts.indexOf(lastProjectPart!);
+    const projectIndex = pathParts.indexOf(lastProjectPart!); 
     if (projectIndex >= 0) {
       relativeFilePath = pathParts.slice(projectIndex + 1).join("/");
     }
@@ -22,27 +24,22 @@ export function resolvePathAliases(
   const depth = fileDir.split("/").filter(Boolean).length;
   const relativeToRoot = depth === 0 ? "." : "../".repeat(depth).slice(0, -1);
 
-  const aliasRegex = /from\s+['"]@\/([^'"]+)['"]/g;
-  code = code.replace(aliasRegex, (_match, path) => {
-    const relativePath = depth === 0 ? `./${path}` : `${relativeToRoot}/${path}`;
-    return `from '${relativePath}'`;
+  return replaceSpecifiers(code, (specifier) => {
+    if (specifier.startsWith("@/")) {
+      const path = specifier.substring(2);
+      const relativePath = depth === 0 ? `./${path}` : `${relativeToRoot}/${path}`;
+      return relativePath;
+    }
+    return null;
   });
-
-  const dynamicAliasRegex = /import\(['"]@\/([^'"]+)['"]\)/g;
-  code = code.replace(dynamicAliasRegex, (_match, path) => {
-    const relativePath = depth === 0 ? `./${path}` : `${relativeToRoot}/${path}`;
-    return `import('${relativePath}')`;
-  });
-
-  return code;
 }
 
-export function resolveRelativeImports(
+export async function resolveRelativeImports(
   code: string,
   filePath: string,
   projectDir: string,
   moduleServerUrl?: string,
-): string {
+): Promise<string> {
   if (!moduleServerUrl) {
     return code;
   }
@@ -64,19 +61,13 @@ export function resolveRelativeImports(
 
   const fileDir = relativeFilePath.substring(0, relativeFilePath.lastIndexOf("/"));
 
-  const relativeImportRegex = /from\s+['"](\.\.?\/[^'"]+)['"]/g;
-  code = code.replace(relativeImportRegex, (_match, importPath) => {
-    const resolvedPath = resolveRelativePath(fileDir, importPath);
-    return `from '${moduleServerUrl}/${resolvedPath}'`;
+  return replaceSpecifiers(code, (specifier) => {
+    if (specifier.startsWith("./") || specifier.startsWith("../")) {
+      const resolvedPath = resolveRelativePath(fileDir, specifier);
+      return `${moduleServerUrl}/${resolvedPath}`;
+    }
+    return null;
   });
-
-  const dynamicRelativeImportRegex = /import\(['"](\.\.?\/[^'"]+)['"]\)/g;
-  code = code.replace(dynamicRelativeImportRegex, (_match, importPath) => {
-    const resolvedPath = resolveRelativePath(fileDir, importPath);
-    return `import('${moduleServerUrl}/${resolvedPath}')`;
-  });
-
-  return code;
 }
 
 function resolveRelativePath(currentDir: string, importPath: string): string {
@@ -95,32 +86,30 @@ function resolveRelativePath(currentDir: string, importPath: string): string {
   return resolvedParts.join("/");
 }
 
-export function resolveRelativeImportsToAbsolute(
+export async function resolveRelativeImportsToAbsolute(
   code: string,
   filePath: string,
   projectDir: string,
-): string {
-  const _normalizedProjectDir = projectDir.replace(/\\/g, "/").replace(/\/$/, "");
+): Promise<string> {
   const normalizedFilePath = filePath.replace(/\\/g, "/");
-
-  // Get the directory of the current file
   const fileDir = normalizedFilePath.substring(0, normalizedFilePath.lastIndexOf("/"));
 
-  // Convert relative imports to absolute file:// URLs
-  const relativeImportRegex = /from\s+['"](\.\.?\/[^'"]+)['"]/g;
-  code = code.replace(relativeImportRegex, (_match, importPath) => {
-    // Resolve the relative path to an absolute path
-    const absolutePath = resolveAbsolutePath(fileDir, importPath);
-    return `from 'file://${absolutePath}'`;
+  return replaceSpecifiers(code, (specifier) => {
+    if (specifier.startsWith("./") || specifier.startsWith("../")) {
+      const absolutePath = resolveAbsolutePath(fileDir, specifier);
+      return `file://${absolutePath}`;
+    }
+    return null;
   });
+}
 
-  const dynamicRelativeImportRegex = /import\(['"](\.\.?\/[^'"]+)['"]\)/g;
-  code = code.replace(dynamicRelativeImportRegex, (_match, importPath) => {
-    const absolutePath = resolveAbsolutePath(fileDir, importPath);
-    return `import('file://${absolutePath}')`;
+export async function resolveRelativeImportsForNodeSSR(code: string): Promise<string> {
+  return replaceSpecifiers(code, (specifier) => {
+    if (specifier.startsWith("./") || specifier.startsWith("../")) {
+      return specifier.replace(/\.(tsx|ts|jsx)$/, ".js");
+    }
+    return null;
   });
-
-  return code;
 }
 
 function resolveAbsolutePath(baseDir: string, relativePath: string): string {

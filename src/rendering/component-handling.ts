@@ -4,13 +4,14 @@
 
 import { rendererLogger as logger } from "@veryfront/utils";
 import { ErrorCode, VeryfrontError } from "@veryfront/errors/index.ts";
-import * as React from "react";
+import * as BundledReact from "react";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import type { EntityInfo, PageBundle } from "@veryfront/types";
 import { createError, toError } from "../core/errors/veryfront-error.ts";
+import { getProjectReact } from "@veryfront/react";
 
 export interface ComponentPageResult {
-  pageElement: React.ReactElement;
+  pageElement: BundledReact.ReactElement;
   pageBundle: PageBundle;
 }
 
@@ -71,7 +72,9 @@ export async function handleComponentPage(
       }));
     }
 
-    const pageElement = React.createElement(PageComponent, options?.props || {});
+    // Get project's React for createElement to ensure element symbols match user components
+    const React = await getProjectReact();
+    const pageElement = React.createElement(PageComponent, options?.props || {}) as BundledReact.ReactElement;
 
     const pageBundle: PageBundle = {
       compiledCode: "",

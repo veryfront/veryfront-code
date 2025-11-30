@@ -5,6 +5,7 @@
 
 import { assertEquals, assertExists } from "std/assert/mod.ts";
 import { afterEach, beforeEach, describe, it } from "std/testing/bdd.ts";
+import type { Dispatch, SetStateAction, EffectCallback, DependencyList } from "react";
 import {
   __resetBridgeForTesting,
   getStateBridge,
@@ -35,8 +36,8 @@ class MockSessionStorage {
 
 // Mock React hooks
 class MockReactHooks {
-  private states: Map<string, { value: unknown; setter: (v: unknown) => void }> = new Map();
-  private effects: Array<() => void | (() => void)> = [];
+  private states: Map<string, { value: unknown; setter: Dispatch<SetStateAction<unknown>> }> = new Map();
+  private effects: Array<EffectCallback> = [];
 
   // Bind methods in constructor to preserve 'this' context
   constructor() {
@@ -45,26 +46,31 @@ class MockReactHooks {
     this.useCallback = this.useCallback.bind(this);
   }
 
-  useState<T>(initial: T): [T, (value: T) => void] {
+  useState<S>(initialState: S | (() => S)): [S, Dispatch<SetStateAction<S>>] {
     const key = `state-${this.states.size}`;
     if (!this.states.has(key)) {
-      const setter = (value: unknown) => {
+      const initialValue = typeof initialState === "function"
+        ? (initialState as () => S)()
+        : initialState;
+      const setter: Dispatch<SetStateAction<S>> = (action: SetStateAction<S>) => {
         const state = this.states.get(key);
         if (state) {
-          state.value = value;
+          state.value = typeof action === "function"
+            ? (action as (prevState: S) => S)(state.value as S)
+            : action;
         }
       };
-      this.states.set(key, { value: initial as unknown, setter });
+      this.states.set(key, { value: initialValue as unknown, setter: setter as Dispatch<SetStateAction<unknown>> });
     }
     const state = this.states.get(key)!;
-    return [state.value as T, state.setter as (value: T) => void];
+    return [state.value as S, state.setter as Dispatch<SetStateAction<S>>];
   }
 
-  useEffect(effect: () => void | (() => void), _deps?: unknown[]): void {
+  useEffect(effect: EffectCallback, _deps?: DependencyList): void {
     this.effects.push(effect);
   }
 
-  useCallback<T>(callback: T, _deps?: unknown[]): T {
+  useCallback<T extends (...args: any[]) => any>(callback: T, _deps?: DependencyList): T {
     return callback;
   }
 
@@ -349,7 +355,7 @@ describe("State Bridge", () => {
     });
 
     it("should use bridged state via SharedState.use", () => {
-      const [value, setValue] = SharedState.use("key", "initial");
+      const [value, setValue] = SharedState.use("key", "initial", undefined, mockReact);
 
       assertEquals(value, "initial");
       assertExists(setValue);
@@ -358,7 +364,7 @@ describe("State Bridge", () => {
 
   describe("useBridgedState Hook", () => {
     it("should initialize with initial value", () => {
-      const [value] = useBridgedState("key", "initial");
+      const [value] = useBridgedState("key", "initial", undefined, mockReact);
 
       assertEquals(value, "initial");
     });
@@ -367,19 +373,19 @@ describe("State Bridge", () => {
       const bridge = getStateBridge();
       bridge.set("key", "stored");
 
-      const [value] = useBridgedState("key", "initial");
+      const [value] = useBridgedState("key", "initial", undefined, mockReact);
 
       assertEquals(value, "stored");
     });
 
     it("should return setter function", () => {
-      const [, setValue] = useBridgedState("key", "initial");
+      const [, setValue] = useBridgedState("key", "initial", undefined, mockReact);
 
       assertEquals(typeof setValue, "function");
     });
 
     it("should update bridge on setValue", () => {
-      const [, setValue] = useBridgedState("key", "initial");
+      const [, setValue] = useBridgedState("key", "initial", undefined, mockReact);
 
       setValue("updated");
 
@@ -388,7 +394,7 @@ describe("State Bridge", () => {
     });
 
     it("should subscribe to updates", () => {
-      useBridgedState("key", "initial");
+      useBridgedState("key", "initial", undefined, mockReact);
 
       const cleanups = mockReact.runEffects();
 
@@ -401,7 +407,7 @@ describe("State Bridge", () => {
     });
 
     it("should persist when persist option is true", () => {
-      useBridgedState("key", "initial", { persist: true });
+      useBridgedState("key", "initial", { persist: true }, mockReact);
 
       mockReact.runEffects();
 
@@ -413,11 +419,11 @@ describe("State Bridge", () => {
     });
 
     it("should handle different data types", () => {
-      const [strValue] = useBridgedState("str", "text");
-      const [numValue] = useBridgedState("num", 42);
-      const [boolValue] = useBridgedState("bool", true);
-      const [objValue] = useBridgedState("obj", { key: "value" });
-      const [arrValue] = useBridgedState("arr", [1, 2, 3]);
+      const [strValue] = useBridgedState("str", "text", undefined, mockReact);
+      const [numValue] = useBridgedState("num", 42, undefined, mockReact);
+      const [boolValue] = useBridgedState("bool", true, undefined, mockReact);
+      const [objValue] = useBridgedState("obj", { key: "value" }, undefined, mockReact);
+      const [arrValue] = useBridgedState("arr", [1, 2, 3], undefined, mockReact);
 
       assertEquals(strValue, "text");
       assertEquals(numValue, 42);
@@ -442,7 +448,7 @@ describe("State Bridge", () => {
     it("should handle missing React hooks", () => {
       (globalThis as any).React = undefined;
 
-      const [value, setValue] = useBridgedState("key", "initial");
+      const [value, setValue] = useBridgedState("key", "initial", undefined, mockReact);
 
       // Should use fallback hooks
       assertEquals(value, "initial");

@@ -3,6 +3,7 @@ import type { WSMessageData, WSWebSocket } from "./types.ts";
 import { createError, toError } from "../../../core/errors/veryfront-error.ts";
 import { serverLogger } from "@veryfront/utils";
 import { registerWebSocketUpgrade } from "./http-server.ts";
+import * as crypto from "node:crypto";
 
 export class NodeServerAdapter implements ServerAdapter {
   upgradeWebSocket(request: Request): WebSocketUpgrade {
@@ -43,7 +44,6 @@ export class NodeServerAdapter implements ServerAdapter {
   }
 
   private generateAcceptKey(key: string): string {
-    const crypto = require("node:crypto");
     const GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
     return crypto.createHash("sha1").update(key + GUID).digest("base64");
   }

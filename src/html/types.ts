@@ -3,7 +3,7 @@ import type { VeryfrontConfig } from "@veryfront/config";
 export type { HTMLMetadata, MDXFrontmatter } from "@veryfront/transforms/mdx/types.ts";
 
 export interface HTMLGenerationOptions {
-  mode: string;
+  mode: "development" | "production";
   config: VeryfrontConfig;
   importMap?: Record<string, string>;
   nestedLayouts?: Array<{ kind: string; path?: string; componentPath?: string }>;

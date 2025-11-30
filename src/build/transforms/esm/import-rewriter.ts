@@ -1,6 +1,7 @@
+import { replaceSpecifiers, parseImports, rewriteImports } from "./lexer.ts";
 import { REACT_DEFAULT_VERSION } from "@veryfront/utils/constants/cdn.ts";
 
-export function rewriteBareImports(code: string, moduleServerUrl?: string): string {
+export async function rewriteBareImports(code: string, moduleServerUrl?: string): Promise<string> {
   const importMap: Record<string, string> = moduleServerUrl
     ? {
       "react": `${moduleServerUrl}/_vendor/react`,
@@ -19,83 +20,111 @@ export function rewriteBareImports(code: string, moduleServerUrl?: string): stri
       "react/jsx-dev-runtime": `https://esm.sh/react@${REACT_DEFAULT_VERSION}/jsx-dev-runtime`,
     };
 
-  for (const [bare, url] of Object.entries(importMap)) {
-    const importRegex = new RegExp(
-      `from\\s*['"]${bare.replace(/\//g, "\\/")}['"]`,
-      "g",
-    );
-    code = code.replace(importRegex, `from '${url}'`);
-
-    const dynamicImportRegex = new RegExp(
-      `import\\(['"]${bare.replace(/\//g, "\\/")}['"]\\)`,
-      "g",
-    );
-    code = code.replace(dynamicImportRegex, `import('${url}')`);
-  }
-
-  return code;
+  return replaceSpecifiers(code, (specifier) => {
+    return importMap[specifier] || null;
+  });
 }
 
-export function rewriteVendorImports(
+export async function rewriteVendorImports(
   code: string,
   moduleServerUrl: string,
   vendorBundleHash: string,
-): string {
+): Promise<string> {
   const vendorUrl = `${moduleServerUrl}/_vendor.js?v=${vendorBundleHash}`;
 
-  const reactPackages = [
+  const reactPackages = new Set([
     "react",
     "react-dom",
     "react-dom/client",
     "react-dom/server",
     "react/jsx-runtime",
     "react/jsx-dev-runtime",
-  ];
+  ]);
 
-  for (const pkg of reactPackages) {
-    const exportName = sanitizeVendorExportName(pkg);
+  // First, preserve export statements by only swapping the specifier
+  let result = await rewriteImports(code, (imp, statement) => {
+    if (!imp.n || !reactPackages.has(imp.n)) return null;
+    const trimmed = statement.trimStart();
+    if (!trimmed.startsWith("export")) return null;
 
-    const patterns = [
-      `['"]${pkg.replace(/\//g, "\\/")}['"]`,
-      `['"]https://esm\\.sh/${pkg.replace(/\//g, "\\/")}@[^'"]+['"]`,
-      `['"]https://esm\\.sh/${pkg.replace(/\//g, "\\/")}['"]`,
-    ];
+    const specStart = imp.s - imp.ss;
+    const specEnd = imp.e - imp.ss;
+    const before = statement.slice(0, specStart);
+    const after = statement.slice(specEnd);
+    return `${before}${vendorUrl}${after}`;
+  });
 
-    for (const pattern of patterns) {
-      const importRegex = new RegExp(
-        `import\\s+([^'"]+)\\s+from\\s+${pattern}`,
-        "g",
-      );
+  // Re-parse after export rewrites
+  const baseSource = result;
+  const imports = await parseImports(baseSource);
 
-      code = code.replace(importRegex, (_match, imports) => {
-        if (imports.trim().startsWith("*")) {
-          return `import ${imports} from '${vendorUrl}'`;
-        }
+  // Process in reverse order to maintain indices
+  for (let i = imports.length - 1; i >= 0; i--) {
+    const imp = imports[i];
+    if (!imp) continue;
+    
+    // Skip if not a vendor package
+    if (!imp.n || !reactPackages.has(imp.n)) continue;
 
-        if (imports.trim().startsWith("{")) {
-          return `import { ${exportName} } from '${vendorUrl}'; const ${imports.trim()} = ${exportName}`;
-        }
+    const exportName = sanitizeVendorExportName(imp.n);
 
-        return `import { ${exportName} as ${imports.trim()} } from '${vendorUrl}'`;
-      });
-    }
+    if (imp.d > -1) {
+      // Dynamic import: import('react') -> import('vendor').then(m => m.react)
+      // imp.d is start of `import(`, imp.e is end of specifier content
 
-    const dynamicPatterns = [
-      `import\\(['"]${pkg.replace(/\//g, "\\/")}['"]\\)`,
-      `import\\(['"]https://esm\\.sh/${pkg.replace(/\//g, "\\/")}@[^'"]+['"]\\)`,
-      `import\\(['"]https://esm\\.sh/${pkg.replace(/\//g, "\\/")}['"]\\)`,
-    ];
+      // Find closing paren after the specifier
+      const afterSpecifier = baseSource.substring(imp.e);
+      // Matches closing quote then closing paren
+      const match = afterSpecifier.match(/^['"]\s*\)/);
 
-    for (const pattern of dynamicPatterns) {
-      const dynamicImportRegex = new RegExp(pattern, "g");
-      code = code.replace(
-        dynamicImportRegex,
-        `import('${vendorUrl}').then(m => m.${exportName})`,
-      );
+      if (!match) continue;
+
+      const endOfCall = imp.e + match[0].length;
+
+      const before = result.substring(0, imp.d);
+      const after = result.substring(endOfCall);
+      const replacement = `import('${vendorUrl}').then(m => m.${exportName})`;
+
+      result = before + replacement + after;
+    } else {
+      // Static import
+      // Extract the part between "import" and "from"
+      const beforeSpecifier = baseSource.substring(imp.ss, imp.s);
+      const fromIndex = beforeSpecifier.lastIndexOf("from");
+      
+      if (fromIndex === -1) {
+        // Side-effect import: import 'react'
+        const before = result.substring(0, imp.ss);
+        const after = result.substring(imp.se);
+        result = before + `import '${vendorUrl}'` + after;
+        continue;
+      }
+      
+      // Extract the import clause (e.g., "{ useState }", "React", "* as React")
+      // "import " is length 7
+      const clause = beforeSpecifier.substring(6, fromIndex).trim();
+      
+      let replacement = "";
+      if (clause.startsWith("*")) {
+        // import * as React from 'react'
+        replacement = `import ${clause} from '${vendorUrl}'`;
+      } else if (clause.startsWith("{")) {
+        // import { useState } from 'react'
+        // -> import { react } from 'vendor'; const { useState } = react;
+        replacement = `import { ${exportName} } from '${vendorUrl}'; const ${clause} = ${exportName}`;
+      } else {
+        // import React from 'react'
+        // -> import { react as React } from 'vendor'
+        replacement = `import { ${exportName} as ${clause} } from '${vendorUrl}'`;
+      }
+      
+      const before = result.substring(0, imp.ss);
+      const after = result.substring(imp.se);
+      result = before + replacement + after;
     }
   }
 
-  return code;
+  return result;
 }
 
 function sanitizeVendorExportName(pkg: string): string {

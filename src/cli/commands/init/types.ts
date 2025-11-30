@@ -11,6 +11,7 @@ export type InitTemplate =
   | "docs"
   | "app"
   | "minimal"
+  | "ai"
   | "pages-router"
   | "app-router"
   | "app-router-api"

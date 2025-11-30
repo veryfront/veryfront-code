@@ -10,9 +10,13 @@ import { createError, toError } from "../../core/errors/veryfront-error.ts";
 import { createFileSystem } from "../../platform/compat/fs.ts";
 
 // Detect if running in Node.js (vs Deno)
-// deno-lint-ignore no-explicit-any
-const _global = globalThis as any;
-const IS_NODE = typeof Deno === "undefined" && typeof _global.process !== "undefined" && _global.process?.versions?.node;
+// Use a function instead of module-level constant to ensure correct evaluation
+// when bundled with esbuild's __esm lazy initialization pattern
+function isNodeRuntime(): boolean {
+  // deno-lint-ignore no-explicit-any
+  const _global = globalThis as any;
+  return typeof Deno === "undefined" && typeof _global.process !== "undefined" && !!_global.process?.versions?.node;
+}
 
 export async function loadComponentFromSource(
   source: string,
@@ -23,13 +27,15 @@ export async function loadComponentFromSource(
 ): Promise<React.ComponentType<Record<string, unknown>>> {
   const projectId = options?.projectId || projectDir;
   const dev = options?.dev ?? true;
+  // Check runtime at call time for correct evaluation in bundled code
+  const isNode = isNodeRuntime();
   // On Node.js, always use SSR mode to avoid module server URLs
   // This uses absolute file:// paths instead of /_vf_modules/ paths
-  const ssr = IS_NODE ? true : (options?.ssr ?? false);
+  const ssr = isNode ? true : (options?.ssr ?? false);
   // Use relative path for module server (integrated into main dev server at /_vf_modules/)
   // On Node.js, don't use moduleServerUrl since there's no dev server
-  const moduleServerUrl = IS_NODE ? undefined : (options?.moduleServerUrl ?? "/_vf_modules");
-  const vendorBundleHash = IS_NODE ? undefined : options?.vendorBundleHash;
+  const moduleServerUrl = isNode ? undefined : (options?.moduleServerUrl ?? "/_vf_modules");
+  const vendorBundleHash = isNode ? undefined : options?.vendorBundleHash;
 
   const transformOpts: TransformOptions = {
     projectId,
@@ -50,7 +56,7 @@ export async function loadComponentFromSource(
   // On Node.js, use a project-relative cache directory so module resolution works
   // Node.js resolves bare imports relative to the file location
   let tmpDir: string;
-  if (IS_NODE) {
+  if (isNode) {
     tmpDir = join(projectDir, "node_modules", ".cache", "veryfront-components");
   } else {
     tmpDir = await getGlobalTmpDir();

@@ -8,8 +8,8 @@
  */
 
 import * as React from "react";
-import { renderToString } from "react-dom/server";
 import { serverLogger as logger } from "@veryfront/utils";
+import { renderToStringAdapter } from "@veryfront/react";
 import type { ClientComponentMeta, RSCNode } from "../types.ts";
 import {
   getComponentId,
@@ -120,7 +120,7 @@ export async function processElement(
 
     if (!hasClientComponents && processedChildren.every((child) => child.type === "html")) {
       // Simple case: no client components, render to string
-      const html = renderToString(element as React.ReactElement);
+      const html = await renderToStringAdapter(element as React.ReactElement);
       return { type: "html", html };
     }
 
@@ -148,7 +148,7 @@ export async function processElement(
   }
 
   // Default: render to string
-  const html = renderToString(element as React.ReactElement);
+  const html = await renderToStringAdapter(element as React.ReactElement);
   return { type: "html", html };
 }
 

@@ -30,6 +30,13 @@ export async function wrapInHTMLShell(
 ): Promise<string> {
   const hasNoLayout = shouldDisableLayout(meta.frontmatter);
 
+  // Debug: Log received mode value at entry point
+  logger.info("[HTML-SHELL] Mode received:", {
+    mode: options.mode,
+    modeType: typeof options.mode,
+    slug: meta.slug,
+  });
+
   logger.info("wrapInHTMLShell called with meta:", {
     title: meta.title,
     frontmatter: meta.frontmatter,

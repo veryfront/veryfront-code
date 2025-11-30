@@ -1,5 +1,5 @@
 import { rendererLogger as logger } from "@veryfront/utils";
-import * as React from "react";
+import * as BundledReact from "react";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import type {
   LayoutItem,
@@ -16,9 +16,10 @@ import {
   getElementDebugInfo,
   getElementTypeName,
 } from "../../element-validator/primitive-checks.ts";
+import { getProjectReact } from "@veryfront/react";
 
 export async function applyLayoutsESM(
-  pageElement: React.ReactElement,
+  pageElement: BundledReact.ReactElement,
   layoutBundle: MdxBundle | undefined,
   nestedLayouts: LayoutItem[],
   providerItems: ProviderItem[],
@@ -26,7 +27,7 @@ export async function applyLayoutsESM(
   mergedComponents: MDXComponents,
   tsxLayoutModuleCache: LayoutComponentCache,
   adapter: RuntimeAdapter,
-): Promise<React.ReactElement> {
+): Promise<BundledReact.ReactElement> {
   let element = pageElement;
 
   if (nestedLayouts.length > 0) {
@@ -71,7 +72,7 @@ export async function applyLayoutsESM(
 }
 
 export async function applyLayoutsFunctionBody(
-  pageElement: React.ReactElement,
+  pageElement: BundledReact.ReactElement,
   layoutBundle: MdxBundle | undefined,
   nestedLayouts: LayoutItem[],
   providerItems: ProviderItem[],
@@ -79,7 +80,9 @@ export async function applyLayoutsFunctionBody(
   tsxLayoutModuleCache: LayoutComponentCache,
   projectDir: string,
   adapter: RuntimeAdapter,
-): Promise<React.ReactElement> {
+): Promise<BundledReact.ReactElement> {
+  // Get project's React for createElement to ensure element symbols match user components
+  const React = await getProjectReact();
   let element = pageElement;
 
   logger.debug("Using function-body wrapping for layouts");
@@ -113,12 +116,12 @@ export async function applyLayoutsFunctionBody(
             tsxLayoutModuleCache,
             adapter,
           );
-          const child = ensureValidChild(element);
+          const child = ensureValidChild(element, React);
           logger.info("Applying TSX layout:", {
             layoutName: LayoutComponent.name || "Anonymous",
-            childType: React.isValidElement(child) ? getElementTypeName(child) : typeof child,
+            childType: React.isValidElement(child) ? getElementTypeName(child as BundledReact.ReactElement) : typeof child,
           });
-          element = React.createElement(LayoutComponent, undefined, child);
+          element = React.createElement(LayoutComponent, undefined, child) as BundledReact.ReactElement;
           logger.info("After TSX layout applied:", {
             pageElementType: React.isValidElement(element)
               ? getElementTypeName(element)
@@ -157,12 +160,12 @@ export async function applyLayoutsFunctionBody(
             tsxLayoutModuleCache,
             adapter,
           );
-          const child = ensureValidChild(element);
+          const child = ensureValidChild(element, React);
           logger.info("Applying TSX provider:", {
             providerName: ProviderComponent.name || "Anonymous",
-            childType: React.isValidElement(child) ? getElementTypeName(child) : typeof child,
+            childType: React.isValidElement(child) ? getElementTypeName(child as BundledReact.ReactElement) : typeof child,
           });
-          element = React.createElement(ProviderComponent, undefined, child);
+          element = React.createElement(ProviderComponent, undefined, child) as BundledReact.ReactElement;
         } catch (e) {
           logger.error("Failed to compile/import TSX provider (non-ESM path)", e);
           throw e;
@@ -175,13 +178,15 @@ export async function applyLayoutsFunctionBody(
 }
 
 async function applyProviders(
-  element: React.ReactElement,
+  element: BundledReact.ReactElement,
   providerItems: ProviderItem[],
   projectDir: string,
   mergedComponents: MDXComponents,
   tsxLayoutModuleCache: LayoutComponentCache,
   adapter: RuntimeAdapter,
-): Promise<React.ReactElement> {
+): Promise<BundledReact.ReactElement> {
+  // Get project's React for createElement to ensure element symbols match user components
+  const React = await getProjectReact();
   let result = element;
   // Reverse providers so lower priority wraps higher priority (outer wraps inner)
   for (const providerItem of [...providerItems].reverse()) {
@@ -197,15 +202,15 @@ async function applyProviders(
         const providerMod = providerModule as MDXModule;
         const ProviderFn = providerMod.MDXLayout || providerMod.default;
         if (ProviderFn) {
-          const child = ensureValidChild(result);
+          const child = ensureValidChild(result, React);
           logger.info("Applying MDX provider", {
             childIsElement: React.isValidElement(child),
           });
           result = React.createElement(
-            ProviderFn as React.ComponentType<{ components?: MDXComponents }>,
+            ProviderFn as BundledReact.ComponentType<{ components?: MDXComponents }>,
             { components: mergedComponents },
             child,
-          );
+          ) as BundledReact.ReactElement;
         }
       } else if (providerItem.kind === "tsx" && providerItem.componentPath) {
         // TSX provider: load via TSX loader
@@ -215,12 +220,12 @@ async function applyProviders(
           tsxLayoutModuleCache,
           adapter,
         );
-        const child = ensureValidChild(result);
+        const child = ensureValidChild(result, React);
         logger.info("Applying TSX provider", {
           providerName: ProviderComponent.name || "Anonymous",
           childIsElement: React.isValidElement(child),
         });
-        result = React.createElement(ProviderComponent, undefined, child);
+        result = React.createElement(ProviderComponent, undefined, child) as BundledReact.ReactElement;
       }
     } catch (e) {
       logger.error("Failed to load ESM provider module:", e);
@@ -230,10 +235,10 @@ async function applyProviders(
   return result;
 }
 
-function ensureValidChild(child: React.ReactNode): React.ReactNode {
+function ensureValidChild(child: BundledReact.ReactNode, React: typeof BundledReact): BundledReact.ReactNode {
   if (React.isValidElement(child)) {
     logger.debug("[ensureValidChild] Valid React element", {
-      type: getElementTypeName(child),
+      type: getElementTypeName(child as BundledReact.ReactElement),
       isValidElement: true,
     });
     return child;

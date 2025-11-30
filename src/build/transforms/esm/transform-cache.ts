@@ -14,9 +14,11 @@ export function generateCacheKey(
   projectId: string | undefined,
   filePath: string,
   contentHash: string,
+  ssr: boolean = false,
 ): string {
   const projectKey = projectId?.trim() || "default";
-  return `${projectKey}:${filePath}:${contentHash}`;
+  const ssrKey = ssr ? "ssr" : "browser";
+  return `${projectKey}:${filePath}:${contentHash}:${ssrKey}`;
 }
 
 export function getCachedTransform(key: string): TransformCacheEntry | undefined {

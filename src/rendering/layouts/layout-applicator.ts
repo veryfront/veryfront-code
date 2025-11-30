@@ -5,7 +5,7 @@
 
 import { dirname, join } from "https://deno.land/std@0.220.0/path/mod.ts";
 import { rendererLogger as logger } from "@veryfront/utils";
-import * as React from "react";
+import * as BundledReact from "react";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import type { LayoutItem, MdxBundle, MDXComponents, ProviderItem } from "@veryfront/types";
 import type { EntityInfo } from "@veryfront/types";
@@ -18,6 +18,7 @@ import {
   tryLoadReservedInDirs,
 } from "../app-reserved.ts";
 import { detectAppRouter } from "../router-detection.ts";
+import { getProjectReact } from "@veryfront/react";
 
 export interface LayoutApplicationOptions {
   projectDir: string;
@@ -56,12 +57,12 @@ export class LayoutApplicator {
    * Main entry point for layout application
    */
   async applyLayouts(
-    pageElement: React.ReactElement,
+    pageElement: BundledReact.ReactElement,
     pageInfo: EntityInfo,
     layoutBundle: MdxBundle | undefined,
     nestedLayouts: LayoutItem[],
     providerItems: ProviderItem[],
-  ): Promise<React.ReactElement> {
+  ): Promise<BundledReact.ReactElement> {
     // Apply nested layouts and providers
     let wrappedElement = await this.applyLayoutsAndProviders(
       pageElement,
@@ -88,11 +89,11 @@ export class LayoutApplicator {
    * Chooses between ESM and function-body wrapping modes
    */
   private async applyLayoutsAndProviders(
-    pageElement: React.ReactElement,
+    pageElement: BundledReact.ReactElement,
     layoutBundle: MdxBundle | undefined,
     nestedLayouts: LayoutItem[],
     providerItems: ProviderItem[],
-  ): Promise<React.ReactElement> {
+  ): Promise<BundledReact.ReactElement> {
     logger.info("Number of nested layouts found:", nestedLayouts.length);
     const useESMWrap = Boolean(this.config?.experimental?.esmLayouts);
 
@@ -117,11 +118,11 @@ export class LayoutApplicator {
    * Apply layouts using ESM wrapping (dynamic import)
    */
   private async applyLayoutsESMMode(
-    pageElement: React.ReactElement,
+    pageElement: BundledReact.ReactElement,
     layoutBundle: MdxBundle | undefined,
     nestedLayouts: LayoutItem[],
     providerItems: ProviderItem[],
-  ): Promise<React.ReactElement> {
+  ): Promise<BundledReact.ReactElement> {
     return await applyLayoutsESM(
       pageElement,
       layoutBundle,
@@ -138,11 +139,11 @@ export class LayoutApplicator {
    * Apply layouts using function-body wrapping
    */
   private async applyLayoutsFunctionBodyMode(
-    pageElement: React.ReactElement,
+    pageElement: BundledReact.ReactElement,
     layoutBundle: MdxBundle | undefined,
     nestedLayouts: LayoutItem[],
     providerItems: ProviderItem[],
-  ): Promise<React.ReactElement> {
+  ): Promise<BundledReact.ReactElement> {
     return await applyLayoutsFunctionBody(
       pageElement,
       layoutBundle,
@@ -158,7 +159,9 @@ export class LayoutApplicator {
   /**
    * Wrap page with App component for Pages Router
    */
-  private async wrapWithAppComponent(pageElement: React.ReactElement): Promise<React.ReactElement> {
+  private async wrapWithAppComponent(pageElement: BundledReact.ReactElement): Promise<BundledReact.ReactElement> {
+    // Get project's React for createElement to ensure element symbols match user components
+    const React = await getProjectReact();
     try {
       const appPath = join(this.projectDir, "components/app.tsx");
       const appExists = await this.adapter.fs.exists(appPath);
@@ -182,7 +185,7 @@ export class LayoutApplicator {
         );
 
         if (App) {
-          pageElement = React.createElement(App, { children: pageElement });
+          pageElement = React.createElement(App, { children: pageElement }) as BundledReact.ReactElement;
           logger.info("Wrapped page with App component");
         }
       }
@@ -197,9 +200,11 @@ export class LayoutApplicator {
    * Wrap page with App Router reserved components (loading, error)
    */
   private async wrapWithReservedComponents(
-    pageElement: React.ReactElement,
+    pageElement: BundledReact.ReactElement,
     pageFilePath: string,
-  ): Promise<React.ReactElement> {
+  ): Promise<BundledReact.ReactElement> {
+    // Get project's React for createElement to ensure element symbols match user components
+    const React = await getProjectReact();
     try {
       const segmentDir = dirname(pageFilePath);
       const appRootDir = join(this.projectDir, "app");
@@ -227,12 +232,12 @@ export class LayoutApplicator {
           React.Suspense,
           { fallback: fallbackEl },
           pageElement,
-        );
+        ) as BundledReact.ReactElement;
       }
 
       if (errorComp) {
-        const Boundary = createErrorBoundary(errorComp);
-        pageElement = React.createElement(Boundary, {}, pageElement);
+        const Boundary = createErrorBoundary(errorComp, React);
+        pageElement = React.createElement(Boundary, {}, pageElement) as BundledReact.ReactElement;
       }
     } catch (error) {
       logger.warn("Failed applying reserved loading/error components", error);

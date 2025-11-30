@@ -154,7 +154,7 @@ export async function handleScriptPage(
       });
     } else {
       const htmlOptions: HTMLGenerationOptions = {
-        mode: options.mode,
+        mode: options.mode as "development" | "production",
         config: options.config,
         nestedLayouts: [],
         providerPaths: [],

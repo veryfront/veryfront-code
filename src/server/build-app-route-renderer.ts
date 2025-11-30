@@ -2,11 +2,10 @@
  * App Route HTML Rendering for Build
  */
 
-import * as React from "react";
 import { serverLogger as logger } from "@veryfront/utils";
 import { join } from "std/path/mod.ts";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
-import { renderToStringAdapter } from "@veryfront/react";
+import { getProjectReact, renderToStringAdapter } from "@veryfront/react";
 import { loadComponentFromSource } from "@veryfront/modules/react-loader/index.ts";
 import { CompilationError } from "@veryfront/errors/index.ts";
 
@@ -43,6 +42,9 @@ export async function renderAppRouteToHTML(args: {
     }
   }
 
+  // Get React from the project's node_modules to ensure element symbols match
+  const React = await getProjectReact();
+
   // Load page component using ESM loader
   const pageSrc = await adapter.fs.readFile(pageFile);
   const Page = await loadComponentFromSource(
@@ -66,7 +68,7 @@ export async function renderAppRouteToHTML(args: {
   // Type-safe component wrapper
   type ReactComponentLike = React.ComponentType<{ children?: React.ReactNode }>;
 
-  // Wrap with layouts
+  // Wrap with layouts using project's React.createElement
   let element: React.ReactNode = React.createElement(Page as ReactComponentLike);
   for (let i = layouts.length - 1; i >= 0; i--) {
     const layoutPath = layouts[i]!;

@@ -1,6 +1,6 @@
 export type { HTMLWrapOptions, SSROptions, SSRResponseOptions, SSRResult } from "./types.ts";
 
-export { getReactDOMServer } from "./server-loader.ts";
+export { getProjectReact, getReactDOMServer } from "./server-loader.ts";
 export type { ReactDOMServer } from "./server-loader.ts";
 
 export { renderToStaticMarkupAdapter, renderToStringAdapter } from "./string-renderer.ts";
