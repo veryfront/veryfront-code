@@ -4,7 +4,7 @@
 
 import { assertEquals, assertThrows } from "https://deno.land/std@0.220.0/assert/mod.ts";
 import { describe, it } from "https://deno.land/std@0.220.0/testing/bdd.ts";
-import { generateId, parseDuration } from "./types.ts";
+import { generateId, parseDuration, validateRetryConfig } from "./types.ts";
 
 describe("parseDuration", () => {
   it("should parse seconds", () => {
@@ -32,7 +32,13 @@ describe("parseDuration", () => {
 
   it("should handle number input (passthrough)", () => {
     assertEquals(parseDuration(5000), 5000);
-    assertEquals(parseDuration(0), 0);
+    assertEquals(parseDuration(100), 100);
+  });
+
+  it("should reject zero and negative durations", () => {
+    assertThrows(() => parseDuration("0s"), Error, "Duration must be positive");
+    assertThrows(() => parseDuration("0m"), Error, "Duration must be positive");
+    assertThrows(() => parseDuration(-100), Error, "Duration cannot be negative");
   });
 
   it("should throw on invalid format", () => {
@@ -68,5 +74,33 @@ describe("generateId", () => {
   it("should use default 'wf' prefix when no prefix provided", () => {
     const id = generateId();
     assertEquals(id.startsWith("wf_"), true);
+  });
+});
+
+describe("validateRetryConfig", () => {
+  it("should accept valid config", () => {
+    // Should not throw
+    validateRetryConfig({});
+    validateRetryConfig({ maxAttempts: 3 });
+    validateRetryConfig({ backoff: "exponential", initialDelay: 100, maxDelay: 5000 });
+  });
+
+  it("should reject invalid maxAttempts", () => {
+    assertThrows(() => validateRetryConfig({ maxAttempts: 0 }), Error, "maxAttempts must be a positive integer");
+    assertThrows(() => validateRetryConfig({ maxAttempts: -1 }), Error, "maxAttempts must be a positive integer");
+    assertThrows(() => validateRetryConfig({ maxAttempts: 1.5 }), Error, "maxAttempts must be a positive integer");
+  });
+
+  it("should reject negative delays", () => {
+    assertThrows(() => validateRetryConfig({ initialDelay: -100 }), Error, "initialDelay cannot be negative");
+    assertThrows(() => validateRetryConfig({ maxDelay: -100 }), Error, "maxDelay cannot be negative");
+  });
+
+  it("should reject initialDelay greater than maxDelay", () => {
+    assertThrows(
+      () => validateRetryConfig({ initialDelay: 5000, maxDelay: 1000 }),
+      Error,
+      "initialDelay (5000) cannot be greater than maxDelay (1000)"
+    );
   });
 });

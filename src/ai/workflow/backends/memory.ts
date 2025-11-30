@@ -170,6 +170,38 @@ export class MemoryBackend implements WorkflowBackend {
     return Promise.resolve(checkpoints.map((c) => structuredClone(c)));
   }
 
+  deleteCheckpoint(runId: string, checkpointId: string): Promise<void> {
+    const checkpoints = this.checkpoints.get(runId);
+    if (!checkpoints) {
+      return Promise.resolve();
+    }
+
+    const index = checkpoints.findIndex((c) => c.id === checkpointId);
+    if (index !== -1) {
+      checkpoints.splice(index, 1);
+      if (this.config.debug) {
+        console.log(`[MemoryBackend] Deleted checkpoint: ${checkpointId}`);
+      }
+    }
+    return Promise.resolve();
+  }
+
+  deleteCheckpoints(runId: string, checkpointIds: string[]): Promise<void> {
+    const checkpoints = this.checkpoints.get(runId);
+    if (!checkpoints) {
+      return Promise.resolve();
+    }
+
+    const idsToDelete = new Set(checkpointIds);
+    const filtered = checkpoints.filter((c) => !idsToDelete.has(c.id));
+    this.checkpoints.set(runId, filtered);
+
+    if (this.config.debug) {
+      console.log(`[MemoryBackend] Deleted ${checkpointIds.length} checkpoints`);
+    }
+    return Promise.resolve();
+  }
+
   // =========================================================================
   // Approvals
   // =========================================================================

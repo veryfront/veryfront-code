@@ -9,13 +9,20 @@ import {
 import type { MDXFrontmatter, MDXModule } from "./types.ts";
 import { join } from "https://deno.land/std@0.220.0/path/mod.ts";
 
+// Detect if running in Node.js (vs Deno/browser)
+// deno-lint-ignore no-explicit-any
+const _global = globalThis as any;
+const IS_NODE = typeof Deno === "undefined" && typeof _global.process !== "undefined" && _global.process?.versions?.node;
+
 // Constants
 const LOG_PREFIX_MDX_LOADER = "[mdx-loader]";
 const LOG_PREFIX_MDX_RENDERER = "[mdx-renderer]";
 const JSX_IMPORT_PATTERN = /import\s+([^'"]+)\s+from\s+['"]file:\/\/([^'"]+\.(jsx|tsx))['"];?/g;
 const REACT_IMPORT_PATTERN = /import\s+.*React.*\s+from\s+['"]react['"]/;
+const HTTP_IMPORT_PATTERN = /['"]https?:\/\/[^'"]+['"]/;
 const ESBUILD_JSX_FACTORY = "React.createElement";
 const ESBUILD_JSX_FRAGMENT = "React.Fragment";
+const HTTP_MODULE_FETCH_TIMEOUT_MS = 30000;
 
 export interface ESMLoaderContext {
   esmCacheDir?: string;
@@ -32,6 +39,79 @@ export function hashString(input: string): string {
   return (hash >>> 0).toString(16);
 }
 
+/**
+ * Creates an esbuild plugin to fetch and bundle HTTP/HTTPS imports.
+ * This allows Node.js to use remote imports via esbuild bundling.
+ */
+function createHTTPPluginForMDX(): import("esbuild").Plugin {
+  return {
+    name: "vf-mdx-http-fetch",
+    setup(build) {
+      // Intercept HTTP/HTTPS imports
+      build.onResolve({ filter: /^(http|https):\/\// }, (args) => ({
+        path: args.path,
+        namespace: "http-url",
+      }));
+
+      // Resolve relative imports within HTTP modules
+      build.onResolve({ filter: /.*/, namespace: "http-url" }, (args) => {
+        if (args.path.startsWith("http://") || args.path.startsWith("https://")) {
+          return { path: args.path, namespace: "http-url" };
+        }
+        try {
+          const resolved = new URL(args.path, args.importer).toString();
+          return { path: resolved, namespace: "http-url" };
+        } catch {
+          return undefined;
+        }
+      });
+
+      // Fetch and return HTTP module contents
+      build.onLoad({ filter: /.*/, namespace: "http-url" }, async (args) => {
+        let requestUrl = args.path;
+        try {
+          const u = new URL(args.path);
+          // Optimize esm.sh URLs
+          if (u.hostname === "esm.sh") {
+            if (u.pathname.includes("/denonext/")) {
+              u.pathname = u.pathname.replace("/denonext/", "/");
+            }
+            u.searchParams.set("target", "es2020");
+            u.searchParams.set("bundle", "true");
+            requestUrl = u.toString();
+          }
+        } catch {
+          // Use original URL if parsing fails
+        }
+
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), HTTP_MODULE_FETCH_TIMEOUT_MS);
+        try {
+          const res = await fetch(requestUrl, {
+            headers: { "user-agent": "Mozilla/5.0 Veryfront/1.0" },
+            signal: controller.signal,
+          });
+          clearTimeout(timeout);
+
+          if (!res.ok) {
+            return {
+              errors: [{ text: `Failed to fetch ${args.path}: ${res.status}` }],
+            };
+          }
+
+          const text = await res.text();
+          return { contents: text, loader: "js" };
+        } catch (e) {
+          clearTimeout(timeout);
+          return {
+            errors: [{ text: `Failed to fetch ${args.path}: ${e instanceof Error ? e.message : String(e)}` }],
+          };
+        }
+      });
+    },
+  };
+}
+
 export async function loadModuleESM(
   compiledProgramCode: string,
   context: ESMLoaderContext,
@@ -41,16 +121,32 @@ export async function loadModuleESM(
     const adapter = await getAdapter();
 
     if (!context.esmCacheDir) {
-      context.esmCacheDir = await adapter.fs.makeTempDir("veryfront-mdx-esm-");
+      if (IS_NODE) {
+        // On Node.js, use a cache dir inside the project so module resolution works
+        // Node.js resolves bare imports relative to the file location
+        const projectCacheDir = join(_global.process.cwd(), "node_modules", ".cache", "veryfront-mdx");
+        await adapter.fs.mkdir(projectCacheDir, { recursive: true });
+        context.esmCacheDir = projectCacheDir;
+      } else {
+        // On Deno, system temp dir is fine
+        context.esmCacheDir = await adapter.fs.makeTempDir("veryfront-mdx-esm-");
+      }
     }
 
-    // Transform imports with import map
-    let rewritten = transformImportsWithMap(
-      compiledProgramCode,
-      getDefaultImportMap(),
-      undefined,
-      { resolveBare: true },
-    );
+    // Transform imports with import map (skip on Node.js - uses npm packages directly)
+    let rewritten: string;
+    if (IS_NODE) {
+      // On Node.js, keep bare imports as-is (npm packages)
+      rewritten = compiledProgramCode;
+    } else {
+      // On Deno/browser, transform to esm.sh URLs
+      rewritten = transformImportsWithMap(
+        compiledProgramCode,
+        getDefaultImportMap(),
+        undefined,
+        { resolveBare: true },
+      );
+    }
 
     // Transform JSX/TSX imports using esbuild
     // This handles user components that use JSX syntax
@@ -116,6 +212,53 @@ export async function loadModuleESM(
 
     if (/\bconst\s+MDXLayout\b/.test(rewritten) && !/export\s+\{[^}]*MDXLayout/.test(rewritten)) {
       rewritten += "\nexport { MDXLayout as __vfLayout };\n";
+    }
+
+    // On Node.js, bundle HTTP imports via esbuild instead of trying to import them directly
+    if (IS_NODE && HTTP_IMPORT_PATTERN.test(rewritten)) {
+      logger.info(`${LOG_PREFIX_MDX_LOADER} Bundling HTTP imports via esbuild for Node.js`);
+      const { build } = await import("esbuild/mod.js");
+
+      // Write temp source file for esbuild to process
+      const tempSourcePath = join(context.esmCacheDir!, `temp-${hashString(rewritten)}.mjs`);
+      await adapter.fs.writeFile(tempSourcePath, rewritten);
+
+      try {
+        const result = await build({
+          entryPoints: [tempSourcePath],
+          bundle: true,
+          format: "esm",
+          platform: "neutral",
+          target: "es2020",
+          write: false,
+          plugins: [createHTTPPluginForMDX()],
+          // Mark npm packages as external so they're not bundled
+          external: ["react", "react-dom", "react/jsx-runtime", "react/jsx-dev-runtime"],
+        });
+
+        const bundledCode = result.outputFiles?.[0]?.text;
+        if (bundledCode) {
+          rewritten = bundledCode;
+          logger.info(`${LOG_PREFIX_MDX_LOADER} Successfully bundled HTTP imports`);
+        }
+      } catch (bundleError) {
+        logger.warn(`${LOG_PREFIX_MDX_LOADER} Failed to bundle HTTP imports, falling back to original code`, bundleError);
+        // Keep original code if bundling fails
+      } finally {
+        // Clean up temp file (use unlink since rm may not exist on all adapters)
+        try {
+          // deno-lint-ignore no-explicit-any
+          const fsAny = adapter.fs as any;
+          if (typeof fsAny.rm === "function") {
+            await fsAny.rm(tempSourcePath);
+          } else if (typeof fsAny.unlink === "function") {
+            await fsAny.unlink(tempSourcePath);
+          }
+          // If neither exists, just leave the temp file (it's in a cache dir anyway)
+        } catch {
+          // Ignore cleanup errors
+        }
+      }
     }
 
     const codeHash = hashString(rewritten);

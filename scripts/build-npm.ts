@@ -277,6 +277,147 @@ const denoResolvePlugin: esbuild.Plugin = {
   },
 };
 
+// Pre-bundle client runtime scripts FIRST (before CLI build)
+// These need to be in templates.ts before the CLI bundle is created
+console.log("📝 Pre-bundling client runtime scripts...\n");
+
+// Create a minimal plugin for pre-bundling client scripts
+const clientBundlePlugin: esbuild.Plugin = {
+  name: "client-bundle",
+  setup(build) {
+    // Handle std/ imports
+    build.onResolve({ filter: /^std\// }, (args) => {
+      if (args.path.includes("/fmt/colors")) {
+        return { path: resolve(PROJECT_ROOT, "src/platform/compat/console/ansi.ts") };
+      }
+      if (args.path.includes("/path")) {
+        return { path: resolve(PROJECT_ROOT, "src/_shims/std-path.ts") };
+      }
+      return { path: "node:path", external: true };
+    });
+
+    // Handle @std/* imports
+    build.onResolve({ filter: /^@std\// }, (args) => {
+      if (args.path.includes("/path")) {
+        return { path: resolve(PROJECT_ROOT, "src/_shims/std-path.ts") };
+      }
+      return { path: "node:path", external: true };
+    });
+
+    // Handle @veryfront/* imports - resolve to actual source files
+    build.onResolve({ filter: /^@veryfront/ }, (args) => {
+      const importPath = args.path;
+      if (veryfrontImportMap[importPath]) {
+        return { path: veryfrontImportMap[importPath] };
+      }
+
+      const sortedKeys = Object.keys(veryfrontImportMap)
+        .filter(k => k.endsWith("/"))
+        .sort((a, b) => b.length - a.length);
+
+      for (const prefix of sortedKeys) {
+        if (importPath.startsWith(prefix.slice(0, -1))) {
+          const mappedPrefix = veryfrontImportMap[prefix];
+          if (!mappedPrefix) continue;
+          const remainder = importPath.slice(prefix.length - 1);
+          const resolvedPath = resolve(mappedPrefix.replace(/\/$/, ""), remainder.replace(/^\//, ""));
+          return { path: resolvedPath };
+        }
+      }
+
+      const fallbackPath = resolve(PROJECT_ROOT, "src", importPath.replace("@veryfront/", "").replace("@veryfront", ""));
+      return { path: fallbackPath };
+    });
+
+    // Handle URL imports
+    build.onResolve({ filter: /^https:\/\// }, (args) => {
+      if (args.path.includes("deno.land/std") && args.path.includes("/fmt/colors")) {
+        return { path: resolve(PROJECT_ROOT, "src/platform/compat/console/ansi.ts") };
+      }
+      const esmMatch = args.path.match(/esm\.sh\/(@?[^@/]+(?:\/[^@/]+)?)/);
+      if (esmMatch) return { path: esmMatch[1], external: true };
+      return { path: args.path, external: true };
+    });
+
+    // External npm packages
+    build.onResolve({ filter: /^(react|react-dom)/ }, (args) => {
+      return { path: args.path, external: true };
+    });
+
+    // Node built-ins
+    build.onResolve({ filter: /^node:/ }, (args) => ({ path: args.path, external: true }));
+  },
+};
+
+async function prebundleClientScript(entryPath: string, name: string): Promise<string> {
+  const result = await esbuild.build({
+    entryPoints: [entryPath],
+    bundle: true,
+    format: "esm",
+    platform: "browser",
+    target: "es2020",
+    write: false,
+    sourcemap: false,
+    packages: "external",
+    mainFields: ["module", "browser", "main"],
+    plugins: [clientBundlePlugin],
+    external: [
+      "react",
+      "react-dom",
+      "react-dom/client",
+      "react/jsx-runtime",
+      "react/jsx-dev-runtime",
+    ],
+  });
+
+  const output = result.outputFiles?.[0]?.text;
+  if (!output) {
+    throw new Error(`Failed to pre-bundle ${name}`);
+  }
+  return output;
+}
+
+let CLIENT_ROUTER_BUNDLE = "";
+let CLIENT_PREFETCH_BUNDLE = "";
+
+try {
+  CLIENT_ROUTER_BUNDLE = await prebundleClientScript(
+    "./src/rendering/client/router.ts",
+    "client router"
+  );
+  console.log(`  ✓ Pre-bundled client router: ${(CLIENT_ROUTER_BUNDLE.length / 1024).toFixed(1)} KB`);
+
+  CLIENT_PREFETCH_BUNDLE = await prebundleClientScript(
+    "./src/rendering/client/prefetch.ts",
+    "client prefetch"
+  );
+  console.log(`  ✓ Pre-bundled client prefetch: ${(CLIENT_PREFETCH_BUNDLE.length / 1024).toFixed(1)} KB`);
+
+  // Write pre-bundled client scripts to templates.ts BEFORE CLI build
+  const templatesPath = "./src/build/production-build/templates.ts";
+  const existingTemplates = await Deno.readTextFile(templatesPath);
+
+  // Escape backticks and dollar signs for template literal
+  const escapeForTemplate = (s: string) => s.replace(/\\/g, "\\\\").replace(/`/g, "\\`").replace(/\$/g, "\\$");
+
+  // Replace the placeholder variables with actual values
+  let updatedTemplates = existingTemplates
+    .replace(
+      /export let CLIENT_ROUTER_BUNDLE: string \| undefined;/,
+      `export const CLIENT_ROUTER_BUNDLE: string = \`${escapeForTemplate(CLIENT_ROUTER_BUNDLE)}\`;`
+    )
+    .replace(
+      /export let CLIENT_PREFETCH_BUNDLE: string \| undefined;/,
+      `export const CLIENT_PREFETCH_BUNDLE: string = \`${escapeForTemplate(CLIENT_PREFETCH_BUNDLE)}\`;`
+    );
+
+  await Deno.writeTextFile(templatesPath, updatedTemplates);
+  console.log("  ✓ Updated templates.ts with pre-bundled client scripts\n");
+} catch (error) {
+  console.error("  ⚠ Failed to pre-bundle client scripts:", error);
+  console.log("  Using empty fallback - client scripts may not work in npm build\n");
+}
+
 console.log("📝 Building ESM modules...\n");
 
 // Build each entry point

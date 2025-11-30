@@ -30,7 +30,7 @@ title: Welcome
 description: Built with Veryfront
 ---
 
-import Button from '../shared/components/Button.jsx'
+import Button from '../components/Button.jsx'
 
 # Welcome to Veryfront
 

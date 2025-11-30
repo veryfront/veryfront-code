@@ -14,7 +14,7 @@ import type {
   WorkflowStatus,
 } from "../types.ts";
 import { generateId, parseDuration } from "../types.ts";
-import type { WorkflowBackend } from "../backends/types.ts";
+import { hasLockSupport, type WorkflowBackend } from "../backends/types.ts";
 import { DAGExecutor } from "./dag-executor.ts";
 import { CheckpointManager } from "./checkpoint-manager.ts";
 import { StepExecutor, type StepExecutorConfig } from "./step-executor.ts";
@@ -31,6 +31,10 @@ export interface WorkflowExecutorConfig {
   maxConcurrency?: number;
   /** Enable debug logging */
   debug?: boolean;
+  /** Lock duration in milliseconds for distributed execution (default: 30000) */
+  lockDuration?: number;
+  /** Enable distributed locking (default: true if backend supports it) */
+  enableLocking?: boolean;
   /** Callback when workflow starts */
   onStart?: (run: WorkflowRun) => void;
   /** Callback when workflow completes */
@@ -71,10 +75,14 @@ export class WorkflowExecutor {
   private dagExecutor: DAGExecutor;
   private workflows = new Map<string, WorkflowDefinition>();
 
+  /** Default lock duration: 30 seconds */
+  private static readonly DEFAULT_LOCK_DURATION = 30000;
+
   constructor(config: WorkflowExecutorConfig) {
     this.config = {
       maxConcurrency: 10,
       debug: false,
+      lockDuration: WorkflowExecutor.DEFAULT_LOCK_DURATION,
       ...config,
     };
 
@@ -91,9 +99,9 @@ export class WorkflowExecutor {
       checkpointManager: this.checkpointManager,
       maxConcurrency: this.config.maxConcurrency,
       debug: this.config.debug,
-      onWaiting: (_nodeId, _waitConfig) => {
-        // Will be handled by execute()
-      },
+      // onWaiting is intentionally a no-op here - waiting state is handled
+      // by executeAsync() after DAG execution returns with waiting: true
+      onWaiting: () => {},
     });
   }
 
@@ -165,7 +173,10 @@ export class WorkflowExecutor {
     }
 
     if (run.status !== "waiting" && run.status !== "pending") {
-      throw new Error(`Cannot resume run in status: ${run.status}`);
+      throw new Error(
+        `Cannot resume workflow run "${runId}": current status is "${run.status}". ` +
+        `Only runs in "waiting" or "pending" status can be resumed.`
+      );
     }
 
     // Get workflow definition
@@ -207,6 +218,9 @@ export class WorkflowExecutor {
 
   /**
    * Execute a workflow run asynchronously
+   *
+   * Uses distributed locking (when backend supports it) to prevent
+   * concurrent execution of the same workflow run.
    */
   async executeAsync(runId: string, startFromNode?: string): Promise<void> {
     const run = await this.config.backend.getRun(runId);
@@ -220,17 +234,36 @@ export class WorkflowExecutor {
       throw new Error(`Workflow not found: ${run.workflowId}`);
     }
 
-    // Update status to running
-    await this.config.backend.updateRun(runId, {
-      status: "running",
-      startedAt: run.startedAt || new Date(),
-    });
+    // Try to acquire lock if backend supports it and locking is enabled
+    const useLocking = this.config.enableLocking !== false &&
+      hasLockSupport(this.config.backend);
+    const lockDuration = this.config.lockDuration!;
 
-    // Notify start
-    const updatedRun = await this.config.backend.getRun(runId);
-    this.config.onStart?.(updatedRun!);
+    if (useLocking) {
+      const acquired = await this.config.backend.acquireLock!(runId, lockDuration);
+      if (!acquired) {
+        throw new Error(
+          `Cannot execute workflow run "${runId}": another worker is already executing it. ` +
+          `This can happen when multiple workers try to execute the same run concurrently.`
+        );
+      }
+
+      if (this.config.debug) {
+        console.log(`[WorkflowExecutor] Acquired lock for run: ${runId}`);
+      }
+    }
 
     try {
+      // Update status to running
+      await this.config.backend.updateRun(runId, {
+        status: "running",
+        startedAt: run.startedAt || new Date(),
+      });
+
+      // Notify start
+      const updatedRun = await this.config.backend.getRun(runId);
+      this.config.onStart?.(updatedRun!);
+
       // Resolve workflow nodes
       const nodes = this.resolveNodes(workflow, run.context);
 
@@ -285,6 +318,15 @@ export class WorkflowExecutor {
       this.config.onError?.(run, err);
 
       throw error;
+    } finally {
+      // Always release lock when done
+      if (useLocking) {
+        await this.config.backend.releaseLock!(runId);
+
+        if (this.config.debug) {
+          console.log(`[WorkflowExecutor] Released lock for run: ${runId}`);
+        }
+      }
     }
   }
 
@@ -295,17 +337,63 @@ export class WorkflowExecutor {
     workflow: WorkflowDefinition,
     context: WorkflowContext,
   ): WorkflowNode[] {
+    let nodes: WorkflowNode[];
+
     if (Array.isArray(workflow.steps)) {
-      return workflow.steps;
+      nodes = workflow.steps;
+    } else {
+      // Dynamic steps - call the function
+      const builderContext: StepBuilderContext = {
+        input: context.input,
+        context,
+      };
+      nodes = workflow.steps(builderContext);
     }
 
-    // Dynamic steps - call the function
-    const builderContext: StepBuilderContext = {
-      input: context.input,
-      context,
-    };
+    // Validate resolved nodes
+    this.validateNodes(nodes, workflow.id);
 
-    return workflow.steps(builderContext);
+    return nodes;
+  }
+
+  /**
+   * Validate workflow nodes
+   */
+  private validateNodes(nodes: WorkflowNode[], workflowId: string): void {
+    if (!Array.isArray(nodes)) {
+      throw new Error(`Workflow "${workflowId}" steps must resolve to an array`);
+    }
+
+    if (nodes.length === 0) {
+      throw new Error(`Workflow "${workflowId}" must have at least one step`);
+    }
+
+    const seenIds = new Set<string>();
+
+    for (let i = 0; i < nodes.length; i++) {
+      const node = nodes[i];
+
+      if (!node) {
+        throw new Error(`Workflow "${workflowId}" has undefined node at index ${i}`);
+      }
+
+      if (!node.id || typeof node.id !== "string") {
+        throw new Error(`Workflow "${workflowId}" node at index ${i} has invalid ID`);
+      }
+
+      if (seenIds.has(node.id)) {
+        throw new Error(`Workflow "${workflowId}" has duplicate node ID: "${node.id}"`);
+      }
+      seenIds.add(node.id);
+
+      if (!node.config || typeof node.config !== "object") {
+        throw new Error(`Workflow "${workflowId}" node "${node.id}" has invalid config`);
+      }
+
+      if (!node.config.type) {
+        throw new Error(`Workflow "${workflowId}" node "${node.id}" config missing type`);
+      }
+    }
   }
 
   /**
@@ -461,7 +549,10 @@ export class WorkflowExecutor {
     }
 
     if (run.status === "completed" || run.status === "failed") {
-      throw new Error(`Cannot cancel run in status: ${run.status}`);
+      throw new Error(
+        `Cannot cancel workflow run "${runId}": run has already ${run.status}. ` +
+        `Only active runs (pending, running, waiting) can be cancelled.`
+      );
     }
 
     await this.config.backend.updateRun(runId, {

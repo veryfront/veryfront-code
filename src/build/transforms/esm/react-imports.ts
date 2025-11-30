@@ -1,6 +1,17 @@
 import { REACT_DEFAULT_VERSION } from "@veryfront/utils/constants/cdn.ts";
 
+// Detect if running in Node.js (vs Deno/browser)
+// deno-lint-ignore no-explicit-any
+const _global = globalThis as any;
+const IS_NODE = typeof Deno === "undefined" && typeof _global.process !== "undefined" && _global.process?.versions?.node;
+
 export function resolveReactImports(code: string): string {
+  // For Node.js, keep bare imports as-is (npm packages)
+  // For Deno/browser, transform to esm.sh URLs
+  if (IS_NODE) {
+    return code; // Node.js can import react, react-dom directly from npm
+  }
+
   const reactImports = [
     {
       bare: "react/jsx-runtime",
@@ -34,6 +45,11 @@ export function resolveReactImports(code: string): string {
 }
 
 export function addDepsToEsmShUrls(code: string): string {
+  // Skip for Node.js - no esm.sh URLs needed
+  if (IS_NODE) {
+    return code;
+  }
+
   return code.replace(
     /from\s+["'](https:\/\/esm\.sh\/[^"'?]+)["']/g,
     (match, url) => {

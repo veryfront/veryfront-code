@@ -108,6 +108,16 @@ export interface WorkflowBackend {
    */
   getCheckpoints?(runId: string): Promise<Checkpoint[]>;
 
+  /**
+   * Delete a specific checkpoint
+   */
+  deleteCheckpoint?(runId: string, checkpointId: string): Promise<void>;
+
+  /**
+   * Delete multiple checkpoints by ID
+   */
+  deleteCheckpoints?(runId: string, checkpointIds: string[]): Promise<void>;
+
   // =========================================================================
   // Approvals
   // =========================================================================

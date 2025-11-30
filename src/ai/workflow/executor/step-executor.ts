@@ -22,6 +22,8 @@ const DEFAULT_STEP_TIMEOUT_MS = 5 * 60 * 1000;
  */
 export interface AgentRegistry {
   get(id: string): Agent | undefined;
+  /** Optional: List all registered agent IDs (for error messages) */
+  list?(): string[];
 }
 
 /**
@@ -29,6 +31,8 @@ export interface AgentRegistry {
  */
 export interface ToolRegistry {
   get(id: string): Tool | undefined;
+  /** Optional: List all registered tool IDs (for error messages) */
+  list?(): string[];
 }
 
 /**
@@ -90,7 +94,10 @@ export class StepExecutor {
     const config = node.config as StepNodeConfig;
 
     if (config.type !== "step") {
-      throw new Error(`StepExecutor can only execute 'step' nodes, got '${config.type}'`);
+      throw new Error(
+        `StepExecutor can only execute 'step' nodes, but node "${node.id}" has type '${config.type}'. ` +
+        `This is likely a bug in the DAG executor routing.`
+      );
     }
 
     try {
@@ -261,7 +268,11 @@ export class StepExecutor {
 
     const agent = this.config.agentRegistry.get(id);
     if (!agent) {
-      throw new Error(`Agent not found: ${id}`);
+      const available = this.config.agentRegistry.list?.() ?? [];
+      const suggestion = available.length > 0
+        ? ` Available agents: ${available.slice(0, 5).join(", ")}${available.length > 5 ? "..." : ""}`
+        : " No agents are registered.";
+      throw new Error(`Agent not found: "${id}".${suggestion}`);
     }
 
     return agent;
@@ -279,7 +290,11 @@ export class StepExecutor {
 
     const tool = this.config.toolRegistry.get(id);
     if (!tool) {
-      throw new Error(`Tool not found: ${id}`);
+      const available = this.config.toolRegistry.list?.() ?? [];
+      const suggestion = available.length > 0
+        ? ` Available tools: ${available.slice(0, 5).join(", ")}${available.length > 5 ? "..." : ""}`
+        : " No tools are registered.";
+      throw new Error(`Tool not found: "${id}".${suggestion}`);
     }
 
     return tool;
@@ -327,9 +342,11 @@ export class StepExecutor {
 
   /**
    * Update node state for completion
+   *
+   * @param result - The step execution result
+   * @param previousState - The previous node state (contains nodeId)
    */
   createCompletedState(
-    _nodeId: string,
     result: StepResult,
     previousState: NodeState,
   ): NodeState {
