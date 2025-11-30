@@ -25,7 +25,7 @@ npm run dev
 deno task dev
 ```
 
-3. Visit http://localhost:3000
+3. Visit http://localhost:3002
 
 ## What It Does
 
@@ -39,7 +39,7 @@ deno task dev
 
 - `pages/index.mdx` - Home page in MDX
 - `pages/about.mdx` - About page in MDX
-- `layouts/main.mdx` - Main layout template
+- `layouts/main.jsx` - Main layout template
 - `package.json` - Project dependencies
 
 ## MDX Features
@@ -85,7 +85,7 @@ pages/
 └── about.mdx          # About page
 
 layouts/
-└── main.mdx           # Main layout
+└── main.jsx           # Main layout
 ```
 
 ## Use Cases

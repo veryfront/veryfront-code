@@ -6,7 +6,7 @@
  */
 
 import { getMCPRegistry } from "./registry.ts";
-import { executeTool } from "../utils/tool.ts";
+import { executeTool, zodToJsonSchema } from "../utils/tool.ts";
 import { resourceRegistry } from "./resource.ts";
 import { promptRegistry } from "./prompt.ts";
 import type { MCPServerConfig } from "../types/mcp.ts";
@@ -141,14 +141,13 @@ export class MCPServer {
     for (const [id, tool] of registry.tools.entries()) {
       // Only expose tools with MCP enabled
       if (tool.mcp?.enabled !== false) {
+        // Use pre-converted schema or convert at runtime
+        const inputSchema = tool.inputSchemaJson || zodToJsonSchema(tool.inputSchema);
+        
         tools.push({
           name: id,
           description: tool.description,
-          inputSchema: {
-            type: "object",
-            properties: {},
-            required: [],
-          },
+          inputSchema,
         });
       }
     }

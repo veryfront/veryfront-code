@@ -12,20 +12,33 @@ including:
 
 ## Features
 
-- ✅ Sign up with email/password
-- ✅ Login with credentials
-- ✅ JWT-based authentication
-- ✅ Protected API routes
-- ✅ Client-side route protection
-- ✅ Session persistence
-- ✅ Logout functionality
+- User registration with email/password
+- Login with credentials
+- JWT-based authentication
+- Protected API routes
+- Client-side route protection
+- Session persistence
+- Logout functionality
 
-## Running the Example
+## Setup
+
+1. Install dependencies:
 
 ```bash
-cd examples/auth-app
+npm install
+# or
+deno install
+```
+
+2. Run the dev server:
+
+```bash
+npm run dev
+# or
 deno task dev
 ```
+
+3. Visit http://localhost:3002
 
 ## Project Structure
 
@@ -52,23 +65,22 @@ auth-app/
 │   ├── jwt.ts              # JWT helpers
 │   └── db.ts               # Mock database
 ├── components/
-│   ├── AuthProvider.tsx
-│   └── ProtectedRoute.tsx
-└── middleware.ts           # Auth middleware
+│   └── AuthProvider.tsx
+├── veryfront.config.ts     # Auth middleware configuration
+└── package.json            # Project dependencies
 ```
 
 ## Key Implementation Details
 
 ### JWT Token Management
 
-- Tokens are signed with a secret key
+- Tokens are signed with a secret key using Web Crypto API
 - Tokens expire after 7 days
 - Refresh tokens can be implemented for extended sessions
 
 ### Password Security
 
-- Passwords are hashed using bcrypt
-- Salt rounds: 10
+- Passwords are hashed before storage
 - Never store plain text passwords
 
 ### Protected Routes
@@ -76,6 +88,14 @@ auth-app/
 - Client-side: UseAuth hook checks authentication
 - Server-side: Middleware validates JWT tokens
 - API routes return 401 for unauthorized access
+
+## Environment Variables
+
+Create a `.env` file with:
+
+```env
+JWT_SECRET=your-secret-key-change-in-production
+```
 
 ## Extending This Example
 

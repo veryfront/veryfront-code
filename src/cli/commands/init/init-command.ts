@@ -107,10 +107,10 @@ export async function initCommand(options: InitOptions): Promise<void> {
   }
 
   // Use new template system for modern templates
-  if (["blog", "docs", "app", "minimal"].includes(template)) {
+  if (["blog", "docs", "app", "minimal", "ai"].includes(template)) {
     const { getTemplate } = await import("../../templates/index.ts");
 
-    const templateFiles = getTemplate(template as "blog" | "docs" | "app" | "minimal");
+    const templateFiles = getTemplate(template as "blog" | "docs" | "app" | "minimal" | "ai");
 
     if (!templateFiles) {
       throw toError(createError({
@@ -176,5 +176,10 @@ export async function initCommand(options: InitOptions): Promise<void> {
     logger.info(`  - Default login: demo@example.com / password`);
     logger.info(`  - Add API routes in app/api/`);
     logger.info(`  - Configure auth in lib/auth.ts`);
+  } else if (template === "ai") {
+    logger.info(`\n${cyan("AI Starter tips:")}`);
+    logger.info(`  - Add your API Key to .env`);
+    logger.info(`  - Define new tools in ai/agent.ts`);
+    logger.info(`  - Configure providers in veryfront.config.js`);
   }
 }

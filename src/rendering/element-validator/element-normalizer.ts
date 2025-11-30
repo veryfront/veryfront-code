@@ -11,7 +11,7 @@ import * as React from "react";
 import { rendererLogger as logger } from "@veryfront/utils";
 import { normalizeChild } from "../utils/index.ts";
 import { deepInspectElement, type InspectionOptions } from "./element-inspector.ts";
-import { getElementTypeName } from "./primitive-checks.ts";
+import { getElementTypeName, looksLikeReactElement } from "./primitive-checks.ts";
 
 /**
  * Options for element validation and normalization
@@ -49,17 +49,25 @@ export function ensureValidReactElement(
 
   // Normalize the child
   const finalChild = normalizeChild(pageElement);
-  const finalIsElement = React.isValidElement(finalChild);
+
+  // Use symbol-agnostic check for cross-instance compatibility
+  // This handles elements created by project React when running in bundled CLI
+  const finalIsElement = React.isValidElement(finalChild) || looksLikeReactElement(finalChild);
 
   // Log final element check if debug mode is enabled
   if (options.debugMode) {
     logFinalElementCheck(finalChild, finalIsElement);
   }
 
-  // Return element or wrap in Fragment
-  return finalIsElement
-    ? (finalChild as React.ReactElement)
-    : React.createElement(React.Fragment, undefined, finalChild);
+  // Return element directly if it looks like a valid React element
+  // Note: We pass it through directly even if created by project React,
+  // because the rendering pipeline (SSR) will use project's React DOM
+  if (finalIsElement) {
+    return finalChild as React.ReactElement;
+  }
+
+  // Wrap non-elements in Fragment
+  return React.createElement(React.Fragment, undefined, finalChild);
 }
 
 /**
@@ -102,7 +110,9 @@ function logFinalElementCheck(
     "children" in finalChild
   );
 
-  const type = React.isValidElement(finalChild)
+  // Use symbol-agnostic check for cross-instance compatibility
+  const isElement = React.isValidElement(finalChild) || looksLikeReactElement(finalChild);
+  const type = isElement
     ? getElementTypeName(finalChild as React.ReactElement)
     : typeof finalChild;
 

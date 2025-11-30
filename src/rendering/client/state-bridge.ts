@@ -1,3 +1,5 @@
+import * as React from "react";
+import type { Dispatch, SetStateAction, EffectCallback, DependencyList } from "react";
 import { rendererLogger } from "@veryfront/utils";
 
 export interface StateStore {
@@ -5,6 +7,13 @@ export interface StateStore {
   set<T>(key: string, value: T): void;
   subscribe<T>(key: string, callback: (value: T) => void): () => void;
   clear(): void;
+}
+
+// Define a subset interface for React hooks used in this module
+interface ReactHooksSubset {
+  useState: <S>(initialState: S | (() => S)) => [S, Dispatch<SetStateAction<S>>];
+  useEffect: (effect: EffectCallback, deps?: DependencyList) => void;
+  useCallback: <T extends (...args: any[]) => any>(callback: T, deps: DependencyList) => T;
 }
 
 class StateBridge implements StateStore {
@@ -128,41 +137,17 @@ export function getStateBridge(): StateBridge {
   return bridgeInstance;
 }
 
-// Test-only function to reset singleton
-// @ts-ignore - This is only used in tests
 export function __resetBridgeForTesting(): void {
   bridgeInstance = null;
-}
-
-// React hooks types for compatibility
-interface ReactHooksCompat {
-  useState: <S>(initialState: S | (() => S)) => [S, (value: S) => void];
-  useEffect: (effect: () => void | (() => void), deps?: unknown[]) => void;
-  useCallback: <T>(callback: T, deps: unknown[]) => T;
-}
-
-// Extend globalThis to include React hooks
-interface GlobalWithReact {
-  React?: ReactHooksCompat;
 }
 
 export function useBridgedState<T>(
   key: string,
   initialValue: T,
   options?: { persist?: boolean },
+  testReact?: ReactHooksSubset, // Use the new subset type
 ): [T, (value: T) => void] {
-  const globalWithReact = globalThis as unknown as GlobalWithReact;
-  const reactHooks: ReactHooksCompat = globalWithReact.React || {
-    useState: <S>(initialState: S | (() => S)) =>
-      [initialState instanceof Function ? initialState() : initialState, () => {}] as [
-        S,
-        (value: S) => void,
-      ],
-    useEffect: () => {},
-    useCallback: <U>(fn: U) => fn,
-  };
-
-  const { useState, useEffect, useCallback } = reactHooks;
+  const { useState, useEffect, useCallback } = testReact || React;
   const bridge = getStateBridge();
 
   const storedValue = bridge.get(key);

@@ -1,10 +1,10 @@
 import type { ShellAdapter } from "../base.ts";
 import { createError, toError } from "../../../core/errors/veryfront-error.ts";
+import * as fs from "node:fs";
 
 export class NodeBasedShellAdapter implements ShellAdapter {
   statSync(path: string): { isFile: boolean; isDirectory: boolean } {
     try {
-      const fs = require("node:fs");
       const stat = fs.statSync(path);
       return {
         isFile: stat.isFile(),
@@ -20,7 +20,6 @@ export class NodeBasedShellAdapter implements ShellAdapter {
 
   readFileSync(path: string): string {
     try {
-      const fs = require("node:fs");
       return fs.readFileSync(path, "utf-8");
     } catch (error) {
       throw toError(createError({

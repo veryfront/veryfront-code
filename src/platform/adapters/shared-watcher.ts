@@ -1,4 +1,5 @@
 import type { FileChangeEvent, FileChangeKind, FileWatcher } from "./base.ts";
+import { join } from "node:path";
 
 export async function setupNodeFsWatcher(
   path: string,
@@ -24,7 +25,6 @@ export async function setupNodeFsWatcher(
       if (options.closed() || options.signal?.aborted) return;
 
       const kind: FileChangeKind = eventType === "change" ? "modify" : "any";
-      const { join } = require("node:path");
       const fullPath = filename ? join(path, filename) : path;
 
       enqueueWatchEvent(

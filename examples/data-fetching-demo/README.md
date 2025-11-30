@@ -26,7 +26,7 @@ npm run dev
 deno task dev
 ```
 
-3. Visit http://localhost:3000
+3. Visit http://localhost:3002
 
 ## What It Does
 

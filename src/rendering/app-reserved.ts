@@ -1,10 +1,10 @@
-import * as React from "react";
+import * as BundledReact from "react";
 import { rendererLogger, rendererLogger as logger } from "@veryfront/utils";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 
 // Type for reserved components (loading, error, not-found)
 // Using unknown props since different reserved components have different prop requirements
-type ReservedComponent = React.ComponentType<unknown>;
+type ReservedComponent = BundledReact.ComponentType<unknown>;
 
 // Reserved runtime components mapping (kept for compatibility)
 export const RESERVED_COMPONENTS = {
@@ -28,13 +28,17 @@ export function collectAncestorDirs(segmentDir: string, appRootDir: string): str
   return dirs;
 }
 
-export function createErrorBoundary(ErrorComponent: ReservedComponent) {
+export function createErrorBoundary(
+  ErrorComponent: ReservedComponent,
+  React: typeof BundledReact = BundledReact,
+) {
   // Create a proper React Error Boundary class component
+  // Use the passed React instance to ensure symbols match user components
   return class ErrorBoundary extends React.Component<
-    { children?: React.ReactNode },
+    { children?: BundledReact.ReactNode },
     { hasError: boolean; error?: Error }
   > {
-    constructor(props: { children?: React.ReactNode }) {
+    constructor(props: { children?: BundledReact.ReactNode }) {
       super(props);
       this.state = { hasError: false };
     }
@@ -43,13 +47,13 @@ export function createErrorBoundary(ErrorComponent: ReservedComponent) {
       return { hasError: true, error };
     }
 
-    override componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
+    override componentDidCatch(error: Error, errorInfo: BundledReact.ErrorInfo) {
       logger.error("Error boundary caught error:", error, errorInfo);
     }
 
     override render() {
       if (this.state.hasError && ErrorComponent) {
-        const Reserved = ErrorComponent as React.ComponentType<Record<string, unknown>>;
+        const Reserved = ErrorComponent as BundledReact.ComponentType<Record<string, unknown>>;
         return React.createElement(Reserved, {
           error: this.state.error,
           reset: () => this.setState({ hasError: false }),

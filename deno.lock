@@ -31,6 +31,9 @@
     "npm:@types/node@*": "24.2.0",
     "npm:ai@latest": "5.0.93_zod@4.1.12",
     "npm:picocolors@*": "1.1.1",
+    "npm:react-dom@^18.3.1": "18.3.1_react@18.3.1",
+    "npm:react@^18.3.1": "18.3.1",
+    "npm:veryfront@latest": "0.0.4",
     "npm:zod@latest": "4.1.12"
   },
   "jsr": {
@@ -232,14 +235,51 @@
     "generic-pool@3.9.0": {
       "integrity": "sha512-hymDOu5B53XvN4QT9dBmZxPX4CWhBPPLguTZ9MMFeFa/Kg0xWVfylOVNlJji/E7yTZWFd/q9GO5TxDLq156D7g=="
     },
+    "js-tokens@4.0.0": {
+      "integrity": "sha512-RdJUflcE3cUzKiMqQgsCu06FPu9UdIJO0beYbPhHN4k6apgJtifcoCtT9bcxOpYBtpD2kCM6Sbzg4CausW/PKQ=="
+    },
     "json-schema@0.4.0": {
       "integrity": "sha512-es94M3nTIfsEPisRafak+HDLfHXnKBhV3vU5eqPcS3flIWqcxJWgXHXiey3YrpaNsanY5ei1VoYEbOzijuq9BA=="
+    },
+    "loose-envify@1.4.0": {
+      "integrity": "sha512-lyuxPGr/Wfhrlem2CL/UcnUc1zcqKAImBDzukY7Y5F/yQiNdko6+fRLevlw1HgMySw7f611UIY408EtxRSoK3Q==",
+      "dependencies": [
+        "js-tokens"
+      ],
+      "bin": true
     },
     "picocolors@1.1.1": {
       "integrity": "sha512-xceH2snhtb5M9liqDsmEw56le376mTZkEX/jEb/RxNFyegNul7eNslCXP9FDj/Lcu0X8KEyMceP2ntpaHrDEVA=="
     },
+    "react-dom@18.3.1_react@18.3.1": {
+      "integrity": "sha512-5m4nQKp+rZRb09LNH59GM4BxTh9251/ylbKIbpe7TpGxfJ+9kv6BLkLBXIjjspbgbnIBNqlI23tRnTWT0snUIw==",
+      "dependencies": [
+        "loose-envify",
+        "react",
+        "scheduler"
+      ]
+    },
+    "react@18.3.1": {
+      "integrity": "sha512-wS+hAgJShR0KhEvPJArfuPVN1+Hz1t0Y6n5jLrGQbkb4urgPE/0Rve+1kMB1v/oWgHgm4WIcV+i7F2pTVj+2iQ==",
+      "dependencies": [
+        "loose-envify"
+      ]
+    },
+    "scheduler@0.23.2": {
+      "integrity": "sha512-UOShsPwz7NrMUqhR6t0hWjFduvOzbtv7toDH1/hIrfRNIDBnnBWd0CwJTGvTpngVlmwGCdP9/Zl/tVrDqcuYzQ==",
+      "dependencies": [
+        "loose-envify"
+      ]
+    },
     "undici-types@7.10.0": {
       "integrity": "sha512-t5Fy/nfn+14LuOc2KNYg75vZqClpAiqscVvMygNnlsHBFpSXdJaYtXMcdNLpl/Qvc3P2cB3s6lOV51nqsFq4ag=="
+    },
+    "veryfront@0.0.4": {
+      "integrity": "sha512-COxi8xeR477Ifve/PUcMZ5TwkkUj24x/UmVgSpE6Vx8JdMASvPtfNB6VBy7FlVZXtedW6FNX0u0VrVxbLXUl2w==",
+      "os": ["darwin", "linux", "win32"],
+      "cpu": ["x64", "arm64"],
+      "scripts": true,
+      "bin": true
     },
     "yallist@4.0.0": {
       "integrity": "sha512-3wdGidZyq5PB084XLES5TpOSRA3wjXAlIWMhum2kRcv/41Sn2emQ0dycQW4uZXLejwKvg6EsvbdlVL+FYEct7A=="
@@ -1274,6 +1314,8 @@
     "https://esm.sh/dir-glob@3.0.1?target=denonext": "9e24212222bd6ccfb7edbbf0c752ec1eb60dba056f69ede8556a6b6e8f695083",
     "https://esm.sh/end-of-stream@1.4.5/denonext/end-of-stream.mjs": "c511aeaea5e808ace58c46cbddce6d84ceb0bcdd969a6f704cac13e012e1ae03",
     "https://esm.sh/end-of-stream@1.4.5?target=denonext": "4b147355dee74ffd5482a770a95b33b197e8cb7ab4036311378df40bc4ea94fe",
+    "https://esm.sh/es-module-lexer@1.5.0": "668dd49773902f0f1514fcadfc6dddf0e7146c1f67436d4dbe4c7ff688d078cd",
+    "https://esm.sh/es-module-lexer@1.5.0/denonext/es-module-lexer.mjs": "443d7691facf7d1f70d635532549f27d0176a980b1685a7162123161bcd33d1b",
     "https://esm.sh/escape-string-regexp@5.0.0/denonext/escape-string-regexp.mjs": "e7e83223aeadce014afec3437ad9eb2c38d4fd583d55e48934f3325834e7388e",
     "https://esm.sh/escape-string-regexp@5.0.0?target=denonext": "a04bd35da97b7bb95120eb6923dcd64751185568d333fa6a64a1ca0be2b4feac",
     "https://esm.sh/estree-util-attach-comments@3.0.0/denonext/estree-util-attach-comments.mjs": "0b318ad4bd7fa385593cd294a79efcf18ac4ca6e6d5b46f562a5cd377ffa98d0",
@@ -2061,5 +2103,18 @@
     "https://esm.sh/zod@4.1.12/v4?target=denonext": "b467d5169ada9f7e196c321361da73414f40dd512c20abdd6bebbbe0c460aea5",
     "https://esm.sh/zwitch@2.0.4/denonext/zwitch.mjs": "9952f81d17f82f6d3ba09f0b593e479474825403f4956e3c48d77555d699ac0c",
     "https://esm.sh/zwitch@2.0.4?target=denonext": "6be0fec2f874b4fdeec2943cd95522fce96968c8f4b3b4ac87f6110409d3c370"
+  },
+  "workspace": {
+    "members": {
+      "examples/form-handling": {
+        "packageJson": {
+          "dependencies": [
+            "npm:react-dom@^18.3.1",
+            "npm:react@^18.3.1",
+            "npm:veryfront@latest"
+          ]
+        }
+      }
+    }
   }
 }

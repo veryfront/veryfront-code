@@ -6,7 +6,7 @@
  */
 
 import * as React from "react";
-import { rendererLogger as logger } from "@veryfront/utils";
+import { rendererLogger as logger, isCompiledBinary } from "@veryfront/utils";
 import { ErrorCode, VeryfrontError } from "@veryfront/errors/index.ts";
 import {
   getReactVersionInfo,
@@ -15,6 +15,46 @@ import {
 } from "@veryfront/react";
 import { streamToString } from "./utils/index.ts";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
+
+/**
+ * Convert Node.js pipeable stream to string
+ *
+ * renderToPipeableStream returns { pipe, abort } instead of a ReadableStream.
+ * This function creates a PassThrough stream, pipes the content to it,
+ * and collects the output as a string.
+ */
+async function pipeToString(
+  pipeFn: (writable: NodeJS.WritableStream) => void,
+): Promise<string> {
+  // Dynamically import Node.js modules for Node environments
+  // In Deno, renderToReadableStream is used instead, so this won't be called
+  const { PassThrough } = await import("node:stream");
+  const { Buffer } = await import("node:buffer");
+
+  return new Promise((resolve, reject) => {
+    const chunks: Uint8Array[] = [];
+    const passThrough = new PassThrough();
+
+    passThrough.on("data", (chunk: Uint8Array) => {
+      chunks.push(chunk);
+    });
+
+    passThrough.on("end", () => {
+      resolve(Buffer.concat(chunks).toString("utf-8"));
+    });
+
+    passThrough.on("error", (err: Error) => {
+      reject(err);
+    });
+
+    // Pipe the React output to our PassThrough stream
+    try {
+      pipeFn(passThrough);
+    } catch (err) {
+      reject(err);
+    }
+  });
+}
 
 export interface SSRRenderOptions {
   mode: string;
@@ -66,8 +106,19 @@ export class SSRRenderer {
     const versionInfo = getReactVersionInfo();
 
     // Determine if we should use streaming
-    const useStreaming = (this.mode === "production" || options.wantsStream) &&
+    // IMPORTANT: Disable streaming in compiled binaries because React's streaming SSR
+    // uses Workers with blob URLs internally, which fail in deno compile binaries
+    // Error: "Module not found: blob:null/..." in worker
+    const useStreaming = !isCompiledBinary() &&
+      (this.mode === "production" || options.wantsStream) &&
       (versionInfo.isReact18 || versionInfo.isReact19);
+
+    if (isCompiledBinary() && (this.mode === "production" || options.wantsStream)) {
+      logger.info("Streaming SSR disabled in compiled binary (using string rendering)", {
+        reactVersion: versionInfo.version,
+        reason: "Workers with blob URLs not supported in deno compile binaries",
+      });
+    }
 
     if (useStreaming) {
       logger.info("Rendering via streaming adapter", {
@@ -94,6 +145,15 @@ export class SSRRenderer {
 
         if (options.debugMode) {
           logger.debug("Streaming SSR completed", { htmlLength: html.length });
+        }
+      } else if (renderResult.pipe) {
+        // Handle Node.js renderToPipeableStream result
+        // This is the case when running in Node.js - the result has { pipe, abort }
+        logger.info("Converting pipeable stream to string (Node.js renderToPipeableStream)");
+        html = await pipeToString(renderResult.pipe);
+
+        if (options.debugMode) {
+          logger.debug("Pipeable SSR completed", { htmlLength: html.length });
         }
       } else if (renderResult.html) {
         html = renderResult.html;

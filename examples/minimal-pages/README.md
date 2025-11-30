@@ -4,20 +4,42 @@ A tiny Pages Router app demonstrating static pages and an API route.
 
 ## Structure
 
-- `pages/index.mdx` – Home page
-- `pages/about.mdx` – About page
-- `pages/api/echo.ts` – Simple API route
+- `pages/index.mdx` - Home page
+- `pages/about.mdx` - About page
+- `pages/api/echo.ts` - Simple API route
 
-## Run (dev)
+## Setup
 
-```bash
-veryfront dev
-```
-
-## Run (production server)
+1. Install dependencies:
 
 ```bash
-veryfront serve --port 3000
+npm install
+# or
+deno install
 ```
 
-Then open http://127.0.0.1:3000 and http://127.0.0.1:3000/api/echo.
+2. Run the dev server:
+
+```bash
+npm run dev
+# or
+deno task dev
+```
+
+3. Visit http://localhost:3002
+
+## API Routes
+
+Test the echo API:
+
+```bash
+curl "http://localhost:3002/api/echo?q=hello"
+# Returns: {"ok":true,"echo":"hello"}
+```
+
+## Files
+
+- `pages/index.mdx` - Home page with frontmatter
+- `pages/about.mdx` - About page
+- `pages/api/echo.ts` - Echo API endpoint
+- `package.json` - Project dependencies

@@ -24,6 +24,12 @@ import { executeTool, toolRegistry, toolToProviderDefinition } from "../utils/to
 import { detectPlatform, getPlatformCapabilities } from "../runtime/platform.ts";
 import { createMemory, type Memory } from "./memory.ts";
 import { serverLogger as logger } from "@veryfront/utils";
+import {
+  addSpanEvent,
+  setSpanAttributes,
+  withSpan,
+  type Span,
+} from "../../observability/tracing/index.ts";
 
 /** Default max tokens for LLM responses */
 const DEFAULT_MAX_TOKENS = 4096;
@@ -53,51 +59,58 @@ export class AgentRuntime {
     input: string | Message[],
     context?: Record<string, unknown>,
   ): Promise<AgentResponse> {
-    // Convert input to messages
-    const inputMessages = this.normalizeInput(input);
-
-    // Add to memory
-    for (const msg of inputMessages) {
-      await this.memory.add(msg);
-    }
-
-    // Get messages from memory
-    const messages = await this.memory.getMessages();
-
-    // Get system prompt
-    const systemPrompt = await this.resolveSystemPrompt();
-
-    // Get provider and model
-    const { provider, model } = getProviderFromModel(this.config.model);
-
-    // Prepare context for middleware
-    const agentContext: AgentContext = {
-      agentId: this.id,
-      model: this.config.model,
-      input: inputMessages,
-      data: context,
-      platform: detectPlatform(),
-    };
-
-    // Execute middleware chain
-    if (this.config.middleware && this.config.middleware.length > 0) {
-      return await this.executeMiddleware(agentContext, async () => {
-        return await this.executeAgentLoop(
-          provider,
-          model,
-          systemPrompt,
-          messages,
-        );
+    return await withSpan("agent.generate", async (span) => {
+      setSpanAttributes(span, {
+        "agent.id": this.id,
+        "agent.model": this.config.model,
       });
-    }
 
-    // Execute agent loop
-    return await this.executeAgentLoop(
-      provider,
-      model,
-      systemPrompt,
-      messages,
-    );
+      // Convert input to messages
+      const inputMessages = this.normalizeInput(input);
+
+      // Add to memory
+      for (const msg of inputMessages) {
+        await this.memory.add(msg);
+      }
+
+      // Get messages from memory
+      const messages = await this.memory.getMessages();
+
+      // Get system prompt
+      const systemPrompt = await this.resolveSystemPrompt();
+
+      // Get provider and model
+      const { provider, model } = getProviderFromModel(this.config.model);
+
+      // Prepare context for middleware
+      const agentContext: AgentContext = {
+        agentId: this.id,
+        model: this.config.model,
+        input: inputMessages,
+        data: context,
+        platform: detectPlatform(),
+      };
+
+      // Execute middleware chain
+      if (this.config.middleware && this.config.middleware.length > 0) {
+        return await this.executeMiddleware(agentContext, async () => {
+          return await this.executeAgentLoop(
+            provider,
+            model,
+            systemPrompt,
+            messages,
+          );
+        });
+      }
+
+      // Execute agent loop
+      return await this.executeAgentLoop(
+        provider,
+        model,
+        systemPrompt,
+        messages,
+      );
+    });
   }
 
   /**
@@ -177,178 +190,200 @@ export class AgentRuntime {
     systemPrompt: string,
     messages: Message[],
   ): Promise<AgentResponse> {
-    const capabilities = getPlatformCapabilities();
-    const maxSteps = this.getMaxSteps(capabilities.maxAgentSteps);
+    return await withSpan("agent.execution_loop", async (loopSpan) => {
+      const capabilities = getPlatformCapabilities();
+      const maxSteps = this.getMaxSteps(capabilities.maxAgentSteps);
 
-    const toolCalls: ToolCall[] = [];
-    const currentMessages = [...messages];
-    const totalUsage = {
-      promptTokens: 0,
-      completionTokens: 0,
-      totalTokens: 0,
-    };
-
-    // Agent loop
-    for (let step = 0; step < maxSteps; step++) {
-      this.status = "thinking";
-
-      // Get available tools
-      const tools = this.getAvailableTools();
-
-      // Call provider
-      const response = await provider.complete({
-        model,
-        system: systemPrompt,
-        messages: currentMessages.map((m) => {
-          const msg: {
-            role: string;
-            content: string;
-            tool_calls?: Array<{
-              id: string;
-              type?: string;
-              function: {
-                name: string;
-                arguments: string;
-              };
-            }>;
-            tool_call_id?: string;
-          } = {
-            role: m.role,
-            content: m.content,
-          };
-
-          // Include tool_calls for assistant messages
-          if (m.role === "assistant" && m.toolCalls) {
-            msg.tool_calls = m.toolCalls.map((tc) => ({
-              id: tc.id,
-              type: "function",
-              function: {
-                name: tc.name,
-                arguments: JSON.stringify(tc.arguments),
-              },
-            }));
-          }
-
-          // Include tool_call_id for tool result messages
-          if (m.role === "tool" && m.toolCallId) {
-            msg.tool_call_id = m.toolCallId;
-          }
-
-          return msg;
-        }),
-        tools: tools.length > 0 ? tools : undefined,
-        maxTokens: this.config.memory?.maxTokens || DEFAULT_MAX_TOKENS,
-        temperature: DEFAULT_TEMPERATURE,
-      });
-
-      // Update usage
-      totalUsage.promptTokens += response.usage.promptTokens;
-      totalUsage.completionTokens += response.usage.completionTokens;
-      totalUsage.totalTokens += response.usage.totalTokens;
-
-      // Add assistant message
-      const assistantMessage: Message = {
-        id: `msg_${Date.now()}_${step}`,
-        role: "assistant",
-        content: response.text,
-        toolCalls: response.toolCalls, // Include tool calls from response
-        timestamp: Date.now(),
+      const toolCalls: ToolCall[] = [];
+      const currentMessages = [...messages];
+      const totalUsage = {
+        promptTokens: 0,
+        completionTokens: 0,
+        totalTokens: 0,
       };
-      currentMessages.push(assistantMessage);
 
-      // Add to memory
-      await this.memory.add(assistantMessage);
+      // Agent loop
+      for (let step = 0; step < maxSteps; step++) {
+        this.status = "thinking";
+        addSpanEvent(loopSpan, "step_start", { step });
 
-      // Check if there are tool calls
-      if (response.toolCalls && response.toolCalls.length > 0) {
-        this.status = "tool_execution";
+        // Get available tools
+        const tools = this.getAvailableTools();
 
-        // Execute each tool call
-        for (const tc of response.toolCalls) {
-          const toolCall: ToolCall = {
-            id: tc.id,
-            name: tc.name,
-            args: tc.arguments,
-            status: "pending",
-          };
+        // Call provider
+        const response = await withSpan("agent.provider_complete", async (span) => {
+          setSpanAttributes(span, {
+            model,
+            "messages.count": currentMessages.length,
+          });
+          return await provider.complete({
+            model,
+            system: systemPrompt,
+            messages: currentMessages.map((m) => {
+              const msg: {
+                role: string;
+                content: string;
+                tool_calls?: Array<{
+                  id: string;
+                  type?: string;
+                  function: {
+                    name: string;
+                    arguments: string;
+                  };
+                }>;
+                tool_call_id?: string;
+              } = {
+                role: m.role,
+                content: m.content,
+              };
 
-          try {
-            toolCall.status = "executing";
-            const startTime = Date.now();
+              // Include tool_calls for assistant messages
+              if (m.role === "assistant" && m.toolCalls) {
+                msg.tool_calls = m.toolCalls.map((tc) => ({
+                  id: tc.id,
+                  type: "function",
+                  function: {
+                    name: tc.name,
+                    arguments: JSON.stringify(tc.arguments),
+                  },
+                }));
+              }
 
-            // Execute tool
-            const result = await executeTool(tc.name, tc.arguments, {
-              agentId: this.id,
+              // Include tool_call_id for tool result messages
+              if (m.role === "tool" && m.toolCallId) {
+                msg.tool_call_id = m.toolCallId;
+              }
+
+              return msg;
+            }),
+            tools: tools.length > 0 ? tools : undefined,
+            maxTokens: this.config.memory?.maxTokens || DEFAULT_MAX_TOKENS,
+            temperature: DEFAULT_TEMPERATURE,
+          });
+        });
+
+        // Update usage
+        totalUsage.promptTokens += response.usage.promptTokens;
+        totalUsage.completionTokens += response.usage.completionTokens;
+        totalUsage.totalTokens += response.usage.totalTokens;
+
+        // Add assistant message
+        const assistantMessage: Message = {
+          id: `msg_${Date.now()}_${step}`,
+          role: "assistant",
+          content: response.text,
+          toolCalls: response.toolCalls, // Include tool calls from response
+          timestamp: Date.now(),
+        };
+        currentMessages.push(assistantMessage);
+
+        // Add to memory
+        await this.memory.add(assistantMessage);
+
+        // Check if there are tool calls
+        if (response.toolCalls && response.toolCalls.length > 0) {
+          this.status = "tool_execution";
+          addSpanEvent(loopSpan, "tool_execution_start", {
+            count: response.toolCalls.length,
+          });
+
+          // Execute each tool call
+          for (const tc of response.toolCalls) {
+            const toolCall: ToolCall = {
+              id: tc.id,
+              name: tc.name,
+              args: tc.arguments,
+              status: "pending",
+            };
+
+            await withSpan("agent.tool_execute", async (toolSpan) => {
+              setSpanAttributes(toolSpan, {
+                "tool.name": tc.name,
+                "tool.id": tc.id,
+              });
+
+              try {
+                toolCall.status = "executing";
+                const startTime = Date.now();
+
+                // Execute tool
+                const result = await executeTool(tc.name, tc.arguments, {
+                  agentId: this.id,
+                });
+
+                toolCall.status = "completed";
+                toolCall.result = result;
+                toolCall.executionTime = Date.now() - startTime;
+
+                // Add tool result message
+                const toolResultMessage: Message = {
+                  id: `tool_${tc.id}`,
+                  role: "tool",
+                  content: JSON.stringify(result),
+                  toolCallId: tc.id, // Required by OpenAI API
+                  toolCall,
+                  timestamp: Date.now(),
+                };
+                currentMessages.push(toolResultMessage);
+
+                // Add to memory
+                await this.memory.add(toolResultMessage);
+              } catch (error) {
+                toolCall.status = "error";
+                toolCall.error = error instanceof Error ? error.message : String(error);
+                setSpanAttributes(toolSpan, { "error": true, "error.message": toolCall.error });
+
+                // Add error message
+                const errorMessage: Message = {
+                  id: `tool_error_${tc.id}`,
+                  role: "tool",
+                  content: `Error: ${toolCall.error}`,
+                  toolCallId: tc.id, // Required by OpenAI API
+                  toolCall,
+                  timestamp: Date.now(),
+                };
+                currentMessages.push(errorMessage);
+
+                // Add to memory
+                await this.memory.add(errorMessage);
+              }
+
+              toolCalls.push(toolCall);
             });
-
-            toolCall.status = "completed";
-            toolCall.result = result;
-            toolCall.executionTime = Date.now() - startTime;
-
-            // Add tool result message
-            const toolResultMessage: Message = {
-              id: `tool_${tc.id}`,
-              role: "tool",
-              content: JSON.stringify(result),
-              toolCallId: tc.id, // Required by OpenAI API
-              toolCall,
-              timestamp: Date.now(),
-            };
-            currentMessages.push(toolResultMessage);
-
-            // Add to memory
-            await this.memory.add(toolResultMessage);
-          } catch (error) {
-            toolCall.status = "error";
-            toolCall.error = error instanceof Error ? error.message : String(error);
-
-            // Add error message
-            const errorMessage: Message = {
-              id: `tool_error_${tc.id}`,
-              role: "tool",
-              content: `Error: ${toolCall.error}`,
-              toolCallId: tc.id, // Required by OpenAI API
-              toolCall,
-              timestamp: Date.now(),
-            };
-            currentMessages.push(errorMessage);
-
-            // Add to memory
-            await this.memory.add(errorMessage);
           }
 
-          toolCalls.push(toolCall);
+          // Continue loop to process tool results
+          continue;
         }
 
-        // Continue loop to process tool results
-        continue;
+        // No tool calls, we're done
+        this.status = "completed";
+        addSpanEvent(loopSpan, "loop_complete");
+
+        return {
+          text: response.text,
+          messages: currentMessages,
+          toolCalls,
+          status: this.status,
+          usage: totalUsage,
+        };
       }
 
-      // No tool calls, we're done
+      // Max steps reached
       this.status = "completed";
+      addSpanEvent(loopSpan, "max_steps_reached", { maxSteps });
 
       return {
-        text: response.text,
+        text: currentMessages[currentMessages.length - 1]?.content || "",
         messages: currentMessages,
         toolCalls,
         status: this.status,
         usage: totalUsage,
+        metadata: {
+          warning: `Max steps (${maxSteps}) reached`,
+        },
       };
-    }
-
-    // Max steps reached
-    this.status = "completed";
-
-    return {
-      text: currentMessages[currentMessages.length - 1]?.content || "",
-      messages: currentMessages,
-      toolCalls,
-      status: this.status,
-      usage: totalUsage,
-      metadata: {
-        warning: `Max steps (${maxSteps}) reached`,
-      },
-    };
+    });
   }
 
   /**
@@ -417,84 +452,103 @@ export class AgentRuntime {
         arguments: string;
       }>();
 
+      const handleEvent = (event: any) => {
+        switch (event.type) {
+          case "content": {
+            // Accumulate text content
+            accumulatedText += event.content;
+
+            // Send chunk to client
+            const chunkData = JSON.stringify({
+              type: "chunk",
+              content: event.content,
+            });
+            controller.enqueue(encoder.encode(`data: ${chunkData}\n\n`));
+
+            // Call callback
+            if (callbacks?.onChunk) {
+              callbacks.onChunk(event.content);
+            }
+            break;
+          }
+
+          case "tool_call_start":
+            // Initialize tool call tracking
+            if (event.toolCall?.id) {
+              streamToolCalls.set(event.toolCall.id, {
+                id: event.toolCall.id,
+                name: event.toolCall.name,
+                arguments: "",
+              });
+            }
+            break;
+
+          case "tool_call_delta":
+            // Accumulate tool call arguments
+            if (event.id && streamToolCalls.has(event.id)) {
+              const tc = streamToolCalls.get(event.id)!;
+              tc.arguments += event.arguments;
+            }
+            break;
+
+          case "tool_call_complete":
+            // Tool call is complete
+            if (event.toolCall?.id) {
+              streamToolCalls.set(event.toolCall.id, {
+                id: event.toolCall.id,
+                name: event.toolCall.name,
+                arguments: event.toolCall.arguments,
+              });
+            }
+            break;
+
+          case "finish":
+            finishReason = event.finishReason;
+            break;
+
+          case "usage":
+            // Accumulate usage data
+            if (event.usage) {
+              totalUsage.promptTokens += event.usage.promptTokens || 0;
+              totalUsage.completionTokens += event.usage.completionTokens || 0;
+              totalUsage.totalTokens += event.usage.totalTokens || 0;
+            }
+            break;
+        }
+      };
+
+      // Buffer to handle partial JSON chunks split across reads
+      let partial = "";
+
       while (true) {
         const { done, value } = await reader.read();
 
         if (done) break;
 
-        const chunk = decoder.decode(value, { stream: true });
-        const lines = chunk.split("\n").filter((line) => line.trim());
+        partial += decoder.decode(value, { stream: true });
+        const segments = partial.split("\n");
+        // Keep the last segment as partial (may be incomplete)
+        partial = segments.pop() ?? "";
+        const lines = segments.filter((line) => line.trim());
 
         for (const line of lines) {
           try {
             const event = JSON.parse(line);
-
-            switch (event.type) {
-              case "content": {
-                // Accumulate text content
-                accumulatedText += event.content;
-
-                // Send chunk to client
-                const chunkData = JSON.stringify({
-                  type: "chunk",
-                  content: event.content,
-                });
-                controller.enqueue(encoder.encode(`data: ${chunkData}\n\n`));
-
-                // Call callback
-                if (callbacks?.onChunk) {
-                  callbacks.onChunk(event.content);
-                }
-                break;
-              }
-
-              case "tool_call_start":
-                // Initialize tool call tracking
-                if (event.toolCall?.id) {
-                  streamToolCalls.set(event.toolCall.id, {
-                    id: event.toolCall.id,
-                    name: event.toolCall.name,
-                    arguments: "",
-                  });
-                }
-                break;
-
-              case "tool_call_delta":
-                // Accumulate tool call arguments
-                if (event.id && streamToolCalls.has(event.id)) {
-                  const tc = streamToolCalls.get(event.id)!;
-                  tc.arguments += event.arguments;
-                }
-                break;
-
-              case "tool_call_complete":
-                // Tool call is complete
-                if (event.toolCall?.id) {
-                  streamToolCalls.set(event.toolCall.id, {
-                    id: event.toolCall.id,
-                    name: event.toolCall.name,
-                    arguments: event.toolCall.arguments,
-                  });
-                }
-                break;
-
-              case "finish":
-                finishReason = event.finishReason;
-                break;
-
-              case "usage":
-                // Accumulate usage data
-                if (event.usage) {
-                  totalUsage.promptTokens += event.usage.promptTokens || 0;
-                  totalUsage.completionTokens += event.usage.completionTokens || 0;
-                  totalUsage.totalTokens += event.usage.totalTokens || 0;
-                }
-                break;
-            }
+            handleEvent(event);
           } catch (_e) {
             // Skip invalid JSON
             continue;
           }
+        }
+      }
+
+      // Process any remaining buffered line
+      if (partial.trim()) {
+        try {
+          const event = JSON.parse(partial);
+          handleEvent(event);
+        } catch {
+          // ignore trailing partial
         }
       }
 

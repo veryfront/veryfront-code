@@ -1,6 +1,6 @@
 import { rendererLogger as logger } from "@veryfront/utils";
 import { getContentHash, TSX_LAYOUT_MAX_ENTRIES } from "@veryfront/utils";
-import * as React from "react";
+import * as BundledReact from "react";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import type { LayoutItem, MdxBundle, MDXComponents, MDXModule } from "@veryfront/types";
 import { createError, toError } from "../../../core/errors/veryfront-error.ts";
@@ -11,20 +11,21 @@ import {
   getElementDebugInfo,
   getElementTypeName,
 } from "../../element-validator/primitive-checks.ts";
+import { getProjectReact } from "@veryfront/react";
 
 export interface LayoutComponentCache {
-  get(key: string): React.ComponentType | undefined;
-  set(key: string, value: React.ComponentType): void;
+  get(key: string): BundledReact.ComponentType | undefined;
+  set(key: string, value: BundledReact.ComponentType): void;
   delete(key: string): void;
   clear(): void;
 }
 
 class InMemoryLayoutComponentCache implements LayoutComponentCache {
-  private readonly entries = new Map<string, React.ComponentType>();
+  private readonly entries = new Map<string, BundledReact.ComponentType>();
 
   constructor(private readonly maxEntries = TSX_LAYOUT_MAX_ENTRIES) {}
 
-  get(key: string): React.ComponentType | undefined {
+  get(key: string): BundledReact.ComponentType | undefined {
     const value = this.entries.get(key);
     if (value) {
       this.entries.delete(key);
@@ -33,7 +34,7 @@ class InMemoryLayoutComponentCache implements LayoutComponentCache {
     return value;
   }
 
-  set(key: string, value: React.ComponentType): void {
+  set(key: string, value: BundledReact.ComponentType): void {
     if (this.entries.has(key)) {
       this.entries.delete(key);
     } else if (this.entries.size >= this.maxEntries) {
@@ -65,7 +66,7 @@ export async function loadTSXComponent(
   projectDir: string,
   cache: LayoutComponentCache,
   adapter: RuntimeAdapter,
-): Promise<React.ComponentType> {
+): Promise<BundledReact.ComponentType> {
   const source = await adapter.fs.readFile(componentPath);
   const hash = await getContentHash(source);
   const cacheKey = `${componentPath}:${hash}`;
@@ -104,7 +105,7 @@ export async function loadMDXLayout(
   bundle: MdxBundle,
   projectDir: string,
   adapter: RuntimeAdapter,
-): Promise<React.ComponentType<{ components?: MDXComponents }> | undefined> {
+): Promise<BundledReact.ComponentType<{ components?: MDXComponents }> | undefined> {
   const map = await loadImportMap(projectDir, adapter);
   const code = transformImportsWithMap(bundle.compiledCode, map);
   const mod = (await mdxRenderer.loadModuleESM(code)) as MDXModule;
@@ -112,12 +113,14 @@ export async function loadMDXLayout(
 }
 
 export async function applyTSXLayout(
-  element: React.ReactElement,
+  element: BundledReact.ReactElement,
   item: LayoutItem,
   tsxLayoutModuleCache: LayoutComponentCache,
   projectDir: string,
   adapter: RuntimeAdapter,
-): Promise<React.ReactElement> {
+): Promise<BundledReact.ReactElement> {
+  // Get project's React for createElement to ensure element symbols match user components
+  const React = await getProjectReact();
   try {
     const LayoutComponent = await loadTSXComponent(
       item.componentPath!,
@@ -125,7 +128,7 @@ export async function applyTSXLayout(
       tsxLayoutModuleCache,
       adapter,
     );
-    return React.createElement(LayoutComponent, {}, element);
+    return React.createElement(LayoutComponent, {}, element) as BundledReact.ReactElement;
   } catch (e) {
     logger.error("Failed to compile/import TSX layout", e);
 
@@ -134,24 +137,26 @@ export async function applyTSXLayout(
 }
 
 export async function applyMDXLayout(
-  element: React.ReactElement,
+  element: BundledReact.ReactElement,
   bundle: MdxBundle,
   projectDir: string,
   mergedComponents: MDXComponents,
   adapter: RuntimeAdapter,
-): Promise<React.ReactElement> {
+): Promise<BundledReact.ReactElement> {
+  // Get project's React for createElement to ensure element symbols match user components
+  const React = await getProjectReact();
   const LayoutFn = await loadMDXLayout(bundle, projectDir, adapter);
   if (LayoutFn) {
-    const child = ensureValidChild(element);
-    return React.createElement(LayoutFn, { components: mergedComponents }, child);
+    const child = ensureValidChild(element, React);
+    return React.createElement(LayoutFn, { components: mergedComponents }, child) as BundledReact.ReactElement;
   }
   return element;
 }
 
-function ensureValidChild(child: React.ReactNode): React.ReactNode {
+function ensureValidChild(child: BundledReact.ReactNode, React: typeof BundledReact): BundledReact.ReactNode {
   if (React.isValidElement(child)) {
     logger.debug("[ensureValidChild] Valid React element", {
-      type: getElementTypeName(child),
+      type: getElementTypeName(child as BundledReact.ReactElement),
       isValidElement: true,
     });
     return child;

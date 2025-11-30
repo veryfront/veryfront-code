@@ -17,6 +17,7 @@ import {
   getObjectSample,
   hasReactSymbol,
   isValidPrimitive,
+  looksLikeReactElement,
 } from "./primitive-checks.ts";
 
 /**
@@ -53,9 +54,10 @@ export function deepInspectElement(
     return;
   }
 
-  // Valid React elements
-  if (React.isValidElement(element)) {
-    inspectReactElement(element, path, depth, options);
+  // Valid React elements (use symbol-agnostic check for cross-instance compatibility)
+  // This handles elements created by project React when running in bundled CLI
+  if (React.isValidElement(element) || looksLikeReactElement(element)) {
+    inspectReactElement(element as React.ReactElement, path, depth, options);
     return;
   }
 
@@ -125,13 +127,13 @@ function inspectElementProps(
     if (key === "children") {
       // Children prop - inspect each child
       inspectChildren(value, path, depth, options);
-    } else if (React.isValidElement(value)) {
-      // Element prop
+    } else if (React.isValidElement(value) || looksLikeReactElement(value)) {
+      // Element prop (use symbol-agnostic check for cross-instance compatibility)
       deepInspectElement(value, `${path}.props.${key}`, depth + 1, options);
     } else if (Array.isArray(value)) {
-      // Array prop - check for elements
+      // Array prop - check for elements (use symbol-agnostic check)
       value.forEach((item, i) => {
-        if (React.isValidElement(item)) {
+        if (React.isValidElement(item) || looksLikeReactElement(item)) {
           deepInspectElement(
             item,
             `${path}.props.${key}[${i}]`,

@@ -76,4 +76,5 @@ export {
   getObjectSample,
   hasReactSymbol,
   isValidPrimitive,
+  looksLikeReactElement,
 } from "./primitive-checks.ts";

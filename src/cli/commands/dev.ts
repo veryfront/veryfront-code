@@ -12,6 +12,7 @@ import { cliLogger } from "@veryfront/utils";
 import { getConfig } from "@veryfront/config";
 import { createDevServer } from "@veryfront/server/dev-server.ts";
 import { getNetworkInterfaces } from "../../platform/compat/process.ts";
+import { runAIConfigValidation } from "../../ai/utils/config-validator.ts";
 
 export interface DevOptions {
   port: number;
@@ -61,6 +62,11 @@ export async function devCommand(options: DevOptions) {
   // Use config port if specified
   const finalPort = config?.dev?.port || port;
   const enableHMR = config?.dev?.hmr !== false && hmr;
+
+  // Validate AI configuration
+  if (config) {
+    runAIConfigValidation(config);
+  }
 
   // Pre-compile MDX files if enabled
   const usePrecompiledMDX = config?.experimental?.precompileMDX === true;

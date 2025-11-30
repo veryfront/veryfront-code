@@ -24,6 +24,7 @@ export {
 } from "./hooks-adapter.ts";
 export {
   createSSRResponse,
+  getProjectReact,
   renderToStaticMarkupAdapter,
   renderToStreamAdapter,
   renderToStringAdapter,

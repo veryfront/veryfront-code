@@ -6,6 +6,7 @@ import type { Agent, AgentConfig, AgentResponse, Message, ToolCall } from "../ty
 import { AgentRuntime } from "./runtime.ts";
 import { detectPlatform, validatePlatformCompatibility } from "../runtime/platform.ts";
 import { registerTool } from "../mcp/registry.ts";
+import { agentRegistry } from "./registry.ts";
 import { agentLogger } from "../../core/utils/logger/logger.ts";
 import { createError, toError } from "../../core/errors/veryfront-error.ts";
 
@@ -68,8 +69,8 @@ export function agent(config: AgentConfig): Agent {
   // Create runtime
   const runtime = new AgentRuntime(id, config);
 
-  // Return agent instance
-  return {
+  // Create agent instance
+  const agentInstance: Agent = {
     id,
     config,
 
@@ -127,6 +128,11 @@ export function agent(config: AgentConfig): Agent {
       return runtime.clearMemory();
     },
   };
+
+  // Register agent
+  agentRegistry.register(id, agentInstance);
+
+  return agentInstance;
 }
 
 /**

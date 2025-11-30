@@ -10,12 +10,14 @@ import type { HTMLGenerationContext, HTMLGenerator } from "./html.ts";
 import type { RenderOptions } from "./types.ts";
 import { getContentHash } from "../utils/index.ts";
 import { createError, toError } from "../../core/errors/veryfront-error.ts";
+import { ElementValidator } from "../element-validator/index.ts";
+import { SSRRenderer } from "../ssr-renderer.ts";
 
 export interface SSROrchestratorConfig {
   mode: "development" | "production";
   debugMode: boolean;
-  elementValidator: any; // ElementValidator - deleted module
-  ssrRenderer: any; // SSRRenderer - deleted module
+  elementValidator: ElementValidator;
+  ssrRenderer: SSRRenderer;
   htmlGenerator: HTMLGenerator;
 }
 

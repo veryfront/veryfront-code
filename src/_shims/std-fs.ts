@@ -4,6 +4,7 @@
  */
 
 import * as fs from "node:fs/promises";
+import { accessSync } from "node:fs";
 import * as nodePath from "node:path";
 
 /**
@@ -23,8 +24,7 @@ export async function exists(path: string): Promise<boolean> {
  */
 export function existsSync(path: string): boolean {
   try {
-    // @ts-ignore - using require for sync
-    require("node:fs").accessSync(path);
+    accessSync(path);
     return true;
   } catch {
     return false;

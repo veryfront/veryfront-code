@@ -1,13 +1,14 @@
 import { rendererLogger as logger } from "@veryfront/utils";
 import { ErrorCode, VeryfrontError } from "@veryfront/errors/index.ts";
-import * as React from "react";
+import * as BundledReact from "react";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import type { EntityInfo, MdxBundle, MDXComponents, MDXModule, PageBundle } from "@veryfront/types";
 import { loadImportMap, transformImportsWithMap } from "@veryfront/modules/import-map/index.ts";
 import { mdxRenderer } from "@veryfront/transforms/mdx/index.ts";
+import { getProjectReact } from "@veryfront/react";
 
 export interface MDXPageResult {
-  pageElement: React.ReactElement;
+  pageElement: BundledReact.ReactElement;
   pageBundle: PageBundle;
   collectedMetadata: Record<string, unknown>;
 }
@@ -91,12 +92,14 @@ export async function handleMDXPage(
         throw error;
       }
     }
+    // Get project's React for createElement to ensure element symbols match user components
+    const React = await getProjectReact();
     const pageElement = React.createElement(
-      MDXComp as React.ComponentType<{ components?: MDXComponents }>,
+      MDXComp as BundledReact.ComponentType<{ components?: MDXComponents }>,
       {
         components: mergedComponents,
       },
-    );
+    ) as BundledReact.ReactElement;
 
     return {
       pageElement,

@@ -1,11 +1,12 @@
 import * as esbuild from "esbuild";
 import { generateCacheKey, getCachedTransform, setCachedTransform } from "./transform-cache.ts";
 import { computeContentHash, getLoaderFromPath } from "./transform-utils.ts";
-import { addDepsToEsmShUrls, resolveReactImports } from "./react-imports.ts";
+import { addDepsToEsmShUrls, resolveReactImports, isNodeRuntime } from "./react-imports.ts";
 import {
   resolvePathAliases,
   resolveRelativeImports,
   resolveRelativeImportsToAbsolute,
+  resolveRelativeImportsForNodeSSR,
 } from "./path-resolver.ts";
 import { rewriteBareImports, rewriteVendorImports } from "./import-rewriter.ts";
 import type { TransformOptions } from "./types.ts";
@@ -30,7 +31,7 @@ export async function transformToESM(
   } = options;
 
   const contentHash = await computeContentHash(source);
-  const cacheKey = generateCacheKey(projectId, filePath, contentHash);
+  const cacheKey = generateCacheKey(projectId, filePath, contentHash, ssr);
 
   const cached = getCachedTransform(cacheKey);
   if (cached) {
@@ -68,23 +69,29 @@ export async function transformToESM(
 
   let code = result.code;
 
-  code = resolveReactImports(code);
-  code = addDepsToEsmShUrls(code);
-  code = resolvePathAliases(code, filePath, projectDir);
+  code = await resolveReactImports(code);
+  code = await addDepsToEsmShUrls(code);
+  code = await resolvePathAliases(code, filePath, projectDir);
 
   // Different import resolution strategies for SSR vs browser
   if (ssr) {
-    // SSR: Convert relative imports to absolute file:// URLs pointing to original source files
-    // This allows Deno to resolve them correctly even though the transformed file is in temp directory
-    code = resolveRelativeImportsToAbsolute(code, filePath, projectDir);
+    if (isNodeRuntime()) {
+      // Node.js SSR: Keep relative imports but convert .tsx/.ts/.jsx extensions to .js
+      // This works because the cache directory mirrors the project structure
+      code = await resolveRelativeImportsForNodeSSR(code);
+    } else {
+      // Deno SSR: Convert relative imports to absolute file:// URLs pointing to original source files
+      // This allows Deno to resolve them correctly even though the transformed file is in temp directory
+      code = await resolveRelativeImportsToAbsolute(code, filePath, projectDir);
+    }
   } else {
     // Browser: Rewrite imports to use module server (HTTP paths)
-    code = resolveRelativeImports(code, filePath, projectDir, moduleServerUrl);
+    code = await resolveRelativeImports(code, filePath, projectDir, moduleServerUrl);
 
     if (moduleServerUrl && vendorBundleHash) {
-      code = rewriteVendorImports(code, moduleServerUrl, vendorBundleHash);
+      code = await rewriteVendorImports(code, moduleServerUrl, vendorBundleHash);
     } else {
-      code = rewriteBareImports(code, moduleServerUrl);
+      code = await rewriteBareImports(code, moduleServerUrl);
     }
   }
 

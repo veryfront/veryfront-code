@@ -94,6 +94,7 @@
     "rehype-slug": "https://esm.sh/rehype-slug@6.0.0",
     "esbuild": "https://deno.land/x/esbuild@v0.20.1/wasm.js",
     "esbuild/mod.js": "https://deno.land/x/esbuild@v0.20.1/mod.js",
+    "es-module-lexer": "https://esm.sh/es-module-lexer@1.5.0",
     "zod": "https://esm.sh/zod@3.22.0",
     "mime-types": "https://esm.sh/mime-types@2.1.35",
     "mdast": "https://esm.sh/@types/mdast@4.0.3",
