@@ -113,6 +113,11 @@ export async function createPackageJson(
       build: "veryfront build",
       preview: "veryfront preview",
     },
+    dependencies: {
+      react: "^19.0.0",
+      "react-dom": "^19.0.0",
+      zod: "^3.24.0",
+    },
   };
 
   const fs = createFileSystem();
