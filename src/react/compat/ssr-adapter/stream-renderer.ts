@@ -11,6 +11,11 @@ async function renderToReadableStreamImpl(
   options: SSROptions,
   server: Awaited<ReturnType<typeof getReactDOMServer>>,
 ): Promise<SSRResult> {
+  const debug = Boolean(
+    (globalThis as any)?.__VERYFRONT_DEBUG__ ||
+      (Deno as any)?.env?.get?.("VERYFRONT_DEBUG") === "1",
+  );
+
   if (!server.renderToReadableStream) {
     throw toError(createError({
       type: "not_supported",
@@ -20,6 +25,7 @@ async function renderToReadableStreamImpl(
   }
 
   try {
+    if (debug) logger.info("[stream-renderer] Calling renderToReadableStream...");
     const stream = await server.renderToReadableStream(
       element as Parameters<typeof server.renderToReadableStream>[0],
       {
@@ -36,16 +42,27 @@ async function renderToReadableStreamImpl(
       },
     );
 
+    if (debug) {
+      logger.info("[stream-renderer] renderToReadableStream succeeded", {
+        hasStream: !!stream,
+        streamType: stream ? typeof stream : "null",
+      });
+    }
+
     return { stream };
   } catch (error) {
-    logger.error("renderToReadableStream failed", error);
+    logger.error("[stream-renderer] renderToReadableStream failed", error);
     options.onError?.(error as Error);
 
     try {
+      if (debug) logger.info("[stream-renderer] Trying string rendering fallback...");
       const html = await renderToStringAdapter(element, options);
+      if (debug) {
+        logger.info("[stream-renderer] String fallback succeeded", { htmlLength: html.length });
+      }
       return { html };
     } catch (fallbackError) {
-      logger.error("String rendering fallback also failed", fallbackError);
+      logger.error("[stream-renderer] String rendering fallback also failed", fallbackError);
       throw fallbackError;
     }
   }
@@ -115,23 +132,30 @@ export async function renderToStreamAdapter(
   element: React.ReactNode,
   options: SSROptions = {},
 ): Promise<SSRResult> {
+  const debug = Boolean(
+    (globalThis as any)?.__VERYFRONT_DEBUG__ ||
+      (Deno as any)?.env?.get?.("VERYFRONT_DEBUG") === "1",
+  );
+
   const versionInfo = getReactVersionInfo();
   const server = await getReactDOMServer();
 
   if (hasFeature("renderToReadableStream") && server.renderToReadableStream) {
+    if (debug) logger.info("[stream-renderer] Using renderToReadableStream");
     return renderToReadableStreamImpl(element, options, server);
   }
 
   if (hasFeature("renderToPipeableStream") && server.renderToPipeableStream) {
+    if (debug) logger.info("[stream-renderer] Using renderToPipeableStream");
     return renderToPipeableStreamImpl(element, options, server);
   }
 
-  logger.info("Using string rendering for React", versionInfo.version);
+  if (debug) logger.info("[stream-renderer] Using string rendering for React", versionInfo.version);
   try {
     const html = await renderToStringAdapter(element, options);
     return { html };
   } catch (error) {
-    logger.error("String rendering failed", error);
+    logger.error("[stream-renderer] String rendering failed", error);
     throw error;
   }
 }
