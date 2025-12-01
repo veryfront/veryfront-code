@@ -35,7 +35,6 @@ export async function discoverAppRoutes(
   prefix: string,
   adapter: RuntimeAdapter,
 ): Promise<void> {
-  // Check for route files in current directory
   for await (
     const file of discoverFiles({
       baseDir: dir,
@@ -51,7 +50,6 @@ export async function discoverAppRoutes(
     }
   }
 
-  // Recurse into subdirectories
   for await (
     const dir_entry of discoverFiles({
       baseDir: dir,

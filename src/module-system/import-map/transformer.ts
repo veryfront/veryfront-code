@@ -10,7 +10,7 @@ export function transformImportsWithMap(
   let transformedCode = code;
 
   transformedCode = transformedCode.replace(
-    /((?:import|export)\s+(?:[\w,{ /* empty */ }\s*]+\s+from\s+)?|export\s+(?:\*|\{[^}]+\})\s+from\s+)["']([^"']+)["']/g,
+    /((?:import|export)\s+(?:[\w,{}\s*]+\s+from\s+)?|export\s+(?:\*|\{[^}]+\})\s+from\s+)["']([^"']+)["']/g,
     (_match, prefix, specifier) => {
       const isBare = !specifier.startsWith("http") &&
         !specifier.startsWith("/") &&

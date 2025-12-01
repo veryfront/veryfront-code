@@ -30,7 +30,6 @@ export function OptimizedBackgroundImage({
   };
 
   return (
-    // @ts-ignore - csstype version conflict between dependencies
     <div className={className} style={bgStyle}>
       {children}
     </div>

@@ -47,10 +47,8 @@ export function ResponsiveImageContainer({
   } as const;
 
   return (
-    // @ts-ignore - csstype version conflict between dependencies
     <div className={className} style={containerStyle}>
-      {/* @ts-ignore - csstype version conflict between dependencies */}
-      <div style={contentStyle as React.CSSProperties}>{children}</div>
+      <div style={contentStyle}>{children}</div>
     </div>
   );
 }

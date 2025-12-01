@@ -111,8 +111,5 @@ export async function initializeInstruments(
     logger.warn("[metrics] Failed to initialize metric instruments", error);
   }
 
-  // Ensure async behavior for backward compatibility
-  await Promise.resolve();
-
   return instruments;
 }

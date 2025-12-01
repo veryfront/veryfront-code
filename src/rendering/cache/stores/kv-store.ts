@@ -67,7 +67,6 @@ export class KVCacheStore implements CacheStore {
   async clear(): Promise<void> {
     const kv = await this.ensureKV();
     if (!kv) return;
-    // Deno KV lacks a truncate; iterate keys.
     const entries = kv.list ? kv.list({ prefix: ["veryfront", "render"] }) : null;
     if (!entries) return;
     for await (const entry of entries as AsyncIterable<{ key: unknown[] }>) {

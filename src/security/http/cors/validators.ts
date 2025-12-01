@@ -8,7 +8,6 @@
 import type {
   CORSConfig,
   CORSValidationResult,
-  OriginValidator as _OriginValidator,
 } from "./types.ts";
 import { serverLogger } from "@veryfront/utils/logger/logger.ts";
 import { recordCorsRejection } from "@veryfront/observability";

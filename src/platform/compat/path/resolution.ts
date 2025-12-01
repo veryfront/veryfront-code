@@ -82,8 +82,11 @@ export function normalize(path: string): string {
     }
   }
 
-  let result = normalized.join("/");
-  if (result) result = `/${result}`;
+  const result = normalized.join("/");
 
-  return result || (isAbs ? "/" : ".");
+  if (isAbs) {
+    return result ? `/${result}` : "/";
+  }
+
+  return result || ".";
 }

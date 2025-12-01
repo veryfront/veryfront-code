@@ -1,7 +1,3 @@
-/**
- * Provider Manager - Discovers and compiles provider components
- */
-
 import { rendererLogger as logger } from "@veryfront/utils";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import type { MdxBundle, ProviderItem } from "@veryfront/types";
@@ -24,9 +20,6 @@ export interface ProviderCollectionResult {
   providerInfos: EntityInfo[];
 }
 
-/**
- * ProviderManager handles discovery and compilation of provider components
- */
 export class ProviderManager {
   private projectDir: string;
   private adapter: RuntimeAdapter;
@@ -42,9 +35,6 @@ export class ProviderManager {
     this.compileMDX = options.compileMDX;
   }
 
-  /**
-   * Collect and compile all providers
-   */
   async collectProviders(): Promise<ProviderCollectionResult> {
     const providerInfos = await this.discoverProviders();
     const { providerBundles, providerItems } = await this.compileProviders(providerInfos);
@@ -57,9 +47,6 @@ export class ProviderManager {
     return { providerBundles, providerItems, providerInfos };
   }
 
-  /**
-   * Discover provider entities from the file system
-   */
   private async discoverProviders(): Promise<EntityInfo[]> {
     const providerInfos = await getProviderEntities(this.projectDir, this.adapter);
 
@@ -70,9 +57,6 @@ export class ProviderManager {
     return providerInfos;
   }
 
-  /**
-   * Compile all provider entities
-   */
   private async compileProviders(
     providerInfos: EntityInfo[],
   ): Promise<{ providerBundles: MdxBundle[]; providerItems: ProviderItem[] }> {
@@ -84,11 +68,9 @@ export class ProviderManager {
         const kind = providerInfo.entity.kind || "mdx";
 
         if (kind === "mdx") {
-          // MDX providers: compile to bundle
           const bundle = await this.compileProvider(providerInfo);
           providerBundles.push(bundle);
 
-          // Also add to providerItems for unified handling
           providerItems.push({
             kind: "mdx",
             bundle,
@@ -97,7 +79,6 @@ export class ProviderManager {
             entityInfo: providerInfo,
           });
         } else {
-          // TSX providers: skip MDX compilation, just add to items
           logger.debug("[ProviderManager] Skipping MDX compilation for TSX provider", {
             providerId: providerInfo.entity.id,
           });
@@ -121,9 +102,6 @@ export class ProviderManager {
     return { providerBundles, providerItems };
   }
 
-  /**
-   * Compile a single provider entity (MDX only)
-   */
   private async compileProvider(providerInfo: EntityInfo): Promise<MdxBundle> {
     logger.debug("[ProviderManager] Compiling MDX provider", {
       providerId: providerInfo.entity.id,

@@ -30,12 +30,10 @@ export function checkVersionCompatibility(
     if (!info.features[feature]) {
       if (REACT_19_FEATURES.includes(feature)) {
         warnings.push(`Feature "${feature}" requires React 19 (current: ${info.version})`);
-      } // React 18+ features - errors (hard requirement)
-      else if (REACT_18_FEATURES.includes(feature)) {
+      } else if (REACT_18_FEATURES.includes(feature)) {
         errors.push(`Feature "${feature}" requires React 18+ (current: ${info.version})`);
         compatible = false;
-      } // Other features - errors
-      else {
+      } else {
         errors.push(`Feature "${feature}" is not available (current: React ${info.version})`);
         compatible = false;
       }

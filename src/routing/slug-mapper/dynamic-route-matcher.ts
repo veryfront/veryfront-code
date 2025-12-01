@@ -29,19 +29,19 @@ export function extractParams(
 
   for (let i = 0; i < patternParts.length; i++) {
     const patternPart = patternParts[i];
-    if (!patternPart) continue; // Skip undefined parts
+    if (!patternPart) continue;
 
     if (patternPart.startsWith("[...") && patternPart.endsWith("]")) {
-      const paramName = patternPart.slice(4, -1); // Remove "[..." and "]"
+      const paramName = patternPart.slice(4, -1);
       const remainingParts = slugParts.slice(slugIndex);
       params[paramName] = remainingParts;
       return params;
     }
 
     if (patternPart.startsWith("[") && patternPart.endsWith("]")) {
-      const paramName = patternPart.slice(1, -1); // Remove "[" and "]"
+      const paramName = patternPart.slice(1, -1);
       if (slugIndex >= slugParts.length) {
-        return null; // Not enough parts in slug
+        return null;
       }
       const slugPart = slugParts[slugIndex];
       if (slugPart !== undefined) {
@@ -52,7 +52,7 @@ export function extractParams(
     }
 
     if (slugIndex >= slugParts.length || slugParts[slugIndex] !== patternPart) {
-      return null; // Doesn't match pattern
+      return null;
     }
     slugIndex++;
   }

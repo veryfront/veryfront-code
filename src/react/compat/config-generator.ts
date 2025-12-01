@@ -1,6 +1,7 @@
 import { rendererLogger as logger } from "@veryfront/utils";
 import { join } from "std/path/mod.ts";
 import { createError, toError } from "../../core/errors/veryfront-error.ts";
+import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
 
 export type ReactVersion = "17" | "18" | "19";
 
@@ -57,9 +58,7 @@ export const REACT_CONFIGS: Record<ReactVersion, ReactVersionConfig> = {
 export async function generateReactVersionConfig(
   projectDir: string,
   targetVersion: ReactVersion,
-  options: { extends?: string; additional?: Record<string, unknown> } = {
-    /* empty */
-  },
+  options: { extends?: string; additional?: Record<string, unknown> } = {},
 ): Promise<void> {
   const config = REACT_CONFIGS[targetVersion];
   if (!config) {
@@ -69,13 +68,12 @@ export async function generateReactVersionConfig(
     }));
   }
 
+  const fs = createFileSystem();
   const baseConfigPath = join(projectDir, options.extends || "deno.json");
-  let baseConfig: Record<string, unknown> = {
-    /* empty */
-  };
+  let baseConfig: Record<string, unknown> = {};
 
   try {
-    const baseConfigText = await Deno.readTextFile(baseConfigPath);
+    const baseConfigText = await fs.readFile(baseConfigPath);
     baseConfig = JSON.parse(baseConfigText);
   } catch (_error) {
     logger.warn(`Could not read base config from ${baseConfigPath}`, _error);
@@ -91,7 +89,7 @@ export async function generateReactVersionConfig(
   };
 
   const configPath = join(projectDir, `deno.react${targetVersion}.json`);
-  await Deno.writeTextFile(configPath, JSON.stringify(versionConfig, null, 2));
+  await fs.writeFile(configPath, JSON.stringify(versionConfig, null, 2));
 
   logger.info(`Generated React ${targetVersion} configuration at ${configPath}`);
 }
@@ -117,8 +115,9 @@ export async function detectReactVersionFromConfig(
   projectDir: string,
 ): Promise<ReactVersion | null> {
   try {
+    const fs = createFileSystem();
     const configPath = join(projectDir, "deno.json");
-    const configText = await Deno.readTextFile(configPath);
+    const configText = await fs.readFile(configPath);
     const config = JSON.parse(configText);
 
     const reactImport = config.imports?.react;
@@ -147,10 +146,10 @@ export async function detectReactVersionFromConfig(
 export function createReactVersionSwitcher(projectDir: string): ReactVersionSwitcher {
   return {
     async switchTo(version: ReactVersion): Promise<void> {
+      const fs = createFileSystem();
       const configPath = join(projectDir, `deno.react${version}.json`);
-      try {
-        await Deno.stat(configPath);
-      } catch (_error) {
+      const exists = await fs.exists(configPath);
+      if (!exists) {
         await generateReactVersionConfig(projectDir, version);
       }
 

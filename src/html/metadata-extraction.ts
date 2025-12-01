@@ -4,12 +4,7 @@ export function extractHTMLMetadata(
   pageFrontmatter: MDXFrontmatter,
   layoutFrontmatter?: MDXFrontmatter,
 ): HTMLMetadata {
-  const base = {
-    ...(layoutFrontmatter ||
-      {
-        /* empty */
-      }),
-  };
+  const base = { ...(layoutFrontmatter || {}) };
   const merged = { ...base, ...pageFrontmatter };
 
   if (merged.metadata && typeof merged.metadata === "object") {

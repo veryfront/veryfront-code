@@ -1,4 +1,3 @@
-import type { ExecutionContext as _ExecutionContext } from "@veryfront/middleware/core/types.ts";
 import type {
   FileSystemAdapter,
   RuntimeAdapter,

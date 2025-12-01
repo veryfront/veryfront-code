@@ -47,8 +47,8 @@ function isLruIntervalDisabled(): boolean {
     return true;
   }
   try {
-    return Deno.env.get("VF_DISABLE_LRU_INTERVAL") === "1";
-  } catch (_error) {
+    return process.env.VF_DISABLE_LRU_INTERVAL === "1";
+  } catch {
     return false;
   }
 }

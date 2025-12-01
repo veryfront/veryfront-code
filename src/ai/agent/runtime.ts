@@ -15,6 +15,7 @@ import type {
   AgentResponse,
   AgentStatus,
   Message,
+  StreamToolCall,
   ToolCall,
 } from "../types/agent.ts";
 import type { ToolDefinition } from "../types/tool.ts";
@@ -31,10 +32,7 @@ import {
   type Span,
 } from "../../observability/tracing/index.ts";
 
-/** Default max tokens for LLM responses */
 const DEFAULT_MAX_TOKENS = 4096;
-
-/** Default temperature for LLM responses (0.7 = balanced creativity) */
 const DEFAULT_TEMPERATURE = 0.7;
 
 export class AgentRuntime {
@@ -47,7 +45,6 @@ export class AgentRuntime {
     this.id = id;
     this.config = config;
 
-    // Initialize memory
     const memoryConfig = config.memory || { type: "conversation", maxTokens: 4000 };
     this.memory = createMemory(memoryConfig);
   }
@@ -65,24 +62,16 @@ export class AgentRuntime {
         "agent.model": this.config.model,
       });
 
-      // Convert input to messages
       const inputMessages = this.normalizeInput(input);
 
-      // Add to memory
       for (const msg of inputMessages) {
         await this.memory.add(msg);
       }
 
-      // Get messages from memory
       const messages = await this.memory.getMessages();
-
-      // Get system prompt
       const systemPrompt = await this.resolveSystemPrompt();
-
-      // Get provider and model
       const { provider, model } = getProviderFromModel(this.config.model);
 
-      // Prepare context for middleware
       const agentContext: AgentContext = {
         agentId: this.id,
         model: this.config.model,
@@ -91,7 +80,6 @@ export class AgentRuntime {
         platform: detectPlatform(),
       };
 
-      // Execute middleware chain
       if (this.config.middleware && this.config.middleware.length > 0) {
         return await this.executeMiddleware(agentContext, async () => {
           return await this.executeAgentLoop(
@@ -103,7 +91,6 @@ export class AgentRuntime {
         });
       }
 
-      // Execute agent loop
       return await this.executeAgentLoop(
         provider,
         model,
@@ -124,21 +111,14 @@ export class AgentRuntime {
       onChunk?: (chunk: string) => void;
     },
   ): Promise<ReadableStream> {
-    // Add to memory
     for (const msg of messages) {
       await this.memory.add(msg);
     }
 
-    // Get messages from memory
     const memoryMessages = await this.memory.getMessages();
-
-    // Get system prompt
     const systemPrompt = await this.resolveSystemPrompt();
-
-    // Get provider and model
     const { provider, model } = getProviderFromModel(this.config.model);
 
-    // Create streaming response
     const encoder = new TextEncoder();
 
     return new ReadableStream({
@@ -146,7 +126,6 @@ export class AgentRuntime {
         try {
           this.status = "streaming";
 
-          // Execute agent loop with streaming
           const response = await this.executeAgentLoopStreaming(
             provider,
             model,
@@ -157,7 +136,6 @@ export class AgentRuntime {
             callbacks,
           );
 
-          // Send final status
           const statusData = JSON.stringify({
             type: "status",
             status: "completed",
@@ -202,15 +180,12 @@ export class AgentRuntime {
         totalTokens: 0,
       };
 
-      // Agent loop
       for (let step = 0; step < maxSteps; step++) {
         this.status = "thinking";
         addSpanEvent(loopSpan, "step_start", { step });
 
-        // Get available tools
         const tools = this.getAvailableTools();
 
-        // Call provider
         const response = await withSpan("agent.provider_complete", async (span) => {
           setSpanAttributes(span, {
             model,
@@ -262,32 +237,26 @@ export class AgentRuntime {
           });
         });
 
-        // Update usage
         totalUsage.promptTokens += response.usage.promptTokens;
         totalUsage.completionTokens += response.usage.completionTokens;
         totalUsage.totalTokens += response.usage.totalTokens;
 
-        // Add assistant message
         const assistantMessage: Message = {
           id: `msg_${Date.now()}_${step}`,
           role: "assistant",
           content: response.text,
-          toolCalls: response.toolCalls, // Include tool calls from response
+          toolCalls: response.toolCalls,
           timestamp: Date.now(),
         };
         currentMessages.push(assistantMessage);
-
-        // Add to memory
         await this.memory.add(assistantMessage);
 
-        // Check if there are tool calls
         if (response.toolCalls && response.toolCalls.length > 0) {
           this.status = "tool_execution";
           addSpanEvent(loopSpan, "tool_execution_start", {
             count: response.toolCalls.length,
           });
 
-          // Execute each tool call
           for (const tc of response.toolCalls) {
             const toolCall: ToolCall = {
               id: tc.id,
@@ -306,7 +275,6 @@ export class AgentRuntime {
                 toolCall.status = "executing";
                 const startTime = Date.now();
 
-                // Execute tool
                 const result = await executeTool(tc.name, tc.arguments, {
                   agentId: this.id,
                 });
@@ -315,36 +283,30 @@ export class AgentRuntime {
                 toolCall.result = result;
                 toolCall.executionTime = Date.now() - startTime;
 
-                // Add tool result message
                 const toolResultMessage: Message = {
                   id: `tool_${tc.id}`,
                   role: "tool",
                   content: JSON.stringify(result),
-                  toolCallId: tc.id, // Required by OpenAI API
+                  toolCallId: tc.id,
                   toolCall,
                   timestamp: Date.now(),
                 };
                 currentMessages.push(toolResultMessage);
-
-                // Add to memory
                 await this.memory.add(toolResultMessage);
               } catch (error) {
                 toolCall.status = "error";
                 toolCall.error = error instanceof Error ? error.message : String(error);
                 setSpanAttributes(toolSpan, { "error": true, "error.message": toolCall.error });
 
-                // Add error message
                 const errorMessage: Message = {
                   id: `tool_error_${tc.id}`,
                   role: "tool",
                   content: `Error: ${toolCall.error}`,
-                  toolCallId: tc.id, // Required by OpenAI API
+                  toolCallId: tc.id,
                   toolCall,
                   timestamp: Date.now(),
                 };
                 currentMessages.push(errorMessage);
-
-                // Add to memory
                 await this.memory.add(errorMessage);
               }
 
@@ -352,11 +314,9 @@ export class AgentRuntime {
             });
           }
 
-          // Continue loop to process tool results
           continue;
         }
 
-        // No tool calls, we're done
         this.status = "completed";
         addSpanEvent(loopSpan, "loop_complete");
 
@@ -369,7 +329,6 @@ export class AgentRuntime {
         };
       }
 
-      // Max steps reached
       this.status = "completed";
       addSpanEvent(loopSpan, "max_steps_reached", { maxSteps });
 
@@ -412,12 +371,9 @@ export class AgentRuntime {
       totalTokens: 0,
     };
 
-    // Agent loop
     for (let step = 0; step < maxSteps; step++) {
-      // Get available tools
       const tools = this.getAvailableTools();
 
-      // Stream from provider
       const stream = await provider.stream({
         model,
         system: systemPrompt,
@@ -439,13 +395,11 @@ export class AgentRuntime {
         temperature: DEFAULT_TEMPERATURE,
       });
 
-      // Read stream - now it returns structured JSON chunks
       const reader = stream.getReader();
       const decoder = new TextDecoder();
       let accumulatedText = "";
       let finishReason: string | null = null;
 
-      // Track tool calls being built
       const streamToolCalls = new Map<string, {
         id: string;
         name: string;
@@ -455,17 +409,14 @@ export class AgentRuntime {
       const handleEvent = (event: any) => {
         switch (event.type) {
           case "content": {
-            // Accumulate text content
             accumulatedText += event.content;
 
-            // Send chunk to client
             const chunkData = JSON.stringify({
               type: "chunk",
               content: event.content,
             });
             controller.enqueue(encoder.encode(`data: ${chunkData}\n\n`));
 
-            // Call callback
             if (callbacks?.onChunk) {
               callbacks.onChunk(event.content);
             }
@@ -473,7 +424,6 @@ export class AgentRuntime {
           }
 
           case "tool_call_start":
-            // Initialize tool call tracking
             if (event.toolCall?.id) {
               streamToolCalls.set(event.toolCall.id, {
                 id: event.toolCall.id,
@@ -484,7 +434,6 @@ export class AgentRuntime {
             break;
 
           case "tool_call_delta":
-            // Accumulate tool call arguments
             if (event.id && streamToolCalls.has(event.id)) {
               const tc = streamToolCalls.get(event.id)!;
               tc.arguments += event.arguments;
@@ -492,7 +441,6 @@ export class AgentRuntime {
             break;
 
           case "tool_call_complete":
-            // Tool call is complete
             if (event.toolCall?.id) {
               streamToolCalls.set(event.toolCall.id, {
                 id: event.toolCall.id,
@@ -507,7 +455,6 @@ export class AgentRuntime {
             break;
 
           case "usage":
-            // Accumulate usage data
             if (event.usage) {
               totalUsage.promptTokens += event.usage.promptTokens || 0;
               totalUsage.completionTokens += event.usage.completionTokens || 0;
@@ -517,7 +464,6 @@ export class AgentRuntime {
         }
       };
 
-      // Buffer to handle partial JSON chunks split across reads
       let partial = "";
 
       while (true) {
@@ -527,7 +473,6 @@ export class AgentRuntime {
 
         partial += decoder.decode(value, { stream: true });
         const segments = partial.split("\n");
-        // Keep the last segment as partial (may be incomplete)
         partial = segments.pop() ?? "";
         const lines = segments.filter((line) => line.trim());
 
@@ -535,24 +480,21 @@ export class AgentRuntime {
           try {
             const event = JSON.parse(line);
             handleEvent(event);
-          } catch (_e) {
-            // Skip invalid JSON
+          } catch {
             continue;
           }
         }
       }
 
-      // Process any remaining buffered line
       if (partial.trim()) {
         try {
           const event = JSON.parse(partial);
           handleEvent(event);
         } catch {
-          // ignore trailing partial
+          // Ignore trailing partial
         }
       }
 
-      // Add assistant message
       const assistantMessage: Message = {
         id: `msg_${Date.now()}_${step}`,
         role: "assistant",
@@ -560,9 +502,8 @@ export class AgentRuntime {
         timestamp: Date.now(),
       };
 
-      // If there are tool calls, add them to the message
       if (streamToolCalls.size > 0) {
-        assistantMessage.toolCalls = Array.from(streamToolCalls.values()).map((tc) => ({
+        assistantMessage.toolCalls = Array.from(streamToolCalls.values()).map((tc): StreamToolCall => ({
           id: tc.id,
           name: tc.name,
           arguments: JSON.parse(tc.arguments),
@@ -570,15 +511,11 @@ export class AgentRuntime {
       }
 
       currentMessages.push(assistantMessage);
-
-      // Add to memory
       await this.memory.add(assistantMessage);
 
-      // Handle tool calls if finish reason is tool_calls
       if (finishReason === "tool_calls" && streamToolCalls.size > 0) {
         this.status = "tool_execution";
 
-        // Execute each tool call
         for (const tc of streamToolCalls.values()) {
           const toolCall: ToolCall = {
             id: tc.id,
@@ -591,12 +528,10 @@ export class AgentRuntime {
             toolCall.status = "executing";
             const startTime = Date.now();
 
-            // Notify via callback
             if (callbacks?.onToolCall) {
               callbacks.onToolCall(toolCall);
             }
 
-            // Send tool call event to client
             const toolCallData = JSON.stringify({
               type: "tool_call",
               toolCall: {
@@ -607,7 +542,6 @@ export class AgentRuntime {
             });
             controller.enqueue(encoder.encode(`data: ${toolCallData}\n\n`));
 
-            // Execute tool
             const result = await executeTool(tc.name, toolCall.args, {
               agentId: this.id,
             });
@@ -617,7 +551,6 @@ export class AgentRuntime {
             toolCall.executionTime = Date.now() - startTime;
             toolCalls.push(toolCall);
 
-            // Send tool result event to client
             const toolResultData = JSON.stringify({
               type: "tool_result",
               toolCall: {
@@ -628,7 +561,6 @@ export class AgentRuntime {
             });
             controller.enqueue(encoder.encode(`data: ${toolResultData}\n\n`));
 
-            // Add tool result message
             const toolResultMessage: Message = {
               id: `tool_${tc.id}`,
               role: "tool",
@@ -638,22 +570,18 @@ export class AgentRuntime {
               timestamp: Date.now(),
             };
             currentMessages.push(toolResultMessage);
-
-            // Add to memory
             await this.memory.add(toolResultMessage);
           } catch (error) {
             toolCall.status = "error";
             toolCall.error = error instanceof Error ? error.message : String(error);
             toolCalls.push(toolCall);
 
-            // Send error event to client
             const errorData = JSON.stringify({
               type: "error",
               error: toolCall.error,
             });
             controller.enqueue(encoder.encode(`data: ${errorData}\n\n`));
 
-            // Add error message
             const errorMessage: Message = {
               id: `tool_error_${tc.id}`,
               role: "tool",
@@ -663,18 +591,14 @@ export class AgentRuntime {
               timestamp: Date.now(),
             };
             currentMessages.push(errorMessage);
-
-            // Add to memory
             await this.memory.add(errorMessage);
           }
         }
 
-        // Continue the loop to get the next response
         this.status = "thinking";
         continue;
       }
 
-      // If we got here with a stop finish reason, we're done
       break;
     }
 
@@ -700,7 +624,6 @@ export class AgentRuntime {
       return next();
     }
 
-    // Create middleware chain
     let index = 0;
     const dispatch = (): Promise<AgentResponse> => {
       if (index >= middleware.length) {

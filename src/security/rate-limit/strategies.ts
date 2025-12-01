@@ -112,18 +112,26 @@ export function tokenBucketStrategy(
     const timeElapsed = now - state.resetTime;
     const tokensToAdd = timeElapsed * refillRate;
     state.count = Math.min(config.maxRequests, state.count + tokensToAdd);
+    state.resetTime = now;
+
+    // Check if we have tokens available before consuming
+    if (state.count < 1) {
+      // No tokens available - request denied
+      store.setState(key, state);
+      const remaining = 0;
+      const resetTime = now + (config.maxRequests - state.count) / refillRate;
+      return Promise.resolve({ allowed: false, remaining, resetTime: Math.floor(resetTime) });
+    }
 
     // Consume one token
-    state.count = Math.max(0, state.count - 1);
-    state.resetTime = now;
+    state.count = state.count - 1;
   }
 
   // Save state
   store.setState(key, state);
 
-  const allowed = state.count >= 0;
   const remaining = Math.floor(state.count);
   const resetTime = now + (config.maxRequests - remaining) / refillRate;
 
-  return Promise.resolve({ allowed, remaining, resetTime: Math.floor(resetTime) });
+  return Promise.resolve({ allowed: true, remaining, resetTime: Math.floor(resetTime) });
 }

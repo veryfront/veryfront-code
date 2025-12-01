@@ -10,7 +10,7 @@ export class LinkObserver {
   private mutationObserver: MutationObserver | null = null;
   private prefetchedUrls: Set<string>;
   private pendingTimeouts = new Map<number, ReturnType<typeof setTimeout>>();
-  private elementTimeoutMap = new WeakMap<Element, number>(); // Track which timeout belongs to which element
+  private elementTimeoutMap = new WeakMap<Element, number>();
   private timeoutCounter = 0;
 
   constructor(options: LinkObserverOptions, prefetchedUrls: Set<string>) {
@@ -37,7 +37,6 @@ export class LinkObserver {
         const target = entry.target;
         let isAnchor = false;
 
-        // Compatible check for anchor element
         if (typeof HTMLAnchorElement !== "undefined") {
           isAnchor = target instanceof HTMLAnchorElement;
         } else {
@@ -58,7 +57,7 @@ export class LinkObserver {
         }, this.options.delay);
 
         this.pendingTimeouts.set(timeoutKey, timeoutId);
-        this.elementTimeoutMap.set(link, timeoutKey); // Track element->timeout mapping
+        this.elementTimeoutMap.set(link, timeoutKey);
       }
     }
   }
@@ -83,7 +82,6 @@ export class LinkObserver {
             }
           });
 
-          // Handle removed nodes - clear pending timeouts to prevent memory leak
           mutation.removedNodes.forEach((node) => {
             if (node.nodeType === Node.ELEMENT_NODE) {
               this.clearElementTimeouts(node as Element);
@@ -100,7 +98,6 @@ export class LinkObserver {
   }
 
   private clearElementTimeouts(element: Element): void {
-    // Clear timeout for the element itself if it's a link
     if (element.tagName === "A") {
       const timeoutKey = this.elementTimeoutMap.get(element);
       if (timeoutKey !== undefined) {
@@ -129,7 +126,6 @@ export class LinkObserver {
   }
 
   private observeElement(element: Element): void {
-    // Check for anchor element with test environment compatibility
     const isAnchor = typeof HTMLAnchorElement !== "undefined"
       ? element instanceof HTMLAnchorElement
       : element.tagName === "A";
@@ -169,13 +165,11 @@ export class LinkObserver {
   }
 
   destroy(): void {
-    // Clear all pending timeouts properly
     for (const [_, timeoutId] of this.pendingTimeouts) {
       clearTimeout(timeoutId);
     }
     this.pendingTimeouts.clear();
 
-    // Disconnect observers
     if (this.intersectionObserver) {
       this.intersectionObserver.disconnect();
       this.intersectionObserver = null;

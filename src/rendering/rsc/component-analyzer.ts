@@ -1,32 +1,18 @@
-/**
- * Component analyzer for RSC
- * Detects whether components are server or client components
- */
-
 import { join, relative } from "std/path/mod.ts";
 import { serverLogger } from "@veryfront/utils";
 import type { ComponentAnalysis, ComponentType } from "./types.ts";
 import type { FileSystemAdapter } from "../../platform/adapters/base.ts";
 
-/**
- * Analyze a component file to determine its type
- * @param filePath - Path to the component file
- * @param fs - Optional filesystem adapter for cross-platform support
- */
 export async function analyzeComponent(
   filePath: string,
-  fs?: FileSystemAdapter,
+  fs: FileSystemAdapter,
 ): Promise<ComponentAnalysis> {
-  const content = fs
-    ? await fs.readFile(filePath)
-    : await Deno.readTextFile(filePath);
+  const content = await fs.readFile(filePath);
 
-  // Check for directives
   const hasUseClient = detectDirective(content, "use client");
   const hasUseServer = detectDirective(content, "use server");
 
-  // Determine component type
-  let type: ComponentType = "server"; // Default to server component
+  let type: ComponentType = "server";
 
   if (hasUseClient) {
     type = "client";
@@ -39,10 +25,7 @@ export async function analyzeComponent(
     type = "server";
   }
 
-  // Extract exports
   const exports = extractExports(content);
-
-  // Generate component ID
   const id = generateComponentId(filePath);
 
   return {
@@ -55,28 +38,19 @@ export async function analyzeComponent(
   };
 }
 
-/**
- * Detect directive in file content
- */
 function detectDirective(content: string, directive: string): boolean {
-  // Check for directive at the beginning of the file
   const directivePattern = new RegExp(`^\\s*['"]s*${directive}s*['"];?\\s*$`, "m");
 
   return directivePattern.test(content);
 }
 
-/**
- * Extract exports from component file
- */
 function extractExports(content: string): string[] {
   const exports: string[] = [];
 
-  // Match export default
   if (/export\s+default\s+/m.test(content)) {
     exports.push("default");
   }
 
-  // Match named exports
   const namedExportPattern = /export\s+(?:const|let|var|function|class)\s+(\w+)/gm;
   let match;
 
@@ -86,7 +60,6 @@ function extractExports(content: string): string[] {
     }
   }
 
-  // Match export { ... }
   const exportBracesPattern = /export\s*\{([^}]+)\}/gm;
 
   while ((match = exportBracesPattern.exec(content)) !== null) {
@@ -94,7 +67,6 @@ function extractExports(content: string): string[] {
       const names = match[1]
         .split(",")
         .map((name) => {
-          // Handle 'as' syntax
           const parts = name.trim().split(/\s+as\s+/);
           return parts[parts.length - 1]?.trim() || "";
         })
@@ -103,35 +75,24 @@ function extractExports(content: string): string[] {
     }
   }
 
-  return [...new Set(exports)]; // Remove duplicates
+  return [...new Set(exports)];
 }
 
-/**
- * Generate a stable component ID from file path
- */
 function generateComponentId(filePath: string): string {
-  // Remove common prefixes and extensions
   let id = filePath.replace(/\.(tsx?|jsx?)$/, "").replace(/\.(client|server)$/, "");
 
-  // Convert path to component name
   const parts = id.split("/");
   const fileName = parts[parts.length - 1];
 
-  // Handle index files
   if (fileName === "index") {
-    // Use parent directory name
     id = parts[parts.length - 2] || "Unknown";
   } else {
     id = fileName || "Unknown";
   }
 
-  // Convert to PascalCase
   return toPascalCase(id);
 }
 
-/**
- * Convert string to PascalCase
- */
 function toPascalCase(str: string): string {
   return str
     .split(/[-_\s]+/)
@@ -139,12 +100,6 @@ function toPascalCase(str: string): string {
     .join("");
 }
 
-/**
- * Build a manifest of client components in a directory
- * @param projectDir - Project root directory
- * @param appDir - App directory name (default: "app")
- * @param fs - Optional filesystem adapter for cross-platform support
- */
 export async function buildClientManifest(
   projectDir: string,
   appDir: string = "app",
@@ -155,7 +110,6 @@ export async function buildClientManifest(
 
   try {
     await walkDirectory(appPath, async (filePath) => {
-      // Only process JS/TS files
       if (!/\.(tsx?|jsx?)$/.test(filePath)) return;
 
       const analysis = await analyzeComponent(filePath, fs);
@@ -179,24 +133,20 @@ export async function buildClientManifest(
   return manifest;
 }
 
-/**
- * Walk directory recursively
- * @param dir - Directory to walk
- * @param callback - Callback for each file
- * @param fs - Optional filesystem adapter for cross-platform support
- */
 async function walkDirectory(
   dir: string,
   callback: (path: string) => Promise<void>,
   fs?: FileSystemAdapter,
 ): Promise<void> {
   try {
-    const entries = fs ? fs.readDir(dir) : Deno.readDir(dir);
+    if (!fs) {
+      throw new Error("FileSystemAdapter is required for walkDirectory");
+    }
+    const entries = fs.readDir(dir);
     for await (const entry of entries) {
       const path = join(dir, entry.name);
 
       if (entry.isDirectory) {
-        // Skip node_modules and hidden directories
         if (entry.name.startsWith(".") || entry.name === "node_modules") {
           continue;
         }
@@ -206,12 +156,11 @@ async function walkDirectory(
       }
     }
   } catch (error) {
-    // Directory might not exist - handle cross-platform
-    if (typeof Deno !== "undefined" && error instanceof Deno.errors.NotFound) {
+    if ((error as { code?: string })?.code === "ENOENT") {
       return;
     }
-    // Node.js ENOENT
-    if ((error as { code?: string })?.code === "ENOENT") {
+    const message = String((error as Error)?.message || "").toLowerCase();
+    if (message.includes("not found") || message.includes("no such file")) {
       return;
     }
     throw error;

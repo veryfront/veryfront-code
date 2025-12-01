@@ -1,18 +1,9 @@
-/**
- * CSS Optimizer Utilities
- *
- * Common utility functions used across CSS optimization strategies
- */
-
 import { dirname, join, relative, SEPARATOR } from "std/path/mod.ts";
 import { walk } from "std/fs/mod.ts";
 import { logger } from "@veryfront/utils";
 import type { BrowserTargets } from "@veryfront/types";
 import { createError, toError } from "../../../core/errors/veryfront-error.ts";
 
-/**
- * Find all CSS files in a directory
- */
 export async function findCSSFiles(dir: string): Promise<string[]> {
   const cssFiles: string[] = [];
 
@@ -28,9 +19,6 @@ export async function findCSSFiles(dir: string): Promise<string[]> {
   return cssFiles;
 }
 
-/**
- * Glob files matching a pattern
- */
 export async function globFiles(pattern: string): Promise<string[]> {
   const files: string[] = [];
 
@@ -58,9 +46,6 @@ export async function globFiles(pattern: string): Promise<string[]> {
   return files;
 }
 
-/**
- * Match a file path against a glob pattern
- */
 export function matchPattern(path: string, pattern: string): boolean {
   // Handle simple wildcards and braces
   // Order matters: expand braces first, then escape dots, then handle /** / (globstar), then * (wildcard)
@@ -74,9 +59,6 @@ export function matchPattern(path: string, pattern: string): boolean {
   return regex.test(path);
 }
 
-/**
- * Get output path for a CSS file
- */
 export function getOutputPath(inputPath: string, outputDir: string): string {
   const dir = dirname(inputPath);
   const filename = inputPath.split(SEPARATOR).pop();
@@ -93,9 +75,6 @@ export function getOutputPath(inputPath: string, outputDir: string): string {
   return join(outputDir, relativePath, outputFilename);
 }
 
-/**
- * Extract selectors from HTML/JSX/TSX content
- */
 export function extractSelectors(content: string): {
   classes: string[];
   ids: string[];
@@ -151,17 +130,11 @@ export function extractSelectors(content: string): {
   return { classes, ids, tags, selectors };
 }
 
-/**
- * Extract selectors from HTML for critical CSS
- */
 export function extractSelectorsFromHTML(html: string): string[] {
   const result = extractSelectors(html);
   return Array.from(result.selectors);
 }
 
-/**
- * Determine if a CSS selector should be kept
- */
 export function shouldKeepSelector(selector: string, usedSelectors: Set<string>): boolean {
   // Always keep universal rules
   const universal = ["*", ":root", "html", "body", "@"];
@@ -179,41 +152,26 @@ export function shouldKeepSelector(selector: string, usedSelectors: Set<string>)
   return parts.some((part) => usedSelectors.has(part));
 }
 
-/**
- * Basic CSS minification
- */
 export function basicMinify(css: string): string {
   return css
-    // Remove comments
     .replace(/\/\*[\s\S]*?\*\//g, "")
-    // Remove whitespace
     .replace(/\s+/g, " ")
-    // Remove spaces around punctuation
     .replace(/\s*([{};:,])\s*/g, "$1")
-    // Remove trailing semicolons before closing braces
     .replace(/;}/g, "}")
     .trim();
 }
 
-/**
- * Calculate savings percentage
- */
 export function calculateSavings(originalSize: number, minifiedSize: number): number {
   if (originalSize === 0) return 0;
   return Math.round(((originalSize - minifiedSize) / originalSize) * 100);
 }
 
-/**
- * Parse browser targets from string, array, or object format
- */
 export function parseBrowserTargets(
   targets: string | string[] | BrowserTargets | undefined,
 ): BrowserTargets | undefined {
   if (!targets) return undefined;
 
   if (typeof targets === "string" || Array.isArray(targets)) {
-    // Parse browserslist-style string or array
-    // Simple implementation - extend as needed
     return {
       chrome: 90,
       firefox: 88,

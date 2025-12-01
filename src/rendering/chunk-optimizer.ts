@@ -1,21 +1,12 @@
-/**
- * Chunk Optimizer for Production Builds
- * Analyzes MDX files and creates optimized shared chunks
- */
-
 import { join } from "std/path/mod.ts";
 import { bundlerLogger as logger } from "@veryfront/utils";
 import type { FileSystemAdapter } from "../platform/adapters/base.ts";
-// Note: import analysis hooks can be reintroduced if chunking strategy evolves in the future.
 
 const SIZE_LIMITS = {
-  /** Approximate bytes saved per shared dependency */
   DEP_SIZE_ESTIMATE: 25_000,
-  /** Approximate bytes saved per UI library chunk */
   UI_LIB_SIZE_ESTIMATE: 150_000,
 };
 
-// Local minimal import analyzer for MDX content
 function analyzeImports(content: string) {
   const importRegex = /import\s+[^'"\n]+from\s+['"]([^'"]+)['"];?/g;
   const local: { path: string }[] = [];
@@ -71,24 +62,17 @@ export interface ChunkManifest {
   }>;
 }
 
-/**
- * Analyze all MDX pages for optimal chunking
- * @param projectDir - Project root directory
- * @param fs - Optional filesystem adapter for cross-platform support
- */
 export async function analyzeProjectChunks(
   projectDir: string,
-  fs?: FileSystemAdapter,
+  fs: FileSystemAdapter,
 ): Promise<ChunkAnalysis> {
   const pages = new Map<string, PageImports>();
   const sharedDeps = new Map<string, number>();
-
-  // Find all MDX files
   const mdxFiles: string[] = [];
 
   async function findMDX(dir: string) {
     try {
-      const entries = fs ? fs.readDir(dir) : Deno.readDir(dir);
+      const entries = fs.readDir(dir);
       for await (const entry of entries) {
         const path = join(dir, entry.name);
         if (entry.isFile && entry.name.endsWith(".mdx")) {
@@ -104,12 +88,9 @@ export async function analyzeProjectChunks(
 
   await findMDX(join(projectDir, "pages"));
 
-  // Analyze each MDX file
   for (const mdxPath of mdxFiles) {
     try {
-      const content = fs
-        ? await fs.readFile(mdxPath)
-        : await Deno.readTextFile(mdxPath);
+      const content = await fs.readFile(mdxPath);
       const imports = analyzeImports(content);
 
       const pageImports: PageImports = {
@@ -121,7 +102,6 @@ export async function analyzeProjectChunks(
 
       pages.set(mdxPath, pageImports);
 
-      // Count shared dependencies
       for (const dep of [...pageImports.remote, ...pageImports.shared]) {
         sharedDeps.set(dep, (sharedDeps.get(dep) || 0) + 1);
       }
@@ -130,7 +110,6 @@ export async function analyzeProjectChunks(
     }
   }
 
-  // Generate chunk suggestions
   const suggestedChunks = generateChunkSuggestions(pages, sharedDeps);
 
   return {
@@ -140,16 +119,12 @@ export async function analyzeProjectChunks(
   };
 }
 
-/**
- * Generate optimal chunk suggestions
- */
 function generateChunkSuggestions(
   pages: Map<string, PageImports>,
   sharedDeps: Map<string, number>,
 ) {
   const suggestions: ChunkSuggestion[] = [];
 
-  // Strategy 1: Bundle frequently used deps (used in 2+ pages)
   const commonDeps = Array.from(sharedDeps.entries())
     .filter(([_, count]) => count >= 2)
     .map(([dep, _]) => dep);
@@ -171,7 +146,6 @@ function generateChunkSuggestions(
     });
   }
 
-  // Strategy 2: Framework chunks (React ecosystem)
   const reactDeps = Array.from(sharedDeps.keys()).filter(
     (dep) => dep.includes("react") || dep.includes("jsx-runtime"),
   );
@@ -190,7 +164,6 @@ function generateChunkSuggestions(
     });
   }
 
-  // Strategy 3: UI library chunks
   const uiDeps = Array.from(sharedDeps.keys()).filter(
     (dep) => dep.includes("@mui/") || dep.includes("framer-motion") || dep.includes("@headlessui/"),
   );
@@ -209,13 +182,9 @@ function generateChunkSuggestions(
     });
   }
 
-  // Sort by benefit
   return suggestions.sort((a, b) => b.benefit - a.benefit);
 }
 
-/**
- * Generate webpack-style chunk manifest
- */
 export function generateChunkManifest(analysis: ChunkAnalysis): ChunkManifest {
   const manifest: ChunkManifest = {
     version: "1.0",
@@ -223,7 +192,6 @@ export function generateChunkManifest(analysis: ChunkAnalysis): ChunkManifest {
     pages: {},
   };
 
-  // Add suggested chunks
   for (const suggestion of analysis.suggestedChunks) {
     manifest.chunks[suggestion.name] = {
       deps: suggestion.deps,
@@ -231,7 +199,6 @@ export function generateChunkManifest(analysis: ChunkAnalysis): ChunkManifest {
     };
   }
 
-  // Map pages to chunks
   for (const [pagePath, imports] of analysis.pages) {
     const pageChunks: string[] = [];
 

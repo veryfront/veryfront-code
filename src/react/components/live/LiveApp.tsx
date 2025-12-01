@@ -63,7 +63,6 @@ export function LiveApp({
               <LiveLayoutComponent layout={layout}>{children}</LiveLayoutComponent>
             </LiveProviderComponent>
 
-            {/* Studio overlay indicator */}
             {isStudioConnected && (
               <div className="fixed bottom-4 left-4 bg-green-500 text-white px-3 py-1 rounded-full text-sm z-50">
                 Studio Connected

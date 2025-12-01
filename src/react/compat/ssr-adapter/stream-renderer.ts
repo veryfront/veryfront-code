@@ -6,14 +6,18 @@ import { renderToStringAdapter } from "./string-renderer.ts";
 import type { SSROptions, SSRResult } from "./types.ts";
 import { createError, toError } from "../../../core/errors/veryfront-error.ts";
 
+interface VeryfrontGlobal {
+  __VERYFRONT_DEBUG__?: boolean;
+}
+
 async function renderToReadableStreamImpl(
   element: React.ReactNode,
   options: SSROptions,
   server: Awaited<ReturnType<typeof getReactDOMServer>>,
 ): Promise<SSRResult> {
   const debug = Boolean(
-    (globalThis as any)?.__VERYFRONT_DEBUG__ ||
-      (Deno as any)?.env?.get?.("VERYFRONT_DEBUG") === "1",
+    (globalThis as VeryfrontGlobal).__VERYFRONT_DEBUG__ ||
+      process.env?.VERYFRONT_DEBUG === "1",
   );
 
   if (!server.renderToReadableStream) {
@@ -133,8 +137,8 @@ export async function renderToStreamAdapter(
   options: SSROptions = {},
 ): Promise<SSRResult> {
   const debug = Boolean(
-    (globalThis as any)?.__VERYFRONT_DEBUG__ ||
-      (Deno as any)?.env?.get?.("VERYFRONT_DEBUG") === "1",
+    (globalThis as VeryfrontGlobal).__VERYFRONT_DEBUG__ ||
+      process.env?.VERYFRONT_DEBUG === "1",
   );
 
   const versionInfo = getReactVersionInfo();

@@ -76,20 +76,6 @@ export function generateHMRClientTemplate(
     });
   }
 
-  function updateJS(path) {
-    // Reload page for JS updates if React Refresh is not available
-    if (reactRefreshEnabled && window.$RefreshReg$) {
-      try {
-        window.$RefreshReg$(path);
-      } catch (error) {
-        console.error('[HMR] React Refresh failed, reloading page:', error);
-        window.location.reload();
-      }
-    } else {
-      window.location.reload();
-    }
-  }
-
   function setupReactRefresh() {
     if (typeof window.$RefreshRuntime$ !== 'undefined') {
       window.$RefreshRuntime$.injectIntoGlobalHook(window);

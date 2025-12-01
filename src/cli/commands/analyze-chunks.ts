@@ -43,8 +43,8 @@ export async function analyzeChunksCommand(options: AnalyzeChunksOptions) {
 
     if (output) {
       const fs = createFileSystem();
-      const _manifest = generateChunkManifest(analysis);
-      await fs.writeTextFile(output, JSON.stringify(_manifest, null, 2));
+      const manifest = generateChunkManifest(analysis);
+      await fs.writeTextFile(output, JSON.stringify(manifest, null, 2));
       cliLogger.info(`Saved chunk manifest to ${output}`);
     }
 

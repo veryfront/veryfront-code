@@ -150,12 +150,10 @@ class LRUCache {
 class TTLCache {
   private cache = new Map<string, CacheEntry>();
   private ttl: number;
+  private cleanupInterval: ReturnType<typeof setInterval> | null = null;
 
   constructor(ttl: number = 300000) {
-    // Default: 5 minutes
     this.ttl = ttl;
-
-    // Start cleanup interval
     this.startCleanup();
   }
 
@@ -214,9 +212,16 @@ class TTLCache {
     return this.cache.size;
   }
 
+  destroy(): void {
+    if (this.cleanupInterval) {
+      clearInterval(this.cleanupInterval);
+      this.cleanupInterval = null;
+    }
+    this.cache.clear();
+  }
+
   private startCleanup(): void {
-    // Clean up expired entries every minute
-    setInterval(() => {
+    this.cleanupInterval = setInterval(() => {
       const now = Date.now();
 
       for (const [key, entry] of this.cache.entries()) {

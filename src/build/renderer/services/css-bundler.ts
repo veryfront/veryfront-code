@@ -35,48 +35,26 @@ export function bundleCss(
   }
 }
 
-/**
- * Simple CSS minification
- */
 function minifyCss(css: string): string {
   return (
     css
-      // Remove comments
       .replace(/\/\*[\s\S]*?\*\//g, "")
-      // Remove unnecessary whitespace
       .replace(/\s+/g, " ")
-      // Remove space around selectors
       .replace(/\s*([{}:;,])\s*/g, "$1")
-      // Remove trailing semicolon before }
       .replace(/;}/g, "}")
-      // Remove quotes from urls when possible
       .replace(/url\(["']([^"']+)["']\)/g, "url($1)")
       .trim()
   );
 }
 
-/**
- * Process CSS imports
- */
 export function processCssImports(css: string, _fromPath: string): string {
-  // Handle @import statements
   const importRegex = /@import\s+["']([^"']+)["'];?/g;
 
-  return css.replace(importRegex, (match, importPath) => {
-    // Resolve relative imports
-    if (importPath.startsWith(".")) {
-      // Keep relative imports as-is for now
-      // In a real implementation, we'd resolve and inline them
-      return match;
-    }
-
+  return css.replace(importRegex, (match, _importPath) => {
     return match;
   });
 }
 
-/**
- * Extract CSS variables
- */
 export function extractCssVariables(css: string): Record<string, string> {
   const variables: Record<string, string> = {};
   const varRegex = /--([a-zA-Z0-9-]+):\s*([^;]+);/g;

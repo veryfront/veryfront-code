@@ -76,10 +76,10 @@ class ConsoleLogger implements Logger {
       const end = performance.now();
       this.debug(`${label} completed in ${(end - start).toFixed(2)}ms`);
       return result;
-    } catch (_error) {
+    } catch (error) {
       const end = performance.now();
-      this.error(`${label} failed after ${(end - start).toFixed(2)}ms`, _error);
-      throw _error;
+      this.error(`${label} failed after ${(end - start).toFixed(2)}ms`, error);
+      throw error;
     }
   }
 }

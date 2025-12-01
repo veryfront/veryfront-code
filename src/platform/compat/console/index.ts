@@ -10,7 +10,6 @@ import type { ColorFunction, ConsoleStyler } from "./types.ts";
 
 export type { ColorFunction, ConsoleStyler } from "./types.ts";
 
-// No-op fallback for environments without terminal support
 const noOp: ColorFunction = (text: string) => text;
 
 const fallbackColors: ConsoleStyler = {
@@ -30,7 +29,6 @@ const fallbackColors: ConsoleStyler = {
   reset: noOp,
 };
 
-// Dynamically load the appropriate implementation
 let _colors: ConsoleStyler | null = null;
 
 async function loadColors(): Promise<ConsoleStyler> {
@@ -45,22 +43,18 @@ async function loadColors(): Promise<ConsoleStyler> {
       _colors = mod.colors;
     }
   } catch {
-    // Fallback for environments where neither works
     _colors = fallbackColors;
   }
 
   return _colors;
 }
 
-// Eagerly load colors (works because this is typically imported at module load time)
 const colorsPromise = loadColors();
 
-// Synchronous access with fallback (for immediate use)
 function getColors(): ConsoleStyler {
   return _colors ?? fallbackColors;
 }
 
-// Export individual color functions that lazily resolve
 export const red: ColorFunction = (text) => getColors().red(text);
 export const green: ColorFunction = (text) => getColors().green(text);
 export const yellow: ColorFunction = (text) => getColors().yellow(text);
@@ -76,7 +70,6 @@ export const underline: ColorFunction = (text) => getColors().underline(text);
 export const strikethrough: ColorFunction = (text) => getColors().strikethrough(text);
 export const reset: ColorFunction = (text) => getColors().reset(text);
 
-// Export the colors object for those who prefer it
 export const colors = {
   red,
   green,
@@ -94,5 +87,4 @@ export const colors = {
   reset,
 } satisfies ConsoleStyler;
 
-// Export promise for async initialization if needed
 export { colorsPromise };

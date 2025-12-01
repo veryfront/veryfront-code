@@ -9,7 +9,6 @@ export interface StateStore {
   clear(): void;
 }
 
-// Define a subset interface for React hooks used in this module
 interface ReactHooksSubset {
   useState: <S>(initialState: S | (() => S)) => [S, Dispatch<SetStateAction<S>>];
   useEffect: (effect: EffectCallback, deps?: DependencyList) => void;
@@ -118,7 +117,6 @@ class StateBridge implements StateStore {
       });
     } catch (error) {
       rendererLogger.error("[StateBridge] Failed to restore state from sessionStorage:", error);
-      // Clear corrupted state to prevent future issues
       try {
         sessionStorage.removeItem("veryfront-state");
       } catch (clearError) {

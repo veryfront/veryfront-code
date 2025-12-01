@@ -1,15 +1,4 @@
-/**
- * SSR Orchestrator - Main orchestration logic for Server-Side Rendering
- *
- * This module combines the main VeryfrontRenderer orchestration with SSR-specific
- * rendering logic into a unified SSR orchestrator.
- *
- * Location: src/render/orchestrator/ssr.ts (formerly src/render/core/renderer/orchestrator.ts + ssr-orchestrator.ts)
- */
-
 import { rendererLogger as logger } from "@veryfront/utils";
-// Path utilities imported but may be used by downstream code
-import { join as _join } from "https://deno.land/std@0.220.0/path/mod.ts";
 import { DEFAULT_DASHBOARD_PORT } from "@veryfront/utils";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import { ConfigurationManager } from "./config.ts";
@@ -21,12 +10,9 @@ import { HTMLGenerator } from "./html.ts";
 import { RenderPipeline } from "./pipeline.ts";
 import { SSROrchestrator } from "./ssr-orchestrator.ts";
 import type { RendererOptions, RenderOptions, RenderResult } from "./types.ts";
-// import type { ElementValidator, SSRRenderer } from '../rendering/index.ts'; // Removed: deleted module
 
 // Re-export types for backward compatibility
 export type { RendererOptions, RenderOptions, RenderResult } from "./types.ts";
-
-// ===== VeryfrontRenderer (Main Orchestrator) =====
 
 export class VeryfrontRenderer {
   private configManager!: ConfigurationManager;
@@ -166,9 +152,6 @@ export class VeryfrontRenderer {
     await this.lifecycle.destroy();
   }
 }
-
-// ===== SSROrchestrator (SSR-specific rendering) =====
-// Re-exported from separate file to avoid circular dependency with pipeline.ts
 
 export type { SSROrchestratorConfig, SSRRenderingResult } from "./ssr-orchestrator.ts";
 export { SSROrchestrator } from "./ssr-orchestrator.ts";

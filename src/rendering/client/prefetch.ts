@@ -12,7 +12,6 @@ import {
 
 export type { ResourceHint };
 
-// Extend Window interface for Veryfront-specific properties
 declare global {
   interface Window {
     veryFrontPrefetch?: PrefetchManager;
@@ -28,7 +27,6 @@ export interface PrefetchOptions {
   timeout?: number;
 }
 
-// Internal interface with required fields for resolved options
 interface ResolvedPrefetchOptions {
   rootMargin: string;
   delay: number;
@@ -48,7 +46,6 @@ export class PrefetchManager {
   private prefetchQueue: PrefetchQueue;
 
   constructor(options: PrefetchOptions = {}) {
-    // Resolve all options with defaults
     this.options = {
       rootMargin: options.rootMargin || "50px",
       delay: options.delay || PREFETCH_DEFAULT_DELAY_MS,

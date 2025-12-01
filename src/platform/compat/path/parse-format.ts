@@ -28,7 +28,7 @@ export function format(pathObject: PathObject): string {
     return nodePath!.format(pathObject);
   }
 
-  const { root: _root = "", dir = "", base = "", name = "", ext = "" } = pathObject;
+  const { dir = "", base = "", name = "", ext = "" } = pathObject;
 
   if (base) {
     return dir ? join(dir, base) : base;

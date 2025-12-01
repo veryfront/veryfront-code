@@ -36,7 +36,7 @@ export const defaultConfig = {
 
 export const DEFAULT_PREFETCH_DELAY_MS = 100;
 
-export const DEFAULT_METRICS_COLLECT_INTERVAL_MS = 60000; // 60 seconds
+export const DEFAULT_METRICS_COLLECT_INTERVAL_MS = 60000;
 
 export const DURATION_HISTOGRAM_BOUNDARIES_MS = [
   5,

@@ -60,7 +60,7 @@ export const DEFAULT_METRICS_COLLECTION_INTERVAL_MS = 60000;
  * Default rate limiter settings
  */
 export const DEFAULT_RATE_LIMIT_REQUESTS = 100;
-export const DEFAULT_RATE_LIMIT_WINDOW_MS = 60000; // 1 minute
+export const DEFAULT_RATE_LIMIT_WINDOW_MS = 60000;
 
 /**
  * Cache statistics sample size for metrics

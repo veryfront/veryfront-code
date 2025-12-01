@@ -59,8 +59,8 @@ export function createMockAdapter(): MockRuntimeAdapter {
       });
     },
     fs: {
-      files, // Expose files Map for tests to populate
-      directories, // Expose directories Set for tests to track empty dirs
+      files,
+      directories,
       readFile: (path: string) => {
         const content = files.get(path);
         if (!content) {
@@ -76,26 +76,16 @@ export function createMockAdapter(): MockRuntimeAdapter {
         return Promise.resolve();
       },
       exists: async (path: string) => {
-        // Check for exact file match in virtual filesystem
         if (files.has(path)) return true;
-        // Check if path is explicitly added as a directory
         if (directories.has(path)) return true;
-        // Check if path is a directory (has child files) in virtual filesystem
         for (const filePath of files.keys()) {
           if (filePath.startsWith(path + "/")) return true;
         }
-        // Fall back to checking real filesystem for temp files
-        try {
-          await Deno.stat(path);
-          return true;
-        } catch {
-          return false;
-        }
+        return false;
       },
       readDir: async function* (path: string) {
         const entries = new Map<string, { isFile: boolean; isDirectory: boolean }>();
 
-        // Find all files under this directory
         for (const filePath of files.keys()) {
           if (filePath.startsWith(path + "/")) {
             const relativePath = filePath.slice(path.length + 1);
@@ -116,7 +106,6 @@ export function createMockAdapter(): MockRuntimeAdapter {
         }
       },
       stat: (path: string) => {
-        // Check if it's a file
         if (files.has(path)) {
           const content = files.get(path)!;
           return Promise.resolve({
@@ -128,7 +117,6 @@ export function createMockAdapter(): MockRuntimeAdapter {
           });
         }
 
-        // Check if it's a directory
         if (directories.has(path)) {
           return Promise.resolve({
             size: 0,
@@ -139,7 +127,6 @@ export function createMockAdapter(): MockRuntimeAdapter {
           });
         }
 
-        // Check if it's a directory with files
         for (const filePath of files.keys()) {
           if (filePath.startsWith(path + "/")) {
             return Promise.resolve({

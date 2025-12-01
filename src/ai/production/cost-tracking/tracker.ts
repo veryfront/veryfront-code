@@ -94,6 +94,7 @@ class CostTracker {
   private monthlyTotal = 0;
   private lastDayReset = Date.now();
   private lastMonthReset = Date.now();
+  private resetInterval: ReturnType<typeof setInterval> | null = null;
 
   constructor(config: CostConfig) {
     this.config = config;
@@ -257,25 +258,28 @@ class CostTracker {
     }
   }
 
-  /**
-   * Reset periodic totals
-   */
   private startPeriodicReset(): void {
-    setInterval(() => {
+    this.resetInterval = setInterval(() => {
       const now = Date.now();
 
-      // Reset daily (every 24 hours)
       if (now - this.lastDayReset >= 24 * 60 * 60 * 1000) {
         this.dailyTotal = 0;
         this.lastDayReset = now;
       }
 
-      // Reset monthly (every 30 days)
       if (now - this.lastMonthReset >= 30 * 24 * 60 * 60 * 1000) {
         this.monthlyTotal = 0;
         this.lastMonthReset = now;
       }
-    }, 60000); // Check every minute
+    }, 60000);
+  }
+
+  destroy(): void {
+    if (this.resetInterval) {
+      clearInterval(this.resetInterval);
+      this.resetInterval = null;
+    }
+    this.records = [];
   }
 
   /**

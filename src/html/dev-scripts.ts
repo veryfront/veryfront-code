@@ -32,7 +32,7 @@ export function getDevStyles(): string {
   </style>`;
 }
 
-export function getDevScripts(_slug: string, port: number = DEFAULT_DASHBOARD_PORT): string {
+export function getDevScripts(port: number = DEFAULT_DASHBOARD_PORT): string {
   const reloadDelay = HMR_CLIENT_RELOAD_DELAY_MS;
   return `
   <script>

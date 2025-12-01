@@ -7,10 +7,9 @@
  * - Route file presence detection
  */
 
-import { join } from "https://deno.land/std@0.220.0/path/mod.ts";
+import { join } from "std/path/mod.ts";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "@veryfront/config";
-import { withFallback } from "@veryfront/platform/adapters/index.ts";
 
 // Re-export from app-route-resolver for backward compatibility
 export { getAppRouteEntity } from "./app-route-resolver.ts";
@@ -40,13 +39,9 @@ export async function detectAppRouter(
   let hasAppRoutes = false;
   let hasPagesRoutes = false;
 
-  // Check for app routes
+  // Check for app routes - use adapter.fs only, no Deno fallbacks
   try {
-    const appStat = await withFallback(
-      () => adapter.fs.stat(appDir),
-      () => Deno.stat(appDir),
-      { operationName: "stat:detectAppRouter:appDir", logError: false },
-    );
+    const appStat = await adapter.fs.stat(appDir);
     if (appStat.isDirectory) {
       hasAppRoutes = await hasRouteFiles(appDir, adapter);
     }
@@ -61,14 +56,7 @@ export async function detectAppRouter(
       hasPagesRoutes = await hasRouteFiles(pagesDir, adapter);
     }
   } catch {
-    try {
-      const info = await Deno.stat(pagesDir);
-      if (info.isDirectory) {
-        hasPagesRoutes = await hasRouteFiles(pagesDir, adapter);
-      }
-    } catch {
-      /* ignore */
-    }
+    /* ignore */
   }
 
   // If both have routes, prefer app router
@@ -85,24 +73,14 @@ export async function detectAppRouter(
     await adapter.fs.stat(appDir);
     hasAppDir = true;
   } catch {
-    try {
-      await Deno.stat(appDir);
-      hasAppDir = true;
-    } catch {
-      /* ignore */
-    }
+    /* ignore */
   }
 
   try {
     await adapter.fs.stat(pagesDir);
     hasPagesDir = true;
   } catch {
-    try {
-      await Deno.stat(pagesDir);
-      hasPagesDir = true;
-    } catch {
-      /* ignore */
-    }
+    /* ignore */
   }
 
   // If both exist but neither has routes, prefer app router (modern default)
@@ -144,27 +122,7 @@ async function hasRouteFiles(
       }
     }
   } catch {
-    // Fallback to Deno.readDir if adapter doesn't support it
-    try {
-      for await (const entry of Deno.readDir(dir)) {
-        if (entry.isFile) {
-          const name = entry.name.toLowerCase();
-          const hasRouteExtension = routeExtensions.some((ext) => name.endsWith(ext));
-          if (hasRouteExtension) {
-            const isRouteFile = routePatterns.some((pattern) => name.startsWith(pattern));
-            const isIndexFile = name.startsWith("index");
-            if (isRouteFile || isIndexFile) {
-              return true;
-            }
-          }
-        } else if (entry.isDirectory) {
-          const hasNested = await hasRouteFiles(join(dir, entry.name), adapter);
-          if (hasNested) return true;
-        }
-      }
-    } catch {
-      /* ignore read errors */
-    }
+    /* ignore read errors - adapter.fs should handle cross-platform */
   }
 
   return false;

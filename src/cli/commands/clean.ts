@@ -107,7 +107,7 @@ function createRenderCacheStore(
       });
     case "kv":
       return new KVCacheStore({
-        path: (renderConfig.kvPath as string | undefined) ?? undefined,
+        path: renderConfig.kvPath,
       });
     case "redis":
       if (!renderConfig.redisUrl) {
@@ -120,8 +120,8 @@ function createRenderCacheStore(
     case "memory":
     default:
       return new MemoryCacheStore({
-        maxEntries: renderConfig.maxEntries as number | undefined,
-        ttlMs: renderConfig.ttl as number | undefined,
+        maxEntries: renderConfig.maxEntries,
+        ttlMs: renderConfig.ttl,
       });
   }
 }

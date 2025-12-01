@@ -46,14 +46,10 @@ export class ContextPropagation {
   async withActiveSpan<T>(span: Span | null, fn: () => Promise<T>): Promise<T> {
     if (!span) return await fn();
 
-    try {
-      return await this.api.context.with(
-        this.api.trace.setSpan(this.api.context.active(), span),
-        fn,
-      );
-    } catch (error) {
-      throw error;
-    }
+    return await this.api.context.with(
+      this.api.trace.setSpan(this.api.context.active(), span),
+      fn,
+    );
   }
 
   withSpan<T>(

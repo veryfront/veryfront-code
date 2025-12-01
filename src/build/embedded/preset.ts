@@ -1,7 +1,5 @@
 import { bundlerLogger as logger } from "@veryfront/utils";
 import { createError, toError } from "../../core/errors/veryfront-error.ts";
-// Use the native esbuild module to avoid interfering with the wasm-based
-// instance used elsewhere in the codebase (which relies on initialize/stop).
 import * as esbuild from "esbuild/mod.js";
 import { ensureDir } from "std/fs/mod.ts";
 import { join } from "std/path/mod.ts";
@@ -30,7 +28,6 @@ export async function buildEmbeddedPreset(
   await ensureDir(embeddedDir);
   await ensureDir(join(embeddedDir, "rsc"));
 
-  // 1) Discover minimal SSR entry: prefer app/page.mdx or pages/index.mdx
   const candidates = [join(projectDir, "app", "page.mdx"), join(projectDir, "pages", "index.mdx")];
   let entryPath = "";
   for (const c of candidates) {
@@ -45,7 +42,7 @@ export async function buildEmbeddedPreset(
       logger.debug(`Entry path not found: ${c}`, error);
     }
   }
-  // If no page, create a trivial entry
+
   if (!entryPath) {
     entryPath = join(projectDir, ".veryfront", "__embedded_fallback__.tsx");
     await ensureDir(join(projectDir, ".veryfront"));
@@ -55,7 +52,6 @@ export async function buildEmbeddedPreset(
     );
   }
 
-  // 2) Bundle SSR entry into app.js (ESM)
   const appOut = join(embeddedDir, "app.js");
   let bundledAppCode = "";
   try {
@@ -64,9 +60,7 @@ export async function buildEmbeddedPreset(
         contents: await Deno.readTextFile(entryPath),
         sourcefile: entryPath,
         resolveDir: projectDir,
-        // We do not have an MDX plugin here yet. If the entry is MDX,
-        // bundling may fail; we will fall back to a stub below.
-        loader: entryPath.endsWith(".mdx") ? "tsx" : "tsx",
+        loader: "tsx",
       },
       bundle: true,
       format: "esm",
@@ -84,7 +78,6 @@ export async function buildEmbeddedPreset(
     bundledAppCode = appBuild.outputFiles[0].text;
   } catch (error) {
     logger.error("Failed to bundle embedded app:", error);
-    // Fallback: emit a minimal stub so the build artifacts exist for consumers/tests
     bundledAppCode = "export default async function App(){ return ''; }";
   }
   if (!bundledAppCode) {
@@ -95,9 +88,6 @@ export async function buildEmbeddedPreset(
   }
   await Deno.writeTextFile(appOut, bundledAppCode);
 
-  // 3) Discover additional MDX routes and emit per-route JS modules
-  //    - App Router: app/**/page.mdx -> /segment
-  //    - Pages Router: pages/**/*.mdx -> path derivation; index.mdx treated as folder index
   const routes: Array<{ path: string; file: string; type: "page" | "api" }> = [];
 
   async function discoverAppRoutes(): Promise<
@@ -113,7 +103,6 @@ export async function buildEmbeddedPreset(
         if (ent.isDirectory) {
           await walk(abs, relNext);
         } else if (ent.isFile && ent.name === "page.mdx") {
-          // Derive route path: base/app/<rel>/page.mdx -> "/<rel>" ("/" for root)
           const routePath = rel.replace(/\/page\.mdx$/, "").replace(/(^$)/, "/");
           const norm = routePath === ""
             ? "/"
@@ -148,7 +137,6 @@ export async function buildEmbeddedPreset(
           await walk(abs, relNext);
         } else if (ent.isFile && ent.name.endsWith(".mdx") && !ent.name.startsWith("_")) {
           const withoutExt = relNext.replace(/\.mdx$/, "");
-          // Map pages/index.mdx to /index (keep explicit path for clarity)
           const norm = `/${withoutExt}`;
           const routePath = norm.replace(/\/+/g, "/") ? norm.replace(/\/+/g, "/") : "/";
           const filePath = join(embeddedDir, `pages${routePath}.js`.replace(/\/+/g, "/"));
@@ -169,7 +157,6 @@ export async function buildEmbeddedPreset(
 
   for (const r of discovered) {
     try {
-      // Compile MDX to a standalone JS module
       const mdxContent = await Deno.readTextFile(r.sourcePath);
       const compiled = await compileMDXToJS(r.sourcePath, mdxContent, {
         projectDir,
@@ -188,14 +175,12 @@ export async function buildEmbeddedPreset(
       logger.warn("embedded: failed to compile route MDX", {
         route: r.routePath,
         error: String(e),
-      } as any);
+      } as unknown);
     }
   }
 
-  // Ensure root entry present in manifest at least once
   routes.unshift({ path: "/", file: "embedded/app.js", type: "page" });
 
-  // 4) Copy RSC client support files (dom/hydrator) to rsc/
   const rscFiles = [
     new URL("../../rendering/rsc/client-dom.ts", import.meta.url),
     new URL("../../rendering/rsc/client-hydrator.ts", import.meta.url),
@@ -206,7 +191,6 @@ export async function buildEmbeddedPreset(
     try {
       const srcPath = url.pathname;
       const src = await Deno.readTextFile(srcPath);
-      // Transpile each to JS using esbuild
       const res = await esbuild.transform(src, {
         loader: "ts",
         target: "es2020",
@@ -215,11 +199,10 @@ export async function buildEmbeddedPreset(
       const name = srcPath.substring(srcPath.lastIndexOf("/") + 1).replace(/\.tsx?$/, ".js");
       await Deno.writeTextFile(join(embeddedDir, "rsc", name), res.code);
     } catch (e) {
-      logger.warn("embedded: failed to process RSC file", { error: String(e) } as any);
+      logger.warn("embedded: failed to process RSC file", { error: String(e) } as unknown);
     }
   }
 
-  // 5) Write manifest
   const manifest: EmbeddedBundleManifest = {
     version: 1,
     routes,
@@ -243,8 +226,8 @@ export async function buildEmbeddedPreset(
   };
   await Deno.writeTextFile(join(embeddedDir, "manifest.json"), JSON.stringify(manifest, null, 2));
 
-  logger.info("Embedded preset built", { outDir: embeddedDir } as any);
-  // Ensure native esbuild child process (mod.js) is torn down to avoid test leaks
+  logger.info("Embedded preset built", { outDir: embeddedDir } as unknown);
+
   try {
     esbuild.stop();
   } catch {

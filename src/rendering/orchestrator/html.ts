@@ -1,9 +1,3 @@
-/**
- * HTML Generator - Generates full HTML documents and fragments
- *
- * Location: src/render/orchestrator/html.ts (formerly src/render/core/renderer/html-generator.ts)
- */
-
 import { join } from "https://deno.land/std@0.220.0/path/mod.ts";
 import { rendererLogger as logger } from "@veryfront/utils";
 import type { EntityInfo } from "@veryfront/types";

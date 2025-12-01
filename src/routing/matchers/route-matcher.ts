@@ -4,9 +4,7 @@ export function matchRoute(pathname: string, route: Route): RouteMatch | null {
   const match = pathname.match(route.regex!);
   if (!match) return null;
 
-  const params: Record<string, string | string[]> = {
-    /* empty */
-  };
+  const params: Record<string, string | string[]> = {};
 
   const catchAllParamNames = new Set<string>();
   if (route.pattern) {

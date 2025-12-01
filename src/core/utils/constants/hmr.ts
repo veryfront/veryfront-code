@@ -1,6 +1,6 @@
 import { KB_IN_BYTES } from "./http.ts";
 
-export const HMR_MAX_MESSAGE_SIZE_BYTES = 1024 * KB_IN_BYTES; // 1MB
+export const HMR_MAX_MESSAGE_SIZE_BYTES = 1024 * KB_IN_BYTES;
 
 export const HMR_MAX_MESSAGES_PER_MINUTE = 100;
 

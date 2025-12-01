@@ -15,11 +15,7 @@ export class NodeHttpServer implements HttpServer {
   private url: NodeUrlModule | null = null;
   private server: NodeServer | null = null;
 
-  constructor() {
-    this.initNodeModules();
-  }
-
-  private async initNodeModules() {
+  private async initNodeModules(): Promise<void> {
     try {
       this.http = (await import("node:http")) as NodeHttpModule;
       this.url = (await import("node:url")) as NodeUrlModule;
@@ -34,9 +30,7 @@ export class NodeHttpServer implements HttpServer {
 
   async serve(
     handler: Handler,
-    options: ServeOptions = {
-      /* empty */
-    },
+    options: ServeOptions = {},
   ): Promise<void> {
     if (!this.http) await this.initNodeModules();
 

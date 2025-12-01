@@ -24,7 +24,6 @@ let fs: FileSystem;
  */
 export async function createSampleFiles(projectDir: string): Promise<void> {
   fs = createFileSystem();
-  // Create index.mdx
   const indexMdx = `---
 title: Welcome
 description: Built with Veryfront
@@ -56,7 +55,6 @@ This is your first Veryfront page! Edit this file to see live changes.
 
   await fs.writeTextFile(join(projectDir, PATHS.PAGES_DIR, "index.mdx"), indexMdx);
 
-  // Create example API route: pages/api/hello.ts
   try {
     await ensureDir(join(projectDir, PATHS.PAGES_DIR, "api"));
     const apiHello = `export async function GET(_ctx) {
@@ -74,7 +72,6 @@ export async function POST(ctx) {
     logger.debug("Creating sample API route failed (non-fatal)", error);
   }
 
-  // Create Button component
   const buttonComponent = `import React from "react";
 
 export default function Button({ children = "Click me" }) {
@@ -88,7 +85,6 @@ export default function Button({ children = "Click me" }) {
 
   await fs.writeTextFile(join(projectDir, PATHS.COMPONENTS_DIR, "Button.jsx"), buttonComponent);
 
-  // Create global styles
   const globalStyles = `@tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -112,7 +108,6 @@ export default function Button({ children = "Click me" }) {
  */
 export async function createAppRouterSample(projectDir: string): Promise<void> {
   if (!fs) fs = createFileSystem();
-  // Create app directories
   await ensureDir(join(projectDir, "app"));
   await ensureDir(join(projectDir, "app", "api", "echo"));
 
@@ -144,8 +139,7 @@ export const POST = async (req: Request) => {
 `;
   await fs.writeTextFile(join(projectDir, "app", "api", "echo", "route.ts"), apiRoute);
 
-  // Keep the App Router scaffold minimal; no pages/ or legacy scaffolds
-  logger.debug("Created App Router sample files (minimal)");
+  logger.debug("Created App Router sample files");
 }
 
 /**
@@ -163,7 +157,6 @@ export const POST = async (req: Request) => {
 export async function createAppRouterApiSample(projectDir: string): Promise<void> {
   if (!fs) fs = createFileSystem();
   await createAppRouterSample(projectDir);
-  // Add reserved component samples
   const loading =
     `export default function Loading(){ return <p style={{padding:12}}>Loading…</p>; }`;
   await fs.writeTextFile(join(projectDir, "app", "loading.tsx"), loading);
@@ -186,9 +179,7 @@ export async function createAppRouterApiSample(projectDir: string): Promise<void
  */
 export async function createRscDemoSample(projectDir: string): Promise<void> {
   if (!fs) fs = createFileSystem();
-  // Create an App Router scaffold first
   await createAppRouterSample(projectDir);
-  // Overwrite root page with links to the RSC demo shell
   const page = `export default function Page() {
   return (
     <div>

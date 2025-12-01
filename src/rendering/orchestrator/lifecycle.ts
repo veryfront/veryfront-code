@@ -1,8 +1,3 @@
-/**
- * Renderer Lifecycle Manager
- * Handles system initialization, component registry setup, and resource cleanup
- */
-
 import { join } from "https://deno.land/std@0.220.0/path/mod.ts";
 import { rendererLogger as logger } from "@veryfront/utils";
 import { MDXCacheAdapter } from "@veryfront/transforms/mdx/index.ts";
@@ -49,9 +44,6 @@ export interface RendererServices {
   compilerService: CompilerService;
 }
 
-/**
- * Manages renderer lifecycle: initialization and cleanup
- */
 export class RendererLifecycle {
   private configManager: ConfigurationManager;
   private port: number;
@@ -65,9 +57,6 @@ export class RendererLifecycle {
     this.moduleServerUrl = options.moduleServerUrl;
   }
 
-  /**
-   * Initialize all renderer services and components
-   */
   async initialize(): Promise<RendererServices> {
     logger.info("Initializing renderer services", {
       projectDir: this.configManager.getProjectDir(),
@@ -226,10 +215,7 @@ export class RendererLifecycle {
 
     return this.services;
   }
-  /**
-   * Update compileMDX function in all services that need it
-   * This is called after the renderer is created with the bound method
-   */
+
   updateCompileMDX(
     compileMDX: (
       content: string,
@@ -248,9 +234,6 @@ export class RendererLifecycle {
     this.services.compilerService.setCompileMDX(compileMDX);
   }
 
-  /**
-   * Get initialized services
-   */
   getServices(): RendererServices {
     if (!this.services) {
       throw toError(createError({
@@ -261,9 +244,6 @@ export class RendererLifecycle {
     return this.services;
   }
 
-  /**
-   * Initialize deferred components after server starts
-   */
   async initializeComponents(): Promise<void> {
     if (!this.services) {
       throw toError(createError({
@@ -274,9 +254,6 @@ export class RendererLifecycle {
     await this.services.componentRegistry.initializeComponents();
   }
 
-  /**
-   * Clear all caches
-   */
   clearAllCaches(): void {
     if (!this.services) return;
 
@@ -287,17 +264,11 @@ export class RendererLifecycle {
     this.services.componentRegistry.clear();
   }
 
-  /**
-   * Clear cache for specific slug
-   */
   clearSlugCache(slug: string): void {
     if (!this.services) return;
     void this.services.cacheCoordinator.clearSlug(slug);
   }
 
-  /**
-   * Clean up all resources
-   */
   async destroy(): Promise<void> {
     if (!this.services) return;
     await this.services.cacheCoordinator.destroy();

@@ -29,7 +29,6 @@ async function detectProjectDir(): Promise<string> {
   if (await fs.exists(altConfigPath)) {
     return projectDir;
   }
-  // No config file found, but that's okay - we'll use defaults
   cliLogger.debug("No veryfront config found, using defaults");
   return projectDir;
 }

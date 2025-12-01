@@ -69,7 +69,6 @@ async function resolveExistingFiles(
   candidates: string[],
   adapter: RuntimeAdapter,
 ): Promise<string[]> {
-  // Parallelize file stat operations to avoid N+1 query pattern
   const results = await Promise.allSettled(
     candidates.map((file) => adapter.fs.stat(file)),
   );
@@ -122,8 +121,6 @@ async function addMissedAncestorLayouts(
 ): Promise<void> {
   try {
     const included = new Set(existing);
-
-    // Collect all candidate paths first
     const candidates: string[] = [];
     let dir = dirname(pageFilePath);
 
@@ -139,12 +136,10 @@ async function addMissedAncestorLayouts(
       dir = parent;
     }
 
-    // Parallelize file stat operations to avoid N+1 query pattern
     const results = await Promise.allSettled(
       candidates.map((cand) => adapter.fs.stat(cand)),
     );
 
-    // Add valid layouts found
     for (let i = 0; i < results.length; i++) {
       const result = results[i];
       const cand = candidates[i];

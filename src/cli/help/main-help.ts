@@ -24,7 +24,6 @@ export function showMainHelp(): void {
 
   cliLogger.info(`${yellow("Usage:")} veryfront <command> [options]\n`);
 
-  // Display commands list
   cliLogger.info(formatSectionHeader("Commands"));
   const commands = Object.values(COMMANDS);
   const formattedCommands = formatCommandList(commands);
@@ -32,7 +31,6 @@ export function showMainHelp(): void {
     cliLogger.info(line);
   }
 
-  // Display global options
   const maxLength = calculateMaxLength(commands.map((c) => ({ length: c.name.length })));
   cliLogger.info(
     `\n${formatSectionHeader("Global Options")}\n` +
@@ -40,7 +38,6 @@ export function showMainHelp(): void {
       `  ${formatCommandName("-v, --version", maxLength)} ${formatDescription("Show version")}\n`,
   );
 
-  // Display quick start guide
   cliLogger.info(
     `\n${formatSectionHeader("Quick Start")}\n` +
       `  ${dim("$")} ${cyan("veryfront init my-app")}\n` +
@@ -48,7 +45,6 @@ export function showMainHelp(): void {
       `  ${dim("$")} ${cyan("veryfront dev")}\n`,
   );
 
-  // Display learning resources
   cliLogger.info(
     `\n${formatSectionHeader("Learn More")}\n` +
       `  ${dim("Docs:")}  https://github.com/veryfront/veryfront\n` +

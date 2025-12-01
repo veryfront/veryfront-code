@@ -111,22 +111,7 @@ async function tryDynamicMatch(
         }
       }
     } catch {
-      // Fallback to Deno.readDir
-      try {
-        for await (const entry of Deno.readDir(currentDir)) {
-          if (entry.isDirectory && isDynamicSegment(entry.name)) {
-            currentDir = pathJoin(currentDir, entry.name);
-            foundDynamic = true;
-            // Check if this is a catch-all segment
-            if (entry.name.startsWith("[...")) {
-              isCatchAll = true;
-            }
-            break;
-          }
-        }
-      } catch {
-        /* ignore */
-      }
+      // adapter.fs.readDir failed - no fallback to Deno for npm compatibility
     }
 
     if (!foundDynamic) {

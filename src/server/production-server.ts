@@ -99,10 +99,6 @@ if (import.meta.main) {
       adapter, // Pass adapter to avoid re-detection
     });
   } catch (e) {
-    try {
-      logger.error("failed to start:", e);
-    } catch (e) {
-      logger.warn("build server render failed", e);
-    }
+    logger.error("Failed to start production server:", e);
   }
 }

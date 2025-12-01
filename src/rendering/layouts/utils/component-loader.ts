@@ -73,8 +73,6 @@ export async function loadTSXComponent(
   let component = cache.get(cacheKey);
 
   if (!component) {
-    // Load component using real react-module-loader
-    // Pass ssr: true to prevent module server import rewriting for server-side execution
     const loadedComponent = await loadComponentFromSource(
       source,
       componentPath,
@@ -83,14 +81,12 @@ export async function loadTSXComponent(
       { dev: true, projectId: projectDir, ssr: true },
     );
 
-    // Only set cache if component was successfully loaded
     if (loadedComponent) {
       component = loadedComponent;
       cache.set(cacheKey, component);
     }
   }
 
-  // TypeScript guard: component is definitely defined here
   if (!component) {
     throw toError(createError({
       type: "render",
@@ -119,7 +115,6 @@ export async function applyTSXLayout(
   projectDir: string,
   adapter: RuntimeAdapter,
 ): Promise<BundledReact.ReactElement> {
-  // Get project's React for createElement to ensure element symbols match user components
   const React = await getProjectReact();
   try {
     const LayoutComponent = await loadTSXComponent(
@@ -143,7 +138,6 @@ export async function applyMDXLayout(
   mergedComponents: MDXComponents,
   adapter: RuntimeAdapter,
 ): Promise<BundledReact.ReactElement> {
-  // Get project's React for createElement to ensure element symbols match user components
   const React = await getProjectReact();
   const LayoutFn = await loadMDXLayout(bundle, projectDir, adapter);
   if (LayoutFn) {

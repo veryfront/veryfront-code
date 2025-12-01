@@ -5,7 +5,7 @@
  * @module core/cors/preflight
  */
 
-import type { CORSConfig as _CORSConfig, CORSPreflightOptions } from "./types.ts";
+import type { CORSPreflightOptions } from "./types.ts";
 import { validateOrigin } from "./validators.ts";
 import {
   DEFAULT_HEADERS,

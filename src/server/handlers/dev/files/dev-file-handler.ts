@@ -70,11 +70,8 @@ export class DevFileHandler extends BaseHandler {
     // Check for errors
     if (absPath.startsWith("Error:")) {
       const message = absPath.replace("Error: ", "");
-      const status = message.includes("encoding") || message.includes("outside")
-        ? HTTP_NOT_FOUND
-        : HTTP_NOT_FOUND;
       this.logDebug("dev fs validation failed", { message }, ctx);
-      return this.respond(this.createErrorModule(message, status));
+      return this.respond(this.createErrorModule(message, HTTP_NOT_FOUND));
     }
 
     // Bundle the file with esbuild

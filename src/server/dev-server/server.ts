@@ -200,8 +200,5 @@ export class DevServer {
     } catch (error) {
       logger.debug("[DevServer] Pipeline teardown error (non-critical)", error);
     }
-
-    // Note: Cache cleanup is handled by cleanupRenderers() above
-    // The cache module no longer exports a singleton cache instance
   }
 }

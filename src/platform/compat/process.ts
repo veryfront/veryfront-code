@@ -1,6 +1,5 @@
 import process from "node:process";
-
-const IS_DENO = typeof Deno !== "undefined" && "Deno" in globalThis;
+import { isDeno as IS_DENO } from "./runtime.ts";
 
 export function getArgs(): string[] {
   if (IS_DENO) {

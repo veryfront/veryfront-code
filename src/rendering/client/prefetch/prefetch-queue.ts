@@ -11,7 +11,7 @@ type ResourceCallback = (response: Response, url: string) => void | Promise<void
 
 const DEFAULT_OPTIONS: PrefetchQueueOptions = {
   maxConcurrent: 4,
-  maxSize: PREFETCH_QUEUE_MAX_SIZE_BYTES, // 1MB
+  maxSize: PREFETCH_QUEUE_MAX_SIZE_BYTES,
   timeout: 5_000,
 };
 

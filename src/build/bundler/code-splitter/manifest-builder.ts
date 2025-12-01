@@ -42,9 +42,8 @@ export function extractEntryName(entryPoint: string): string {
       message: `Invalid entry point path: ${entryPoint}`,
     }));
   }
-  return filename.replace(/\.(ts|tsx|js|jsx|mdx)$/, "")
-    ? filename.replace(/\.(ts|tsx|js|jsx|mdx)$/, "")
-    : "unknown";
+  const nameWithoutExt = filename.replace(/\.(ts|tsx|js|jsx|mdx)$/, "");
+  return nameWithoutExt || "unknown";
 }
 
 /**

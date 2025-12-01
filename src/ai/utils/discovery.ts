@@ -73,15 +73,12 @@ export async function discoverAll(
   let aiDir = config.aiDir;
   const baseDir = config.baseDir;
 
-  // If aiDir is not provided, try to load from veryfront.config.ts
   if (!aiDir) {
     try {
       const adapter = createMockAdapter();
-      // Attempt to load config from baseDir
       const projectConfig = await getConfig(baseDir, adapter);
       aiDir = projectConfig.directories?.ai || "ai";
     } catch {
-      // Fallback to default
       aiDir = "ai";
     }
   }
@@ -99,25 +96,21 @@ export async function discoverAll(
     errors: [],
   };
 
-  // Discover tools
   const toolDirs = config.toolDirs || [`${aiDir}/tools`];
   for (const dir of toolDirs) {
     await discoverTools(`${baseDir}/${dir}`, result, context, config.verbose);
   }
 
-  // Discover agents
   const agentDirs = config.agentDirs || [`${aiDir}/agents`];
   for (const dir of agentDirs) {
     await discoverAgents(`${baseDir}/${dir}`, result, context, config.verbose);
   }
 
-  // Discover resources
   const resourceDirs = config.resourceDirs || [`${aiDir}/resources`];
   for (const dir of resourceDirs) {
     await discoverResources(`${baseDir}/${dir}`, result, context, config.verbose);
   }
 
-  // Discover prompts
   const promptDirs = config.promptDirs || [`${aiDir}/prompts`];
   for (const dir of promptDirs) {
     await discoverPrompts(`${baseDir}/${dir}`, result, context, config.verbose);
@@ -153,13 +146,8 @@ async function discoverTools(
         continue;
       }
 
-      // Generate ID from filename
       const id = filenameToId(file);
-
-      // Create new tool with corrected ID
       const toolWithId = { ...tool, id };
-
-      // Register tool
       registerTool(id, toolWithId);
       result.tools.set(id, toolWithId);
 
@@ -206,7 +194,6 @@ async function discoverAgents(
         continue;
       }
 
-      // Generate ID from filename if not provided
       const id = agent.id || filenameToId(file);
 
       result.agents.set(id, agent);
@@ -254,14 +241,9 @@ async function discoverResources(
         continue;
       }
 
-      // Generate ID and pattern from file path
       const id = filenameToId(file);
       const pattern = filePathToPattern(file, dir);
-
-      // Create resource with corrected ID and pattern
       const resourceWithMeta = { ...resource, id, pattern };
-
-      // Register resource
       registerResource(id, resourceWithMeta);
       result.resources.set(id, resourceWithMeta);
 
@@ -308,13 +290,8 @@ async function discoverPrompts(
         continue;
       }
 
-      // Generate ID from filename
       const id = filenameToId(file);
-
-      // Create prompt with corrected ID
       const promptWithId = { ...promptInstance, id };
-
-      // Register prompt
       registerPrompt(id, promptWithId);
       result.prompts.set(id, promptWithId);
 
@@ -344,7 +321,6 @@ async function findTypeScriptFiles(
   const files: string[] = [];
 
   try {
-    // If a filesystem adapter is provided, use it (works on all platforms including Workers)
     if (context.fsAdapter) {
       const exists = await context.fsAdapter.exists(dir);
       if (!exists) {
@@ -361,23 +337,12 @@ async function findTypeScriptFiles(
           files.push(...subFiles);
         }
       }
-    } else if (context.platform === "deno") {
-      // Use Deno's file system API
-      for await (const entry of Deno.readDir(dir)) {
-        const filePath = `${dir}/${entry.name}`;
-
-        if (entry.isFile && (entry.name.endsWith(".ts") || entry.name.endsWith(".tsx"))) {
-          // Convert to file:// URL for import
-          files.push(`file://${filePath}`);
-        } else if (entry.isDirectory) {
-          // Recursively scan subdirectories
-          const subFiles = await findTypeScriptFiles(filePath, context);
-          files.push(...subFiles);
-        }
-      }
     } else {
-      // Fallback to Node.js fs for Node/Bun (lazy load to avoid bundling issues)
       const { fs, path } = await getNodeDeps(context);
+
+      if (!fs || !path) {
+        return files;
+      }
 
       if (!fs.existsSync(dir)) {
         return files;
@@ -389,10 +354,8 @@ async function findTypeScriptFiles(
         const filePath = path.join(dir, entry.name);
 
         if (entry.isFile() && (entry.name.endsWith(".ts") || entry.name.endsWith(".tsx"))) {
-          // Convert to file:// URL for import
           files.push(`file://${path.resolve(filePath)}`);
         } else if (entry.isDirectory()) {
-          // Recursively scan subdirectories
           const subFiles = await findTypeScriptFiles(filePath, context);
           files.push(...subFiles);
         }
@@ -411,6 +374,14 @@ async function getNodeDeps(context: FileDiscoveryContext) {
     return context.nodeDeps;
   }
 
+  if (context.fsAdapter) {
+    context.nodeDeps = {
+      fs: {} as unknown as typeof import("node:fs"),
+      path: {} as unknown as typeof import("node:path"),
+    };
+    return context.nodeDeps;
+  }
+
   const [fsModule, pathModule] = await Promise.all([
     import("node:fs"),
     import("node:path"),
@@ -426,16 +397,10 @@ async function getNodeDeps(context: FileDiscoveryContext) {
 
 /**
  * Convert filename to camelCase ID
- * Examples:
- *   search-web.ts -> searchWeb
- *   send_email.ts -> sendEmail
- *   getUserData.ts -> getUserData
  */
 function filenameToId(filePath: string): string {
-  // Get filename without extension
   const filename = filePath.split("/").pop()?.replace(/\.(ts|tsx|js|jsx)$/, "") || "";
 
-  // Convert kebab-case and snake_case to camelCase
   return filename
     .replace(/[-_](.)/g, (_, char) => char.toUpperCase())
     .replace(/^[A-Z]/, (char) => char.toLowerCase());
@@ -443,23 +408,15 @@ function filenameToId(filePath: string): string {
 
 /**
  * Convert file path to resource pattern
- * Examples:
- *   ai/resources/users/[userId]/profile.ts -> /users/:userId/profile
- *   ai/resources/products/[productId].ts -> /products/:productId
  */
 function filePathToPattern(filePath: string, baseDir: string): string {
-  // Remove file:// protocol if present
   const cleanPath = filePath.replace("file://", "");
 
-  // Remove base directory and .ts extension
   let pattern = cleanPath
     .replace(baseDir, "")
     .replace(/\.(ts|tsx|js|jsx)$/, "");
 
-  // Convert [param] to :param (Next.js -> Express style)
   pattern = pattern.replace(/\[(\w+)\]/g, ":$1");
-
-  // Remove leading slash if exists, then add it back
   pattern = pattern.replace(/^\/+/, "");
   pattern = "/" + pattern;
 

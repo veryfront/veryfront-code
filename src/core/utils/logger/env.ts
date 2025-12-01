@@ -11,9 +11,7 @@ export function getEnvironmentVariable(name: string): string | undefined {
       const value = (globalThis as GlobalWithProcess).process?.env[name];
       return value === "" ? undefined : value;
     }
-  } catch (error) {
-    // Note: Can't use logger here due to circular dependency (logger imports env.ts)
-    console.debug(`Failed to get environment variable ${name}:`, error);
+  } catch {
     return undefined;
   }
   return undefined;

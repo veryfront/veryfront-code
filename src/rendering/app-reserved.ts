@@ -1,12 +1,9 @@
 import * as BundledReact from "react";
-import { rendererLogger, rendererLogger as logger } from "@veryfront/utils";
+import { rendererLogger as logger } from "@veryfront/utils";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 
-// Type for reserved components (loading, error, not-found)
-// Using unknown props since different reserved components have different prop requirements
 type ReservedComponent = BundledReact.ComponentType<unknown>;
 
-// Reserved runtime components mapping (kept for compatibility)
 export const RESERVED_COMPONENTS = {
   loading: "loading.tsx",
   error: "error.tsx",
@@ -32,8 +29,6 @@ export function createErrorBoundary(
   ErrorComponent: ReservedComponent,
   React: typeof BundledReact = BundledReact,
 ) {
-  // Create a proper React Error Boundary class component
-  // Use the passed React instance to ensure symbols match user components
   return class ErrorBoundary extends React.Component<
     { children?: BundledReact.ReactNode },
     { hasError: boolean; error?: Error }
@@ -90,14 +85,8 @@ export async function tryLoadReservedInDirs(
           { projectId: projectDir, dev: true },
         );
         if (typeof Cmp === "function") return Cmp as ReservedComponent;
-      } catch (e) {
-        try {
-          const { rendererLogger } = await import("@veryfront/utils/logger/logger.ts");
-          rendererLogger.debug("reserved component probe miss", e);
-        } catch (logError) {
-          // Log error during logging attempt - avoid recursive failures
-          rendererLogger.warn("Failed to log reserved component probe miss:", logError);
-        }
+      } catch {
+        // Component not found in this path, continue to next
       }
     }
   }

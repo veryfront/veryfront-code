@@ -55,7 +55,6 @@ export function OptimizedImage({
 
   return (
     <picture>
-      {/* Render source elements for each format */}
       {formats.map((format) => (
         <source
           key={format}
@@ -65,7 +64,6 @@ export function OptimizedImage({
         />
       ))}
 
-      {/* Fallback img element */}
       <img
         src={getOptimizedPath(src, originalFormat, width || RESPONSIVE_IMAGE_WIDTH_LG, quality)}
         alt={alt}
@@ -74,7 +72,6 @@ export function OptimizedImage({
         loading={loadingStrategy}
         decoding="async"
         className={className}
-        // @ts-ignore - csstype version conflict between dependencies
         style={imgStyle}
         onClick={onClick}
         onLoad={onLoad}

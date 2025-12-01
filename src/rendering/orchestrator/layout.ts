@@ -1,9 +1,3 @@
-/**
- * Layout Orchestrator - Orchestrates layout collection and application
- *
- * Location: src/render/orchestrator/layout.ts (formerly src/render/core/renderer/layout-orchestrator.ts)
- */
-
 import * as React from "react";
 import type { EntityInfo } from "@veryfront/types";
 import type { LayoutItem, MdxBundle, MDXComponents, ProviderItem } from "@veryfront/types";

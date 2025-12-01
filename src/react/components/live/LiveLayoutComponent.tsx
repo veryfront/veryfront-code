@@ -30,10 +30,7 @@ export function LiveLayoutComponent({ children, layout }: LiveLayoutComponentPro
         if (liveEntity.compiledCode) {
           liveLayout = {
             compiledCode: liveEntity.compiledCode,
-            frontmatter: entity.frontmatter ||
-              {
-                /* empty */
-              },
+            frontmatter: entity.frontmatter || {},
             globals: liveEntity.globals,
           };
         }

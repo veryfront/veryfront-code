@@ -1,8 +1,3 @@
-/**
- * Layout Collector - Discovers and collects layouts from the file system
- * Handles both named layouts and nested directory layouts
- */
-
 import { join } from "https://deno.land/std@0.220.0/path/mod.ts";
 import { rendererLogger as logger } from "@veryfront/utils";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
@@ -29,9 +24,6 @@ export interface LayoutCollectorOptions {
   ) => Promise<MdxBundle>;
 }
 
-/**
- * LayoutCollector handles discovery and collection of layouts
- */
 export class LayoutCollector {
   private projectDir: string;
   private adapter: RuntimeAdapter;
@@ -49,27 +41,16 @@ export class LayoutCollector {
     this.compileMDX = options.compileMDX;
   }
 
-  /**
-   * Collect all layouts for a given page
-   * Includes both named layouts and nested directory layouts
-   */
   async collectLayouts(pageInfo: EntityInfo): Promise<LayoutCollectionResult> {
-    // Collect named layout if specified
     const layoutBundle = await this.collectNamedLayout(pageInfo);
-
-    // Collect nested directory layouts
     const nestedLayouts = await this.collectNestedLayouts(pageInfo);
 
     return { layoutBundle, nestedLayouts };
   }
 
-  /**
-   * Collect named layout from frontmatter
-   */
   private async collectNamedLayout(pageInfo: EntityInfo): Promise<MdxBundle | undefined> {
     const layoutValue = pageInfo.entity.frontmatter.layout;
 
-    // Determine layout name: false/boolean disables layout, string sets explicit layout
     const layoutName = (typeof layoutValue === "boolean" && !layoutValue) || layoutValue === "false"
       ? null
       : (typeof layoutValue === "string" ? layoutValue : null) ||
@@ -105,14 +86,10 @@ export class LayoutCollector {
     return layoutBundle;
   }
 
-  /**
-   * Collect nested directory layouts (layout.tsx, layout.mdx)
-   */
   private async collectNestedLayouts(pageInfo: EntityInfo): Promise<LayoutItem[]> {
     const pageFilePath = pageInfo.entity.id;
     const useAppRouter = await detectAppRouter(this.projectDir, this.config, this.adapter);
 
-    // Check if using Veryfront API adapter
     const wrappedAdapter: unknown = (this.adapter?.fs as { fsAdapter?: unknown })?.fsAdapter;
     const isVeryfrontAPI =
       (wrappedAdapter as { constructor?: { name?: string } })?.constructor?.name ===
@@ -134,12 +111,8 @@ export class LayoutCollector {
     }
   }
 
-  /**
-   * Collect layouts from API project configuration
-   */
   private async collectAPILayoutConfiguration(wrappedAdapter: unknown): Promise<LayoutItem[]> {
     const nestedLayouts: LayoutItem[] = [];
-    // Type guard: wrappedAdapter is VeryfrontFSAdapter
     const projectData = (wrappedAdapter as {
       getProjectData: () => { provider?: string; layout?: string } | undefined;
     }).getProjectData();
@@ -149,7 +122,6 @@ export class LayoutCollector {
       layout: projectData?.layout,
     });
 
-    // Add layout from API project configuration
     if (projectData?.layout) {
       const layoutPath = join(this.projectDir, "components", projectData.layout);
       const layoutExists = await (wrappedAdapter as { exists: (path: string) => Promise<boolean> })
@@ -177,9 +149,6 @@ export class LayoutCollector {
     return nestedLayouts;
   }
 
-  /**
-   * Collect layouts from traditional filesystem structure
-   */
   private async collectFilesystemLayouts(
     pageFilePath: string,
     useAppRouter: boolean,

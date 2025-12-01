@@ -7,7 +7,6 @@
 export type ColorFunction = (text: string) => string;
 
 export interface ConsoleStyler {
-  // Basic colors
   red: ColorFunction;
   green: ColorFunction;
   yellow: ColorFunction;
@@ -16,14 +15,10 @@ export interface ConsoleStyler {
   magenta: ColorFunction;
   white: ColorFunction;
   gray: ColorFunction;
-
-  // Text modifiers
   bold: ColorFunction;
   dim: ColorFunction;
   italic: ColorFunction;
   underline: ColorFunction;
   strikethrough: ColorFunction;
-
-  // Utility
   reset: ColorFunction;
 }

@@ -26,8 +26,8 @@ export async function renderAppRouteToHTML(args: {
   try {
     const st = await adapter.fs.stat(rootLayout);
     if (st.isFile) layouts.push(rootLayout);
-  } catch (e) {
-    logger.warn?.("[build] cleanup write failed", e);
+  } catch {
+    // Root layout not found, continue without it
   }
   const segments = routePath === "/" ? [] : routePath.split("/").filter(Boolean);
   let current = appRoot;
@@ -37,8 +37,8 @@ export async function renderAppRouteToHTML(args: {
     try {
       const st = await adapter.fs.stat(lf);
       if (st.isFile) layouts.push(lf);
-    } catch (e) {
-      logger.warn?.("[build] copy static failed", e);
+    } catch {
+      // Segment layout not found, continue without it
     }
   }
 

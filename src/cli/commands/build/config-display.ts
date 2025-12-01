@@ -24,11 +24,9 @@ export function displayBuildConfig(options: BuildOptions): void {
     dryRun = false,
   } = options;
 
-  // Show build header and start message (kept for CLI tests)
   cliLogger.info(bold(cyan("\n🚀 Veryfront Production Build\n")));
   cliLogger.info("Starting production build");
 
-  // Show build configuration
   cliLogger.info(yellow("\nBuild Configuration:"));
   cliLogger.info(`  ${dim("Project:")}    ${projectDir}`);
   cliLogger.info(`  ${dim("Output:")}     ${outputDir || "dist"}`);
@@ -46,7 +44,6 @@ export function displayBuildConfig(options: BuildOptions): void {
   }
   if (dryRun) {
     cliLogger.info(`\n  ${yellow("⚠")}  ${yellow("Dry run mode - no files will be written")}`);
-    // Emit token used by CLI tests
     cliLogger.info("dry-run");
   }
   cliLogger.info("");

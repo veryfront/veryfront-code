@@ -18,9 +18,7 @@ export interface Args {
 
 export function parse(
   args: string[],
-  options: ParseOptions = {
-    /* empty */
-  },
+  options: ParseOptions = {},
 ) {
   const parsed = denoFlagsParse(args, options);
 

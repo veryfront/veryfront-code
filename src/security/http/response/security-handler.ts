@@ -6,7 +6,6 @@
 import type { SecurityConfig } from "./types.ts";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import { recordSecurityHeaders } from "@veryfront/observability";
-import { serverLogger as logger } from "@veryfront/utils";
 
 /**
  * Generate cryptographic nonce for CSP
@@ -119,7 +118,6 @@ export function applySecurityHeaders(
   config?: SecurityConfig | null,
   adapter?: RuntimeAdapter,
 ): void {
-  logger.debug("[NONCE-TRACE] applySecurityHeaders called", { nonce });
   const getHeaderOverride = (name: string): string | undefined => {
     const overrides = config?.headers;
     if (!overrides) return undefined;

@@ -44,9 +44,6 @@ export function agent(config: AgentConfig): Agent {
   const compatibility = validatePlatformCompatibility({
     maxSteps: config.maxSteps,
     streaming: config.streaming,
-    // Conservative defaults: filesystem and MCP requirements aren't auto-detected yet
-    // since Tool and AgentConfig types don't expose these flags. This ensures agents
-    // work across all platforms. Users can manually specify via edge config if needed.
     requiresFileSystem: false,
     requiresMCP: false,
   }, platform);
@@ -66,10 +63,8 @@ export function agent(config: AgentConfig): Agent {
     );
   }
 
-  // Create runtime
   const runtime = new AgentRuntime(id, config);
 
-  // Create agent instance
   const agentInstance: Agent = {
     id,
     config,
@@ -99,11 +94,8 @@ export function agent(config: AgentConfig): Agent {
     },
 
     async respond(request: Request): Promise<Response> {
-      // Parse request body
       const body = await request.json();
       const messages = body.messages || [];
-
-      // Stream response
       const stream = await runtime.stream(messages, body.context);
 
       return new Response(stream, {
@@ -115,7 +107,6 @@ export function agent(config: AgentConfig): Agent {
       });
     },
 
-    // Memory management
     getMemory() {
       return runtime.getMemory();
     },
@@ -129,7 +120,6 @@ export function agent(config: AgentConfig): Agent {
     },
   };
 
-  // Register agent
   agentRegistry.register(id, agentInstance);
 
   return agentInstance;

@@ -63,7 +63,6 @@ export class FilesystemCacheStore implements CacheStore {
       await this.adapter.fs.mkdir(path, { recursive: true });
     } catch (error) {
       if ((error as Error).message?.includes("exists")) return;
-      // ignore repeated mkdir races
     }
   }
 

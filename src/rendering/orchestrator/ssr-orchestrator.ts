@@ -1,9 +1,3 @@
-/**
- * SSR Orchestrator - SSR-specific rendering logic
- *
- * Separated from ssr.ts to avoid circular dependency with pipeline.ts
- */
-
 import * as React from "react";
 import { rendererLogger as logger } from "@veryfront/utils";
 import type { HTMLGenerationContext, HTMLGenerator } from "./html.ts";

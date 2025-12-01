@@ -33,7 +33,6 @@ export class ComponentRegistry {
   private components = new Map<string, ComponentInfo>();
   private componentDirs: string[];
   private initializedPromise: Promise<void> | null = null;
-  private loader?: ComponentLoader;
   private adapter: RuntimeAdapter;
   private initialized = false;
 
@@ -187,10 +186,6 @@ export class ComponentRegistry {
 
   getComponentNames(): string[] {
     return Array.from(this.components.keys());
-  }
-
-  getLoader(): ComponentLoader | undefined {
-    return this.loader;
   }
 
   async listComponents(): Promise<
