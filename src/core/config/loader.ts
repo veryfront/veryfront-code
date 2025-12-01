@@ -53,7 +53,8 @@ const DEFAULT_CONFIG: Partial<VeryfrontConfig> = {
   },
 };
 
-const configCacheByProject = new Map<string, VeryfrontConfig>();
+const configCacheByProject = new Map<string, { revision: number; config: VeryfrontConfig }>();
+let cacheRevision = 0;
 
 function validateCorsConfig(userConfig: unknown): void {
   if (!userConfig || typeof userConfig !== "object") {
@@ -144,15 +145,21 @@ async function loadAndMergeConfig(
   projectDir: string,
 ): Promise<VeryfrontConfig | null> {
   try {
-    const configUrl = `file://${configPath}?t=${Date.now()}`;
+    const configUrl = `file://${configPath}?t=${Date.now()}-${crypto.randomUUID()}`;
     const configModule = await import(configUrl);
     const userConfig = configModule.default || configModule;
+
+    if (userConfig === null || typeof userConfig !== "object" || Array.isArray(userConfig)) {
+      throw new ConfigValidationError(
+        `Expected object, received ${userConfig === null ? "null" : typeof userConfig}`,
+      );
+    }
 
     validateCorsConfig(userConfig);
     validateConfigShape(userConfig);
 
     const merged = mergeConfigs(userConfig);
-    configCacheByProject.set(projectDir, merged);
+    configCacheByProject.set(projectDir, { revision: cacheRevision, config: merged });
     return merged;
   } catch (error) {
     if (error instanceof ConfigValidationError) {
@@ -172,7 +179,7 @@ export async function getConfig(
   adapter: RuntimeAdapter,
 ): Promise<VeryfrontConfig> {
   const cached = configCacheByProject.get(projectDir);
-  if (cached) return cached;
+  if (cached && cached.revision === cacheRevision) return cached.config;
 
   const configFiles = ["veryfront.config.js", "veryfront.config.ts", "veryfront.config.mjs"];
 
@@ -204,10 +211,11 @@ export async function getConfig(
   }
 
   const defaultConfig = DEFAULT_CONFIG as VeryfrontConfig;
-  configCacheByProject.set(projectDir, defaultConfig);
+  configCacheByProject.set(projectDir, { revision: cacheRevision, config: defaultConfig });
   return defaultConfig;
 }
 
 export function clearConfigCache() {
   configCacheByProject.clear();
+  cacheRevision++;
 }

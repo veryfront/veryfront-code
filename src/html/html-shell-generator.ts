@@ -1,5 +1,17 @@
-import { rendererLogger as logger } from "@veryfront/utils";
 import type { ComponentProps, RenderMetadata } from "@veryfront/types";
+import { escapeHTML } from "./html-escape.ts";
+import {
+  generateHydrationData,
+  getDevScripts,
+  getProdScripts,
+} from "./hydration-script-builder/index.ts";
+import { processMetadata } from "./metadata-builder.ts";
+import {
+  generateThemeVariables,
+  getDevStyles,
+  getProductionStyles,
+} from "./styles-builder/index.ts";
+import { generateTailwindCSS } from "./styles-builder/unocss-generator.ts";
 import type { HTMLGenerationOptions } from "./types.ts";
 import {
   buildContentAttributes,
@@ -7,28 +19,21 @@ import {
   buildRootAttributes,
   shouldDisableLayout,
 } from "./utils.ts";
-import { escapeHTML } from "./html-escape.ts";
-import { processMetadata } from "./metadata-builder.ts";
-import {
-  generateHydrationData,
-  getDevScripts,
-  getProdScripts,
-} from "./hydration-script-builder/index.ts";
-import {
-  generateThemeVariables,
-  getDevStyles,
-  getProductionStyles,
-} from "./styles-builder/index.ts";
-import { generateTailwindCSS } from "./styles-builder/unocss-generator.ts";
 
-export async function wrapInHTMLShell(
-  content: string,
+/**
+ * Generate HTML shell parts for streaming
+ * Returns the start (before content) and end (after content) parts of the HTML document
+ */
+export async function generateHTMLShellParts(
   meta: RenderMetadata,
   options: HTMLGenerationOptions,
   params?: Record<string, string | string[]>,
   props?: ComponentProps,
-): Promise<string> {
-  const tailwindCSS = await generateTailwindCSS(content);
+  contentForTailwind?: string,
+): Promise<{ start: string; end: string }> {
+  // For streaming, we can't generate Tailwind CSS from the content
+  // since the content isn't available yet. Use empty string or provided content.
+  const tailwindCSS = contentForTailwind ? await generateTailwindCSS(contentForTailwind) : "";
 
   const {
     effectiveTitle,
@@ -75,7 +80,7 @@ export async function wrapInHTMLShell(
 
   const syntaxHighlightTheme = options.mode === "development" ? "github-dark" : "github";
 
-  return `<!DOCTYPE html>
+  const start = `<!DOCTYPE html>
 <html lang="${escapeHTML(lang)}">
 <head>
   ${metaTags}
@@ -103,7 +108,9 @@ ${generateThemeVariables()}
 <body${bodyClass ? ` class="${bodyClass}"` : ""}>
   <div ${rootAttributes}>
     <div ${contentAttributes}>
-      ${content}
+`;
+
+  const end = `
     </div>
   </div>
   <div id="veryfront-portals"></div>
@@ -117,4 +124,23 @@ ${generateThemeVariables()}
   ${modeScripts}
 </body>
 </html>`;
+
+  return { start, end };
+}
+
+export async function wrapInHTMLShell(
+  content: string,
+  meta: RenderMetadata,
+  options: HTMLGenerationOptions,
+  params?: Record<string, string | string[]>,
+  props?: ComponentProps,
+): Promise<string> {
+  const { start, end } = await generateHTMLShellParts(
+    meta,
+    options,
+    params,
+    props,
+    content,
+  );
+  return `${start}${content}${end}`;
 }

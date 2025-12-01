@@ -12,8 +12,11 @@ export interface FrontMatterResult<T = Record<string, unknown>> {
   frontMatter: string;
 }
 
-// Lazy-loaded gray-matter module
+import { createRequire } from "node:module";
+
+// Lazy-loaded gray-matter module (kept as any to avoid Deno type issues)
 let grayMatter: typeof import("gray-matter") | null = null;
+const require = createRequire(import.meta.url);
 
 async function getGrayMatter(): Promise<typeof import("gray-matter")> {
   if (!grayMatter) {
@@ -24,6 +27,24 @@ async function getGrayMatter(): Promise<typeof import("gray-matter")> {
   return grayMatter;
 }
 
+function getGrayMatterSync(): typeof import("gray-matter")["default"] | null {
+  if (grayMatter) {
+    return (grayMatter as { default?: typeof import("gray-matter")["default"] }).default ??
+      (grayMatter as unknown as { default: typeof import("gray-matter")["default"] }).default ??
+      (grayMatter as unknown as typeof import("gray-matter")["default"]);
+  }
+
+  try {
+    const mod = require("gray-matter") as {
+      default?: typeof import("gray-matter")["default"];
+    };
+    grayMatter = mod as typeof import("gray-matter");
+    return mod.default ?? (mod as unknown as typeof import("gray-matter")["default"]);
+  } catch (_error) {
+    return null;
+  }
+}
+
 /**
  * Extract front matter from content
  * Compatible with Deno std/front_matter/yaml.ts extract function
@@ -31,59 +52,26 @@ async function getGrayMatter(): Promise<typeof import("gray-matter")> {
 export function extract<T = Record<string, unknown>>(
   content: string,
 ): FrontMatterResult<T> {
-  // Synchronous extraction using a simple regex-based parser
-  // This avoids the async complexity while still working
-  const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/);
-
-  if (!match) {
+  // Prefer real gray-matter parsing to avoid regex-based YAML guesses
+  const gm = getGrayMatterSync();
+  if (gm) {
+    const result = gm(content);
     return {
-      attrs: {} as T,
-      body: content,
-      frontMatter: "",
+      attrs: result.data as T,
+      body: result.content,
+      frontMatter: result.matter ?? "",
     };
   }
 
-  const [, frontMatterStr, body] = match;
+  // Fallback: behave like Deno std extract when gray-matter is unavailable
+  const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/);
 
-  // Simple YAML parsing for common cases
-  const attrs: Record<string, unknown> = {};
-  if (frontMatterStr) {
-    const lines = frontMatterStr.split(/\r?\n/);
-    for (const line of lines) {
-      const colonIndex = line.indexOf(":");
-      if (colonIndex > 0) {
-        const key = line.slice(0, colonIndex).trim();
-        let value: unknown = line.slice(colonIndex + 1).trim();
-
-        // Handle quoted strings
-        if (
-          (value as string).startsWith('"') && (value as string).endsWith('"')
-        ) {
-          value = (value as string).slice(1, -1);
-        } else if (
-          (value as string).startsWith("'") && (value as string).endsWith("'")
-        ) {
-          value = (value as string).slice(1, -1);
-        } // Handle booleans
-        else if (value === "true") {
-          value = true;
-        } else if (value === "false") {
-          value = false;
-        } // Handle numbers
-        else if (!isNaN(Number(value)) && (value as string) !== "") {
-          value = Number(value);
-        }
-
-        attrs[key] = value;
-      }
-    }
+  if (!match) {
+    return { attrs: {} as T, body: content, frontMatter: "" };
   }
 
-  return {
-    attrs: attrs as T,
-    body: body || "",
-    frontMatter: frontMatterStr || "",
-  };
+  const [, frontMatterStr, body] = match;
+  return { attrs: {} as T, body: body || "", frontMatter: frontMatterStr || "" };
 }
 
 /**

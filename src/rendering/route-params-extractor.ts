@@ -1,4 +1,5 @@
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
+import { extractParams } from "@veryfront/routing/slug-mapper/dynamic-route-matcher.ts";
 
 export async function extractAppRouteParams(
   projectDir: string,
@@ -6,7 +7,6 @@ export async function extractAppRouteParams(
   adapter: RuntimeAdapter,
 ): Promise<Record<string, string | string[]> | null> {
   const { join: pathJoin } = await import("https://deno.land/std@0.220.0/path/mod.ts");
-  const { extractParams } = await import("@veryfront/routing/slug-mapper/dynamic-route-matcher.ts");
 
   const segments = slug ? slug.split("/").filter(Boolean) : [];
   let currentDir = pathJoin(projectDir, "app");

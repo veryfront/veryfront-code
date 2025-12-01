@@ -148,6 +148,13 @@ export class ComponentRegistry {
   }
 
   /**
+   * Loader accessor for compatibility with older tests; loader is not used in this registry.
+   */
+  getLoader(): ComponentLoader | undefined {
+    return undefined;
+  }
+
+  /**
    * Get all components as MDXComponents record (for MDX rendering)
    */
   getAllAsComponents(): Record<string, React.ComponentType<unknown>> {

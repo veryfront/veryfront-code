@@ -37,7 +37,10 @@ export function generateHMRClientTemplate(
     try {
       const message = JSON.parse(event.data);
       switch (message.type) {
-        case 'connected': reactRefreshEnabled = message.reactRefresh || false; break;
+        case 'connected':
+          reactRefreshEnabled = message.reactRefresh || false;
+          if (reactRefreshEnabled) { setupReactRefresh(); }
+          break;
         case 'update': handleUpdate(message); break;
         case 'reload': window.location.reload(); break;
         default: console.warn('[HMR] Unknown message type:', message);
@@ -59,8 +62,7 @@ export function generateHMRClientTemplate(
   function handleUpdate(update) {
     if (!update.path) { console.warn('[HMR] Update message missing path'); return; }
     if (update.path.endsWith('.css')) { updateCSS(update.path); return; }
-    if (reactRefreshEnabled && window.$RefreshReg$) { window.$RefreshReg$(update.path); return; }
-    window.location.reload();
+    updateJS(update.path);
   }
 
   function updateCSS(path) {
@@ -74,6 +76,28 @@ export function generateHMRClientTemplate(
         }
       } catch (error) { console.error('[HMR] Failed to update CSS link:', error); }
     });
+  }
+
+  function updateJS(path) {
+    try {
+      const cacheBusted = path + (path.includes('?') ? '&' : '?') + 't=' + Date.now();
+      const script = document.createElement('script');
+      script.type = 'module';
+      script.crossOrigin = 'anonymous';
+      script.onload = () => {
+        if (reactRefreshEnabled && window.$RefreshRuntime$?.performReactRefresh) {
+          window.$RefreshRuntime$.performReactRefresh();
+        } else {
+          window.location.reload();
+        }
+      };
+      script.onerror = () => { window.location.reload(); };
+      script.src = cacheBusted;
+      document.head.appendChild(script);
+    } catch (error) {
+      console.error('[HMR] Failed to update JS module:', error);
+      window.location.reload();
+    }
   }
 
   function setupReactRefresh() {

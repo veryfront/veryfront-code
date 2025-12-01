@@ -55,6 +55,7 @@ export class LayoutOrchestrator {
     layoutBundle: MdxBundle | undefined,
     nestedLayouts: LayoutItem[],
     providerItems: ProviderItem[],
+    layoutDataMap?: Map<string, Record<string, unknown>>,
   ): Promise<React.ReactElement> {
     const defaultComponents = createDefaultMDXComponents();
     const mergedComponents = { ...defaultComponents, ...this.config.componentRegistry };
@@ -75,6 +76,7 @@ export class LayoutOrchestrator {
       layoutBundle,
       nestedLayouts,
       providerItems,
+      layoutDataMap,
     );
   }
 }

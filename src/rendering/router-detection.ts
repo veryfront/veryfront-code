@@ -39,24 +39,15 @@ export async function detectAppRouter(
   let hasAppRoutes = false;
   let hasPagesRoutes = false;
 
-  // Check for app routes - use adapter.fs only, no Deno fallbacks
-  try {
-    const appStat = await adapter.fs.stat(appDir);
-    if (appStat.isDirectory) {
-      hasAppRoutes = await hasRouteFiles(appDir, adapter);
-    }
-  } catch {
-    /* ignore */
+  const appStat = await statWithFallback(appDir, adapter);
+  if (appStat?.isDirectory) {
+    hasAppRoutes = await hasRouteFiles(appDir, adapter);
   }
 
   // Check for pages routes
-  try {
-    const pagesStat = await adapter.fs.stat(pagesDir);
-    if (pagesStat.isDirectory) {
-      hasPagesRoutes = await hasRouteFiles(pagesDir, adapter);
-    }
-  } catch {
-    /* ignore */
+  const pagesStat = await statWithFallback(pagesDir, adapter);
+  if (pagesStat?.isDirectory) {
+    hasPagesRoutes = await hasRouteFiles(pagesDir, adapter);
   }
 
   // If both have routes, prefer app router
@@ -66,29 +57,15 @@ export async function detectAppRouter(
 
   // If neither has routes, check which directory exists
   // Prefer app router for new projects, but allow pages router for legacy
-  let hasAppDir = false;
-  let hasPagesDir = false;
-
-  try {
-    await adapter.fs.stat(appDir);
-    hasAppDir = true;
-  } catch {
-    /* ignore */
-  }
-
-  try {
-    await adapter.fs.stat(pagesDir);
-    hasPagesDir = true;
-  } catch {
-    /* ignore */
-  }
+  const hasAppDir = Boolean(appStat?.isDirectory);
+  const hasPagesDir = Boolean(pagesStat?.isDirectory);
 
   // If both exist but neither has routes, prefer app router (modern default)
   // If only one exists, use that one
   // If neither exists, default to app router
   if (hasAppDir) return true; // Prefer app router when it exists
   if (hasPagesDir) return false;
-  return true; // Default to app router for new projects
+  return false; // If nothing is detectable, fall back to pages router to avoid false positives
 }
 
 /**
@@ -101,29 +78,90 @@ async function hasRouteFiles(
   const routeExtensions = [".mdx", ".tsx", ".jsx", ".ts", ".js"];
   const routePatterns = ["page", "layout", "error", "loading", "not-found"];
 
-  try {
-    const entries = await adapter.fs.readDir(dir);
-    for await (const entry of entries) {
-      if (entry.isFile) {
-        const name = entry.name.toLowerCase();
-        // Check if file matches a route pattern or is a valid route file
-        const hasRouteExtension = routeExtensions.some((ext) => name.endsWith(ext));
-        if (hasRouteExtension) {
-          const isRouteFile = routePatterns.some((pattern) => name.startsWith(pattern));
-          const isIndexFile = name.startsWith("index");
-          if (isRouteFile || isIndexFile) {
-            return true;
-          }
+  const entries = await readDirWithFallback(dir, adapter);
+  for (const entry of entries) {
+    if (entry.isFile) {
+      const name = entry.name.toLowerCase();
+      // Check if file matches a route pattern or is a valid route file
+      const hasRouteExtension = routeExtensions.some((ext) => name.endsWith(ext));
+      if (hasRouteExtension) {
+        const isRouteFile = routePatterns.some((pattern) => name.startsWith(pattern));
+        const isIndexFile = name.startsWith("index");
+        if (isRouteFile || isIndexFile) {
+          return true;
         }
-      } else if (entry.isDirectory) {
-        // Recursively check subdirectories
-        const hasNested = await hasRouteFiles(join(dir, entry.name), adapter);
-        if (hasNested) return true;
       }
+    } else if (entry.isDirectory) {
+      // Recursively check subdirectories
+      const hasNested = await hasRouteFiles(join(dir, entry.name), adapter);
+      if (hasNested) return true;
     }
-  } catch {
-    /* ignore read errors - adapter.fs should handle cross-platform */
   }
 
   return false;
+}
+
+type NormalizedStat = {
+  size?: number;
+  isFile: boolean;
+  isDirectory: boolean;
+  isSymlink: boolean;
+  mtime?: Date | null;
+};
+
+type NormalizedDirEntry = {
+  name: string;
+  isFile: boolean;
+  isDirectory: boolean;
+  isSymlink: boolean;
+};
+
+async function statWithFallback(
+  path: string,
+  adapter: RuntimeAdapter,
+): Promise<NormalizedStat | null> {
+  try {
+    return await adapter.fs.stat(path) as NormalizedStat;
+  } catch {
+    try {
+      const stat = await Deno.stat(path);
+      return {
+        size: stat.size,
+        isFile: stat.isFile,
+        isDirectory: stat.isDirectory,
+        isSymlink: stat.isSymlink,
+        mtime: stat.mtime,
+      };
+    } catch {
+      return null;
+    }
+  }
+}
+
+async function readDirWithFallback(
+  dir: string,
+  adapter: RuntimeAdapter,
+): Promise<NormalizedDirEntry[]> {
+  try {
+    const entries: NormalizedDirEntry[] = [];
+    for await (const entry of adapter.fs.readDir(dir)) {
+      entries.push(entry as NormalizedDirEntry);
+    }
+    return entries;
+  } catch {
+    try {
+      const entries: NormalizedDirEntry[] = [];
+      for await (const entry of Deno.readDir(dir)) {
+        entries.push({
+          name: entry.name,
+          isFile: entry.isFile,
+          isDirectory: entry.isDirectory,
+          isSymlink: entry.isSymlink,
+        });
+      }
+      return entries;
+    } catch {
+      return [];
+    }
+  }
 }

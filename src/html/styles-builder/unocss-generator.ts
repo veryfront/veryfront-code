@@ -10,7 +10,8 @@ import { getUnoCSSTailwindResetUrl } from "@veryfront/core/utils/constants/cdn.t
 
 // Lazy-initialized UnoCSS generator and reset CSS
 // Using lazy initialization avoids top-level await which breaks esbuild bundling
-let resetTailwind: string | null = null;
+let resetTailwind = "";
+let resetInitialized = false;
 let uno: UnoGenerator | null = null;
 
 /**
@@ -26,7 +27,8 @@ async function ensureInitialized(): Promise<{ reset: string; generator: UnoGener
     });
   }
 
-  if (resetTailwind === null) {
+  if (!resetInitialized) {
+    resetInitialized = true;
     try {
       resetTailwind = await fetch(getUnoCSSTailwindResetUrl()).then((r) => r.text());
     } catch (error) {

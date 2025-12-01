@@ -155,7 +155,8 @@ const _Fragment = Fragment;
 
 async function ensureTempDir(): Promise<string> {
   const adapter = await getAdapter();
-  const cwd = adapter.process?.cwd?.() ?? process.cwd();
+  const cwd = (adapter as unknown as { process?: { cwd?: () => string } }).process?.cwd?.() ??
+    (typeof Deno !== "undefined" ? Deno.cwd() : process.cwd());
   const tempDir = `${cwd}/.veryfront/temp/mdx-modules`;
 
   try {

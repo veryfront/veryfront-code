@@ -45,13 +45,15 @@ export function generateRuntimeScript(): string {
 
       // Safely extract and escape error info
       const errorType = escapeHtml(errorInfo.type || 'unknown');
-      const errorName = escapeHtml(errorInfo.error?.name || 'Error');
-      const errorMessage = escapeHtml(errorInfo.error?.message || 'Unknown error');
+      const errorName = escapeHtml((errorInfo.error && errorInfo.error.name) || 'Error');
+      const errorMessage = escapeHtml((errorInfo.error && errorInfo.error.message) || 'Unknown error');
       const errorFile = errorInfo.file ? escapeHtml(String(errorInfo.file)) : '';
       const errorLine = errorInfo.line ? escapeHtml(String(errorInfo.line)) : '';
       const errorColumn = errorInfo.column ? escapeHtml(String(errorInfo.column)) : '';
       const errorSuggestion = errorInfo.suggestion ? escapeHtml(errorInfo.suggestion) : '';
-      const errorStack = errorInfo.error?.stack ? escapeHtml(errorInfo.error.stack) : '';
+      const errorStack = errorInfo.error && errorInfo.error.stack
+        ? escapeHtml(errorInfo.error.stack)
+        : '';
 
       // Create error display
       const overlay = document.createElement('div');

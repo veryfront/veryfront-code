@@ -35,11 +35,11 @@ export class HMRServer {
     this.rateLimiter = new RateLimiter(options.maxMessagesPerMinute ?? HMR_MAX_MESSAGES_PER_MINUTE);
   }
 
-  /**
-   * Start the HMR server
-   * Sets up HTTP server with WebSocket upgrade and runtime script serving
-   */
-  async start(): Promise<void> {
+ /**
+  * Start the HMR server
+  * Sets up HTTP server with WebSocket upgrade and runtime script serving
+  */
+  start(): Promise<void> {
     const _handler = (req: Request): Response => {
       const url = new URL(req.url);
 
@@ -107,13 +107,22 @@ export class HMRServer {
     this.abortController = this.options.signal ? undefined : controller;
 
     // Use the adapter's serve method - works on any runtime (Deno, Node, Bun)
-    this.server = await this.options.adapter.serve(_handler, {
+    const startPromise = this.options.adapter.serve(_handler, {
       port: this.options.port,
       signal,
       onListen: ({ port }: { port: number }) => {
         logger.info(`HMR server running on port ${port}`);
       },
+    }).then((server) => {
+      this.server = server;
     });
+
+    // Attach a handler to avoid unhandled rejections when callers forget to await
+    startPromise.catch((error) => {
+      logger.error("HMR server failed to start", error);
+    });
+
+    return startPromise;
   }
 
   /**

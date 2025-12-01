@@ -1,3 +1,5 @@
+import { globToRegExp } from "std/path/glob_to_regexp.ts";
+
 /**
  * Coverage Threshold Configuration
  *
@@ -209,10 +211,9 @@ export function getThresholdForFile(filePath: string): CoverageThreshold {
  * Check if a file should be excluded from coverage
  */
 export function shouldExcludeFile(filePath: string): boolean {
-  return COVERAGE_EXCLUDES.some((pattern) => {
-    const regex = new RegExp(pattern.replace(/\*/g, ".*"));
-    return regex.test(filePath);
-  });
+  return COVERAGE_EXCLUDES.some((pattern) =>
+    globToRegExp(pattern, { globstar: true, extended: true }).test(filePath)
+  );
 }
 
 /**

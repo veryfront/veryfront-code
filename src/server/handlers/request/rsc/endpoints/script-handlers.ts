@@ -5,6 +5,11 @@
 
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import { serverLogger } from "@veryfront/utils";
+import {
+  getReactCDNUrl,
+  getReactDOMClientCDNUrl,
+  REACT_DEFAULT_VERSION,
+} from "@veryfront/utils/constants/cdn.ts";
 
 /**
  * Handle client.js endpoint
@@ -71,8 +76,8 @@ async function hydrateMarkers() {
 async function hydratePageComponent(pagePath) {
 	try {
 		// Import React and ReactDOM
-		const React = await import("https://esm.sh/react@19.1.1");
-		const ReactDOM = await import("https://esm.sh/react-dom@19.1.1/client");
+		const React = await import("${getReactCDNUrl(REACT_DEFAULT_VERSION)}");
+		const ReactDOM = await import("${getReactDOMClientCDNUrl(REACT_DEFAULT_VERSION)}");
 
 		// Convert the page file path to the /_veryfront/fs/ URL format
 		const base64Path = toBase64Url(pagePath);
@@ -185,14 +190,15 @@ if (document.readyState === "loading") {
 export async function handleDomScript(
   adapter: RuntimeAdapter,
 ): Promise<Response> {
+  const p = new URL(
+    "../../../../../rendering/rsc/client-dom.ts",
+    import.meta.url,
+  ).pathname;
+  let esbuild: typeof import("esbuild/mod.js") | null = null;
   try {
     // Use native esbuild for proper file system access during bundling
     // In npm build, this will be replaced by the injected bundle
-    const esbuild = await import("esbuild/mod.js");
-    const p = new URL(
-      "../../../../../rendering/rsc/client-dom.ts",
-      import.meta.url,
-    ).pathname;
+    esbuild = await import("esbuild/mod.js");
     const src = await adapter.fs.readFile(p);
     const result = await esbuild.build({
       bundle: true,
@@ -208,11 +214,6 @@ export async function handleDomScript(
       },
     });
     const out = result.outputFiles?.[0]?.text ?? src;
-
-    // Stop esbuild service to prevent process leaks
-    if (esbuild.stop) {
-      esbuild.stop();
-    }
 
     return new Response(out, {
       headers: { "content-type": "application/javascript" },
@@ -230,14 +231,16 @@ export async function handleDomScript(
       "[ScriptHandlers] Build failed, serving raw TypeScript",
       error,
     );
-    const p = new URL(
-      "../../../../../rendering/rsc/client-dom.ts",
-      import.meta.url,
-    ).pathname;
     const src = await adapter.fs.readFile(p);
     return new Response(src, {
       headers: { "content-type": "application/typescript" },
     });
+  } finally {
+    try {
+      esbuild?.stop?.();
+    } catch (stopError) {
+      serverLogger.debug("[ScriptHandlers] esbuild stop failed", stopError);
+    }
   }
 }
 

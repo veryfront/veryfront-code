@@ -15,7 +15,8 @@ export async function analyzeChunksCommand(options: AnalyzeChunksOptions) {
   const { projectDir, output } = options;
 
   try {
-    const analysis = await analyzeProjectChunks(projectDir);
+    const fs = createFileSystem();
+    const analysis = await analyzeProjectChunks(projectDir, fs);
 
     if (analysis.sharedDeps.size > 0) {
       cliLogger.info("Top shared dependencies:");
@@ -42,7 +43,6 @@ export async function analyzeChunksCommand(options: AnalyzeChunksOptions) {
     }
 
     if (output) {
-      const fs = createFileSystem();
       const manifest = generateChunkManifest(analysis);
       await fs.writeTextFile(output, JSON.stringify(manifest, null, 2));
       cliLogger.info(`Saved chunk manifest to ${output}`);

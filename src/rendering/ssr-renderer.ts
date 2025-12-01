@@ -5,16 +5,16 @@
  * Provides React 18/19 streaming support with fallback to string rendering.
  */
 
-import * as React from "react";
-import { rendererLogger as logger, isCompiledBinary } from "@veryfront/utils";
 import { ErrorCode, VeryfrontError } from "@veryfront/errors/index.ts";
+import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import {
   getReactVersionInfo,
   renderToStreamAdapter,
   renderToStringAdapter,
 } from "@veryfront/react";
+import { isCompiledBinary, rendererLogger as logger } from "@veryfront/utils";
+import type * as React from "react";
 import { streamToString } from "./utils/index.ts";
-import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 
 /**
  * Convert Node.js pipeable stream to string
@@ -101,7 +101,7 @@ export class SSRRenderer {
     pageElement: React.ReactElement,
     options: SSRRenderOptions,
   ): Promise<SSRRenderResult> {
-    let html: string;
+    let html = "";
     let stream: ReadableStream | null = null;
     const versionInfo = getReactVersionInfo();
 
@@ -113,11 +113,17 @@ export class SSRRenderer {
       (this.mode === "production" || options.wantsStream) &&
       (versionInfo.isReact18 || versionInfo.isReact19);
 
-    if (isCompiledBinary() && (this.mode === "production" || options.wantsStream)) {
-      logger.info("Streaming SSR disabled in compiled binary (using string rendering)", {
-        reactVersion: versionInfo.version,
-        reason: "Workers with blob URLs not supported in deno compile binaries",
-      });
+    if (
+      isCompiledBinary() &&
+      (this.mode === "production" || options.wantsStream)
+    ) {
+      logger.info(
+        "Streaming SSR disabled in compiled binary (using string rendering)",
+        {
+          reactVersion: versionInfo.version,
+          reason: "Workers with blob URLs not supported in deno compile binaries",
+        },
+      );
     }
 
     if (useStreaming) {
@@ -129,27 +135,33 @@ export class SSRRenderer {
       const renderResult = await renderToStreamAdapter(pageElement);
 
       if (renderResult.stream) {
-        let streamForBuffer = renderResult.stream;
+        // If client wants stream, return it directly without buffering
+          if (options.wantsStream && typeof (renderResult.stream as ReadableStream).tee === "function") {
+            const [clientStream, bufferStream] = (renderResult.stream as ReadableStream).tee();
+            stream = clientStream;
+            html = await streamToString(bufferStream);
 
-        // If client wants stream and we can tee it, do so
-        if (
-          options.wantsStream && typeof (renderResult.stream as ReadableStream).tee === "function"
-        ) {
-          const [clientStream, bufferStream] = (renderResult.stream as ReadableStream).tee();
-          stream = clientStream;
-          streamForBuffer = bufferStream;
-        }
+            if (options.debugMode) {
+              logger.debug("Streaming SSR - teeing stream and buffering copy", {
+                htmlLength: html.length,
+              });
+            }
+          } else {
+            // Client doesn't want stream or can't tee - buffer it
+            html = await streamToString(renderResult.stream);
 
-        // Convert stream to string for immediate use
-        html = await streamToString(streamForBuffer);
-
-        if (options.debugMode) {
-          logger.debug("Streaming SSR completed", { htmlLength: html.length });
-        }
+            if (options.debugMode) {
+              logger.debug("Streaming SSR completed (buffered)", {
+                htmlLength: html.length,
+              });
+            }
+          }
       } else if (renderResult.pipe) {
         // Handle Node.js renderToPipeableStream result
         // This is the case when running in Node.js - the result has { pipe, abort }
-        logger.info("Converting pipeable stream to string (Node.js renderToPipeableStream)");
+        logger.info(
+          "Converting pipeable stream to string (Node.js renderToPipeableStream)",
+        );
         html = await pipeToString(renderResult.pipe);
 
         if (options.debugMode) {
@@ -158,7 +170,10 @@ export class SSRRenderer {
       } else if (renderResult.html) {
         html = renderResult.html;
       } else {
-        throw new VeryfrontError("SSR failed - no output", ErrorCode.RENDER_ERROR);
+        throw new VeryfrontError(
+          "SSR failed - no output",
+          ErrorCode.RENDER_ERROR,
+        );
       }
 
       // Note: We don't do a second render pass if stream is unavailable
@@ -190,7 +205,7 @@ export class SSRRenderer {
     };
   } {
     const versionInfo = getReactVersionInfo();
-    const useStreaming = (this.mode === "production") &&
+    const useStreaming = this.mode === "production" &&
       (versionInfo.isReact18 || versionInfo.isReact19);
 
     return {

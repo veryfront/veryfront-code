@@ -41,7 +41,7 @@ export async function checkConfiguration(projectDir: string): Promise<Diagnostic
     const { getAdapter } = await import("@veryfront/platform/adapters/detect.ts");
     const adapter = await getAdapter();
     const config = await getConfig(projectDir, adapter);
-    const reactConfig = config.react as { version?: string } | undefined;
+    const reactConfig = (config as { react?: { version?: string } }).react;
     return {
       name: "Configuration",
       status: "pass",

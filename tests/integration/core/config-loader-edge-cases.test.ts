@@ -24,6 +24,9 @@ async function setupConfigTest(
   for (const { content, filename = "veryfront.config.js" } of configArray) {
     const configPath = join(tempDir, filename);
     await Deno.writeTextFile(configPath, content);
+    if (adapter) {
+      await adapter.fs.writeFile(configPath, content);
+    }
   }
 
   return {
@@ -432,7 +435,15 @@ describe("Config Loader - Edge Cases and Error Handling", () => {
           join(tempDir1, "veryfront.config.js"),
           'export default { title: "Project 1" };',
         );
+        await adapter.fs.writeFile(
+          join(tempDir1, "veryfront.config.js"),
+          'export default { title: "Project 1" };',
+        );
         await Deno.writeTextFile(
+          join(tempDir2, "veryfront.config.js"),
+          'export default { title: "Project 2" };',
+        );
+        await adapter.fs.writeFile(
           join(tempDir2, "veryfront.config.js"),
           'export default { title: "Project 2" };',
         );
@@ -463,6 +474,7 @@ describe("Config Loader - Edge Cases and Error Handling", () => {
 
       try {
         await Deno.writeTextFile(configPath, 'export default { title: "Original" };');
+        await adapter.fs.writeFile(configPath, 'export default { title: "Original" };');
 
         const config1 = await getConfig(tempDir, adapter);
         assertEquals(config1.title, "Original");
@@ -471,6 +483,7 @@ describe("Config Loader - Edge Cases and Error Handling", () => {
 
         // Update config file
         await Deno.writeTextFile(configPath, 'export default { title: "Updated" };');
+        await adapter.fs.writeFile(configPath, 'export default { title: "Updated" };');
 
         const config2 = await getConfig(tempDir, adapter);
         assertEquals(config2.title, "Updated");
