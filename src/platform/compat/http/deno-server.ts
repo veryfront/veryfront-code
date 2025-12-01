@@ -6,9 +6,7 @@ export class DenoHttpServer implements HttpServer {
 
   async serve(
     handler: Handler,
-    options: ServeOptions = {
-      /* empty */
-    },
+    options: ServeOptions = {},
   ): Promise<void> {
     const { port = 8000, hostname = LOCALHOST.IPV4 } = options;
 

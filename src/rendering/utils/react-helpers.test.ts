@@ -61,94 +61,21 @@ Deno.test("normalizeChild - handles arrays", () => {
   assertEquals(result, arr);
 });
 
-Deno.test("createDefaultMDXComponents - creates all HTML element components", () => {
+Deno.test("createDefaultMDXComponents - returns empty object for npm package compatibility", () => {
   const components = createDefaultMDXComponents();
 
-  // Check that all expected components exist
-  const expectedComponents = [
-    "h1",
-    "h2",
-    "h3",
-    "h4",
-    "h5",
-    "h6",
-    "p",
-    "a",
-    "blockquote",
-    "ul",
-    "ol",
-    "li",
-    "pre",
-    "code",
-    "em",
-    "strong",
-    "hr",
-    "img",
-    "table",
-    "thead",
-    "tbody",
-    "tr",
-    "th",
-    "td",
-  ];
-
-  for (const tag of expectedComponents) {
-    assert(components[tag], `Component ${tag} should exist`);
-    assert(typeof components[tag] === "function", `Component ${tag} should be a function`);
-  }
+  // Should return empty object - MDX handles HTML elements natively
+  // This avoids React instance mismatch when CLI's bundled React creates elements
+  // that are then rendered by the project's react-dom/server
+  assertEquals(Object.keys(components).length, 0);
+  assertEquals(components, {});
 });
 
-Deno.test("createDefaultMDXComponents - components render correctly", () => {
-  const components = createDefaultMDXComponents();
-
-  // Test h1 component - use React.createElement instead of calling directly
-  const h1Component = components.h1;
-  assert(h1Component);
-  // deno-lint-ignore no-explicit-any
-  const h1Element = React.createElement(h1Component as any, { children: "Heading" });
-  assert(React.isValidElement(h1Element));
-
-  // Test p component
-  const pComponent = components.p;
-  assert(pComponent);
-  // deno-lint-ignore no-explicit-any
-  const pElement = React.createElement(pComponent as any, { children: "Paragraph" });
-  assert(React.isValidElement(pElement));
-
-  // Test a component with href
-  const aComponent = components.a;
-  assert(aComponent);
-  // deno-lint-ignore no-explicit-any
-  const aElement = React.createElement(aComponent as any, { href: "/test", children: "Link" });
-  assert(React.isValidElement(aElement));
-});
-
-Deno.test("createDefaultMDXComponents - components handle props correctly", () => {
-  const components = createDefaultMDXComponents();
-
-  const imgComponent = components.img;
-  assert(imgComponent);
-  const imgProps = { src: "/image.png", alt: "Test image" };
-  // deno-lint-ignore no-explicit-any
-  const imgElement = React.createElement(imgComponent as any, imgProps);
-
-  assert(React.isValidElement(imgElement));
-  // Props should be passed through
-  // deno-lint-ignore no-explicit-any
-  assertEquals((imgElement as any).props.src, "/image.png");
-  // deno-lint-ignore no-explicit-any
-  assertEquals((imgElement as any).props.alt, "Test image");
-});
-
-Deno.test("createDefaultMDXComponents - creates new instances on each call", () => {
+Deno.test("createDefaultMDXComponents - creates new object instances on each call", () => {
   const components1 = createDefaultMDXComponents();
   const components2 = createDefaultMDXComponents();
 
-  // Should be different objects
+  // Should be different object instances even though both are empty
   assert(components1 !== components2);
-
-  // But components should have the same structure
-  const keys1 = Object.keys(components1).sort();
-  const keys2 = Object.keys(components2).sort();
-  assertEquals(keys1, keys2);
+  assertEquals(Object.keys(components1), Object.keys(components2));
 });

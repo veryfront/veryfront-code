@@ -46,30 +46,26 @@ export const HTTP_FORBIDDEN = 403;
  * Security Note: Defaults to production (true) for fail-secure behavior.
  */
 export function isProductionMode(): boolean {
-  // Check Deno environment
-  if (typeof Deno !== "undefined" && Deno.env) {
-    const veryfrontEnv = Deno.env.get("VERYFRONT_ENV");
-    const nodeEnv = Deno.env.get("NODE_ENV");
-    const denoEnv = Deno.env.get("DENO_ENV");
+  try {
+    const env = process.env;
+    if (!env) return true;
 
-    return (
-      veryfrontEnv === "production" ||
-      nodeEnv === "production" ||
-      denoEnv === "production"
-    );
+    const veryfrontEnv = env.VERYFRONT_ENV;
+    const nodeEnv = env.NODE_ENV;
+    const denoEnv = env.DENO_ENV;
+
+    // Check for explicit development mode
+    if (
+      veryfrontEnv === "development" ||
+      nodeEnv === "development" ||
+      denoEnv === "development"
+    ) {
+      return false;
+    }
+
+    return true;
+  } catch {
+    // Default to production for safety (fail-secure)
+    return true;
   }
-
-  // Check Node.js environment
-  const globalProcess = (globalThis as {
-    process?: { env?: Record<string, string | undefined> };
-  }).process;
-  if (globalProcess?.env) {
-    const nodeEnv = globalProcess.env.NODE_ENV;
-    const veryfrontEnv = globalProcess.env.VERYFRONT_ENV;
-
-    return nodeEnv === "production" || veryfrontEnv === "production";
-  }
-
-  // Default to production for safety (fail-secure)
-  return true;
 }

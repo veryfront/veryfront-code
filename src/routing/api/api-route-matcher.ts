@@ -20,7 +20,7 @@ export class DynamicRouter {
     const disableIntervals = shouldDisableLruInterval();
     this.routeCache = new LRUCache<string, RouteMatch | null>({
       maxEntries: 500,
-      ttlMs: disableIntervals ? undefined : 5 * 60 * 1000, // 5 minutes when intervals allowed
+      ttlMs: disableIntervals ? undefined : 5 * 60 * 1000,
     });
   }
 
@@ -119,7 +119,7 @@ export class DynamicRouter {
 
     const sortedRoutes = this.sortRoutesByPriority();
 
-    for (const [_, routeData] of sortedRoutes) {
+    for (const [, routeData] of sortedRoutes) {
       const match = normalizedPath.match(routeData.regex);
       if (match) {
         const params = this.extractParams(
@@ -175,7 +175,7 @@ export class DynamicRouter {
 
   clear(): void {
     this.routes.clear();
-    this.routeCache.destroy(); // Properly cleanup intervals
+    this.routeCache.destroy();
   }
 
   clearCache(): void {

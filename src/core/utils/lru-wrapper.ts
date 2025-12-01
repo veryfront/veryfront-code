@@ -5,7 +5,7 @@ import { DEFAULT_LRU_MAX_ENTRIES } from "@veryfront/utils";
 export interface LRUOptions {
   maxEntries?: number;
   ttlMs?: number;
-  cleanupIntervalMs?: number; // Note: Not used by LRUCacheAdapter (no automatic cleanup)
+  cleanupIntervalMs?: number;
 }
 
 export class LRUCache<K, V> {
@@ -101,7 +101,7 @@ function shouldDisableInterval(): boolean {
   }
   try {
     return Deno.env.get("VF_DISABLE_LRU_INTERVAL") === "1";
-  } catch (_error) {
+  } catch {
     return false;
   }
 }

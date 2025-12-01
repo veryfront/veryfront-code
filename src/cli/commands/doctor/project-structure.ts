@@ -40,11 +40,12 @@ export async function checkConfiguration(projectDir: string): Promise<Diagnostic
   try {
     const { getAdapter } = await import("@veryfront/platform/adapters/detect.ts");
     const adapter = await getAdapter();
-    const config = (await getConfig(projectDir, adapter)) as any;
+    const config = await getConfig(projectDir, adapter);
+    const reactConfig = config.react as { version?: string } | undefined;
     return {
       name: "Configuration",
       status: "pass",
-      message: `Loaded (React ${(config as any).react?.version || "auto"})`,
+      message: `Loaded (React ${reactConfig?.version || "auto"})`,
     };
   } catch (error) {
     return {

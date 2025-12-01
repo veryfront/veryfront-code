@@ -1,8 +1,3 @@
-/**
- * Types for Veryfront's minimal RSC implementation
- * Re-exported from @veryfront/types for backward compatibility
- */
-
 export type {
   ClientComponentMeta,
   ComponentAnalysis,

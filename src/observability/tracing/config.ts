@@ -69,7 +69,7 @@ function applyEnvFromDeno(config: TracingConfig): void {
       config.exporter = exporterType;
     }
   } catch {
-    // Deno env access may fail, silently continue
+    // Environment access may fail in some runtimes
   }
 }
 

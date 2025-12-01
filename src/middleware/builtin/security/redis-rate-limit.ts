@@ -41,7 +41,7 @@ export class RedisRateLimitStore implements RateLimitStore {
     try {
       const mod = await import("npm:@redis/client@1.5.8");
       createClient = mod.createClient as unknown as (options: { url?: string }) => RedisClient;
-    } catch (_error) {
+    } catch {
       throw toError(createError({
         type: "config",
         message:

@@ -1,9 +1,3 @@
-/**
- * Shared Orchestrator Types
- *
- * Location: src/render/orchestrator/types.ts (formerly src/render/core/renderer/types.ts)
- */
-
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import type { MDXFrontmatter } from "@veryfront/types";
 

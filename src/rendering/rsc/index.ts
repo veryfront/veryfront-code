@@ -1,7 +1,3 @@
-/**
- * Veryfront RSC - Minimal React Server Components implementation
- */
-
 export { hydrateRSC, RSCHydrator } from "./client-hydrator.ts";
 export { analyzeComponent, buildClientManifest } from "./component-analyzer.ts";
 export { RSCProductionOptimizer } from "./production-optimizer.ts";

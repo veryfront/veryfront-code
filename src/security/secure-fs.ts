@@ -135,18 +135,16 @@ export class SecureFs {
     this.config = {
       context: "internal",
       throwOnError: true,
-      onSecurityEvent: () => {}, // No-op by default
+      onSecurityEvent: () => {},
       validationOptions: {},
       ...config,
     };
 
-    // Get base validation options from context
     const contextOptions = getContextValidationOptions(
       this.config.context,
       this.config.baseDir,
     );
 
-    // Merge with custom options and add adapter
     this.validationOptions = {
       ...contextOptions,
       ...this.config.validationOptions,
@@ -214,8 +212,6 @@ export class SecureFs {
     return result;
   }
 
-  // ========== Filesystem Operations ==========
-
   async readFile(path: string): Promise<string> {
     const validation = await this.validatePathForOperation(path, "readFile");
     if (!validation.valid || !validation.canonicalPath) {
@@ -257,16 +253,14 @@ export class SecureFs {
   }
 
   async exists(path: string): Promise<boolean> {
-    // exists() is less critical, but still validate
     const validation = await this.validatePathForOperation(path, "exists");
     if (!validation.valid || !validation.canonicalPath) {
-      return false; // Return false instead of throwing
+      return false;
     }
     return await this.config.adapter.fs.exists(validation.canonicalPath);
   }
 
   readDir(path: string): AsyncIterable<DirEntry> {
-    // readDir returns AsyncIterable, validate synchronously and wrap
     const validation = this.validatePathSync(path, "readDir");
     if (!validation.valid || !validation.canonicalPath) {
       throw new SecurityError("Invalid path", validation.code, path);
@@ -275,7 +269,6 @@ export class SecureFs {
   }
 
   async makeTempDir(prefix: string): Promise<string> {
-    // TempDir is less critical but still validate prefix
     return await this.config.adapter.fs.makeTempDir(prefix);
   }
 
@@ -283,7 +276,6 @@ export class SecureFs {
     paths: string | string[],
     options?: { recursive?: boolean; signal?: AbortSignal },
   ): FileWatcher {
-    // Watch operation - validate all paths
     const pathArray = Array.isArray(paths) ? paths : [paths];
     const validatedPaths: string[] = [];
 

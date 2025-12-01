@@ -19,17 +19,11 @@ export function LivePageContextProvider({
   const context = pageContext || {
     slug: "",
     path: typeof window !== "undefined" ? globalThis.location.pathname : "/",
-    params: {
-      /* empty */
-    },
+    params: {},
     query: typeof window !== "undefined"
       ? Object.fromEntries(new URLSearchParams(globalThis.location.search))
-      : {
-        /* empty */
-      },
-    frontmatter: {
-      /* empty */
-    },
+      : {},
+    frontmatter: {},
   };
 
   return <PageContext.Provider value={context}>{children}</PageContext.Provider>;

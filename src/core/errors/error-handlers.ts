@@ -16,8 +16,8 @@ function safeLog(logFn: () => void): void {
   } catch (error) {
     try {
       serverLogger.warn("[errors] Logging failed:", error);
-    } catch (_error) {
-      void _error;
+    } catch {
+      // Silently ignore if even warning fails
     }
   }
 }

@@ -8,7 +8,6 @@ import { PageLoader } from "@veryfront/routing";
 import { PageTransition } from "@veryfront/routing";
 import { ViewportPrefetch } from "@veryfront/routing";
 
-// Extend globalThis to include Veryfront-specific properties
 declare global {
   interface Window {
     __VERYFRONT_ROUTER_OPTS__?: Partial<RouterOptions>;
@@ -18,7 +17,6 @@ declare global {
   var __VERYFRONT_ROUTER_OPTS__: Partial<RouterOptions> | undefined;
 }
 
-// Re-export types for backward compatibility
 export type { RouteData };
 
 export interface RouterOptions {
@@ -103,7 +101,6 @@ export class VeryfrontRouter {
       return;
     }
 
-    // Use globalThis.ReactDOM if available (for testing), otherwise use the imported ReactDOM
     const ReactDOMToUse = (globalThis as GlobalWithReactDOM).ReactDOM || ReactDOM;
     this.root = ReactDOMToUse.createRoot(rootElement);
 

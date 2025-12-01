@@ -122,24 +122,18 @@ export async function bundleCode({
   }
 }
 
-/**
- * Create resolve plugin for esbuild
- */
 function createResolvePlugin(fileCache: Map<string, string>, projectDir: string): esbuild.Plugin {
   return {
     name: "veryfront-resolve",
     setup(build) {
-      // Resolve cached files
       build.onResolve({ filter: /.*/ }, (args) => {
         if (fileCache.has(args.path)) {
           return { path: args.path, namespace: "veryfront-cache" };
         }
 
-        // Let esbuild handle node_modules and other imports
         return undefined;
       });
 
-      // Load cached files
       build.onLoad({ filter: /.*/, namespace: "veryfront-cache" }, (args) => {
         const content = fileCache.get(args.path);
         if (content) {
@@ -155,9 +149,6 @@ function createResolvePlugin(fileCache: Map<string, string>, projectDir: string)
   };
 }
 
-/**
- * Create CSS plugin for esbuild
- */
 function createCSSPlugin(result: BundleResult): esbuild.Plugin {
   return {
     name: "veryfront-css",
@@ -166,14 +157,12 @@ function createCSSPlugin(result: BundleResult): esbuild.Plugin {
         try {
           const content = await Deno.readTextFile(args.path);
 
-          // Add CSS to outputs
           result.outputs.set(args.path, {
             path: args.path,
             content,
             type: "css",
           });
 
-          // Return empty JS module
           return {
             contents: `export default ${JSON.stringify(content)}`,
             loader: "js",
@@ -193,9 +182,6 @@ function createCSSPlugin(result: BundleResult): esbuild.Plugin {
   };
 }
 
-/**
- * Plugin: mark bare dynamic imports as external for runtime resolution
- */
 function createDynamicImportPlugin(): Plugin {
   return {
     name: "veryfront-dynamic-import",
@@ -217,9 +203,6 @@ function createDynamicImportPlugin(): Plugin {
   };
 }
 
-/**
- * Format esbuild message
- */
 function formatEsbuildMessage(msg: esbuild.Message): string {
   let result = msg.text;
 

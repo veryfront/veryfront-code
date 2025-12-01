@@ -35,8 +35,7 @@ async function ensureInitialized(): Promise<{ reset: string; generator: UnoGener
     }
   }
 
-  // TypeScript narrowing: after the if block, resetTailwind is guaranteed to be string
-  return { reset: resetTailwind as string, generator: uno };
+  return { reset: resetTailwind, generator: uno };
 }
 
 /**
@@ -72,7 +71,7 @@ export function extractClassNames(htmlContent: string): Set<string> {
 
   let match: RegExpExecArray | null;
   while ((match = classPattern.exec(htmlContent)) !== null) {
-    const classes = (match![1] || "").split(/\s+/);
+    const classes = (match[1] || "").split(/\s+/);
     classes.forEach((cls) => {
       if (cls.trim()) classNames.add(cls.trim());
     });

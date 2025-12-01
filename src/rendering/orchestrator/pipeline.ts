@@ -1,9 +1,3 @@
-/**
- * Render Pipeline - Orchestrates the full page rendering pipeline
- *
- * Location: src/render/orchestrator/pipeline.ts (formerly src/render/core/renderer/render-pipeline.ts)
- */
-
 import { rendererLogger as logger } from "@veryfront/utils";
 import { ErrorCode, VeryfrontError } from "@veryfront/errors/index.ts";
 import type { MdxBundle } from "@veryfront/types";
@@ -12,7 +6,6 @@ import type { CacheCoordinator } from "../cache/cache-coordinator.ts";
 import type { PageRenderer } from "../page-renderer.ts";
 import type { PageResolver } from "../page-resolution/index.ts";
 import type { LayoutOrchestrator } from "./layout.ts";
-// Import from ssr-orchestrator to avoid circular dependency with ssr.ts
 import type { SSROrchestrator } from "./ssr-orchestrator.ts";
 import type { RenderOptions, RenderResult } from "./types.ts";
 import { DataFetcher } from "@veryfront/data/index.ts";
@@ -49,15 +42,11 @@ export class RenderPipeline {
   async renderPage(slug: string, options?: RenderOptions): Promise<RenderResult> {
     const pageInfo = await this.config.pageResolver.resolvePage(slug);
 
-    // PAGES ROUTER DATA FETCHING: Load page module and call getServerData/getStaticData
     let dataFetchingProps: Record<string, unknown> | undefined;
     let loadedPageModule: PageWithData | undefined;
 
-    // Only try to load module for component pages (.tsx, .jsx, .ts, .js)
     const fileExtension = pageInfo.entity.id.split(".").pop()?.toLowerCase() || "";
     const isComponentPage = ["tsx", "jsx", "ts", "js"].includes(fileExtension);
-
-    // Only run data fetching for Pages Router pages (in /pages directory), not App Router
     const isInPagesDir = pageInfo.entity.id.includes("/pages/");
 
     logger.info("[renderPage] Data fetching check", {
@@ -72,8 +61,6 @@ export class RenderPipeline {
 
     if (isComponentPage && isInPagesDir && options?.request && options?.url) {
       try {
-        // Extract route params if not already provided
-        // Simple extraction: match dynamic segments in page path against slug
         if (!options.params || Object.keys(options.params).length === 0) {
           logger.info("[renderPage] Attempting to extract Pages Router params", {
             slug,
@@ -81,12 +68,7 @@ export class RenderPipeline {
           });
 
           try {
-            // Extract params from the page path
-            // Example: pageId = "/project/pages/blog/[slug].tsx", slug = "blog/my-post"
-            // Should extract {slug: "my-post"}
             const params: Record<string, string | string[]> = {};
-
-            // Get the relative path from pages directory
             const pagesIndex = pageInfo.entity.id.indexOf("/pages/");
             if (pagesIndex !== -1) {
               const relativePath = pageInfo.entity.id.substring(pagesIndex + 7); // Skip "/pages/"
@@ -95,22 +77,18 @@ export class RenderPipeline {
               );
               const slugSegments = slug.split("/").filter(Boolean);
 
-              // Match segments
               for (let i = 0; i < pathSegments.length && i < slugSegments.length; i++) {
                 const pathSeg = pathSegments[i];
                 const slugSeg = slugSegments[i];
 
-                // Check if path segment is dynamic
                 if (pathSeg && pathSeg.startsWith("[") && pathSeg.endsWith("]")) {
                   const isCatchAll = pathSeg.startsWith("[...");
                   const paramName = pathSeg.replace(/\[\.\.\.|\[|\]/g, "");
 
                   if (isCatchAll) {
-                    // Catch-all: collect remaining segments
                     params[paramName] = slugSegments.slice(i);
                     break;
                   } else {
-                    // Single param
                     if (slugSeg !== undefined) {
                       params[paramName] = slugSeg;
                     }
@@ -145,7 +123,6 @@ export class RenderPipeline {
           pageId: pageInfo.entity.id,
         });
 
-        // Load the ENTIRE page module (not just the component) to access getServerData/getStaticData
         const fileContent = await this.config.adapter.fs.readFile(pageInfo.entity.id);
 
         // Transform to ESM and write to temp file for dynamic import
@@ -165,13 +142,11 @@ export class RenderPipeline {
           },
         );
 
-        // Write to temp file and import as module to get all exports
         const tmpDir = await getGlobalTmpDir();
         const hash = await this.generateHash(pageInfo.entity.id);
         const tempFilePath = `${tmpDir}/page-${hash}.js`;
-        await Deno.writeTextFile(tempFilePath, transformedCode);
+        await this.config.adapter.fs.writeFile(tempFilePath, transformedCode);
 
-        // Dynamic import to get ALL exports (default, getServerData, getStaticData, etc.)
         const moduleUrl = `file://${tempFilePath}?t=${Date.now()}`;
         loadedPageModule = await import(moduleUrl) as PageWithData;
 
@@ -181,7 +156,6 @@ export class RenderPipeline {
           hasGetStaticData: !!(loadedPageModule?.getStaticData),
         });
 
-        // If the page has getServerData or getStaticData, call it
         if (
           loadedPageModule && (loadedPageModule.getServerData || loadedPageModule.getStaticData)
         ) {
@@ -234,7 +208,6 @@ export class RenderPipeline {
             );
           }
 
-          // Use the fetched props
           dataFetchingProps = dataResult.props as Record<string, unknown> | undefined;
           logger.info("[renderPage] Data fetching succeeded", {
             slug,
@@ -243,12 +216,10 @@ export class RenderPipeline {
           });
         }
       } catch (error) {
-        // If it's a notFound error, rethrow it
         if (error instanceof VeryfrontError && error.code === ErrorCode.FILE_NOT_FOUND) {
           throw error;
         }
 
-        // For other errors during data fetching, log and rethrow
         logger.error("[renderPage] Data fetching error", {
           slug,
           error: error instanceof Error ? error.message : String(error),
@@ -268,12 +239,10 @@ export class RenderPipeline {
       providerResult.providerInfos,
     );
 
-    // cacheCoordinator stub returns null, check before accessing properties
     if (cacheResult?.cachedResult) {
       return cacheResult.cachedResult;
     }
 
-    // Merge data fetching props with any existing props
     const mergedOptions = dataFetchingProps
       ? { ...options, props: { ...options?.props, ...dataFetchingProps } }
       : options;
@@ -335,7 +304,6 @@ export class RenderPipeline {
 
     logger.info("Page bundle frontmatter:", (pageBundleResult.pageBundle as MdxBundle).frontmatter);
 
-    // Only persist cache if cacheResult exists (cacheCoordinator stub returns null)
     if (cacheResult) {
       await this.config.cacheCoordinator.persistResult(
         result,

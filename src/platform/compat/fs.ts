@@ -21,7 +21,6 @@
  * @module
  */
 
-import { isDeno } from "./runtime.ts";
 import type { FileInfo } from "@veryfront/platform/adapters/base.ts";
 import { createError, toError } from "../../core/errors/veryfront-error.ts";
 
@@ -31,64 +30,14 @@ import { createError, toError } from "../../core/errors/veryfront-error.ts";
  */
 export interface FileSystem {
   readTextFile(path: string): Promise<string>;
+  readFile(path: string): Promise<string>;
   writeTextFile(path: string, data: string): Promise<void>;
+  writeFile(path: string, data: string): Promise<void>;
   exists(path: string): Promise<boolean>;
   stat(path: string): Promise<FileInfo>;
   mkdir(path: string, options?: { recursive?: boolean }): Promise<void>;
-  readDir(path: string): Promise<Array<{ name: string; isFile: boolean; isDirectory: boolean }>>;
+  readDir(path: string): AsyncIterable<{ name: string; isFile: boolean; isDirectory: boolean }>;
   remove(path: string, options?: { recursive?: boolean }): Promise<void>;
-}
-
-class DenoFileSystem implements FileSystem {
-  async readTextFile(path: string): Promise<string> {
-    return await Deno.readTextFile(path);
-  }
-
-  async writeTextFile(path: string, data: string): Promise<void> {
-    await Deno.writeTextFile(path, data);
-  }
-
-  async exists(path: string): Promise<boolean> {
-    try {
-      await Deno.stat(path);
-      return true;
-    } catch (_error) {
-      return false;
-    }
-  }
-
-  async stat(path: string): Promise<FileInfo> {
-    const stat = await Deno.stat(path);
-    return {
-      isFile: stat.isFile,
-      isDirectory: stat.isDirectory,
-      isSymlink: stat.isSymlink,
-      size: stat.size,
-      mtime: stat.mtime,
-    };
-  }
-
-  async mkdir(path: string, options?: { recursive?: boolean }): Promise<void> {
-    await Deno.mkdir(path, { recursive: options?.recursive ?? false });
-  }
-
-  async readDir(
-    path: string,
-  ): Promise<Array<{ name: string; isFile: boolean; isDirectory: boolean }>> {
-    const entries = [];
-    for await (const entry of Deno.readDir(path)) {
-      entries.push({
-        name: entry.name,
-        isFile: entry.isFile,
-        isDirectory: entry.isDirectory,
-      });
-    }
-    return entries;
-  }
-
-  async remove(path: string, options?: { recursive?: boolean }): Promise<void> {
-    await Deno.remove(path, { recursive: options?.recursive ?? false });
-  }
 }
 
 interface NodeFsPromises {
@@ -116,11 +65,7 @@ interface NodeFsPromises {
 class NodeFileSystem implements FileSystem {
   private fs: NodeFsPromises | null = null;
 
-  constructor() {
-    this.initNodeModules();
-  }
-
-  private async initNodeModules() {
+  private async initNodeModules(): Promise<void> {
     try {
       this.fs = await import("node:fs/promises") as NodeFsPromises;
     } catch (_error) {
@@ -137,9 +82,17 @@ class NodeFileSystem implements FileSystem {
     return await this.fs!.readFile(path, "utf8");
   }
 
+  async readFile(path: string): Promise<string> {
+    return this.readTextFile(path);
+  }
+
   async writeTextFile(path: string, data: string): Promise<void> {
     if (!this.fs) await this.initNodeModules();
     await this.fs!.writeFile(path, data, "utf8");
+  }
+
+  async writeFile(path: string, data: string): Promise<void> {
+    return this.writeTextFile(path, data);
   }
 
   async exists(path: string): Promise<boolean> {
@@ -158,7 +111,7 @@ class NodeFileSystem implements FileSystem {
     return {
       isFile: stat.isFile(),
       isDirectory: stat.isDirectory(),
-      isSymlink: false, // Node.js stat doesn't track symlinks by default
+      isSymlink: false,
       size: stat.size,
       mtime: stat.mtime,
     };
@@ -169,16 +122,18 @@ class NodeFileSystem implements FileSystem {
     await this.fs!.mkdir(path, { recursive: options?.recursive ?? false });
   }
 
-  async readDir(
+  async *readDir(
     path: string,
-  ): Promise<Array<{ name: string; isFile: boolean; isDirectory: boolean }>> {
+  ): AsyncIterable<{ name: string; isFile: boolean; isDirectory: boolean }> {
     if (!this.fs) await this.initNodeModules();
     const entries = await this.fs!.readdir(path, { withFileTypes: true });
-    return entries.map((entry: { name: string; isFile(): boolean; isDirectory(): boolean }) => ({
-      name: entry.name,
-      isFile: entry.isFile(),
-      isDirectory: entry.isDirectory(),
-    }));
+    for (const entry of entries) {
+      yield {
+        name: entry.name,
+        isFile: entry.isFile(),
+        isDirectory: entry.isDirectory(),
+      };
+    }
   }
 
   async remove(path: string, options?: { recursive?: boolean }): Promise<void> {
@@ -202,11 +157,11 @@ class NodeFileSystem implements FileSystem {
  * ```
  *
  * For server/rendering contexts, prefer using adapter.fs directly.
+ *
+ * Note: For npm package, always uses Node.js fs APIs for cross-platform compatibility.
  */
 export function createFileSystem(): FileSystem {
-  if (isDeno) {
-    return new DenoFileSystem();
-  } else {
-    return new NodeFileSystem();
-  }
+  // Always use NodeFileSystem for npm package compatibility
+  // This avoids bundling Deno-specific code that would fail at runtime
+  return new NodeFileSystem();
 }

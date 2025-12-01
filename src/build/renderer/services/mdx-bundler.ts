@@ -5,8 +5,7 @@
 import { compile as compileMdx } from "@mdx-js/mdx";
 import { bundlerLogger as logger } from "@veryfront/utils";
 
-// PluggableList type for MDX plugins (not exported in current @mdx-js/mdx version)
-type PluggableList = Array<any>;
+type PluggableList = Array<unknown>;
 import { extract } from "std/front_matter/yaml.ts";
 import { dirname, join } from "std/path/mod.ts";
 import { getRehypePlugins, getRemarkPlugins } from "@veryfront/transforms/plugins/plugin-loader.ts";
@@ -33,18 +32,15 @@ export async function bundleMdx(
     let body = source.content;
     let frontmatter: Record<string, unknown> = {};
 
-    // Check if content has frontmatter
     if (source.content.trim().startsWith("---")) {
       const extracted = extract(source.content);
       body = extracted.body;
       frontmatter = extracted.attrs as Record<string, unknown>;
     }
 
-    // Get plugins - PluggableList is the official @mdx-js/mdx plugin array type
     const remarkPlugins = (await getRemarkPlugins(options.projectDir)) as unknown as PluggableList;
     const rehypePlugins = (await getRehypePlugins(options.projectDir)) as unknown as PluggableList;
 
-    // Process imports
     const processedContent = await processImports(
       body,
       source.path,
@@ -85,7 +81,7 @@ export async function bundleMdx(
               found = true;
               break;
             } catch {
-              // Continue checking
+              // Extension not found, continue checking others
             }
           }
 
@@ -100,17 +96,14 @@ export async function bundleMdx(
       },
     );
 
-    // Compile MDX
     const compiled = await compileMdx(processedContent, {
       outputFormat: "function-body",
       development: options.mode === "development",
       remarkPlugins,
       rehypePlugins,
       providerImportSource: undefined,
-      // Don't set jsxImportSource to avoid automatic React imports
     });
 
-    // Create the module code
     const slug = getSlugFromPath(source.path);
     const moduleCode = `
 import React from 'react';
@@ -141,7 +134,6 @@ export const meta = ${
       meta: frontmatter,
     });
 
-    // Track dependencies
     const imports = extractImports(moduleCode);
     result.dependencies.set(source.path, imports);
 
@@ -173,40 +165,32 @@ export async function bundleMDXWithOptions(options: MDXBundleOptions): Promise<M
     let body = content;
     let frontmatter: Record<string, unknown> = {};
 
-    // Check if content has frontmatter
     if (content.trim().startsWith("---")) {
       const extracted = extract(content);
       body = extracted.body;
       frontmatter = extracted.attrs as Record<string, unknown>;
     }
 
-    // Get default plugins and merge with provided ones
     const defaultRemarkPlugins = (await getRemarkPlugins(projectDir)) as unknown as PluggableList;
     const defaultRehypePlugins = (await getRehypePlugins(projectDir)) as unknown as PluggableList;
     const allRemarkPlugins: PluggableList = [...defaultRemarkPlugins, ...remarkPlugins];
     const allRehypePlugins: PluggableList = [...defaultRehypePlugins, ...rehypePlugins];
 
-    // Compile MDX
     const compiled = await compileMdx(body, {
       outputFormat: "function-body",
       development: mode === "development",
       remarkPlugins: allRemarkPlugins,
       rehypePlugins: allRehypePlugins,
       providerImportSource: undefined,
-      // Don't set jsxImportSource to avoid automatic React imports
     });
 
-    // Extract dependencies
     const compiledStr = String(compiled);
     const dependencies = extractImports(compiledStr);
 
-    // Create globals import
     const globalsImport = Object.keys(globals).length > 0
       ? `const { ${Object.keys(globals).join(", ")} } = globalThis;`
       : "";
 
-    // Create the final code for bundling
-    // The MDX compiler outputs a function body that expects React to be in scope
     const code = `
 import * as React from "react";
 import { useMDXComponents } from '@veryfront/mdx-components';

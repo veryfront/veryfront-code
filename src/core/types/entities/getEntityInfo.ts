@@ -58,7 +58,7 @@ export async function getEntityInfo(
         frontmatter = extracted.attrs as Frontmatter;
         body = extracted.body;
       } catch {
-        // ignore
+        // Malformed frontmatter - use empty
       }
     }
 

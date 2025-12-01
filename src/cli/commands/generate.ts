@@ -24,7 +24,7 @@ async function ensureDir(path: string) {
 
 function toSlug(name: string) {
   return name
-    .replace(/\\s+/g, "-")
+    .replace(/\s+/g, "-")
     .replace(/[^a-zA-Z0-9_\-[\]/]/g, "")
     .replace(/\/+/g, "/");
 }
@@ -39,14 +39,12 @@ export async function generateCommand(projectDir: string, type: string, name: st
     const cfg = await getConfig(projectDir, adapter);
     const pref = (cfg as any)?.generate?.preferredRouter || cfg?.router;
     if (pref === "app-router" || pref === "pages-router") preferred = pref;
-  } catch (error) {
-    // Config loading is optional for generate command
-    cliLogger.debug("Could not load config for generate command:", error);
+  } catch {
+    cliLogger.debug("Could not load config for generate command, using defaults");
   }
   const slug = toSlug(name);
   switch (type) {
     case "rsc": {
-      // Minimal RSC scaffold: add an app page linking to the RSC shell
       const dir = join(projectDir, "app", slug || "");
       await ensureDir(dir);
       const file = join(dir, "page.tsx");

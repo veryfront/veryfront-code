@@ -34,10 +34,9 @@ export class RedisCacheStore implements CacheStore {
 
     let createClient: ((options: { url?: string }) => RedisClient) | undefined;
     try {
-      // Dynamic import is strictly typed via casting
       const mod = await import("npm:@redis/client@1.5.8");
       createClient = mod.createClient as unknown as (options: { url?: string }) => RedisClient;
-    } catch (_error) {
+    } catch {
       throw toError(createError({
         type: "render",
         message:

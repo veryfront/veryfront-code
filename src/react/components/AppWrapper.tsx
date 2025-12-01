@@ -18,9 +18,7 @@ export function AppWrapper({
   children,
   providers = [],
   layout,
-  components = {
-    /* empty */
-  },
+  components = {},
   mode: _mode,
   studioEnabled: _studioEnabled,
   pageContext,

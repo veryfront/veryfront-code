@@ -5,9 +5,7 @@
 import pc from "npm:picocolors";
 import type { ConsoleStyler } from "./types.ts";
 
-// picocolors API is slightly different, so we wrap it
 export const colors: ConsoleStyler = {
-  // Basic colors
   red: pc.red,
   green: pc.green,
   yellow: pc.yellow,
@@ -16,19 +14,14 @@ export const colors: ConsoleStyler = {
   magenta: pc.magenta,
   white: pc.white,
   gray: pc.gray,
-
-  // Text modifiers
   bold: pc.bold,
   dim: pc.dim,
   italic: pc.italic,
   underline: pc.underline,
   strikethrough: pc.strikethrough,
-
-  // Utility - picocolors doesn't have reset, so we implement it
   reset: (text: string) => pc.reset(text),
 };
 
-// Export individual functions
 export const red = pc.red;
 export const green = pc.green;
 export const yellow = pc.yellow;

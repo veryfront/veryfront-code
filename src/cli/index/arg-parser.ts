@@ -8,8 +8,6 @@
 
 import type { ParsedArgs } from "./types.ts";
 
-// Simple cross-platform argument parser
-// Compatible with Deno std/flags, minimist, and mri APIs
 function parse(
   args: string[],
   options: {
@@ -20,7 +18,6 @@ function parse(
   const result: Record<string, unknown> = { _: [] as string[], ...options.default };
   const aliasMap = new Map<string, string>();
 
-  // Build reverse alias map
   if (options.alias) {
     for (const [short, long] of Object.entries(options.alias)) {
       aliasMap.set(short, long);
@@ -32,7 +29,6 @@ function parse(
     if (!arg) continue;
 
     if (arg.startsWith("--")) {
-      // Long flag: --flag or --flag=value
       const eqIdx = arg.indexOf("=");
       if (eqIdx !== -1) {
         const key = arg.slice(2, eqIdx);
@@ -48,7 +44,6 @@ function parse(
         }
       }
     } else if (arg.startsWith("-") && arg.length === 2) {
-      // Short flag: -f or -f value
       const short = arg.slice(1);
       const key = aliasMap.get(short) || short;
       const next = args[i + 1];
@@ -59,10 +54,8 @@ function parse(
         result[key] = true;
       }
     } else if (!result._) {
-      // Positional argument - command
       result._ = [arg];
     } else {
-      // Additional positional arguments
       (result._ as string[]).push(arg);
     }
   }

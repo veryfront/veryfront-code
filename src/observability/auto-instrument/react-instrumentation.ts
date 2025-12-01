@@ -14,7 +14,7 @@ export function instrumentReactRender<T>(
         const result = renderFn();
 
         if (result instanceof Promise) {
-          return await handleAsyncRender(result, span, startTime, componentName);
+          return await handleAsyncRender(result, span, startTime);
         }
 
         return handleSyncRender(result, span, startTime);
@@ -47,17 +47,10 @@ async function handleAsyncRender<T>(
   result: Promise<T>,
   span: Span | null,
   startTime: number,
-  _componentName: string,
 ): Promise<T> {
-  try {
-    const resolved = await result;
-    recordRenderDuration(span, startTime);
-    return resolved;
-  } catch (error) {
-    // Error handling already done in instrumentReactRender wrapper
-    // but we need to re-throw for the promise chain
-    throw error;
-  }
+  const resolved = await result;
+  recordRenderDuration(span, startTime);
+  return resolved;
 }
 
 function handleSyncRender<T>(result: T, span: Span | null, startTime: number): T {

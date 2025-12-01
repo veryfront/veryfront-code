@@ -38,7 +38,6 @@ export class PageTransition {
     isPopState: boolean,
     scrollY: number,
   ): void {
-    // Clear any pending transition
     if (this.pendingTransitionTimeout !== undefined) {
       clearTimeout(this.pendingTransitionTimeout);
     }
@@ -78,7 +77,7 @@ export class PageTransition {
     heading.textContent = "Oops! Something went wrong";
 
     const message = document.createElement("p");
-    message.textContent = error.message; // textContent auto-escapes
+    message.textContent = error.message;
 
     const button = document.createElement("button");
     button.type = "button";
@@ -89,7 +88,7 @@ export class PageTransition {
     errorDiv.appendChild(message);
     errorDiv.appendChild(button);
 
-    rootElement.innerHTML = ""; // Clear existing content
+    rootElement.innerHTML = "";
     rootElement.appendChild(errorDiv);
   }
 

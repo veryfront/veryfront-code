@@ -4,7 +4,6 @@
  */
 
 import type { AppRouteInfo, BuildStats, RouteInfo } from "../../server/build-types.ts";
-// import type { ChunkManifest } from '../../build/bundler/code-splitter/index.ts' // Removed: deleted module
 import { bundlerLogger } from "@veryfront/utils";
 
 // Stub type for deleted ChunkManifest module

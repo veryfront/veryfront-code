@@ -2,9 +2,7 @@ import type React from "react";
 import { createContext, useContext } from "react";
 import type { MDXComponents } from "@veryfront/types";
 
-const MDXContext = createContext<MDXComponents>({
-  /* empty */
-});
+const MDXContext = createContext<MDXComponents>({});
 
 export interface MDXProviderProps {
   components?: MDXComponents;
@@ -12,9 +10,7 @@ export interface MDXProviderProps {
 }
 
 export function MDXProvider({
-  components = {
-    /* empty */
-  },
+  components = {},
   children,
 }: MDXProviderProps) {
   return <MDXContext.Provider value={components}>{children}</MDXContext.Provider>;

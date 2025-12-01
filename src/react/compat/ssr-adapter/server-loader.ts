@@ -12,13 +12,19 @@ export interface ReactDOMServer {
   renderToReadableStream?: typeof import("react-dom/server").renderToReadableStream;
 }
 
+interface NodeGlobal {
+  process?: {
+    versions?: {
+      node?: string;
+    };
+  };
+}
+
 function isNodeRuntime(): boolean {
-  // deno-lint-ignore no-explicit-any
-  const g = globalThis as any;
+  const g = globalThis as NodeGlobal;
   return typeof Deno === "undefined" && typeof g.process?.versions?.node !== "undefined";
 }
 
-// Cache for project React to avoid repeated imports
 let projectReactCache: typeof React | null = null;
 
 /**
@@ -29,16 +35,12 @@ let projectReactCache: typeof React | null = null;
  * In Deno, returns the bundled React since there's no node_modules conflict.
  */
 export async function getProjectReact(): Promise<typeof React> {
-  // Return cached instance if available
   if (projectReactCache) {
     return projectReactCache;
   }
 
-  // In Node.js, we need to resolve react from the project's node_modules
-  // to ensure we use the same React instance as user components
   if (isNodeRuntime()) {
     try {
-      // Use createRequire to resolve from the current working directory (user's project)
       const { createRequire } = await import("node:module");
       const { pathToFileURL } = await import("node:url");
       const projectRequire = createRequire(pathToFileURL(process.cwd() + "/").href);
@@ -52,23 +54,15 @@ export async function getProjectReact(): Promise<typeof React> {
     }
   }
 
-  // Deno or fallback: use bundled React
   projectReactCache = React;
   return React;
 }
 
-/**
- * Import react-dom/server from the project's node_modules, not the CLI's.
- * This is critical for Node.js to avoid multiple React instances.
- */
 async function importReactDOMServerFromProject(): Promise<
   typeof import("react-dom/server")
 > {
-  // In Node.js, we need to resolve react-dom from the project's node_modules
-  // to ensure we use the same React instance as user components
   if (isNodeRuntime()) {
     try {
-      // Use createRequire to resolve from the current working directory (user's project)
       const { createRequire } = await import("node:module");
       const { pathToFileURL } = await import("node:url");
       const projectRequire = createRequire(pathToFileURL(process.cwd() + "/").href);
@@ -77,12 +71,10 @@ async function importReactDOMServerFromProject(): Promise<
       return await import(pathToFileURL(reactDomServerPath).href);
     } catch (error) {
       logger.warn("Failed to resolve react-dom from project, falling back to bundled", error);
-      // Fall back to bundled version
       return await import("react-dom/server");
     }
   }
 
-  // Deno: use normal import
   return await import("react-dom/server");
 }
 

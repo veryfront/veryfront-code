@@ -81,7 +81,6 @@ export async function applyLayoutsFunctionBody(
   projectDir: string,
   adapter: RuntimeAdapter,
 ): Promise<BundledReact.ReactElement> {
-  // Get project's React for createElement to ensure element symbols match user components
   const React = await getProjectReact();
   let element = pageElement;
 
@@ -144,7 +143,6 @@ export async function applyLayoutsFunctionBody(
   }
 
   if (providerItems.length > 0) {
-    // Reverse providers so lower priority wraps higher priority (outer wraps inner)
     for (const providerItem of [...providerItems].reverse()) {
       if (providerItem.kind === "mdx" && providerItem.bundle?.compiledCode) {
         element = mdxRenderer.render(providerItem.bundle.compiledCode, {
@@ -185,14 +183,11 @@ async function applyProviders(
   tsxLayoutModuleCache: LayoutComponentCache,
   adapter: RuntimeAdapter,
 ): Promise<BundledReact.ReactElement> {
-  // Get project's React for createElement to ensure element symbols match user components
   const React = await getProjectReact();
   let result = element;
-  // Reverse providers so lower priority wraps higher priority (outer wraps inner)
   for (const providerItem of [...providerItems].reverse()) {
     try {
       if (providerItem.kind === "mdx" && providerItem.bundle?.compiledCode) {
-        // MDX provider: load via MDX renderer
         const providerImportMap = await loadImportMap(projectDir, adapter);
         const providerCode = transformImportsWithMap(
           providerItem.bundle.compiledCode,

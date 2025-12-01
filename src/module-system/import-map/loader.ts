@@ -23,8 +23,8 @@ export async function loadImportMap(
         scopes: cfg.resolve.importMap.scopes ?? {},
       };
     }
-  } catch (_e) {
-    void _e;
+  } catch {
+    // Config not found or invalid, fall through to file-based discovery
   }
 
   let currentPath = startPath;
@@ -43,8 +43,8 @@ export async function loadImportMap(
           scopes: config.scopes ?? {},
         };
       }
-    } catch (_error) {
-      void _error;
+    } catch {
+      // deno.json not found in this directory, continue searching
     }
 
     const parent = dirname(currentPath);

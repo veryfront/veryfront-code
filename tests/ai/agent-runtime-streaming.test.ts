@@ -1,5 +1,5 @@
 import { describe, it } from "std/testing/bdd.ts";
-import type { AgentConfig, Message } from "../../src/ai/types/agent.ts";
+import type { AgentConfig, Message, StreamToolCall } from "../../src/ai/types/agent.ts";
 
 type Provider = {
   name: string;
@@ -115,9 +115,9 @@ describe("AgentRuntime streaming JSON buffering", () => {
     // No tool execution because finishReason=stop, but assistant message should carry parsed toolCalls
     const assistant = response.messages.find((m) => m.role === "assistant");
     assert(assistant?.toolCalls && assistant.toolCalls.length === 1, "assistant toolCalls captured");
-    const tc = assistant!.toolCalls![0]!;
+    const tc = assistant!.toolCalls![0]! as StreamToolCall;
     assertEquals(tc.name, "testTool");
-    assertEquals((tc as any).arguments ?? (tc as any).args, { x: 1 });
+    assertEquals(tc.arguments, { x: 1 });
     // Restore env if we modified it
     if (restoreEnv) {
       restoreEnv();

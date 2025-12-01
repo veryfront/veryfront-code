@@ -142,11 +142,7 @@ export interface Message {
   content: string;
 
   /** Tool calls made by assistant (for assistant messages) */
-  toolCalls?: Array<{
-    id: string;
-    name: string;
-    arguments: Record<string, unknown>;
-  }>;
+  toolCalls?: StreamToolCall[];
 
   /** Tool call ID (for tool result messages) */
   toolCallId?: string;
@@ -162,6 +158,16 @@ export interface Message {
 
   /** Additional metadata */
   metadata?: Record<string, unknown>;
+}
+
+/**
+ * Tool call emitted during streaming responses.
+ * Matches provider streaming payload shape and is parsed into arguments.
+ */
+export interface StreamToolCall {
+  id: string;
+  name: string;
+  arguments: Record<string, unknown>;
 }
 
 /**

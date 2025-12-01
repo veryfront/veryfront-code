@@ -57,17 +57,17 @@ export function loadConfig(
       finalConfig.exporter = exporterType;
     }
   } else {
-    // Fallback to Deno.env
+    // Fallback to process.env for cross-platform compatibility
     try {
-      const denoEnv = globalThis.Deno?.env;
-      if (denoEnv) {
-        finalConfig.enabled = denoEnv.get("OTEL_METRICS_ENABLED") === "true" ||
-          denoEnv.get("VERYFRONT_OTEL") === "1" ||
+      const env = process.env;
+      if (env) {
+        finalConfig.enabled = env.OTEL_METRICS_ENABLED === "true" ||
+          env.VERYFRONT_OTEL === "1" ||
           finalConfig.enabled;
-        finalConfig.endpoint = denoEnv.get("OTEL_EXPORTER_OTLP_ENDPOINT") ||
-          denoEnv.get("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT") ||
+        finalConfig.endpoint = env.OTEL_EXPORTER_OTLP_ENDPOINT ||
+          env.OTEL_EXPORTER_OTLP_METRICS_ENDPOINT ||
           finalConfig.endpoint;
-        const exporterType = denoEnv.get("OTEL_METRICS_EXPORTER");
+        const exporterType = env.OTEL_METRICS_EXPORTER;
         if (
           exporterType === "prometheus" || exporterType === "otlp" ||
           exporterType === "console"
@@ -76,7 +76,7 @@ export function loadConfig(
         }
       }
     } catch {
-      // Deno env access may fail, silently continue
+      // process.env access may fail, silently continue
     }
   }
 
@@ -92,16 +92,9 @@ export function getMemoryUsage(): {
   heapTotal: number;
 } | null {
   try {
-    // Try Deno first
-    if (globalThis.Deno?.memoryUsage) {
-      return globalThis.Deno.memoryUsage();
-    }
-    // Try Node.js
-    const proc = (globalThis as {
-      process?: { memoryUsage?: () => { rss: number; heapUsed: number; heapTotal: number } };
-    }).process;
-    if (proc?.memoryUsage) {
-      return proc.memoryUsage();
+    // Use process.memoryUsage for cross-platform compatibility
+    if (process?.memoryUsage) {
+      return process.memoryUsage();
     }
     return null;
   } catch {

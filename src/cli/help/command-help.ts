@@ -28,14 +28,10 @@ export function showCommandHelp(command: string): void {
     return;
   }
 
-  // Header
   cliLogger.info(formatCommandHeader(cmd.name));
   cliLogger.info(`${cmd.description}\n`);
-
-  // Usage
   cliLogger.info(formatUsage(cmd.usage));
 
-  // Options
   if (cmd.options && cmd.options.length > 0) {
     cliLogger.info(formatSectionHeader("Options"));
     const maxLength = calculateMaxLength(cmd.options.map((o) => ({ length: o.flag.length })));
@@ -46,7 +42,6 @@ export function showCommandHelp(command: string): void {
     cliLogger.info("");
   }
 
-  // Examples
   if (cmd.examples && cmd.examples.length > 0) {
     cliLogger.info(formatSectionHeader("Examples"));
     for (const example of cmd.examples) {
@@ -55,7 +50,6 @@ export function showCommandHelp(command: string): void {
     cliLogger.info("");
   }
 
-  // Command-specific tips
   const tips = getCommandTips(command);
   if (tips) {
     cliLogger.info(tips);

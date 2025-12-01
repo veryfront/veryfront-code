@@ -29,9 +29,6 @@ export async function handleMDXPage(
     precompiledModule?: string;
   },
 ): Promise<MDXPageResult> {
-  logger.info(`Checking for pre-compiled MDX: projectDir=${projectDir}, slug=${slug}`);
-  const hasCompiled = false;
-  logger.info(`Checking for pre-compiled MDX for ${slug}: ${hasCompiled}`);
 
   const fmArg = pageInfo.entity.frontmatter && Object.keys(pageInfo.entity.frontmatter).length > 0
     ? pageInfo.entity.frontmatter

@@ -21,9 +21,9 @@ export function detectFeatures(
     improvedSuspense: isReact19Flag,
     enhancedStreaming: isReact19Flag,
 
-    renderToString: true, // Available in all versions
-    renderToStaticMarkup: true, // Available in all versions
-    renderToNodeStream: true, // Available in all versions (deprecated in 18+)
+    renderToString: true,
+    renderToStaticMarkup: true,
+    renderToNodeStream: true,
     renderToPipeableStream: major >= 18,
     renderToReadableStream: major >= 18,
   };

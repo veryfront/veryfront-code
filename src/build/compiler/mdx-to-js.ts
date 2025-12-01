@@ -1,10 +1,3 @@
-/**
- * MDX to JS Compiler
- * Compiles MDX files to regular JavaScript modules that can be imported
- * This avoids runtime compilation and Function constructor issues
- *
- * Security: Uses secure filesystem wrapper to prevent path traversal attacks
- */
 
 import { compile as compileMdx } from "@mdx-js/mdx";
 import { bundlerLogger as logger } from "@veryfront/utils";
@@ -60,7 +53,6 @@ export async function compileMDXToJS(
   options: CompileToJSOptions,
 ): Promise<{ code: string; frontmatter: MDXFrontmatter }> {
   await initializeEsbuild();
-  // Parse frontmatter
   let frontmatter: MDXFrontmatter = {};
   let content = mdxContent;
 
@@ -86,13 +78,11 @@ export async function compileMDXToJS(
           content = String(_match[2]);
         } catch (yamlError) {
           logger.error("Failed to parse YAML frontmatter:", yamlError);
-          // Use content as-is
         }
       }
     }
   }
 
-  // Extract imports from MDX
   const importRegex = /import\s+(\w+)\s+from\s+['"]([^'"]+)['"]/g;
   const imports: Array<{ name: string; path: string }> = [];
   let match: RegExpExecArray | null;
@@ -103,10 +93,8 @@ export async function compileMDXToJS(
     if (name && path) imports.push({ name, path });
   }
 
-  // Remove imports from content
   const contentWithoutImports = content.replace(/import\s+.*?from\s+['"].*?['"];?\s*/g, "");
 
-  // Compile MDX to JSX
   const compiled = await compileMdx(contentWithoutImports, {
     jsx: true,
     jsxRuntime: "automatic",
@@ -114,15 +102,11 @@ export async function compileMDXToJS(
     development: options.mode === "development",
   });
 
-  // Create the module code
   const moduleCode = `
 // Generated from ${mdxPath}
 import * as React from "react";
 
-// Export frontmatter
 export const frontmatter = ${JSON.stringify(frontmatter, null, 2)};
-
-// Component imports stub
 ${
     imports
       .map((imp) => {
@@ -137,17 +121,12 @@ ${
       })
       .join("\n")
   }
-
-// MDX Content (remove any default export from compiled code)
 ${
     String(compiled.value)
       .replace(/export\s+{\s*\w+\s+as\s+default\s*}/g, "")
       .replace(/export\s+default\s+/g, "")
   }
-
-// Wrap to accept runtime components
 export default function MDXPage({ components = {} }) {
-  // Map imported components to runtime components
   ${
     imports
       .map((imp) => {
@@ -167,7 +146,6 @@ export default function MDXPage({ components = {} }) {
 }
 `;
 
-  // Transform JSX to JS using esbuild
   const result = await esbuild.transform(moduleCode, {
     loader: "jsx",
     jsx: "automatic",
@@ -182,36 +160,27 @@ export default function MDXPage({ components = {} }) {
   };
 }
 
-/**
- * Compile and write MDX file to JS
- */
 export async function compileMDXFile(
   mdxPath: string,
   outputDir: string,
   options: CompileToJSOptions,
 ): Promise<void> {
-  // Create secure filesystem wrapper for build operations
   const secureFs = createSecureFs({
     baseDir: options.projectDir,
     adapter: options.adapter,
     context: "build", // Build context allows more flexibility
-    throwOnError: true, // Throw on errors for build failures
+    throwOnError: true,
   });
 
   try {
-    // Use secure filesystem wrapper (automatic path validation)
     const content = await secureFs.readFile(mdxPath);
     const { code, frontmatter: _frontmatter } = await compileMDXToJS(mdxPath, content, options);
 
-    // Determine output path
     const relativePath = mdxPath.replace(options.projectDir, "").replace(/^\//, "");
     const outputPath = join(outputDir, relativePath.replace(".mdx", ".mdx.js"));
 
-    // Ensure directory exists
     const dirPath = dirname(outputPath);
     await secureFs.mkdir(dirPath, { recursive: true });
-
-    // Write the compiled file
     await secureFs.writeFile(outputPath, code);
 
     logger.info(`Compiled MDX: ${mdxPath} -> ${outputPath}`);
@@ -221,9 +190,6 @@ export async function compileMDXFile(
   }
 }
 
-/**
- * Compile all MDX files in project
- */
 export async function compileProjectMDX(
   projectDir: string,
   outputDir: string,
@@ -234,7 +200,6 @@ export async function compileProjectMDX(
     projectDir,
   };
 
-  // Get list of available components
   const componentsDir = join(projectDir, "components");
   const components: string[] = [];
 
@@ -249,8 +214,6 @@ export async function compileProjectMDX(
   }
 
   compileOptions.components = components;
-
-  // Compile all MDX files
   const mdxFiles: string[] = [];
 
   async function findMDXFiles(dir: string) {
@@ -272,14 +235,12 @@ export async function compileProjectMDX(
     }
   }
 
-  // Find MDX files in pages, layouts, and providers
   await findMDXFiles(join(projectDir, "pages"));
   await findMDXFiles(join(projectDir, "layouts"));
   await findMDXFiles(join(projectDir, "providers"));
 
   logger.info(`Found ${mdxFiles.length} MDX files to compile`);
 
-  // Compile all files
   for (const mdxFile of mdxFiles) {
     await compileMDXFile(mdxFile, outputDir, compileOptions);
   }

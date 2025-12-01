@@ -14,7 +14,6 @@ import {
   createFileWatcher,
   createWatcherIterator,
   enqueueWatchEvent,
-  setupNodeFsWatcher as _setupNodeFsWatcher,
 } from "../shared-watcher.ts";
 import type { BunFSWatcher, BunWatchEvent } from "./types.ts";
 import { serverLogger } from "@veryfront/utils";

@@ -69,14 +69,10 @@ export class PageLoader {
   }
 
   async loadPage(path: string): Promise<RouteData> {
-    if (this.isCached(path)) {
+    const cachedData = this.getCached(path);
+    if (cachedData) {
       logger.debug(`Loading ${path} from cache`);
-      const cachedData = this.getCached(path);
-      if (!cachedData) {
-        logger.warn(`[PageLoader] Cache entry for ${path} was unexpectedly null`);
-      } else {
-        return cachedData;
-      }
+      return cachedData;
     }
 
     const data = await this.fetchPageData(path);

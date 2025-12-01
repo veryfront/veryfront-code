@@ -1,5 +1,4 @@
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
-import { HTTP_OK } from "@veryfront/utils";
 import { createContext, normalizeParams } from "./context-builder.ts";
 import type { RouteMatch } from "./api-route-matcher.ts";
 import { createError, toError } from "../../core/errors/veryfront-error.ts";
@@ -28,19 +27,13 @@ export async function executeAppRoute(
   const handlerModule = handler as Record<string, unknown>;
   const handlerFn = handlerModule[method] as PagesRouteHandler | AppRouteHandler | undefined;
   const defaultFn = handlerModule.default as PagesRouteHandler | AppRouteHandler | undefined;
-  const resolvedFn = handlerFn || defaultFn;
-  let headShim = false;
+  let resolvedFn = handlerFn || defaultFn;
   const appContext: AppRouteContext = { params: normalizeParams(match.params) };
 
   if (!resolvedFn && method === "HEAD") {
     const getFn = handlerModule.GET as PagesRouteHandler | AppRouteHandler | undefined;
     if (typeof getFn === "function") {
-      headShim = true;
-      const res = await (getFn as AppRouteHandler)(request, appContext);
-      return new Response(null, {
-        status: res?.status ?? HTTP_OK,
-        headers: res?.headers || {},
-      });
+      resolvedFn = getFn;
     }
   }
 
@@ -61,7 +54,7 @@ export async function executeAppRoute(
       }));
     }
 
-    if (headShim) {
+    if (method === "HEAD") {
       return new Response(null, {
         status: response.status,
         headers: response.headers,

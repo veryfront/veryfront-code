@@ -10,13 +10,12 @@ let fs: FileSystem;
 export async function routesCommand(projectDir: string, options: { json?: boolean } = {}) {
   fs = createFileSystem();
   const adapter = await getAdapter();
-  const _config = await getConfig(projectDir, adapter);
+  await getConfig(projectDir, adapter);
   const pagesDir = join(projectDir, "pages");
   const apiHandler = new APIRouteHandler(projectDir, adapter);
   await apiHandler.initialize();
 
   const router = new DynamicRouter();
-  // naive page scan
   try {
     const entries = await fs.readDir(pagesDir);
     for (const entry of entries) {
@@ -38,14 +37,12 @@ export async function routesCommand(projectDir: string, options: { json?: boolea
   }
 
   const apis: string[] = [];
-  // Re-discover API files and print patterns without depending on internal state
   const apiDir = join(projectDir, "pages", "api");
   if (await fs.exists(apiDir)) {
     await collectApiPatterns(apiDir, "/api", apis);
   }
 
   if (options.json) {
-    // Use console.log directly to avoid [CLI] prefix for valid JSON output
     console.log(JSON.stringify({ pages, apis }, null, 2));
   } else {
     cliLogger.info("Pages:");

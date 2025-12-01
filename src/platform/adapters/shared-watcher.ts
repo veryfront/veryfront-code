@@ -50,7 +50,7 @@ export async function setupNodeFsWatcher(
 export function createWatcherIterator(
   eventQueue: FileChangeEvent[],
   _getResolver: () => ((value: IteratorResult<FileChangeEvent>) => void) | null,
-  setResolver: (resolver: ((value: IteratorResult<FileChangeEvent>) => void) | null) => void,
+  setResolver: (r: ((value: IteratorResult<FileChangeEvent>) => void) | null) => void,
   isClosed: () => boolean,
   isAborted: () => boolean,
 ): AsyncIterator<FileChangeEvent> {

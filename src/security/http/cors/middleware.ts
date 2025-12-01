@@ -10,7 +10,6 @@ import type { CORSConfig } from "./types.ts";
 import { handleCORSPreflight, isPreflightRequest } from "./preflight.ts";
 import { applyCORSHeaders } from "./headers.ts";
 import { validateCORSConfig } from "./validators.ts";
-import { serverLogger as _serverLogger } from "@veryfront/utils/logger/logger.ts";
 import { createError, toError } from "../../../core/errors/veryfront-error.ts";
 
 /**

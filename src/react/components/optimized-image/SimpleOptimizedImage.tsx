@@ -1,4 +1,4 @@
-import _React from "react";
+import React from "react";
 import type { OptimizedImageProps } from "./OptimizedImage.tsx";
 import { RESPONSIVE_IMAGE_WIDTH_LG, RESPONSIVE_IMAGE_WIDTHS } from "@veryfront/utils";
 import { generateSrcSet, getOptimizedPath } from "./helpers.ts";
@@ -33,8 +33,7 @@ export function SimpleOptimizedImage({
       loading={loading}
       decoding="async"
       className={className}
-      // @ts-ignore - csstype version conflict between dependencies
-      style={style}
+      style={style as React.CSSProperties}
       onClick={onClick}
       onLoad={onLoad}
       onError={onError}

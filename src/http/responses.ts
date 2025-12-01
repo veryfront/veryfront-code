@@ -80,8 +80,7 @@ export function jsonResponse<T>(
       status,
       headers,
     });
-  } catch (_error) {
-    // If serialization fails, return a proper error response
+  } catch {
     return errorResponse(
       HttpStatus.INTERNAL_SERVER_ERROR,
       "Failed to serialize response data",

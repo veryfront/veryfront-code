@@ -9,6 +9,7 @@
 import { join } from "std/path/mod.ts";
 import { logger } from "@veryfront/utils";
 import { denoAdapter } from "@veryfront/platform/adapters/deno.ts";
+import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
 import type { TailwindProcessorOptions, TailwindProcessResult } from "./types.ts";
 import { TailwindProcessor } from "./processor.ts";
 import { isTailwindV4File } from "./detector.ts";
@@ -67,9 +68,10 @@ export async function processTailwindCSSInDirectory(
 ): Promise<TailwindProcessResult[]> {
   const results: TailwindProcessResult[] = [];
   const cssPath = join(projectDir, cssDir);
+  const fs = createFileSystem();
 
   try {
-    for await (const entry of Deno.readDir(cssPath)) {
+    for await (const entry of fs.readDir(cssPath)) {
       if (entry.isFile && (entry.name.endsWith(".css"))) {
         const filePath = join(cssPath, entry.name);
 

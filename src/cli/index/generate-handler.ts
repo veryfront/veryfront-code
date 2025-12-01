@@ -18,9 +18,9 @@ import { cwd } from "../../platform/compat/process.ts";
 export async function handleGenerateCommand(args: GenerateCommandArgs): Promise<void> {
   const type = args._[1] as string;
   const name = args._[2] as string;
-  const validTypes = ["page", "layout", "provider", "api"] as const;
+  const validTypes = ["page", "layout", "provider", "api"];
 
-  if (!type || !name || !validTypes.includes(type as any)) {
+  if (!type || !name || !validTypes.includes(type)) {
     showCommandHelp("generate");
     exitProcess(2);
     return;

@@ -27,9 +27,7 @@ export function LiveDataProvider({ children }: { children: React.ReactNode }) {
     entities: new Map(),
     components: new Map(),
     styles: new Map(),
-    config: {
-      /* empty */
-    },
+    config: {},
   });
 
   const [subscribers, setSubscribers] = useState<Set<() => void>>(new Set());

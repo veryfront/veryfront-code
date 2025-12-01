@@ -118,14 +118,11 @@ function resolvePathSegments(path: string): string {
 
   for (const part of parts) {
     if (part === ".") {
-      // Skip current directory references
       continue;
     } else if (part === "..") {
-      // Go up one directory
       if (resolved.length > 0) {
         resolved.pop();
       }
-      // If resolved is empty, .. has no effect on absolute paths
     } else {
       resolved.push(part);
     }
@@ -234,12 +231,9 @@ async function getCanonicalPath(
   }
 
   try {
-    // Check if path is a symlink
     const stat = await adapter.fs.stat(path);
 
     if (stat.isSymlink) {
-      // Note: Current adapters don't expose realpath
-      // This is a limitation to document
       return {
         path: resolvePathSegments(path),
         isSymlink: true,
@@ -251,7 +245,6 @@ async function getCanonicalPath(
       isSymlink: false,
     };
   } catch {
-    // If stat fails, return resolved path
     return {
       path: resolvePathSegments(path),
       isSymlink: false,

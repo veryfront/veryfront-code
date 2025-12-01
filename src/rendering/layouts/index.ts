@@ -1,16 +1,3 @@
-/**
- * Layouts - Page Layout and Provider System
- *
- * Provides layout discovery, nesting, caching, and rendering support
- * for both app and pages router.
- *
- * This module consolidates:
- * - High-level layout system classes (Collector, Compiler, Applicator)
- * - Low-level layout utilities (discovery, compilation, application)
- * - Provider management
- */
-
-// High-level layout system (class-based API)
 export {
   type LayoutCollectionResult,
   LayoutCollector,
@@ -27,7 +14,6 @@ export {
   type ProviderManagerOptions,
 } from "./provider-manager.ts";
 
-// Low-level layout utilities
 export type { LayoutDiscoveryOptions, NestedLayoutsResult } from "./types.ts";
 export { discoverNestedLayouts } from "./utils/discovery.ts";
 export { compileMDXLayouts } from "./utils/compiler.ts";

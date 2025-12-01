@@ -230,7 +230,6 @@ export class APIRouteHandler {
   }
 }
 
-// Re-export commonly used response helpers
 export {
   badRequest,
   forbidden,

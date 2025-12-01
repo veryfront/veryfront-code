@@ -9,8 +9,7 @@ export class MiddlewarePipeline {
   private teardownCallbacks: Array<() => void | Promise<void>> = [];
   private registry: Array<{ pattern: RegExp; use: MiddlewareHandler[] }> = [];
 
-  constructor(_options: MiddlewarePipelineOptions = {}) {
-  }
+  constructor(_options: MiddlewarePipelineOptions = {}) {}
 
   use(middleware: MiddlewareHandler): this {
     this.middlewares.push(middleware);

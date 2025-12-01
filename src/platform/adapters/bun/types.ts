@@ -41,6 +41,5 @@ export interface BunNamespace {
 }
 
 declare global {
-  // @ts-ignore - May conflict with bun-shim in test environments
   const Bun: BunNamespace;
 }

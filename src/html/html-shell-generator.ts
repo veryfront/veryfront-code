@@ -28,29 +28,7 @@ export async function wrapInHTMLShell(
   params?: Record<string, string | string[]>,
   props?: ComponentProps,
 ): Promise<string> {
-  const hasNoLayout = shouldDisableLayout(meta.frontmatter);
-
-  // Debug: Log received mode value at entry point
-  logger.info("[HTML-SHELL] Mode received:", {
-    mode: options.mode,
-    modeType: typeof options.mode,
-    slug: meta.slug,
-  });
-
-  logger.info("wrapInHTMLShell called with meta:", {
-    title: meta.title,
-    frontmatter: meta.frontmatter,
-    layout: meta.frontmatter?.layout,
-    layoutType: typeof meta.frontmatter?.layout,
-    hasNoLayout,
-  });
-
-  // Generate Tailwind CSS on-the-fly from HTML content
   const tailwindCSS = await generateTailwindCSS(content);
-  logger.info("Generated Tailwind CSS:", {
-    cssLength: tailwindCSS.length,
-    slug: meta.slug,
-  });
 
   const {
     effectiveTitle,
@@ -86,14 +64,10 @@ export async function wrapInHTMLShell(
   );
 
   const nonce = options.nonce || "";
-  logger.debug("[NONCE-TRACE] HTML generation using nonce:", nonce);
 
-  const modeScripts = (() => {
-    logger.info("Adding scripts for mode:", options.mode, "slug:", meta.slug);
-    return options.mode === "development"
-      ? getDevScripts(meta.slug || "", options.config, params, props, nonce)
-      : getProdScripts(meta.slug || "", params, props, nonce);
-  })();
+  const modeScripts = options.mode === "development"
+    ? getDevScripts(meta.slug || "", options.config, params, props, nonce)
+    : getProdScripts(meta.slug || "", params, props, nonce);
 
   const modeStyles = options.mode === "development"
     ? getDevStyles(nonce)

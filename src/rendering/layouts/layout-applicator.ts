@@ -1,8 +1,3 @@
-/**
- * Layout Applicator - Applies layouts and providers to page elements
- * Handles both ESM and function-body wrapping modes
- */
-
 import { dirname, join } from "https://deno.land/std@0.220.0/path/mod.ts";
 import { rendererLogger as logger } from "@veryfront/utils";
 import * as BundledReact from "react";
@@ -30,9 +25,6 @@ export interface LayoutApplicationOptions {
   moduleServerUrl?: string;
 }
 
-/**
- * LayoutApplicator handles applying layouts and wrappers to page elements
- */
 export class LayoutApplicator {
   private projectDir: string;
   private adapter: RuntimeAdapter;
@@ -52,10 +44,6 @@ export class LayoutApplicator {
     this.moduleServerUrl = options.moduleServerUrl;
   }
 
-  /**
-   * Apply all layouts and wrappers to a page element
-   * Main entry point for layout application
-   */
   async applyLayouts(
     pageElement: BundledReact.ReactElement,
     pageInfo: EntityInfo,
@@ -63,7 +51,6 @@ export class LayoutApplicator {
     nestedLayouts: LayoutItem[],
     providerItems: ProviderItem[],
   ): Promise<BundledReact.ReactElement> {
-    // Apply nested layouts and providers
     let wrappedElement = await this.applyLayoutsAndProviders(
       pageElement,
       layoutBundle,
@@ -71,7 +58,6 @@ export class LayoutApplicator {
       providerItems,
     );
 
-    // Apply router-specific components
     const useAppRouter = await detectAppRouter(this.projectDir, this.config, this.adapter);
     const pageFilePath = pageInfo.entity.id;
 
@@ -84,10 +70,6 @@ export class LayoutApplicator {
     return wrappedElement;
   }
 
-  /**
-   * Apply nested layouts and providers
-   * Chooses between ESM and function-body wrapping modes
-   */
   private async applyLayoutsAndProviders(
     pageElement: BundledReact.ReactElement,
     layoutBundle: MdxBundle | undefined,
@@ -114,9 +96,6 @@ export class LayoutApplicator {
     }
   }
 
-  /**
-   * Apply layouts using ESM wrapping (dynamic import)
-   */
   private async applyLayoutsESMMode(
     pageElement: BundledReact.ReactElement,
     layoutBundle: MdxBundle | undefined,
@@ -135,9 +114,6 @@ export class LayoutApplicator {
     );
   }
 
-  /**
-   * Apply layouts using function-body wrapping
-   */
   private async applyLayoutsFunctionBodyMode(
     pageElement: BundledReact.ReactElement,
     layoutBundle: MdxBundle | undefined,
@@ -156,11 +132,7 @@ export class LayoutApplicator {
     );
   }
 
-  /**
-   * Wrap page with App component for Pages Router
-   */
   private async wrapWithAppComponent(pageElement: BundledReact.ReactElement): Promise<BundledReact.ReactElement> {
-    // Get project's React for createElement to ensure element symbols match user components
     const React = await getProjectReact();
     try {
       const appPath = join(this.projectDir, "components/app.tsx");
@@ -196,14 +168,10 @@ export class LayoutApplicator {
     return pageElement;
   }
 
-  /**
-   * Wrap page with App Router reserved components (loading, error)
-   */
   private async wrapWithReservedComponents(
     pageElement: BundledReact.ReactElement,
     pageFilePath: string,
   ): Promise<BundledReact.ReactElement> {
-    // Get project's React for createElement to ensure element symbols match user components
     const React = await getProjectReact();
     try {
       const segmentDir = dirname(pageFilePath);

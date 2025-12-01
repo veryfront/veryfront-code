@@ -20,9 +20,7 @@ export interface APIServerOptions {
 }
 
 export class APIServer {
-  constructor(private options: APIServerOptions) {
-    /* empty */
-  }
+  constructor(private options: APIServerOptions) {}
 
   async handleRequest(pathname: string): Promise<Response | null> {
     // Handle page data API (for client-side navigation)
@@ -47,18 +45,7 @@ export class APIServer {
           },
         );
       } catch (error) {
-        try {
-          logger.error(`Error rendering page data for ${slug}:`, error);
-        } catch (loggingError) {
-          // Last resort fallback - write directly to stderr if logger fails
-          const encoder = new TextEncoder();
-          const message = `[APIServer] Failed to log error: ${loggingError}\n`;
-          try {
-            Deno.stderr.writeSync(encoder.encode(message));
-          } catch {
-            // Silent failure - even stderr write failed, nothing more we can do
-          }
-        }
+        logger.error(`Error rendering page data for ${slug}:`, error);
 
         return new Response(
           JSON.stringify({

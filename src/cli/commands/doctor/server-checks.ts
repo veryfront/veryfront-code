@@ -88,7 +88,6 @@ export async function checkRSCEndpoints(): Promise<DiagnosticResult[]> {
     }
     await safeCancelBody(stream);
 
-    // Explicit note about Flight endpoints removal (do not probe)
     results.push({
       name: "RSC Flight",
       status: "pass",

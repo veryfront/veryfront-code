@@ -3,6 +3,7 @@ import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import { transformToESM } from "@veryfront/transforms/esm/transform-core.ts";
 import type { TransformOptions } from "@veryfront/transforms/esm/types.ts";
 import { rendererLogger as logger } from "@veryfront/utils";
+import { getGlobalTmpDir } from "./temp-directory.ts";
 import type { ComponentMap, ComponentSource, LoadComponentOptions } from "./types.ts";
 
 export async function loadComponentsUnified(
@@ -23,19 +24,22 @@ export async function loadComponentsUnified(
     transformOpts,
   );
 
-  const tmpDir = await Deno.makeTempDir({ prefix: "vf-components-" });
+  const baseTmp = await getGlobalTmpDir();
+  const uniqueTmp = `unified-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const tmpDir = join(baseTmp, uniqueTmp);
+  await adapter.fs.mkdir(tmpDir, { recursive: true });
 
   try {
-    await writeComponentFiles(tmpDir, transformedComponents);
+    await writeComponentFiles(tmpDir, transformedComponents, adapter);
 
     const entryCode = generateEntryPoint(transformedComponents);
-    await Deno.writeTextFile(join(tmpDir, "entry.js"), entryCode);
+    await adapter.fs.writeFile(join(tmpDir, "entry.js"), entryCode);
 
     const components = await importUnifiedComponents(tmpDir, transformedComponents);
 
     return components;
   } finally {
-    await cleanupTempDirectory(tmpDir);
+    await cleanupTempDirectory(tmpDir, adapter);
   }
 }
 
@@ -62,11 +66,12 @@ async function transformAllComponents(
 async function writeComponentFiles(
   tmpDir: string,
   components: Array<{ name: string; code: string }>,
+  adapter: RuntimeAdapter,
 ): Promise<void> {
   await Promise.all(
     components.map(async (comp) => {
       const fileName = `${comp.name}.js`;
-      await Deno.writeTextFile(join(tmpDir, fileName), comp.code);
+      await adapter.fs.writeFile(join(tmpDir, fileName), comp.code);
     }),
   );
 }
@@ -103,9 +108,9 @@ async function importUnifiedComponents(
   return result;
 }
 
-async function cleanupTempDirectory(tmpDir: string): Promise<void> {
+async function cleanupTempDirectory(tmpDir: string, adapter: RuntimeAdapter): Promise<void> {
   try {
-    await Deno.remove(tmpDir, { recursive: true });
+    await adapter.fs.remove(tmpDir, { recursive: true });
   } catch (error) {
     logger.warn("Failed to cleanup temp directory", { tmpDir, error });
   }

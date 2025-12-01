@@ -193,25 +193,48 @@ export class OrchestrationError extends Error {
 
 export async function handleErrorWithFallback<T>(
   fn: () => T | Promise<T>,
-  _fallback: T,
+  fallback: T,
   _logger?: unknown,
 ): Promise<T> {
-  return await fn();
+  try {
+    return await fn();
+  } catch {
+    return fallback;
+  }
 }
 
 export function handleErrorWithFallbackSync<T>(
   fn: () => T,
-  _fallback: T,
+  fallback: T,
   _logger?: unknown,
 ): T {
-  return fn();
+  try {
+    return fn();
+  } catch {
+    return fallback;
+  }
 }
 
 export async function retryWithBackoff<T>(
   fn: () => Promise<T>,
-  _options?: unknown,
+  options?: { maxRetries?: number; initialDelay?: number },
 ): Promise<T> {
-  return await fn();
+  const maxRetries = options?.maxRetries ?? 3;
+  const initialDelay = options?.initialDelay ?? 100;
+  let lastError: unknown;
+
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      return await fn();
+    } catch (error) {
+      lastError = error;
+      if (attempt < maxRetries - 1) {
+        await new Promise((resolve) => setTimeout(resolve, initialDelay * Math.pow(2, attempt)));
+      }
+    }
+  }
+
+  throw lastError;
 }
 
 export function wrapError(

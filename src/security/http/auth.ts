@@ -32,12 +32,6 @@ function encodeBase64(value: string): string {
     return bufferCtor.from(value, "utf8").toString("base64");
   }
 
-  const bytes = new TextEncoder().encode(value);
-  let binary = "";
-  for (const byte of bytes) binary += String.fromCharCode(byte);
-  if (typeof globalThis.btoa === "function") {
-    return globalThis.btoa(binary);
-  }
   throw toError(createError({
     type: "not_supported",
     message: "Base64 encoding is not supported in this runtime",

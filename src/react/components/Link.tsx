@@ -5,10 +5,9 @@ export type LinkProps = React.AnchorHTMLAttributes<HTMLAnchorElement> & {
 };
 
 export function Link({ prefetch = true, children, ...rest }: LinkProps) {
-  const props = {
+  const props: React.AnchorHTMLAttributes<HTMLAnchorElement> = {
     ...rest,
     ...(prefetch ? { "data-prefetch": "true" } : {}),
   };
-  // @ts-ignore - csstype version conflict between dependencies
   return <a {...props}>{children}</a>;
 }

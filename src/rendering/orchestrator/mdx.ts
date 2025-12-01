@@ -1,10 +1,3 @@
-/**
- * MDX Orchestrator - Handles MDX compilation and caching
- *
- * Location: src/render/orchestrator/mdx.ts (formerly src/render/core/renderer/mdx-compiler.ts)
- */
-
-// import { wrapError } from "@veryfront/internal/errors.ts"; // Removed: use error-handling/index.ts
 import { wrapError } from "@veryfront/errors/index.ts";
 import type { MdxBundle } from "@veryfront/types";
 import type { MDXCacheAdapter } from "@veryfront/transforms/mdx/index.ts";

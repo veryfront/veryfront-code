@@ -24,10 +24,7 @@ export function LiveProviderComponent({ children, providers = [] }: LiveProvider
     if (liveEntity.isProvider && liveEntity.compiledCode) {
       allProviders.push({
         compiledCode: liveEntity.compiledCode,
-        frontmatter: liveEntity.frontmatter ||
-          {
-            /* empty */
-          },
+        frontmatter: liveEntity.frontmatter || {},
         globals: liveEntity.globals,
       });
     }

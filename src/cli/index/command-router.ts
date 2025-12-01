@@ -20,7 +20,6 @@ import { handleGenerateCommand } from "./generate-handler.ts";
 import { exitProcess } from "../utils/index.ts";
 import type { ParsedArgs } from "./types.ts";
 import type { CacheBackend, InitTemplate } from "../commands/init/types.ts";
-import { createError, toError } from "../../core/errors/veryfront-error.ts";
 import { cwd } from "../../platform/compat/process.ts";
 
 /**
@@ -165,11 +164,6 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
         return;
 
       case undefined:
-        if (args.version || args.v) {
-          cliLogger.info(`Veryfront CLI v${VERSION}`);
-          exitProcess(0);
-          return;
-        }
         showBasicHelp();
         exitProcess(0);
         return;
@@ -178,10 +172,7 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
         cliLogger.error(`Unknown command: ${command}\n`);
         showBasicHelp();
         exitProcess(1);
-        throw toError(createError({
-          type: "config",
-          message: `Unknown command: ${command}`,
-        }));
+        return;
     }
   } catch (error) {
     const formattedError = error instanceof Error ? formatUserError(error) : String(error);

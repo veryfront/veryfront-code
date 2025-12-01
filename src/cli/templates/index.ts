@@ -21,7 +21,6 @@ export const templates: Record<TemplateName, TemplateFile[]> = {
   app: appTemplate,
   minimal: minimalTemplate,
   ai: aiTemplate,
-  // Legacy names for backward compatibility
   "pages-router": minimalTemplate,
   "app-router": minimalTemplate,
 };
