@@ -59,11 +59,10 @@ export default tool({
 
 `app/api/chat/route.ts`:
 ```typescript
-import { agents } from '@/ai/agents';
+import { agents } from '../../../ai/agents';
 
 export async function POST(req: Request) {
-  const { messages } = await req.json();
-  return agents.assistant.stream({ messages }).toDataStreamResponse();
+  return agents.assistant.respond(req);
 }
 ```
 

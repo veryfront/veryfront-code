@@ -1,6 +1,6 @@
 {
   "name": "veryfront",
-  "version": "0.0.5",
+  "version": "0.1.0",
   "description": "Zero-config React meta-framework for building agentic AI applications",
   "type": "module",
   "main": "./dist/index.js",
@@ -72,35 +72,20 @@
   "bugs": {
     "url": "https://github.com/veryfront/veryfront/issues"
   },
-  "homepage": "https://veryfront.com",
+  "homepage": "https://github.com/veryfront/veryfront#readme",
   "engines": {
     "node": ">=18.0.0"
   },
   "peerDependencies": {
     "react": "^17.0.0 || ^18.0.0 || ^19.0.0",
-    "react-dom": "^17.0.0 || ^18.0.0 || ^19.0.0",
-    "zod": "^3.22.0",
-    "ai": "^5.0.0",
-    "@ai-sdk/react": "^2.0.0"
-  },
-  "peerDependenciesMeta": {
-    "zod": {
-      "optional": false
-    },
-    "ai": {
-      "optional": false
-    },
-    "@ai-sdk/react": {
-      "optional": true
-    },
-    "@ai-sdk/openai": {
-      "optional": true
-    },
-    "@ai-sdk/anthropic": {
-      "optional": true
-    }
+    "react-dom": "^17.0.0 || ^18.0.0 || ^19.0.0"
   },
   "dependencies": {
+    "zod": "^3.22.0",
+    "ai": "^5.0.0",
+    "@ai-sdk/openai": "^2.0.0",
+    "@ai-sdk/anthropic": "^2.0.0",
+    "@ai-sdk/react": "^2.0.0",
     "esbuild": "^0.20.0",
     "@mdx-js/mdx": "^3.0.0",
     "@mdx-js/react": "^3.0.0",
@@ -120,10 +105,6 @@
     "@unocss/core": "^0.59.0",
     "@unocss/preset-wind": "^0.59.0",
     "glob": "^11.0.0"
-  },
-  "optionalDependencies": {
-    "@ai-sdk/openai": "^2.0.0",
-    "@ai-sdk/anthropic": "^2.0.0"
   },
   "devDependencies": {
     "@types/react": "^18.2.0",

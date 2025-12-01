@@ -10,11 +10,83 @@ import { agentLogger } from "../../core/utils/logger/logger.ts";
 import { createError, toError } from "../../core/errors/veryfront-error.ts";
 
 /**
+ * Get environment variable (works in Node.js and Deno)
+ */
+function getEnv(name: string): string | undefined {
+  // Deno
+  if (typeof Deno !== "undefined" && Deno.env) {
+    return Deno.env.get(name);
+  }
+  // Node.js
+  // deno-lint-ignore no-explicit-any
+  const _global = globalThis as any;
+  if (typeof _global.process !== "undefined" && _global.process.env) {
+    return _global.process.env[name];
+  }
+  return undefined;
+}
+
+/**
  * Provider registry
  */
 class ProviderRegistry {
   private providers = new Map<string, Provider>();
   private config: ProvidersConfig = {};
+  private autoInitialized = false;
+
+  /**
+   * Auto-initialize providers from environment variables
+   * This is called lazily when a provider is first requested
+   */
+  private autoInitializeFromEnv(): void {
+    if (this.autoInitialized) return;
+    this.autoInitialized = true;
+
+    // Initialize OpenAI from OPENAI_API_KEY
+    const openaiKey = getEnv("OPENAI_API_KEY");
+    if (openaiKey && !this.providers.has("openai")) {
+      try {
+        const provider = new OpenAIProvider({
+          apiKey: openaiKey,
+          baseURL: getEnv("OPENAI_BASE_URL"),
+          organizationId: getEnv("OPENAI_ORGANIZATION_ID"),
+        });
+        this.providers.set("openai", provider);
+        agentLogger.debug("Auto-initialized OpenAI provider from environment");
+      } catch (error) {
+        agentLogger.warn("Failed to auto-initialize OpenAI provider:", error);
+      }
+    }
+
+    // Initialize Anthropic from ANTHROPIC_API_KEY
+    const anthropicKey = getEnv("ANTHROPIC_API_KEY");
+    if (anthropicKey && !this.providers.has("anthropic")) {
+      try {
+        const provider = new AnthropicProvider({
+          apiKey: anthropicKey,
+          baseURL: getEnv("ANTHROPIC_BASE_URL"),
+        });
+        this.providers.set("anthropic", provider);
+        agentLogger.debug("Auto-initialized Anthropic provider from environment");
+      } catch (error) {
+        agentLogger.warn("Failed to auto-initialize Anthropic provider:", error);
+      }
+    }
+
+    // Initialize Google from GOOGLE_API_KEY or GOOGLE_GENERATIVE_AI_API_KEY
+    const googleKey = getEnv("GOOGLE_API_KEY") || getEnv("GOOGLE_GENERATIVE_AI_API_KEY");
+    if (googleKey && !this.providers.has("google")) {
+      try {
+        const provider = new GoogleProvider({
+          apiKey: googleKey,
+        });
+        this.providers.set("google", provider);
+        agentLogger.debug("Auto-initialized Google provider from environment");
+      } catch (error) {
+        agentLogger.warn("Failed to auto-initialize Google provider:", error);
+      }
+    }
+  }
 
   /**
    * Initialize providers from configuration
@@ -57,6 +129,9 @@ class ProviderRegistry {
    * Get a provider by name
    */
   getProvider(name: string): Provider {
+    // Auto-initialize from environment variables if not already done
+    this.autoInitializeFromEnv();
+
     const provider = this.providers.get(name);
 
     if (!provider) {
@@ -116,6 +191,7 @@ class ProviderRegistry {
    * Check if a provider is available
    */
   hasProvider(name: string): boolean {
+    this.autoInitializeFromEnv();
     return this.providers.has(name);
   }
 
@@ -123,6 +199,7 @@ class ProviderRegistry {
    * Get all available provider names
    */
   getAvailableProviders(): string[] {
+    this.autoInitializeFromEnv();
     return Array.from(this.providers.keys());
   }
 

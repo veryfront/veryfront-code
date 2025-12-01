@@ -80,11 +80,17 @@ export async function createNodeServer(
         }
       }
 
-      const request = new Request(url.toString(), {
+      // Node.js 18+ requires duplex: "half" when creating a Request with a streaming body
+      const requestInit: RequestInit & { duplex?: string } = {
         method: _req.method,
         headers: headersRecord,
         body: body as BodyInit | null,
-      });
+      };
+      // Only add duplex for requests with a body (POST, PUT, PATCH, etc.)
+      if (body !== null) {
+        requestInit.duplex = "half";
+      }
+      const request = new Request(url.toString(), requestInit);
 
       const response = await handler(request);
 

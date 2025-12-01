@@ -14,19 +14,18 @@
 npm install veryfront ai zod
 ```
 
-### 2. Configure
+### 2. Set your API key
 
-```typescript
-// veryfront.config.ts
-export default {
-  ai: {
-    enabled: true,
-    providers: {
-      openai: { apiKey: process.env.OPENAI_API_KEY },
-    },
-  },
-};
+```bash
+echo "OPENAI_API_KEY=sk-..." > .env
 ```
+
+Providers auto-initialize from environment variables - no config file needed!
+
+Supported env vars:
+- `OPENAI_API_KEY` - OpenAI
+- `ANTHROPIC_API_KEY` - Anthropic
+- `GOOGLE_API_KEY` or `GOOGLE_GENERATIVE_AI_API_KEY` - Google
 
 ### 3. Create a Tool
 
@@ -440,15 +439,11 @@ const edgeAgent = agent({
 
 ```typescript
 // app/api/chat/route.ts
-import { agents } from '@/ai/agents';
+import { agents } from '../../../ai/agents';
 
 export async function POST(req: Request) {
-  const { messages } = await req.json();
-
-  // Use auto-discovered agent
-  const stream = await agents.assistant.stream({ messages });
-
-  return stream.toDataStreamResponse();
+  // Use auto-discovered agent with streaming response
+  return agents.assistant.respond(req);
 }
 ```
 
