@@ -28,12 +28,21 @@ export async function handleRSCEndpoint(
     return null;
   }
 
-  // Check if RSC feature is enabled via feature flag
+  const sub = pathname.replace("/_veryfront/rsc/", "");
+
+  // Always serve client.js and dom.js regardless of RSC being enabled
+  // These are needed for basic hydration even without full RSC
+  if (sub === "client.js") {
+    return handleClientScript();
+  }
+  if (sub === "dom.js") {
+    return handleDomScript();
+  }
+
+  // Check if RSC feature is enabled via feature flag for other endpoints
   if (!isRSCEnabled(config)) {
     return null; // Not enabled, let it 404
   }
-
-  const sub = pathname.replace("/_veryfront/rsc/", "");
   const url = new URL(req.url);
   const handler = getRSCHandler(projectDir);
 
@@ -95,7 +104,7 @@ export async function handleRSCEndpoint(
         return handleClientScript();
 
       case "dom.js":
-        return handleDomScript(adapter);
+        return handleDomScript();
 
       case "module":
         return await handleModuleEndpoint({

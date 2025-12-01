@@ -7,6 +7,7 @@ import {
   resolveRelativeImports,
   resolveRelativeImportsToAbsolute,
   resolveRelativeImportsForNodeSSR,
+  resolveVeryfrontImports,
 } from "./path-resolver.ts";
 import { rewriteBareImports, rewriteVendorImports } from "./import-rewriter.ts";
 import type { TransformOptions } from "./types.ts";
@@ -76,6 +77,8 @@ export async function transformToESM(
   // Different import resolution strategies for SSR vs browser
   if (ssr) {
     if (isNodeRuntime()) {
+      // Node.js SSR: Rewrite @veryfront/* imports to veryfront/* for npm compatibility
+      code = await resolveVeryfrontImports(code);
       // Node.js SSR: Keep relative imports but convert .tsx/.ts/.jsx extensions to .js
       // This works because the cache directory mirrors the project structure
       code = await resolveRelativeImportsForNodeSSR(code);

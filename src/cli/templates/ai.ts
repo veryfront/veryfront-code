@@ -42,7 +42,7 @@ export const aiTemplate: TemplateFile[] = [
   },
   {
     path: "ai/agent.ts",
-    content: `import { agent, tool } from "@veryfront/ai";
+    content: `import { agent, tool } from "veryfront/ai";
 import { z } from "zod";
 
 // Define a tool
@@ -98,16 +98,29 @@ export const myAgent = agent({
 }`,
   },
   {
+    path: "app/api/chat/route.ts",
+    content: `import { myAgent } from "../../../ai/agent";
+
+export async function POST(request: Request) {
+  const { messages } = await request.json();
+
+  // Use the agent to generate a response
+  const response = await myAgent.stream({ messages });
+
+  return response.toDataStreamResponse();
+}
+`,
+  },
+  {
     path: "app/page.tsx",
     content: `/** @jsxImportSource react */
 'use client';
 
-import { useChat } from "@veryfront/ai/react";
-import { myAgent } from "../ai/agent.ts";
+import { useChat } from "veryfront/ai/react";
 
 export default function ChatPage() {
-  const { messages, input, setInput, sendMessage, isLoading } = useChat({
-    agent: myAgent,
+  const { messages, input, setInput, append, isLoading, handleInputChange, handleSubmit } = useChat({
+    api: "/api/chat",
   });
 
   return (
@@ -174,13 +187,13 @@ export default function ChatPage() {
             type="text"
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && sendMessage()}
+            onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && handleSubmit(e as unknown as React.FormEvent)}
             placeholder="Type a message..."
             className="flex-1 border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:border-blue-500"
             disabled={isLoading}
           />
           <button
-            onClick={() => sendMessage()}
+            onClick={(e) => handleSubmit(e as unknown as React.FormEvent)}
             disabled={isLoading || !input.trim()}
             className="bg-blue-600 text-white px-6 py-2 rounded-lg font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >

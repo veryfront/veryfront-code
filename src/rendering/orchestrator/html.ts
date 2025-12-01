@@ -40,22 +40,38 @@ export class HTMLGenerator {
 
   async generateFullHTML(context: HTMLGenerationContext): Promise<string> {
     if (isFullHTMLDocument(context.html)) {
-      return this.handleFullHTMLDocument(context);
+      return await this.handleFullHTMLDocument(context);
     }
 
     return await this.wrapHTMLFragment(context);
   }
 
-  private handleFullHTMLDocument(context: HTMLGenerationContext): string {
+  private async handleFullHTMLDocument(context: HTMLGenerationContext): Promise<string> {
     const metadata = extractHTMLMetadata(
       (context.pageInfo.entity.frontmatter || {}) as MDXFrontmatter,
       (context.layoutBundle?.frontmatter || {}) as MDXFrontmatter,
     );
 
+    // Detect if the page has 'use client' directive for hydration
+    let isClientPage = false;
+    const pagePath = context.pageInfo.entity.id;
+    try {
+      const pageContent = await this.config.adapter.fs.readFile(pagePath);
+      // Match 'use client' or "use client" at start of line
+      isClientPage = /^\s*['"]use client['"];?\s*$/m.test(pageContent);
+      if (isClientPage) {
+        logger.info(`[HTMLGenerator] Detected 'use client' page: ${pagePath}`);
+      }
+    } catch (e) {
+      logger.debug(`[HTMLGenerator] Could not read page file for directive detection: ${pagePath}`);
+    }
+
     const injectedHtml = injectHTMLContent(context.html, "", metadata, {
       mode: this.config.mode,
       slug: context.slug,
       devPort: this.config.config?.dev?.port || DEFAULT_DASHBOARD_PORT,
+      pagePath: isClientPage ? pagePath : undefined,
+      isClientPage,
     });
 
     return injectedHtml.trimStart().toLowerCase().startsWith("<!doctype")

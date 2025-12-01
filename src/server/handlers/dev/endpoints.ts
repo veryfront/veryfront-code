@@ -6,6 +6,7 @@
 import { BaseHandler } from "../response/base.ts";
 import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } from "../types.ts";
 import { HTTP_OK, PRIORITY_HIGH_DEV } from "@veryfront/core/constants/index.ts";
+import { HMR_CLIENT_RELOAD_DELAY_MS } from "@veryfront/utils/constants/hmr.ts";
 
 export class DevEndpointsHandler extends BaseHandler {
   metadata: HandlerMetadata = {
@@ -15,6 +16,8 @@ export class DevEndpointsHandler extends BaseHandler {
       { pattern: "/_veryfront/hmr-runtime.js", exact: true },
       { pattern: "/_veryfront/error-overlay.js", exact: true },
       { pattern: "/_veryfront/dev-loader.js", exact: true },
+      { pattern: "/_veryfront/hmr.js", exact: true },
+      { pattern: "/_veryfront/hydrate.js", exact: true },
     ],
     enabled: (ctx) => ctx.mode === "development", // Only in dev mode
   };
@@ -28,6 +31,26 @@ export class DevEndpointsHandler extends BaseHandler {
     }
 
     const builder = this.createResponseBuilder(ctx);
+
+    // HMR script (external module to avoid CSP issues)
+    if (pathname === "/_veryfront/hmr.js") {
+      const port = url.searchParams.get("port") || "3000";
+      const script = this.getHMRScript(parseInt(port, 10));
+      const response = builder
+        .withCache("no-cache")
+        .javascript(script, HTTP_OK);
+      return Promise.resolve(this.respond(response));
+    }
+
+    // Hydrate script (external module to avoid CSP issues)
+    if (pathname === "/_veryfront/hydrate.js") {
+      const slug = url.searchParams.get("slug") || "";
+      const script = this.getHydrateScript(slug);
+      const response = builder
+        .withCache("no-cache")
+        .javascript(script, HTTP_OK);
+      return Promise.resolve(this.respond(response));
+    }
 
     // HMR runtime
     if (pathname === "/_veryfront/hmr-runtime.js") {
@@ -57,6 +80,40 @@ export class DevEndpointsHandler extends BaseHandler {
     }
 
     return Promise.resolve(this.continue());
+  }
+
+  private getHMRScript(port: number): string {
+    const reloadDelay = HMR_CLIENT_RELOAD_DELAY_MS;
+    return `
+// Veryfront HMR WebSocket Client
+const indicator = document.createElement('div');
+indicator.className = 'dev-indicator';
+indicator.textContent = 'Development Mode';
+document.body.appendChild(indicator);
+
+const ws = new WebSocket('ws://localhost:${port}/_ws');
+ws.onmessage = (event) => {
+  const data = JSON.parse(event.data);
+  if (data.type === 'reload') {
+    location.reload();
+  }
+};
+ws.onclose = () => {
+  setTimeout(() => location.reload(), ${reloadDelay});
+};
+
+window.__veryfrontHMRWebSocket = ws;
+    `.trim();
+  }
+
+  private getHydrateScript(slug: string): string {
+    return `
+// Veryfront Hydration Script
+import { hydrate } from '/_veryfront/rsc/client.js';
+hydrate('${slug}', {
+  ssr: true
+});
+    `.trim();
   }
 
   private getHMRRuntime(): string {

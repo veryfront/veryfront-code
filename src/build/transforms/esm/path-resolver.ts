@@ -1,5 +1,23 @@
 import { replaceSpecifiers } from "./lexer.ts";
 
+/**
+ * Rewrite @veryfront/* imports to veryfront/* for npm compatibility
+ * This allows Deno-style imports to work in Node.js environments
+ */
+export async function resolveVeryfrontImports(code: string): Promise<string> {
+  return replaceSpecifiers(code, (specifier) => {
+    if (specifier.startsWith("@veryfront/")) {
+      // @veryfront/ai -> veryfront/ai
+      // @veryfront/ai/react -> veryfront/ai/react
+      return specifier.replace("@veryfront/", "veryfront/");
+    }
+    if (specifier === "@veryfront") {
+      return "veryfront";
+    }
+    return null;
+  });
+}
+
 export async function resolvePathAliases(
   code: string,
   filePath: string,

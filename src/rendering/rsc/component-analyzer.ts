@@ -1,5 +1,7 @@
 import { join, relative } from "std/path/mod.ts";
 import { serverLogger } from "@veryfront/utils";
+import { toBase64Url } from "@veryfront/utils/path-utils.ts";
+import { getAdapter } from "@veryfront/platform/adapters/detect.ts";
 import type { ComponentAnalysis, ComponentType } from "./types.ts";
 import type { FileSystemAdapter } from "../../platform/adapters/base.ts";
 
@@ -39,7 +41,8 @@ export async function analyzeComponent(
 }
 
 function detectDirective(content: string, directive: string): boolean {
-  const directivePattern = new RegExp(`^\\s*['"]s*${directive}s*['"];?\\s*$`, "m");
+  // Match directives like 'use client' or "use client" at the start of a line
+  const directivePattern = new RegExp(`^\\s*['"]${directive}['"];?\\s*$`, "m");
 
   return directivePattern.test(content);
 }
@@ -108,24 +111,36 @@ export async function buildClientManifest(
   const manifest = new Map<string, import("./types.ts").ClientComponentMeta>();
   const appPath = join(projectDir, appDir);
 
+  // Get adapter if not provided
+  let fsAdapter = fs;
+  if (!fsAdapter) {
+    try {
+      const adapter = await getAdapter();
+      fsAdapter = adapter.fs;
+    } catch (error) {
+      serverLogger.warn(`Failed to get file system adapter:`, error);
+      return manifest;
+    }
+  }
+
   try {
     await walkDirectory(appPath, async (filePath) => {
       if (!/\.(tsx?|jsx?)$/.test(filePath)) return;
 
-      const analysis = await analyzeComponent(filePath, fs);
+      const analysis = await analyzeComponent(filePath, fsAdapter!);
 
       if (analysis.type === "client") {
         const relativePath = relative(projectDir, filePath);
 
         manifest.set(analysis.id, {
           id: analysis.id,
-          path: `/_veryfront/fs/${encodeURIComponent(filePath)}`,
+          path: `/_veryfront/fs/${toBase64Url(filePath)}`,
           exports: analysis.exports,
         });
 
         serverLogger.debug(`Found client component: ${analysis.id} at ${relativePath}`);
       }
-    }, fs);
+    }, fsAdapter);
   } catch (error) {
     serverLogger.warn(`Failed to build client manifest:`, error);
   }

@@ -1,45 +1,57 @@
 {
   "name": "veryfront",
-  "version": "0.0.6",
+  "version": "0.0.8",
   "description": "Zero-config React meta-framework for building agentic AI applications",
   "type": "module",
   "main": "./dist/index.js",
   "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "bin": {
     "veryfront": "./bin/veryfront.js"
   },
   "exports": {
     ".": {
+      "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     },
     "./components": {
+      "types": "./dist/components.d.ts",
       "import": "./dist/components.js"
     },
     "./data": {
+      "types": "./dist/data.d.ts",
       "import": "./dist/data.js"
     },
     "./config": {
+      "types": "./dist/config.d.ts",
       "import": "./dist/config.js"
     },
     "./ai": {
+      "types": "./dist/ai/index.d.ts",
       "import": "./dist/ai/index.js"
     },
     "./ai/client": {
+      "types": "./dist/ai/client.d.ts",
       "import": "./dist/ai/client.js"
     },
     "./ai/react": {
+      "types": "./dist/ai/react.d.ts",
       "import": "./dist/ai/react.js"
     },
     "./ai/primitives": {
+      "types": "./dist/ai/primitives.d.ts",
       "import": "./dist/ai/primitives.js"
     },
     "./ai/components": {
+      "types": "./dist/ai/components.d.ts",
       "import": "./dist/ai/components.js"
     },
     "./ai/production": {
+      "types": "./dist/ai/production.d.ts",
       "import": "./dist/ai/production.js"
     },
     "./ai/dev": {
+      "types": "./dist/ai/dev.d.ts",
       "import": "./dist/ai/dev.js"
     }
   },
@@ -72,17 +84,25 @@
   "bugs": {
     "url": "https://github.com/veryfront/veryfront/issues"
   },
-  "homepage": "https://github.com/veryfront/veryfront#readme",
+  "homepage": "https://veryfront.com",
   "engines": {
     "node": ">=18.0.0"
   },
   "peerDependencies": {
     "react": "^17.0.0 || ^18.0.0 || ^19.0.0",
-    "react-dom": "^17.0.0 || ^18.0.0 || ^19.0.0"
+    "react-dom": "^17.0.0 || ^18.0.0 || ^19.0.0",
+    "zod": "^3.22.0",
+    "ai": "^5.0.0"
+  },
+  "peerDependenciesMeta": {
+    "zod": {
+      "optional": false
+    },
+    "ai": {
+      "optional": false
+    }
   },
   "dependencies": {
-    "zod": "^3.22.0",
-    "ai": "^5.0.0",
     "@ai-sdk/openai": "^2.0.0",
     "@ai-sdk/anthropic": "^2.0.0",
     "@ai-sdk/react": "^2.0.0",

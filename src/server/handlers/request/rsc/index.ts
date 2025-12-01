@@ -33,7 +33,11 @@ export class RSCHandler extends BaseHandler {
       return this.continue();
     }
 
-    if (!isRSCEnabled(ctx.config)) {
+    // Always allow client.js and dom.js (needed for basic hydration even without full RSC)
+    const sub = pathname.replace("/_veryfront/rsc/", "");
+    const isHydrationScript = sub === "client.js" || sub === "dom.js";
+
+    if (!isRSCEnabled(ctx.config) && !isHydrationScript) {
       return this.respond(new Response("Not Found", { status: HTTP_NOT_FOUND }));
     }
 
