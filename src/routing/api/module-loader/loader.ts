@@ -217,7 +217,18 @@ async function loadAndTranspileModule(
     "std/*",
     "@std/*",
     "https://deno.land/*",
+    // Veryfront packages - should use runtime resolution, not bundled
+    "veryfront",
+    "veryfront/*",
+    // OpenTelemetry packages used by veryfront/ai
+    "@opentelemetry/*",
+    // Path module - Node.js built-in
+    "path",
   ];
+
+  // Use the directory containing the source file as resolveDir
+  // This allows relative imports like ../../../ai/agents to resolve correctly
+  const resolveDir = dirname(modulePath);
 
   const result: BuildResult = await build({
     bundle: true,
@@ -232,7 +243,7 @@ async function loadAndTranspileModule(
     stdin: {
       contents: source,
       loader,
-      resolveDir: projectDir,
+      resolveDir,
       sourcefile: modulePath,
     },
     plugins,
@@ -250,14 +261,14 @@ async function loadAndTranspileModule(
   const js = result.outputFiles?.[0]?.text ?? "export {}";
   logger.debug(`[API] transpiled size ${js.length} bytes`);
 
-  return await loadModuleFromCode(js, adapter);
+  return await loadModuleFromCode(js, adapter, projectDir);
 }
 
-async function loadModuleFromCode(code: string, adapter: RuntimeAdapter): Promise<APIRoute> {
+async function loadModuleFromCode(code: string, adapter: RuntimeAdapter, projectDir: string): Promise<APIRoute> {
   const tempDir = await createTempDir(adapter);
   const tempFile = join(tempDir, "handler.mjs");
 
-  const transformedCode = rewriteExternalImports(code);
+  const transformedCode = await rewriteExternalImports(code, projectDir);
 
   await writeTempFile(tempFile, transformedCode, adapter);
 
@@ -272,7 +283,74 @@ async function loadModuleFromCode(code: string, adapter: RuntimeAdapter): Promis
   }
 }
 
-function rewriteExternalImports(code: string): string {
+// Detect if running in Node.js (vs Deno/browser)
+function isNodeRuntime(): boolean {
+  // deno-lint-ignore no-explicit-any
+  const _global = globalThis as any;
+  return typeof Deno === "undefined" && typeof _global.process !== "undefined" && !!_global.process?.versions?.node;
+}
+
+async function rewriteExternalImports(code: string, projectDir: string): Promise<string> {
+  let transformed = code;
+
+  // In Node.js, resolve veryfront imports to absolute paths
+  // since the temp file is outside the project's node_modules
+  if (isNodeRuntime()) {
+    try {
+      const { pathToFileURL } = await import("node:url");
+
+      logger.debug(`[API] Rewriting external imports for Node.js, projectDir: ${projectDir}`);
+
+      // Manual resolution using package.json exports
+      // This is more reliable than createRequire for subpath exports
+      const vfPackagePath = join(projectDir, "node_modules", "veryfront");
+      const vfPackageJsonPath = join(vfPackagePath, "package.json");
+
+      let exportsMap: Record<string, { import?: string }> = {};
+      try {
+        const pkgJson = JSON.parse(await (await import("node:fs/promises")).readFile(vfPackageJsonPath, "utf-8"));
+        exportsMap = pkgJson.exports || {};
+      } catch {
+        logger.debug("[API] Could not read veryfront package.json");
+      }
+
+      // Resolve veryfront subpath imports (e.g., veryfront/ai)
+      transformed = transformed.replace(
+        /from\s+["'](veryfront\/[^"']+)["']/g,
+        (_match, fullSpecifier: string) => {
+          const subpath = "./" + fullSpecifier.replace("veryfront/", "");
+          const exportEntry = exportsMap[subpath];
+          if (exportEntry?.import) {
+            const resolvedPath = join(vfPackagePath, exportEntry.import);
+            logger.debug(`[API] Resolved ${fullSpecifier} -> ${resolvedPath}`);
+            return `from "${pathToFileURL(resolvedPath).href}"`;
+          }
+          logger.warn(`[API] No export found for ${subpath}`);
+          return _match;
+        },
+      );
+
+      // Resolve bare veryfront import
+      transformed = transformed.replace(
+        /from\s+["']veryfront["']/g,
+        () => {
+          const exportEntry = exportsMap["."];
+          if (exportEntry?.import) {
+            const resolvedPath = join(vfPackagePath, exportEntry.import);
+            logger.debug(`[API] Resolved veryfront -> ${resolvedPath}`);
+            return `from "${pathToFileURL(resolvedPath).href}"`;
+          }
+          return 'from "veryfront"';
+        },
+      );
+    } catch (e) {
+      // If node:module import fails, we're not in Node.js or something went wrong
+      logger.warn(`[API] Failed to import node:module: ${e}`);
+      // Fall through to Deno handling
+    }
+  }
+
+  // For Deno, use npm: specifiers
   const externalPackages = [
     { pattern: /from\s+["']ai["']/g, replacement: 'from "npm:ai@latest"' },
     {
@@ -322,7 +400,6 @@ function rewriteExternalImports(code: string): string {
     { pattern: /import\s*\(\s*["']zod["']\s*\)/g, replacement: 'import("npm:zod@latest")' },
   ];
 
-  let transformed = code;
   for (const { pattern, replacement } of externalPackages) {
     transformed = transformed.replace(pattern, replacement);
   }

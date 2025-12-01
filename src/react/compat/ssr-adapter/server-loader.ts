@@ -26,11 +26,56 @@ function isNodeRuntime(): boolean {
 }
 
 let projectReactCache: typeof React | null = null;
+let useProjectReact: boolean | null = null;
+
+/**
+ * Check if both react and react-dom can be resolved from the project.
+ * This ensures we use a consistent set of React packages to avoid
+ * the "multiple React instances" hook error.
+ */
+async function canResolveReactFromProject(): Promise<boolean> {
+  if (useProjectReact !== null) {
+    return useProjectReact;
+  }
+
+  if (!isNodeRuntime()) {
+    useProjectReact = false;
+    return false;
+  }
+
+  try {
+    const { createRequire } = await import("node:module");
+    const { pathToFileURL } = await import("node:url");
+    const projectRequire = createRequire(pathToFileURL(process.cwd() + "/").href);
+
+    // Check that BOTH react and react-dom can be resolved from project
+    const reactPath = projectRequire.resolve("react");
+    const reactDomPath = projectRequire.resolve("react-dom/server");
+
+    logger.debug("Project has both react and react-dom", {
+      react: reactPath,
+      reactDom: reactDomPath,
+    });
+    useProjectReact = true;
+    return true;
+  } catch (error) {
+    logger.debug(
+      "Project missing react and/or react-dom, using bundled versions for consistency",
+      error
+    );
+    useProjectReact = false;
+    return false;
+  }
+}
 
 /**
  * Get React from the project's node_modules, not the CLI's.
  * This is critical for Node.js to avoid multiple React instances when
  * creating elements that will be rendered with user components.
+ *
+ * IMPORTANT: We only use project's React if BOTH react and react-dom
+ * can be resolved from the project. This prevents the singleton mismatch
+ * that causes "Invalid hook call" errors.
  *
  * In Deno, returns the bundled React since there's no node_modules conflict.
  */
@@ -39,7 +84,9 @@ export async function getProjectReact(): Promise<typeof React> {
     return projectReactCache;
   }
 
-  if (isNodeRuntime()) {
+  const canUseProject = await canResolveReactFromProject();
+
+  if (canUseProject) {
     try {
       const { createRequire } = await import("node:module");
       const { pathToFileURL } = await import("node:url");
@@ -61,7 +108,9 @@ export async function getProjectReact(): Promise<typeof React> {
 async function importReactDOMServerFromProject(): Promise<
   typeof import("react-dom/server")
 > {
-  if (isNodeRuntime()) {
+  const canUseProject = await canResolveReactFromProject();
+
+  if (canUseProject) {
     try {
       const { createRequire } = await import("node:module");
       const { pathToFileURL } = await import("node:url");
@@ -71,7 +120,6 @@ async function importReactDOMServerFromProject(): Promise<
       return await import(pathToFileURL(reactDomServerPath).href);
     } catch (error) {
       logger.warn("Failed to resolve react-dom from project, falling back to bundled", error);
-      return await import("react-dom/server");
     }
   }
 

@@ -1,24 +1,18 @@
 import { replaceSpecifiers, parseImports, rewriteImports } from "./lexer.ts";
 import { REACT_DEFAULT_VERSION } from "@veryfront/utils/constants/cdn.ts";
 
-export async function rewriteBareImports(code: string, moduleServerUrl?: string): Promise<string> {
-  const importMap: Record<string, string> = moduleServerUrl
-    ? {
-      "react": `${moduleServerUrl}/_vendor/react`,
-      "react-dom": `${moduleServerUrl}/_vendor/react-dom`,
-      "react-dom/client": `${moduleServerUrl}/_vendor/react-dom/client`,
-      "react-dom/server": `${moduleServerUrl}/_vendor/react-dom/server`,
-      "react/jsx-runtime": `${moduleServerUrl}/_vendor/react/jsx-runtime`,
-      "react/jsx-dev-runtime": `${moduleServerUrl}/_vendor/react/jsx-dev-runtime`,
-    }
-    : {
-      "react": `https://esm.sh/react@${REACT_DEFAULT_VERSION}`,
-      "react-dom": `https://esm.sh/react-dom@${REACT_DEFAULT_VERSION}`,
-      "react-dom/client": `https://esm.sh/react-dom@${REACT_DEFAULT_VERSION}/client`,
-      "react-dom/server": `https://esm.sh/react-dom@${REACT_DEFAULT_VERSION}/server`,
-      "react/jsx-runtime": `https://esm.sh/react@${REACT_DEFAULT_VERSION}/jsx-runtime`,
-      "react/jsx-dev-runtime": `https://esm.sh/react@${REACT_DEFAULT_VERSION}/jsx-dev-runtime`,
-    };
+export async function rewriteBareImports(code: string, _moduleServerUrl?: string): Promise<string> {
+  // Always use esm.sh URLs for React packages in browser mode
+  // The _vendor/ path approach requires a handler to serve vendor modules,
+  // which is not implemented. Using esm.sh ensures React is loaded correctly.
+  const importMap: Record<string, string> = {
+    "react": `https://esm.sh/react@${REACT_DEFAULT_VERSION}`,
+    "react-dom": `https://esm.sh/react-dom@${REACT_DEFAULT_VERSION}`,
+    "react-dom/client": `https://esm.sh/react-dom@${REACT_DEFAULT_VERSION}/client`,
+    "react-dom/server": `https://esm.sh/react-dom@${REACT_DEFAULT_VERSION}/server`,
+    "react/jsx-runtime": `https://esm.sh/react@${REACT_DEFAULT_VERSION}/jsx-runtime`,
+    "react/jsx-dev-runtime": `https://esm.sh/react@${REACT_DEFAULT_VERSION}/jsx-dev-runtime`,
+  };
 
   return replaceSpecifiers(code, (specifier) => {
     return importMap[specifier] || null;

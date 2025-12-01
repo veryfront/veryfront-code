@@ -69,7 +69,7 @@ export async function transformToESM(
 
   let code = result.code;
 
-  code = await resolveReactImports(code);
+  code = await resolveReactImports(code, ssr);
   code = await addDepsToEsmShUrls(code);
   code = await resolvePathAliases(code, filePath, projectDir);
 
