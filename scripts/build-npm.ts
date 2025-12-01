@@ -22,7 +22,7 @@ const __dirname = dirname(fromFileUrl(import.meta.url));
 const PROJECT_ROOT = resolve(__dirname, "..");
 
 const denoJson = JSON.parse(await Deno.readTextFile("./deno.json"));
-const version = denoJson.version || "0.1.0";
+const version = denoJson.version || "0.0.6";
 const denoImports: Record<string, string> = denoJson.imports || {};
 
 const veryfrontImportMap: Record<string, string> = {};
