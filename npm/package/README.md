@@ -2,34 +2,6 @@
 
 Veryfront is a **zero-config React framework** for building **agentic applications**. Automatically discovers agents, tools, and routes through file-based conventions.
 
-## Installation
-
-**npm**
-```bash
-npm install veryfront ai zod
-```
-
-**yarn**
-```bash
-yarn add veryfront ai zod
-```
-
-**pnpm**
-```bash
-pnpm add veryfront ai zod
-```
-
-**bun**
-```bash
-bun add veryfront ai zod
-```
-
-**Deno**
-```bash
-deno add npm:veryfront npm:ai npm:zod
-```
-
----
 
 ## Project Structure
 
@@ -51,7 +23,12 @@ The `ai/` directory auto-enables AI features. No config required.
 
 ## Quick Start
 
-**1. Create an agent**
+**1. Install**
+```bash
+deno add npm:veryfront npm:ai npm:zod
+```
+
+**2. Create an agent**
 
 `ai/agents/assistant.ts`:
 ```typescript
@@ -64,7 +41,7 @@ export default agent({
 });
 ```
 
-**2. Add a tool**
+**3. Add a tool**
 
 `ai/tools/calculator.ts`:
 ```typescript
@@ -78,7 +55,7 @@ export default tool({
 });
 ```
 
-**3. Create the API endpoint**
+**4. Create the API endpoint**
 
 `app/api/chat/route.ts`:
 ```typescript
@@ -90,7 +67,7 @@ export async function POST(req: Request) {
 }
 ```
 
-**4. Add the UI**
+**5. Add the UI**
 
 `app/chat/page.tsx`:
 ```tsx
@@ -103,14 +80,10 @@ export default function ChatPage() {
 }
 ```
 
-**5. Run**
-
+**6. Run**
 ```bash
-# Set your API key
 echo "OPENAI_API_KEY=sk-..." > .env
-
-# Start development server
-npx veryfront dev
+deno task dev
 ```
 
 Visit `localhost:3000/chat` - your agent can now use the calculator tool.
@@ -158,7 +131,7 @@ export default resource({
 
 **Run MCP server:**
 ```bash
-npx veryfront dev --mcp  # Port 3001 by default
+deno task dev --mcp  # Port 3001 by default
 ```
 
 ---
@@ -175,37 +148,24 @@ npx veryfront dev --mcp  # Port 3001 by default
 
 ## Documentation
 
-- [Quick Start Tutorial](https://veryfront.com/docs/learn/quickstart)
-- [AI Getting Started](https://veryfront.com/docs/ai/getting-started)
-- [Routing Guide](https://veryfront.com/docs/guides/routing)
-- [Deployment Guide](https://veryfront.com/docs/guides/deployment)
-- [API Reference](https://veryfront.com/docs/reference/ai)
+- [Quick Start Tutorial](./docs/learn/quickstart.md)
+- [AI Getting Started](./docs/ai/getting-started.md)
+- [Routing Guide](./docs/guides/routing/README.md)
+- [Deployment Guide](./docs/guides/deployment/README.md)
+- [API Reference](./docs/reference/ai/README.md)
 
-[Browse all docs →](https://veryfront.com/docs)
-
----
-
-## CLI Commands
-
-```bash
-# Development
-npx veryfront dev
-
-# Build for production
-npx veryfront build
-
-# Start production server
-npx veryfront start
-
-# Run with MCP server
-npx veryfront dev --mcp
-```
+[Browse all docs →](./docs/README.md)
 
 ---
 
 ## Examples
 
-See the [examples directory](https://github.com/veryfront/veryfront/tree/main/examples) for complete working examples.
+```bash
+cd examples/ai-basic
+deno run --allow-all demo.ts
+```
+
+See [examples/](./examples/) for more.
 
 ---
 
