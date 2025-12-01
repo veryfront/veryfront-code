@@ -1,9 +1,9 @@
-import { HMR_CLIENT_RELOAD_DELAY_MS } from "@veryfront/utils/constants/hmr.ts";
 import { DEFAULT_DASHBOARD_PORT } from "@veryfront/utils/constants/server.ts";
 
-export function getDevStyles(): string {
+export function getDevStyles(nonce?: string): string {
+  const nonceAttr = nonce ? ` nonce="${nonce}"` : "";
   return `
-  <style>
+  <style${nonceAttr}>
     .dev-indicator {
       position: fixed;
       bottom: 1rem;
@@ -32,37 +32,19 @@ export function getDevStyles(): string {
   </style>`;
 }
 
-export function getDevScripts(port: number = DEFAULT_DASHBOARD_PORT): string {
-  const reloadDelay = HMR_CLIENT_RELOAD_DELAY_MS;
+export function getDevScripts(port: number = DEFAULT_DASHBOARD_PORT, nonce?: string): string {
+  const nonceAttr = nonce ? ` nonce="${nonce}"` : "";
+  // Use external script src for hydration to work with CSP
+  // The HMR websocket is handled in the external hmr.js script
   return `
-  <script>
-    const indicator = document.createElement('div');
-    indicator.className = 'dev-indicator';
-    indicator.textContent = 'Development Mode';
-    document.body.appendChild(indicator);
-
-    const ws = new WebSocket('ws://localhost:${port}/_ws');
-    ws.onmessage = (event) => {
-      const data = JSON.parse(event.data);
-      if (data.type === 'reload') {
-        location.reload();
-      }
-    };
-    ws.onclose = () => {
-      setTimeout(() => location.reload(), ${reloadDelay});
-    };
-
-    window.__veryfrontHMRWebSocket = ws;
-  </script>
-  <script type="module" src="/_veryfront/client.js"></script>`;
+  <script type="module" src="/_veryfront/rsc/client.js"${nonceAttr}></script>
+  <script type="module" src="/_veryfront/hmr.js?port=${port}"${nonceAttr}></script>`;
 }
 
-export function getProdScripts(slug: string): string {
+export function getProdScripts(slug: string, nonce?: string): string {
+  const nonceAttr = nonce ? ` nonce="${nonce}"` : "";
+  // Use external script src for hydration to avoid CSP issues with inline scripts
   return `
-  <script type="module">
-    import { hydrate } from '/_veryfront/client.js';
-    hydrate('${slug}', {
-      ssr: true
-    });
-  </script>`;
+  <script type="module" src="/_veryfront/rsc/client.js"${nonceAttr}></script>
+  <script type="module" src="/_veryfront/hydrate.js?slug=${encodeURIComponent(slug)}"${nonceAttr}></script>`;
 }

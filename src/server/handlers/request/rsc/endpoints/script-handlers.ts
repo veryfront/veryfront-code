@@ -11,30 +11,166 @@ import { serverLogger } from "@veryfront/utils";
  * @returns Response with client boot script
  */
 export function handleClientScript(): Response {
-  // Mirror prod: inline small boot script that streams + hydrates
+  // Client boot script that:
+  // 1. Reads hydration data from the page (contains exact pagePath)
+  // 2. Attempts RSC streaming if available
+  // 3. Falls back to direct React hydration for 'use client' pages
   const code = `import { getContainer, consumeNdjsonStream } from '/_veryfront/rsc/dom.js';
-async function tryStream(q){
-  try{
-    const res = await fetch('/_veryfront/rsc/stream'+q);
-    if(!res.ok || !res.body) return false;
-    const ctrl = new AbortController();
-    addEventListener('pagehide', () => ctrl.abort(), { once:true });
-    await consumeNdjsonStream(res, document, ctrl.signal);
-    return true;
-  }catch(e){ console.debug?.('[RSC] tryStream failed', e); return false; }
+
+// Convert file path to base64url (matching server-side toBase64Url)
+function toBase64Url(str) {
+	try {
+		const base64 = btoa(unescape(encodeURIComponent(str)));
+		return base64
+			.replace(/\\+/g, "-")
+			.replace(/\\/ / g, "_")
+			.replace(/=+$/, "");
+	} catch (e) {
+		console.debug?.("[RSC] toBase64Url failed", e);
+		return null;
+	}
 }
-async function hydrate(){ try{ await import('/_veryfront/rsc/hydrate.js').then(m=>m.bootHydration?.()); }catch(e){ console.debug?.('[RSC] hydrate import failed', e); } }
-export async function boot(){
-  try{
-    const q = window.location.search || '';
-    const streamed = await tryStream(q);
-    if(streamed){ await hydrate(); return; }
-    const res = await fetch('/_veryfront/rsc/payload'+q);
-    const data = await res.json();
-    if(data && data.slots){ for(const [id, html] of Object.entries(data.slots)){ const el = getContainer(document, id); el.innerHTML = String(html||''); } } else { const el = getContainer(document, 'root'); el.innerHTML = String(data.html || ''); }
-    await hydrate();
-  }catch(e){ console.error('[RSC] boot failed', e); }
-}`;
+
+// Get hydration data from the page
+function getHydrationData() {
+	try {
+		const el = document.getElementById("veryfront-hydration-data");
+		if (!el) return null;
+		return JSON.parse(el.textContent || "{}");
+	} catch (e) {
+		console.debug?.("[RSC] hydration data parse failed", e);
+		return null;
+	}
+}
+
+// Try RSC streaming approach
+async function tryStream(q) {
+	try {
+		const res = await fetch("/_veryfront/rsc/stream" + q);
+		if (!res.ok || !res.body) return false;
+		const ctrl = new AbortController();
+		addEventListener("pagehide", () => ctrl.abort(), { once: true });
+		await consumeNdjsonStream(res, document, ctrl.signal);
+		return true;
+	} catch (e) {
+		console.debug?.("[RSC] tryStream failed", e);
+		return false;
+	}
+}
+
+// Hydrate using the hydrate.js script (for data-client-ref markers)
+async function hydrateMarkers() {
+	try {
+		await import("/_veryfront/rsc/hydrate.js").then((m) => m.bootHydration?.());
+	} catch (e) {
+		console.debug?.("[RSC] hydrate import failed", e);
+	}
+}
+
+// Direct React hydration for 'use client' page components
+async function hydratePageComponent(pagePath) {
+	try {
+		// Import React and ReactDOM
+		const React = await import("https://esm.sh/react@19.1.1");
+		const ReactDOM = await import("https://esm.sh/react-dom@19.1.1/client");
+
+		// Convert the page file path to the /_veryfront/fs/ URL format
+		const base64Path = toBase64Url(pagePath);
+		if (!base64Path) {
+			console.debug?.("[RSC] Failed to encode page path");
+			return false;
+		}
+		const moduleUrl = "/_veryfront/fs/" + base64Path + ".js";
+
+		console.debug?.("[RSC] Loading component from:", moduleUrl);
+
+		// Import the component module
+		const mod = await import(moduleUrl);
+		const Component = mod.default;
+
+		if (typeof Component !== "function") {
+			console.debug?.("[RSC] Page component is not a function");
+			return false;
+		}
+
+		// Find the root element to hydrate
+		// Look for body's first child div or the first child with content
+		const root =
+			document.body.querySelector("div[class]") ||
+			document.body.firstElementChild ||
+			document.body;
+
+		// Use hydrateRoot for proper React hydration
+		ReactDOM.hydrateRoot(root, React.createElement(Component, {}));
+		console.debug?.("[RSC] Page component hydrated successfully");
+		return true;
+	} catch (e) {
+		console.error("[RSC] Page hydration failed", e);
+		return false;
+	}
+}
+
+export async function boot() {
+	try {
+		const q = window.location.search || "";
+
+		// FIRST: Check hydration data for the pagePath
+		// This handles 'use client' pages that need direct React hydration
+		const hydrationData = getHydrationData();
+		if (hydrationData && hydrationData.pagePath) {
+			console.debug?.(
+				"[RSC] Found page component in hydration data:",
+				hydrationData.pagePath,
+			);
+			const hydrated = await hydratePageComponent(hydrationData.pagePath);
+			if (hydrated) {
+				console.debug?.("[RSC] Client component hydrated successfully");
+				return;
+			}
+		}
+
+		// If no client page components, try RSC streaming for server components
+		const streamed = await tryStream(q);
+		if (streamed) {
+			await hydrateMarkers();
+			return;
+		}
+
+		// Try payload-based approach
+		try {
+			const res = await fetch("/_veryfront/rsc/payload" + q);
+			if (res.ok) {
+				const data = await res.json();
+				if (data && data.slots) {
+					for (const [id, html] of Object.entries(data.slots)) {
+						const el = getContainer(document, id);
+						el.innerHTML = String(html || "");
+					}
+				} else {
+					const el = getContainer(document, "root");
+					el.innerHTML = String(data.html || "");
+				}
+				await hydrateMarkers();
+				return;
+			}
+		} catch (e) {
+			console.debug?.("[RSC] payload fetch failed", e);
+		}
+
+		// Final fallback: just run marker-based hydration
+		await hydrateMarkers();
+	} catch (e) {
+		console.error("[RSC] boot failed", e);
+	}
+}
+
+// Auto-boot on DOM ready
+if (document.readyState === "loading") {
+	document.addEventListener("DOMContentLoaded", boot);
+} else {
+	boot();
+}
+`;
 
   return new Response(code, {
     headers: { "content-type": "application/javascript" },
@@ -42,15 +178,21 @@ export async function boot(){
 }
 
 /**
- * Handle dom.js endpoint - bundles client-dom.ts to ESM
- * @param adapter - Runtime adapter for file operations
- * @returns Response with bundled DOM utilities
+ * Handle dom.js endpoint - provides DOM utilities for RSC streaming
+ * Inlined to avoid file system dependencies in npm package context
+ * @returns Response with DOM utilities
  */
-export async function handleDomScript(adapter: RuntimeAdapter): Promise<Response> {
+export async function handleDomScript(
+  adapter: RuntimeAdapter,
+): Promise<Response> {
   try {
     // Use native esbuild for proper file system access during bundling
+    // In npm build, this will be replaced by the injected bundle
     const esbuild = await import("esbuild/mod.js");
-    const p = new URL("../../../../../rendering/rsc/client-dom.ts", import.meta.url).pathname;
+    const p = new URL(
+      "../../../../../rendering/rsc/client-dom.ts",
+      import.meta.url,
+    ).pathname;
     const src = await adapter.fs.readFile(p);
     const result = await esbuild.build({
       bundle: true,
@@ -76,11 +218,28 @@ export async function handleDomScript(adapter: RuntimeAdapter): Promise<Response
       headers: { "content-type": "application/javascript" },
     });
   } catch (error) {
-    serverLogger.debug("[ScriptHandlers] Build failed, serving raw TypeScript", error);
-    const p = new URL("../../../../../rendering/rsc/client-dom.ts", import.meta.url).pathname;
+    // Fallback for npm build where esbuild/fs might not be available
+    // CLIENT_DOM_BUNDLE will be injected by the build script
+    if (CLIENT_DOM_BUNDLE) {
+      return new Response(CLIENT_DOM_BUNDLE, {
+        headers: { "content-type": "application/javascript" },
+      });
+    }
+
+    serverLogger.debug(
+      "[ScriptHandlers] Build failed, serving raw TypeScript",
+      error,
+    );
+    const p = new URL(
+      "../../../../../rendering/rsc/client-dom.ts",
+      import.meta.url,
+    ).pathname;
     const src = await adapter.fs.readFile(p);
     return new Response(src, {
       headers: { "content-type": "application/typescript" },
     });
   }
 }
+
+// Placeholder for build-time injection
+export const CLIENT_DOM_BUNDLE = "";

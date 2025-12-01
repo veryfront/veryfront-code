@@ -1,0 +1,51 @@
+{
+  "compilerOptions": {
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "declaration": true,
+    "declarationOnly": true,
+    "emitDeclarationOnly": true,
+    "outDir": "./npm/dist",
+    "rootDir": "./src",
+    "strict": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "jsx": "react-jsx",
+    "jsxImportSource": "react",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "noEmit": false,
+    "paths": {
+      "@veryfront": ["./src/index.ts"],
+      "@veryfront/*": ["./src/*"],
+      "react": ["./node_modules/@types/react"],
+      "react-dom": ["./node_modules/@types/react-dom"]
+    },
+    "types": ["node"],
+    "lib": ["ESNext", "DOM", "DOM.Iterable"]
+  },
+  "include": [
+    "src/index.ts",
+    "src/ai/index.ts",
+    "src/ai/client.ts",
+    "src/ai/react/index.ts",
+    "src/ai/react/primitives/index.ts",
+    "src/ai/react/components/index.ts",
+    "src/ai/production/index.ts",
+    "src/ai/dev/index.ts",
+    "src/core/config/index.ts",
+    "src/data/index.ts",
+    "src/react/components/index.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist",
+    "npm",
+    "**/*.test.ts",
+    "**/*.test.tsx",
+    "**/*_test.ts",
+    "**/*_test.tsx"
+  ]
+}

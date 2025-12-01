@@ -90,24 +90,35 @@ export function createRelativeFsPlugin(projectDir: string, adapter: RuntimeAdapt
 }
 
 /**
+ * Map of common packages to their esm.sh versions for browser imports
+ */
+const ESM_PACKAGE_MAP: Record<string, string> = {
+  "react": "https://esm.sh/react@19.1.1",
+  "react-dom": "https://esm.sh/react-dom@19.1.1",
+  "react-dom/client": "https://esm.sh/react-dom@19.1.1/client",
+  "react/jsx-runtime": "https://esm.sh/react@19.1.1/jsx-runtime",
+  "react/jsx-dev-runtime": "https://esm.sh/react@19.1.1/jsx-dev-runtime",
+};
+
+/**
  * Create bare module external plugin
  *
- * Marks bare module imports (npm packages) as external so they're
- * not bundled. This allows using CDN imports or import maps.
+ * Rewrites bare module imports (npm packages) to esm.sh URLs for browser compatibility.
+ * For packages not in the map, marks them as external.
  *
  * Bare modules:
- * - 'react' ✓
- * - 'lodash' ✓
- * - './relative' ✗
- * - '/absolute' ✗
- * - 'https://...' ✗
+ * - 'react' -> 'https://esm.sh/react@19.1.1'
+ * - 'lodash' -> external (marked for import map)
+ * - './relative' ✗ (not handled)
+ * - '/absolute' ✗ (not handled)
+ * - 'https://...' ✗ (not handled)
  *
  * @returns ESBuild plugin
  *
  * @example
  * ```typescript
  * const plugin = createBareExternalPlugin();
- * // import React from 'react' -> marked as external
+ * // import React from 'react' -> import React from 'https://esm.sh/react@19.1.1'
  * // import './Button' -> bundled normally
  * ```
  */
@@ -122,7 +133,15 @@ export function createBareExternalPlugin(): Plugin {
           !args.path.startsWith("https://");
         if (!isBare) return undefined;
         if (args.kind === "import-statement" || args.kind === "dynamic-import") {
-          return { path: args.path, external: true };
+          // Check if we have a known mapping for this package
+          const esmUrl = ESM_PACKAGE_MAP[args.path];
+          if (esmUrl) {
+            // Rewrite to esm.sh URL
+            return { path: esmUrl, external: true };
+          }
+          // For unknown packages, try esm.sh with the package name
+          // This handles most npm packages automatically
+          return { path: `https://esm.sh/${args.path}`, external: true };
         }
         return undefined;
       });
