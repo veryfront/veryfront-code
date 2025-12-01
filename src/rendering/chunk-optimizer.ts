@@ -1,5 +1,6 @@
 import { join } from "std/path/mod.ts";
 import { bundlerLogger as logger } from "@veryfront/utils";
+import { createFileSystem } from "../platform/compat/fs.ts";
 import type { FileSystemAdapter } from "../platform/adapters/base.ts";
 
 const SIZE_LIMITS = {
@@ -62,17 +63,23 @@ export interface ChunkManifest {
   }>;
 }
 
+type FSLike = {
+  readDir(path: string): AsyncIterable<{ name: string; isFile: boolean; isDirectory: boolean }>;
+  readFile(path: string): Promise<string>;
+};
+
 export async function analyzeProjectChunks(
   projectDir: string,
-  fs: FileSystemAdapter,
+  fs?: FSLike,
 ): Promise<ChunkAnalysis> {
+  const fsAdapter = fs ?? createFileSystem();
   const pages = new Map<string, PageImports>();
   const sharedDeps = new Map<string, number>();
   const mdxFiles: string[] = [];
 
   async function findMDX(dir: string) {
     try {
-      const entries = fs.readDir(dir);
+      const entries = fsAdapter.readDir(dir);
       for await (const entry of entries) {
         const path = join(dir, entry.name);
         if (entry.isFile && entry.name.endsWith(".mdx")) {
@@ -90,7 +97,7 @@ export async function analyzeProjectChunks(
 
   for (const mdxPath of mdxFiles) {
     try {
-      const content = await fs.readFile(mdxPath);
+      const content = await fsAdapter.readFile(mdxPath);
       const imports = analyzeImports(content);
 
       const pageImports: PageImports = {

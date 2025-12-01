@@ -17,8 +17,8 @@ export async function routesCommand(projectDir: string, options: { json?: boolea
 
   const router = new DynamicRouter();
   try {
-    const entries = await fs.readDir(pagesDir);
-    for (const entry of entries) {
+    const entries = fs.readDir(pagesDir);
+    for await (const entry of entries) {
       if (!entry.isFile) continue;
       if (entry.name.endsWith(".mdx") || entry.name.endsWith(".tsx")) {
         const slug = entry.name.replace(/\.(mdx|tsx)$/i, "");
@@ -57,8 +57,8 @@ export async function routesCommand(projectDir: string, options: { json?: boolea
 }
 
 async function collectApiPatterns(dir: string, prefix: string, out: string[]) {
-  const entries = await fs.readDir(dir);
-  for (const entry of entries) {
+  const entries = fs.readDir(dir);
+  for await (const entry of entries) {
     const fullPath = join(dir, entry.name);
     const routePath = `${prefix}/${entry.name.replace(/\.(ts|js|tsx|jsx)$/i, "")}`;
     if (entry.isDirectory) {

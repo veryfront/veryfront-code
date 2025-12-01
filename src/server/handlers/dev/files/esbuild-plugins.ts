@@ -10,6 +10,14 @@
 import type { OnLoadArgs, OnResolveArgs, Plugin, PluginBuild } from "esbuild";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/index.ts";
 import { getDirectory, joinPath } from "@veryfront/utils/path-utils.ts";
+import {
+  getReactCDNUrl,
+  getReactDOMCDNUrl,
+  getReactDOMClientCDNUrl,
+  getReactJSXRuntimeCDNUrl,
+  getReactJSXDevRuntimeCDNUrl,
+  REACT_DEFAULT_VERSION,
+} from "@veryfront/utils/constants/cdn.ts";
 
 /**
  * Create relative file system plugin
@@ -90,14 +98,15 @@ export function createRelativeFsPlugin(projectDir: string, adapter: RuntimeAdapt
 }
 
 /**
- * Map of common packages to their esm.sh versions for browser imports
+ * Map of common packages to their esm.sh versions for browser imports.
+ * Uses centralized React version constants from cdn.ts.
  */
 const ESM_PACKAGE_MAP: Record<string, string> = {
-  "react": "https://esm.sh/react@19.1.1",
-  "react-dom": "https://esm.sh/react-dom@19.1.1",
-  "react-dom/client": "https://esm.sh/react-dom@19.1.1/client",
-  "react/jsx-runtime": "https://esm.sh/react@19.1.1/jsx-runtime",
-  "react/jsx-dev-runtime": "https://esm.sh/react@19.1.1/jsx-dev-runtime",
+  "react": getReactCDNUrl(REACT_DEFAULT_VERSION),
+  "react-dom": getReactDOMCDNUrl(REACT_DEFAULT_VERSION),
+  "react-dom/client": getReactDOMClientCDNUrl(REACT_DEFAULT_VERSION),
+  "react/jsx-runtime": getReactJSXRuntimeCDNUrl(REACT_DEFAULT_VERSION),
+  "react/jsx-dev-runtime": getReactJSXDevRuntimeCDNUrl(REACT_DEFAULT_VERSION),
 };
 
 /**
@@ -107,7 +116,7 @@ const ESM_PACKAGE_MAP: Record<string, string> = {
  * For packages not in the map, marks them as external.
  *
  * Bare modules:
- * - 'react' -> 'https://esm.sh/react@19.1.1'
+ * - 'react' -> esm.sh React URL (via centralized constants)
  * - 'lodash' -> external (marked for import map)
  * - './relative' ✗ (not handled)
  * - '/absolute' ✗ (not handled)

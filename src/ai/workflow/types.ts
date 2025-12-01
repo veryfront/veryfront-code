@@ -43,6 +43,7 @@ export type NodeStatus =
 export type WorkflowNodeType =
   | "step" // Single agent or tool execution
   | "parallel" // Parallel execution of multiple nodes
+  | "map" // Dynamic fan-out/map-reduce
   | "branch" // Conditional branching
   | "wait" // Wait for approval or event
   | "subWorkflow"; // Nested workflow execution
@@ -146,11 +147,25 @@ export interface SubWorkflowNodeConfig extends BaseNodeConfig {
 }
 
 /**
+ * Map node configuration (dynamic fan-out)
+ */
+export interface MapNodeConfig extends BaseNodeConfig {
+  type: "map";
+  /** Collection to iterate over (array) */
+  items: unknown[] | ((context: WorkflowContext) => unknown[] | Promise<unknown[]>);
+  /** Node or workflow to execute for each item */
+  processor: WorkflowNode | WorkflowDefinition;
+  /** Maximum concurrent executions */
+  concurrency?: number;
+}
+
+/**
  * Union of all node configurations
  */
 export type WorkflowNodeConfig =
   | StepNodeConfig
   | ParallelNodeConfig
+  | MapNodeConfig
   | BranchNodeConfig
   | WaitNodeConfig
   | SubWorkflowNodeConfig;

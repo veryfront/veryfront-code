@@ -4,6 +4,17 @@ import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
 
 const TEST_DIR = await Deno.makeTempDir({ prefix: "veryfront_fs_test_" });
 
+async function collectEntries(
+  fs: ReturnType<typeof createFileSystem>,
+  path: string,
+) {
+  const results: Array<{ name: string; isFile: boolean; isDirectory: boolean }> = [];
+  for await (const entry of fs.readDir(path)) {
+    results.push(entry);
+  }
+  return results;
+}
+
 async function cleanup() {
   try {
     await Deno.remove(TEST_DIR, { recursive: true });
@@ -166,7 +177,7 @@ Deno.test("should list directory contents with correct file and directory entrie
   await fs.writeTextFile(join(testDir, "file2.txt"), "content2");
   await fs.mkdir(join(testDir, "subdir"));
 
-  const entries = await fs.readDir(testDir) as Deno.DirEntry[];
+  const entries = await collectEntries(fs, testDir);
 
   assertEquals(entries.length, 3);
 
@@ -193,7 +204,7 @@ Deno.test("should return empty array for empty directory", async () => {
 
   await fs.mkdir(testDir);
 
-  const entries = await fs.readDir(testDir) as Deno.DirEntry[];
+  const entries = await collectEntries(fs, testDir);
 
   assertEquals(entries.length, 0);
 
@@ -376,7 +387,7 @@ Deno.test("should handle sequential file operations across multiple files", asyn
   }
 
   // Read directory
-  const entries = await fs.readDir(testDir) as Deno.DirEntry[];
+  const entries = await collectEntries(fs, testDir);
   assertEquals(entries.length, 5);
 
   // Read each file
@@ -391,7 +402,7 @@ Deno.test("should handle sequential file operations across multiple files", asyn
   }
 
   // Directory should be empty
-  const emptyEntries = await fs.readDir(testDir);
+  const emptyEntries = await collectEntries(fs, testDir);
   assertEquals(emptyEntries.length, 0);
 
   // Clean up
@@ -413,7 +424,7 @@ Deno.test("should handle concurrent file write operations", async () => {
   await Promise.all(promises);
 
   // Verify all files exist
-  const entries = await fs.readDir(testDir) as Deno.DirEntry[];
+  const entries = await collectEntries(fs, testDir);
   assertEquals(entries.length, 10);
 
   // Clean up
@@ -432,7 +443,7 @@ Deno.test("should handle filenames with special characters", async () => {
     await fs.writeTextFile(join(testDir, name), "content");
   }
 
-  const entries = await fs.readDir(testDir) as Deno.DirEntry[];
+  const entries = await collectEntries(fs, testDir);
   assertEquals(entries.length, specialNames.length);
 
   const names = entries.map((e) => e.name).sort();

@@ -50,12 +50,14 @@ export class LayoutApplicator {
     layoutBundle: MdxBundle | undefined,
     nestedLayouts: LayoutItem[],
     providerItems: ProviderItem[],
+    layoutDataMap?: Map<string, Record<string, unknown>>,
   ): Promise<BundledReact.ReactElement> {
     let wrappedElement = await this.applyLayoutsAndProviders(
       pageElement,
       layoutBundle,
       nestedLayouts,
       providerItems,
+      layoutDataMap,
     );
 
     const useAppRouter = await detectAppRouter(this.projectDir, this.config, this.adapter);
@@ -75,6 +77,7 @@ export class LayoutApplicator {
     layoutBundle: MdxBundle | undefined,
     nestedLayouts: LayoutItem[],
     providerItems: ProviderItem[],
+    layoutDataMap?: Map<string, Record<string, unknown>>,
   ): Promise<BundledReact.ReactElement> {
     logger.info("Number of nested layouts found:", nestedLayouts.length);
     const useESMWrap = Boolean(this.config?.experimental?.esmLayouts);
@@ -85,6 +88,7 @@ export class LayoutApplicator {
         layoutBundle,
         nestedLayouts,
         providerItems,
+        layoutDataMap,
       );
     } else {
       return await this.applyLayoutsFunctionBodyMode(
@@ -92,6 +96,7 @@ export class LayoutApplicator {
         layoutBundle,
         nestedLayouts,
         providerItems,
+        layoutDataMap,
       );
     }
   }
@@ -101,6 +106,7 @@ export class LayoutApplicator {
     layoutBundle: MdxBundle | undefined,
     nestedLayouts: LayoutItem[],
     providerItems: ProviderItem[],
+    layoutDataMap?: Map<string, Record<string, unknown>>,
   ): Promise<BundledReact.ReactElement> {
     return await applyLayoutsESM(
       pageElement,
@@ -111,6 +117,7 @@ export class LayoutApplicator {
       this.mergedComponents,
       this.layoutCache,
       this.adapter,
+      layoutDataMap,
     );
   }
 
@@ -119,6 +126,7 @@ export class LayoutApplicator {
     layoutBundle: MdxBundle | undefined,
     nestedLayouts: LayoutItem[],
     providerItems: ProviderItem[],
+    layoutDataMap?: Map<string, Record<string, unknown>>,
   ): Promise<BundledReact.ReactElement> {
     return await applyLayoutsFunctionBody(
       pageElement,
@@ -129,6 +137,7 @@ export class LayoutApplicator {
       this.layoutCache,
       this.projectDir,
       this.adapter,
+      layoutDataMap,
     );
   }
 

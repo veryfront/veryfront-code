@@ -114,6 +114,7 @@ export async function applyTSXLayout(
   tsxLayoutModuleCache: LayoutComponentCache,
   projectDir: string,
   adapter: RuntimeAdapter,
+  props?: Record<string, unknown>,
 ): Promise<BundledReact.ReactElement> {
   const React = await getProjectReact();
   try {
@@ -123,7 +124,7 @@ export async function applyTSXLayout(
       tsxLayoutModuleCache,
       adapter,
     );
-    return React.createElement(LayoutComponent, {}, element) as BundledReact.ReactElement;
+    return React.createElement(LayoutComponent, props || {}, element) as BundledReact.ReactElement;
   } catch (e) {
     logger.error("Failed to compile/import TSX layout", e);
 

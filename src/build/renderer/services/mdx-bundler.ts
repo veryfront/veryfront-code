@@ -4,8 +4,7 @@
 
 import { compile as compileMdx } from "@mdx-js/mdx";
 import { bundlerLogger as logger } from "@veryfront/utils";
-
-type PluggableList = Array<unknown>;
+import type { Pluggable, PluggableList } from "unified";
 import { extract } from "std/front_matter/yaml.ts";
 import { dirname, join } from "std/path/mod.ts";
 import { getRehypePlugins, getRemarkPlugins } from "@veryfront/transforms/plugins/plugin-loader.ts";
@@ -96,11 +95,18 @@ export async function bundleMdx(
       },
     );
 
+    const normalizePlugins = (plugins: PluggableList | undefined): Pluggable[] =>
+      plugins === undefined
+        ? []
+        : Array.isArray(plugins)
+        ? plugins.flat() as Pluggable[]
+        : [plugins as Pluggable];
+
     const compiled = await compileMdx(processedContent, {
       outputFormat: "function-body",
       development: options.mode === "development",
-      remarkPlugins,
-      rehypePlugins,
+      remarkPlugins: normalizePlugins(remarkPlugins as PluggableList),
+      rehypePlugins: normalizePlugins(rehypePlugins as PluggableList),
       providerImportSource: undefined,
     });
 
@@ -171,10 +177,23 @@ export async function bundleMDXWithOptions(options: MDXBundleOptions): Promise<M
       frontmatter = extracted.attrs as Record<string, unknown>;
     }
 
+    const normalizePlugins = (plugins: PluggableList | undefined): Pluggable[] =>
+      plugins === undefined
+        ? []
+        : Array.isArray(plugins)
+        ? plugins.flat() as Pluggable[]
+        : [plugins as Pluggable];
+
     const defaultRemarkPlugins = (await getRemarkPlugins(projectDir)) as unknown as PluggableList;
     const defaultRehypePlugins = (await getRehypePlugins(projectDir)) as unknown as PluggableList;
-    const allRemarkPlugins: PluggableList = [...defaultRemarkPlugins, ...remarkPlugins];
-    const allRehypePlugins: PluggableList = [...defaultRehypePlugins, ...rehypePlugins];
+    const allRemarkPlugins: Pluggable[] = [
+      ...normalizePlugins(defaultRemarkPlugins),
+      ...normalizePlugins(remarkPlugins as PluggableList),
+    ];
+    const allRehypePlugins: Pluggable[] = [
+      ...normalizePlugins(defaultRehypePlugins),
+      ...normalizePlugins(rehypePlugins as PluggableList),
+    ];
 
     const compiled = await compileMdx(body, {
       outputFormat: "function-body",

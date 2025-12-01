@@ -1,11 +1,15 @@
 import { rendererLogger as logger } from "@veryfront/utils";
 import type { MDXExports, MDXImportInfo, ParsedMDX } from "./types.ts";
+import {
+  extractFrontmatter,
+  extractMetadata,
+} from "./module-loader/metadata-extractor.ts";
 
 export type { ParsedMDX };
 
 export function parseMDXCode(compiledCode: string): ParsedMDX {
   logger.debug("Parsing MDX code, first 200 chars:", compiledCode.substring(0, 200));
-  const importRegex = /import\s+(?:{([^}]+)}|(\w+))\s+from\s+['"]([^'"]+)['"]/g;
+  const importRegex = /^\s*import\s+(?:{([^}]+)}|(\w+))\s+from\s+['"]([^'"]+)['"]\s*;?\s*$/gm;
   const imports = new Map<string, MDXImportInfo>();
   let match: RegExpExecArray | null;
 
@@ -29,17 +33,17 @@ export function parseMDXCode(compiledCode: string): ParsedMDX {
   }
 
   const cleanedCode = compiledCode
-    .replace(/import\s+.*?from\s+['"][^'"]+['"];?\s*/gm, "") // Remove imports (multiline mode)
-    .replace(/export\s+\{[\s\S]*?\};?/gm, "") // Remove named exports (including multi-line)
-    .replace(/export\s+default\s+function/gm, "function") // Convert default export function
-    .replace(/export\s+default\s+/gm, "") // Remove other default exports
-    .replace(/export\s+const\s+/gm, "const ") // Convert export const to const
-    .replace(/export\s+function\s+/gm, "function ") // Convert export function to function
-    .replace(/^const\s+React\s*=.*?;?\s*$/gm, "") // Remove React declarations
-    .replace(/^import\s+React\s+from.*?;?\s*$/gm, "") // Remove React imports
-    .replace(/^const\s+(Fragment|Fragment2)\s*=.*?;?\s*$/gm, "") // Remove Fragment declarations
-    .replace(/^const\s+(jsx|jsx2)\s*=.*?;?\s*$/gm, "") // Remove jsx declarations
-    .replace(/^const\s+(jsxs|jsxs2)\s*=.*?;?\s*$/gm, ""); // Remove jsxs declarations
+    .replace(importRegex, "") // Remove top-level imports
+    .replace(/^\s*export\s+\{[\s\S]*?\};?\s*$/gm, "") // Remove named exports (including multi-line)
+    .replace(/^\s*export\s+default\s+function/gm, "function") // Convert default export function
+    .replace(/^\s*export\s+default\s+/gm, "") // Remove other default exports
+    .replace(/^\s*export\s+const\s+/gm, "const ") // Convert export const to const
+    .replace(/^\s*export\s+function\s+/gm, "function ") // Convert export function to function
+    .replace(/^\s*const\s+React\s*=.*?;?\s*$/gm, "") // Remove React declarations
+    .replace(/^\s*import\s+React\s+from.*?;?\s*$/gm, "") // Remove React imports
+    .replace(/^\s*const\s+(Fragment|Fragment2)\s*=.*?;?\s*$/gm, "") // Remove Fragment declarations
+    .replace(/^\s*const\s+(jsx|jsx2)\s*=.*?;?\s*$/gm, "") // Remove jsx declarations
+    .replace(/^\s*const\s+(jsxs|jsxs2)\s*=.*?;?\s*$/gm, ""); // Remove jsxs declarations
 
   if (cleanedCode.includes("import React")) {
     logger.warn("Import React still in cleaned code");
@@ -51,51 +55,17 @@ export function parseMDXCode(compiledCode: string): ParsedMDX {
 
   const exports: MDXExports = {};
 
-  const frontmatterMatch = cleanedCode.match(/const\s+frontmatter\s*=\s*({[\s\S]*?});/);
-  if (frontmatterMatch) {
-    try {
-      const objectLiteral = (frontmatterMatch[1] ?? "{}")
-        .replace(/(\w+):/g, '"$1":') // Convert keys to strings
-        .replace(/'/g, '"'); // Convert single quotes to double
-      exports.frontmatter = JSON.parse(objectLiteral);
-    } catch {
-      logger.debug("[MDX] Could not parse frontmatter statically, will extract at runtime");
-    }
+  const frontmatter = extractFrontmatter(cleanedCode);
+  if (frontmatter) {
+    exports.frontmatter = frontmatter;
   }
 
-  const exportMatches = [
-    { regex: /const\s+title\s*=\s*["']([^"']+)["']/, key: "title", parse: (v: string) => v },
-    {
-      regex: /const\s+description\s*=\s*["']([^"']+)["']/,
-      key: "description",
-      parse: (v: string) => v,
-    },
-    { regex: /const\s+layout\s*=\s*true/, key: "layout", parse: () => true },
-    { regex: /const\s+layout\s*=\s*false/, key: "layout", parse: () => false },
-    { regex: /const\s+layout\s*=\s*["']([^"']+)["']/, key: "layout", parse: (v: string) => v },
-    {
-      regex: /const\s+headings\s*=\s*(\[[\s\S]*?\]);/,
-      key: "headings",
-      parse: (v: string) => {
-        try {
-          return JSON.parse(v.replace(/'/g, '"'));
-        } catch {
-          return [];
-        }
-      },
-    },
-  ];
-
-  exportMatches.forEach(({ regex, key, parse }) => {
-    const m = cleanedCode.match(regex);
-    if (m) {
-      try {
-        exports[key] = parse(m[1] || m[0]);
-      } catch (_error) {
-        void _error;
-      }
+  const metadata = extractMetadata(cleanedCode);
+  for (const [key, value] of Object.entries(metadata)) {
+    if (value !== undefined) {
+      (exports as Record<string, unknown>)[key] = value;
     }
-  });
+  }
 
   return { code: cleanedCode, imports, exports };
 }

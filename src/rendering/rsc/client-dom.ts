@@ -1,5 +1,5 @@
 import { rscLogger } from "../client/browser-logger.ts";
-import { validateTrustedHtml } from "@veryfront/security/client/html-sanitizer.ts";
+import { validateTrustedHtml } from "../../security/client/html-sanitizer.ts";
 
 export type SlotMessage = { type: "slot"; id: string; html: string };
 

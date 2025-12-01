@@ -27,6 +27,7 @@ export async function applyLayoutsESM(
   mergedComponents: MDXComponents,
   tsxLayoutModuleCache: LayoutComponentCache,
   adapter: RuntimeAdapter,
+  layoutDataMap?: Map<string, Record<string, unknown>>,
 ): Promise<BundledReact.ReactElement> {
   let element = pageElement;
 
@@ -44,7 +45,15 @@ export async function applyLayoutsESM(
             adapter,
           );
         } else if (item.kind === "tsx") {
-          element = await applyTSXLayout(element, item, tsxLayoutModuleCache, projectDir, adapter);
+          const props = item.componentPath ? layoutDataMap?.get(item.componentPath) : undefined;
+          element = await applyTSXLayout(
+            element,
+            item,
+            tsxLayoutModuleCache,
+            projectDir,
+            adapter,
+            props,
+          );
         }
       } catch (e) {
         logger.error("Failed to apply nested layout:", e);
@@ -80,6 +89,7 @@ export async function applyLayoutsFunctionBody(
   tsxLayoutModuleCache: LayoutComponentCache,
   projectDir: string,
   adapter: RuntimeAdapter,
+  layoutDataMap?: Map<string, Record<string, unknown>>,
 ): Promise<BundledReact.ReactElement> {
   const React = await getProjectReact();
   let element = pageElement;
@@ -120,7 +130,8 @@ export async function applyLayoutsFunctionBody(
             layoutName: LayoutComponent.name || "Anonymous",
             childType: React.isValidElement(child) ? getElementTypeName(child as BundledReact.ReactElement) : typeof child,
           });
-          element = React.createElement(LayoutComponent, undefined, child) as BundledReact.ReactElement;
+          const props = item.componentPath ? layoutDataMap?.get(item.componentPath) : undefined;
+          element = React.createElement(LayoutComponent, props, child) as BundledReact.ReactElement;
           logger.info("After TSX layout applied:", {
             pageElementType: React.isValidElement(element)
               ? getElementTypeName(element)

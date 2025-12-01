@@ -8,6 +8,7 @@ import { PATHS } from "@veryfront/utils/paths.ts";
 import { join } from "std/path/mod.ts";
 import type { CacheBackend, InitTemplate } from "./types.ts";
 import { createFileSystem } from "../../../platform/compat/fs.ts";
+import { getReactImportMap, REACT_DEFAULT_VERSION } from "@veryfront/utils/constants/cdn.ts";
 
 /**
  * Creates the veryfront.config.js file with default settings
@@ -28,6 +29,9 @@ export async function createConfigFile(
   template: InitTemplate | undefined,
   cacheBackend: CacheBackend,
 ): Promise<void> {
+  // Get React import map URLs from centralized constants
+  const reactImports = getReactImportMap(REACT_DEFAULT_VERSION);
+
   const config = `export default {
   title: "${name || "My App"}",
   description: "Built with Veryfront",
@@ -49,12 +53,12 @@ export async function createConfigFile(
   resolve: {
     importMap: {
       imports: {
-        "react": "https://esm.sh/react@19.1.1",
-        "react/jsx-runtime": "https://esm.sh/react@19.1.1/jsx-runtime",
-        "react/jsx-dev-runtime": "https://esm.sh/react@19.1.1/jsx-dev-runtime",
-        "react-dom": "https://esm.sh/react-dom@19.1.1",
-        "react-dom/client": "https://esm.sh/react-dom@19.1.1/client",
-        "react-dom/server": "https://esm.sh/react-dom@19.1.1/server",
+        "react": "${reactImports["react"]}",
+        "react/jsx-runtime": "${reactImports["react/jsx-runtime"]}",
+        "react/jsx-dev-runtime": "${reactImports["react/jsx-dev-runtime"]}",
+        "react-dom": "${reactImports["react-dom"]}",
+        "react-dom/client": "${reactImports["react-dom/client"]}",
+        "react-dom/server": "${reactImports["react-dom/server"]}",
       },
     },
   },

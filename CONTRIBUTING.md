@@ -9,6 +9,7 @@ Thank you for your interest in contributing to Veryfront! This document provides
 - [Code Style](#code-style)
 - [Testing](#testing)
 - [Pull Request Process](#pull-request-process)
+- [Release Process](#release-process)
 - [Module Guidelines](#module-guidelines)
 
 ## Code Organization
@@ -332,6 +333,49 @@ Brief description of changes
 2. **At least 1 approval** required from maintainers
 3. **Address feedback** - respond to all review comments
 4. **Squash commits** - maintainers will squash when merging
+
+## Release Process
+
+We use an automated script to handle versioning, testing, building, and publishing.
+
+### Prerequisites
+
+- Ensure you are on the `main` branch.
+- Ensure your working directory is clean.
+- Ensure you have `npm` authenticated (if publishing).
+
+### Creating a Release
+
+Use the `release` task to create a new version:
+
+```bash
+# Patch release (0.0.1 -> 0.0.2)
+deno task release patch
+
+# Minor release (0.1.0 -> 0.2.0)
+deno task release minor
+
+# Major release (1.0.0 -> 2.0.0)
+deno task release major
+
+# Specific version
+deno task release 1.2.3
+```
+
+### What the script does
+
+1.  **Runs Tests**: Executes `deno task test` to ensure stability.
+2.  **Updates Version**: Bumps the version in `deno.json`.
+3.  **Builds Package**: Runs `deno task build:npm` to generate the npm package.
+4.  **Publishes**: Prompts to publish to npm (optional).
+
+### Dry Run
+
+You can preview the release process without making changes:
+
+```bash
+deno task release patch --dry-run
+```
 
 ## Module Guidelines
 

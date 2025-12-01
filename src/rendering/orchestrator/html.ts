@@ -1,14 +1,23 @@
 import { join } from "https://deno.land/std@0.220.0/path/mod.ts";
-import { rendererLogger as logger } from "@veryfront/utils";
-import type { EntityInfo } from "@veryfront/types";
-import type { LayoutItem, MdxBundle, MDXFrontmatter, PageBundle } from "@veryfront/types";
-import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "@veryfront/config";
-import { type HTMLGenerationOptions, wrapInHTMLShell } from "@veryfront/html";
-import { extractHTMLMetadata, injectHTMLContent, isFullHTMLDocument } from "@veryfront/html";
-
+import type { HTMLGenerationOptions } from "@veryfront/html";
+import {
+  extractHTMLMetadata,
+  generateHTMLShellParts,
+  injectHTMLContent,
+  isFullHTMLDocument,
+  wrapInHTMLShell,
+} from "@veryfront/html";
+import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
+import type {
+  EntityInfo,
+  LayoutItem,
+  MdxBundle,
+  MDXFrontmatter,
+  PageBundle,
+} from "@veryfront/types";
+import { DEFAULT_DASHBOARD_PORT, rendererLogger as logger } from "@veryfront/utils";
 import { detectAppRouter } from "../router-detection.ts";
-import { DEFAULT_DASHBOARD_PORT } from "@veryfront/utils";
 import type { RenderOptions } from "./types.ts";
 
 export interface HTMLGeneratorConfig {
@@ -46,7 +55,84 @@ export class HTMLGenerator {
     return await this.wrapHTMLFragment(context);
   }
 
-  private async handleFullHTMLDocument(context: HTMLGenerationContext): Promise<string> {
+  /**
+   * Generate HTML stream for streaming SSR
+   * Wraps the React stream with HTML shell parts
+   */
+  async generateHTMLStream(
+    reactStream: ReadableStream,
+    context: Omit<HTMLGenerationContext, "html">,
+  ): Promise<ReadableStream> {
+    const mergedFrontmatter = this.mergeFrontmatter(
+      context as HTMLGenerationContext,
+    );
+    const useAppRouter = await detectAppRouter(
+      this.config.projectDir,
+      this.config.config,
+      this.config.adapter,
+    );
+    const appComponentPath = await this.resolveAppComponentPath(useAppRouter);
+
+    const htmlOptions: HTMLGenerationOptions = {
+      mode: this.config.mode,
+      config: this.config.config,
+      nestedLayouts: context.nestedLayouts.map((l) => ({
+        kind: l.kind,
+        path: l.path,
+        componentPath: l.componentPath,
+      })),
+      providerPaths: context.providerInfos.map((p) => p.entity.id),
+      appPath: appComponentPath,
+      pagePath: context.pageInfo.entity.id,
+      nonce: context.options?.nonce,
+    };
+
+    const { start, end } = await generateHTMLShellParts(
+      {
+        title: mergedFrontmatter.title || "Veryfront App",
+        description: mergedFrontmatter.description || "",
+        slug: context.slug,
+        frontmatter: mergedFrontmatter,
+        layoutFrontmatter: context.layoutBundle?.frontmatter,
+        ssrHash: context.ssrHash,
+      },
+      htmlOptions,
+      context.options?.params,
+      context.options?.props,
+    );
+
+    const encoder = new TextEncoder();
+    const startChunk = encoder.encode(start);
+    const endChunk = encoder.encode(end);
+
+    return new ReadableStream({
+      start(controller) {
+        controller.enqueue(startChunk);
+      },
+      async pull(controller) {
+        const reader = reactStream.getReader();
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) {
+              controller.enqueue(endChunk);
+              controller.close();
+              break;
+            }
+            controller.enqueue(value);
+          }
+        } catch (error) {
+          controller.error(error);
+        } finally {
+          reader.releaseLock();
+        }
+      },
+    });
+  }
+
+  private async handleFullHTMLDocument(
+    context: HTMLGenerationContext,
+  ): Promise<string> {
     const metadata = extractHTMLMetadata(
       (context.pageInfo.entity.frontmatter || {}) as MDXFrontmatter,
       (context.layoutBundle?.frontmatter || {}) as MDXFrontmatter,
@@ -62,8 +148,10 @@ export class HTMLGenerator {
       if (isClientPage) {
         logger.info(`[HTMLGenerator] Detected 'use client' page: ${pagePath}`);
       }
-    } catch (e) {
-      logger.debug(`[HTMLGenerator] Could not read page file for directive detection: ${pagePath}`);
+    } catch (_e) {
+      logger.debug(
+        `[HTMLGenerator] Could not read page file for directive detection: ${pagePath}`,
+      );
     }
 
     const injectedHtml = injectHTMLContent(context.html, "", metadata, {
@@ -79,7 +167,9 @@ export class HTMLGenerator {
       : `<!DOCTYPE html>\n${injectedHtml}`;
   }
 
-  private async wrapHTMLFragment(context: HTMLGenerationContext): Promise<string> {
+  private async wrapHTMLFragment(
+    context: HTMLGenerationContext,
+  ): Promise<string> {
     const mergedFrontmatter = this.mergeFrontmatter(context);
     logger.info("Merged frontmatter for wrapInHTMLShell:", mergedFrontmatter);
 
@@ -129,7 +219,9 @@ export class HTMLGenerator {
     } as MDXFrontmatter;
   }
 
-  private async resolveAppComponentPath(useAppRouter: boolean): Promise<string | undefined> {
+  private async resolveAppComponentPath(
+    useAppRouter: boolean,
+  ): Promise<string | undefined> {
     if (useAppRouter) {
       return undefined;
     }

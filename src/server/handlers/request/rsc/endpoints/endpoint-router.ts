@@ -36,7 +36,7 @@ export async function handleRSCEndpoint(
     return handleClientScript();
   }
   if (sub === "dom.js") {
-    return handleDomScript();
+    return handleDomScript(adapter);
   }
 
   // Check if RSC feature is enabled via feature flag for other endpoints
@@ -104,7 +104,7 @@ export async function handleRSCEndpoint(
         return handleClientScript();
 
       case "dom.js":
-        return handleDomScript();
+        return handleDomScript(adapter);
 
       case "module":
         return await handleModuleEndpoint({

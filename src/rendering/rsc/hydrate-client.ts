@@ -2,7 +2,12 @@
 // Minimal: hydrate default export without props in dev
 
 import { rscLogger } from "../client/browser-logger.ts";
-import type { Root } from "https://esm.sh/react-dom@19.1.1/client";
+// Note: Using centralized version - matches REACT_DEFAULT_VERSION from cdn.ts (18.3.1)
+import type { Root } from "https://esm.sh/react-dom@18.3.1/client";
+
+// React CDN URLs - should match REACT_DEFAULT_VERSION from cdn.ts
+const REACT_URL = "https://esm.sh/react@18.3.1";
+const REACT_DOM_CLIENT_URL = "https://esm.sh/react-dom@18.3.1/client";
 
 type Manifest = {
   version: number;
@@ -145,8 +150,8 @@ export async function hydrateAllClientBoundaries(doc: Document = document): Prom
     rscLogger.debug("hydrate: test mode flags failed", e);
   }
 
-  const { default: React } = await import("https://esm.sh/react@19.1.1");
-  const { createRoot } = await import("https://esm.sh/react-dom@19.1.1/client");
+  const { default: React } = await import(REACT_URL);
+  const { createRoot } = await import(REACT_DOM_CLIENT_URL);
 
   for (const el of nodes) {
     const ref = el.dataset?.clientRef || "";

@@ -16,6 +16,14 @@ export type { StepOptions } from "./step.ts";
 export { parallel } from "./parallel.ts";
 export type { ParallelOptions } from "./parallel.ts";
 
+// Map/Fan-out execution
+export { map } from "./map.ts";
+export type { MapOptions } from "./map.ts";
+
+// Sub-workflow execution
+export { subWorkflow } from "./sub-workflow.ts";
+export type { SubWorkflowOptions } from "./sub-workflow.ts";
+
 // Conditional branching
 export { branch, when, unless } from "./branch.ts";
 export type { BranchOptions } from "./branch.ts";

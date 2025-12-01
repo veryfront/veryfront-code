@@ -7,10 +7,13 @@
 import type {
   BranchNodeConfig,
   Checkpoint,
+  MapNodeConfig,
   NodeState,
   ParallelNodeConfig,
+  SubWorkflowNodeConfig,
   WaitNodeConfig,
   WorkflowContext,
+  WorkflowDefinition,
   WorkflowNode,
   WorkflowNodeConfig,
   WorkflowRun,
@@ -265,25 +268,253 @@ export class DAGExecutor {
       case "parallel":
         return await this.executeParallelNode(node, config, context, nodeStates);
 
+      case "map":
+        return await this.executeMapNode(node, config as MapNodeConfig, context, nodeStates);
+
       case "branch":
-        return await this.executeBranchNode(node, config, context, nodeStates);
+        return await this.executeBranchNode(node, config as BranchNodeConfig, context, nodeStates);
 
       case "wait":
-        return await this.executeWaitNode(node, config, context);
+        return await this.executeWaitNode(node, config as WaitNodeConfig, context);
 
       case "subWorkflow":
-        throw new Error(
-          `Sub-workflow execution is not yet implemented for node "${node.id}". ` +
-            `Workaround: Flatten your workflow by inlining the sub-workflow steps directly, ` +
-            `or use the parallel() or branch() DSL helpers to compose workflows.`,
-        );
+        return await this.executeSubWorkflowNode(node, config as SubWorkflowNodeConfig, context, nodeStates);
 
       default:
         throw new Error(
           `Unknown node type "${(config as WorkflowNodeConfig).type}" for node "${node.id}". ` +
-          `Valid types are: step, parallel, branch, wait, subWorkflow`
+          `Valid types are: step, parallel, map, branch, wait, subWorkflow`
         );
     }
+  }
+
+  /**
+   * Execute a map node (dynamic fan-out)
+   */
+  private async executeMapNode(
+    node: WorkflowNode,
+    config: MapNodeConfig,
+    context: WorkflowContext,
+    nodeStates: Record<string, NodeState>,
+  ): Promise<{
+    state: NodeState;
+    contextUpdates: Record<string, unknown>;
+    waiting: boolean;
+  }> {
+    const startTime = Date.now();
+
+    // 1. Resolve items collection
+    const items = typeof config.items === "function"
+      ? await config.items(context)
+      : config.items;
+
+    if (!Array.isArray(items)) {
+      throw new Error(`Map node "${node.id}" items must be an array`);
+    }
+
+    if (items.length === 0) {
+      // Empty collection, done immediately
+      const state: NodeState = {
+        nodeId: node.id,
+        status: "completed",
+        output: [],
+        attempt: 1,
+        startedAt: new Date(startTime),
+        completedAt: new Date(),
+      };
+      return { state, contextUpdates: { [node.id]: [] }, waiting: false };
+    }
+
+    // 2. Generate child nodes for each item
+    const childNodes: WorkflowNode[] = [];
+    
+    // Check if processor is a WorkflowDefinition or a single node
+    const isWorkflowDef = (p: any): p is WorkflowDefinition => !!p.steps;
+    
+    // We'll map each item to a set of nodes
+    // For simplicity in this implementation, if processor is a single node, we clone it.
+    // If it's a workflow def, we'd need to expand it (similar to subworkflow).
+    // Here we assume it's a single node structure for the "map" pattern or a simple chain.
+    // To support complex subworkflows per item, best to wrap in a SubWorkflowNode.
+
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      const childId = `${node.id}_${i}`;
+      
+      let childNode: WorkflowNode;
+
+      if (isWorkflowDef(config.processor)) {
+        // Create a SubWorkflow node for this item
+        childNode = {
+          id: childId,
+          config: {
+            type: "subWorkflow",
+            workflow: config.processor,
+            input: item,
+            retry: config.retry,
+            checkpoint: false, // Don't checkpoint individual map items by default
+          } as SubWorkflowNodeConfig,
+        };
+      } else {
+        // Clone the single processor node
+        // We must override the input to be the current item
+        const processorConfig = { ...config.processor.config } as any;
+        
+        // If it's a step node, ensure input receives the item
+        if (processorConfig.type === "step") {
+          processorConfig.input = item;
+        }
+
+        childNode = {
+          id: childId,
+          config: processorConfig,
+        };
+      }
+      
+      childNodes.push(childNode);
+    }
+
+    // 3. Execute child nodes
+    // We use a temporary DAG execution for these nodes
+    // The maxConcurrency from config overrides default
+    const originalConcurrency = this.config.maxConcurrency;
+    if (config.concurrency) {
+      this.config.maxConcurrency = config.concurrency;
+    }
+
+    try {
+      const result = await this.execute(childNodes, {
+        id: `${node.id}_map`,
+        workflowId: "",
+        status: "running",
+        input: context.input,
+        nodeStates: {}, // Start fresh for map iteration
+        currentNodes: [],
+        context: { ...context }, // Pass copy of context so they can read global state
+        checkpoints: [],
+        pendingApprovals: [],
+        createdAt: new Date(),
+      });
+
+      // Merge child node states into parent for visibility
+      Object.assign(nodeStates, result.nodeStates);
+
+      // Collect outputs in order
+      const outputs = childNodes.map(child => {
+        const childState = result.nodeStates[child.id];
+        return childState?.output;
+      });
+
+      const state: NodeState = {
+        nodeId: node.id,
+        status: result.completed ? "completed" : (result.waiting ? "running" : "failed"),
+        output: outputs,
+        error: result.error,
+        attempt: 1,
+        startedAt: new Date(startTime),
+        completedAt: result.completed ? new Date() : undefined,
+      };
+
+      this.config.onNodeComplete?.(node.id, state);
+
+      return {
+        state,
+        contextUpdates: result.completed ? { [node.id]: outputs } : {},
+        waiting: result.waiting,
+      };
+
+    } finally {
+      // Restore concurrency setting
+      this.config.maxConcurrency = originalConcurrency!;
+    }
+  }
+
+  /**
+   * Execute a sub-workflow node
+   */
+  private async executeSubWorkflowNode(
+    node: WorkflowNode,
+    config: SubWorkflowNodeConfig,
+    context: WorkflowContext,
+    nodeStates: Record<string, NodeState>,
+  ): Promise<{
+    state: NodeState;
+    contextUpdates: Record<string, unknown>;
+    waiting: boolean;
+  }> {
+    const startTime = Date.now();
+
+    // 1. Resolve workflow definition
+    let workflowDef: WorkflowDefinition;
+    if (typeof config.workflow === "string") {
+      throw new Error("Resolving workflow by ID is not yet supported in this execution context. Pass the WorkflowDefinition object.");
+    } else {
+      workflowDef = config.workflow;
+    }
+
+    // 2. Resolve input
+    const input = typeof config.input === "function" 
+      ? await config.input(context) 
+      : (config.input ?? context.input);
+
+    // 3. Expand steps (handle dynamic steps builder)
+    let steps: WorkflowNode[];
+    if (typeof workflowDef.steps === "function") {
+      steps = workflowDef.steps({
+        input,
+        context
+      });
+    } else {
+      steps = workflowDef.steps;
+    }
+
+    // 4. Execute sub-workflow
+    // We create a new isolated run context for the subworkflow
+    const subRunId = `${node.id}_sub_${generateId()}`;
+    
+    // Execute recursively
+    const result = await this.execute(steps, {
+      id: subRunId,
+      workflowId: workflowDef.id,
+      status: "running",
+      input,
+      nodeStates: {}, 
+      currentNodes: [],
+      context: { 
+        input, // Subworkflow starts with fresh context scoped to its input
+        // We do NOT inherit parent context to ensure isolation, 
+        // unless explicitly passed via input.
+      },
+      checkpoints: [],
+      pendingApprovals: [],
+      createdAt: new Date(),
+    });
+
+    // 5. Process result
+    let finalOutput = result.context; // Default output is the final context
+    
+    // If sub-workflow has explicit output transformation
+    if (result.completed && config.output) {
+      finalOutput = config.output(result.context) as any;
+    }
+
+    const state: NodeState = {
+      nodeId: node.id,
+      status: result.completed ? "completed" : (result.waiting ? "running" : "failed"),
+      output: finalOutput,
+      error: result.error,
+      attempt: 1,
+      startedAt: new Date(startTime),
+      completedAt: result.completed ? new Date() : undefined,
+    };
+
+    this.config.onNodeComplete?.(node.id, state);
+
+    return {
+      state,
+      contextUpdates: result.completed ? { [node.id]: finalOutput } : {},
+      waiting: result.waiting,
+    };
   }
 
   /**

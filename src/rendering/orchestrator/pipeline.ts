@@ -39,27 +39,48 @@ export class RenderPipeline {
     return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("").slice(0, 16);
   }
 
+  private async loadModule(filePath: string): Promise<any> {
+    const fileContent = await this.config.adapter.fs.readFile(filePath);
+    const { transformToESM } = await import("@veryfront/transforms/esm-transform.ts");
+    const { getGlobalTmpDir } = await import(
+      "@veryfront/modules/react-loader/index.ts"
+    );
+
+    const transformedCode = await transformToESM(
+      fileContent,
+      filePath,
+      this.config.projectDir,
+      this.config.adapter,
+      {
+        projectId: this.config.projectDir,
+        dev: this.config.mode === "development",
+      },
+    );
+
+    const tmpDir = await getGlobalTmpDir();
+    const hash = await this.generateHash(filePath);
+    const tempFilePath = `${tmpDir}/mod-${hash}.js`;
+    await this.config.adapter.fs.writeFile(tempFilePath, transformedCode);
+
+    const moduleUrl = `file://${tempFilePath}?t=${Date.now()}`;
+    return await import(moduleUrl);
+  }
+
   async renderPage(slug: string, options?: RenderOptions): Promise<RenderResult> {
     const pageInfo = await this.config.pageResolver.resolvePage(slug);
 
+    // 1. Collect layouts first to enable parallel data fetching
+    const layoutResult = await this.config.layoutOrchestrator.collectLayouts(pageInfo);
+    const providerResult = await this.config.layoutOrchestrator.collectProviders();
+
     let dataFetchingProps: Record<string, unknown> | undefined;
-    let loadedPageModule: PageWithData | undefined;
+    const layoutDataMap = new Map<string, Record<string, unknown>>();
 
     const fileExtension = pageInfo.entity.id.split(".").pop()?.toLowerCase() || "";
     const isComponentPage = ["tsx", "jsx", "ts", "js"].includes(fileExtension);
     const isInPagesDir = pageInfo.entity.id.includes("/pages/");
 
-    logger.info("[renderPage] Data fetching check", {
-      slug,
-      fileExtension,
-      isComponentPage,
-      isInPagesDir,
-      hasRequest: !!options?.request,
-      hasUrl: !!options?.url,
-      pageId: pageInfo.entity.id,
-    });
-
-    if (isComponentPage && isInPagesDir && options?.request && options?.url) {
+    if (options?.request && options?.url) {
       try {
         if (!options.params || Object.keys(options.params).length === 0) {
           logger.info("[renderPage] Attempting to extract Pages Router params", {
@@ -119,104 +140,86 @@ export class RenderPipeline {
           }
         }
 
-        logger.info("[renderPage] Loading page module for data fetching", {
-          pageId: pageInfo.entity.id,
-        });
+        // Parallel Data Fetching
+        const jobs: Array<{ type: "page" | "layout"; id: string; run: () => Promise<any> }> = [];
 
-        const fileContent = await this.config.adapter.fs.readFile(pageInfo.entity.id);
+        const dataContext: DataContext = {
+          params: options.params || {},
+          query: options.url.searchParams,
+          request: options.request,
+          url: options.url,
+        };
 
-        // Transform to ESM and write to temp file for dynamic import
-        const { transformToESM } = await import("@veryfront/transforms/esm-transform.ts");
-        const { getGlobalTmpDir } = await import(
-          "@veryfront/modules/react-loader/index.ts"
-        );
-
-        const transformedCode = await transformToESM(
-          fileContent,
-          pageInfo.entity.id,
-          this.config.projectDir,
-          this.config.adapter,
-          {
-            projectId: this.config.projectDir,
-            dev: this.config.mode === "development",
-          },
-        );
-
-        const tmpDir = await getGlobalTmpDir();
-        const hash = await this.generateHash(pageInfo.entity.id);
-        const tempFilePath = `${tmpDir}/page-${hash}.js`;
-        await this.config.adapter.fs.writeFile(tempFilePath, transformedCode);
-
-        const moduleUrl = `file://${tempFilePath}?t=${Date.now()}`;
-        loadedPageModule = await import(moduleUrl) as PageWithData;
-
-        logger.info("[renderPage] Page module loaded", {
-          hasModule: !!loadedPageModule,
-          hasGetServerData: !!(loadedPageModule?.getServerData),
-          hasGetStaticData: !!(loadedPageModule?.getStaticData),
-        });
-
-        if (
-          loadedPageModule && (loadedPageModule.getServerData || loadedPageModule.getStaticData)
-        ) {
-          const dataContext: DataContext = {
-            params: options.params || {},
-            query: options.url.searchParams,
-            request: options.request,
-            url: options.url,
-          };
-
-          logger.info("[renderPage] Calling data fetching with context", {
-            slug,
-            params: dataContext.params,
-            queryString: dataContext.url.search,
-          });
-
-          const dataResult = await this.dataFetcher.fetchData(
-            loadedPageModule,
-            dataContext,
-            this.config.mode,
-          );
-
-          logger.info("[renderPage] Data result", {
-            slug,
-            hasNotFound: !!dataResult.notFound,
-            hasRedirect: !!dataResult.redirect,
-            hasProps: !!dataResult.props,
-          });
-
-          // Handle notFound
-          if (dataResult.notFound) {
-            throw new VeryfrontError(
-              "Page returned notFound",
-              ErrorCode.FILE_NOT_FOUND,
-              { slug },
-            );
-          }
-
-          // Handle redirect
-          if (dataResult.redirect) {
-            // For now, throw an error that the handler can catch
-            // In the future, this could return a special redirect result
-            throw new VeryfrontError(
-              `Redirect to ${dataResult.redirect.destination}`,
-              ErrorCode.RENDER_ERROR,
-              {
-                slug,
-                redirect: dataResult.redirect,
-              },
-            );
-          }
-
-          dataFetchingProps = dataResult.props as Record<string, unknown> | undefined;
-          logger.info("[renderPage] Data fetching succeeded", {
-            slug,
-            hasProps: !!dataFetchingProps,
-            propKeys: dataFetchingProps ? Object.keys(dataFetchingProps) : [],
+        // Page Job
+        if (isComponentPage && isInPagesDir) {
+          jobs.push({
+            type: "page",
+            id: pageInfo.entity.id,
+            run: async () => {
+              const mod = await this.loadModule(pageInfo.entity.id);
+              if (mod && (mod.getServerData || mod.getStaticData)) {
+                return this.dataFetcher.fetchData(mod, dataContext, this.config.mode);
+              }
+              return null;
+            },
           });
         }
+
+        // Layout Jobs
+        for (const layout of layoutResult.nestedLayouts) {
+          if (layout.kind === "tsx" && layout.componentPath) {
+            jobs.push({
+              type: "layout",
+              id: layout.componentPath,
+              run: async () => {
+                const mod = await this.loadModule(layout.componentPath!);
+                if (mod && (mod.getServerData || mod.getStaticData)) {
+                  return this.dataFetcher.fetchData(mod, dataContext, this.config.mode);
+                }
+                return null;
+              },
+            });
+          }
+        }
+
+        logger.info("[renderPage] Executing parallel data fetching jobs", { count: jobs.length });
+        const results = await Promise.all(jobs.map((j) => j.run()));
+
+        for (let i = 0; i < jobs.length; i++) {
+          const job = jobs[i];
+          if (!job) continue;
+          const result = results[i];
+          if (result) {
+            if (result.notFound) {
+              throw new VeryfrontError(
+                "Page/Layout returned notFound",
+                ErrorCode.FILE_NOT_FOUND,
+                { slug, component: job.id },
+              );
+            }
+
+            if (result.redirect) {
+              throw new VeryfrontError(
+                `Redirect to ${result.redirect.destination}`,
+                ErrorCode.RENDER_ERROR,
+                {
+                  slug,
+                  redirect: result.redirect,
+                },
+              );
+            }
+
+            if (result.props) {
+              if (job.type === "page") {
+                dataFetchingProps = result.props as Record<string, unknown>;
+              } else {
+                layoutDataMap.set(job.id, result.props as Record<string, unknown>);
+              }
+            }
+          }
+        }
       } catch (error) {
-        if (error instanceof VeryfrontError && error.code === ErrorCode.FILE_NOT_FOUND) {
+        if (error instanceof VeryfrontError) {
           throw error;
         }
 
@@ -227,9 +230,6 @@ export class RenderPipeline {
         throw error;
       }
     }
-
-    const layoutResult = await this.config.layoutOrchestrator.collectLayouts(pageInfo);
-    const providerResult = await this.config.layoutOrchestrator.collectProviders();
 
     const cacheResult = await this.config.cacheCoordinator.checkCache(
       slug,
@@ -268,6 +268,7 @@ export class RenderPipeline {
       layoutResult.layoutBundle,
       layoutResult.nestedLayouts,
       providerResult.providerItems,
+      layoutDataMap,
     );
 
     const ssrResult = await this.config.ssrOrchestrator.performSSRRendering(
