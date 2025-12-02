@@ -14,37 +14,17 @@
  *   cd /path/to/test-project && npm link veryfront
  */
 
-import * as esbuild from "esbuild";
+import * as esbuild from "esbuild/mod.js";
 import { createFileSystem, FileSystem } from "../src/platform/compat/fs.ts";
-
-// Conditional imports for path module
-let pathMod: typeof import('node:path') | undefined;
-let fsPromises: typeof import('node:fs/promises') | undefined;
-
-// @ts-ignore - Deno global
-if (typeof Deno === 'undefined') {
-  pathMod = require('node:path');
-  fsPromises = require('node:fs/promises');
-}
-
-// Helper to get path functions
-const getPath = () => {
-  if (pathMod) {
-    return pathMod;
-  } else {
-    // Fallback for Deno, should already be globally available or imported via import maps
-    // @ts-ignore - Deno global
-    return require("std/path/mod.ts");
-  }
-};
+import * as pathHelper from "../src/platform/compat/path-helper.ts";
 
 // Helper to get fs functions (prioritizing the compat layer)
 const getFs = (): FileSystem => {
   return createFileSystem();
 };
 
-const __dirname = getPath().dirname(getPath().fromFileUrl(import.meta.url));
-const PROJECT_ROOT = getPath().resolve(__dirname, "..");
+const __dirname = pathHelper.dirname(pathHelper.fromFileUrl(import.meta.url));
+const PROJECT_ROOT = pathHelper.resolve(__dirname, "..");
 const fs = getFs();
 
 const denoJson = JSON.parse(await fs.readTextFile("./deno.json"));
@@ -58,7 +38,7 @@ for (const [key, value] of Object.entries(denoImports)) {
 		typeof value === "string" &&
 		value.startsWith("./")
 	) {
-		veryfrontImportMap[key] = resolve(PROJECT_ROOT, value);
+		veryfrontImportMap[key] = pathHelper.resolve(PROJECT_ROOT, value);
 	}
 }
 
@@ -81,7 +61,7 @@ function resolveVeryfrontImport(importPath: string): string {
 			const mappedPrefix = veryfrontImportMap[prefix];
 			if (!mappedPrefix) continue;
 			const remainder = importPath.slice(prefix.length - 1);
-			const resolvedPath = resolve(
+			const resolvedPath = pathHelper.resolve(
 				mappedPrefix.replace(/\/$/, ""),
 				remainder.replace(/^\//, ""),
 			);
@@ -90,7 +70,7 @@ function resolveVeryfrontImport(importPath: string): string {
 	}
 
 	// Fallback: assume src/<path> structure
-	const fallbackPath = resolve(
+	const fallbackPath = pathHelper.resolve(
 		PROJECT_ROOT,
 		"src",
 		importPath.replace("@veryfront/", "").replace("@veryfront", ""),
@@ -105,8 +85,8 @@ console.log(`\n📦 Building Veryfront v${version} for npm...\n`);
 try {
 	await Deno.remove(OUT_DIR, { recursive: true });
 } catch {}
-await ensureDir(OUT_DIR);
-await ensureDir(join(OUT_DIR, "dist"));
+await fs.mkdir(OUT_DIR, { recursive: true });
+await fs.mkdir(pathHelper.join(OUT_DIR, "dist"), { recursive: true });
 
 const entryPoints: Record<string, string> = {
 	"ai/index": "./src/ai/index.ts",
@@ -148,7 +128,7 @@ const denoResolvePlugin: esbuild.Plugin = {
 		build.onResolve({ filter: /^std\// }, (args) => {
 			if (args.path.startsWith("std/fmt/colors")) {
 				return {
-					path: resolve(PROJECT_ROOT, "src/platform/compat/console/ansi.ts"),
+					path: pathHelper.resolve(PROJECT_ROOT, "src/platform/compat/console/ansi.ts"),
 				};
 			}
 
@@ -183,7 +163,7 @@ const denoResolvePlugin: esbuild.Plugin = {
 				}
 				if (args.path.includes("/fmt/colors")) {
 					return {
-						path: resolve(PROJECT_ROOT, "src/platform/compat/console/ansi.ts"),
+						path: pathHelper.resolve(PROJECT_ROOT, "src/platform/compat/console/ansi.ts"),
 					};
 				}
 				if (args.path.includes("/fs/") || args.path.includes("/fs@")) {
@@ -242,14 +222,14 @@ const denoResolvePlugin: esbuild.Plugin = {
 					const mappedPrefix = veryfrontImportMap[prefix];
 					if (!mappedPrefix) continue;
 					const remainder = importPath.slice(prefix.length - 1);
-					const resolvedPath = resolve(
+					const resolvedPath = pathHelper.resolve(
 						mappedPrefix.replace(/\/$/, ""),
 						remainder.replace(/^\//, ""),
 					);
 					return { path: resolvedPath };
 				}
 			}
-			const fallbackPath = resolve(
+			const fallbackPath = pathHelper.resolve(
 				PROJECT_ROOT,
 				"src",
 				importPath.replace("@veryfront/", "").replace("@veryfront", ""),
@@ -290,18 +270,18 @@ const clientBundlePlugin: esbuild.Plugin = {
 		build.onResolve({ filter: /^std\// }, (args) => {
 			if (args.path.includes("/fmt/colors")) {
 				return {
-					path: resolve(PROJECT_ROOT, "src/platform/compat/console/ansi.ts"),
+					path: pathHelper.resolve(PROJECT_ROOT, "src/platform/compat/console/ansi.ts"),
 				};
 			}
 			if (args.path.includes("/path")) {
-				return { path: resolve(PROJECT_ROOT, "src/_shims/std-path.ts") };
+				return { path: pathHelper.resolve(PROJECT_ROOT, "src/_shims/std-path.ts") };
 			}
 			return { path: "node:path", external: true };
 		});
 
 		build.onResolve({ filter: /^@std\// }, (args) => {
 			if (args.path.includes("/path")) {
-				return { path: resolve(PROJECT_ROOT, "src/_shims/std-path.ts") };
+				return { path: pathHelper.resolve(PROJECT_ROOT, "src/_shims/std-path.ts") };
 			}
 			return { path: "node:path", external: true };
 		});
@@ -319,14 +299,14 @@ const clientBundlePlugin: esbuild.Plugin = {
 					const mappedPrefix = veryfrontImportMap[prefix];
 					if (!mappedPrefix) continue;
 					const remainder = importPath.slice(prefix.length - 1);
-					const resolvedPath = resolve(
+					const resolvedPath = pathHelper.resolve(
 						mappedPrefix.replace(/\/$/, ""),
 						remainder.replace(/^\//, ""),
 					);
 					return { path: resolvedPath };
 				}
 			}
-			const fallbackPath = resolve(
+			const fallbackPath = pathHelper.resolve(
 				PROJECT_ROOT,
 				"src",
 				importPath.replace("@veryfront/", "").replace("@veryfront", ""),
@@ -340,7 +320,7 @@ const clientBundlePlugin: esbuild.Plugin = {
 				args.path.includes("/fmt/colors")
 			) {
 				return {
-					path: resolve(PROJECT_ROOT, "src/platform/compat/console/ansi.ts"),
+					path: pathHelper.resolve(PROJECT_ROOT, "src/platform/compat/console/ansi.ts"),
 				};
 			}
 			const esmMatch = args.path.match(/esm\.sh\/(@?[^@/]+(?:\/[^@/]+)?)/);
@@ -483,8 +463,8 @@ const templateInjectionPlugin: esbuild.Plugin = {
 console.log("📝 Building ESM modules...\n");
 
 for (const [name, entryPath] of Object.entries(entryPoints)) {
-	const outfile = join(OUT_DIR, "dist", `${name}.js`);
-	await ensureDir(dirname(outfile));
+	const outfile = pathHelper.join(OUT_DIR, "dist", `${name}.js`);
+	await fs.mkdir(pathHelper.dirname(outfile), { recursive: true });
 
 	console.log(`  Building ${name}...`);
 
@@ -586,18 +566,18 @@ const cliBundlePlugin: esbuild.Plugin = {
 		build.onResolve({ filter: /^std\// }, (args) => {
 			if (args.path.includes("front_matter")) {
 				return {
-					path: resolve(PROJECT_ROOT, "src/_shims/std-front-matter.ts"),
+					path: pathHelper.resolve(PROJECT_ROOT, "src/_shims/std-front-matter.ts"),
 				};
 			}
 			if (args.path.includes("/fs")) {
-				return { path: resolve(PROJECT_ROOT, "src/_shims/std-fs.ts") };
+				return { path: pathHelper.resolve(PROJECT_ROOT, "src/_shims/std-fs.ts") };
 			}
 			if (args.path.includes("/path")) {
-				return { path: resolve(PROJECT_ROOT, "src/_shims/std-path.ts") };
+				return { path: pathHelper.resolve(PROJECT_ROOT, "src/_shims/std-path.ts") };
 			}
 			if (args.path.includes("/fmt/colors")) {
 				return {
-					path: resolve(PROJECT_ROOT, "src/platform/compat/console/ansi.ts"),
+					path: pathHelper.resolve(PROJECT_ROOT, "src/platform/compat/console/ansi.ts"),
 				};
 			}
 			if (args.path.includes("/flags")) return { path: "mri", external: true };
@@ -615,19 +595,19 @@ const cliBundlePlugin: esbuild.Plugin = {
 		// Handle @std/* imports (Deno standard library with @ prefix)
 		build.onResolve({ filter: /^@std\// }, (args) => {
 			if (args.path.includes("/path")) {
-				return { path: resolve(PROJECT_ROOT, "src/_shims/std-path.ts") };
+				return { path: pathHelper.resolve(PROJECT_ROOT, "src/_shims/std-path.ts") };
 			}
 			if (args.path.includes("/fs")) {
-				return { path: resolve(PROJECT_ROOT, "src/_shims/std-fs.ts") };
+				return { path: pathHelper.resolve(PROJECT_ROOT, "src/_shims/std-fs.ts") };
 			}
 			if (args.path.includes("/front_matter")) {
 				return {
-					path: resolve(PROJECT_ROOT, "src/_shims/std-front-matter.ts"),
+					path: pathHelper.resolve(PROJECT_ROOT, "src/_shims/std-front-matter.ts"),
 				};
 			}
 			if (args.path.includes("/fmt/colors")) {
 				return {
-					path: resolve(PROJECT_ROOT, "src/platform/compat/console/ansi.ts"),
+					path: pathHelper.resolve(PROJECT_ROOT, "src/platform/compat/console/ansi.ts"),
 				};
 			}
 			if (args.path.includes("/yaml")) return { path: "yaml", external: true };
@@ -644,19 +624,19 @@ const cliBundlePlugin: esbuild.Plugin = {
 				return { path: "esbuild", external: true };
 			if (args.path.includes("deno.land/std")) {
 				if (args.path.includes("/path")) {
-					return { path: resolve(PROJECT_ROOT, "src/_shims/std-path.ts") };
+					return { path: pathHelper.resolve(PROJECT_ROOT, "src/_shims/std-path.ts") };
 				}
 				if (args.path.includes("/fs")) {
-					return { path: resolve(PROJECT_ROOT, "src/_shims/std-fs.ts") };
+					return { path: pathHelper.resolve(PROJECT_ROOT, "src/_shims/std-fs.ts") };
 				}
 				if (args.path.includes("/fmt/colors")) {
 					return {
-						path: resolve(PROJECT_ROOT, "src/platform/compat/console/ansi.ts"),
+						path: pathHelper.resolve(PROJECT_ROOT, "src/platform/compat/console/ansi.ts"),
 					};
 				}
 				if (args.path.includes("/front_matter")) {
 					return {
-						path: resolve(PROJECT_ROOT, "src/_shims/std-front-matter.ts"),
+						path: pathHelper.resolve(PROJECT_ROOT, "src/_shims/std-front-matter.ts"),
 					};
 				}
 				if (args.path.includes("/assert"))
@@ -693,7 +673,7 @@ const cliBundlePlugin: esbuild.Plugin = {
 try {
 	await esbuild.build({
 		entryPoints: ["./src/cli/index/cli-main.ts"],
-		outfile: join(OUT_DIR, "dist", "cli.js"),
+		outfile: pathHelper.join(OUT_DIR, "dist", "cli.js"),
 		bundle: true,
 		format: "esm",
 		platform: "node",
@@ -727,7 +707,7 @@ try {
 		jsx: "automatic",
 					jsxImportSource: "react",
 				});
-				const stat = await fs.stat(getPath().join(OUT_DIR, "dist", "cli.js"));
+				const stat = await fs.stat(pathHelper.join(OUT_DIR, "dist", "cli.js"));
 				console.log(
 					`  ✓ Built CLI bundle: ${(stat.size / 1024).toFixed(1)} KB (single file)`,
 				);} catch (error) {
@@ -1059,8 +1039,8 @@ export declare function AIDevTools(props: DevToolsConfig): JSX.Element | null;
 
 // Write all declaration files
 for (const [filename, content] of Object.entries(declarationFiles)) {
-	const dtsPath = getPath().join(OUT_DIR, "dist", filename);
-	await fs.mkdir(getPath().dirname(dtsPath), { recursive: true });
+	const dtsPath = pathHelper.join(OUT_DIR, "dist", filename);
+	await fs.mkdir(pathHelper.dirname(dtsPath), { recursive: true });
 	await fs.writeTextFile(dtsPath, content);
 	console.log(`  ✓ Generated ${filename}`);
 }
@@ -1196,12 +1176,12 @@ const packageJson = {
 };
 
 await fs.writeTextFile(
-	getPath().join(OUT_DIR, "package.json"),
+	pathHelper.join(OUT_DIR, "package.json"),
 	JSON.stringify(packageJson, null, 2),
 );
 
 console.log("📄 Creating CLI bin wrapper...");
-await fs.mkdir(getPath().join(OUT_DIR, "bin"), { recursive: true });
+await fs.mkdir(pathHelper.join(OUT_DIR, "bin"), { recursive: true });
 const cliBinContent = `#!/usr/bin/env node
 // CLI entry point - calls main() from the bundled CLI
 import { main } from '../dist/cli.js';
@@ -1210,41 +1190,30 @@ main().catch(err => {
   process.exit(1);
 });
 `;
-const binPath = getPath().join(OUT_DIR, "bin", "veryfront.js");
+const binPath = pathHelper.join(OUT_DIR, "bin", "veryfront.js");
 await fs.writeTextFile(binPath, cliBinContent);
 
-// Conditional chmod for Deno
+// Make the bin file executable (Deno only)
 // @ts-ignore - Deno global
 if (typeof Deno !== 'undefined') {
   // @ts-ignore - Deno global
   await Deno.chmod(binPath, 0o755);
-} else if (fsPromises) {
-  // Node.js chmod
-  await fsPromises.chmod(binPath, 0o755);
 }
 
 console.log("📄 Copying additional files...");
 try {
-  if (fsPromises) {
-		await fsPromises.copyFile("README.md", getPath().join(OUT_DIR, "README.md"));
-  } else {
-    // @ts-ignore - Deno global
-		await Deno.copyFile("README.md", getPath().join(OUT_DIR, "README.md"));
-  }
+  // @ts-ignore - Deno global
+  await Deno.copyFile("README.md", pathHelper.join(OUT_DIR, "README.md"));
 } catch {
 	console.log("  No README.md found");
 }
 try {
-  if (fsPromises) {
-		await fsPromises.copyFile("LICENSE", getPath().join(OUT_DIR, "LICENSE"));
-  } else {
-    // @ts-ignore - Deno global
-		await Deno.copyFile("LICENSE", getPath().join(OUT_DIR, "LICENSE"));
-  }
+  // @ts-ignore - Deno global
+  await Deno.copyFile("LICENSE", pathHelper.join(OUT_DIR, "LICENSE"));
 } catch {
 	console.log("  No LICENSE found, creating MIT license...");
 	await fs.writeTextFile(
-		getPath().join(OUT_DIR, "LICENSE"),
+		pathHelper.join(OUT_DIR, "LICENSE"),
 		`MIT License\n\nCopyright (c) ${new Date().getFullYear()} Veryfront\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE.\n`,
 	);
 }
