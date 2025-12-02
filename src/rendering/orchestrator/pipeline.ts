@@ -54,6 +54,7 @@ export class RenderPipeline {
       {
         projectId: this.config.projectDir,
         dev: this.config.mode === "development",
+        ssr: true, // Required for Node.js SSR - prevents esm.sh URL transformation
       },
     );
 

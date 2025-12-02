@@ -13,6 +13,7 @@ import type {
   WorkflowNode,
 } from "../types.ts";
 import { parseDuration } from "../types.ts";
+import type { BlobStorage } from "../blob/types.ts";
 
 /** Default timeout for workflow steps (5 minutes) */
 const DEFAULT_STEP_TIMEOUT_MS = 5 * 60 * 1000;
@@ -45,6 +46,8 @@ export interface StepExecutorConfig {
   toolRegistry?: ToolRegistry;
   /** Default timeout for steps (in milliseconds) */
   defaultTimeout?: number;
+  /** Blob storage access */
+  blobStorage?: BlobStorage;
   /** Callback when step starts */
   onStepStart?: (nodeId: string, input: unknown) => void;
   /** Callback when step completes */
@@ -250,7 +253,10 @@ export class StepExecutor {
     // Execute tool
     const result = await resolvedTool.execute(
       input as Record<string, unknown>,
-      { agentId: "workflow" },
+      { 
+        agentId: "workflow",
+        blobStorage: this.config.blobStorage, 
+      },
     );
 
     return result;

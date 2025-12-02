@@ -12,12 +12,14 @@ import type {
   WorkflowNode,
   WorkflowRun,
   WorkflowStatus,
+  BlobResolver,
 } from "../types.ts";
 import { generateId, parseDuration } from "../types.ts";
 import { hasLockSupport, type WorkflowBackend } from "../backends/types.ts";
 import { DAGExecutor } from "./dag-executor.ts";
 import { CheckpointManager } from "./checkpoint-manager.ts";
 import { StepExecutor, type StepExecutorConfig } from "./step-executor.ts";
+import type { BlobStorage } from "../blob/types.ts";
 
 /**
  * Workflow executor configuration
@@ -25,6 +27,8 @@ import { StepExecutor, type StepExecutorConfig } from "./step-executor.ts";
 export interface WorkflowExecutorConfig {
   /** Backend for persistence */
   backend: WorkflowBackend;
+  /** Blob storage for large data */
+  blobStorage?: BlobStorage;
   /** Step executor configuration */
   stepExecutor?: StepExecutorConfig;
   /** Maximum concurrent parallel executions */
@@ -73,7 +77,8 @@ export class WorkflowExecutor {
   private stepExecutor: StepExecutor;
   private checkpointManager: CheckpointManager;
   private dagExecutor: DAGExecutor;
-  private workflows = new Map<string, WorkflowDefinition>();
+  private workflows = new Map<string, WorkflowDefinition<any, any>>();
+  private blobResolver?: BlobResolver;
 
   /** Default lock duration: 30 seconds */
   private static readonly DEFAULT_LOCK_DURATION = 30000;
@@ -87,7 +92,10 @@ export class WorkflowExecutor {
     };
 
     // Initialize components
-    this.stepExecutor = new StepExecutor(this.config.stepExecutor);
+    this.stepExecutor = new StepExecutor({
+      ...this.config.stepExecutor,
+      blobStorage: this.config.blobStorage,
+    });
 
     this.checkpointManager = new CheckpointManager({
       backend: this.config.backend,
@@ -103,19 +111,30 @@ export class WorkflowExecutor {
       // by executeAsync() after DAG execution returns with waiting: true
       onWaiting: () => {},
     });
+
+    if (this.config.blobStorage) {
+      const bs = this.config.blobStorage;
+      this.blobResolver = {
+        getText: async (ref) => ref.__kind === "blob" ? bs.getText(ref.id) : null,
+        getBytes: async (ref) => ref.__kind === "blob" ? bs.getBytes(ref.id) : null,
+        getStream: async (ref) => ref.__kind === "blob" ? bs.getStream(ref.id) : null,
+        stat: async (ref) => ref.__kind === "blob" ? bs.stat(ref.id) : null,
+        delete: async (ref) => ref.__kind === "blob" ? bs.delete(ref.id) : undefined,
+      };
+    }
   }
 
   /**
    * Register a workflow definition
    */
-  register(workflow: WorkflowDefinition): void {
+  register<TInput, TOutput>(workflow: WorkflowDefinition<TInput, TOutput>): void {
     this.workflows.set(workflow.id, workflow);
   }
 
   /**
    * Get a registered workflow
    */
-  getWorkflow(id: string): WorkflowDefinition | undefined {
+  getWorkflow(id: string): WorkflowDefinition<any, any> | undefined {
     return this.workflows.get(id);
   }
 
@@ -343,9 +362,16 @@ export class WorkflowExecutor {
       nodes = workflow.steps;
     } else {
       // Dynamic steps - call the function
+      if (!this.config.blobStorage) {
+         // Warn if blobStorage is missing but dynamic steps might need it? 
+         // For now, we allow it to be undefined if user doesn't use it.
+      }
+      
       const builderContext: StepBuilderContext = {
         input: context.input,
         context,
+        blobStorage: this.config.blobStorage,
+        blob: this.blobResolver,
       };
       nodes = workflow.steps(builderContext);
     }

@@ -122,6 +122,8 @@ const ESM_PACKAGE_MAP: Record<string, string> = {
  * - '/absolute' ✗ (not handled)
  * - 'https://...' ✗ (not handled)
  *
+ * @param bundle - If true, fetches esm.sh content at build time (for Node.js SSR).
+ *                 If false, marks as external for runtime loading (for browser).
  * @returns ESBuild plugin
  *
  * @example
@@ -131,7 +133,7 @@ const ESM_PACKAGE_MAP: Record<string, string> = {
  * // import './Button' -> bundled normally
  * ```
  */
-export function createBareExternalPlugin(): Plugin {
+export function createBareExternalPlugin(bundle = false): Plugin {
   return {
     name: "veryfront-bare-ext",
     setup(build: PluginBuild) {
@@ -145,15 +147,43 @@ export function createBareExternalPlugin(): Plugin {
           // Check if we have a known mapping for this package
           const esmUrl = ESM_PACKAGE_MAP[args.path];
           if (esmUrl) {
-            // Rewrite to esm.sh URL
+            if (bundle) {
+              // Fetch and bundle at build time - use namespace to trigger onLoad
+              return { path: esmUrl, namespace: "https" };
+            }
+            // Rewrite to esm.sh URL for browser runtime loading
             return { path: esmUrl, external: true };
           }
           // For unknown packages, try esm.sh with the package name
-          // This handles most npm packages automatically
-          return { path: `https://esm.sh/${args.path}`, external: true };
+          const fallbackUrl = `https://esm.sh/${args.path}`;
+          if (bundle) {
+            return { path: fallbackUrl, namespace: "https" };
+          }
+          return { path: fallbackUrl, external: true };
         }
         return undefined;
       });
+
+      // When bundle=true, fetch https:// URLs at build time
+      if (bundle) {
+        build.onLoad({ filter: /.*/, namespace: "https" }, async (args: OnLoadArgs) => {
+          try {
+            const response = await fetch(args.path);
+            if (!response.ok) {
+              throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            }
+            const contents = await response.text();
+            return { contents, loader: "js" };
+          } catch (error) {
+            return {
+              errors: [{
+                text: `Failed to fetch ${args.path}: ${String(error)}`,
+                location: null,
+              }],
+            };
+          }
+        });
+      }
     },
   };
 }

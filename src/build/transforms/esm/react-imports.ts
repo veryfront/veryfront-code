@@ -64,30 +64,50 @@ async function getBundledReactPath(subpath: string = ""): Promise<string | null>
 }
 
 export async function resolveReactImports(code: string, forSSR: boolean = false): Promise<string> {
-  // For Node.js SSR, check if project has both react and react-dom
+  // For Node.js SSR, always resolve to absolute file:// URLs
+  // This is required because temp modules can't resolve bare imports
   if (isNodeRuntime() && forSSR) {
     const hasReactDom = await checkProjectHasReactDom();
-    if (!hasReactDom) {
-      // Project doesn't have react-dom, rewrite imports to use bundled React
-      // This ensures consistency with the bundled react-dom/server used by renderer
-      const bundledReact = await getBundledReactPath();
-      const bundledJsxRuntime = await getBundledReactPath("/jsx-runtime");
-      const bundledJsxDevRuntime = await getBundledReactPath("/jsx-dev-runtime");
+    const { pathToFileURL } = await import("node:url");
 
-      if (bundledReact && bundledJsxRuntime && bundledJsxDevRuntime) {
-        const { pathToFileURL } = await import("node:url");
-        const bundledImports: Record<string, string> = {
-          "react/jsx-runtime": pathToFileURL(bundledJsxRuntime).href,
-          "react/jsx-dev-runtime": pathToFileURL(bundledJsxDevRuntime).href,
-          "react": pathToFileURL(bundledReact).href,
+    if (hasReactDom) {
+      // Project has react and react-dom, resolve to project's node_modules
+      try {
+        const { createRequire } = await import("node:module");
+        const projectRequire = createRequire(pathToFileURL(process.cwd() + "/").href);
+
+        const projectImports: Record<string, string> = {
+          "react/jsx-runtime": pathToFileURL(projectRequire.resolve("react/jsx-runtime")).href,
+          "react/jsx-dev-runtime": pathToFileURL(projectRequire.resolve("react/jsx-dev-runtime")).href,
+          "react": pathToFileURL(projectRequire.resolve("react")).href,
         };
 
         return replaceSpecifiers(code, (specifier) => {
-          return bundledImports[specifier] || null;
+          return projectImports[specifier] || null;
         });
+      } catch {
+        // Fall through to bundled React
       }
     }
-    // Project has react-dom, keep bare imports for Node.js to resolve
+
+    // Project doesn't have react-dom or resolution failed, use bundled React
+    const bundledReact = await getBundledReactPath();
+    const bundledJsxRuntime = await getBundledReactPath("/jsx-runtime");
+    const bundledJsxDevRuntime = await getBundledReactPath("/jsx-dev-runtime");
+
+    if (bundledReact && bundledJsxRuntime && bundledJsxDevRuntime) {
+      const bundledImports: Record<string, string> = {
+        "react/jsx-runtime": pathToFileURL(bundledJsxRuntime).href,
+        "react/jsx-dev-runtime": pathToFileURL(bundledJsxDevRuntime).href,
+        "react": pathToFileURL(bundledReact).href,
+      };
+
+      return replaceSpecifiers(code, (specifier) => {
+        return bundledImports[specifier] || null;
+      });
+    }
+
+    // Last resort: keep bare imports
     return code;
   }
 

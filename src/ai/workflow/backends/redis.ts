@@ -267,7 +267,7 @@ export class RedisBackend implements WorkflowBackend {
    */
   private async createConnection(): Promise<RedisClient> {
     // Dynamic import for redis
-    const { connect } = await import("redis");
+    const { connect } = await import("https://deno.land/x/redis@v0.32.1/mod.ts");
 
     const hostname = this.config.hostname || "127.0.0.1";
     const port = this.config.port || 6379;
