@@ -39,18 +39,18 @@ export interface ToolConfig<TInput = any, TOutput = any> {
   };
 }
 
+import type { BlobStorage } from "../workflow/blob/types.ts";
+
 /**
- * Tool execution context
+ * Context passed to tool execution
  */
 export interface ToolExecutionContext {
-  /** Agent ID calling the tool */
+  /** ID of the agent calling the tool (if any) */
   agentId?: string;
-
-  /** Request metadata */
-  metadata?: Record<string, unknown>;
-
-  /** Platform-specific environment (e.g., CF Workers env) */
-  env?: Record<string, unknown>;
+  /** Additional context */
+  [key: string]: unknown;
+  /** Blob storage access (if configured in workflow) */
+  blobStorage?: BlobStorage;
 }
 
 /**

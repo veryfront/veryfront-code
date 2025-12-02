@@ -7,6 +7,7 @@
 import type { z } from "zod";
 import type { Agent } from "../types/agent.ts";
 import type { Tool } from "../types/tool.ts";
+import type { BlobRef, BlobStorage } from "./blob/types.ts";
 
 // ============================================================================
 // Workflow Status
@@ -84,7 +85,7 @@ export interface StepNodeConfig extends BaseNodeConfig {
   /** Agent ID or agent instance to execute */
   agent?: string | Agent;
   /** Tool ID or tool instance to execute */
-  tool?: string | Tool;
+  tool?: string | Tool | undefined;
   /** Input for the agent/tool - can be static or computed from context */
   input?:
     | string
@@ -197,6 +198,22 @@ export interface WorkflowContext {
 }
 
 /**
+ * Helper to resolve BlobRefs into actual content.
+ */
+export interface BlobResolver {
+  /** Get blob content as text. */
+  getText(ref: BlobRef): Promise<string | null>;
+  /** Get blob content as Uint8Array. */
+  getBytes(ref: BlobRef): Promise<Uint8Array | null>;
+  /** Get blob content as ReadableStream. */
+  getStream(ref: BlobRef): Promise<ReadableStream | null>;
+  /** Get blob metadata. */
+  stat(ref: BlobRef): Promise<BlobRef | null>;
+  /** Delete blob data. */
+  delete(ref: BlobRef): Promise<void>;
+}
+
+/**
  * Step builder function context
  */
 export interface StepBuilderContext<TInput = unknown> {
@@ -204,6 +221,10 @@ export interface StepBuilderContext<TInput = unknown> {
   input: TInput;
   /** Accumulated context from previous steps */
   context: WorkflowContext;
+  /** Blob storage access (if configured) */
+  blobStorage?: BlobStorage;
+  /** Helper to resolve BlobRefs to content */
+  blob?: BlobResolver;
 }
 
 /**

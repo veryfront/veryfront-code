@@ -21,7 +21,7 @@ export interface StepOptions extends Omit<BaseNodeConfig, "checkpoint"> {
   /** Agent ID or agent instance to execute */
   agent?: string | Agent;
   /** Tool ID or tool instance to execute */
-  tool?: string | Tool;
+  tool?: string | Tool | undefined;
   /** Input for the agent/tool */
   input?:
     | string

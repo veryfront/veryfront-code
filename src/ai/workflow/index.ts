@@ -70,6 +70,7 @@ export type {
   WorkflowContext,
   StepBuilderContext,
   WorkflowDefinition,
+  BlobResolver,
 
   // Run state
   NodeState,
@@ -98,6 +99,8 @@ export {
   waitForApproval,
   waitForEvent,
   delay,
+  map,
+  subWorkflow,
 
   // Convenience builders
   agentStep,
@@ -119,7 +122,23 @@ export type {
   BranchOptions,
   WaitForApprovalOptions,
   WaitForEventOptions,
+  MapOptions,
+  SubWorkflowOptions,
 } from "./dsl/index.ts";
+
+// =============================================================================
+// Blob Storage
+// =============================================================================
+export { 
+  type BlobRef, 
+  type BlobStorage, 
+  type StoreBlobOptions, 
+  LocalBlobStorage, 
+  type S3BlobStorageConfig, 
+  S3BlobStorage, 
+  type GCSBlobStorageConfig, 
+  GCSBlobStorage 
+} from "./blob/index.ts";
 
 // =============================================================================
 // Backend
