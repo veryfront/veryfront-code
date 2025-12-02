@@ -45,7 +45,7 @@ deno run --allow-net --allow-env --allow-read example.ts
 ```typescript
 import { openai, generateText } from 'veryfront/ai';
 
-const model = openai('gpt-4', { apiKey });
+const model = openai('gpt-4o', { apiKey });
 const result = await generateText({
   model,
   prompt: 'Hello',
@@ -84,7 +84,7 @@ import { openai } from 'veryfront/ai';
 import { initializeProviders } from 'veryfront/ai';
 
 // Use AI SDK for standard providers
-const model = openai('gpt-4');
+const model = openai('gpt-4o');
 
 // Use custom for special cases
 initializeProviders({

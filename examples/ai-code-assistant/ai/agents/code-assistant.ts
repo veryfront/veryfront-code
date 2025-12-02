@@ -10,7 +10,7 @@ import { promptRegistry } from 'veryfront/ai/mcp/prompt';
 export default agent({
   id: 'codeAssistant',
 
-  model: 'openai/gpt-4',
+  model: 'openai/gpt-4o',
 
   // Load the system prompt from the prompt registry
   system: async () => {

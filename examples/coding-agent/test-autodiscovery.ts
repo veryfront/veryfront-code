@@ -6,6 +6,20 @@
 
 import { discoverAll, getMCPStats } from "veryfront/ai";
 
+// Helper for Cross-Platform Compatibility (Deno/Node)
+function exitProcess(code: number) {
+  // @ts-ignore - Deno global
+  if (typeof Deno !== 'undefined') {
+    // @ts-ignore - Deno global
+    Deno.exit(code);
+  }
+  // @ts-ignore - process global
+  else if (typeof process !== 'undefined') {
+    // @ts-ignore - process global
+    process.exit(code);
+  }
+}
+
 console.log("=== Testing Veryfront AI Autodiscovery ===\n");
 
 // Discover all AI components
@@ -58,5 +72,5 @@ if (allFound) {
   console.log("\n❌ FAILED: Some tools were not discovered");
   console.log(`   Expected: ${expectedTools.join(", ")}`);
   console.log(`   Found: ${discoveredTools.join(", ")}`);
-  Deno.exit(1);
+  exitProcess(1);
 }

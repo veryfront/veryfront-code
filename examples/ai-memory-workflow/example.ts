@@ -19,12 +19,27 @@ import {
 } from 'veryfront/ai';
 import { z } from 'zod';
 
+// Helpers for Cross-Platform Compatibility (Deno/Node)
+function getEnv(key: string): string | undefined {
+  // @ts-ignore - Deno global
+  if (typeof Deno !== 'undefined') {
+    // @ts-ignore - Deno global
+    return Deno.env.get(key);
+  }
+  // @ts-ignore - process global
+  else if (typeof process !== 'undefined' && process.env) {
+    // @ts-ignore - process global
+    return process.env[key];
+  }
+  return undefined;
+}
+
 console.log('=== Phase 3: Agent Enhancements ===\n');
 
 // Initialize providers
 initializeProviders({
   openai: {
-    apiKey: Deno.env.get('OPENAI_API_KEY') || 'sk-test',
+    apiKey: getEnv('OPENAI_API_KEY') || 'sk-test',
   },
 });
 
@@ -37,7 +52,7 @@ console.log('=== 1. Memory Strategies ===\n');
 // Conversation Memory (default) - Keeps all messages
 const conversationAgent = agent({
   id: 'conversationAgent',
-  model: 'openai/gpt-4',
+  model: 'openai/gpt-4o',
   system: 'You are a helpful assistant with perfect recall',
   memory: {
     type: 'conversation',
@@ -53,7 +68,7 @@ console.log('  Behavior: Keeps all messages\n');
 // Buffer Memory - Keeps last N messages
 const bufferAgent = agent({
   id: 'bufferAgent',
-  model: 'openai/gpt-4',
+  model: 'openai/gpt-4o',
   system: 'You are a helpful assistant',
   memory: {
     type: 'buffer',
@@ -69,7 +84,7 @@ console.log('  Behavior: Keeps only last 5 messages\n');
 // Summary Memory - Summarizes old messages
 const summaryAgent = agent({
   id: 'summaryAgent',
-  model: 'openai/gpt-4',
+  model: 'openai/gpt-4o',
   system: 'You are a helpful assistant',
   memory: {
     type: 'summary',
@@ -91,7 +106,7 @@ console.log('=== 2. Agent Composition ===\n');
 // Create specialized agents
 const researchAgent = agent({
   id: 'researcher',
-  model: 'openai/gpt-4',
+  model: 'openai/gpt-4o',
   system: 'You are an expert researcher. Provide thorough, factual information.',
   memory: {
     type: 'buffer',
@@ -101,7 +116,7 @@ const researchAgent = agent({
 
 const writerAgent = agent({
   id: 'writer',
-  model: 'openai/gpt-4',
+  model: 'openai/gpt-4o',
   system: 'You are a skilled content writer. Write engaging, clear content.',
   memory: {
     type: 'buffer',
@@ -120,7 +135,7 @@ registerAgent('writer', writerAgent);
 // Create orchestrator that uses other agents
 const orchestrator = agent({
   id: 'orchestrator',
-  model: 'openai/gpt-4',
+  model: 'openai/gpt-4o',
   system: `You coordinate between specialized agents.
 
 When asked to create content:
@@ -202,7 +217,7 @@ console.log(`  Type: ${summaryStats.type}\n`);
 // 5. Test Workflow (if API key set)
 // ============================================================================
 
-const apiKey = Deno.env.get('OPENAI_API_KEY');
+const apiKey = getEnv('OPENAI_API_KEY');
 
 if (apiKey && apiKey !== 'sk-test') {
   console.log('=== 5. Testing Workflow Execution ===\n');

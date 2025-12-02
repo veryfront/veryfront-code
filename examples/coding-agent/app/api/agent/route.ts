@@ -29,6 +29,8 @@ async function loadEnvFile(): Promise<Record<string, string>> {
   }
 }
 
+const MODEL_ID = "anthropic/claude-3-5-sonnet-latest";
+
 // Load .env and initialize providers at MODULE level (before any requests)
 const env = await loadEnvFile();
 const apiKey = env.ANTHROPIC_API_KEY || Deno.env.get("ANTHROPIC_API_KEY") || "";
@@ -42,7 +44,7 @@ initializeProviders({
 
 // Debug: Verify provider can be retrieved
 try {
-  const _testProvider = getProviderFromModel("anthropic/claude-sonnet-4-20250514");
+  const _testProvider = getProviderFromModel(MODEL_ID);
   console.log("[API] Provider initialization successful - can retrieve provider");
 } catch (err) {
   console.error("[API] Provider initialization FAILED:", err);
@@ -74,7 +76,7 @@ export async function POST(request: Request) {
     // Debug: Check provider accessibility in request context
     console.log("[POST] Verifying provider can be retrieved");
     try {
-      const _testProvider = getProviderFromModel("anthropic/claude-sonnet-4-20250514");
+      const _testProvider = getProviderFromModel(MODEL_ID);
       console.log("[POST] Successfully retrieved provider for model");
     } catch (err) {
       console.error("[POST] Failed to retrieve provider:", err);
@@ -83,7 +85,7 @@ export async function POST(request: Request) {
     // Create agent with auto-discovered tools
     // Tools are referenced by their filenames (in kebab-case)
     const codingAgent = agent({
-      model: "anthropic/claude-sonnet-4-20250514",
+      model: MODEL_ID,
 
       system: `You are an expert coding assistant with comprehensive capabilities.
 
