@@ -34,7 +34,7 @@ export async function POST(request: Request) {
     const session = await createSession(user);
 
     // In production, ensure Secure flag is set for HTTPS-only transmission
-    const isProduction = Deno.env.get("NODE_ENV") === "production";
+    const isProduction = getEnv("NODE_ENV") === "production";
     const secureFlagvalue = isProduction ? "; Secure" : "";
 
     return Response.json(

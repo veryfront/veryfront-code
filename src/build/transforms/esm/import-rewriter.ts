@@ -1,7 +1,7 @@
 import { replaceSpecifiers, parseImports, rewriteImports } from "./lexer.ts";
 import { REACT_DEFAULT_VERSION } from "@veryfront/utils/constants/cdn.ts";
 
-export async function rewriteBareImports(code: string, _moduleServerUrl?: string): Promise<string> {
+export function rewriteBareImports(code: string, _moduleServerUrl?: string): Promise<string> {
   // Always use esm.sh URLs for React packages in browser mode
   // The _vendor/ path approach requires a handler to serve vendor modules,
   // which is not implemented. Using esm.sh ensures React is loaded correctly.
@@ -14,9 +14,9 @@ export async function rewriteBareImports(code: string, _moduleServerUrl?: string
     "react/jsx-dev-runtime": `https://esm.sh/react@${REACT_DEFAULT_VERSION}/jsx-dev-runtime`,
   };
 
-  return replaceSpecifiers(code, (specifier) => {
+  return Promise.resolve(replaceSpecifiers(code, (specifier) => {
     return importMap[specifier] || null;
-  });
+  }));
 }
 
 export async function rewriteVendorImports(

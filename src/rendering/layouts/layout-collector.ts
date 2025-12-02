@@ -1,4 +1,4 @@
-import { join } from "https://deno.land/std@0.220.0/path/mod.ts";
+import { join } from "../../platform/compat/path-helper.ts";
 import { rendererLogger as logger } from "@veryfront/utils";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import type { EntityInfo } from "@veryfront/types";

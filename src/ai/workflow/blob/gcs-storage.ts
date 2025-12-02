@@ -119,7 +119,10 @@ export class GCSBlobStorage implements BlobStorage {
     if (typeof data === "string") {
       body = new TextEncoder().encode(data);
       contentLength = body.byteLength;
-    } else if (data instanceof Uint8Array || data instanceof Blob) {
+    } else if (data instanceof Uint8Array) {
+      body = data;
+      contentLength = data.byteLength;
+    } else if (data instanceof Blob) {
       body = data;
       contentLength = data.size;
     } else if (data instanceof ReadableStream) {
@@ -317,7 +320,7 @@ export class GCSBlobStorage implements BlobStorage {
     // Custom metadata is stored with `x-goog-meta-` prefix and is all lowercase
     const metadata: Record<string, string> = {};
     if (gcsObject.metadata) {
-      for (const [k, v] of Object.entries(gcsObject.metadata)) {
+      for (const [k, v] of Object.entries(gcsObject.metadata as Record<string, string>)) {
         if (k.startsWith("x-goog-meta-")) {
           metadata[k.replace("x-goog-meta-", "")] = v;
         } else {

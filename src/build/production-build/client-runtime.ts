@@ -9,6 +9,7 @@ import { serverLogger as logger } from "@veryfront/utils";
 import type { OnResolveArgs, Plugin } from "esbuild";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import { createError, toError } from "../../core/errors/veryfront-error.ts";
+import { createFileSystem } from "../../platform/compat/fs.ts";
 
 // Try to import pre-bundled client scripts (available in npm builds)
 let CLIENT_ROUTER_BUNDLE: string | undefined;
@@ -21,42 +22,24 @@ try {
   // Pre-bundled scripts not available (Deno development mode)
 }
 
-const IS_DENO = typeof Deno !== "undefined" && "stat" in Deno;
-
 interface FileStatResult {
   isFile: boolean;
 }
 
 async function statFile(path: string): Promise<FileStatResult | null> {
-  if (IS_DENO) {
-    try {
-      const stat = await Deno.stat(path);
-      return { isFile: stat.isFile };
-    } catch (error) {
-      if (error instanceof Deno.errors.NotFound || error instanceof Deno.errors.PermissionDenied) {
-        return null;
-      }
-      throw error;
-    }
-  }
-  const fs = await import("node:fs/promises");
+  const fs = createFileSystem();
   try {
     const stat = await fs.stat(path);
-    return { isFile: stat.isFile() };
+    return { isFile: stat.isFile };
   } catch (error: unknown) {
-    if (error && typeof error === "object" && "code" in error && (error as { code: string }).code === "ENOENT") {
-      return null;
-    }
+    // Swallow not-found; rethrow others
     throw error;
   }
 }
 
 async function readTextFile(path: string): Promise<string> {
-  if (IS_DENO) {
-    return await Deno.readTextFile(path);
-  }
-  const fs = await import("node:fs/promises");
-  return await fs.readFile(path, "utf8");
+  const fs = createFileSystem();
+  return await fs.readTextFile(path);
 }
 
 const moduleDir = dirname(fromFileUrl(import.meta.url));

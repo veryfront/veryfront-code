@@ -6,8 +6,7 @@
 
 import type { BlobRef, BlobStorage, StoreBlobOptions } from "./types.ts";
 import { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand, HeadObjectCommand, CreateBucketCommand } from "https://esm.sh/@aws-sdk/client-s3@3.490.0";
-import { get } from "https://esm.sh/@aws-sdk/lib-dynamodb@3.490.0"; // This import seems incorrect, should be @aws-sdk/lib-storage for streaming
-import { getSignedUrl } from "https://esm.sh/@aws-sdk/s3-request-presigner@3.490.0"; // For pre-signed URLs
+import { agentLogger as logger } from "@veryfront/utils";
 
 export interface S3BlobStorageConfig {
   /** AWS Region */
@@ -70,7 +69,10 @@ export class S3BlobStorage implements BlobStorage {
     if (typeof data === "string") {
       body = new TextEncoder().encode(data);
       contentLength = body.byteLength;
-    } else if (data instanceof Uint8Array || data instanceof Blob) {
+    } else if (data instanceof Uint8Array) {
+      body = data;
+      contentLength = data.byteLength;
+    } else if (data instanceof Blob) {
       body = data;
       contentLength = data.size;
     } else if (data instanceof ReadableStream) {
@@ -105,7 +107,7 @@ export class S3BlobStorage implements BlobStorage {
           await this.client.send(putCommand);
         } catch (createError) {
           // If creation fails (e.g., race condition), throw the original error or the new one
-          console.error("Failed to auto-create bucket:", createError);
+          logger.error("Failed to auto-create bucket:", createError);
           throw e;
         }
       } else {
@@ -125,7 +127,7 @@ export class S3BlobStorage implements BlobStorage {
         const headResult = await this.client.send(headCommand);
         size = headResult.ContentLength || 0;
       } catch (e) {
-        console.warn(`Could not get size for S3 blob ${key} after put:`, e);
+        logger.warn(`Could not get size for S3 blob ${key} after put:`, e);
       }
     }
 

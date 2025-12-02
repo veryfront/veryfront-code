@@ -1,5 +1,6 @@
 import type { VeryfrontConfig } from "./types.ts";
 import { createError, toError } from "../../core/errors/veryfront-error.ts";
+import { getEnv } from "../../platform/compat/process.ts";
 
 export function defineConfig(config: VeryfrontConfig): VeryfrontConfig {
   return config;
@@ -8,7 +9,7 @@ export function defineConfig(config: VeryfrontConfig): VeryfrontConfig {
 export function defineConfigWithEnv(
   factory: (env: string) => VeryfrontConfig,
 ): VeryfrontConfig {
-  const env = Deno.env.get("NODE_ENV") || "development";
+  const env = getEnv("NODE_ENV") || "development";
   return factory(env);
 }
 

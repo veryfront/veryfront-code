@@ -7,7 +7,40 @@
  * Run: deno task setup
  */
 
-import { parse } from "std/flags/mod.ts";
+import { createFileSystem, FileSystem } from "../src/platform/compat/fs.ts";
+import { getArgs, exitProcess, isDeno, getRuntimeVersion } from "../src/platform/compat/process.ts";
+
+// Conditional imports for path module and command parsing
+let pathMod: typeof import('node:path') | undefined;
+let childProcess: typeof import('node:child_process') | undefined;
+let util: typeof import('node:util') | undefined;
+let parseArgs: typeof import("mri");
+
+// @ts-ignore - Deno global
+if (typeof Deno === 'undefined') {
+  pathMod = require('node:path');
+  childProcess = require('node:child_process');
+  util = require('node:util');
+  parseArgs = require("mri');
+} else {
+  // @ts-ignore - Deno global
+  pathMod = await import("jsr:@std/path");
+  // @ts-ignore - Deno global
+  ({ parseArgs } = await import("std/flags/mod.ts"));
+}
+
+// Helper to get path functions
+const getPath = () => {
+  if (pathMod) {
+    return pathMod;
+  } else {
+    // Fallback for Deno, should already be globally available or imported via import maps
+    // @ts-ignore - Deno global
+    return require("std/path/mod.ts");
+  }
+};
+
+const fs = createFileSystem();
 
 const colors = {
   reset: "\x1b[0m",
@@ -43,11 +76,61 @@ function header(message: string) {
   log("=".repeat(message.length), colors.bold);
 }
 
+// Cross-platform command execution helper
+async function runCommand(cmd: string[], cwd?: string): Promise<{ success: boolean; stdout: string; stderr: string }> {
+  // @ts-ignore - Deno global
+  if (isDeno) {
+    // @ts-ignore - Deno global
+    const command = new Deno.Command(cmd[0], {
+      args: cmd.slice(1),
+      cwd,
+      stdout: "piped",
+      stderr: "piped",
+    });
+    const output = await command.output();
+    const decoder = new TextDecoder();
+    return {
+      success: output.success,
+      stdout: decoder.decode(output.stdout),
+      stderr: decoder.decode(output.stderr),
+    };
+  } else if (childProcess && util) {
+    const execFile = util.promisify(childProcess.execFile);
+    try {
+      const { stdout, stderr } = await execFile(cmd[0], cmd.slice(1), { cwd });
+      return { success: true, stdout: String(stdout), stderr: String(stderr) };
+    } catch (error: any) {
+      return {
+        success: false,
+        stdout: String(error.stdout || ''),
+        stderr: String(error.stderr || ''),
+      };
+    }
+  } else {
+    return { success: false, stdout: '', stderr: 'Unsupported runtime for command execution.' };
+  }
+}
+
+// Helper to get Deno version (if running in Deno)
+function getDenoVersion(): string | null {
+  if (isDeno) {
+    // @ts-ignore - Deno global
+    return Deno.version.deno;
+  }
+  return null;
+}
+
 // Check Deno version
 async function checkDenoVersion() {
   header("Checking Deno Version");
 
-  const denoVersion = Deno.version.deno;
+  const denoVersion = getDenoVersion();
+
+  if (!denoVersion) {
+    info("Not running in Deno environment, skipping Deno version check.");
+    return true; // Not critical for Node.js/Bun
+  }
+
   const [major, minor] = denoVersion.split(".").map(Number);
 
   const requiredMajor = 1;
@@ -70,15 +153,8 @@ async function checkNodeVersion() {
   header("Checking Node.js (Optional)");
 
   try {
-    const command = new Deno.Command("node", {
-      args: ["--version"],
-      stdout: "piped",
-      stderr: "piped",
-    });
-
-    const result = await command.output();
-    const output = new TextDecoder().decode(result.stdout);
-    const version = output.trim();
+    const { stdout } = await runCommand(["node", "--version"]);
+    const version = stdout.trim();
 
     success(`Node.js ${version} is installed (optional)`);
     return true;
@@ -89,45 +165,49 @@ async function checkNodeVersion() {
 }
 
 // Check if deno.json exists
-function checkDenoJson() {
+async function checkDenoJson() {
   header("Checking Project Files");
 
   const denoJsonPath = "deno.json";
 
   try {
-    Deno.statSync(denoJsonPath);
-    success("deno.json found");
-    return true;
-  } catch {
+    if (await fs.exists(denoJsonPath)) {
+      success("deno.json found");
+      return true;
+    }
     error("deno.json not found");
-    info("Make sure you're in the veryfront root directory");
+    info("Make sure you\'re in the veryfront root directory");
+    return false;
+  } catch (e) {
+    error(`Error checking deno.json: ${e.message}`);
     return false;
   }
 }
 
 // Check if .env file exists
-function checkEnvFile() {
+async function checkEnvFile() {
   header("Checking Environment Configuration");
 
   const envPath = ".env";
   const envExamplePath = ".env.example";
 
   try {
-    Deno.statSync(envPath);
-    success(".env file found");
-    return true;
-  } catch {
+    if (await fs.exists(envPath)) {
+      success(".env file found");
+      return true;
+    }
     warning(".env file not found");
 
-    try {
-      Deno.statSync(envExamplePath);
+    if (await fs.exists(envExamplePath)) {
       info(`Run: cp ${envExamplePath} ${envPath}`);
       info("Then edit .env with your configuration");
       return true; // Not critical
-    } catch {
-      warning(".env.example also not found");
-      return true; // Not critical
     }
+    warning(".env.example also not found");
+    return true; // Not critical
+  } catch (e) {
+    error(`Error checking environment files: ${e.message}`);
+    return false;
   }
 }
 
@@ -135,32 +215,32 @@ function checkEnvFile() {
 async function cacheDependencies() {
   header("Caching Dependencies");
 
-  try {
-    info("Caching imports (this may take a moment)...");
+  if (isDeno) {
+    try {
+      info("Caching imports (this may take a moment)...");
 
-    const command = new Deno.Command("deno", {
-      args: ["cache", "--reload", "src/index.ts"],
-      stdout: "inherit",
-      stderr: "inherit",
-    });
+      const { success: cmdSuccess } = await runCommand(["deno", "cache", "--reload", "src/index.ts"], undefined);
 
-    const result = await command.output();
-
-    if (result.success) {
-      success("Dependencies cached successfully");
-      return true;
-    } else {
-      error("Failed to cache dependencies");
+      if (cmdSuccess) {
+        success("Dependencies cached successfully");
+        return true;
+      } else {
+        error("Failed to cache dependencies");
+        return false;
+      }
+    } catch (err: any) {
+      error(`Failed to cache dependencies: ${err.message}`);
       return false;
     }
-  } catch (err) {
-    error(`Failed to cache dependencies: ${err.message}`);
-    return false;
+  } else {
+    info("Not running in Deno environment, skipping Deno cache. Run npm install if needed.");
+    // For Node.js/Bun, assume dependencies are handled by package manager (npm/yarn/pnpm)
+    return true;
   }
 }
 
 // Validate project structure
-function validateProjectStructure() {
+async function validateProjectStructure() {
   header("Validating Project Structure");
 
   const requiredDirs = ["src", "tests", "docs", "scripts", ".vscode"];
@@ -175,24 +255,35 @@ function validateProjectStructure() {
 
   for (const dir of requiredDirs) {
     try {
-      const stat = Deno.statSync(dir);
-      if (stat.isDirectory) {
-        success(`${dir}/ directory found`);
+      const exists = await fs.exists(dir);
+      if (exists) {
+        const stat = await fs.stat(dir);
+        if (stat.isDirectory) {
+          success(`${dir}/ directory found`);
+        } else {
+          error(`${dir} exists but is not a directory`);
+          allValid = false;
+        }
       } else {
-        error(`${dir} exists but is not a directory`);
-        allValid = false;
+        warning(`${dir}/ directory not found`);
       }
-    } catch {
-      warning(`${dir}/ directory not found`);
+    } catch (e: any) {
+      error(`Error checking directory ${dir}: ${e.message}`);
+      allValid = false;
     }
   }
 
   for (const file of requiredFiles) {
     try {
-      Deno.statSync(file);
-      success(`${file} found`);
-    } catch {
-      warning(`${file} not found`);
+      if (await fs.exists(file)) {
+        success(`${file} found`);
+      } else {
+        warning(`${file} not found`);
+        allValid = false;
+      }
+    } catch (e: any) {
+      error(`Error checking file ${file}: ${e.message}`);
+      allValid = false;
     }
   }
 
@@ -203,28 +294,29 @@ function validateProjectStructure() {
 async function quickTypeCheck() {
   header("Running Quick Type Check");
 
-  try {
-    info("Checking TypeScript compilation...");
+  if (isDeno) {
+    try {
+      info("Checking TypeScript compilation (Deno)...");
 
-    const command = new Deno.Command("deno", {
-      args: ["check", "src/index.ts"],
-      stdout: "inherit",
-      stderr: "inherit",
-    });
+      const { success: cmdSuccess, stderr } = await runCommand(["deno", "check", "src/index.ts"], undefined);
 
-    const result = await command.output();
-
-    if (result.success) {
-      success("Type check passed");
-      return true;
-    } else {
-      error("Type check failed");
-      info("Run: deno task typecheck");
+      if (cmdSuccess) {
+        success("Type check passed");
+        return true;
+      } else {
+        error("Type check failed");
+        info("Run: deno task typecheck");
+        console.error(stderr);
+        return false;
+      }
+    } catch (err: any) {
+      error(`Type check failed: ${err.message}`);
       return false;
     }
-  } catch (err) {
-    error(`Type check failed: ${err.message}`);
-    return false;
+  } else {
+    info("Not running in Deno environment, skipping Deno type check.");
+    // For Node.js/Bun, assuming `tsc --noEmit` would be run separately or type checking happens in IDE
+    return true; // Not critical for Node.js/Bun
   }
 }
 
@@ -233,7 +325,11 @@ function printNextSteps() {
   header("Next Steps");
 
   log("1. Start the development server:");
-  log("   deno task dev", colors.blue);
+  if (isDeno) {
+    log("   deno task dev", colors.blue);
+  } else {
+    log("   npm run dev", colors.blue);
+  }
 
   log("\n2. Visit http://localhost:3000 in your browser");
 
@@ -241,12 +337,22 @@ function printNextSteps() {
   log("   Changes will hot-reload automatically");
 
   log("\n4. Run tests:");
-  log("   deno task test", colors.blue);
+  if (isDeno) {
+    log("   deno task test", colors.blue);
+  } else {
+    log("   npm test", colors.blue);
+  }
 
   log("\n5. Before committing:");
-  log("   deno task fmt     # Format code", colors.blue);
-  log("   deno task lint    # Check linting", colors.blue);
-  log("   deno task typecheck # Check types", colors.blue);
+  if (isDeno) {
+    log("   deno task fmt     # Format code", colors.blue);
+    log("   deno task lint    # Check linting", colors.blue);
+    log("   deno task typecheck # Check types", colors.blue);
+  } else {
+    log("   npm run format    # Format code", colors.blue);
+    log("   npm run lint      # Check linting", colors.blue);
+    log("   npm run typecheck # Check types", colors.blue);
+  }
 
   log("\n6. Read the docs:");
   log("   CONTRIBUTING.md - Contribution guidelines", colors.blue);
@@ -284,11 +390,11 @@ async function runSetup() {
   if (!allPassed) {
     error("\nSetup validation failed!");
     log("\nPlease fix the issues above and run setup again.");
-    Deno.exit(1);
+    exitProcess(1);
   }
 
   // Optional steps
-  const args = parse(Deno.args, { boolean: ["skip-cache", "skip-check"] });
+  const args = parseArgs(getArgs(), { boolean: ["skip-cache", "skip-check"] });
 
   if (!args["skip-cache"]) {
     const cachePassed = await cacheDependencies();

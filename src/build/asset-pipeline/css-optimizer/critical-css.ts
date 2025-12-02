@@ -7,7 +7,10 @@
 
 import { logger } from "@veryfront/utils";
 import type { CriticalCSSResult, CSSOptimizationOptions } from "@veryfront/types";
+import { createFileSystem } from "../../../platform/compat/fs.ts";
 import { basicMinify, extractSelectorsFromHTML } from "./utils.ts";
+
+const fs = createFileSystem();
 
 /**
  * Extract critical CSS from a CSS file based on HTML content
@@ -19,7 +22,7 @@ export async function extractCriticalCSS(
 ): Promise<CriticalCSSResult> {
   logger.debug(`Extracting critical CSS from ${cssPath}`);
 
-  const css = await Deno.readTextFile(cssPath);
+  const css = await fs.readTextFile(cssPath);
 
   // Simple critical CSS extraction based on HTML structure
   // In production, you might use a more sophisticated tool like 'critical'

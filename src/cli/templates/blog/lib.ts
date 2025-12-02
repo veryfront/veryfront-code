@@ -7,10 +7,7 @@ import type { TemplateFile } from "../types.ts";
 export const blogLibTemplates: TemplateFile[] = [
   {
     path: "lib/posts.ts",
-    content: `import { join } from "std/path/mod.ts";
-import { extract } from "std/front_matter/yaml.ts";
-
-interface PostMeta {
+    content: `interface PostMeta {
   title: string;
   date: string;
   author?: string;
@@ -23,17 +20,22 @@ interface Post extends PostMeta {
   content: string;
 }
 
-const POSTS_DIR = join(Deno.cwd(), "content", "posts");
+const POSTS_DIR = pathMod ? pathMod.join(cwd(), "content", "posts") : new URL("../../content/posts", import.meta.url).pathname;
 
 export async function getPosts(): Promise<Post[]> {
   const posts: Post[] = [];
 
   try {
-    for await (const entry of Deno.readDir(POSTS_DIR)) {
+    let entries: { name: string; isFile: boolean; isDirectory: boolean }[] = [];
+    for await (const entry of fs.readDir(POSTS_DIR)) {
+      entries.push(entry);
+    }
+
+    for (const entry of entries) {
       if (entry.isFile && entry.name.endsWith(".mdx")) {
         const slug = entry.name.replace(/\\.mdx$/, "");
-        const content = await Deno.readTextFile(join(POSTS_DIR, entry.name));
-        const { attrs, body } = extract(content) as { attrs: PostMeta; body: string };
+        const content = await fs.readTextFile(pathMod ? pathMod.join(POSTS_DIR, entry.name) : join(POSTS_DIR, entry.name));
+        const { attrs, body } = extractYaml(content) as { attrs: PostMeta; body: string };
 
         posts.push({
           slug,
@@ -54,8 +56,8 @@ export async function getPosts(): Promise<Post[]> {
 
 export async function getPost(slug: string): Promise<Post | null> {
   try {
-    const content = await Deno.readTextFile(join(POSTS_DIR, \`\${slug}.mdx\`));
-    const { attrs, body } = extract(content) as { attrs: PostMeta; body: string };
+    const content = await fs.readTextFile(pathMod ? pathMod.join(POSTS_DIR, \`\${slug}.mdx\`) : join(POSTS_DIR, \`\${slug}.mdx\`));
+    const { attrs, body } = extractYaml(content) as { attrs: PostMeta; body: string };
 
     return {
       slug,

@@ -11,7 +11,7 @@
  * to use for a given URL slug and handles both routing modes.
  */
 
-import { join } from "https://deno.land/std@0.220.0/path/mod.ts";
+import { join } from "../../platform/compat/path-helper.ts";
 import { rendererLogger as logger } from "@veryfront/utils";
 import { ErrorCode, VeryfrontError } from "@veryfront/errors/index.ts";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";

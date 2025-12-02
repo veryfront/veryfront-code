@@ -34,6 +34,7 @@ export { createSplitterPlugin } from "./esbuild-plugin.ts";
 // Factory and utility functions
 import type { ChunkManifest, SplitOptions } from "./types.ts";
 import { CodeSplitter } from "./splitter.ts";
+import { createFileSystem } from "../../../platform/compat/fs.ts";
 
 /**
  * Creates a new code splitter instance
@@ -52,7 +53,8 @@ export function createCodeSplitter(options: SplitOptions): CodeSplitter {
  * @returns Parsed chunk manifest
  */
 export async function loadChunkManifest(manifestPath: string): Promise<ChunkManifest> {
-  const content = await Deno.readTextFile(manifestPath);
+  const fs = createFileSystem();
+  const content = await fs.readTextFile(manifestPath);
   return JSON.parse(content);
 }
 

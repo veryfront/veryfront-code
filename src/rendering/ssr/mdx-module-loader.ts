@@ -155,9 +155,8 @@ const _Fragment = Fragment;
 
 async function ensureTempDir(): Promise<string> {
   const adapter = await getAdapter();
-  const cwd = (adapter as unknown as { process?: { cwd?: () => string } }).process?.cwd?.() ??
-    (typeof Deno !== "undefined" ? Deno.cwd() : process.cwd());
-  const tempDir = `${cwd}/.veryfront/temp/mdx-modules`;
+  const { cwd } = await import("../../platform/compat/process.ts"); // Import cwd helper
+  const tempDir = `${cwd()}/.veryfront/temp/mdx-modules`;
 
   try {
     const exists = await adapter.fs.exists(tempDir);

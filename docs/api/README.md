@@ -552,8 +552,9 @@ if (isPlatform('deno')) {
 // Access env vars (works across all runtimes)
 const apiKey = process.env.API_KEY;
 
-// Or use Deno.env (Deno only)
-const apiKey = Deno.env.get('API_KEY');
+// Or use compat helpers
+import { getEnv } from 'veryfront/platform/compat/process.ts';
+const apiKey = getEnv('API_KEY');
 ```
 
 ---
@@ -563,7 +564,8 @@ const apiKey = Deno.env.get('API_KEY');
 ```typescript
 // App Router: Use in getServerData or Server Components
 export const getServerData = async () => {
-  const content = await Deno.readTextFile('./data.json');
+  const fs = await getAdapter().then((adapter) => adapter.fs);
+  const content = await fs.readFile('./data.json');
   return { props: { content } };
 };
 
@@ -856,7 +858,7 @@ Veryfront is designed to be largely compatible with Next.js. Most code works wit
 **What needs changes:**
 - ⚠️ Image optimization: Use `<OptimizedImage>` instead of `next/image`
 - ⚠️ Font optimization: Manual setup required
-- ⚠️ Environment variables: Use `process.env` or `Deno.env`
+- ⚠️ Environment variables: Use `process.env` or compat `getEnv()`
 
 **What's not supported:**
 - ❌ `getServerSideProps` / `getStaticProps` names (use `getServerData`)

@@ -1,6 +1,5 @@
 import { serverLogger as logger } from "@veryfront/utils";
 import type { BuildResult, Plugin } from "esbuild";
-import { dirname, isAbsolute, join, resolve } from "std/path/mod.ts";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/index.ts";
 import type { VeryfrontConfig } from "@veryfront/config";
 import { createHTTPPlugin } from "./esbuild-plugin.ts";
@@ -8,14 +7,17 @@ import { validateHTTPImports } from "./http-validator.ts";
 import { loadSecurityConfig } from "./security-config.ts";
 import type { APIRoute, LoadModuleOptions } from "./types.ts";
 import { createError, toError } from "../../../core/errors/veryfront-error.ts";
+import { createFileSystem, FileSystem } from "../../../platform/compat/fs.ts";
+import * as pathHelper from "../../../platform/compat/path-helper.ts";
 
 export async function loadHandlerModule(options: LoadModuleOptions): Promise<APIRoute | null> {
   const { projectDir, modulePath, adapter, config } = options;
+  const fs = createFileSystem();
 
   try {
     const module = modulePath.endsWith(".js")
       ? await loadJSModule(modulePath)
-      : await loadAndTranspileModule(modulePath, projectDir, adapter, config);
+      : await loadAndTranspileModule(modulePath, projectDir, adapter, fs, config);
 
     return extractAPIRouteHandlers(module);
   } catch (error: unknown) {
@@ -73,8 +75,8 @@ function createImportMapPlugin(
         }
 
         if (args.namespace === "import-map" && args.path.startsWith(".")) {
-          const importerDir = dirname(args.importer);
-          const absolutePath = resolve(importerDir, args.path);
+          const importerDir = pathHelper.dirname(args.importer);
+          const absolutePath = pathHelper.resolve(importerDir, args.path);
 
           logger.debug(
             `[API] Import map relative resolve: ${args.path} (from ${args.importer}) -> ${absolutePath}`,
@@ -86,7 +88,7 @@ function createImportMapPlugin(
           };
         }
 
-        if (isAbsolute(args.path) && args.namespace !== "import-map") {
+        if (pathHelper.isAbsolute(args.path) && args.namespace !== "import-map") {
           return undefined;
         }
 
@@ -110,9 +112,9 @@ function createImportMapPlugin(
             return undefined;
           }
 
-          const absolutePath = isAbsolute(resolvedPath)
+          const absolutePath = pathHelper.isAbsolute(resolvedPath)
             ? resolvedPath
-            : resolve(projectDir, resolvedPath);
+            : pathHelper.resolve(projectDir, resolvedPath);
 
           logger.debug(`[API] Import map resolved: ${args.path} -> ${absolutePath}`);
 
@@ -144,6 +146,7 @@ function createImportMapPlugin(
                 found = true;
                 break;
               } catch {
+                // Ignore error, try next extension
               }
             }
 
@@ -171,7 +174,7 @@ function createImportMapPlugin(
           return {
             contents,
             loader,
-            resolveDir: dirname(filePath),
+            resolveDir: pathHelper.dirname(filePath),
           };
         } catch (error) {
           const msg = error instanceof Error ? error.message : String(error);
@@ -189,6 +192,7 @@ async function loadAndTranspileModule(
   modulePath: string,
   projectDir: string,
   adapter: RuntimeAdapter,
+  fs: FileSystem, // Pass fs compat instance
   config?: VeryfrontConfig,
 ): Promise<APIRoute> {
   const source = await adapter.fs.readFile(modulePath);
@@ -214,9 +218,6 @@ async function loadAndTranspileModule(
     "@ai-sdk/*",
     "zod",
     "node:*",
-    "std/*",
-    "@std/*",
-    "https://deno.land/*",
     // Veryfront packages - should use runtime resolution, not bundled
     "veryfront",
     "veryfront/*",
@@ -228,7 +229,7 @@ async function loadAndTranspileModule(
 
   // Use the directory containing the source file as resolveDir
   // This allows relative imports like ../../../ai/agents to resolve correctly
-  const resolveDir = dirname(modulePath);
+  const resolveDir = pathHelper.dirname(modulePath);
 
   const result: BuildResult = await build({
     bundle: true,
@@ -261,16 +262,16 @@ async function loadAndTranspileModule(
   const js = result.outputFiles?.[0]?.text ?? "export {}";
   logger.debug(`[API] transpiled size ${js.length} bytes`);
 
-  return await loadModuleFromCode(js, adapter, projectDir);
+  return await loadModuleFromCode(js, adapter, projectDir, fs);
 }
 
-async function loadModuleFromCode(code: string, adapter: RuntimeAdapter, projectDir: string): Promise<APIRoute> {
-  const tempDir = await createTempDir(adapter);
-  const tempFile = join(tempDir, "handler.mjs");
+async function loadModuleFromCode(code: string, _adapter: RuntimeAdapter, projectDir: string, fs: FileSystem): Promise<APIRoute> {
+  const tempDir = await fs.makeTempDir({ prefix: "vf-api-" });
+  const tempFile = pathHelper.join(tempDir, "handler.mjs");
 
-  const transformedCode = await rewriteExternalImports(code, projectDir);
+  const transformedCode = await rewriteExternalImports(code, projectDir, fs);
 
-  await writeTempFile(tempFile, transformedCode, adapter);
+  await fs.writeTextFile(tempFile, transformedCode);
 
   try {
     return await import(`file://${tempFile}?v=${Date.now()}`);
@@ -279,7 +280,7 @@ async function loadModuleFromCode(code: string, adapter: RuntimeAdapter, project
     logger.error(`[API] dynamic import failed ${tempFile}: ${errorMessage}`);
     throw e;
   } finally {
-    await removeTempDir(tempDir, adapter);
+    await fs.remove(tempDir, { recursive: true });
   }
 }
 
@@ -287,10 +288,11 @@ async function loadModuleFromCode(code: string, adapter: RuntimeAdapter, project
 function isNodeRuntime(): boolean {
   // deno-lint-ignore no-explicit-any
   const _global = globalThis as any;
+  // @ts-ignore - Deno global
   return typeof Deno === "undefined" && typeof _global.process !== "undefined" && !!_global.process?.versions?.node;
 }
 
-async function rewriteExternalImports(code: string, projectDir: string): Promise<string> {
+async function rewriteExternalImports(code: string, projectDir: string, fs: FileSystem): Promise<string> {
   let transformed = code;
 
   // In Node.js, resolve veryfront imports to absolute paths
@@ -303,15 +305,15 @@ async function rewriteExternalImports(code: string, projectDir: string): Promise
 
       // Manual resolution using package.json exports
       // This is more reliable than createRequire for subpath exports
-      const vfPackagePath = join(projectDir, "node_modules", "veryfront");
-      const vfPackageJsonPath = join(vfPackagePath, "package.json");
+      const vfPackagePath = pathHelper.join(projectDir, "node_modules", "veryfront");
+      const vfPackageJsonPath = pathHelper.join(vfPackagePath, "package.json");
 
       let exportsMap: Record<string, { import?: string }> = {};
       try {
-        const pkgJson = JSON.parse(await (await import("node:fs/promises")).readFile(vfPackageJsonPath, "utf-8"));
+        const pkgJson = JSON.parse(await fs.readTextFile(vfPackageJsonPath));
         exportsMap = pkgJson.exports || {};
-      } catch {
-        logger.debug("[API] Could not read veryfront package.json");
+      } catch (err) {
+        logger.debug(`[API] Could not read veryfront package.json: ${err}`);
       }
 
       // Resolve veryfront subpath imports (e.g., veryfront/ai)
@@ -321,7 +323,7 @@ async function rewriteExternalImports(code: string, projectDir: string): Promise
           const subpath = "./" + fullSpecifier.replace("veryfront/", "");
           const exportEntry = exportsMap[subpath];
           if (exportEntry?.import) {
-            const resolvedPath = join(vfPackagePath, exportEntry.import);
+            const resolvedPath = pathHelper.join(vfPackagePath, exportEntry.import);
             logger.debug(`[API] Resolved ${fullSpecifier} -> ${resolvedPath}`);
             return `from "${pathToFileURL(resolvedPath).href}"`;
           }
@@ -336,7 +338,7 @@ async function rewriteExternalImports(code: string, projectDir: string): Promise
         () => {
           const exportEntry = exportsMap["."];
           if (exportEntry?.import) {
-            const resolvedPath = join(vfPackagePath, exportEntry.import);
+            const resolvedPath = pathHelper.join(vfPackagePath, exportEntry.import);
             logger.debug(`[API] Resolved veryfront -> ${resolvedPath}`);
             return `from "${pathToFileURL(resolvedPath).href}"`;
           }
@@ -350,7 +352,9 @@ async function rewriteExternalImports(code: string, projectDir: string): Promise
     }
   }
 
-  // For Deno, use npm: specifiers
+  // For Deno, use npm: specifiers for selected packages
+  // For Node.js, these are typically resolved via node_modules
+  // This list should only include packages that are externalized by esbuild but need explicit npm: specifiers in Deno
   const externalPackages = [
     { pattern: /from\s+["']ai["']/g, replacement: 'from "npm:ai@latest"' },
     {
@@ -400,50 +404,15 @@ async function rewriteExternalImports(code: string, projectDir: string): Promise
     { pattern: /import\s*\(\s*["']zod["']\s*\)/g, replacement: 'import("npm:zod@latest")' },
   ];
 
-  for (const { pattern, replacement } of externalPackages) {
-    transformed = transformed.replace(pattern, replacement);
+  // Apply npm: specifier rewrites only if not in Node.js (i.e., in Deno)
+  // @ts-ignore - Deno global
+  if (typeof Deno !== 'undefined') {
+    for (const { pattern, replacement } of externalPackages) {
+      transformed = transformed.replace(pattern, replacement);
+    }
   }
 
   return transformed;
-}
-
-async function createTempDir(adapter: RuntimeAdapter): Promise<string> {
-  try {
-    return await adapter.fs.makeTempDir("vf-api-");
-  } catch (error) {
-    if (typeof Deno !== "undefined" && Deno.makeTempDir) {
-      return await Deno.makeTempDir({ prefix: "vf-api-" });
-    }
-    throw error;
-  }
-}
-
-async function writeTempFile(path: string, code: string, adapter: RuntimeAdapter): Promise<void> {
-  try {
-    await adapter.fs.writeFile(path, code);
-  } catch (error) {
-    if (typeof Deno !== "undefined" && Deno.writeTextFile) {
-      await Deno.writeTextFile(path, code);
-      return;
-    }
-    throw error;
-  }
-}
-
-async function removeTempDir(tempDir: string, adapter: RuntimeAdapter): Promise<void> {
-  try {
-    await adapter.fs.remove(tempDir, { recursive: true });
-  } catch (error) {
-    if (typeof Deno !== "undefined" && Deno.remove) {
-      try {
-        await Deno.remove(tempDir, { recursive: true });
-      } catch (_error) {
-        void _error;
-      }
-      return;
-    }
-    logger.debug(`[API] failed to cleanup temp dir ${tempDir}`, error);
-  }
 }
 
 function extractAPIRouteHandlers(module: unknown): APIRoute {

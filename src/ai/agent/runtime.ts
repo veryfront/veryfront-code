@@ -29,7 +29,6 @@ import {
   addSpanEvent,
   setSpanAttributes,
   withSpan,
-  type Span,
 } from "../../observability/tracing/index.ts";
 
 const DEFAULT_MAX_TOKENS = 4096;

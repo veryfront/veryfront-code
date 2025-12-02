@@ -9,7 +9,7 @@ import type { LayoutOrchestrator } from "./layout.ts";
 import type { SSROrchestrator } from "./ssr-orchestrator.ts";
 import type { RenderOptions, RenderResult } from "./types.ts";
 import { DataFetcher } from "@veryfront/data/index.ts";
-import type { DataContext, PageWithData } from "@veryfront/data/types.ts";
+import type { DataContext } from "@veryfront/data/types.ts";
 
 export interface RenderPipelineConfig {
   pageResolver: PageResolver;

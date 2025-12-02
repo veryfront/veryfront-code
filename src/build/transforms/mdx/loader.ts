@@ -2,6 +2,7 @@ import { rendererLogger as logger } from "@veryfront/utils";
 import { join } from "@std/path";
 import * as React from "react";
 import type { MDXComponents, MDXFrontmatter, MDXModule } from "./types.ts";
+import { createFileSystem } from "../../../platform/compat/fs.ts";
 
 export async function loadCompiledMDX(modulePath: string): Promise<MDXModule | null> {
   try {
@@ -62,7 +63,8 @@ export async function hasCompiledMDX(
   const modulePath = getCompiledMDXPath(projectDir, slug, type);
   logger.debug(`Checking for compiled MDX at: ${modulePath}`);
   try {
-    const stat = await Deno.stat(modulePath);
+    const fs = createFileSystem();
+    const stat = await fs.stat(modulePath);
     logger.debug(`Found compiled MDX file: ${modulePath}, size: ${stat.size}`);
     return true;
   } catch (_error) {

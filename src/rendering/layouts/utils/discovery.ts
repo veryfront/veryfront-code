@@ -2,6 +2,7 @@ import { rendererLogger as logger } from "@veryfront/utils";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import type { LayoutItem } from "@veryfront/types";
 import { memoizeAsync, memoizeHash as simpleHash } from "@veryfront/utils";
+import { dirname, join, extname } from "../../../platform/compat/path-helper.ts";
 
 async function discoverNestedLayoutsImpl(
   pageFilePath: string,
@@ -12,29 +13,24 @@ async function discoverNestedLayoutsImpl(
   const nestedLayouts: LayoutItem[] = [];
 
   try {
-    const {
-      dirname,
-      join: pathJoin,
-      extname,
-    } = await import("https://deno.land/std@0.220.0/path/mod.ts");
     let currentDir = dirname(pageFilePath);
     const candidates: string[] = [];
 
     while (currentDir.startsWith(rootDir)) {
-      const mdxCandidate = pathJoin(currentDir, "layout.mdx");
-      const tsxCandidate = pathJoin(currentDir, "layout.tsx");
-      const jsxCandidate = pathJoin(currentDir, "layout.jsx");
+      const mdxCandidate = join(currentDir, "layout.mdx");
+      const tsxCandidate = join(currentDir, "layout.tsx");
+      const jsxCandidate = join(currentDir, "layout.jsx");
       candidates.push(mdxCandidate, tsxCandidate, jsxCandidate);
       const parent = dirname(currentDir);
       if (parent === currentDir || currentDir === rootDir) break;
       currentDir = parent;
     }
 
-    if (!candidates.includes(pathJoin(rootDir, "layout.mdx"))) {
+    if (!candidates.includes(join(rootDir, "layout.mdx"))) {
       candidates.push(
-        pathJoin(rootDir, "layout.mdx"),
-        pathJoin(rootDir, "layout.tsx"),
-        pathJoin(rootDir, "layout.jsx"),
+        join(rootDir, "layout.mdx"),
+        join(rootDir, "layout.tsx"),
+        join(rootDir, "layout.jsx"),
       );
     }
 
@@ -49,7 +45,7 @@ async function discoverNestedLayoutsImpl(
       existing,
       nestedLayouts,
       adapter,
-      pathJoin,
+      join,
       dirname,
     );
   } catch (e) {

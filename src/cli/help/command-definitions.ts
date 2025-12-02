@@ -16,7 +16,7 @@ export const COMMANDS: CommandRegistry = {
     options: [
       {
         flag: "-t, --template <name>",
-        description: "Project template",
+        description: "Project template (pages-router | app-router | app-router-api | rsc-demo | blog | docs | app | minimal | ai)",
         default: "app-router",
       },
       {
@@ -38,6 +38,8 @@ export const COMMANDS: CommandRegistry = {
       "veryfront init my-blog --template blog",
       "veryfront init my-docs --template docs",
       "veryfront init enterprise-app --template app",
+      "veryfront init my-minimal-app --template minimal",
+      "veryfront init my-ai-app --template ai",
     ],
     notes: [
       "Use --cache-backend to set render cache (memory | filesystem | kv | redis) during scaffolding",

@@ -7,6 +7,7 @@ import {
   validateConfig,
 } from "./define-config.ts";
 import type { VeryfrontConfig } from "./types.ts";
+import { getEnv, setEnv, deleteEnv } from "../../platform/compat/process.ts";
 
 describe("define-config", () => {
   describe("defineConfig", () => {
@@ -53,19 +54,19 @@ describe("define-config", () => {
     let originalEnv: string | undefined;
 
     beforeEach(() => {
-      originalEnv = Deno.env.get("NODE_ENV");
+      originalEnv = getEnv("NODE_ENV");
     });
 
     afterEach(() => {
       if (originalEnv !== undefined) {
-        Deno.env.set("NODE_ENV", originalEnv);
+        setEnv("NODE_ENV", originalEnv);
       } else {
-        Deno.env.delete("NODE_ENV");
+        deleteEnv("NODE_ENV");
       }
     });
 
     it("should use development as default environment", () => {
-      Deno.env.delete("NODE_ENV");
+      deleteEnv("NODE_ENV");
       const result = defineConfigWithEnv((env) => ({
         title: `App-${env}`,
       }));
@@ -73,7 +74,7 @@ describe("define-config", () => {
     });
 
     it("should use NODE_ENV if set", () => {
-      Deno.env.set("NODE_ENV", "production");
+      setEnv("NODE_ENV", "production");
       const result = defineConfigWithEnv((env) => ({
         title: `App-${env}`,
       }));
@@ -81,7 +82,7 @@ describe("define-config", () => {
     });
 
     it("should allow environment-specific configuration", () => {
-      Deno.env.set("NODE_ENV", "production");
+      setEnv("NODE_ENV", "production");
       const result = defineConfigWithEnv((env) => ({
         dev: {
           port: env === "production" ? 8080 : 3002,
@@ -91,7 +92,7 @@ describe("define-config", () => {
     });
 
     it("should work with development environment", () => {
-      Deno.env.set("NODE_ENV", "development");
+      setEnv("NODE_ENV", "development");
       const result = defineConfigWithEnv((env) => ({
         dev: {
           port: env === "production" ? 8080 : 3002,
@@ -101,7 +102,7 @@ describe("define-config", () => {
     });
 
     it("should work with custom environments", () => {
-      Deno.env.set("NODE_ENV", "staging");
+      setEnv("NODE_ENV", "staging");
       const result = defineConfigWithEnv((env) => ({
         title: `Staging-${env}`,
       }));
@@ -109,7 +110,7 @@ describe("define-config", () => {
     });
 
     it("should pass full config from factory", () => {
-      Deno.env.set("NODE_ENV", "test");
+      setEnv("NODE_ENV", "test");
       const result = defineConfigWithEnv((env) => ({
         title: "Test App",
         description: `Running in ${env}`,

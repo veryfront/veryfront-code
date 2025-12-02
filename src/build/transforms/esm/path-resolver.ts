@@ -4,8 +4,8 @@ import { replaceSpecifiers } from "./lexer.ts";
  * Rewrite @veryfront/* imports to veryfront/* for npm compatibility
  * This allows Deno-style imports to work in Node.js environments
  */
-export async function resolveVeryfrontImports(code: string): Promise<string> {
-  return replaceSpecifiers(code, (specifier) => {
+export function resolveVeryfrontImports(code: string): Promise<string> {
+  return Promise.resolve(replaceSpecifiers(code, (specifier) => {
     if (specifier.startsWith("@veryfront/")) {
       // @veryfront/ai -> veryfront/ai
       // @veryfront/ai/react -> veryfront/ai/react
@@ -15,10 +15,10 @@ export async function resolveVeryfrontImports(code: string): Promise<string> {
       return "veryfront";
     }
     return null;
-  });
+  }));
 }
 
-export async function resolvePathAliases(
+export function resolvePathAliases(
   code: string,
   filePath: string,
   projectDir: string,
@@ -42,24 +42,24 @@ export async function resolvePathAliases(
   const depth = fileDir.split("/").filter(Boolean).length;
   const relativeToRoot = depth === 0 ? "." : "../".repeat(depth).slice(0, -1);
 
-  return replaceSpecifiers(code, (specifier) => {
+  return Promise.resolve(replaceSpecifiers(code, (specifier) => {
     if (specifier.startsWith("@/")) {
       const path = specifier.substring(2);
       const relativePath = depth === 0 ? `./${path}` : `${relativeToRoot}/${path}`;
       return relativePath;
     }
     return null;
-  });
+  }));
 }
 
-export async function resolveRelativeImports(
+export function resolveRelativeImports(
   code: string,
   filePath: string,
   projectDir: string,
   moduleServerUrl?: string,
 ): Promise<string> {
   if (!moduleServerUrl) {
-    return code;
+    return Promise.resolve(code);
   }
 
   const _normalizedProjectDir = projectDir.replace(/\\/g, "/").replace(/\/$/, "");
@@ -79,13 +79,13 @@ export async function resolveRelativeImports(
 
   const fileDir = relativeFilePath.substring(0, relativeFilePath.lastIndexOf("/"));
 
-  return replaceSpecifiers(code, (specifier) => {
+  return Promise.resolve(replaceSpecifiers(code, (specifier) => {
     if (specifier.startsWith("./") || specifier.startsWith("../")) {
       const resolvedPath = resolveRelativePath(fileDir, specifier);
       return `${moduleServerUrl}/${resolvedPath}`;
     }
     return null;
-  });
+  }));
 }
 
 function resolveRelativePath(currentDir: string, importPath: string): string {
@@ -104,30 +104,30 @@ function resolveRelativePath(currentDir: string, importPath: string): string {
   return resolvedParts.join("/");
 }
 
-export async function resolveRelativeImportsToAbsolute(
+export function resolveRelativeImportsToAbsolute(
   code: string,
   filePath: string,
-  projectDir: string,
+  _projectDir: string,
 ): Promise<string> {
   const normalizedFilePath = filePath.replace(/\\/g, "/");
   const fileDir = normalizedFilePath.substring(0, normalizedFilePath.lastIndexOf("/"));
 
-  return replaceSpecifiers(code, (specifier) => {
+  return Promise.resolve(replaceSpecifiers(code, (specifier) => {
     if (specifier.startsWith("./") || specifier.startsWith("../")) {
       const absolutePath = resolveAbsolutePath(fileDir, specifier);
       return `file://${absolutePath}`;
     }
     return null;
-  });
+  }));
 }
 
-export async function resolveRelativeImportsForNodeSSR(code: string): Promise<string> {
-  return replaceSpecifiers(code, (specifier) => {
+export function resolveRelativeImportsForNodeSSR(code: string): Promise<string> {
+  return Promise.resolve(replaceSpecifiers(code, (specifier) => {
     if (specifier.startsWith("./") || specifier.startsWith("../")) {
       return specifier.replace(/\.(tsx|ts|jsx)$/, ".js");
     }
     return null;
-  });
+  }));
 }
 
 function resolveAbsolutePath(baseDir: string, relativePath: string): string {

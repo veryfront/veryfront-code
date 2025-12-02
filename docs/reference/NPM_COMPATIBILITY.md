@@ -61,8 +61,8 @@ The following Deno-specific API usages have been fixed with cross-platform alter
 | `temp-directory.ts` | `Deno.makeTempDir` | `os.tmpdir()` + `fs.mkdir()` |
 | `build-context.ts` | `Deno.writeTextFile` | `createFileSystem().writeTextFile()` |
 | `component-loader.ts` | `Deno.mkdir`, `Deno.writeTextFile` | `createFileSystem()` methods |
-| `manifest-builder.ts` | `Deno.readFile`, `Deno.writeTextFile` | Local helper functions |
-| `client-runtime.ts` | `Deno.stat`, `Deno.readTextFile` | Local helper functions |
+| `manifest-builder.ts` | `createFileSystem().readFile`, `writeTextFile` | Local helper functions |
+| `client-runtime.ts` | `createFileSystem().stat`, `readTextFile` | Local helper functions |
 
 ## Platform Compatibility Layer
 

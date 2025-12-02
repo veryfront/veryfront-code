@@ -5,28 +5,11 @@
 
 import type { Metafile } from "esbuild/mod.js";
 import { join, relative } from "std/path/mod.ts";
+import { createFileSystem } from "../../../platform/compat/fs.ts";
 import type { ChunkInfo, ChunkManifest, MetafileOutput } from "./types.ts";
 import { createError, toError } from "../../../core/errors/veryfront-error.ts";
 
-const IS_DENO = typeof Deno !== "undefined" && "readFile" in Deno;
-
-async function readFileBytes(path: string): Promise<Uint8Array> {
-  if (IS_DENO) {
-    return await Deno.readFile(path);
-  }
-  const fs = await import("node:fs/promises");
-  const buffer = await fs.readFile(path);
-  return new Uint8Array(buffer);
-}
-
-async function writeTextFile(path: string, content: string): Promise<void> {
-  if (IS_DENO) {
-    await Deno.writeTextFile(path, content);
-    return;
-  }
-  const fs = await import("node:fs/promises");
-  await fs.writeFile(path, content, "utf8");
-}
+const fs = createFileSystem();
 
 /**
  * Extracts entry name from entry point path
@@ -115,7 +98,7 @@ export async function getChunkInfo(
   output: MetafileOutput,
   outDir: string,
 ): Promise<ChunkInfo> {
-  const content = await readFileBytes(file);
+  const content = await fs.readFile(file);
   const hash = await calculateFileHash(content);
 
   return {
@@ -199,7 +182,7 @@ export async function buildManifest(
  * @param outDir - Output directory for manifest.json
  */
 export async function writeManifest(manifest: ChunkManifest, outDir: string): Promise<void> {
-  await writeTextFile(
+  await fs.writeTextFile(
     join(outDir, "manifest.json"),
     JSON.stringify(manifest, null, 2),
   );

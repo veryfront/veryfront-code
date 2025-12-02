@@ -170,7 +170,8 @@ import { isRuntimeDeno, isRuntimeNode } from "@veryfront/utils";
 
 if (isRuntimeDeno()) {
   // Use Deno APIs
-  const file = await Deno.readTextFile(path);
+  const fs = await getAdapter().then((adapter) => adapter.fs);
+  const file = await fs.readFile(path);
 } else if (isRuntimeNode()) {
   // Use Node APIs
   const file = await fs.readFile(path, "utf-8");

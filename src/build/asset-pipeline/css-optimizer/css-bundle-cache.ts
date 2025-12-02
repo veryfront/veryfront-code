@@ -8,10 +8,12 @@
  */
 
 import { join } from "std/path/mod.ts";
-import { ensureDir } from "std/fs/mod.ts";
+import { createFileSystem } from "../../../platform/compat/fs.ts";
 import { logger } from "@veryfront/utils";
 import { BYTES_PER_KB } from "@veryfront/utils";
 import type { CSSBundle } from "@veryfront/types";
+
+const fs = createFileSystem();
 
 export class CacheManager {
   private bundles: Map<string, CSSBundle> = new Map();
@@ -65,12 +67,12 @@ export class CacheManager {
    * Write CSS manifest to disk
    */
   async writeManifest(outputDir: string): Promise<void> {
-    await ensureDir(outputDir);
+    await fs.mkdir(outputDir, { recursive: true });
 
     const manifestPath = join(outputDir, "css-manifest.json");
     const manifest = Object.fromEntries(this.bundles);
 
-    await Deno.writeTextFile(
+    await fs.writeTextFile(
       manifestPath,
       JSON.stringify(
         manifest,
@@ -154,7 +156,7 @@ export async function loadCSSManifest(
   const manifestPath = join(outputDir, "css-manifest.json");
 
   try {
-    const content = await Deno.readTextFile(manifestPath);
+    const content = await fs.readTextFile(manifestPath);
     const data = JSON.parse(content);
     return new Map(Object.entries(data));
   } catch (error) {

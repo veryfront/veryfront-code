@@ -1,4 +1,4 @@
-import { join } from "https://deno.land/std@0.220.0/path/mod.ts";
+import { join } from "../../platform/compat/path-helper.ts";
 import type { PathCandidates } from "./types.ts";
 
 const SUPPORTED_EXTENSIONS = [".mdx", ".tsx", ".jsx", ".ts", ".js"];

@@ -5,8 +5,9 @@
 import { assertEquals, assertExists } from "std/assert/mod.ts";
 import { join } from "std/path/mod.ts";
 import { collectFiles, countFiles, discoverFiles, hasMatchingFiles } from "./file-discovery.ts";
+import { cwd } from "../../platform/compat/process.ts";
 
-const TEST_DIR = join(Deno.cwd(), "src/core/utils");
+const TEST_DIR = join(cwd(), "src/core/utils");
 
 Deno.test("file-discovery: discovers files with extension filter", async () => {
   const files = await collectFiles({
@@ -23,7 +24,7 @@ Deno.test("file-discovery: discovers files with extension filter", async () => {
 
 Deno.test("file-discovery: discovers files recursively", async () => {
   const files = await collectFiles({
-    baseDir: join(Deno.cwd(), "src/core"),
+    baseDir: join(cwd(), "src/core"),
     extensions: [".ts"],
     recursive: true,
   });
@@ -47,7 +48,7 @@ Deno.test("file-discovery: filters by pattern", async () => {
 
 Deno.test("file-discovery: respects maxDepth", async () => {
   const files = await collectFiles({
-    baseDir: join(Deno.cwd(), "src"),
+    baseDir: join(cwd(), "src"),
     extensions: [".ts"],
     maxDepth: 1,
     recursive: true,
@@ -59,7 +60,7 @@ Deno.test("file-discovery: respects maxDepth", async () => {
 
 Deno.test("file-discovery: ignores patterns", async () => {
   const files = await collectFiles({
-    baseDir: join(Deno.cwd(), "src/core"),
+    baseDir: join(cwd(), "src/core"),
     extensions: [".ts"],
     ignorePatterns: ["test"],
     recursive: true,
@@ -71,7 +72,7 @@ Deno.test("file-discovery: ignores patterns", async () => {
 
 Deno.test("file-discovery: includes directories when requested", async () => {
   const results = await collectFiles({
-    baseDir: join(Deno.cwd(), "src/core"),
+    baseDir: join(cwd(), "src/core"),
     includeDirs: true,
     recursive: false,
   });
@@ -133,7 +134,7 @@ Deno.test("file-discovery: handles non-existent directory gracefully", async () 
 
 Deno.test("file-discovery: discovers multiple extension types", async () => {
   const files = await collectFiles({
-    baseDir: join(Deno.cwd(), "src/routing"),
+    baseDir: join(cwd(), "src/routing"),
     extensions: [".ts", ".tsx"],
     maxDepth: 1,
   });
@@ -148,7 +149,7 @@ Deno.test("file-discovery: discovers multiple extension types", async () => {
 
 Deno.test("file-discovery: combines extension and pattern filters", async () => {
   const files = await collectFiles({
-    baseDir: join(Deno.cwd(), "src/routing"),
+    baseDir: join(cwd(), "src/routing"),
     extensions: [".ts"],
     patterns: ["route"],
     maxDepth: 1,

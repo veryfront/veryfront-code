@@ -42,7 +42,7 @@ import { createRscInstruments } from "./rsc-instruments.ts";
  * instruments.httpRequestCounter?.add(1, { method: "GET", status: 200 });
  * ```
  */
-export async function initializeInstruments(
+export function initializeInstruments(
   meter: Meter,
   config: MetricsConfig,
   runtimeState: RuntimeState,
@@ -111,5 +111,5 @@ export async function initializeInstruments(
     logger.warn("[metrics] Failed to initialize metric instruments", error);
   }
 
-  return instruments;
+  return Promise.resolve(instruments);
 }

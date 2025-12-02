@@ -11,10 +11,56 @@
  *   deno task release patch --dry-run
  */
 
-import { parseArgs } from "jsr:@std/cli/parse-args";
-import { resolve } from "jsr:@std/path";
+/**
+ * Release script for Veryfront
+ *
+ * Usage:
+ *   deno task release [version] [flags]
+ *
+ * Examples:
+ *   deno task release patch
+ *   deno task release minor
+ *   deno task release 1.2.3
+ *   deno task release patch --dry-run
+ */
 
-const args = parseArgs(Deno.args, {
+import { createFileSystem, FileSystem } from "../src/platform/compat/fs.ts";
+import { getArgs, exitProcess, isDeno } from "../src/platform/compat/process.ts";
+import { promptUser } from "../src/cli/utils/index.ts";
+
+// Conditional imports for path module
+let pathMod: typeof import('node:path') | undefined;
+let childProcess: typeof import('node:child_process') | undefined;
+let util: typeof import('node:util') | undefined;
+let parseArgs: typeof import("mri");
+
+// @ts-ignore - Deno global
+if (typeof Deno === 'undefined') {
+  pathMod = require('node:path');
+  childProcess = require('node:child_process');
+  util = require('node:util');
+  parseArgs = require("mri');
+} else {
+  // @ts-ignore - Deno global
+  pathMod = await import("jsr:@std/path");
+  // @ts-ignore - Deno global
+  ({ parseArgs } = await import("jsr:@std/cli/parse-args"));
+}
+
+// Helper to get path functions
+const getPath = () => {
+  if (pathMod) {
+    return pathMod;
+  } else {
+    // Fallback for Deno, should already be globally available or imported via import maps
+    // @ts-ignore - Deno global
+    return require("std/path/mod.ts");
+  }
+};
+
+const fs = createFileSystem();
+
+const args = parseArgs(getArgs(), {
 	boolean: ["dry-run", "no-test", "no-build", "no-publish", "yes"],
 	alias: { d: "dry-run", y: "yes" },
 });
@@ -25,7 +71,7 @@ if (!versionArg) {
 	console.error(
 		"Error: Please provide a version argument (patch, minor, major, or specific version)",
 	);
-	Deno.exit(1);
+	exitProcess(1);
 }
 
 const DRY_RUN = args["dry-run"];
@@ -38,18 +84,31 @@ async function runCommand(cmd: string[], cwd?: string) {
 		throw new Error("Command cannot be empty");
 	}
 
-	const command = new Deno.Command(cmd[0], {
-		args: cmd.slice(1),
-		cwd,
-		stdout: "inherit",
-		stderr: "inherit",
-	});
-
-	const status = await command.output();
-	if (!status.success) {
-		console.error(`Command failed: ${cmd.join(" ")}`);
-		Deno.exit(1);
-	}
+  if (isDeno) {
+    // @ts-ignore - Deno global
+    const command = new Deno.Command(cmd[0], {
+      args: cmd.slice(1),
+      cwd,
+      stdout: "inherit",
+      stderr: "inherit",
+    });
+    const status = await command.output();
+    if (!status.success) {
+      console.error(`Command failed: ${cmd.join(" ")}`);
+      exitProcess(1);
+    }
+  } else if (childProcess && util) {
+    // Node.js
+    const execFile = util.promisify(childProcess.execFile);
+    try {
+      await execFile(cmd[0], cmd.slice(1), { cwd, stdio: 'inherit' });
+    } catch (error: any) {
+      console.error(`Command failed: ${cmd.join(" ")}\n`, error.stderr || error.message);
+      exitProcess(1);
+    }
+  } else {
+    throw new Error("Unsupported runtime for command execution.");
+  }
 }
 
 async function getNewVersion(
@@ -72,12 +131,12 @@ async function getNewVersion(
 	}
 
 	console.error(`Invalid version argument: ${type}`);
-	Deno.exit(1);
+	exitProcess(1);
 }
 
 async function main() {
-	const denoJsonPath = resolve("deno.json");
-	const denoJson = JSON.parse(await Deno.readTextFile(denoJsonPath));
+	const denoJsonPath = getPath().resolve("deno.json");
+	const denoJson = JSON.parse(await fs.readTextFile(denoJsonPath));
 	const currentVersion = denoJson.version;
 
 	console.log(`Current version: ${currentVersion}`);
@@ -87,10 +146,10 @@ async function main() {
 	if (DRY_RUN) {
 		console.log("DRY RUN: No changes will be made.");
 	} else if (!args.yes) {
-		const confirm = prompt("Continue? [y/N]");
+		const confirm = await promptUser("Continue? [y/N]");
 		if (confirm?.toLowerCase() !== "y") {
 			console.log("Aborted.");
-			Deno.exit(0);
+			exitProcess(0);
 		}
 	}
 
@@ -104,7 +163,7 @@ async function main() {
 	console.log("\n📝 Updating version in deno.json...");
 	if (!DRY_RUN) {
 		denoJson.version = newVersion;
-		await Deno.writeTextFile(
+		await fs.writeTextFile(
 			denoJsonPath,
 			JSON.stringify(denoJson, null, 2) + "\n",
 		);
@@ -122,9 +181,9 @@ async function main() {
 			console.log("\n🚀 [DRY RUN] Would publish to npm");
 		} else {
 			const shouldPublish =
-				args.yes || prompt("\n🚀 Publish to npm? [y/N]")?.toLowerCase() === "y";
+				args.yes || await promptUser("\n🚀 Publish to npm? [y/N]")?.toLowerCase() === "y";
 			if (shouldPublish) {
-				await runCommand(["npm", "publish"], resolve("npm"));
+				await runCommand(["npm", "publish"], getPath().resolve("npm"));
 				console.log(`\n✅ Successfully published veryfront@${newVersion}`);
 			} else {
 				console.log("\nSkipping publish.");

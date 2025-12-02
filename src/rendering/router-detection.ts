@@ -7,7 +7,8 @@
  * - Route file presence detection
  */
 
-import { join } from "std/path/mod.ts";
+import { join } from "../platform/compat/path-helper.ts";
+import { createFileSystem } from "../platform/compat/fs.ts";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "@veryfront/config";
 
@@ -123,8 +124,9 @@ async function statWithFallback(
   try {
     return await adapter.fs.stat(path) as NormalizedStat;
   } catch {
+    const fs = createFileSystem();
     try {
-      const stat = await Deno.stat(path);
+      const stat = await fs.stat(path);
       return {
         size: stat.size,
         isFile: stat.isFile,
@@ -149,14 +151,15 @@ async function readDirWithFallback(
     }
     return entries;
   } catch {
+    const fs = createFileSystem();
     try {
       const entries: NormalizedDirEntry[] = [];
-      for await (const entry of Deno.readDir(dir)) {
+      for await (const entry of fs.readDir(dir)) {
         entries.push({
           name: entry.name,
           isFile: entry.isFile,
           isDirectory: entry.isDirectory,
-          isSymlink: entry.isSymlink,
+          isSymlink: "isSymlink" in entry ? (entry as any).isSymlink : false,
         });
       }
       return entries;

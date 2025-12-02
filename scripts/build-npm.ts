@@ -14,21 +14,40 @@
  *   cd /path/to/test-project && npm link veryfront
  */
 
-import { copy, ensureDir } from "https://deno.land/std@0.220.0/fs/mod.ts";
-import {
-	basename,
-	dirname,
-	fromFileUrl,
-	join,
-	relative,
-	resolve,
-} from "https://deno.land/std@0.220.0/path/mod.ts";
-import * as esbuild from "https://deno.land/x/esbuild@v0.20.1/mod.js";
+import * as esbuild from "esbuild";
+import { createFileSystem, FileSystem } from "../src/platform/compat/fs.ts";
 
-const __dirname = dirname(fromFileUrl(import.meta.url));
-const PROJECT_ROOT = resolve(__dirname, "..");
+// Conditional imports for path module
+let pathMod: typeof import('node:path') | undefined;
+let fsPromises: typeof import('node:fs/promises') | undefined;
 
-const denoJson = JSON.parse(await Deno.readTextFile("./deno.json"));
+// @ts-ignore - Deno global
+if (typeof Deno === 'undefined') {
+  pathMod = require('node:path');
+  fsPromises = require('node:fs/promises');
+}
+
+// Helper to get path functions
+const getPath = () => {
+  if (pathMod) {
+    return pathMod;
+  } else {
+    // Fallback for Deno, should already be globally available or imported via import maps
+    // @ts-ignore - Deno global
+    return require("std/path/mod.ts");
+  }
+};
+
+// Helper to get fs functions (prioritizing the compat layer)
+const getFs = (): FileSystem => {
+  return createFileSystem();
+};
+
+const __dirname = getPath().dirname(getPath().fromFileUrl(import.meta.url));
+const PROJECT_ROOT = getPath().resolve(__dirname, "..");
+const fs = getFs();
+
+const denoJson = JSON.parse(await fs.readTextFile("./deno.json"));
 const version = denoJson.version || "0.0.6";
 const denoImports: Record<string, string> = denoJson.imports || {};
 
@@ -412,7 +431,7 @@ const templateInjectionPlugin: esbuild.Plugin = {
 	name: "template-injection",
 	setup(build) {
 		build.onLoad({ filter: /templates\.ts$/ }, async (args) => {
-			let content = await Deno.readTextFile(args.path);
+			let content = await fs.readTextFile(args.path);
 
 			const routerDecl = `export const CLIENT_ROUTER_BUNDLE: string = ${JSON.stringify(CLIENT_ROUTER_BUNDLE)};`;
 			const prefetchDecl = `export const CLIENT_PREFETCH_BUNDLE: string = ${JSON.stringify(CLIENT_PREFETCH_BUNDLE)};`;
@@ -446,7 +465,7 @@ const templateInjectionPlugin: esbuild.Plugin = {
 
 		// Inject CLIENT_DOM_BUNDLE into script-handlers.ts
 		build.onLoad({ filter: /script-handlers\.ts$/ }, async (args) => {
-			let content = await Deno.readTextFile(args.path);
+			let content = await fs.readTextFile(args.path);
 			const domDecl = `export const CLIENT_DOM_BUNDLE: string = ${JSON.stringify(CLIENT_DOM_BUNDLE)};`;
 
 			if (content.includes("export const CLIENT_DOM_BUNDLE")) {
@@ -706,13 +725,12 @@ try {
 			"glob",
 		],
 		jsx: "automatic",
-		jsxImportSource: "react",
-	});
-	const stat = await Deno.stat(join(OUT_DIR, "dist", "cli.js"));
-	console.log(
-		`  ✓ Built CLI bundle: ${(stat.size / 1024).toFixed(1)} KB (single file)`,
-	);
-} catch (error) {
+					jsxImportSource: "react",
+				});
+				const stat = await fs.stat(getPath().join(OUT_DIR, "dist", "cli.js"));
+				console.log(
+					`  ✓ Built CLI bundle: ${(stat.size / 1024).toFixed(1)} KB (single file)`,
+				);} catch (error) {
 	console.error("  ❌ Failed to build CLI bundle:", error);
 }
 
@@ -865,8 +883,109 @@ export * from 'ai';
 `,
 
 	"ai/react.d.ts": `// AI React hooks type definitions
-export { useChat, useCompletion, useAssistant, useObject } from '@ai-sdk/react';
-export type { UseChatOptions, UseChatHelpers, Message } from '@ai-sdk/react';
+import type { Message } from 'ai';
+import type { ReactNode, ChangeEvent, FormEvent } from 'react';
+
+// UseChat Types
+export interface UseChatOptions {
+  api: string;
+  initialMessages?: Message[];
+  body?: Record<string, unknown>;
+  headers?: Record<string, string>;
+  credentials?: RequestCredentials;
+  onResponse?: (response: Response) => void;
+  onFinish?: (message: Message) => void;
+  onError?: (error: Error) => void;
+}
+
+export interface UseChatResult {
+  messages: Message[];
+  input: string;
+  isLoading: boolean;
+  error: Error | null;
+  setInput: (input: string) => void;
+  append: (message: Omit<Message, "id" | "timestamp">) => Promise<void>;
+  reload: () => Promise<void>;
+  stop: () => void;
+  setMessages: (messages: Message[]) => void;
+  data?: unknown;
+  handleInputChange: (e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => void;
+  handleSubmit: (e: FormEvent) => Promise<void>;
+}
+
+export declare function useChat(options: UseChatOptions): UseChatResult;
+
+// UseCompletion Types
+export interface UseCompletionOptions {
+  api: string;
+  body?: Record<string, unknown>;
+  headers?: Record<string, string>;
+  onResponse?: (response: Response) => void;
+  onFinish?: (completion: string) => void;
+  onError?: (error: Error) => void;
+}
+
+export interface UseCompletionResult {
+  completion: string;
+  isLoading: boolean;
+  error: Error | null;
+  complete: (prompt: string) => Promise<void>;
+  stop: () => void;
+  setCompletion: (completion: string) => void;
+}
+
+export declare function useCompletion(options: UseCompletionOptions): UseCompletionResult;
+
+// UseAgent Types (Custom)
+export type AgentStatus = "idle" | "thinking" | "executing" | "completed" | "error";
+
+export interface ToolCall {
+  id: string;
+  name: string;
+  arguments: unknown;
+  status: "pending" | "executing" | "completed" | "error";
+  result?: unknown;
+  error?: string;
+}
+
+export interface UseAgentOptions {
+  agent: string;
+  onToolCall?: (toolCall: ToolCall) => void;
+  onToolResult?: (toolCall: ToolCall, result: unknown) => void;
+  onError?: (error: Error) => void;
+}
+
+export interface UseAgentResult {
+  messages: Message[];
+  toolCalls: ToolCall[];
+  status: AgentStatus;
+  thinking?: string;
+  invoke: (input: string) => Promise<void>;
+  stop: () => void;
+  isLoading: boolean;
+  error: Error | null;
+}
+
+export declare function useAgent(options: UseAgentOptions): UseAgentResult;
+
+// UseStreaming Types
+export interface UseStreamingOptions {
+  url: string;
+  onChunk?: (chunk: string) => void;
+  onComplete?: () => void;
+  onError?: (error: Error) => void;
+}
+
+export interface UseStreamingResult {
+  data: string;
+  isStreaming: boolean;
+  error: Error | null;
+  start: (body?: Record<string, unknown>) => Promise<void>;
+  stop: () => void;
+  reset: () => void;
+}
+
+export declare function useStreaming(options: UseStreamingOptions): UseStreamingResult;
 `,
 
 	"ai/primitives.d.ts": `// AI primitive components type definitions
@@ -940,9 +1059,9 @@ export declare function AIDevTools(props: DevToolsConfig): JSX.Element | null;
 
 // Write all declaration files
 for (const [filename, content] of Object.entries(declarationFiles)) {
-	const dtsPath = join(OUT_DIR, "dist", filename);
-	await ensureDir(dirname(dtsPath));
-	await Deno.writeTextFile(dtsPath, content);
+	const dtsPath = getPath().join(OUT_DIR, "dist", filename);
+	await fs.mkdir(getPath().dirname(dtsPath), { recursive: true });
+	await fs.writeTextFile(dtsPath, content);
 	console.log(`  ✓ Generated ${filename}`);
 }
 
@@ -1076,13 +1195,13 @@ const packageJson = {
 	},
 };
 
-await Deno.writeTextFile(
-	join(OUT_DIR, "package.json"),
+await fs.writeTextFile(
+	getPath().join(OUT_DIR, "package.json"),
 	JSON.stringify(packageJson, null, 2),
 );
 
 console.log("📄 Creating CLI bin wrapper...");
-await ensureDir(join(OUT_DIR, "bin"));
+await fs.mkdir(getPath().join(OUT_DIR, "bin"), { recursive: true });
 const cliBinContent = `#!/usr/bin/env node
 // CLI entry point - calls main() from the bundled CLI
 import { main } from '../dist/cli.js';
@@ -1091,44 +1210,42 @@ main().catch(err => {
   process.exit(1);
 });
 `;
-const binPath = join(OUT_DIR, "bin", "veryfront.js");
-await Deno.writeTextFile(binPath, cliBinContent);
-await Deno.chmod(binPath, 0o755);
+const binPath = getPath().join(OUT_DIR, "bin", "veryfront.js");
+await fs.writeTextFile(binPath, cliBinContent);
+
+// Conditional chmod for Deno
+// @ts-ignore - Deno global
+if (typeof Deno !== 'undefined') {
+  // @ts-ignore - Deno global
+  await Deno.chmod(binPath, 0o755);
+} else if (fsPromises) {
+  // Node.js chmod
+  await fsPromises.chmod(binPath, 0o755);
+}
 
 console.log("📄 Copying additional files...");
 try {
-	await Deno.copyFile("README.md", join(OUT_DIR, "README.md"));
+  if (fsPromises) {
+		await fsPromises.copyFile("README.md", getPath().join(OUT_DIR, "README.md"));
+  } else {
+    // @ts-ignore - Deno global
+		await Deno.copyFile("README.md", getPath().join(OUT_DIR, "README.md"));
+  }
 } catch {
 	console.log("  No README.md found");
 }
 try {
-	await Deno.copyFile("LICENSE", join(OUT_DIR, "LICENSE"));
+  if (fsPromises) {
+		await fsPromises.copyFile("LICENSE", getPath().join(OUT_DIR, "LICENSE"));
+  } else {
+    // @ts-ignore - Deno global
+		await Deno.copyFile("LICENSE", getPath().join(OUT_DIR, "LICENSE"));
+  }
 } catch {
 	console.log("  No LICENSE found, creating MIT license...");
-	await Deno.writeTextFile(
-		join(OUT_DIR, "LICENSE"),
-		`MIT License
-
-Copyright (c) ${new Date().getFullYear()} Veryfront
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-`,
+	await fs.writeTextFile(
+		getPath().join(OUT_DIR, "LICENSE"),
+		`MIT License\n\nCopyright (c) ${new Date().getFullYear()} Veryfront\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE.\n`,
 	);
 }
 

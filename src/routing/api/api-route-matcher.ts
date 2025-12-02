@@ -1,4 +1,5 @@
 import type { Route, RouteMatch } from "@veryfront/routing/matchers/types.ts";
+import { getEnv } from "../../platform/compat/process.ts";
 import { LRUCache } from "@veryfront/utils/lru-wrapper.ts";
 
 export type { Route, RouteMatch };
@@ -192,7 +193,7 @@ function shouldDisableLruInterval(): boolean {
     return true;
   }
   try {
-    return Deno.env.get("VF_DISABLE_LRU_INTERVAL") === "1";
+    return getEnv("VF_DISABLE_LRU_INTERVAL") === "1";
   } catch (_error) {
     return false;
   }

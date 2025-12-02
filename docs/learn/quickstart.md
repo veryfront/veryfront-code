@@ -303,7 +303,7 @@ export default defineConfig({
     enabled: true,
     providers: {
       openai: {
-        apiKey: Deno.env.get('OPENAI_API_KEY'),
+        apiKey: getEnv('OPENAI_API_KEY'),
       },
     },
   },

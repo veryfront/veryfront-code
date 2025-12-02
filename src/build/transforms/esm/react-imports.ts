@@ -131,16 +131,16 @@ export async function resolveReactImports(code: string, forSSR: boolean = false)
   });
 }
 
-export async function addDepsToEsmShUrls(code: string): Promise<string> {
+export function addDepsToEsmShUrls(code: string): Promise<string> {
   // Skip for Node.js - no esm.sh URLs needed
   if (isNodeRuntime()) {
-    return code;
+    return Promise.resolve(code);
   }
 
-  return replaceSpecifiers(code, (specifier) => {
+  return Promise.resolve(replaceSpecifiers(code, (specifier) => {
     if (specifier.startsWith("https://esm.sh/") && !specifier.includes("?") && !specifier.includes(`react@${REACT_DEFAULT_VERSION}`)) {
       return `${specifier}?deps=react@${REACT_DEFAULT_VERSION},react-dom@${REACT_DEFAULT_VERSION}`;
     }
     return null;
-  });
+  }));
 }

@@ -62,7 +62,7 @@ import { RedisRateLimitStore } from 'veryfront/middleware/redis-rate-limit';
 export const middleware = [
   rateLimit({
     store: new RedisRateLimitStore({
-      url: Deno.env.get('REDIS_URL'),
+      url: getEnv('REDIS_URL'),
     }),
   }),
 ];

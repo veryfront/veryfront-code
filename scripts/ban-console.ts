@@ -34,6 +34,7 @@ function shouldSkip(path: string): boolean {
     path.includes("/core/utils/logger/") ||
     path.includes("/rendering/client/browser-logger") ||
     path.includes("/rendering/client/browser-stubs/") ||
+    path.includes("/security/client/") ||
     // Allow console in dev tools
     path.includes("/ai/dev/")
   );

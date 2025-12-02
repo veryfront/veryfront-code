@@ -5,22 +5,25 @@ import { serverLogger } from "@veryfront/utils";
 import { isDeno } from "../runtime.ts";
 
 interface GlobalWithDenoKv {
-  Deno?: {
-    openKv?: (path?: string) => Promise<Kv>;
+  Deno: {
+    openKv: (path?: string) => Promise<Kv>;
   };
 }
 
 export async function openKv(path?: string): Promise<Kv> {
-  const global = globalThis as GlobalWithDenoKv;
-
-  if (isDeno && typeof global.Deno?.openKv === "function") {
-    try {
-      return await global.Deno.openKv(path);
-    } catch (error) {
-      serverLogger.debug("Native Deno KV not available, using polyfill:", error);
+  // 1. Try native Deno KV
+  if (isDeno) {
+    const global = globalThis as unknown as GlobalWithDenoKv;
+    if (typeof global.Deno?.openKv === "function") {
+      try {
+        return await global.Deno.openKv(path);
+      } catch (error) {
+        serverLogger.debug("Native Deno KV failed, trying other options:", error);
+      }
     }
   }
 
+  // 2. Try SQLite (Node.js/Bun compatible)
   try {
     const Database = (await import("better-sqlite3")).default;
     const dbPath = path || ":memory:";
@@ -28,8 +31,10 @@ export async function openKv(path?: string): Promise<Kv> {
     return new SqliteKv(db);
   } catch (error) {
     serverLogger.debug("SQLite not available, using memory KV:", error);
-    return new MemoryKv();
   }
+
+  // 3. Fallback to in-memory KV
+  return new MemoryKv();
 }
 
 export async function createKVStore(options?: { path?: string }) {
@@ -38,10 +43,10 @@ export async function createKVStore(options?: { path?: string }) {
 
 export function polyfillDenoKv() {
   if (!isDeno) {
-    const global = globalThis as GlobalWithDenoKv;
+    const global = globalThis as unknown as GlobalWithDenoKv;
 
     if (!global.Deno) {
-      global.Deno = {};
+      global.Deno = {} as GlobalWithDenoKv["Deno"];
     }
 
     if (!global.Deno.openKv) {

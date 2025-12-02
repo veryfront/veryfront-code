@@ -1,12 +1,8 @@
-/**
- * Consolidated CLI utility functions
- * Merges cli/utils.ts and cli/index/process-utils.ts
- */
-
 import { VERSION } from "@veryfront/utils";
 import { bold, cyan, dim, yellow } from "@veryfront/compat/console";
 import { cliLogger } from "@veryfront/utils";
 import { exit } from "../../platform/compat/process.ts";
+import { isDeno } from "../../platform/compat/runtime.ts";
 
 // Logo and help display
 export function showLogo() {
@@ -108,30 +104,31 @@ export function logInfo(message: string) {
 export async function promptUser(message: string): Promise<string> {
   cliLogger.info(message);
 
-  // Cross-platform stdin reading
-  if (typeof Deno !== "undefined" && Deno.stdin) {
+  if (isDeno) {
+    // Deno-specific stdin reading
     const buf = new Uint8Array(1024);
+    // @ts-ignore - Deno global
     const n = await Deno.stdin.read(buf);
     if (n === null) {
       return "";
     }
     const input = new TextDecoder().decode(buf.subarray(0, n));
     return input.trim();
-  }
-
-  // Node.js/Bun fallback using readline
-  const readline = await import("node:readline");
-  const rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout,
-  });
-
-  return new Promise((resolve) => {
-    rl.question("", (answer: string) => {
-      rl.close();
-      resolve(answer.trim());
+  } else {
+    // Node.js/Bun fallback using readline
+    const readline = await import("node:readline");
+    const rl = readline.createInterface({
+      input: process.stdin,
+      output: process.stdout,
     });
-  });
+
+    return new Promise((resolve) => {
+      rl.question("", (answer: string) => {
+        rl.close();
+        resolve(answer.trim());
+      });
+    });
+  }
 }
 
 // Process utilities

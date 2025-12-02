@@ -9,6 +9,7 @@ import type { BundleResult, BundlerOptions } from "../types/bundler-types.ts";
 import { extractImports } from "../utils/import-utils.ts";
 import { getEsbuildLoader } from "../../utils/file-types.ts";
 import { createError, toError } from "../../../core/errors/veryfront-error.ts";
+import { createFileSystem } from "../../../platform/compat/fs.ts";
 
 interface BundleCodeOptions {
   source: { path: string; content: string; type: string };
@@ -150,12 +151,13 @@ function createResolvePlugin(fileCache: Map<string, string>, projectDir: string)
 }
 
 function createCSSPlugin(result: BundleResult): esbuild.Plugin {
+  const fs = createFileSystem();
   return {
     name: "veryfront-css",
     setup(build) {
       build.onLoad({ filter: /\.css$/ }, async (args) => {
         try {
-          const content = await Deno.readTextFile(args.path);
+          const content = await fs.readTextFile(args.path);
 
           result.outputs.set(args.path, {
             path: args.path,

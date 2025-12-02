@@ -22,7 +22,21 @@ export function createUsersTemplate(): TemplateFile {
   return {
     path: "lib/users.ts",
     content: `import { nanoid } from "nanoid";
-import { hash, compare } from "https://deno.land/x/bcrypt@v0.4.1/mod.ts";
+
+let hash: (password: string) => Promise<string>;
+let compare: (password: string, hash: string) => Promise<boolean>;
+
+// @ts-ignore - Deno global
+if (typeof Deno !== 'undefined') {
+  const bcrypt = await import("https://deno.land/x/bcrypt@v0.4.1/mod.ts");
+  hash = bcrypt.hash;
+  compare = bcrypt.compare;
+} else {
+  // @ts-ignore
+  const bcrypt = await import('@node-rs/bcrypt');
+  hash = bcrypt.hash;
+  compare = bcrypt.compare;
+}
 
 interface User {
   id: string;

@@ -157,7 +157,7 @@ export async function POST(request: Request) {
   const { path, tag, secret } = body;
 
   // Verify secret to prevent unauthorized invalidation
-  if (secret !== Deno.env.get('REVALIDATE_SECRET')) {
+  if (secret !== getEnv('REVALIDATE_SECRET')) {
     return Response.json(
       { message: 'Invalid secret' },
       { status: 401 }
@@ -210,7 +210,7 @@ async function updateBlogPost(slug: string, data: BlogPostUpdate) {
   await db.posts.update(slug, data);
 
   // Invalidate the cached page
-  const secret = Deno.env.get('REVALIDATE_SECRET');
+  const secret = getEnv('REVALIDATE_SECRET');
   await fetch('https://yoursite.com/api/revalidate', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -227,7 +227,7 @@ async function updateBlogPost(slug: string, data: BlogPostUpdate) {
 async function deleteProduct(id: string) {
   await db.products.delete(id);
 
-  const secret = Deno.env.get('REVALIDATE_SECRET');
+  const secret = getEnv('REVALIDATE_SECRET');
   await fetch('https://yoursite.com/api/revalidate', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -362,7 +362,7 @@ export async function POST(request: Request) {
 function verifySignature(signature: string | null, body: string): boolean {
   if (!signature) return false;
 
-  const secret = Deno.env.get('WEBHOOK_SECRET');
+  const secret = getEnv('WEBHOOK_SECRET');
   const crypto = new TextEncoder().encode(secret + body);
   // Implement your signature verification logic
   return true;
@@ -763,7 +763,7 @@ Technical documentation that updates when docs are edited:
 // app/docs/[...slug]/page.tsx
 import type { PageWithData, DataContext } from 'veryfront';
 import { join } from '@std/path';
-import { readTextFile } from '@std/fs';
+import { getAdapter } from 'veryfront/platform';
 import matter from 'gray-matter';
 import { marked } from 'marked';
 
@@ -772,7 +772,8 @@ export const getStaticPaths = async () => {
   const paths: Array<{ params: { slug: string[] } }> = [];
 
   async function walk(dir: string, base: string[] = []) {
-    for await (const entry of Deno.readDir(dir)) {
+    const adapter = await getAdapter();
+    for await (const entry of adapter.fs.readDir(dir)) {
       if (entry.isDirectory) {
         await walk(join(dir, entry.name), [...base, entry.name]);
       } else if (entry.name.endsWith('.md')) {
@@ -954,7 +955,7 @@ return {
 export async function POST(request: Request) {
   const { secret, path } = await request.json();
 
-  if (secret !== Deno.env.get('REVALIDATE_SECRET')) {
+  if (secret !== getEnv('REVALIDATE_SECRET')) {
     return Response.json({ error: 'Invalid secret' }, { status: 401 });
   }
 
@@ -1080,7 +1081,7 @@ let lastReset = Date.now();
 export async function POST(request: Request) {
   const { path, secret } = await request.json();
 
-  if (secret !== Deno.env.get('REVALIDATE_SECRET')) {
+  if (secret !== getEnv('REVALIDATE_SECRET')) {
     return Response.json({ error: 'Invalid' }, { status: 401 });
   }
 
@@ -1121,7 +1122,7 @@ export const getServerData = async (ctx: DataContext) => {
     props: { post },
     cache: 'forever',
     tags: ['blog'],
-    headers: Deno.env.get('NODE_ENV') === 'development' ? {
+    headers: getEnv('NODE_ENV') === 'development' ? {
       'X-Cache-Status': 'MISS',
       'X-Cache-Tags': 'blog,post:123',
       'X-Cached-At': new Date().toISOString()

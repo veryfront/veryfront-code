@@ -21,14 +21,60 @@ import { exitProcess } from "../utils/index.ts";
 import type { ParsedArgs } from "./types.ts";
 import type { CacheBackend, InitTemplate } from "../commands/init/types.ts";
 import { cwd } from "../../platform/compat/process.ts";
+import { COMMANDS } from "../help/command-definitions.ts";
+import {
+  calculateMaxLength,
+  formatCommandHeader,
+  formatExample,
+  formatOption,
+  formatSectionHeader,
+  formatUsage,
+} from "../help/formatters.ts";
+import { dim } from "@veryfront/compat/console";
 
 /**
  * Show basic help information
  */
 function showBasicHelp(command?: string): void {
-  if (command) {
-    cliLogger.info(`Help for '${command}' command`);
-    // Command-specific help could be added here
+  if (command && COMMANDS[command]) {
+    const cmd = COMMANDS[command];
+
+    // Header
+    cliLogger.info(formatCommandHeader(cmd.name));
+    cliLogger.info(`${cmd.description}\n`);
+
+    // Usage
+    cliLogger.info(formatUsage(cmd.usage));
+
+    // Options
+    if (cmd.options && cmd.options.length > 0) {
+      cliLogger.info(`\n${formatSectionHeader("Options")}`);
+      const maxFlagLength = calculateMaxLength(cmd.options.map((o) => ({ length: o.flag.length })));
+      for (const option of cmd.options) {
+        cliLogger.info(formatOption(option, maxFlagLength));
+      }
+    }
+
+    // Examples
+    if (cmd.examples && cmd.examples.length > 0) {
+      cliLogger.info(`\n${formatSectionHeader("Examples")}`);
+      for (const example of cmd.examples) {
+        cliLogger.info(formatExample(example));
+      }
+    }
+
+    // Notes
+    if (cmd.notes && cmd.notes.length > 0) {
+      cliLogger.info(`\n${formatSectionHeader("Notes")}`);
+      for (const note of cmd.notes) {
+        cliLogger.info(`  ${dim("-")} ${note}`);
+      }
+    }
+
+    cliLogger.info("");
+  } else if (command) {
+    cliLogger.info(`Unknown command: ${command}`);
+    cliLogger.info(`Use 'veryfront --help' to see available commands.`);
   } else {
     cliLogger.info(`Veryfront CLI v${VERSION}
 

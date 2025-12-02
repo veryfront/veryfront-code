@@ -3,6 +3,7 @@ import { walk } from "std/fs/mod.ts";
 import { logger } from "@veryfront/utils";
 import type { BrowserTargets } from "@veryfront/types";
 import { createError, toError } from "../../../core/errors/veryfront-error.ts";
+import { cwd } from "../../../platform/compat/process.ts";
 
 export async function findCSSFiles(dir: string): Promise<string[]> {
   const cssFiles: string[] = [];
@@ -71,7 +72,7 @@ export function getOutputPath(inputPath: string, outputDir: string): string {
   const nameWithoutExt = filename.replace(".css", "");
   const outputFilename = `${nameWithoutExt}.min.css`;
 
-  const relativePath = relative(Deno.cwd(), dir);
+  const relativePath = relative(cwd(), dir);
   return join(outputDir, relativePath, outputFilename);
 }
 

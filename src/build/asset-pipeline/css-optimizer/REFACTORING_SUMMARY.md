@@ -256,7 +256,7 @@ Deno.test("descriptive test name", async () => {
 
 ### File System Operations
 
-- Uses Deno APIs: `Deno.readTextFile()`, `Deno.writeTextFile()`
+- Uses compat FS APIs: `createFileSystem().readTextFile()`, `createFileSystem().writeTextFile()`
 - Proper permissions: `--allow-read`, `--allow-write`, `--allow-env`
 
 ## Performance Considerations

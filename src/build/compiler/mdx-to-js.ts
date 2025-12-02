@@ -5,6 +5,7 @@ import * as esbuild from "esbuild";
 import { extract } from "std/front_matter/yaml.ts";
 import { dirname, join } from "std/path/mod.ts";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
+import { createFileSystem } from "../../platform/compat/fs.ts";
 import { createSecureFs } from "@veryfront/security";
 import { createError, toError } from "../../core/errors/veryfront-error.ts";
 
@@ -23,6 +24,7 @@ export interface CompileToJSOptions {
 }
 
 let esbuildInitialized = false;
+const fs = createFileSystem();
 
 async function initializeEsbuild() {
   if (!esbuildInitialized) {
@@ -204,7 +206,7 @@ export async function compileProjectMDX(
   const components: string[] = [];
 
   try {
-    for await (const entry of Deno.readDir(componentsDir)) {
+    for await (const entry of fs.readDir(componentsDir)) {
       if (entry.isFile && /\.(jsx?|tsx?)$/.test(entry.name)) {
         components.push(entry.name.replace(/\.(jsx?|tsx?)$/, ""));
       }
@@ -218,7 +220,7 @@ export async function compileProjectMDX(
 
   async function findMDXFiles(dir: string) {
     try {
-      for await (const entry of Deno.readDir(dir)) {
+      for await (const entry of fs.readDir(dir)) {
         const path = join(dir, entry.name);
         if (entry.isFile && entry.name.endsWith(".mdx")) {
           mdxFiles.push(path);

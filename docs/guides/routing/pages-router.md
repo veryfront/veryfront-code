@@ -774,7 +774,7 @@ export default function Page() {
 ```typescript
 // pages/api/data.ts
 export default async function handler(req: Request) {
-  const apiKey = Deno.env.get('API_KEY');
+  const apiKey = getEnv('API_KEY');
   const data = await fetchData(apiKey);
 
   return new Response(JSON.stringify(data));

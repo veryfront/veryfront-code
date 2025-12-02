@@ -6,7 +6,6 @@
 
 import type {
   BaseNodeConfig,
-  RetryConfig,
   SubWorkflowNodeConfig,
   WorkflowContext,
   WorkflowDefinition,

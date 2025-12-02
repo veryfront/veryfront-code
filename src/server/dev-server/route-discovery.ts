@@ -5,6 +5,7 @@ import type { DynamicRouter } from "@veryfront/routing/api/index.ts";
 import type { VeryfrontConfig } from "@veryfront/config";
 import type { RouteDirectory } from "./types.ts";
 import { withFallback } from "@veryfront/platform/adapters/index.ts";
+import { createFileSystem } from "../../platform/compat/fs.ts";
 
 export class RouteDiscovery {
   constructor(
@@ -94,7 +95,7 @@ export class RouteDiscovery {
     try {
       const stat = await withFallback(
         () => this.adapter.fs.stat(path),
-        () => Deno.stat(path),
+        () => createFileSystem().stat(path),
         { operationName: "stat:routeDiscovery:directoryExists", logError: false },
       );
       return stat.isDirectory;

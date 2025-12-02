@@ -16,6 +16,7 @@ import type {
   WorkflowRun,
 } from "../types.ts";
 import type { BackendConfig, WorkflowBackend } from "./types.ts";
+import { agentLogger as logger } from "@veryfront/utils";
 
 /**
  * Inngest adapter configuration
@@ -58,7 +59,7 @@ export class InngestAdapter implements WorkflowBackend {
       ...config,
     };
 
-    console.warn(
+    logger.warn(
       "[InngestAdapter] This is a stub implementation. " +
       "Full Inngest integration requires additional setup. " +
       "See: https://www.inngest.com/docs",

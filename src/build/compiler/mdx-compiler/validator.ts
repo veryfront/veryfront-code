@@ -1,5 +1,8 @@
 import type { CompileOptions } from "./types.ts";
+import { createFileSystem } from "../../../platform/compat/fs.ts";
 import { createError, toError } from "../../../core/errors/veryfront-error.ts";
+
+const fs = createFileSystem();
 
 export function validateCompileParams(
   filePath: string,
@@ -29,7 +32,10 @@ export function validateCompileParams(
 export async function validateFileExists(filePath: string, content: string): Promise<void> {
   if (!content || content.trim() === "") {
     try {
-      await Deno.stat(filePath);
+      const exists = await fs.exists(filePath);
+      if (!exists) {
+        throw new Error("file not found");
+      }
     } catch (_error) {
       throw toError(createError({
         type: "build",
@@ -41,8 +47,7 @@ export async function validateFileExists(filePath: string, content: string): Pro
 
 export async function pathExists(path: string): Promise<boolean> {
   try {
-    await Deno.stat(path);
-    return true;
+    return await fs.exists(path);
   } catch {
     return false;
   }

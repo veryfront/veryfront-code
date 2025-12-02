@@ -6,8 +6,9 @@
  * - cleanupBundler() (known to be async)
  */
 
-import { walk } from "https://deno.land/std@0.220.0/fs/walk.ts";
-import { relative } from "https://deno.land/std@0.220.0/path/mod.ts";
+import { relative } from "../src/platform/compat/path-helper.ts";
+import { createFileSystem, FileSystem } from "../src/platform/compat/fs.ts";
+import { cwd, exit } from "../src/platform/compat/process.ts";
 
 interface Issue {
   file: string;
@@ -35,13 +36,41 @@ const PATTERNS = [
   },
 ];
 
-async function checkFile(filePath: string): Promise<Issue[]> {
+// Custom walk implementation using FileSystem abstraction
+async function* walk(dir: string, fs: FileSystem, exts: string[], skip: RegExp[]): AsyncGenerator<{ path: string; isFile: boolean }> {
+  try {
+    for await (const entry of fs.readDir(dir)) {
+      const entryPath = `${dir}/${entry.name}`;
+      if (skip.some(s => s.test(entryPath))) {
+        continue;
+      }
+
+      if (entry.isFile) {
+        const ext = entry.name.split('.').pop();
+        if (ext && exts.includes(ext)) {
+          yield { path: entryPath, isFile: true };
+        }
+      } else if (entry.isDirectory) {
+        yield* walk(entryPath, fs, exts, skip);
+      }
+    }
+  } catch (e) {
+    if (e instanceof Deno.errors.NotFound || e instanceof Error && (e as any).code === 'ENOENT') {
+      // Directory not found, gracefully skip
+      return;
+    }
+    throw e;
+  }
+}
+
+async function checkFile(filePath: string, fs: FileSystem): Promise<Issue[]> {
   const issues: Issue[] = [];
-  const content = await Deno.readTextFile(filePath);
+  const content = await fs.readTextFile(filePath);
   const lines = content.split("\n");
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
+    if (!line) continue;
     const trimmed = line.trim();
 
     // Skip comments, empty lines, and function declarations
@@ -82,47 +111,38 @@ async function checkFile(filePath: string): Promise<Issue[]> {
 
 async function main() {
   const issues: Issue[] = [];
-  const cwd = Deno.cwd();
+  const currentWorkingDir = cwd();
+  const fs = createFileSystem();
 
   // Check src/ directory
   for await (
-    const entry of walk("src", {
-      exts: ["ts", "tsx"],
-      skip: [/node_modules/, /dist/, /coverage/],
-    })
+    const entry of walk("src", fs, ["ts", "tsx"], [/node_modules/, /dist/, /coverage/])
   ) {
     if (entry.isFile) {
-      const fileIssues = await checkFile(entry.path);
+      const fileIssues = await checkFile(entry.path, fs);
       issues.push(...fileIssues);
     }
   }
 
   // Check tests/ directory
-  try {
-    for await (
-      const entry of walk("tests", {
-        exts: ["ts", "tsx"],
-        skip: [/node_modules/, /dist/, /coverage/],
-      })
-    ) {
-      if (entry.isFile) {
-        const fileIssues = await checkFile(entry.path);
-        issues.push(...fileIssues);
-      }
+  for await (
+    const entry of walk("tests", fs, ["ts", "tsx"], [/node_modules/, /dist/, /coverage/])
+  ) {
+    if (entry.isFile) {
+      const fileIssues = await checkFile(entry.path, fs);
+      issues.push(...fileIssues);
     }
-  } catch {
-    // tests directory might not exist
   }
 
   if (issues.length === 0) {
     console.log("✓ No unawaited promise issues found!");
-    Deno.exit(0);
+    exit(0);
   }
 
   console.error(`\n❌ Found ${issues.length} potential unawaited promise issue(s):\n`);
 
   for (const issue of issues) {
-    const relativePath = relative(cwd, issue.file);
+    const relativePath = relative(currentWorkingDir, issue.file);
     console.error(`${relativePath}:${issue.line}`);
     console.error(`  Pattern: ${issue.pattern}`);
     console.error(`  Code: ${issue.code}`);
@@ -132,9 +152,11 @@ async function main() {
   console.error(
     "\n⚠️  These calls may need 'await' if they return promises.\n",
   );
-  Deno.exit(1);
+  exit(1);
 }
 
-if (import.meta.main) {
+// Check if the script is run directly
+// @ts-ignore - Deno global
+if (import.meta.main || typeof Deno === 'undefined') {
   main();
 }

@@ -179,7 +179,7 @@ export const getServerData = async (ctx: DataContext) => {
   // Call external API
   const response = await fetch(
     `https://api.openweathermap.org/data/2.5/weather?q=${city}&appid=${
-      Deno.env.get('WEATHER_API_KEY')
+      getEnv('WEATHER_API_KEY')
     }`
   );
 
@@ -275,7 +275,7 @@ export const getServerData = async (ctx: DataContext) => {
     const token = authHeader.replace('Bearer ', '');
     const payload = verify(
       token,
-      Deno.env.get('JWT_SECRET')!
+      getEnv('JWT_SECRET')!
     ) as { userId: string };
 
     const user = await fetchUser(payload.userId);
@@ -483,7 +483,7 @@ export const getServerData = async (ctx: DataContext) => {
 import { Pool } from 'pg';
 
 const pool = new Pool({
-  connectionString: Deno.env.get('DATABASE_URL'),
+  connectionString: getEnv('DATABASE_URL'),
   max: 20, // Maximum number of connections
   idleTimeoutMillis: 30000,
   connectionTimeoutMillis: 2000

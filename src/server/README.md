@@ -74,10 +74,11 @@ server/
 ```ts
 import { createDevServer } from "#server";
 import { getConfig } from "#config";
+import { cwd } from "../../platform/compat/process.ts"; // Assuming cwd is available from compat
 
-const config = await getConfig(Deno.cwd());
+const config = await getConfig(cwd());
 const server = await createDevServer({
-  projectDir: Deno.cwd(),
+  projectDir: cwd(),
   config,
   port: 3000,
 });
@@ -90,9 +91,10 @@ console.log("Dev server running on http://localhost:3000");
 
 ```ts
 import { startUniversalServer } from "#server";
+import { cwd } from "../../platform/compat/process.ts"; // Assuming cwd is available from compat
 
 await startUniversalServer({
-  projectDir: Deno.cwd(),
+  projectDir: cwd(),
   port: 8000,
   hostname: "0.0.0.0",
 });
@@ -106,12 +108,13 @@ console.log("Production server running on http://0.0.0.0:8000");
 import { createVeryfrontHandler } from "#server";
 import { getConfig } from "#config";
 import { getAdapter } from "#adapters";
+import { cwd } from "../../platform/compat/process.ts"; // Assuming cwd is available from compat
 
 const adapter = await getAdapter();
-const config = await getConfig(Deno.cwd(), adapter);
+const config = await getConfig(cwd(), adapter);
 
 const handler = await createVeryfrontHandler({
-  projectDir: Deno.cwd(),
+  projectDir: cwd(),
   config,
   adapter,
   mode: "production",

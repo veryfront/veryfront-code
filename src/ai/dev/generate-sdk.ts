@@ -1,7 +1,8 @@
-import { join, basename, extname } from "https://deno.land/std@0.220.0/path/mod.ts";
-import { ensureDir } from "https://deno.land/std@0.220.0/fs/mod.ts";
+import { join, basename, extname } from "../../platform/compat/path-helper.ts";
+import { createFileSystem } from "../../platform/compat/fs.ts";
 
 export async function generateClientSDK(projectDir: string): Promise<void> {
+  const fs = createFileSystem();
   const agentsDir = join(projectDir, "ai", "agents");
   const outDir = join(projectDir, ".veryfront");
   const outFile = join(outDir, "client-sdk.d.ts");
@@ -9,16 +10,16 @@ export async function generateClientSDK(projectDir: string): Promise<void> {
   const agents: { id: string; path: string }[] = [];
 
   try {
-    for await (const entry of Deno.readDir(agentsDir)) {
+    for await (const entry of fs.readDir(agentsDir)) {
       if (entry.isFile && (entry.name.endsWith(".ts") || entry.name.endsWith(".tsx"))) {
         const id = basename(entry.name, extname(entry.name));
         // Convert ID to camelCase if strictly needed, but let's assume filenames are identifiers for now
         // or map kebab-case to camelCase
-        const camelId = id.replace(/-([a-z])/g, (g) => g[1].toUpperCase());
+        const camelId = id.replace(/-([a-z])/g, (_, p1) => p1.toUpperCase());
         agents.push({ id: camelId, path: entry.name });
       }
     }
-  } catch (e) {
+  } catch (_e) {
     // Directory might not exist
     return;
   }
@@ -50,6 +51,6 @@ declare module "veryfront/ai/client" {
 }
 `;
 
-  await ensureDir(outDir);
-  await Deno.writeTextFile(outFile, content);
+  await fs.mkdir(outDir, { recursive: true });
+  await fs.writeTextFile(outFile, content);
 }
