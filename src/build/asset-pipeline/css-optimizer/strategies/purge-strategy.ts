@@ -17,6 +17,9 @@ import type {
   CSSProcessingResult,
 } from "../types/index.ts";
 import { extractSelectors, globFiles, shouldKeepSelector } from "../utils.ts";
+import { createFileSystem } from "../../../../platform/compat/fs.ts";
+
+const fs = createFileSystem();
 
 export class PurgeStrategy implements CSSOptimizationStrategy {
   readonly name = "purge-css";
@@ -44,7 +47,7 @@ export class PurgeStrategy implements CSSOptimizationStrategy {
 
       for (const file of files) {
         try {
-          const content = await Deno.readTextFile(file);
+          const content = await fs.readTextFile(file);
           const result = extractSelectors(content);
 
           // Add all extracted selectors to the used set

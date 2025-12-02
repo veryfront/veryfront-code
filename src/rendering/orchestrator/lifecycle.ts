@@ -1,4 +1,4 @@
-import { join } from "https://deno.land/std@0.220.0/path/mod.ts";
+import { join } from "../../platform/compat/path-helper.ts";
 import { rendererLogger as logger } from "@veryfront/utils";
 import { MDXCacheAdapter } from "@veryfront/transforms/mdx/index.ts";
 import { isCompiledBinary } from "@veryfront/utils";

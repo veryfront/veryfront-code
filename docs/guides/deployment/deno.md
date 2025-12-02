@@ -186,8 +186,10 @@ ANTHROPIC_API_KEY=sk-ant-...
 
 ```typescript
 // Server-side only (getServerData, API routes)
-const apiKey = Deno.env.get('API_KEY');
-const dbUrl = Deno.env.get('DATABASE_URL');
+import { getEnv } from 'veryfront/platform/compat/process.ts';
+
+const apiKey = getEnv('API_KEY');
+const dbUrl = getEnv('DATABASE_URL');
 
 // Or using process.env (compatible)
 const apiKey = process.env.API_KEY;
@@ -322,8 +324,8 @@ Connect to any database over HTTP/HTTPS:
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
 const supabase = createClient(
-  Deno.env.get('SUPABASE_URL')!,
-  Deno.env.get('SUPABASE_KEY')!
+  getEnv('SUPABASE_URL')!,
+  getEnv('SUPABASE_KEY')!
 );
 
 const { data, error } = await supabase
@@ -336,9 +338,9 @@ const { data, error } = await supabase
 import { MongoClient } from 'https://deno.land/x/atlas_sdk/mod.ts';
 
 const client = new MongoClient({
-  endpoint: Deno.env.get('MONGO_URL')!,
+  endpoint: getEnv('MONGO_URL')!,
   dataSource: 'Cluster0',
-  auth: { apiKey: Deno.env.get('MONGO_API_KEY')! },
+  auth: { apiKey: getEnv('MONGO_API_KEY')! },
 });
 
 const users = client.database('mydb').collection('users');
@@ -426,7 +428,7 @@ Integrate with error tracking services:
 import * as Sentry from 'https://deno.land/x/sentry/index.ts';
 
 Sentry.init({
-  dsn: Deno.env.get('SENTRY_DSN'),
+  dsn: getEnv('SENTRY_DSN'),
   environment: 'production',
 });
 

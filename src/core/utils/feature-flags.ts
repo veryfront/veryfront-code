@@ -1,4 +1,5 @@
 declare const process: { env: Record<string, string | undefined> } | undefined;
+import { getEnv } from "../../platform/compat/process.ts";
 
 /**
  * Checks if React Server Components (RSC) are enabled.
@@ -18,13 +19,5 @@ export function isRSCEnabled(config?: { experimental?: { rsc?: boolean } }): boo
   }
 
   // 2. Fallback to environment variables (backward compatibility)
-  if (typeof Deno !== "undefined" && Deno.env) {
-    return Deno.env.get("VERYFRONT_EXPERIMENTAL_RSC") === "1";
-  }
-  if (typeof process !== "undefined" && process?.env) {
-    return process.env.VERYFRONT_EXPERIMENTAL_RSC === "1";
-  }
-
-  // 3. Default to false
-  return false;
+  return getEnv("VERYFRONT_EXPERIMENTAL_RSC") === "1";
 }

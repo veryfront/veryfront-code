@@ -32,9 +32,17 @@ export class MemoryRateLimitStore implements RateLimitStore {
         }
       }, windowMs * CLEANUP_INTERVAL_MULTIPLIER);
 
-      if (typeof Deno !== "undefined" && this.cleanupInterval) {
-        // @ts-ignore - Deno-specific API
-        Deno.unrefTimer(this.cleanupInterval);
+      if (this.cleanupInterval) {
+        // Node.js / Bun style
+        if (typeof (this.cleanupInterval as any).unref === 'function') {
+          (this.cleanupInterval as any).unref();
+        } 
+        // Deno style
+        // @ts-ignore - Deno global
+        else if (typeof Deno !== "undefined" && typeof Deno.unrefTimer === 'function') {
+          // @ts-ignore - Deno global
+          Deno.unrefTimer(this.cleanupInterval);
+        }
       }
     }
   }

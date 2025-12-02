@@ -8,10 +8,10 @@
  */
 
 import { serverLogger as logger } from "@veryfront/utils";
-import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { handleErrorWithFallback } from "@veryfront/errors/index.ts";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/index.ts";
+import { createFileSystem } from "../../../platform/compat/fs.ts";
 
 /**
  * Clean and prepare the output directory for the build
@@ -32,6 +32,7 @@ export async function setupBuildDirectories(
 
   // Create directory structure if not a dry run
   if (!dryRun) {
+    const fs = createFileSystem();
     const dirs = [
       outputDir,
       join(outputDir, "_veryfront"),
@@ -42,9 +43,14 @@ export async function setupBuildDirectories(
 
     for (const dir of dirs) {
       try {
-        await mkdir(dir, { recursive: true });
+        await fs.mkdir(dir, { recursive: true });
       } catch (error) {
-        if (error && typeof error === "object" && (error as Deno.errors.AlreadyExists)) {
+        if (
+          error &&
+          typeof error === "object" &&
+          "code" in error &&
+          (error as { code?: string }).code === "EEXIST"
+        ) {
           continue;
         }
         throw error;

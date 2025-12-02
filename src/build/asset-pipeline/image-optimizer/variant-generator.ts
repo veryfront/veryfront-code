@@ -1,6 +1,6 @@
-import { ensureDir } from "std/fs/mod.ts";
 import { dirname, relative } from "std/path/mod.ts";
 import { logger } from "@veryfront/utils";
+import { createFileSystem } from "../../../platform/compat/fs.ts";
 import { processFormat } from "./format-processor.ts";
 import { calculateAspectRatio, getVariantPath } from "../../utils/asset-utils.ts";
 import type {
@@ -21,9 +21,10 @@ export async function generateVariant(
   quality: number,
   outputDir: string,
 ): Promise<ImageVariant | null> {
+  const fs = createFileSystem();
   try {
     const outputPath = getVariantPath(outputDir, relPath, format, width);
-    await ensureDir(dirname(outputPath));
+    await fs.mkdir(dirname(outputPath), { recursive: true });
 
     const processor = image.clone().resize(width, null, {
       fit: "inside",
@@ -32,7 +33,7 @@ export async function generateVariant(
 
     const formattedProcessor = processFormat(processor, format, quality);
     const buffer = await formattedProcessor.toBuffer();
-    await Deno.writeFile(outputPath, buffer);
+    await fs.writeFile(outputPath, buffer);
 
     const processedMetadata = await sharp(buffer).metadata();
 

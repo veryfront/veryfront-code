@@ -8,6 +8,7 @@ import { dirname, join, relative } from "node:path";
 import { walk } from "std/fs/mod.ts";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import { CLIENT_STYLES } from "./templates.ts";
+import { createFileSystem } from "../../platform/compat/fs.ts";
 
 export interface AssetStats {
   assets: number;
@@ -24,9 +25,6 @@ interface PathStat {
 function isNotFoundError(error: unknown): boolean {
   if (!error || typeof error !== "object") return false;
   const err = error as { code?: string };
-  if (typeof Deno !== "undefined" && "errors" in Deno && Deno.errors.NotFound) {
-    if (error instanceof Deno.errors.NotFound) return true;
-  }
   return err.code === "ENOENT";
 }
 
@@ -73,59 +71,24 @@ function toPathStat(
 }
 
 async function statPath(path: string, adapter: RuntimeAdapter): Promise<PathStat> {
-  if (typeof Deno !== "undefined" && typeof Deno.lstat === "function") {
-    try {
-      const info = await Deno.lstat(path);
-      return toPathStat(info);
-    } catch (error) {
-      if (!isNotFoundError(error)) {
-        throw error;
-      }
-      // fall through to other strategies for not found to ensure consistent error types
-    }
-  }
-
   try {
-    const fs = await import("node:fs/promises");
-    const info = await fs.lstat(path);
-    return toPathStat(
-      info as unknown as {
-        size: number;
-        isFile(): boolean;
-        isDirectory(): boolean;
-        isSymbolicLink(): boolean;
-      },
-    );
+    const fs = createFileSystem();
+    const info = await fs.stat(path);
+    return toPathStat(info as unknown as PathStat);
   } catch (error) {
     if (!isNotFoundError(error)) {
       throw error;
     }
+    const adapterInfo = await adapter.fs.stat(path);
+    return toPathStat(adapterInfo as unknown as PathStat);
   }
-
-  const adapterInfo = await adapter.fs.stat(path);
-  return toPathStat(adapterInfo as unknown as PathStat);
 }
 
 async function ensureDirPath(path: string, adapter: RuntimeAdapter): Promise<void> {
   if (!path) return;
 
-  if (typeof Deno !== "undefined" && typeof Deno.mkdir === "function") {
-    try {
-      await Deno.mkdir(path, { recursive: true });
-      return;
-    } catch (error) {
-      if (
-        error instanceof Deno.errors.AlreadyExists ||
-        (typeof error === "object" && error !== null && "code" in error &&
-          (error as { code?: string }).code === "EEXIST")
-      ) {
-        return;
-      }
-    }
-  }
-
+  const fs = createFileSystem();
   try {
-    const fs = await import("node:fs/promises");
     await fs.mkdir(path, { recursive: true });
     return;
   } catch (error) {
@@ -175,31 +138,14 @@ export async function copyStaticAssets(
   const destinationRoot = outputDir;
 
   const readFileBytes = async (path: string): Promise<Uint8Array> => {
-    if (typeof Deno !== "undefined" && typeof Deno.readFile === "function") {
-      return await Deno.readFile(path);
-    }
-    try {
-      const fs = await import("node:fs/promises");
-      const buffer = await fs.readFile(path);
-      return buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
-    } catch (_error) {
-      const text = await adapter.fs.readFile(path);
-      return new TextEncoder().encode(text);
-    }
+    const fs = createFileSystem();
+    const buffer = await fs.readFile(path);
+    return buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
   };
 
   const writeFileBytes = async (path: string, data: Uint8Array): Promise<void> => {
-    if (typeof Deno !== "undefined" && typeof Deno.writeFile === "function") {
-      await Deno.writeFile(path, data);
-      return;
-    }
-    try {
-      const fs = await import("node:fs/promises");
-      await fs.writeFile(path, data);
-    } catch (_error) {
-      const text = new TextDecoder().decode(data);
-      await adapter.fs.writeFile(path, text);
-    }
+    const fs = createFileSystem();
+    await fs.writeFile(path, data);
   };
 
   if (!dryRun) {

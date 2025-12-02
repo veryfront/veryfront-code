@@ -171,7 +171,7 @@ export async function POST(request: Request) {
   const { path, secret } = body;
 
   // Verify secret
-  if (secret !== Deno.env.get('REVALIDATE_SECRET')) {
+  if (secret !== getEnv('REVALIDATE_SECRET')) {
     return Response.json({ message: 'Invalid secret' }, { status: 401 });
   }
 

@@ -1,29 +1,3 @@
-/**
- * Zero-config AI setup
- *
- * Provides a simple, batteries-included API for setting up AI in any project.
- * Works on Deno, Node.js, Bun, and edge runtimes.
- *
- * @example
- * ```typescript
- * import { setupAI } from "veryfront/ai";
- *
- * // Zero-config - discovers tools from ai/ directory or manifest
- * const ai = await setupAI();
- *
- * // Get all discovered tools
- * const tools = ai.getTools();
- *
- * // Use with Vercel AI SDK
- * import { generateText } from "ai";
- * const result = await generateText({
- *   model: openai("gpt-4"),
- *   tools: ai.toAISDKTools(),
- *   prompt: "What's the weather?",
- * });
- * ```
- */
-
 import type { Tool } from "../types/tool.ts";
 import type { Agent } from "../types/agent.ts";
 import type { Prompt, Resource } from "../types/mcp.ts";
@@ -33,6 +7,11 @@ import { registerAgent } from "../agent/composition.ts";
 import { registerResource } from "../mcp/registry.ts";
 import { registerPrompt } from "../mcp/registry.ts";
 import { toAISDKTools } from "../adapters/ai-sdk.ts";
+import { cwd } from "../../platform/compat/process.ts";
+import { createFileSystem } from "../../platform/compat/fs.ts";
+import { cliLogger as logger } from "@veryfront/utils";
+
+const fs = createFileSystem();
 
 export interface SetupAIOptions {
   /**
@@ -172,7 +151,7 @@ export interface SetupAIResult {
  */
 export async function setupAI(options: SetupAIOptions = {}): Promise<SetupAIResult> {
   const {
-    baseDir = detectCwd(),
+    baseDir = cwd(),
     aiDir = "ai",
     tools: manualTools = {},
     agents: manualAgents = {},
@@ -193,7 +172,7 @@ export async function setupAI(options: SetupAIOptions = {}): Promise<SetupAIResu
   // Step 1: Load from manifest if provided
   if (manifestPath) {
     try {
-      const manifest = await loadManifest(manifestPath);
+      const manifest = await fs.readTextFile(manifestPath).then(JSON.parse);
       if (manifest.tools) {
         for (const [id, tool] of Object.entries(manifest.tools)) {
           tools.set(id, tool as Tool);
@@ -219,7 +198,7 @@ export async function setupAI(options: SetupAIOptions = {}): Promise<SetupAIResu
         }
       }
       if (verbose) {
-        console.log(`[setupAI] Loaded manifest: ${tools.size} tools, ${agents.size} agents`);
+        logger.info(`[setupAI] Loaded manifest: ${tools.size} tools, ${agents.size} agents`);
       }
     } catch (error) {
       errors.push({
@@ -256,12 +235,12 @@ export async function setupAI(options: SetupAIOptions = {}): Promise<SetupAIResu
       errors.push(...discovered.errors);
 
       if (verbose) {
-        console.log(`[setupAI] Discovered: ${tools.size} tools, ${agents.size} agents`);
+        logger.info(`[setupAI] Discovered: ${tools.size} tools, ${agents.size} agents`);
       }
     } catch (error) {
       // Discovery failed - might be expected if no ai/ directory
       if (verbose) {
-        console.log(`[setupAI] Discovery skipped: ${error}`);
+        logger.info(`[setupAI] Discovery skipped: ${error}`);
       }
     }
   }
@@ -319,45 +298,4 @@ export async function setupAI(options: SetupAIOptions = {}): Promise<SetupAIResu
   };
 
   return result;
-}
-
-/**
- * Detect the current working directory across runtimes
- */
-function detectCwd(): string {
-  // Deno
-  if (typeof Deno !== "undefined" && typeof Deno.cwd === "function") {
-    return Deno.cwd();
-  }
-
-  // Node.js / Bun
-  if (typeof process !== "undefined" && typeof process.cwd === "function") {
-    return process.cwd();
-  }
-
-  // Edge runtime / Workers - no cwd available
-  return ".";
-}
-
-/**
- * Load AI manifest from file
- */
-async function loadManifest(
-  path: string,
-): Promise<{
-  tools?: Record<string, unknown>;
-  agents?: Record<string, unknown>;
-  resources?: Record<string, unknown>;
-  prompts?: Record<string, unknown>;
-}> {
-  // Deno
-  if (typeof Deno !== "undefined" && typeof Deno.readTextFile === "function") {
-    const content = await Deno.readTextFile(path);
-    return JSON.parse(content);
-  }
-
-  // Node.js / Bun
-  const fs = await import("node:fs/promises");
-  const content = await fs.readFile(path, "utf-8");
-  return JSON.parse(content);
 }

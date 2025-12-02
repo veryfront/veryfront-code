@@ -443,10 +443,10 @@ export default defineConfig({
     defaultProvider: 'anthropic',
     providers: {
       anthropic: {
-        apiKey: Deno.env.get('ANTHROPIC_API_KEY'),
+        apiKey: getEnv('ANTHROPIC_API_KEY'),
       },
       openai: {
-        apiKey: Deno.env.get('OPENAI_API_KEY'),
+        apiKey: getEnv('OPENAI_API_KEY'),
       },
     },
   },
@@ -494,17 +494,17 @@ export default defineConfig({
     enabled: true,
     providers: {
       anthropic: {
-        apiKey: Deno.env.get('ANTHROPIC_API_KEY'),
+        apiKey: getEnv('ANTHROPIC_API_KEY'),
         baseURL: 'https://api.anthropic.com',
         defaultModel: 'claude-3-5-sonnet-20241022',
       },
       openai: {
-        apiKey: Deno.env.get('OPENAI_API_KEY'),
+        apiKey: getEnv('OPENAI_API_KEY'),
         organization: 'org-xxxxx',
         defaultModel: 'gpt-4-turbo',
       },
       google: {
-        apiKey: Deno.env.get('GOOGLE_API_KEY'),
+        apiKey: getEnv('GOOGLE_API_KEY'),
         defaultModel: 'gemini-pro',
       },
     },
@@ -906,11 +906,11 @@ export default defineConfig({
     defaultProvider: 'anthropic',
     providers: {
       anthropic: {
-        apiKey: Deno.env.get('ANTHROPIC_API_KEY'),
+        apiKey: getEnv('ANTHROPIC_API_KEY'),
         defaultModel: 'claude-3-5-sonnet-20241022',
       },
       openai: {
-        apiKey: Deno.env.get('OPENAI_API_KEY'),
+        apiKey: getEnv('OPENAI_API_KEY'),
         defaultModel: 'gpt-4-turbo',
       },
     },
@@ -992,8 +992,9 @@ export default defineConfig({
 // veryfront.config.ts
 import { defineConfig } from 'veryfront';
 
-const isDev = Deno.env.get('NODE_ENV') === 'development';
-const isProd = Deno.env.get('NODE_ENV') === 'production';
+import { getEnv } from 'veryfront/platform/compat/process.ts';
+const isDev = getEnv('NODE_ENV') === 'development';
+const isProd = getEnv('NODE_ENV') === 'production';
 
 export default defineConfig({
   projectName: 'my-app',
@@ -1015,7 +1016,7 @@ export default defineConfig({
 // veryfront.config.ts
 import { defineConfig } from 'veryfront';
 
-const aiEnabled = Deno.env.get('ENABLE_AI') === 'true';
+const aiEnabled = getEnv('ENABLE_AI') === 'true';
 
 export default defineConfig({
   ai: aiEnabled ? {

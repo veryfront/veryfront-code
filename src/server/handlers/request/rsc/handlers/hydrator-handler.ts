@@ -1,15 +1,20 @@
-import { dirname, fromFileUrl } from "std/path/mod.ts";
+import { createFileSystem } from "../../../../../platform/compat/fs.ts";
+import * as pathHelper from "../../../../../platform/compat/path-helper.ts";
+
+const compatFs = createFileSystem();
+
 import { serverLogger as logger } from "@veryfront/utils";
 import { createError, toError } from "../../../../../core/errors/veryfront-error.ts";
 import type { FileSystemAdapter } from "../../../../../platform/adapters/base.ts";
 
 export class HydratorHandler {
-  constructor(private fs?: FileSystemAdapter) {}
+  constructor(private fsAdapter?: FileSystemAdapter) {}
 
   async handle(): Promise<Response> {
     // Use correct path to hydrate-client.ts in rendering/rsc
-    const hydratorPath = fromFileUrl(
-      new URL("../../../../../rendering/rsc/hydrate-client.ts", import.meta.url),
+    const hydratorPath = pathHelper.join(
+      pathHelper.dirname(pathHelper.fromFileUrl(import.meta.url)),
+      "../../../../../rendering/rsc/hydrate-client.ts",
     );
 
     try {
@@ -28,9 +33,9 @@ export class HydratorHandler {
     const { build, stop } = await import("esbuild/mod.js");
 
     try {
-      const source = this.fs
-        ? await this.fs.readFile(path)
-        : await Deno.readTextFile(path);
+      const source = this.fsAdapter
+        ? await this.fsAdapter.readFile(path)
+        : await compatFs.readTextFile(path);
 
       const result = await build({
         bundle: true,
@@ -41,7 +46,7 @@ export class HydratorHandler {
         stdin: {
           contents: source,
           loader: "ts",
-          resolveDir: dirname(path),
+          resolveDir: pathHelper.dirname(path),
           sourcefile: path,
         },
         external: ["react", "react-dom", "react-dom/client"],
@@ -70,9 +75,9 @@ export class HydratorHandler {
 
   private async fallbackToSource(path: string): Promise<Response> {
     try {
-      const source = this.fs
-        ? await this.fs.readFile(path)
-        : await Deno.readTextFile(path);
+      const source = this.fsAdapter
+        ? await this.fsAdapter.readFile(path)
+        : await compatFs.readTextFile(path);
       return this.createTypeScriptResponse(source);
     } catch (readError) {
       logger.error("[RSC] Failed to read hydrator file:", readError);

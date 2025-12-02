@@ -1,11 +1,48 @@
-import { extract } from "std/front_matter/yaml.ts";
-import { exists } from "std/fs/exists.ts";
-import { extname, join } from "std/path/mod.ts";
+// Conditional imports for front_matter (path is handled via path-helper)
+let extractYaml: ((content: string) => any) | undefined;
+let jsYamlModule: typeof import('js-yaml') | null = null;
+import { createFileSystem } from "../../../platform/compat/fs.ts";
+import * as pathHelper from "../../../platform/compat/path-helper.ts";
+
+// Initialize extractYaml based on runtime
+// @ts-ignore - Deno global
+if (typeof Deno === 'undefined') {
+  // Node.js environment - use lazy loading for js-yaml
+  extractYaml = (content: string) => {
+    const frontMatterRegex = /^---\n([\s\S]*?)\n---/; // Basic regex for YAML front matter
+    const match = content.match(frontMatterRegex);
+    if (match && match[1]) {
+      // Synchronous parsing with cached module
+      if (jsYamlModule) {
+        const attrs = jsYamlModule.load(match[1]);
+        const body = content.slice(match[0].length);
+        return { attrs, body };
+      }
+      // Fallback: return content without parsing if module not loaded
+      return { attrs: {}, body: content };
+    }
+    return { attrs: {}, body: content };
+  };
+
+  // Eagerly load js-yaml module
+  import('js-yaml').then((mod) => {
+    jsYamlModule = mod;
+  }).catch((e) => {
+    console.warn("Could not import js-yaml for Node.js frontmatter parsing.", e);
+  });
+} else {
+  // @ts-ignore - Deno global
+  const { extract } = await import("std/front_matter/yaml.ts");
+  extractYaml = extract;
+}
+
 import { detectEntityType } from "../entities.ts";
 import { createError, toError } from "../../../core/errors/veryfront-error.ts";
 import type { Entity, EntityInfo, Frontmatter } from "../entities.ts";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import { withFallback } from "@veryfront/platform/adapters/index.ts";
+
+const fs = createFileSystem();
 
 export async function getEntityInfo(
   filePath: string,
@@ -18,7 +55,7 @@ export async function getEntityInfo(
         const stat = await withFallback(
           () => adapter.fs.stat(filePath),
           async () => {
-            const exists = await Deno.stat(filePath).then(() => true).catch(() => false);
+            const exists = await fs.exists(filePath);
             if (!exists) {
               throw toError(
                 createError({
@@ -28,7 +65,7 @@ export async function getEntityInfo(
                 }),
               );
             }
-            return await Deno.stat(filePath);
+            return await fs.stat(filePath);
           },
           { operationName: "stat:getEntityInfo", logError: false },
         );
@@ -37,24 +74,24 @@ export async function getEntityInfo(
         return null;
       }
     } else {
-      if (!(await exists(filePath))) return null;
+      if (!(await fs.exists(filePath))) return null;
     }
 
     const content = adapter
       ? await withFallback(
         () => adapter.fs.readFile(filePath),
-        () => Deno.readTextFile(filePath),
+        () => fs.readTextFile(filePath),
         { operationName: "readFile:getEntityInfo", logError: false },
       )
-      : await Deno.readTextFile(filePath);
-    const ext = extname(filePath).toLowerCase();
+      : await fs.readTextFile(filePath);
+    const ext = pathHelper.extname(filePath).toLowerCase();
 
     let frontmatter: Frontmatter = {};
     let body = content;
 
-    if ([".md", ".mdx"].includes(ext)) {
+    if ([".md", ".mdx"].includes(ext) && extractYaml) {
       try {
-        const extracted = extract(content);
+        const extracted = extractYaml(content);
         frontmatter = extracted.attrs as Frontmatter;
         body = extracted.body;
       } catch {
@@ -93,33 +130,33 @@ export async function getEntityBySlug(
   adapter?: RuntimeAdapter,
 ): Promise<EntityInfo | null> {
   const possiblePaths = [
-    join(projectDir, "pages", `${slug}.mdx`),
-    join(projectDir, "pages", `${slug}.tsx`),
-    join(projectDir, "pages", `${slug}.jsx`),
-    join(projectDir, "pages", `${slug}.ts`),
-    join(projectDir, "pages", `${slug}/index.mdx`),
-    join(projectDir, "pages", `${slug}/index.tsx`),
-    join(projectDir, "pages", `${slug}/index.jsx`),
-    join(projectDir, "pages", `${slug}/index.ts`),
-    join(projectDir, `${slug}.mdx`),
-    join(projectDir, `${slug}.tsx`),
-    join(projectDir, `${slug}.ts`),
+    pathHelper.join(projectDir, "pages", `${slug}.mdx`),
+    pathHelper.join(projectDir, "pages", `${slug}.tsx`),
+    pathHelper.join(projectDir, "pages", `${slug}.jsx`),
+    pathHelper.join(projectDir, "pages", `${slug}.ts`),
+    pathHelper.join(projectDir, "pages", `${slug}/index.mdx`),
+    pathHelper.join(projectDir, "pages", `${slug}/index.tsx`),
+    pathHelper.join(projectDir, "pages", `${slug}/index.jsx`),
+    pathHelper.join(projectDir, "pages", `${slug}/index.ts`),
+    pathHelper.join(projectDir, `${slug}.mdx`),
+    pathHelper.join(projectDir, `${slug}.tsx`),
+    pathHelper.join(projectDir, `${slug}.ts`),
   ];
 
   if (slug === "index" || slug === "") {
     possiblePaths.unshift(
-      join(projectDir, "pages", "index.mdx"),
-      join(projectDir, "pages", "index.tsx"),
-      join(projectDir, "pages", "index.ts"),
-      join(projectDir, "index.mdx"),
-      join(projectDir, "index.tsx"),
-      join(projectDir, "index.ts"),
+      pathHelper.join(projectDir, "pages", "index.mdx"),
+      pathHelper.join(projectDir, "pages", "index.tsx"),
+      pathHelper.join(projectDir, "pages", "index.ts"),
+      pathHelper.join(projectDir, "index.mdx"),
+      pathHelper.join(projectDir, "index.tsx"),
+      pathHelper.join(projectDir, "index.ts"),
     );
   }
 
   // First try exact matches
-  for (const path of possiblePaths) {
-    const info = await getEntityInfo(path, adapter);
+  for (const p of possiblePaths) {
+    const info = await getEntityInfo(p, adapter);
     if (info?.entity.isPage) return info;
   }
 
@@ -130,7 +167,7 @@ export async function getEntityBySlug(
   // Try to match dynamic routes for all path depths
   for (let depth = slugParts.length - 1; depth >= 0; depth--) {
     const parentPath = slugParts.slice(0, depth).join("/");
-    const pagesDir = parentPath ? join(projectDir, "pages", parentPath) : join(projectDir, "pages");
+    const pagesDir = parentPath ? pathHelper.join(projectDir, "pages", parentPath) : pathHelper.join(projectDir, "pages");
 
     try {
       // Check if directory exists
@@ -139,7 +176,7 @@ export async function getEntityBySlug(
         try {
           const stat = await withFallback(
             () => adapter.fs.stat(pagesDir),
-            () => Deno.stat(pagesDir),
+            () => fs.stat(pagesDir),
             { operationName: "stat:getEntityBySlug", logError: false },
           );
           dirExists = stat.isDirectory;
@@ -147,23 +184,19 @@ export async function getEntityBySlug(
           dirExists = false;
         }
       } else {
-        dirExists = await exists(pagesDir);
+        dirExists = await fs.exists(pagesDir);
       }
 
       if (dirExists) {
-        // Look for files with [param] pattern in the directory
-        const entries = adapter?.fs.readDir
-          ? await withFallback(
-            () => Promise.resolve(adapter.fs.readDir(pagesDir)),
-            () => Promise.resolve(Deno.readDir(pagesDir)),
-            { operationName: "readDir:getEntityBySlug", logError: false },
-          )
-          : Deno.readDir(pagesDir);
+        const entries: { name: string; isFile: boolean; isDirectory: boolean }[] = [];
+        for await (const entry of fs.readDir(pagesDir)) {
+          entries.push(entry);
+        }
 
-        for await (const entry of entries) {
+        for (const entry of entries) {
           if (entry.isFile && /\[.+\]\.(mdx|tsx|jsx|ts|js)$/.test(entry.name)) {
             // Found a dynamic route file like [slug].tsx
-            const dynamicPath = join(pagesDir, entry.name);
+            const dynamicPath = pathHelper.join(pagesDir, entry.name);
             const info = await getEntityInfo(dynamicPath, adapter);
             if (info?.entity.isPage) return info;
           }
@@ -183,16 +216,16 @@ export async function getLayoutEntity(
   adapter?: RuntimeAdapter,
 ): Promise<EntityInfo | null> {
   const possiblePaths = [
-    join(projectDir, "layouts", `${layoutName}.mdx`),
-    join(projectDir, "layouts", `${layoutName}.tsx`),
-    join(projectDir, "components", `${layoutName}Layout.mdx`),
-    join(projectDir, "components", `${layoutName}Layout.tsx`),
-    join(projectDir, "components", "Layout.mdx"),
-    join(projectDir, "components", "Layout.tsx"),
+    pathHelper.join(projectDir, "layouts", `${layoutName}.mdx`),
+    pathHelper.join(projectDir, "layouts", `${layoutName}.tsx`),
+    pathHelper.join(projectDir, "components", `${layoutName}Layout.mdx`),
+    pathHelper.join(projectDir, "components", `${layoutName}Layout.tsx`),
+    pathHelper.join(projectDir, "components", "Layout.mdx"),
+    pathHelper.join(projectDir, "components", "Layout.tsx"),
   ];
 
-  for (const path of possiblePaths) {
-    const info = await getEntityInfo(path, adapter);
+  for (const p of possiblePaths) {
+    const info = await getEntityInfo(p, adapter);
     if (info?.entity.isLayout) return info;
   }
   return null;
@@ -203,7 +236,7 @@ export async function getProviderEntities(
   adapter?: RuntimeAdapter,
 ): Promise<EntityInfo[]> {
   const providers: EntityInfo[] = [];
-  const providerDirs = [join(projectDir, "providers"), join(projectDir, "components")];
+  const providerDirs = [pathHelper.join(projectDir, "providers"), pathHelper.join(projectDir, "components")];
 
   for (const dir of providerDirs) {
     // Check directory existence using adapter with fallback
@@ -212,7 +245,7 @@ export async function getProviderEntities(
       try {
         const stat = await withFallback(
           () => adapter.fs.stat(dir),
-          () => Deno.stat(dir),
+          () => fs.stat(dir),
           { operationName: "stat:getProviderEntities", logError: false },
         );
         dirExists = stat.isDirectory;
@@ -220,21 +253,18 @@ export async function getProviderEntities(
         dirExists = false;
       }
     } else {
-      dirExists = await exists(dir);
+      dirExists = await fs.exists(dir);
     }
 
     if (dirExists) {
-      const entries = adapter?.fs.readDir
-        ? await withFallback(
-          () => Promise.resolve(adapter.fs.readDir(dir)),
-          () => Promise.resolve(Deno.readDir(dir)),
-          { operationName: "readDir:getProviderEntities", logError: false },
-        )
-        : Deno.readDir(dir);
+      const entries: { name: string; isFile: boolean; isDirectory: boolean }[] = [];
+      for await (const entry of fs.readDir(dir)) {
+        entries.push(entry);
+      }
 
-      for await (const entry of entries) {
+      for (const entry of entries) {
         if (entry.isFile) {
-          const filePath = join(dir, entry.name);
+          const filePath = pathHelper.join(dir, entry.name);
           const info = await getEntityInfo(filePath, adapter);
           if (info?.entity.isProvider) {
             providers.push(info);
@@ -256,7 +286,7 @@ export async function getProviderEntities(
 }
 
 function getSlugFromPath(filePath: string): string {
-  const parts = filePath.split("/");
+  const parts = filePath.split(pathHelper.sep);
   const fileName = parts[parts.length - 1];
   const slug = (fileName ?? "").replace(/\.(mdx?|tsx?|jsx?|ts)$/, "");
   if (slug === "index") {

@@ -1,4 +1,4 @@
-import { isAbsolute, join } from "https://deno.land/std@0.220.0/path/mod.ts";
+import { isAbsolute, join } from "../../platform/compat/path-helper.ts";
 import { rendererLogger as logger } from "@veryfront/utils";
 import { createError, toError } from "../../core/errors/veryfront-error.ts";
 import { handleErrorWithFallback } from "@veryfront/errors/index.ts";

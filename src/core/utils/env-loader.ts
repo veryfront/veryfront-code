@@ -20,18 +20,23 @@ function getFs(): FileSystem {
 /**
  * Check if an error is a "file not found" error across platforms
  */
-function isNotFoundError(error: unknown): boolean {
+async function isNotFoundError(error: unknown, path: string): Promise<boolean> {
   if (error instanceof Error) {
-    // Deno error
-    if (typeof Deno !== "undefined" && error instanceof Deno.errors.NotFound) {
-      return true;
-    }
-    // Node.js error
+    // Node.js error codes
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
       return true;
     }
+    // Deno error type
+    // @ts-ignore - Deno global
+    if (typeof Deno !== "undefined" && error instanceof Deno.errors.NotFound) {
+      return true;
+    }
   }
-  return false;
+  // Fallback: check if the file actually exists using the filesystem API
+  // This handles cases where the error object might not be standard
+  const fs = getFs();
+  const exists = await fs.exists(path);
+  return !exists;
 }
 
 /**
@@ -92,7 +97,9 @@ export async function loadEnv(options: {
       }
     } catch (error) {
       // Ignore if file doesn't exist
-      if (!isNotFoundError(error)) {
+      if (await isNotFoundError(error, file)) {
+        // Silently ignore "file not found" errors
+      } else {
         logger.warn(`[env] Failed to load ${file}:`, error);
       }
     }
@@ -213,18 +220,7 @@ function expandVariables(value: string, vars: Record<string, string>): string {
  * (Deno, Node.js, Bun - not Cloudflare Workers)
  */
 export function supportsEnvFiles(): boolean {
-  // Check for Deno
-  if (typeof Deno !== "undefined" && typeof Deno.readTextFile === "function") {
-    return true;
-  }
-  // Check for Node.js (has process and fs modules)
-  if (typeof process !== "undefined" && process.versions?.node) {
-    return true;
-  }
-  // Check for Bun
-  if ("Bun" in globalThis) {
-    return true;
-  }
-  // Cloudflare Workers and other environments don't support file system
-  return false;
+  const fs = getFs();
+  // If fs.readTextFile is available, it supports .env files
+  return typeof fs.readTextFile === 'function';
 }

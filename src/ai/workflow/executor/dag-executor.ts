@@ -436,7 +436,7 @@ export class DAGExecutor {
     node: WorkflowNode,
     config: SubWorkflowNodeConfig,
     context: WorkflowContext,
-    nodeStates: Record<string, NodeState>,
+    _nodeStates: Record<string, NodeState>,
   ): Promise<{
     state: NodeState;
     contextUpdates: Record<string, unknown>;

@@ -1,8 +1,33 @@
+// Cross-platform environment variable helper
+function getEnv(key: string): string | undefined {
+  // @ts-ignore - Deno global
+  if (typeof Deno !== 'undefined') {
+    // @ts-ignore - Deno global
+    return Deno.env.get(key);
+  }
+  // @ts-ignore - process global
+  else if (typeof process !== 'undefined' && process.env) {
+    // @ts-ignore - process global
+    return process.env[key];
+  }
+  return undefined;
+}
+
+// Conditional imports for file system operations
+let fs: typeof import('node:fs/promises') | undefined;
+let pathMod: typeof import('node:path') | undefined;
+
+// @ts-ignore - Deno global
+if (typeof Deno === 'undefined') {
+  fs = await import('node:fs/promises');
+  pathMod = await import('node:path');
+}
+
 import { agent, initializeProviders, tool } from "veryfront/ai";
 import { z } from "zod";
 
 // Initialize providers
-const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY");
+const OPENAI_API_KEY = getEnv("OPENAI_API_KEY");
 if (OPENAI_API_KEY) {
   initializeProviders({
     openai: { apiKey: OPENAI_API_KEY },
@@ -20,7 +45,16 @@ interface Chunk {
 
 let knowledgeBase: Chunk[] = [];
 try {
-  const data = await Deno.readTextFile(new URL("../../knowledge.json", import.meta.url));
+  let data: string;
+  const knowledgePath = pathMod ? pathMod.join(pathMod.dirname(new URL(import.meta.url).pathname), '../../knowledge.json') : new URL("../../knowledge.json", import.meta.url).pathname;
+  
+  if (fs) {
+    data = await fs.readFile(knowledgePath, { encoding: 'utf-8' });
+  } else {
+    // @ts-ignore - Deno global
+    data = await Deno.readTextFile(knowledgePath);
+  }
+
   knowledgeBase = JSON.parse(data);
   console.log(`[RAG] Loaded ${knowledgeBase.length} chunks from knowledge base.`);
 } catch (_e) {

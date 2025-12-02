@@ -1,5 +1,8 @@
-import { join } from "std/path/mod.ts";
+import { createFileSystem } from "../../../../../platform/compat/fs.ts";
+import * as pathHelper from "../../../../../platform/compat/path-helper.ts";
 import type { FileSystemAdapter } from "../../../../../platform/adapters/base.ts";
+
+const fs = createFileSystem();
 
 const FILE_PATTERNS = [
   "app/{path}/page.tsx",
@@ -22,15 +25,15 @@ const ROOT_PATTERNS = [
 export async function resolveComponentPath(
   pathname: string,
   projectDir: string,
-  fs?: FileSystemAdapter,
+  fsAdapter?: FileSystemAdapter,
 ): Promise<string | null> {
   const cleanPath = cleanPathname(pathname);
 
   // Check root patterns first if this is the root/index
   if (cleanPath === "index" || cleanPath === "") {
     for (const pattern of ROOT_PATTERNS) {
-      const fullPath = join(projectDir, pattern);
-      if (await fileExists(fullPath, fs)) {
+      const fullPath = pathHelper.join(projectDir, pattern);
+      if (await fileExists(fullPath, fsAdapter)) {
         return fullPath;
       }
     }
@@ -38,8 +41,8 @@ export async function resolveComponentPath(
 
   // Then check regular patterns
   for (const pattern of FILE_PATTERNS) {
-    const fullPath = join(projectDir, pattern.replace("{path}", cleanPath));
-    if (await fileExists(fullPath, fs)) {
+    const fullPath = pathHelper.join(projectDir, pattern.replace("{path}", cleanPath));
+    if (await fileExists(fullPath, fsAdapter)) {
       return fullPath;
     }
   }
@@ -52,13 +55,13 @@ function cleanPathname(pathname: string): string {
   return cleaned || "index";
 }
 
-async function fileExists(path: string, fs?: FileSystemAdapter): Promise<boolean> {
+async function fileExists(path: string, fsAdapter?: FileSystemAdapter): Promise<boolean> {
   try {
-    if (fs) {
-      const stat = await fs.stat(path);
+    if (fsAdapter) {
+      const stat = await fsAdapter.stat(path);
       return stat.isFile;
     }
-    const stat = await Deno.stat(path);
+    const stat = await fs.stat(path);
     return stat.isFile;
   } catch {
     return false;

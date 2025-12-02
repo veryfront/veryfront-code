@@ -71,10 +71,10 @@ export const appConfigTemplates: TemplateFile[] = [
     dir: ".veryfront/cache",
     render: {
       // Choose between "memory", "filesystem", "kv", or "redis"
-      type: Deno.env.get("REDIS_URL") ? "redis" : "memory",
+      type: getEnv("REDIS_URL") ? "redis" : "memory",
       ttl: 5 * 60 * 1000,
       maxEntries: 500,
-      redisUrl: Deno.env.get("REDIS_URL") ?? undefined,
+      redisUrl: getEnv("REDIS_URL") ?? undefined,
       redisKeyPrefix: "vf:render:",
     },
   },

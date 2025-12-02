@@ -73,7 +73,7 @@ export async function generateReactVersionConfig(
   let baseConfig: Record<string, unknown> = {};
 
   try {
-    const baseConfigText = await fs.readFile(baseConfigPath);
+    const baseConfigText = await fs.readTextFile(baseConfigPath);
     baseConfig = JSON.parse(baseConfigText);
   } catch (_error) {
     logger.warn(`Could not read base config from ${baseConfigPath}`, _error);
@@ -89,7 +89,7 @@ export async function generateReactVersionConfig(
   };
 
   const configPath = join(projectDir, `deno.react${targetVersion}.json`);
-  await fs.writeFile(configPath, JSON.stringify(versionConfig, null, 2));
+  await fs.writeTextFile(configPath, JSON.stringify(versionConfig, null, 2));
 
   logger.info(`Generated React ${targetVersion} configuration at ${configPath}`);
 }
@@ -117,7 +117,7 @@ export async function detectReactVersionFromConfig(
   try {
     const fs = createFileSystem();
     const configPath = join(projectDir, "deno.json");
-    const configText = await fs.readFile(configPath);
+    const configText = await fs.readTextFile(configPath);
     const config = JSON.parse(configText);
 
     const reactImport = config.imports?.react;

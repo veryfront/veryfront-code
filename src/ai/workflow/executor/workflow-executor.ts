@@ -115,11 +115,11 @@ export class WorkflowExecutor {
     if (this.config.blobStorage) {
       const bs = this.config.blobStorage;
       this.blobResolver = {
-        getText: async (ref) => ref.__kind === "blob" ? bs.getText(ref.id) : null,
-        getBytes: async (ref) => ref.__kind === "blob" ? bs.getBytes(ref.id) : null,
-        getStream: async (ref) => ref.__kind === "blob" ? bs.getStream(ref.id) : null,
-        stat: async (ref) => ref.__kind === "blob" ? bs.stat(ref.id) : null,
-        delete: async (ref) => ref.__kind === "blob" ? bs.delete(ref.id) : undefined,
+        getText: (ref) => ref.__kind === "blob" ? bs.getText(ref.id) : Promise.resolve(null),
+        getBytes: (ref) => ref.__kind === "blob" ? bs.getBytes(ref.id) : Promise.resolve(null),
+        getStream: (ref) => ref.__kind === "blob" ? bs.getStream(ref.id) : Promise.resolve(null),
+        stat: (ref) => ref.__kind === "blob" ? bs.stat(ref.id) : Promise.resolve(null),
+        delete: (ref) => ref.__kind === "blob" ? bs.delete(ref.id) : Promise.resolve(undefined),
       };
     }
   }

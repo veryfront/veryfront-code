@@ -1,21 +1,20 @@
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import { extractParams } from "@veryfront/routing/slug-mapper/dynamic-route-matcher.ts";
+import { join } from "../platform/compat/path-helper.ts";
 
 export async function extractAppRouteParams(
   projectDir: string,
   slug: string,
   adapter: RuntimeAdapter,
 ): Promise<Record<string, string | string[]> | null> {
-  const { join: pathJoin } = await import("https://deno.land/std@0.220.0/path/mod.ts");
-
   const segments = slug ? slug.split("/").filter(Boolean) : [];
-  let currentDir = pathJoin(projectDir, "app");
+  let currentDir = join(projectDir, "app");
   const patternParts: string[] = [];
 
   for (let i = 0; i < segments.length; i++) {
     const segment = segments[i];
     if (!segment) continue;
-    const exactPath = pathJoin(currentDir, segment);
+    const exactPath = join(currentDir, segment);
 
     try {
       const stat = await adapter.fs.stat(exactPath);
@@ -34,7 +33,7 @@ export async function extractAppRouteParams(
       const entries = await adapter.fs.readDir(currentDir);
       for await (const entry of entries) {
         if (entry.isDirectory && isDynamicSegment(entry.name)) {
-          currentDir = pathJoin(currentDir, entry.name);
+          currentDir = join(currentDir, entry.name);
           patternParts.push(entry.name);
           foundDynamic = true;
           if (entry.name.startsWith("[...")) {
@@ -65,10 +64,8 @@ export async function extractPagesRouteParams(
   slug: string,
   adapter: RuntimeAdapter,
 ): Promise<Record<string, string | string[]> | null> {
-  const { join: pathJoin } = await import("https://deno.land/std@0.220.0/path/mod.ts");
-
   const segments = slug ? slug.split("/").filter(Boolean) : [];
-  const pagesDir = pathJoin(projectDir, "pages");
+  const pagesDir = join(projectDir, "pages");
   const routeExtensions = [".tsx", ".jsx", ".ts", ".js", ".mdx"];
   const patternParts: string[] = [];
   let currentDir = pagesDir;
@@ -77,7 +74,7 @@ export async function extractPagesRouteParams(
     const segment = segments[i];
     if (!segment) continue;
 
-    const exactPath = pathJoin(currentDir, segment);
+    const exactPath = join(currentDir, segment);
 
     // Try exact match first
     try {
@@ -108,7 +105,7 @@ export async function extractPagesRouteParams(
             foundDynamic = true;
             break;
           } else if (entry.isDirectory) {
-            currentDir = pathJoin(currentDir, entryName);
+            currentDir = join(currentDir, entryName);
             patternParts.push(entryName);
             foundDynamic = true;
 

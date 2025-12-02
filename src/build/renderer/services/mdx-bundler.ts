@@ -8,6 +8,7 @@ import type { Pluggable, PluggableList } from "unified";
 import { extract } from "std/front_matter/yaml.ts";
 import { dirname, join } from "std/path/mod.ts";
 import { getRehypePlugins, getRemarkPlugins } from "@veryfront/transforms/plugins/plugin-loader.ts";
+import { createFileSystem } from "../../../platform/compat/fs.ts";
 import type {
   BundleResult,
   BundlerOptions,
@@ -16,6 +17,8 @@ import type {
 } from "../types/bundler-types.ts";
 import { extractImports, processImports } from "../utils/import-utils.ts";
 import { getSlugFromPath } from "../utils/loader-utils.ts";
+
+const fs = createFileSystem();
 
 /**
  * Bundle MDX content
@@ -47,7 +50,7 @@ export async function bundleMdx(
       async (importPath) => {
         if (importPath.endsWith(".mdx")) {
           try {
-            const importContent = await Deno.readTextFile(importPath);
+            const importContent = await fs.readTextFile(importPath);
             const compiledImport = await compileMDXForImport(importContent, options);
 
             // Add to outputs
@@ -76,9 +79,11 @@ export async function bundleMdx(
 
           for (const ext of extensions) {
             try {
-              await Deno.stat(basePath + ext);
-              found = true;
-              break;
+              const stat = await fs.stat(basePath + ext);
+              if (stat.isFile) {
+                found = true;
+                break;
+              }
             } catch {
               // Extension not found, continue checking others
             }

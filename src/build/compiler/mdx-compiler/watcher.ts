@@ -1,5 +1,6 @@
 import { bundlerLogger as logger } from "@veryfront/utils";
 import { join } from "std/path/mod.ts";
+import { getAdapter } from "../../../platform/adapters/detect.ts";
 import type { CompileOptions } from "./types.ts";
 import { compileMDXFile } from "./compiler.ts";
 
@@ -13,7 +14,8 @@ export async function watchMDX(options: CompileOptions): Promise<void> {
     return;
   }
 
-  const watcher = Deno.watchFs(dirsToWatch);
+  const adapter = await getAdapter();
+  const watcher = adapter.fs.watch(dirsToWatch, { recursive: true });
 
   for await (const event of watcher) {
     if (event.kind === "modify" || event.kind === "create") {
@@ -23,6 +25,7 @@ export async function watchMDX(options: CompileOptions): Promise<void> {
 }
 
 async function getWatchableDirectories(projectDir: string): Promise<string[]> {
+  const adapter = await getAdapter();
   const dirsToWatch: string[] = [];
   const potentialDirs = [
     join(projectDir, "pages"),
@@ -32,7 +35,7 @@ async function getWatchableDirectories(projectDir: string): Promise<string[]> {
 
   for (const dir of potentialDirs) {
     try {
-      const stat = await Deno.stat(dir);
+      const stat = await adapter.fs.stat(dir);
       if (stat.isDirectory) {
         dirsToWatch.push(dir);
       }
@@ -45,10 +48,11 @@ async function getWatchableDirectories(projectDir: string): Promise<string[]> {
 }
 
 async function handleFileChange(paths: string[], options: CompileOptions): Promise<void> {
+  const adapter = await getAdapter();
   for (const path of paths) {
     if (path.endsWith(".mdx")) {
       try {
-        const content = await Deno.readTextFile(path);
+        const content = await adapter.fs.readFile(path);
         await compileMDXFile(path, content, options);
         logger.info(`Recompiled: ${path}`);
       } catch (error) {

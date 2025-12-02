@@ -15,14 +15,28 @@ import type {
   WorkflowStatus,
 } from "../types.ts";
 import type { BackendConfig, WorkflowBackend } from "./types.ts";
+import { agentLogger as logger } from "@veryfront/utils";
+
+// Conditional Redis client imports
+// @ts-ignore - Deno global
+let DenoRedis: any = undefined;
+let NodeRedis: any = undefined;
+
+// @ts-ignore - Deno global
+if (typeof Deno !== 'undefined') {
+  // @ts-ignore - Deno global
+  DenoRedis = await import("https://deno.land/x/redis@v0.32.1/mod.ts");
+} else {
+  NodeRedis = await import('redis');
+}
 
 /**
- * Redis client interface (compatible with deno-redis)
+ * Redis client interface (compatible with deno-redis/node-redis)
  */
 export interface RedisClient {
   // Hash operations
-  hset(key: string, fields: Record<string, string>): Promise<number>;
-  hgetall(key: string): Promise<string[]>;
+  hset(key: string, fields: Record<string, string>): Promise<number | string>;
+  hgetall(key: string): Promise<any>; // Returns string[] (Deno) or Record<string, string> (Node)
   hdel(key: string, ...fields: string[]): Promise<number>;
   del(...keys: string[]): Promise<number>;
 
@@ -35,7 +49,7 @@ export interface RedisClient {
   rpush(key: string, ...values: string[]): Promise<number>;
   lrange(key: string, start: number, stop: number): Promise<string[]>;
   lindex(key: string, index: number): Promise<string | null>;
-  lset(key: string, index: number, value: string): Promise<string>;
+  lset(key: string, index: number, value: string): Promise<string | 'OK'>; // NodeRedis returns 'OK'
   llen(key: string): Promise<number>;
 
   // Stream operations
@@ -44,7 +58,7 @@ export interface RedisClient {
   xreadgroup(
     streams: Array<{ key: string; xid: string }>,
     options: { group: string; consumer: string; block?: number; count?: number },
-  ): Promise<Array<{ key: string; messages: Array<{ xid: string; fieldValues: string[] }> }> | null>;
+  ): Promise<any>; // Returns different shapes on Deno/Node
   xack(key: string, group: string, ...ids: string[]): Promise<number>;
 
   // Key operations
@@ -61,7 +75,9 @@ export interface RedisClient {
   get(key: string): Promise<string | null>;
 
   // Connection
-  close(): void;
+  quit(): Promise<string>; // NodeRedis uses quit()
+  disconnect(): Promise<void>; // DenoRedis uses close()
+  // close(): void; // Replaced by disconnect()
 }
 
 /**
@@ -266,17 +282,32 @@ export class RedisBackend implements WorkflowBackend {
    * Create a new Redis connection
    */
   private async createConnection(): Promise<RedisClient> {
-    // Dynamic import for redis
-    const { connect } = await import("https://deno.land/x/redis@v0.32.1/mod.ts");
+    if (NodeRedis) {
+      const client = NodeRedis.createClient({
+        url: this.config.url,
+        socket: {
+          host: this.config.hostname,
+          port: this.config.port,
+        },
+      });
+      await client.connect();
+      this.client = client as unknown as RedisClient;
+    } else if (DenoRedis) {
+      this.client = await DenoRedis.connect({
+        hostname: this.config.hostname,
+        port: this.config.port,
+      }) as RedisClient;
+    } else {
+      throw new Error("No Redis client available for this runtime.");
+    }
 
     const hostname = this.config.hostname || "127.0.0.1";
     const port = this.config.port || 6379;
 
     if (this.config.debug) {
-      console.log(`[RedisBackend] Connecting to ${hostname}:${port}`);
+      logger.debug(`[RedisBackend] Connecting to ${hostname}:${port}`);
     }
 
-    this.client = await connect({ hostname, port }) as RedisClient;
     return this.client;
   }
 
@@ -294,12 +325,12 @@ export class RedisBackend implements WorkflowBackend {
         true,
       );
       if (this.config.debug) {
-        console.log(`[RedisBackend] Created consumer group: ${this.config.groupName}`);
+        logger.debug(`[RedisBackend] Created consumer group: ${this.config.groupName}`);
       }
     } catch (e) {
       const msg = String(e instanceof Error ? e.message : e);
       if (!msg.includes("BUSYGROUP")) {
-        console.error("[RedisBackend] Error creating consumer group:", e);
+        logger.error("[RedisBackend] Error creating consumer group:", e);
       }
     }
 
@@ -314,7 +345,7 @@ export class RedisBackend implements WorkflowBackend {
     const client = await this.ensureClient();
 
     if (this.config.debug) {
-      console.log(`[RedisBackend] Creating run: ${run.id}`);
+      logger.debug(`[RedisBackend] Creating run: ${run.id}`);
     }
 
     // Store run in hash
@@ -334,13 +365,17 @@ export class RedisBackend implements WorkflowBackend {
     const client = await this.ensureClient();
     const rawData = await client.hgetall(this.runKey(runId));
 
-    if (!rawData || rawData.length === 0) {
+    if (!rawData) {
       return null;
     }
 
-    const data = this.arrayToObject(rawData);
-    if (Object.keys(data).length === 0) {
-      return null;
+    let data: Record<string, string>;
+    if (Array.isArray(rawData)) {
+      if (rawData.length === 0) return null;
+      data = this.arrayToObject(rawData);
+    } else {
+      if (Object.keys(rawData).length === 0) return null;
+      data = rawData;
     }
 
     const run = this.deserializeRun(data);
@@ -355,7 +390,7 @@ export class RedisBackend implements WorkflowBackend {
     const client = await this.ensureClient();
 
     if (this.config.debug) {
-      console.log(`[RedisBackend] Updating run: ${runId}`);
+      logger.debug(`[RedisBackend] Updating run: ${runId}`);
     }
 
     // Get current status for index update
@@ -471,7 +506,7 @@ export class RedisBackend implements WorkflowBackend {
     const client = await this.ensureClient();
 
     if (this.config.debug) {
-      console.log(`[RedisBackend] Saving checkpoint: ${checkpoint.id}`);
+      logger.debug(`[RedisBackend] Saving checkpoint: ${checkpoint.id}`);
     }
 
     const serialized = JSON.stringify({
@@ -518,7 +553,7 @@ export class RedisBackend implements WorkflowBackend {
     const client = await this.ensureClient();
 
     if (this.config.debug) {
-      console.log(`[RedisBackend] Saving approval: ${approval.id}`);
+      logger.debug(`[RedisBackend] Saving approval: ${approval.id}`);
     }
 
     const serialized = JSON.stringify({
@@ -649,7 +684,7 @@ export class RedisBackend implements WorkflowBackend {
     const client = await this.ensureClient();
 
     if (this.config.debug) {
-      console.log(`[RedisBackend] Enqueueing job: ${job.runId}`);
+      logger.debug(`[RedisBackend] Enqueueing job: ${job.runId}`);
     }
 
     await client.xadd(this.config.streamKey, "*", {
@@ -688,7 +723,19 @@ export class RedisBackend implements WorkflowBackend {
       return null;
     }
 
-    const data = this.arrayToObject(message.fieldValues);
+    let data: Record<string, string>;
+    // @ts-ignore: Deno/Node compatibility
+    if (message.fieldValues) {
+      // Deno Redis
+      // @ts-ignore: Deno/Node compatibility
+      data = this.arrayToObject(message.fieldValues);
+    } else if ((message as any).message) {
+      // Node Redis
+      data = (message as any).message;
+    } else {
+      // Unknown format
+      return null;
+    }
 
     return {
       runId: data.runId ?? "",
@@ -703,7 +750,7 @@ export class RedisBackend implements WorkflowBackend {
     // Note: In a full implementation, we'd need to track the message ID
     // For now, this is a placeholder
     if (this.config.debug) {
-      console.log(`[RedisBackend] Acknowledged: ${runId}`);
+      logger.debug(`[RedisBackend] Acknowledged: ${runId}`);
     }
     return Promise.resolve();
   }
@@ -774,14 +821,20 @@ export class RedisBackend implements WorkflowBackend {
 
   destroy(): Promise<void> {
     if (this.client) {
-      this.client.close();
+      if (typeof (this.client as any).quit === 'function') {
+        (this.client as any).quit();
+      } else if (typeof (this.client as any).disconnect === 'function') {
+        (this.client as any).disconnect();
+      } else if (typeof (this.client as any).close === 'function') {
+        (this.client as any).close();
+      }
       this.client = null;
     }
     this.connectionPromise = null;
     this.initialized = false;
 
     if (this.config.debug) {
-      console.log("[RedisBackend] Destroyed");
+      logger.debug("[RedisBackend] Destroyed");
     }
     return Promise.resolve();
   }

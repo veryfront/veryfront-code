@@ -1,7 +1,7 @@
-import { ensureDir } from "std/fs/mod.ts";
 import { relative } from "std/path/mod.ts";
 import { logger } from "@veryfront/utils";
 import { DEFAULT_BUILD_CONCURRENCY } from "@veryfront/utils";
+import { createFileSystem } from "../../../platform/compat/fs.ts";
 import { DEFAULT_OPTIONS } from "./constants.ts";
 import { loadSharp } from "./sharp-loader.ts";
 import { findImages } from "./image-finder.ts";
@@ -30,6 +30,7 @@ export class ImageOptimizer {
   private options: Required<ImageOptimizationOptions>;
   private sharp: SharpConstructor | null = null;
   private imageManifest: Map<string, OptimizedImageMetadata> = new Map();
+  private fs = createFileSystem();
 
   constructor(options: ImageOptimizationOptions = {}) {
     this.options = { ...DEFAULT_OPTIONS, ...options };
@@ -58,7 +59,7 @@ export class ImageOptimizer {
       sizes: this.options.sizes,
     });
 
-    await ensureDir(this.options.outputDir);
+    await this.fs.mkdir(this.options.outputDir, { recursive: true });
 
     const images = await findImages(this.options.inputDir);
     logger.info(`Found ${images.length} images to optimize`);
@@ -85,7 +86,7 @@ export class ImageOptimizer {
     logger.debug(`Optimizing: ${relPath}`);
 
     try {
-      const imageBuffer = await Deno.readFile(imagePath);
+      const imageBuffer = await this.fs.readFile(imagePath);
       const image = this.sharp!(imageBuffer);
       const metadata = await image.metadata();
 

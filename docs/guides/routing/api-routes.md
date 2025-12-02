@@ -589,7 +589,7 @@ export async function POST(request: Request) {
 
   const token = sign(
     { userId: user.id, email: user.email },
-    Deno.env.get('JWT_SECRET')!,
+    getEnv('JWT_SECRET')!,
     { expiresIn: '7d' }
   );
 
@@ -615,7 +615,7 @@ export async function GET(request: Request) {
 
   try {
     const token = authHeader.replace('Bearer ', '');
-    const payload = verify(token, Deno.env.get('JWT_SECRET')!) as {
+    const payload = verify(token, getEnv('JWT_SECRET')!) as {
       userId: string;
     };
 
@@ -703,7 +703,7 @@ export async function POST(request: Request) {
 import { Pool } from 'pg';
 
 const pool = new Pool({
-  connectionString: Deno.env.get('DATABASE_URL')
+  connectionString: getEnv('DATABASE_URL')
 });
 
 export async function GET(request: Request) {
@@ -729,7 +729,7 @@ export async function POST(request: Request) {
 // app/api/products/route.ts
 import { MongoClient } from 'mongodb';
 
-const client = new MongoClient(Deno.env.get('MONGODB_URI')!);
+const client = new MongoClient(getEnv('MONGODB_URI')!);
 const db = client.db('myapp');
 const products = db.collection('products');
 
@@ -768,7 +768,7 @@ export async function GET(request: Request) {
     );
   }
 
-  const apiKey = Deno.env.get('WEATHER_API_KEY');
+  const apiKey = getEnv('WEATHER_API_KEY');
   const url = `https://api.openweathermap.org/data/2.5/weather?q=${city}&appid=${apiKey}`;
 
   const response = await fetch(url);
@@ -799,7 +799,7 @@ export async function POST(request: Request) {
     const event = verify(
       body,
       signature,
-      Deno.env.get('STRIPE_WEBHOOK_SECRET')!
+      getEnv('STRIPE_WEBHOOK_SECRET')!
     );
 
     // Handle different event types
@@ -971,9 +971,9 @@ export async function GET(request: Request) {
 ### 4. Use Environment Variables
 
 ```typescript
-const API_KEY = Deno.env.get('EXTERNAL_API_KEY');
-const DATABASE_URL = Deno.env.get('DATABASE_URL');
-const JWT_SECRET = Deno.env.get('JWT_SECRET');
+const API_KEY = getEnv('EXTERNAL_API_KEY');
+const DATABASE_URL = getEnv('DATABASE_URL');
+const JWT_SECRET = getEnv('JWT_SECRET');
 
 if (!API_KEY) {
   throw new Error('EXTERNAL_API_KEY not set');

@@ -8,23 +8,7 @@ import { AnthropicProvider } from "./anthropic.ts";
 import { GoogleProvider } from "./google.ts";
 import { agentLogger } from "../../core/utils/logger/logger.ts";
 import { createError, toError } from "../../core/errors/veryfront-error.ts";
-
-/**
- * Get environment variable (works in Node.js and Deno)
- */
-function getEnv(name: string): string | undefined {
-  // Deno
-  if (typeof Deno !== "undefined" && Deno.env) {
-    return Deno.env.get(name);
-  }
-  // Node.js
-  // deno-lint-ignore no-explicit-any
-  const _global = globalThis as any;
-  if (typeof _global.process !== "undefined" && _global.process.env) {
-    return _global.process.env[name];
-  }
-  return undefined;
-}
+import { getEnv } from "../../platform/compat/process.ts";
 
 /**
  * Provider registry

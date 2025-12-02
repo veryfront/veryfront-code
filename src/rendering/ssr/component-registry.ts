@@ -3,7 +3,7 @@
  * @module
  */
 
-import { dirname, join } from "https://deno.land/std@0.220.0/path/mod.ts";
+import { dirname, join } from "../../platform/compat/path-helper.ts";
 import { rendererLogger as logger } from "@veryfront/utils";
 import * as React from "react";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";

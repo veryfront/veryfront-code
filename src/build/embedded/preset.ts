@@ -1,11 +1,11 @@
 import { bundlerLogger as logger } from "@veryfront/utils";
 import { createError, toError } from "../../core/errors/veryfront-error.ts";
 import * as esbuild from "esbuild/mod.js";
-import { ensureDir } from "std/fs/mod.ts";
 import { join } from "std/path/mod.ts";
 import { compileMDXToJS } from "../compiler/index.ts";
 import { denoAdapter } from "@veryfront/platform/adapters/deno.ts";
 import type { EmbeddedBundleManifest } from "../renderer/types/bundler-types.ts";
+import { createFileSystem } from "../../platform/compat/fs.ts";
 
 export interface BuildEmbeddedOptions {
   projectDir: string;
@@ -22,17 +22,18 @@ export interface BuildEmbeddedOptions {
  */
 export async function buildEmbeddedPreset(
   options: BuildEmbeddedOptions,
-): Promise<{ manifest: EmbeddedBundleManifest }> {
+  ): Promise<{ manifest: EmbeddedBundleManifest }> {
   const { projectDir, outDir } = options;
   const embeddedDir = join(outDir, "embedded");
-  await ensureDir(embeddedDir);
-  await ensureDir(join(embeddedDir, "rsc"));
+  const fs = createFileSystem();
+  await fs.mkdir(embeddedDir, { recursive: true });
+  await fs.mkdir(join(embeddedDir, "rsc"), { recursive: true });
 
   const candidates = [join(projectDir, "app", "page.mdx"), join(projectDir, "pages", "index.mdx")];
   let entryPath = "";
   for (const c of candidates) {
     try {
-      const st = await Deno.stat(c);
+      const st = await fs.stat(c);
       if (st.isFile) {
         entryPath = c;
         break;
@@ -45,8 +46,8 @@ export async function buildEmbeddedPreset(
 
   if (!entryPath) {
     entryPath = join(projectDir, ".veryfront", "__embedded_fallback__.tsx");
-    await ensureDir(join(projectDir, ".veryfront"));
-    await Deno.writeTextFile(
+    await fs.mkdir(join(projectDir, ".veryfront"), { recursive: true });
+    await fs.writeTextFile(
       entryPath,
       `export default function Page(){ return '<div>Veryfront</div>'; }`,
     );
@@ -57,7 +58,7 @@ export async function buildEmbeddedPreset(
   try {
     const appBuild = await esbuild.build({
       stdin: {
-        contents: await Deno.readTextFile(entryPath),
+        contents: await fs.readTextFile(entryPath),
         sourcefile: entryPath,
         resolveDir: projectDir,
         loader: "tsx",
@@ -86,7 +87,7 @@ export async function buildEmbeddedPreset(
       message: "Failed to generate embedded app bundle",
     }));
   }
-  await Deno.writeTextFile(appOut, bundledAppCode);
+  await fs.writeTextFile(appOut, bundledAppCode);
 
   const routes: Array<{ path: string; file: string; type: "page" | "api" }> = [];
 
@@ -97,7 +98,7 @@ export async function buildEmbeddedPreset(
     const base = join(projectDir, "app");
 
     async function walk(dir: string, rel = ""): Promise<void> {
-      for await (const ent of Deno.readDir(dir)) {
+      for await (const ent of fs.readDir(dir)) {
         const abs = join(dir, ent.name);
         const relNext = rel ? `${rel}/${ent.name}` : ent.name;
         if (ent.isDirectory) {
@@ -130,7 +131,7 @@ export async function buildEmbeddedPreset(
     const base = join(projectDir, "pages");
 
     async function walk(dir: string, rel = ""): Promise<void> {
-      for await (const ent of Deno.readDir(dir)) {
+      for await (const ent of fs.readDir(dir)) {
         const abs = join(dir, ent.name);
         const relNext = rel ? `${rel}/${ent.name}` : ent.name;
         if (ent.isDirectory) {
@@ -157,14 +158,14 @@ export async function buildEmbeddedPreset(
 
   for (const r of discovered) {
     try {
-      const mdxContent = await Deno.readTextFile(r.sourcePath);
+      const mdxContent = await fs.readTextFile(r.sourcePath);
       const compiled = await compileMDXToJS(r.sourcePath, mdxContent, {
         projectDir,
         mode: "production",
         adapter: denoAdapter,
       });
-      await ensureDir(r.filePath.slice(0, r.filePath.lastIndexOf("/")));
-      await Deno.writeTextFile(r.filePath, compiled.code);
+      await fs.mkdir(r.filePath.slice(0, r.filePath.lastIndexOf("/")), { recursive: true });
+      await fs.writeTextFile(r.filePath, compiled.code);
       const fileRel = r.filePath.slice(embeddedDir.length + 1).replace(/\\/g, "/");
       routes.push({
         path: r.routePath,
@@ -190,14 +191,14 @@ export async function buildEmbeddedPreset(
   for (const url of rscFiles) {
     try {
       const srcPath = url.pathname;
-      const src = await Deno.readTextFile(srcPath);
+      const src = await fs.readTextFile(srcPath);
       const res = await esbuild.transform(src, {
         loader: "ts",
         target: "es2020",
         format: "esm",
       });
       const name = srcPath.substring(srcPath.lastIndexOf("/") + 1).replace(/\.tsx?$/, ".js");
-      await Deno.writeTextFile(join(embeddedDir, "rsc", name), res.code);
+      await fs.writeTextFile(join(embeddedDir, "rsc", name), res.code);
     } catch (e) {
       logger.warn("embedded: failed to process RSC file", { error: String(e) } as unknown);
     }
@@ -224,7 +225,7 @@ export async function buildEmbeddedPreset(
       },
     ],
   };
-  await Deno.writeTextFile(join(embeddedDir, "manifest.json"), JSON.stringify(manifest, null, 2));
+  await fs.writeTextFile(join(embeddedDir, "manifest.json"), JSON.stringify(manifest, null, 2));
 
   logger.info("Embedded preset built", { outDir: embeddedDir } as unknown);
 

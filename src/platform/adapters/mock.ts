@@ -75,13 +75,13 @@ export function createMockAdapter(): MockRuntimeAdapter {
         files.set(path, content);
         return Promise.resolve();
       },
-      exists: async (path: string) => {
-        if (files.has(path)) return true;
-        if (directories.has(path)) return true;
+      exists: (path: string) => {
+        if (files.has(path)) return Promise.resolve(true);
+        if (directories.has(path)) return Promise.resolve(true);
         for (const filePath of files.keys()) {
-          if (filePath.startsWith(path + "/")) return true;
+          if (filePath.startsWith(path + "/")) return Promise.resolve(true);
         }
-        return false;
+        return Promise.resolve(false);
       },
       readDir: async function* (path: string) {
         const entries = new Map<string, { isFile: boolean; isDirectory: boolean }>();

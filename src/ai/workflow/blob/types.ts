@@ -20,6 +20,8 @@ export interface BlobRef {
   mimeType: string;
   /** When it was created */
   createdAt: Date;
+  /** When this blob expires (if TTL was set) */
+  expiresAt?: Date;
   /** Optional public URL (if supported by backend) */
   url?: string;
   /** Metadata */

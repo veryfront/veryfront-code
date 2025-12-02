@@ -12,7 +12,7 @@ export async function writeManifest(
   const manifestPath = join(outputDir, MANIFEST_FILENAME);
   const manifest = Object.fromEntries(imageManifest);
 
-  await fs.writeFile(
+  await fs.writeTextFile(
     manifestPath,
     JSON.stringify(manifest, null, 2),
   );
@@ -27,7 +27,7 @@ export async function loadManifest(
   const manifestPath = join(outputDir, MANIFEST_FILENAME);
 
   try {
-    const content = await fs.readFile(manifestPath);
+    const content = await fs.readTextFile(manifestPath);
     const data = JSON.parse(content);
     return new Map(Object.entries(data));
   } catch (error) {

@@ -9,12 +9,48 @@ The adapter fallback wrapper provides a centralized, type-safe way to handle fal
 Before this wrapper, the codebase had 30+ duplicate try-catch blocks like this:
 
 ```typescript
-let result;
-try {
-  result = await adapter.someMethod();
-} catch {
-  result = await Deno.someMethod(); // fallback
-}
+import { withFallback } from "@veryfront/platform/adapters";
+import { createFileSystem } from "@veryfront/platform/compat/fs.ts"; // Assuming fs compat is available
+
+const fs = createFileSystem();
+
+const content = await withFallback(
+  () => adapter.fs.readFile(path),
+  () => fs.readTextFile(path),
+  { operationName: "readFile" },
+);
+```
+
+### 2. `withFallbackSync` - Synchronous Operations
+
+```typescript
+import { withFallbackSync } from "@veryfront/platform/adapters";
+import { getEnv } from "@veryfront/platform/compat/process.ts"; // Assuming process compat is available
+
+const value = withFallbackSync(
+  () => adapter.env.get("KEY"),
+  () => getEnv("KEY"),
+  { operationName: "env.get" },
+);
+```
+
+### 3. `createAdapterFallback` - Reusable Async Wrapper
+
+```typescript
+import { createAdapterFallback } from "@veryfront/platform/adapters";
+import { createFileSystem } from "@veryfront/platform/compat/fs.ts"; // Assuming fs compat is available
+
+const fs = createFileSystem();
+
+const readFile = createAdapterFallback(
+  () => this.adapter.fs.readFile(this.configPath),
+  () => fs.readTextFile(this.configPath),
+  "readFile",
+);
+
+// Can be called multiple times
+const content1 = await readFile.execute();
+const content2 = await readFile = await readFile.execute();
 ```
 
 **Issues with this approach:**
@@ -92,7 +128,7 @@ The wrapper automatically logs errors with context:
 ```typescript
 await withFallback(
   () => adapter.operation(),
-  () => Deno.operation(),
+  () => someOtherOperation(), // Placeholder for a cross-platform operation
   {
     operationName: "operation",
     logError: true, // default
@@ -113,7 +149,7 @@ For operations where logging is not needed:
 ```typescript
 await withFallback(
   () => adapter.operation(),
-  () => Deno.operation(),
+  () => someOtherOperation(), // Placeholder for a cross-platform operation
   {
     operationName: "operation",
     logError: false,
@@ -129,7 +165,7 @@ When both operations fail, errors are preserved:
 try {
   await withFallback(
     () => adapter.operation(),
-    () => Deno.operation(),
+    () => someOtherOperation(), // Placeholder for a cross-platform operation
     { operationName: "operation" },
   );
 } catch (error) {
@@ -147,7 +183,7 @@ Control whether to throw `FallbackExecutionError` or just the fallback error:
 ```typescript
 await withFallback(
   () => adapter.operation(),
-  () => Deno.operation(),
+  () => someOtherOperation(), // Placeholder for a cross-platform operation
   {
     operationName: "operation",
     rethrowOnFallbackFailure: false, // throws fallback error directly
@@ -157,15 +193,15 @@ await withFallback(
 
 ## Usage Examples
 
-### File System Operations
-
 ```typescript
 import { withFallback } from "@veryfront/platform/adapters";
+import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
 
 async function readConfig(adapter: RuntimeAdapter) {
+  const fs = createFileSystem();
   return await withFallback(
     () => adapter.fs.readFile("config.json"),
-    () => Deno.readTextFile("config.json"),
+    () => fs.readTextFile("config.json"),
     { operationName: "readFile:config" },
   );
 }
@@ -175,11 +211,12 @@ async function readConfig(adapter: RuntimeAdapter) {
 
 ```typescript
 import { withFallbackSync } from "@veryfront/platform/adapters";
+import { getEnv } from "@veryfront/platform/compat/process.ts";
 
 function getPort(adapter: RuntimeAdapter): number {
   const portStr = withFallbackSync(
     () => adapter.env.get("PORT"),
-    () => Deno.env.get("PORT"),
+    () => getEnv("PORT"),
     { operationName: "env.get:PORT" },
   );
   return Number(portStr ?? 3000);
@@ -204,11 +241,13 @@ async function fetchData(adapter: RuntimeAdapter, url: string) {
 
 ```typescript
 import { createAdapterFallback } from "@veryfront/platform/adapters";
+import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
 
 class ConfigLoader {
+  private fs = createFileSystem();
   private readFile = createAdapterFallback(
     () => this.adapter.fs.readFile(this.configPath),
-    () => Deno.readTextFile(this.configPath),
+    () => this.fs.readTextFile(this.configPath),
     "readFile:config",
   );
 
@@ -259,11 +298,13 @@ async function readUserConfig(adapter: RuntimeAdapter, path: string) {
 
 ```typescript
 import { withFallback } from "@veryfront/platform/adapters";
+import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
 
 async function readUserConfig(adapter: RuntimeAdapter, path: string) {
+  const fs = createFileSystem();
   const content = await withFallback(
     () => adapter.fs.readFile(path),
-    () => Deno.readTextFile(path),
+    () => fs.readTextFile(path),
     { operationName: "readFile:userConfig" },
   );
   return JSON.parse(content);

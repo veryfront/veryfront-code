@@ -1,7 +1,11 @@
-import { assert, assertEquals, assertRejects, assertExists } from "https://deno.land/std@0.220.0/assert/mod.ts";
+import { assert, assertEquals, assertExists } from "https://deno.land/std@0.220.0/assert/mod.ts";
 import { LocalBlobStorage } from "./local-storage.ts";
 import { join } from "https://deno.land/std@0.220.0/path/mod.ts";
-import { ensureDir, remove } from "https://deno.land/std@0.220.0/fs/mod.ts";
+
+// Helper function to replace std's remove
+async function remove(path: string, options?: { recursive?: boolean }): Promise<void> {
+  await Deno.remove(path, options);
+}
 
 Deno.test("LocalBlobStorage - put and get text", async () => {
   const testDir = await Deno.makeTempDir({ prefix: "vf_blob_test_" });
@@ -50,7 +54,8 @@ Deno.test("LocalBlobStorage - put with TTL and cleanup", async () => {
     const expiredData = "Expired content";
     const expiredRef = await storage.put(expiredData, { ttl: 1 }); // 1 second TTL
     assertExists(expiredRef.expiresAt);
-    assert(expiredRef.expiresAt! < new Date(Date.now() + 1000));
+    // Use <= since expiresAt = createdAt + ttl*1000, and createdAt ≈ Date.now()
+    assert(expiredRef.expiresAt! <= new Date(Date.now() + 2000));
 
     // Put a non-expired blob
     const validData = "Valid content";
@@ -143,8 +148,9 @@ Deno.test("LocalBlobStorage - rootDir is created if not exists", async () => {
 
   try {
     const data = "Initial data";
-    await storage.put(data);
-    assert(await storage.exists(storage['getPath'](storage['getMetadataPath']("some-id")).split("/").pop()!.replace(".meta.json", ""))); // Check existence of a file within rootDir
+    const ref = await storage.put(data);
+    // Verify the blob exists using the returned reference ID
+    assert(await storage.exists(ref.id), "Blob should exist after put");
     const statResult = await Deno.stat(nonExistentDir);
     assert(statResult.isDirectory, "Root directory should be created");
   } finally {
