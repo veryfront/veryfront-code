@@ -137,7 +137,7 @@ function getSessionAgent(sessionId: string): Agent {
   const sessionAgent = agent({
     id: `codeAssistant_${sessionId}`,
 
-    model: 'openai/gpt-4',
+    model: 'openai/gpt-4o',
 
     // Use the inlined system prompt
     system: CODE_ASSISTANT_PROMPT,

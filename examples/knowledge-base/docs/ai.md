@@ -8,7 +8,7 @@ Agents are the core building block. They are created using the `agent()` factory
 
 ```typescript
 const myAgent = agent({
-  model: "openai/gpt-4",
+  model: "openai/gpt-4o",
   system: "You are helpful.",
   tools: { myTool },
 });

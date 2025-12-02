@@ -5,13 +5,17 @@
  */
 
 import { resource } from 'veryfront/ai';
+import { z } from 'zod';
 
 export default resource({
-  name: 'documentation',
   pattern: '/docs/:topic',
   description: 'Get documentation for a specific topic (e.g., agents, tools, streaming, middleware)',
 
-  execute: async ({ topic }) => {
+  paramsSchema: z.object({
+    topic: z.string(),
+  }),
+
+  load: async ({ topic }) => {
     // Simulate documentation lookup
     const docs = {
       agents: {
@@ -27,7 +31,7 @@ import { agent } from 'veryfront/ai';
 
 const myAgent = agent({
   id: 'assistant',
-  model: 'openai/gpt-4',
+  model: 'openai/gpt-4o',
   system: 'You are a helpful assistant',
   tools: {
     searchCode: true,

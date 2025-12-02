@@ -102,7 +102,7 @@ console.log('✅ Phase 3: Agent Enhancements\n');
 // Create agents with different memory strategies
 const assistantAgent = agent({
   id: 'assistant',
-  model: 'openai/gpt-4',
+  model: 'openai/gpt-4o',
   system: 'You are a helpful AI assistant.',
   memory: {
     type: 'conversation',
@@ -116,14 +116,14 @@ console.log('Created assistant with conversation memory ✓');
 // Agent composition example
 const researchAgent = agent({
   id: 'researcher',
-  model: 'openai/gpt-4',
+  model: 'openai/gpt-4o',
   system: 'You research topics thoroughly.',
   memory: { type: 'buffer', maxMessages: 3 },
 });
 
 const writerAgent = agent({
   id: 'writer',
-  model: 'openai/gpt-4',
+  model: 'openai/gpt-4o',
   system: 'You write clear, engaging content.',
   memory: { type: 'buffer', maxMessages: 3 },
 });
@@ -151,7 +151,7 @@ const costTracker = createCostTracker({
 
 const productionAgent = agent({
   id: 'productionAgent',
-  model: 'openai/gpt-4',
+  model: 'openai/gpt-4o',
   system: 'You are a production-ready assistant.',
   tools: {
     calculate: true,

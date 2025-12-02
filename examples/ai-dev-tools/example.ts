@@ -27,12 +27,27 @@ import {
 
 import { z } from 'zod';
 
+//Helpers for Cross-Platform Compatibility (Deno/Node)
+function getEnv(key: string): string | undefined {
+  // @ts-ignore - Deno global
+  if (typeof Deno !== 'undefined') {
+    // @ts-ignore - Deno global
+    return Deno.env.get(key);
+  }
+  // @ts-ignore - process global
+  else if (typeof process !== 'undefined' && process.env) {
+    // @ts-ignore - process global
+    return process.env[key];
+  }
+  return undefined;
+}
+
 console.log('=== Phase 7: Developer Tools ===\n');
 
 // Initialize providers
 initializeProviders({
   openai: {
-    apiKey: Deno.env.get('OPENAI_API_KEY') || 'sk-test',
+    apiKey: getEnv('OPENAI_API_KEY') || 'sk-test',
   },
 });
 
@@ -107,7 +122,7 @@ console.log('=== 2. Agent Testing ===\n');
 
 const mathAgent = agent({
   id: 'mathAgent',
-  model: 'openai/gpt-4',
+  model: 'openai/gpt-4o',
   system: 'You are a math assistant. Use the calculator tool for computations.',
   tools: {
     calculator: true,
@@ -121,7 +136,7 @@ const mathAgent = agent({
 
 console.log('Created math agent with calculator tool\n');
 
-const apiKey = Deno.env.get('OPENAI_API_KEY');
+const apiKey = getEnv('OPENAI_API_KEY');
 
 if (apiKey && apiKey !== 'sk-test') {
   // Test the agent

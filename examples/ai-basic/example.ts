@@ -30,6 +30,39 @@ import {
 import { z } from 'zod';
 
 // ============================================================================
+// Helpers for Cross-Platform Compatibility (Deno/Node)
+// ============================================================================
+
+function getEnv(key: string): string | undefined {
+  // @ts-ignore - Deno global
+  if (typeof Deno !== 'undefined') {
+    // @ts-ignore - Deno global
+    return Deno.env.get(key);
+  }
+  // @ts-ignore - process global
+  if (typeof process !== 'undefined' && process.env) {
+    // @ts-ignore - process global
+    return process.env[key];
+  }
+  return undefined;
+}
+
+function writeStdout(text: string) {
+  // @ts-ignore - Deno global
+  if (typeof Deno !== 'undefined') {
+    // @ts-ignore - Deno global
+    Deno.stdout.writeSync(new TextEncoder().encode(text));
+  }
+  // @ts-ignore - process global
+  else if (typeof process !== 'undefined' && process.stdout) {
+    // @ts-ignore - process global
+    process.stdout.write(text);
+  } else {
+    console.log(text);
+  }
+}
+
+// ============================================================================
 // 1. Platform Detection
 // ============================================================================
 
@@ -57,10 +90,10 @@ console.log('\n=== Provider Initialization ===');
 
 initializeProviders({
   openai: {
-    apiKey: Deno.env.get('OPENAI_API_KEY') || 'sk-test',
+    apiKey: getEnv('OPENAI_API_KEY') || 'sk-test',
   },
   anthropic: {
-    apiKey: Deno.env.get('ANTHROPIC_API_KEY') || 'sk-ant-test',
+    apiKey: getEnv('ANTHROPIC_API_KEY') || 'sk-ant-test',
   },
 });
 
@@ -112,7 +145,7 @@ console.log('\n=== Agent Creation ===');
 
 const mathAgent = agent({
   id: 'mathAssistant',
-  model: 'openai/gpt-4',
+  model: 'openai/gpt-4o',
   system: `You are a helpful math assistant.
 When the user asks a math question, use the calculator tool to compute the answer.
 Always show your work and explain the result.`,
@@ -145,7 +178,7 @@ console.log(`  Total: ${stats.total}`);
 // 6. Execute Agent (if API key is set)
 // ============================================================================
 
-const apiKey = Deno.env.get('OPENAI_API_KEY');
+const apiKey = getEnv('OPENAI_API_KEY');
 
 if (apiKey && apiKey !== 'sk-test') {
   console.log('\n=== Agent Execution (Non-Streaming) ===');
@@ -194,7 +227,7 @@ if (apiKey && apiKey !== 'sk-test') {
     // Create a fresh agent instance for streaming to avoid memory conflicts
     const streamingAgent = agent({
       id: 'mathAssistantStreaming',
-      model: 'openai/gpt-4',
+      model: 'openai/gpt-4o',
       system: `You are a helpful math assistant.
 When the user asks a math question, use the calculator tool to compute the answer.
 Always show your work and explain the result.`,
@@ -215,7 +248,7 @@ Always show your work and explain the result.`,
       input: 'What is 789 divided by 3?',
       onChunk: (chunk) => {
         // Print each chunk as it arrives
-        Deno.stdout.writeSync(new TextEncoder().encode(chunk));
+        writeStdout(chunk);
         fullText += chunk;
       },
       onToolCall: (toolCall) => {

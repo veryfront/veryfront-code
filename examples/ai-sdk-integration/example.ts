@@ -28,6 +28,21 @@ import {
 
 import { z } from 'zod';
 
+// Helpers for Cross-Platform Compatibility (Deno/Node)
+function getEnv(key: string): string | undefined {
+  // @ts-ignore - Deno global
+  if (typeof Deno !== 'undefined') {
+    // @ts-ignore - Deno global
+    return Deno.env.get(key);
+  }
+  // @ts-ignore - process global
+  else if (typeof process !== 'undefined' && process.env) {
+    // @ts-ignore - process global
+    return process.env[key];
+  }
+  return undefined;
+}
+
 console.log('=== AI SDK Integration Example ===\n');
 console.log('Demonstrating flexibility: AI SDK + Custom Providers\n');
 
@@ -37,14 +52,14 @@ console.log('Demonstrating flexibility: AI SDK + Custom Providers\n');
 
 console.log('=== 1. Using AI SDK Providers ===\n');
 
-const apiKey = Deno.env.get('OPENAI_API_KEY') || 'sk-test';
+const apiKey = getEnv('OPENAI_API_KEY') || 'sk-test';
 
 if (apiKey && apiKey !== 'sk-test') {
   console.log('Testing AI SDK provider (OpenAI)...\n');
 
   try {
     // Use AI SDK's openai provider directly
-    const model = openai('gpt-4', {
+    const model = openai('gpt-4o', {
       apiKey,
     });
 
