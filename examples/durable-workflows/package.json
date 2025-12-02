@@ -1,0 +1,16 @@
+{
+  "name": "veryfront-durable-workflows",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Durable workflows example demonstrating workflow API, approvals, and checkpoints",
+  "scripts": {
+    "start": "npx tsx src/server.ts"
+  },
+  "dependencies": {
+    "veryfront": "^0.0.9"
+  },
+  "devDependencies": {
+    "tsx": "^4.0.0"
+  }
+}

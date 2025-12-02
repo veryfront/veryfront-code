@@ -25,7 +25,7 @@ import {
   // Registries
   registerTool,
   getMCPStats,
-} from '../../src/ai/index.ts';
+} from 'veryfront/ai';
 
 import { z } from 'zod';
 

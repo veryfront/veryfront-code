@@ -1,0 +1,17 @@
+{
+  "name": "veryfront-ai-sdk-integration",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "AI SDK integration example demonstrating AI SDK providers with Veryfront enhancements",
+  "scripts": {
+    "start": "npx tsx example.ts"
+  },
+  "dependencies": {
+    "veryfront": "^0.0.9",
+    "zod": "^3.22.0"
+  },
+  "devDependencies": {
+    "tsx": "^4.0.0"
+  }
+}

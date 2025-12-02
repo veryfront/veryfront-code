@@ -1,4 +1,4 @@
-import { tool } from "../../../../src/ai/index.ts";
+import { tool } from "veryfront/ai";
 import { z } from "zod";
 
 export default tool({

@@ -1,6 +1,5 @@
-import { tool } from "../../../../src/ai/index.ts";
+import { tool, type ToolExecutionContext } from "veryfront/ai";
 import { z } from "zod";
-import type { ToolExecutionContext } from "../../../../src/ai/types/tool.ts";
 
 export default tool({
   id: "save-string-to-blob",

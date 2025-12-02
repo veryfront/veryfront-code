@@ -1,4 +1,4 @@
-import { workflow, step, map, type BlobRef } from "../../../../src/ai/workflow/index.ts";
+import { workflow, step, map, type BlobRef } from "veryfront/ai/workflow";
 import { z } from "zod";
 import processorAgent from "../agents/processor.ts";
 import saveBlobTool from "../tools/save-blob.ts";

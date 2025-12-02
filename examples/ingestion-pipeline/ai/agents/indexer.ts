@@ -1,4 +1,4 @@
-import { agent } from "../../../../src/ai/index.ts";
+import { agent } from "veryfront/ai";
 import indexDocument from "../tools/index-document.ts";
 
 export default agent({

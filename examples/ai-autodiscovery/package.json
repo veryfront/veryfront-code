@@ -1,0 +1,17 @@
+{
+  "name": "veryfront-ai-autodiscovery",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Auto-discovery example demonstrating automatic tool, agent, and resource discovery",
+  "scripts": {
+    "start": "npx tsx example.ts"
+  },
+  "dependencies": {
+    "veryfront": "^0.0.9",
+    "zod": "^3.22.0"
+  },
+  "devDependencies": {
+    "tsx": "^4.0.0"
+  }
+}

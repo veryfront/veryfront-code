@@ -1,8 +1,8 @@
 {
-  "name": "veryfront-form-handling-example",
+  "name": "veryfront-middleware-demo",
   "version": "1.0.0",
   "private": true,
-  "description": "Form handling example for Veryfront",
+  "description": "Middleware demo for Veryfront",
   "type": "module",
   "scripts": {
     "dev": "veryfront dev",

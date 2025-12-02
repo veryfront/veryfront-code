@@ -13,7 +13,7 @@ import {
   tool,
   initializeProviders,
   registerTool,
-} from '../../src/ai/index.ts';
+} from 'veryfront/ai';
 
 import {
   testAgent,
@@ -23,7 +23,7 @@ import {
   inspectAgent,
   printInspectionReport,
   printRegistryOverview,
-} from '../../src/ai/dev/index.ts';
+} from 'veryfront/ai/dev';
 
 import { z } from 'zod';
 
