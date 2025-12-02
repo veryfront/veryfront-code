@@ -4,7 +4,27 @@
  * Executes the ingestion pipeline workflow using local MinIO and Redis.
  */
 
-import "https://deno.land/std@0.220.0/dotenv/load.ts";
+// Helper for Cross-Platform Compatibility (Deno/Node)
+function getEnv(key: string): string | undefined {
+  // @ts-ignore - Deno global
+  if (typeof Deno !== 'undefined') {
+    // @ts-ignore - Deno global
+    return Deno.env.get(key);
+  }
+  // @ts-ignore - process global
+  else if (typeof process !== 'undefined' && process.env) {
+    // @ts-ignore - process global
+    return process.env[key];
+  }
+  return undefined;
+}
+
+/**
+ * Run Ingestion Pipeline
+ * 
+ * Executes the ingestion pipeline workflow using local MinIO and Redis.
+ */
+
 import { WorkflowExecutor, RedisBackend, S3BlobStorage, DefaultAgentRegistry, DefaultToolRegistry } from "veryfront/ai/workflow";
 import ingestionWorkflow from "./ai/workflows/ingestion.ts";
 import processorAgent from "./ai/agents/processor.ts";
@@ -19,7 +39,7 @@ async function main() {
   // Here we explicitly initialize it to ensure it uses the provided key.
   initializeProviders({
     openai: {
-      apiKey: Deno.env.get("OPENAI_API_KEY") || "sk-no-key-provided",
+      apiKey: getEnv("OPENAI_API_KEY") || "sk-no-key-provided",
     },
   });
 

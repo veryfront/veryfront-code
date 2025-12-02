@@ -1,9 +1,24 @@
+// Helper for Cross-Platform CWD
+function getEnv(key: string): string | undefined {
+  // @ts-ignore - Deno global
+  if (typeof Deno !== 'undefined') {
+    // @ts-ignore - Deno global
+    return Deno.env.get(key);
+  }
+  // @ts-ignore - process global
+  else if (typeof process !== 'undefined' && process.env) {
+    // @ts-ignore - process global
+    return process.env[key];
+  }
+  return undefined;
+}
+
 import { agent, initializeProviders, tool } from "veryfront/ai";
 import { z } from "zod";
 
 // Try to initialize real providers
-const OPENAI_KEY = Deno.env.get("OPENAI_API_KEY");
-const ANTHROPIC_KEY = Deno.env.get("ANTHROPIC_API_KEY");
+const OPENAI_KEY = getEnv("OPENAI_API_KEY");
+const ANTHROPIC_KEY = getEnv("ANTHROPIC_API_KEY");
 
 let hasProviders = false;
 if (OPENAI_KEY || ANTHROPIC_KEY) {

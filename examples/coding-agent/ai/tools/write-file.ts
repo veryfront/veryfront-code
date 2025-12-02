@@ -1,41 +1,68 @@
 /**
  * Write File Tool
- * Write or update a file in the project (works with virtual FS)
+ *
+ * Writes content to a specified file in the codebase.
+ * Uses secure path validation to prevent unauthorized access.
  */
 
-import { tool } from "veryfront/ai";
-import { z } from "zod";
-import { getAdapter } from "@veryfront/platform";
-import { resolvePath } from "../utils/path-helpers.ts";
+import { tool } from 'veryfront/ai';
+import { z } from 'zod';
+import { validateAndResolvePath } from '../utils/path-helpers.ts';
 
-const adapter = await getAdapter();
+// Conditional imports for file system operations
+let fs: typeof import('node:fs/promises') | undefined;
+
+// @ts-ignore - Deno global
+if (typeof Deno === 'undefined') {
+  fs = await import('node:fs/promises');
+}
 
 export default tool({
-  description: "Write or update a file in the project (works with virtual FS)",
-  inputSchema: z.object({
-    path: z.string().describe("Relative or absolute path to the file"),
-    content: z.string().describe("Content to write to the file"),
-  }),
-  execute: async ({ path, content }) => {
-    try {
-      const fullPath = resolvePath(path);
+  description: 'Write content to a specified file. Can create new files or overwrite existing ones. Useful for modifying code, updating configurations, or generating new files.',
 
-      // Create parent directory if it doesn't exist
-      const parentDir = fullPath.substring(0, fullPath.lastIndexOf("/"));
-      if (parentDir && !await adapter.fs.exists(parentDir)) {
-        await adapter.fs.mkdir(parentDir, { recursive: true });
+  inputSchema: z.object({
+    filePath: z.string().describe('The path to the file to write (relative to project root)'),
+    content: z.string().describe('The content to write to the file'),
+    append: z.boolean().optional().default(false).describe('Whether to append content to the file instead of overwriting'),
+  }),
+
+  execute: async ({ filePath, content, append }) => {
+    try {
+      // Validate and resolve the file path
+      const pathResult = validateAndResolvePath(filePath, {
+        allowParentTraversal: false, // Security: prevent path traversal
+      });
+
+      if (!pathResult.success) {
+        return {
+          success: false,
+          error: pathResult.error,
+          filePath,
+        };
       }
 
-      await adapter.fs.writeFile(fullPath, content);
+      const resolvedPath = pathResult.path!;
+
+      if (fs) {
+        // Node.js file write
+        await fs.writeFile(resolvedPath, content, { encoding: 'utf-8', flag: append ? 'a' : 'w' });
+      } else {
+        // Deno file write
+        // @ts-ignore - Deno global
+        await Deno.writeTextFile(resolvedPath, content, { append });
+      }
 
       return {
         success: true,
-        path,
-        size: content.length,
+        filePath,
+        resolvedPath,
+        message: `Content ${append ? 'appended to' : 'written to'} ${filePath}`,
       };
     } catch (error) {
       return {
-        error: error instanceof Error ? error.message : "Failed to write file",
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error',
+        filePath,
       };
     }
   },

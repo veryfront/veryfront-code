@@ -6,6 +6,21 @@
 import { tool } from "veryfront/ai";
 import { z } from "zod";
 
+// Cross-platform environment variable helper
+function getEnv(key: string): string | undefined {
+  // @ts-ignore - Deno global
+  if (typeof Deno !== 'undefined') {
+    // @ts-ignore - Deno global
+    return Deno.env.get(key);
+  }
+  // @ts-ignore - process global
+  else if (typeof process !== 'undefined' && process.env) {
+    // @ts-ignore - process global
+    return process.env[key];
+  }
+  return undefined;
+}
+
 export default tool({
   description: "Search the web for documentation, examples, or latest information",
   inputSchema: z.object({
@@ -13,7 +28,7 @@ export default tool({
     count: z.number().optional().default(5).describe("Number of results to return (1-10)"),
   }),
   execute: async ({ query, count }) => {
-    const apiKey = Deno.env.get("BRAVE_SEARCH_API_KEY");
+    const apiKey = getEnv("BRAVE_SEARCH_API_KEY");
 
     if (!apiKey) {
       return {

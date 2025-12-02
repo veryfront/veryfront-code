@@ -1,9 +1,38 @@
+// Helper for Cross-Platform CWD
+function getEnv(key: string): string | undefined {
+  // @ts-ignore - Deno global
+  if (typeof Deno !== 'undefined') {
+    // @ts-ignore - Deno global
+    return Deno.env.get(key);
+  }
+  // @ts-ignore - process global
+  else if (typeof process !== 'undefined' && process.env) {
+    // @ts-ignore - process global
+    return process.env[key];
+  }
+  return undefined;
+}
+
+// Helper for Cross-Platform randomUUID
+function getRandomUUID(): string {
+  // @ts-ignore - crypto global
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  // Fallback for Node.js < 19 or other environments
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+    const r = Math.random() * 16 | 0,
+      v = c == 'x' ? r : (r & 0x3 | 0x8);
+    return v.toString(16);
+  });
+}
+
 import { getRedis } from "./redis_client.ts";
 import { GROUP_NAME, STREAM_KEY } from "./agent_types.ts";
 import { getRun, initStream, updateRun } from "./agent_runtime.ts";
 import { executeAgent } from "./agent_factory.ts";
 
-const CONSUMER_NAME = Deno.env.get("CONSUMER_NAME") ?? `worker-${crypto.randomUUID().slice(0, 8)}`;
+const CONSUMER_NAME = getEnv("CONSUMER_NAME") ?? `worker-${getRandomUUID().slice(0, 8)}`;
 const BLOCK_MS = 5000;
 
 async function processLoop() {
