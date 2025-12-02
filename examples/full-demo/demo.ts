@@ -39,6 +39,21 @@ import {
   printRegistryOverview,
 } from 'veryfront/ai/dev';
 
+// Helper for Cross-Platform Compatibility (Deno/Node)
+function getEnv(key: string): string | undefined {
+  // @ts-ignore - Deno global
+  if (typeof Deno !== 'undefined') {
+    // @ts-ignore - Deno global
+    return Deno.env.get(key);
+  }
+  // @ts-ignore - process global
+  else if (typeof process !== 'undefined' && process.env) {
+    // @ts-ignore - process global
+    return process.env[key];
+  }
+  return undefined;
+}
+
 console.log('\n🚀 === Veryfront AI - Full Demo === 🚀\n');
 console.log('Demonstrating all 8 phases of the AI Native Framework\n');
 
@@ -59,7 +74,7 @@ console.log('');
 // Initialize providers
 initializeProviders({
   openai: {
-    apiKey: Deno.env.get('OPENAI_API_KEY') || 'sk-test',
+    apiKey: getEnv('OPENAI_API_KEY') || 'sk-test',
   },
 });
 

@@ -7,6 +7,52 @@
 
 import { tool } from 'veryfront/ai';
 import { z } from 'zod';
+import * as child_process from 'node:child_process';
+import * as util from 'node:util';
+
+const execFile = util.promisify(child_process.execFile);
+
+// Helper for Cross-Platform CWD
+function getCwd(): string {
+  // @ts-ignore - Deno global
+  if (typeof Deno !== 'undefined') {
+    // @ts-ignore - Deno global
+    return Deno.cwd();
+  }
+  return process.cwd();
+}
+
+// Helper for Cross-Platform Command Execution
+async function runCommand(command: string, args: string[], cwd: string): Promise<{ stdout: string; stderr: string; code: number }> {
+  // @ts-ignore - Deno global
+  if (typeof Deno !== 'undefined') {
+    // @ts-ignore - Deno global
+    const cmd = new Deno.Command(command, {
+      args,
+      cwd,
+      stdout: 'piped',
+      stderr: 'piped',
+    });
+    const output = await cmd.output();
+    const decoder = new TextDecoder();
+    return {
+      stdout: decoder.decode(output.stdout),
+      stderr: decoder.decode(output.stderr),
+      code: output.code,
+    };
+  } else {
+    try {
+      const { stdout, stderr } = await execFile(command, args, { cwd });
+      return { stdout: String(stdout), stderr: String(stderr), code: 0 };
+    } catch (error: any) {
+      return {
+        stdout: String(error.stdout || ''),
+        stderr: String(error.stderr || ''),
+        code: error.code || 1,
+      };
+    }
+  }
+}
 
 export default tool({
   description: 'Get the current git status of the repository including branch name, modified files, staged changes, and untracked files. Useful for understanding the current state of the codebase and recent changes.',
@@ -17,17 +63,11 @@ export default tool({
 
   execute: async ({ showDiff = false }) => {
     try {
-      const baseDir = Deno.cwd();
+      const baseDir = getCwd();
 
       // Check if we're in a git repository
-      const gitCheckCmd = new Deno.Command('git', {
-        args: ['rev-parse', '--git-dir'],
-        cwd: baseDir,
-        stdout: 'piped',
-        stderr: 'piped',
-      });
-
-      const gitCheckResult = await gitCheckCmd.output();
+      const gitCheckResult = await runCommand('git', ['rev-parse', '--git-dir'], baseDir);
+      
       if (gitCheckResult.code !== 0) {
         return {
           success: false,
@@ -36,22 +76,12 @@ export default tool({
       }
 
       // Get current branch
-      const branchCmd = new Deno.Command('git', {
-        args: ['branch', '--show-current'],
-        cwd: baseDir,
-        stdout: 'piped',
-      });
-      const branchResult = await branchCmd.output();
-      const branch = new TextDecoder().decode(branchResult.stdout).trim();
+      const branchResult = await runCommand('git', ['branch', '--show-current'], baseDir);
+      const branch = branchResult.stdout.trim();
 
       // Get git status in porcelain format for easy parsing
-      const statusCmd = new Deno.Command('git', {
-        args: ['status', '--porcelain'],
-        cwd: baseDir,
-        stdout: 'piped',
-      });
-      const statusResult = await statusCmd.output();
-      const statusOutput = new TextDecoder().decode(statusResult.stdout);
+      const statusResult = await runCommand('git', ['status', '--porcelain'], baseDir);
+      const statusOutput = statusResult.stdout;
 
       // Parse git status output
       const modified: string[] = [];
@@ -103,13 +133,8 @@ export default tool({
 
       // Add diff statistics if requested
       if (showDiff && (modified.length > 0 || staged.length > 0)) {
-        const diffCmd = new Deno.Command('git', {
-          args: ['diff', '--shortstat'],
-          cwd: baseDir,
-          stdout: 'piped',
-        });
-        const diffResult = await diffCmd.output();
-        const diffOutput = new TextDecoder().decode(diffResult.stdout).trim();
+        const diffResult = await runCommand('git', ['diff', '--shortstat'], baseDir);
+        const diffOutput = diffResult.stdout.trim();
 
         // Parse: " 3 files changed, 145 insertions(+), 23 deletions(-)"
         const match = diffOutput.match(/(\d+) files? changed(?:, (\d+) insertions?\(\+\))?(?:, (\d+) deletions?\(-\))?/);
@@ -125,16 +150,10 @@ export default tool({
 
       // Get ahead/behind information if there's an upstream branch
       try {
-        const upstreamCmd = new Deno.Command('git', {
-          args: ['rev-list', '--left-right', '--count', `${branch}...@{upstream}`],
-          cwd: baseDir,
-          stdout: 'piped',
-          stderr: 'piped',
-        });
-        const upstreamResult = await upstreamCmd.output();
+        const upstreamResult = await runCommand('git', ['rev-list', '--left-right', '--count', `${branch}...@{upstream}`], baseDir);
 
         if (upstreamResult.code === 0) {
-          const upstreamOutput = new TextDecoder().decode(upstreamResult.stdout).trim();
+          const upstreamOutput = upstreamResult.stdout.trim();
           const [ahead, behind] = upstreamOutput.split(/\s+/).map(Number);
           result.upstream = { ahead, behind };
 
@@ -147,8 +166,8 @@ export default tool({
       }
 
       return result;
-    } catch (error) {
-      if (error instanceof Deno.errors.NotFound) {
+    } catch (error: any) {
+      if (error instanceof Deno.errors.NotFound || error.code === 'ENOENT') {
         return {
           success: false,
           error: 'git command not found. Please ensure git is installed on your system.',

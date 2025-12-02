@@ -6,24 +6,68 @@
 
 import { agent, discoverAll, getProviderFromModel, initializeProviders } from "veryfront/ai";
 
-// Helper to load .env file manually
+// Cross-platform environment variable helper
+function getEnv(key: string): string | undefined {
+  // @ts-ignore - Deno global
+  if (typeof Deno !== 'undefined') {
+    // @ts-ignore - Deno global
+    return Deno.env.get(key);
+  }
+  // @ts-ignore - process global
+  else if (typeof process !== 'undefined' && process.env) {
+    // @ts-ignore - process global
+    return process.env[key];
+  }
+  return undefined;
+}
+
+// Cross-platform CWD helper
+function getCwd(): string {
+  // @ts-ignore - Deno global
+  if (typeof Deno !== 'undefined') {
+    // @ts-ignore - Deno global
+    return Deno.cwd();
+  }
+  return process.cwd();
+}
+
+// Conditional imports for file system operations
+let fs: typeof import('node:fs/promises') | undefined;
+let pathMod: typeof import('node:path') | undefined;
+
+// @ts-ignore - Deno global
+if (typeof Deno === 'undefined') {
+  fs = await import('node:fs/promises');
+  pathMod = await import('node:path');
+}
+
+// Helper to load .env file manually for Node.js
 async function loadEnvFile(): Promise<Record<string, string>> {
   try {
-    const envPath = `${Deno.cwd()}/.env`;
-    const content = await Deno.readTextFile(envPath);
-    const env: Record<string, string> = {};
-
-    for (const line of content.split("\n")) {
-      const trimmed = line.trim();
-      if (!trimmed || trimmed.startsWith("#")) continue;
-
-      const [key, ...valueParts] = trimmed.split("=");
-      if (key && valueParts.length > 0) {
-        env[key.trim()] = valueParts.join("=").trim();
-      }
+    // @ts-ignore - Deno global
+    if (typeof Deno !== 'undefined') {
+      // Deno.env handles .env files automatically if --allow-env is used.
+      // For explicit file reading in Deno, use Deno.readTextFile
+      return {}; // Or implement Deno.readTextFile logic if needed for specific .env files
     }
 
-    return env;
+    if (fs && pathMod) {
+      const envPath = pathMod.join(getCwd(), '.env');
+      const content = await fs.readFile(envPath, { encoding: 'utf-8' });
+      const env: Record<string, string> = {};
+
+      for (const line of content.split("\n")) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith("#")) continue;
+
+        const [key, ...valueParts] = trimmed.split("=");
+        if (key && valueParts.length > 0) {
+          env[key.trim()] = valueParts.join("=").trim();
+        }
+      }
+      return env;
+    }
+    return {};
   } catch {
     return {};
   }
@@ -33,7 +77,7 @@ const MODEL_ID = "anthropic/claude-3-5-sonnet-latest";
 
 // Load .env and initialize providers at MODULE level (before any requests)
 const env = await loadEnvFile();
-const apiKey = env.ANTHROPIC_API_KEY || Deno.env.get("ANTHROPIC_API_KEY") || "";
+const apiKey = env.ANTHROPIC_API_KEY || getEnv("ANTHROPIC_API_KEY") || "";
 console.log("[API] ANTHROPIC_API_KEY present:", apiKey ? "YES" : "NO", "length:", apiKey.length);
 
 initializeProviders({
@@ -52,7 +96,7 @@ try {
 
 // Auto-discover tools from ai/tools/ directory (done at module level)
 await discoverAll({
-  baseDir: Deno.cwd(),
+  baseDir: getCwd(),
   verbose: true, // Enable verbose logging during development
 });
 

@@ -5,7 +5,18 @@
  * to prevent path traversal attacks and unauthorized access.
  */
 
-import { resolve, normalize, isAbsolute, join } from 'https://deno.land/std@0.224.0/path/mod.ts';
+import * as pathMod from 'node:path';
+import * as fs from 'node:fs/promises';
+
+// Helper for Cross-Platform CWD
+function getCwd(): string {
+  // @ts-ignore - Deno global
+  if (typeof Deno !== 'undefined') {
+    // @ts-ignore - Deno global
+    return Deno.cwd();
+  }
+  return process.cwd();
+}
 
 export interface PathValidationOptions {
   baseDir?: string;
@@ -29,13 +40,13 @@ export function validateAndResolvePath(
   options: PathValidationOptions = {}
 ): PathValidationResult {
   const {
-    baseDir = Deno.cwd(),
+    baseDir = getCwd(),
     allowAbsolute = false,
     allowParentTraversal = false,
   } = options;
 
   // Reject absolute paths if not allowed
-  if (isAbsolute(inputPath) && !allowAbsolute) {
+  if (pathMod.isAbsolute(inputPath) && !allowAbsolute) {
     return {
       success: false,
       error: 'Absolute paths are not allowed for security reasons',
@@ -43,8 +54,8 @@ export function validateAndResolvePath(
   }
 
   // Resolve the path relative to base directory
-  const resolved = resolve(baseDir, inputPath);
-  const normalized = normalize(resolved);
+  const resolved = pathMod.resolve(baseDir, inputPath);
+  const normalized = pathMod.normalize(resolved);
 
   // Check for path traversal outside base directory
   if (!allowParentTraversal && !normalized.startsWith(baseDir)) {
@@ -80,7 +91,9 @@ export async function listDirectory(
   const entries: FileEntry[] = [];
 
   try {
-    for await (const entry of Deno.readDir(directory)) {
+    const dirEntries = await fs.readdir(directory, { withFileTypes: true });
+
+    for (const entry of dirEntries) {
       // Skip hidden files if not requested
       if (!includeHidden && entry.name.startsWith('.')) {
         continue;
@@ -91,14 +104,20 @@ export async function listDirectory(
         continue;
       }
 
-      // Get file stats for size information
-      const entryPath = join(directory, entry.name);
-      const stat = await Deno.stat(entryPath);
+      let size: number | null = null;
+      if (entry.isFile()) {
+        try {
+          const stat = await fs.stat(pathMod.join(directory, entry.name));
+          size = stat.size;
+        } catch {
+          // Ignore stat errors
+        }
+      }
 
       entries.push({
         name: entry.name,
-        type: entry.isDirectory ? 'directory' : 'file',
-        size: entry.isFile ? stat.size : null,
+        type: entry.isDirectory() ? 'directory' : 'file',
+        size,
       });
     }
 
@@ -109,11 +128,11 @@ export async function listDirectory(
       }
       return a.name.localeCompare(b.name);
     });
-  } catch (error) {
-    if (error instanceof Deno.errors.NotFound) {
+  } catch (error: any) {
+    if (error.code === 'ENOENT') {
       throw new Error(`Directory not found: ${directory}`);
     }
-    if (error instanceof Deno.errors.PermissionDenied) {
+    if (error.code === 'EACCES' || error.code === 'EPERM') {
       throw new Error(`Permission denied accessing: ${directory}`);
     }
     throw error;
@@ -129,7 +148,7 @@ function matchesPattern(filename: string, pattern: string): boolean {
   // Convert glob pattern to regex
   // Escape special regex characters except * and ?
   const regexPattern = pattern
-    .replace(/[.+^${}()|[\]\\]/g, '\\$&')
+    .replace(/[.+^${}()|[\\]/g, '\$&')
     .replace(/\*/g, '.*')
     .replace(/\?/g, '.');
 
@@ -160,7 +179,7 @@ export async function readFileContent(
 
   try {
     // Read file content
-    const content = await Deno.readTextFile(filePath);
+    const content = await fs.readFile(filePath, { encoding: 'utf-8' });
     const lines = content.split('\n');
 
     // Apply line range if specified
@@ -182,11 +201,11 @@ export async function readFileContent(
       linesReturned: selectedLines.length,
       language,
     };
-  } catch (error) {
-    if (error instanceof Deno.errors.NotFound) {
+  } catch (error: any) {
+    if (error.code === 'ENOENT') {
       throw new Error(`File not found: ${filePath}`);
     }
-    if (error instanceof Deno.errors.PermissionDenied) {
+    if (error.code === 'EACCES' || error.code === 'EPERM') {
       throw new Error(`Permission denied reading: ${filePath}`);
     }
     throw error;

@@ -7,6 +7,53 @@
 
 import { tool } from 'veryfront/ai';
 import { z } from 'zod';
+import * as child_process from 'node:child_process';
+import * as util from 'node:util';
+
+const execFile = util.promisify(child_process.execFile);
+
+// Helper for Cross-Platform CWD
+function getCwd(): string {
+  // @ts-ignore - Deno global
+  if (typeof Deno !== 'undefined') {
+    // @ts-ignore - Deno global
+    return Deno.cwd();
+  }
+  return process.cwd();
+}
+
+// Helper for Cross-Platform Command Execution
+async function runCommand(command: string, args: string[], cwd: string): Promise<{ stdout: string; stderr: string; code: number }> {
+  // @ts-ignore - Deno global
+  if (typeof Deno !== 'undefined') {
+    // @ts-ignore - Deno global
+    const cmd = new Deno.Command(command, {
+      args,
+      cwd,
+      stdout: 'piped',
+      stderr: 'piped',
+    });
+    const output = await cmd.output();
+    const decoder = new TextDecoder();
+    return {
+      stdout: decoder.decode(output.stdout),
+      stderr: decoder.decode(output.stderr),
+      code: output.code,
+    };
+  } else {
+    try {
+      const { stdout, stderr } = await execFile(command, args, { cwd });
+      return { stdout: String(stdout), stderr: String(stderr), code: 0 };
+    } catch (error: any) {
+      // execFile throws on non-zero exit code
+      return {
+        stdout: String(error.stdout || ''),
+        stderr: String(error.stderr || ''),
+        code: error.code || 1,
+      };
+    }
+  }
+}
 
 export default tool({
   description: 'Search for code patterns, function names, or text within the codebase. Returns matching files, line numbers, and context. Useful for finding function definitions, usages, imports, or specific code patterns.',
@@ -20,33 +67,29 @@ export default tool({
 
   execute: async ({ query, filePattern = '*.{ts,tsx,js,jsx}', caseSensitive = false, maxResults = 20 }) => {
     try {
-      const baseDir = Deno.cwd();
+      const baseDir = getCwd();
 
       // Build grep command with options
       const caseSensitiveFlag = caseSensitive ? '' : '-i';
-      const command = new Deno.Command('grep', {
-        args: [
-          '-rn', // Recursive search with line numbers
-          caseSensitiveFlag,
-          '--include', filePattern, // File pattern filter
-          '-H', // Always print filename
-          query,
-          '.',
-        ].filter(Boolean), // Remove empty strings
-        cwd: baseDir,
-        stdout: 'piped',
-        stderr: 'piped',
-      });
+      
+      // Node.js execFile arguments need to be cleaned of empty strings strictly
+      const grepArgs = [
+        '-rn', // Recursive search with line numbers
+        caseSensitiveFlag,
+        '--include', filePattern, // File pattern filter
+        '-H', // Always print filename
+        query,
+        '.',
+      ].filter(arg => arg !== '');
 
-      const { code, stdout, stderr } = await command.output();
+      const { code, stdout, stderr } = await runCommand('grep', grepArgs, baseDir);
 
       // grep returns exit code 1 when no matches found (not an error)
       if (code !== 0 && code !== 1) {
-        const errorMsg = new TextDecoder().decode(stderr);
-        throw new Error(`grep failed: ${errorMsg}`);
+        throw new Error(`grep failed: ${stderr}`);
       }
 
-      const output = new TextDecoder().decode(stdout);
+      const output = stdout;
 
       if (!output.trim()) {
         return {
@@ -82,9 +125,9 @@ export default tool({
         hasMore: lines.length > maxResults,
         message: `Found ${results.length} matches${lines.length > maxResults ? ` (showing first ${maxResults})` : ''} for "${query}"`,
       };
-    } catch (error) {
+    } catch (error: any) {
       // If grep command not found, provide helpful error
-      if (error instanceof Deno.errors.NotFound) {
+      if (error instanceof Deno.errors.NotFound || error.code === 'ENOENT') {
         return {
           success: false,
           error: 'grep command not found. Please ensure grep is installed on your system.',

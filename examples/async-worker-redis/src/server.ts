@@ -1,4 +1,19 @@
-import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
+import * as http from 'node:http';
+// Helper for Cross-Platform CWD
+function getEnv(key: string): string | undefined {
+  // @ts-ignore - Deno global
+  if (typeof Deno !== 'undefined') {
+    // @ts-ignore - Deno global
+    return Deno.env.get(key);
+  }
+  // @ts-ignore - process global
+  else if (typeof process !== 'undefined' && process.env) {
+    // @ts-ignore - process global
+    return process.env[key];
+  }
+  return undefined;
+}
+
 import { cancelRun, createRun, getRun } from "./agent_runtime.ts";
 
 async function handler(req: Request): Promise<Response> {
@@ -48,7 +63,32 @@ async function handler(req: Request): Promise<Response> {
 }
 
 if (import.meta.main) {
-  const port = Number(Deno.env.get("PORT") ?? "8080");
+  const port = Number(getEnv("PORT") ?? "8080");
   console.log(`[API] Server listening on http://localhost:${port}`);
-  await serve(handler, { port });
+
+  // Node.js specific server setup
+  if (typeof process !== 'undefined') {
+    http.createServer(async (nodeReq, nodeRes) => {
+      const url = `http://${nodeReq.headers.host}${nodeReq.url}`;
+      const req = new Request(url, {
+        method: nodeReq.method,
+        headers: nodeReq.headers as HeadersInit,
+        body: nodeReq.method !== 'GET' && nodeReq.method !== 'HEAD' ? nodeReq : undefined,
+      });
+
+      const response = await handler(req);
+
+      nodeRes.writeHead(response.status, Object.fromEntries(response.headers.entries()));
+      if (response.body) {
+        for await (const chunk of response.body as any) {
+          nodeRes.write(chunk);
+        }
+      }
+      nodeRes.end();
+    }).listen(port);
+  } else {
+    // Deno specific server setup
+    // @ts-ignore - Deno global
+    await Deno.serve(handler, { port });
+  }
 }

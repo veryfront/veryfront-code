@@ -1,13 +1,34 @@
-import { connect, type Redis } from "redis";
+// Helper for Cross-Platform CWD
+function getEnv(key: string): string | undefined {
+  // @ts-ignore - Deno global
+  if (typeof Deno !== 'undefined') {
+    // @ts-ignore - Deno global
+    return Deno.env.get(key);
+  }
+  // @ts-ignore - process global
+  else if (typeof process !== 'undefined' && process.env) {
+    // @ts-ignore - process global
+    return process.env[key];
+  }
+  return undefined;
+}
 
-let client: Redis | null = null;
+import { createClient, type RedisClientType } from 'redis';
 
-export async function getRedis(): Promise<Redis> {
+let client: RedisClientType | null = null;
+
+export async function getRedis(): Promise<RedisClientType> {
   if (!client) {
-    const hostname = Deno.env.get("REDIS_HOST") ?? "127.0.0.1";
-    const port = Number(Deno.env.get("REDIS_PORT") ?? "6379");
+    const hostname = getEnv("REDIS_HOST") ?? "127.0.0.1";
+    const port = Number(getEnv("REDIS_PORT") ?? "6379");
     try {
-      client = await connect({ hostname, port });
+      client = createClient({
+        socket: {
+          host: hostname,
+          port: port,
+        },
+      });
+      await client.connect();
       console.log(`[Redis] Connected to ${hostname}:${port}`);
     } catch (e) {
       console.error(`[Redis] Failed to connect to ${hostname}:${port}. Is Docker running?`);
