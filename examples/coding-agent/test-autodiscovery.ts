@@ -4,7 +4,7 @@
  * Verify that tools are automatically discovered from ai/tools/ directory
  */
 
-import { discoverAll, getMCPStats } from "../../src/ai/index.ts";
+import { discoverAll, getMCPStats } from "veryfront/ai";
 
 console.log("=== Testing Veryfront AI Autodiscovery ===\n");
 

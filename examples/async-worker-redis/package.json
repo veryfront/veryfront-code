@@ -1,0 +1,18 @@
+{
+  "name": "veryfront-async-worker-redis",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Async worker example with Redis backend for agent task queue",
+  "scripts": {
+    "start:server": "npx tsx src/server.ts",
+    "start:worker": "npx tsx src/worker.ts"
+  },
+  "dependencies": {
+    "veryfront": "^0.0.9",
+    "redis": "^4.6.0"
+  },
+  "devDependencies": {
+    "tsx": "^4.0.0"
+  }
+}

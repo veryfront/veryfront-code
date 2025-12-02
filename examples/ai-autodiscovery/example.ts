@@ -11,7 +11,7 @@ import {
   discoverAll,
   getMCPStats,
   createMCPServer,
-} from '../../src/ai/index.ts';
+} from 'veryfront/ai';
 
 console.log('=== Veryfront AI Auto-Discovery ===\n');
 

@@ -16,7 +16,7 @@ import {
   agentAsTool,
   createWorkflow,
   registerAgent,
-} from '../../src/ai/index.ts';
+} from 'veryfront/ai';
 import { z } from 'zod';
 
 console.log('=== Phase 3: Agent Enhancements ===\n');

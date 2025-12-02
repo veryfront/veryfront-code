@@ -5,11 +5,11 @@
  */
 
 import "https://deno.land/std@0.220.0/dotenv/load.ts";
-import { WorkflowExecutor, RedisBackend, S3BlobStorage, DefaultAgentRegistry, DefaultToolRegistry } from "../../src/ai/workflow/index.ts";
+import { WorkflowExecutor, RedisBackend, S3BlobStorage, DefaultAgentRegistry, DefaultToolRegistry } from "veryfront/ai/workflow";
 import ingestionWorkflow from "./ai/workflows/ingestion.ts";
 import processorAgent from "./ai/agents/processor.ts";
 import indexerAgent from "./ai/agents/indexer.ts";
-import { initializeProviders } from "../../src/ai/providers/factory.ts";
+import { initializeProviders } from "veryfront/ai";
 
 async function main() {
   console.log("🚀 Starting Ingestion Pipeline Example...");

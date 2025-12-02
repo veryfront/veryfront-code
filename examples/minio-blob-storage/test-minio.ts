@@ -9,7 +9,7 @@
  * 2. Login to http://localhost:9001 (minioadmin/minioadmin) and create a bucket named 'test-bucket'.
  */
 
-import { S3BlobStorage } from "../../src/ai/workflow/blob/s3-storage.ts";
+import { S3BlobStorage } from "veryfront/ai/workflow";
 
 async function main() {
   console.log("Initializing S3BlobStorage for MinIO...");

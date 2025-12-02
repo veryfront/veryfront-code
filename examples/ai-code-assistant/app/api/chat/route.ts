@@ -73,17 +73,20 @@ You: "Let me search for that in the codebase..."
 - Ask follow-up questions when helpful
 - **CRITICAL**: Always end with a complete thought, never just tool output`;
 
-// Initialize providers
+// Initialize providers - works in both Node.js and Deno
 initializeProviders({
   openai: {
-    apiKey: Deno.env.get('OPENAI_API_KEY') || '',
+    apiKey: (typeof process !== 'undefined' ? process.env.OPENAI_API_KEY : '') ||
+            (typeof Deno !== 'undefined' ? Deno.env.get('OPENAI_API_KEY') : '') || '',
   },
 });
 
 // Auto-discover tools and resources on module load
-// Use Deno.cwd() to get the actual project directory (not the temp bundle directory)
+// Use cwd() to get the actual project directory (not the temp bundle directory)
+const cwd = typeof process !== 'undefined' ? process.cwd() :
+            (typeof Deno !== 'undefined' ? Deno.cwd() : '.');
 await discoverAll({
-  baseDir: Deno.cwd(),
+  baseDir: cwd,
   verbose: true, // Enable verbose logging to see what's being discovered
 });
 

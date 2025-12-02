@@ -1,0 +1,16 @@
+{
+  "name": "veryfront-minio-blob-storage",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "MinIO S3 blob storage example for workflow attachments",
+  "scripts": {
+    "start": "npx tsx test-minio.ts"
+  },
+  "dependencies": {
+    "veryfront": "^0.0.9"
+  },
+  "devDependencies": {
+    "tsx": "^4.0.0"
+  }
+}

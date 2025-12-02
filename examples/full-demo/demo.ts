@@ -29,7 +29,7 @@ import {
   createCostTracker,
 
   // Dev tools
-} from '../../src/ai/index.ts';
+} from 'veryfront/ai';
 
 import {
   testAgent,
@@ -37,7 +37,7 @@ import {
   inspectAgent,
   printInspectionReport,
   printRegistryOverview,
-} from '../../src/ai/dev/index.ts';
+} from 'veryfront/ai/dev';
 
 console.log('\n🚀 === Veryfront AI - Full Demo === 🚀\n');
 console.log('Demonstrating all 8 phases of the AI Native Framework\n');
@@ -222,7 +222,7 @@ const calculatorTool = discoveryResult.tools.get('calculate');
 if (calculatorTool) {
   console.log('Testing calculator tool...');
 
-  const { testTool, printToolTestResults } = await import('../../src/ai/dev/index.ts');
+  const { testTool, printToolTestResults } = await import('veryfront/ai/dev');
 
   const toolResults = await testTool(calculatorTool, [
     {
