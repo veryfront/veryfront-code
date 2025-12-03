@@ -176,18 +176,13 @@ Be helpful, thorough, and always prioritize code quality and maintainability.`,
 
     // Stream response from agent
     console.log("[POST] Calling agent.stream()...");
-    const stream = await codingAgent.stream({
+    const result = await codingAgent.stream({
       messages,
     });
-    console.log("[POST] Stream created successfully, type:", typeof stream);
+    console.log("[POST] Stream created successfully");
 
-    return new Response(stream, {
-      headers: {
-        "Content-Type": "text/event-stream",
-        "Cache-Control": "no-cache",
-        "Connection": "keep-alive",
-      },
-    });
+    // Use toDataStreamResponse() for Vercel AI SDK compatible streaming
+    return result.toDataStreamResponse();
   } catch (error) {
     console.error("[API] Error:", error);
 

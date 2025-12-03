@@ -11,6 +11,56 @@ import { agentLogger } from "../../core/utils/logger/logger.ts";
 import { createError, toError } from "../../core/errors/veryfront-error.ts";
 
 /**
+ * Result object returned by agent.stream() with Vercel AI SDK compatible API
+ */
+export interface AgentStreamResult extends ReadableStream {
+  /**
+   * Convert the stream to a Response object for streaming responses
+   * Compatible with Vercel AI SDK's toDataStreamResponse()
+   */
+  toDataStreamResponse(options?: {
+    headers?: Record<string, string>;
+    status?: number;
+    statusText?: string;
+  }): Response;
+}
+
+/**
+ * Create an AgentStreamResult that wraps a ReadableStream with toDataStreamResponse()
+ */
+function createAgentStreamResult(stream: ReadableStream): AgentStreamResult {
+  // Create a new object that extends the stream's prototype
+  const result = Object.create(stream) as AgentStreamResult;
+
+  // Copy all properties from the original stream
+  Object.defineProperties(result, Object.getOwnPropertyDescriptors(stream));
+
+  // Add toDataStreamResponse method
+  result.toDataStreamResponse = function(options?: {
+    headers?: Record<string, string>;
+    status?: number;
+    statusText?: string;
+  }): Response {
+    const defaultHeaders = {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      "Connection": "keep-alive",
+    };
+
+    return new Response(stream, {
+      status: options?.status ?? 200,
+      statusText: options?.statusText,
+      headers: {
+        ...defaultHeaders,
+        ...options?.headers,
+      },
+    });
+  };
+
+  return result;
+}
+
+/**
  * Create an agent
  *
  * @example
@@ -76,21 +126,23 @@ export function agent(config: AgentConfig): Agent {
       return runtime.generate(input.input, input.context);
     },
 
-    stream(input: {
+    async stream(input: {
       input?: string;
       messages?: Message[];
       context?: Record<string, unknown>;
       onToolCall?: (toolCall: ToolCall) => void;
       onChunk?: (chunk: string) => void;
-    }): Promise<ReadableStream> {
+    }): Promise<AgentStreamResult> {
       const inputMessages = input.input
         ? [{ role: "user" as const, content: input.input }]
         : input.messages || [];
 
-      return runtime.stream(inputMessages, input.context, {
+      const stream = await runtime.stream(inputMessages, input.context, {
         onToolCall: input.onToolCall,
         onChunk: input.onChunk,
       });
+
+      return createAgentStreamResult(stream);
     },
 
     async respond(request: Request): Promise<Response> {
