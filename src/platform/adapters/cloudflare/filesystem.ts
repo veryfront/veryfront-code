@@ -16,6 +16,11 @@ export class CloudflareFileSystemAdapter implements FileSystemAdapter {
     return content;
   }
 
+  async readFileBytes(path: string): Promise<Uint8Array> {
+    const content = await this.readFile(path);
+    return new TextEncoder().encode(content);
+  }
+
   async writeFile(path: string, content: string): Promise<void> {
     if (!this.kvNamespace) {
       throw new ConfigError("KV namespace required for file operations in Workers", { path });

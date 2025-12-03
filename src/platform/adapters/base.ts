@@ -114,6 +114,8 @@ export interface Server {
 
 export interface FileSystemAdapter {
   readFile(path: string): Promise<string>;
+  /** Read raw bytes when binary-safe access is required */
+  readFileBytes?(path: string): Promise<Uint8Array>;
   writeFile(path: string, content: string): Promise<void>;
   exists(path: string): Promise<boolean>;
   readDir(path: string): AsyncIterable<DirEntry>;

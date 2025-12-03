@@ -24,6 +24,12 @@ export class BunFileSystemAdapter implements FileSystemAdapter {
     return await file.text();
   }
 
+  async readFileBytes(path: string): Promise<Uint8Array> {
+    const file = Bun.file(path);
+    const buffer = await file.arrayBuffer();
+    return new Uint8Array(buffer);
+  }
+
   async writeFile(path: string, content: string): Promise<void> {
     await Bun.write(path, content);
   }

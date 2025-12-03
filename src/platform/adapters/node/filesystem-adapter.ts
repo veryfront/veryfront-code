@@ -9,6 +9,12 @@ export class NodeFileSystemAdapter implements FileSystemAdapter {
     return await fs.readFile(path, "utf-8");
   }
 
+  async readFileBytes(path: string): Promise<Uint8Array> {
+    const fs = await import("node:fs/promises");
+    const buffer = await fs.readFile(path);
+    return buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
+  }
+
   async writeFile(path: string, content: string): Promise<void> {
     const fs = await import("node:fs/promises");
     await fs.writeFile(path, content, "utf-8");

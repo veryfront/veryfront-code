@@ -24,6 +24,10 @@ class DenoFileSystemAdapter implements FileSystemAdapter {
     return await Deno.readTextFile(path);
   }
 
+  async readFileBytes(path: string): Promise<Uint8Array> {
+    return await Deno.readFile(path);
+  }
+
   async writeFile(path: string, content: string): Promise<void> {
     await Deno.writeTextFile(path, content);
   }

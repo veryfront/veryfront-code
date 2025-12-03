@@ -122,8 +122,8 @@ export class StaticHandler extends BaseHandler {
         const info = await secureFs.stat(candidate.abs);
         if (!info.isFile) continue;
 
-        const text = await secureFs.readFile(candidate.abs);
-        const etag = computeEtag(text);
+        const fileData = await secureFs.readFileBytes(candidate.abs);
+        const etag = computeEtag(fileData);
 
         // Check if-none-match
         if (hasMatchingEtag(req, etag)) {
@@ -155,7 +155,7 @@ export class StaticHandler extends BaseHandler {
         const builder = this.createResponseBuilder(ctx);
 
         // For HEAD requests, don't include body
-        const body = req.method.toUpperCase() === "HEAD" ? null : text;
+        const body = req.method.toUpperCase() === "HEAD" ? null : fileData;
 
         const response = builder
           .withCORS(req, ctx.securityConfig?.cors)
@@ -167,7 +167,7 @@ export class StaticHandler extends BaseHandler {
         this.logDebug(`Served static file: ${candidate.abs}`, {
           contentType,
           cacheStrategy,
-          size: text.length,
+          size: fileData.byteLength,
           source: candidate.source,
         }, ctx);
 

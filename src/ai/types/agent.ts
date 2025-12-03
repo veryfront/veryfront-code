@@ -227,9 +227,10 @@ export interface AgentResponse {
 }
 
 /**
- * Result object returned by agent.stream() with Vercel AI SDK compatible API
+ * Result object returned by agent.stream()
+ * Provides toDataStreamResponse() for Vercel AI SDK compatible streaming
  */
-export interface AgentStreamResult extends ReadableStream {
+export interface AgentStreamResult {
   /**
    * Convert the stream to a Response object for streaming responses
    * Compatible with Vercel AI SDK's toDataStreamResponse()
