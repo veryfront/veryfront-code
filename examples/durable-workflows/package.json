@@ -8,7 +8,7 @@
     "start": "npx tsx src/server.ts"
   },
   "dependencies": {
-    "veryfront": "^0.0.9"
+    "veryfront": "^0.0.11"
   },
   "devDependencies": {
     "tsx": "^4.0.0"
