@@ -104,7 +104,11 @@ describe("State Bridge", () => {
 
     mockSessionStorage = new MockSessionStorage();
     originalSessionStorage = (globalThis as any).sessionStorage;
-    (globalThis as any).sessionStorage = mockSessionStorage;
+    Object.defineProperty(globalThis, "sessionStorage", {
+      value: mockSessionStorage,
+      configurable: true,
+      writable: true,
+    });
 
     mockReact = new MockReactHooks();
     (globalThis as any).React = mockReact;
@@ -115,7 +119,11 @@ describe("State Bridge", () => {
   });
 
   afterEach(() => {
-    (globalThis as any).sessionStorage = originalSessionStorage;
+    Object.defineProperty(globalThis, "sessionStorage", {
+      value: originalSessionStorage,
+      configurable: true,
+      writable: true,
+    });
     mockReact.reset();
     // Reset singleton for next test
     __resetBridgeForTesting();
@@ -257,6 +265,7 @@ describe("State Bridge", () => {
       const bridge = getStateBridge();
 
       bridge.set("key", "value");
+      assertEquals(bridge.get("key"), "value");
       bridge.persist("key");
 
       const stored = (globalThis as any).sessionStorage.getItem("veryfront-state");
@@ -326,6 +335,18 @@ describe("State Bridge", () => {
       // Should not throw, should silently ignore
       const bridge = getStateBridge();
       assertEquals(bridge.get("any-key"), undefined);
+    });
+
+    it("should recover when saving after corrupted persisted state", () => {
+      const bridge = getStateBridge();
+      sessionStorage.setItem("veryfront-state", "not-json");
+
+      bridge.set("key", "value");
+      bridge.persist("key");
+
+      const stored = sessionStorage.getItem("veryfront-state");
+      assertExists(stored);
+      assertEquals(stored, JSON.stringify({ key: "value" }));
     });
 
     it("should clear persisted state", () => {

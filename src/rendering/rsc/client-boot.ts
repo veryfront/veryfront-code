@@ -1,0 +1,169 @@
+/**
+ * Client boot script for RSC hydration and streaming
+ * This file is bundled by esbuild at runtime and served as client.js
+ */
+
+import {
+  getReactCDNUrl,
+  getReactDOMClientCDNUrl,
+  REACT_DEFAULT_VERSION,
+} from "@veryfront/utils/constants/cdn.ts";
+import { consumeNdjsonStream, getContainer } from "./client-dom.ts";
+import { FS_PATH_PREFIX, HYDRATION_DATA_ID, RSC_PATH_PREFIX, RSC_ROOT_ID } from "./constants.ts";
+
+// Convert file path to base64url (matching server-side toBase64Url)
+function toBase64Url(str: string): string | null {
+  try {
+    const base64 = btoa(unescape(encodeURIComponent(str)));
+    return base64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  } catch (e) {
+    console.debug?.("[RSC] toBase64Url failed", e);
+    return null;
+  }
+}
+
+// Get hydration data from the page
+function getHydrationData(): { pagePath?: string } | null {
+  try {
+    const el = document.getElementById(HYDRATION_DATA_ID);
+    if (!el) return null;
+    return JSON.parse(el.textContent || "{}");
+  } catch (e) {
+    console.debug?.("[RSC] hydration data parse failed", e);
+    return null;
+  }
+}
+
+// Try RSC streaming approach
+async function tryStream(q: string): Promise<boolean> {
+  try {
+    const res = await fetch(RSC_PATH_PREFIX + "stream" + q);
+    if (!res.ok || !res.body) return false;
+    const ctrl = new AbortController();
+    addEventListener("pagehide", () => ctrl.abort(), { once: true });
+    await consumeNdjsonStream(res, document, ctrl.signal);
+    return true;
+  } catch (e) {
+    console.debug?.("[RSC] tryStream failed", e);
+    return false;
+  }
+}
+
+// Hydrate using the hydrate.js script (for data-client-ref markers)
+async function hydrateMarkers(): Promise<void> {
+  try {
+    // Dynamic import needs to be preserved or handled by esbuild correctly
+    // We use the full path here which matches what was in the inline script
+    const mod = await import(RSC_PATH_PREFIX + "hydrate.js");
+    mod.bootHydration?.();
+  } catch (e) {
+    console.debug?.("[RSC] hydrate import failed", e);
+  }
+}
+
+// Direct React hydration for 'use client' page components
+async function hydratePageComponent(pagePath: string): Promise<boolean> {
+  try {
+    // Import React and ReactDOM
+    const React = await import(getReactCDNUrl(REACT_DEFAULT_VERSION));
+    const ReactDOM = await import(
+      getReactDOMClientCDNUrl(REACT_DEFAULT_VERSION)
+    );
+
+    // Convert the page file path to the /_veryfront/fs/ URL format
+    const base64Path = toBase64Url(pagePath);
+    if (!base64Path) {
+      console.debug?.("[RSC] Failed to encode page path");
+      return false;
+    }
+    const moduleUrl = FS_PATH_PREFIX + base64Path + ".js";
+
+    console.debug?.("[RSC] Loading component from:", moduleUrl);
+
+    // Import the component module
+    const mod = await import(moduleUrl);
+    const Component = mod.default;
+
+    if (typeof Component !== "function") {
+      console.debug?.("[RSC] Page component is not a function");
+      return false;
+    }
+
+    // Find the root element to hydrate
+    // Look for body's first child div or the first child with content
+    const root = document.body.querySelector("div[class]") ||
+      document.body.firstElementChild ||
+      document.body;
+
+    // Use hydrateRoot for proper React hydration
+    ReactDOM.hydrateRoot(root, React.createElement(Component, {}));
+    console.debug?.("[RSC] Page component hydrated successfully");
+    return true;
+  } catch (e) {
+    console.error("[RSC] Page hydration failed", e);
+    return false;
+  }
+}
+
+export async function boot(): Promise<void> {
+  try {
+    const q = globalThis.window?.location.search || "";
+
+    // FIRST: Check hydration data for the pagePath
+    // This handles 'use client' pages that need direct React hydration
+    const hydrationData = getHydrationData();
+    if (hydrationData && hydrationData.pagePath) {
+      console.debug?.(
+        "[RSC] Found page component in hydration data:",
+        hydrationData.pagePath,
+      );
+      const hydrated = await hydratePageComponent(hydrationData.pagePath);
+      if (hydrated) {
+        console.debug?.("[RSC] Client component hydrated successfully");
+        return;
+      }
+    }
+
+    // If no client page components, try RSC streaming for server components
+    const streamed = await tryStream(q);
+    if (streamed) {
+      await hydrateMarkers();
+      return;
+    }
+
+    // Try payload-based approach
+    try {
+      const res = await fetch(RSC_PATH_PREFIX + "payload" + q);
+      if (res.ok) {
+        const data = await res.json();
+        if (data && data.slots) {
+          for (const [id, html] of Object.entries(data.slots)) {
+            const el = getContainer(document, id);
+            el.innerHTML = String(html || "");
+          }
+        } else {
+          const el = getContainer(document, RSC_ROOT_ID);
+          el.innerHTML = String(data.html || "");
+        }
+        await hydrateMarkers();
+        return;
+      }
+    } catch (e) {
+      console.debug?.("[RSC] payload fetch failed", e);
+    }
+
+    // Final fallback: just run marker-based hydration
+    await hydrateMarkers();
+  } catch (e) {
+    console.error("[RSC] boot failed", e);
+  }
+}
+
+// Auto-boot on DOM ready
+if (typeof document !== "undefined") {
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", () => boot());
+  } else {
+    boot();
+  }
+}

@@ -12,6 +12,24 @@ import type {
   ProviderConfig,
 } from "../types/provider.ts";
 import { agentLogger } from "../../core/utils/logger/logger.ts";
+import { z } from "zod";
+
+const OpenAIStreamChunkSchema = z.object({
+  choices: z.array(z.object({
+    delta: z.object({
+      content: z.string().optional().nullable(),
+      tool_calls: z.array(z.object({
+        index: z.number().optional(),
+        id: z.string().optional(),
+        function: z.object({
+          name: z.string().optional(),
+          arguments: z.string().optional(),
+        }).optional(),
+      })).optional(),
+    }),
+    finish_reason: z.string().nullable(),
+  })).min(1),
+});
 
 export abstract class BaseProvider implements Provider {
   abstract name: string;
@@ -55,7 +73,7 @@ export abstract class BaseProvider implements Provider {
    * Transform provider response to standard format
    */
   protected abstract transformResponse(
-    response: any,
+    response: unknown,
   ): CompletionResponse;
 
   /**
@@ -166,8 +184,15 @@ export abstract class BaseProvider implements Provider {
                 }
 
                 try {
-                  const parsed = JSON.parse(data);
-                  const choice = parsed.choices?.[0];
+                  const raw = JSON.parse(data);
+                  const result = OpenAIStreamChunkSchema.safeParse(raw);
+
+                  if (!result.success) {
+                    // agentLogger.debug("Skipping invalid stream chunk schema", result.error);
+                    continue;
+                  }
+
+                  const choice = result.data.choices[0];
 
                   if (!choice) continue;
 

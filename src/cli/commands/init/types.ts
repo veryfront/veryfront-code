@@ -45,4 +45,17 @@ export interface InitOptions {
    * Desired cache backend (overrides interactive prompt).
    */
   cacheBackend?: CacheBackend;
+
+  /**
+   * Skip automatic dependency installation after scaffolding.
+   * If true, user must manually run `npm install` or equivalent.
+   * @default false
+   */
+  skipInstall?: boolean;
+
+  /**
+   * Preferred package manager to use for installing dependencies.
+   * If not specified, auto-detected from lockfiles.
+   */
+  packageManager?: "npm" | "yarn" | "pnpm" | "bun";
 }

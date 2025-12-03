@@ -1,14 +1,15 @@
-import { rscLogger } from "../client/browser-logger.ts";
 import { validateTrustedHtml } from "../../security/client/html-sanitizer.ts";
+import { rscLogger } from "../client/browser-logger.ts";
+import { RSC_ROOT_ID } from "./constants.ts";
 
 export type SlotMessage = { type: "slot"; id: string; html: string };
 
 export function getContainer(doc: Document, id: string): HTMLElement {
   if (id === "root") {
-    let el = doc.getElementById("rsc-root") as HTMLElement | null;
+    let el = doc.getElementById(RSC_ROOT_ID) as HTMLElement | null;
     if (!el) {
       el = doc.createElement("div");
-      el.id = "rsc-root";
+      el.id = RSC_ROOT_ID;
       doc.body.appendChild(el);
     }
     return el;
@@ -163,7 +164,10 @@ export async function consumeNdjsonStream(
 }
 
 // Hydration stubs for client boundaries
-export function findClientBoundaries(doc: Document, slotId: string): HTMLElement[] {
+export function findClientBoundaries(
+  doc: Document,
+  slotId: string,
+): HTMLElement[] {
   const root = getContainer(doc, slotId);
   const out: HTMLElement[] = [];
   const walker = (node: Element) => {
