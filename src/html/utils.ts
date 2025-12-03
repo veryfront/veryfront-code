@@ -35,12 +35,21 @@ export function buildContentAttributes(
 }
 
 function getDefaultHTMLImportMap(): Record<string, string> {
+  const reactVersion = "18.3.1";
+  const veryfrontVersion = "0.0.12";
+
   return {
-    "react": "https://esm.sh/react@18.3.1",
-    "react-dom": "https://esm.sh/react-dom@18.3.1",
-    "react-dom/client": "https://esm.sh/react-dom@18.3.1/client",
-    "react/jsx-runtime": "https://esm.sh/react@18.3.1/jsx-runtime",
-    "react/jsx-dev-runtime": "https://esm.sh/react@18.3.1/jsx-dev-runtime",
+    // React core
+    "react": `https://esm.sh/react@${reactVersion}`,
+    "react-dom": `https://esm.sh/react-dom@${reactVersion}`,
+    "react-dom/client": `https://esm.sh/react-dom@${reactVersion}/client`,
+    "react/jsx-runtime": `https://esm.sh/react@${reactVersion}/jsx-runtime`,
+    "react/jsx-dev-runtime": `https://esm.sh/react@${reactVersion}/jsx-dev-runtime`,
+
+    // Veryfront AI client-side modules
+    "veryfront/ai/react": `https://esm.sh/veryfront@${veryfrontVersion}/ai/react?external=react`,
+    "veryfront/ai/components": `https://esm.sh/veryfront@${veryfrontVersion}/ai/components?external=react`,
+    "veryfront/ai/primitives": `https://esm.sh/veryfront@${veryfrontVersion}/ai/primitives?external=react`,
   };
 }
 
