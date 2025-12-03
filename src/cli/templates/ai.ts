@@ -104,10 +104,11 @@ export const myAgent = agent({
 export async function POST(request: Request) {
   const { messages } = await request.json();
 
-  // Use the agent to generate a response
-  const response = await myAgent.stream({ messages });
+  // Use the agent to generate a streaming response
+  const result = await myAgent.stream({ messages });
 
-  return response.toDataStreamResponse();
+  // Use toDataStreamResponse() for Vercel AI SDK compatible streaming
+  return result.toDataStreamResponse();
 }
 `,
   },

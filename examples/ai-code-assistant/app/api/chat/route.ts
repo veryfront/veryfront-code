@@ -197,16 +197,14 @@ export async function POST(request: Request): Promise<Response> {
     // Stream response using the agent's respond method
     // Note: We can't use respond() directly as it expects the full request
     // So we'll use stream() instead
-    const stream = await sessionAgent.stream({
+    const result = await sessionAgent.stream({
       messages,
       context: body.context,
     });
 
-    return new Response(stream, {
+    // Use toDataStreamResponse() for Vercel AI SDK compatible streaming
+    return result.toDataStreamResponse({
       headers: {
-        'Content-Type': 'text/event-stream',
-        'Cache-Control': 'no-cache',
-        'Connection': 'keep-alive',
         // Return the session ID so client can use it for subsequent requests
         'X-Session-ID': sessionId,
       },

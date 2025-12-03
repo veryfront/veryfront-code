@@ -227,6 +227,21 @@ export interface AgentResponse {
 }
 
 /**
+ * Result object returned by agent.stream() with Vercel AI SDK compatible API
+ */
+export interface AgentStreamResult extends ReadableStream {
+  /**
+   * Convert the stream to a Response object for streaming responses
+   * Compatible with Vercel AI SDK's toDataStreamResponse()
+   */
+  toDataStreamResponse(options?: {
+    headers?: Record<string, string>;
+    status?: number;
+    statusText?: string;
+  }): Response;
+}
+
+/**
  * Agent instance (returned by agent() function)
  */
 export interface Agent {
@@ -246,6 +261,7 @@ export interface Agent {
 
   /**
    * Stream a response
+   * Returns an AgentStreamResult which extends ReadableStream and adds toDataStreamResponse()
    */
   stream(input: {
     input?: string;
@@ -253,7 +269,7 @@ export interface Agent {
     context?: Record<string, unknown>;
     onToolCall?: (toolCall: ToolCall) => void;
     onChunk?: (chunk: string) => void;
-  }): Promise<ReadableStream>;
+  }): Promise<AgentStreamResult>;
 
   /**
    * Respond to an HTTP request
