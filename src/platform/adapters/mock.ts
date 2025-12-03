@@ -71,6 +71,16 @@ export function createMockAdapter(): MockRuntimeAdapter {
         }
         return Promise.resolve(content);
       },
+      readFileBytes: (path: string) => {
+        const content = files.get(path);
+        if (!content) {
+          throw toError(createError({
+            type: "file",
+            message: `File not found: ${path}`,
+          }));
+        }
+        return Promise.resolve(new TextEncoder().encode(content));
+      },
       writeFile: (path: string, content: string) => {
         files.set(path, content);
         return Promise.resolve();

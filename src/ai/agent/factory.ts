@@ -11,9 +11,10 @@ import { agentLogger } from "../../core/utils/logger/logger.ts";
 import { createError, toError } from "../../core/errors/veryfront-error.ts";
 
 /**
- * Result object returned by agent.stream() with Vercel AI SDK compatible API
+ * Result object returned by agent.stream()
+ * Provides toDataStreamResponse() for Vercel AI SDK compatible streaming
  */
-export interface AgentStreamResult extends ReadableStream {
+export interface AgentStreamResult {
   /**
    * Convert the stream to a Response object for streaming responses
    * Compatible with Vercel AI SDK's toDataStreamResponse()
@@ -26,38 +27,27 @@ export interface AgentStreamResult extends ReadableStream {
 }
 
 /**
- * Create an AgentStreamResult that wraps a ReadableStream with toDataStreamResponse()
+ * Create an AgentStreamResult from a ReadableStream
  */
 function createAgentStreamResult(stream: ReadableStream): AgentStreamResult {
-  // Create a new object that extends the stream's prototype
-  const result = Object.create(stream) as AgentStreamResult;
-
-  // Copy all properties from the original stream
-  Object.defineProperties(result, Object.getOwnPropertyDescriptors(stream));
-
-  // Add toDataStreamResponse method
-  result.toDataStreamResponse = function(options?: {
-    headers?: Record<string, string>;
-    status?: number;
-    statusText?: string;
-  }): Response {
-    const defaultHeaders = {
-      "Content-Type": "text/event-stream",
-      "Cache-Control": "no-cache",
-      "Connection": "keep-alive",
-    };
-
-    return new Response(stream, {
-      status: options?.status ?? 200,
-      statusText: options?.statusText,
-      headers: {
-        ...defaultHeaders,
-        ...options?.headers,
-      },
-    });
+  return {
+    toDataStreamResponse(options?: {
+      headers?: Record<string, string>;
+      status?: number;
+      statusText?: string;
+    }): Response {
+      return new Response(stream, {
+        status: options?.status ?? 200,
+        statusText: options?.statusText,
+        headers: {
+          "Content-Type": "text/event-stream",
+          "Cache-Control": "no-cache",
+          "Connection": "keep-alive",
+          ...options?.headers,
+        },
+      });
+    },
   };
-
-  return result;
 }
 
 /**

@@ -137,6 +137,105 @@ async function getNewVersion(
 	exit(1);
 }
 
+async function updateExampleVersions(newVersion: string) {
+	console.log("\n📝 Updating examples versions...");
+	const examplesDir = getPath().resolve("examples");
+
+	if (await fs.exists(examplesDir)) {
+		for await (const entry of fs.readDir(examplesDir)) {
+			if (entry.isDirectory) {
+				const packageJsonPath = getPath().join(examplesDir, entry.name, "package.json");
+				if (await fs.exists(packageJsonPath)) {
+					try {
+						const content = await fs.readTextFile(packageJsonPath);
+						const json = JSON.parse(content);
+						let changed = false;
+
+						if (json.dependencies && json.dependencies.veryfront) {
+							json.dependencies.veryfront = `^${newVersion}`;
+							changed = true;
+						}
+
+						if (json.devDependencies && json.devDependencies.veryfront) {
+							json.devDependencies.veryfront = `^${newVersion}`;
+							changed = true;
+						}
+
+						if (changed) {
+							if (DRY_RUN) {
+								console.log(`  [DRY RUN] Would update ${entry.name} to ${newVersion}`);
+							} else {
+								await fs.writeTextFile(
+									packageJsonPath,
+									JSON.stringify(json, null, 2) + "\n",
+								);
+								console.log(`  ✓ Updated ${entry.name}`);
+							}
+						}
+					} catch (e) {
+						console.warn(`  ⚠ Failed to update ${entry.name}:`, e);
+					}
+				}
+			}
+		}
+	}
+}
+
+async function updateTemplates(newVersion: string) {
+	console.log("\n📝 Updating template versions...");
+	const filesToUpdate = [
+		"src/cli/commands/init/config-generator.ts",
+		"src/cli/npm-cli.ts",
+	];
+
+	for (const filePath of filesToUpdate) {
+		const fullPath = getPath().resolve(filePath);
+		if (await fs.exists(fullPath)) {
+			try {
+				let content = await fs.readTextFile(fullPath);
+				const regex1 = /veryfront:\s*"[\^~]?[\d\.]+",/g;
+				const regex2 = /"veryfront":\s*"npm:veryfront@[\^~]?[\d\.]+"/g;
+				const regex3 = /"veryfront\/":\s*"npm:veryfront@[\^~]?[\d\.]+\/"/g;
+				const regex4 = /const VERSION = "[\d\.]+";/;
+
+				let newContent = content;
+				if (regex1.test(newContent)) {
+					newContent = newContent.replace(regex1, `veryfront: "^${newVersion}",`);
+				}
+				if (regex2.test(newContent)) {
+					newContent = newContent.replace(
+						regex2,
+						`"veryfront": "npm:veryfront@^${newVersion}"`,
+					);
+				}
+				if (regex3.test(newContent)) {
+					newContent = newContent.replace(
+						regex3,
+						`"veryfront/": "npm:veryfront@^${newVersion}/"`,
+					);
+				}
+				if (regex4.test(newContent)) {
+					newContent = newContent.replace(
+						regex4,
+						`const VERSION = "${newVersion}";`,
+					);
+				}
+
+				if (newContent !== content) {
+					if (DRY_RUN) {
+						console.log(`  [DRY RUN] Would update ${filePath}`);
+					} else {
+						await fs.writeTextFile(fullPath, newContent);
+						console.log(`  ✓ Updated ${filePath}`);
+					}
+				}
+			} catch (e) {
+				console.warn(`  ⚠ Failed to update ${filePath}:`, e);
+			}
+		}
+	}
+}
+
 async function main() {
 	const denoJsonPath = getPath().resolve("deno.json");
 	const denoJson = JSON.parse(await fs.readTextFile(denoJsonPath));
@@ -171,6 +270,12 @@ async function main() {
 			JSON.stringify(denoJson, null, 2) + "\n",
 		);
 	}
+
+	// 2.5 Update examples
+	await updateExampleVersions(newVersion);
+
+	// 2.6 Update templates
+	await updateTemplates(newVersion);
 
 	// 3. Build npm package
 	if (!args["no-build"]) {

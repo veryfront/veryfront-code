@@ -79,7 +79,7 @@ export function javascript(
 export function withContentType(
   this: ResponseMethodsContext,
   contentType: string,
-  body: string | ReadableStream | null,
+  body: BodyInit | null,
   status?: number,
 ): Response {
   this.headers.set("content-type", contentType);

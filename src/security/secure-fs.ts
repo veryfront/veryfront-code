@@ -220,6 +220,21 @@ export class SecureFs {
     return await this.config.adapter.fs.readFile(validation.canonicalPath);
   }
 
+  async readFileBytes(path: string): Promise<Uint8Array> {
+    const validation = await this.validatePathForOperation(path, "readFileBytes");
+    if (!validation.valid || !validation.canonicalPath) {
+      throw new SecurityError("Invalid path", validation.code, path);
+    }
+
+    const reader = this.config.adapter.fs.readFileBytes;
+    if (reader) {
+      return await reader.call(this.config.adapter.fs, validation.canonicalPath);
+    }
+
+    const content = await this.config.adapter.fs.readFile(validation.canonicalPath);
+    return new TextEncoder().encode(content);
+  }
+
   async writeFile(path: string, content: string): Promise<void> {
     const validation = await this.validatePathForOperation(path, "writeFile");
     if (!validation.valid || !validation.canonicalPath) {

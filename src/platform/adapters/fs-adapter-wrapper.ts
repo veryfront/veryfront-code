@@ -16,6 +16,18 @@ export class FSAdapterWrapper implements FileSystemAdapter {
     return new TextDecoder().decode(result);
   }
 
+  async readFileBytes(path: string): Promise<Uint8Array> {
+    if (this.fsAdapter.readFile) {
+      const result = await this.fsAdapter.readFile(path);
+      return typeof result === "string" ? new TextEncoder().encode(result) : result;
+    }
+    if (this.fsAdapter.readTextFile) {
+      const text = await this.fsAdapter.readTextFile(path);
+      return new TextEncoder().encode(text);
+    }
+    throw new NotSupportedError("readFile/readTextFile not supported by this FSAdapter");
+  }
+
   async writeFile(path: string, content: string): Promise<void> {
     if (!this.fsAdapter.writeFile) {
       throw new NotSupportedError("writeFile not supported by this FSAdapter");
