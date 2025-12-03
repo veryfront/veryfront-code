@@ -10,21 +10,39 @@ import type { SplitOptions } from "./types.ts";
 import { createSplitterPlugin } from "./esbuild-plugin.ts";
 import { createFileSystem } from "../../../platform/compat/fs.ts";
 
+/** Veryfront AI modules that may be externalized based on moduleResolution setting */
+const VERYFRONT_AI_MODULES = [
+  "veryfront/ai/react",
+  "veryfront/ai/components",
+  "veryfront/ai/primitives",
+];
+
 /**
  * Gets list of external dependencies to exclude from bundle
  *
  * @param customExternal - Additional external packages from options
+ * @param moduleResolution - Module resolution mode: 'cdn', 'self-hosted', or 'bundled'
  * @returns Array of package names to mark as external
  */
-export function getExternalDependencies(customExternal: string[] = []): string[] {
-  return [
+export function getExternalDependencies(
+  customExternal: string[] = [],
+  moduleResolution: "cdn" | "self-hosted" | "bundled" = "cdn",
+): string[] {
+  const baseExternal = [
     "react",
     "react-dom",
     "react-dom/client",
     "react/jsx-runtime",
     "react/jsx-dev-runtime",
-    ...customExternal,
   ];
+
+  // In 'bundled' mode, veryfront/ai modules are NOT external (bundled into client JS)
+  // In 'cdn' or 'self-hosted' mode, they ARE external (resolved via import map)
+  if (moduleResolution !== "bundled") {
+    baseExternal.push(...VERYFRONT_AI_MODULES);
+  }
+
+  return [...baseExternal, ...customExternal];
 }
 
 /**
@@ -65,7 +83,10 @@ export async function createBuildContext(
   options: SplitOptions,
   entryPoints: Record<string, string>,
 ): Promise<BuildContext> {
-  const externalDependencies = getExternalDependencies(options.external);
+  const externalDependencies = getExternalDependencies(
+    options.external,
+    options.moduleResolution ?? "cdn",
+  );
   const shimFile = await createShimFile(options.outDir);
 
   return await context({
