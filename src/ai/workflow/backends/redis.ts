@@ -17,17 +17,43 @@ import type {
 import type { BackendConfig, WorkflowBackend } from "./types.ts";
 import { agentLogger as logger } from "@veryfront/utils";
 
-// Conditional Redis client imports
+// Lazy-loaded Redis client modules (loaded only when Redis backend is used)
 // @ts-ignore - Deno global
-let DenoRedis: any = undefined;
-let NodeRedis: any = undefined;
+let DenoRedis: any = null;
+let NodeRedis: any = null;
 
-// @ts-ignore - Deno global
-if (typeof Deno !== 'undefined') {
+/**
+ * Lazily load the Redis module for the current runtime.
+ * This ensures the redis package is only required when the Redis backend is actually used.
+ */
+async function getRedisModule(): Promise<{ DenoRedis: any; NodeRedis: any }> {
+  // Return cached modules if already loaded
+  if (DenoRedis || NodeRedis) {
+    return { DenoRedis, NodeRedis };
+  }
+
   // @ts-ignore - Deno global
-  DenoRedis = await import("https://deno.land/x/redis@v0.32.1/mod.ts");
-} else {
-  NodeRedis = await import('redis');
+  if (typeof Deno !== "undefined") {
+    try {
+      // @ts-ignore - Deno global
+      DenoRedis = await import("https://deno.land/x/redis@v0.32.1/mod.ts");
+    } catch (error) {
+      throw new Error(
+        `Failed to load Deno Redis module. Error: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+  } else {
+    try {
+      NodeRedis = await import("redis");
+    } catch (error) {
+      throw new Error(
+        `Failed to load 'redis' package. Please install it with: npm install redis\n` +
+        `Error: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+  }
+
+  return { DenoRedis, NodeRedis };
 }
 
 /**
@@ -528,8 +554,11 @@ export class RedisBackend implements WorkflowBackend {
    * Create a new Redis connection
    */
   private async createConnection(): Promise<RedisAdapter> {
-    if (NodeRedis) {
-      const client = NodeRedis.createClient({
+    // Lazily load the Redis module for the current runtime
+    const { DenoRedis: denoRedis, NodeRedis: nodeRedis } = await getRedisModule();
+
+    if (nodeRedis) {
+      const client = nodeRedis.createClient({
         url: this.config.url,
         socket: {
           host: this.config.hostname,
@@ -538,8 +567,8 @@ export class RedisBackend implements WorkflowBackend {
       });
       await client.connect();
       this.client = new NodeRedisAdapter(client);
-    } else if (DenoRedis) {
-      const client = await DenoRedis.connect({
+    } else if (denoRedis) {
+      const client = await denoRedis.connect({
         hostname: this.config.hostname,
         port: this.config.port,
       });
