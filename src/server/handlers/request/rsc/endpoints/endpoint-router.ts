@@ -33,7 +33,7 @@ export async function handleRSCEndpoint(
   // Always serve client.js and dom.js regardless of RSC being enabled
   // These are needed for basic hydration even without full RSC
   if (sub === "client.js") {
-    return handleClientScript();
+    return handleClientScript(adapter);
   }
   if (sub === "dom.js") {
     return handleDomScript(adapter);
@@ -101,7 +101,7 @@ export async function handleRSCEndpoint(
         return await handler.handleHydratorScript();
 
       case "client.js":
-        return handleClientScript();
+        return handleClientScript(adapter);
 
       case "dom.js":
         return handleDomScript(adapter);

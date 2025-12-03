@@ -92,25 +92,25 @@ describe("html-generation/utils", () => {
   });
 
   describe("buildImportMapJson", () => {
-    it("should build import map JSON with custom imports", () => {
+    it("should build import map JSON with custom imports", async () => {
       const customMap = { "custom-lib": "https://cdn.example.com/lib.js" };
-      const result = buildImportMapJson(customMap);
+      const result = await buildImportMapJson(customMap);
 
       assertStringIncludes(result, '"imports"');
       assertStringIncludes(result, '"custom-lib"');
       assertStringIncludes(result, "https://cdn.example.com/lib.js");
     });
 
-    it("should use default imports when none provided", () => {
-      const result = buildImportMapJson();
+    it("should use default imports when none provided", async () => {
+      const result = await buildImportMapJson();
 
       assertStringIncludes(result, '"react"');
       assertStringIncludes(result, '"react-dom"');
       assertStringIncludes(result, "esm.sh");
     });
 
-    it("should format JSON with proper indentation", () => {
-      const result = buildImportMapJson();
+    it("should format JSON with proper indentation", async () => {
+      const result = await buildImportMapJson();
 
       assertStringIncludes(result, "\n");
       assertStringIncludes(result, "  ");
