@@ -25,7 +25,10 @@
  */
 
 import { createFileSystem, FileSystem } from "../src/platform/compat/fs.ts";
-import { getArgs, exitProcess, isDeno } from "../src/platform/compat/process.ts";
+import { getArgs, exit } from "../src/platform/compat/process.ts";
+
+// @ts-ignore - Deno global
+const isDeno = typeof Deno !== 'undefined';
 import { promptUser } from "../src/cli/utils/index.ts";
 
 // Conditional imports for path module
@@ -39,7 +42,7 @@ if (typeof Deno === 'undefined') {
   pathMod = require('node:path');
   childProcess = require('node:child_process');
   util = require('node:util');
-  parseArgs = require("mri');
+  parseArgs = require("mri");
 } else {
   // @ts-ignore - Deno global
   pathMod = await import("jsr:@std/path");
@@ -71,7 +74,7 @@ if (!versionArg) {
 	console.error(
 		"Error: Please provide a version argument (patch, minor, major, or specific version)",
 	);
-	exitProcess(1);
+	exit(1);
 }
 
 const DRY_RUN = args["dry-run"];
@@ -95,7 +98,7 @@ async function runCommand(cmd: string[], cwd?: string) {
     const status = await command.output();
     if (!status.success) {
       console.error(`Command failed: ${cmd.join(" ")}`);
-      exitProcess(1);
+      exit(1);
     }
   } else if (childProcess && util) {
     // Node.js
@@ -104,7 +107,7 @@ async function runCommand(cmd: string[], cwd?: string) {
       await execFile(cmd[0], cmd.slice(1), { cwd, stdio: 'inherit' });
     } catch (error: any) {
       console.error(`Command failed: ${cmd.join(" ")}\n`, error.stderr || error.message);
-      exitProcess(1);
+      exit(1);
     }
   } else {
     throw new Error("Unsupported runtime for command execution.");
@@ -131,7 +134,7 @@ async function getNewVersion(
 	}
 
 	console.error(`Invalid version argument: ${type}`);
-	exitProcess(1);
+	exit(1);
 }
 
 async function main() {
@@ -149,7 +152,7 @@ async function main() {
 		const confirm = await promptUser("Continue? [y/N]");
 		if (confirm?.toLowerCase() !== "y") {
 			console.log("Aborted.");
-			exitProcess(0);
+			exit(0);
 		}
 	}
 
@@ -180,8 +183,8 @@ async function main() {
 		if (DRY_RUN) {
 			console.log("\n🚀 [DRY RUN] Would publish to npm");
 		} else {
-			const shouldPublish =
-				args.yes || await promptUser("\n🚀 Publish to npm? [y/N]")?.toLowerCase() === "y";
+			const response = await promptUser("\n🚀 Publish to npm? [y/N]");
+			const shouldPublish = args.yes || response?.toLowerCase() === "y";
 			if (shouldPublish) {
 				await runCommand(["npm", "publish"], getPath().resolve("npm"));
 				console.log(`\n✅ Successfully published veryfront@${newVersion}`);

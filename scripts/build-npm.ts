@@ -644,7 +644,24 @@ const cliBundlePlugin: esbuild.Plugin = {
 				return { path: "node:path", external: true };
 			}
 			const esmMatch = args.path.match(/esm\.sh\/(@?[^@/]+(?:\/[^@/]+)?)/);
-			if (esmMatch) return { path: esmMatch[1], external: true };
+			if (esmMatch) {
+				const pkgName = esmMatch[1];
+				// Bundle these packages instead of externalizing them
+				// These need to be bundled because npx doesn't always install dependencies properly
+				const packagesToBundlePatterns = [
+					"rehype-", "remark-", "unified", "github-slugger",
+					"unist-", "mdast-", "hast-", "@unocss/", "unocss",
+					"@mdx-js/", "lightningcss", "mime-types",
+				];
+				const shouldBundle = packagesToBundlePatterns.some(pattern =>
+					pkgName?.startsWith(pattern) || pkgName === pattern
+				);
+				if (shouldBundle) {
+					// Use http-url namespace to fetch and bundle these packages
+					return { path: args.path, namespace: "http-url" };
+				}
+				return { path: pkgName, external: true };
+			}
 			return { path: args.path, external: true };
 		});
 
@@ -665,6 +682,83 @@ const cliBundlePlugin: esbuild.Plugin = {
 			},
 			(args) => {
 				return { path: args.path, external: true };
+			},
+		);
+
+		// Handle bare imports that need to be resolved to esm.sh URLs for bundling
+		// These are packages that Deno resolves via import map but esbuild doesn't know about
+		const bareImportMap: Record<string, string> = {
+			"@unocss/core": "https://esm.sh/@unocss/core@0.59.0",
+			"@unocss/preset-wind": "https://esm.sh/@unocss/preset-wind@0.59.0",
+			"rehype-highlight": "https://esm.sh/rehype-highlight@7.0.2",
+			"rehype-slug": "https://esm.sh/rehype-slug@6.0.0",
+			"remark-gfm": "https://esm.sh/remark-gfm@4.0.1",
+			"remark-frontmatter": "https://esm.sh/remark-frontmatter@5.0.0",
+			"unified": "https://esm.sh/unified@11.0.5",
+			"github-slugger": "https://esm.sh/github-slugger@2.0.0",
+			"unist-util-visit": "https://esm.sh/unist-util-visit@5.0.0",
+			"mdast-util-to-string": "https://esm.sh/mdast-util-to-string@4.0.0",
+			"@mdx-js/mdx": "https://esm.sh/@mdx-js/mdx@3.0.0",
+			"@mdx-js/react": "https://esm.sh/@mdx-js/react@3.0.0",
+			"mime-types": "https://esm.sh/mime-types@2.1.35",
+			"lightningcss": "https://esm.sh/lightningcss@1.22.0",
+		};
+
+		build.onResolve(
+			{
+				filter: /^(@unocss\/|rehype-|remark-|unified|github-slugger|unist-|mdast-|@mdx-js\/|mime-types|lightningcss)/,
+			},
+			(args) => {
+				const esmUrl = bareImportMap[args.path];
+				if (esmUrl) {
+					// Use http-url namespace so esbuild knows this isn't a file path
+					return { path: esmUrl, namespace: "http-url" };
+				}
+				// For prefix matches like unist-util-visit, remark-xxx etc, externalize them
+				return { path: args.path, external: true };
+			},
+		);
+
+		// Handle transitive URL imports within http-url namespace
+		// This covers both absolute URLs (https://...) and root-relative paths (/...)
+		build.onResolve(
+			{ filter: /.*/, namespace: "http-url" },
+			(args) => {
+				// If it's already an absolute URL, use it directly
+				if (args.path.startsWith("https://") || args.path.startsWith("http://")) {
+					return { path: args.path, namespace: "http-url" };
+				}
+				// esm.sh uses root-relative paths like /@unocss/core@0.59.0/denonext/core.mjs
+				// Convert them to full URLs
+				if (args.path.startsWith("/")) {
+					const fullUrl = `https://esm.sh${args.path}`;
+					return { path: fullUrl, namespace: "http-url" };
+				}
+				// For relative paths, resolve against the importer
+				if (args.importer && args.importer.startsWith("https://")) {
+					const resolvedUrl = new URL(args.path, args.importer).href;
+					return { path: resolvedUrl, namespace: "http-url" };
+				}
+				// Externalize anything else we can't resolve
+				return { path: args.path, external: true };
+			},
+		);
+
+		// Fetch and load HTTP URLs
+		build.onLoad(
+			{ filter: /.*/, namespace: "http-url" },
+			async (args) => {
+				console.log(`  Fetching: ${args.path}`);
+				const response = await fetch(args.path);
+				if (!response.ok) {
+					throw new Error(`Failed to fetch ${args.path}: ${response.status}`);
+				}
+				const contents = await response.text();
+				return {
+					contents,
+					loader: "js",
+					resolveDir: PROJECT_ROOT,
+				};
 			},
 		);
 	},
@@ -689,17 +783,13 @@ try {
 			"ai",
 			"ai/*",
 			"@ai-sdk/*",
-			"@mdx-js/*",
+			// Note: @mdx-js/*, @unocss/*, mime-types, github-slugger, lightningcss
+			// are now bundled via http-url namespace to ensure npx compatibility
 			"esbuild",
-			"mime-types",
-			"github-slugger",
 			"picocolors",
 			"mri",
 			"yaml",
 			"gray-matter",
-			"unocss",
-			"@unocss/*",
-			"lightningcss",
 			"@opentelemetry/*",
 			"node:*",
 			"glob",
