@@ -164,4 +164,14 @@ export interface VeryfrontConfig {
       expose?: string[];
     };
   };
+  client?: {
+    /** How to resolve veryfront client modules in browser */
+    moduleResolution?: "cdn" | "self-hosted" | "bundled";
+    /** CDN options when moduleResolution is 'cdn' */
+    cdn?: {
+      provider?: "esm.sh" | "unpkg" | "jsdelivr";
+      /** 'auto' detects from package.json, or pin specific versions */
+      versions?: "auto" | { react?: string; veryfront?: string };
+    };
+  };
 }

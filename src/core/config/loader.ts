@@ -51,6 +51,13 @@ const DEFAULT_CONFIG: Partial<VeryfrontConfig> = {
   resolve: {
     importMap: getDefaultImportMapForConfig(),
   },
+  client: {
+    moduleResolution: "cdn",
+    cdn: {
+      provider: "esm.sh",
+      versions: "auto",
+    },
+  },
 };
 
 const configCacheByProject = new Map<string, { revision: number; config: VeryfrontConfig }>();
@@ -109,6 +116,14 @@ function mergeConfigs(userConfig: Partial<VeryfrontConfig>): VeryfrontConfig {
     resolve: {
       ...DEFAULT_CONFIG.resolve,
       ...userConfig.resolve,
+    },
+    client: {
+      ...DEFAULT_CONFIG.client,
+      ...userConfig.client,
+      cdn: {
+        ...DEFAULT_CONFIG.client?.cdn,
+        ...userConfig.client?.cdn,
+      },
     },
   } as VeryfrontConfig;
 

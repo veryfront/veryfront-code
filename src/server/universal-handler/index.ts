@@ -24,6 +24,7 @@ import { ClientLogHandler } from "../handlers/monitoring/client-log.ts";
 import { DevEndpointsHandler } from "../handlers/dev/endpoints.ts";
 import { DevFileHandler } from "../handlers/dev/files/index.ts";
 import { StaticHandler } from "../handlers/request/static.ts";
+import { LibModulesHandler } from "../handlers/request/lib-modules-handler.ts";
 import { RSCHandler } from "../handlers/request/rsc/index.ts";
 import { ModuleHandler } from "../handlers/request/module/index.ts";
 import { ApiHandlerWrapper } from "../handlers/request/api/index.ts";
@@ -105,8 +106,9 @@ export function createVeryfrontHandler(
     new ClientLogHandler(), // Priority: 200 (HIGH, dev only)
     new DevEndpointsHandler(), // Priority: 300 (HIGH, dev only)
     new DevFileHandler(), // Priority: 400 (dev only)
+    new StaticHandler(), // Priority: 500 (MEDIUM_STATIC)
+    new LibModulesHandler(), // Priority: 550 (MEDIUM_LIB_MODULES, self-hosted veryfront/ai/*)
     new RSCHandler(), // Priority: 600 (MEDIUM, runs before static to expose RSC endpoints)
-    new StaticHandler(), // Priority: 600 (MEDIUM)
     new ModuleHandler(), // Priority: 600 (MEDIUM)
     apiHandler, // Priority: 700 (MEDIUM)
     new SSRHandler(), // Priority: 1000 (LOW)

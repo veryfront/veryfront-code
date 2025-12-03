@@ -193,6 +193,27 @@ export const veryfrontConfigSchema = z
       })
       .partial()
       .optional(),
+    client: z
+      .object({
+        moduleResolution: z.enum(["cdn", "self-hosted", "bundled"]).optional(),
+        cdn: z
+          .object({
+            provider: z.enum(["esm.sh", "unpkg", "jsdelivr"]).optional(),
+            versions: z
+              .union([
+                z.literal("auto"),
+                z.object({
+                  react: z.string().optional(),
+                  veryfront: z.string().optional(),
+                }),
+              ])
+              .optional(),
+          })
+          .partial()
+          .optional(),
+      })
+      .partial()
+      .optional(),
   })
   .partial();
 
@@ -244,6 +265,7 @@ export function findUnknownTopLevelKeys(input: Record<string, unknown>): string[
     "assetPipeline",
     "observability",
     "fs",
+    "client",
   ]);
   return Object.keys(input).filter((k) => !known.has(k));
 }

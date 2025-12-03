@@ -34,6 +34,9 @@ export const PRIORITY_MEDIUM_DEV_FILES = 400;
 /** MEDIUM priority - Static file serving */
 export const PRIORITY_MEDIUM_STATIC = 500;
 
+/** MEDIUM priority - Self-hosted lib modules (veryfront/ai/*) */
+export const PRIORITY_MEDIUM_LIB_MODULES = 550;
+
 /** MEDIUM priority - RSC, module, and static handlers */
 export const PRIORITY_MEDIUM = 600;
 
@@ -57,6 +60,7 @@ export const HANDLER_PRIORITIES = {
   HIGH_DEV: PRIORITY_HIGH_DEV,
   MEDIUM_DEV_FILES: PRIORITY_MEDIUM_DEV_FILES,
   MEDIUM_STATIC: PRIORITY_MEDIUM_STATIC,
+  MEDIUM_LIB_MODULES: PRIORITY_MEDIUM_LIB_MODULES,
   MEDIUM: PRIORITY_MEDIUM,
   MEDIUM_API: PRIORITY_MEDIUM_API,
   LOW: PRIORITY_LOW,
