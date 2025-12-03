@@ -322,7 +322,7 @@ function isNodeRuntime(): boolean {
 async function rewriteExternalImports(code: string, projectDir: string, fs: FileSystem): Promise<string> {
   let transformed = code;
 
-  // In Node.js, resolve veryfront imports to absolute paths
+  // In Node.js, resolve external imports to absolute paths
   // since the temp file is outside the project's node_modules
   if (isNodeRuntime()) {
     try {
@@ -330,7 +330,80 @@ async function rewriteExternalImports(code: string, projectDir: string, fs: File
 
       logger.debug(`[API] Rewriting external imports for Node.js, projectDir: ${projectDir}`);
 
-      // Manual resolution using package.json exports
+      // Helper to resolve a package to absolute file:// URL
+      const resolvePackageToFileUrl = async (packageName: string): Promise<string | null> => {
+        const packagePath = pathHelper.join(projectDir, "node_modules", packageName);
+        const packageJsonPath = pathHelper.join(packagePath, "package.json");
+
+        try {
+          const pkgJson = JSON.parse(await fs.readTextFile(packageJsonPath));
+          // Try exports["."].import, exports["."].default, main, module in that order
+          let entryPoint: string | undefined;
+
+          if (pkgJson.exports) {
+            const dotExport = pkgJson.exports["."];
+            if (typeof dotExport === "string") {
+              entryPoint = dotExport;
+            } else if (dotExport?.import) {
+              entryPoint = dotExport.import;
+            } else if (dotExport?.default) {
+              entryPoint = dotExport.default;
+            }
+          }
+
+          if (!entryPoint) {
+            entryPoint = pkgJson.module || pkgJson.main || "index.js";
+          }
+
+          if (!entryPoint) {
+            return null;
+          }
+
+          const resolvedPath = pathHelper.join(packagePath, entryPoint);
+          return pathToFileURL(resolvedPath).href;
+        } catch {
+          return null;
+        }
+      };
+
+      // List of external packages that need to be resolved to absolute paths
+      const externalPackagesToResolve = [
+        "zod",
+        "ai",
+        "@ai-sdk/anthropic",
+        "@ai-sdk/openai",
+        "@ai-sdk/google",
+        "@ai-sdk/mistral",
+        "@ai-sdk/provider",
+        "@ai-sdk/provider-utils",
+      ];
+
+      // Resolve external packages to absolute paths
+      for (const pkg of externalPackagesToResolve) {
+        const escapedPkg = pkg.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+        // Match static imports: from "package"
+        const staticImportRegex = new RegExp(`from\\s+["']${escapedPkg}["']`, "g");
+        if (staticImportRegex.test(transformed)) {
+          const resolvedUrl = await resolvePackageToFileUrl(pkg);
+          if (resolvedUrl) {
+            transformed = transformed.replace(staticImportRegex, `from "${resolvedUrl}"`);
+            logger.debug(`[API] Resolved ${pkg} -> ${resolvedUrl}`);
+          }
+        }
+
+        // Match dynamic imports: import("package")
+        const dynamicImportRegex = new RegExp(`import\\s*\\(\\s*["']${escapedPkg}["']\\s*\\)`, "g");
+        if (dynamicImportRegex.test(transformed)) {
+          const resolvedUrl = await resolvePackageToFileUrl(pkg);
+          if (resolvedUrl) {
+            transformed = transformed.replace(dynamicImportRegex, `import("${resolvedUrl}")`);
+            logger.debug(`[API] Resolved dynamic import ${pkg} -> ${resolvedUrl}`);
+          }
+        }
+      }
+
+      // Manual resolution for veryfront using package.json exports
       // This is more reliable than createRequire for subpath exports
       const vfPackagePath = pathHelper.join(projectDir, "node_modules", "veryfront");
       const vfPackageJsonPath = pathHelper.join(vfPackagePath, "package.json");

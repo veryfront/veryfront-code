@@ -10,6 +10,49 @@ import { createFileSystem } from "../../platform/compat/fs.ts";
 export type PackageManager = "npm" | "yarn" | "pnpm" | "bun";
 
 /**
+ * Execute a shell command cross-runtime (Deno/Node.js)
+ * @returns Promise with exit code
+ */
+async function executeCommand(
+  cmd: string,
+  args: string[],
+  cwd: string,
+  silent: boolean,
+): Promise<number> {
+  // Try Deno.Command first (Deno runtime)
+  if (typeof Deno !== "undefined" && Deno.Command) {
+    const process = new Deno.Command(cmd, {
+      args,
+      cwd,
+      stdout: silent ? "null" : "inherit",
+      stderr: silent ? "null" : "inherit",
+    });
+    const { code } = await process.output();
+    return code;
+  }
+
+  // Fall back to Node.js child_process (npm package runtime)
+  // Use dynamic import to avoid Deno type errors
+  const { spawn } = await import("node:child_process");
+
+  return new Promise((resolve, reject) => {
+    const child = spawn(cmd, args, {
+      cwd,
+      stdio: silent ? "ignore" : "inherit",
+      shell: process.platform === "win32", // Use shell on Windows for .cmd files
+    });
+
+    child.on("error", (error: Error) => {
+      reject(error);
+    });
+
+    child.on("close", (code: number | null) => {
+      resolve(code ?? 1);
+    });
+  });
+}
+
+/**
  * Detect the package manager to use based on lockfiles or user preference
  *
  * Priority:
@@ -97,21 +140,14 @@ export async function installDependencies(
   }
 
   try {
-    // Use Deno.Command for cross-platform subprocess execution
     const parts = command.split(" ");
     const cmd = parts[0];
     const args = parts.slice(1);
     if (!cmd) {
       throw new Error("Invalid command");
     }
-    const process = new Deno.Command(cmd, {
-      args,
-      cwd: projectDir,
-      stdout: options.silent ? "null" : "inherit",
-      stderr: options.silent ? "null" : "inherit",
-    });
 
-    const { code } = await process.output();
+    const code = await executeCommand(cmd, args, projectDir, options.silent ?? false);
 
     if (code === 0) {
       if (!options.silent) {

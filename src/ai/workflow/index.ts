@@ -159,7 +159,7 @@ export { MemoryBackend } from "./backends/memory.ts";
 
 // Redis backend (production)
 export { RedisBackend } from "./backends/redis.ts";
-export type { RedisBackendConfig, RedisClient } from "./backends/redis.ts";
+export type { RedisBackendConfig, RedisAdapter } from "./backends/redis.ts";
 
 // =============================================================================
 // Executor
