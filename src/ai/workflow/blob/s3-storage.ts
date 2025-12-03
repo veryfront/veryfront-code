@@ -2,11 +2,52 @@
  * S3 Blob Storage
  *
  * Stores blobs in AWS S3.
+ *
+ * NOTE: This module uses dynamic imports for @aws-sdk/client-s3 to avoid
+ * requiring the AWS SDK as a mandatory dependency. The SDK is only loaded
+ * when S3BlobStorage is instantiated.
  */
 
 import type { BlobRef, BlobStorage, StoreBlobOptions } from "./types.ts";
-import { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand, HeadObjectCommand, CreateBucketCommand } from "https://esm.sh/@aws-sdk/client-s3@3.490.0";
 import { agentLogger as logger } from "@veryfront/utils";
+
+// Type definitions for AWS SDK (to avoid top-level import)
+type S3ClientType = import("@aws-sdk/client-s3").S3Client;
+type PutObjectCommandType = import("@aws-sdk/client-s3").PutObjectCommand;
+type GetObjectCommandType = import("@aws-sdk/client-s3").GetObjectCommand;
+type DeleteObjectCommandType = import("@aws-sdk/client-s3").DeleteObjectCommand;
+type HeadObjectCommandType = import("@aws-sdk/client-s3").HeadObjectCommand;
+type CreateBucketCommandType = import("@aws-sdk/client-s3").CreateBucketCommand;
+
+// Cached module reference for lazy loading
+let s3Module: typeof import("@aws-sdk/client-s3") | null = null;
+
+/**
+ * Dynamically import the AWS SDK (lazy loading)
+ * This allows the module to be loaded without requiring @aws-sdk/client-s3 to be installed
+ * unless S3BlobStorage is actually used.
+ */
+async function getS3Module(): Promise<typeof import("@aws-sdk/client-s3")> {
+  if (s3Module) {
+    return s3Module;
+  }
+
+  try {
+    // Try Deno's esm.sh import first (for Deno runtime)
+    if (typeof Deno !== "undefined") {
+      s3Module = await import("https://esm.sh/@aws-sdk/client-s3@3.490.0");
+    } else {
+      // For Node.js runtime, use bare specifier
+      s3Module = await import("@aws-sdk/client-s3");
+    }
+    return s3Module;
+  } catch (error) {
+    throw new Error(
+      `Failed to load @aws-sdk/client-s3. Please install it: npm install @aws-sdk/client-s3\n` +
+      `Original error: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
+}
 
 export interface S3BlobStorageConfig {
   /** AWS Region */
@@ -32,20 +73,44 @@ export interface S3BlobStorageConfig {
 }
 
 export class S3BlobStorage implements BlobStorage {
-  private client: S3Client;
+  private client: S3ClientType | null = null;
   private config: S3BlobStorageConfig;
+  private initPromise: Promise<void> | null = null;
 
   constructor(config: S3BlobStorageConfig) {
     this.config = config;
+    // Trigger initialization (but don't await in constructor)
+    this.initPromise = this.initialize();
+  }
+
+  /**
+   * Initialize the S3 client asynchronously
+   */
+  private async initialize(): Promise<void> {
+    const { S3Client } = await getS3Module();
     this.client = new S3Client({
-      region: config.region,
+      region: this.config.region,
       credentials: {
-        accessKeyId: config.accessKeyId,
-        secretAccessKey: config.secretAccessKey,
+        accessKeyId: this.config.accessKeyId,
+        secretAccessKey: this.config.secretAccessKey,
       },
-      endpoint: config.endpoint,
-      forcePathStyle: config.forcePathStyle,
+      endpoint: this.config.endpoint,
+      forcePathStyle: this.config.forcePathStyle,
     });
+  }
+
+  /**
+   * Ensure the S3 client is initialized before use
+   */
+  private async ensureInitialized(): Promise<S3ClientType> {
+    if (this.initPromise) {
+      await this.initPromise;
+      this.initPromise = null;
+    }
+    if (!this.client) {
+      throw new Error("S3BlobStorage: Client failed to initialize");
+    }
+    return this.client;
   }
 
   private getKey(id: string): string {
@@ -56,6 +121,9 @@ export class S3BlobStorage implements BlobStorage {
     data: string | Uint8Array | Blob | ReadableStream,
     options: StoreBlobOptions = {},
   ): Promise<BlobRef> {
+    const client = await this.ensureInitialized();
+    const { PutObjectCommand, CreateBucketCommand, HeadObjectCommand } = await getS3Module();
+
     const id = options.id || crypto.randomUUID();
     const key = this.getKey(id);
     const mimeType = options.mimeType || "application/octet-stream";
@@ -97,14 +165,14 @@ export class S3BlobStorage implements BlobStorage {
     });
 
     try {
-      await this.client.send(putCommand);
+      await client.send(putCommand);
     } catch (e: any) {
       if (e.name === "NoSuchBucket" && this.config.autoCreateBucket) {
         // Bucket doesn't exist, try to create it
         try {
-          await this.client.send(new CreateBucketCommand({ Bucket: this.config.bucket }));
+          await client.send(new CreateBucketCommand({ Bucket: this.config.bucket }));
           // Retry the put operation
-          await this.client.send(putCommand);
+          await client.send(putCommand);
         } catch (createError) {
           // If creation fails (e.g., race condition), throw the original error or the new one
           logger.error("Failed to auto-create bucket:", createError);
@@ -124,7 +192,7 @@ export class S3BlobStorage implements BlobStorage {
           Bucket: this.config.bucket,
           Key: key,
         });
-        const headResult = await this.client.send(headCommand);
+        const headResult = await client.send(headCommand);
         size = headResult.ContentLength || 0;
       } catch (e) {
         logger.warn(`Could not get size for S3 blob ${key} after put:`, e);
@@ -144,13 +212,16 @@ export class S3BlobStorage implements BlobStorage {
   }
 
   async getStream(id: string): Promise<ReadableStream | null> {
+    const client = await this.ensureInitialized();
+    const { GetObjectCommand } = await getS3Module();
+
     const key = this.getKey(id);
     try {
       const getCommand = new GetObjectCommand({
         Bucket: this.config.bucket,
         Key: key,
       });
-      const response = await this.client.send(getCommand);
+      const response = await client.send(getCommand);
       if (response.Body) {
         // The S3 SDK returns an AsyncIterable (which is also a ReadableStream in Deno)
         return response.Body as ReadableStream;
@@ -182,13 +253,16 @@ export class S3BlobStorage implements BlobStorage {
   }
 
   async delete(id: string): Promise<void> {
+    const client = await this.ensureInitialized();
+    const { DeleteObjectCommand } = await getS3Module();
+
     const key = this.getKey(id);
     const deleteCommand = new DeleteObjectCommand({
       Bucket: this.config.bucket,
       Key: key,
     });
     try {
-      await this.client.send(deleteCommand);
+      await client.send(deleteCommand);
     } catch (e) {
       if (e instanceof Error && e.name === "NoSuchKey") {
         // Ignore if trying to delete a non-existent key
@@ -199,9 +273,12 @@ export class S3BlobStorage implements BlobStorage {
   }
 
   async exists(id: string): Promise<boolean> {
+    const client = await this.ensureInitialized();
+    const { HeadObjectCommand } = await getS3Module();
+
     const key = this.getKey(id);
     try {
-      await this.client.send(new HeadObjectCommand({
+      await client.send(new HeadObjectCommand({
         Bucket: this.config.bucket,
         Key: key,
       }));
@@ -215,9 +292,12 @@ export class S3BlobStorage implements BlobStorage {
   }
 
   async stat(id: string): Promise<BlobRef | null> {
+    const client = await this.ensureInitialized();
+    const { HeadObjectCommand } = await getS3Module();
+
     const key = this.getKey(id);
     try {
-      const headResult = await this.client.send(new HeadObjectCommand({
+      const headResult = await client.send(new HeadObjectCommand({
         Bucket: this.config.bucket,
         Key: key,
       }));
@@ -226,8 +306,11 @@ export class S3BlobStorage implements BlobStorage {
 
       // Custom metadata is returned as all lowercase keys by S3
       const metadata: Record<string, string> = {};
-      for (const [k, v] of Object.entries(headResult.Metadata || {})) {
-        metadata[k] = v!;
+      const rawMetadata = headResult.Metadata as Record<string, string> | undefined;
+      for (const [k, v] of Object.entries(rawMetadata || {})) {
+        if (v != null) {
+          metadata[k] = v;
+        }
       }
 
       let expiresAt: Date | undefined;
