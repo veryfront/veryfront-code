@@ -32,6 +32,26 @@ export const COMMANDS: CommandRegistry = {
         description: "Set render cache backend (memory | filesystem | kv | redis)",
         default: "memory",
       },
+      {
+        flag: "--skip-install",
+        description: "Skip automatic dependency installation",
+      },
+      {
+        flag: "--use-npm",
+        description: "Use npm as the package manager",
+      },
+      {
+        flag: "--use-yarn",
+        description: "Use yarn as the package manager",
+      },
+      {
+        flag: "--use-pnpm",
+        description: "Use pnpm as the package manager",
+      },
+      {
+        flag: "--use-bun",
+        description: "Use bun as the package manager",
+      },
     ],
     examples: [
       "veryfront init my-app",
@@ -40,6 +60,8 @@ export const COMMANDS: CommandRegistry = {
       "veryfront init enterprise-app --template app",
       "veryfront init my-minimal-app --template minimal",
       "veryfront init my-ai-app --template ai",
+      "veryfront init my-app --skip-install",
+      "veryfront init my-app --use-pnpm",
     ],
     notes: [
       "Use --cache-backend to set render cache (memory | filesystem | kv | redis) during scaffolding",

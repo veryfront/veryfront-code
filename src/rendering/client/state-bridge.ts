@@ -97,8 +97,7 @@ class StateBridge implements StateStore {
   private saveKey(key: string, value: unknown): void {
     if (typeof sessionStorage === "undefined") return;
 
-    const stored = sessionStorage.getItem("veryfront-state");
-    const state = stored ? JSON.parse(stored) : {};
+    const state = this.readPersistedState() ?? {};
     state[key] = value;
     sessionStorage.setItem("veryfront-state", JSON.stringify(state));
   }
@@ -106,22 +105,35 @@ class StateBridge implements StateStore {
   private restoreState(): void {
     if (typeof sessionStorage === "undefined") return;
 
+    const state = this.readPersistedState();
+    if (!state) return;
+
+    Object.entries(state).forEach(([key, value]) => {
+      this.state.set(key, value);
+      this.persistKeys.add(key);
+    });
+  }
+
+  private readPersistedState(): Record<string, unknown> | null {
+    if (typeof sessionStorage === "undefined") return null;
+
     const stored = sessionStorage.getItem("veryfront-state");
-    if (!stored) return;
+    if (!stored) return null;
 
     try {
       const state = JSON.parse(stored);
-      Object.entries(state).forEach(([key, value]) => {
-        this.state.set(key, value);
-        this.persistKeys.add(key);
-      });
+      if (state && typeof state === "object" && !Array.isArray(state)) {
+        return state as Record<string, unknown>;
+      }
+      throw new Error("Persisted state is not an object");
     } catch (error) {
-      rendererLogger.error("[StateBridge] Failed to restore state from sessionStorage:", error);
+      rendererLogger.error("[StateBridge] Failed to parse state from sessionStorage:", error);
       try {
         sessionStorage.removeItem("veryfront-state");
       } catch (clearError) {
         rendererLogger.error("[StateBridge] Failed to clear corrupted state:", clearError);
       }
+      return null;
     }
   }
 }

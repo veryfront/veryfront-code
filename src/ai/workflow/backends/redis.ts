@@ -31,12 +31,13 @@ if (typeof Deno !== 'undefined') {
 }
 
 /**
- * Redis client interface (compatible with deno-redis/node-redis)
+ * Standardized Redis Adapter Interface
+ * Normalizes differences between Deno and Node Redis clients
  */
-export interface RedisClient {
+export interface RedisAdapter {
   // Hash operations
   hset(key: string, fields: Record<string, string>): Promise<number | string>;
-  hgetall(key: string): Promise<any>; // Returns string[] (Deno) or Record<string, string> (Node)
+  hgetall(key: string): Promise<Record<string, string>>;
   hdel(key: string, ...fields: string[]): Promise<number>;
   del(...keys: string[]): Promise<number>;
 
@@ -49,7 +50,7 @@ export interface RedisClient {
   rpush(key: string, ...values: string[]): Promise<number>;
   lrange(key: string, start: number, stop: number): Promise<string[]>;
   lindex(key: string, index: number): Promise<string | null>;
-  lset(key: string, index: number, value: string): Promise<string | 'OK'>; // NodeRedis returns 'OK'
+  lset(key: string, index: number, value: string): Promise<string | 'OK'>;
   llen(key: string): Promise<number>;
 
   // Stream operations
@@ -58,7 +59,7 @@ export interface RedisClient {
   xreadgroup(
     streams: Array<{ key: string; xid: string }>,
     options: { group: string; consumer: string; block?: number; count?: number },
-  ): Promise<any>; // Returns different shapes on Deno/Node
+  ): Promise<Array<{ key: string; messages: Array<{ id: string; data: Record<string, string> }> }>>;
   xack(key: string, group: string, ...ids: string[]): Promise<number>;
 
   // Key operations
@@ -75,9 +76,279 @@ export interface RedisClient {
   get(key: string): Promise<string | null>;
 
   // Connection
-  quit(): Promise<string>; // NodeRedis uses quit()
-  disconnect(): Promise<void>; // DenoRedis uses close()
-  // close(): void; // Replaced by disconnect()
+  quit(): Promise<void>;
+  disconnect(): Promise<void>;
+}
+
+// Helper to convert array [k1, v1, k2, v2] to object
+function arrayToObject(arr: string[]): Record<string, string> {
+  const obj: Record<string, string> = {};
+  for (let i = 0; i < arr.length; i += 2) {
+    const key = arr[i];
+    const value = arr[i + 1];
+    if (key && value !== undefined) {
+      obj[key] = value;
+    }
+  }
+  return obj;
+}
+
+/**
+ * Adapter for Node.js 'redis' package
+ */
+class NodeRedisAdapter implements RedisAdapter {
+  constructor(private client: any) {}
+
+  async hset(key: string, fields: Record<string, string>): Promise<number | string> {
+    return await this.client.hSet(key, fields);
+  }
+
+  async hgetall(key: string): Promise<Record<string, string>> {
+    return await this.client.hGetAll(key);
+  }
+
+  async hdel(key: string, ...fields: string[]): Promise<number> {
+    return await this.client.hDel(key, fields);
+  }
+
+  async del(...keys: string[]): Promise<number> {
+    return await this.client.del(keys);
+  }
+
+  async sadd(key: string, ...members: string[]): Promise<number> {
+    return await this.client.sAdd(key, members);
+  }
+
+  async srem(key: string, ...members: string[]): Promise<number> {
+    return await this.client.sRem(key, members);
+  }
+
+  async smembers(key: string): Promise<string[]> {
+    return await this.client.sMembers(key);
+  }
+
+  async rpush(key: string, ...values: string[]): Promise<number> {
+    return await this.client.rPush(key, values);
+  }
+
+  async lrange(key: string, start: number, stop: number): Promise<string[]> {
+    return await this.client.lRange(key, start, stop);
+  }
+
+  async lindex(key: string, index: number): Promise<string | null> {
+    return await this.client.lIndex(key, index);
+  }
+
+  async lset(key: string, index: number, value: string): Promise<string | 'OK'> {
+    return await this.client.lSet(key, index, value);
+  }
+
+  async llen(key: string): Promise<number> {
+    return await this.client.lLen(key);
+  }
+
+  async xadd(key: string, id: string, fields: Record<string, string>): Promise<string> {
+    return await this.client.xAdd(key, id, fields);
+  }
+
+  async xgroupCreate(key: string, group: string, id: string, mkstream?: boolean): Promise<string> {
+    return await this.client.xGroupCreate(key, group, id, { MKSTREAM: mkstream });
+  }
+
+  async xreadgroup(
+    streams: Array<{ key: string; xid: string }>,
+    options: { group: string; consumer: string; block?: number; count?: number },
+  ): Promise<Array<{ key: string; messages: Array<{ id: string; data: Record<string, string> }> }>> {
+    // Node redis format: { key: string, messages: Array<{ id: string, message: Record<string, string> }> }
+    // OR if single stream: Array<{ id: string, message: Record<string, string> }> ??
+    // The node-redis v4 API is slightly different.
+    // Assuming commandOptions style:
+    const result = await this.client.xReadGroup(
+      options.group,
+      options.consumer,
+      streams.map(s => ({ key: s.key, id: s.xid })),
+      {
+        BLOCK: options.block,
+        COUNT: options.count
+      }
+    );
+
+    if (!result) return [];
+
+    // Normalize output
+    // node-redis v4 returns: Array<{ name: string, messages: Array<{ id: string, message: Record<string, string> }> }>
+    return (result as any[]).map((stream: any) => ({
+      key: stream.name,
+      messages: stream.messages.map((msg: any) => ({
+        id: msg.id,
+        data: msg.message,
+      })),
+    }));
+  }
+
+  async xack(key: string, group: string, ...ids: string[]): Promise<number> {
+    return await this.client.xAck(key, group, ids);
+  }
+
+  async keys(pattern: string): Promise<string[]> {
+    return await this.client.keys(pattern);
+  }
+
+  async exists(...keys: string[]): Promise<number> {
+    return await this.client.exists(keys);
+  }
+
+  async expire(key: string, seconds: number): Promise<number> {
+    return await this.client.expire(key, seconds);
+  }
+
+  async set(
+    key: string,
+    value: string,
+    options?: { nx?: boolean; px?: number; ex?: number },
+  ): Promise<string | null> {
+    const opts: any = {};
+    if (options?.nx) opts.NX = true;
+    if (options?.px) opts.PX = options.px;
+    if (options?.ex) opts.EX = options.ex;
+    return await this.client.set(key, value, opts);
+  }
+
+  async get(key: string): Promise<string | null> {
+    return await this.client.get(key);
+  }
+
+  async quit(): Promise<void> {
+    await this.client.quit();
+  }
+
+  async disconnect(): Promise<void> {
+    await this.client.disconnect();
+  }
+}
+
+/**
+ * Adapter for Deno 'redis' module
+ */
+class DenoRedisAdapter implements RedisAdapter {
+  constructor(private client: any) {}
+
+  async hset(key: string, fields: Record<string, string>): Promise<number | string> {
+    return await this.client.hset(key, fields);
+  }
+
+  async hgetall(key: string): Promise<Record<string, string>> {
+    const res = await this.client.hgetall(key);
+    // Deno redis returns array [k1, v1, k2, v2]
+    return arrayToObject(res);
+  }
+
+  async hdel(key: string, ...fields: string[]): Promise<number> {
+    return await this.client.hdel(key, ...fields);
+  }
+
+  async del(...keys: string[]): Promise<number> {
+    return await this.client.del(...keys);
+  }
+
+  async sadd(key: string, ...members: string[]): Promise<number> {
+    return await this.client.sadd(key, ...members);
+  }
+
+  async srem(key: string, ...members: string[]): Promise<number> {
+    return await this.client.srem(key, ...members);
+  }
+
+  async smembers(key: string): Promise<string[]> {
+    return await this.client.smembers(key);
+  }
+
+  async rpush(key: string, ...values: string[]): Promise<number> {
+    return await this.client.rpush(key, ...values);
+  }
+
+  async lrange(key: string, start: number, stop: number): Promise<string[]> {
+    return await this.client.lrange(key, start, stop);
+  }
+
+  async lindex(key: string, index: number): Promise<string | null> {
+    return await this.client.lindex(key, index);
+  }
+
+  async lset(key: string, index: number, value: string): Promise<string | 'OK'> {
+    return await this.client.lset(key, index, value);
+  }
+
+  async llen(key: string): Promise<number> {
+    return await this.client.llen(key);
+  }
+
+  async xadd(key: string, id: string, fields: Record<string, string>): Promise<string> {
+    return await this.client.xadd(key, id, fields);
+  }
+
+  async xgroupCreate(key: string, group: string, id: string, mkstream?: boolean): Promise<string> {
+    return await this.client.xgroupCreate(key, group, id, mkstream);
+  }
+
+  async xreadgroup(
+    streams: Array<{ key: string; xid: string }>,
+    options: { group: string; consumer: string; block?: number; count?: number },
+  ): Promise<Array<{ key: string; messages: Array<{ id: string; data: Record<string, string> }> }>> {
+    if (streams.length === 0) return [];
+
+    // Deno redis returns: Array<{ key: string, messages: Array<{ id: string, fieldValues: string[] }> }>
+    const res = await this.client.xreadgroup(
+      streams.map(s => ({ key: s.key, xid: s.xid })),
+      options
+    );
+
+    if (!res) return [];
+
+    return (res as any[]).map((stream: any) => ({
+      key: stream.key,
+      messages: stream.messages.map((msg: any) => ({
+        id: msg.id,
+        data: arrayToObject(msg.fieldValues),
+      })),
+    }));
+  }
+
+  async xack(key: string, group: string, ...ids: string[]): Promise<number> {
+    return await this.client.xack(key, group, ...ids);
+  }
+
+  async keys(pattern: string): Promise<string[]> {
+    return await this.client.keys(pattern);
+  }
+
+  async exists(...keys: string[]): Promise<number> {
+    return await this.client.exists(...keys);
+  }
+
+  async expire(key: string, seconds: number): Promise<number> {
+    return await this.client.expire(key, seconds);
+  }
+
+  async set(
+    key: string,
+    value: string,
+    options?: { nx?: boolean; px?: number; ex?: number },
+  ): Promise<string | null> {
+    return await this.client.set(key, value, options);
+  }
+
+  async get(key: string): Promise<string | null> {
+    return await this.client.get(key);
+  }
+
+  async quit(): Promise<void> {
+    await this.client.close(); // Deno redis uses close
+  }
+
+  async disconnect(): Promise<void> {
+    await this.client.close();
+  }
 }
 
 /**
@@ -103,28 +374,15 @@ export interface RedisBackendConfig extends BackendConfig {
   /** Enable debug logging */
   debug?: boolean;
   /** Existing Redis client (optional) */
-  client?: RedisClient;
+  client?: RedisAdapter;
 }
 
 /**
  * Redis Workflow Backend
- *
- * @example
- * ```typescript
- * import { RedisBackend } from 'veryfront/ai/workflow/backends/redis';
- *
- * const backend = new RedisBackend({
- *   hostname: 'localhost',
- *   port: 6379,
- *   prefix: 'myapp:workflow:',
- * });
- *
- * await backend.initialize();
- * ```
  */
 export class RedisBackend implements WorkflowBackend {
-  private client: RedisClient | null = null;
-  private connectionPromise: Promise<RedisClient> | null = null;
+  private client: RedisAdapter | null = null;
+  private connectionPromise: Promise<RedisAdapter> | null = null;
   private config: Required<
     Pick<RedisBackendConfig, "prefix" | "streamKey" | "groupName" | "consumerName" | "debug">
   > & RedisBackendConfig;
@@ -247,23 +505,11 @@ export class RedisBackend implements WorkflowBackend {
     };
   }
 
-  private arrayToObject(arr: string[]): Record<string, string> {
-    const obj: Record<string, string> = {};
-    for (let i = 0; i < arr.length; i += 2) {
-      const key = arr[i];
-      const value = arr[i + 1];
-      if (key && value !== undefined) {
-        obj[key] = value;
-      }
-    }
-    return obj;
-  }
-
   // =========================================================================
   // Connection Management
   // =========================================================================
 
-  private ensureClient(): Promise<RedisClient> {
+  private ensureClient(): Promise<RedisAdapter> {
     // Return existing client if available
     if (this.client) {
       return Promise.resolve(this.client);
@@ -281,7 +527,7 @@ export class RedisBackend implements WorkflowBackend {
   /**
    * Create a new Redis connection
    */
-  private async createConnection(): Promise<RedisClient> {
+  private async createConnection(): Promise<RedisAdapter> {
     if (NodeRedis) {
       const client = NodeRedis.createClient({
         url: this.config.url,
@@ -291,12 +537,13 @@ export class RedisBackend implements WorkflowBackend {
         },
       });
       await client.connect();
-      this.client = client as unknown as RedisClient;
+      this.client = new NodeRedisAdapter(client);
     } else if (DenoRedis) {
-      this.client = await DenoRedis.connect({
+      const client = await DenoRedis.connect({
         hostname: this.config.hostname,
         port: this.config.port,
-      }) as RedisClient;
+      });
+      this.client = new DenoRedisAdapter(client);
     } else {
       throw new Error("No Redis client available for this runtime.");
     }
@@ -308,7 +555,8 @@ export class RedisBackend implements WorkflowBackend {
       logger.debug(`[RedisBackend] Connecting to ${hostname}:${port}`);
     }
 
-    return this.client;
+    // Ensure client is not null for TS
+    return this.client!;
   }
 
   async initialize(): Promise<void> {
@@ -363,19 +611,10 @@ export class RedisBackend implements WorkflowBackend {
 
   async getRun(runId: string): Promise<WorkflowRun | null> {
     const client = await this.ensureClient();
-    const rawData = await client.hgetall(this.runKey(runId));
+    const data = await client.hgetall(this.runKey(runId));
 
-    if (!rawData) {
+    if (!data || Object.keys(data).length === 0) {
       return null;
-    }
-
-    let data: Record<string, string>;
-    if (Array.isArray(rawData)) {
-      if (rawData.length === 0) return null;
-      data = this.arrayToObject(rawData);
-    } else {
-      if (Object.keys(rawData).length === 0) return null;
-      data = rawData;
     }
 
     const run = this.deserializeRun(data);
@@ -713,6 +952,7 @@ export class RedisBackend implements WorkflowBackend {
       return null;
     }
 
+    // Now streams is strongly typed due to Adapter
     const stream = streams[0];
     if (!stream || !stream.messages || stream.messages.length === 0) {
       return null;
@@ -723,19 +963,7 @@ export class RedisBackend implements WorkflowBackend {
       return null;
     }
 
-    let data: Record<string, string>;
-    // @ts-ignore: Deno/Node compatibility
-    if (message.fieldValues) {
-      // Deno Redis
-      // @ts-ignore: Deno/Node compatibility
-      data = this.arrayToObject(message.fieldValues);
-    } else if ((message as any).message) {
-      // Node Redis
-      data = (message as any).message;
-    } else {
-      // Unknown format
-      return null;
-    }
+    const data = message.data;
 
     return {
       runId: data.runId ?? "",
@@ -821,12 +1049,10 @@ export class RedisBackend implements WorkflowBackend {
 
   destroy(): Promise<void> {
     if (this.client) {
-      if (typeof (this.client as any).quit === 'function') {
-        (this.client as any).quit();
-      } else if (typeof (this.client as any).disconnect === 'function') {
-        (this.client as any).disconnect();
-      } else if (typeof (this.client as any).close === 'function') {
-        (this.client as any).close();
+      if (typeof this.client.quit === 'function') {
+        this.client.quit();
+      } else if (typeof this.client.disconnect === 'function') {
+        this.client.disconnect();
       }
       this.client = null;
     }

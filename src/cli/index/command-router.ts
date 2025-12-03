@@ -120,11 +120,21 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
         const name = args._[1] as string | undefined;
         const template = (args.t || args.template) as InitTemplate | undefined;
         const cacheBackendArg = args["cache-backend"] ?? args.cacheBackend;
+
+        // Determine package manager from --use-* flags
+        let packageManager: "npm" | "yarn" | "pnpm" | "bun" | undefined;
+        if (args["use-npm"]) packageManager = "npm";
+        else if (args["use-yarn"]) packageManager = "yarn";
+        else if (args["use-pnpm"]) packageManager = "pnpm";
+        else if (args["use-bun"]) packageManager = "bun";
+
         await initCommand({
           name,
           template,
           appRouter: Boolean(args["app-router"]) || template === "app-router",
           cacheBackend: cacheBackendArg ? (String(cacheBackendArg) as CacheBackend) : undefined,
+          skipInstall: Boolean(args["skip-install"]),
+          packageManager,
         });
         break;
       }

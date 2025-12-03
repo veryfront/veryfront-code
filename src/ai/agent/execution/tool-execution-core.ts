@@ -75,17 +75,16 @@ export class ToolExecutionCore {
     tc: ProviderToolCall,
     callbacks?: StreamingCallbacks,
   ): Promise<ToolExecutionResult> {
-    // Parse arguments if needed
-    const args = typeof tc.arguments === "string" ? JSON.parse(tc.arguments) : tc.arguments;
-
     const toolCall: ToolCall = {
       id: tc.id,
       name: tc.name,
-      args,
+      args: {},
       status: "pending",
     };
 
     try {
+      toolCall.args = this.parseArguments(tc.arguments);
+
       toolCall.status = "executing";
       const startTime = Date.now();
 
@@ -93,7 +92,7 @@ export class ToolExecutionCore {
       callbacks?.onToolCallStart?.(toolCall);
 
       // Execute the tool
-      const result = await executeTool(tc.name, args, {
+      const result = await executeTool(tc.name, toolCall.args, {
         agentId: this.context.agentId,
       });
 
@@ -138,6 +137,26 @@ export class ToolExecutionCore {
         success: false,
       };
     }
+  }
+
+  /**
+   * Parse provider tool arguments and ensure we always return an object.
+   * Throws an error if the payload is missing or malformed to be handled upstream.
+   */
+  private parseArguments(raw: ProviderToolCall["arguments"]): Record<string, unknown> {
+    if (typeof raw === "string") {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        return parsed as Record<string, unknown>;
+      }
+      throw new Error("Tool call arguments must be a JSON object");
+    }
+
+    if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+      return raw as Record<string, unknown>;
+    }
+
+    throw new Error("Tool call arguments must be a JSON object");
   }
 
   /**

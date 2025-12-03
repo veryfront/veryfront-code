@@ -5,7 +5,7 @@
 
 import { cliLogger as logger } from "@veryfront/utils";
 import { FileSystemError } from "@veryfront/errors";
-import { cyan, green } from "@veryfront/compat/console";
+import { cyan, green, yellow } from "@veryfront/compat/console";
 import { ensureDir } from "std/fs/mod.ts";
 import { join } from "std/path/mod.ts";
 import { createConfigFile, createPackageJson, updateConfigCacheBlock } from "./config-generator.ts";
@@ -20,6 +20,7 @@ import {
 import type { CacheBackend, InitOptions, InitTemplate } from "./types.ts";
 import { cwd, getEnv, isInteractive as checkIsInteractive } from "../../../platform/compat/process.ts";
 import { createFileSystem } from "../../../platform/compat/fs.ts";
+import { installDependencies, getInstallCommand, detectPackageManager } from "../../utils/package-manager.ts";
 
 const CACHE_BACKENDS: CacheBackend[] = ["memory", "filesystem", "kv", "redis"];
 
@@ -154,9 +155,29 @@ export async function initCommand(options: InitOptions): Promise<void> {
   }
 
   logger.info(`${green("✅")} Created Veryfront project${name ? ` at ${name}` : ""}`);
+
+  // Auto-install dependencies unless skipInstall is true
+  if (!options.skipInstall) {
+    logger.info("");
+    const installSuccess = await installDependencies(projectDir, {
+      packageManager: options.packageManager,
+    });
+
+    if (!installSuccess) {
+      const pm = await detectPackageManager(projectDir, options.packageManager);
+      logger.warn(
+        `${yellow("⚠")} Dependency installation failed. Run '${getInstallCommand(pm)}' manually.`,
+      );
+    }
+  }
+
   logger.info(`\n${cyan("Next steps:")}`);
   if (name) {
     logger.info(`  cd ${name}`);
+  }
+  if (options.skipInstall) {
+    const pm = await detectPackageManager(projectDir, options.packageManager);
+    logger.info(`  ${getInstallCommand(pm)}`);
   }
   logger.info(`  veryfront dev`);
 

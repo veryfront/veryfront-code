@@ -30,6 +30,48 @@ import {
   setSpanAttributes,
   withSpan,
 } from "../../observability/tracing/index.ts";
+import { z } from "zod";
+
+const AgentStreamEventSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("content"),
+    content: z.string(),
+  }),
+  z.object({
+    type: z.literal("tool_call_start"),
+    toolCall: z.object({
+      id: z.string(),
+      name: z.string(),
+    }),
+  }),
+  z.object({
+    type: z.literal("tool_call_delta"),
+    id: z.string(),
+    arguments: z.string(),
+  }),
+  z.object({
+    type: z.literal("tool_call_complete"),
+    toolCall: z.object({
+      id: z.string(),
+      name: z.string(),
+      arguments: z.string(),
+    }),
+  }),
+  z.object({
+    type: z.literal("finish"),
+    finishReason: z.string().nullable(),
+  }),
+  z.object({
+    type: z.literal("usage"),
+    usage: z.object({
+      promptTokens: z.number().optional(),
+      completionTokens: z.number().optional(),
+      totalTokens: z.number().optional(),
+    }),
+  }),
+]);
+
+type AgentStreamEvent = z.infer<typeof AgentStreamEventSchema>;
 
 const DEFAULT_MAX_TOKENS = 4096;
 const DEFAULT_TEMPERATURE = 0.7;
@@ -405,7 +447,47 @@ export class AgentRuntime {
         arguments: string;
       }>();
 
-      const handleEvent = (event: any) => {
+      const parseStreamToolArgs = (
+        rawArgs: string | Record<string, unknown>,
+      ): { args: Record<string, unknown>; error?: string } => {
+        try {
+          const parsed = typeof rawArgs === "string" ? JSON.parse(rawArgs) : rawArgs;
+          if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+            return { args: parsed as Record<string, unknown> };
+          }
+          return { args: {}, error: "Tool call arguments must be a JSON object" };
+        } catch (error) {
+          return {
+            args: {},
+            error: error instanceof Error ? error.message : String(error),
+          };
+        }
+      };
+
+      const recordToolError = async (toolCall: ToolCall, errorStr: string) => {
+        toolCall.status = "error";
+        toolCall.error = errorStr;
+        toolCalls.push(toolCall);
+
+        const errorData = JSON.stringify({
+          type: "error",
+          error: errorStr,
+        });
+        controller.enqueue(encoder.encode(`data: ${errorData}\n\n`));
+
+        const errorMessage: Message = {
+          id: `tool_error_${toolCall.id}`,
+          role: "tool",
+          content: `Error: ${errorStr}`,
+          toolCallId: toolCall.id,
+          toolCall,
+          timestamp: Date.now(),
+        };
+        currentMessages.push(errorMessage);
+        await this.memory.add(errorMessage);
+      };
+
+      const handleEvent = (event: AgentStreamEvent) => {
         switch (event.type) {
           case "content": {
             accumulatedText += event.content;
@@ -477,9 +559,16 @@ export class AgentRuntime {
 
         for (const line of lines) {
           try {
-            const event = JSON.parse(line);
-            handleEvent(event);
-          } catch {
+            const rawEvent = JSON.parse(line);
+            const parseResult = AgentStreamEventSchema.safeParse(rawEvent);
+
+            if (parseResult.success) {
+              handleEvent(parseResult.data);
+            } else {
+              logger.warn("[AGENT] Invalid stream event received:", parseResult.error);
+            }
+          } catch (e) {
+            logger.warn("[AGENT] Failed to parse stream line:", e);
             continue;
           }
         }
@@ -487,8 +576,11 @@ export class AgentRuntime {
 
       if (partial.trim()) {
         try {
-          const event = JSON.parse(partial);
-          handleEvent(event);
+          const rawEvent = JSON.parse(partial);
+          const parseResult = AgentStreamEventSchema.safeParse(rawEvent);
+          if (parseResult.success) {
+            handleEvent(parseResult.data);
+          }
         } catch {
           // Ignore trailing partial
         }
@@ -502,11 +594,20 @@ export class AgentRuntime {
       };
 
       if (streamToolCalls.size > 0) {
-        assistantMessage.toolCalls = Array.from(streamToolCalls.values()).map((tc): StreamToolCall => ({
-          id: tc.id,
-          name: tc.name,
-          arguments: JSON.parse(tc.arguments),
-        }));
+        assistantMessage.toolCalls = Array.from(streamToolCalls.values()).map((tc): StreamToolCall => {
+          const { args, error } = parseStreamToolArgs(tc.arguments);
+          if (error) {
+            logger.warn("[AGENT] Failed to parse streamed tool arguments", {
+              toolCallId: tc.id,
+              error,
+            });
+          }
+          return {
+            id: tc.id,
+            name: tc.name,
+            arguments: args,
+          };
+        });
       }
 
       currentMessages.push(assistantMessage);
@@ -516,12 +617,22 @@ export class AgentRuntime {
         this.status = "tool_execution";
 
         for (const tc of streamToolCalls.values()) {
+          const { args, error: argError } = parseStreamToolArgs(tc.arguments);
           const toolCall: ToolCall = {
             id: tc.id,
             name: tc.name,
-            args: JSON.parse(tc.arguments),
+            args,
             status: "pending",
           };
+
+          if (argError) {
+            logger.warn("[AGENT] Invalid streamed tool arguments", {
+              toolCallId: tc.id,
+              error: argError,
+            });
+            await recordToolError(toolCall, `Invalid tool arguments: ${argError}`);
+            continue;
+          }
 
           try {
             toolCall.status = "executing";
@@ -571,26 +682,8 @@ export class AgentRuntime {
             currentMessages.push(toolResultMessage);
             await this.memory.add(toolResultMessage);
           } catch (error) {
-            toolCall.status = "error";
-            toolCall.error = error instanceof Error ? error.message : String(error);
-            toolCalls.push(toolCall);
-
-            const errorData = JSON.stringify({
-              type: "error",
-              error: toolCall.error,
-            });
-            controller.enqueue(encoder.encode(`data: ${errorData}\n\n`));
-
-            const errorMessage: Message = {
-              id: `tool_error_${tc.id}`,
-              role: "tool",
-              content: `Error: ${toolCall.error}`,
-              toolCallId: tc.id,
-              toolCall,
-              timestamp: Date.now(),
-            };
-            currentMessages.push(errorMessage);
-            await this.memory.add(errorMessage);
+            const errorStr = error instanceof Error ? error.message : String(error);
+            await recordToolError(toolCall, errorStr);
           }
         }
 
