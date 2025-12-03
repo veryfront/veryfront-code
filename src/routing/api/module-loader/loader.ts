@@ -195,11 +195,38 @@ async function loadAndTranspileModule(
   fs: FileSystem, // Pass fs compat instance
   config?: VeryfrontConfig,
 ): Promise<APIRoute> {
-  const source = await adapter.fs.readFile(modulePath);
+  // Try to resolve the module path with various extensions if not found
+  let resolvedPath = modulePath;
+  let source: string | undefined;
 
-  const isTsx = modulePath.endsWith(".tsx");
-  const isJsx = modulePath.endsWith(".jsx");
-  const loader = isTsx ? "tsx" : isJsx ? "jsx" : modulePath.endsWith(".ts") ? "ts" : "js";
+  try {
+    source = await adapter.fs.readFile(modulePath);
+  } catch {
+    // If file not found, try with common extensions
+    const extensions = [".ts", ".tsx", ".js", ".jsx", ".mjs"];
+
+    for (const ext of extensions) {
+      try {
+        const pathWithExt = modulePath + ext;
+        source = await adapter.fs.readFile(pathWithExt);
+        resolvedPath = pathWithExt;
+        break;
+      } catch {
+        // Continue trying other extensions
+      }
+    }
+
+    if (source === undefined) {
+      throw toError(createError({
+        type: "file",
+        message: `File not found: ${modulePath} (tried extensions: ${extensions.join(", ")})`,
+      }));
+    }
+  }
+
+  const isTsx = resolvedPath.endsWith(".tsx");
+  const isJsx = resolvedPath.endsWith(".jsx");
+  const loader = isTsx ? "tsx" : isJsx ? "jsx" : resolvedPath.endsWith(".ts") ? "ts" : "js";
 
   const allowedHosts = await loadSecurityConfig(projectDir, adapter);
   validateHTTPImports(source, allowedHosts);
@@ -229,7 +256,7 @@ async function loadAndTranspileModule(
 
   // Use the directory containing the source file as resolveDir
   // This allows relative imports like ../../../ai/agents to resolve correctly
-  const resolveDir = pathHelper.dirname(modulePath);
+  const resolveDir = pathHelper.dirname(resolvedPath);
 
   const result: BuildResult = await build({
     bundle: true,
@@ -245,7 +272,7 @@ async function loadAndTranspileModule(
       contents: source,
       loader,
       resolveDir,
-      sourcefile: modulePath,
+      sourcefile: resolvedPath,
     },
     plugins,
   });
@@ -258,7 +285,7 @@ async function loadAndTranspileModule(
     }));
   }
 
-  logger.info(`[API] built handler ${modulePath}`);
+  logger.info(`[API] built handler ${resolvedPath}`);
   const js = result.outputFiles?.[0]?.text ?? "export {}";
   logger.debug(`[API] transpiled size ${js.length} bytes`);
 
