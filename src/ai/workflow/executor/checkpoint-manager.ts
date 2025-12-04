@@ -4,12 +4,7 @@
  * Handles workflow state checkpointing for durability and resume
  */
 
-import type {
-  Checkpoint,
-  NodeState,
-  WorkflowContext,
-  WorkflowNode,
-} from "../types.ts";
+import type { Checkpoint, NodeState, WorkflowContext, WorkflowNode } from "../types.ts";
 import { generateId } from "../types.ts";
 import type { WorkflowBackend } from "../backends/types.ts";
 

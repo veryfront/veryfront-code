@@ -2,7 +2,11 @@
  * Workflow DSL Tests
  */
 
-import { assertEquals, assertExists, assertThrows } from "https://deno.land/std@0.220.0/assert/mod.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertThrows,
+} from "https://deno.land/std@0.220.0/assert/mod.ts";
 import { describe, it } from "https://deno.land/std@0.220.0/testing/bdd.ts";
 import { dag, dependsOn, sequence, workflow } from "./workflow.ts";
 import { step } from "./step.ts";
@@ -56,7 +60,7 @@ describe("workflow()", () => {
       // @ts-expect-error Testing invalid input
       () => workflow({ steps: [] }),
       Error,
-      "id"
+      "id",
     );
   });
 
@@ -65,7 +69,7 @@ describe("workflow()", () => {
       // @ts-expect-error Testing invalid input
       () => workflow({ id: "test" }),
       Error,
-      "steps"
+      "steps",
     );
   });
 });
@@ -75,7 +79,7 @@ describe("sequence()", () => {
     const nodes = sequence(
       step("step1", { agent: "agent1" }),
       step("step2", { agent: "agent2" }),
-      step("step3", { agent: "agent3" })
+      step("step3", { agent: "agent3" }),
     );
 
     assertEquals(nodes.length, 3);
@@ -127,7 +131,7 @@ describe("dependsOn()", () => {
   it("should add single dependency", () => {
     const node = dependsOn(
       step("process", { agent: "processor" }),
-      "fetch"
+      "fetch",
     );
 
     assertEquals(node.dependsOn, ["fetch"]);
@@ -138,7 +142,7 @@ describe("dependsOn()", () => {
       step("merge", { tool: "merger" }),
       "step1",
       "step2",
-      "step3"
+      "step3",
     );
 
     assertEquals(node.dependsOn, ["step1", "step2", "step3"]);

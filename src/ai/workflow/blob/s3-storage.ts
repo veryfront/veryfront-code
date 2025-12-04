@@ -44,7 +44,7 @@ async function getS3Module(): Promise<typeof import("@aws-sdk/client-s3")> {
   } catch (error) {
     throw new Error(
       `Failed to load @aws-sdk/client-s3. Please install it: npm install @aws-sdk/client-s3\n` +
-      `Original error: ${error instanceof Error ? error.message : String(error)}`
+        `Original error: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
 }
@@ -278,10 +278,12 @@ export class S3BlobStorage implements BlobStorage {
 
     const key = this.getKey(id);
     try {
-      await client.send(new HeadObjectCommand({
-        Bucket: this.config.bucket,
-        Key: key,
-      }));
+      await client.send(
+        new HeadObjectCommand({
+          Bucket: this.config.bucket,
+          Key: key,
+        }),
+      );
       return true;
     } catch (e) {
       if (e instanceof Error && e.name === "NotFound") {
@@ -297,10 +299,12 @@ export class S3BlobStorage implements BlobStorage {
 
     const key = this.getKey(id);
     try {
-      const headResult = await client.send(new HeadObjectCommand({
-        Bucket: this.config.bucket,
-        Key: key,
-      }));
+      const headResult = await client.send(
+        new HeadObjectCommand({
+          Bucket: this.config.bucket,
+          Key: key,
+        }),
+      );
 
       if (!headResult.LastModified) return null; // Should always be present for existing objects
 
@@ -321,9 +325,9 @@ export class S3BlobStorage implements BlobStorage {
         expiresAt = new Date(headResult.Metadata["expiresat"]!);
       }
 
-      // S3 Lifecycle rules or object TTLs are not exposed directly via HeadObject. 
-      // If `options.ttl` was used in `put`, that TTL is not natively handled by S3 `Expires` header 
-      // for object lifecycle management (it's for caching). 
+      // S3 Lifecycle rules or object TTLs are not exposed directly via HeadObject.
+      // If `options.ttl` was used in `put`, that TTL is not natively handled by S3 `Expires` header
+      // for object lifecycle management (it's for caching).
       // To support TTL, user must configure S3 bucket lifecycle rules separately based on object tags/prefix
       // OR we store expiresAt in metadata and rely on cleanup logic (if any) or user to manage.
       // For now, we only populate expiresAt if S3 provides an Expires header (HTTP caching).

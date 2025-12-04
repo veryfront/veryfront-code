@@ -4,12 +4,7 @@
  * Handles execution of step nodes - the basic unit of workflow execution.
  */
 
-import type {
-  NodeState,
-  StepNodeConfig,
-  WorkflowNode,
-  WorkflowNodeConfig,
-} from "../../types.ts";
+import type { NodeState, StepNodeConfig, WorkflowNode, WorkflowNodeConfig } from "../../types.ts";
 import type { StepExecutor } from "../step-executor.ts";
 import {
   BaseNodeHandler,

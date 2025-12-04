@@ -7,7 +7,7 @@ import {
   validateConfig,
 } from "./define-config.ts";
 import type { VeryfrontConfig } from "./types.ts";
-import { getEnv, setEnv, deleteEnv } from "../../platform/compat/process.ts";
+import { deleteEnv, getEnv, setEnv } from "../../platform/compat/process.ts";
 
 describe("define-config", () => {
   describe("defineConfig", () => {

@@ -6,12 +6,7 @@
 
 import type { Agent, AgentResponse } from "../../types/agent.ts";
 import type { Tool } from "../../types/tool.ts";
-import type {
-  NodeState,
-  StepNodeConfig,
-  WorkflowContext,
-  WorkflowNode,
-} from "../types.ts";
+import type { NodeState, StepNodeConfig, WorkflowContext, WorkflowNode } from "../types.ts";
 import { parseDuration } from "../types.ts";
 import type { BlobStorage } from "../blob/types.ts";
 
@@ -99,7 +94,7 @@ export class StepExecutor {
     if (config.type !== "step") {
       throw new Error(
         `StepExecutor can only execute 'step' nodes, but node "${node.id}" has type '${config.type}'. ` +
-        `This is likely a bug in the DAG executor routing.`
+          `This is likely a bug in the DAG executor routing.`,
       );
     }
 
@@ -109,9 +104,7 @@ export class StepExecutor {
       this.config.onStepStart?.(node.id, resolvedInput);
 
       // Execute with timeout
-      const timeout = config.timeout
-        ? parseDuration(config.timeout)
-        : this.config.defaultTimeout!;
+      const timeout = config.timeout ? parseDuration(config.timeout) : this.config.defaultTimeout!;
 
       const output = await this.executeWithTimeout(
         () => this.executeStep(config, resolvedInput, context),
@@ -216,9 +209,7 @@ export class StepExecutor {
     context: WorkflowContext,
   ): Promise<unknown> {
     // Resolve agent from registry if string
-    const resolvedAgent = typeof agent === "string"
-      ? this.getAgent(agent)
-      : agent;
+    const resolvedAgent = typeof agent === "string" ? this.getAgent(agent) : agent;
 
     // Prepare input for agent
     const agentInput = typeof input === "string" ? input : JSON.stringify(input);
@@ -246,16 +237,14 @@ export class StepExecutor {
     input: unknown,
   ): Promise<unknown> {
     // Resolve tool from registry if string
-    const resolvedTool = typeof tool === "string"
-      ? this.getTool(tool)
-      : tool;
+    const resolvedTool = typeof tool === "string" ? this.getTool(tool) : tool;
 
     // Execute tool
     const result = await resolvedTool.execute(
       input as Record<string, unknown>,
-      { 
+      {
         agentId: "workflow",
-        blobStorage: this.config.blobStorage, 
+        blobStorage: this.config.blobStorage,
       },
     );
 
@@ -276,7 +265,9 @@ export class StepExecutor {
     if (!agent) {
       const available = this.config.agentRegistry.list?.() ?? [];
       const suggestion = available.length > 0
-        ? ` Available agents: ${available.slice(0, 5).join(", ")}${available.length > 5 ? "..." : ""}`
+        ? ` Available agents: ${available.slice(0, 5).join(", ")}${
+          available.length > 5 ? "..." : ""
+        }`
         : " No agents are registered.";
       throw new Error(`Agent not found: "${id}".${suggestion}`);
     }
@@ -298,7 +289,9 @@ export class StepExecutor {
     if (!tool) {
       const available = this.config.toolRegistry.list?.() ?? [];
       const suggestion = available.length > 0
-        ? ` Available tools: ${available.slice(0, 5).join(", ")}${available.length > 5 ? "..." : ""}`
+        ? ` Available tools: ${available.slice(0, 5).join(", ")}${
+          available.length > 5 ? "..." : ""
+        }`
         : " No tools are registered.";
       throw new Error(`Tool not found: "${id}".${suggestion}`);
     }

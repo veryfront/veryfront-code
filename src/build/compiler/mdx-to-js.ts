@@ -1,4 +1,3 @@
-
 import { compile as compileMdx } from "@mdx-js/mdx";
 import { bundlerLogger as logger } from "@veryfront/utils";
 import * as esbuild from "esbuild";

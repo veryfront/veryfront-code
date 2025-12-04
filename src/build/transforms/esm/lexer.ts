@@ -7,7 +7,9 @@ export async function initLexer() {
     // es-module-lexer@1.5 exports init as a Promise (not a function) in ESM build
     // but some typings expect a function. Handle both to avoid type errors.
     const anyInit = init as unknown;
-    initPromise = typeof anyInit === "function" ? (anyInit as () => Promise<void>)() : (anyInit as Promise<void>);
+    initPromise = typeof anyInit === "function"
+      ? (anyInit as () => Promise<void>)()
+      : (anyInit as Promise<void>);
   }
   await initPromise;
 }
@@ -33,7 +35,7 @@ export async function parseImports(code: string): Promise<readonly ImportSpecifi
  */
 export async function replaceSpecifiers(
   code: string,
-  replacer: (specifier: string, isDynamic: boolean) => string | null | undefined
+  replacer: (specifier: string, isDynamic: boolean) => string | null | undefined,
 ): Promise<string> {
   const imports = await parseImports(code);
   let result = code;
@@ -45,7 +47,7 @@ export async function replaceSpecifiers(
     if (imp.n === undefined) continue;
 
     const replacement = replacer(imp.n, imp.d > -1);
-    
+
     if (replacement && replacement !== imp.n) {
       // Replace only the specifier part [s, e]
       // imp.s and imp.e are indices in the original string.
@@ -65,7 +67,7 @@ export async function replaceSpecifiers(
  */
 export async function rewriteImports(
   code: string,
-  rewriter: (imp: ImportSpecifier, statement: string) => string | null
+  rewriter: (imp: ImportSpecifier, statement: string) => string | null,
 ): Promise<string> {
   const imports = await parseImports(code);
   let result = code;
@@ -73,12 +75,12 @@ export async function rewriteImports(
   for (let i = imports.length - 1; i >= 0; i--) {
     const imp = imports[i];
     if (!imp) continue;
-    
+
     // Extract the full statement from the ORIGINAL code (indices are stable)
     const statement = code.substring(imp.ss, imp.se);
-    
+
     const replacement = rewriter(imp, statement);
-    
+
     if (replacement !== null) {
       const before = result.substring(0, imp.ss);
       const after = result.substring(imp.se);

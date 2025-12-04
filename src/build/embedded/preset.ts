@@ -22,7 +22,7 @@ export interface BuildEmbeddedOptions {
  */
 export async function buildEmbeddedPreset(
   options: BuildEmbeddedOptions,
-  ): Promise<{ manifest: EmbeddedBundleManifest }> {
+): Promise<{ manifest: EmbeddedBundleManifest }> {
   const { projectDir, outDir } = options;
   const embeddedDir = join(outDir, "embedded");
   const fs = createFileSystem();

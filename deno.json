@@ -1,15 +1,7 @@
 {
   "name": "veryfront",
-  "version": "0.0.17",
+  "version": "0.0.18",
   "nodeModulesDir": "auto",
-  "workspace": [
-    "./examples/async-worker-redis",
-    "./examples/knowledge-base",
-    "./examples/form-handling",
-    "./examples/middleware-demo",
-    "./examples/coding-agent",
-    "./examples/durable-workflows"
-  ],
   "exports": {
     ".": "./src/index.ts",
     "./cli": "./src/cli/main.ts",

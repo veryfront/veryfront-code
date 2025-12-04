@@ -1,6 +1,6 @@
 import { assertEquals } from "std/assert/mod.ts";
 import { join } from "std/path/mod.ts";
-import { writeManifest, loadManifest } from "./manifest-manager.ts";
+import { loadManifest, writeManifest } from "./manifest-manager.ts";
 import type { OptimizedImageMetadata } from "./types.ts";
 
 Deno.test("manifest-manager writes and loads manifests via compat fs", async () => {

@@ -4,7 +4,7 @@
 
 // Types and interfaces
 export type { BackendConfig, Lock, WorkflowBackend } from "./types.ts";
-export { hasQueueSupport, hasLockSupport, hasEventSupport } from "./types.ts";
+export { hasEventSupport, hasLockSupport, hasQueueSupport } from "./types.ts";
 
 // Backend implementations
 export { MemoryBackend } from "./memory.ts";

@@ -39,7 +39,9 @@ async function getRedisModule(): Promise<{ DenoRedis: any; NodeRedis: any }> {
       DenoRedis = await import("https://deno.land/x/redis@v0.32.1/mod.ts");
     } catch (error) {
       throw new Error(
-        `Failed to load Deno Redis module. Error: ${error instanceof Error ? error.message : String(error)}`
+        `Failed to load Deno Redis module. Error: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
       );
     }
   } else {
@@ -48,7 +50,7 @@ async function getRedisModule(): Promise<{ DenoRedis: any; NodeRedis: any }> {
     } catch (error) {
       throw new Error(
         `Failed to load 'redis' package. Please install it with: npm install redis\n` +
-        `Error: ${error instanceof Error ? error.message : String(error)}`
+          `Error: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
   }
@@ -76,7 +78,7 @@ export interface RedisAdapter {
   rpush(key: string, ...values: string[]): Promise<number>;
   lrange(key: string, start: number, stop: number): Promise<string[]>;
   lindex(key: string, index: number): Promise<string | null>;
-  lset(key: string, index: number, value: string): Promise<string | 'OK'>;
+  lset(key: string, index: number, value: string): Promise<string | "OK">;
   llen(key: string): Promise<number>;
 
   // Stream operations
@@ -165,7 +167,7 @@ class NodeRedisAdapter implements RedisAdapter {
     return await this.client.lIndex(key, index);
   }
 
-  async lset(key: string, index: number, value: string): Promise<string | 'OK'> {
+  async lset(key: string, index: number, value: string): Promise<string | "OK"> {
     return await this.client.lSet(key, index, value);
   }
 
@@ -184,7 +186,9 @@ class NodeRedisAdapter implements RedisAdapter {
   async xreadgroup(
     streams: Array<{ key: string; xid: string }>,
     options: { group: string; consumer: string; block?: number; count?: number },
-  ): Promise<Array<{ key: string; messages: Array<{ id: string; data: Record<string, string> }> }>> {
+  ): Promise<
+    Array<{ key: string; messages: Array<{ id: string; data: Record<string, string> }> }>
+  > {
     // Node redis format: { key: string, messages: Array<{ id: string, message: Record<string, string> }> }
     // OR if single stream: Array<{ id: string, message: Record<string, string> }> ??
     // The node-redis v4 API is slightly different.
@@ -192,11 +196,11 @@ class NodeRedisAdapter implements RedisAdapter {
     const result = await this.client.xReadGroup(
       options.group,
       options.consumer,
-      streams.map(s => ({ key: s.key, id: s.xid })),
+      streams.map((s) => ({ key: s.key, id: s.xid })),
       {
         BLOCK: options.block,
-        COUNT: options.count
-      }
+        COUNT: options.count,
+      },
     );
 
     if (!result) return [];
@@ -301,7 +305,7 @@ class DenoRedisAdapter implements RedisAdapter {
     return await this.client.lindex(key, index);
   }
 
-  async lset(key: string, index: number, value: string): Promise<string | 'OK'> {
+  async lset(key: string, index: number, value: string): Promise<string | "OK"> {
     return await this.client.lset(key, index, value);
   }
 
@@ -320,13 +324,15 @@ class DenoRedisAdapter implements RedisAdapter {
   async xreadgroup(
     streams: Array<{ key: string; xid: string }>,
     options: { group: string; consumer: string; block?: number; count?: number },
-  ): Promise<Array<{ key: string; messages: Array<{ id: string; data: Record<string, string> }> }>> {
+  ): Promise<
+    Array<{ key: string; messages: Array<{ id: string; data: Record<string, string> }> }>
+  > {
     if (streams.length === 0) return [];
 
     // Deno redis returns: Array<{ key: string, messages: Array<{ id: string, fieldValues: string[] }> }>
     const res = await this.client.xreadgroup(
-      streams.map(s => ({ key: s.key, xid: s.xid })),
-      options
+      streams.map((s) => ({ key: s.key, xid: s.xid })),
+      options,
     );
 
     if (!res) return [];
@@ -409,9 +415,11 @@ export interface RedisBackendConfig extends BackendConfig {
 export class RedisBackend implements WorkflowBackend {
   private client: RedisAdapter | null = null;
   private connectionPromise: Promise<RedisAdapter> | null = null;
-  private config: Required<
-    Pick<RedisBackendConfig, "prefix" | "streamKey" | "groupName" | "consumerName" | "debug">
-  > & RedisBackendConfig;
+  private config:
+    & Required<
+      Pick<RedisBackendConfig, "prefix" | "streamKey" | "groupName" | "consumerName" | "debug">
+    >
+    & RedisBackendConfig;
   private initialized = false;
 
   constructor(config: RedisBackendConfig = {}) {
@@ -490,12 +498,19 @@ export class RedisBackend implements WorkflowBackend {
     }
 
     // Validate status is a known value
-    const validStatuses: WorkflowStatus[] = ["pending", "running", "completed", "failed", "cancelled", "waiting"];
+    const validStatuses: WorkflowStatus[] = [
+      "pending",
+      "running",
+      "completed",
+      "failed",
+      "cancelled",
+      "waiting",
+    ];
     const status = data.status as WorkflowStatus;
     if (data.status && !validStatuses.includes(status)) {
       throw new Error(
         `Invalid workflow run data for run "${data.id}": unknown status "${data.status}". ` +
-        `Expected one of: ${validStatuses.join(", ")}`
+          `Expected one of: ${validStatuses.join(", ")}`,
       );
     }
 
@@ -507,7 +522,7 @@ export class RedisBackend implements WorkflowBackend {
       } catch (e) {
         throw new Error(
           `Invalid workflow run data for run "${data.id}": failed to parse '${field}' as JSON. ` +
-          `Error: ${e instanceof Error ? e.message : String(e)}`
+            `Error: ${e instanceof Error ? e.message : String(e)}`,
         );
       }
     };
@@ -933,7 +948,9 @@ export class RedisBackend implements WorkflowBackend {
         }
 
         // Check approver filter
-        if (filter?.approver && approval.approvers && !approval.approvers.includes(filter.approver)) {
+        if (
+          filter?.approver && approval.approvers && !approval.approvers.includes(filter.approver)
+        ) {
           continue;
         }
 
@@ -1078,9 +1095,9 @@ export class RedisBackend implements WorkflowBackend {
 
   destroy(): Promise<void> {
     if (this.client) {
-      if (typeof this.client.quit === 'function') {
+      if (typeof this.client.quit === "function") {
         this.client.quit();
-      } else if (typeof this.client.disconnect === 'function') {
+      } else if (typeof this.client.disconnect === "function") {
         this.client.disconnect();
       }
       this.client = null;

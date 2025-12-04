@@ -61,7 +61,7 @@ async function canResolveReactFromProject(): Promise<boolean> {
   } catch (error) {
     logger.debug(
       "Project missing react and/or react-dom, using bundled versions for consistency",
-      error
+      error,
     );
     useProjectReact = false;
     return false;

@@ -26,11 +26,11 @@ export interface SubWorkflowOptions extends BaseNodeConfig {
 
 /**
  * Create a sub-workflow node for nested execution
- * 
+ *
  * @example
  * ```typescript
  * import mySubWorkflow from './my-sub-workflow';
- * 
+ *
  * // Execute a sub-workflow
  * subWorkflow('nested-process', {
  *   workflow: mySubWorkflow.definition,

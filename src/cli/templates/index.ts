@@ -13,7 +13,14 @@ export interface TemplateFile {
   content: string;
 }
 
-export type TemplateName = "blog" | "docs" | "app" | "minimal" | "ai" | "pages-router" | "app-router";
+export type TemplateName =
+  | "blog"
+  | "docs"
+  | "app"
+  | "minimal"
+  | "ai"
+  | "pages-router"
+  | "app-router";
 
 export const templates: Record<TemplateName, TemplateFile[]> = {
   blog: blogTemplate,

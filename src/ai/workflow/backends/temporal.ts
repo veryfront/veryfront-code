@@ -70,8 +70,8 @@ export class TemporalAdapter implements WorkflowBackend {
 
     console.warn(
       "[TemporalAdapter] This is a stub implementation. " +
-      "Full Temporal integration requires the Temporal SDK and worker setup. " +
-      "See: https://docs.temporal.io/",
+        "Full Temporal integration requires the Temporal SDK and worker setup. " +
+        "See: https://docs.temporal.io/",
     );
   }
 

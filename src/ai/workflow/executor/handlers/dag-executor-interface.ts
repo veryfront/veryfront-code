@@ -5,12 +5,7 @@
  * between handlers and the executor.
  */
 
-import type {
-  NodeState,
-  WorkflowContext,
-  WorkflowNode,
-  WorkflowRun,
-} from "../../types.ts";
+import type { NodeState, WorkflowContext, WorkflowNode, WorkflowRun } from "../../types.ts";
 
 /**
  * Result of DAG execution (subset of DAGExecutionResult)

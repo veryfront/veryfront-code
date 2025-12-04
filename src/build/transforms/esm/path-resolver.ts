@@ -32,7 +32,7 @@ export function resolvePathAliases(
     const pathParts = filePath.split("/");
     const projectParts = _normalizedProjectDir.split("/");
     const lastProjectPart = projectParts[projectParts.length - 1];
-    const projectIndex = pathParts.indexOf(lastProjectPart!); 
+    const projectIndex = pathParts.indexOf(lastProjectPart!);
     if (projectIndex >= 0) {
       relativeFilePath = pathParts.slice(projectIndex + 1).join("/");
     }

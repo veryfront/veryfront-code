@@ -74,7 +74,10 @@ export async function handleComponentPage(
 
     // Get project's React for createElement to ensure element symbols match user components
     const React = await getProjectReact();
-    const pageElement = React.createElement(PageComponent, options?.props || {}) as BundledReact.ReactElement;
+    const pageElement = React.createElement(
+      PageComponent,
+      options?.props || {},
+    ) as BundledReact.ReactElement;
 
     const pageBundle: PageBundle = {
       compiledCode: "",

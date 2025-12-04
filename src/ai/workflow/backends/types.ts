@@ -262,7 +262,9 @@ export interface WorkflowBackend {
  */
 export function hasQueueSupport(
   backend: WorkflowBackend,
-): backend is WorkflowBackend & Required<Pick<WorkflowBackend, "enqueue" | "dequeue" | "acknowledge">> {
+): backend is
+  & WorkflowBackend
+  & Required<Pick<WorkflowBackend, "enqueue" | "dequeue" | "acknowledge">> {
   return (
     typeof backend.enqueue === "function" &&
     typeof backend.dequeue === "function" &&
@@ -289,7 +291,9 @@ export function hasLockSupport(
  */
 export function hasEventSupport(
   backend: WorkflowBackend,
-): backend is WorkflowBackend & Required<Pick<WorkflowBackend, "publishEvent" | "subscribeEvents">> {
+): backend is
+  & WorkflowBackend
+  & Required<Pick<WorkflowBackend, "publishEvent" | "subscribeEvents">> {
   return (
     typeof backend.publishEvent === "function" &&
     typeof backend.subscribeEvents === "function"

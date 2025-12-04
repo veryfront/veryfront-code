@@ -59,7 +59,9 @@ export class ResponseBuilder implements FluentMethodsContext, ResponseMethodsCon
 }
 
 // Initialize the ResponseBuilder class reference in static-helpers
-staticHelpers.setResponseBuilderClass(ResponseBuilder as unknown as Parameters<typeof staticHelpers.setResponseBuilderClass>[0]);
+staticHelpers.setResponseBuilderClass(
+  ResponseBuilder as unknown as Parameters<typeof staticHelpers.setResponseBuilderClass>[0],
+);
 
 /**
  * Factory function for creating preconfigured builders

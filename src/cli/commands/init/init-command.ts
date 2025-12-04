@@ -18,9 +18,17 @@ import {
   createSampleFiles,
 } from "./sample-generators.ts";
 import type { CacheBackend, InitOptions, InitTemplate } from "./types.ts";
-import { cwd, getEnv, isInteractive as checkIsInteractive } from "../../../platform/compat/process.ts";
+import {
+  cwd,
+  getEnv,
+  isInteractive as checkIsInteractive,
+} from "../../../platform/compat/process.ts";
 import { createFileSystem } from "../../../platform/compat/fs.ts";
-import { installDependencies, getInstallCommand, detectPackageManager } from "../../utils/package-manager.ts";
+import {
+  detectPackageManager,
+  getInstallCommand,
+  installDependencies,
+} from "../../utils/package-manager.ts";
 
 const CACHE_BACKENDS: CacheBackend[] = ["memory", "filesystem", "kv", "redis"];
 

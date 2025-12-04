@@ -5,7 +5,7 @@
 
 import { assertEquals, assertExists } from "std/assert/mod.ts";
 import { afterEach, beforeEach, describe, it } from "std/testing/bdd.ts";
-import type { Dispatch, SetStateAction, EffectCallback, DependencyList } from "react";
+import type { DependencyList, Dispatch, EffectCallback, SetStateAction } from "react";
 import {
   __resetBridgeForTesting,
   getStateBridge,
@@ -36,7 +36,8 @@ class MockSessionStorage {
 
 // Mock React hooks
 class MockReactHooks {
-  private states: Map<string, { value: unknown; setter: Dispatch<SetStateAction<unknown>> }> = new Map();
+  private states: Map<string, { value: unknown; setter: Dispatch<SetStateAction<unknown>> }> =
+    new Map();
   private effects: Array<EffectCallback> = [];
 
   // Bind methods in constructor to preserve 'this' context
@@ -60,7 +61,10 @@ class MockReactHooks {
             : action;
         }
       };
-      this.states.set(key, { value: initialValue as unknown, setter: setter as Dispatch<SetStateAction<unknown>> });
+      this.states.set(key, {
+        value: initialValue as unknown,
+        setter: setter as Dispatch<SetStateAction<unknown>>,
+      });
     }
     const state = this.states.get(key)!;
     return [state.value as S, state.setter as Dispatch<SetStateAction<S>>];

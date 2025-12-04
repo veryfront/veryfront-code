@@ -17,6 +17,7 @@
 import * as esbuild from "esbuild/mod.js";
 import { createFileSystem, FileSystem } from "../src/platform/compat/fs.ts";
 import * as pathHelper from "../src/platform/compat/path-helper.ts";
+import { getEnv } from "../src/platform/compat/process.ts";
 
 // Helper to get fs functions (prioritizing the compat layer)
 const getFs = (): FileSystem => {
@@ -28,7 +29,7 @@ const PROJECT_ROOT = pathHelper.resolve(__dirname, "..");
 const fs = getFs();
 
 const denoJson = JSON.parse(await fs.readTextFile("./deno.json"));
-const version = denoJson.version || "0.0.6";
+const version = getEnv("VERYFRONT_VERSION") || denoJson.version || "0.0.6";
 const denoImports: Record<string, string> = denoJson.imports || {};
 
 const veryfrontImportMap: Record<string, string> = {};

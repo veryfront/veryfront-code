@@ -173,7 +173,9 @@ export class ApprovalManager {
   ): Promise<void> {
     if (this.config.debug) {
       console.log(
-        `[ApprovalManager] Processing decision for ${approvalId}: ${decision.approved ? "approved" : "rejected"}`,
+        `[ApprovalManager] Processing decision for ${approvalId}: ${
+          decision.approved ? "approved" : "rejected"
+        }`,
       );
     }
 
@@ -256,7 +258,9 @@ export class ApprovalManager {
       await this.config.backend.updateRun(runId, {
         status: "failed",
         error: {
-          message: `Approval "${approvalId}" was rejected${decision.comment ? `: ${decision.comment}` : ""}`,
+          message: `Approval "${approvalId}" was rejected${
+            decision.comment ? `: ${decision.comment}` : ""
+          }`,
         },
         completedAt: new Date(),
       });

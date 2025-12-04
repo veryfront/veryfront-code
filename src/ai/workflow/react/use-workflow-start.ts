@@ -70,7 +70,7 @@ export interface UseWorkflowStartResult<TInput = unknown> {
  * useWorkflowStart - Start new workflow runs
  */
 export function useWorkflowStart<TInput = unknown>(
-  options: UseWorkflowStartOptions
+  options: UseWorkflowStartOptions,
 ): UseWorkflowStartResult<TInput> {
   const { workflowId, apiBase = "/api/workflows", onStart, onError } = options;
 
@@ -98,7 +98,7 @@ export function useWorkflowStart<TInput = unknown>(
         if (!response.ok) {
           const errorData = await response.json().catch(() => ({}));
           throw new Error(
-            errorData.message || `Failed to start workflow: ${response.status}`
+            errorData.message || `Failed to start workflow: ${response.status}`,
           );
         }
 
@@ -118,7 +118,7 @@ export function useWorkflowStart<TInput = unknown>(
         setIsStarting(false);
       }
     },
-    [workflowId, apiBase, onStart, onError]
+    [workflowId, apiBase, onStart, onError],
   );
 
   /**

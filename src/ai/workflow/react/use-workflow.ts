@@ -34,12 +34,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import type {
-  NodeState,
-  PendingApproval,
-  WorkflowRun,
-  WorkflowStatus,
-} from "../types.ts";
+import type { NodeState, PendingApproval, WorkflowRun, WorkflowStatus } from "../types.ts";
 
 /**
  * Options for useWorkflow hook
@@ -285,7 +280,7 @@ export function useWorkflow(options: UseWorkflowOptions): UseWorkflowResult {
     if (states.length === 0) return 0;
 
     const completed = states.filter(
-      (s) => s.status === "completed" || s.status === "skipped"
+      (s) => s.status === "completed" || s.status === "skipped",
     ).length;
 
     return Math.round((completed / states.length) * 100);

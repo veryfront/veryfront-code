@@ -46,5 +46,7 @@ export function getProdScripts(slug: string, nonce?: string): string {
   // Use external script src for hydration to avoid CSP issues with inline scripts
   return `
   <script type="module" src="/_veryfront/rsc/client.js"${nonceAttr}></script>
-  <script type="module" src="/_veryfront/hydrate.js?slug=${encodeURIComponent(slug)}"${nonceAttr}></script>`;
+  <script type="module" src="/_veryfront/hydrate.js?slug=${
+    encodeURIComponent(slug)
+  }"${nonceAttr}></script>`;
 }

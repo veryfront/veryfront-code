@@ -112,9 +112,7 @@ function logFinalElementCheck(
 
   // Use symbol-agnostic check for cross-instance compatibility
   const isElement = React.isValidElement(finalChild) || looksLikeReactElement(finalChild);
-  const type = isElement
-    ? getElementTypeName(finalChild as React.ReactElement)
-    : typeof finalChild;
+  const type = isElement ? getElementTypeName(finalChild as React.ReactElement) : typeof finalChild;
 
   logger.info("Final element check before SSR", {
     finalIsElement,

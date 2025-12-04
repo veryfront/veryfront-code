@@ -222,5 +222,5 @@ function expandVariables(value: string, vars: Record<string, string>): string {
 export function supportsEnvFiles(): boolean {
   const fs = getFs();
   // If fs.readTextFile is available, it supports .env files
-  return typeof fs.readTextFile === 'function';
+  return typeof fs.readTextFile === "function";
 }

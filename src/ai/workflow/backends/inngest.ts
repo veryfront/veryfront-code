@@ -61,8 +61,8 @@ export class InngestAdapter implements WorkflowBackend {
 
     logger.warn(
       "[InngestAdapter] This is a stub implementation. " +
-      "Full Inngest integration requires additional setup. " +
-      "See: https://www.inngest.com/docs",
+        "Full Inngest integration requires additional setup. " +
+        "See: https://www.inngest.com/docs",
     );
   }
 

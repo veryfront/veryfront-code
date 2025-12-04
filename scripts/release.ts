@@ -94,6 +94,7 @@ async function runCommand(cmd: string[], cwd?: string) {
       cwd,
       stdout: "inherit",
       stderr: "inherit",
+      env: Deno.env.toObject(), // Pass current environment variables
     });
     const status = await command.output();
     if (!status.success) {
@@ -280,6 +281,8 @@ async function main() {
 	// 3. Build npm package
 	if (!args["no-build"]) {
 		console.log("\n📦 Building npm package...");
+		// @ts-ignore - Deno global
+		if (isDeno) Deno.env.set("VERYFRONT_VERSION", newVersion);
 		await runCommand(["deno", "task", "build:npm"]);
 	}
 

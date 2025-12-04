@@ -5,6 +5,7 @@
  */
 
 import type {
+  BlobResolver,
   NodeState,
   StepBuilderContext,
   WorkflowContext,
@@ -12,7 +13,6 @@ import type {
   WorkflowNode,
   WorkflowRun,
   WorkflowStatus,
-  BlobResolver,
 } from "../types.ts";
 import { generateId, parseDuration } from "../types.ts";
 import { hasLockSupport, type WorkflowBackend } from "../backends/types.ts";
@@ -194,7 +194,7 @@ export class WorkflowExecutor {
     if (run.status !== "waiting" && run.status !== "pending") {
       throw new Error(
         `Cannot resume workflow run "${runId}": current status is "${run.status}". ` +
-        `Only runs in "waiting" or "pending" status can be resumed.`
+          `Only runs in "waiting" or "pending" status can be resumed.`,
       );
     }
 
@@ -218,7 +218,7 @@ export class WorkflowExecutor {
     if (fromCheckpoint && !resumeInfo) {
       throw new Error(
         `Checkpoint "${fromCheckpoint}" not found for run "${runId}". ` +
-        `Cannot resume from non-existent checkpoint.`
+          `Cannot resume from non-existent checkpoint.`,
       );
     }
 
@@ -263,7 +263,7 @@ export class WorkflowExecutor {
       if (!acquired) {
         throw new Error(
           `Cannot execute workflow run "${runId}": another worker is already executing it. ` +
-          `This can happen when multiple workers try to execute the same run concurrently.`
+            `This can happen when multiple workers try to execute the same run concurrently.`,
         );
       }
 
@@ -363,10 +363,10 @@ export class WorkflowExecutor {
     } else {
       // Dynamic steps - call the function
       if (!this.config.blobStorage) {
-         // Warn if blobStorage is missing but dynamic steps might need it? 
-         // For now, we allow it to be undefined if user doesn't use it.
+        // Warn if blobStorage is missing but dynamic steps might need it?
+        // For now, we allow it to be undefined if user doesn't use it.
       }
-      
+
       const builderContext: StepBuilderContext = {
         input: context.input,
         context,
@@ -577,7 +577,7 @@ export class WorkflowExecutor {
     if (run.status === "completed" || run.status === "failed") {
       throw new Error(
         `Cannot cancel workflow run "${runId}": run has already ${run.status}. ` +
-        `Only active runs (pending, running, waiting) can be cancelled.`
+          `Only active runs (pending, running, waiting) can be cancelled.`,
       );
     }
 

@@ -109,9 +109,7 @@ export class MemoryBackend implements WorkflowBackend {
     }
 
     if (filter.status) {
-      const statuses = Array.isArray(filter.status)
-        ? filter.status
-        : [filter.status];
+      const statuses = Array.isArray(filter.status) ? filter.status : [filter.status];
       runs = runs.filter((r) => statuses.includes(r.status));
     }
 
@@ -222,9 +220,11 @@ export class MemoryBackend implements WorkflowBackend {
 
   getPendingApprovals(runId: string): Promise<PendingApproval[]> {
     const approvals = this.approvals.get(runId) || [];
-    return Promise.resolve(approvals
-      .filter((a) => a.status === "pending")
-      .map((a) => structuredClone(a)));
+    return Promise.resolve(
+      approvals
+        .filter((a) => a.status === "pending")
+        .map((a) => structuredClone(a)),
+    );
   }
 
   getPendingApproval(

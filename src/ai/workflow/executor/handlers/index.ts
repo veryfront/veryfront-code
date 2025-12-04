@@ -30,24 +30,24 @@ export type { DAGSubExecutionResult, IDAGSubExecutor } from "./dag-executor-inte
 // Handler implementations
 export {
   createStepNodeHandler,
-  StepNodeHandler,
   type StepNodeCallbacks,
+  StepNodeHandler,
 } from "./step-node-handler.ts";
 
 export {
   createParallelNodeHandler,
-  ParallelNodeHandler,
   type ParallelNodeCallbacks,
+  ParallelNodeHandler,
 } from "./parallel-node-handler.ts";
 
 export {
+  type BranchNodeCallbacks,
   BranchNodeHandler,
   createBranchNodeHandler,
-  type BranchNodeCallbacks,
 } from "./branch-node-handler.ts";
 
 export {
   createWaitNodeHandler,
-  WaitNodeHandler,
   type WaitNodeCallbacks,
+  WaitNodeHandler,
 } from "./wait-node-handler.ts";

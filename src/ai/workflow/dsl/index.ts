@@ -5,11 +5,11 @@
  */
 
 // Main workflow builder
-export { workflow, sequence, dag, dependsOn } from "./workflow.ts";
-export type { WorkflowOptions, Workflow } from "./workflow.ts";
+export { dag, dependsOn, sequence, workflow } from "./workflow.ts";
+export type { Workflow, WorkflowOptions } from "./workflow.ts";
 
 // Step builder
-export { step, agentStep, toolStep } from "./step.ts";
+export { agentStep, step, toolStep } from "./step.ts";
 export type { StepOptions } from "./step.ts";
 
 // Parallel execution
@@ -25,9 +25,9 @@ export { subWorkflow } from "./sub-workflow.ts";
 export type { SubWorkflowOptions } from "./sub-workflow.ts";
 
 // Conditional branching
-export { branch, when, unless } from "./branch.ts";
+export { branch, unless, when } from "./branch.ts";
 export type { BranchOptions } from "./branch.ts";
 
 // Wait/approval nodes
-export { waitForApproval, waitForEvent, delay } from "./wait.ts";
+export { delay, waitForApproval, waitForEvent } from "./wait.ts";
 export type { WaitForApprovalOptions, WaitForEventOptions } from "./wait.ts";

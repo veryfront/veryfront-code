@@ -62,10 +62,12 @@ export function looksLikeReactElement(value: unknown): boolean {
   // This handles both bundled and project React instances
   if (typeof typeofSymbol === "symbol") {
     const desc = typeofSymbol.description || String(typeofSymbol);
-    if (desc.includes("react.element") || desc.includes("react.fragment") ||
-        desc.includes("react.portal") || desc.includes("react.forward_ref") ||
-        desc.includes("react.memo") || desc.includes("react.lazy") ||
-        desc.includes("react.suspense") || desc.includes("react.context")) {
+    if (
+      desc.includes("react.element") || desc.includes("react.fragment") ||
+      desc.includes("react.portal") || desc.includes("react.forward_ref") ||
+      desc.includes("react.memo") || desc.includes("react.lazy") ||
+      desc.includes("react.suspense") || desc.includes("react.context")
+    ) {
       return true;
     }
   }
