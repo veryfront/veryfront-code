@@ -25,6 +25,9 @@ let NodeRedis: any = null;
 /**
  * Lazily load the Redis module for the current runtime.
  * This ensures the redis package is only required when the Redis backend is actually used.
+ *
+ * NOTE: We construct module names dynamically to prevent Deno's static analyzer
+ * from pre-fetching these optional dependencies during lint/check tasks.
  */
 async function getRedisModule(): Promise<{ DenoRedis: any; NodeRedis: any }> {
   // Return cached modules if already loaded
@@ -35,8 +38,10 @@ async function getRedisModule(): Promise<{ DenoRedis: any; NodeRedis: any }> {
   // @ts-ignore - Deno global
   if (typeof Deno !== "undefined") {
     try {
+      // Construct URL dynamically to prevent static analysis from pre-fetching
+      const denoRedisUrl = ["https://deno.land/x/redis", "@v0.32.1/mod.ts"].join("");
       // @ts-ignore - Deno global
-      DenoRedis = await import("https://deno.land/x/redis@v0.32.1/mod.ts");
+      DenoRedis = await import(denoRedisUrl);
     } catch (error) {
       throw new Error(
         `Failed to load Deno Redis module. Error: ${
@@ -46,7 +51,10 @@ async function getRedisModule(): Promise<{ DenoRedis: any; NodeRedis: any }> {
     }
   } else {
     try {
-      NodeRedis = await import("redis");
+      // Construct module name dynamically to prevent Deno static analyzer
+      // from trying to resolve this npm package during lint/check
+      const redisModuleName = ["re", "dis"].join("");
+      NodeRedis = await import(redisModuleName);
     } catch (error) {
       throw new Error(
         `Failed to load 'redis' package. Please install it with: npm install redis\n` +
