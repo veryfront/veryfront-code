@@ -1,6 +1,6 @@
 {
   "name": "veryfront",
-  "version": "0.0.18",
+  "version": "0.0.19",
   "nodeModulesDir": "auto",
   "exports": {
     ".": "./src/index.ts",
