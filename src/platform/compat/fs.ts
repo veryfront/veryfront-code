@@ -47,8 +47,15 @@ export interface FileSystem {
 // ============================================================================
 
 interface NodeFsPromises {
-  readFile(path: string, options?: { encoding?: string; flag?: string } | string): Promise<string | Uint8Array>;
-  writeFile(path: string, data: string | Uint8Array, options?: { encoding?: string; flag?: string } | string): Promise<void>;
+  readFile(
+    path: string,
+    options?: { encoding?: string; flag?: string } | string,
+  ): Promise<string | Uint8Array>;
+  writeFile(
+    path: string,
+    data: string | Uint8Array,
+    options?: { encoding?: string; flag?: string } | string,
+  ): Promise<void>;
   access(path: string, mode?: number): Promise<void>;
   stat(path: string): Promise<{
     isFile(): boolean;
@@ -71,8 +78,8 @@ interface NodeFsPromises {
 
 class NodeFileSystem implements FileSystem {
   private fs: NodeFsPromises | null = null;
-  private os: typeof import('node:os') | null = null;
-  private path: typeof import('node:path') | null = null;
+  private os: typeof import("node:os") | null = null;
+  private path: typeof import("node:path") | null = null;
   private initialized = false;
 
   private async ensureInitialized(): Promise<void> {
@@ -88,9 +95,9 @@ class NodeFileSystem implements FileSystem {
 
     // Use dynamic ESM imports for Node.js modules
     const [fsModule, osModule, pathModule] = await Promise.all([
-      import('node:fs/promises'),
-      import('node:os'),
-      import('node:path'),
+      import("node:fs/promises"),
+      import("node:os"),
+      import("node:path"),
     ]);
 
     this.fs = fsModule as unknown as NodeFsPromises;
@@ -125,7 +132,7 @@ class NodeFileSystem implements FileSystem {
       await this.fs!.access(path);
       return true;
     } catch (error: any) {
-      if (error.code === 'ENOENT') {
+      if (error.code === "ENOENT") {
         return false;
       }
       throw error;
@@ -166,12 +173,18 @@ class NodeFileSystem implements FileSystem {
   async remove(path: string, options?: { recursive?: boolean }): Promise<void> {
     await this.ensureInitialized();
     // Node.js fs.rm requires force for recursive deletion of non-empty directories
-    await this.fs!.rm(path, { recursive: options?.recursive ?? false, force: options?.recursive ?? false });
+    await this.fs!.rm(path, {
+      recursive: options?.recursive ?? false,
+      force: options?.recursive ?? false,
+    });
   }
 
   async makeTempDir(options?: { prefix?: string }): Promise<string> {
     await this.ensureInitialized();
-    const tempDir = this.path!.join(this.os!.tmpdir(), `${options?.prefix ?? 'tmp-'}${Math.random().toString(36).substring(2, 8)}`);
+    const tempDir = this.path!.join(
+      this.os!.tmpdir(),
+      `${options?.prefix ?? "tmp-"}${Math.random().toString(36).substring(2, 8)}`,
+    );
     await this.fs!.mkdir(tempDir, { recursive: true });
     return tempDir;
   }

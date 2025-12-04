@@ -18,7 +18,10 @@ export class MemoryRateLimitStore implements RateLimitStore {
   ) {
     // Start cleanup interval
     if (typeof setInterval !== "undefined") {
-      this.cleanupInterval = setInterval(() => this.cleanup(), cleanupIntervalMs) as unknown as number;
+      this.cleanupInterval = setInterval(
+        () => this.cleanup(),
+        cleanupIntervalMs,
+      ) as unknown as number;
     }
   }
 

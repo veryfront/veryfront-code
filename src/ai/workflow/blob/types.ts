@@ -51,7 +51,10 @@ export interface BlobStorage {
   /**
    * Store data and return a reference
    */
-  put(data: string | Uint8Array | Blob | ReadableStream, options?: StoreBlobOptions): Promise<BlobRef>;
+  put(
+    data: string | Uint8Array | Blob | ReadableStream,
+    options?: StoreBlobOptions,
+  ): Promise<BlobRef>;
 
   /**
    * Retrieve data as a ReadableStream

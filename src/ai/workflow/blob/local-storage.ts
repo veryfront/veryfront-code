@@ -4,7 +4,7 @@
  * Stores blobs as files on the local disk
  */
 
-import { join, dirname } from "../../../platform/compat/path-helper.ts";
+import { dirname, join } from "../../../platform/compat/path-helper.ts";
 import { createFileSystem, FileSystem } from "../../../platform/compat/fs.ts";
 import type { BlobRef, BlobStorage, StoreBlobOptions } from "./types.ts";
 import { agentLogger as logger } from "@veryfront/utils";
@@ -32,7 +32,7 @@ export class LocalBlobStorage implements BlobStorage {
 
   async put(
     data: string | Uint8Array | Blob | ReadableStream,
-    options: StoreBlobOptions = {}
+    options: StoreBlobOptions = {},
   ): Promise<BlobRef> {
     const id = options.id || crypto.randomUUID();
     const filePath = this.getPath(id);
@@ -149,12 +149,12 @@ export class LocalBlobStorage implements BlobStorage {
   async cleanupExpiredBlobs(): Promise<void> {
     // Iterate over prefixes (00-ff)
     for (let i = 0; i < 256; i++) {
-      const prefix = i.toString(16).padStart(2, '0');
+      const prefix = i.toString(16).padStart(2, "0");
       const prefixDir = join(this.rootDir, prefix);
       try {
         for await (const entry of this.fs.readDir(prefixDir)) {
-          if (entry.isFile && entry.name.endsWith('.meta.json')) {
-            const id = entry.name.replace('.meta.json', '');
+          if (entry.isFile && entry.name.endsWith(".meta.json")) {
+            const id = entry.name.replace(".meta.json", "");
             const blobRef = await this.stat(id);
             if (blobRef && blobRef.expiresAt && blobRef.expiresAt < new Date()) {
               logger.debug(`[LocalBlobStorage] Deleting expired blob: ${id}`);

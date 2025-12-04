@@ -12,7 +12,8 @@ import { join } from "https://deno.land/std@0.220.0/path/mod.ts";
 // Detect if running in Node.js (vs Deno/browser)
 // deno-lint-ignore no-explicit-any
 const _global = globalThis as any;
-const IS_NODE = typeof Deno === "undefined" && typeof _global.process !== "undefined" && _global.process?.versions?.node;
+const IS_NODE = typeof Deno === "undefined" && typeof _global.process !== "undefined" &&
+  _global.process?.versions?.node;
 
 // Constants
 const LOG_PREFIX_MDX_LOADER = "[mdx-loader]";
@@ -104,7 +105,9 @@ function createHTTPPluginForMDX(): import("esbuild").Plugin {
         } catch (e) {
           clearTimeout(timeout);
           return {
-            errors: [{ text: `Failed to fetch ${args.path}: ${e instanceof Error ? e.message : String(e)}` }],
+            errors: [{
+              text: `Failed to fetch ${args.path}: ${e instanceof Error ? e.message : String(e)}`,
+            }],
           };
         }
       });
@@ -124,7 +127,12 @@ export async function loadModuleESM(
       if (IS_NODE) {
         // On Node.js, use a cache dir inside the project so module resolution works
         // Node.js resolves bare imports relative to the file location
-        const projectCacheDir = join(_global.process.cwd(), "node_modules", ".cache", "veryfront-mdx");
+        const projectCacheDir = join(
+          _global.process.cwd(),
+          "node_modules",
+          ".cache",
+          "veryfront-mdx",
+        );
         await adapter.fs.mkdir(projectCacheDir, { recursive: true });
         context.esmCacheDir = projectCacheDir;
       } else {
@@ -242,7 +250,10 @@ export async function loadModuleESM(
           logger.info(`${LOG_PREFIX_MDX_LOADER} Successfully bundled HTTP imports`);
         }
       } catch (bundleError) {
-        logger.warn(`${LOG_PREFIX_MDX_LOADER} Failed to bundle HTTP imports, falling back to original code`, bundleError);
+        logger.warn(
+          `${LOG_PREFIX_MDX_LOADER} Failed to bundle HTTP imports, falling back to original code`,
+          bundleError,
+        );
         // Keep original code if bundling fails
       } finally {
         // Clean up temp file (use unlink since rm may not exist on all adapters)

@@ -17,7 +17,8 @@ let CLIENT_PREFETCH_BUNDLE: string | undefined;
 try {
   const templates = await import("./templates.ts");
   CLIENT_ROUTER_BUNDLE = (templates as { CLIENT_ROUTER_BUNDLE?: string }).CLIENT_ROUTER_BUNDLE;
-  CLIENT_PREFETCH_BUNDLE = (templates as { CLIENT_PREFETCH_BUNDLE?: string }).CLIENT_PREFETCH_BUNDLE;
+  CLIENT_PREFETCH_BUNDLE =
+    (templates as { CLIENT_PREFETCH_BUNDLE?: string }).CLIENT_PREFETCH_BUNDLE;
 } catch {
   // Pre-bundled scripts not available (Deno development mode)
 }

@@ -1,4 +1,4 @@
-import { replaceSpecifiers, parseImports, rewriteImports } from "./lexer.ts";
+import { parseImports, replaceSpecifiers, rewriteImports } from "./lexer.ts";
 import { REACT_DEFAULT_VERSION } from "@veryfront/utils/constants/cdn.ts";
 
 export function rewriteBareImports(code: string, _moduleServerUrl?: string): Promise<string> {
@@ -56,7 +56,7 @@ export async function rewriteVendorImports(
   for (let i = imports.length - 1; i >= 0; i--) {
     const imp = imports[i];
     if (!imp) continue;
-    
+
     // Skip if not a vendor package
     if (!imp.n || !reactPackages.has(imp.n)) continue;
 
@@ -85,7 +85,7 @@ export async function rewriteVendorImports(
       // Extract the part between "import" and "from"
       const beforeSpecifier = baseSource.substring(imp.ss, imp.s);
       const fromIndex = beforeSpecifier.lastIndexOf("from");
-      
+
       if (fromIndex === -1) {
         // Side-effect import: import 'react'
         const before = result.substring(0, imp.ss);
@@ -93,11 +93,11 @@ export async function rewriteVendorImports(
         result = before + `import '${vendorUrl}'` + after;
         continue;
       }
-      
+
       // Extract the import clause (e.g., "{ useState }", "React", "* as React")
       // "import " is length 7
       const clause = beforeSpecifier.substring(6, fromIndex).trim();
-      
+
       let replacement = "";
       if (clause.startsWith("*")) {
         // import * as React from 'react'
@@ -105,13 +105,14 @@ export async function rewriteVendorImports(
       } else if (clause.startsWith("{")) {
         // import { useState } from 'react'
         // -> import { react } from 'vendor'; const { useState } = react;
-        replacement = `import { ${exportName} } from '${vendorUrl}'; const ${clause} = ${exportName}`;
+        replacement =
+          `import { ${exportName} } from '${vendorUrl}'; const ${clause} = ${exportName}`;
       } else {
         // import React from 'react'
         // -> import { react as React } from 'vendor'
         replacement = `import { ${exportName} as ${clause} } from '${vendorUrl}'`;
       }
-      
+
       const before = result.substring(0, imp.ss);
       const after = result.substring(imp.se);
       result = before + replacement + after;

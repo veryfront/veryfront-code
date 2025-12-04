@@ -1,5 +1,5 @@
 import * as React from "react";
-import type { Dispatch, SetStateAction, EffectCallback, DependencyList } from "react";
+import type { DependencyList, Dispatch, EffectCallback, SetStateAction } from "react";
 import { rendererLogger } from "@veryfront/utils";
 
 export interface StateStore {

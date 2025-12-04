@@ -18,7 +18,7 @@ function hashString(text: string): number {
 function hashBytes(bytes: Uint8Array): number {
   let hash = HASH_SEED_DJB2;
   for (let i = 0; i < bytes.length; i++) {
-    hash = ((hash << 5) + hash) ^ bytes[i];
+    hash = ((hash << 5) + hash) ^ bytes[i]!;
   }
   return hash >>> 0;
 }

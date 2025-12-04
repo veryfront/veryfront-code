@@ -5,10 +5,10 @@
  * It's used in npm builds where std/fmt/colors.ts isn't available.
  */
 
-import type { ConsoleStyler, ColorFunction } from "./types.ts";
+import type { ColorFunction, ConsoleStyler } from "./types.ts";
 
-const ansi = (open: number, close: number): ColorFunction =>
-  (text: string) => `\x1b[${open}m${text}\x1b[${close}m`;
+const ansi = (open: number, close: number): ColorFunction => (text: string) =>
+  `\x1b[${open}m${text}\x1b[${close}m`;
 
 export const red: ColorFunction = ansi(31, 39);
 export const green: ColorFunction = ansi(32, 39);

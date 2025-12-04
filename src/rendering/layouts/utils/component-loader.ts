@@ -143,12 +143,19 @@ export async function applyMDXLayout(
   const LayoutFn = await loadMDXLayout(bundle, projectDir, adapter);
   if (LayoutFn) {
     const child = ensureValidChild(element, React);
-    return React.createElement(LayoutFn, { components: mergedComponents }, child) as BundledReact.ReactElement;
+    return React.createElement(
+      LayoutFn,
+      { components: mergedComponents },
+      child,
+    ) as BundledReact.ReactElement;
   }
   return element;
 }
 
-function ensureValidChild(child: BundledReact.ReactNode, React: typeof BundledReact): BundledReact.ReactNode {
+function ensureValidChild(
+  child: BundledReact.ReactNode,
+  React: typeof BundledReact,
+): BundledReact.ReactNode {
   if (React.isValidElement(child)) {
     logger.debug("[ensureValidChild] Valid React element", {
       type: getElementTypeName(child as BundledReact.ReactElement),

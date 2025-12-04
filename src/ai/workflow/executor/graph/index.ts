@@ -5,8 +5,4 @@
  * - DependencyGraph: Manages node dependencies and topological ordering
  */
 
-export {
-  createDependencyGraph,
-  DependencyGraph,
-  type GraphStructure,
-} from "./dependency-graph.ts";
+export { createDependencyGraph, DependencyGraph, type GraphStructure } from "./dependency-graph.ts";

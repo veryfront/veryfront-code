@@ -521,7 +521,7 @@ export function validateRetryConfig(config: RetryConfig): void {
   if (config.initialDelay !== undefined && config.maxDelay !== undefined) {
     if (config.initialDelay > config.maxDelay) {
       throw new Error(
-        `initialDelay (${config.initialDelay}) cannot be greater than maxDelay (${config.maxDelay})`
+        `initialDelay (${config.initialDelay}) cannot be greater than maxDelay (${config.maxDelay})`,
       );
     }
   }
@@ -529,7 +529,9 @@ export function validateRetryConfig(config: RetryConfig): void {
   if (config.backoff !== undefined) {
     const validBackoffs = ["fixed", "linear", "exponential"];
     if (!validBackoffs.includes(config.backoff)) {
-      throw new Error(`Invalid backoff strategy: ${config.backoff}. Must be one of: ${validBackoffs.join(", ")}`);
+      throw new Error(
+        `Invalid backoff strategy: ${config.backoff}. Must be one of: ${validBackoffs.join(", ")}`,
+      );
     }
   }
 }

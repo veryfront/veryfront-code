@@ -16,7 +16,8 @@ export const COMMANDS: CommandRegistry = {
     options: [
       {
         flag: "-t, --template <name>",
-        description: "Project template (pages-router | app-router | app-router-api | rsc-demo | blog | docs | app | minimal | ai)",
+        description:
+          "Project template (pages-router | app-router | app-router-api | rsc-demo | blog | docs | app | minimal | ai)",
         default: "app-router",
       },
       {

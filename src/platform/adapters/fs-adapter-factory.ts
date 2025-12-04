@@ -11,8 +11,7 @@ export async function createFSAdapter(config: FSAdapterConfig): Promise<FSAdapte
     throw toError(
       createError({
         type: "config",
-        message:
-          `FSAdapter type "local" should not use this factory. ` +
+        message: `FSAdapter type "local" should not use this factory. ` +
           `Use RuntimeAdapter.fs directly for local filesystem access. ` +
           `If you're seeing this error, check your veryfront.config.ts fs configuration.`,
       }),
@@ -30,8 +29,7 @@ export async function createFSAdapter(config: FSAdapterConfig): Promise<FSAdapte
   throw toError(
     createError({
       type: "config",
-      message:
-        `FSAdapter type "${type}" is not implemented. ` +
+      message: `FSAdapter type "${type}" is not implemented. ` +
         `Supported types: "local" (default, uses RuntimeAdapter.fs), "veryfront-api".`,
     }),
   );

@@ -1,5 +1,5 @@
 import { cliLogger as logger } from "@veryfront/utils";
-import { bold, yellow, red, cyan } from "@veryfront/compat/console";
+import { bold, cyan, red, yellow } from "@veryfront/compat/console";
 import type { VeryfrontConfig } from "../../core/config/types.ts";
 
 export interface ValidationResult {
@@ -31,8 +31,8 @@ export function validateAIConfig(config: VeryfrontConfig): ValidationResult {
     if (!providerConfig.apiKey) {
       result.warnings.push(
         `Missing API Key for provider "${bold(name)}".\n` +
-        `The provider is configured but no API key was found.\n` +
-        `Please add ${cyan(`${name.toUpperCase()}_API_KEY`)} to your .env file.`
+          `The provider is configured but no API key was found.\n` +
+          `Please add ${cyan(`${name.toUpperCase()}_API_KEY`)} to your .env file.`,
       );
     }
   }

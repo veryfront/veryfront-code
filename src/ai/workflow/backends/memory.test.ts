@@ -3,9 +3,9 @@
  */
 
 import { assertEquals, assertExists } from "https://deno.land/std@0.220.0/assert/mod.ts";
-import { describe, it, beforeEach } from "https://deno.land/std@0.220.0/testing/bdd.ts";
+import { beforeEach, describe, it } from "https://deno.land/std@0.220.0/testing/bdd.ts";
 import { MemoryBackend } from "./memory.ts";
-import type { WorkflowRun, Checkpoint, PendingApproval, WorkflowJob } from "../types.ts";
+import type { Checkpoint, PendingApproval, WorkflowJob, WorkflowRun } from "../types.ts";
 
 describe("MemoryBackend", () => {
   let backend: MemoryBackend;
@@ -196,7 +196,12 @@ describe("MemoryBackend", () => {
 
     it("should process jobs in FIFO order", async () => {
       await backend.enqueue({ runId: "first", workflowId: "wf", input: {}, createdAt: new Date() });
-      await backend.enqueue({ runId: "second", workflowId: "wf", input: {}, createdAt: new Date() });
+      await backend.enqueue({
+        runId: "second",
+        workflowId: "wf",
+        input: {},
+        createdAt: new Date(),
+      });
       await backend.enqueue({ runId: "third", workflowId: "wf", input: {}, createdAt: new Date() });
 
       const first = await backend.dequeue();
@@ -209,9 +214,27 @@ describe("MemoryBackend", () => {
     });
 
     it("should respect priority", async () => {
-      await backend.enqueue({ runId: "normal", workflowId: "wf", input: {}, priority: 0, createdAt: new Date() });
-      await backend.enqueue({ runId: "high", workflowId: "wf", input: {}, priority: 10, createdAt: new Date() });
-      await backend.enqueue({ runId: "low", workflowId: "wf", input: {}, priority: -5, createdAt: new Date() });
+      await backend.enqueue({
+        runId: "normal",
+        workflowId: "wf",
+        input: {},
+        priority: 0,
+        createdAt: new Date(),
+      });
+      await backend.enqueue({
+        runId: "high",
+        workflowId: "wf",
+        input: {},
+        priority: 10,
+        createdAt: new Date(),
+      });
+      await backend.enqueue({
+        runId: "low",
+        workflowId: "wf",
+        input: {},
+        priority: -5,
+        createdAt: new Date(),
+      });
 
       const first = await backend.dequeue();
       const second = await backend.dequeue();

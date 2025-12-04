@@ -106,7 +106,10 @@ Deno.test("detectAppRouter falls back to compat fs when adapter fails", async ()
   const tmpDir = await Deno.makeTempDir();
   const appDir = join(tmpDir, "app");
   await Deno.mkdir(appDir, { recursive: true });
-  await Deno.writeTextFile(join(appDir, "page.tsx"), "export default function Page() { return null; }");
+  await Deno.writeTextFile(
+    join(appDir, "page.tsx"),
+    "export default function Page() { return null; }",
+  );
 
   const config = {} as VeryfrontConfig;
   const result = await detectAppRouter(tmpDir, config, failingAdapter);

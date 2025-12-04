@@ -180,9 +180,7 @@ export function createMockAgent(
       system: "Mock agent for testing",
     },
     async generate(input: { input: string | unknown[]; context?: Record<string, unknown> }) {
-      const inputStr = typeof input.input === "string"
-        ? input.input
-        : JSON.stringify(input.input);
+      const inputStr = typeof input.input === "string" ? input.input : JSON.stringify(input.input);
 
       let text: string;
       if (options.responseFunc) {

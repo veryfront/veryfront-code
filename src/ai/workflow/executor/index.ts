@@ -8,14 +8,14 @@ export type { WorkflowExecutorConfig, WorkflowHandle } from "./workflow-executor
 
 // DAG executor
 export { DAGExecutor } from "./dag-executor.ts";
-export type { DAGExecutorConfig, DAGExecutionResult } from "./dag-executor.ts";
+export type { DAGExecutionResult, DAGExecutorConfig } from "./dag-executor.ts";
 
 // Step executor
 export { StepExecutor } from "./step-executor.ts";
 export type {
+  AgentRegistry,
   StepExecutorConfig,
   StepResult,
-  AgentRegistry,
   ToolRegistry,
 } from "./step-executor.ts";
 

@@ -8,11 +8,7 @@
 import { logger } from "@veryfront/utils";
 import type { RateLimitConfig, RateLimitStore } from "./types.ts";
 import { MemoryRateLimitStore } from "./memory-store.ts";
-import {
-  fixedWindowStrategy,
-  slidingWindowStrategy,
-  tokenBucketStrategy,
-} from "./strategies.ts";
+import { fixedWindowStrategy, slidingWindowStrategy, tokenBucketStrategy } from "./strategies.ts";
 
 /**
  * Default key generator - uses IP address

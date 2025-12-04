@@ -141,7 +141,14 @@ export async function createNodeServer(
       const requestId = createRequestId(request);
 
       // Handle the upgrade
-      (wsServer as unknown as { handleUpgrade: (req: unknown, socket: unknown, head: unknown, callback: (ws: WSWebSocket) => void) => void })
+      (wsServer as unknown as {
+        handleUpgrade: (
+          req: unknown,
+          socket: unknown,
+          head: unknown,
+          callback: (ws: WSWebSocket) => void,
+        ) => void;
+      })
         .handleUpgrade(request, socket, head, (ws: WSWebSocket) => {
           const pending = pendingWebSocketUpgrades.get(requestId);
           if (pending) {

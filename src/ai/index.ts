@@ -210,37 +210,33 @@ export type {
 // Re-export workflow module
 // Full workflow API available at: import { ... } from "veryfront/ai/workflow";
 export {
-  // DSL builders
-  workflow,
-  step,
-  parallel,
   branch,
-  waitForApproval,
-
-  // Client
-  WorkflowClient,
   createWorkflowClient,
-
   // Backend
   MemoryBackend,
+  parallel,
+  step,
+  waitForApproval,
+  // DSL builders
+  workflow,
+  // Client
+  WorkflowClient,
 } from "./workflow/index.ts";
 
 export type {
-  // Core types
-  WorkflowStatus,
-  WorkflowRun,
-  WorkflowNode,
-  WorkflowDefinition,
-  WorkflowContext,
-  PendingApproval,
   Checkpoint,
-
-  // Client
-  WorkflowClientConfig,
-  WorkflowHandle,
-
+  PendingApproval,
   // Backend
   WorkflowBackend,
+  // Client
+  WorkflowClientConfig,
+  WorkflowContext,
+  WorkflowDefinition,
+  WorkflowHandle,
+  WorkflowNode,
+  WorkflowRun,
+  // Core types
+  WorkflowStatus,
 } from "./workflow/index.ts";
 
 // ============================================================================

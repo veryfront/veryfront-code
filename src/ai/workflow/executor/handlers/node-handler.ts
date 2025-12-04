@@ -66,8 +66,7 @@ export interface INodeHandler<TConfig extends WorkflowNodeConfig = WorkflowNodeC
  * Base class for node handlers providing common functionality
  */
 export abstract class BaseNodeHandler<TConfig extends WorkflowNodeConfig = WorkflowNodeConfig>
-  implements INodeHandler<TConfig>
-{
+  implements INodeHandler<TConfig> {
   abstract readonly nodeType: WorkflowNodeType;
 
   abstract canHandle(config: WorkflowNodeConfig): config is TConfig;

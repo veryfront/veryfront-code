@@ -10,11 +10,7 @@ import type {
   WatchOptions,
 } from "../base.ts";
 
-import {
-  createFileWatcher,
-  createWatcherIterator,
-  enqueueWatchEvent,
-} from "../shared-watcher.ts";
+import { createFileWatcher, createWatcherIterator, enqueueWatchEvent } from "../shared-watcher.ts";
 import type { BunFSWatcher, BunWatchEvent } from "./types.ts";
 import { serverLogger } from "@veryfront/utils";
 
@@ -26,7 +22,8 @@ export class BunFileSystemAdapter implements FileSystemAdapter {
 
   async readFileBytes(path: string): Promise<Uint8Array> {
     const file = Bun.file(path);
-    const buffer = await file.arrayBuffer();
+    // deno-lint-ignore no-explicit-any
+    const buffer = await (file as any).arrayBuffer();
     return new Uint8Array(buffer);
   }
 

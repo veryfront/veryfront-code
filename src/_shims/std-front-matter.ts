@@ -88,7 +88,10 @@ export async function extractAsync<T = Record<string, unknown>>(
   content: string,
 ): Promise<FrontMatterResult<T>> {
   const gm = await getGrayMatter();
-  const result = (gm as { default: (content: string) => { data: T; content: string; matter: string } }).default(content);
+  const result =
+    (gm as { default: (content: string) => { data: T; content: string; matter: string } }).default(
+      content,
+    );
   return {
     attrs: result.data,
     body: result.content,

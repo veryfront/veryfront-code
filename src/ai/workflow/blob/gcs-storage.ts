@@ -57,18 +57,18 @@ export class GCSBlobStorage implements BlobStorage {
       iat: Math.floor(now / 1000),
     }));
 
-    // This part requires a proper JWT signing library. 
-    // Deno's native crypto.subtle can sign, but creating the RS256 private key from PKCS8 (PEM) 
-    // is non-trivial without a dedicated library. 
+    // This part requires a proper JWT signing library.
+    // Deno's native crypto.subtle can sign, but creating the RS256 private key from PKCS8 (PEM)
+    // is non-trivial without a dedicated library.
     // For a quick implementation, we will use a placeholder or assume a pre-signed JWT.
     // In a real-world Deno project, you'd use `djwt` or a similar library.
     console.warn(
       "[GCSBlobStorage] JWT signing for service account requires a library like `djwt`. " +
-        "Proceeding with a placeholder/manual approach, which is not suitable for production."
+        "Proceeding with a placeholder/manual approach, which is not suitable for production.",
     );
-    
+
     // Placeholder for actual JWT signing
-    const signature = "PLACEHOLDER_SIGNATURE"; 
+    const signature = "PLACEHOLDER_SIGNATURE";
     const jwt = `${jwtHeader}.${jwtClaimSet}.${signature}`;
 
     // This is a simplified approach, a real implementation would correctly sign the JWT
@@ -134,7 +134,8 @@ export class GCSBlobStorage implements BlobStorage {
     }
 
     const token = await this.getAccessToken();
-    const uploadUrl = `https://storage.googleapis.com/upload/storage/v1/b/${this.config.bucket}/o?uploadType=media&name=${key}`;
+    const uploadUrl =
+      `https://storage.googleapis.com/upload/storage/v1/b/${this.config.bucket}/o?uploadType=media&name=${key}`;
 
     const headers: Record<string, string> = {
       "Authorization": `Bearer ${token}`,
@@ -166,7 +167,7 @@ export class GCSBlobStorage implements BlobStorage {
     if (!response.ok) {
       const errorBody = await response.text();
       throw new Error(
-        `Failed to upload to GCS: ${response.status} - ${response.statusText}. Body: ${errorBody}`
+        `Failed to upload to GCS: ${response.status} - ${response.statusText}. Body: ${errorBody}`,
       );
     }
 
@@ -187,7 +188,8 @@ export class GCSBlobStorage implements BlobStorage {
   async getStream(id: string): Promise<ReadableStream | null> {
     const key = this.getKey(id);
     const token = await this.getAccessToken();
-    const downloadUrl = `https://storage.googleapis.com/storage/v1/b/${this.config.bucket}/o/${key}?alt=media`;
+    const downloadUrl =
+      `https://storage.googleapis.com/storage/v1/b/${this.config.bucket}/o/${key}?alt=media`;
 
     try {
       const response = await fetch(downloadUrl, {
@@ -202,7 +204,7 @@ export class GCSBlobStorage implements BlobStorage {
       if (!response.ok) {
         const errorBody = await response.text();
         throw new Error(
-          `Failed to download from GCS: ${response.status} - ${response.statusText}. Body: ${errorBody}`
+          `Failed to download from GCS: ${response.status} - ${response.statusText}. Body: ${errorBody}`,
         );
       }
       return response.body; // Deno's fetch body is a ReadableStream
@@ -264,7 +266,7 @@ export class GCSBlobStorage implements BlobStorage {
     if (!response.ok) {
       const errorBody = await response.text();
       throw new Error(
-        `Failed to delete from GCS: ${response.status} - ${response.statusText}. Body: ${errorBody}`
+        `Failed to delete from GCS: ${response.status} - ${response.statusText}. Body: ${errorBody}`,
       );
     }
   }
@@ -272,7 +274,8 @@ export class GCSBlobStorage implements BlobStorage {
   async exists(id: string): Promise<boolean> {
     const key = this.getKey(id);
     const token = await this.getAccessToken();
-    const getUrl = `https://storage.googleapis.com/storage/v1/b/${this.config.bucket}/o/${key}?fields=id`;
+    const getUrl =
+      `https://storage.googleapis.com/storage/v1/b/${this.config.bucket}/o/${key}?fields=id`;
 
     const response = await fetch(getUrl, {
       method: "GET",
@@ -289,7 +292,7 @@ export class GCSBlobStorage implements BlobStorage {
     }
     const errorBody = await response.text();
     throw new Error(
-      `Failed to check existence in GCS: ${response.status} - ${response.statusText}. Body: ${errorBody}`
+      `Failed to check existence in GCS: ${response.status} - ${response.statusText}. Body: ${errorBody}`,
     );
   }
 
@@ -311,12 +314,12 @@ export class GCSBlobStorage implements BlobStorage {
     if (!response.ok) {
       const errorBody = await response.text();
       throw new Error(
-        `Failed to get metadata from GCS: ${response.status} - ${response.statusText}. Body: ${errorBody}`
+        `Failed to get metadata from GCS: ${response.status} - ${response.statusText}. Body: ${errorBody}`,
       );
     }
 
     const gcsObject = await response.json();
-    
+
     // Custom metadata is stored with `x-goog-meta-` prefix and is all lowercase
     const metadata: Record<string, string> = {};
     if (gcsObject.metadata) {

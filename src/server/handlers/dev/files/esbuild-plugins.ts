@@ -14,8 +14,8 @@ import {
   getReactCDNUrl,
   getReactDOMCDNUrl,
   getReactDOMClientCDNUrl,
-  getReactJSXRuntimeCDNUrl,
   getReactJSXDevRuntimeCDNUrl,
+  getReactJSXRuntimeCDNUrl,
   REACT_DEFAULT_VERSION,
 } from "@veryfront/utils/constants/cdn.ts";
 

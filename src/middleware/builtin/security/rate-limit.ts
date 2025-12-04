@@ -34,12 +34,11 @@ export class MemoryRateLimitStore implements RateLimitStore {
 
       if (this.cleanupInterval) {
         // Node.js / Bun style
-        if (typeof (this.cleanupInterval as any).unref === 'function') {
+        if (typeof (this.cleanupInterval as any).unref === "function") {
           (this.cleanupInterval as any).unref();
-        } 
-        // Deno style
+        } // Deno style
         // @ts-ignore - Deno global
-        else if (typeof Deno !== "undefined" && typeof Deno.unrefTimer === 'function') {
+        else if (typeof Deno !== "undefined" && typeof Deno.unrefTimer === "function") {
           // @ts-ignore - Deno global
           Deno.unrefTimer(this.cleanupInterval);
         }

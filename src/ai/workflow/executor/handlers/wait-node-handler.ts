@@ -4,12 +4,7 @@
  * Handles execution of wait nodes - for human approvals, timers, or external events.
  */
 
-import type {
-  NodeState,
-  WaitNodeConfig,
-  WorkflowNode,
-  WorkflowNodeConfig,
-} from "../../types.ts";
+import type { NodeState, WaitNodeConfig, WorkflowNode, WorkflowNodeConfig } from "../../types.ts";
 import {
   BaseNodeHandler,
   type NodeExecutionResult,

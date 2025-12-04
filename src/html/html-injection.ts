@@ -57,7 +57,8 @@ export function injectHTMLContent(
       slug: options.slug,
       isClientPage: true,
     });
-    const hydrationScript = `<script id="veryfront-hydration-data" type="application/json">${hydrationData}</script>`;
+    const hydrationScript =
+      `<script id="veryfront-hydration-data" type="application/json">${hydrationData}</script>`;
     // Insert before </body> - will be before the dev/prod scripts we add below
     html = html.replace(/<\/body>/i, `${hydrationScript}</body>`);
   }

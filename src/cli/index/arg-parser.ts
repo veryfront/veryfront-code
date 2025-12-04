@@ -13,7 +13,7 @@ function parse(
   options: {
     alias?: Record<string, string>;
     default?: Record<string, unknown>;
-  } = {}
+  } = {},
 ): Record<string, unknown> {
   const result: Record<string, unknown> = { _: [] as string[], ...options.default };
   const aliasMap = new Map<string, string>();

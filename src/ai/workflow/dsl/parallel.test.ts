@@ -33,7 +33,7 @@ describe("parallel()", () => {
         step("task2", { agent: "a" }),
         step("task3", { agent: "a" }),
       ],
-      { strategy: "race" }
+      { strategy: "race" },
     );
 
     const config = raceNode.config as ParallelNodeConfig;
@@ -44,7 +44,7 @@ describe("parallel()", () => {
     const node = parallel(
       "critical",
       [step("a", { agent: "a" }), step("b", { agent: "b" })],
-      { strategy: "allSettled" }
+      { strategy: "allSettled" },
     );
 
     const config = node.config as ParallelNodeConfig;
@@ -55,7 +55,7 @@ describe("parallel()", () => {
     assertThrows(
       () => parallel("empty", []),
       Error,
-      "must have at least one child node"
+      "must have at least one child node",
     );
   });
 

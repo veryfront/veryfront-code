@@ -136,26 +136,28 @@ export class SSRRenderer {
 
       if (renderResult.stream) {
         // If client wants stream, return it directly without buffering
-          if (options.wantsStream && typeof (renderResult.stream as ReadableStream).tee === "function") {
-            const [clientStream, bufferStream] = (renderResult.stream as ReadableStream).tee();
-            stream = clientStream;
-            html = await streamToString(bufferStream);
+        if (
+          options.wantsStream && typeof (renderResult.stream as ReadableStream).tee === "function"
+        ) {
+          const [clientStream, bufferStream] = (renderResult.stream as ReadableStream).tee();
+          stream = clientStream;
+          html = await streamToString(bufferStream);
 
-            if (options.debugMode) {
-              logger.debug("Streaming SSR - teeing stream and buffering copy", {
-                htmlLength: html.length,
-              });
-            }
-          } else {
-            // Client doesn't want stream or can't tee - buffer it
-            html = await streamToString(renderResult.stream);
-
-            if (options.debugMode) {
-              logger.debug("Streaming SSR completed (buffered)", {
-                htmlLength: html.length,
-              });
-            }
+          if (options.debugMode) {
+            logger.debug("Streaming SSR - teeing stream and buffering copy", {
+              htmlLength: html.length,
+            });
           }
+        } else {
+          // Client doesn't want stream or can't tee - buffer it
+          html = await streamToString(renderResult.stream);
+
+          if (options.debugMode) {
+            logger.debug("Streaming SSR completed (buffered)", {
+              htmlLength: html.length,
+            });
+          }
+        }
       } else if (renderResult.pipe) {
         // Handle Node.js renderToPipeableStream result
         // This is the case when running in Node.js - the result has { pipe, abort }

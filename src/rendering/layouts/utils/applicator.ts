@@ -128,7 +128,9 @@ export async function applyLayoutsFunctionBody(
           const child = ensureValidChild(element, React);
           logger.info("Applying TSX layout:", {
             layoutName: LayoutComponent.name || "Anonymous",
-            childType: React.isValidElement(child) ? getElementTypeName(child as BundledReact.ReactElement) : typeof child,
+            childType: React.isValidElement(child)
+              ? getElementTypeName(child as BundledReact.ReactElement)
+              : typeof child,
           });
           const props = item.componentPath ? layoutDataMap?.get(item.componentPath) : undefined;
           element = React.createElement(LayoutComponent, props, child) as BundledReact.ReactElement;
@@ -172,9 +174,15 @@ export async function applyLayoutsFunctionBody(
           const child = ensureValidChild(element, React);
           logger.info("Applying TSX provider:", {
             providerName: ProviderComponent.name || "Anonymous",
-            childType: React.isValidElement(child) ? getElementTypeName(child as BundledReact.ReactElement) : typeof child,
+            childType: React.isValidElement(child)
+              ? getElementTypeName(child as BundledReact.ReactElement)
+              : typeof child,
           });
-          element = React.createElement(ProviderComponent, undefined, child) as BundledReact.ReactElement;
+          element = React.createElement(
+            ProviderComponent,
+            undefined,
+            child,
+          ) as BundledReact.ReactElement;
         } catch (e) {
           logger.error("Failed to compile/import TSX provider (non-ESM path)", e);
           throw e;
@@ -231,7 +239,11 @@ async function applyProviders(
           providerName: ProviderComponent.name || "Anonymous",
           childIsElement: React.isValidElement(child),
         });
-        result = React.createElement(ProviderComponent, undefined, child) as BundledReact.ReactElement;
+        result = React.createElement(
+          ProviderComponent,
+          undefined,
+          child,
+        ) as BundledReact.ReactElement;
       }
     } catch (e) {
       logger.error("Failed to load ESM provider module:", e);
@@ -241,7 +253,10 @@ async function applyProviders(
   return result;
 }
 
-function ensureValidChild(child: BundledReact.ReactNode, React: typeof BundledReact): BundledReact.ReactNode {
+function ensureValidChild(
+  child: BundledReact.ReactNode,
+  React: typeof BundledReact,
+): BundledReact.ReactNode {
   if (React.isValidElement(child)) {
     logger.debug("[ensureValidChild] Valid React element", {
       type: getElementTypeName(child as BundledReact.ReactElement),

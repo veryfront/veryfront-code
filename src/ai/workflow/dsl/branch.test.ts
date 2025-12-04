@@ -74,7 +74,7 @@ describe("when()", () => {
     const node = when(
       "if-premium",
       () => true,
-      [step("premium-feature", { agent: "premium" })]
+      [step("premium-feature", { agent: "premium" })],
     );
 
     assertEquals(node.id, "if-premium");
@@ -91,7 +91,7 @@ describe("unless()", () => {
     const node = unless(
       "unless-disabled",
       () => false,
-      [step("enabled-feature", { agent: "a" })]
+      [step("enabled-feature", { agent: "a" })],
     );
 
     assertEquals(node.id, "unless-disabled");
@@ -106,7 +106,7 @@ describe("unless()", () => {
     const node = unless(
       "test",
       () => originalConditionValue,
-      [step("a", { agent: "a" })]
+      [step("a", { agent: "a" })],
     );
 
     // The unless wrapper should invert the condition
@@ -119,7 +119,7 @@ describe("unless()", () => {
     const node2 = unless(
       "test2",
       () => originalConditionValue,
-      [step("b", { agent: "b" })]
+      [step("b", { agent: "b" })],
     );
     const config2 = node2.config as BranchNodeConfig;
     const result2 = await config2.condition({} as never);

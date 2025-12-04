@@ -1,12 +1,12 @@
 import * as esbuild from "esbuild";
 import { generateCacheKey, getCachedTransform, setCachedTransform } from "./transform-cache.ts";
 import { computeContentHash, getLoaderFromPath } from "./transform-utils.ts";
-import { addDepsToEsmShUrls, resolveReactImports, isNodeRuntime } from "./react-imports.ts";
+import { addDepsToEsmShUrls, isNodeRuntime, resolveReactImports } from "./react-imports.ts";
 import {
   resolvePathAliases,
   resolveRelativeImports,
-  resolveRelativeImportsToAbsolute,
   resolveRelativeImportsForNodeSSR,
+  resolveRelativeImportsToAbsolute,
   resolveVeryfrontImports,
 } from "./path-resolver.ts";
 import { rewriteBareImports, rewriteVendorImports } from "./import-rewriter.ts";

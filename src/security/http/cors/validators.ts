@@ -5,10 +5,7 @@
  * @module core/cors/validators
  */
 
-import type {
-  CORSConfig,
-  CORSValidationResult,
-} from "./types.ts";
+import type { CORSConfig, CORSValidationResult } from "./types.ts";
 import { serverLogger } from "@veryfront/utils/logger/logger.ts";
 import { recordCorsRejection } from "@veryfront/observability";
 

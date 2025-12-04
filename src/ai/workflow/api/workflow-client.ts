@@ -18,10 +18,7 @@ import {
   type WorkflowExecutorConfig,
   type WorkflowHandle,
 } from "../executor/workflow-executor.ts";
-import {
-  ApprovalManager,
-  type ApprovalManagerConfig,
-} from "../runtime/approval-manager.ts";
+import { ApprovalManager, type ApprovalManagerConfig } from "../runtime/approval-manager.ts";
 import type { Workflow } from "../dsl/workflow.ts";
 
 /**
@@ -83,9 +80,7 @@ export class WorkflowClient {
   register(
     workflow: Workflow | WorkflowDefinition,
   ): void {
-    const definition = "definition" in workflow
-      ? workflow.definition
-      : workflow;
+    const definition = "definition" in workflow ? workflow.definition : workflow;
 
     this.executor.register(definition as WorkflowDefinition);
 

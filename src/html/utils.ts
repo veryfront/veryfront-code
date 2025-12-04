@@ -113,12 +113,15 @@ function getJsdelivrImportMap(versions: DetectedVersions): Record<string, string
   return {
     "react": `https://cdn.jsdelivr.net/npm/react@${react}/umd/react.production.min.js`,
     "react-dom": `https://cdn.jsdelivr.net/npm/react-dom@${react}/umd/react-dom.production.min.js`,
-    "react-dom/client": `https://cdn.jsdelivr.net/npm/react-dom@${react}/umd/react-dom.production.min.js`,
+    "react-dom/client":
+      `https://cdn.jsdelivr.net/npm/react-dom@${react}/umd/react-dom.production.min.js`,
     "react/jsx-runtime": `https://cdn.jsdelivr.net/npm/react@${react}/jsx-runtime`,
     "react/jsx-dev-runtime": `https://cdn.jsdelivr.net/npm/react@${react}/jsx-dev-runtime`,
     "veryfront/ai/react": `https://cdn.jsdelivr.net/npm/veryfront@${veryfront}/dist/ai/react.js`,
-    "veryfront/ai/components": `https://cdn.jsdelivr.net/npm/veryfront@${veryfront}/dist/ai/components.js`,
-    "veryfront/ai/primitives": `https://cdn.jsdelivr.net/npm/veryfront@${veryfront}/dist/ai/primitives.js`,
+    "veryfront/ai/components":
+      `https://cdn.jsdelivr.net/npm/veryfront@${veryfront}/dist/ai/components.js`,
+    "veryfront/ai/primitives":
+      `https://cdn.jsdelivr.net/npm/veryfront@${veryfront}/dist/ai/primitives.js`,
   };
 }
 
@@ -203,7 +206,9 @@ export async function buildImportMapJson(
   options?: BuildImportMapOptions | Record<string, string>,
 ): Promise<string> {
   // Legacy: if passed a plain record, use as import map directly
-  if (options && !("projectDir" in options) && !("config" in options) && !("customImports" in options)) {
+  if (
+    options && !("projectDir" in options) && !("config" in options) && !("customImports" in options)
+  ) {
     const imports = options as Record<string, string>;
     if (Object.keys(imports).length > 0) {
       return JSON.stringify({ imports }, null, 2);
@@ -219,9 +224,7 @@ export async function buildImportMapJson(
   // For bundled mode, we might not need veryfront imports in the map
   // as they'll be bundled into the client JS
   if (mode === "bundled") {
-    const versions = projectDir
-      ? await resolveVersions(projectDir, config)
-      : DEFAULT_VERSIONS;
+    const versions = projectDir ? await resolveVersions(projectDir, config) : DEFAULT_VERSIONS;
 
     // Only include React in import map for bundled mode
     const imports: Record<string, string> = {
@@ -237,9 +240,7 @@ export async function buildImportMapJson(
   }
 
   // Resolve versions
-  const versions = projectDir
-    ? await resolveVersions(projectDir, config)
-    : DEFAULT_VERSIONS;
+  const versions = projectDir ? await resolveVersions(projectDir, config) : DEFAULT_VERSIONS;
 
   // Get base import map based on mode
   let imports: Record<string, string>;

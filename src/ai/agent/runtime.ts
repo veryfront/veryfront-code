@@ -25,11 +25,7 @@ import { executeTool, toolRegistry, toolToProviderDefinition } from "../utils/to
 import { detectPlatform, getPlatformCapabilities } from "../runtime/platform.ts";
 import { createMemory, type Memory } from "./memory.ts";
 import { serverLogger as logger } from "@veryfront/utils";
-import {
-  addSpanEvent,
-  setSpanAttributes,
-  withSpan,
-} from "../../observability/tracing/index.ts";
+import { addSpanEvent, setSpanAttributes, withSpan } from "../../observability/tracing/index.ts";
 import { z } from "zod";
 
 const AgentStreamEventSchema = z.discriminatedUnion("type", [
@@ -594,20 +590,22 @@ export class AgentRuntime {
       };
 
       if (streamToolCalls.size > 0) {
-        assistantMessage.toolCalls = Array.from(streamToolCalls.values()).map((tc): StreamToolCall => {
-          const { args, error } = parseStreamToolArgs(tc.arguments);
-          if (error) {
-            logger.warn("[AGENT] Failed to parse streamed tool arguments", {
-              toolCallId: tc.id,
-              error,
-            });
-          }
-          return {
-            id: tc.id,
-            name: tc.name,
-            arguments: args,
-          };
-        });
+        assistantMessage.toolCalls = Array.from(streamToolCalls.values()).map(
+          (tc): StreamToolCall => {
+            const { args, error } = parseStreamToolArgs(tc.arguments);
+            if (error) {
+              logger.warn("[AGENT] Failed to parse streamed tool arguments", {
+                toolCallId: tc.id,
+                error,
+              });
+            }
+            return {
+              id: tc.id,
+              name: tc.name,
+              arguments: args,
+            };
+          },
+        );
       }
 
       currentMessages.push(assistantMessage);

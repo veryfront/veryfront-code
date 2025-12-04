@@ -86,21 +86,41 @@ describe("validateRetryConfig", () => {
   });
 
   it("should reject invalid maxAttempts", () => {
-    assertThrows(() => validateRetryConfig({ maxAttempts: 0 }), Error, "maxAttempts must be a positive integer");
-    assertThrows(() => validateRetryConfig({ maxAttempts: -1 }), Error, "maxAttempts must be a positive integer");
-    assertThrows(() => validateRetryConfig({ maxAttempts: 1.5 }), Error, "maxAttempts must be a positive integer");
+    assertThrows(
+      () => validateRetryConfig({ maxAttempts: 0 }),
+      Error,
+      "maxAttempts must be a positive integer",
+    );
+    assertThrows(
+      () => validateRetryConfig({ maxAttempts: -1 }),
+      Error,
+      "maxAttempts must be a positive integer",
+    );
+    assertThrows(
+      () => validateRetryConfig({ maxAttempts: 1.5 }),
+      Error,
+      "maxAttempts must be a positive integer",
+    );
   });
 
   it("should reject negative delays", () => {
-    assertThrows(() => validateRetryConfig({ initialDelay: -100 }), Error, "initialDelay cannot be negative");
-    assertThrows(() => validateRetryConfig({ maxDelay: -100 }), Error, "maxDelay cannot be negative");
+    assertThrows(
+      () => validateRetryConfig({ initialDelay: -100 }),
+      Error,
+      "initialDelay cannot be negative",
+    );
+    assertThrows(
+      () => validateRetryConfig({ maxDelay: -100 }),
+      Error,
+      "maxDelay cannot be negative",
+    );
   });
 
   it("should reject initialDelay greater than maxDelay", () => {
     assertThrows(
       () => validateRetryConfig({ initialDelay: 5000, maxDelay: 1000 }),
       Error,
-      "initialDelay (5000) cannot be greater than maxDelay (1000)"
+      "initialDelay (5000) cannot be greater than maxDelay (1000)",
     );
   });
 });

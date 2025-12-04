@@ -29,7 +29,6 @@ export async function handleMDXPage(
     precompiledModule?: string;
   },
 ): Promise<MDXPageResult> {
-
   const fmArg = pageInfo.entity.frontmatter && Object.keys(pageInfo.entity.frontmatter).length > 0
     ? pageInfo.entity.frontmatter
     : undefined;

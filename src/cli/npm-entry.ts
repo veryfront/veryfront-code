@@ -8,7 +8,7 @@
 
 import { parseCliArgs } from "./index/arg-parser.ts";
 import { routeCommand } from "./index/command-router.ts";
-import { getArgs, exit } from "../platform/compat/process.ts";
+import { exit, getArgs } from "../platform/compat/process.ts";
 
 /**
  * Main CLI function for npm package

@@ -1,12 +1,12 @@
 // Conditional imports for front_matter (path is handled via path-helper)
 let extractYaml: ((content: string) => any) | undefined;
-let jsYamlModule: typeof import('js-yaml') | null = null;
+let jsYamlModule: typeof import("js-yaml") | null = null;
 import { createFileSystem } from "../../../platform/compat/fs.ts";
 import * as pathHelper from "../../../platform/compat/path-helper.ts";
 
 // Initialize extractYaml based on runtime
 // @ts-ignore - Deno global
-if (typeof Deno === 'undefined') {
+if (typeof Deno === "undefined") {
   // Node.js environment - use lazy loading for js-yaml
   extractYaml = (content: string) => {
     const frontMatterRegex = /^---\n([\s\S]*?)\n---/; // Basic regex for YAML front matter
@@ -25,7 +25,7 @@ if (typeof Deno === 'undefined') {
   };
 
   // Eagerly load js-yaml module
-  import('js-yaml').then((mod) => {
+  import("js-yaml").then((mod) => {
     jsYamlModule = mod;
   }).catch((e) => {
     console.warn("Could not import js-yaml for Node.js frontmatter parsing.", e);
@@ -167,7 +167,9 @@ export async function getEntityBySlug(
   // Try to match dynamic routes for all path depths
   for (let depth = slugParts.length - 1; depth >= 0; depth--) {
     const parentPath = slugParts.slice(0, depth).join("/");
-    const pagesDir = parentPath ? pathHelper.join(projectDir, "pages", parentPath) : pathHelper.join(projectDir, "pages");
+    const pagesDir = parentPath
+      ? pathHelper.join(projectDir, "pages", parentPath)
+      : pathHelper.join(projectDir, "pages");
 
     try {
       // Check if directory exists
@@ -236,7 +238,10 @@ export async function getProviderEntities(
   adapter?: RuntimeAdapter,
 ): Promise<EntityInfo[]> {
   const providers: EntityInfo[] = [];
-  const providerDirs = [pathHelper.join(projectDir, "providers"), pathHelper.join(projectDir, "components")];
+  const providerDirs = [
+    pathHelper.join(projectDir, "providers"),
+    pathHelper.join(projectDir, "components"),
+  ];
 
   for (const dir of providerDirs) {
     // Check directory existence using adapter with fallback

@@ -1,15 +1,8 @@
-#!/usr/bin/env node
-/**
- * Cross-platform CLI entry point for npm package
- *
- * This is a lightweight CLI that works on Node.js, Bun, and Deno.
- * It provides basic commands that don't require heavy framework dependencies.
- */
-
 import { join } from "node:path";
-import { mkdir, writeFile, access } from "node:fs/promises";
+import { access, mkdir, writeFile } from "node:fs/promises";
+import { getEnv } from "../../platform/compat/process.ts";
 
-const VERSION = "0.1.0";
+const VERSION = getEnv("VERYFRONT_VERSION") || "0.0.0-dev";
 
 /**
  * Get command line arguments cross-platform
@@ -19,7 +12,7 @@ function getArgs(): string[] {
     return process.argv.slice(2);
   }
   if (typeof Deno !== "undefined") {
-    return (Deno as { args: string[] }).args;
+    return (Deno as { args: string }).args;
   }
   return [];
 }
@@ -72,8 +65,8 @@ function parseArgs(args: string[]): {
  * Show help information
  */
 function showHelp(): void {
-  console.log(`Veryfront CLI v${VERSION}
-
+  console.log(`Veryfront CLI v${VERSION}`);
+  console.log(`
 Available commands:
   init          Create a new Veryfront project
   dev           Start the development server
@@ -117,13 +110,13 @@ async function initCommand(name: string, template: string = "minimal"): Promise<
     name: name,
     version: "0.1.0",
     tasks: {
-      dev: "deno run -A npm:veryfront dev",
-      build: "deno run -A npm:veryfront build",
-      preview: "deno run -A npm:veryfront preview",
+      dev: `deno run -A npm:veryfront@^${VERSION} dev`,
+      build: `deno run -A npm:veryfront@^${VERSION} build`,
+      preview: `deno run -A npm:veryfront@^${VERSION} preview`,
     },
     imports: {
-      "veryfront": "npm:veryfront@^0.1.0",
-      "veryfront/": "npm:veryfront@^0.1.0/",
+      "veryfront": `npm:veryfront@^${VERSION}`,
+      "veryfront/": `npm:veryfront@^${VERSION}/`,
       "react": "https://esm.sh/react@18.3.1",
       "react-dom": "https://esm.sh/react-dom@18.3.1",
       "react/jsx-runtime": "https://esm.sh/react@18.3.1/jsx-runtime",
@@ -135,7 +128,7 @@ async function initCommand(name: string, template: string = "minimal"): Promise<
   };
   await writeFile(
     join(projectDir, "deno.json"),
-    JSON.stringify(denoJson, null, 2)
+    JSON.stringify(denoJson, null, 2),
   );
 
   // Create veryfront.config.ts
@@ -166,19 +159,19 @@ export default defineConfig({
     private: true,
     type: "module",
     scripts: {
-      dev: "npx veryfront dev",
-      build: "npx veryfront build",
-      preview: "npx veryfront preview",
+      dev: `npx veryfront dev`,
+      build: `npx veryfront build`,
+      preview: `npx veryfront preview`,
     },
     dependencies: {
-      veryfront: "^0.1.0",
+      veryfront: `^${VERSION}`,
       react: "^18.3.1",
       "react-dom": "^18.3.1",
     },
   };
   await writeFile(
     join(projectDir, "package.json"),
-    JSON.stringify(packageJson, null, 2)
+    JSON.stringify(packageJson, null, 2),
   );
 
   console.log("Project created successfully!\n");
@@ -233,11 +226,11 @@ async function main(): Promise<void> {
 The '${command}' command requires the Veryfront development server.
 
 For Deno (recommended):
-  deno run -A npm:veryfront ${args.join(" ")}
+  deno run -A npm:veryfront@^${VERSION} ${args.join(" ")}
 
 For Node.js, install dependencies first:
   npm install
-  npx veryfront ${args.join(" ")}
+  npx veryfront@^${VERSION} ${args.join(" ")}
 
 Note: dev/build/preview commands work best with Deno runtime.
 `);

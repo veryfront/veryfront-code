@@ -141,7 +141,9 @@ export class LayoutApplicator {
     );
   }
 
-  private async wrapWithAppComponent(pageElement: BundledReact.ReactElement): Promise<BundledReact.ReactElement> {
+  private async wrapWithAppComponent(
+    pageElement: BundledReact.ReactElement,
+  ): Promise<BundledReact.ReactElement> {
     const React = await getProjectReact();
     try {
       const appPath = join(this.projectDir, "components/app.tsx");
@@ -166,7 +168,9 @@ export class LayoutApplicator {
         );
 
         if (App) {
-          pageElement = React.createElement(App, { children: pageElement }) as BundledReact.ReactElement;
+          pageElement = React.createElement(App, {
+            children: pageElement,
+          }) as BundledReact.ReactElement;
           logger.info("Wrapped page with App component");
         }
       }

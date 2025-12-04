@@ -3,12 +3,12 @@
  */
 
 import { assertEquals } from "https://deno.land/std@0.220.0/assert/mod.ts";
-import { describe, it, beforeEach } from "https://deno.land/std@0.220.0/testing/bdd.ts";
+import { beforeEach, describe, it } from "https://deno.land/std@0.220.0/testing/bdd.ts";
 import { DAGExecutor } from "./dag-executor.ts";
 import { StepExecutor } from "./step-executor.ts";
 import { step } from "../dsl/step.ts";
 import { dependsOn } from "../dsl/workflow.ts";
-import type { WorkflowRun, WorkflowNode, WorkflowContext } from "../types.ts";
+import type { WorkflowContext, WorkflowNode, WorkflowRun } from "../types.ts";
 
 /**
  * Creates a mock StepExecutor that tracks execution order
@@ -97,7 +97,7 @@ describe("DAGExecutor", () => {
 
       stepExecutor.execute = async (node: WorkflowNode, _context: WorkflowContext) => {
         startTimes[node.id] = Date.now();
-        await new Promise(r => setTimeout(r, 50));
+        await new Promise((r) => setTimeout(r, 50));
         return {
           success: true,
           output: {},

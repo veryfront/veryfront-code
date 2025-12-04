@@ -292,7 +292,12 @@ async function loadAndTranspileModule(
   return await loadModuleFromCode(js, adapter, projectDir, fs);
 }
 
-async function loadModuleFromCode(code: string, _adapter: RuntimeAdapter, projectDir: string, fs: FileSystem): Promise<APIRoute> {
+async function loadModuleFromCode(
+  code: string,
+  _adapter: RuntimeAdapter,
+  projectDir: string,
+  fs: FileSystem,
+): Promise<APIRoute> {
   const tempDir = await fs.makeTempDir({ prefix: "vf-api-" });
   const tempFile = pathHelper.join(tempDir, "handler.mjs");
 
@@ -316,10 +321,15 @@ function isNodeRuntime(): boolean {
   // deno-lint-ignore no-explicit-any
   const _global = globalThis as any;
   // @ts-ignore - Deno global
-  return typeof Deno === "undefined" && typeof _global.process !== "undefined" && !!_global.process?.versions?.node;
+  return typeof Deno === "undefined" && typeof _global.process !== "undefined" &&
+    !!_global.process?.versions?.node;
 }
 
-async function rewriteExternalImports(code: string, projectDir: string, fs: FileSystem): Promise<string> {
+async function rewriteExternalImports(
+  code: string,
+  projectDir: string,
+  fs: FileSystem,
+): Promise<string> {
   let transformed = code;
 
   // In Node.js, resolve external imports to absolute paths
@@ -506,7 +516,7 @@ async function rewriteExternalImports(code: string, projectDir: string, fs: File
 
   // Apply npm: specifier rewrites only if not in Node.js (i.e., in Deno)
   // @ts-ignore - Deno global
-  if (typeof Deno !== 'undefined') {
+  if (typeof Deno !== "undefined") {
     for (const { pattern, replacement } of externalPackages) {
       transformed = transformed.replace(pattern, replacement);
     }

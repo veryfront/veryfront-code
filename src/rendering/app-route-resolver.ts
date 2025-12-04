@@ -14,11 +14,11 @@ import { serverLogger as logger } from "@veryfront/utils";
 
 // Conditional import for front-matter extraction
 let extractYaml: ((content: string) => any) | undefined;
-let jsYamlModule: typeof import('js-yaml') | null = null;
+let jsYamlModule: typeof import("js-yaml") | null = null;
 
 // Initialize extractYaml based on runtime
 // @ts-ignore - Deno global
-if (typeof Deno === 'undefined') {
+if (typeof Deno === "undefined") {
   // Node.js environment - use lazy loading for js-yaml
   extractYaml = (content: string) => {
     const frontMatterRegex = /^---\n([\s\S]*?)\n---/; // Basic regex for YAML front matter
@@ -37,7 +37,7 @@ if (typeof Deno === 'undefined') {
   };
 
   // Eagerly load js-yaml module
-  import('js-yaml').then((mod) => {
+  import("js-yaml").then((mod) => {
     jsYamlModule = mod;
   }).catch((e) => {
     logger.warn("Could not import js-yaml for Node.js frontmatter parsing.", e);

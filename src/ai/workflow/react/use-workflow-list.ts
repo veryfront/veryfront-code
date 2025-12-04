@@ -103,7 +103,7 @@ export interface UseWorkflowListResult {
  * useWorkflowList - List and filter workflow runs
  */
 export function useWorkflowList(
-  options: UseWorkflowListOptions = {}
+  options: UseWorkflowListOptions = {},
 ): UseWorkflowListResult {
   const {
     workflowId,
@@ -167,7 +167,7 @@ export function useWorkflowList(
 
       return params.toString();
     },
-    []
+    [],
   );
 
   /**
@@ -203,7 +203,7 @@ export function useWorkflowList(
         setError(fetchError);
       }
     },
-    [apiBase, filter, cursor, buildQueryString]
+    [apiBase, filter, cursor, buildQueryString],
   );
 
   /**
@@ -267,7 +267,7 @@ export function useWorkflowList(
         limit: newFilter.pageSize ?? prev.limit,
       }));
     },
-    []
+    [],
   );
 
   return {

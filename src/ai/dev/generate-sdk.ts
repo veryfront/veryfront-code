@@ -1,4 +1,4 @@
-import { join, basename, extname } from "../../platform/compat/path-helper.ts";
+import { basename, extname, join } from "../../platform/compat/path-helper.ts";
 import { createFileSystem } from "../../platform/compat/fs.ts";
 
 export async function generateClientSDK(projectDir: string): Promise<void> {

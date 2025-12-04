@@ -2,9 +2,13 @@
  * Workflow Client Tests
  */
 
-import { assertEquals, assertExists, assertRejects } from "https://deno.land/std@0.220.0/assert/mod.ts";
-import { describe, it, beforeEach, afterEach } from "https://deno.land/std@0.220.0/testing/bdd.ts";
-import { WorkflowClient, createWorkflowClient } from "./workflow-client.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertRejects,
+} from "https://deno.land/std@0.220.0/assert/mod.ts";
+import { afterEach, beforeEach, describe, it } from "https://deno.land/std@0.220.0/testing/bdd.ts";
+import { createWorkflowClient, WorkflowClient } from "./workflow-client.ts";
 import { MemoryBackend } from "../backends/memory.ts";
 import { workflow } from "../dsl/workflow.ts";
 import { step } from "../dsl/step.ts";
@@ -82,7 +86,7 @@ describe("WorkflowClient", () => {
       await assertRejects(
         () => client.start("non-existent", {}),
         Error,
-        "Workflow not found"
+        "Workflow not found",
       );
     });
   });

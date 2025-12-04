@@ -8,7 +8,7 @@ let denoPathPromise: Promise<PlatformPath> | null = null;
 
 // Initialize path module synchronously for Node.js
 // @ts-ignore - Deno global
-if (typeof Deno === 'undefined') {
+if (typeof Deno === "undefined") {
   pathMod = nodePath;
 } else {
   // Deno environment - start loading asynchronously but don't await
@@ -28,18 +28,19 @@ function getPathMod(): PlatformPath {
 }
 
 // Re-export common path functions with proper types
-export const basename = (path: string, suffix?: string): string => getPathMod().basename(path, suffix);
+export const basename = (path: string, suffix?: string): string =>
+  getPathMod().basename(path, suffix);
 export const dirname = (path: string): string => getPathMod().dirname(path);
 export const fromFileUrl = (url: string | URL): string => {
   const mod = getPathMod();
   // @ts-ignore - Deno path module has fromFileUrl
-  if (mod && typeof (mod as any).fromFileUrl === 'function') {
+  if (mod && typeof (mod as any).fromFileUrl === "function") {
     // @ts-ignore - Deno path module has fromFileUrl
     return (mod as any).fromFileUrl(url);
   }
   // Fallback for Node.js where fromFileUrl might not be directly available
   // This uses URL parsing which is generally cross-platform
-  const urlObj = typeof url === 'string' ? new URL(url) : url;
+  const urlObj = typeof url === "string" ? new URL(url) : url;
   return urlObj.pathname;
 };
 export const join = (...paths: string[]): string => getPathMod().join(...paths);

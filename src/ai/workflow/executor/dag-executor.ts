@@ -136,9 +136,7 @@ export class DAGExecutor {
       ready = ready.slice(this.config.maxConcurrency);
 
       const results = await Promise.allSettled(
-        batch.map((nodeId) =>
-          this.executeNode(nodeMap.get(nodeId)!, context, nodeStates)
-        ),
+        batch.map((nodeId) => this.executeNode(nodeMap.get(nodeId)!, context, nodeStates)),
       );
 
       // Process results
@@ -278,12 +276,17 @@ export class DAGExecutor {
         return await this.executeWaitNode(node, config as WaitNodeConfig, context);
 
       case "subWorkflow":
-        return await this.executeSubWorkflowNode(node, config as SubWorkflowNodeConfig, context, nodeStates);
+        return await this.executeSubWorkflowNode(
+          node,
+          config as SubWorkflowNodeConfig,
+          context,
+          nodeStates,
+        );
 
       default:
         throw new Error(
           `Unknown node type "${(config as WorkflowNodeConfig).type}" for node "${node.id}". ` +
-          `Valid types are: step, parallel, map, branch, wait, subWorkflow`
+            `Valid types are: step, parallel, map, branch, wait, subWorkflow`,
         );
     }
   }
@@ -304,9 +307,7 @@ export class DAGExecutor {
     const startTime = Date.now();
 
     // 1. Resolve items collection
-    const items = typeof config.items === "function"
-      ? await config.items(context)
-      : config.items;
+    const items = typeof config.items === "function" ? await config.items(context) : config.items;
 
     if (!Array.isArray(items)) {
       throw new Error(`Map node "${node.id}" items must be an array`);
@@ -327,10 +328,10 @@ export class DAGExecutor {
 
     // 2. Generate child nodes for each item
     const childNodes: WorkflowNode[] = [];
-    
+
     // Check if processor is a WorkflowDefinition or a single node
     const isWorkflowDef = (p: any): p is WorkflowDefinition => !!p.steps;
-    
+
     // We'll map each item to a set of nodes
     // For simplicity in this implementation, if processor is a single node, we clone it.
     // If it's a workflow def, we'd need to expand it (similar to subworkflow).
@@ -340,7 +341,7 @@ export class DAGExecutor {
     for (let i = 0; i < items.length; i++) {
       const item = items[i];
       const childId = `${node.id}_${i}`;
-      
+
       let childNode: WorkflowNode;
 
       if (isWorkflowDef(config.processor)) {
@@ -359,7 +360,7 @@ export class DAGExecutor {
         // Clone the single processor node
         // We must override the input to be the current item
         const processorConfig = { ...config.processor.config } as any;
-        
+
         // If it's a step node, ensure input receives the item
         if (processorConfig.type === "step") {
           processorConfig.input = item;
@@ -370,7 +371,7 @@ export class DAGExecutor {
           config: processorConfig,
         };
       }
-      
+
       childNodes.push(childNode);
     }
 
@@ -400,7 +401,7 @@ export class DAGExecutor {
       Object.assign(nodeStates, result.nodeStates);
 
       // Collect outputs in order
-      const outputs = childNodes.map(child => {
+      const outputs = childNodes.map((child) => {
         const childState = result.nodeStates[child.id];
         return childState?.output;
       });
@@ -422,7 +423,6 @@ export class DAGExecutor {
         contextUpdates: result.completed ? { [node.id]: outputs } : {},
         waiting: result.waiting,
       };
-
     } finally {
       // Restore concurrency setting
       this.config.maxConcurrency = originalConcurrency!;
@@ -447,14 +447,16 @@ export class DAGExecutor {
     // 1. Resolve workflow definition
     let workflowDef: WorkflowDefinition;
     if (typeof config.workflow === "string") {
-      throw new Error("Resolving workflow by ID is not yet supported in this execution context. Pass the WorkflowDefinition object.");
+      throw new Error(
+        "Resolving workflow by ID is not yet supported in this execution context. Pass the WorkflowDefinition object.",
+      );
     } else {
       workflowDef = config.workflow;
     }
 
     // 2. Resolve input
-    const input = typeof config.input === "function" 
-      ? await config.input(context) 
+    const input = typeof config.input === "function"
+      ? await config.input(context)
       : (config.input ?? context.input);
 
     // 3. Expand steps (handle dynamic steps builder)
@@ -462,7 +464,7 @@ export class DAGExecutor {
     if (typeof workflowDef.steps === "function") {
       steps = workflowDef.steps({
         input,
-        context
+        context,
       });
     } else {
       steps = workflowDef.steps;
@@ -471,18 +473,18 @@ export class DAGExecutor {
     // 4. Execute sub-workflow
     // We create a new isolated run context for the subworkflow
     const subRunId = `${node.id}_sub_${generateId()}`;
-    
+
     // Execute recursively
     const result = await this.execute(steps, {
       id: subRunId,
       workflowId: workflowDef.id,
       status: "running",
       input,
-      nodeStates: {}, 
+      nodeStates: {},
       currentNodes: [],
-      context: { 
+      context: {
         input, // Subworkflow starts with fresh context scoped to its input
-        // We do NOT inherit parent context to ensure isolation, 
+        // We do NOT inherit parent context to ensure isolation,
         // unless explicitly passed via input.
       },
       checkpoints: [],
@@ -492,7 +494,7 @@ export class DAGExecutor {
 
     // 5. Process result
     let finalOutput = result.context; // Default output is the final context
-    
+
     // If sub-workflow has explicit output transformation
     if (result.completed && config.output) {
       finalOutput = config.output(result.context) as any;

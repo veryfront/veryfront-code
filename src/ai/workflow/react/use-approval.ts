@@ -117,7 +117,7 @@ export function useApproval(options: UseApprovalOptions): UseApprovalResult {
     const fetchApproval = async () => {
       try {
         const response = await fetch(
-          `${apiBase}/runs/${runId}/approvals/${approvalId}`
+          `${apiBase}/runs/${runId}/approvals/${approvalId}`,
         );
 
         if (!response.ok) {
@@ -160,7 +160,7 @@ export function useApproval(options: UseApprovalOptions): UseApprovalResult {
               "Content-Type": "application/json",
             },
             body: JSON.stringify(decision),
-          }
+          },
         );
 
         if (!response.ok) {
@@ -171,12 +171,12 @@ export function useApproval(options: UseApprovalOptions): UseApprovalResult {
         setApproval((prev) =>
           prev
             ? {
-                ...prev,
-                status: decision.approved ? "approved" : "rejected",
-                resolvedAt: new Date(),
-                resolvedBy: decision.approver,
-                comment: decision.comment,
-              }
+              ...prev,
+              status: decision.approved ? "approved" : "rejected",
+              resolvedAt: new Date(),
+              resolvedBy: decision.approver,
+              comment: decision.comment,
+            }
             : null
         );
 
@@ -190,7 +190,7 @@ export function useApproval(options: UseApprovalOptions): UseApprovalResult {
         setIsSubmitting(false);
       }
     },
-    [runId, approvalId, apiBase, onDecision, onError]
+    [runId, approvalId, apiBase, onDecision, onError],
   );
 
   /**
@@ -204,7 +204,7 @@ export function useApproval(options: UseApprovalOptions): UseApprovalResult {
         comment,
       });
     },
-    [submitDecision, approver]
+    [submitDecision, approver],
   );
 
   /**
@@ -218,7 +218,7 @@ export function useApproval(options: UseApprovalOptions): UseApprovalResult {
         comment,
       });
     },
-    [submitDecision, approver]
+    [submitDecision, approver],
   );
 
   return {

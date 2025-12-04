@@ -15,7 +15,8 @@ import { createFileSystem } from "../../platform/compat/fs.ts";
 function isNodeRuntime(): boolean {
   // deno-lint-ignore no-explicit-any
   const _global = globalThis as any;
-  return typeof Deno === "undefined" && typeof _global.process !== "undefined" && !!_global.process?.versions?.node;
+  return typeof Deno === "undefined" && typeof _global.process !== "undefined" &&
+    !!_global.process?.versions?.node;
 }
 
 export async function loadComponentFromSource(

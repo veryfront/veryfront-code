@@ -10,18 +10,18 @@
 
 export {
   createToolExecutionCore,
-  ToolExecutionCore,
   type ProviderToolCall,
   type StreamingCallbacks,
   type ToolExecutionContext,
+  ToolExecutionCore,
   type ToolExecutionResult,
 } from "./tool-execution-core.ts";
 
 export {
   createUsageTracker,
-  UsageTracker,
   type ProviderUsage,
   type UsageStats,
+  UsageTracker,
 } from "./usage-tracker.ts";
 
 export {
@@ -31,7 +31,7 @@ export {
 } from "./message-transformer.ts";
 
 export {
+  type AgentMiddleware,
   createMiddlewareChain,
   MiddlewareChain,
-  type AgentMiddleware,
 } from "./middleware-chain.ts";

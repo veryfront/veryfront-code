@@ -35,10 +35,10 @@ export class HMRServer {
     this.rateLimiter = new RateLimiter(options.maxMessagesPerMinute ?? HMR_MAX_MESSAGES_PER_MINUTE);
   }
 
- /**
-  * Start the HMR server
-  * Sets up HTTP server with WebSocket upgrade and runtime script serving
-  */
+  /**
+   * Start the HMR server
+   * Sets up HTTP server with WebSocket upgrade and runtime script serving
+   */
   start(): Promise<void> {
     const _handler = (req: Request): Response => {
       const url = new URL(req.url);

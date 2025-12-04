@@ -7,7 +7,8 @@ import { REACT_DEFAULT_VERSION } from "@veryfront/utils/constants/cdn.ts";
 export function isNodeRuntime(): boolean {
   // deno-lint-ignore no-explicit-any
   const _global = globalThis as any;
-  return typeof Deno === "undefined" && typeof _global.process !== "undefined" && !!_global.process?.versions?.node;
+  return typeof Deno === "undefined" && typeof _global.process !== "undefined" &&
+    !!_global.process?.versions?.node;
 }
 
 // Cache whether project has both react and react-dom
@@ -78,7 +79,8 @@ export async function resolveReactImports(code: string, forSSR: boolean = false)
 
         const projectImports: Record<string, string> = {
           "react/jsx-runtime": pathToFileURL(projectRequire.resolve("react/jsx-runtime")).href,
-          "react/jsx-dev-runtime": pathToFileURL(projectRequire.resolve("react/jsx-dev-runtime")).href,
+          "react/jsx-dev-runtime":
+            pathToFileURL(projectRequire.resolve("react/jsx-dev-runtime")).href,
           "react": pathToFileURL(projectRequire.resolve("react")).href,
         };
 
@@ -138,7 +140,10 @@ export function addDepsToEsmShUrls(code: string): Promise<string> {
   }
 
   return Promise.resolve(replaceSpecifiers(code, (specifier) => {
-    if (specifier.startsWith("https://esm.sh/") && !specifier.includes("?") && !specifier.includes(`react@${REACT_DEFAULT_VERSION}`)) {
+    if (
+      specifier.startsWith("https://esm.sh/") && !specifier.includes("?") &&
+      !specifier.includes(`react@${REACT_DEFAULT_VERSION}`)
+    ) {
       return `${specifier}?deps=react@${REACT_DEFAULT_VERSION},react-dom@${REACT_DEFAULT_VERSION}`;
     }
     return null;

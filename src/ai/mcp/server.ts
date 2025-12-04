@@ -143,7 +143,7 @@ export class MCPServer {
       if (tool.mcp?.enabled !== false) {
         // Use pre-converted schema or convert at runtime
         const inputSchema = tool.inputSchemaJson || zodToJsonSchema(tool.inputSchema);
-        
+
         tools.push({
           name: id,
           description: tool.description,
