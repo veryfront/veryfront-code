@@ -74,7 +74,8 @@ export const myAgent = agent({
   },
   {
     path: "app/layout.tsx",
-    content: `export default function RootLayout({
+    content: `// Layout component - veryfront automatically generates Tailwind CSS using UnoCSS
+export default function RootLayout({
   children
 }: {
   children: React.ReactNode
@@ -84,10 +85,6 @@ export const myAgent = agent({
       <head>
         <title>Veryfront AI Starter</title>
         <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <link
-          rel="stylesheet"
-          href="https://cdn.jsdelivr.net/npm/tailwindcss@3/dist/tailwind.min.css"
-        />
       </head>
       <body className="h-full bg-slate-50 dark:bg-slate-900">
         {children}
