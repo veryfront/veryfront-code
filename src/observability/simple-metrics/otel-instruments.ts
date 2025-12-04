@@ -39,7 +39,10 @@ export async function ensureOtelInstruments(): Promise<void> {
   otelInitialized = true;
 
   try {
-    const mod = await import("npm:@opentelemetry/api@1");
+    // Construct module name dynamically to prevent Deno static analyzer
+    // from trying to resolve this npm package during lint/check
+    const otelApiModule = ["npm:@opentelemetry/", "api@1"].join("");
+    const mod = await import(otelApiModule);
     const meter = mod.metrics.getMeter("veryfront", "0.1.0");
     otel.meter = meter;
     otel.ssrHistogram = meter.createHistogram("veryfront.ssr.duration", {
