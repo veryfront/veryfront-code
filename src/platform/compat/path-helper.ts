@@ -4,7 +4,6 @@ import type { PlatformPath } from "node:path";
 
 // Use node:path for Node.js or import Deno's std/path for Deno
 let pathMod: PlatformPath | null = null;
-let denoPathPromise: Promise<PlatformPath> | null = null;
 
 // Initialize path module synchronously for Node.js
 // @ts-ignore - Deno global
@@ -13,9 +12,8 @@ if (typeof Deno === "undefined") {
 } else {
   // Deno environment - start loading asynchronously but don't await
   // @ts-ignore - Deno global
-  denoPathPromise = import("std/path/mod.ts").then((mod) => {
+  import("std/path/mod.ts").then((mod) => {
     pathMod = mod as unknown as PlatformPath;
-    return pathMod;
   });
 }
 
