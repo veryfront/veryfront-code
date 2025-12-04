@@ -9,7 +9,7 @@
     "build": "npx veryfront build"
   },
   "dependencies": {
-    "veryfront": "^0.0.18",
+    "veryfront": "^0.0.19",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   }
