@@ -34,7 +34,10 @@ export class RedisCacheStore implements CacheStore {
 
     let createClient: ((options: { url?: string }) => RedisClient) | undefined;
     try {
-      const mod = await import("npm:@redis/client@1.5.8");
+      // Construct module name dynamically to prevent Deno static analyzer
+      // from trying to resolve this npm package during lint/check
+      const redisClientModule = ["npm:@redis/client", "@1.5.8"].join("");
+      const mod = await import(redisClientModule);
       createClient = mod.createClient as unknown as (options: { url?: string }) => RedisClient;
     } catch {
       throw toError(createError({
