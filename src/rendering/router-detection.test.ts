@@ -21,24 +21,30 @@ const failingAdapter: RuntimeAdapter = {
     writableFs: true,
   },
   fs: {
+    // deno-lint-ignore require-await
     async stat() {
       throw new Error("adapter stat failure");
     },
+    // deno-lint-ignore require-yield
     async *readDir() {
       throw new Error("adapter readDir failure");
     },
     // Unused in this test
+    // deno-lint-ignore require-await
     async readFile() {
       throw new Error("not implemented");
     },
+    // deno-lint-ignore require-await
     async writeFile() {
       throw new Error("not implemented");
     },
+    // deno-lint-ignore require-await
     async exists() {
       return false;
     },
     async mkdir() {},
     async remove() {},
+    // deno-lint-ignore require-await
     async makeTempDir() {
       return "";
     },
@@ -74,6 +80,7 @@ const failingAdapter: RuntimeAdapter = {
     typescript: true,
   },
   kv: {
+    // deno-lint-ignore require-await
     async get() {
       return null;
     },
@@ -94,6 +101,7 @@ const failingAdapter: RuntimeAdapter = {
       throw new Error("not implemented");
     },
   },
+  // deno-lint-ignore require-await
   async serve() {
     return {
       stop: async () => {},

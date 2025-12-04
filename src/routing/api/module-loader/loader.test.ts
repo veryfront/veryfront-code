@@ -75,6 +75,7 @@ const adapter: RuntimeAdapter = {
       throw new Error("not implemented");
     },
   },
+  // deno-lint-ignore require-await
   async serve() {
     throw new Error("not implemented");
   },
