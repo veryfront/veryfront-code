@@ -28,6 +28,7 @@ export interface AgentStreamResult {
 
 /**
  * Create an AgentStreamResult from a ReadableStream
+ * Returns Vercel AI SDK compatible streaming response
  */
 function createAgentStreamResult(stream: ReadableStream): AgentStreamResult {
   return {
@@ -43,6 +44,8 @@ function createAgentStreamResult(stream: ReadableStream): AgentStreamResult {
           "Content-Type": "text/event-stream",
           "Cache-Control": "no-cache",
           "Connection": "keep-alive",
+          // Required header for Vercel AI SDK Data Stream Protocol v1
+          "x-vercel-ai-ui-message-stream": "v1",
           ...options?.headers,
         },
       });
@@ -145,6 +148,8 @@ export function agent(config: AgentConfig): Agent {
           "Content-Type": "text/event-stream",
           "Cache-Control": "no-cache",
           "Connection": "keep-alive",
+          // Required header for Vercel AI SDK Data Stream Protocol v1
+          "x-vercel-ai-ui-message-stream": "v1",
         },
       });
     },

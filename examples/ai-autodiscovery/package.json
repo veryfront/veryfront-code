@@ -8,7 +8,7 @@
     "start": "npx tsx example.ts"
   },
   "dependencies": {
-    "veryfront": "^0.0.27",
+    "veryfront": "^0.0.28",
     "zod": "^3.22.0"
   },
   "devDependencies": {

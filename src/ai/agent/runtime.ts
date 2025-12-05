@@ -139,6 +139,7 @@ export class AgentRuntime {
 
   /**
    * Stream a response
+   * Returns a ReadableStream compatible with Vercel AI SDK Data Stream Protocol
    */
   async stream(
     messages: Message[],
@@ -157,11 +158,19 @@ export class AgentRuntime {
     const { provider, model } = getProviderFromModel(this.config.model);
 
     const encoder = new TextEncoder();
+    const messageId = `msg_${Date.now()}`;
 
     return new ReadableStream({
       start: async (controller) => {
         try {
           this.status = "streaming";
+
+          // Send start event (Vercel AI SDK Data Stream Protocol)
+          const startEvent = JSON.stringify({
+            type: "start",
+            messageId,
+          });
+          controller.enqueue(encoder.encode(`data: ${startEvent}\n\n`));
 
           const response = await this.executeAgentLoopStreaming(
             provider,
@@ -171,24 +180,28 @@ export class AgentRuntime {
             controller,
             encoder,
             callbacks,
+            messageId,
           );
 
-          const statusData = JSON.stringify({
-            type: "status",
-            status: "completed",
+          // Send finish event
+          const finishEvent = JSON.stringify({
+            type: "finish",
             usage: response.usage,
           });
-          controller.enqueue(encoder.encode(`data: ${statusData}\n\n`));
+          controller.enqueue(encoder.encode(`data: ${finishEvent}\n\n`));
+
+          // Send [DONE] to signal end of stream
+          controller.enqueue(encoder.encode("data: [DONE]\n\n"));
 
           controller.close();
         } catch (error) {
           this.status = "error";
 
-          const errorData = JSON.stringify({
+          const errorEvent = JSON.stringify({
             type: "error",
             error: error instanceof Error ? error.message : String(error),
           });
-          controller.enqueue(encoder.encode(`data: ${errorData}\n\n`));
+          controller.enqueue(encoder.encode(`data: ${errorEvent}\n\n`));
 
           controller.close();
         }
@@ -384,6 +397,7 @@ export class AgentRuntime {
 
   /**
    * Execute agent loop with streaming
+   * Uses Vercel AI SDK Data Stream Protocol format
    */
   private async executeAgentLoopStreaming(
     provider: Provider,
@@ -396,6 +410,7 @@ export class AgentRuntime {
       onToolCall?: (toolCall: ToolCall) => void;
       onChunk?: (chunk: string) => void;
     },
+    messageId?: string,
   ): Promise<AgentResponse> {
     const capabilities = getPlatformCapabilities();
     const maxSteps = this.getMaxSteps(capabilities.maxAgentSteps);
@@ -483,16 +498,18 @@ export class AgentRuntime {
         await this.memory.add(errorMessage);
       };
 
+      // Vercel AI SDK Data Stream Protocol event handler
       const handleEvent = (event: AgentStreamEvent) => {
         switch (event.type) {
           case "content": {
             accumulatedText += event.content;
 
-            const chunkData = JSON.stringify({
-              type: "chunk",
-              content: event.content,
+            // Use Vercel AI SDK text-delta format
+            const textDeltaEvent = JSON.stringify({
+              type: "text-delta",
+              textDelta: event.content,
             });
-            controller.enqueue(encoder.encode(`data: ${chunkData}\n\n`));
+            controller.enqueue(encoder.encode(`data: ${textDeltaEvent}\n\n`));
 
             if (callbacks?.onChunk) {
               callbacks.onChunk(event.content);
@@ -507,6 +524,14 @@ export class AgentRuntime {
                 name: event.toolCall.name,
                 arguments: "",
               });
+
+              // Send tool-call-streaming-start event (Vercel AI SDK format)
+              const toolStartEvent = JSON.stringify({
+                type: "tool-call-streaming-start",
+                toolCallId: event.toolCall.id,
+                toolName: event.toolCall.name,
+              });
+              controller.enqueue(encoder.encode(`data: ${toolStartEvent}\n\n`));
             }
             break;
 
@@ -514,6 +539,14 @@ export class AgentRuntime {
             if (event.id && streamToolCalls.has(event.id)) {
               const tc = streamToolCalls.get(event.id)!;
               tc.arguments += event.arguments;
+
+              // Send tool-call-delta event (Vercel AI SDK format)
+              const toolDeltaEvent = JSON.stringify({
+                type: "tool-call-delta",
+                toolCallId: event.id,
+                argsTextDelta: event.arguments,
+              });
+              controller.enqueue(encoder.encode(`data: ${toolDeltaEvent}\n\n`));
             }
             break;
 
@@ -524,6 +557,16 @@ export class AgentRuntime {
                 name: event.toolCall.name,
                 arguments: event.toolCall.arguments,
               });
+
+              // Send tool-call event (Vercel AI SDK format)
+              const { args } = parseStreamToolArgs(event.toolCall.arguments);
+              const toolCallEvent = JSON.stringify({
+                type: "tool-call",
+                toolCallId: event.toolCall.id,
+                toolName: event.toolCall.name,
+                args,
+              });
+              controller.enqueue(encoder.encode(`data: ${toolCallEvent}\n\n`));
             }
             break;
 
@@ -640,15 +683,14 @@ export class AgentRuntime {
               callbacks.onToolCall(toolCall);
             }
 
-            const toolCallData = JSON.stringify({
-              type: "tool_call",
-              toolCall: {
-                id: toolCall.id,
-                name: toolCall.name,
-                args: toolCall.args,
-              },
+            // Send tool-call event (Vercel AI SDK format)
+            const toolCallEvent = JSON.stringify({
+              type: "tool-call",
+              toolCallId: toolCall.id,
+              toolName: toolCall.name,
+              args: toolCall.args,
             });
-            controller.enqueue(encoder.encode(`data: ${toolCallData}\n\n`));
+            controller.enqueue(encoder.encode(`data: ${toolCallEvent}\n\n`));
 
             const result = await executeTool(tc.name, toolCall.args, {
               agentId: this.id,
@@ -659,15 +701,13 @@ export class AgentRuntime {
             toolCall.executionTime = Date.now() - startTime;
             toolCalls.push(toolCall);
 
-            const toolResultData = JSON.stringify({
-              type: "tool_result",
-              toolCall: {
-                id: toolCall.id,
-                name: toolCall.name,
-                result,
-              },
+            // Send tool-result event (Vercel AI SDK format)
+            const toolResultEvent = JSON.stringify({
+              type: "tool-result",
+              toolCallId: toolCall.id,
+              result,
             });
-            controller.enqueue(encoder.encode(`data: ${toolResultData}\n\n`));
+            controller.enqueue(encoder.encode(`data: ${toolResultEvent}\n\n`));
 
             const toolResultMessage: Message = {
               id: `tool_${tc.id}`,
