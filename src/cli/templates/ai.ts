@@ -1,13 +1,8 @@
 /**
  * AI starter template for Veryfront
  *
- * Uses auto-discovery for tools, agents, and prompts.
- * Structure:
- *   ai/
- *   ├── agents/      # Auto-discovered agents
- *   ├── tools/       # Auto-discovered tools
- *   ├── prompts/     # Auto-discovered prompts
- *   └── resources/   # Auto-discovered resources (MCP-style)
+ * Simple AI chat application with tool calling.
+ * Files in ai/ are auto-discovered by veryfront dev server.
  */
 
 import type { TemplateConfig, TemplateFile } from "./index.ts";
@@ -29,47 +24,94 @@ export const aiTemplateConfig: TemplateConfig = {
 };
 
 export const aiTemplate: TemplateFile[] = [
-  // No veryfront.config.ts needed - router is auto-detected from folder structure
-  // and CORS isn't required when UI and API are on the same origin
+  // TypeScript config with modern module resolution for npm package exports
+  {
+    path: "tsconfig.json",
+    content: `{
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "noEmit": true,
+    "lib": ["DOM", "DOM.Iterable", "ES2020"]
+  },
+  "include": ["**/*.ts", "**/*.tsx"],
+  "exclude": ["node_modules"]
+}
+`,
+  },
 
-  // Agent definition - references auto-discovered tools by ID
+  // Agent definition - auto-discovered from ai/agents/
   {
     path: "ai/agents/assistant.ts",
     content: `/**
  * AI Assistant Agent
  *
- * Uses auto-discovered tools and prompts.
- * Tools are referenced by their file name (kebab-case -> camelCase).
+ * Auto-discovered from ai/agents/ directory.
+ * Export default to register the agent.
  */
 
-import { agent } from 'veryfront/ai';
-import { promptRegistry } from 'veryfront/ai/mcp/prompt';
+import { agent, promptRegistry } from 'veryfront/ai';
+
+/**
+ * Get the system prompt from the registry
+ * Falls back to a default if not found
+ */
+function getSystemPrompt(): string {
+  const prompt = promptRegistry.get('assistant');
+  if (prompt) {
+    const content = prompt.getContent();
+    return typeof content === 'string' ? content : '';
+  }
+  return 'You are a helpful AI assistant.';
+}
 
 export default agent({
   id: 'assistant',
-
   model: 'openai/gpt-4o',
-
-  // Load system prompt from the prompt registry (auto-discovered from ai/prompts/)
-  system: async () => {
-    const prompt = promptRegistry.get('assistant');
-    if (prompt) {
-      return await prompt.getContent();
-    }
-    return 'You are a helpful AI assistant with access to weather information.';
-  },
+  system: getSystemPrompt,
 
   // Reference auto-discovered tools by their IDs
-  // Tool IDs are derived from filenames: get-weather.ts -> getWeather
   tools: {
     getWeather: true,
   },
 
-  // Enable streaming for real-time responses
-  streaming: true,
-
-  // Maximum agent loop steps (for tool-calling loops)
   maxSteps: 10,
+});
+`,
+  },
+
+  // Prompt definition - auto-discovered from ai/prompts/
+  {
+    path: "ai/prompts/assistant.ts",
+    content: `/**
+ * Assistant System Prompt
+ *
+ * Auto-discovered from ai/prompts/ directory.
+ * Export default to register the prompt.
+ */
+
+import { prompt } from 'veryfront/ai';
+
+export default prompt({
+  name: 'assistant',
+  description: 'System prompt for the AI assistant',
+
+  getContent: () => \`You are a helpful AI assistant with access to weather information.
+
+When users ask about the weather:
+1. Use the getWeather tool to fetch current conditions
+2. Provide a friendly summary of the weather
+3. Suggest appropriate activities based on conditions
+
+Be conversational and helpful. If you don't know something, say so honestly.\`,
 });
 `,
   },
@@ -94,16 +136,16 @@ export default tool({
     location: z.string().describe('The city and state, e.g. San Francisco, CA'),
   }),
 
-  execute: async ({ location }) => {
+  execute: async ({ location }: { location: string }) => {
     // Mock implementation - replace with real weather API
-    const mockWeather = {
+    const mockWeather: Record<string, { temp: number; condition: string }> = {
       'San Francisco, CA': { temp: 65, condition: 'Foggy' },
       'New York, NY': { temp: 75, condition: 'Sunny' },
       'London, UK': { temp: 60, condition: 'Rainy' },
       'Tokyo, Japan': { temp: 80, condition: 'Humid' },
     };
 
-    const weather = mockWeather[location as keyof typeof mockWeather] || {
+    const weather = mockWeather[location] || {
       temp: 70,
       condition: 'Clear',
     };
@@ -119,35 +161,6 @@ export default tool({
 `,
   },
 
-  // Prompt definition - auto-discovered from ai/prompts/
-  {
-    path: "ai/prompts/assistant.ts",
-    content: `/**
- * Assistant System Prompt
- *
- * Auto-discovered from ai/prompts/ directory.
- * Export default to register the prompt.
- */
-
-import { prompt } from 'veryfront/ai/mcp/prompt';
-
-export default prompt({
-  name: 'assistant',
-  description: 'System prompt for the AI assistant',
-
-  getContent: async () => {
-    return \`You are a helpful AI assistant with access to weather information.
-
-When users ask about the weather:
-1. Use the getWeather tool to fetch current conditions
-2. Provide a friendly summary of the weather
-3. Suggest appropriate activities based on conditions
-
-Be conversational and helpful. If you don't know something, say so honestly.\`;
-  },
-});
-`,
-  },
   {
     path: "app/layout.tsx",
     content: `// Layout component for client-rendered pages
@@ -176,47 +189,29 @@ export default function RootLayout({
     content: `/**
  * Chat API Route
  *
- * Uses auto-discovery to load tools, prompts, and agents.
+ * Uses auto-discovered agent from ai/agents/ directory.
+ * The agent, tools, and prompts are all auto-registered by veryfront.
  */
 
-import { agent, discoverAll, initializeProviders } from 'veryfront/ai';
-
-// Initialize providers with env vars
-initializeProviders({
-  openai: {
-    apiKey: (typeof process !== 'undefined' ? process.env.OPENAI_API_KEY : '') ||
-            (typeof Deno !== 'undefined' ? Deno.env.get('OPENAI_API_KEY') : '') || '',
-  },
-});
-
-// Auto-discover tools and prompts from ai/ directory
-const cwd = typeof process !== 'undefined' ? process.cwd() :
-            (typeof Deno !== 'undefined' ? Deno.cwd() : '.');
-await discoverAll({
-  baseDir: cwd,
-  verbose: true,
-});
-
-// Create a reusable agent instance
-// In production, you might want session-based agents like in ai-code-assistant
-const assistantAgent = agent({
-  id: 'assistant',
-  model: 'openai/gpt-4o',
-  system: 'You are a helpful AI assistant with access to weather information.',
-  tools: {
-    getWeather: true, // Reference auto-discovered tool by ID
-  },
-  streaming: true,
-  maxSteps: 10,
-});
+import { agentRegistry } from 'veryfront/ai';
 
 export async function POST(request: Request) {
   const { messages } = await request.json();
 
-  // Stream response using the agent
-  const result = await assistantAgent.stream({ messages });
+  // Get the auto-discovered agent from registry
+  const chatAgent = agentRegistry.get('assistant');
 
-  // Use toDataStreamResponse() for Vercel AI SDK compatible streaming
+  if (!chatAgent) {
+    return new Response(
+      JSON.stringify({ error: 'Agent not found. Make sure ai/agents/assistant.ts exists.' }),
+      { status: 500, headers: { 'Content-Type': 'application/json' } }
+    );
+  }
+
+  // Stream response using the agent
+  const result = await chatAgent.stream({ messages });
+
+  // Return Vercel AI SDK compatible streaming response
   return result.toDataStreamResponse();
 }
 `,
@@ -273,8 +268,13 @@ function TypingIndicator() {
   );
 }
 
+interface ToolCall {
+  id: string;
+  name: string;
+}
+
 // Message bubble component
-function MessageBubble({ role, content, toolCalls }: { role: "user" | "assistant"; content: string; toolCalls?: any[] }) {
+function MessageBubble({ role, content, toolCalls }: { role: "user" | "assistant"; content: string; toolCalls: ToolCall[] }) {
   const isUser = role === "user";
 
   return (
@@ -301,10 +301,10 @@ function MessageBubble({ role, content, toolCalls }: { role: "user" | "assistant
         <div className="whitespace-pre-wrap text-sm leading-relaxed">{content}</div>
 
         {/* Tool calls display */}
-        {toolCalls && toolCalls.length > 0 && (
+        {toolCalls.length > 0 && (
           <div className="mt-3 pt-2 border-t border-slate-200/20">
             <div className="text-xs opacity-70 mb-2">Tools used:</div>
-            {toolCalls.map((tc: any) => (
+            {toolCalls.map((tc) => (
               <div key={tc.id} className="text-xs font-mono bg-black/10 dark:bg-white/10 rounded px-2 py-1 mt-1">
                 {tc.name}
               </div>
@@ -355,6 +355,13 @@ function EmptyState({ onSuggestionClick }: { onSuggestionClick: (text: string) =
       </div>
     </div>
   );
+}
+
+interface Message {
+  id: string;
+  role: string;
+  content: string;
+  toolInvocations?: unknown[];
 }
 
 export default function ChatPage() {
@@ -416,12 +423,12 @@ export default function ChatPage() {
             <EmptyState onSuggestionClick={handleSuggestionClick} />
           ) : (
             <div className="space-y-6">
-              {messages.map((m) => (
+              {(messages as Message[]).map((m) => (
                 <MessageBubble
                   key={m.id}
                   role={m.role as "user" | "assistant"}
                   content={m.content}
-                  toolCalls={m.toolInvocations}
+                  toolCalls={(m.toolInvocations || []) as ToolCall[]}
                 />
               ))}
 
