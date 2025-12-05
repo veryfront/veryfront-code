@@ -910,9 +910,14 @@ export declare function defineConfig(config: VeryFrontConfig): VeryFrontConfig;
 	"ai/index.d.ts": `// AI module type definitions
 import type { z } from 'zod';
 
+// ============================================================================
+// Core Types
+// ============================================================================
+
 export interface AgentConfig {
+  id?: string;
   model: string;
-  system?: string;
+  system?: string | (() => string | Promise<string>);
   tools?: Record<string, boolean | object>;
   memory?: {
     type?: 'conversation' | 'summary' | 'buffer';
@@ -934,16 +939,84 @@ export interface ResourceConfig<TParams = unknown, TData = unknown> {
   load: (params: TParams) => Promise<TData> | TData;
 }
 
-export declare function agent(config: AgentConfig): {
-  stream(options: { messages: Array<{ role: string; content: string }> }): {
+export interface PromptConfig {
+  name: string;
+  description?: string;
+  getContent: (args?: Record<string, unknown>) => string | Promise<string>;
+}
+
+// ============================================================================
+// Agent Functions
+// ============================================================================
+
+export interface AgentInstance {
+  id: string;
+  config: AgentConfig;
+  stream(options: { messages?: Array<{ role: string; content: string }>; input?: string }): Promise<{
     toDataStreamResponse(): Response;
-  };
+  }>;
   respond(request: Request): Promise<Response>;
+  generate(options: { input: string | Array<{ role: string; content: string }> }): Promise<{
+    text: string;
+    messages: Array<{ role: string; content: string }>;
+  }>;
+}
+
+export declare function agent(config: AgentConfig): AgentInstance;
+
+export declare const agentRegistry: {
+  get(id: string): AgentInstance | undefined;
+  getAll(): Map<string, AgentInstance>;
+  register(id: string, agent: AgentInstance): void;
 };
+
+// ============================================================================
+// Tool Functions
+// ============================================================================
 
 export declare function tool<TInput, TOutput>(config: ToolConfig<TInput, TOutput>): ToolConfig<TInput, TOutput>;
 
+export declare const toolRegistry: {
+  get(id: string): ToolConfig | undefined;
+  getAll(): Map<string, ToolConfig>;
+  register(id: string, tool: ToolConfig): void;
+};
+
+// ============================================================================
+// Resource Functions
+// ============================================================================
+
 export declare function resource<TParams, TData>(config: ResourceConfig<TParams, TData>): ResourceConfig<TParams, TData>;
+
+export declare const resourceRegistry: {
+  get(uri: string): ResourceConfig | undefined;
+  getAll(): Map<string, ResourceConfig>;
+  register(uri: string, resource: ResourceConfig): void;
+};
+
+// ============================================================================
+// Prompt Functions
+// ============================================================================
+
+export declare function prompt(config: PromptConfig): PromptConfig;
+
+export declare const promptRegistry: {
+  get(name: string): PromptConfig | undefined;
+  getAll(): Map<string, PromptConfig>;
+  register(name: string, prompt: PromptConfig): void;
+};
+
+// ============================================================================
+// Discovery Functions
+// ============================================================================
+
+export declare function discoverAll(options?: { baseDir?: string; verbose?: boolean }): Promise<void>;
+
+// ============================================================================
+// Provider Functions
+// ============================================================================
+
+export declare function initializeProviders(config: { openai?: { apiKey?: string }; anthropic?: { apiKey?: string } }): void;
 
 // Re-export from ai-sdk
 export * from 'ai';
