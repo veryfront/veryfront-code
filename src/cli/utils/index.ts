@@ -100,6 +100,63 @@ export function logInfo(message: string) {
   cliLogger.info(`ℹ️  ${message}`);
 }
 
+/**
+ * Register handlers for termination signals in both Node/Bun and Deno runtimes.
+ * Returns a cleanup function to remove listeners.
+ */
+export function registerTerminationSignals(
+  handler: (signal: "SIGINT" | "SIGTERM") => void | Promise<void>,
+): () => void {
+  const cleanupFns: Array<() => void> = [];
+  const signals: Array<"SIGINT" | "SIGTERM"> = ["SIGINT", "SIGTERM"];
+
+  for (const signal of signals) {
+    // Deno (with Node compat available)
+    if (typeof Deno !== "undefined" && "addSignalListener" in Deno) {
+      const listener = () => {
+        void handler(signal);
+      };
+      // @ts-ignore - Deno types are available at runtime when using Deno
+      Deno.addSignalListener(signal, listener);
+      cleanupFns.push(() => {
+        try {
+          // @ts-ignore - optional on older Deno versions
+          Deno.removeSignalListener?.(signal, listener);
+        } catch {
+          /* ignore */
+        }
+      });
+      continue;
+    }
+
+    // Node/Bun
+    if (typeof process !== "undefined" && typeof process.on === "function") {
+      const listener = () => {
+        void handler(signal);
+      };
+      process.on(signal, listener);
+      cleanupFns.push(() => {
+        try {
+          if (typeof process.off === "function") {
+            process.off(signal, listener);
+          } else {
+            // @ts-ignore - removeListener exists on Node process
+            process.removeListener?.(signal, listener);
+          }
+        } catch {
+          /* ignore */
+        }
+      });
+    }
+  }
+
+  return () => {
+    for (const cleanup of cleanupFns) {
+      cleanup();
+    }
+  };
+}
+
 // User interaction
 export async function promptUser(message: string): Promise<string> {
   cliLogger.info(message);

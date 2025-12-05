@@ -1,4 +1,5 @@
-// Layout component - veryfront automatically generates Tailwind CSS using UnoCSS
+// Layout component for client-rendered pages
+// Tailwind Play CDN is used for 'use client' pages where CSS classes are rendered dynamically
 export default function RootLayout({
   children
 }: {
@@ -9,6 +10,7 @@ export default function RootLayout({
       <head>
         <title>Knowledge Base</title>
         <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <script src="https://cdn.tailwindcss.com"></script>
       </head>
       <body className="h-full bg-slate-50 dark:bg-slate-900">
         {children}

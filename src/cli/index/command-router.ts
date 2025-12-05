@@ -13,11 +13,10 @@ import { cleanCommand } from "../commands/clean.ts";
 import { doctorCommand } from "../commands/doctor/index.ts";
 import { initCommand } from "../commands/init/index.ts";
 import { routesCommand } from "../commands/routes.ts";
-import { showLogo } from "../utils/index.ts";
+import { exitProcess, registerTerminationSignals, showLogo } from "../utils/index.ts";
 import { handleBuildCommand } from "./build-handler.ts";
 import { handleDevCommand } from "./dev-handler.ts";
 import { handleGenerateCommand } from "./generate-handler.ts";
-import { exitProcess } from "../utils/index.ts";
 import type { ParsedArgs } from "./types.ts";
 import type { CacheBackend, InitTemplate } from "../commands/init/types.ts";
 import { cwd } from "../../platform/compat/process.ts";
@@ -161,14 +160,37 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
           const port = args.port ?? DEFAULT_DEV_SERVER_PORT;
           const hostname = String(args.hostname || args.host || "0.0.0.0");
           const debug = Boolean(args.debug);
+          const shutdownController = new AbortController();
           const server = await startUniversalServer({
             projectDir,
             port,
             hostname,
             debug,
             adapter,
+            signal: shutdownController.signal,
           });
           await server.ready;
+
+          // Graceful shutdown for preview/serve mode
+          let shuttingDown = false;
+          const shutdown = async (signal: "SIGINT" | "SIGTERM") => {
+            if (shuttingDown) return;
+            shuttingDown = true;
+            cliLogger.info(`Received ${signal}, shutting down production server...`);
+            try {
+              shutdownController.abort();
+              await server.stop();
+            } catch (error) {
+              cliLogger.warn("Error while shutting down production server:", error);
+            } finally {
+              exitProcess(0);
+            }
+          };
+
+          registerTerminationSignals((signal) => {
+            void shutdown(signal);
+          });
+
           // Keep process alive until Ctrl+C
           await new Promise(() => {
             /* never resolve */

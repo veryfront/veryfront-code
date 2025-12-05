@@ -85,19 +85,48 @@ if (import.meta.main) {
     const { cwd } = await import("../runtime/compat/process.ts");
     const adapter = await getAdapter();
 
+    const shutdownController = new AbortController();
     const projectDir = cwd();
     const port = Number(
       adapter.env.get("PORT") ?? adapter.env.get("VERYFRONT_PORT") ?? 3000,
     );
     const hostname = adapter.env.get("HOST") ?? adapter.env.get("HOSTNAME") ?? LOCALHOST.IPV4;
 
-    await startUniversalServer({
+    const server = await startUniversalServer({
       projectDir,
       port,
       hostname,
       debug: adapter.env.get("VERYFRONT_DEBUG") === "1",
       adapter, // Pass adapter to avoid re-detection
+      signal: shutdownController.signal,
     });
+
+    // Graceful shutdown for direct CLI execution (e.g., deno run)
+    let shuttingDown = false;
+    const shutdown = async (signal: "SIGINT" | "SIGTERM") => {
+      if (shuttingDown) return;
+      shuttingDown = true;
+      logger.info(`Received ${signal}, shutting down production server...`);
+      try {
+        shutdownController.abort();
+        await server.stop();
+      } catch (error) {
+        logger.warn("Error while shutting down production server:", error);
+      }
+    };
+
+    const signals: Array<"SIGINT" | "SIGTERM"> = ["SIGINT", "SIGTERM"];
+    for (const signal of signals) {
+      if (typeof Deno !== "undefined" && "addSignalListener" in Deno) {
+        Deno.addSignalListener(signal, () => {
+          void shutdown(signal);
+        });
+      } else if (typeof process !== "undefined" && typeof process.on === "function") {
+        process.on(signal, () => {
+          void shutdown(signal);
+        });
+      }
+    }
   } catch (e) {
     logger.error("Failed to start production server:", e);
   }

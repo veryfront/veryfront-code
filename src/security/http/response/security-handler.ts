@@ -43,7 +43,7 @@ export function buildCSP(
   const defaultCsp = isDev
     ? [
       "default-src 'self'",
-      `style-src 'self' 'nonce-${nonce}' 'unsafe-inline' https://esm.sh https://cdnjs.cloudflare.com https://cdn.veryfront.com https://cdn.jsdelivr.net`,
+      `style-src 'self' 'unsafe-inline' https://esm.sh https://cdnjs.cloudflare.com https://cdn.veryfront.com https://cdn.jsdelivr.net https://cdn.tailwindcss.com`,
       "img-src 'self' data: https://cdn.veryfront.com https://cdnjs.cloudflare.com",
       `script-src 'self' 'nonce-${nonce}' 'unsafe-eval' https://esm.sh https://cdn.tailwindcss.com`,
       "connect-src 'self' https://esm.sh ws://localhost:* wss://localhost:*",
