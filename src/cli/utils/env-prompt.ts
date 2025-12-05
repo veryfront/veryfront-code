@@ -7,6 +7,7 @@ import { cliLogger as logger } from "@veryfront/utils";
 import { cyan, dim, green, yellow } from "@veryfront/compat/console";
 import { getEnv, isInteractive as checkIsInteractive } from "../../platform/compat/process.ts";
 import type { EnvVarConfig } from "../templates/index.ts";
+import { promptUser } from "./index.ts";
 
 export interface EnvPromptOptions {
   /** Whether to run in interactive mode (prompt for values) */
@@ -117,27 +118,31 @@ async function promptForSingleEnvVar(envVar: EnvVarConfig): Promise<string> {
   const requiredIndicator = envVar.required ? `${yellow("*")}` : "";
   const docsHint = envVar.docsUrl ? dim(` (${envVar.docsUrl})`) : "";
 
-  logger.info(`  ${cyan(envVar.name)}${requiredIndicator}: ${envVar.description}${docsHint}`);
-
   try {
-    // Note: Deno's prompt() doesn't support hiding input for sensitive values
-    // For now, we'll use regular prompt. A future enhancement could use
-    // a library that supports hidden input for secrets.
-    const value = prompt(`  Enter value: `) || "";
+    // Use cross-platform promptUser which handles both Deno and Node.js
+    const value = await promptUser(
+      `  ${cyan(envVar.name)}${requiredIndicator}: ${envVar.description}${docsHint}\n  Enter value (press Enter to skip): `,
+    );
 
-    if (value && envVar.sensitive) {
+    const trimmedValue = value.trim();
+
+    if (trimmedValue && envVar.sensitive) {
       // Mask the displayed value for sensitive inputs
-      const masked = value.substring(0, 4) + "..." + value.substring(value.length - 4);
+      const masked = trimmedValue.length > 8
+        ? trimmedValue.substring(0, 4) + "..." + trimmedValue.substring(trimmedValue.length - 4)
+        : "****";
       logger.info(dim(`    Set to: ${masked}`));
-    } else if (value) {
-      logger.info(dim(`    Set to: ${value}`));
+    } else if (trimmedValue) {
+      logger.info(dim(`    Set to: ${trimmedValue}`));
     } else {
       logger.info(dim("    Skipped (will use placeholder)"));
     }
 
-    return value.trim();
-  } catch {
+    return trimmedValue;
+  } catch (error) {
     // Prompt may fail in non-interactive environments
+    logger.debug("Failed to read stdin:", error);
+    logger.info(dim("    Skipped (will use placeholder)"));
     return "";
   }
 }
