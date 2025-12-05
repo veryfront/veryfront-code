@@ -2,7 +2,23 @@
  * AI starter template for Veryfront
  */
 
-import type { TemplateFile } from "./index.ts";
+import type { TemplateFile, TemplateConfig } from "./index.ts";
+
+/**
+ * AI template configuration including required environment variables
+ */
+export const aiTemplateConfig: TemplateConfig = {
+  envVars: [
+    {
+      name: "OPENAI_API_KEY",
+      description: "Your OpenAI API key",
+      required: true,
+      sensitive: true,
+      placeholder: "sk-...",
+      docsUrl: "https://platform.openai.com/api-keys",
+    },
+  ],
+};
 
 export const aiTemplate: TemplateFile[] = [
   {
@@ -10,12 +26,12 @@ export const aiTemplate: TemplateFile[] = [
     content: `export default {
   title: "Veryfront AI App",
   description: "An AI-native application starter",
-  
+
   dev: {
     port: 3000,
     open: true,
   },
-  
+
   ai: {
     providers: {
       openai: {
@@ -35,10 +51,6 @@ export const aiTemplate: TemplateFile[] = [
   },
 };
 `,
-  },
-  {
-    path: ".env",
-    content: `OPENAI_API_KEY=your_api_key_here`,
   },
   {
     path: "ai/agent.ts",

@@ -58,4 +58,12 @@ export interface InitOptions {
    * If not specified, auto-detected from lockfiles.
    */
   packageManager?: "npm" | "yarn" | "pnpm" | "bun";
+
+  /**
+   * Skip prompting for environment variables.
+   * If true, .env will be created with placeholder values.
+   * Useful for CI/automated environments.
+   * @default false
+   */
+  skipEnvPrompt?: boolean;
 }
