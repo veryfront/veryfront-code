@@ -25,58 +25,33 @@ export default function HomePage() {
   }, []);
 
   return (
-    <div style={{ padding: "20px", fontFamily: "system-ui" }}>
-      <h1>Veryfront RSC Demo</h1>
+    <div className="p-5 font-sans max-w-3xl mx-auto">
+      <h1 className="text-3xl font-bold mb-6">Veryfront RSC Demo</h1>
 
-      <section>
-        <h2>Server-like Data</h2>
-        <p>In a full RSC setup, this content would be rendered on the server.</p>
-        <p>Server time: {serverTime || "Loading..."}</p>
-        <p>Fetched data: {data?.message || "Loading..."}</p>
+      <section className="mb-8">
+        <h2 className="text-xl font-semibold mb-3">Server-like Data</h2>
+        <p className="text-gray-600 mb-2">In a full RSC setup, this content would be rendered on the server.</p>
+        <p className="text-gray-700">Server time: {serverTime || "Loading..."}</p>
+        <p className="text-gray-700">Fetched data: {data?.message || "Loading..."}</p>
       </section>
 
-      <section>
-        <h2>Interactive Component</h2>
-        <p>The counter below demonstrates client-side interactivity:</p>
-        <div
-          style={{
-            border: "2px solid #0066cc",
-            padding: "15px",
-            borderRadius: "8px",
-            backgroundColor: "#f0f8ff",
-            margin: "10px 0",
-          }}
-        >
-          <p>This is a client component with React state.</p>
-          <p>Count: {count}</p>
+      <section className="mb-8">
+        <h2 className="text-xl font-semibold mb-3">Interactive Component</h2>
+        <p className="text-gray-600 mb-3">The counter below demonstrates client-side interactivity:</p>
+        <div className="border-2 border-blue-500 p-4 rounded-lg bg-blue-50 my-3">
+          <p className="mb-2">This is a client component with React state.</p>
+          <p className="text-lg font-semibold mb-3">Count: {count}</p>
           <button
             type="button"
             onClick={() => setCount(count + 1)}
-            style={{
-              padding: "8px 16px",
-              fontSize: "16px",
-              backgroundColor: "#0066cc",
-              color: "white",
-              border: "none",
-              borderRadius: "4px",
-              cursor: "pointer",
-              marginRight: "10px",
-            }}
+            className="px-4 py-2 bg-blue-600 text-white rounded mr-3 hover:bg-blue-700 transition-colors"
           >
             Increment
           </button>
           <button
             type="button"
             onClick={() => setCount(count - 1)}
-            style={{
-              padding: "8px 16px",
-              fontSize: "16px",
-              backgroundColor: "#666",
-              color: "white",
-              border: "none",
-              borderRadius: "4px",
-              cursor: "pointer",
-            }}
+            className="px-4 py-2 bg-gray-600 text-white rounded hover:bg-gray-700 transition-colors"
           >
             Decrement
           </button>
@@ -84,8 +59,8 @@ export default function HomePage() {
       </section>
 
       <section>
-        <h2>RSC Benefits (when enabled)</h2>
-        <ul>
+        <h2 className="text-xl font-semibold mb-3">RSC Benefits (when enabled)</h2>
+        <ul className="list-disc list-inside space-y-1 text-gray-700">
           <li>Server components have zero client-side JavaScript</li>
           <li>Direct database/API access on the server</li>
           <li>Client components only ship interactive code</li>

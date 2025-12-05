@@ -39,7 +39,7 @@ export default function DashboardPage() {
   }
 
   if (loading) {
-    return <div>Loading...</div>;
+    return <div className="text-center py-8">Loading...</div>;
   }
 
   if (!user) {
@@ -48,52 +48,28 @@ export default function DashboardPage() {
 
   return (
     <div>
-      <div
-        style={{
-          backgroundColor: "white",
-          padding: "2rem",
-          borderRadius: "8px",
-          marginBottom: "2rem",
-        }}
-      >
-        <h1>Dashboard</h1>
-        <p>Welcome back, {user.email}!</p>
+      <div className="bg-white p-8 rounded-lg mb-8">
+        <h1 className="text-3xl font-bold mb-2">Dashboard</h1>
+        <p className="text-gray-600">Welcome back, {user.email}!</p>
       </div>
 
-      <div
-        style={{
-          backgroundColor: "white",
-          padding: "2rem",
-          borderRadius: "8px",
-        }}
-      >
-        <h2>User Information</h2>
+      <div className="bg-white p-8 rounded-lg">
+        <h2 className="text-2xl font-semibold mb-4">User Information</h2>
         <dl>
-          <dt style={{ fontWeight: "bold", marginTop: "1rem" }}>Email</dt>
-          <dd>{user.email}</dd>
+          <dt className="font-bold mt-4 text-gray-700">Email</dt>
+          <dd className="text-gray-600">{user.email}</dd>
 
-          <dt style={{ fontWeight: "bold", marginTop: "1rem" }}>User ID</dt>
-          <dd>{user.id}</dd>
+          <dt className="font-bold mt-4 text-gray-700">User ID</dt>
+          <dd className="text-gray-600">{user.id}</dd>
 
-          <dt style={{ fontWeight: "bold", marginTop: "1rem" }}>
-            Member Since
-          </dt>
-          <dd>{new Date(user.createdAt).toLocaleDateString()}</dd>
+          <dt className="font-bold mt-4 text-gray-700">Member Since</dt>
+          <dd className="text-gray-600">{new Date(user.createdAt).toLocaleDateString()}</dd>
         </dl>
 
         <button
           type="button"
           onClick={handleLogout}
-          style={{
-            marginTop: "2rem",
-            padding: "0.75rem 2rem",
-            backgroundColor: "#dc3545",
-            color: "white",
-            border: "none",
-            borderRadius: "4px",
-            fontSize: "1rem",
-            cursor: "pointer",
-          }}
+          className="mt-8 px-8 py-3 bg-red-500 text-white rounded font-bold hover:bg-red-600 transition-colors"
         >
           Logout
         </button>
