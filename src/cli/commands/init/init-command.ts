@@ -29,6 +29,7 @@ import {
   getInstallCommand,
   installDependencies,
 } from "../../utils/package-manager.ts";
+import { generateGitignoreContent, promptForEnvVars } from "../../utils/env-prompt.ts";
 
 const CACHE_BACKENDS: CacheBackend[] = ["memory", "filesystem", "kv", "redis"];
 
@@ -117,9 +118,10 @@ export async function initCommand(options: InitOptions): Promise<void> {
 
   // Use new template system for modern templates
   if (["blog", "docs", "app", "minimal", "ai"].includes(template)) {
-    const { getTemplate } = await import("../../templates/index.ts");
+    const { getTemplate, getTemplateConfig } = await import("../../templates/index.ts");
 
     const templateFiles = getTemplate(template as "blog" | "docs" | "app" | "minimal" | "ai");
+    const templateConfig = getTemplateConfig(template as "blog" | "docs" | "app" | "minimal" | "ai");
 
     if (!templateFiles) {
       throw toError(createError({
@@ -132,8 +134,13 @@ export async function initCommand(options: InitOptions): Promise<void> {
       await ensureDir(projectDir);
     }
 
-    // Create all template files
+    // Create all template files (excluding .env which we'll generate separately)
     for (const file of templateFiles) {
+      // Skip .env files - we'll generate them with prompting
+      if (file.path === ".env" || file.path === ".env.example") {
+        continue;
+      }
+
       const filePath = join(projectDir, file.path);
       const fileDir = join(projectDir, ...file.path.split("/").slice(0, -1));
 
@@ -148,6 +155,33 @@ export async function initCommand(options: InitOptions): Promise<void> {
     // Create package.json with ES module support
     await createPackageJson(projectDir, name);
     await updateConfigCacheBlock(projectDir, cacheBackend);
+
+    // Handle environment variables if template has env var config
+    if (templateConfig?.envVars && templateConfig.envVars.length > 0) {
+      const envResult = await promptForEnvVars(templateConfig.envVars, {
+        skipPrompt: options.skipEnvPrompt,
+      });
+
+      // Write .env file
+      await fs.writeTextFile(join(projectDir, ".env"), envResult.envContent);
+      logger.debug("Created file: .env");
+
+      // Write .env.example file
+      await fs.writeTextFile(join(projectDir, ".env.example"), envResult.envExampleContent);
+      logger.debug("Created file: .env.example");
+    }
+
+    // Ensure .gitignore includes .env
+    const gitignorePath = join(projectDir, ".gitignore");
+    let existingGitignore: string | undefined;
+    try {
+      existingGitignore = await fs.readTextFile(gitignorePath);
+    } catch {
+      // File doesn't exist, that's fine
+    }
+    const gitignoreContent = generateGitignoreContent(existingGitignore);
+    await fs.writeTextFile(gitignorePath, gitignoreContent);
+    logger.debug("Updated file: .gitignore");
   } else {
     // Legacy template handling
     await createProjectStructure(projectDir, template);
