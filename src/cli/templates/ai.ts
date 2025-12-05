@@ -1,8 +1,16 @@
 /**
  * AI starter template for Veryfront
+ *
+ * Uses auto-discovery for tools, agents, and prompts.
+ * Structure:
+ *   ai/
+ *   ├── agents/      # Auto-discovered agents
+ *   ├── tools/       # Auto-discovered tools
+ *   ├── prompts/     # Auto-discovered prompts
+ *   └── resources/   # Auto-discovered resources (MCP-style)
  */
 
-import type { TemplateFile, TemplateConfig } from "./index.ts";
+import type { TemplateConfig, TemplateFile } from "./index.ts";
 
 /**
  * AI template configuration including required environment variables
@@ -21,65 +29,121 @@ export const aiTemplateConfig: TemplateConfig = {
 };
 
 export const aiTemplate: TemplateFile[] = [
+  // No veryfront.config.ts needed - router is auto-detected from folder structure
+  // and CORS isn't required when UI and API are on the same origin
+
+  // Agent definition - references auto-discovered tools by ID
   {
-    path: "veryfront.config.js",
-    content: `export default {
-  title: "Veryfront AI App",
-  description: "An AI-native application starter",
+    path: "ai/agents/assistant.ts",
+    content: `/**
+ * AI Assistant Agent
+ *
+ * Uses auto-discovered tools and prompts.
+ * Tools are referenced by their file name (kebab-case -> camelCase).
+ */
 
-  dev: {
-    port: 3000,
-    open: true,
+import { agent } from 'veryfront/ai';
+import { promptRegistry } from 'veryfront/ai/mcp/prompt';
+
+export default agent({
+  id: 'assistant',
+
+  model: 'openai/gpt-4o',
+
+  // Load system prompt from the prompt registry (auto-discovered from ai/prompts/)
+  system: async () => {
+    const prompt = promptRegistry.get('assistant');
+    if (prompt) {
+      return await prompt.getContent();
+    }
+    return 'You are a helpful AI assistant with access to weather information.';
   },
 
-  ai: {
-    providers: {
-      openai: {
-        apiKey: process.env.OPENAI_API_KEY,
-      },
-    },
-    defaultModel: "openai/gpt-4o",
+  // Reference auto-discovered tools by their IDs
+  // Tool IDs are derived from filenames: get-weather.ts -> getWeather
+  tools: {
+    getWeather: true,
   },
 
-  cache: {
-    dir: ".veryfront/cache",
-    render: {
-      type: "memory",
-      ttl: 60 * 1000,
-      maxEntries: 200,
-    },
-  },
-};
+  // Enable streaming for real-time responses
+  streaming: true,
+
+  // Maximum agent loop steps (for tool-calling loops)
+  maxSteps: 10,
+});
 `,
   },
-  {
-    path: "ai/agent.ts",
-    content: `import { agent, tool } from "veryfront/ai";
-import { z } from "zod";
 
-// Define a tool
-const weatherTool = tool({
-  id: "get_weather",
-  description: "Get the current weather for a location",
+  // Tool definition - auto-discovered from ai/tools/
+  {
+    path: "ai/tools/get-weather.ts",
+    content: `/**
+ * Weather Tool
+ *
+ * Auto-discovered from ai/tools/ directory.
+ * Export default to register the tool.
+ */
+
+import { tool } from 'veryfront/ai';
+import { z } from 'zod';
+
+export default tool({
+  description: 'Get the current weather for a location',
+
   inputSchema: z.object({
-    location: z.string().describe("The city and state, e.g. San Francisco, CA"),
+    location: z.string().describe('The city and state, e.g. San Francisco, CA'),
   }),
+
   execute: async ({ location }) => {
-    // Mock implementation
+    // Mock implementation - replace with real weather API
+    const mockWeather = {
+      'San Francisco, CA': { temp: 65, condition: 'Foggy' },
+      'New York, NY': { temp: 75, condition: 'Sunny' },
+      'London, UK': { temp: 60, condition: 'Rainy' },
+      'Tokyo, Japan': { temp: 80, condition: 'Humid' },
+    };
+
+    const weather = mockWeather[location as keyof typeof mockWeather] || {
+      temp: 70,
+      condition: 'Clear',
+    };
+
     return {
       location,
-      temperature: 72,
-      condition: "Sunny",
+      temperature: weather.temp,
+      condition: weather.condition,
+      unit: 'fahrenheit',
     };
   },
 });
+`,
+  },
 
-// Create the agent
-export const myAgent = agent({
-  model: "openai/gpt-4o",
-  system: "You are a helpful AI assistant with access to weather information.",
-  tools: {
-    weather: weatherTool,
+  // Prompt definition - auto-discovered from ai/prompts/
+  {
+    path: "ai/prompts/assistant.ts",
+    content: `/**
+ * Assistant System Prompt
+ *
+ * Auto-discovered from ai/prompts/ directory.
+ * Export default to register the prompt.
+ */
+
+import { prompt } from 'veryfront/ai/mcp/prompt';
+
+export default prompt({
+  name: 'assistant',
+  description: 'System prompt for the AI assistant',
+
+  getContent: async () => {
+    return \`You are a helpful AI assistant with access to weather information.
+
+When users ask about the weather:
+1. Use the getWeather tool to fetch current conditions
+2. Provide a friendly summary of the weather
+3. Suggest appropriate activities based on conditions
+
+Be conversational and helpful. If you don't know something, say so honestly.\`;
   },
 });
 `,
@@ -109,13 +173,48 @@ export default function RootLayout({
   },
   {
     path: "app/api/chat/route.ts",
-    content: `import { myAgent } from "../../../ai/agent";
+    content: `/**
+ * Chat API Route
+ *
+ * Uses auto-discovery to load tools, prompts, and agents.
+ */
+
+import { agent, discoverAll, initializeProviders } from 'veryfront/ai';
+
+// Initialize providers with env vars
+initializeProviders({
+  openai: {
+    apiKey: (typeof process !== 'undefined' ? process.env.OPENAI_API_KEY : '') ||
+            (typeof Deno !== 'undefined' ? Deno.env.get('OPENAI_API_KEY') : '') || '',
+  },
+});
+
+// Auto-discover tools and prompts from ai/ directory
+const cwd = typeof process !== 'undefined' ? process.cwd() :
+            (typeof Deno !== 'undefined' ? Deno.cwd() : '.');
+await discoverAll({
+  baseDir: cwd,
+  verbose: true,
+});
+
+// Create a reusable agent instance
+// In production, you might want session-based agents like in ai-code-assistant
+const assistantAgent = agent({
+  id: 'assistant',
+  model: 'openai/gpt-4o',
+  system: 'You are a helpful AI assistant with access to weather information.',
+  tools: {
+    getWeather: true, // Reference auto-discovered tool by ID
+  },
+  streaming: true,
+  maxSteps: 10,
+});
 
 export async function POST(request: Request) {
   const { messages } = await request.json();
 
-  // Use the agent to generate a streaming response
-  const result = await myAgent.stream({ messages });
+  // Stream response using the agent
+  const result = await assistantAgent.stream({ messages });
 
   // Use toDataStreamResponse() for Vercel AI SDK compatible streaming
   return result.toDataStreamResponse();
