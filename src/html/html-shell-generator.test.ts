@@ -146,7 +146,7 @@ describe("html-generation/html-shell-generator", () => {
       assertStringIncludes(result, '[data-theme="dark"]');
     });
 
-    it("should include generated Tailwind CSS", async () => {
+    it("should include Tailwind CDN in development mode", async () => {
       const meta: RenderMetadata = {
         title: "Test Page",
         slug: "test",
@@ -160,11 +160,30 @@ describe("html-generation/html-shell-generator", () => {
 
       const result = await wrapInHTMLShell("<div>Content</div>", meta, options);
 
+      // In development, use Tailwind CDN for runtime CSS compilation (works with 'use client' pages)
+      assertStringIncludes(result, "cdn.tailwindcss.com");
       assertStringIncludes(
         result,
-        "<!-- Generated Tailwind CSS (UnoCSS on-the-fly compilation) -->",
+        "<!-- Tailwind CSS: CDN in dev (runtime compilation), UnoCSS in prod (pre-generated) -->",
       );
-      assert(!result.includes("https://cdn.tailwindcss.com"));
+    });
+
+    it("should use UnoCSS-generated CSS in production mode", async () => {
+      const meta: RenderMetadata = {
+        title: "Test Page",
+        slug: "test",
+        frontmatter: {},
+      };
+
+      const options: HTMLGenerationOptions = {
+        mode: "production",
+        config: mockConfig,
+      };
+
+      const result = await wrapInHTMLShell("<div>Content</div>", meta, options);
+
+      // In production, use UnoCSS pre-generated CSS (no Tailwind CDN)
+      assert(!result.includes("cdn.tailwindcss.com"));
     });
 
     it("should include syntax highlighting styles", async () => {
