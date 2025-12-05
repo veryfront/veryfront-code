@@ -241,8 +241,9 @@ export async function initCommand(options: InitOptions): Promise<void> {
     logger.info(`  - Configure auth in lib/auth.ts`);
   } else if (template === "ai") {
     logger.info(`\n${cyan("AI Starter tips:")}`);
-    logger.info(`  - Add your API Key to .env`);
-    logger.info(`  - Define new tools in ai/agent.ts`);
-    logger.info(`  - Configure providers in veryfront.config.js`);
+    logger.info(`  - Add your OPENAI_API_KEY to .env`);
+    logger.info(`  - Add tools in ai/tools/ (auto-discovered)`);
+    logger.info(`  - Add agents in ai/agents/ (auto-discovered)`);
+    logger.info(`  - Add prompts in ai/prompts/ (auto-discovered)`);
   }
 }
