@@ -174,4 +174,23 @@ export interface VeryfrontConfig {
       versions?: "auto" | { react?: string; veryfront?: string };
     };
   };
+  tailwind?: {
+    /** Enable built-in Tailwind CDN plugins (forms, typography, aspect-ratio, container-queries) */
+    plugins?: Array<"forms" | "typography" | "aspect-ratio" | "container-queries">;
+    /** Extend the Tailwind theme (merged with veryfront defaults) */
+    theme?: {
+      extend?: {
+        colors?: Record<string, string | Record<string, string>>;
+        fontFamily?: Record<string, string[]>;
+        spacing?: Record<string, string>;
+        fontSize?: Record<string, string | [string, { lineHeight?: string; letterSpacing?: string }]>;
+        screens?: Record<string, string>;
+        animation?: Record<string, string>;
+        keyframes?: Record<string, Record<string, Record<string, string>>>;
+        [key: string]: unknown;
+      };
+    };
+    /** Custom CSS content to add (for @layer, @apply directives, etc.) */
+    customCSS?: string;
+  };
 }

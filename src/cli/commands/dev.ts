@@ -13,6 +13,7 @@ import { getConfig } from "@veryfront/config";
 import { createDevServer } from "@veryfront/server/dev-server.ts";
 import { getNetworkInterfaces } from "../../platform/compat/process.ts";
 import { runAIConfigValidation } from "../../ai/utils/config-validator.ts";
+import { exitProcess, registerTerminationSignals } from "../utils/index.ts";
 
 export interface DevOptions {
   port: number;
@@ -94,13 +95,16 @@ export async function devCommand(options: DevOptions) {
   }
 
   // Start dev server with new features
+  const shutdownController = new AbortController();
+  let devServer: Awaited<ReturnType<typeof createDevServer>> | null = null;
   try {
-    await createDevServer({
+    devServer = await createDevServer({
       port: finalPort,
       projectDir,
       hmrPort: finalPort + 1,
       enableHMR,
       enableFastRefresh: true,
+      signal: shutdownController.signal,
     });
   } catch (error) {
     if (error instanceof Error) {
@@ -118,6 +122,26 @@ export async function devCommand(options: DevOptions) {
     }
     throw error;
   }
+
+  // Graceful shutdown on termination signals
+  let shuttingDown = false;
+  const shutdown = async (signal: "SIGINT" | "SIGTERM") => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    cliLogger.info(`Received ${signal}, shutting down dev server...`);
+    try {
+      shutdownController.abort();
+      await devServer?.stop();
+    } catch (error) {
+      cliLogger.warn("Error while shutting down dev server:", error);
+    } finally {
+      exitProcess(0);
+    }
+  };
+
+  registerTerminationSignals((signal) => {
+    void shutdown(signal);
+  });
 
   // Enhanced startup message
   cliLogger.info(`${green("✓")} Server started successfully!\n`);

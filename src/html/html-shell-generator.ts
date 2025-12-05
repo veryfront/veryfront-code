@@ -7,9 +7,11 @@ import {
 } from "./hydration-script-builder/index.ts";
 import { processMetadata } from "./metadata-builder.ts";
 import {
+  generateTailwindConfig,
   generateThemeVariables,
   getDevStyles,
   getProductionStyles,
+  getTailwindCDNUrl,
 } from "./styles-builder/index.ts";
 import { generateTailwindCSS } from "./styles-builder/unocss-generator.ts";
 import type { HTMLGenerationOptions } from "./types.ts";
@@ -33,7 +35,11 @@ export async function generateHTMLShellParts(
 ): Promise<{ start: string; end: string }> {
   // For streaming, we can't generate Tailwind CSS from the content
   // since the content isn't available yet. Use empty string or provided content.
-  const tailwindCSS = contentForTailwind ? await generateTailwindCSS(contentForTailwind) : "";
+  // Pass tailwind config for theme customization in production mode
+  const tailwindConfig = options.config?.tailwind;
+  const tailwindCSS = contentForTailwind
+    ? await generateTailwindCSS(contentForTailwind, tailwindConfig)
+    : "";
 
   const {
     effectiveTitle,
@@ -80,6 +86,17 @@ export async function generateHTMLShellParts(
 
   const syntaxHighlightTheme = options.mode === "development" ? "github-dark" : "github";
 
+  // In development, use Tailwind CDN for runtime CSS compilation (works with 'use client' pages)
+  // In production, use UnoCSS-generated CSS from pre-rendered HTML
+  const tailwindCDNUrl = getTailwindCDNUrl(tailwindConfig);
+  const tailwindCDN = options.mode === "development"
+    ? `<script src="${tailwindCDNUrl}"${nonce ? ` nonce="${nonce}"` : ""}></script>
+  <script${nonce ? ` nonce="${nonce}"` : ""}>${generateTailwindConfig(tailwindConfig)}</script>${tailwindConfig?.customCSS ? `
+  <style type="text/tailwindcss"${nonce ? ` nonce="${nonce}"` : ""}>
+${tailwindConfig.customCSS}
+  </style>` : ""}`
+    : "";
+
   const start = `<!DOCTYPE html>
 <html lang="${escapeHTML(lang)}">
 <head>
@@ -91,13 +108,14 @@ export async function generateHTMLShellParts(
   ${importMapJson}
   </script>
 
+  <!-- Tailwind CSS: CDN in dev (runtime compilation), UnoCSS in prod (pre-generated) -->
+  ${tailwindCDN}
+  ${options.mode !== "development" && tailwindCSS ? `<style${nonce ? ` nonce="${nonce}"` : ""}>\n${tailwindCSS}\n  </style>` : ""}
+
   <!-- CSS Variables for Theming (veryfront-renderer compatible) -->
   <style${nonce ? ` nonce="${nonce}"` : ""}>
 ${generateThemeVariables()}
   </style>
-
-  <!-- Generated Tailwind CSS (UnoCSS on-the-fly compilation) -->
-  ${tailwindCSS ? `<style${nonce ? ` nonce="${nonce}"` : ""}>\n${tailwindCSS}\n  </style>` : ""}
 
   <!-- Syntax highlighting for code blocks -->
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/${syntaxHighlightTheme}.min.css">
