@@ -1,70 +1,33 @@
 export default function HomePage() {
   return (
-    <div style={{ textAlign: "center", padding: "4rem 0" }}>
-      <h1>Welcome to Veryfront Auth Example</h1>
-      <p style={{ fontSize: "1.2rem", color: "#666", margin: "2rem 0" }}>
+    <div className="text-center py-16">
+      <h1 className="text-4xl font-bold mb-4">Welcome to Veryfront Auth Example</h1>
+      <p className="text-xl text-gray-600 my-8">
         This example demonstrates a complete authentication system.
       </p>
-      <div
-        style={{
-          display: "flex",
-          gap: "1rem",
-          justifyContent: "center",
-          marginTop: "3rem",
-        }}
-      >
+      <div className="flex gap-4 justify-center mt-12">
         <a
           href="/signup"
-          style={{
-            padding: "0.75rem 2rem",
-            backgroundColor: "#0070f3",
-            color: "white",
-            textDecoration: "none",
-            borderRadius: "5px",
-            fontWeight: "bold",
-          }}
+          className="px-8 py-3 bg-blue-500 text-white rounded-md font-bold hover:bg-blue-600 transition-colors"
         >
           Get Started
         </a>
         <a
           href="/login"
-          style={{
-            padding: "0.75rem 2rem",
-            backgroundColor: "white",
-            color: "#0070f3",
-            textDecoration: "none",
-            borderRadius: "5px",
-            border: "2px solid #0070f3",
-            fontWeight: "bold",
-          }}
+          className="px-8 py-3 bg-white text-blue-500 rounded-md font-bold border-2 border-blue-500 hover:bg-blue-50 transition-colors"
         >
           Login
         </a>
       </div>
 
-      <div
-        style={{
-          marginTop: "4rem",
-          padding: "2rem",
-          backgroundColor: "white",
-          borderRadius: "8px",
-        }}
-      >
-        <h2>Features</h2>
-        <ul
-          style={{
-            listStyle: "none",
-            padding: 0,
-            textAlign: "left",
-            maxWidth: "400px",
-            margin: "0 auto",
-          }}
-        >
-          <li>✅ User registration</li>
-          <li>✅ Secure login</li>
-          <li>✅ JWT authentication</li>
-          <li>✅ Protected routes</li>
-          <li>✅ Session management</li>
+      <div className="mt-16 p-8 bg-white rounded-lg max-w-md mx-auto">
+        <h2 className="text-2xl font-semibold mb-4">Features</h2>
+        <ul className="text-left space-y-2">
+          <li>User registration</li>
+          <li>Secure login</li>
+          <li>JWT authentication</li>
+          <li>Protected routes</li>
+          <li>Session management</li>
         </ul>
       </div>
     </div>

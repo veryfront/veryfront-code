@@ -83,38 +83,26 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
+      <head>
+        <title>Auth Example</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <script src="https://cdn.tailwindcss.com"></script>
+      </head>
       <body>
         <AuthProvider>
-          <div style={{ minHeight: "100vh", backgroundColor: "#f5f5f5" }}>
-            <nav
-              style={{
-                backgroundColor: "white",
-                padding: "1rem 2rem",
-                boxShadow: "0 1px 3px rgba(0,0,0,0.1)",
-              }}
-            >
-              <div
-                style={{
-                  maxWidth: "1200px",
-                  margin: "0 auto",
-                  display: "flex",
-                  justifyContent: "space-between",
-                }}
-              >
-                <h1 style={{ margin: 0, fontSize: "1.5rem" }}>Auth Example</h1>
-                <div
-                  style={{ display: "flex", gap: "1rem", alignItems: "center" }}
-                >
-                  <a href="/">Home</a>
-                  <a href="/dashboard">Dashboard</a>
-                  <a href="/login">Login</a>
-                  <a href="/signup">Sign Up</a>
+          <div className="min-h-screen bg-gray-100">
+            <nav className="bg-white px-8 py-4 shadow-sm">
+              <div className="max-w-6xl mx-auto flex justify-between items-center">
+                <h1 className="text-2xl font-semibold">Auth Example</h1>
+                <div className="flex gap-4 items-center">
+                  <a href="/" className="text-gray-600 hover:text-gray-900">Home</a>
+                  <a href="/dashboard" className="text-gray-600 hover:text-gray-900">Dashboard</a>
+                  <a href="/login" className="text-gray-600 hover:text-gray-900">Login</a>
+                  <a href="/signup" className="text-gray-600 hover:text-gray-900">Sign Up</a>
                 </div>
               </div>
             </nav>
-            <main
-              style={{ maxWidth: "1200px", margin: "0 auto", padding: "2rem" }}
-            >
+            <main className="max-w-6xl mx-auto p-8">
               {children}
             </main>
           </div>

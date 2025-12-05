@@ -6,21 +6,12 @@ interface AppProps {
 
 export default function App({ children }: AppProps) {
   return (
-    <div style={{
-      fontFamily: "system-ui, -apple-system, sans-serif",
-      maxWidth: "800px",
-      margin: "0 auto",
-      padding: "2rem"
-    }}>
-      <header style={{
-        borderBottom: "2px solid #e5e7eb",
-        paddingBottom: "1rem",
-        marginBottom: "2rem"
-      }}>
-        <h1 style={{ margin: 0, color: "#1e40af" }}>
+    <div className="font-sans max-w-3xl mx-auto p-8">
+      <header className="border-b-2 border-gray-200 pb-4 mb-8">
+        <h1 className="text-2xl font-bold text-blue-800 m-0">
           Veryfront Data Fetching Demo
         </h1>
-        <p style={{ margin: "0.5rem 0 0 0", color: "#6b7280" }}>
+        <p className="text-gray-500 mt-2 mb-0">
           Demonstrating SSR and SSG with ISR
         </p>
       </header>
@@ -29,14 +20,7 @@ export default function App({ children }: AppProps) {
         {children}
       </main>
 
-      <footer style={{
-        borderTop: "2px solid #e5e7eb",
-        paddingTop: "1rem",
-        marginTop: "3rem",
-        textAlign: "center",
-        color: "#6b7280",
-        fontSize: "0.875rem"
-      }}>
+      <footer className="border-t-2 border-gray-200 pt-4 mt-12 text-center text-gray-500 text-sm">
         <p>Built with Veryfront - A modern React framework</p>
       </footer>
     </div>
