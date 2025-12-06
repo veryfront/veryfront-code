@@ -4,7 +4,7 @@ import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import { getAdapter } from "@veryfront/platform/adapters/detect.ts";
 import { createVeryfrontHandler } from "./universal-handler/index.ts";
 import { bootstrapProd } from "./bootstrap.ts";
-import { onSignal, cwd } from "@veryfront/platform/compat/process.ts";
+import { cwd, onSignal } from "@veryfront/platform/compat/process.ts";
 
 interface ServerOptions {
   projectDir: string;

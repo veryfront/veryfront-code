@@ -1,6 +1,14 @@
 {
   "name": "veryfront",
   "version": "0.0.31",
+  "exclude": [
+    "npm/",
+    "dist/",
+    "coverage/",
+    "scripts/",
+    "examples/",
+    "tests/"
+  ],
   "exports": {
     ".": "./src/index.ts",
     "./cli": "./src/cli/main.ts",

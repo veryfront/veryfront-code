@@ -11,7 +11,7 @@ export { MemoryBackend } from "./memory.ts";
 
 // Redis backend (production)
 export { RedisBackend } from "./redis.ts";
-export type { RedisBackendConfig, RedisClient } from "./redis.ts";
+export type { RedisBackendConfig } from "./redis.ts";
 
 // Adapter backends (for external workflow engines)
 export { TemporalAdapter } from "./temporal.ts";

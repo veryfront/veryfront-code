@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { access, mkdir, writeFile } from "node:fs/promises";
-import { getEnv } from "../../platform/compat/process.ts";
+import { getEnv } from "../platform/compat/process.ts";
 
 const VERSION = getEnv("VERYFRONT_VERSION") || "0.0.0-dev";
 
@@ -12,7 +12,7 @@ function getArgs(): string[] {
     return process.argv.slice(2);
   }
   if (typeof Deno !== "undefined") {
-    return (Deno as { args: string }).args;
+    return (Deno as unknown as { args: string[] }).args;
   }
   return [];
 }

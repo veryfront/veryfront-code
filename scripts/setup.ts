@@ -21,7 +21,7 @@ if (typeof Deno === 'undefined') {
   pathMod = require('node:path');
   childProcess = require('node:child_process');
   util = require('node:util');
-  parseArgs = require("mri');
+  parseArgs = require("mri");
 } else {
   // @ts-ignore - Deno global
   pathMod = await import("jsr:@std/path");
