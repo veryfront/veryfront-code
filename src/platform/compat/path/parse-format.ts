@@ -1,11 +1,11 @@
-import { isDeno, nodePath } from "./runtime.ts";
+import { hasNodePath, isDeno, nodePath } from "./runtime.ts";
 import { basename, dirname, extname } from "./basic-operations.ts";
 import { isAbsolute } from "./resolution.ts";
 import { join } from "./basic-operations.ts";
 import type { PathObject } from "./types.ts";
 
 export function parse(path: string): PathObject {
-  if (!isDeno) {
+  if (!isDeno && hasNodePath) {
     return nodePath!.parse(path);
   }
 
@@ -24,7 +24,7 @@ export function parse(path: string): PathObject {
 }
 
 export function format(pathObject: PathObject): string {
-  if (!isDeno) {
+  if (!isDeno && hasNodePath) {
     return nodePath!.format(pathObject);
   }
 

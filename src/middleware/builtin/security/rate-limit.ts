@@ -7,6 +7,7 @@ import {
   MS_PER_SECOND,
 } from "@veryfront/utils/constants/http.ts";
 import { CLEANUP_INTERVAL_MULTIPLIER } from "@veryfront/utils/constants/cache.ts";
+import { unrefTimer } from "@veryfront/platform/compat/process.ts";
 
 const DEFAULT_RATE_LIMIT_REQUESTS = 100;
 const DEFAULT_RATE_LIMIT_WINDOW_MS = MS_PER_MINUTE;
@@ -33,15 +34,7 @@ export class MemoryRateLimitStore implements RateLimitStore {
       }, windowMs * CLEANUP_INTERVAL_MULTIPLIER);
 
       if (this.cleanupInterval) {
-        // Node.js / Bun style
-        if (typeof (this.cleanupInterval as any).unref === "function") {
-          (this.cleanupInterval as any).unref();
-        } // Deno style
-        // @ts-ignore - Deno global
-        else if (typeof Deno !== "undefined" && typeof Deno.unrefTimer === "function") {
-          // @ts-ignore - Deno global
-          Deno.unrefTimer(this.cleanupInterval);
-        }
+        unrefTimer(this.cleanupInterval);
       }
     }
   }

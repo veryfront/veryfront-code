@@ -4,6 +4,7 @@ import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import { getAdapter } from "@veryfront/platform/adapters/detect.ts";
 import { createVeryfrontHandler } from "./universal-handler/index.ts";
 import { bootstrapProd } from "./bootstrap.ts";
+import { onSignal, cwd } from "@veryfront/platform/compat/process.ts";
 
 interface ServerOptions {
   projectDir: string;
@@ -82,7 +83,6 @@ export async function startProductionServer(options: ServerOptions): Promise<Ser
 
 if (import.meta.main) {
   try {
-    const { cwd } = await import("../runtime/compat/process.ts");
     const adapter = await getAdapter();
 
     const shutdownController = new AbortController();
@@ -115,18 +115,8 @@ if (import.meta.main) {
       }
     };
 
-    const signals: Array<"SIGINT" | "SIGTERM"> = ["SIGINT", "SIGTERM"];
-    for (const signal of signals) {
-      if (typeof Deno !== "undefined" && "addSignalListener" in Deno) {
-        Deno.addSignalListener(signal, () => {
-          void shutdown(signal);
-        });
-      } else if (typeof process !== "undefined" && typeof process.on === "function") {
-        process.on(signal, () => {
-          void shutdown(signal);
-        });
-      }
-    }
+    onSignal("SIGINT", () => void shutdown("SIGINT"));
+    onSignal("SIGTERM", () => void shutdown("SIGTERM"));
   } catch (e) {
     logger.error("Failed to start production server:", e);
   }

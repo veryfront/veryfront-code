@@ -159,8 +159,10 @@ class AdapterRegistry {
       );
     }
 
-    // Unknown - default to Node.js compatibility
-    return "node";
+    throw new Error(
+      "Unsupported runtime detected. Supported runtimes: deno, node, bun. " +
+        "For Cloudflare Workers, call runtime.set(createCloudflareAdapter(env)).",
+    );
   }
 
   /**

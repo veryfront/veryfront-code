@@ -10,6 +10,7 @@
 
 import type { BlobRef, BlobStorage, StoreBlobOptions } from "./types.ts";
 import { agentLogger as logger } from "@veryfront/utils";
+import { isDeno } from "@veryfront/platform/compat/runtime.ts";
 
 // Type definitions for AWS SDK (to avoid top-level import)
 type S3ClientType = import("@aws-sdk/client-s3").S3Client;
@@ -34,7 +35,7 @@ async function getS3Module(): Promise<typeof import("@aws-sdk/client-s3")> {
 
   try {
     // Try Deno's esm.sh import first (for Deno runtime)
-    if (typeof Deno !== "undefined") {
+    if (isDeno) {
       s3Module = await import("https://esm.sh/@aws-sdk/client-s3@3.490.0");
     } else {
       // For Node.js runtime, use bare specifier

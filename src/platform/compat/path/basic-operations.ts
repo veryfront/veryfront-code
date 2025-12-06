@@ -1,7 +1,7 @@
-import { isDeno, nodePath } from "./runtime.ts";
+import { hasNodePath, isDeno, nodePath } from "./runtime.ts";
 
 export function join(...paths: string[]): string {
-  if (!isDeno) {
+  if (!isDeno && hasNodePath) {
     return nodePath!.join(...paths);
   }
 
@@ -15,7 +15,7 @@ export function join(...paths: string[]): string {
 }
 
 export function dirname(path: string): string {
-  if (!isDeno) {
+  if (!isDeno && hasNodePath) {
     return nodePath!.dirname(path);
   }
 
@@ -26,7 +26,7 @@ export function dirname(path: string): string {
 }
 
 export function basename(path: string, ext?: string): string {
-  if (!isDeno) {
+  if (!isDeno && hasNodePath) {
     return nodePath!.basename(path, ext);
   }
 
@@ -41,7 +41,7 @@ export function basename(path: string, ext?: string): string {
 }
 
 export function extname(path: string): string {
-  if (!isDeno) {
+  if (!isDeno && hasNodePath) {
     return nodePath!.extname(path);
   }
 

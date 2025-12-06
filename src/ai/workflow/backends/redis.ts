@@ -16,6 +16,7 @@ import type {
 } from "../types.ts";
 import type { BackendConfig, WorkflowBackend } from "./types.ts";
 import { agentLogger as logger } from "@veryfront/utils";
+import { isDeno } from "@veryfront/platform/compat/runtime.ts";
 
 // Lazy-loaded Redis client modules (loaded only when Redis backend is used)
 // @ts-ignore - Deno global
@@ -35,8 +36,7 @@ async function getRedisModule(): Promise<{ DenoRedis: any; NodeRedis: any }> {
     return { DenoRedis, NodeRedis };
   }
 
-  // @ts-ignore - Deno global
-  if (typeof Deno !== "undefined") {
+  if (isDeno) {
     try {
       // Construct URL dynamically to prevent static analysis from pre-fetching
       const denoRedisUrl = ["https://deno.land/x/redis", "@v0.32.1/mod.ts"].join("");

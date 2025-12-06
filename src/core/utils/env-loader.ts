@@ -7,6 +7,7 @@
 import { serverLogger as logger } from "@veryfront/utils";
 import { cwd as getCwd, getEnv, setEnv } from "../../platform/compat/process.ts";
 import { createFileSystem, type FileSystem } from "../../platform/compat/fs.ts";
+import { isDeno } from "../../platform/compat/runtime.ts";
 
 // Lazy-initialized filesystem for cross-platform support
 let _fs: FileSystem | null = null;
@@ -27,8 +28,7 @@ async function isNotFoundError(error: unknown, path: string): Promise<boolean> {
       return true;
     }
     // Deno error type
-    // @ts-ignore - Deno global
-    if (typeof Deno !== "undefined" && error instanceof Deno.errors.NotFound) {
+    if (isDeno && error instanceof Deno.errors.NotFound) {
       return true;
     }
   }
