@@ -9,8 +9,9 @@
  * - Can use real file extensions (.tsx, .mdx, etc.)
  */
 
-import { walk } from "std/fs/walk.ts";
-import { relative } from "std/path/mod.ts";
+import { createFileSystem } from "../../platform/compat/fs.ts";
+import * as pathHelper from "../../platform/compat/path-helper.ts";
+import { isDeno } from "../../platform/compat/runtime.ts";
 import type { TemplateFile } from "./types.ts";
 
 /**
@@ -36,35 +37,17 @@ export async function loadTemplateFromDirectory(
   templateDir: string,
 ): Promise<TemplateFile[]> {
   const files: TemplateFile[] = [];
+  const fs = createFileSystem();
 
   try {
-    for await (
-      const entry of walk(templateDir, {
-        includeDirs: false,
-        includeFiles: true,
-        followSymlinks: false,
-      })
-    ) {
-      // Get path relative to template directory
-      let relativePath = relative(templateDir, entry.path);
-
-      // Apply file name mappings (e.g., _gitignore -> .gitignore)
-      const fileName = relativePath.split("/").pop() || "";
-      if (FILE_NAME_MAPPINGS[fileName]) {
-        relativePath = relativePath.replace(fileName, FILE_NAME_MAPPINGS[fileName]);
-      }
-
-      // Read file content
-      const content = await Deno.readTextFile(entry.path);
-
-      files.push({
-        path: relativePath,
-        content,
-      });
-    }
+    await walkDirectory(templateDir, templateDir, files, fs);
   } catch (error) {
     // If directory doesn't exist, return empty array
-    if (error instanceof Deno.errors.NotFound) {
+    if (isDeno && error instanceof Deno.errors.NotFound) {
+      return [];
+    }
+    // Node.js ENOENT
+    if ((error as NodeJS.ErrnoException)?.code === "ENOENT") {
       return [];
     }
     throw error;
@@ -75,16 +58,96 @@ export async function loadTemplateFromDirectory(
 }
 
 /**
+ * Recursively walk a directory and collect files.
+ */
+async function walkDirectory(
+  baseDir: string,
+  currentDir: string,
+  files: TemplateFile[],
+  fs: ReturnType<typeof createFileSystem>,
+): Promise<void> {
+  if (isDeno) {
+    // Deno path
+    for await (const entry of Deno.readDir(currentDir)) {
+      const entryPath = pathHelper.join(currentDir, entry.name);
+
+      if (entry.isDirectory) {
+        await walkDirectory(baseDir, entryPath, files, fs);
+      } else if (entry.isFile) {
+        let relativePath = pathHelper.relative(baseDir, entryPath);
+
+        // Apply file name mappings (e.g., _gitignore -> .gitignore)
+        const fileName = relativePath.split("/").pop() || "";
+        if (FILE_NAME_MAPPINGS[fileName]) {
+          relativePath = relativePath.replace(fileName, FILE_NAME_MAPPINGS[fileName]);
+        }
+
+        const content = await fs.readTextFile(entryPath);
+        files.push({ path: relativePath, content });
+      }
+    }
+  } else {
+    // Node.js path
+    const nodeFs = await import("node:fs/promises");
+    const entries = await nodeFs.readdir(currentDir, { withFileTypes: true });
+
+    for (const entry of entries) {
+      const entryPath = pathHelper.join(currentDir, entry.name);
+
+      if (entry.isDirectory()) {
+        await walkDirectory(baseDir, entryPath, files, fs);
+      } else if (entry.isFile()) {
+        let relativePath = pathHelper.relative(baseDir, entryPath);
+
+        // Apply file name mappings (e.g., _gitignore -> .gitignore)
+        const fileName = relativePath.split("/").pop() || "";
+        if (FILE_NAME_MAPPINGS[fileName]) {
+          relativePath = relativePath.replace(fileName, FILE_NAME_MAPPINGS[fileName]);
+        }
+
+        const content = await fs.readTextFile(entryPath);
+        files.push({ path: relativePath, content });
+      }
+    }
+  }
+}
+
+/**
  * Get the absolute path to a template directory.
- * Templates are stored in src/cli/templates/files/<template-name>/
+ * Templates are stored in:
+ * - Deno source: src/cli/templates/files/<template-name>/
+ * - npm package: dist/templates/<template-name>/
  *
  * @param templateName - Name of the template (e.g., "minimal", "ai")
  * @returns Absolute path to the template directory
  */
 export function getTemplateDirectory(templateName: string): string {
   // Use import.meta.url to resolve relative to this file
-  const moduleDir = new URL(".", import.meta.url).pathname;
-  return `${moduleDir}files/${templateName}`;
+  const moduleUrl = new URL(".", import.meta.url);
+  // Handle both file:// URLs and regular paths
+  let moduleDir: string;
+  if (moduleUrl.protocol === "file:") {
+    // Remove leading slash on Windows for proper path resolution
+    moduleDir = moduleUrl.pathname;
+    if (
+      typeof process !== "undefined" && process.platform === "win32" && moduleDir.startsWith("/")
+    ) {
+      moduleDir = moduleDir.slice(1);
+    }
+  } else {
+    moduleDir = moduleUrl.href;
+  }
+
+  // In Deno, templates are at ./files/<name>
+  // In Node.js (npm package), templates are at ./templates/<name>
+  // The bundled CLI ends up at dist/cli.js, with templates at dist/templates/
+  if (isDeno) {
+    return pathHelper.join(moduleDir, "files", templateName);
+  } else {
+    // In Node.js, the bundled code runs from dist/cli.js
+    // Templates are at dist/templates/<name>
+    return pathHelper.join(moduleDir, "templates", templateName);
+  }
 }
 
 /**
@@ -95,8 +158,10 @@ export function getTemplateDirectory(templateName: string): string {
  */
 export async function templateDirectoryExists(templateName: string): Promise<boolean> {
   const templateDir = getTemplateDirectory(templateName);
+  const fs = createFileSystem();
+
   try {
-    const stat = await Deno.stat(templateDir);
+    const stat = await fs.stat(templateDir);
     return stat.isDirectory;
   } catch {
     return false;

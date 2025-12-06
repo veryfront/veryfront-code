@@ -1366,6 +1366,41 @@ if (typeof Deno !== 'undefined') {
   await Deno.chmod(binPath, 0o755);
 }
 
+console.log("📄 Copying template files...");
+// Copy template files for `veryfront init` command
+const templatesSourceDir = pathHelper.join(PROJECT_ROOT, "src/cli/templates/files");
+const templatesDestDir = pathHelper.join(OUT_DIR, "dist/templates");
+
+async function copyDirectory(src: string, dest: string): Promise<void> {
+  await fs.mkdir(dest, { recursive: true });
+  // @ts-ignore - Deno global
+  for await (const entry of Deno.readDir(src)) {
+    const srcPath = pathHelper.join(src, entry.name);
+    const destPath = pathHelper.join(dest, entry.name);
+    if (entry.isDirectory) {
+      await copyDirectory(srcPath, destPath);
+    } else if (entry.isFile) {
+      // @ts-ignore - Deno global
+      await Deno.copyFile(srcPath, destPath);
+    }
+  }
+}
+
+try {
+  await copyDirectory(templatesSourceDir, templatesDestDir);
+  // @ts-ignore - Deno global
+  const templateDirs = [];
+  // @ts-ignore - Deno global
+  for await (const entry of Deno.readDir(templatesSourceDir)) {
+    if (entry.isDirectory) {
+      templateDirs.push(entry.name);
+    }
+  }
+  console.log(`  ✓ Copied template files: ${templateDirs.join(", ")}`);
+} catch (e) {
+  console.log("  ⚠ Failed to copy templates:", e);
+}
+
 console.log("📄 Copying additional files...");
 try {
   // @ts-ignore - Deno global
