@@ -8,16 +8,7 @@ import { normalizeModulePath, resolveRelativePath } from "./path-resolver.ts";
 import type { LoadComponentOptions } from "./types.ts";
 import { createError, toError } from "../../core/errors/veryfront-error.ts";
 import { createFileSystem } from "../../platform/compat/fs.ts";
-
-// Detect if running in Node.js (vs Deno)
-// Use a function instead of module-level constant to ensure correct evaluation
-// when bundled with esbuild's __esm lazy initialization pattern
-function isNodeRuntime(): boolean {
-  // deno-lint-ignore no-explicit-any
-  const _global = globalThis as any;
-  return typeof Deno === "undefined" && typeof _global.process !== "undefined" &&
-    !!_global.process?.versions?.node;
-}
+import { isNodeRuntime } from "../../platform/compat/runtime.ts";
 
 export async function loadComponentFromSource(
   source: string,

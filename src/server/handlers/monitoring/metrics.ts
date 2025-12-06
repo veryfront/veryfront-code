@@ -12,6 +12,7 @@ import {
   HTTP_OK,
   PRIORITY_HIGH,
 } from "@veryfront/core/constants/index.ts";
+import { memoryUsage, uptime } from "../../../platform/compat/process.ts";
 
 export class MetricsHandler extends BaseHandler {
   metadata: HandlerMetadata = {
@@ -33,52 +34,27 @@ export class MetricsHandler extends BaseHandler {
     try {
       const snap = metrics.snapshot();
 
-      // Best-effort memory and uptime (Deno/Node)
-      interface DenoGlobal {
-        Deno?: {
-          memoryUsage?: () => { rss: number; heapTotal: number; heapUsed: number };
-          osUptime?: () => number;
-        };
-        process?: {
-          memoryUsage?: () => { rss: number; heapTotal: number; heapUsed: number };
-          uptime?: () => number;
-        };
-      }
-
-      const global = globalThis as DenoGlobal;
-      const D = global.Deno;
-      const P = global.process;
-
+      // Best-effort memory and uptime using platform abstraction
       const memory = (() => {
         try {
-          if (D?.memoryUsage) return D.memoryUsage();
+          return memoryUsage();
         } catch (err) {
-          this.logDebug("Failed to get Deno memory usage", { error: err }, ctx);
+          this.logDebug("Failed to get memory usage", { error: err }, ctx);
+          return undefined;
         }
-        try {
-          if (P?.memoryUsage) return P.memoryUsage();
-        } catch (err) {
-          this.logDebug("Failed to get process memory usage", { error: err }, ctx);
-        }
-        return undefined;
       })();
 
-      const uptime = (() => {
+      const uptimeValue = (() => {
         try {
-          if (D?.osUptime) return D.osUptime();
+          return uptime();
         } catch (err) {
-          this.logDebug("Failed to get Deno uptime", { error: err }, ctx);
+          this.logDebug("Failed to get uptime", { error: err }, ctx);
+          return undefined;
         }
-        try {
-          if (P?.uptime) return P.uptime();
-        } catch (err) {
-          this.logDebug("Failed to get process uptime", { error: err }, ctx);
-        }
-        return undefined;
       })();
 
       const response = ResponseBuilder.json(
-        { counters: snap, memory, uptime },
+        { counters: snap, memory, uptime: uptimeValue },
         req,
         {
           securityConfig: ctx.securityConfig ?? undefined,

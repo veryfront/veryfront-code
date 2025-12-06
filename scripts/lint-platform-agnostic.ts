@@ -22,12 +22,16 @@ const VIOLATION_PATTERNS = [
   { pattern: /import\s+["']node:/g, name: "node: import" },
   { pattern: /require\s*\(\s*["']node:/g, name: "node: require" },
 
-  // Direct process access
-  { pattern: /process\.env(?!\s*\.\s*NODE_ENV\s*[:=])/g, name: "process.env" },
-  { pattern: /process\.cwd\s*\(/g, name: "process.cwd()" },
-  { pattern: /process\.exit\s*\(/g, name: "process.exit()" },
-  { pattern: /process\.argv/g, name: "process.argv" },
-  { pattern: /process\.platform/g, name: "process.platform" },
+  // Direct process access (including via globalThis/global)
+  { pattern: /(?<!\.)process\.env(?!\s*\.\s*NODE_ENV\s*[:=])/g, name: "process.env" },
+  { pattern: /(?<!\.)process\.cwd\s*\(/g, name: "process.cwd()" },
+  { pattern: /(?<!\.)process\.exit\s*\(/g, name: "process.exit()" },
+  { pattern: /(?<!\.)process\.argv/g, name: "process.argv" },
+  { pattern: /(?<!\.)process\.platform/g, name: "process.platform" },
+  { pattern: /(?<!\.)process\.memoryUsage\s*\(/g, name: "process.memoryUsage()" },
+  { pattern: /globalThis\.process/g, name: "globalThis.process" },
+  { pattern: /global\.process/g, name: "global.process" },
+  { pattern: /_global\.process/g, name: "_global.process" },
 
   // Direct Deno API access (must use platform abstractions)
   { pattern: /Deno\.readFile\s*\(/g, name: "Deno.readFile()" },
@@ -40,6 +44,8 @@ const VIOLATION_PATTERNS = [
   { pattern: /Deno\.env\./g, name: "Deno.env" },
   { pattern: /Deno\.Command\s*\(/g, name: "Deno.Command()" },
   { pattern: /Deno\.build\./g, name: "Deno.build" },
+  { pattern: /globalThis\.Deno/g, name: "globalThis.Deno" },
+  { pattern: /global\.Deno/g, name: "global.Deno" },
 ];
 
 // Directories where platform-specific code is allowed

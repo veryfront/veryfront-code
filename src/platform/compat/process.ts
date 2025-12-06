@@ -252,6 +252,22 @@ export function execPath(): string {
 }
 
 /**
+ * Get process uptime in seconds
+ * Returns OS uptime on Deno, process uptime on Node.js
+ */
+export function uptime(): number {
+  if (IS_DENO) {
+    // Deno.osUptime() returns system uptime in seconds
+    return Deno.osUptime?.() ?? 0;
+  }
+  if (hasNodeProcess) {
+    // process.uptime() returns process uptime in seconds
+    return nodeProcess!.uptime?.() ?? 0;
+  }
+  return 0;
+}
+
+/**
  * Get stdout stream for writing
  * Returns null if not available (e.g., in browser/workers)
  */
