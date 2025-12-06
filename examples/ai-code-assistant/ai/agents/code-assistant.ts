@@ -4,8 +4,7 @@
  * AI agent for helping developers understand and navigate codebases.
  */
 
-import { agent } from 'veryfront/ai';
-import { promptRegistry } from 'veryfront/ai/mcp/prompt';
+import { agent, promptRegistry } from 'veryfront/ai';
 
 export default agent({
   id: 'codeAssistant',

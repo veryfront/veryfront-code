@@ -95,7 +95,9 @@ export async function promptForEnvVars(
       logger.info(`\n${green("All environment variables configured!")}`);
     } else if (filledCount > 0) {
       logger.info(
-        `\n${yellow("Some environment variables skipped.")} Edit ${cyan(".env")} to add them later.`,
+        `\n${yellow("Some environment variables skipped.")} Edit ${
+          cyan(".env")
+        } to add them later.`,
       );
     } else {
       logger.info(
@@ -121,7 +123,9 @@ async function promptForSingleEnvVar(envVar: EnvVarConfig): Promise<string> {
   try {
     // Use cross-platform promptUser which handles both Deno and Node.js
     const value = await promptUser(
-      `  ${cyan(envVar.name)}${requiredIndicator}: ${envVar.description}${docsHint}\n  Enter value (press Enter to skip): `,
+      `  ${
+        cyan(envVar.name)
+      }${requiredIndicator}: ${envVar.description}${docsHint}\n  Enter value (press Enter to skip): `,
     );
 
     const trimmedValue = value.trim();

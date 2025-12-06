@@ -6,9 +6,9 @@ The rendering module handles server-side rendering (SSR), React Server Component
 
 ## Scope
 
-###
+### 
 
- What this module does:
+What this module does:
 
 - Server-Side Rendering (SSR) with React 17/18/19
 - React Server Components (RSC) with streaming

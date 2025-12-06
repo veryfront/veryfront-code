@@ -133,5 +133,5 @@ class PromptRegistryClass {
 const PROMPT_REGISTRY_KEY = "__veryfront_prompt_registry__";
 // deno-lint-ignore no-explicit-any
 const _globalPrompt = globalThis as any;
-export const promptRegistry: PromptRegistryClass =
-  _globalPrompt[PROMPT_REGISTRY_KEY] ||= new PromptRegistryClass();
+export const promptRegistry: PromptRegistryClass = _globalPrompt[PROMPT_REGISTRY_KEY] ||=
+  new PromptRegistryClass();

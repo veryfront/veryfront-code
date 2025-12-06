@@ -152,7 +152,7 @@ if (match) {
 ### Slug Mapping
 
 ```typescript
-import { pathToSlug, slugToPath, normalizeSlug } from "@veryfront/routing";
+import { normalizeSlug, pathToSlug, slugToPath } from "@veryfront/routing";
 
 // File path → URL slug
 const slug = pathToSlug("pages/blog/[category]/[slug].tsx");
@@ -175,7 +175,7 @@ console.log(normalized); // "/blog/post"
 ### API Routes
 
 ```typescript
-import { type APIContext, json, badRequest, notFound } from "@veryfront/routing";
+import { type APIContext, badRequest, json, notFound } from "@veryfront/routing";
 
 // GET /api/users/:id
 export async function GET(ctx: APIContext) {

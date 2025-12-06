@@ -39,6 +39,15 @@ export async function handleRSCEndpoint(
     return handleDomScript(adapter);
   }
 
+  // Always return 410 Gone for deprecated flight_page endpoint
+  // regardless of RSC being enabled
+  if (sub === "flight_page") {
+    return new Response(
+      "Flight endpoint removed. Use custom RSC endpoints.",
+      { status: 410 },
+    );
+  }
+
   // Check if RSC feature is enabled via feature flag for other endpoints
   if (!isRSCEnabled(config)) {
     return null; // Not enabled, let it 404
@@ -121,12 +130,8 @@ export async function handleRSCEndpoint(
         metrics.recordRSC("stream");
         return handleStreamEndpoint(url.searchParams);
 
-      case "flight_page":
-        // Flight endpoints removed; use custom RSC. Return 410 Gone.
-        return new Response(
-          "Flight endpoint removed. Use custom RSC endpoints.",
-          { status: 410 },
-        );
+      // Note: flight_page is handled earlier (before RSC enabled check)
+      // to always return 410 Gone for deprecated endpoints
 
       default:
         // Check if it's a render request

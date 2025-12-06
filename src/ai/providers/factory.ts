@@ -201,8 +201,8 @@ class ProviderRegistry {
 const PROVIDER_REGISTRY_KEY = "__veryfront_provider_registry__";
 // deno-lint-ignore no-explicit-any
 const _globalProvider = globalThis as any;
-export const providerRegistry: ProviderRegistry =
-  _globalProvider[PROVIDER_REGISTRY_KEY] ||= new ProviderRegistry();
+export const providerRegistry: ProviderRegistry = _globalProvider[PROVIDER_REGISTRY_KEY] ||=
+  new ProviderRegistry();
 
 /**
  * Initialize providers with configuration

@@ -121,7 +121,9 @@ export async function initCommand(options: InitOptions): Promise<void> {
     const { getTemplate, getTemplateConfig } = await import("../../templates/index.ts");
 
     const templateFiles = getTemplate(template as "blog" | "docs" | "app" | "minimal" | "ai");
-    const templateConfig = getTemplateConfig(template as "blog" | "docs" | "app" | "minimal" | "ai");
+    const templateConfig = getTemplateConfig(
+      template as "blog" | "docs" | "app" | "minimal" | "ai",
+    );
 
     if (!templateFiles) {
       throw toError(createError({

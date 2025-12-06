@@ -1,7 +1,6 @@
 {
   "name": "veryfront",
   "version": "0.0.31",
-  "nodeModulesDir": "auto",
   "exports": {
     ".": "./src/index.ts",
     "./cli": "./src/cli/main.ts",
@@ -95,11 +94,13 @@
     "unified": "https://esm.sh/unified@11.0.5?dts",
     "ai": "https://esm.sh/ai@5.0.76?deps=react@18.3.1,react-dom@18.3.1",
     "ai/react": "https://esm.sh/@ai-sdk/react@2.0.59?deps=react@18.3.1,react-dom@18.3.1",
+    "@ai-sdk/react": "https://esm.sh/@ai-sdk/react@2.0.59?deps=react@18.3.1,react-dom@18.3.1",
     "@ai-sdk/openai": "https://esm.sh/@ai-sdk/openai@2.0.1",
     "@ai-sdk/anthropic": "https://esm.sh/@ai-sdk/anthropic@2.0.4",
     "unocss": "https://esm.sh/unocss@0.59.0",
     "@unocss/core": "https://esm.sh/@unocss/core@0.59.0",
-    "@unocss/preset-wind": "https://esm.sh/@unocss/preset-wind@0.59.0"
+    "@unocss/preset-wind": "https://esm.sh/@unocss/preset-wind@0.59.0",
+    "redis": "npm:redis"
   },
   "compilerOptions": {
     "jsx": "react-jsx",
@@ -125,8 +126,6 @@
     "test": "DENO_JOBS=1 deno test --parallel --fail-fast --allow-all --unstable-worker-options --unstable-net",
     "test:unit": "DENO_JOBS=1 deno test --parallel --allow-all --v8-flags=--max-old-space-size=8192 --ignore=tests --unstable-worker-options --unstable-net",
     "test:integration": "DENO_JOBS=1 deno test --parallel --fail-fast --allow-all tests --unstable-worker-options --unstable-net",
-    "test:batches": "deno run --allow-all scripts/test-batches.ts",
-    "test:unsafe": "DENO_JOBS=1 deno test --parallel --fail-fast --allow-all --coverage=coverage --unstable-worker-options --unstable-net",
     "test:coverage": "rm -rf coverage && DENO_JOBS=1 deno test --parallel --fail-fast --allow-all --coverage=coverage --unstable-worker-options --unstable-net || exit 1",
     "test:coverage:unit": "rm -rf coverage && DENO_JOBS=1 deno test --parallel --fail-fast --allow-all --coverage=coverage --ignore=tests --unstable-worker-options --unstable-net || exit 1",
     "test:coverage:integration": "rm -rf coverage && DENO_JOBS=1 deno test --parallel --fail-fast --allow-all --coverage=coverage tests --unstable-worker-options --unstable-net || exit 1",

@@ -33,11 +33,13 @@ export class RSCHandler extends BaseHandler {
       return this.continue();
     }
 
-    // Always allow client.js and dom.js (needed for basic hydration even without full RSC)
+    // Always allow client.js, dom.js (needed for basic hydration even without full RSC)
+    // and flight_page (deprecated endpoint that always returns 410 Gone)
     const sub = pathname.replace("/_veryfront/rsc/", "");
     const isHydrationScript = sub === "client.js" || sub === "dom.js";
+    const isDeprecatedEndpoint = sub === "flight_page";
 
-    if (!isRSCEnabled(ctx.config) && !isHydrationScript) {
+    if (!isRSCEnabled(ctx.config) && !isHydrationScript && !isDeprecatedEndpoint) {
       return this.respond(new Response("Not Found", { status: HTTP_NOT_FOUND }));
     }
 

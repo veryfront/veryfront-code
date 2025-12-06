@@ -183,7 +183,10 @@ export interface VeryfrontConfig {
         colors?: Record<string, string | Record<string, string>>;
         fontFamily?: Record<string, string[]>;
         spacing?: Record<string, string>;
-        fontSize?: Record<string, string | [string, { lineHeight?: string; letterSpacing?: string }]>;
+        fontSize?: Record<
+          string,
+          string | [string, { lineHeight?: string; letterSpacing?: string }]
+        >;
         screens?: Record<string, string>;
         animation?: Record<string, string>;
         keyframes?: Record<string, Record<string, Record<string, string>>>;

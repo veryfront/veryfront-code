@@ -209,8 +209,8 @@ class ToolRegistryClass {
 const TOOL_REGISTRY_KEY = "__veryfront_tool_registry__";
 // deno-lint-ignore no-explicit-any
 const _globalTool = globalThis as any;
-export const toolRegistry: ToolRegistryClass =
-  _globalTool[TOOL_REGISTRY_KEY] ||= new ToolRegistryClass();
+export const toolRegistry: ToolRegistryClass = _globalTool[TOOL_REGISTRY_KEY] ||=
+  new ToolRegistryClass();
 
 export function toolToProviderDefinition(tool: Tool): ToolDefinition {
   // Use pre-converted JSON Schema if available (preferred)

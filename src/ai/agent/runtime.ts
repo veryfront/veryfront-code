@@ -410,7 +410,7 @@ export class AgentRuntime {
       onToolCall?: (toolCall: ToolCall) => void;
       onChunk?: (chunk: string) => void;
     },
-    messageId?: string,
+    _messageId?: string,
   ): Promise<AgentResponse> {
     const capabilities = getPlatformCapabilities();
     const maxSteps = this.getMaxSteps(capabilities.maxAgentSteps);
