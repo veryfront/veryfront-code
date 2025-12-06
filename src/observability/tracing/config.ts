@@ -1,5 +1,6 @@
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import type { TracingConfig } from "./types.ts";
+import { getEnv } from "../../platform/compat/process.ts";
 
 const DEFAULT_CONFIG: TracingConfig = {
   enabled: false,
@@ -52,19 +53,17 @@ function applyEnvFromAdapter(
 
 function applyEnvFromDeno(config: TracingConfig): void {
   try {
-    const denoEnv = globalThis.Deno?.env;
-    if (!denoEnv) return;
-
-    config.enabled = denoEnv.get("OTEL_TRACES_ENABLED") === "true" ||
-      denoEnv.get("VERYFRONT_OTEL") === "1" ||
+    // Use platform abstraction for cross-platform env access
+    config.enabled = getEnv("OTEL_TRACES_ENABLED") === "true" ||
+      getEnv("VERYFRONT_OTEL") === "1" ||
       config.enabled;
 
-    config.serviceName = denoEnv.get("OTEL_SERVICE_NAME") || config.serviceName;
-    config.endpoint = denoEnv.get("OTEL_EXPORTER_OTLP_ENDPOINT") ||
-      denoEnv.get("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT") ||
+    config.serviceName = getEnv("OTEL_SERVICE_NAME") || config.serviceName;
+    config.endpoint = getEnv("OTEL_EXPORTER_OTLP_ENDPOINT") ||
+      getEnv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT") ||
       config.endpoint;
 
-    const exporterType = denoEnv.get("OTEL_TRACES_EXPORTER");
+    const exporterType = getEnv("OTEL_TRACES_EXPORTER");
     if (isValidExporter(exporterType)) {
       config.exporter = exporterType;
     }
