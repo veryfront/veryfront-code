@@ -27,15 +27,15 @@ export class RouteDiscovery {
 
     for (const routeDir of routeDirs) {
       if (routeDir.type === "app") {
-        logger.info(`[SERVER] Discovering app routes in: ${routeDir.path}`);
+        logger.debug(`[SERVER] Discovering app routes in: ${routeDir.path}`);
         await this.discoverAppRoutes(routeDir.path);
       } else {
-        logger.info(`[SERVER] Discovering pages routes in: ${routeDir.path}`);
+        logger.debug(`[SERVER] Discovering pages routes in: ${routeDir.path}`);
         await this.discoverPagesRoutes(routeDir.path, "");
       }
     }
 
-    logger.info(`[SERVER] Route discovery complete`, {
+    logger.debug(`[SERVER] Route discovery complete`, {
       routes: this.router.listRoutes().length,
     });
   }
@@ -122,7 +122,7 @@ export class RouteDiscovery {
           const relativePath = this.toProjectRelativePath(fullPath);
 
           this.router.addRoute(pattern, relativePath);
-          logger.info(`[SERVER] Discovered route: ${pattern} -> ${relativePath}`);
+          logger.debug(`[SERVER] Discovered route: ${pattern} -> ${relativePath}`);
         }
       }
     } catch (error) {
@@ -153,7 +153,7 @@ export class RouteDiscovery {
           const pattern = this.buildAppRoutePattern(segments);
           const relativePath = this.toProjectRelativePath(fullPath);
           this.router.addRoute(pattern, relativePath);
-          logger.info(`[SERVER] Discovered app route: ${pattern} -> ${relativePath}`);
+          logger.debug(`[SERVER] Discovered app route: ${pattern} -> ${relativePath}`);
         }
       }
     } catch (error) {

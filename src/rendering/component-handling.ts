@@ -33,7 +33,7 @@ export async function handleComponentPage(
   },
 ): Promise<ComponentPageResult> {
   try {
-    logger.info(`Loading TSX/JSX file: ${pageInfo.entity.id}`);
+    logger.debug(`Loading TSX/JSX file: ${pageInfo.entity.id}`);
 
     const fileContent = await adapter.fs.readFile(pageInfo.entity.id);
 
@@ -92,7 +92,7 @@ export async function handleComponentPage(
       pageBundle.clientModuleCode = clientModuleCode;
     }
 
-    logger.info(`Successfully loaded TSX/JSX component for ${slug}`);
+    logger.debug(`Successfully loaded TSX/JSX component for ${slug}`);
 
     return { pageElement, pageBundle };
   } catch (error) {

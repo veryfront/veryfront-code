@@ -24,11 +24,17 @@ export interface ChatProps {
   /** Current input value */
   input: string;
 
-  /** Input change handler */
+  /** Input change handler (alternative naming) */
   onChange?: (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => void;
 
-  /** Submit handler */
+  /** Input change handler (from useChat) */
+  handleInputChange?: (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => void;
+
+  /** Submit handler (alternative naming) */
   onSubmit?: (e: React.FormEvent) => void | Promise<void>;
+
+  /** Submit handler (from useChat) */
+  handleSubmit?: (e: React.FormEvent) => void | Promise<void>;
 
   /** Loading state */
   isLoading?: boolean;
@@ -80,7 +86,9 @@ export const Chat = React.forwardRef<HTMLDivElement, ChatProps>(
       messages,
       input,
       onChange,
+      handleInputChange,
       onSubmit,
+      handleSubmit,
       isLoading,
       error,
       placeholder = "Type a message...",
@@ -95,6 +103,10 @@ export const Chat = React.forwardRef<HTMLDivElement, ChatProps>(
   ) => {
     const theme = mergeThemes(defaultChatTheme, userTheme);
     const messagesEndRef = React.useRef<HTMLDivElement>(null);
+
+    // Support both naming conventions from useChat
+    const inputChangeHandler = onChange || handleInputChange || (() => {});
+    const submitHandler = onSubmit || handleSubmit;
 
     // Auto-scroll to bottom on new messages
     React.useEffect(() => {
@@ -150,11 +162,14 @@ export const Chat = React.forwardRef<HTMLDivElement, ChatProps>(
         )}
 
         {/* Input area */}
-        <form onSubmit={onSubmit} className="border-t border-gray-200 dark:border-gray-800 p-4">
+        <form
+          onSubmit={submitHandler}
+          className="border-t border-gray-200 dark:border-gray-800 p-4"
+        >
           <div className="flex gap-2">
             <InputBox
               value={input}
-              onChange={onChange || (() => {})}
+              onChange={inputChangeHandler}
               placeholder={placeholder}
               disabled={isLoading}
               multiline={multiline}

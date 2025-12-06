@@ -44,7 +44,7 @@ export async function bootstrap(
   projectDir: string,
   adapter: RuntimeAdapter,
 ): Promise<BootstrapResult> {
-  logger.info("[Bootstrap] Starting framework initialization", {
+  logger.debug("[Bootstrap] Starting framework initialization", {
     projectDir,
     runtime: adapter.platform,
   });
@@ -74,7 +74,7 @@ export async function bootstrap(
   const needsFSAdapter = fsType && fsType !== "local";
 
   if (!needsFSAdapter) {
-    logger.info("[Bootstrap] Using local filesystem (no FSAdapter needed)");
+    logger.debug("[Bootstrap] Using local filesystem (no FSAdapter needed)");
     return {
       adapter,
       config,
@@ -83,7 +83,7 @@ export async function bootstrap(
   }
 
   // Step 3: Create enhanced adapter with FSAdapter
-  logger.info("[Bootstrap] Initializing FSAdapter", { type: fsType });
+  logger.debug("[Bootstrap] Initializing FSAdapter", { type: fsType });
   const enhancedAdapter = await enhanceAdapterWithFS(adapter, config, projectDir);
 
   // Check if FSAdapter was actually initialized (enhanceAdapterWithFS returns original adapter on failure)
@@ -97,7 +97,7 @@ export async function bootstrap(
     config = await getConfig(projectDir, enhancedAdapter);
   }
 
-  logger.info("[Bootstrap] Framework initialized successfully", {
+  logger.debug("[Bootstrap] Framework initialized successfully", {
     projectDir,
     runtime: adapter.platform,
     fsAdapter: fsAdapterInitialized ? fsType : "local",
@@ -118,13 +118,13 @@ export async function bootstrapDev(
   projectDir: string,
   adapter: RuntimeAdapter,
 ): Promise<BootstrapResult> {
-  logger.info("[Bootstrap:Dev] Starting development mode initialization");
+  logger.debug("[Bootstrap:Dev] Starting development mode initialization");
 
   const result = await bootstrap(projectDir, adapter);
 
   // Log development-specific info
   if (result.usingFSAdapter) {
-    logger.info("[Bootstrap:Dev] FSAdapter active", {
+    logger.debug("[Bootstrap:Dev] FSAdapter active", {
       type: result.fsAdapterType,
       projectSlug: result.config.fs?.veryfront?.projectSlug,
     });
@@ -140,13 +140,13 @@ export async function bootstrapProd(
   projectDir: string,
   adapter: RuntimeAdapter,
 ): Promise<BootstrapResult> {
-  logger.info("[Bootstrap:Prod] Starting production mode initialization");
+  logger.debug("[Bootstrap:Prod] Starting production mode initialization");
 
   try {
     const result = await bootstrap(projectDir, adapter);
 
     if (result.usingFSAdapter) {
-      logger.info("[Bootstrap:Prod] FSAdapter initialized", {
+      logger.debug("[Bootstrap:Prod] FSAdapter initialized", {
         type: result.fsAdapterType,
       });
     }

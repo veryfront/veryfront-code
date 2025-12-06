@@ -39,7 +39,7 @@ export class ProviderManager {
     const providerInfos = await this.discoverProviders();
     const { providerBundles, providerItems } = await this.compileProviders(providerInfos);
 
-    logger.info("[ProviderManager] Collected providers", {
+    logger.debug("[ProviderManager] Collected providers", {
       count: providerInfos.length,
       providers: providerInfos.map((p) => p.entity.id),
     });

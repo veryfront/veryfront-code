@@ -131,7 +131,7 @@ export class PageRenderer {
     const mergedComponents = this.getMergedComponents();
     const pageType = this.detectPageType(pageInfo);
 
-    logger.info(`Page file info:`, {
+    logger.debug(`Page file info:`, {
       id: pageInfo.entity.id,
       extension: pageType.extension,
       type: pageType.type,

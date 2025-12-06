@@ -95,7 +95,7 @@ export class LayoutCollector {
       (wrappedAdapter as { constructor?: { name?: string } })?.constructor?.name ===
         "VeryfrontFSAdapter";
 
-    logger.info("[LayoutCollector] Checking FS adapter type", {
+    logger.debug("[LayoutCollector] Checking FS adapter type", {
       hasAdapter: !!this.adapter,
       hasFs: !!this.adapter?.fs,
       wrapperName: this.adapter?.fs?.constructor?.name,
@@ -117,7 +117,7 @@ export class LayoutCollector {
       getProjectData: () => { provider?: string; layout?: string } | undefined;
     }).getProjectData();
 
-    logger.info("[LayoutCollector] Veryfront API project data", {
+    logger.debug("[LayoutCollector] Veryfront API project data", {
       provider: projectData?.provider,
       layout: projectData?.layout,
     });
@@ -127,7 +127,7 @@ export class LayoutCollector {
       const layoutExists = await (wrappedAdapter as { exists: (path: string) => Promise<boolean> })
         .exists(layoutPath);
 
-      logger.info("[LayoutCollector] Checking API layout", {
+      logger.debug("[LayoutCollector] Checking API layout", {
         layoutPath,
         exists: layoutExists,
       });
@@ -140,7 +140,7 @@ export class LayoutCollector {
           path: layoutPath,
         });
 
-        logger.info("[LayoutCollector] Added API layout to nestedLayouts", {
+        logger.debug("[LayoutCollector] Added API layout to nestedLayouts", {
           layoutPath,
         });
       }

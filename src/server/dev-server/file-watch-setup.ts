@@ -55,7 +55,7 @@ export class FileWatchSetup {
         return;
       }
 
-      logger.info(`[HMR] Initializing optimized file watcher with ${this.debounceMs}ms debounce`);
+      logger.debug(`[HMR] Initializing optimized file watcher with ${this.debounceMs}ms debounce`);
 
       this.optimizedWatcher = new OptimizedFileWatcher(
         this.debounceMs,

@@ -111,7 +111,7 @@ export class HMRServer {
       port: this.options.port,
       signal,
       onListen: ({ port }: { port: number }) => {
-        logger.info(`HMR server running on port ${port}`);
+        logger.debug(`HMR server running on port ${port}`);
       },
     }).then((server) => {
       this.server = server;
