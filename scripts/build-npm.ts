@@ -935,10 +935,15 @@ export interface AgentConfig {
   temperature?: number;
 }
 
+export interface ToolContext {
+  agentId?: string;
+  [key: string]: unknown;
+}
+
 export interface ToolConfig<TInput = unknown, TOutput = unknown> {
   description: string;
-  inputSchema: z.ZodType<TInput>;
-  execute: (input: TInput) => Promise<TOutput> | TOutput;
+  inputSchema: z.ZodType<TInput, z.ZodTypeDef, unknown>;
+  execute: (input: TInput, context?: ToolContext) => Promise<TOutput> | TOutput;
 }
 
 export interface ResourceConfig<TParams = unknown, TData = unknown> {

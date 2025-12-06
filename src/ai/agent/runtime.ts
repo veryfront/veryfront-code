@@ -777,6 +777,19 @@ export class AgentRuntime {
 
     const tools: ToolDefinition[] = [];
 
+    // When tools === true, load ALL tools from the registry
+    if (this.config.tools === true) {
+      const allTools = toolRegistry.getAll();
+      logger.debug(`[AGENT] Loading all ${allTools.size} tools from registry`);
+      for (const [name, tool] of allTools) {
+        const def = toolToProviderDefinition(tool);
+        logger.debug(`[AGENT] Tool definition for "${name}":`, JSON.stringify(def, null, 2));
+        tools.push(def);
+      }
+      return tools;
+    }
+
+    // Otherwise, load specific tools from the config
     for (const [name, entry] of Object.entries(this.config.tools)) {
       if (entry === true) {
         const tool = toolRegistry.get(name);

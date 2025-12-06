@@ -30,7 +30,7 @@ export interface ChatTheme {
  * Default theme using Tailwind CSS - Apple Messages inspired, clean & minimal
  */
 export const defaultChatTheme: ChatTheme = {
-  container: "flex flex-col h-full bg-white dark:bg-neutral-900",
+  container: "flex flex-col h-full overflow-hidden bg-white dark:bg-neutral-900",
   message: {
     user: "bg-blue-500 text-white rounded-[20px] rounded-br-[4px] px-4 py-2.5 max-w-[75%]",
     assistant:
