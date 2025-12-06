@@ -1,6 +1,6 @@
 import { replaceSpecifiers } from "./lexer.ts";
 import { REACT_DEFAULT_VERSION } from "@veryfront/utils/constants/cdn.ts";
-import { isNode } from "../../../platform/compat/runtime.ts";
+import { isNodeRuntime } from "../../../platform/compat/runtime.ts";
 import { cwd } from "../../../platform/compat/process.ts";
 
 // Cache whether project has both react and react-dom
@@ -16,7 +16,7 @@ async function checkProjectHasReactDom(): Promise<boolean> {
     return projectHasReactDom;
   }
 
-  if (!isNode) {
+  if (!isNodeRuntime()) {
     projectHasReactDom = false;
     return false;
   }
@@ -42,7 +42,7 @@ async function checkProjectHasReactDom(): Promise<boolean> {
  * This is used when the project doesn't have react-dom installed.
  */
 async function getBundledReactPath(subpath: string = ""): Promise<string | null> {
-  if (!isNode) {
+  if (!isNodeRuntime()) {
     return null;
   }
 
@@ -57,6 +57,8 @@ async function getBundledReactPath(subpath: string = ""): Promise<string | null>
 }
 
 export async function resolveReactImports(code: string, forSSR: boolean = false): Promise<string> {
+  const isNode = isNodeRuntime();
+
   // For Node.js SSR, always resolve to absolute file:// URLs
   // This is required because temp modules can't resolve bare imports
   if (isNode && forSSR) {
@@ -127,7 +129,7 @@ export async function resolveReactImports(code: string, forSSR: boolean = false)
 
 export function addDepsToEsmShUrls(code: string): Promise<string> {
   // Skip for Node.js - no esm.sh URLs needed
-  if (isNode) {
+  if (isNodeRuntime()) {
     return Promise.resolve(code);
   }
 
