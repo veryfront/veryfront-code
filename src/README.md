@@ -4,24 +4,24 @@ Complete module reference for working with Veryfront's source code.
 
 ## Quick Module Overview
 
-| Module | Export Alias | Purpose |
-|--------|--------------|---------|
-| **`ai/`** | `veryfront/ai` | AI agent runtime, MCP integration |
-| **`build/`** | `@veryfront/build` | Build system, bundler, asset optimization |
-| **`cli/`** | `veryfront/cli` | Command-line interface |
-| **`core/`** | `@veryfront/types`, `@veryfront/config`, `@veryfront/utils`, `@veryfront/errors` | Foundation types, config, utilities |
-| **`data/`** | `@veryfront/data` | Data fetching (getServerData, etc.) |
-| **`html/`** | `@veryfront/html` | HTML generation, metadata, hydration |
-| **`middleware/`** | `@veryfront/middleware` | Request/response pipeline |
-| **`module-system/`** | `@veryfront/modules` | Module loading, resolution, import maps |
-| **`modules/`** | - | Component registry, React loader |
-| **`observability/`** | `@veryfront/observability` | Metrics, tracing |
-| **`platform/`** | `@veryfront/platform` | Runtime adapters (Deno, Node, Bun, CF) |
-| **`react/`** | `@veryfront/react`, `@veryfront/components` | React components and hooks |
-| **`rendering/`** | `@veryfront/rendering` | SSR/RSC rendering engine |
-| **`routing/`** | `@veryfront/routing` | Route matching, API routes |
-| **`security/`** | `@veryfront/security` | Security primitives, validation |
-| **`server/`** | `@veryfront/server` | Dev & production servers |
+| Module               | Export Alias                                                                     | Purpose                                   |
+| -------------------- | -------------------------------------------------------------------------------- | ----------------------------------------- |
+| **`ai/`**            | `veryfront/ai`                                                                   | AI agent runtime, MCP integration         |
+| **`build/`**         | `@veryfront/build`                                                               | Build system, bundler, asset optimization |
+| **`cli/`**           | `veryfront/cli`                                                                  | Command-line interface                    |
+| **`core/`**          | `@veryfront/types`, `@veryfront/config`, `@veryfront/utils`, `@veryfront/errors` | Foundation types, config, utilities       |
+| **`data/`**          | `@veryfront/data`                                                                | Data fetching (getServerData, etc.)       |
+| **`html/`**          | `@veryfront/html`                                                                | HTML generation, metadata, hydration      |
+| **`middleware/`**    | `@veryfront/middleware`                                                          | Request/response pipeline                 |
+| **`module-system/`** | `@veryfront/modules`                                                             | Module loading, resolution, import maps   |
+| **`modules/`**       | -                                                                                | Component registry, React loader          |
+| **`observability/`** | `@veryfront/observability`                                                       | Metrics, tracing                          |
+| **`platform/`**      | `@veryfront/platform`                                                            | Runtime adapters (Deno, Node, Bun, CF)    |
+| **`react/`**         | `@veryfront/react`, `@veryfront/components`                                      | React components and hooks                |
+| **`rendering/`**     | `@veryfront/rendering`                                                           | SSR/RSC rendering engine                  |
+| **`routing/`**       | `@veryfront/routing`                                                             | Route matching, API routes                |
+| **`security/`**      | `@veryfront/security`                                                            | Security primitives, validation           |
+| **`server/`**        | `@veryfront/server`                                                              | Dev & production servers                  |
 
 ---
 
@@ -32,6 +32,7 @@ Complete module reference for working with Veryfront's source code.
 **Purpose**: Shared types, configuration, errors, and utilities used across the framework
 
 **Exports**:
+
 - `@veryfront/types` - TypeScript type definitions
 - `@veryfront/config` - Configuration system
 - `@veryfront/errors` - Error handling with user-friendly messages
@@ -40,6 +41,7 @@ Complete module reference for working with Veryfront's source code.
 **Dependencies**: None (foundation module)
 
 **Key Directories**:
+
 - `types/` - Framework type definitions
 - `config/` - Configuration schema and loader
 - `errors/` - Error catalogs and handlers
@@ -56,12 +58,14 @@ Complete module reference for working with Veryfront's source code.
 **Dependencies**: `@veryfront/types`
 
 **Key Features**:
+
 - Unified filesystem API across runtimes
 - KV store abstraction
 - Runtime detection and capabilities
 - Platform-specific optimizations
 
 **Directories**:
+
 - `adapters/` - Runtime-specific implementations
 - `detection/` - Runtime detection logic
 - `types/` - Platform interface types
@@ -77,6 +81,7 @@ Complete module reference for working with Veryfront's source code.
 **Dependencies**: `@veryfront/types`, `@veryfront/utils`
 
 **Key Features**:
+
 - Input validation (JSON, forms, query params) with Zod
 - Path traversal protection
 - Secure filesystem wrapper
@@ -85,12 +90,13 @@ Complete module reference for working with Veryfront's source code.
 - Security headers (HSTS, X-Frame-Options, etc.)
 
 **Directories**:
+
 - `http/` - CORS, CSP, security headers
 - `validation/` - Zod schemas and validators
 
 ---
 
-###  `routing/` - Route Matching
+### `routing/` - Route Matching
 
 **Purpose**: Route matching, dynamic routes, API routes
 
@@ -99,6 +105,7 @@ Complete module reference for working with Veryfront's source code.
 **Dependencies**: `@veryfront/types`, `@veryfront/security`
 
 **Key Features**:
+
 - App Router style dynamic routing
 - API route handlers
 - Client-side routing utilities
@@ -106,6 +113,7 @@ Complete module reference for working with Veryfront's source code.
 - Slug normalization and mapping
 
 **Directories**:
+
 - `api/` - API route handling
 - `matchers/` - Route matching algorithms
 - `slug-mapper/` - Dynamic route mapping
@@ -122,12 +130,14 @@ Complete module reference for working with Veryfront's source code.
 **Dependencies**: `@veryfront/types`, `@veryfront/security`
 
 **Key Features**:
+
 - Pipeline composition with `next()`
 - Built-in middleware (auth, logging, rate limiting, security)
 - Context passing between middleware
 - Type-safe middleware interfaces
 
 **Directories**:
+
 - `builtin/` - Framework-provided middleware
 - `compose/` - Middleware composition utilities
 - `pipeline/` - Pipeline execution engine
@@ -143,6 +153,7 @@ Complete module reference for working with Veryfront's source code.
 **Dependencies**: `@veryfront/types`, `@veryfront/platform`
 
 **Key Features**:
+
 - Module resolution with import maps
 - Component registry for React
 - Import transformation (ESM, JSX)
@@ -150,6 +161,7 @@ Complete module reference for working with Veryfront's source code.
 - Module graph analysis
 
 **Key Files**:
+
 - `module-resolver.ts` - Module resolution logic
 - `module-graph.ts` - Dependency graph builder
 - `import-map.ts` - Import map management
@@ -163,12 +175,14 @@ Complete module reference for working with Veryfront's source code.
 **Dependencies**: `@veryfront/module-system`, `react`
 
 **Key Features**:
+
 - Component registry for MDX
 - React component loader
 - Module serving in dev mode
 - Dynamic imports
 
 **Directories**:
+
 - `component-loader/` - Component discovery and loading
 - `react-loader/` - React-specific module loading
 - `server/` - Development module server
@@ -184,12 +198,14 @@ Complete module reference for working with Veryfront's source code.
 **Dependencies**: `@veryfront/types`
 
 **Key Features**:
+
 - `getServerData()` for SSR page data
 - `getStaticPaths()` for SSG
 - Data caching layer
 - `notFound()` and `redirect()` helpers
 
 **Key Files**:
+
 - `data-fetcher.ts` - Data fetching orchestrator
 - `data-fetching-cache.ts` - Cache implementation
 
@@ -204,6 +220,7 @@ Complete module reference for working with Veryfront's source code.
 **Dependencies**: `@veryfront/types`, `@veryfront/module-system`
 
 **Key Features**:
+
 - HTML shell generation
 - Metadata extraction and building (Open Graph, Twitter Cards)
 - Import map injection
@@ -212,6 +229,7 @@ Complete module reference for working with Veryfront's source code.
 - `<Head>` component support
 
 **Directories**:
+
 - `html-shell-generator/` - Main HTML document builder
 - `hydration-script-builder/` - Client-side hydration
 - `metadata/` - Meta tags, SEO, social cards
@@ -227,6 +245,7 @@ Complete module reference for working with Veryfront's source code.
 **Dependencies**: `@veryfront/types`, `react`, `react-dom`
 
 **Key Features**:
+
 - `<Link>` component for client routing
 - `<Head>` component for metadata
 - `<OptimizedImage>` component with lazy loading
@@ -235,6 +254,7 @@ Complete module reference for working with Veryfront's source code.
 - Hooks (`useRouter`, `useParams`, `usePathname`)
 
 **Directories**:
+
 - `components/` - Framework components
 - `compat/` - React version compatibility
 - `hooks/` - React hooks
@@ -250,6 +270,7 @@ Complete module reference for working with Veryfront's source code.
 **Dependencies**: `@veryfront/types`, `@veryfront/utils`, `@veryfront/module-system`, `@veryfront/html`, `react`, `react-dom`
 
 **Key Features**:
+
 - SSR with React 17/18/19 support
 - RSC (React Server Components)
 - Layout system (nested layouts)
@@ -258,6 +279,7 @@ Complete module reference for working with Veryfront's source code.
 - Virtual module system for dynamic content
 
 **Directories**:
+
 - `ssr/` - Server-side rendering implementation
 - `rsc/` - React Server Components
 - `layouts/` - Layout discovery and compilation
@@ -275,6 +297,7 @@ Complete module reference for working with Veryfront's source code.
 **Dependencies**: `@veryfront/types`, `@veryfront/utils`, `@veryfront/platform`, `@veryfront/rendering`
 
 **Key Features**:
+
 - MDX compilation to JSX
 - TypeScript → JavaScript transformation
 - CSS optimization (Tailwind, UnoCSS)
@@ -284,6 +307,7 @@ Complete module reference for working with Veryfront's source code.
 - Production bundling
 
 **Directories**:
+
 - `compiler/` - MDX and TypeScript compilation
 - `transforms/` - Code transformations (ESM, JSX, MDX)
 - `bundler/` - Code splitting and bundling (esbuild)
@@ -302,6 +326,7 @@ Complete module reference for working with Veryfront's source code.
 **Dependencies**: Most modules (orchestrator role)
 
 **Key Features**:
+
 - Dev server with Hot Module Replacement (HMR)
 - Production server with optimizations
 - Universal request handler (platform-agnostic)
@@ -310,6 +335,7 @@ Complete module reference for working with Veryfront's source code.
 - Bootstrap and initialization
 
 **Directories**:
+
 - `dev-server/` - Development server with HMR
 - `production-server.ts` - Production server implementation
 - `bootstrap.ts` - Server initialization
@@ -327,12 +353,14 @@ Complete module reference for working with Veryfront's source code.
 **Dependencies**: `@veryfront/config`, `@veryfront/platform`, `@veryfront/build`, `@veryfront/server`
 
 **Commands**:
+
 - `dev` - Start development server with HMR
 - `build` - Build for production
 - `init` - Initialize new project
 - `doctor` - Diagnose project issues
 
 **Directories**:
+
 - `commands/` - Individual CLI commands
 - `help/` - Help system and documentation
 - `templates/` - Project templates (app, blog, docs)
@@ -348,6 +376,7 @@ Complete module reference for working with Veryfront's source code.
 **Dependencies**: `@veryfront/types`
 
 **Key Features**:
+
 - Metrics collection (request count, latency, etc.)
 - Distributed tracing (OpenTelemetry compatible)
 - Auto-instrumentation
@@ -364,6 +393,7 @@ Complete module reference for working with Veryfront's source code.
 **Dependencies**: `@veryfront/types`, `@veryfront/utils`
 
 **Key Features**:
+
 - Agent runtime with tool execution
 - MCP (Model Context Protocol) server
 - Provider adapters (OpenAI, Anthropic, Google)
@@ -372,6 +402,7 @@ Complete module reference for working with Veryfront's source code.
 - React hooks for streaming responses
 
 **Directories**:
+
 - `agent/` - Agent factory and runtime
 - `mcp/` - MCP server implementation
 - `providers/` - AI provider integrations
@@ -470,6 +501,7 @@ export { createValidatedHandler } from "./input-validation/index.ts";
 ```
 
 **Benefits**:
+
 - Clear public API surface
 - Internal refactoring without breaking imports
 - Enforced module boundaries
@@ -477,6 +509,7 @@ export { createValidatedHandler } from "./input-validation/index.ts";
 ## Module Documentation
 
 Each module contains a `README.md` with:
+
 - Purpose and responsibilities
 - Key features and APIs
 - Usage examples

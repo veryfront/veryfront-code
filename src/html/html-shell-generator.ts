@@ -91,10 +91,14 @@ export async function generateHTMLShellParts(
   const tailwindCDNUrl = getTailwindCDNUrl(tailwindConfig);
   const tailwindCDN = options.mode === "development"
     ? `<script src="${tailwindCDNUrl}"${nonce ? ` nonce="${nonce}"` : ""}></script>
-  <script${nonce ? ` nonce="${nonce}"` : ""}>${generateTailwindConfig(tailwindConfig)}</script>${tailwindConfig?.customCSS ? `
+  <script${nonce ? ` nonce="${nonce}"` : ""}>${generateTailwindConfig(tailwindConfig)}</script>${
+      tailwindConfig?.customCSS
+        ? `
   <style type="text/tailwindcss"${nonce ? ` nonce="${nonce}"` : ""}>
 ${tailwindConfig.customCSS}
-  </style>` : ""}`
+  </style>`
+        : ""
+    }`
     : "";
 
   const start = `<!DOCTYPE html>
@@ -110,7 +114,11 @@ ${tailwindConfig.customCSS}
 
   <!-- Tailwind CSS: CDN in dev (runtime compilation), UnoCSS in prod (pre-generated) -->
   ${tailwindCDN}
-  ${options.mode !== "development" && tailwindCSS ? `<style${nonce ? ` nonce="${nonce}"` : ""}>\n${tailwindCSS}\n  </style>` : ""}
+  ${
+    options.mode !== "development" && tailwindCSS
+      ? `<style${nonce ? ` nonce="${nonce}"` : ""}>\n${tailwindCSS}\n  </style>`
+      : ""
+  }
 
   <!-- CSS Variables for Theming (veryfront-renderer compatible) -->
   <style${nonce ? ` nonce="${nonce}"` : ""}>

@@ -89,7 +89,9 @@ function buildUnoTheme(tailwindConfig?: TailwindConfig): Record<string, unknown>
  * Recreates the generator if the config has changed
  */
 // deno-lint-ignore no-explicit-any
-async function ensureInitialized(tailwindConfig?: TailwindConfig): Promise<{ reset: string; generator: UnoGenerator<any> }> {
+async function ensureInitialized(
+  tailwindConfig?: TailwindConfig,
+): Promise<{ reset: string; generator: UnoGenerator<any> }> {
   const configHash = hashConfig(tailwindConfig);
 
   // Recreate generator if config changed

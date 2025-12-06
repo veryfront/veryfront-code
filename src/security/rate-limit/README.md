@@ -14,7 +14,7 @@ Protection against abuse and DoS attacks through configurable rate limiting.
 ## Quick Start
 
 ```typescript
-import { RateLimitPresets } from 'veryfront/security/rate-limit';
+import { RateLimitPresets } from "veryfront/security/rate-limit";
 
 // Use a preset
 const rateLimiter = RateLimitPresets.moderate(); // 100 req/min
@@ -31,10 +31,11 @@ export async function handler(request: Request) {
 ## Strategies
 
 ### Fixed Window
+
 Simple counter that resets at fixed intervals. Fast but allows bursts at boundaries.
 
 ```typescript
-import { createRateLimiter } from 'veryfront/security/rate-limit';
+import { createRateLimiter } from "veryfront/security/rate-limit";
 
 const limiter = createRateLimiter({
   maxRequests: 100,
@@ -44,6 +45,7 @@ const limiter = createRateLimiter({
 ```
 
 ### Sliding Window
+
 More accurate, prevents burst attacks by tracking individual timestamps.
 
 ```typescript
@@ -55,6 +57,7 @@ const limiter = createRateLimiter({
 ```
 
 ### Token Bucket
+
 Allows controlled bursts. Tokens refill at constant rate.
 
 ```typescript
@@ -117,6 +120,7 @@ const limiter = createRateLimiter({
 ## Presets
 
 ### Strict (10 req/min)
+
 For sensitive operations.
 
 ```typescript
@@ -124,6 +128,7 @@ RateLimitPresets.strict();
 ```
 
 ### Moderate (100 req/min)
+
 For general web pages.
 
 ```typescript
@@ -131,6 +136,7 @@ RateLimitPresets.moderate();
 ```
 
 ### Lenient (1000 req/hour)
+
 For public APIs.
 
 ```typescript
@@ -138,6 +144,7 @@ RateLimitPresets.lenient();
 ```
 
 ### Auth (5 req/15min)
+
 For authentication endpoints.
 
 ```typescript
@@ -149,7 +156,7 @@ RateLimitPresets.auth();
 For distributed systems, implement the `RateLimitStore` interface:
 
 ```typescript
-import type { RateLimitStore } from 'veryfront/security/rate-limit';
+import type { RateLimitStore } from "veryfront/security/rate-limit";
 
 class RedisRateLimitStore implements RateLimitStore {
   async increment(key: string): Promise<number> {
@@ -185,6 +192,7 @@ All responses include rate limit headers:
 - `X-RateLimit-Reset`: Unix timestamp when limit resets
 
 When rate limit is exceeded:
+
 - HTTP status: `429 Too Many Requests`
 - `Retry-After`: Seconds to wait before retrying
 
@@ -205,7 +213,7 @@ When rate limit is exceeded:
 
 ```typescript
 // app/api/users/route.ts
-import { RateLimitPresets } from 'veryfront/security/rate-limit';
+import { RateLimitPresets } from "veryfront/security/rate-limit";
 
 const limiter = RateLimitPresets.moderate();
 
@@ -221,7 +229,7 @@ export async function GET(request: Request) {
 
 ```typescript
 // app/api/auth/login/route.ts
-import { RateLimitPresets } from 'veryfront/security/rate-limit';
+import { RateLimitPresets } from "veryfront/security/rate-limit";
 
 const limiter = RateLimitPresets.auth();
 
@@ -236,7 +244,7 @@ export async function POST(request: Request) {
 ### Different Limits per Tier
 
 ```typescript
-import { createRateLimiter } from 'veryfront/security/rate-limit';
+import { createRateLimiter } from "veryfront/security/rate-limit";
 
 const limiter = createRateLimiter({
   maxRequests: 100, // Default
@@ -268,7 +276,7 @@ const limiter = createRateLimiter({
 ## Testing
 
 ```typescript
-import { createRateLimiter } from 'veryfront/security/rate-limit';
+import { createRateLimiter } from "veryfront/security/rate-limit";
 
 Deno.test("rate limiter blocks after limit", async () => {
   const limiter = createRateLimiter({

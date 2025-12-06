@@ -226,8 +226,8 @@ class AgentRegistryClass {
 const AGENT_REGISTRY_KEY = "__veryfront_agent_registry__";
 // deno-lint-ignore no-explicit-any
 const _globalAgent = globalThis as any;
-export const agentRegistry: AgentRegistryClass =
-  _globalAgent[AGENT_REGISTRY_KEY] ||= new AgentRegistryClass();
+export const agentRegistry: AgentRegistryClass = _globalAgent[AGENT_REGISTRY_KEY] ||=
+  new AgentRegistryClass();
 
 // Export class for type usage
 export { AgentRegistryClass };

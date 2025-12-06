@@ -135,7 +135,7 @@ ai/
 ### Basic Agent
 
 ```typescript
-import { agent, tool, initializeProviders } from "@veryfront/ai";
+import { agent, initializeProviders, tool } from "@veryfront/ai";
 import { z } from "zod";
 
 // Initialize providers
@@ -198,7 +198,7 @@ const response = await chatAgent.generate({ input: "What's my name?" });
 ### Multi-Agent Workflow
 
 ```typescript
-import { agent, createWorkflow, agentAsTool } from "@veryfront/ai";
+import { agent, agentAsTool, createWorkflow } from "@veryfront/ai";
 
 // Create specialized agents
 const researcher = agent({
@@ -288,9 +288,9 @@ export function ChatComponent() {
 ```typescript
 import {
   agent,
-  rateLimitMiddleware,
   cacheMiddleware,
   costTrackingMiddleware,
+  rateLimitMiddleware,
   securityMiddleware,
 } from "@veryfront/ai";
 

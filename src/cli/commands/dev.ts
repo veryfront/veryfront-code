@@ -77,8 +77,7 @@ export async function devCommand(options: DevOptions) {
       verbose: false,
     });
 
-    const totalDiscovered =
-      aiResult.agents.size +
+    const totalDiscovered = aiResult.agents.size +
       aiResult.tools.size +
       aiResult.prompts.size +
       aiResult.resources.size;
@@ -86,8 +85,8 @@ export async function devCommand(options: DevOptions) {
     if (totalDiscovered > 0) {
       cliLogger.info(
         `${green("✓")} AI Discovery: ${aiResult.agents.size} agents, ` +
-        `${aiResult.tools.size} tools, ${aiResult.prompts.size} prompts, ` +
-        `${aiResult.resources.size} resources`
+          `${aiResult.tools.size} tools, ${aiResult.prompts.size} prompts, ` +
+          `${aiResult.resources.size} resources`,
       );
     }
 

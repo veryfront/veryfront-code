@@ -161,5 +161,5 @@ class ResourceRegistryClass {
 const RESOURCE_REGISTRY_KEY = "__veryfront_resource_registry__";
 // deno-lint-ignore no-explicit-any
 const _globalResource = globalThis as any;
-export const resourceRegistry: ResourceRegistryClass =
-  _globalResource[RESOURCE_REGISTRY_KEY] ||= new ResourceRegistryClass();
+export const resourceRegistry: ResourceRegistryClass = _globalResource[RESOURCE_REGISTRY_KEY] ||=
+  new ResourceRegistryClass();
