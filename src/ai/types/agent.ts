@@ -55,8 +55,8 @@ export interface AgentConfig {
   /** System prompt or prompt template ID */
   system: string | (() => string) | (() => Promise<string>);
 
-  /** Tools available to the agent */
-  tools?: Record<string, Tool | boolean>;
+  /** Tools available to the agent. Use `true` to enable all discovered tools, or specify individual tools. */
+  tools?: true | Record<string, Tool | boolean>;
 
   /** Maximum agent steps before stopping */
   maxSteps?: number;
