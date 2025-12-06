@@ -566,12 +566,12 @@ export default function Breadcrumbs() {
 
 - [Components Reference](/reference/components/) - React components
 - [Functions Reference](/reference/functions/) - Server-side functions
-- [Routing Guide](/routing/) - File-based routing
-- [Data Fetching Guide](/data-fetching/) - Data loading patterns
+- [Routing Guide](/guides/routing/README.md) - File-based routing
+- [Data Fetching Guide](/reference/functions/README.md) - Data loading patterns
 
 ## Examples
 
-- [Navigation Example](/examples/navigation/)
-- [Search with Filters](/examples/search-filters/)
-- [Multi-Step Form](/examples/multi-step-form/)
-- [Pagination Example](/examples/pagination/)
+- [Navigation Example](https://github.com/veryfrontjs/veryfront/tree/main/examples/minimal-app-router)
+- [Search with Filters](https://github.com/veryfrontjs/veryfront/tree/main/examples/form-handling)
+- [Multi-Step Form](https://github.com/veryfrontjs/veryfront/tree/main/examples/form-handling)
+- [Pagination Example](https://github.com/veryfrontjs/veryfront/tree/main/examples/data-fetching-demo)

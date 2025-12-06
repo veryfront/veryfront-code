@@ -804,15 +804,15 @@ export const getServerData = async (ctx: DataContext) => {
 - [SSG Guide](./ssg.md) - Static Site Generation
 - [ISR Guide](./isr.md) - Incremental Static Regeneration
 - [JIT Guide](./jit.md) - Just-In-Time Rendering
-- [Data Fetching API](/reference/functions/data-fetching.md) - Complete reference
+- [Data Fetching API](/reference/functions/get-server-data.md) - Complete reference
 
 ---
 
 ## Examples
 
-- [Auth App](/examples/auth-app/) - Protected SSR routes
-- [Data Fetching Demo](/examples/data-fetching-demo/) - All patterns
-- [Full Demo](/examples/full-demo/) - Real-world SSR usage
+- [Auth App](https://github.com/veryfrontjs/veryfront/tree/main/examples/auth-app) - Protected SSR routes
+- [Data Fetching Demo](https://github.com/veryfrontjs/veryfront/tree/main/examples/data-fetching-demo) - All patterns
+- [Full Demo](https://github.com/veryfrontjs/veryfront/tree/main/examples/full-demo) - Real-world SSR usage
 
 ---
 

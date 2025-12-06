@@ -742,7 +742,7 @@ async function getUser(id: string) {
 
 ## Next Steps
 
-- Review [Performance Optimization](/docs/guides/performance/optimization.md)
-- Configure [CDN deployment](/docs/guides/deployment/cloudflare.md)
-- Implement [Node.js caching](/docs/guides/deployment/node.md)
-- Learn about [Bun performance](/docs/guides/deployment/bun.md)
+- Review [Performance Optimization](/guides/performance/optimization.md)
+- Configure [CDN deployment](/guides/deployment/cloudflare.md)
+- Implement [Node.js caching](/guides/deployment/node.md)
+- Learn about [Bun performance](/guides/deployment/bun.md)

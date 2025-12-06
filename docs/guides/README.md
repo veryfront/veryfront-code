@@ -17,53 +17,53 @@ Step-by-step tutorials and how-to guides for building applications with Veryfron
 
 **New to Veryfront?** Start here:
 
-- **[Quick Start](../quick-start.md)** - Build your first Veryfront app in 5 minutes
-- **[Installation Guide](../getting-started/installation.md)** - Install for Deno, Node.js, Bun, or Cloudflare Workers
-- **[Introduction](../introduction.md)** - What is Veryfront and why use it?
+- **[Quick Start](/learn/quickstart.md)** - Build your first Veryfront app in 5 minutes
+- **[Installation Guide](/learn/installation.md)** - Install for Deno, Node.js, Bun, or Cloudflare Workers
+- **[Introduction](/learn/introduction.md)** - What is Veryfront and why use it?
 
 ## Core Concepts
 
 Understand the fundamentals:
 
 ### Routing
-- **[Routing Overview](../routing/README.md)** - File-based routing with App Router and Pages Router
-- **[App Router](../routing/app-router.md)** - Next.js 13+ style routing with layouts
-- **[Pages Router](../routing/pages-router.md)** - Next.js 12 style routing
-- **[Dynamic Routes](../routing/dynamic-routes.md)** - URL parameters with [slug] syntax
-- **[API Routes](../routing/api-routes.md)** - Server-side API endpoints
+- **[Routing Overview](/guides/routing/README.md)** - File-based routing with App Router and Pages Router
+- **[App Router](/guides/routing/app-router.md)** - Next.js 13+ style routing with layouts
+- **[Pages Router](/guides/routing/pages-router.md)** - Next.js 12 style routing
+- **[Dynamic Routes](/guides/routing/dynamic-routes.md)** - URL parameters with [slug] syntax
+- **[API Routes](/guides/routing/api-routes.md)** - Server-side API endpoints
 
 ### Rendering
-- **[Rendering Overview](../rendering/README.md)** - All five rendering modes
-- **[Rendering Comparison](../rendering/comparison.md)** - Choose the right mode
-- **[SSR Guide](../rendering/ssr.md)** - Server-Side Rendering
-- **[SSG Guide](../rendering/ssg.md)** - Static Site Generation
-- **[ISR Guide](../rendering/isr.md)** - Incremental Static Regeneration
-- **[JIT Guide](../rendering/jit.md)** - Just-In-Time Rendering
+- **[Rendering Overview](/guides/rendering/README.md)** - All five rendering modes
+- **[Rendering Comparison](/guides/rendering/comparison.md)** - Choose the right mode
+- **[SSR Guide](/guides/rendering/ssr.md)** - Server-Side Rendering
+- **[SSG Guide](/guides/rendering/ssg.md)** - Static Site Generation
+- **[ISR Guide](/guides/rendering/isr.md)** - Incremental Static Regeneration
+- **[JIT Guide](/guides/rendering/jit.md)** - Just-In-Time Rendering
 
 ### Data Fetching
-- **[Data Fetching Patterns](./data-fetching-patterns.md)** - Common patterns for fetching data
-- **[Server-Side Data](/reference/functions/data-fetching.md)** - API reference for getServerData
+- **[Data Fetching Patterns](/reference/functions/get-server-data.md)** - Common patterns for fetching data
+- **[Server-Side Data](/reference/functions/get-server-data.md)** - API reference for getServerData
 
 ## Tutorials
 
 Build complete applications:
 
 ### Beginner
-- **[Building a Blog](./building-blog.md)** - Create a full-featured blog
-- **[Static Site](./static-site.md)** - Build a fast static website
-- **[Simple API](./simple-api.md)** - Create REST API endpoints
+- **[Building a Blog](https://github.com/veryfrontjs/veryfront/tree/main/examples/basic-mdx)** - Create a full-featured blog
+- **[Static Site](/guides/rendering/ssg.md)** - Build a fast static website
+- **[Simple API](/guides/routing/api-routes.md)** - Create REST API endpoints
 
 ### Intermediate
-- **[Authentication](./authentication.md)** - Add user authentication
-- **[Database Integration](./database.md)** - Connect to databases
-- **[Form Handling](./forms.md)** - Handle forms and validation
-- **[File Uploads](./file-uploads.md)** - Upload and process files
+- **[Authentication](https://github.com/veryfrontjs/veryfront/tree/main/examples/auth-app)** - Add user authentication
+- **[Database Integration](/reference/functions/get-server-data.md)** - Connect to databases
+- **[Form Handling](https://github.com/veryfrontjs/veryfront/tree/main/examples/form-handling)** - Handle forms and validation
+- **[File Uploads](/guides/routing/api-routes.md)** - Upload and process files
 
 ### Advanced
-- **[Real-Time Features](./real-time.md)** - WebSockets and Server-Sent Events
-- **[Background Jobs](./background-jobs.md)** - Async workers and queues
-- **[Multi-Tenant Apps](./multi-tenant.md)** - Build SaaS applications
-- **[Microservices](./microservices.md)** - Service-oriented architecture
+- **[Real-Time Features](/guides/routing/api-routes.md)** - WebSockets and Server-Sent Events
+- **[Background Jobs](https://github.com/veryfrontjs/veryfront/tree/main/examples/async-worker-redis)** - Async workers and queues
+- **[Multi-Tenant Apps](/guides/architecture/README.md)** - Build SaaS applications
+- **[Microservices](/guides/architecture/README.md)** - Service-oriented architecture
 
 ## Deployment
 
@@ -76,10 +76,10 @@ Deploy your application:
 - **[Cloudflare Workers](./deployment/cloudflare.md)** - Edge deployment
 
 ### CI/CD & DevOps
-- **[GitHub Actions](./deployment/github-actions.md)** - Automated deployments
-- **[Docker Containers](./deployment/docker.md)** - Containerize your app
-- **[Environment Variables](./deployment/env-vars.md)** - Managing secrets
-- **[Monitoring](./deployment/monitoring.md)** - Application monitoring
+- **[GitHub Actions](/guides/deployment/README.md)** - Automated deployments
+- **[Docker Containers](/guides/deployment/README.md)** - Containerize your app
+- **[Environment Variables](/reference/configuration/README.md)** - Managing secrets
+- **[Monitoring](/guides/deployment/README.md)** - Application monitoring
 
 ## AI Integration
 
@@ -91,97 +91,97 @@ Build AI-powered applications:
 - **[AI Summary](../ai/summary.md)** - Quick reference guide
 
 ### AI Patterns
-- **[Chat Interfaces](./ai/chat.md)** - Build conversational UIs
-- **[RAG Systems](./ai/rag.md)** - Retrieval-Augmented Generation
-- **[Agent Workflows](./ai/agents.md)** - Multi-agent orchestration
-- **[Tool Integration](./ai/tools.md)** - Custom AI tools
+- **[Chat Interfaces](/ai/getting-started.md)** - Build conversational UIs
+- **[RAG Systems](/ai/README.md)** - Retrieval-Augmented Generation
+- **[Agent Workflows](/reference/ai/agent.md)** - Multi-agent orchestration
+- **[Tool Integration](/reference/ai/tools.md)** - Custom AI tools
 
 ## Performance
 
 Optimize your application:
 
-- **[Performance Guide](./performance.md)** - Comprehensive optimization guide
-- **[Image Optimization](./image-optimization.md)** - Optimize images for web
-- **[Code Splitting](./code-splitting.md)** - Reduce bundle sizes
-- **[Caching Strategies](./caching.md)** - Client and server caching
-- **[Bundle Analysis](./bundle-analysis.md)** - Analyze and reduce bundles
+- **[Performance Guide](/guides/performance/README.md)** - Comprehensive optimization guide
+- **[Image Optimization](/guides/components/image.md)** - Optimize images for web
+- **[Code Splitting](/guides/performance/optimization.md)** - Reduce bundle sizes
+- **[Caching Strategies](/guides/performance/caching.md)** - Client and server caching
+- **[Bundle Analysis](/guides/performance/optimization.md)** - Analyze and reduce bundles
 
 ## Styling & UI
 
 Style your application:
 
-- **[Styling Guide](./styling.md)** - All styling approaches
-- **[CSS Modules](./css-modules.md)** - Scoped CSS
-- **[Tailwind CSS](./tailwind.md)** - Utility-first CSS
-- **[CSS-in-JS](./css-in-js.md)** - Styled Components, Emotion
-- **[Dark Mode](./dark-mode.md)** - Implement theme switching
+- **[Styling Guide](/guides/components/README.md)** - All styling approaches
+- **[CSS Modules](/guides/components/README.md)** - Scoped CSS
+- **[Tailwind CSS](/guides/components/README.md)** - Utility-first CSS
+- **[CSS-in-JS](/guides/components/README.md)** - Styled Components, Emotion
+- **[Dark Mode](/guides/components/README.md)** - Implement theme switching
 
 ## Content & Media
 
 Work with content:
 
-- **[MDX Integration](./mdx.md)** - Markdown with React components
-- **[Content Collections](./content-collections.md)** - Organize content
-- **[Image Handling](./images.md)** - Upload, optimize, serve images
-- **[Video Streaming](./video.md)** - Serve video content
-- **[SEO Optimization](./seo.md)** - Search engine optimization
+- **[MDX Integration](https://github.com/veryfrontjs/veryfront/tree/main/examples/basic-mdx)** - Markdown with React components
+- **[Content Collections](https://github.com/veryfrontjs/veryfront/tree/main/examples/basic-mdx)** - Organize content
+- **[Image Handling](/guides/components/image.md)** - Upload, optimize, serve images
+- **[Video Streaming](/guides/components/README.md)** - Serve video content
+- **[SEO Optimization](/guides/components/head.md)** - Search engine optimization
 
 ## Architecture
 
 Design patterns and best practices:
 
-- **[Architecture Overview](../architecture.md)** - System architecture
-- **[Project Structure](./project-structure.md)** - Organize your code
-- **[State Management](./state-management.md)** - Client-side state
-- **[Error Handling](./error-handling.md)** - Robust error handling
-- **[Testing](./testing.md)** - Unit, integration, and e2e tests
+- **[Architecture Overview](/guides/architecture/README.md)** - System architecture
+- **[Project Structure](/learn/project-structure.md)** - Organize your code
+- **[State Management](/guides/components/README.md)** - Client-side state
+- **[Error Handling](/reference/functions/not-found.md)** - Robust error handling
+- **[Testing](/guides/testing/README.md)** - Unit, integration, and e2e tests
 
 ## Security
 
 Secure your application:
 
-- **[Security Best Practices](./security.md)** - Comprehensive security guide
-- **[Authentication](./authentication.md)** - User authentication
-- **[Authorization](./authorization.md)** - Role-based access control
-- **[CORS](./cors.md)** - Cross-Origin Resource Sharing
-- **[Rate Limiting](./rate-limiting.md)** - Protect your APIs
+- **[Security Best Practices](/guides/middleware/README.md)** - Comprehensive security guide
+- **[Authentication](https://github.com/veryfrontjs/veryfront/tree/main/examples/auth-app)** - User authentication
+- **[Authorization](https://github.com/veryfrontjs/veryfront/tree/main/examples/auth-app)** - Role-based access control
+- **[CORS](/guides/middleware/README.md)** - Cross-Origin Resource Sharing
+- **[Rate Limiting](/guides/middleware/README.md)** - Protect your APIs
 
 ## Migration
 
 Move to Veryfront:
 
-- **[From Next.js](./migration/nextjs.md)** - Migrate Next.js apps
-- **[From React](./migration/react.md)** - Migrate Create React App
-- **[From Remix](./migration/remix.md)** - Migrate Remix apps
-- **[From Gatsby](./migration/gatsby.md)** - Migrate Gatsby sites
+- **[From Next.js](/migration/)** - Migrate Next.js apps
+- **[From React](/migration/)** - Migrate Create React App
+- **[From Remix](/migration/)** - Migrate Remix apps
+- **[From Gatsby](/migration/)** - Migrate Gatsby sites
 
 ## Examples
 
 Learn by example - see the `/examples/` directory:
 
 ### Core Examples (9 examples)
-- **[Minimal App Router](/examples/minimal-app-router/)** - Simplest App Router setup
-- **[Minimal Pages](/examples/minimal-pages/)** - Simplest Pages Router setup
-- **[Auth App](/examples/auth-app/)** - Authentication with protected routes
-- **[Data Fetching Demo](/examples/data-fetching-demo/)** - All data fetching patterns
-- **[Basic MDX](/examples/basic-mdx/)** - MDX integration
-- **[Form Handling](/examples/form-handling/)** - Forms with validation
-- **[Middleware Demo](/examples/middleware-demo/)** - Request/response middleware
-- **[RSC Demo](/examples/rsc-demo/)** - React Server Components
+- **[Minimal App Router](https://github.com/veryfrontjs/veryfront/tree/main/examples/minimal-app-router)** - Simplest App Router setup
+- **[Minimal Pages](https://github.com/veryfrontjs/veryfront/tree/main/examples/minimal-pages)** - Simplest Pages Router setup
+- **[Auth App](https://github.com/veryfrontjs/veryfront/tree/main/examples/auth-app)** - Authentication with protected routes
+- **[Data Fetching Demo](https://github.com/veryfrontjs/veryfront/tree/main/examples/data-fetching-demo)** - All data fetching patterns
+- **[Basic MDX](https://github.com/veryfrontjs/veryfront/tree/main/examples/basic-mdx)** - MDX integration
+- **[Form Handling](https://github.com/veryfrontjs/veryfront/tree/main/examples/form-handling)** - Forms with validation
+- **[Middleware Demo](https://github.com/veryfrontjs/veryfront/tree/main/examples/middleware-demo)** - Request/response middleware
+- **[RSC Demo](https://github.com/veryfrontjs/veryfront/tree/main/examples/rsc-demo)** - React Server Components
 
 ### AI Examples (8 examples)
-- **[AI Basic](/examples/ai-basic/)** - Simple AI agent integration
-- **[AI Code Assistant](/examples/ai-code-assistant/)** - Complete code assistant
-- **[Full Demo](/examples/full-demo/)** - All features including AI
-- **[Knowledge Base](/examples/knowledge-base/)** - AI-powered search
-- **[AI Autodiscovery](/examples/ai-autodiscovery/)** - Dynamic tool registration
-- **[AI Phase 3](/examples/ai-phase3/)** - Advanced AI features
-- **[AI Dev Tools](/examples/ai-dev-tools/)** - Developer tools
-- **[AI SDK Integration](/examples/ai-sdk-integration/)** - External AI SDKs
+- **[AI Basic](https://github.com/veryfrontjs/veryfront/tree/main/examples/ai-basic)** - Simple AI agent integration
+- **[AI Code Assistant](https://github.com/veryfrontjs/veryfront/tree/main/examples/ai-code-assistant)** - Complete code assistant
+- **[Full Demo](https://github.com/veryfrontjs/veryfront/tree/main/examples/full-demo)** - All features including AI
+- **[Knowledge Base](https://github.com/veryfrontjs/veryfront/tree/main/examples/knowledge-base)** - AI-powered search
+- **[AI Autodiscovery](https://github.com/veryfrontjs/veryfront/tree/main/examples/ai-autodiscovery)** - Dynamic tool registration
+- **[AI Phase 3](https://github.com/veryfrontjs/veryfront/tree/main/examples/ai-phase3)** - Advanced AI features
+- **[AI Dev Tools](https://github.com/veryfrontjs/veryfront/tree/main/examples/ai-dev-tools)** - Developer tools
+- **[AI SDK Integration](https://github.com/veryfrontjs/veryfront/tree/main/examples/ai-sdk-integration)** - External AI SDKs
 
 ### Infrastructure Examples (2 examples)
-- **[Async Worker + Redis](/examples/async-worker-redis/)** - Background jobs
-- **[Coding Agent](/examples/coding-agent/)** - Autonomous agent
+- **[Async Worker + Redis](https://github.com/veryfrontjs/veryfront/tree/main/examples/async-worker-redis)** - Background jobs
+- **[Coding Agent](https://github.com/veryfrontjs/veryfront/tree/main/examples/coding-agent)** - Autonomous agent
 
 ## Common Use Cases
 
@@ -215,28 +215,28 @@ Guides for specific scenarios:
 
 Productivity boosters:
 
-- **[VS Code Setup](./vscode-setup.md)** - Configure VS Code for Veryfront
-- **[Debugging](./debugging.md)** - Debug effectively
-- **[Hot Reload](./hot-reload.md)** - Fast development workflow
-- **[TypeScript Tips](./typescript-tips.md)** - Advanced TypeScript patterns
+- **[VS Code Setup](/learn/installation.md)** - Configure VS Code for Veryfront
+- **[Debugging](/guides/troubleshooting/debugging.md)** - Debug effectively
+- **[Hot Reload](/guides/troubleshooting/debugging.md)** - Fast development workflow
+- **[TypeScript Tips](/guides/troubleshooting/README.md)** - Advanced TypeScript patterns
 
 ## Troubleshooting
 
 Common issues and solutions:
 
-- **[Debugging Guide](../debugging.md)** - Complete debugging reference
-- **[Common Errors](./common-errors.md)** - Error messages explained
-- **[Performance Issues](./performance-issues.md)** - Diagnose slow apps
-- **[Build Errors](./build-errors.md)** - Fix build problems
+- **[Debugging Guide](/guides/troubleshooting/debugging.md)** - Complete debugging reference
+- **[Common Errors](/guides/troubleshooting/README.md)** - Error messages explained
+- **[Performance Issues](/guides/performance/README.md)** - Diagnose slow apps
+- **[Build Errors](/guides/troubleshooting/README.md)** - Fix build problems
 
 ## Contributing
 
 Help improve Veryfront:
 
-- **[Contributing Guide](../contributing.md)** - How to contribute
-- **[Documentation Guide](./writing-docs.md)** - Write documentation
-- **[Code Style](./code-style.md)** - Coding standards
-- **[Pull Request Guidelines](./pr-guidelines.md)** - Submit PRs
+- **[Contributing Guide](/community/contributing.md)** - How to contribute
+- **[Documentation Guide](/community/contributing.md)** - Write documentation
+- **[Code Style](/community/contributing.md)** - Coding standards
+- **[Pull Request Guidelines](/community/contributing.md)** - Submit PRs
 
 ## By Topic
 
@@ -269,54 +269,54 @@ Help improve Veryfront:
 ## By Skill Level
 
 ### Beginner (New to Veryfront)
-1. [Quick Start](../quick-start.md) - Get started in 5 minutes
-2. [Routing Overview](../routing/README.md) - Understand routing
-3. [Rendering Comparison](../rendering/comparison.md) - Choose rendering mode
-4. [Building a Blog](./building-blog.md) - First complete project
+1. [Quick Start](/learn/quickstart.md) - Get started in 5 minutes
+2. [Routing Overview](/guides/routing/README.md) - Understand routing
+3. [Rendering Comparison](/guides/rendering/comparison.md) - Choose rendering mode
+4. [Building a Blog](https://github.com/veryfrontjs/veryfront/tree/main/examples/basic-mdx) - First complete project
 
 ### Intermediate (Comfortable with basics)
-1. [Data Fetching Patterns](./data-fetching-patterns.md) - Advanced patterns
-2. [Authentication](./authentication.md) - Add user auth
-3. [Database Integration](./database.md) - Connect databases
+1. [Data Fetching Patterns](/reference/functions/get-server-data.md) - Advanced patterns
+2. [Authentication](https://github.com/veryfrontjs/veryfront/tree/main/examples/auth-app) - Add user auth
+3. [Database Integration](/reference/functions/get-server-data.md) - Connect databases
 4. [Deployment Guide](./deployment/deno.md) - Deploy to production
 
 ### Advanced (Experienced developer)
-1. [Architecture Overview](../architecture.md) - System design
-2. [Performance Guide](./performance.md) - Optimize everything
+1. [Architecture Overview](/guides/architecture/README.md) - System design
+2. [Performance Guide](/guides/performance/README.md) - Optimize everything
 3. [AI Integration](../ai/specification.md) - Build AI apps
-4. [Microservices](./microservices.md) - Distributed systems
+4. [Microservices](/guides/architecture/README.md) - Distributed systems
 
 ## By Goal
 
 ### Learn Veryfront
-- Start: [Quick Start](../quick-start.md)
-- Routing: [Routing Overview](../routing/README.md)
-- Rendering: [Rendering Comparison](../rendering/comparison.md)
-- Complete: [Building a Blog](./building-blog.md)
+- Start: [Quick Start](/learn/quickstart.md)
+- Routing: [Routing Overview](/guides/routing/README.md)
+- Rendering: [Rendering Comparison](/guides/rendering/comparison.md)
+- Complete: [Building a Blog](https://github.com/veryfrontjs/veryfront/tree/main/examples/basic-mdx)
 
 ### Build a Website
-- Blog: [Building a Blog](./building-blog.md)
-- Docs: [Documentation Site](./docs-site.md)
-- Marketing: [Static Site](./static-site.md)
-- Portfolio: [Portfolio Site](./portfolio.md)
+- Blog: [Building a Blog](https://github.com/veryfrontjs/veryfront/tree/main/examples/basic-mdx)
+- Docs: [Documentation Site](https://github.com/veryfrontjs/veryfront/tree/main/examples)
+- Marketing: [Static Site](/guides/rendering/ssg.md)
+- Portfolio: [Portfolio Site](https://github.com/veryfrontjs/veryfront/tree/main/examples)
 
 ### Build an App
-- SaaS: [Multi-Tenant Apps](./multi-tenant.md)
-- Dashboard: [User Dashboard](./dashboard.md)
-- E-commerce: [Online Store](./ecommerce.md)
-- Social: [Social Platform](./social-platform.md)
+- SaaS: [Multi-Tenant Apps](/guides/architecture/README.md)
+- Dashboard: [User Dashboard](https://github.com/veryfrontjs/veryfront/tree/main/examples)
+- E-commerce: [Online Store](https://github.com/veryfrontjs/veryfront/tree/main/examples)
+- Social: [Social Platform](https://github.com/veryfrontjs/veryfront/tree/main/examples)
 
 ### Add Features
-- Auth: [Authentication](./authentication.md)
-- Search: [Full-Text Search](./search.md)
-- Real-Time: [WebSockets & SSE](./real-time.md)
-- Payments: [Payment Integration](./payments.md)
+- Auth: [Authentication](https://github.com/veryfrontjs/veryfront/tree/main/examples/auth-app)
+- Search: [Full-Text Search](/reference/functions/get-server-data.md)
+- Real-Time: [WebSockets & SSE](/guides/routing/api-routes.md)
+- Payments: [Payment Integration](https://github.com/veryfrontjs/veryfront/tree/main/examples)
 
 ### Optimize
-- Speed: [Performance Guide](./performance.md)
-- SEO: [SEO Optimization](./seo.md)
-- Scale: [Scaling Guide](./scaling.md)
-- Cost: [Cost Optimization](./cost-optimization.md)
+- Speed: [Performance Guide](/guides/performance/README.md)
+- SEO: [SEO Optimization](/guides/components/head.md)
+- Scale: [Scaling Guide](/guides/performance/README.md)
+- Cost: [Cost Optimization](/guides/performance/README.md)
 
 ## Learning Paths
 
@@ -338,29 +338,29 @@ Help improve Veryfront:
 ## Quick Reference
 
 ### Most Popular Guides
-1. [Quick Start](../quick-start.md) - 5-minute setup
-2. [Rendering Comparison](../rendering/comparison.md) - Choose rendering mode
+1. [Quick Start](/learn/quickstart.md) - 5-minute setup
+2. [Rendering Comparison](/guides/rendering/comparison.md) - Choose rendering mode
 3. [Deno Deployment](./deployment/deno.md) - Deploy to production
-4. [Authentication](./authentication.md) - Add user auth
-5. [Performance Guide](./performance.md) - Optimize everything
+4. [Authentication](https://github.com/veryfrontjs/veryfront/tree/main/examples/auth-app) - Add user auth
+5. [Performance Guide](/guides/performance/README.md) - Optimize everything
 
 ### Most Useful Patterns
-1. [Data Fetching Patterns](./data-fetching-patterns.md) - Server & client data
-2. [Error Handling](./error-handling.md) - Handle errors gracefully
-3. [Caching Strategies](./caching.md) - Cache effectively
-4. [State Management](./state-management.md) - Manage client state
-5. [Testing Patterns](./testing.md) - Test your app
+1. [Data Fetching Patterns](/reference/functions/get-server-data.md) - Server & client data
+2. [Error Handling](/reference/functions/not-found.md) - Handle errors gracefully
+3. [Caching Strategies](/guides/performance/caching.md) - Cache effectively
+4. [State Management](/guides/components/README.md) - Manage client state
+5. [Testing Patterns](/guides/testing/README.md) - Test your app
 
 ### Essential Reading
-- **Before Starting:** [Introduction](../introduction.md) + [Quick Start](../quick-start.md)
-- **Before Production:** [Deployment Guide](./deployment/deno.md) + [Security](./security.md)
-- **Before Scaling:** [Performance](./performance.md) + [Monitoring](./deployment/monitoring.md)
+- **Before Starting:** [Introduction](/learn/introduction.md) + [Quick Start](/learn/quickstart.md)
+- **Before Production:** [Deployment Guide](./deployment/deno.md) + [Security](/guides/middleware/README.md)
+- **Before Scaling:** [Performance](/guides/performance/README.md) + [Monitoring](/guides/deployment/README.md)
 
 ## Related Documentation
 
 - **[API Reference](/reference/functions/README.md)** - Complete API documentation
-- **[Routing System](../routing/README.md)** - File-based routing
-- **[Rendering Modes](../rendering/README.md)** - Five rendering strategies
+- **[Routing System](/guides/routing/README.md)** - File-based routing
+- **[Rendering Modes](/guides/rendering/README.md)** - Five rendering strategies
 - **[AI System](../ai/README.md)** - AI integration guide
 
 ## Getting Help
@@ -374,9 +374,9 @@ Help improve Veryfront:
 
 Choose your path:
 
-1. **New to Veryfront?** → [Quick Start](../quick-start.md)
-2. **Building a site?** → [Building a Blog](./building-blog.md)
-3. **Building an app?** → [Authentication](./authentication.md)
+1. **New to Veryfront?** → [Quick Start](/learn/quickstart.md)
+2. **Building a site?** → [Building a Blog](https://github.com/veryfrontjs/veryfront/tree/main/examples/basic-mdx)
+3. **Building an app?** → [Authentication](https://github.com/veryfrontjs/veryfront/tree/main/examples/auth-app)
 4. **Adding AI?** → [AI Getting Started](../ai/getting-started.md)
 5. **Deploying?** → [Deno Deployment](./deployment/deno.md)
-6. **Optimizing?** → [Performance Guide](./performance.md)
+6. **Optimizing?** → [Performance Guide](/guides/performance/README.md)

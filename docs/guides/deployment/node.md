@@ -814,7 +814,7 @@ const DB_URL = process.env.DATABASE_URL;
 
 ## Next Steps
 
-- Explore [Bun deployment](/docs/guides/deployment/bun.md) for faster runtime
-- Learn about [Cloudflare Workers](/docs/guides/deployment/cloudflare.md) for edge deployment
-- Read [Performance Optimization](/docs/guides/performance/optimization.md) guide
-- Check [Caching Strategies](/docs/guides/performance/caching.md) for better performance
+- Explore [Bun deployment](/guides/deployment/bun.md) for faster runtime
+- Learn about [Cloudflare Workers](/guides/deployment/cloudflare.md) for edge deployment
+- Read [Performance Optimization](/guides/performance/optimization.md) guide
+- Check [Caching Strategies](/guides/performance/caching.md) for better performance

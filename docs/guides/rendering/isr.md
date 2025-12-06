@@ -682,15 +682,15 @@ const BlogPost: PageWithData<{ post: Post }> = ({ post }) => {
 - [SSG Guide](./ssg.md) - Static Site Generation
 - [SSR Guide](./ssr.md) - Server-Side Rendering
 - [JIT Guide](./jit.md) - Just-In-Time Rendering
-- [Data Fetching API](/reference/functions/data-fetching.md) - Complete reference
+- [Data Fetching API](/reference/functions/get-server-data.md) - Complete reference
 
 ---
 
 ## Examples
 
-- [News Site](/examples/news-site/) - ISR for articles
-- [E-commerce](/examples/ecommerce/) - ISR for products
-- [Blog](/examples/blog/) - ISR for posts
+- [News Site](https://github.com/veryfrontjs/veryfront/tree/main/examples/basic-mdx) - ISR for articles
+- [E-commerce](https://github.com/veryfrontjs/veryfront/tree/main/examples/full-demo) - ISR for products
+- [Blog](https://github.com/veryfrontjs/veryfront/tree/main/examples/basic-mdx) - ISR for posts
 
 ---
 

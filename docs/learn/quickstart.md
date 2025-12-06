@@ -460,7 +460,7 @@ Visit **http://localhost:3000/chat** and try:
 
 1. **[Routing System](/guides/routing/README.md)** - Master file-based routing (App Router and Pages Router)
 2. **[Rendering Modes](/guides/rendering/README.md)** - Understand SSR, SSG, ISR, JIT, and RSC
-3. **[AI Capabilities](/guides/ai/README.md)** - Explore agents, tools, and MCP integration
+3. **[AI Capabilities](/ai/README.md)** - Explore agents, tools, and MCP integration
 4. **[Deployment](/guides/deployment/README.md)** - Deploy to production on any platform
 
 ### Deep Dive into Features
@@ -490,9 +490,9 @@ Visit **http://localhost:3000/chat** and try:
 
 ### AI and Agent Development
 
-- [AI Overview](/guides/ai/README.md) - Complete AI capabilities overview
-- [Getting Started with AI](/guides/ai/getting-started.md) - Build your first agent
-- [AI Specification](/guides/ai/specification.md) - Technical specification
+- [AI Overview](/ai/README.md) - Complete AI capabilities overview
+- [Getting Started with AI](/ai/getting-started.md) - Build your first agent
+- [AI Specification](/ai/specification.md) - Technical specification
 
 ### Testing and Performance
 
@@ -618,4 +618,4 @@ my-blog/
 
 ---
 
-**Congratulations!** You've built a full-stack React application with AI capabilities in 30 minutes. Continue exploring Veryfront's features in the [guides section](/guides/routing/overview.md).
+**Congratulations!** You've built a full-stack React application with AI capabilities in 30 minutes. Continue exploring Veryfront's features in the [guides section](/guides/routing/README.md).

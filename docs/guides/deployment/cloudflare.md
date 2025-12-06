@@ -764,7 +764,7 @@ npx wrangler pages deploy .veryfront/build
 
 ## Next Steps
 
-- Compare with [Node.js deployment](/docs/guides/deployment/node.md)
-- Explore [Bun deployment](/docs/guides/deployment/bun.md) for faster runtime
-- Read [Performance Optimization](/docs/guides/performance/optimization.md)
-- Check [Caching Strategies](/docs/guides/performance/caching.md)
+- Compare with [Node.js deployment](/guides/deployment/node.md)
+- Explore [Bun deployment](/guides/deployment/bun.md) for faster runtime
+- Read [Performance Optimization](/guides/performance/optimization.md)
+- Check [Caching Strategies](/guides/performance/caching.md)

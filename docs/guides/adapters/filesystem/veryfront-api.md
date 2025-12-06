@@ -641,6 +641,6 @@ app.listen(3001, () => {
 ## Next Steps
 
 - [Filesystem Adapters Overview](./overview.md)
-- [Custom Filesystem Adapters](./custom.md)
-- [Platform Adapters](../platform-adapters/overview.md)
-- [Performance Optimization Guide](../guides/performance.md)
+- [Custom Filesystem Adapters](../README.md)
+- [Platform Adapters](/guides/adapters/platform/overview.md)
+- [Performance Optimization Guide](/guides/performance/README.md)

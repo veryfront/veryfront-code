@@ -1,6 +1,7 @@
 export * from "./build.ts";
 export * from "./cache.ts";
 export * from "./cdn.ts";
+export * from "./env.ts";
 export * from "./hash.ts";
 export * from "./hmr.ts";
 export * from "./html.ts";

@@ -145,12 +145,12 @@ export default defineConfig({
 Choose your runtime to see detailed setup instructions:
 
 - [**Deno** - Native TypeScript, Deno Deploy](./deno.md)
-- [**Node.js** - Enterprise ready, wide hosting](./nodejs.md)
-- [**Bun** - Ultra-fast, Node.js compatible](./bun.md)
-- [**Cloudflare Workers** - Global edge deployment](./cloudflare.md)
+- [**Node.js** - Enterprise ready, wide hosting](/guides/deployment/node.md)
+- [**Bun** - Ultra-fast, Node.js compatible](/guides/deployment/bun.md)
+- [**Cloudflare Workers** - Global edge deployment](/guides/deployment/cloudflare.md)
 
 ## Learn More
 
-- [Platform Abstraction Architecture](../advanced/architecture.md#platform-abstraction)
-- [Custom Platform Adapters](../advanced/custom-adapters.md)
-- [Deployment Guide](../guides/deployment.md)
+- [Platform Abstraction Architecture](/guides/architecture/README.md)
+- [Custom Platform Adapters](/guides/adapters/README.md)
+- [Deployment Guide](/guides/deployment/README.md)

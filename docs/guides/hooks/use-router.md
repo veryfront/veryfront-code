@@ -718,8 +718,8 @@ export default function EditForm() {
 
 ## Next Steps
 
-- Learn about [usePathname hook](/docs/hooks/use-pathname.md) for current path detection
-- Explore [useParams hook](/docs/hooks/use-params.md) for route parameters
-- Check out [useSearchParams hook](/docs/hooks/use-search-params.md) for query strings
-- Read about [Link component](/docs/components/link.md) for declarative navigation
+- Learn about [usePathname hook](/reference/hooks/use-pathname.md) for current path detection
+- Explore [useParams hook](/reference/hooks/use-params.md) for route parameters
+- Check out [useSearchParams hook](/reference/hooks/use-search-params.md) for query strings
+- Read about [Link component](/reference/components/link.md) for declarative navigation
 - Review [App Router](/guides/routing/app-router.md) for routing concepts

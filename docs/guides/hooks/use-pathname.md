@@ -644,7 +644,7 @@ export default function ClientComponent() {
 
 ## Next Steps
 
-- Learn about [useRouter hook](/docs/hooks/use-router.md) for programmatic navigation
-- Explore [useParams hook](/docs/hooks/use-params.md) for route parameters
-- Check out [useSearchParams hook](/docs/hooks/use-search-params.md) for query strings
-- Read about [Link component](/docs/components/link.md) for declarative navigation
+- Learn about [useRouter hook](/reference/hooks/use-router.md) for programmatic navigation
+- Explore [useParams hook](/reference/hooks/use-params.md) for route parameters
+- Check out [useSearchParams hook](/reference/hooks/use-search-params.md) for query strings
+- Read about [Link component](/reference/components/link.md) for declarative navigation

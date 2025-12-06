@@ -1076,7 +1076,7 @@ export default function ArticlePage({ article }: ArticleProps) {
 
 ## Next Steps
 
-- Learn about the [Script component](/docs/components/script.md) for loading external scripts
-- Explore [Image optimization](/docs/components/image.md) for better performance
+- Learn about the [Script component](/guides/components/script.md) for loading external scripts
+- Explore [Image optimization](/guides/components/image.md) for better performance
 - Read about [SSR](/guides/rendering/ssr.md) for dynamic metadata
 - Check out [App Router](/guides/routing/app-router.md) for layout composition

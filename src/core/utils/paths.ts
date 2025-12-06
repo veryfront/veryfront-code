@@ -1,3 +1,16 @@
+/**
+ * Project directory paths and file extensions
+ *
+ * For internal veryfront URL endpoints, see ./constants/server.ts
+ */
+
+import {
+  INTERNAL_PREFIX,
+  INTERNAL_ENDPOINTS,
+  INTERNAL_PATH_PREFIXES,
+  BUILD_DIRS,
+} from "./constants/server.ts";
+
 export const PATHS = {
   PAGES_DIR: "pages",
   COMPONENTS_DIR: "components",
@@ -7,16 +20,19 @@ export const PATHS = {
   CONFIG_FILE: "veryfront.config.js",
 } as const;
 
+/**
+ * @deprecated Use INTERNAL_PREFIX, INTERNAL_ENDPOINTS, INTERNAL_PATH_PREFIXES from ./constants/server.ts
+ */
 export const VERYFRONT_PATHS = {
-  INTERNAL_PREFIX: "/_veryfront",
-  BUILD_DIR: "_veryfront",
-  CHUNKS_DIR: "_veryfront/chunks",
-  DATA_DIR: "_veryfront/data",
-  ASSETS_DIR: "_veryfront/assets",
-  HMR_RUNTIME: "/_veryfront/hmr-runtime.js",
-  CLIENT_JS: "/_veryfront/client.js",
-  ROUTER_JS: "/_veryfront/router.js",
-  ERROR_OVERLAY: "/_veryfront/error-overlay.js",
+  INTERNAL_PREFIX: INTERNAL_PREFIX,
+  BUILD_DIR: BUILD_DIRS.ROOT,
+  CHUNKS_DIR: BUILD_DIRS.CHUNKS,
+  DATA_DIR: BUILD_DIRS.DATA,
+  ASSETS_DIR: BUILD_DIRS.ASSETS,
+  HMR_RUNTIME: INTERNAL_ENDPOINTS.HMR_RUNTIME,
+  CLIENT_JS: INTERNAL_ENDPOINTS.CLIENT_JS,
+  ROUTER_JS: INTERNAL_ENDPOINTS.ROUTER_JS,
+  ERROR_OVERLAY: INTERNAL_ENDPOINTS.ERROR_OVERLAY,
 } as const;
 
 export const FILE_EXTENSIONS = {
@@ -25,3 +41,6 @@ export const FILE_EXTENSIONS = {
   STYLE: [".css", ".scss", ".sass"],
   ALL: [".mdx", ".md", ".tsx", ".ts", ".jsx", ".js", ".css"],
 } as const;
+
+// Re-export for convenience
+export { INTERNAL_PREFIX, INTERNAL_ENDPOINTS, INTERNAL_PATH_PREFIXES, BUILD_DIRS };

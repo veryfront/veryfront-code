@@ -55,7 +55,7 @@ src/
     └── server/               → Dev server, HMR, production server
 ```
 
-**See [src/NAVIGATION.md](../../src/NAVIGATION.md) for detailed module navigation.**
+**See [src/NAVIGATION.md](/guides/routing/README.md) for detailed module navigation.**
 
 ## Development Workflow
 
@@ -427,18 +427,18 @@ When changing a module's public API:
 4. Add troubleshooting tips if needed
 
 ### Architecture Documentation
-- Main architecture: [Architecture Guide](../advanced/architecture.md)
-- Code navigation: [src/NAVIGATION.md](../../src/NAVIGATION.md)
+- Main architecture: [Architecture Guide](/guides/architecture/README.md)
+- Code navigation: [src/NAVIGATION.md](/guides/routing/README.md)
 - Module READMEs: `../../src/<module>/README.md`
 
 ## Getting Help
 
 ### Resources
-- **Architecture**: [Architecture Guide](../advanced/architecture.md)
-- **Navigation Guide**: [src/NAVIGATION.md](../../src/NAVIGATION.md)
+- **Architecture**: [Architecture Guide](/guides/architecture/README.md)
+- **Navigation Guide**: [src/NAVIGATION.md](/guides/routing/README.md)
 - **Module Docs**: All modules have READMEs (15/15 documented)
-- **Quick Start**: [Quick Start Guide](../quick-start.md)
-- **Introduction**: [Introduction](../introduction.md)
+- **Quick Start**: [Quick Start Guide](/learn/quickstart.md)
+- **Introduction**: [Introduction](/learn/introduction.md)
 
 ### Questions?
 - Check existing issues on GitHub

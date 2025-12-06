@@ -27,14 +27,14 @@ Deploy your Veryfront app on Node.js platforms. Learn about:
 - Docker containerization
 - Load balancing and clustering
 
-### [Deploy to Bun](./bun.md)
+### [Deploy to Bun](/guides/deployment/bun.md)
 Deploy your Veryfront app using Bun runtime. Learn about:
 - Bun server configuration
 - Performance optimization with Bun
 - Hosting options for Bun apps
 - Migration from Node.js to Bun
 
-### [Deploy to Cloudflare Workers](./cloudflare.md)
+### [Deploy to Cloudflare Workers](/guides/deployment/cloudflare.md)
 Deploy your Veryfront app on Cloudflare's edge network. Learn about:
 - Cloudflare Workers configuration
 - Wrangler CLI setup
@@ -57,8 +57,8 @@ Before deploying, ensure you have:
 
 ### Other Platforms
 - [Node.js Deployment](./node.md) - Deploy with Node.js (Vercel, Railway, etc.)
-- [Bun Deployment](./bun.md) - Deploy using Bun runtime
-- [Cloudflare Workers](./cloudflare.md) - Deploy to edge network
+- [Bun Deployment](/guides/deployment/bun.md) - Deploy using Bun runtime
+- [Cloudflare Workers](/guides/deployment/cloudflare.md) - Deploy to edge network
 
 ## Related Guides
 

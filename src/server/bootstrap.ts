@@ -17,6 +17,7 @@ import { enhanceAdapterWithFS } from "@veryfront/platform/adapters/fs-integratio
 import type { VeryfrontConfig } from "@veryfront/config";
 import { logger } from "@veryfront/utils";
 import { loadEnv, supportsEnvFiles } from "../core/utils/env-loader.ts";
+import { isDebugEnabled } from "../core/utils/constants/env.ts";
 
 export interface BootstrapResult {
   /** Enhanced runtime adapter (with FSAdapter if configured) */
@@ -54,7 +55,7 @@ export async function bootstrap(
       await loadEnv({
         cwd: projectDir,
         override: false, // Don't override existing env vars
-        debug: adapter.env.get("VERYFRONT_DEBUG") === "true",
+        debug: isDebugEnabled(adapter.env),
       });
     } catch (error) {
       // Non-fatal error - log but continue

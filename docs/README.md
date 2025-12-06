@@ -16,11 +16,11 @@ This directory contains the complete Veryfront documentation organized for easy 
 
 #### **Core Concepts**
 - [Convention over Configuration](./learn/concepts/convention-over-configuration.md) - The framework philosophy
-- [Routing](./routing/README.md) - File-based routing (App Router & Pages Router)
-- [Rendering](./rendering/README.md) - SSR, SSG, ISR, JIT, and RSC
-- [Data Fetching](./data-fetching/README.md) - Server data, static props, and caching
-- [Styling](./styling/README.md) - CSS, Tailwind, CSS-in-JS
-- [MDX](./mdx.md) - Zero-config MDX support
+- [Routing](/guides/routing/README.md) - File-based routing (App Router & Pages Router)
+- [Rendering](/guides/rendering/README.md) - SSR, SSG, ISR, JIT, and RSC
+- [Data Fetching](/reference/functions/README.md) - Server data, static props, and caching
+- [Styling](/guides/components/README.md) - CSS, Tailwind, CSS-in-JS
+- [MDX](https://github.com/veryfrontjs/veryfront/tree/main/examples/basic-mdx) - Zero-config MDX support
 
 #### **Agent System**
 
@@ -42,51 +42,51 @@ This directory contains the complete Veryfront documentation organized for easy 
 **Examples:**
 - [Complete Demo](../examples/full-demo/README.md) - Full-featured example
 - [Auto-Discovery](../examples/ai-autodiscovery/) - Convention-driven setup
-- [Memory & Composition](../examples/ai-phase3/) - Advanced features
+- [Memory & Composition](https://github.com/veryfrontjs/veryfront/tree/main/examples) - Advanced features
 
 #### **Platform Adapters**
-- [Overview](./platform-adapters/overview.md) - Multi-runtime support
-- [Deno](./platform-adapters/deno.md) - Deploy on Deno & Deno Deploy
-- [Node.js](./platform-adapters/nodejs.md) - Deploy on Node.js
-- [Bun](./platform-adapters/bun.md) - Deploy on Bun
-- [Cloudflare Workers](./platform-adapters/cloudflare.md) - Deploy on Cloudflare
+- [Overview](/guides/adapters/platform/overview.md) - Multi-runtime support
+- [Deno](/guides/deployment/deno.md) - Deploy on Deno & Deno Deploy
+- [Node.js](/guides/deployment/node.md) - Deploy on Node.js
+- [Bun](/guides/deployment/bun.md) - Deploy on Bun
+- [Cloudflare Workers](/guides/deployment/cloudflare.md) - Deploy on Cloudflare
 
 #### **Filesystem Adapters**
-- [Overview](./filesystem-adapters/overview.md) - Filesystem abstraction
-- [Local Disk](./filesystem-adapters/local.md) - Standard filesystem (default)
-- [Veryfront API](./filesystem-adapters/veryfront-api.md) - Remote project rendering
-- [Custom Adapters](./filesystem-adapters/custom.md) - Build your own
+- [Overview](/guides/adapters/filesystem/overview.md) - Filesystem abstraction
+- [Local Disk](/guides/adapters/filesystem/overview.md) - Standard filesystem (default)
+- [Veryfront API](/guides/adapters/filesystem/veryfront-api.md) - Remote project rendering
+- [Custom Adapters](/guides/adapters/filesystem/overview.md) - Build your own
 
 #### **API Reference**
-- [Configuration](./api/configuration.md) - veryfront.config.ts reference
-- [Components](./api/components.md) - Link, Head, OptimizedImage, etc.
-- [Data Fetching](./api/data-fetching.md) - getServerData, getStaticPaths
-- [API Routes](./api/routes.md) - Building API endpoints
-- [Middleware](./api/middleware.md) - Request/response middleware
-- [CLI](./api/cli.md) - Command-line interface
+- [Configuration](/reference/configuration/README.md) - veryfront.config.ts reference
+- [Components](/reference/components/README.md) - Link, Head, OptimizedImage, etc.
+- [Data Fetching](/reference/functions/get-server-data.md) - getServerData, getStaticPaths
+- [API Routes](/guides/routing/api-routes.md) - Building API endpoints
+- [Middleware](/guides/middleware/README.md) - Request/response middleware
+- [CLI](/reference/cli/README.md) - Command-line interface
 
 #### **Guides**
-- [Building a Blog](./guides/blog.md) - Step-by-step tutorial
-- [Image Optimization](./guides/images.md) - OptimizedImage best practices
-- [Performance](./guides/performance.md) - Optimization techniques
-- [Deployment](./guides/deployment.md) - Deploy to production
-- [Migration](./guides/migration.md) - Migrate from Next.js/Remix
+- [Building a Blog](https://github.com/veryfrontjs/veryfront/tree/main/examples/basic-mdx) - Step-by-step tutorial
+- [Image Optimization](/guides/components/image.md) - OptimizedImage best practices
+- [Performance](/guides/performance/README.md) - Optimization techniques
+- [Deployment](/guides/deployment/README.md) - Deploy to production
+- [Migration](/migration/) - Migrate from Next.js/Remix
 
 #### **Cookbooks**
 - [RAG Chatbot](./cookbooks/rag-chatbot.md) - Build a knowledge-base bot
 - [Cookbook Index](./cookbooks/README.md) - Browse all recipes
 
 #### **Advanced**
-- [Architecture](./advanced/architecture.md) - Framework internals
-- [Security](./advanced/security.md) - CORS, CSP, input validation
-- [Observability](./advanced/observability.md) - Metrics and tracing
-- [Custom Builds](./advanced/custom-builds.md) - Advanced build configuration
+- [Architecture](/guides/architecture/README.md) - Framework internals
+- [Security](/guides/middleware/README.md) - CORS, CSP, input validation
+- [Observability](/guides/performance/README.md) - Metrics and tracing
+- [Custom Builds](/reference/configuration/README.md) - Advanced build configuration
 
 #### **Community**
 - [Contributing](./community/contributing.md) - How to contribute
 - [Changelog](./community/changelog.md) - Version history
-- [Examples](./community/examples.md) - Example projects
-- [FAQ](./community/faq.md) - Frequently asked questions
+- [Examples](https://github.com/veryfrontjs/veryfront/tree/main/examples) - Example projects
+- [FAQ](/community/contributing.md) - Frequently asked questions
 
 ## Publishing
 
@@ -99,7 +99,7 @@ This documentation is designed to be published with:
 ## Navigation
 
 For code navigation within the framework source, see:
-- [Code Navigation Guide](../src/NAVIGATION.md)
+- [Code Navigation Guide](/guides/routing/README.md)
 - [Module READMEs](../src/) - All 16 modules documented (including AI module)
 - [AI Documentation Index](./ai/README.md) - Complete AI documentation guide
 

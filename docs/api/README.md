@@ -56,7 +56,7 @@ export default defineConfig({
 });
 ```
 
-**Full reference:** [Configuration API](./configuration.md)
+**Full reference:** [Configuration API](/reference/configuration/README.md)
 
 ---
 
@@ -137,7 +137,7 @@ import { OptimizedImage } from 'veryfront';
 - `className?: string` - CSS class name
 - `style?: React.CSSProperties` - Inline styles
 
-**Full reference:** [Components API](./components.md)
+**Full reference:** [Components API](/reference/components/README.md)
 
 ---
 
@@ -280,7 +280,7 @@ export const getServerData = async (ctx) => {
 return redirect('/new-url', { permanent: true });
 ```
 
-**Full reference:** [Data Fetching API](./data-fetching.md)
+**Full reference:** [Data Fetching API](/reference/functions/get-server-data.md)
 
 ---
 
@@ -399,7 +399,7 @@ export default function Search() {
 }
 ```
 
-**Full reference:** [Routes API](./routes.md)
+**Full reference:** [Routes API](/guides/routing/api-routes.md)
 
 ---
 
@@ -448,7 +448,7 @@ export default function handler(
 }
 ```
 
-**Full reference:** [API Routes](./routes.md)
+**Full reference:** [API Routes](/guides/routing/api-routes.md)
 
 ---
 
@@ -831,12 +831,12 @@ For Deno projects, use `deno.json`:
 
 ## Related Documentation
 
-- [Configuration Guide](./configuration.md) - Complete configuration reference
-- [Components Guide](./components.md) - Component API details
-- [Data Fetching Guide](./data-fetching.md) - Data fetching patterns
-- [Routes Guide](./routes.md) - Routing and API routes
-- [Routing System](../routing/README.md) - File-based routing overview
-- [Rendering Modes](../rendering/README.md) - Rendering strategies
+- [Configuration Guide](/reference/configuration/README.md) - Complete configuration reference
+- [Components Guide](/reference/components/README.md) - Component API details
+- [Data Fetching Guide](/reference/functions/get-server-data.md) - Data fetching patterns
+- [Routes Guide](/guides/routing/api-routes.md) - Routing and API routes
+- [Routing System](/guides/routing/README.md) - File-based routing overview
+- [Rendering Modes](/guides/rendering/README.md) - Rendering strategies
 
 ---
 
@@ -872,19 +872,19 @@ Veryfront is designed to be largely compatible with Next.js. Most code works wit
 See working examples in the repository:
 
 **API Examples:**
-- [Minimal App Router](/examples/minimal-app-router/) - Basic App Router setup
-- [Minimal Pages](/examples/minimal-pages/) - Basic Pages Router setup
-- [Data Fetching Demo](/examples/data-fetching-demo/) - All data fetching patterns
-- [API Routes](/examples/auth-app/) - API endpoints with authentication
-- [Form Handling](/examples/form-handling/) - Forms with server actions
+- [Minimal App Router](https://github.com/veryfrontjs/veryfront/tree/main/examples/minimal-app-router) - Basic App Router setup
+- [Minimal Pages](https://github.com/veryfrontjs/veryfront/tree/main/examples/minimal-pages) - Basic Pages Router setup
+- [Data Fetching Demo](https://github.com/veryfrontjs/veryfront/tree/main/examples/data-fetching-demo) - All data fetching patterns
+- [API Routes](https://github.com/veryfrontjs/veryfront/tree/main/examples/auth-app) - API endpoints with authentication
+- [Form Handling](https://github.com/veryfrontjs/veryfront/tree/main/examples/form-handling) - Forms with server actions
 
 **Component Examples:**
-- [Image Optimization](/examples/basic-mdx/) - OptimizedImage usage
-- [Dynamic Imports](/examples/minimal-app-router/) - Code splitting
+- [Image Optimization](https://github.com/veryfrontjs/veryfront/tree/main/examples/basic-mdx) - OptimizedImage usage
+- [Dynamic Imports](https://github.com/veryfrontjs/veryfront/tree/main/examples/minimal-app-router) - Code splitting
 
 **AI Examples:**
-- [AI Basic](/examples/ai-basic/) - Simple agent integration
-- [Code Assistant](/examples/ai-code-assistant/) - AI-powered tools
+- [AI Basic](https://github.com/veryfrontjs/veryfront/tree/main/examples/ai-basic) - Simple agent integration
+- [Code Assistant](https://github.com/veryfrontjs/veryfront/tree/main/examples/ai-code-assistant) - AI-powered tools
 
 ---
 
@@ -893,4 +893,4 @@ See working examples in the repository:
 - **Documentation:** [docs.veryfront.com](/)
 - **Examples:** Check the `/examples/` directory
 - **Issues:** Report bugs on GitHub
-- **Quick Start:** [5-minute quickstart guide](../quick-start.md)
+- **Quick Start:** [5-minute quickstart guide](/learn/quickstart.md)

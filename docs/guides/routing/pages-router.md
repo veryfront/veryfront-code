@@ -927,16 +927,16 @@ const HeavyComponent = dynamic(() => import('../components/Heavy'), {
 - [App Router Guide](./app-router.md) - Modern routing with layouts
 - [Dynamic Routes](./dynamic-routes.md) - URL parameters in depth
 - [API Routes](./api-routes.md) - Backend endpoints
-- [Data Fetching](/reference/functions/data-fetching.md) - Complete API reference
+- [Data Fetching](/reference/functions/get-server-data.md) - Complete API reference
 
 ---
 
 ## Examples
 
-- [Minimal Pages](/examples/minimal-pages/) - Simple Pages Router setup
-- [Data Fetching Demo](/examples/data-fetching-demo/) - All patterns
-- [Blog Example](/examples/blog/) - Complete blog
-- [Auth App](/examples/auth-app/) - Protected routes
+- [Minimal Pages](https://github.com/veryfrontjs/veryfront/tree/main/examples/minimal-pages) - Simple Pages Router setup
+- [Data Fetching Demo](https://github.com/veryfrontjs/veryfront/tree/main/examples/data-fetching-demo) - All patterns
+- [Blog Example](https://github.com/veryfrontjs/veryfront/tree/main/examples/basic-mdx) - Complete blog
+- [Auth App](https://github.com/veryfrontjs/veryfront/tree/main/examples/auth-app) - Protected routes
 
 ---
 

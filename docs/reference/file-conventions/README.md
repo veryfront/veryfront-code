@@ -107,7 +107,7 @@ export default function CounterPage() {
 }
 ```
 
-**See Also:** [App Router Guide](../../routing/app-router.md)
+**See Also:** [App Router Guide](/guides/routing/app-router.md)
 
 ---
 
@@ -202,7 +202,7 @@ export default async function DashboardLayout({
 - Can fetch data asynchronously
 - State persists during navigation
 
-**See Also:** [App Router Guide](../../routing/app-router.md#layouts)
+**See Also:** [App Router Guide](/guides/routing/app-router.md#layouts)
 
 ---
 
@@ -300,7 +300,7 @@ export async function GET(request: Request) {
 - Automatically sets `Content-Type: application/json` when using `Response.json()`
 - Context includes: `params`, `query`, `request`, `headers`
 
-**See Also:** [API Routes Guide](../../routing/api-routes.md)
+**See Also:** [API Routes Guide](/guides/routing/api-routes.md)
 
 ---
 
@@ -349,7 +349,7 @@ export default function BlogLoading() {
 - Replaced with actual page content when ready
 - Allows UI to render immediately while content loads
 
-**See Also:** [App Router Guide](../../routing/app-router.md#loading-states)
+**See Also:** [App Router Guide](/guides/routing/app-router.md#loading-states)
 
 ---
 
@@ -425,7 +425,7 @@ export default function Error({
 - `error: Error` - The error that was thrown
 - `reset: () => void` - Function to attempt recovery
 
-**See Also:** [Error Handling](..//reference/functions/README.md#error-handling)
+**See Also:** [Error Handling](/reference/functions/README.md#error-handling)
 
 ---
 
@@ -530,7 +530,7 @@ export default function Template({
 - Reset component state on navigation
 - Enter/exit animations
 
-**See Also:** [App Router Guide](../../routing/app-router.md)
+**See Also:** [App Router Guide](/guides/routing/app-router.md)
 
 ---
 
@@ -686,7 +686,7 @@ export default function App({ Component, pageProps }: AppProps) {
 - Analytics integration
 - Error boundaries
 
-**See Also:** [Pages Router Guide](../../routing/pages-router.md#custom-app)
+**See Also:** [Pages Router Guide](/guides/routing/pages-router.md#custom-app)
 
 ---
 
@@ -762,7 +762,7 @@ export default function Document() {
 - Don't use React hooks or event handlers
 - Use `_app.tsx` for client-side logic
 
-**See Also:** [Pages Router Guide](../../routing/pages-router.md#custom-document)
+**See Also:** [Pages Router Guide](/guides/routing/pages-router.md#custom-document)
 
 ---
 
@@ -890,7 +890,7 @@ export const getServerData = async (ctx) => {
 };
 ```
 
-**See Also:** [Dynamic Routes](../../routing/dynamic-routes.md)
+**See Also:** [Dynamic Routes](/guides/routing/dynamic-routes.md)
 
 ---
 
@@ -983,7 +983,7 @@ app/
 
 **Note:** Only works in App Router
 
-**See Also:** [App Router Guide](../../routing/app-router.md#route-groups)
+**See Also:** [App Router Guide](/guides/routing/app-router.md#route-groups)
 
 ---
 
@@ -1033,7 +1033,7 @@ export default function Layout({
 
 **Note:** Only works in App Router
 
-**See Also:** [App Router Guide](../../routing/app-router.md#parallel-routes)
+**See Also:** [App Router Guide](/guides/routing/app-router.md#parallel-routes)
 
 ---
 
@@ -1069,7 +1069,7 @@ app/
 
 **Note:** Only works in App Router
 
-**See Also:** [App Router Guide](../../routing/app-router.md#intercepting-routes)
+**See Also:** [App Router Guide](/guides/routing/app-router.md#intercepting-routes)
 
 ---
 
@@ -1269,7 +1269,7 @@ export const config = {
 };
 ```
 
-**See Also:** [Middleware API](..//reference/functions/README.md#middleware-experimental)
+**See Also:** [Middleware API](/reference/functions/README.md#middleware-experimental)
 
 ---
 
@@ -1446,9 +1446,9 @@ export default function blogPost() { }
 
 ## See Also
 
-- [App Router Guide](../../routing/app-router.md) - Detailed App Router documentation
-- [Pages Router Guide](../../routing/pages-router.md) - Detailed Pages Router documentation
-- [Dynamic Routes](../../routing/dynamic-routes.md) - Dynamic route patterns
-- [API Routes](../../routing/api-routes.md) - Backend endpoints
+- [App Router Guide](/guides/routing/app-router.md) - Detailed App Router documentation
+- [Pages Router Guide](/guides/routing/pages-router.md) - Detailed Pages Router documentation
+- [Dynamic Routes](/guides/routing/dynamic-routes.md) - Dynamic route patterns
+- [API Routes](/guides/routing/api-routes.md) - Backend endpoints
 - [CLI Reference](../cli/README.md) - Command-line interface
 - [Configuration Reference](../configuration/README.md) - Config options

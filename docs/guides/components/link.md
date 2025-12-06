@@ -869,8 +869,8 @@ import { Link } from 'veryfront';
 
 ## Related Documentation
 
-- [App Router](../routing/app-router.md) - Modern routing with RSC
-- [Pages Router](../routing/pages-router.md) - Traditional routing
+- [App Router](/guides/routing/app-router.md) - Modern routing with RSC
+- [Pages Router](/guides/routing/pages-router.md) - Traditional routing
 - [useRouter Hook](../hooks/use-router.md) - Programmatic navigation
 - [usePathname Hook](../hooks/use-pathname.md) - Current path detection
 

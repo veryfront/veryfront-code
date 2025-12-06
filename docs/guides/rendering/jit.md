@@ -1401,7 +1401,7 @@ tags: [
 - [ISR (Incremental Static Regeneration)](./isr.md) - Time-based revalidation
 - [SSG (Static Site Generation)](./ssg.md) - Build-time rendering
 - [Rendering Mode Comparison](./comparison.md) - Compare all rendering modes
-- [Revalidation API](/reference/functions/revalidation.md) - Complete API reference
+- [Revalidation API](/reference/functions/get-static-paths.md) - Complete API reference
 
 ## Summary
 

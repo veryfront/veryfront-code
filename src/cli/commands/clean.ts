@@ -2,6 +2,7 @@ import { join } from "std/path/mod.ts";
 import { getConfig } from "@veryfront/config";
 import { getAdapter } from "@veryfront/platform/adapters/detect.ts";
 import { cliLogger } from "@veryfront/utils";
+import { DEFAULT_CACHE_DIR, PROJECT_DIRS } from "@veryfront/utils/constants/server.ts";
 import { CacheCoordinator, type CacheStore } from "@veryfront/rendering/cache/index.ts";
 import {
   FilesystemCacheStore,
@@ -58,11 +59,11 @@ async function cleanDirectory(path: string): Promise<void> {
 }
 
 async function cleanCacheStore(projectDir: string): Promise<void> {
-  const fallbackCacheDir = join(projectDir, ".veryfront", "cache");
+  const fallbackCacheDir = join(projectDir, PROJECT_DIRS.ROOT, "cache");
   try {
     const adapter = await getAdapter();
     const config = await getConfig(projectDir, adapter);
-    const cacheDir = config.cache?.dir ?? ".veryfront/cache";
+    const cacheDir = config.cache?.dir ?? DEFAULT_CACHE_DIR;
     const renderConfig = (config.cache?.render ?? {}) as RenderCacheConfig;
 
     const store = createRenderCacheStore(renderConfig.type, {

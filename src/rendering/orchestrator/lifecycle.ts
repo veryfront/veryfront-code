@@ -2,6 +2,7 @@ import { join } from "../../platform/compat/path-helper.ts";
 import { rendererLogger as logger } from "@veryfront/utils";
 import { MDXCacheAdapter } from "@veryfront/transforms/mdx/index.ts";
 import { isCompiledBinary } from "@veryfront/utils";
+import { DEFAULT_CACHE_DIR } from "@veryfront/utils/constants/server.ts";
 import { ComponentRegistry } from "../ssr/component-registry.ts";
 import { VirtualModuleSystem } from "../virtual-module-system.ts";
 import { CacheCoordinator } from "../cache/index.ts";
@@ -83,7 +84,7 @@ export class RendererLifecycle {
 
     // Initialize cache system (pluggable)
     const renderCacheConfig = config.cache?.render ?? {};
-    const cacheBaseDir = config.cache?.dir ?? ".veryfront/cache";
+    const cacheBaseDir = config.cache?.dir ?? DEFAULT_CACHE_DIR;
 
     let cacheStore: CacheStore;
     switch (renderCacheConfig.type) {

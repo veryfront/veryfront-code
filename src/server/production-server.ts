@@ -5,6 +5,7 @@ import { getAdapter } from "@veryfront/platform/adapters/detect.ts";
 import { createVeryfrontHandler } from "./universal-handler/index.ts";
 import { bootstrapProd } from "./bootstrap.ts";
 import { cwd, onSignal } from "@veryfront/platform/compat/process.ts";
+import { isDebugEnabled } from "../core/utils/constants/env.ts";
 
 interface ServerOptions {
   projectDir: string;
@@ -96,7 +97,7 @@ if (import.meta.main) {
       projectDir,
       port,
       hostname,
-      debug: adapter.env.get("VERYFRONT_DEBUG") === "1",
+      debug: isDebugEnabled(adapter.env),
       adapter, // Pass adapter to avoid re-detection
       signal: shutdownController.signal,
     });

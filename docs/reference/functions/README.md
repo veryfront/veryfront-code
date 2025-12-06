@@ -523,12 +523,12 @@ export const getServerData = async (ctx) => {
 
 - [Components Reference](/reference/components/) - React components
 - [Hooks Reference](/reference/hooks/) - Client-side hooks
-- [Data Fetching Guide](/data-fetching/) - Data fetching patterns
-- [Rendering Modes](/rendering/) - SSR, SSG, ISR, JIT explained
+- [Data Fetching Guide](/reference/functions/README.md) - Data fetching patterns
+- [Rendering Modes](/guides/rendering/README.md) - SSR, SSG, ISR, JIT explained
 
 ## Examples
 
-- [Data Fetching Demo](/examples/data-fetching-demo/)
-- [Static Blog](/examples/static-blog/)
-- [E-commerce with ISR](/examples/ecommerce-isr/)
-- [Authentication Flow](/examples/auth-app/)
+- [Data Fetching Demo](https://github.com/veryfrontjs/veryfront/tree/main/examples/data-fetching-demo)
+- [Static Blog](https://github.com/veryfrontjs/veryfront/tree/main/examples/basic-mdx)
+- [E-commerce with ISR](https://github.com/veryfrontjs/veryfront/tree/main/examples/full-demo)
+- [Authentication Flow](https://github.com/veryfrontjs/veryfront/tree/main/examples/auth-app)

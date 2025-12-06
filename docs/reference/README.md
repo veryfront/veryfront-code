@@ -142,19 +142,19 @@ import type {
 
 This documentation covers Veryfront v0.1.0. For migration guides and version-specific changes, see:
 
-- [Migration from Next.js](/guides/migration/from-nextjs.md)
-- [Changelog](/changelog.md)
+- [Migration from Next.js](/migration/)
+- [Changelog](/community/changelog.md)
 
 ## Getting Help
 
-- **Quick Start**: [5-minute quickstart guide](/quick-start.md)
+- **Quick Start**: [5-minute quickstart guide](/learn/quickstart.md)
 - **Guides**: [Step-by-step guides](/guides/)
-- **Examples**: [Example projects](/examples/)
+- **Examples**: [Example projects](https://github.com/veryfrontjs/veryfront/tree/main/examples)
 - **Community**: [GitHub Discussions](https://github.com/veryfront/veryfront/discussions)
 
 ## Related Documentation
 
-- [Routing System](/routing/) - File-based routing and route patterns
-- [Data Fetching](/data-fetching/) - Data loading strategies
-- [Rendering Modes](/rendering/) - SSR, SSG, ISR, and JIT explained
+- [Routing System](/guides/routing/README.md) - File-based routing and route patterns
+- [Data Fetching](/reference/functions/README.md) - Data loading strategies
+- [Rendering Modes](/guides/rendering/README.md) - SSR, SSG, ISR, and JIT explained
 - [AI Integration](/ai/) - AI agent system documentation

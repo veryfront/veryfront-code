@@ -62,5 +62,5 @@ export function getUnoCSSTailwindResetUrl(): string {
   return `${ESM_CDN_BASE}/@unocss/reset@${UNOCSS_VERSION}/tailwind.css`;
 }
 
-// Veryfront package version for esm.sh imports
-export const VERYFRONT_VERSION = "0.0.33";
+// Veryfront package version - derived from deno.json (single source of truth)
+export { VERSION as VERYFRONT_VERSION } from "../version.ts";
