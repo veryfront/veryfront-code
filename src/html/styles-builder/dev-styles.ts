@@ -17,10 +17,27 @@ export function getDevStyles(nonce?: string): string {
       right: 1rem;
       background: #3b82f6;
       color: white;
-      padding: 0.5rem 1rem;
+      padding: 0.5rem 0.75rem 0.5rem 1rem;
       border-radius: 0.5rem;
       font-size: 0.875rem;
       z-index: ${Z_INDEX_DEV_INDICATOR};
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    .dev-indicator-close {
+      background: transparent;
+      border: none;
+      color: white;
+      cursor: pointer;
+      font-size: 1.25rem;
+      line-height: 1;
+      padding: 0 0.25rem;
+      opacity: 0.7;
+      transition: opacity 0.15s;
+    }
+    .dev-indicator-close:hover {
+      opacity: 1;
     }
 
     /* Error overlay */

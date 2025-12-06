@@ -92,7 +92,8 @@ class ResourceRegistryClass {
    */
   register(id: string, resourceInstance: Resource): void {
     if (this.resources.has(id)) {
-      agentLogger.warn(`Resource "${id}" is already registered. Overwriting.`);
+      // Debug level - overwriting is expected during hot reload and re-discovery
+      agentLogger.debug(`Resource "${id}" is already registered. Overwriting.`);
     }
 
     this.resources.set(id, resourceInstance);

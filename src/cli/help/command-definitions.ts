@@ -193,10 +193,20 @@ export const COMMANDS: CommandRegistry = {
       },
       {
         flag: "--all",
-        description: "Clean everything",
+        description: "Clean everything (node_modules, .deno, .veryfront)",
+      },
+      {
+        flag: "-f, --force",
+        description: "Skip confirmation prompts",
       },
     ],
-    examples: ["veryfront clean", "veryfront clean --cache", "veryfront clean --all"],
+    examples: [
+      "veryfront clean",
+      "veryfront clean --cache",
+      "veryfront clean --all",
+      "veryfront clean --all --force",
+    ],
+    notes: ["The --all option requires confirmation unless --force is used"],
   },
   routes: {
     name: "routes",

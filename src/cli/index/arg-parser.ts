@@ -78,12 +78,30 @@ export function parseArrayArg(arg: unknown): string[] | undefined {
 /**
  * Parse CLI arguments with default configuration
  *
+ * Supports standard CLI flags per clig.dev guidelines:
+ * - -h, --help: Show help
+ * - -v, --version: Show version
+ * - -q, --quiet: Suppress non-essential output
+ * - --verbose: Show detailed output
+ * - -f, --force: Skip confirmations for dangerous operations
+ * - --no-color: Disable colored output
+ * - --color: Force colored output
+ *
  * @param args - Raw CLI arguments
  * @returns Parsed arguments object
  */
 export function parseCliArgs(args: string[]): ParsedArgs {
   return parse(args, {
-    alias: { p: "port", h: "help", v: "version" },
+    alias: {
+      p: "port",
+      h: "help",
+      v: "version",
+      q: "quiet",
+      f: "force",
+      s: "strict",
+      t: "template",
+      j: "json",
+    },
     default: { port: 3002 },
   }) as ParsedArgs;
 }

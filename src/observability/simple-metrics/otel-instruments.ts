@@ -4,8 +4,16 @@
  */
 
 import { serverLogger as logger } from "@veryfront/utils";
-import { isDeno } from "../../platform/compat/runtime.ts";
 import type { OtelInstruments } from "./types.ts";
+
+/**
+ * Check if running in Deno at runtime
+ * We use a function instead of a constant to ensure proper detection
+ * in bundled environments where constants may be evaluated at build time
+ */
+function isDenoRuntime(): boolean {
+  return typeof Deno !== "undefined";
+}
 
 let otelInitialized = false;
 const otel: OtelInstruments = {};
@@ -41,7 +49,7 @@ export async function ensureOtelInstruments(): Promise<void> {
 
   // Skip OpenTelemetry in non-Deno runtimes (Node.js, Bun)
   // The npm: protocol is Deno-specific and will fail in other runtimes
-  if (!isDeno) return;
+  if (!isDenoRuntime()) return;
 
   try {
     // Construct module name dynamically to prevent Deno static analyzer
