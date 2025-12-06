@@ -65,16 +65,18 @@ export interface AgentTheme {
 }
 
 /**
- * Default agent theme
+ * Default agent theme - Apple-inspired, clean & minimal
  */
 export const defaultAgentTheme: AgentTheme = {
   container:
-    "border border-gray-200 dark:border-gray-800 rounded-lg p-6 space-y-4 bg-white dark:bg-gray-950",
-  status: "inline-flex items-center px-3 py-1 rounded-full text-sm font-medium",
+    "border border-neutral-200 dark:border-neutral-800 rounded-2xl p-6 space-y-4 bg-white dark:bg-neutral-900",
+  status: "inline-flex items-center px-3 py-1.5 rounded-full text-sm font-medium",
   thinking:
-    "bg-yellow-50 dark:bg-yellow-900/20 border-l-4 border-yellow-500 pl-4 py-2 italic text-gray-700 dark:text-gray-300",
-  tool: "border-l-4 border-blue-500 pl-4 py-2 bg-blue-50 dark:bg-blue-900/20",
-  toolResult: "mt-2 p-3 bg-gray-100 dark:bg-gray-900 rounded font-mono text-sm overflow-x-auto",
+    "bg-amber-50 dark:bg-amber-900/20 rounded-xl px-4 py-3 italic text-neutral-700 dark:text-neutral-300 border border-amber-200 dark:border-amber-800",
+  tool:
+    "rounded-xl px-4 py-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800",
+  toolResult:
+    "mt-2 p-3 bg-neutral-100 dark:bg-neutral-800 rounded-xl font-mono text-sm overflow-x-auto",
 };
 
 /**

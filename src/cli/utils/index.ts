@@ -95,7 +95,7 @@ export function getColorEnabled(): boolean {
  * Strip ANSI color codes from a string
  */
 export function stripColors(str: string): string {
-  // eslint-disable-next-line no-control-regex
+  // deno-lint-ignore no-control-regex
   return str.replace(/\x1b\[[0-9;]*m/g, "");
 }
 
