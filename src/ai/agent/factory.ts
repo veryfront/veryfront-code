@@ -73,7 +73,8 @@ function createAgentStreamResult(stream: ReadableStream): AgentStreamResult {
 export function agent(config: AgentConfig): Agent {
   const id = config.id || generateAgentId();
 
-  if (config.tools) {
+  // Register tools if config.tools is a Record (not `true` for all tools)
+  if (config.tools && config.tools !== true) {
     for (const [name, entry] of Object.entries(config.tools)) {
       if (entry && typeof entry === "object") {
         const normalizedTool = entry.id === name ? entry : { ...entry, id: name };
