@@ -134,14 +134,14 @@ const denoResolvePlugin: esbuild.Plugin = {
 			}
 
 			const stdMappings: Record<string, string> = {
-				"std/path": "path",
-				"std/path/mod.ts": "path",
-				"std/fs": "fs",
-				"std/fs/mod.ts": "fs",
+				"std/path": "node:path",
+				"std/path/mod.ts": "node:path",
+				"std/fs": "node:fs",
+				"std/fs/mod.ts": "node:fs",
 				"std/testing/bdd.ts": "@std/testing-bdd",
 				"std/expect": "expect",
 				"std/front_matter": "gray-matter",
-				"std/assert": "assert",
+				"std/assert": "node:assert",
 				"std/flags": "minimist",
 				"std/flags/mod.ts": "minimist",
 				"std/yaml": "yaml",
@@ -160,7 +160,7 @@ const denoResolvePlugin: esbuild.Plugin = {
 		build.onResolve({ filter: /^https:\/\// }, (args) => {
 			if (args.path.includes("deno.land/std")) {
 				if (args.path.includes("/path/") || args.path.includes("/path@")) {
-					return { path: "path", external: true };
+					return { path: "node:path", external: true };
 				}
 				if (args.path.includes("/fmt/colors")) {
 					return {
@@ -168,10 +168,10 @@ const denoResolvePlugin: esbuild.Plugin = {
 					};
 				}
 				if (args.path.includes("/fs/") || args.path.includes("/fs@")) {
-					return { path: "fs", external: true };
+					return { path: "node:fs", external: true };
 				}
 				if (args.path.includes("/assert/") || args.path.includes("/assert@")) {
-					return { path: "assert", external: true };
+					return { path: "node:assert", external: true };
 				}
 				if (args.path.includes("/testing/")) {
 					return { path: "@std/testing", external: true };
@@ -186,7 +186,7 @@ const denoResolvePlugin: esbuild.Plugin = {
 					return { path: "minimist", external: true };
 				}
 				console.warn(`[build-npm] Unmapped Deno std URL: ${args.path}`);
-				return { path: "path", external: true };
+				return { path: "node:path", external: true };
 			}
 
 			const npmPkg = importMappings[args.path];
@@ -240,8 +240,8 @@ const denoResolvePlugin: esbuild.Plugin = {
 
 		build.onResolve({ filter: /^@std\// }, (args) => {
 			const stdMappings: Record<string, string> = {
-				"@std/path": "path",
-				"@std/fs": "fs",
+				"@std/path": "node:path",
+				"@std/fs": "node:fs",
 				"@std/testing/bdd.ts": "@std/testing-bdd",
 				"@std/expect": "expect",
 			};
@@ -251,7 +251,7 @@ const denoResolvePlugin: esbuild.Plugin = {
 			if (mapped) {
 				return { path: mapped[1], external: true };
 			}
-			return { path: "path", external: true };
+			return { path: "node:path", external: true };
 		});
 
 		build.onResolve({ filter: /^(react|react-dom|ai|@ai-sdk|zod)/ }, (args) => {
@@ -679,7 +679,7 @@ const cliBundlePlugin: esbuild.Plugin = {
 		build.onResolve(
 			{
 				filter:
-					/^(react|react-dom|zod|ai|@ai-sdk|picocolors|mri|yaml|gray-matter|ws)/,
+					/^(react|react-dom|zod|ai|@ai-sdk|picocolors|mri|yaml|gray-matter|ws|@opentelemetry)/,
 			},
 			(args) => {
 				return { path: args.path, external: true };
@@ -1311,6 +1311,8 @@ const packageJson = {
 		"@ai-sdk/openai": "^2.0.0",
 		"@ai-sdk/anthropic": "^2.0.0",
 		"@ai-sdk/react": "^2.0.0",
+		"@opentelemetry/api": "^1.9.0",
+		"@opentelemetry/core": "^1.30.0",
 		esbuild: "^0.20.0",
 		"@mdx-js/mdx": "^3.0.0",
 		"@mdx-js/react": "^3.0.0",
