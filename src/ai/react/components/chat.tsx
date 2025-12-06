@@ -118,8 +118,8 @@ export const Chat = React.forwardRef<HTMLDivElement, ChatProps>(
         className={cn(theme.container, className)}
         style={{ maxHeight }}
       >
-        {/* Message List */}
-        <MessageList className="flex-1 overflow-y-auto">
+        {/* Message List - scrollable content area */}
+        <MessageList className="flex-1 min-h-0 overflow-y-auto">
           <div className="max-w-2xl mx-auto px-4 py-4 space-y-2">
             {messages.map((msg) =>
               renderMessage
@@ -167,8 +167,8 @@ export const Chat = React.forwardRef<HTMLDivElement, ChatProps>(
           </div>
         )}
 
-        {/* Input area - Apple style */}
-        <div className="bg-white dark:bg-neutral-900 border-t border-neutral-200 dark:border-neutral-800">
+        {/* Input area - fixed at bottom */}
+        <div className="flex-shrink-0 bg-white dark:bg-neutral-900 border-t border-neutral-200 dark:border-neutral-800">
           <form
             onSubmit={submitHandler}
             className="max-w-2xl mx-auto px-4 py-3"
