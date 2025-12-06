@@ -902,7 +902,14 @@ export interface VeryFrontConfig {
       anthropic?: { apiKey?: string };
     };
   };
+  client?: {
+    moduleResolution?: 'esm-sh' | 'self-hosted' | 'bundled';
+    [key: string]: unknown;
+  };
 }
+
+/** Alias for VeryFrontConfig for compatibility */
+export type VeryfrontConfig = VeryFrontConfig;
 
 export declare function defineConfig(config: VeryFrontConfig): VeryFrontConfig;
 `,
@@ -918,7 +925,8 @@ export interface AgentConfig {
   id?: string;
   model: string;
   system?: string | (() => string | Promise<string>);
-  tools?: Record<string, boolean | object>;
+  /** Tools available to the agent. Use \`true\` to enable all discovered tools, or specify individual tools. */
+  tools?: true | Record<string, boolean | object>;
   memory?: {
     type?: 'conversation' | 'summary' | 'buffer';
     maxTokens?: number;
@@ -969,6 +977,15 @@ export declare const agentRegistry: {
   getAll(): Map<string, AgentInstance>;
   register(id: string, agent: AgentInstance): void;
 };
+
+/** Get an agent by ID from the registry */
+export declare function getAgent(id: string): AgentInstance | undefined;
+
+/** Get all registered agent IDs */
+export declare function getAllAgentIds(): string[];
+
+/** Register an agent in the registry */
+export declare function registerAgent(id: string, agent: AgentInstance): void;
 
 // ============================================================================
 // Tool Functions
@@ -1399,6 +1416,26 @@ try {
   console.log(`  ✓ Copied template files: ${templateDirs.join(", ")}`);
 } catch (e) {
   console.log("  ⚠ Failed to copy templates:", e);
+}
+
+// Copy integration files for `veryfront init --integrations` command
+console.log("📄 Copying integration files...");
+const integrationsSourceDir = pathHelper.join(PROJECT_ROOT, "src/cli/templates/integrations");
+const integrationsDestDir = pathHelper.join(OUT_DIR, "dist/integrations");
+
+try {
+  await copyDirectory(integrationsSourceDir, integrationsDestDir);
+  // @ts-ignore - Deno global
+  const integrationDirs = [];
+  // @ts-ignore - Deno global
+  for await (const entry of Deno.readDir(integrationsSourceDir)) {
+    if (entry.isDirectory) {
+      integrationDirs.push(entry.name);
+    }
+  }
+  console.log(`  ✓ Copied integration files: ${integrationDirs.join(", ")}`);
+} catch (e) {
+  console.log("  ⚠ Failed to copy integrations:", e);
 }
 
 console.log("📄 Copying additional files...");
