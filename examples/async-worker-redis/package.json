@@ -9,7 +9,7 @@
     "start:worker": "npx tsx src/worker.ts"
   },
   "dependencies": {
-    "veryfront": "^0.0.43",
+    "veryfront": "^0.0.44",
     "redis": "^4.6.0"
   },
   "devDependencies": {
