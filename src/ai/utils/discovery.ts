@@ -73,6 +73,20 @@ async function importModule(
   // Transpile with esbuild
   const { build } = await import("esbuild");
 
+  // Get the directory containing the file for resolving relative imports
+  const fileDir = pathHelper.dirname(filePath);
+
+  // Extract relative imports from source to mark them as external
+  // This is needed because esbuild in WASM mode has limited filesystem access
+  const relativeImportPattern = /from\s+["'](\.\.[^"']+)["']/g;
+  const relativeImports: string[] = [];
+  let match;
+  while ((match = relativeImportPattern.exec(source)) !== null) {
+    if (match[1]) {
+      relativeImports.push(match[1]);
+    }
+  }
+
   const result = await build({
     bundle: true,
     write: false,
@@ -92,11 +106,13 @@ async function importModule(
       "veryfront/*",
       "@opentelemetry/*",
       "path",
+      // Mark relative imports as external to avoid filesystem access issues
+      ...relativeImports,
     ],
     stdin: {
       contents: source,
       loader,
-      resolveDir: pathHelper.dirname(filePath),
+      resolveDir: fileDir,
       sourcefile: filePath,
     },
   });
@@ -115,11 +131,11 @@ async function importModule(
   // Rewrite imports based on platform
   let transformedCode: string;
   if (isDeno) {
-    // In Deno, rewrite to npm: specifiers
-    transformedCode = rewriteForDeno(js);
+    // In Deno, rewrite to npm: specifiers and resolve relative imports
+    transformedCode = rewriteForDeno(js, fileDir);
   } else {
     // In Node.js, rewrite to absolute paths
-    transformedCode = await rewriteDiscoveryImports(js, context.baseDir || ".", fs);
+    transformedCode = await rewriteDiscoveryImports(js, context.baseDir || ".", fs, fileDir);
   }
 
   await fs.writeTextFile(tempFile, transformedCode);
@@ -135,9 +151,9 @@ async function importModule(
 }
 
 /**
- * Rewrite imports for Deno (use npm: specifiers)
+ * Rewrite imports for Deno (use npm: specifiers and resolve relative imports)
  */
-function rewriteForDeno(code: string): string {
+function rewriteForDeno(code: string, fileDir: string): string {
   let transformed = code;
 
   // Rewrite external packages to npm: specifiers
@@ -154,6 +170,16 @@ function rewriteForDeno(code: string): string {
     transformed = transformed.replace(pattern, replacement);
   }
 
+  // Rewrite relative imports to absolute file:// URLs
+  // This handles imports like "../../lib/github-client.ts" that were marked external
+  transformed = transformed.replace(
+    /from\s+["'](\.\.\/[^"']+)["']/g,
+    (_match, relativePath: string) => {
+      const absolutePath = pathHelper.resolve(fileDir, relativePath);
+      return `from "file://${absolutePath}"`;
+    },
+  );
+
   return transformed;
 }
 
@@ -164,11 +190,22 @@ async function rewriteDiscoveryImports(
   code: string,
   projectDir: string,
   fs: ReturnType<typeof createFileSystem>,
+  fileDir: string,
 ): Promise<string> {
   let transformed = code;
 
   try {
     const { pathToFileURL } = await import("node:url");
+
+    // Rewrite relative imports to absolute file:// URLs
+    // This handles imports like "../../lib/github-client.ts" that were marked external
+    transformed = transformed.replace(
+      /from\s+["'](\.\.\/[^"']+)["']/g,
+      (_match, relativePath: string) => {
+        const absolutePath = pathHelper.resolve(fileDir, relativePath);
+        return `from "${pathToFileURL(absolutePath).href}"`;
+      },
+    );
 
     // Helper to resolve a package to absolute file:// URL
     const resolvePackageToFileUrl = async (packageName: string): Promise<string | null> => {
