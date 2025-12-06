@@ -117,7 +117,7 @@ export class SSRRenderer {
       isCompiledBinary() &&
       (this.mode === "production" || options.wantsStream)
     ) {
-      logger.info(
+      logger.debug(
         "Streaming SSR disabled in compiled binary (using string rendering)",
         {
           reactVersion: versionInfo.version,
@@ -127,7 +127,7 @@ export class SSRRenderer {
     }
 
     if (useStreaming) {
-      logger.info("Rendering via streaming adapter", {
+      logger.debug("Rendering via streaming adapter", {
         reactVersion: versionInfo.version,
         delivery: options.wantsStream ? "stream" : "string",
       });
@@ -161,7 +161,7 @@ export class SSRRenderer {
       } else if (renderResult.pipe) {
         // Handle Node.js renderToPipeableStream result
         // This is the case when running in Node.js - the result has { pipe, abort }
-        logger.info(
+        logger.debug(
           "Converting pipeable stream to string (Node.js renderToPipeableStream)",
         );
         html = await pipeToString(renderResult.pipe);

@@ -53,17 +53,17 @@ export class DevServer {
 
   async start(): Promise<void> {
     const baseAdapter = await getAdapter();
-    logger.info(`Using ${baseAdapter.name} runtime adapter`);
+    logger.debug(`Using ${baseAdapter.name} runtime adapter`);
 
     const bootstrap = await bootstrapDev(this.options.projectDir, baseAdapter);
     this.adapter = bootstrap.adapter;
     this.appConfig = bootstrap.config;
 
     if (bootstrap.usingFSAdapter) {
-      logger.info(`[FSAdapter] Using ${bootstrap.fsAdapterType} backend`);
+      logger.debug(`[FSAdapter] Using ${bootstrap.fsAdapterType} backend`);
     }
 
-    logger.info("Starting dev server", {
+    logger.debug("Starting dev server", {
       port: this.options.port,
       projectDir: this.options.projectDir,
       hmr: this.options.enableHMR,

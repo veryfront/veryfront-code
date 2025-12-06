@@ -35,7 +35,7 @@ export async function getRenderer(
   ctx: HandlerContext,
 ): Promise<Awaited<ReturnType<typeof createRenderer>>> {
   if (!rendererInit) {
-    rendererLogger.info("[SSRHandler] Creating renderer", {
+    rendererLogger.debug("[SSRHandler] Creating renderer", {
       mode: ctx.mode,
       projectDir: ctx.projectDir,
     });
@@ -50,7 +50,7 @@ export async function getRenderer(
       // Register renderer for cleanup
       rendererRegistry.add(renderer);
 
-      rendererLogger.info("[SSRHandler] Renderer created successfully");
+      rendererLogger.debug("[SSRHandler] Renderer created successfully");
       return renderer;
     } catch (error) {
       rendererLogger.error("[SSRHandler] FATAL: Renderer creation failed", {
@@ -77,7 +77,7 @@ export async function getRenderer(
  * ```
  */
 export async function cleanupRenderers(): Promise<void> {
-  rendererLogger.info("[RendererManager] Cleaning up renderers", {
+  rendererLogger.debug("[RendererManager] Cleaning up renderers", {
     count: rendererRegistry.size,
   });
 
@@ -93,5 +93,5 @@ export async function cleanupRenderers(): Promise<void> {
 
   rendererRegistry.clear();
 
-  rendererLogger.info("[RendererManager] Renderer cleanup complete");
+  rendererLogger.debug("[RendererManager] Renderer cleanup complete");
 }

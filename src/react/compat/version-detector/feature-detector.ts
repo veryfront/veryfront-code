@@ -50,7 +50,7 @@ export function detectReactVersion(): ReactVersionInfo {
     features,
   };
 
-  logger.info("Detected React version", info);
+  logger.debug("Detected React version", info);
 
   return info;
 }

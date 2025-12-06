@@ -56,7 +56,7 @@ export class ComponentRegistry {
   }
 
   private async _discoverInternal(): Promise<void> {
-    logger.info(`Discovering components in: ${this.componentDirs.join(", ")}`);
+    logger.debug(`Discovering components in: ${this.componentDirs.join(", ")}`);
 
     for (const dir of this.componentDirs) {
       const fullPath = join(this.options.projectDir, dir);
@@ -64,11 +64,16 @@ export class ComponentRegistry {
       try {
         await this.walkDirectory(fullPath);
       } catch (error) {
-        logger.warn(`Failed to discover components in ${fullPath}:`, error);
+        // Silently skip missing directories - they're optional
+        const isNotFound = (error as NodeJS.ErrnoException)?.code === "ENOENT" ||
+          (error instanceof Error && error.name === "NotFound");
+        if (!isNotFound) {
+          logger.warn(`Failed to discover components in ${fullPath}:`, error);
+        }
       }
     }
 
-    logger.info(`Discovered ${this.components.size} components`);
+    logger.debug(`Discovered ${this.components.size} components`);
   }
 
   private async walkDirectory(dir: string): Promise<void> {
