@@ -17,7 +17,7 @@ import { generateTailwindCSS } from "./styles-builder/unocss-generator.ts";
 import type { HTMLGenerationOptions } from "./types.ts";
 import {
   buildContentAttributes,
-  buildImportMapJsonSync,
+  buildImportMapJson,
   buildRootAttributes,
   shouldDisableLayout,
 } from "./utils.ts";
@@ -65,7 +65,12 @@ export async function generateHTMLShellParts(
     meta.ssrHash,
   );
 
-  const importMapJson = buildImportMapJsonSync(options.importMap);
+  // Build import map with config support (self-hosted mode, CDN versions, etc.)
+  const importMapJson = await buildImportMapJson({
+    projectDir: options.projectDir,
+    config: options.config,
+    customImports: options.importMap,
+  });
 
   const hydrationDataJson = generateHydrationData(
     meta.slug || "",

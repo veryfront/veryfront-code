@@ -138,17 +138,58 @@ export function useChat(options: UseChatOptions): UseChatResult {
 
         // Handle streaming response
         if (response.body) {
+          // Create a placeholder message ID for streaming
+          const streamingMessageId = `msg_${Date.now()}`;
+          let hasAddedStreamingMessage = false;
+
           await handleStreamingResponse(
             response.body,
+            // onMessage - when streaming is complete
             (assistantMessage) => {
-              setMessages((prev) => [...prev, assistantMessage]);
+              // Replace the streaming message with the final message
+              setMessages((prev) => {
+                // If we had a streaming message, replace it
+                if (hasAddedStreamingMessage) {
+                  return prev.map((m) =>
+                    m.id === streamingMessageId ? assistantMessage : m
+                  );
+                }
+                // Otherwise just add it
+                return [...prev, assistantMessage];
+              });
 
               if (options.onFinish) {
                 options.onFinish(assistantMessage);
               }
             },
+            // onData - for data events
             (partialData) => {
               setData(partialData);
+            },
+            // onUpdate - for real-time streaming updates
+            (partialContent, messageId) => {
+              if (!hasAddedStreamingMessage) {
+                // Add the streaming message for the first time
+                hasAddedStreamingMessage = true;
+                setMessages((prev) => [
+                  ...prev,
+                  {
+                    id: messageId || streamingMessageId,
+                    role: "assistant" as const,
+                    content: partialContent,
+                    timestamp: Date.now(),
+                  },
+                ]);
+              } else {
+                // Update the streaming message content
+                setMessages((prev) =>
+                  prev.map((m) =>
+                    m.id === (messageId || streamingMessageId)
+                      ? { ...m, content: partialContent }
+                      : m
+                  )
+                );
+              }
             },
           );
         }
@@ -256,20 +297,25 @@ export function useChat(options: UseChatOptions): UseChatResult {
 
 /**
  * Handle streaming response from server
+ * Uses Vercel AI SDK data stream format
  */
 async function handleStreamingResponse(
   body: ReadableStream,
   onMessage: (message: Message) => void,
   onData: (data: unknown) => void,
+  onUpdate?: (partialContent: string, messageId: string) => void,
 ): Promise<void> {
   const reader = body.getReader();
   const decoder = new TextDecoder();
   let accumulatedText = "";
+  let messageId = `msg_${Date.now()}`;
 
   while (true) {
     const { done, value } = await reader.read();
 
-    if (done) break;
+    if (done) {
+      break;
+    }
 
     const chunk = decoder.decode(value, { stream: true });
     const lines = chunk.split("\n").filter((line) => line.trim());
@@ -279,25 +325,46 @@ async function handleStreamingResponse(
         const data = line.slice(6);
 
         if (data === "[DONE]") {
+          // Stream finished - create the assistant message
+          if (accumulatedText) {
+            const assistantMessage: Message = {
+              id: messageId,
+              role: "assistant",
+              content: accumulatedText,
+              timestamp: Date.now(),
+            };
+            onMessage(assistantMessage);
+          }
           continue;
         }
 
         try {
           const parsed = JSON.parse(data);
 
-          if (parsed.type === "chunk") {
-            accumulatedText += parsed.content;
-          } else if (parsed.type === "status") {
-            // Stream completed
-            const assistantMessage: Message = {
-              id: `msg_${Date.now()}`,
-              role: "assistant",
-              content: accumulatedText,
-              timestamp: Date.now(),
-            };
-            onMessage(assistantMessage);
-          } else if (parsed.type === "data") {
+          if (parsed.type === "data") {
             onData(parsed.data);
+          } else if (parsed.type === "start") {
+            // New message starting
+            messageId = parsed.messageId || `msg_${Date.now()}`;
+            accumulatedText = "";
+          } else if (parsed.type === "text-delta") {
+            // Text chunk - accumulate and update UI
+            accumulatedText += parsed.textDelta || "";
+            // Call onUpdate to show text progressively
+            if (onUpdate) {
+              onUpdate(accumulatedText, messageId);
+            }
+          } else if (parsed.type === "finish") {
+            // Stream completed
+            if (accumulatedText) {
+              const assistantMessage: Message = {
+                id: messageId,
+                role: "assistant",
+                content: accumulatedText,
+                timestamp: Date.now(),
+              };
+              onMessage(assistantMessage);
+            }
           }
         } catch {
           // Skip invalid JSON

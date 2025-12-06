@@ -8,7 +8,7 @@
     "start": "npx tsx test-minio.ts"
   },
   "dependencies": {
-    "veryfront": "^0.0.32"
+    "veryfront": "^0.0.33"
   },
   "devDependencies": {
     "tsx": "^4.0.0"

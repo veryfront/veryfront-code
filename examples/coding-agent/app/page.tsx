@@ -256,25 +256,29 @@ function useAgentChat(options: { api: string }) {
         for (const line of lines) {
           if (!line.startsWith("data: ")) continue;
 
-          try {
-            const data = JSON.parse(line.slice(6));
+          const rawData = line.slice(6);
+          if (rawData === "[DONE]") continue;
 
-            if (data.type === "chunk") {
+          try {
+            const data = JSON.parse(rawData);
+
+            // Vercel AI SDK data stream format
+            if (data.type === "text-delta") {
               assistantMessage = {
                 ...assistantMessage,
-                content: assistantMessage.content + data.content,
+                content: assistantMessage.content + (data.textDelta || ""),
               };
               setMessages((prev) => [...prev.slice(0, -1), assistantMessage]);
-            } else if (data.type === "tool_call") {
+            } else if (data.type === "tool-call") {
               assistantMessage = {
                 ...assistantMessage,
-                toolCalls: [...(assistantMessage.toolCalls || []), data.toolCall],
+                toolCalls: [...(assistantMessage.toolCalls || []), { name: data.toolName, args: data.args }],
               };
               setMessages((prev) => [...prev.slice(0, -1), assistantMessage]);
-            } else if (data.type === "tool_result") {
+            } else if (data.type === "tool-result") {
               assistantMessage = {
                 ...assistantMessage,
-                toolResults: [...(assistantMessage.toolResults || []), data.toolCall],
+                toolResults: [...(assistantMessage.toolResults || []), { name: data.toolName, result: data.result }],
               };
               setMessages((prev) => [...prev.slice(0, -1), assistantMessage]);
             } else if (data.type === "error") {

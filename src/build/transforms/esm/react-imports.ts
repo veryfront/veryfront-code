@@ -3,6 +3,20 @@ import { REACT_DEFAULT_VERSION } from "@veryfront/utils/constants/cdn.ts";
 import { isNodeRuntime } from "../../../platform/compat/runtime.ts";
 import { cwd } from "../../../platform/compat/process.ts";
 
+/**
+ * Get the absolute path to the veryfront AI React module for Deno SSR.
+ * This resolves relative to this file's location in the veryfront source tree.
+ */
+function getVeryfrontAIReactPath(subpath: string = ""): string {
+  // This file is at: src/build/transforms/esm/react-imports.ts
+  // AI react is at: src/ai/react/index.ts
+  // So we need to go up 4 levels: esm -> transforms -> build -> src
+  const currentDir = new URL(".", import.meta.url).pathname;
+  const srcDir = currentDir.replace(/\/build\/transforms\/esm\/?$/, "");
+  const modulePath = subpath || "index.ts";
+  return `file://${srcDir}/ai/react/${modulePath}`;
+}
+
 // Cache whether project has both react and react-dom
 let projectHasReactDom: boolean | null = null;
 
@@ -110,6 +124,28 @@ export async function resolveReactImports(code: string, forSSR: boolean = false)
   // For Node.js (non-SSR), keep bare imports as-is (npm packages)
   if (isNode) {
     return code;
+  }
+
+  // For Deno SSR, resolve veryfront imports to local source files (not esm.sh)
+  // and React imports to esm.sh
+  if (forSSR) {
+    const denoSSRImports: Record<string, string> = {
+      "react/jsx-runtime": `https://esm.sh/react@${REACT_DEFAULT_VERSION}/jsx-runtime`,
+      "react/jsx-dev-runtime": `https://esm.sh/react@${REACT_DEFAULT_VERSION}/jsx-dev-runtime`,
+      "react-dom/server": `https://esm.sh/react-dom@${REACT_DEFAULT_VERSION}/server`,
+      "react-dom/client": `https://esm.sh/react-dom@${REACT_DEFAULT_VERSION}/client`,
+      "react-dom": `https://esm.sh/react-dom@${REACT_DEFAULT_VERSION}`,
+      "react": `https://esm.sh/react@${REACT_DEFAULT_VERSION}`,
+      // For Deno SSR, resolve veryfront imports to absolute file:// URLs
+      // This prevents "react not in import map" errors when esm.sh module tries to import react
+      "veryfront/ai/react": getVeryfrontAIReactPath(),
+      "veryfront/ai/components": getVeryfrontAIReactPath("components/index.ts"),
+      "veryfront/ai/primitives": getVeryfrontAIReactPath("primitives/index.ts"),
+    };
+
+    return replaceSpecifiers(code, (specifier) => {
+      return denoSSRImports[specifier] || null;
+    });
   }
 
   // For Deno/browser, transform to esm.sh URLs
