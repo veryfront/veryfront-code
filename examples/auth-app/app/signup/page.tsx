@@ -38,7 +38,6 @@ export default function SignupPage() {
         throw new Error(data.error || "Failed to sign up");
       }
 
-      // Redirect to login or auto-login
       globalThis.location.href = "/login?registered=true";
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to sign up");
@@ -48,19 +47,22 @@ export default function SignupPage() {
   }
 
   return (
-    <div className="max-w-md mx-auto p-8">
-      <div className="bg-white p-8 rounded-lg shadow-md">
-        <h1 className="text-2xl font-bold text-center mb-8">Sign Up</h1>
+    <div className="max-w-sm mx-auto">
+      <div className="text-center mb-8">
+        <h1 className="text-2xl font-bold text-neutral-900 dark:text-white">Create account</h1>
+        <p className="text-sm text-neutral-500 dark:text-neutral-400 mt-1">Get started for free</p>
+      </div>
 
+      <div className="bg-white dark:bg-neutral-800 p-6 rounded-2xl border border-neutral-200 dark:border-neutral-700">
         {error && (
-          <div className="bg-red-50 border border-red-200 text-red-700 p-3 rounded mb-4">
+          <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-600 dark:text-red-400 px-4 py-3 rounded-xl text-sm mb-4">
             {error}
           </div>
         )}
 
-        <form onSubmit={handleSubmit}>
-          <div className="mb-4">
-            <label className="block mb-2 font-bold text-gray-700">
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-1.5">
               Email
             </label>
             <input
@@ -68,12 +70,12 @@ export default function SignupPage() {
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               required
-              className="w-full p-3 border border-gray-300 rounded text-base focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              className="w-full px-4 py-2.5 bg-neutral-50 dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-700 rounded-xl text-neutral-900 dark:text-white placeholder-neutral-400 focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 transition-colors"
             />
           </div>
 
-          <div className="mb-4">
-            <label className="block mb-2 font-bold text-gray-700">
+          <div>
+            <label className="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-1.5">
               Password
             </label>
             <input
@@ -82,12 +84,12 @@ export default function SignupPage() {
               onChange={(e) => setPassword(e.target.value)}
               required
               minLength={8}
-              className="w-full p-3 border border-gray-300 rounded text-base focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              className="w-full px-4 py-2.5 bg-neutral-50 dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-700 rounded-xl text-neutral-900 dark:text-white placeholder-neutral-400 focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 transition-colors"
             />
           </div>
 
-          <div className="mb-6">
-            <label className="block mb-2 font-bold text-gray-700">
+          <div>
+            <label className="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-1.5">
               Confirm Password
             </label>
             <input
@@ -95,21 +97,21 @@ export default function SignupPage() {
               value={confirmPassword}
               onChange={(e) => setConfirmPassword(e.target.value)}
               required
-              className="w-full p-3 border border-gray-300 rounded text-base focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              className="w-full px-4 py-2.5 bg-neutral-50 dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-700 rounded-xl text-neutral-900 dark:text-white placeholder-neutral-400 focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 transition-colors"
             />
           </div>
 
           <button
             type="submit"
             disabled={loading}
-            className="w-full p-3 bg-blue-500 text-white rounded font-bold text-base hover:bg-blue-600 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
+            className="w-full py-2.5 px-4 bg-blue-500 text-white font-medium rounded-xl hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500/30 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
-            {loading ? "Creating account..." : "Sign Up"}
+            {loading ? "Creating account..." : "Sign up"}
           </button>
         </form>
 
-        <p className="text-center mt-6 text-gray-600">
-          Already have an account? <a href="/login" className="text-blue-500 hover:underline">Login</a>
+        <p className="text-center mt-6 text-sm text-neutral-600 dark:text-neutral-400">
+          Already have an account? <a href="/login" className="text-blue-500 hover:text-blue-600 font-medium">Sign in</a>
         </p>
       </div>
     </div>

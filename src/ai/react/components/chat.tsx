@@ -120,70 +120,79 @@ export const Chat = React.forwardRef<HTMLDivElement, ChatProps>(
         style={{ maxHeight }}
       >
         {/* Message List */}
-        <MessageList className="flex-1 overflow-y-auto p-4 space-y-4">
-          {messages.map((msg) =>
-            renderMessage
-              ? <React.Fragment key={msg.id}>{renderMessage(msg)}</React.Fragment>
-              : (
-                <MessageItem
-                  key={msg.id}
-                  role={msg.role}
-                  className={cn(
-                    "flex",
-                    msg.role === "user" ? "justify-end" : "justify-start",
-                  )}
-                >
-                  <div className={theme.message?.[msg.role] || theme.message?.assistant}>
-                    {msg.content}
+        <MessageList className="flex-1 overflow-y-auto">
+          <div className="max-w-2xl mx-auto px-4 py-4 space-y-2">
+            {messages.map((msg) =>
+              renderMessage
+                ? <React.Fragment key={msg.id}>{renderMessage(msg)}</React.Fragment>
+                : (
+                  <MessageItem
+                    key={msg.id}
+                    role={msg.role}
+                    className={cn(
+                      "flex",
+                      msg.role === "user" ? "justify-end" : "justify-start",
+                    )}
+                  >
+                    <div className={theme.message?.[msg.role] || theme.message?.assistant}>
+                      <p className="whitespace-pre-wrap text-[15px] leading-relaxed">{msg.content}</p>
+                    </div>
+                  </MessageItem>
+                )
+            )}
+
+            {/* Loading indicator */}
+            {isLoading && (
+              <div className="flex justify-start">
+                <div className="bg-neutral-100 dark:bg-neutral-800 rounded-[20px] rounded-bl-[4px] px-4 py-3">
+                  <div className="flex gap-1.5 items-center">
+                    <span className={cn(theme.loading)} />
+                    <span className={cn(theme.loading)} style={{ animationDelay: "0.15s" }} />
+                    <span className={cn(theme.loading)} style={{ animationDelay: "0.3s" }} />
                   </div>
-                </MessageItem>
-              )
-          )}
-
-          {/* Loading indicator */}
-          {isLoading && (
-            <div className="flex justify-start">
-              <div className="bg-gray-200 dark:bg-gray-800 rounded-lg px-4 py-2">
-                <LoadingIndicator className={theme.loading} />
+                </div>
               </div>
-            </div>
-          )}
+            )}
 
-          {/* Auto-scroll anchor */}
-          <div ref={messagesEndRef} />
+            {/* Auto-scroll anchor */}
+            <div ref={messagesEndRef} />
+          </div>
         </MessageList>
 
         {/* Error display */}
         {error && (
-          <div className="px-4 py-2 bg-red-50 dark:bg-red-900/20 border-l-4 border-red-500 text-red-900 dark:text-red-100">
-            <p className="text-sm font-medium">Error</p>
-            <p className="text-sm">{error.message}</p>
+          <div className="mx-4 mb-2 px-4 py-3 bg-red-50 dark:bg-red-900/20 rounded-2xl text-red-600 dark:text-red-400 text-sm">
+            {error.message}
           </div>
         )}
 
-        {/* Input area */}
-        <form
-          onSubmit={submitHandler}
-          className="border-t border-gray-200 dark:border-gray-800 p-4"
-        >
-          <div className="flex gap-2">
-            <InputBox
-              value={input}
-              onChange={inputChangeHandler}
-              placeholder={placeholder}
-              disabled={isLoading}
-              multiline={multiline}
-              className={theme.input}
-            />
-            <SubmitButton
-              isLoading={isLoading}
-              disabled={!input.trim() || isLoading}
-              className={theme.button}
-            >
-              Send
-            </SubmitButton>
-          </div>
-        </form>
+        {/* Input area - Apple style */}
+        <div className="bg-white dark:bg-neutral-900 border-t border-neutral-200 dark:border-neutral-800">
+          <form
+            onSubmit={submitHandler}
+            className="max-w-2xl mx-auto px-4 py-3"
+          >
+            <div className="flex gap-2 items-center">
+              <InputBox
+                value={input}
+                onChange={inputChangeHandler}
+                placeholder={placeholder}
+                disabled={isLoading}
+                multiline={multiline}
+                className={theme.input}
+              />
+              <SubmitButton
+                isLoading={isLoading}
+                disabled={!input.trim() || isLoading}
+                className={theme.button}
+              >
+                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" />
+                </svg>
+              </SubmitButton>
+            </div>
+          </form>
+        </div>
       </ChatContainer>
     );
   },

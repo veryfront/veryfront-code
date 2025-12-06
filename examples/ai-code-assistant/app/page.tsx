@@ -3,7 +3,7 @@
 /**
  * AI Code Assistant - Main Page
  *
- * A sleek, modern chat interface inspired by ChatGPT.
+ * A sleek, modern chat interface with Apple-inspired design.
  * Features real-time streaming, tool execution, and session management.
  */
 
@@ -21,49 +21,13 @@ interface Message {
   }>;
 }
 
-// Sparkle icon for AI
-function SparkleIcon({ className = '' }: { className?: string }) {
-  return (
-    <svg className={className} viewBox="0 0 24 24" fill="currentColor">
-      <path d="M12 2L13.09 8.26L18 7L14.74 10.91L20 14L13.09 13.74L12 20L10.91 13.74L4 14L9.26 10.91L6 7L10.91 8.26L12 2Z" />
-    </svg>
-  );
-}
-
-// User icon
-function UserIcon({ className = '' }: { className?: string }) {
-  return (
-    <svg className={className} viewBox="0 0 24 24" fill="currentColor">
-      <path d="M12 4a4 4 0 1 0 0 8 4 4 0 0 0 0-8zM6 8a6 6 0 1 1 12 0A6 6 0 0 1 6 8zm2 10a3 3 0 0 0-3 3 1 1 0 1 1-2 0 5 5 0 0 1 5-5h8a5 5 0 0 1 5 5 1 1 0 1 1-2 0 3 3 0 0 0-3-3H8z" />
-    </svg>
-  );
-}
-
-// Send icon
-function SendIcon({ className = '' }: { className?: string }) {
-  return (
-    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-      <path d="M22 2L11 13M22 2L15 22L11 13M22 2L2 9L11 13" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  );
-}
-
-// Code icon for tools
-function CodeIcon({ className = '' }: { className?: string }) {
-  return (
-    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-      <path d="M16 18L22 12L16 6M8 6L2 12L8 18" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  );
-}
-
 // Typing indicator
 function TypingIndicator() {
   return (
-    <div className="flex items-center gap-1 px-2 py-1">
-      <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-      <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-      <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+    <div className="flex items-center gap-1.5">
+      <div className="w-1.5 h-1.5 bg-neutral-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+      <div className="w-1.5 h-1.5 bg-neutral-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+      <div className="w-1.5 h-1.5 bg-neutral-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
     </div>
   );
 }
@@ -73,34 +37,36 @@ function ToolCard({ tool }: { tool: { toolName: string; args: any; state: string
   const [expanded, setExpanded] = useState(false);
 
   return (
-    <div className="my-3 border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden bg-gray-50 dark:bg-gray-800/50">
+    <div className="my-3 border border-neutral-200 dark:border-neutral-700 rounded-xl overflow-hidden bg-neutral-50 dark:bg-neutral-800/50">
       <button
         onClick={() => setExpanded(!expanded)}
-        className="w-full px-4 py-3 flex items-center gap-3 hover:bg-gray-100 dark:hover:bg-gray-700/50 transition-colors"
+        className="w-full px-4 py-3 flex items-center gap-3 hover:bg-neutral-100 dark:hover:bg-neutral-700/50 transition-colors"
       >
-        <div className="flex-shrink-0 w-8 h-8 rounded-lg bg-emerald-100 dark:bg-emerald-900/50 flex items-center justify-center">
-          <CodeIcon className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+        <div className="flex-shrink-0 w-8 h-8 rounded-lg bg-blue-500/10 flex items-center justify-center">
+          <svg className="w-4 h-4 text-blue-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M16 18L22 12L16 6M8 6L2 12L8 18" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
         </div>
         <div className="flex-1 text-left">
           <div className="flex items-center gap-2">
-            <span className="font-medium text-gray-900 dark:text-gray-100 text-sm">{tool.toolName}</span>
+            <span className="font-medium text-neutral-900 dark:text-neutral-100 text-sm">{tool.toolName}</span>
             {tool.state === 'call' && (
               <span className="text-xs px-2 py-0.5 bg-amber-100 dark:bg-amber-900/50 text-amber-700 dark:text-amber-300 rounded-full">
                 Running...
               </span>
             )}
             {tool.state === 'result' && (
-              <span className="text-xs px-2 py-0.5 bg-emerald-100 dark:bg-emerald-900/50 text-emerald-700 dark:text-emerald-300 rounded-full">
+              <span className="text-xs px-2 py-0.5 bg-green-100 dark:bg-green-900/50 text-green-700 dark:text-green-300 rounded-full">
                 Complete
               </span>
             )}
           </div>
-          <div className="text-xs text-gray-500 dark:text-gray-400 mt-0.5 truncate">
+          <div className="text-xs text-neutral-500 dark:text-neutral-400 mt-0.5 truncate">
             {JSON.stringify(tool.args).slice(0, 60)}...
           </div>
         </div>
         <svg
-          className={`w-4 h-4 text-gray-400 transition-transform ${expanded ? 'rotate-180' : ''}`}
+          className={`w-4 h-4 text-neutral-400 transition-transform ${expanded ? 'rotate-180' : ''}`}
           fill="none"
           viewBox="0 0 24 24"
           stroke="currentColor"
@@ -109,16 +75,16 @@ function ToolCard({ tool }: { tool: { toolName: string; args: any; state: string
         </svg>
       </button>
       {expanded && (
-        <div className="px-4 pb-4 pt-2 border-t border-gray-200 dark:border-gray-700 bg-gray-100/50 dark:bg-gray-900/30">
-          <div className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2">Arguments</div>
-          <pre className="text-xs bg-white dark:bg-gray-800 rounded-lg p-3 overflow-x-auto border border-gray-200 dark:border-gray-700">
-            <code className="text-gray-700 dark:text-gray-300">{JSON.stringify(tool.args, null, 2)}</code>
+        <div className="px-4 pb-4 pt-2 border-t border-neutral-200 dark:border-neutral-700">
+          <div className="text-xs font-medium text-neutral-500 dark:text-neutral-400 mb-2">Arguments</div>
+          <pre className="text-xs bg-white dark:bg-neutral-800 rounded-lg p-3 overflow-x-auto border border-neutral-200 dark:border-neutral-700">
+            <code className="text-neutral-700 dark:text-neutral-300">{JSON.stringify(tool.args, null, 2)}</code>
           </pre>
           {tool.state === 'result' && tool.result && (
             <>
-              <div className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2 mt-4">Result</div>
-              <pre className="text-xs bg-white dark:bg-gray-800 rounded-lg p-3 overflow-x-auto max-h-48 border border-gray-200 dark:border-gray-700">
-                <code className="text-gray-700 dark:text-gray-300">{JSON.stringify(tool.result, null, 2)}</code>
+              <div className="text-xs font-medium text-neutral-500 dark:text-neutral-400 mb-2 mt-4">Result</div>
+              <pre className="text-xs bg-white dark:bg-neutral-800 rounded-lg p-3 overflow-x-auto max-h-48 border border-neutral-200 dark:border-neutral-700">
+                <code className="text-neutral-700 dark:text-neutral-300">{JSON.stringify(tool.result, null, 2)}</code>
               </pre>
             </>
           )}
@@ -128,46 +94,31 @@ function ToolCard({ tool }: { tool: { toolName: string; args: any; state: string
   );
 }
 
-// Message component
+// Message component - Apple Messages style
 function MessageBubble({ message }: { message: Message }) {
   const isUser = message.role === 'user';
 
   return (
-    <div className={`py-6 ${isUser ? 'bg-white dark:bg-gray-900' : 'bg-gray-50 dark:bg-gray-800/50'}`}>
-      <div className="max-w-3xl mx-auto px-4 flex gap-4">
-        {/* Avatar */}
+    <div className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
+      <div className="max-w-[75%]">
         <div
-          className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center ${
-            isUser ? 'bg-gray-600' : 'bg-gradient-to-br from-violet-500 to-purple-600'
+          className={`px-4 py-2.5 ${
+            isUser
+              ? 'bg-blue-500 text-white rounded-[20px] rounded-br-[4px]'
+              : 'bg-neutral-100 dark:bg-neutral-800 text-neutral-900 dark:text-neutral-100 rounded-[20px] rounded-bl-[4px]'
           }`}
         >
-          {isUser ? (
-            <UserIcon className="w-4 h-4 text-white" />
-          ) : (
-            <SparkleIcon className="w-4 h-4 text-white" />
-          )}
+          <p className="whitespace-pre-wrap text-[15px] leading-relaxed">{message.content}</p>
         </div>
 
-        {/* Content */}
-        <div className="flex-1 min-w-0">
-          <div className="font-medium text-sm text-gray-900 dark:text-gray-100 mb-1">
-            {isUser ? 'You' : 'Veryfront AI'}
+        {/* Tool Calls */}
+        {message.toolInvocations && message.toolInvocations.length > 0 && (
+          <div className="mt-2">
+            {message.toolInvocations.map((tool, j) => (
+              <ToolCard key={j} tool={tool} />
+            ))}
           </div>
-          <div className="prose prose-sm dark:prose-invert max-w-none">
-            <div className="text-gray-700 dark:text-gray-300 whitespace-pre-wrap leading-relaxed">
-              {message.content}
-            </div>
-          </div>
-
-          {/* Tool Calls */}
-          {message.toolInvocations && message.toolInvocations.length > 0 && (
-            <div className="mt-4">
-              {message.toolInvocations.map((tool, j) => (
-                <ToolCard key={j} tool={tool} />
-              ))}
-            </div>
-          )}
-        </div>
+        )}
       </div>
     </div>
   );
@@ -177,32 +128,33 @@ function MessageBubble({ message }: { message: Message }) {
 function EmptyState() {
   return (
     <div className="flex-1 flex flex-col items-center justify-center px-4 py-12">
-      <div className="w-16 h-16 rounded-full bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center mb-6 shadow-lg">
-        <SparkleIcon className="w-8 h-8 text-white" />
+      <div className="w-14 h-14 rounded-2xl bg-blue-500 flex items-center justify-center mb-6">
+        <svg className="w-7 h-7 text-white" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M12 2L13.09 8.26L18 7L14.74 10.91L20 14L13.09 13.74L12 20L10.91 13.74L4 14L9.26 10.91L6 7L10.91 8.26L12 2Z" />
+        </svg>
       </div>
-      <h2 className="text-2xl font-semibold text-gray-900 dark:text-white mb-2">
-        How can I help you today?
+      <h2 className="text-2xl font-semibold text-neutral-900 dark:text-white mb-2">
+        How can I help?
       </h2>
-      <p className="text-gray-500 dark:text-gray-400 text-center max-w-md mb-8">
-        I can help you explore your codebase, search for patterns, read files, and understand your project structure.
+      <p className="text-neutral-500 dark:text-neutral-400 text-center max-w-md mb-8">
+        I can help you explore your codebase, search for patterns, and understand your project.
       </p>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 w-full max-w-2xl">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 w-full max-w-lg">
         {[
-          { icon: '🔍', title: 'Search code', desc: '"Find all React components using hooks"' },
-          { icon: '📁', title: 'Explore files', desc: '"What files are in the src directory?"' },
-          { icon: '📖', title: 'Read content', desc: '"Show me the package.json"' },
-          { icon: '🔀', title: 'Git status', desc: '"What are the recent changes?"' },
+          { title: 'Search code', desc: 'Find React components using hooks' },
+          { title: 'Explore files', desc: 'What files are in src?' },
+          { title: 'Read content', desc: 'Show me package.json' },
+          { title: 'Git status', desc: 'What are recent changes?' },
         ].map((item, i) => (
           <div
             key={i}
-            className="p-4 rounded-xl border border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-all cursor-pointer group"
+            className="p-4 rounded-xl border border-neutral-200 dark:border-neutral-700 hover:bg-neutral-50 dark:hover:bg-neutral-800 transition-colors cursor-pointer"
           >
-            <div className="text-xl mb-2">{item.icon}</div>
-            <div className="font-medium text-gray-900 dark:text-gray-100 mb-1 group-hover:text-violet-600 dark:group-hover:text-violet-400 transition-colors">
+            <div className="font-medium text-neutral-900 dark:text-white text-sm mb-1">
               {item.title}
             </div>
-            <div className="text-sm text-gray-500 dark:text-gray-400">{item.desc}</div>
+            <div className="text-xs text-neutral-500 dark:text-neutral-400">{item.desc}</div>
           </div>
         ))}
       </div>
@@ -217,7 +169,7 @@ function ChatInterface() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   // Initialize session ID
   useEffect(() => {
@@ -238,13 +190,6 @@ function ChatInterface() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  // Auto-resize textarea
-  const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    setInput(e.target.value);
-    e.target.style.height = 'auto';
-    e.target.style.height = Math.min(e.target.scrollHeight, 200) + 'px';
-  };
-
   // Handle message submission
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -260,11 +205,6 @@ function ChatInterface() {
     setInput('');
     setIsLoading(true);
     setError(null);
-
-    // Reset textarea height
-    if (inputRef.current) {
-      inputRef.current.style.height = 'auto';
-    }
 
     try {
       const response = await fetch('/api/chat', {
@@ -314,7 +254,6 @@ function ChatInterface() {
             try {
               const data = JSON.parse(rawData);
 
-              // Vercel AI SDK data stream format
               if (data.type === 'text-delta') {
                 assistantMessage.content += data.textDelta || '';
                 setMessages((prev) => {
@@ -355,7 +294,7 @@ function ChatInterface() {
                 throw new Error(data.error);
               }
             } catch (e) {
-              if (e instanceof SyntaxError) continue; // Skip invalid JSON
+              if (e instanceof SyntaxError) continue;
               throw e;
             }
           }
@@ -369,14 +308,6 @@ function ChatInterface() {
     }
   };
 
-  // Handle Enter key (with Shift for new line)
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      handleSubmit(e);
-    }
-  };
-
   // Clear conversation
   const handleClearConversation = async () => {
     if (!confirm('Clear conversation history?')) return;
@@ -386,7 +317,6 @@ function ChatInterface() {
         method: 'DELETE',
       });
 
-      // Generate new session ID
       const newSessionId = crypto.randomUUID();
       localStorage.setItem('ai-assistant-session-id', newSessionId);
       setSessionId(newSessionId);
@@ -397,32 +327,19 @@ function ChatInterface() {
   };
 
   return (
-    <div className="flex flex-col h-screen bg-white dark:bg-gray-900">
+    <div className="flex flex-col h-screen bg-white dark:bg-neutral-900">
       {/* Header */}
-      <header className="flex-shrink-0 border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900">
-        <div className="max-w-3xl mx-auto px-4 py-3 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center">
-              <SparkleIcon className="w-4 h-4 text-white" />
-            </div>
-            <div>
-              <h1 className="font-semibold text-gray-900 dark:text-white">Veryfront AI</h1>
-              <p className="text-xs text-gray-500 dark:text-gray-400">Code Assistant</p>
-            </div>
-          </div>
-          <div className="flex items-center gap-4">
-            {messages.length > 0 && (
-              <span className="text-xs text-gray-400 dark:text-gray-500">
-                {messages.length} messages
-              </span>
-            )}
+      <header className="flex-shrink-0 border-b border-neutral-200 dark:border-neutral-800">
+        <div className="max-w-2xl mx-auto px-4 py-3 flex items-center justify-between">
+          <h1 className="font-medium text-neutral-900 dark:text-white">AI Assistant</h1>
+          {messages.length > 0 && (
             <button
               onClick={handleClearConversation}
-              className="text-sm text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 transition-colors"
+              className="text-sm text-neutral-500 hover:text-neutral-700 dark:text-neutral-400 dark:hover:text-neutral-200 transition-colors"
             >
               New chat
             </button>
-          </div>
+          )}
         </div>
       </header>
 
@@ -431,77 +348,56 @@ function ChatInterface() {
         {messages.length === 0 ? (
           <EmptyState />
         ) : (
-          <div className="divide-y divide-gray-100 dark:divide-gray-800">
+          <div className="max-w-2xl mx-auto px-4 py-4 space-y-2">
             {messages.map((message, i) => (
               <MessageBubble key={message.id || i} message={message} />
             ))}
 
             {/* Loading State */}
             {isLoading && messages[messages.length - 1]?.role === 'user' && (
-              <div className="py-6 bg-gray-50 dark:bg-gray-800/50">
-                <div className="max-w-3xl mx-auto px-4 flex gap-4">
-                  <div className="flex-shrink-0 w-8 h-8 rounded-full bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center">
-                    <SparkleIcon className="w-4 h-4 text-white" />
-                  </div>
-                  <div className="flex-1">
-                    <div className="font-medium text-sm text-gray-900 dark:text-gray-100 mb-1">
-                      Veryfront AI
-                    </div>
-                    <TypingIndicator />
-                  </div>
+              <div className="flex justify-start">
+                <div className="bg-neutral-100 dark:bg-neutral-800 rounded-[20px] rounded-bl-[4px] px-4 py-3">
+                  <TypingIndicator />
                 </div>
               </div>
             )}
 
             {/* Error Display */}
             {error && (
-              <div className="py-6 bg-red-50 dark:bg-red-900/20">
-                <div className="max-w-3xl mx-auto px-4">
-                  <div className="flex items-start gap-3 p-4 rounded-xl bg-red-100 dark:bg-red-900/30 border border-red-200 dark:border-red-800">
-                    <svg className="w-5 h-5 text-red-600 dark:text-red-400 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                    </svg>
-                    <div>
-                      <div className="font-medium text-red-800 dark:text-red-200">Something went wrong</div>
-                      <div className="text-sm text-red-700 dark:text-red-300 mt-1">{error}</div>
-                    </div>
-                  </div>
-                </div>
+              <div className="mx-4 px-4 py-3 bg-red-50 dark:bg-red-900/20 rounded-2xl text-red-600 dark:text-red-400 text-sm">
+                {error}
               </div>
             )}
+
+            <div ref={messagesEndRef} />
           </div>
         )}
-        <div ref={messagesEndRef} />
       </main>
 
       {/* Input Area */}
-      <footer className="flex-shrink-0 border-t border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900">
-        <div className="max-w-3xl mx-auto px-4 py-4">
-          <form onSubmit={handleSubmit} className="relative">
-            <div className="relative rounded-2xl border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 shadow-sm focus-within:border-violet-500 dark:focus-within:border-violet-400 focus-within:ring-1 focus-within:ring-violet-500 dark:focus-within:ring-violet-400 transition-all">
-              <textarea
-                ref={inputRef}
-                value={input}
-                onChange={handleInputChange}
-                onKeyDown={handleKeyDown}
-                placeholder="Message Veryfront AI..."
-                rows={1}
-                className="w-full resize-none bg-transparent px-4 py-3 pr-14 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none"
-                disabled={isLoading}
-              />
-              <button
-                type="submit"
-                disabled={isLoading || !input.trim()}
-                className="absolute right-2 bottom-2 p-2 rounded-lg bg-violet-600 hover:bg-violet-700 disabled:bg-gray-300 dark:disabled:bg-gray-700 disabled:cursor-not-allowed text-white transition-colors"
-              >
-                <SendIcon className="w-4 h-4" />
-              </button>
-            </div>
-          </form>
-          <p className="text-center text-xs text-gray-400 dark:text-gray-500 mt-3">
-            Press Enter to send, Shift+Enter for new line
-          </p>
-        </div>
+      <footer className="flex-shrink-0 bg-white dark:bg-neutral-900 border-t border-neutral-200 dark:border-neutral-800">
+        <form onSubmit={handleSubmit} className="max-w-2xl mx-auto px-4 py-3">
+          <div className="flex gap-2 items-center">
+            <input
+              ref={inputRef}
+              type="text"
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              placeholder="Message"
+              className="flex-1 px-4 py-2.5 bg-neutral-100 dark:bg-neutral-800 border-0 rounded-full focus:outline-none focus:ring-2 focus:ring-blue-500/30 dark:text-neutral-100 placeholder-neutral-400 dark:placeholder-neutral-500 text-[15px]"
+              disabled={isLoading}
+            />
+            <button
+              type="submit"
+              disabled={isLoading || !input.trim()}
+              className="w-9 h-9 flex items-center justify-center bg-blue-500 hover:bg-blue-600 active:scale-95 text-white rounded-full transition-all disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-blue-500 disabled:active:scale-100"
+            >
+              <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" />
+              </svg>
+            </button>
+          </div>
+        </form>
       </footer>
     </div>
   );

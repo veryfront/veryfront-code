@@ -6,7 +6,7 @@ export default async function HomePage() {
 
   return (
     <div>
-      <h1 className="text-4xl font-bold mb-8">Latest Posts</h1>
+      <h1 className="text-3xl font-bold text-neutral-900 dark:text-white mb-8">Latest Posts</h1>
       <BlogPostList posts={posts} />
     </div>
   );

@@ -90,19 +90,19 @@ export default function RootLayout({
       </head>
       <body>
         <AuthProvider>
-          <div className="min-h-screen bg-gray-100">
-            <nav className="bg-white px-8 py-4 shadow-sm">
-              <div className="max-w-6xl mx-auto flex justify-between items-center">
-                <h1 className="text-2xl font-semibold">Auth Example</h1>
-                <div className="flex gap-4 items-center">
-                  <a href="/" className="text-gray-600 hover:text-gray-900">Home</a>
-                  <a href="/dashboard" className="text-gray-600 hover:text-gray-900">Dashboard</a>
-                  <a href="/login" className="text-gray-600 hover:text-gray-900">Login</a>
-                  <a href="/signup" className="text-gray-600 hover:text-gray-900">Sign Up</a>
+          <div className="min-h-screen bg-white dark:bg-neutral-900">
+            <nav className="sticky top-0 z-50 bg-white/80 dark:bg-neutral-900/80 backdrop-blur-lg border-b border-neutral-200 dark:border-neutral-800">
+              <div className="max-w-5xl mx-auto px-6 h-14 flex justify-between items-center">
+                <a href="/" className="text-lg font-semibold text-neutral-900 dark:text-white">Auth Example</a>
+                <div className="flex gap-6 items-center">
+                  <a href="/" className="text-sm text-neutral-600 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-white transition-colors">Home</a>
+                  <a href="/dashboard" className="text-sm text-neutral-600 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-white transition-colors">Dashboard</a>
+                  <a href="/login" className="text-sm text-neutral-600 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-white transition-colors">Login</a>
+                  <a href="/signup" className="text-sm px-4 py-2 bg-blue-500 text-white rounded-full hover:bg-blue-600 transition-colors">Sign Up</a>
                 </div>
               </div>
             </nav>
-            <main className="max-w-6xl mx-auto p-8">
+            <main className="max-w-5xl mx-auto px-6 py-12">
               {children}
             </main>
           </div>

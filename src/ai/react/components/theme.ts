@@ -27,24 +27,24 @@ export interface ChatTheme {
 }
 
 /**
- * Default theme using Tailwind CSS
+ * Default theme using Tailwind CSS - Apple Messages inspired, clean & minimal
  */
 export const defaultChatTheme: ChatTheme = {
-  container: "flex flex-col h-full bg-white dark:bg-gray-950",
+  container: "flex flex-col h-full bg-white dark:bg-neutral-900",
   message: {
-    user: "bg-blue-600 text-white rounded-lg px-4 py-2 max-w-[70%] ml-auto",
+    user: "bg-blue-500 text-white rounded-[20px] rounded-br-[4px] px-4 py-2.5 max-w-[75%]",
     assistant:
-      "bg-gray-200 dark:bg-gray-800 text-gray-900 dark:text-gray-100 rounded-lg px-4 py-2 max-w-[70%]",
+      "bg-neutral-100 dark:bg-neutral-800 text-neutral-900 dark:text-neutral-100 rounded-[20px] rounded-bl-[4px] px-4 py-2.5 max-w-[75%]",
     system:
-      "bg-yellow-100 dark:bg-yellow-900/20 text-yellow-900 dark:text-yellow-100 rounded px-3 py-1 text-sm",
+      "bg-neutral-100 dark:bg-neutral-800 text-neutral-500 dark:text-neutral-400 rounded-2xl px-4 py-2 text-sm mx-auto text-center",
     tool:
-      "bg-purple-100 dark:bg-purple-900/20 text-purple-900 dark:text-purple-100 rounded px-3 py-1 text-sm font-mono",
+      "bg-neutral-50 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-300 rounded-xl px-3 py-2 text-sm font-mono border border-neutral-200 dark:border-neutral-700",
   },
   input:
-    "flex-1 px-4 py-2 border border-gray-300 dark:border-gray-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-900 dark:text-gray-100",
+    "flex-1 px-4 py-2.5 bg-neutral-100 dark:bg-neutral-800 border-0 rounded-full focus:outline-none focus:ring-2 focus:ring-blue-500/30 dark:text-neutral-100 placeholder-neutral-400 dark:placeholder-neutral-500 text-[15px]",
   button:
-    "px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed",
-  loading: "w-5 h-5 border-2 border-gray-400 border-t-transparent rounded-full animate-spin",
+    "w-9 h-9 flex items-center justify-center bg-blue-500 hover:bg-blue-600 active:scale-95 text-white rounded-full transition-all disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-blue-500 disabled:active:scale-100",
+  loading: "w-1.5 h-1.5 bg-neutral-400 rounded-full animate-bounce",
 };
 
 export interface AgentTheme {

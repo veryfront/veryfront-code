@@ -48,9 +48,9 @@ function ChevronDownIcon({ className }: { className?: string }) {
 function TypingIndicator() {
   return (
     <div className="flex items-center gap-1 px-2 py-1">
-      <span className="w-2 h-2 bg-indigo-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></span>
-      <span className="w-2 h-2 bg-indigo-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></span>
-      <span className="w-2 h-2 bg-indigo-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></span>
+      <span className="w-2 h-2 bg-blue-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></span>
+      <span className="w-2 h-2 bg-blue-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></span>
+      <span className="w-2 h-2 bg-blue-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></span>
     </div>
   );
 }
@@ -60,30 +60,30 @@ function ToolCard({ name, args, result }: { name: string; args: any; result?: an
   const [expanded, setExpanded] = useState(false);
 
   return (
-    <div className="mt-3 border border-slate-200 dark:border-slate-700 rounded-lg overflow-hidden bg-slate-50 dark:bg-slate-800/50">
+    <div className="mt-3 border border-neutral-200 dark:border-neutral-700 rounded-xl overflow-hidden bg-neutral-50 dark:bg-neutral-800/50">
       <button
         type="button"
         onClick={() => setExpanded(!expanded)}
-        className="w-full flex items-center justify-between px-3 py-2 hover:bg-slate-100 dark:hover:bg-slate-700/50 transition-colors text-left"
+        className="w-full flex items-center justify-between px-3 py-2 hover:bg-neutral-100 dark:hover:bg-neutral-700/50 transition-colors text-left"
       >
         <div className="flex items-center gap-2">
-          <div className="w-6 h-6 rounded bg-indigo-100 dark:bg-indigo-900/30 flex items-center justify-center">
-            <WrenchIcon className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
+          <div className="w-6 h-6 rounded-lg bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center">
+            <WrenchIcon className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
           </div>
-          <span className="text-sm font-medium text-slate-700 dark:text-slate-300">{name}</span>
+          <span className="text-sm font-medium text-neutral-700 dark:text-neutral-300">{name}</span>
         </div>
-        <ChevronDownIcon className={`w-4 h-4 text-slate-400 transition-transform ${expanded ? 'rotate-180' : ''}`} />
+        <ChevronDownIcon className={`w-4 h-4 text-neutral-400 transition-transform ${expanded ? 'rotate-180' : ''}`} />
       </button>
       {expanded && (
-        <div className="px-3 py-2 border-t border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800">
-          <div className="text-xs font-medium text-slate-500 dark:text-slate-400 mb-1">Arguments</div>
-          <pre className="text-xs text-slate-600 dark:text-slate-300 overflow-x-auto bg-slate-50 dark:bg-slate-900 rounded p-2 mb-2">
+        <div className="px-3 py-2 border-t border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-800">
+          <div className="text-xs font-medium text-neutral-500 dark:text-neutral-400 mb-1">Arguments</div>
+          <pre className="text-xs text-neutral-600 dark:text-neutral-300 overflow-x-auto bg-neutral-50 dark:bg-neutral-900 rounded-lg p-2 mb-2">
             {JSON.stringify(args, null, 2)}
           </pre>
           {result !== undefined && (
             <>
-              <div className="text-xs font-medium text-slate-500 dark:text-slate-400 mb-1">Result</div>
-              <pre className="text-xs text-slate-600 dark:text-slate-300 overflow-x-auto bg-slate-50 dark:bg-slate-900 rounded p-2 max-h-32">
+              <div className="text-xs font-medium text-neutral-500 dark:text-neutral-400 mb-1">Result</div>
+              <pre className="text-xs text-neutral-600 dark:text-neutral-300 overflow-x-auto bg-neutral-50 dark:bg-neutral-900 rounded-lg p-2 max-h-32">
                 {typeof result === "string" ? result.slice(0, 500) : JSON.stringify(result, null, 2).slice(0, 500)}
                 {(typeof result === "string" ? result.length : JSON.stringify(result).length) > 500 && "..."}
               </pre>
@@ -112,8 +112,8 @@ function MessageBubble({ message }: { message: Message }) {
       {/* Avatar */}
       <div className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center ${
         isUser
-          ? 'bg-slate-600 dark:bg-slate-500'
-          : 'bg-gradient-to-br from-indigo-500 to-blue-600'
+          ? 'bg-neutral-600 dark:bg-neutral-500'
+          : 'bg-blue-500'
       }`}>
         {isUser ? (
           <UserIcon className="w-5 h-5 text-white" />
@@ -124,10 +124,10 @@ function MessageBubble({ message }: { message: Message }) {
 
       {/* Message content */}
       <div className={`max-w-[85%] ${isUser ? '' : ''}`}>
-        <div className={`px-4 py-3 rounded-2xl ${
+        <div className={`px-4 py-3 rounded-[20px] ${
           isUser
-            ? 'bg-indigo-600 text-white rounded-tr-sm'
-            : 'bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 rounded-tl-sm shadow-sm'
+            ? 'bg-blue-500 text-white rounded-br-[4px]'
+            : 'bg-neutral-100 dark:bg-neutral-800 text-neutral-900 dark:text-white rounded-bl-[4px]'
         }`}>
           <div className="whitespace-pre-wrap text-sm leading-relaxed">{message.content}</div>
         </div>
@@ -161,13 +161,13 @@ function EmptyState({ onSuggestionClick }: { onSuggestionClick: (text: string) =
 
   return (
     <div className="flex flex-col items-center justify-center h-full py-12 px-4">
-      <div className="w-16 h-16 rounded-full bg-gradient-to-br from-indigo-500 to-blue-600 flex items-center justify-center mb-6 shadow-lg">
+      <div className="w-16 h-16 rounded-full bg-blue-500 flex items-center justify-center mb-6">
         <TerminalIcon className="w-8 h-8 text-white" />
       </div>
-      <h2 className="text-2xl font-semibold text-slate-800 dark:text-slate-200 mb-2">
+      <h2 className="text-2xl font-semibold text-neutral-900 dark:text-white mb-2">
         Coding Agent
       </h2>
-      <p className="text-slate-500 dark:text-slate-400 text-center max-w-md mb-8">
+      <p className="text-neutral-500 dark:text-neutral-400 text-center max-w-md mb-8">
         AI assistant with file operations, web search, and command execution capabilities.
       </p>
 
@@ -176,12 +176,12 @@ function EmptyState({ onSuggestionClick }: { onSuggestionClick: (text: string) =
           <button
             key={i}
             onClick={() => onSuggestionClick(suggestion.text)}
-            className="flex items-center gap-3 p-4 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl hover:border-indigo-400 dark:hover:border-indigo-500 hover:shadow-md transition-all text-left group"
+            className="flex items-center gap-3 p-4 bg-white dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 rounded-xl hover:border-blue-400 dark:hover:border-blue-500 transition-all text-left group"
           >
-            <div className="w-8 h-8 rounded-lg bg-indigo-100 dark:bg-indigo-900/30 flex items-center justify-center text-indigo-600 dark:text-indigo-400 group-hover:bg-indigo-200 dark:group-hover:bg-indigo-900/50 transition-colors">
+            <div className="w-8 h-8 rounded-lg bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center text-blue-600 dark:text-blue-400 group-hover:bg-blue-200 dark:group-hover:bg-blue-900/50 transition-colors">
               <TerminalIcon className="w-4 h-4" />
             </div>
-            <span className="text-sm text-slate-700 dark:text-slate-300 group-hover:text-indigo-700 dark:group-hover:text-indigo-400 transition-colors">
+            <span className="text-sm text-neutral-700 dark:text-neutral-300 group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">
               {suggestion.text}
             </span>
           </button>
@@ -342,7 +342,7 @@ export default function CodingAgentPage() {
     api: "/api/agent",
   });
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -352,15 +352,7 @@ export default function CodingAgentPage() {
     scrollToBottom();
   }, [messages]);
 
-  // Auto-resize textarea
-  useEffect(() => {
-    if (textareaRef.current) {
-      textareaRef.current.style.height = 'auto';
-      textareaRef.current.style.height = Math.min(textareaRef.current.scrollHeight, 200) + 'px';
-    }
-  }, [input]);
-
-  function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
+  function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       handleSubmit();
@@ -370,21 +362,21 @@ export default function CodingAgentPage() {
   function handleSuggestionClick(text: string) {
     setInput(text);
     setTimeout(() => {
-      textareaRef.current?.focus();
+      inputRef.current?.focus();
     }, 100);
   }
 
   return (
-    <div className="flex flex-col h-screen bg-slate-50 dark:bg-slate-900">
+    <div className="flex flex-col h-screen bg-white dark:bg-neutral-900">
       {/* Header */}
-      <header className="flex-shrink-0 border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900">
-        <div className="max-w-4xl mx-auto px-4 py-3 flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-500 to-blue-600 flex items-center justify-center shadow-lg">
+      <header className="flex-shrink-0 bg-white/80 dark:bg-neutral-900/80 backdrop-blur-lg border-b border-neutral-200 dark:border-neutral-800">
+        <div className="max-w-4xl mx-auto px-4 h-14 flex items-center gap-3">
+          <div className="w-9 h-9 rounded-full bg-blue-500 flex items-center justify-center">
             <TerminalIcon className="w-5 h-5 text-white" />
           </div>
           <div>
-            <h1 className="font-semibold text-slate-800 dark:text-white">Coding Agent</h1>
-            <p className="text-xs text-slate-500 dark:text-slate-400">File ops, web search, command execution</p>
+            <h1 className="font-semibold text-neutral-900 dark:text-white">Coding Agent</h1>
+            <p className="text-xs text-neutral-500 dark:text-neutral-400">File ops, web search, command execution</p>
           </div>
         </div>
       </header>
@@ -402,10 +394,10 @@ export default function CodingAgentPage() {
 
               {isLoading && messages[messages.length - 1]?.role === "user" && (
                 <div className="flex gap-3">
-                  <div className="flex-shrink-0 w-8 h-8 rounded-full bg-gradient-to-br from-indigo-500 to-blue-600 flex items-center justify-center">
+                  <div className="flex-shrink-0 w-8 h-8 rounded-full bg-blue-500 flex items-center justify-center">
                     <TerminalIcon className="w-4 h-4 text-white" />
                   </div>
-                  <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl rounded-tl-sm px-4 py-3 shadow-sm">
+                  <div className="bg-neutral-100 dark:bg-neutral-800 rounded-[20px] rounded-bl-[4px] px-4 py-3">
                     <TypingIndicator />
                   </div>
                 </div>
@@ -418,31 +410,28 @@ export default function CodingAgentPage() {
       </div>
 
       {/* Input area */}
-      <div className="flex-shrink-0 border-t border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900">
+      <div className="flex-shrink-0 border-t border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900">
         <div className="max-w-4xl mx-auto px-4 py-4">
           <form onSubmit={handleSubmit} className="relative">
-            <div className="flex items-end gap-2 bg-slate-100 dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 focus-within:border-indigo-400 dark:focus-within:border-indigo-500 focus-within:ring-2 focus-within:ring-indigo-400/20 transition-all">
-              <textarea
-                ref={textareaRef}
+            <div className="flex items-center gap-2 bg-neutral-100 dark:bg-neutral-800 rounded-full border border-neutral-200 dark:border-neutral-700 focus-within:border-blue-400 dark:focus-within:border-blue-500 transition-all px-4 py-2">
+              <input
+                ref={inputRef}
+                type="text"
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={handleKeyDown}
                 placeholder="Ask the coding agent..."
                 disabled={isLoading}
-                rows={1}
-                className="flex-1 bg-transparent px-4 py-3 text-slate-800 dark:text-white placeholder-slate-400 dark:placeholder-slate-500 resize-none focus:outline-none text-sm leading-relaxed max-h-[200px]"
+                className="flex-1 bg-transparent text-neutral-900 dark:text-white placeholder-neutral-400 dark:placeholder-neutral-500 focus:outline-none text-sm"
               />
               <button
                 type="submit"
                 disabled={isLoading || !input.trim()}
-                className="flex-shrink-0 m-2 p-2 rounded-xl bg-gradient-to-r from-indigo-500 to-blue-600 text-white disabled:opacity-40 disabled:cursor-not-allowed hover:from-indigo-600 hover:to-blue-700 transition-all shadow-sm hover:shadow-md"
+                className="flex-shrink-0 w-8 h-8 rounded-full bg-blue-500 text-white disabled:opacity-40 disabled:cursor-not-allowed hover:bg-blue-600 transition-colors flex items-center justify-center"
               >
-                <SendIcon className="w-5 h-5" />
+                <SendIcon className="w-4 h-4" />
               </button>
             </div>
-            <p className="mt-2 text-xs text-center text-slate-400 dark:text-slate-500">
-              Press Enter to send, Shift+Enter for new line
-            </p>
           </form>
         </div>
       </div>

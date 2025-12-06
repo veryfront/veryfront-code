@@ -14,7 +14,7 @@ export default function RootLayout({
 }) {
   return (
     <AuthProvider>
-      <div className="min-h-screen bg-slate-50 text-slate-900 antialiased">
+      <div className="min-h-screen bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100 antialiased">
         {children}
         <Toaster />
       </div>

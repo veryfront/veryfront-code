@@ -11,41 +11,32 @@ interface Post {
 
 export function BlogPostList({ posts }: { posts: Post[] }) {
   return (
-    <div className="space-y-8">
+    <div className="space-y-10">
       {posts.map(post => (
-        <article key={post.slug} className="border-b pb-8">
-          <h2 className="text-2xl font-semibold mb-2">
-            <a
-              href={`/blog/${post.slug}`}
-              className="text-gray-900 hover:text-blue-600"
-            >
+        <article key={post.slug}>
+          <a href={`/blog/${post.slug}`} className="group block">
+            <time className="text-sm text-neutral-500 dark:text-neutral-400">
+              {formatDate(post.date)}
+            </time>
+            <h2 className="text-xl font-semibold text-neutral-900 dark:text-white mt-1 group-hover:text-blue-500 transition-colors">
               {post.title}
-            </a>
-          </h2>
-          <div className="text-gray-600 text-sm mb-2">
-            {formatDate(post.date)}
-          </div>
-          {post.excerpt && (
-            <p className="text-gray-700 mb-4">{post.excerpt}</p>
-          )}
+            </h2>
+            {post.excerpt && (
+              <p className="text-neutral-600 dark:text-neutral-400 mt-2 line-clamp-2">{post.excerpt}</p>
+            )}
+          </a>
           {post.tags && (
-            <div className="flex gap-2">
+            <div className="flex gap-2 mt-3">
               {post.tags.map(tag => (
                 <span
                   key={tag}
-                  className="px-2 py-1 bg-gray-100 text-gray-600 rounded text-sm"
+                  className="px-2 py-1 bg-neutral-100 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-400 rounded-md text-xs"
                 >
                   {tag}
                 </span>
               ))}
             </div>
           )}
-          <a
-            href={`/blog/${post.slug}`}
-            className="text-blue-600 hover:underline mt-2 inline-block"
-          >
-            Read more →
-          </a>
         </article>
       ))}
     </div>

@@ -4,6 +4,7 @@
  */
 
 import { serverLogger as logger } from "@veryfront/utils";
+import { isDeno } from "../../platform/compat/runtime.ts";
 import type { OtelInstruments } from "./types.ts";
 
 let otelInitialized = false;
@@ -37,6 +38,10 @@ export function safeLogWarn(message: string, error?: unknown): void {
 export async function ensureOtelInstruments(): Promise<void> {
   if (otelInitialized) return;
   otelInitialized = true;
+
+  // Skip OpenTelemetry in non-Deno runtimes (Node.js, Bun)
+  // The npm: protocol is Deno-specific and will fail in other runtimes
+  if (!isDeno) return;
 
   try {
     // Construct module name dynamically to prevent Deno static analyzer
