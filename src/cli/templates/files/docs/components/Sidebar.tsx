@@ -37,22 +37,22 @@ export function Sidebar() {
   }, []);
 
   return (
-    <aside className="w-64 border-r border-gray-200 min-h-screen">
-      <nav className="p-6 space-y-8">
+    <aside className="w-56 shrink-0 border-r border-neutral-200 dark:border-neutral-800 min-h-[calc(100vh-3.5rem)]">
+      <nav className="p-4 space-y-6 sticky top-14">
         {navigation.map((section) => (
           <div key={section.title}>
-            <h3 className="font-semibold text-gray-900 mb-3">
+            <h3 className="text-xs font-semibold text-neutral-500 dark:text-neutral-400 uppercase tracking-wider mb-2 px-3">
               {section.title}
             </h3>
-            <ul className="space-y-2">
+            <ul className="space-y-0.5">
               {section.items.map((item) => (
                 <li key={item.href}>
                   <a
                     href={item.href}
-                    className={`block px-3 py-1.5 text-sm rounded-md transition-colors ${
+                    className={`block px-3 py-1.5 text-sm rounded-lg transition-colors ${
                       pathname === item.href
-                        ? "bg-blue-50 text-blue-700"
-                        : "text-gray-600 hover:text-gray-900 hover:bg-gray-50"
+                        ? "bg-blue-500/10 text-blue-500 font-medium"
+                        : "text-neutral-600 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-white hover:bg-neutral-100 dark:hover:bg-neutral-800"
                     }`}
                   >
                     {item.title}
