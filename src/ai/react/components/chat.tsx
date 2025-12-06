@@ -135,7 +135,9 @@ export const Chat = React.forwardRef<HTMLDivElement, ChatProps>(
                     )}
                   >
                     <div className={theme.message?.[msg.role] || theme.message?.assistant}>
-                      <p className="whitespace-pre-wrap text-[15px] leading-relaxed">{msg.content}</p>
+                      <p className="whitespace-pre-wrap text-[15px] leading-relaxed">
+                        {msg.content}
+                      </p>
                     </div>
                   </MessageItem>
                 )
