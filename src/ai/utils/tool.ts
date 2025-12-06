@@ -204,8 +204,13 @@ class ToolRegistryClass {
   }
 }
 
-// Singleton instance
-export const toolRegistry = new ToolRegistryClass();
+// Singleton instance using globalThis to share across module contexts
+// This is necessary for esbuild-bundled API routes to access the same registry
+const TOOL_REGISTRY_KEY = "__veryfront_tool_registry__";
+// deno-lint-ignore no-explicit-any
+const _globalTool = globalThis as any;
+export const toolRegistry: ToolRegistryClass =
+  _globalTool[TOOL_REGISTRY_KEY] ||= new ToolRegistryClass();
 
 export function toolToProviderDefinition(tool: Tool): ToolDefinition {
   // Use pre-converted JSON Schema if available (preferred)

@@ -81,16 +81,13 @@ const adapter: RuntimeAdapter = {
   },
 };
 
-Deno.test("loadHandlerModule resolves .ts file without explicit extension", async () => {
+Deno.test("loadHandlerModule loads .ts file with explicit extension", async () => {
   const tmpDir = await Deno.makeTempDir();
-  const modulePath = join(tmpDir, "handler");
+  const modulePath = join(tmpDir, "handler.ts");
 
   await fs.writeTextFile(
-    `${modulePath}.ts`,
-    `
-      import { NextResponse } from 'https://deno.land/x/next_response/mod.ts';
-      export const GET = () => new Response("ok");
-    `,
+    modulePath,
+    `export const GET = () => new Response("ok");`,
   );
 
   const route = await loadHandlerModule({

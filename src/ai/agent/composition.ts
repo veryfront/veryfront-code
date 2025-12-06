@@ -7,6 +7,7 @@
 import type { Agent } from "../types/agent.ts";
 import type { Tool } from "../types/tool.ts";
 import { z } from "zod";
+import { agentLogger } from "../../core/utils/logger/logger.ts";
 
 /**
  * Convert an agent to a tool that can be called by other agents
@@ -164,36 +165,93 @@ export function createWorkflow(config: WorkflowConfig) {
 }
 
 /**
- * Agent registry for composition
+ * Agent registry for composition and multi-agent workflows
+ *
+ * Note: This registry is primarily used for agent-to-agent orchestration.
+ * For API routes, agents should be imported directly to ensure they are
+ * bundled with the route and available at runtime.
  */
 class AgentRegistryClass {
   private agents = new Map<string, Agent>();
 
+  /**
+   * Register an agent
+   */
   register(id: string, agent: Agent): void {
+    if (this.agents.has(id)) {
+      agentLogger.warn(`Agent "${id}" is already registered. Overwriting.`);
+    }
     this.agents.set(id, agent);
+    agentLogger.debug(`Registered agent: ${id}`);
   }
 
+  /**
+   * Get an agent by ID
+   */
   get(id: string): Agent | undefined {
     return this.agents.get(id);
   }
 
+  /**
+   * Check if an agent exists
+   */
+  has(id: string): boolean {
+    return this.agents.has(id);
+  }
+
+  /**
+   * Get all agent IDs
+   */
+  getAllIds(): string[] {
+    return Array.from(this.agents.keys());
+  }
+
+  /**
+   * Get all agents as a Map
+   */
   getAll(): Map<string, Agent> {
     return new Map(this.agents);
   }
 
+  /**
+   * Clear all agents (for testing)
+   */
   clear(): void {
     this.agents.clear();
   }
 }
 
-// Singleton instance
-export const agentRegistry = new AgentRegistryClass();
+// Singleton instance using globalThis to share across module contexts
+// This is necessary for esbuild-bundled API routes to access the same registry
+const AGENT_REGISTRY_KEY = "__veryfront_agent_registry__";
+// deno-lint-ignore no-explicit-any
+const _globalAgent = globalThis as any;
+export const agentRegistry: AgentRegistryClass =
+  _globalAgent[AGENT_REGISTRY_KEY] ||= new AgentRegistryClass();
+
+// Export class for type usage
+export { AgentRegistryClass };
 
 /**
  * Register an agent for use by other agents
  */
 export function registerAgent(id: string, agent: Agent): void {
   agentRegistry.register(id, agent);
+}
+
+/**
+ * Get an agent by ID from the registry.
+ * Returns undefined if agent not found.
+ */
+export function getAgent(id: string): Agent | undefined {
+  return agentRegistry.get(id);
+}
+
+/**
+ * Get all registered agent IDs
+ */
+export function getAllAgentIds(): string[] {
+  return agentRegistry.getAllIds();
 }
 
 /**

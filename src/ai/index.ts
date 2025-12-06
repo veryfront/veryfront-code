@@ -98,7 +98,7 @@ export {
 export { toolRegistry } from "./utils/tool.ts";
 export { resourceRegistry } from "./mcp/resource.ts";
 export { promptRegistry } from "./mcp/prompt.ts";
-export { agentRegistry, registerAgent } from "./agent/composition.ts";
+export { agentRegistry, getAgent, getAllAgentIds, registerAgent } from "./agent/composition.ts";
 
 // ============================================================================
 // Public API - Agent Composition

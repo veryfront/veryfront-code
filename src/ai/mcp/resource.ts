@@ -156,5 +156,10 @@ class ResourceRegistryClass {
   }
 }
 
-// Singleton instance
-export const resourceRegistry = new ResourceRegistryClass();
+// Singleton instance using globalThis to share across module contexts
+// This is necessary for esbuild-bundled API routes to access the same registry
+const RESOURCE_REGISTRY_KEY = "__veryfront_resource_registry__";
+// deno-lint-ignore no-explicit-any
+const _globalResource = globalThis as any;
+export const resourceRegistry: ResourceRegistryClass =
+  _globalResource[RESOURCE_REGISTRY_KEY] ||= new ResourceRegistryClass();

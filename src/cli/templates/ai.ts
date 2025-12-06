@@ -189,27 +189,17 @@ export default function RootLayout({
     content: `/**
  * Chat API Route
  *
- * Uses auto-discovered agent from ai/agents/ directory.
- * The agent, tools, and prompts are all auto-registered by veryfront.
+ * Imports the agent directly from ai/agents/ directory.
+ * This ensures the agent is bundled with the route and available at runtime.
  */
 
-import { agentRegistry } from 'veryfront/ai';
+import assistantAgent from '../../../ai/agents/assistant';
 
 export async function POST(request: Request) {
   const { messages } = await request.json();
 
-  // Get the auto-discovered agent from registry
-  const chatAgent = agentRegistry.get('assistant');
-
-  if (!chatAgent) {
-    return new Response(
-      JSON.stringify({ error: 'Agent not found. Make sure ai/agents/assistant.ts exists.' }),
-      { status: 500, headers: { 'Content-Type': 'application/json' } }
-    );
-  }
-
   // Stream response using the agent
-  const result = await chatAgent.stream({ messages });
+  const result = await assistantAgent.stream({ messages });
 
   // Return Vercel AI SDK compatible streaming response
   return result.toDataStreamResponse();

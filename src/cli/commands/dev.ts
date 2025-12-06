@@ -13,6 +13,7 @@ import { getConfig } from "@veryfront/config";
 import { createDevServer } from "@veryfront/server/dev-server.ts";
 import { getNetworkInterfaces } from "../../platform/compat/process.ts";
 import { runAIConfigValidation } from "../../ai/utils/config-validator.ts";
+import { discoverAll } from "../../ai/utils/discovery.ts";
 import { exitProcess, registerTerminationSignals } from "../utils/index.ts";
 
 export interface DevOptions {
@@ -67,6 +68,36 @@ export async function devCommand(options: DevOptions) {
   // Validate AI configuration
   if (config) {
     runAIConfigValidation(config);
+  }
+
+  // Auto-discover AI components (agents, tools, prompts, resources)
+  try {
+    const aiResult = await discoverAll({
+      baseDir: projectDir,
+      verbose: false,
+    });
+
+    const totalDiscovered =
+      aiResult.agents.size +
+      aiResult.tools.size +
+      aiResult.prompts.size +
+      aiResult.resources.size;
+
+    if (totalDiscovered > 0) {
+      cliLogger.info(
+        `${green("✓")} AI Discovery: ${aiResult.agents.size} agents, ` +
+        `${aiResult.tools.size} tools, ${aiResult.prompts.size} prompts, ` +
+        `${aiResult.resources.size} resources`
+      );
+    }
+
+    if (aiResult.errors.length > 0) {
+      for (const err of aiResult.errors) {
+        cliLogger.warn(`AI discovery error in ${err.file}: ${err.error.message}`);
+      }
+    }
+  } catch (error) {
+    cliLogger.debug("AI discovery skipped (no ai/ directory or error):", error);
   }
 
   // Pre-compile MDX files if enabled

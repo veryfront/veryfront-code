@@ -128,5 +128,10 @@ class PromptRegistryClass {
   }
 }
 
-// Singleton instance
-export const promptRegistry = new PromptRegistryClass();
+// Singleton instance using globalThis to share across module contexts
+// This is necessary for esbuild-bundled API routes to access the same registry
+const PROMPT_REGISTRY_KEY = "__veryfront_prompt_registry__";
+// deno-lint-ignore no-explicit-any
+const _globalPrompt = globalThis as any;
+export const promptRegistry: PromptRegistryClass =
+  _globalPrompt[PROMPT_REGISTRY_KEY] ||= new PromptRegistryClass();

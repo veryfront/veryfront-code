@@ -6,7 +6,7 @@ import type { Agent, AgentConfig, AgentResponse, Message, ToolCall } from "../ty
 import { AgentRuntime } from "./runtime.ts";
 import { detectPlatform, validatePlatformCompatibility } from "../runtime/platform.ts";
 import { registerTool } from "../mcp/registry.ts";
-import { agentRegistry } from "./registry.ts";
+import { agentRegistry } from "./composition.ts";
 import { agentLogger } from "../../core/utils/logger/logger.ts";
 import { createError, toError } from "../../core/errors/veryfront-error.ts";
 

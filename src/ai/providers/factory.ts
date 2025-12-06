@@ -196,8 +196,13 @@ class ProviderRegistry {
   }
 }
 
-// Singleton instance
-export const providerRegistry = new ProviderRegistry();
+// Singleton instance using globalThis to share across module contexts
+// This is necessary for esbuild-bundled API routes to access the same registry
+const PROVIDER_REGISTRY_KEY = "__veryfront_provider_registry__";
+// deno-lint-ignore no-explicit-any
+const _globalProvider = globalThis as any;
+export const providerRegistry: ProviderRegistry =
+  _globalProvider[PROVIDER_REGISTRY_KEY] ||= new ProviderRegistry();
 
 /**
  * Initialize providers with configuration
