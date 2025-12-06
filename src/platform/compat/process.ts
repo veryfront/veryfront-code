@@ -289,3 +289,67 @@ export function getStdout(): { write: (data: string) => void } | null {
   }
   return null;
 }
+
+// Cached Node.js modules for synchronous prompt
+let cachedNodeFs: typeof import("node:fs") | null = null;
+
+/**
+ * Synchronous prompt function that works across Deno and Node.js
+ * Displays a message and reads user input from stdin
+ */
+export function promptSync(message?: string): string | null {
+  if (IS_DENO) {
+    // Deno has a built-in prompt() function
+    return prompt(message);
+  }
+
+  if (hasNodeProcess) {
+    // Print the message
+    if (message) {
+      nodeProcess!.stdout.write(message + " ");
+    }
+
+    // Lazy load fs module
+    if (!cachedNodeFs) {
+      // Dynamic import converted to sync require for bundling
+      // @ts-ignore - dynamic require for Node.js
+      cachedNodeFs = globalThis.require?.("node:fs") || null;
+      if (!cachedNodeFs) {
+        // Try alternative approach
+        try {
+          // @ts-ignore: __require is injected by bundlers for Node.js require
+          cachedNodeFs = __require("node:fs");
+        } catch {
+          return null;
+        }
+      }
+    }
+
+    if (!cachedNodeFs) {
+      return null;
+    }
+
+    // Read synchronously using fs
+    // This works by reading from file descriptor 0 (stdin)
+    // Use Uint8Array for cross-platform compatibility
+    const bufferSize = 1024;
+    const uint8Array = new Uint8Array(bufferSize);
+    let input = "";
+
+    try {
+      // Read from stdin (fd 0) synchronously
+      const bytesRead = cachedNodeFs.readSync(0, uint8Array, 0, bufferSize, null);
+      if (bytesRead > 0) {
+        const decoder = new TextDecoder("utf-8");
+        input = decoder.decode(uint8Array.subarray(0, bytesRead)).trim();
+      }
+    } catch {
+      // If stdin is not available or EOF, return null
+      return null;
+    }
+
+    return input || null;
+  }
+
+  return null;
+}
