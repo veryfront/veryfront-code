@@ -10,7 +10,7 @@
     "ingest": "npx tsx scripts/ingest.ts"
   },
   "dependencies": {
-    "veryfront": "^0.0.34",
+    "veryfront": "^0.0.35",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "zod": "^3.22.0"
