@@ -9,7 +9,6 @@ import * as React from "react";
 import {
   ChatContainer,
   InputBox,
-  LoadingIndicator,
   MessageItem,
   MessageList,
   SubmitButton,

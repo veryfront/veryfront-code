@@ -87,13 +87,13 @@ export const AgentCard = React.forwardRef<HTMLDivElement, AgentCardProps>(
 
         {/* Tool calls */}
         {toolCalls.length > 0 && (
-          <div className="space-y-2">
-            <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300">
+          <div className="space-y-3">
+            <h3 className="text-sm font-semibold text-neutral-700 dark:text-neutral-300">
               Tool Calls
             </h3>
             <ToolList
               toolCalls={toolCalls}
-              className="space-y-2"
+              className="space-y-3"
               renderTool={renderTool ||
                 ((tool) => (
                   <ToolInvocation
@@ -106,7 +106,7 @@ export const AgentCard = React.forwardRef<HTMLDivElement, AgentCardProps>(
                       <ToolResult result={tool.result} className={theme.toolResult} />
                     )}
                     {tool.error && (
-                      <div className="mt-2 p-2 bg-red-50 dark:bg-red-900/20 text-red-900 dark:text-red-100 rounded text-sm">
+                      <div className="mt-2 p-3 bg-red-50 dark:bg-red-900/20 text-red-900 dark:text-red-100 rounded-xl text-sm border border-red-200 dark:border-red-800">
                         Error: {tool.error}
                       </div>
                     )}
@@ -118,18 +118,22 @@ export const AgentCard = React.forwardRef<HTMLDivElement, AgentCardProps>(
 
         {/* Messages (if provided) */}
         {messages && messages.length > 0 && (
-          <div className="space-y-2">
-            <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300">
+          <div className="space-y-3">
+            <h3 className="text-sm font-semibold text-neutral-700 dark:text-neutral-300">
               Messages
             </h3>
             <div className="space-y-2 max-h-96 overflow-y-auto">
               {messages.map((msg) => (
                 <div
                   key={msg.id}
-                  className="text-sm p-2 rounded bg-gray-50 dark:bg-gray-900"
+                  className="text-sm p-3 rounded-xl bg-neutral-50 dark:bg-neutral-800"
                 >
-                  <span className="font-semibold capitalize">{msg.role}:</span>
-                  <span>{msg.content.substring(0, 200)}...</span>
+                  <span className="font-semibold capitalize text-neutral-900 dark:text-neutral-100">
+                    {msg.role}:
+                  </span>
+                  <span className="text-neutral-600 dark:text-neutral-400 ml-1">
+                    {msg.content.substring(0, 200)}...
+                  </span>
                 </div>
               ))}
             </div>
@@ -143,16 +147,16 @@ export const AgentCard = React.forwardRef<HTMLDivElement, AgentCardProps>(
 AgentCard.displayName = "AgentCard";
 
 /**
- * Get status color classes
+ * Get status color classes - Apple-inspired status colors
  */
 function getStatusColor(status: AgentStatus): string {
   switch (status) {
     case "idle":
-      return "bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300";
+      return "bg-neutral-100 text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300";
     case "thinking":
       return "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300";
     case "tool_execution":
-      return "bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300";
+      return "bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-300";
     case "streaming":
       return "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300";
     case "completed":
@@ -160,6 +164,6 @@ function getStatusColor(status: AgentStatus): string {
     case "error":
       return "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300";
     default:
-      return "bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300";
+      return "bg-neutral-100 text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300";
   }
 }
