@@ -1,0 +1,15 @@
+{
+  "name": "mdx",
+  "description": "MDX support for rich content pages with React components",
+  "configMerge": {
+    "mdx": {
+      "enabled": true
+    }
+  },
+  "tips": [
+    "Create .mdx files in app/ directory",
+    "Import React components directly in MDX",
+    "Supports frontmatter for metadata",
+    "Code blocks with syntax highlighting included"
+  ]
+}

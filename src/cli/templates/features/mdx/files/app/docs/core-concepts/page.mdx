@@ -1,0 +1,56 @@
+# Core Concepts
+
+Learn the fundamental concepts behind this framework.
+
+## Routing
+
+Routes are defined by the file structure in the `app/` directory:
+
+| File                    | Route        |
+| ----------------------- | ------------ |
+| `app/page.tsx`          | `/`          |
+| `app/about/page.tsx`    | `/about`     |
+| `app/blog/[slug]/page.tsx` | `/blog/:slug` |
+
+## Layouts
+
+Layouts wrap pages and can be nested:
+
+```tsx
+// app/layout.tsx
+export default function RootLayout({ children }) {
+  return (
+    <html>
+      <body>{children}</body>
+    </html>
+  );
+}
+```
+
+## Data Fetching
+
+Fetch data in server components:
+
+```tsx
+// app/users/page.tsx
+async function getUsers() {
+  const res = await fetch('https://api.example.com/users');
+  return res.json();
+}
+
+export default async function UsersPage() {
+  const users = await getUsers();
+  return <UserList users={users} />;
+}
+```
+
+## API Routes
+
+Create API endpoints in `app/api/`:
+
+```ts
+// app/api/hello/route.ts
+export async function GET() {
+  return Response.json({ message: 'Hello, World!' });
+}
+```

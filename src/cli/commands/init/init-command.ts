@@ -8,21 +8,10 @@ import { FileSystemError } from "@veryfront/errors";
 import { cyan, green, yellow } from "@veryfront/compat/console";
 import { ensureDir } from "std/fs/mod.ts";
 import { join } from "std/path/mod.ts";
-import { createConfigFile, createPackageJson, updateConfigCacheBlock } from "./config-generator.ts";
-import { createProjectStructure } from "./project-structure.ts";
+import { createPackageJson } from "./config-generator.ts";
 import { createError, toError } from "../../../core/errors/veryfront-error.ts";
-import {
-  createAppRouterApiSample,
-  createAppRouterSample,
-  createRscDemoSample,
-  createSampleFiles,
-} from "./sample-generators.ts";
-import type { CacheBackend, InitOptions, InitTemplate } from "./types.ts";
-import {
-  cwd,
-  getEnv,
-  isInteractive as checkIsInteractive,
-} from "../../../platform/compat/process.ts";
+import type { InitOptions, InitTemplate } from "./types.ts";
+import { cwd } from "../../../platform/compat/process.ts";
 import { createFileSystem } from "../../../platform/compat/fs.ts";
 import {
   detectPackageManager,
@@ -30,48 +19,20 @@ import {
   installDependencies,
 } from "../../utils/package-manager.ts";
 import { generateGitignoreContent, promptForEnvVars } from "../../utils/env-prompt.ts";
-
-const CACHE_BACKENDS: CacheBackend[] = ["memory", "filesystem", "kv", "redis"];
-
-function normalizeBackend(value: string): CacheBackend | null {
-  const normalized = value.trim().toLowerCase();
-  return CACHE_BACKENDS.find((backend) => backend === normalized) ?? null;
-}
-
-function resolveCacheBackend(provided?: string): Promise<CacheBackend> {
-  if (provided) {
-    const normalized = normalizeBackend(provided);
-    if (!normalized) {
-      throw toError(createError({
-        type: "config",
-        message: `Unknown cache backend: ${provided}. Expected one of ${CACHE_BACKENDS.join(", ")}`,
-      }));
-    }
-    return Promise.resolve(normalized);
-  }
-
-  try {
-    // Prompt only when stdin is interactive and we are not inside CI/tests
-    const disablePrompt = getEnv("CI") === "1" || getEnv("DENO_TESTING") === "1";
-    const interactive = !disablePrompt && checkIsInteractive();
-
-    if (interactive) {
-      const answer = prompt(
-        `Select cache backend [memory/filesystem/kv/redis] (default: memory)`,
-      );
-      if (answer) {
-        const normalized = normalizeBackend(answer);
-        if (normalized) return Promise.resolve(normalized);
-        logger.warn(`Unknown cache backend "${answer}". Using default (memory).`);
-      }
-    }
-  } catch (error) {
-    // Prompt may fail in non-interactive environments (e.g., CI)
-    logger.debug("Prompt failed (likely non-interactive environment):", error);
-  }
-
-  return Promise.resolve("memory");
-}
+import type { EnvVarConfig, TemplateFile } from "../../templates/types.ts";
+import {
+  loadFeature,
+  mergeFiles,
+  resolveFeatures,
+  validateFeatures,
+} from "../../templates/feature-loader.ts";
+import {
+  getIntegrationBaseFiles,
+  loadIntegrationBaseFilesFromDirectory,
+  loadIntegrations,
+  validateIntegrations,
+} from "../../templates/integration-loader.ts";
+import { runInteractiveWizard, shouldRunWizard } from "./interactive-wizard.ts";
 
 /**
  * Initializes a new Veryfront project with the specified template
@@ -83,30 +44,75 @@ function resolveCacheBackend(provided?: string): Promise<CacheBackend> {
  * @example
  * ```ts
  * // Create new project in current directory
- * await initCommand({ template: 'pages-router' })
+ * await initCommand({ template: 'minimal' })
  *
  * // Create new project in named directory
- * await initCommand({ name: 'my-app', template: 'app-router' })
+ * await initCommand({ name: 'my-app', template: 'app' })
  *
- * // Using deprecated appRouter flag (backward compatibility)
- * await initCommand({ name: 'my-app', appRouter: true })
+ * // Create AI agent with integrations
+ * await initCommand({ name: 'my-agent', template: 'ai', integrations: ['gmail', 'slack'] })
  * ```
  */
 export async function initCommand(options: InitOptions): Promise<void> {
-  const { name } = options;
-  const template: InitTemplate = (options.template as InitTemplate | undefined)
-    ? (options.template as InitTemplate)
-    : options.appRouter
-    ? "app-router"
-    : "pages-router";
+  const { name, features = [] } = options;
+  let { integrations = [] } = options;
+
+  // Run interactive wizard if no template/integrations specified
+  let template: InitTemplate;
+  if (shouldRunWizard(options)) {
+    const wizardResult = await runInteractiveWizard();
+    template = wizardResult.template;
+    if (wizardResult.integrations.length > 0) {
+      integrations = wizardResult.integrations;
+    }
+  } else {
+    // Determine template: explicit > default to AI (primary use case)
+    if (options.template) {
+      template = options.template;
+    } else {
+      template = "ai";
+    }
+  }
   const projectDir = name ? join(cwd(), name) : cwd();
-  const cacheBackend = await resolveCacheBackend(options.cacheBackend);
   const fs = createFileSystem();
 
+  // Validate features if provided
+  if (features.length > 0) {
+    const validation = validateFeatures(features);
+    if (!validation.valid) {
+      for (const error of validation.errors) {
+        logger.error(error);
+      }
+      throw toError(createError({
+        type: "config",
+        message: "Invalid features specified",
+      }));
+    }
+  }
+
+  // Validate integrations if provided
+  if (integrations.length > 0) {
+    const validation = validateIntegrations(integrations);
+    if (!validation.valid) {
+      for (const error of validation.errors) {
+        logger.error(error);
+      }
+      throw toError(createError({
+        type: "config",
+        message: "Invalid integrations specified",
+      }));
+    }
+  }
+
+  const featuresStr = features.length > 0 ? ` with features: ${features.join(", ")}` : "";
+  const integrationsStr = integrations.length > 0
+    ? ` with integrations: ${integrations.join(", ")}`
+    : "";
   logger.info(
-    `Creating new Veryfront project${name ? ` in ${name}` : ""} with template: ${template}`,
+    `Creating new Veryfront project${
+      name ? ` in ${name}` : ""
+    } with template: ${template}${featuresStr}${integrationsStr}`,
   );
-  logger.debug(`Selected render cache backend: ${cacheBackend}`);
 
   // Check if directory exists
   if (name) {
@@ -116,99 +122,175 @@ export async function initCommand(options: InitOptions): Promise<void> {
     }
   }
 
-  // Use new template system for modern templates
-  if (["blog", "docs", "app", "minimal", "ai"].includes(template)) {
-    const { getTemplate, getTemplateConfig } = await import("../../templates/index.ts");
+  const { getTemplate, getTemplateConfig } = await import("../../templates/index.ts");
 
-    const templateFiles = await getTemplate(template as "blog" | "docs" | "app" | "minimal" | "ai");
-    const templateConfig = getTemplateConfig(
-      template as "blog" | "docs" | "app" | "minimal" | "ai",
-    );
+  let templateFiles = await getTemplate(template);
+  const templateConfig = getTemplateConfig(template);
 
-    if (!templateFiles) {
+  if (!templateFiles) {
+    throw toError(createError({
+      type: "config",
+      message: `Template ${template} not found`,
+    }));
+  }
+
+  // Collect env vars from template and features
+  const allEnvVars: EnvVarConfig[] = templateConfig?.envVars ? [...templateConfig.envVars] : [];
+  const featureTips: string[] = [];
+
+  // Load and merge features if provided
+  if (features.length > 0) {
+    const { ordered, errors } = await resolveFeatures(features);
+    if (errors.length > 0) {
+      for (const error of errors) {
+        logger.error(error);
+      }
       throw toError(createError({
         type: "config",
-        message: `Template ${template} not found`,
+        message: "Failed to resolve features",
       }));
     }
 
-    if (name) {
-      await ensureDir(projectDir);
-    }
+    logger.debug(`Resolved feature order: ${ordered.join(" -> ")}`);
 
-    // Create all template files (excluding .env which we'll generate separately)
-    for (const file of templateFiles) {
-      // Skip .env files - we'll generate them with prompting
-      if (file.path === ".env" || file.path === ".env.example") {
-        continue;
+    // Load and merge each feature
+    for (const featureName of ordered) {
+      const feature = await loadFeature(featureName);
+      if (feature) {
+        logger.debug(`Loading feature: ${featureName} (${feature.files.length} files)`);
+        templateFiles = mergeFiles(templateFiles, feature.files);
+
+        // Collect feature env vars
+        if (feature.config.envVars) {
+          allEnvVars.push(...feature.config.envVars);
+        }
+
+        // Collect feature tips
+        if (feature.config.tips) {
+          featureTips.push(...feature.config.tips);
+        }
+      } else {
+        logger.warn(`Feature ${featureName} not found, skipping`);
       }
-
-      const filePath = join(projectDir, file.path);
-      const fileDir = join(projectDir, ...file.path.split("/").slice(0, -1));
-
-      if (fileDir !== projectDir) {
-        await ensureDir(fileDir);
-      }
-
-      await fs.writeTextFile(filePath, file.content);
-      logger.debug(`Created file: ${file.path}`);
     }
-
-    // Create package.json with ES module support
-    await createPackageJson(projectDir, name);
-    await updateConfigCacheBlock(projectDir, cacheBackend);
-
-    // Handle environment variables if template has env var config
-    if (templateConfig?.envVars && templateConfig.envVars.length > 0) {
-      const envResult = await promptForEnvVars(templateConfig.envVars, {
-        skipPrompt: options.skipEnvPrompt,
-      });
-
-      // Write .env file
-      await fs.writeTextFile(join(projectDir, ".env"), envResult.envContent);
-      logger.debug("Created file: .env");
-
-      // Write .env.example file
-      await fs.writeTextFile(join(projectDir, ".env.example"), envResult.envExampleContent);
-      logger.debug("Created file: .env.example");
-    }
-
-    // Ensure .gitignore includes .env
-    const gitignorePath = join(projectDir, ".gitignore");
-    let existingGitignore: string | undefined;
-    try {
-      existingGitignore = await fs.readTextFile(gitignorePath);
-    } catch {
-      // File doesn't exist, that's fine
-    }
-    const gitignoreContent = generateGitignoreContent(existingGitignore);
-    await fs.writeTextFile(gitignorePath, gitignoreContent);
-    logger.debug("Updated file: .gitignore");
-  } else {
-    // Legacy template handling
-    await createProjectStructure(projectDir, template);
-    await createConfigFile(projectDir, name, template, cacheBackend);
-    // Create package.json with ES module support
-    await createPackageJson(projectDir, name);
-
-    if (template === "app-router") await createAppRouterSample(projectDir);
-    else if (template === "app-router-api") {
-      await createAppRouterApiSample(projectDir);
-    } else if (template === "rsc-demo") await createRscDemoSample(projectDir);
-    else await createSampleFiles(projectDir);
   }
+
+  // Load and merge integrations if provided
+  if (integrations.length > 0) {
+    logger.debug(`Loading integrations: ${integrations.join(", ")}`);
+
+    // Add base integration files (token store, oauth utils, shared components)
+    const baseFiles = getIntegrationBaseFiles();
+    templateFiles = mergeFiles(templateFiles, baseFiles);
+
+    // Load additional base files from _base directory (setup guide, status API)
+    const baseDirectoryFiles = await loadIntegrationBaseFilesFromDirectory();
+    templateFiles = mergeFiles(templateFiles, baseDirectoryFiles);
+
+    // Load each integration
+    const { integrations: loadedIntegrations, files: integrationFiles, errors: integrationErrors } =
+      await loadIntegrations(integrations);
+
+    if (integrationErrors.length > 0) {
+      for (const error of integrationErrors) {
+        logger.warn(error);
+      }
+    }
+
+    // Merge integration files
+    templateFiles = mergeFiles(templateFiles, integrationFiles);
+
+    // Collect env vars from integrations
+    for (const integration of loadedIntegrations) {
+      if (integration.config.envVars) {
+        allEnvVars.push(...integration.config.envVars);
+      }
+    }
+
+    logger.debug(
+      `Loaded ${loadedIntegrations.length} integrations with ${integrationFiles.length} files`,
+    );
+
+    // Add integration setup tips
+    featureTips.push(`Integrations loaded: ${integrations.join(", ")}`);
+    featureTips.push("Visit /setup for guided OAuth app setup");
+    featureTips.push("Connect services at /api/auth/<service>");
+  }
+
+  if (name) {
+    await ensureDir(projectDir);
+  }
+
+  // Create all template files (excluding .env which we'll generate separately)
+  for (const file of templateFiles as TemplateFile[]) {
+    // Skip .env files - we'll generate them with prompting
+    if (file.path === ".env" || file.path === ".env.example") {
+      continue;
+    }
+
+    const filePath = join(projectDir, file.path);
+    const fileDir = join(projectDir, ...file.path.split("/").slice(0, -1));
+
+    if (fileDir !== projectDir) {
+      await ensureDir(fileDir);
+    }
+
+    await fs.writeTextFile(filePath, file.content);
+    logger.debug(`Created file: ${file.path}`);
+  }
+
+  // Create package.json with ES module support
+  await createPackageJson(projectDir, name);
+
+  // Handle environment variables from both template and features
+  if (allEnvVars.length > 0) {
+    // Deduplicate env vars by name (keep first occurrence)
+    const seenEnvVars = new Set<string>();
+    const uniqueEnvVars = allEnvVars.filter((envVar) => {
+      if (seenEnvVars.has(envVar.name)) {
+        return false;
+      }
+      seenEnvVars.add(envVar.name);
+      return true;
+    });
+
+    const envResult = await promptForEnvVars(uniqueEnvVars, {
+      skipPrompt: options.skipEnvPrompt,
+    });
+
+    // Write .env file
+    await fs.writeTextFile(join(projectDir, ".env"), envResult.envContent);
+    logger.debug("Created file: .env");
+
+    // Write .env.example file
+    await fs.writeTextFile(join(projectDir, ".env.example"), envResult.envExampleContent);
+    logger.debug("Created file: .env.example");
+  }
+
+  // Ensure .gitignore includes .env
+  const gitignorePath = join(projectDir, ".gitignore");
+  let existingGitignore: string | undefined;
+  try {
+    existingGitignore = await fs.readTextFile(gitignorePath);
+  } catch {
+    // File doesn't exist, that's fine
+  }
+  const gitignoreContent = generateGitignoreContent(existingGitignore);
+  await fs.writeTextFile(gitignorePath, gitignoreContent);
+  logger.debug("Updated file: .gitignore");
+
+  // Store feature tips for later display
+  (options as InitOptions & { _featureTips?: string[] })._featureTips = featureTips;
 
   logger.info(`${green("✅")} Created Veryfront project${name ? ` at ${name}` : ""}`);
 
   // Auto-install dependencies unless skipInstall is true
   if (!options.skipInstall) {
     logger.info("");
-    const installSuccess = await installDependencies(projectDir, {
-      packageManager: options.packageManager,
-    });
+    const installSuccess = await installDependencies(projectDir);
 
     if (!installSuccess) {
-      const pm = await detectPackageManager(projectDir, options.packageManager);
+      const pm = await detectPackageManager(projectDir);
       logger.warn(
         `${yellow("⚠")} Dependency installation failed. Run '${getInstallCommand(pm)}' manually.`,
       );
@@ -220,7 +302,7 @@ export async function initCommand(options: InitOptions): Promise<void> {
     logger.info(`  cd ${name}`);
   }
   if (options.skipInstall) {
-    const pm = await detectPackageManager(projectDir, options.packageManager);
+    const pm = await detectPackageManager(projectDir);
     logger.info(`  ${getInstallCommand(pm)}`);
   }
   logger.info(`  veryfront dev`);
@@ -247,5 +329,14 @@ export async function initCommand(options: InitOptions): Promise<void> {
     logger.info(`  - Add tools in ai/tools/ (auto-discovered)`);
     logger.info(`  - Add agents in ai/agents/ (auto-discovered)`);
     logger.info(`  - Add prompts in ai/prompts/ (auto-discovered)`);
+  }
+
+  // Display feature tips if any
+  const displayFeatureTips = (options as InitOptions & { _featureTips?: string[] })._featureTips;
+  if (displayFeatureTips && displayFeatureTips.length > 0) {
+    logger.info(`\n${cyan("Feature tips:")}`);
+    for (const tip of displayFeatureTips) {
+      logger.info(`  - ${tip}`);
+    }
   }
 }

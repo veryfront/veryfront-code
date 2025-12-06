@@ -1,0 +1,74 @@
+{
+  "name": "slack",
+  "displayName": "Slack",
+  "icon": "slack.svg",
+  "description": "Send messages, read channels, and manage Slack workspace",
+  "auth": {
+    "type": "oauth2",
+    "provider": "slack",
+    "authorizationUrl": "https://slack.com/oauth/v2/authorize",
+    "tokenUrl": "https://slack.com/api/oauth.v2.access",
+    "scopes": [
+      "channels:history",
+      "channels:read",
+      "chat:write",
+      "users:read",
+      "im:history",
+      "im:read"
+    ],
+    "callbackPath": "/api/auth/slack/callback"
+  },
+  "envVars": [
+    {
+      "name": "SLACK_CLIENT_ID",
+      "description": "Slack App Client ID",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://api.slack.com/apps"
+    },
+    {
+      "name": "SLACK_CLIENT_SECRET",
+      "description": "Slack App Client Secret",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://api.slack.com/apps"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list-channels",
+      "name": "List Channels",
+      "description": "Get list of Slack channels",
+      "requiresWrite": false
+    },
+    {
+      "id": "send-message",
+      "name": "Send Message",
+      "description": "Send a message to a Slack channel",
+      "requiresWrite": true
+    },
+    {
+      "id": "get-messages",
+      "name": "Get Messages",
+      "description": "Get recent messages from a channel",
+      "requiresWrite": false
+    }
+  ],
+  "prompts": [
+    {
+      "id": "catch-up-slack",
+      "title": "Catch up on Slack",
+      "prompt": "Summarize the important messages from my Slack channels from today. Highlight any mentions or urgent items.",
+      "category": "productivity",
+      "icon": "slack"
+    },
+    {
+      "id": "post-update",
+      "title": "Post team update",
+      "prompt": "Help me write and post a team update to Slack about my current work progress.",
+      "category": "productivity",
+      "icon": "message"
+    }
+  ],
+  "suggestedWith": ["gmail", "calendar", "jira"]
+}

@@ -8,6 +8,11 @@
 
 import type { ParsedArgs } from "./types.ts";
 
+/**
+ * Flags that should accumulate values instead of replacing
+ */
+const ARRAY_FLAGS = new Set(["with"]);
+
 function parse(
   args: string[],
   options: {
@@ -24,6 +29,20 @@ function parse(
     }
   }
 
+  /**
+   * Set a value, handling array flags that accumulate
+   */
+  const setValue = (key: string, value: unknown) => {
+    if (ARRAY_FLAGS.has(key)) {
+      if (!result[key]) {
+        result[key] = [];
+      }
+      (result[key] as unknown[]).push(value);
+    } else {
+      result[key] = value;
+    }
+  };
+
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
     if (!arg) continue;
@@ -32,15 +51,15 @@ function parse(
       const eqIdx = arg.indexOf("=");
       if (eqIdx !== -1) {
         const key = arg.slice(2, eqIdx);
-        result[key] = arg.slice(eqIdx + 1);
+        setValue(key, arg.slice(eqIdx + 1));
       } else {
         const key = arg.slice(2);
         const next = args[i + 1];
         if (next && !next.startsWith("-")) {
-          result[key] = next;
+          setValue(key, next);
           i++;
         } else {
-          result[key] = true;
+          setValue(key, true);
         }
       }
     } else if (arg.startsWith("-") && arg.length === 2) {
@@ -48,10 +67,10 @@ function parse(
       const key = aliasMap.get(short) || short;
       const next = args[i + 1];
       if (next && !next.startsWith("-")) {
-        result[key] = next;
+        setValue(key, next);
         i++;
       } else {
-        result[key] = true;
+        setValue(key, true);
       }
     } else if (!result._) {
       result._ = [arg];
@@ -101,6 +120,7 @@ export function parseCliArgs(args: string[]): ParsedArgs {
       s: "strict",
       t: "template",
       j: "json",
+      w: "with",
     },
     default: { port: 3002 },
   }) as ParsedArgs;

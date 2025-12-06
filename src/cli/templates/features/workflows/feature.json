@@ -1,0 +1,10 @@
+{
+  "name": "workflows",
+  "description": "Durable workflows for background processing and long-running tasks",
+  "tips": [
+    "Define workflows in workflows/ directory",
+    "Workflows persist state across restarts",
+    "Use for data processing, content pipelines, and async operations",
+    "API routes: /api/workflows/start, /api/workflows/status"
+  ]
+}

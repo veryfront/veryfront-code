@@ -1,0 +1,20 @@
+{
+  "name": "auth",
+  "description": "JWT-based authentication with login, signup, and session management",
+  "envVars": [
+    {
+      "name": "JWT_SECRET",
+      "description": "Secret key for signing JWT tokens",
+      "required": true,
+      "sensitive": true,
+      "placeholder": "your-super-secret-key-change-in-production"
+    }
+  ],
+  "tips": [
+    "Default demo credentials: demo@example.com / password",
+    "Auth routes: /login, /signup, /dashboard",
+    "API routes: /api/auth/login, /api/auth/signup, /api/auth/logout, /api/auth/me",
+    "Sessions stored in HTTP-only cookies for security",
+    "Change JWT_SECRET in production!"
+  ]
+}

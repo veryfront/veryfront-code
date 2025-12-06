@@ -11,10 +11,39 @@ import {
   loadTemplateFromDirectory,
   templateDirectoryExists,
 } from "./loader.ts";
-import type { EnvVarConfig, TemplateConfig, TemplateFile, TemplateName } from "./types.ts";
+import type {
+  EnvVarConfig,
+  FeatureConfig,
+  FeatureName,
+  ResolvedFeature,
+  TemplateConfig,
+  TemplateFile,
+  TemplateName,
+} from "./types.ts";
 
 // Re-export types
-export type { EnvVarConfig, TemplateConfig, TemplateFile, TemplateName };
+export type {
+  EnvVarConfig,
+  FeatureConfig,
+  FeatureName,
+  ResolvedFeature,
+  TemplateConfig,
+  TemplateFile,
+  TemplateName,
+};
+
+// Re-export feature functions
+export {
+  AVAILABLE_FEATURES,
+  featureExists,
+  loadFeature,
+  loadFeatureConfig,
+  mergeConfig,
+  mergeDependencies,
+  mergeFiles,
+  resolveFeatures,
+  validateFeatures,
+} from "./feature-loader.ts";
 
 /**
  * AI template configuration including required environment variables
