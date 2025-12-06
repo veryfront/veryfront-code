@@ -1,0 +1,53 @@
+import { z } from "zod";
+import { getEnv } from "veryfront/platform";
+import { createSession } from "../../../../lib/auth.ts";
+import { validatePassword } from "../../../../lib/users.ts";
+
+const loginSchema = z.object({
+  email: z.string().email(),
+  password: z.string().min(8),
+});
+
+export async function POST(request: Request) {
+  try {
+    const body = await request.json();
+    const { email, password } = loginSchema.parse(body);
+
+    // Validate credentials (replace with real DB lookup)
+    const user = await validatePassword(email, password);
+    if (!user) {
+      return Response.json(
+        { error: "Invalid credentials" },
+        { status: 401 }
+      );
+    }
+
+    // Create session
+    const session = await createSession(user);
+
+    // In production, ensure Secure flag is set for HTTPS-only transmission
+    const isProduction = getEnv("NODE_ENV") === "production";
+    const secureFlag = isProduction ? "; Secure" : "";
+
+    return Response.json(
+      { user, token: session.token },
+      {
+        headers: {
+          "Set-Cookie": `session=${session.token}; Path=/; HttpOnly; SameSite=Strict${secureFlag}`,
+        },
+      }
+    );
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return Response.json(
+        { error: "Invalid input", details: error.errors },
+        { status: 400 }
+      );
+    }
+
+    return Response.json(
+      { error: "Internal server error" },
+      { status: 500 }
+    );
+  }
+}

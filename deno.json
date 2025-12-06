@@ -1,13 +1,14 @@
 {
   "name": "veryfront",
-  "version": "0.0.35",
+  "version": "0.0.36",
   "exclude": [
     "npm/",
     "dist/",
     "coverage/",
     "scripts/",
     "examples/",
-    "tests/"
+    "tests/",
+    "src/cli/templates/files/"
   ],
   "exports": {
     ".": "./src/index.ts",
@@ -17,6 +18,7 @@
     "./components": "./src/react/components/index.ts",
     "./data": "./src/data/index.ts",
     "./config": "./src/core/config/index.ts",
+    "./platform": "./src/platform/index.ts",
     "./ai": "./src/ai/index.ts",
     "./ai/client": "./src/ai/client.ts",
     "./ai/react": "./src/ai/react/index.ts",

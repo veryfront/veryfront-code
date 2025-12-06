@@ -5,10 +5,10 @@
  */
 
 import {
-  INTERNAL_PREFIX,
+  BUILD_DIRS,
   INTERNAL_ENDPOINTS,
   INTERNAL_PATH_PREFIXES,
-  BUILD_DIRS,
+  INTERNAL_PREFIX,
 } from "./constants/server.ts";
 
 export const PATHS = {
@@ -43,4 +43,4 @@ export const FILE_EXTENSIONS = {
 } as const;
 
 // Re-export for convenience
-export { INTERNAL_PREFIX, INTERNAL_ENDPOINTS, INTERNAL_PATH_PREFIXES, BUILD_DIRS };
+export { BUILD_DIRS, INTERNAL_ENDPOINTS, INTERNAL_PATH_PREFIXES, INTERNAL_PREFIX };

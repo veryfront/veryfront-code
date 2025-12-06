@@ -124,7 +124,10 @@ export function isStaticAsset(pathname: string): boolean {
 /**
  * Normalize a chunk path to include the base prefix
  */
-export function normalizeChunkPath(filename: string, basePath: string = INTERNAL_PATH_PREFIXES.CHUNKS): string {
+export function normalizeChunkPath(
+  filename: string,
+  basePath: string = INTERNAL_PATH_PREFIXES.CHUNKS,
+): string {
   if (filename.startsWith("/")) {
     return filename;
   }

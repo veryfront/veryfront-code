@@ -150,9 +150,7 @@ export function useChat(options: UseChatOptions): UseChatResult {
               setMessages((prev) => {
                 // If we had a streaming message, replace it
                 if (hasAddedStreamingMessage) {
-                  return prev.map((m) =>
-                    m.id === streamingMessageId ? assistantMessage : m
-                  );
+                  return prev.map((m) => m.id === streamingMessageId ? assistantMessage : m);
                 }
                 // Otherwise just add it
                 return [...prev, assistantMessage];

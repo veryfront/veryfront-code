@@ -2,10 +2,7 @@
 // Minimal: hydrate default export without props in dev
 
 import { rscLogger } from "../client/browser-logger.ts";
-import {
-  getReactCDNUrl,
-  getReactDOMClientCDNUrl,
-} from "../../core/utils/constants/cdn.ts";
+import { getReactCDNUrl, getReactDOMClientCDNUrl } from "../../core/utils/constants/cdn.ts";
 // Note: Using centralized version from cdn.ts
 import type { Root } from "https://esm.sh/react-dom@18.3.1/client";
 
