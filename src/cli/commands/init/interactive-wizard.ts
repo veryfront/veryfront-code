@@ -5,7 +5,11 @@
 
 import { cyan, dim, green } from "@veryfront/compat/console";
 import { cliLogger as logger } from "@veryfront/utils";
-import { getEnv, isInteractive as checkIsInteractive } from "../../../platform/compat/process.ts";
+import {
+  getEnv,
+  isInteractive as checkIsInteractive,
+  promptSync,
+} from "../../../platform/compat/process.ts";
 import type { IntegrationName } from "../../templates/types.ts";
 import type { InitTemplate } from "./types.ts";
 
@@ -61,7 +65,7 @@ function selectOne(
     ? ` (default: ${options.find((o) => o.value === defaultValue)?.label || defaultValue})`
     : "";
 
-  const answer = prompt(`Enter number [1-${options.length}]${defaultHint}:`);
+  const answer = promptSync(`Enter number [1-${options.length}]${defaultHint}:`);
 
   if (!answer && defaultValue) {
     return defaultValue;
@@ -108,7 +112,7 @@ function selectMany(
     ? ` (press Enter to keep: ${preselected.join(", ")})`
     : "";
 
-  const answer = prompt(`Enter numbers${preselectedHint}:`);
+  const answer = promptSync(`Enter numbers${preselectedHint}:`);
 
   if (!answer && preselected.length > 0) {
     return preselected;
