@@ -6,13 +6,21 @@
 import { bold, cyan, dim, green, yellow } from "@veryfront/compat/console";
 import { VERSION } from "@veryfront/utils";
 import type { CommandHelp, CommandOption } from "./types.ts";
+import { getColorEnabled } from "../utils/index.ts";
+
+/**
+ * Conditionally apply color function based on NO_COLOR and TTY
+ */
+function c<T extends (s: string) => string>(colorFn: T, text: string): string {
+  return getColorEnabled() ? colorFn(text) : text;
+}
 
 /**
  * Formats the main application header
  * @returns Formatted header string
  */
 export function formatHeader(): string {
-  return bold(cyan("\n⚡ Veryfront")) + dim(` v${VERSION}\n`);
+  return c(bold, c(cyan, "\n⚡ Veryfront")) + c(dim, ` v${VERSION}\n`);
 }
 
 /**
@@ -22,7 +30,7 @@ export function formatHeader(): string {
  * @returns Formatted command name
  */
 export function formatCommandName(name: string, paddingLength: number): string {
-  return green(name.padEnd(paddingLength + 2));
+  return c(green, name.padEnd(paddingLength + 2));
 }
 
 /**
@@ -31,7 +39,7 @@ export function formatCommandName(name: string, paddingLength: number): string {
  * @returns Formatted description
  */
 export function formatDescription(description: string): string {
-  return dim(description);
+  return c(dim, description);
 }
 
 /**
@@ -40,7 +48,7 @@ export function formatDescription(description: string): string {
  * @returns Formatted usage string
  */
 export function formatUsage(usage: string): string {
-  return `${yellow("Usage:")} ${usage}\n`;
+  return `${c(yellow, "Usage:")} ${usage}\n`;
 }
 
 /**
@@ -50,7 +58,7 @@ export function formatUsage(usage: string): string {
  * @returns Formatted option flag
  */
 export function formatOptionFlag(flag: string, paddingLength: number): string {
-  return green(flag.padEnd(paddingLength + 2));
+  return c(green, flag.padEnd(paddingLength + 2));
 }
 
 /**
@@ -60,7 +68,7 @@ export function formatOptionFlag(flag: string, paddingLength: number): string {
  * @returns Formatted option line
  */
 export function formatOption(option: CommandOption, paddingLength: number): string {
-  const defaultStr = option.default ? dim(` (default: ${option.default})`) : "";
+  const defaultStr = option.default ? c(dim, ` (default: ${option.default})`) : "";
   return `  ${formatOptionFlag(option.flag, paddingLength)} ${option.description}${defaultStr}`;
 }
 
@@ -70,7 +78,7 @@ export function formatOption(option: CommandOption, paddingLength: number): stri
  * @returns Formatted example
  */
 export function formatExample(example: string): string {
-  return `  ${dim("$")} ${cyan(example)}`;
+  return `  ${c(dim, "$")} ${c(cyan, example)}`;
 }
 
 /**
@@ -79,7 +87,7 @@ export function formatExample(example: string): string {
  * @returns Formatted section header
  */
 export function formatSectionHeader(title: string): string {
-  return yellow(title + ":");
+  return c(yellow, title + ":");
 }
 
 /**
@@ -88,7 +96,7 @@ export function formatSectionHeader(title: string): string {
  * @returns Formatted command header
  */
 export function formatCommandHeader(commandName: string): string {
-  return `${bold(cyan(`\n⚡ Veryfront ${commandName}`))}\n`;
+  return `${c(bold, c(cyan, `\n⚡ Veryfront ${commandName}`))}\n`;
 }
 
 /**
@@ -97,10 +105,10 @@ export function formatCommandHeader(commandName: string): string {
  */
 export function formatAsciiLogo(): string {
   return `
-${cyan("╔══════════════════════════════════════╗")}
-${cyan("║")}  ⚡  ${bold("VERYFRONT")}                      ${cyan("║")}
-${cyan("║")}  ${dim("Deno-First React Framework")}        ${cyan("║")}
-${cyan("╚══════════════════════════════════════╝")}
+${c(cyan, "╔══════════════════════════════════════╗")}
+${c(cyan, "║")}  ⚡  ${c(bold, "VERYFRONT")}                      ${c(cyan, "║")}
+${c(cyan, "║")}  ${c(dim, "Deno-First React Framework")}        ${c(cyan, "║")}
+${c(cyan, "╚══════════════════════════════════════╝")}
 `;
 }
 

@@ -158,7 +158,8 @@ class ToolRegistryClass {
 
   register(id: string, toolInstance: Tool): void {
     if (this.tools.has(id)) {
-      agentLogger.warn(`Tool "${id}" is already registered. Overwriting.`);
+      // Debug level - overwriting is expected during hot reload and re-discovery
+      agentLogger.debug(`Tool "${id}" is already registered. Overwriting.`);
     }
 
     this.tools.set(id, toolInstance);

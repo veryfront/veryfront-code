@@ -13,7 +13,14 @@ import { cleanCommand } from "../commands/clean.ts";
 import { doctorCommand } from "../commands/doctor/index.ts";
 import { initCommand } from "../commands/init/index.ts";
 import { routesCommand } from "../commands/routes.ts";
-import { exitProcess, registerTerminationSignals, showLogo } from "../utils/index.ts";
+import {
+  exitProcess,
+  registerTerminationSignals,
+  setColorMode,
+  setQuietMode,
+  setVerboseMode,
+  showLogo,
+} from "../utils/index.ts";
 import { handleBuildCommand } from "./build-handler.ts";
 import { handleDevCommand } from "./dev-handler.ts";
 import { handleGenerateCommand } from "./generate-handler.ts";
@@ -97,6 +104,21 @@ Use 'veryfront <command> --help' for command-specific help.`);
  * @param args - Parsed CLI arguments
  */
 export async function routeCommand(args: ParsedArgs): Promise<void> {
+  // Initialize global CLI modes (clig.dev compliance)
+  // Color mode: --no-color disables, --color forces, NO_COLOR env also respected
+  if (args["no-color"]) {
+    setColorMode(false);
+  } else if (args.color) {
+    setColorMode(true);
+  }
+
+  // Verbose/Quiet mode
+  if (args.verbose) {
+    setVerboseMode(true);
+  } else if (args.quiet || args.q) {
+    setQuietMode(true);
+  }
+
   // Handle version flag
   if (args.version || args.v) {
     cliLogger.info(`Veryfront CLI v${VERSION}`);
@@ -212,6 +234,7 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
           cache: Boolean(args.cache),
           build: Boolean(args.build),
           all: Boolean(args.all),
+          force: Boolean(args.force || args.f),
         });
         break;
 

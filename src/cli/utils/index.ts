@@ -4,20 +4,131 @@ import { cliLogger } from "@veryfront/utils";
 import { exit } from "../../platform/compat/process.ts";
 import { isDeno } from "../../platform/compat/runtime.ts";
 
+// ============================================================================
+// TTY and Color Detection (clig.dev compliance)
+// ============================================================================
+
+/**
+ * Check if stdout is a TTY (interactive terminal)
+ * @returns true if stdout is a TTY
+ */
+export function isTTY(): boolean {
+  if (isDeno) {
+    // @ts-ignore - Deno global
+    return typeof Deno !== "undefined" && Deno.stdout?.isTerminal?.() === true;
+  }
+  // Node.js/Bun
+  return typeof process !== "undefined" && process.stdout?.isTTY === true;
+}
+
+/**
+ * Check if stderr is a TTY
+ * @returns true if stderr is a TTY
+ */
+export function isStderrTTY(): boolean {
+  if (isDeno) {
+    // @ts-ignore - Deno global
+    return typeof Deno !== "undefined" && Deno.stderr?.isTerminal?.() === true;
+  }
+  return typeof process !== "undefined" && process.stderr?.isTTY === true;
+}
+
+/**
+ * Determine if colors should be used in output
+ * Respects NO_COLOR environment variable (https://no-color.org/)
+ * and checks if output is a TTY
+ *
+ * @param forceColor - Optional flag to force color on/off (from --color/--no-color flags)
+ * @returns true if colors should be used
+ */
+export function shouldUseColor(forceColor?: boolean): boolean {
+  // If explicitly forced via CLI flag, respect that
+  if (forceColor !== undefined) {
+    return forceColor;
+  }
+
+  // Check NO_COLOR environment variable (https://no-color.org/)
+  const noColor = getEnv("NO_COLOR");
+  if (noColor !== undefined && noColor !== "") {
+    return false;
+  }
+
+  // Check FORCE_COLOR environment variable
+  const forceColorEnv = getEnv("FORCE_COLOR");
+  if (forceColorEnv !== undefined && forceColorEnv !== "0") {
+    return true;
+  }
+
+  // Default: use color only if stdout is a TTY
+  return isTTY();
+}
+
+/**
+ * Get environment variable cross-platform
+ */
+function getEnv(name: string): string | undefined {
+  if (isDeno) {
+    // @ts-ignore - Deno global
+    return Deno.env?.get?.(name);
+  }
+  return process?.env?.[name];
+}
+
+// Global color state - can be set by CLI flags
+let _colorEnabled: boolean | undefined;
+
+/**
+ * Set global color mode (used by CLI to propagate --no-color flag)
+ */
+export function setColorMode(enabled: boolean | undefined): void {
+  _colorEnabled = enabled;
+}
+
+/**
+ * Get current color mode
+ */
+export function getColorEnabled(): boolean {
+  return shouldUseColor(_colorEnabled);
+}
+
+/**
+ * Strip ANSI color codes from a string
+ */
+export function stripColors(str: string): string {
+  // eslint-disable-next-line no-control-regex
+  return str.replace(/\x1b\[[0-9;]*m/g, "");
+}
+
+/**
+ * Conditionally apply color function based on color mode
+ */
+export function conditionalColor<T extends (s: string) => string>(
+  colorFn: T,
+  text: string,
+): string {
+  return getColorEnabled() ? colorFn(text) : text;
+}
+
 // Logo and help display
 export function showLogo() {
+  const useColor = getColorEnabled();
+  const c = (fn: (s: string) => string, s: string) => (useColor ? fn(s) : s);
+
   cliLogger.info(`
-${cyan("⚡")} ${bold(cyan("Veryfront"))} ${dim(`v${VERSION}`)}
-${dim("──────────────────────")}
+${c(cyan, "⚡")} ${c(bold, c(cyan, "Veryfront"))} ${c(dim, `v${VERSION}`)}
+${c(dim, "──────────────────────")}
 `);
 }
 
 export function showHelp() {
   showLogo();
-  cliLogger.info(`
-${yellow("Usage:")} veryfront <command> [options]
+  const useColor = getColorEnabled();
+  const c = (fn: (s: string) => string, s: string) => (useColor ? fn(s) : s);
 
-${cyan("Commands:")}
+  cliLogger.info(`
+${c(yellow, "Usage:")} veryfront <command> [options]
+
+${c(cyan, "Commands:")}
   init          Initialize a new Veryfront project
     -t, --template <name>  Template: app-router | app-router-api | pages-router | rsc-demo (default: pages-router)
   dev           Start development server
@@ -31,16 +142,23 @@ ${cyan("Commands:")}
   doctor        Check system requirements
                --strict, -s    Treat warnings as failures
   clean         Clean build cache
+               --all           Remove node_modules, .deno, and .veryfront
+               -f, --force     Skip confirmation prompts
 
   routes        Print discovered routes (pages + API)
                 --json, -j      Output JSON
   generate, g   Generate scaffolds (page|layout|provider|api|rsc)
 
-${cyan("Options:")}
-  --version     Show version information
-  --help        Show this help message
+${c(cyan, "Global Options:")}
+  --version       Show version information
+  --help          Show this help message
+  -q, --quiet     Suppress non-essential output
+  --verbose       Show detailed output
+  --no-color      Disable colored output (respects NO_COLOR env)
+  --color         Force colored output
+  -f, --force     Skip confirmation prompts
 
-${cyan("Examples:")}
+${c(cyan, "Examples:")}
   veryfront init my-app -t app-router
   veryfront init my-app-api -t app-router-api
   veryfront dev --port 3000
@@ -56,19 +174,19 @@ ${cyan("Examples:")}
   veryfront serve --port 3000
   # With Redis cache adapter enabled
   VERYFRONT_USE_REDIS_CACHE=1 veryfront serve --port 3000
-  # Try experimental RSC demo template (RSC is behind a flag)
-  veryfront init my-rsc-app -t rsc-demo && (cd my-rsc-app && VERYFRONT_EXPERIMENTAL_RSC=1 veryfront dev)
-  # RSC production server (preview)
-  VERYFRONT_EXPERIMENTAL_RSC=1 deno run -A src/server/production-server.ts
+  # Clean all with force (no confirmation)
+  veryfront clean --all --force
+  # Disable colors in CI/CD
+  NO_COLOR=1 veryfront build
 
-${cyan("Config tips:")}
+${c(cyan, "Config tips:")}
   // veryfront.config.js
   export default {
     generate: { preferredRouter: "app-router" },
     security: { remoteHosts: ["https://esm.sh", "https://deno.land"] }
   }
 
-${cyan("Docs:")}
+${c(cyan, "Docs:")}
   RSC Security & Actions: docs/RSC_SECURITY_AND_ACTIONS.md
   Server Actions: docs/server-actions.md
   Caching: docs/caching.md
@@ -157,7 +275,59 @@ export function registerTerminationSignals(
   };
 }
 
-// User interaction
+// ============================================================================
+// Verbose/Quiet Mode (clig.dev compliance)
+// ============================================================================
+
+let _verboseMode = false;
+let _quietMode = false;
+
+/**
+ * Set verbose mode (--verbose flag)
+ */
+export function setVerboseMode(enabled: boolean): void {
+  _verboseMode = enabled;
+  if (enabled) _quietMode = false; // Verbose overrides quiet
+}
+
+/**
+ * Set quiet mode (--quiet flag)
+ */
+export function setQuietMode(enabled: boolean): void {
+  _quietMode = enabled;
+  if (enabled) _verboseMode = false; // Quiet overrides verbose
+}
+
+/**
+ * Check if verbose mode is enabled
+ */
+export function isVerbose(): boolean {
+  return _verboseMode;
+}
+
+/**
+ * Check if quiet mode is enabled
+ */
+export function isQuiet(): boolean {
+  return _quietMode;
+}
+
+/**
+ * Log verbose message (only shown with --verbose)
+ */
+export function logVerbose(message: string): void {
+  if (_verboseMode) {
+    cliLogger.info(dim(`[verbose] ${message}`));
+  }
+}
+
+// ============================================================================
+// User Interaction & Prompts
+// ============================================================================
+
+/**
+ * Prompt user for text input
+ */
 export async function promptUser(message: string): Promise<string> {
   cliLogger.info(message);
 
@@ -186,6 +356,101 @@ export async function promptUser(message: string): Promise<string> {
       });
     });
   }
+}
+
+/**
+ * Prompt user for yes/no confirmation
+ * @param message - The confirmation message to display
+ * @param defaultValue - Default value if user just presses Enter (default: false)
+ * @returns true if confirmed, false otherwise
+ */
+export async function confirmPrompt(
+  message: string,
+  defaultValue = false,
+): Promise<boolean> {
+  // If not interactive (not a TTY), return default value
+  if (!isTTY()) {
+    return defaultValue;
+  }
+
+  const hint = defaultValue ? "[Y/n]" : "[y/N]";
+  const response = await promptUser(`${message} ${hint} `);
+
+  if (response === "") {
+    return defaultValue;
+  }
+
+  const normalized = response.toLowerCase().trim();
+  return normalized === "y" || normalized === "yes";
+}
+
+// ============================================================================
+// Progress Spinner (clig.dev compliance)
+// ============================================================================
+
+const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+
+interface Spinner {
+  start: () => void;
+  stop: (finalMessage?: string) => void;
+  update: (message: string) => void;
+}
+
+/**
+ * Create a progress spinner for long-running operations
+ * Only shows spinner if stdout is a TTY
+ *
+ * @param message - Initial spinner message
+ * @returns Spinner control object
+ */
+export function createSpinner(message: string): Spinner {
+  let frameIndex = 0;
+  let intervalId: ReturnType<typeof setInterval> | null = null;
+  let currentMessage = message;
+  const isInteractive = isTTY();
+
+  const clearLine = () => {
+    if (isInteractive) {
+      // Move cursor to beginning of line and clear it
+      process.stdout?.write?.("\r\x1b[K");
+    }
+  };
+
+  const render = () => {
+    if (!isInteractive) return;
+    const frame = SPINNER_FRAMES[frameIndex % SPINNER_FRAMES.length] ?? "⠋";
+    const coloredFrame = getColorEnabled() ? cyan(frame) : frame;
+    process.stdout?.write?.(`\r${coloredFrame} ${currentMessage}`);
+    frameIndex++;
+  };
+
+  return {
+    start: () => {
+      if (!isInteractive) {
+        // Non-interactive: just log the message once
+        cliLogger.info(`... ${message}`);
+        return;
+      }
+      render();
+      intervalId = setInterval(render, 80);
+    },
+    stop: (finalMessage?: string) => {
+      if (intervalId) {
+        clearInterval(intervalId);
+        intervalId = null;
+      }
+      clearLine();
+      if (finalMessage) {
+        cliLogger.info(finalMessage);
+      }
+    },
+    update: (newMessage: string) => {
+      currentMessage = newMessage;
+      if (!isInteractive) {
+        cliLogger.info(`... ${newMessage}`);
+      }
+    },
+  };
 }
 
 // Process utilities

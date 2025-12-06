@@ -12,6 +12,7 @@ import {
 } from "@veryfront/rendering/cache/stores/index.ts";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import { createFileSystem } from "../../platform/compat/fs.ts";
+import { confirmPrompt, createSpinner, logSuccess, logWarning } from "../utils/index.ts";
 
 interface RenderCacheConfig {
   type?: "memory" | "filesystem" | "kv" | "redis";
@@ -27,22 +28,56 @@ interface CleanOptions {
   cache?: boolean;
   build?: boolean;
   all?: boolean;
+  force?: boolean; // Skip confirmation prompts
 }
 
 export async function cleanCommand(options: CleanOptions) {
-  const { projectDir, cache: cleanCache = false, build: cleanBuild = false, all = false } = options;
+  const {
+    projectDir,
+    cache: cleanCache = false,
+    build: cleanBuild = false,
+    all = false,
+    force = false,
+  } = options;
 
-  if (cleanBuild || all) {
-    await cleanDirectory(join(projectDir, "dist"));
+  // Require confirmation for destructive --all operation unless --force is used
+  if (all && !force) {
+    logWarning("This will remove node_modules, .deno, and .veryfront directories.");
+    const confirmed = await confirmPrompt(
+      "Are you sure you want to clean all project artifacts?",
+      false,
+    );
+    if (!confirmed) {
+      cliLogger.info("Clean operation cancelled.");
+      return;
+    }
   }
 
-  if (cleanCache || all) {
-    await cleanCacheStore(projectDir);
-  }
+  const spinner = createSpinner("Cleaning project...");
+  spinner.start();
 
-  if (all) {
-    const tempDirs = [".veryfront", "node_modules", ".deno"].map((dir) => join(projectDir, dir));
-    await Promise.all(tempDirs.map(cleanDirectory));
+  try {
+    if (cleanBuild || all) {
+      spinner.update("Cleaning dist directory...");
+      await cleanDirectory(join(projectDir, "dist"));
+    }
+
+    if (cleanCache || all) {
+      spinner.update("Cleaning cache...");
+      await cleanCacheStore(projectDir);
+    }
+
+    if (all) {
+      spinner.update("Cleaning node_modules and temp directories...");
+      const tempDirs = [".veryfront", "node_modules", ".deno"].map((dir) => join(projectDir, dir));
+      await Promise.all(tempDirs.map(cleanDirectory));
+    }
+
+    spinner.stop();
+    logSuccess("Project cleaned successfully.");
+  } catch (error) {
+    spinner.stop();
+    throw error;
   }
 }
 

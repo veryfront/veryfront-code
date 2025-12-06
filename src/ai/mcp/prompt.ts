@@ -81,7 +81,8 @@ class PromptRegistryClass {
    */
   register(id: string, promptInstance: Prompt): void {
     if (this.prompts.has(id)) {
-      agentLogger.warn(`Prompt "${id}" is already registered. Overwriting.`);
+      // Debug level - overwriting is expected during hot reload and re-discovery
+      agentLogger.debug(`Prompt "${id}" is already registered. Overwriting.`);
     }
 
     this.prompts.set(id, promptInstance);

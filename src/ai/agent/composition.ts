@@ -179,7 +179,8 @@ class AgentRegistryClass {
    */
   register(id: string, agent: Agent): void {
     if (this.agents.has(id)) {
-      agentLogger.warn(`Agent "${id}" is already registered. Overwriting.`);
+      // Debug level - overwriting is expected during hot reload and re-discovery
+      agentLogger.debug(`Agent "${id}" is already registered. Overwriting.`);
     }
     this.agents.set(id, agent);
     agentLogger.debug(`Registered agent: ${id}`);
