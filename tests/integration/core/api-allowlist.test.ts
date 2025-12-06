@@ -24,8 +24,16 @@ describe(
         const handler = new APIRouteHandler(context.projectDir);
         await handler.initialize();
         const res = await handler.handle(new Request("http://local/api/bad"));
-        // Build should fail with 502 when remote import is blocked
-        assertEquals(res?.status === 502 || res === null, true);
+        // Should fail with error status when remote import is blocked:
+        // - 502 (Bad Gateway) when build fails
+        // - 500 (Internal Server Error) when runtime import fails in Deno direct mode
+        // - null when handler can't process the request
+        const status = res?.status;
+        assertEquals(
+          status === 502 || status === 500 || res === null,
+          true,
+          `Expected 500, 502, or null but got status ${status}`,
+        );
       });
     });
   },

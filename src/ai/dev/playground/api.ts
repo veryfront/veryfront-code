@@ -4,7 +4,7 @@
 
 import { PLAYGROUND_HTML } from "./client.ts";
 import { toolRegistry } from "../../utils/tool.ts";
-import { agentRegistry } from "../../agent/registry.ts";
+import { agentRegistry } from "../../agent/composition.ts";
 
 export async function handlePlaygroundRequest(req: Request): Promise<Response> {
   const url = new URL(req.url);

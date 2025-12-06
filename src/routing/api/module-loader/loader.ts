@@ -10,14 +10,31 @@ import { createError, toError } from "../../../core/errors/veryfront-error.ts";
 import { createFileSystem, FileSystem } from "../../../platform/compat/fs.ts";
 import * as pathHelper from "../../../platform/compat/path-helper.ts";
 
+// Check if running in Deno
+function isDenoRuntime(): boolean {
+  // @ts-ignore - Deno global
+  return typeof Deno !== "undefined";
+}
+
 export async function loadHandlerModule(options: LoadModuleOptions): Promise<APIRoute | null> {
   const { projectDir, modulePath, adapter, config } = options;
   const fs = createFileSystem();
 
   try {
-    const module = modulePath.endsWith(".js")
-      ? await loadJSModule(modulePath)
-      : await loadAndTranspileModule(modulePath, projectDir, adapter, fs, config);
+    let module: APIRoute;
+
+    if (modulePath.endsWith(".js")) {
+      // JS files can be loaded directly
+      module = await loadJSModule(modulePath);
+    } else if (isDenoRuntime()) {
+      // In Deno, directly import TypeScript files without bundling
+      // This allows modules to share the same runtime context (including singletons like agentRegistry)
+      module = await loadTSModuleDirect(modulePath);
+    } else {
+      // In Node.js, use esbuild to transpile TypeScript
+      // Singletons are shared via globalThis pattern (see src/ai/agent/composition.ts etc.)
+      module = await loadAndTranspileModule(modulePath, projectDir, adapter, fs, config);
+    }
 
     return extractAPIRouteHandlers(module);
   } catch (error: unknown) {
@@ -28,6 +45,22 @@ export async function loadHandlerModule(options: LoadModuleOptions): Promise<API
       message: `Failed to load API handler: ${errorMsg}`,
     }));
   }
+}
+
+/**
+ * Directly import a TypeScript module in Deno without bundling.
+ * This allows the module to share the same runtime context as the dev server,
+ * enabling auto-discovery features like agentRegistry to work.
+ */
+async function loadTSModuleDirect(modulePath: string): Promise<APIRoute> {
+  // Add cache buster for HMR
+  const cacheBuster = `?v=${Date.now()}`;
+  const url = modulePath.startsWith("file://")
+    ? `${modulePath}${cacheBuster}`
+    : `file://${modulePath}${cacheBuster}`;
+
+  logger.debug(`[API] Direct import (Deno): ${url}`);
+  return await import(url);
 }
 
 async function loadJSModule(modulePath: string): Promise<APIRoute> {
