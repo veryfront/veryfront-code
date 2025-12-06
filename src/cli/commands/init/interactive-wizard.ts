@@ -5,11 +5,8 @@
 
 import { cyan, dim, green } from "@veryfront/compat/console";
 import { cliLogger as logger } from "@veryfront/utils";
-import {
-  getEnv,
-  isInteractive as checkIsInteractive,
-  promptSync,
-} from "../../../platform/compat/process.ts";
+import { getEnv, isInteractive as checkIsInteractive } from "../../../platform/compat/process.ts";
+import { promptUser } from "../../utils/index.ts";
 import type { IntegrationName } from "../../templates/types.ts";
 import type { InitTemplate } from "./types.ts";
 
@@ -45,11 +42,11 @@ function canRunWizard(): boolean {
 /**
  * Display a selection menu and get user choice
  */
-function selectOne(
+async function selectOne(
   question: string,
   options: Array<{ value: string; label: string; description?: string }>,
   defaultValue?: string,
-): string | null {
+): Promise<string | null> {
   console.log("");
   console.log(cyan("?") + " " + question);
   console.log("");
@@ -65,7 +62,7 @@ function selectOne(
     ? ` (default: ${options.find((o) => o.value === defaultValue)?.label || defaultValue})`
     : "";
 
-  const answer = promptSync(`Enter number [1-${options.length}]${defaultHint}:`);
+  const answer = await promptUser(`Enter number [1-${options.length}]${defaultHint}: `);
 
   if (!answer && defaultValue) {
     return defaultValue;
@@ -90,11 +87,11 @@ function selectOne(
 /**
  * Display a multi-select menu and get user choices
  */
-function selectMany(
+async function selectMany(
   question: string,
   options: Array<{ value: string; label: string; description?: string }>,
   preselected: string[] = [],
-): string[] {
+): Promise<string[]> {
   console.log("");
   console.log(cyan("?") + " " + question);
   console.log(dim("  Enter numbers separated by commas, or 'all' for all options"));
@@ -112,7 +109,7 @@ function selectMany(
     ? ` (press Enter to keep: ${preselected.join(", ")})`
     : "";
 
-  const answer = promptSync(`Enter numbers${preselectedHint}:`);
+  const answer = await promptUser(`Enter numbers${preselectedHint}: `);
 
   if (!answer && preselected.length > 0) {
     return preselected;
@@ -142,7 +139,7 @@ function selectMany(
 /**
  * Run the interactive wizard
  */
-export function runInteractiveWizard(): WizardResult {
+export async function runInteractiveWizard(): Promise<WizardResult> {
   if (!canRunWizard()) {
     return {
       template: "minimal",
@@ -156,7 +153,7 @@ export function runInteractiveWizard(): WizardResult {
   console.log("Let's set up your project.\n");
 
   // Step 1: Select template type
-  const templateChoice = selectOne(
+  const templateChoice = await selectOne(
     "What would you like to build?",
     TEMPLATES,
     "ai",
@@ -186,7 +183,7 @@ export function runInteractiveWizard(): WizardResult {
   }
 
   // Step 2: For AI template, select integrations directly
-  const selected = selectMany(
+  const selected = await selectMany(
     "Which services should your agent connect to?",
     INTEGRATIONS,
   );
