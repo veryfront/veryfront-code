@@ -101,10 +101,10 @@ export default agent({
 import { prompt } from 'veryfront/ai';
 
 export default prompt({
-  name: 'assistant',
+  id: 'assistant',
   description: 'System prompt for the AI assistant',
 
-  getContent: () => \`You are a helpful AI assistant with access to weather information.
+  content: \`You are a helpful AI assistant with access to weather information.
 
 When users ask about the weather:
 1. Use the getWeather tool to fetch current conditions
