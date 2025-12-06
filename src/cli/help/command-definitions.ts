@@ -16,58 +16,28 @@ export const COMMANDS: CommandRegistry = {
     options: [
       {
         flag: "-t, --template <name>",
-        description:
-          "Project template (pages-router | app-router | app-router-api | rsc-demo | blog | docs | app | minimal | ai)",
-        default: "app-router",
+        description: "Project template (ai | app | blog | docs | minimal)",
+        default: "ai",
       },
       {
-        flag: "--app-router",
-        description: "Use App Router (default)",
-      },
-      {
-        flag: "--pages-router",
-        description: "Use Pages Router",
-      },
-      {
-        flag: "--cache-backend <type>",
-        description: "Set render cache backend (memory | filesystem | kv | redis)",
-        default: "memory",
+        flag: "--integrations <list>",
+        description: "Service integrations for AI template (gmail,slack,github,calendar)",
       },
       {
         flag: "--skip-install",
         description: "Skip automatic dependency installation",
       },
-      {
-        flag: "--use-npm",
-        description: "Use npm as the package manager",
-      },
-      {
-        flag: "--use-yarn",
-        description: "Use yarn as the package manager",
-      },
-      {
-        flag: "--use-pnpm",
-        description: "Use pnpm as the package manager",
-      },
-      {
-        flag: "--use-bun",
-        description: "Use bun as the package manager",
-      },
     ],
     examples: [
+      "veryfront init                              # Interactive wizard",
       "veryfront init my-app",
+      "veryfront init my-agent --template ai --integrations gmail,slack",
       "veryfront init my-blog --template blog",
       "veryfront init my-docs --template docs",
-      "veryfront init enterprise-app --template app",
-      "veryfront init my-minimal-app --template minimal",
-      "veryfront init my-ai-app --template ai",
-      "veryfront init my-app --skip-install",
-      "veryfront init my-app --use-pnpm",
     ],
     notes: [
-      "Use --cache-backend to set render cache (memory | filesystem | kv | redis) during scaffolding",
-      "Configure cache.render later in veryfront.config.js if you need to change it",
-      "Set REDIS_URL for redis cache, cache.render.kvPath for Deno KV",
+      "Run without arguments for interactive wizard",
+      "Using --integrations implies --template ai",
     ],
   },
   dev: {

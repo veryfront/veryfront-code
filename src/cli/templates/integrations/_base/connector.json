@@ -1,0 +1,11 @@
+{
+  "name": "_base",
+  "displayName": "Base Integration Files",
+  "description": "Shared files for all integrations (setup guide, status API)",
+  "internal": true,
+  "auth": {
+    "type": "none"
+  },
+  "envVars": [],
+  "tools": []
+}

@@ -1,0 +1,84 @@
+{
+  "name": "github",
+  "displayName": "GitHub",
+  "icon": "github.svg",
+  "description": "Manage repositories, issues, and pull requests",
+  "auth": {
+    "type": "oauth2",
+    "provider": "github",
+    "authorizationUrl": "https://github.com/login/oauth/authorize",
+    "tokenUrl": "https://github.com/login/oauth/access_token",
+    "scopes": [
+      "repo",
+      "read:user",
+      "read:org"
+    ],
+    "callbackPath": "/api/auth/github/callback"
+  },
+  "envVars": [
+    {
+      "name": "GITHUB_CLIENT_ID",
+      "description": "GitHub OAuth App Client ID",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://github.com/settings/developers"
+    },
+    {
+      "name": "GITHUB_CLIENT_SECRET",
+      "description": "GitHub OAuth App Client Secret",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://github.com/settings/developers"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list-repos",
+      "name": "List Repositories",
+      "description": "Get list of user's repositories",
+      "requiresWrite": false
+    },
+    {
+      "id": "list-prs",
+      "name": "List Pull Requests",
+      "description": "Get open pull requests",
+      "requiresWrite": false
+    },
+    {
+      "id": "create-issue",
+      "name": "Create Issue",
+      "description": "Create a new issue in a repository",
+      "requiresWrite": true
+    },
+    {
+      "id": "get-pr-diff",
+      "name": "Get PR Diff",
+      "description": "Get the diff for a pull request",
+      "requiresWrite": false
+    }
+  ],
+  "prompts": [
+    {
+      "id": "review-prs",
+      "title": "Review my open PRs",
+      "prompt": "Show me my open pull requests and help me review them. Summarize the changes and any comments.",
+      "category": "development",
+      "icon": "git-pull-request"
+    },
+    {
+      "id": "create-issue",
+      "title": "Create GitHub issue",
+      "prompt": "Help me create a new GitHub issue with a clear description and appropriate labels.",
+      "category": "development",
+      "icon": "circle-dot"
+    },
+    {
+      "id": "summarize-commits",
+      "title": "Summarize recent commits",
+      "prompt": "Summarize the recent commits in my repository and highlight significant changes.",
+      "category": "development",
+      "icon": "git-commit"
+    }
+  ],
+  "suggestedWith": ["jira", "slack"]
+}

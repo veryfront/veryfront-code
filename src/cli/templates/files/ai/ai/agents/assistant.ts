@@ -13,8 +13,10 @@ export default agent({
   id: "assistant",
   model: "openai/gpt-4o",
   system: getSystemPrompt,
-  tools: {
-    getWeather: true,
-  },
+
+  // Use all discovered tools from ai/tools/
+  // To select specific tools, change to: tools: { toolName: true, anotherTool: true }
+  tools: true,
+
   maxSteps: 10,
 });

@@ -1,0 +1,77 @@
+{
+  "name": "calendar",
+  "displayName": "Google Calendar",
+  "icon": "calendar.svg",
+  "description": "Manage events, find free time, and schedule meetings",
+  "auth": {
+    "type": "oauth2",
+    "provider": "google",
+    "authorizationUrl": "https://accounts.google.com/o/oauth2/v2/auth",
+    "tokenUrl": "https://oauth2.googleapis.com/token",
+    "scopes": [
+      "https://www.googleapis.com/auth/calendar.readonly",
+      "https://www.googleapis.com/auth/calendar.events"
+    ],
+    "callbackPath": "/api/auth/calendar/callback"
+  },
+  "envVars": [
+    {
+      "name": "GOOGLE_CLIENT_ID",
+      "description": "Google OAuth Client ID",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://console.cloud.google.com/apis/credentials"
+    },
+    {
+      "name": "GOOGLE_CLIENT_SECRET",
+      "description": "Google OAuth Client Secret",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://console.cloud.google.com/apis/credentials"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list-events",
+      "name": "List Events",
+      "description": "Get upcoming calendar events",
+      "requiresWrite": false
+    },
+    {
+      "id": "create-event",
+      "name": "Create Event",
+      "description": "Schedule a new calendar event",
+      "requiresWrite": true
+    },
+    {
+      "id": "find-free-time",
+      "name": "Find Free Time",
+      "description": "Find available time slots in calendar",
+      "requiresWrite": false
+    }
+  ],
+  "prompts": [
+    {
+      "id": "block-deep-work",
+      "title": "Block time for deep work",
+      "prompt": "Find a 2-hour block for focused work this week and add it to my calendar.",
+      "category": "productivity",
+      "icon": "clock"
+    },
+    {
+      "id": "schedule-meeting",
+      "title": "Schedule a meeting",
+      "prompt": "Help me schedule a meeting. Find available time slots and create the calendar event.",
+      "category": "productivity",
+      "icon": "users"
+    },
+    {
+      "id": "today-agenda",
+      "title": "What's on my calendar today?",
+      "prompt": "Show me my calendar for today and summarize my schedule.",
+      "category": "productivity",
+      "icon": "calendar"
+    }
+  ],
+  "suggestedWith": ["gmail", "slack"]
+}

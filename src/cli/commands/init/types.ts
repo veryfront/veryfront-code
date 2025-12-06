@@ -3,21 +3,12 @@
  * @module
  */
 
+import type { FeatureName, IntegrationName } from "../../templates/types.ts";
+
 /**
  * Available project templates
  */
-export type InitTemplate =
-  | "blog"
-  | "docs"
-  | "app"
-  | "minimal"
-  | "ai"
-  | "pages-router"
-  | "app-router"
-  | "app-router-api"
-  | "rsc-demo";
-
-export type CacheBackend = "memory" | "filesystem" | "kv" | "redis";
+export type InitTemplate = "ai" | "app" | "blog" | "docs" | "minimal";
 
 /**
  * Options for initializing a new project
@@ -30,40 +21,30 @@ export interface InitOptions {
   name?: string;
 
   /**
-   * Template name. Defaults to "pages-router".
+   * Template name. Defaults to "minimal".
    */
   template?: InitTemplate;
 
   /**
-   * Deprecated alias for app-router template.
-   * Kept for backward compatibility.
-   * @deprecated Use template: 'app-router' instead
-   */
-  appRouter?: boolean;
-
-  /**
-   * Desired cache backend (overrides interactive prompt).
-   */
-  cacheBackend?: CacheBackend;
-
-  /**
    * Skip automatic dependency installation after scaffolding.
-   * If true, user must manually run `npm install` or equivalent.
    * @default false
    */
   skipInstall?: boolean;
 
   /**
-   * Preferred package manager to use for installing dependencies.
-   * If not specified, auto-detected from lockfiles.
-   */
-  packageManager?: "npm" | "yarn" | "pnpm" | "bun";
-
-  /**
    * Skip prompting for environment variables.
-   * If true, .env will be created with placeholder values.
-   * Useful for CI/automated environments.
    * @default false
    */
   skipEnvPrompt?: boolean;
+
+  /**
+   * Features to add to the base template via --with flag.
+   */
+  features?: FeatureName[];
+
+  /**
+   * Service integrations to add via --integrations flag.
+   * Using this implies template: "ai"
+   */
+  integrations?: IntegrationName[];
 }

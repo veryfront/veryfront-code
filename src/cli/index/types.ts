@@ -62,6 +62,9 @@ export interface ParsedArgs {
   t?: string;
   json?: boolean;
   j?: boolean;
+  // Feature flags (for init --with)
+  with?: string[];
+  w?: string[];
   // Allow additional flags
   [key: string]: unknown;
 }

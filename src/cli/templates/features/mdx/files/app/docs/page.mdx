@@ -1,0 +1,41 @@
+# Documentation
+
+Welcome to your documentation site powered by MDX.
+
+## Features
+
+- **MDX Support**: Write documentation with React components
+- **Syntax Highlighting**: Code blocks with automatic highlighting
+- **File-based Routing**: Create pages by adding `.mdx` files
+
+## Quick Start
+
+```bash
+# Install dependencies
+npm install
+
+# Start development server
+veryfront dev
+```
+
+## Example Code
+
+```typescript
+// Example TypeScript code with syntax highlighting
+interface User {
+  id: string;
+  name: string;
+  email: string;
+}
+
+async function getUser(id: string): Promise<User> {
+  const response = await fetch(`/api/users/${id}`);
+  return response.json();
+}
+```
+
+## Navigation
+
+- [Getting Started](/docs/getting-started)
+- [Core Concepts](/docs/core-concepts)
+- [API Reference](/docs/api)

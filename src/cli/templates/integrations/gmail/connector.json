@@ -1,0 +1,78 @@
+{
+  "name": "gmail",
+  "displayName": "Gmail",
+  "icon": "gmail.svg",
+  "description": "Read and send emails via Gmail API",
+  "auth": {
+    "type": "oauth2",
+    "provider": "google",
+    "authorizationUrl": "https://accounts.google.com/o/oauth2/v2/auth",
+    "tokenUrl": "https://oauth2.googleapis.com/token",
+    "scopes": [
+      "https://www.googleapis.com/auth/gmail.readonly",
+      "https://www.googleapis.com/auth/gmail.send",
+      "https://www.googleapis.com/auth/gmail.modify"
+    ],
+    "callbackPath": "/api/auth/gmail/callback"
+  },
+  "envVars": [
+    {
+      "name": "GOOGLE_CLIENT_ID",
+      "description": "Google OAuth Client ID",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://console.cloud.google.com/apis/credentials"
+    },
+    {
+      "name": "GOOGLE_CLIENT_SECRET",
+      "description": "Google OAuth Client Secret",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://console.cloud.google.com/apis/credentials"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list-emails",
+      "name": "List Emails",
+      "description": "Get recent emails from inbox",
+      "requiresWrite": false
+    },
+    {
+      "id": "send-email",
+      "name": "Send Email",
+      "description": "Send an email to recipients",
+      "requiresWrite": true
+    },
+    {
+      "id": "search-emails",
+      "name": "Search Emails",
+      "description": "Search emails by query",
+      "requiresWrite": false
+    }
+  ],
+  "prompts": [
+    {
+      "id": "summarize-emails",
+      "title": "Summarize today's emails",
+      "prompt": "Summarize my unread emails from today. Group them by priority and highlight any that need immediate attention.",
+      "category": "productivity",
+      "icon": "mail"
+    },
+    {
+      "id": "draft-reply",
+      "title": "Draft a quick reply",
+      "prompt": "Help me draft a reply to my most recent email. Keep it professional and concise.",
+      "category": "productivity",
+      "icon": "reply"
+    },
+    {
+      "id": "find-emails",
+      "title": "Find important emails",
+      "prompt": "Search my emails for important messages from the past week that I might have missed.",
+      "category": "productivity",
+      "icon": "search"
+    }
+  ],
+  "suggestedWith": ["calendar", "slack"]
+}

@@ -25,7 +25,8 @@ import { handleBuildCommand } from "./build-handler.ts";
 import { handleDevCommand } from "./dev-handler.ts";
 import { handleGenerateCommand } from "./generate-handler.ts";
 import type { ParsedArgs } from "./types.ts";
-import type { CacheBackend, InitTemplate } from "../commands/init/types.ts";
+import type { InitTemplate } from "../commands/init/types.ts";
+import type { IntegrationName } from "../templates/types.ts";
 import { cwd } from "../../platform/compat/process.ts";
 import { COMMANDS } from "../help/command-definitions.ts";
 import {
@@ -140,22 +141,19 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
       case "init": {
         const name = args._[1] as string | undefined;
         const template = (args.t || args.template) as InitTemplate | undefined;
-        const cacheBackendArg = args["cache-backend"] ?? args.cacheBackend;
 
-        // Determine package manager from --use-* flags
-        let packageManager: "npm" | "yarn" | "pnpm" | "bun" | undefined;
-        if (args["use-npm"]) packageManager = "npm";
-        else if (args["use-yarn"]) packageManager = "yarn";
-        else if (args["use-pnpm"]) packageManager = "pnpm";
-        else if (args["use-bun"]) packageManager = "bun";
+        // Parse integrations from --integrations flag (comma-separated)
+        let integrations: IntegrationName[] | undefined;
+        if (args.integrations) {
+          const integrationsArg = String(args.integrations);
+          integrations = integrationsArg.split(",").map((s) => s.trim()) as IntegrationName[];
+        }
 
         await initCommand({
           name,
           template,
-          appRouter: Boolean(args["app-router"]) || template === "app-router",
-          cacheBackend: cacheBackendArg ? (String(cacheBackendArg) as CacheBackend) : undefined,
           skipInstall: Boolean(args["skip-install"]),
-          packageManager,
+          integrations,
         });
         break;
       }

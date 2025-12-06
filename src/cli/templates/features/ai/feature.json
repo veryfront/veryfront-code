@@ -1,0 +1,29 @@
+{
+  "name": "ai",
+  "description": "Add AI capabilities with chat API and agent support",
+  "dependencies": {
+    "ai": "^4.0.0",
+    "@ai-sdk/openai": "^1.0.0"
+  },
+  "envVars": [
+    {
+      "name": "OPENAI_API_KEY",
+      "description": "OpenAI API key for AI features",
+      "required": true,
+      "sensitive": true,
+      "placeholder": "sk-...",
+      "docsUrl": "https://platform.openai.com/api-keys"
+    }
+  ],
+  "configMerge": {
+    "ai": {
+      "enabled": true
+    }
+  },
+  "tips": [
+    "Get your OpenAI API key at https://platform.openai.com/api-keys",
+    "The chat API is available at /api/chat",
+    "Customize agents in ai/agents/ directory",
+    "Add new tools in ai/tools/ directory"
+  ]
+}

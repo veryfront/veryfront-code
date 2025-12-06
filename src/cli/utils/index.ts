@@ -130,7 +130,9 @@ ${c(yellow, "Usage:")} veryfront <command> [options]
 
 ${c(cyan, "Commands:")}
   init          Initialize a new Veryfront project
-    -t, --template <name>  Template: app-router | app-router-api | pages-router | rsc-demo (default: pages-router)
+    -t, --template <name>  Template: minimal | app | blog | docs | ai (default: minimal)
+    -w, --with <feature>   Add features: ai | auth | workflows | mdx | redis | blob
+                           Can be specified multiple times: --with ai --with auth
   dev           Start development server
   build         Build for production
   serve         Start universal production server (no build required)
@@ -159,8 +161,9 @@ ${c(cyan, "Global Options:")}
   -f, --force     Skip confirmation prompts
 
 ${c(cyan, "Examples:")}
-  veryfront init my-app -t app-router
-  veryfront init my-app-api -t app-router-api
+  veryfront init my-app -t minimal
+  veryfront init my-app -t app --with ai
+  veryfront init my-app -t minimal --with ai --with auth
   veryfront dev --port 3000
   veryfront build --minify
   veryfront build --no-ssg            # disable static site generation

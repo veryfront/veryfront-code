@@ -1,0 +1,20 @@
+{
+  "name": "redis",
+  "description": "Redis-based async job queue for background processing",
+  "envVars": [
+    {
+      "name": "REDIS_URL",
+      "description": "Redis connection URL",
+      "required": true,
+      "sensitive": false,
+      "placeholder": "redis://localhost:6379",
+      "docsUrl": "https://redis.io/docs/connect/clients/"
+    }
+  ],
+  "tips": [
+    "Start Redis: docker run -p 6379:6379 redis",
+    "Queue jobs via /api/jobs endpoint",
+    "Worker processes jobs in the background",
+    "Supports job priorities and retries"
+  ]
+}
