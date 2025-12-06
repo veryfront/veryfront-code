@@ -12,6 +12,8 @@ export function rewriteBareImports(code: string, _moduleServerUrl?: string): Pro
     "react-dom/server": `https://esm.sh/react-dom@${REACT_DEFAULT_VERSION}/server`,
     "react/jsx-runtime": `https://esm.sh/react@${REACT_DEFAULT_VERSION}/jsx-runtime`,
     "react/jsx-dev-runtime": `https://esm.sh/react@${REACT_DEFAULT_VERSION}/jsx-dev-runtime`,
+    // NOTE: veryfront/ai/react is NOT rewritten here - it's handled by the HTML import map
+    // which points to /_veryfront/lib/ai/react.js served from the local package
   };
 
   return Promise.resolve(replaceSpecifiers(code, (specifier) => {

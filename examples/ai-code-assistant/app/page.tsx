@@ -308,21 +308,25 @@ function ChatInterface() {
 
         for (const line of lines) {
           if (line.startsWith('data: ')) {
-            try {
-              const data = JSON.parse(line.slice(6));
+            const rawData = line.slice(6);
+            if (rawData === '[DONE]') continue;
 
-              if (data.type === 'chunk') {
-                assistantMessage.content += data.content;
+            try {
+              const data = JSON.parse(rawData);
+
+              // Vercel AI SDK data stream format
+              if (data.type === 'text-delta') {
+                assistantMessage.content += data.textDelta || '';
                 setMessages((prev) => {
                   const updated = [...prev];
                   updated[updated.length - 1] = { ...assistantMessage };
                   return updated;
                 });
-              } else if (data.type === 'tool_call') {
+              } else if (data.type === 'tool-call') {
                 assistantMessage.toolInvocations = assistantMessage.toolInvocations || [];
                 assistantMessage.toolInvocations.push({
-                  toolName: data.toolCall.name,
-                  args: data.toolCall.args,
+                  toolName: data.toolName,
+                  args: data.args,
                   state: 'call',
                 });
                 setMessages((prev) => {
@@ -330,16 +334,16 @@ function ChatInterface() {
                   updated[updated.length - 1] = { ...assistantMessage };
                   return updated;
                 });
-              } else if (data.type === 'tool_result') {
+              } else if (data.type === 'tool-result') {
                 const invocations = assistantMessage.toolInvocations || [];
                 const idx = invocations.findIndex(
-                  (inv) => inv.toolName === data.toolCall.name && inv.state === 'call'
+                  (inv) => inv.toolName === data.toolName && inv.state === 'call'
                 );
                 if (idx >= 0) {
                   invocations[idx] = {
                     ...invocations[idx],
                     state: 'result',
-                    result: data.toolCall.result,
+                    result: data.result,
                   };
                 }
                 setMessages((prev) => {
@@ -351,7 +355,8 @@ function ChatInterface() {
                 throw new Error(data.error);
               }
             } catch (e) {
-              console.error('Error parsing SSE data:', e);
+              if (e instanceof SyntaxError) continue; // Skip invalid JSON
+              throw e;
             }
           }
         }

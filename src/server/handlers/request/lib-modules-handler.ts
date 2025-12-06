@@ -93,12 +93,19 @@ export class LibModulesHandler extends BaseHandler {
     }
 
     try {
-      // Create secure filesystem wrapper
+      // Create secure filesystem wrapper with custom validation
+      // We need to allow reading from node_modules/veryfront/dist which is outside
+      // the default static-serving allowed directories (dist, public)
       const secureFs = createSecureFs({
         baseDir: ctx.projectDir,
         adapter: ctx.adapter,
-        context: "static-serving",
+        context: "internal", // Use internal context which is more permissive
         throwOnError: false,
+        validationOptions: {
+          // Override to allow node_modules path
+          allowedDirs: ["node_modules"],
+          allowAbsolute: true,
+        },
       });
 
       // Read the module file
@@ -116,14 +123,17 @@ export class LibModulesHandler extends BaseHandler {
         );
       }
 
-      // Build response with immutable caching (modules are versioned)
+      // Build response with appropriate caching based on mode
+      // In development, use no-cache to allow debugging with fresh code
+      // In production, use immutable caching (modules are versioned)
       const builder = this.createResponseBuilder(ctx);
       const body = method === "HEAD" ? null : content;
+      const isDev = ctx.config?.mode === "development";
 
       const response = builder
         .withCORS(req, ctx.securityConfig?.cors)
         .withSecurity(ctx.securityConfig ?? undefined)
-        .withCache("immutable")
+        .withCache(isDev ? "no-cache" : "immutable")
         .withETag(etag)
         .withContentType("application/javascript; charset=utf-8", body, HTTP_OK);
 

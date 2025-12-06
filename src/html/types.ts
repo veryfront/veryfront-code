@@ -11,6 +11,8 @@ export interface HTMLGenerationOptions {
   appPath?: string;
   pagePath?: string;
   nonce?: string;
+  /** Project directory for resolving package versions */
+  projectDir?: string;
 }
 
 export type { ImportMapConfig } from "../module-system/import-map/types.ts";

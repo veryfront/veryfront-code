@@ -56,6 +56,13 @@ export { agent } from "./agent/factory.ts";
 export { tool } from "./utils/tool.ts";
 
 /**
+ * Re-export zod for schema definitions
+ * This allows users to import z from 'veryfront/ai' without needing separate zod import
+ * which ensures compatibility across Deno, Node.js, and other runtimes
+ */
+export { z } from "zod";
+
+/**
  * Create an MCP resource
  */
 export { resource } from "./mcp/resource.ts";

@@ -193,7 +193,7 @@ export default function RootLayout({
  * This ensures the agent is bundled with the route and available at runtime.
  */
 
-import assistantAgent from '../../../ai/agents/assistant';
+import assistantAgent from '../../../ai/agents/assistant.ts';
 
 export async function POST(request: Request) {
   const { messages } = await request.json();
@@ -471,5 +471,28 @@ export default function ChatPage() {
     </div>
   );
 }`,
+  },
+  // Veryfront config for self-hosted mode (serves latest local modules)
+  {
+    path: "veryfront.config.ts",
+    content: `/**
+ * Veryfront Configuration
+ *
+ * Enables self-hosted mode to serve veryfront/ai modules from node_modules
+ * instead of CDN, ensuring you always use the latest local version.
+ */
+
+import type { VeryfrontConfig } from 'veryfront';
+
+const config: VeryfrontConfig = {
+  client: {
+    // Self-hosted mode serves veryfront modules from /_veryfront/lib/*
+    // This ensures the browser uses your locally installed veryfront version
+    moduleResolution: 'self-hosted',
+  },
+};
+
+export default config;
+`,
   },
 ];

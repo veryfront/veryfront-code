@@ -1,6 +1,6 @@
 {
   "name": "veryfront",
-  "version": "0.0.32",
+  "version": "0.0.33",
   "exclude": [
     "npm/",
     "dist/",

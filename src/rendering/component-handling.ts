@@ -62,6 +62,7 @@ export async function handleComponentPage(
         projectId: projectDir,
         dev: true,
         moduleServerUrl: options?.moduleServerUrl,
+        ssr: true, // SSR mode for proper import resolution
       },
     );
 

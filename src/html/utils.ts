@@ -1,5 +1,6 @@
 import { escapeHTML } from "./html-escape.ts";
 import type { VeryfrontConfig } from "../core/config/types.ts";
+import { VERYFRONT_VERSION, REACT_DEFAULT_VERSION } from "../core/utils/constants/cdn.ts";
 
 export function buildRootAttributes(
   slug: string,
@@ -41,8 +42,8 @@ interface DetectedVersions {
 }
 
 const DEFAULT_VERSIONS: DetectedVersions = {
-  react: "18.3.1",
-  veryfront: "0.0.12",
+  react: REACT_DEFAULT_VERSION,
+  veryfront: VERYFRONT_VERSION,
 };
 
 /**
