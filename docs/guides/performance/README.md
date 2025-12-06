@@ -20,7 +20,7 @@ Comprehensive performance optimization techniques. Learn about:
 - Core Web Vitals optimization
 - Lighthouse score improvements
 
-### [Caching Strategies](./caching.md)
+### [Caching Strategies](/guides/performance/caching.md)
 Implement effective caching for better performance. Learn about:
 - HTTP caching headers
 - Browser caching strategies
@@ -40,7 +40,7 @@ Before optimizing performance, ensure you have:
 
 ### Optimization Topics
 - [Optimization Guide](./optimization.md) - Comprehensive optimization techniques
-- [Caching Strategies](./caching.md) - Caching patterns and configuration
+- [Caching Strategies](/guides/performance/caching.md) - Caching patterns and configuration
 
 ## Related Guides
 
@@ -82,7 +82,7 @@ Before optimizing performance, ensure you have:
 
 1. Measure current performance with Lighthouse
 2. Follow the [Optimization Guide](./optimization.md)
-3. Implement [Caching Strategies](./caching.md)
+3. Implement [Caching Strategies](/guides/performance/caching.md)
 4. Deploy optimized app and measure improvements
 
 ## Troubleshooting

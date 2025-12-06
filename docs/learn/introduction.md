@@ -272,7 +272,7 @@ Ready to start building?
 ### Core Concepts
 - [Routing System](/guides/routing/README.md) - File-based routing with App and Pages Router
 - [Rendering Modes](/guides/rendering/README.md) - SSR, SSG, ISR, JIT, and RSC
-- [AI Capabilities](/guides/ai/README.md) - Built-in agents, tools, and MCP
+- [AI Capabilities](/ai/README.md) - Built-in agents, tools, and MCP
 
 ### Configuration
 - [Configuration Reference](/reference/configuration/README.md) - Complete config options

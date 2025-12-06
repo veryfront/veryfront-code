@@ -272,7 +272,7 @@ Dynamic routes work with all rendering modes:
 | **ISR** | Periodically updated | Product pages |
 | **JIT** | Large-scale sites | Docs with 100k+ pages |
 
-See [Rendering Modes](../rendering/comparison.md) for details.
+See [Rendering Modes](/guides/rendering/comparison.md) for details.
 
 ## Priority Rules
 
@@ -339,12 +339,12 @@ export const getServerData = async (ctx: DataContext) => {
 - [App Router](./app-router.md) - App Router overview
 - [Pages Router](./pages-router.md) - Pages Router overview
 - [API Routes](./api-routes.md) - API endpoints with dynamic segments
-- [Static Generation](../rendering/ssg.md) - Pre-rendering dynamic routes
-- [Data Fetching](/reference/functions/data-fetching.md) - getServerData and getStaticPaths APIs
+- [Static Generation](/guides/rendering/ssg.md) - Pre-rendering dynamic routes
+- [Data Fetching](/reference/functions/get-server-data.md) - getServerData and getStaticPaths APIs
 
 ## Examples
 
 See working examples:
-- [Blog Example](/examples/blog/) - Dynamic blog with categories
-- [Documentation Site](/examples/docs/) - Catch-all routes
-- [E-commerce](/examples/shop/) - Products with dynamic routes
+- [Blog Example](https://github.com/veryfrontjs/veryfront/tree/main/examples/basic-mdx) - Dynamic blog with categories
+- [Documentation Site](https://github.com/veryfrontjs/veryfront/tree/main/examples/basic-mdx) - Catch-all routes
+- [E-commerce](https://github.com/veryfrontjs/veryfront/tree/main/examples/full-demo) - Products with dynamic routes

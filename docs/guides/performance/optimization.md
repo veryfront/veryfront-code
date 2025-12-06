@@ -788,7 +788,7 @@ const Heavy = lazy(() => import('./Heavy'));
 
 ## Next Steps
 
-- Learn about [Caching Strategies](/docs/guides/performance/caching.md)
-- Optimize [Images](/docs/components/image.md)
-- Configure [Scripts](/docs/components/script.md)
-- Review [Deployment](/docs/guides/deployment/node.md) best practices
+- Learn about [Caching Strategies](/guides/performance/caching.md)
+- Optimize [Images](/guides/components/image.md)
+- Configure [Scripts](/guides/components/script.md)
+- Review [Deployment](/guides/deployment/node.md) best practices

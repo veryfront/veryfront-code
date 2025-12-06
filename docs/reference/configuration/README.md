@@ -107,7 +107,7 @@ export default defineConfig({
 - `'pages'` - Traditional Pages Router, simpler file-based routing
 - `'auto'` - Auto-detect based on whether `app/` or `pages/` directory exists
 
-**See Also:** [App Router Guide](../../routing/app-router.md), [Pages Router Guide](../../routing/pages-router.md)
+**See Also:** [App Router Guide](/guides/routing/app-router.md), [Pages Router Guide](/guides/routing/pages-router.md)
 
 ---
 
@@ -151,7 +151,7 @@ export default defineConfig({
 - `'jit'` - Just-In-Time (render once, cache forever)
 - `'csr'` - Client-Side Rendering (render in browser)
 
-**See Also:** [Rendering Modes](../../rendering/README.md)
+**See Also:** [Rendering Modes](/guides/rendering/README.md)
 
 #### rendering.fallback
 
@@ -1123,9 +1123,9 @@ interface ProviderConfig {
 ## See Also
 
 - [CLI Reference](../cli/README.md) - Command-line interface
-- [API Reference](..//reference/functions/README.md) - Programming APIs
+- [API Reference](/reference/functions/README.md) - Programming APIs
 - [File Conventions](../file-conventions/README.md) - Special files
-- [Installation Guide](../../getting-started/installation.md) - Setup instructions
+- [Installation Guide](/learn/installation.md) - Setup instructions
 - [Deployment Guides](../../guides/deployment/README.md) - Production deployment
 
 ---

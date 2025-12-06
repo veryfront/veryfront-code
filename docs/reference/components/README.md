@@ -339,12 +339,12 @@ Automatic polyfills and fallbacks are provided for older browsers where needed.
 
 - [Hooks Reference](/reference/hooks/) - Client-side hooks
 - [Functions Reference](/reference/functions/) - Server-side functions
-- [Routing Guide](/routing/) - File-based routing
-- [Styling Guide](/guides/styling/) - Styling approaches
+- [Routing Guide](/guides/routing/README.md) - File-based routing
+- [Styling Guide](/guides/components/README.md) - Styling approaches
 
 ## Examples
 
-- [Navigation Menu Example](/examples/navigation-menu/)
-- [SEO Optimization Example](/examples/seo-optimized/)
-- [Image Gallery Example](/examples/image-gallery/)
-- [Blog with Images Example](/examples/blog-images/)
+- [Navigation Menu Example](https://github.com/veryfrontjs/veryfront/tree/main/examples/minimal-app-router)
+- [SEO Optimization Example](https://github.com/veryfrontjs/veryfront/tree/main/examples/basic-mdx)
+- [Image Gallery Example](https://github.com/veryfrontjs/veryfront/tree/main/examples/full-demo)
+- [Blog with Images Example](https://github.com/veryfrontjs/veryfront/tree/main/examples/basic-mdx)

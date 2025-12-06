@@ -1004,7 +1004,7 @@ Use `sizes` and `srcset` to serve different image sizes based on viewport:
 
 ## Next Steps
 
-- Learn about [Script component](/docs/components/script.md) for loading external scripts
-- Explore [Performance optimization](/docs/guides/performance/optimization.md) for more tips
-- Check out [Head component](/docs/components/head.md) for metadata management
+- Learn about [Script component](/guides/components/script.md) for loading external scripts
+- Explore [Performance optimization](/guides/performance/optimization.md) for more tips
+- Check out [Head component](/reference/components/head.md) for metadata management
 - Read about [SSR](/guides/rendering/ssr.md) for dynamic image URLs

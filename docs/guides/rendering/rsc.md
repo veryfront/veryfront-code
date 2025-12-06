@@ -1310,8 +1310,8 @@ const getData = cache(async (id) => await fetch(id));
 
 - [SSR (Server-Side Rendering)](./ssr.md) - Traditional SSR patterns
 - [Rendering Mode Comparison](./comparison.md) - Compare all rendering modes
-- [App Router](../routing/app-router.md) - RSC is App Router exclusive
-- [Streaming API](/reference/functions/streaming.md) - Advanced streaming patterns
+- [App Router](/guides/routing/app-router.md) - RSC is App Router exclusive
+- [Streaming API](/reference/functions/README.md) - Advanced streaming patterns
 
 ## Summary
 

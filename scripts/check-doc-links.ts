@@ -9,7 +9,8 @@ let broken = 0;
 for (const root of roots) {
   for await (const entry of walk(root, { exts: [".md"], includeDirs: false })) {
     const text = await Deno.readTextFile(entry.path);
-    const re = /\]\(([^)]+)\)/g; // simple markdown link extractor
+    // Match markdown links: [text](url) - requires [ before ]
+    const re = /\[[^\]]*\]\(([^)]+)\)/g;
     let match: RegExpExecArray | null;
     while ((match = re.exec(text))) {
       const href = match[1];
@@ -17,8 +18,20 @@ for (const root of roots) {
       // Skip external links
       if (/^https?:\/\//.test(href)) continue;
       if (href.startsWith("#")) continue;
-      // Resolve relative to current file
-      const url = new URL(href, `file://${entry.path}`);
+      // Skip links that start with quotes (likely code, not actual links)
+      if (href.startsWith("'") || href.startsWith('"')) continue;
+
+      // Handle absolute paths (starting with /) as relative to docs root
+      // Handle relative paths as relative to the current file
+      let url: URL;
+      if (href.startsWith("/")) {
+        // Strip the leading / and resolve from docs root
+        url = new URL(href.slice(1), `file://${docsRoot}`);
+      } else {
+        // Resolve relative to current file
+        url = new URL(href, `file://${entry.path}`);
+      }
+
       try {
         const stat = await Deno.stat(url);
         if (!stat.isFile && !stat.isDirectory) throw new Error("not file or dir");

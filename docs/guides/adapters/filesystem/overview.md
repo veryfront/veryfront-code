@@ -33,8 +33,8 @@ Mock filesystem for testing without touching real files.
 |---------|----------|-------------|-------|
 | **Local Disk** | Development, traditional servers |  Native | Default |
 | **Veryfront API** | Remote rendering, multi-tenant SaaS |  Cached | [Guide](./veryfront-api.md) |
-| **Memory** | Testing, temporary builds |  In-memory | [Guide](./memory.md) |
-| **Custom** | S3, CDN, database, etc. | Varies | [Guide](./custom.md) |
+| **Memory** | Testing, temporary builds |  In-memory | [Guide](/ai/README.md) |
+| **Custom** | S3, CDN, database, etc. | Varies | [Guide](../README.md) |
 
 ## How It Works
 
@@ -128,7 +128,7 @@ class S3FSAdapter implements FSAdapter {
 }
 ```
 
-[→ Learn more about custom adapters](./custom.md)
+[→ Learn more about custom adapters](../README.md)
 
 ## Architecture
 
@@ -307,12 +307,12 @@ export default defineConfig({
 
 Choose your filesystem adapter:
 
-- [**Local Disk** - Standard filesystem (default)](./local.md)
+- [**Local Disk** - Standard filesystem (default)](/guides/adapters/filesystem/overview.md)
 - [**Veryfront API** - Remote rendering & multi-tenant](./veryfront-api.md)
-- [**Custom Adapters** - Build your own (S3, CDN, etc.)](./custom.md)
+- [**Custom Adapters** - Build your own (S3, CDN, etc.)](../README.md)
 
 ## Learn More
 
-- [Platform Adapters Overview](../platform-adapters/overview.md)
-- [Architecture Deep Dive](../advanced/architecture.md)
-- [Performance Optimization](../guides/performance.md)
+- [Platform Adapters Overview](/guides/adapters/platform/overview.md)
+- [Architecture Deep Dive](/guides/architecture/README.md)
+- [Performance Optimization](/guides/performance/README.md)

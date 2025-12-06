@@ -4,6 +4,7 @@ import { join } from "std/path/mod.ts";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import { serverLogger } from "@veryfront/utils/logger/logger.ts";
 import { getReactImportMap, REACT_DEFAULT_VERSION } from "@veryfront/utils/constants/cdn.ts";
+import { DEFAULT_CACHE_DIR } from "@veryfront/utils/constants/server.ts";
 
 export type { VeryfrontConfig } from "./types.ts";
 
@@ -33,7 +34,7 @@ const DEFAULT_CONFIG: Partial<VeryfrontConfig> = {
     },
   },
   cache: {
-    dir: ".veryfront/cache",
+    dir: DEFAULT_CACHE_DIR,
     render: {
       type: "memory",
       ttl: undefined,

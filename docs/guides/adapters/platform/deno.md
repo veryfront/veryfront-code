@@ -609,9 +609,9 @@ See [Configuration](#configuration) section above.
 
 ## Next Steps
 
-- [Filesystem Adapters](../filesystem-adapters/overview.md) - Use remote storage
-- [Deployment Guide](../guides/deployment.md) - Advanced deployment
-- [Performance](../guides/performance.md) - Optimization tips
+- [Filesystem Adapters](/guides/adapters/filesystem/overview.md) - Use remote storage
+- [Deployment Guide](/guides/deployment/README.md) - Advanced deployment
+- [Performance](/guides/performance/README.md) - Optimization tips
 - [Other Runtimes](./overview.md) - Node.js, Bun, Cloudflare
 
 ## Resources

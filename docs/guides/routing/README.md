@@ -367,7 +367,7 @@ const Page: PageWithData<{ data: MyData }> = ({ data }) => {
 export default Page;
 ```
 
-Learn more about data fetching in the [Data Fetching Guide](../guides/data-fetching-patterns.md)
+Learn more about data fetching in the [Data Fetching Guide](/reference/functions/get-server-data.md)
 
 ## TypeScript Support
 
@@ -429,10 +429,10 @@ Switching from Pages Router to App Router (or vice versa) requires restructuring
 ## Examples
 
 See working examples:
-- [Minimal App Router](/examples/minimal-app-router/) - Simplest App Router setup
-- [Minimal Pages](/examples/minimal-pages/) - Simplest Pages Router setup
-- [Blog Example](/examples/blog/) - Full blog with dynamic routes
-- [Auth App](/examples/auth-app/) - Authentication with protected routes
+- [Minimal App Router](https://github.com/veryfrontjs/veryfront/tree/main/examples/minimal-app-router) - Simplest App Router setup
+- [Minimal Pages](https://github.com/veryfrontjs/veryfront/tree/main/examples/minimal-pages) - Simplest Pages Router setup
+- [Blog Example](https://github.com/veryfrontjs/veryfront/tree/main/examples/basic-mdx) - Full blog with dynamic routes
+- [Auth App](https://github.com/veryfrontjs/veryfront/tree/main/examples/auth-app) - Authentication with protected routes
 
 ## Prerequisites
 

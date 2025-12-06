@@ -2,12 +2,16 @@
 // Minimal: hydrate default export without props in dev
 
 import { rscLogger } from "../client/browser-logger.ts";
-// Note: Using centralized version - matches REACT_DEFAULT_VERSION from cdn.ts (18.3.1)
+import {
+  getReactCDNUrl,
+  getReactDOMClientCDNUrl,
+} from "../../core/utils/constants/cdn.ts";
+// Note: Using centralized version from cdn.ts
 import type { Root } from "https://esm.sh/react-dom@18.3.1/client";
 
-// React CDN URLs - should match REACT_DEFAULT_VERSION from cdn.ts
-const REACT_URL = "https://esm.sh/react@18.3.1";
-const REACT_DOM_CLIENT_URL = "https://esm.sh/react-dom@18.3.1/client";
+// React CDN URLs - derived from centralized constants
+const REACT_URL = getReactCDNUrl();
+const REACT_DOM_CLIENT_URL = getReactDOMClientCDNUrl();
 
 type Manifest = {
   version: number;

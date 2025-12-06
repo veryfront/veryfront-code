@@ -707,9 +707,9 @@ export const GET = () => {
 ## Related Documentation
 
 - [Node.js Deployment](./node.md) - Deploy to Vercel, Railway
-- [Bun Deployment](./bun.md) - Deploy with Bun runtime
-- [Configuration](..//reference/functions/configuration.md) - Framework configuration
-- [Environment Variables](./env-vars.md) - Managing secrets
+- [Bun Deployment](/guides/deployment/bun.md) - Deploy with Bun runtime
+- [Configuration](/reference/configuration/README.md) - Framework configuration
+- [Environment Variables](/reference/configuration/README.md) - Managing secrets
 
 ## Getting Help
 

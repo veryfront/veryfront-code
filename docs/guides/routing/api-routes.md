@@ -1082,15 +1082,15 @@ Deno.test('POST /api/users creates user', async () => {
 - [App Router](./app-router.md) - Modern routing system
 - [Pages Router](./pages-router.md) - Traditional routing
 - [Dynamic Routes](./dynamic-routes.md) - URL parameters
-- [Data Fetching](/reference/functions/data-fetching.md) - Server-side data
+- [Data Fetching](/reference/functions/get-server-data.md) - Server-side data
 
 ---
 
 ## Examples
 
-- [Form Handling](/examples/form-handling/) - API routes with forms
-- [Auth App](/examples/auth-app/) - Authentication API
-- [Full Demo](/examples/full-demo/) - Complete API examples
+- [Form Handling](https://github.com/veryfrontjs/veryfront/tree/main/examples/form-handling) - API routes with forms
+- [Auth App](https://github.com/veryfrontjs/veryfront/tree/main/examples/auth-app) - Authentication API
+- [Full Demo](https://github.com/veryfrontjs/veryfront/tree/main/examples/full-demo) - Complete API examples
 
 ---
 

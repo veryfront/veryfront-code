@@ -827,7 +827,7 @@ Use Chrome DevTools or Lighthouse to measure the performance impact of third-par
 
 ## Next Steps
 
-- Learn about [Head component](/docs/components/head.md) for metadata management
-- Explore [Performance optimization](/docs/guides/performance/optimization.md) for more tips
-- Check out [Image component](/docs/components/image.md) for image optimization
+- Learn about [Head component](/reference/components/head.md) for metadata management
+- Explore [Performance optimization](/guides/performance/optimization.md) for more tips
+- Check out [Image component](/guides/components/image.md) for image optimization
 - Read about [SSR](/guides/rendering/ssr.md) for server-side rendering

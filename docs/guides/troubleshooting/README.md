@@ -11,7 +11,7 @@ Guides to help you debug and resolve issues in your Veryfront applications.
 
 ## Available Guides
 
-### [Debugging Guide](./debugging.md)
+### [Debugging Guide](/guides/troubleshooting/debugging.md)
 Comprehensive debugging guide covering:
 - Common error messages and solutions
 - Debugging tools and techniques

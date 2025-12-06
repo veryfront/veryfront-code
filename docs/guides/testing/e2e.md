@@ -959,12 +959,12 @@ test.use({ storageState: 'playwright/.auth/user.json' });
 
 ## Next Steps
 
-- [Unit Testing](/guides/testing/unit) - Unit and integration testing
-- [Performance](/guides/performance/optimization) - Optimize your app
-- [Deployment](/guides/deployment/node) - Deploy to production
+- [Unit Testing](/guides/testing/unit.md) - Unit and integration testing
+- [Performance](/guides/performance/optimization.md) - Optimize your app
+- [Deployment](/guides/deployment/node.md) - Deploy to production
 
 ## Related
 
-- [Component APIs](/components/overview) - Component reference
-- [Hook APIs](/hooks/overview) - Hook reference
-- [TypeScript](/guides/typescript) - TypeScript configuration
+- [Component APIs](/reference/components/README.md) - Component reference
+- [Hook APIs](/reference/hooks/README.md) - Hook reference
+- [TypeScript](/guides/troubleshooting/README.md) - TypeScript configuration

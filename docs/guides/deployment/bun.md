@@ -863,7 +863,7 @@ serve({ port: 3000, fetch: handler });
 
 ## Next Steps
 
-- Compare with [Node.js deployment](/docs/guides/deployment/node.md)
-- Explore [Cloudflare Workers](/docs/guides/deployment/cloudflare.md) for edge
-- Read [Performance Optimization](/docs/guides/performance/optimization.md)
-- Check [Caching Strategies](/docs/guides/performance/caching.md)
+- Compare with [Node.js deployment](/guides/deployment/node.md)
+- Explore [Cloudflare Workers](/guides/deployment/cloudflare.md) for edge
+- Read [Performance Optimization](/guides/performance/optimization.md)
+- Check [Caching Strategies](/guides/performance/caching.md)

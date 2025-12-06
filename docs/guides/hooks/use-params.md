@@ -631,7 +631,7 @@ export default function ServerComponent({ params }: { params: { id: string } }) 
 
 ## Next Steps
 
-- Learn about [useRouter hook](/docs/hooks/use-router.md) for programmatic navigation
-- Explore [useSearchParams hook](/docs/hooks/use-search-params.md) for query strings
-- Check out [usePathname hook](/docs/hooks/use-pathname.md) for current pathname
+- Learn about [useRouter hook](/reference/hooks/use-router.md) for programmatic navigation
+- Explore [useSearchParams hook](/reference/hooks/use-search-params.md) for query strings
+- Check out [usePathname hook](/reference/hooks/use-pathname.md) for current pathname
 - Read about [Dynamic Routes](/guides/routing/dynamic-routes.md) for route patterns

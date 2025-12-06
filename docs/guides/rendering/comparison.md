@@ -437,8 +437,8 @@ Static homepage
 ## Examples
 
 See working examples:
-- [SSG Example](/examples/blog/) - Static blog with SSG
-- [ISR Example](/examples/e-commerce/) - Product catalog with ISR
-- [SSR Example](/examples/dashboard/) - User dashboard with SSR
-- [JIT Example](/examples/docs/) - Large documentation site with JIT
-- [RSC Example](/examples/rsc-demo/) - React Server Components demo
+- [SSG Example](https://github.com/veryfrontjs/veryfront/tree/main/examples/basic-mdx) - Static blog with SSG
+- [ISR Example](https://github.com/veryfrontjs/veryfront/tree/main/examples/full-demo) - Product catalog with ISR
+- [SSR Example](https://github.com/veryfrontjs/veryfront/tree/main/examples/full-demo) - User dashboard with SSR
+- [JIT Example](https://github.com/veryfrontjs/veryfront/tree/main/examples/basic-mdx) - Large documentation site with JIT
+- [RSC Example](https://github.com/veryfrontjs/veryfront/tree/main/examples/rsc-demo) - React Server Components demo

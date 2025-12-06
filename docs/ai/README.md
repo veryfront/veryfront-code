@@ -80,7 +80,7 @@ All documentation has been created and updated to reflect the **100% complete** 
 
 ### 🔧 Module Documentation
 
-5. **[Core AI Module](../../../src/ai/README.md)**
+5. **[Core AI Module](/ai/README.md)**
    - Core AI module documentation
    - Phase-by-phase completion status
    - Usage examples
@@ -88,20 +88,20 @@ All documentation has been created and updated to reflect the **100% complete** 
    - Public API reference
    - **Status**: ✅ Updated with all 8 phases complete
 
-6. **[React Hooks (Layer 1)](../../../src/ai/react/README.md)**
+6. **[React Hooks (Layer 1)](/reference/ai/hooks.md)**
    - React hooks documentation
    - Hook API reference
    - Usage examples
    - **Status**: ✅ Complete
 
-7. **[Unstyled Primitives (Layer 2)](../../../src/ai/react/primitives/README.md)**
+7. **[Unstyled Primitives (Layer 2)](/reference/ai/README.md)**
    - Unstyled primitives documentation
    - All 12 primitives documented
    - Integration examples (Tailwind, shadcn, etc.)
    - Accessibility details
    - **Status**: ✅ Complete
 
-8. **[Styled Components (Layer 3)](../../../src/ai/react/components/README.md)**
+8. **[Styled Components (Layer 3)](/reference/ai/README.md)**
    - Styled components documentation
    - Theme system guide
    - Customization options
@@ -111,13 +111,13 @@ All documentation has been created and updated to reflect the **100% complete** 
 
 ### 📝 Example Documentation
 
-9. **[Basic Example](../../../examples/ai-basic/README.md)**
+9. **[Basic Example](https://github.com/veryfrontjs/veryfront/tree/main/examples/ai-basic)**
    - Basic example documentation
    - Platform detection demo
    - Tool and agent creation
    - **Status**: ✅ Complete
 
-10. **[Full Demo](../../../examples/full-demo/README.md)**
+10. **[Full Demo](https://github.com/veryfrontjs/veryfront/tree/main/examples/full-demo)**
     - Complete demo documentation
     - All 8 phases demonstrated
     - Expected output
@@ -149,18 +149,18 @@ All documentation has been created and updated to reflect the **100% complete** 
 
 ### For Developers
 → **[Framework Summary](./summary.md)** - Quick reference
-→ **[Core AI Module](../../../src/ai/README.md)** - Core module docs
+→ **[Core AI Module](/ai/README.md)** - Core module docs
 
 ### For Implementation Details
 → **[Implementation Status](./implementation-status.md)** - What's built
 
 ### For Layer Selection
-→ **[React Hooks](../../../src/ai/react/README.md)** - Layer 1 (Hooks)
-→ **[Unstyled Primitives](../../../src/ai/react/primitives/README.md)** - Layer 2 (Primitives)
-→ **[Styled Components](../../../src/ai/react/components/README.md)** - Layer 3 (Styled)
+→ **[React Hooks](/reference/ai/hooks.md)** - Layer 1 (Hooks)
+→ **[Unstyled Primitives](/reference/ai/README.md)** - Layer 2 (Primitives)
+→ **[Styled Components](/reference/ai/README.md)** - Layer 3 (Styled)
 
 ### For Examples
-→ **[Full Demo](../../../examples/full-demo/)** - Complete demo showing all features
+→ **[Full Demo](https://github.com/veryfrontjs/veryfront/tree/main/examples/full-demo)** - Complete demo showing all features
 
 ---
 

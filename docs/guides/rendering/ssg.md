@@ -854,15 +854,15 @@ import { Link } from 'veryfront';
 - [SSR Guide](./ssr.md) - Server-Side Rendering
 - [ISR Guide](./isr.md) - Incremental Static Regeneration
 - [JIT Guide](./jit.md) - Just-In-Time Rendering
-- [Data Fetching API](/reference/functions/data-fetching.md) - Complete reference
+- [Data Fetching API](/reference/functions/get-server-data.md) - Complete reference
 
 ---
 
 ## Examples
 
-- [Blog Example](/examples/blog/) - Markdown blog with SSG
-- [Documentation](/examples/docs/) - Multi-level docs
-- [Portfolio](/examples/portfolio/) - Static portfolio site
+- [Blog Example](https://github.com/veryfrontjs/veryfront/tree/main/examples/basic-mdx) - Markdown blog with SSG
+- [Documentation](https://github.com/veryfrontjs/veryfront/tree/main/examples/basic-mdx) - Multi-level docs
+- [Portfolio](https://github.com/veryfrontjs/veryfront/tree/main/examples/minimal-app-router) - Static portfolio site
 
 ---
 

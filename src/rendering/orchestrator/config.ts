@@ -7,6 +7,7 @@ import { getConfig } from "@veryfront/config";
 import { initializeBundleManifest } from "@veryfront/utils";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "@veryfront/config";
+import { isAnyDebugEnabled } from "../../core/utils/constants/env.ts";
 
 export interface ConfigurationOptions {
   projectDir: string;
@@ -96,8 +97,7 @@ export class ConfigurationManager {
   }
 
   isDebugMode(): boolean {
-    return this.adapter.env?.get?.("VERYFRONT_DEBUG") === "1" ||
-      this.adapter.env?.get?.("VERYFRONT_DEEP_INSPECT") === "1";
+    return isAnyDebugEnabled(this.adapter.env ?? { get: () => undefined });
   }
 
   getProjectDir(): string {

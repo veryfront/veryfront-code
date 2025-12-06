@@ -187,6 +187,7 @@ async function updateTemplates(newVersion: string) {
 	const filesToUpdate = [
 		"src/cli/commands/init/config-generator.ts",
 		"src/cli/npm-cli.ts",
+		"src/core/utils/constants/cdn.ts",
 	];
 
 	for (const filePath of filesToUpdate) {
@@ -198,6 +199,7 @@ async function updateTemplates(newVersion: string) {
 				const regex2 = /"veryfront":\s*"npm:veryfront@[\^~]?[\d\.]+"/g;
 				const regex3 = /"veryfront\/":\s*"npm:veryfront@[\^~]?[\d\.]+\/"/g;
 				const regex4 = /const VERSION = "[\d\.]+";/;
+				const regex5 = /VERYFRONT_VERSION = "[\d\.]+";/;
 
 				let newContent = content;
 				if (regex1.test(newContent)) {
@@ -219,6 +221,12 @@ async function updateTemplates(newVersion: string) {
 					newContent = newContent.replace(
 						regex4,
 						`const VERSION = "${newVersion}";`,
+					);
+				}
+				if (regex5.test(newContent)) {
+					newContent = newContent.replace(
+						regex5,
+						`VERYFRONT_VERSION = "${newVersion}";`,
 					);
 				}
 

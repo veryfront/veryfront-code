@@ -40,7 +40,7 @@ Each directory has a **single responsibility**:
 - `data/` - Data fetching only
 - etc.
 
-**See [src/NAVIGATION.md](../../src/NAVIGATION.md) for module navigation guide.**
+**See [src/NAVIGATION.md](/guides/routing/README.md) for module navigation guide.**
 
 ### 3. Platform Abstraction
 
@@ -472,10 +472,10 @@ Choose the right mode for each use case:
 
 ## Related Documentation
 
-- **Getting Started**: See [Quick Start Guide](../quick-start.md)
-- **Introduction**: See [Introduction](../introduction.md)
-- **Code Navigation**: See [src/NAVIGATION.md](../../src/NAVIGATION.md)
-- **Contributing**: See [Contributing Guide](../community/contributing.md)
+- **Getting Started**: See [Quick Start Guide](/learn/quickstart.md)
+- **Introduction**: See [Introduction](/learn/introduction.md)
+- **Code Navigation**: See [src/NAVIGATION.md](/guides/routing/README.md)
+- **Contributing**: See [Contributing Guide](/community/contributing.md)
 - **Module Docs**: See `../../src/<module>/README.md` for each module
 
 All 15 modules have comprehensive READMEs with:

@@ -758,10 +758,10 @@ build:
 ## See Also
 
 - [Configuration Reference](../configuration/README.md) - Complete config options
-- [Installation Guide](../../getting-started/installation.md) - Setup instructions
+- [Installation Guide](/learn/installation.md) - Setup instructions
 - [Deployment Guides](../../guides/deployment/README.md) - Production deployment
-- [Quick Start](../../quick-start.md) - Get started in 5 minutes
-- [Troubleshooting](../../guides/troubleshooting.md) - Common issues and solutions
+- [Quick Start](/learn/quickstart.md) - Get started in 5 minutes
+- [Troubleshooting](/guides/troubleshooting/README.md) - Common issues and solutions
 
 ---
 
