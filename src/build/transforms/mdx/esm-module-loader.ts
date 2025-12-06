@@ -8,12 +8,8 @@ import {
 } from "@veryfront/modules/import-map/index.ts";
 import type { MDXFrontmatter, MDXModule } from "./types.ts";
 import { join } from "https://deno.land/std@0.220.0/path/mod.ts";
-
-// Detect if running in Node.js (vs Deno/browser)
-// deno-lint-ignore no-explicit-any
-const _global = globalThis as any;
-const IS_NODE = typeof Deno === "undefined" && typeof _global.process !== "undefined" &&
-  _global.process?.versions?.node;
+import { isNode as IS_NODE } from "../../../platform/compat/runtime.ts";
+import { cwd } from "../../../platform/compat/process.ts";
 
 // Constants
 const LOG_PREFIX_MDX_LOADER = "[mdx-loader]";
@@ -128,7 +124,7 @@ export async function loadModuleESM(
         // On Node.js, use a cache dir inside the project so module resolution works
         // Node.js resolves bare imports relative to the file location
         const projectCacheDir = join(
-          _global.process.cwd(),
+          cwd(),
           "node_modules",
           ".cache",
           "veryfront-mdx",

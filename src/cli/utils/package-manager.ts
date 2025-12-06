@@ -3,11 +3,28 @@
  * @module cli/utils/package-manager
  */
 
-import { join } from "std/path/mod.ts";
+import { join } from "../../platform/compat/path/index.ts";
 import { cliLogger as logger } from "@veryfront/utils";
 import { createFileSystem } from "../../platform/compat/fs.ts";
+import { isDeno, isNode } from "../../platform/compat/runtime.ts";
 
 export type PackageManager = "npm" | "yarn" | "pnpm" | "bun";
+
+/**
+ * Check if running on Windows
+ */
+function isWindows(): boolean {
+  if (isDeno) {
+    // @ts-ignore - Deno global
+    return Deno.build.os === "windows";
+  }
+  if (isNode) {
+    // deno-lint-ignore no-explicit-any
+    const nodeProcess = (globalThis as any).process;
+    return nodeProcess?.platform === "win32";
+  }
+  return false;
+}
 
 /**
  * Execute a shell command cross-runtime (Deno/Node.js)
@@ -20,7 +37,8 @@ async function executeCommand(
   silent: boolean,
 ): Promise<number> {
   // Try Deno.Command first (Deno runtime)
-  if (typeof Deno !== "undefined" && Deno.Command) {
+  if (isDeno) {
+    // @ts-ignore - Deno global
     const process = new Deno.Command(cmd, {
       args,
       cwd,
@@ -39,7 +57,7 @@ async function executeCommand(
     const child = spawn(cmd, args, {
       cwd,
       stdio: silent ? "ignore" : "inherit",
-      shell: process.platform === "win32", // Use shell on Windows for .cmd files
+      shell: isWindows(), // Use shell on Windows for .cmd files
     });
 
     child.on("error", (error: Error) => {

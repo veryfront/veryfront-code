@@ -1,15 +1,7 @@
 import { replaceSpecifiers } from "./lexer.ts";
 import { REACT_DEFAULT_VERSION } from "@veryfront/utils/constants/cdn.ts";
-
-// Detect if running in Node.js (vs Deno/browser)
-// Use a function instead of module-level constant to ensure correct evaluation
-// when bundled with esbuild's __esm lazy initialization pattern
-export function isNodeRuntime(): boolean {
-  // deno-lint-ignore no-explicit-any
-  const _global = globalThis as any;
-  return typeof Deno === "undefined" && typeof _global.process !== "undefined" &&
-    !!_global.process?.versions?.node;
-}
+import { isNode } from "../../../platform/compat/runtime.ts";
+import { cwd } from "../../../platform/compat/process.ts";
 
 // Cache whether project has both react and react-dom
 let projectHasReactDom: boolean | null = null;
@@ -24,7 +16,7 @@ async function checkProjectHasReactDom(): Promise<boolean> {
     return projectHasReactDom;
   }
 
-  if (!isNodeRuntime()) {
+  if (!isNode) {
     projectHasReactDom = false;
     return false;
   }
@@ -32,7 +24,7 @@ async function checkProjectHasReactDom(): Promise<boolean> {
   try {
     const { createRequire } = await import("node:module");
     const { pathToFileURL } = await import("node:url");
-    const projectRequire = createRequire(pathToFileURL(process.cwd() + "/").href);
+    const projectRequire = createRequire(pathToFileURL(cwd() + "/").href);
 
     // Check that BOTH can be resolved
     projectRequire.resolve("react");
@@ -50,7 +42,7 @@ async function checkProjectHasReactDom(): Promise<boolean> {
  * This is used when the project doesn't have react-dom installed.
  */
 async function getBundledReactPath(subpath: string = ""): Promise<string | null> {
-  if (!isNodeRuntime()) {
+  if (!isNode) {
     return null;
   }
 
@@ -67,7 +59,7 @@ async function getBundledReactPath(subpath: string = ""): Promise<string | null>
 export async function resolveReactImports(code: string, forSSR: boolean = false): Promise<string> {
   // For Node.js SSR, always resolve to absolute file:// URLs
   // This is required because temp modules can't resolve bare imports
-  if (isNodeRuntime() && forSSR) {
+  if (isNode && forSSR) {
     const hasReactDom = await checkProjectHasReactDom();
     const { pathToFileURL } = await import("node:url");
 
@@ -75,7 +67,7 @@ export async function resolveReactImports(code: string, forSSR: boolean = false)
       // Project has react and react-dom, resolve to project's node_modules
       try {
         const { createRequire } = await import("node:module");
-        const projectRequire = createRequire(pathToFileURL(process.cwd() + "/").href);
+        const projectRequire = createRequire(pathToFileURL(cwd() + "/").href);
 
         const projectImports: Record<string, string> = {
           "react/jsx-runtime": pathToFileURL(projectRequire.resolve("react/jsx-runtime")).href,
@@ -114,7 +106,7 @@ export async function resolveReactImports(code: string, forSSR: boolean = false)
   }
 
   // For Node.js (non-SSR), keep bare imports as-is (npm packages)
-  if (isNodeRuntime()) {
+  if (isNode) {
     return code;
   }
 
@@ -135,7 +127,7 @@ export async function resolveReactImports(code: string, forSSR: boolean = false)
 
 export function addDepsToEsmShUrls(code: string): Promise<string> {
   // Skip for Node.js - no esm.sh URLs needed
-  if (isNodeRuntime()) {
+  if (isNode) {
     return Promise.resolve(code);
   }
 

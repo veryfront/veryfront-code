@@ -1,16 +1,8 @@
-import type { GlobalWithDeno } from "@veryfront/utils/runtime-guards.ts";
-import { hasDenoRuntime } from "@veryfront/utils/runtime-guards.ts";
-
-declare const process: { env: Record<string, string> };
+import { getEnv } from "../../../../../platform/compat/process.ts";
 
 export function isProductionMode(): boolean {
   try {
-    if (typeof Deno !== "undefined" && hasDenoRuntime(globalThis)) {
-      return (globalThis as GlobalWithDeno).Deno?.env.get("DENO_ENV") === "production";
-    }
-    if (typeof process !== "undefined" && process.env) {
-      return process.env.DENO_ENV === "production";
-    }
+    return getEnv("DENO_ENV") === "production" || getEnv("NODE_ENV") === "production";
   } catch {
     // ignore
   }

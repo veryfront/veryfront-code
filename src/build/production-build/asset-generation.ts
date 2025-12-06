@@ -155,12 +155,8 @@ export async function copyStaticAssets(
     try {
       await writeFileBytes(testFilePath, testBytes);
       try {
-        if (typeof Deno !== "undefined" && typeof Deno.remove === "function") {
-          await Deno.remove(testFilePath);
-        } else {
-          const fs = await import("node:fs/promises");
-          await fs.rm(testFilePath, { force: true });
-        }
+        const fs = createFileSystem();
+        await fs.remove(testFilePath);
       } catch (_error) {
         // Best-effort cleanup; ignore failures to remove test file.
       }

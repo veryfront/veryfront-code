@@ -5,6 +5,8 @@
 
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import type { MetricsConfig } from "./types.ts";
+import { getEnv } from "../../platform/compat/process.ts";
+import { memoryUsage as platformMemoryUsage } from "../../platform/compat/process.ts";
 
 /**
  * Default metrics collect interval in milliseconds (60 seconds)
@@ -57,26 +59,23 @@ export function loadConfig(
       finalConfig.exporter = exporterType;
     }
   } else {
-    // Fallback to process.env for cross-platform compatibility
+    // Fallback to platform getEnv for cross-platform compatibility
     try {
-      const env = process.env;
-      if (env) {
-        finalConfig.enabled = env.OTEL_METRICS_ENABLED === "true" ||
-          env.VERYFRONT_OTEL === "1" ||
-          finalConfig.enabled;
-        finalConfig.endpoint = env.OTEL_EXPORTER_OTLP_ENDPOINT ||
-          env.OTEL_EXPORTER_OTLP_METRICS_ENDPOINT ||
-          finalConfig.endpoint;
-        const exporterType = env.OTEL_METRICS_EXPORTER;
-        if (
-          exporterType === "prometheus" || exporterType === "otlp" ||
-          exporterType === "console"
-        ) {
-          finalConfig.exporter = exporterType;
-        }
+      finalConfig.enabled = getEnv("OTEL_METRICS_ENABLED") === "true" ||
+        getEnv("VERYFRONT_OTEL") === "1" ||
+        finalConfig.enabled;
+      finalConfig.endpoint = getEnv("OTEL_EXPORTER_OTLP_ENDPOINT") ||
+        getEnv("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT") ||
+        finalConfig.endpoint;
+      const exporterType = getEnv("OTEL_METRICS_EXPORTER");
+      if (
+        exporterType === "prometheus" || exporterType === "otlp" ||
+        exporterType === "console"
+      ) {
+        finalConfig.exporter = exporterType;
       }
     } catch {
-      // process.env access may fail, silently continue
+      // getEnv access may fail, silently continue
     }
   }
 
@@ -92,11 +91,8 @@ export function getMemoryUsage(): {
   heapTotal: number;
 } | null {
   try {
-    // Use process.memoryUsage for cross-platform compatibility
-    if (process?.memoryUsage) {
-      return process.memoryUsage();
-    }
-    return null;
+    // Use platform abstraction for cross-platform compatibility
+    return platformMemoryUsage();
   } catch {
     return null;
   }

@@ -4,17 +4,19 @@
  * Handles build errors and displays user-friendly error messages.
  */
 
-import process from "node:process";
 import { bold, cyan, dim, red } from "@veryfront/compat/console";
 import { cliLogger } from "@veryfront/utils";
-import { exit } from "../../../platform/compat/process.ts";
+import { exit, getStdout } from "../../../platform/compat/process.ts";
 
 /**
  * Handle build error with user-friendly messaging
  */
 export function handleBuildError(error: unknown): never {
   // Clear any progress indicators
-  process.stdout.write(`\r${" ".repeat(80)}\r`);
+  const stdout = getStdout();
+  if (stdout?.write) {
+    stdout.write(`\r${" ".repeat(80)}\r`);
+  }
 
   cliLogger.error(`\n${red("✗")}${bold(red(" Build failed!\n"))}`);
 
