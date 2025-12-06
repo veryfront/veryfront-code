@@ -6,6 +6,7 @@
  */
 
 import { DEV_LOCALHOST_ORIGINS } from "@veryfront/config";
+import { getEnv } from "../../../platform/compat/process.ts";
 
 /**
  * Default allowed HTTP methods for CORS
@@ -47,12 +48,9 @@ export const HTTP_FORBIDDEN = 403;
  */
 export function isProductionMode(): boolean {
   try {
-    const env = process.env;
-    if (!env) return true;
-
-    const veryfrontEnv = env.VERYFRONT_ENV;
-    const nodeEnv = env.NODE_ENV;
-    const denoEnv = env.DENO_ENV;
+    const veryfrontEnv = getEnv("VERYFRONT_ENV");
+    const nodeEnv = getEnv("NODE_ENV");
+    const denoEnv = getEnv("DENO_ENV");
 
     // Check for explicit development mode
     if (

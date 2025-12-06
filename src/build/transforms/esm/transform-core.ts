@@ -1,7 +1,8 @@
 import * as esbuild from "esbuild";
 import { generateCacheKey, getCachedTransform, setCachedTransform } from "./transform-cache.ts";
 import { computeContentHash, getLoaderFromPath } from "./transform-utils.ts";
-import { addDepsToEsmShUrls, isNodeRuntime, resolveReactImports } from "./react-imports.ts";
+import { addDepsToEsmShUrls, resolveReactImports } from "./react-imports.ts";
+import { isNode } from "../../../platform/compat/runtime.ts";
 import {
   resolvePathAliases,
   resolveRelativeImports,
@@ -76,7 +77,7 @@ export async function transformToESM(
 
   // Different import resolution strategies for SSR vs browser
   if (ssr) {
-    if (isNodeRuntime()) {
+    if (isNode) {
       // Node.js SSR: Rewrite @veryfront/* imports to veryfront/* for npm compatibility
       code = await resolveVeryfrontImports(code);
       // Node.js SSR: Keep relative imports but convert .tsx/.ts/.jsx extensions to .js

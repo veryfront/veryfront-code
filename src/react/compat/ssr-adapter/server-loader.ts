@@ -1,6 +1,8 @@
 import * as React from "react";
 import { rendererLogger as logger } from "@veryfront/utils";
 import { getReactVersionInfo } from "../version-detector/index.ts";
+import { isNode } from "../../../platform/compat/runtime.ts";
+import { cwd } from "../../../platform/compat/process.ts";
 
 export interface ReactDOMServer {
   renderToString: typeof import("react-dom/server").renderToString;
@@ -10,19 +12,6 @@ export interface ReactDOMServer {
   renderToPipeableStream?: typeof import("react-dom/server").renderToPipeableStream;
 
   renderToReadableStream?: typeof import("react-dom/server").renderToReadableStream;
-}
-
-interface NodeGlobal {
-  process?: {
-    versions?: {
-      node?: string;
-    };
-  };
-}
-
-function isNodeRuntime(): boolean {
-  const g = globalThis as NodeGlobal;
-  return typeof Deno === "undefined" && typeof g.process?.versions?.node !== "undefined";
 }
 
 let projectReactCache: typeof React | null = null;
@@ -38,7 +27,7 @@ async function canResolveReactFromProject(): Promise<boolean> {
     return useProjectReact;
   }
 
-  if (!isNodeRuntime()) {
+  if (!isNode) {
     useProjectReact = false;
     return false;
   }
@@ -46,7 +35,7 @@ async function canResolveReactFromProject(): Promise<boolean> {
   try {
     const { createRequire } = await import("node:module");
     const { pathToFileURL } = await import("node:url");
-    const projectRequire = createRequire(pathToFileURL(process.cwd() + "/").href);
+    const projectRequire = createRequire(pathToFileURL(cwd() + "/").href);
 
     // Check that BOTH react and react-dom can be resolved from project
     const reactPath = projectRequire.resolve("react");
@@ -90,7 +79,7 @@ export async function getProjectReact(): Promise<typeof React> {
     try {
       const { createRequire } = await import("node:module");
       const { pathToFileURL } = await import("node:url");
-      const projectRequire = createRequire(pathToFileURL(process.cwd() + "/").href);
+      const projectRequire = createRequire(pathToFileURL(cwd() + "/").href);
       const reactPath = projectRequire.resolve("react");
       logger.debug("Resolved react from project", { path: reactPath });
       const projectReact = await import(pathToFileURL(reactPath).href);
@@ -114,7 +103,7 @@ async function importReactDOMServerFromProject(): Promise<
     try {
       const { createRequire } = await import("node:module");
       const { pathToFileURL } = await import("node:url");
-      const projectRequire = createRequire(pathToFileURL(process.cwd() + "/").href);
+      const projectRequire = createRequire(pathToFileURL(cwd() + "/").href);
       const reactDomServerPath = projectRequire.resolve("react-dom/server");
       logger.debug("Resolved react-dom/server from project", { path: reactDomServerPath });
       return await import(pathToFileURL(reactDomServerPath).href);

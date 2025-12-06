@@ -51,8 +51,10 @@ const DEFAULT_VERSIONS: DetectedVersions = {
  */
 export async function detectVersions(projectDir: string): Promise<DetectedVersions> {
   try {
+    const { createFileSystem } = await import("../platform/compat/fs.ts");
+    const fs = createFileSystem();
     const packageJsonPath = `${projectDir}/package.json`;
-    const content = await Deno.readTextFile(packageJsonPath);
+    const content = await fs.readTextFile(packageJsonPath);
     const pkg = JSON.parse(content) as {
       dependencies?: Record<string, string>;
       devDependencies?: Record<string, string>;

@@ -250,3 +250,26 @@ export function execPath(): string {
   }
   return "";
 }
+
+/**
+ * Get stdout stream for writing
+ * Returns null if not available (e.g., in browser/workers)
+ */
+export function getStdout(): { write: (data: string) => void } | null {
+  if (IS_DENO) {
+    const encoder = new TextEncoder();
+    return {
+      write: (data: string) => {
+        Deno.stdout.writeSync(encoder.encode(data));
+      },
+    };
+  }
+  if (hasNodeProcess && nodeProcess!.stdout) {
+    return {
+      write: (data: string) => {
+        nodeProcess!.stdout.write(data);
+      },
+    };
+  }
+  return null;
+}

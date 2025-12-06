@@ -1,21 +1,8 @@
-import { join } from "node:path";
-import { access, mkdir, writeFile } from "node:fs/promises";
-import { getEnv } from "../platform/compat/process.ts";
+import { join } from "../platform/compat/path/index.ts";
+import { createFileSystem } from "../platform/compat/fs.ts";
+import { cwd, exit, getArgs, getEnv } from "../platform/compat/process.ts";
 
 const VERSION = getEnv("VERYFRONT_VERSION") || "0.0.0-dev";
-
-/**
- * Get command line arguments cross-platform
- */
-function getArgs(): string[] {
-  if (typeof process !== "undefined" && Array.isArray(process.argv)) {
-    return process.argv.slice(2);
-  }
-  if (typeof Deno !== "undefined") {
-    return (Deno as unknown as { args: string[] }).args;
-  }
-  return [];
-}
 
 /**
  * Simple argument parser
@@ -81,29 +68,19 @@ Use 'veryfront <command> --help' for command-specific help.`);
 }
 
 /**
- * Create directory if it doesn't exist
- */
-async function ensureDir(path: string): Promise<void> {
-  try {
-    await access(path);
-  } catch {
-    await mkdir(path, { recursive: true });
-  }
-}
-
-/**
  * Initialize a new Veryfront project
  */
 async function initCommand(name: string, template: string = "minimal"): Promise<void> {
-  const projectDir = join(process.cwd(), name);
+  const fs = createFileSystem();
+  const projectDir = join(cwd(), name);
 
   console.log(`\nCreating new Veryfront project: ${name}`);
   console.log(`Template: ${template}\n`);
 
   // Create project structure
-  await ensureDir(projectDir);
-  await ensureDir(join(projectDir, "pages"));
-  await ensureDir(join(projectDir, "public"));
+  await fs.mkdir(projectDir, { recursive: true });
+  await fs.mkdir(join(projectDir, "pages"), { recursive: true });
+  await fs.mkdir(join(projectDir, "public"), { recursive: true });
 
   // Create deno.json
   const denoJson = {
@@ -126,7 +103,7 @@ async function initCommand(name: string, template: string = "minimal"): Promise<
       jsxImportSource: "react",
     },
   };
-  await writeFile(
+  await fs.writeTextFile(
     join(projectDir, "deno.json"),
     JSON.stringify(denoJson, null, 2),
   );
@@ -138,7 +115,7 @@ export default defineConfig({
   // Add your configuration here
 });
 `;
-  await writeFile(join(projectDir, "veryfront.config.ts"), config);
+  await fs.writeTextFile(join(projectDir, "veryfront.config.ts"), config);
 
   // Create index page
   const indexPage = `export default function Home() {
@@ -150,7 +127,7 @@ export default defineConfig({
   );
 }
 `;
-  await writeFile(join(projectDir, "pages", "index.tsx"), indexPage);
+  await fs.writeTextFile(join(projectDir, "pages", "index.tsx"), indexPage);
 
   // Create package.json for Node.js/Bun compatibility
   const packageJson = {
@@ -169,7 +146,7 @@ export default defineConfig({
       "react-dom": "^18.3.1",
     },
   };
-  await writeFile(
+  await fs.writeTextFile(
     join(projectDir, "package.json"),
     JSON.stringify(packageJson, null, 2),
   );
@@ -191,13 +168,13 @@ async function main(): Promise<void> {
   // Handle version flag
   if (flags.version || flags.v) {
     console.log(`Veryfront CLI v${VERSION}`);
-    process.exit(0);
+    exit(0);
   }
 
   // Handle help flag or no command
   if (flags.help || flags.h || !command) {
     showHelp();
-    process.exit(0);
+    exit(0);
   }
 
   switch (command) {
@@ -206,7 +183,7 @@ async function main(): Promise<void> {
       if (!name) {
         console.error("Error: Project name required");
         console.log("Usage: veryfront init <project-name> [-t <template>]");
-        process.exit(1);
+        exit(1);
       }
       const template = (flags.t || flags.template || "minimal") as string;
       await initCommand(name, template);
@@ -234,18 +211,18 @@ For Node.js, install dependencies first:
 
 Note: dev/build/preview commands work best with Deno runtime.
 `);
-      process.exit(0);
+      exit(0);
       break;
 
     default:
       console.error(`Unknown command: ${command}\n`);
       showHelp();
-      process.exit(1);
+      exit(1);
   }
 }
 
 // Run
 main().catch((error) => {
   console.error("CLI Error:", error);
-  process.exit(1);
+  exit(1);
 });
