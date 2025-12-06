@@ -85,7 +85,7 @@ export function listBlobs(): Promise<BlobRef[]> {
   return Promise.resolve(
     Array.from(blobs.values())
       .map((b) => b.ref)
-      .sort((a, b) => b.createdAt - a.createdAt)
+      .sort((a, b) => b.createdAt - a.createdAt),
   );
 }
 
