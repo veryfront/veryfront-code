@@ -1,7 +1,7 @@
-import { isDeno, nodePath } from "./runtime.ts";
+import { hasNodePath, isDeno, nodePath } from "./runtime.ts";
 
 export function resolve(...paths: string[]): string {
-  if (!isDeno) {
+  if (!isDeno && hasNodePath) {
     return nodePath!.resolve(...paths);
   }
 
@@ -22,7 +22,7 @@ export function resolve(...paths: string[]): string {
 }
 
 export function isAbsolute(path: string): boolean {
-  if (!isDeno) {
+  if (!isDeno && hasNodePath) {
     return nodePath!.isAbsolute(path);
   }
 
@@ -30,7 +30,7 @@ export function isAbsolute(path: string): boolean {
 }
 
 export function relative(from: string, to: string): string {
-  if (!isDeno) {
+  if (!isDeno && hasNodePath) {
     return nodePath!.relative(from, to);
   }
 
@@ -60,7 +60,7 @@ export function relative(from: string, to: string): string {
 }
 
 export function normalize(path: string): string {
-  if (!isDeno) {
+  if (!isDeno && hasNodePath) {
     return nodePath!.normalize(path);
   }
 

@@ -1,8 +1,8 @@
-import { isDeno } from "./runtime.ts";
+import { hasNodePath } from "./runtime.ts";
 import { isAbsolute, resolve } from "./resolution.ts";
 
 export async function fromFileUrl(url: string | URL): Promise<string> {
-  if (!isDeno) {
+  if (hasNodePath) {
     const { fileURLToPath } = await import("node:url");
     return fileURLToPath(url);
   }
@@ -16,7 +16,7 @@ export async function fromFileUrl(url: string | URL): Promise<string> {
 }
 
 export function toFileUrl(path: string): URL {
-  if (!isDeno) {
+  if (hasNodePath) {
     return new URL(`file://${path}`);
   }
 

@@ -9,12 +9,7 @@ import type { APIRoute, LoadModuleOptions } from "./types.ts";
 import { createError, toError } from "../../../core/errors/veryfront-error.ts";
 import { createFileSystem, FileSystem } from "../../../platform/compat/fs.ts";
 import * as pathHelper from "../../../platform/compat/path-helper.ts";
-
-// Check if running in Deno
-function isDenoRuntime(): boolean {
-  // @ts-ignore - Deno global
-  return typeof Deno !== "undefined";
-}
+import { isDeno, isNode } from "../../../platform/compat/runtime.ts";
 
 export async function loadHandlerModule(options: LoadModuleOptions): Promise<APIRoute | null> {
   const { projectDir, modulePath, adapter, config } = options;
@@ -26,7 +21,7 @@ export async function loadHandlerModule(options: LoadModuleOptions): Promise<API
     if (modulePath.endsWith(".js")) {
       // JS files can be loaded directly
       module = await loadJSModule(modulePath);
-    } else if (isDenoRuntime()) {
+    } else if (isDeno) {
       // In Deno, directly import TypeScript files without bundling
       // This allows modules to share the same runtime context (including singletons like agentRegistry)
       module = await loadTSModuleDirect(modulePath);
@@ -349,15 +344,6 @@ async function loadModuleFromCode(
   }
 }
 
-// Detect if running in Node.js (vs Deno/browser)
-function isNodeRuntime(): boolean {
-  // deno-lint-ignore no-explicit-any
-  const _global = globalThis as any;
-  // @ts-ignore - Deno global
-  return typeof Deno === "undefined" && typeof _global.process !== "undefined" &&
-    !!_global.process?.versions?.node;
-}
-
 async function rewriteExternalImports(
   code: string,
   projectDir: string,
@@ -367,7 +353,7 @@ async function rewriteExternalImports(
 
   // In Node.js, resolve external imports to absolute paths
   // since the temp file is outside the project's node_modules
-  if (isNodeRuntime()) {
+  if (isNode) {
     try {
       const { pathToFileURL } = await import("node:url");
 
@@ -548,8 +534,7 @@ async function rewriteExternalImports(
   ];
 
   // Apply npm: specifier rewrites only if not in Node.js (i.e., in Deno)
-  // @ts-ignore - Deno global
-  if (typeof Deno !== "undefined") {
+  if (isDeno) {
     for (const { pattern, replacement } of externalPackages) {
       transformed = transformed.replace(pattern, replacement);
     }

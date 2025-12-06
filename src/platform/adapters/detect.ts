@@ -1,4 +1,3 @@
-import process from "node:process";
 import { logger } from "@veryfront/utils";
 import type { RuntimeAdapter, RuntimeId } from "./base.ts";
 import { createError, toError } from "../../core/errors/veryfront-error.ts";
@@ -50,7 +49,8 @@ export function detectRuntime(): RuntimeId | "unknown" {
     return "bun";
   }
 
-  if (process?.versions?.node) {
+  const globalProcess = (globalThis as { process?: { versions?: { node?: string } } }).process;
+  if (globalProcess?.versions?.node) {
     return "node";
   }
 
