@@ -19,6 +19,9 @@ import { agentLogger } from "../../core/utils/logger/logger.ts";
 import { getConfig } from "../../core/config/loader.ts";
 import { createMockAdapter } from "../../platform/adapters/mock.ts";
 import type { FileSystemAdapter } from "../../platform/adapters/base.ts";
+import { isDeno } from "../../platform/compat/runtime.ts";
+import { createFileSystem } from "../../platform/compat/fs.ts";
+import * as pathHelper from "../../platform/compat/path-helper.ts";
 
 interface FileDiscoveryContext {
   platform: Platform;
@@ -29,6 +32,252 @@ interface FileDiscoveryContext {
     fs: typeof import("node:fs");
     path: typeof import("node:path");
   };
+  /** Base directory for the project (needed for Node.js transpilation) */
+  baseDir?: string;
+}
+
+/** Cache for transpiled modules to avoid re-transpiling the same file */
+const transpileCache = new Map<string, unknown>();
+
+/**
+ * Import a TypeScript module in a platform-aware way.
+ * - Deno: Transpile to rewrite npm package imports, then import
+ * - Node.js: Transpile with esbuild first, then import
+ */
+async function importModule(
+  file: string,
+  context: FileDiscoveryContext,
+): Promise<unknown> {
+  // Check cache first (applies to both Deno and Node.js)
+  const cacheKey = file;
+  if (transpileCache.has(cacheKey)) {
+    return transpileCache.get(cacheKey);
+  }
+
+  const fs = createFileSystem();
+  const filePath = file.replace("file://", "");
+
+  // Read the source file
+  let source: string;
+  try {
+    source = await fs.readTextFile(filePath);
+  } catch (error) {
+    throw new Error(`Failed to read file ${filePath}: ${error}`);
+  }
+
+  // Determine loader based on file extension
+  const isTsx = filePath.endsWith(".tsx");
+  const isJsx = filePath.endsWith(".jsx");
+  const loader = isTsx ? "tsx" : isJsx ? "jsx" : filePath.endsWith(".ts") ? "ts" : "js";
+
+  // Transpile with esbuild
+  const { build } = await import("esbuild");
+
+  const result = await build({
+    bundle: true,
+    write: false,
+    format: "esm",
+    platform: "neutral",
+    target: "es2022",
+    jsx: "automatic",
+    jsxImportSource: "react",
+    resolveExtensions: [".ts", ".tsx", ".js", ".jsx", ".mjs"],
+    external: [
+      "ai",
+      "ai/*",
+      "@ai-sdk/*",
+      "zod",
+      "node:*",
+      "veryfront",
+      "veryfront/*",
+      "@opentelemetry/*",
+      "path",
+    ],
+    stdin: {
+      contents: source,
+      loader,
+      resolveDir: pathHelper.dirname(filePath),
+      sourcefile: filePath,
+    },
+  });
+
+  if (result.errors && result.errors.length > 0) {
+    const first = result.errors[0]?.text || "unknown error";
+    throw new Error(`Failed to transpile ${filePath}: ${first}`);
+  }
+
+  const js = result.outputFiles?.[0]?.text ?? "export {}";
+
+  // Write to temp file and import
+  const tempDir = await fs.makeTempDir({ prefix: "vf-discovery-" });
+  const tempFile = pathHelper.join(tempDir, "module.mjs");
+
+  // Rewrite imports based on platform
+  let transformedCode: string;
+  if (isDeno) {
+    // In Deno, rewrite to npm: specifiers
+    transformedCode = rewriteForDeno(js);
+  } else {
+    // In Node.js, rewrite to absolute paths
+    transformedCode = await rewriteDiscoveryImports(js, context.baseDir || ".", fs);
+  }
+
+  await fs.writeTextFile(tempFile, transformedCode);
+
+  try {
+    const module = await import(`file://${tempFile}?v=${Date.now()}`);
+    transpileCache.set(cacheKey, module);
+    return module;
+  } finally {
+    // Clean up temp file
+    await fs.remove(tempDir, { recursive: true });
+  }
+}
+
+/**
+ * Rewrite imports for Deno (use npm: specifiers)
+ */
+function rewriteForDeno(code: string): string {
+  let transformed = code;
+
+  // Rewrite external packages to npm: specifiers
+  const npmPackages = [
+    { pattern: /from\s+["']ai["']/g, replacement: 'from "npm:ai"' },
+    { pattern: /from\s+["']ai\/([^"']+)["']/g, replacement: 'from "npm:ai/$1"' },
+    { pattern: /from\s+["']@ai-sdk\/([^"']+)["']/g, replacement: 'from "npm:@ai-sdk/$1"' },
+    { pattern: /from\s+["']zod["']/g, replacement: 'from "npm:zod"' },
+    { pattern: /import\s*\(\s*["']ai["']\s*\)/g, replacement: 'import("npm:ai")' },
+    { pattern: /import\s*\(\s*["']zod["']\s*\)/g, replacement: 'import("npm:zod")' },
+  ];
+
+  for (const { pattern, replacement } of npmPackages) {
+    transformed = transformed.replace(pattern, replacement);
+  }
+
+  return transformed;
+}
+
+/**
+ * Rewrite external imports to absolute paths for Node.js compatibility
+ */
+async function rewriteDiscoveryImports(
+  code: string,
+  projectDir: string,
+  fs: ReturnType<typeof createFileSystem>,
+): Promise<string> {
+  let transformed = code;
+
+  try {
+    const { pathToFileURL } = await import("node:url");
+
+    // Helper to resolve a package to absolute file:// URL
+    const resolvePackageToFileUrl = async (packageName: string): Promise<string | null> => {
+      const packagePath = pathHelper.join(projectDir, "node_modules", packageName);
+      const packageJsonPath = pathHelper.join(packagePath, "package.json");
+
+      try {
+        const pkgJson = JSON.parse(await fs.readTextFile(packageJsonPath));
+        let entryPoint: string | undefined;
+
+        if (pkgJson.exports) {
+          const dotExport = pkgJson.exports["."];
+          if (typeof dotExport === "string") {
+            entryPoint = dotExport;
+          } else if (dotExport?.import) {
+            entryPoint = dotExport.import;
+          } else if (dotExport?.default) {
+            entryPoint = dotExport.default;
+          }
+        }
+
+        if (!entryPoint) {
+          entryPoint = pkgJson.module || pkgJson.main || "index.js";
+        }
+
+        if (!entryPoint) {
+          return null;
+        }
+
+        const resolvedPath = pathHelper.join(packagePath, entryPoint);
+        return pathToFileURL(resolvedPath).href;
+      } catch {
+        return null;
+      }
+    };
+
+    // List of external packages that need to be resolved
+    const externalPackagesToResolve = [
+      "zod",
+      "ai",
+      "@ai-sdk/anthropic",
+      "@ai-sdk/openai",
+      "@ai-sdk/google",
+      "@ai-sdk/mistral",
+      "@ai-sdk/provider",
+      "@ai-sdk/provider-utils",
+    ];
+
+    for (const pkg of externalPackagesToResolve) {
+      const escapedPkg = pkg.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+      const staticImportRegex = new RegExp(`from\\s+["']${escapedPkg}["']`, "g");
+      if (staticImportRegex.test(transformed)) {
+        const resolvedUrl = await resolvePackageToFileUrl(pkg);
+        if (resolvedUrl) {
+          transformed = transformed.replace(staticImportRegex, `from "${resolvedUrl}"`);
+        }
+      }
+
+      const dynamicImportRegex = new RegExp(`import\\s*\\(\\s*["']${escapedPkg}["']\\s*\\)`, "g");
+      if (dynamicImportRegex.test(transformed)) {
+        const resolvedUrl = await resolvePackageToFileUrl(pkg);
+        if (resolvedUrl) {
+          transformed = transformed.replace(dynamicImportRegex, `import("${resolvedUrl}")`);
+        }
+      }
+    }
+
+    // Resolve veryfront imports
+    const vfPackagePath = pathHelper.join(projectDir, "node_modules", "veryfront");
+    const vfPackageJsonPath = pathHelper.join(vfPackagePath, "package.json");
+
+    let exportsMap: Record<string, { import?: string }> = {};
+    try {
+      const pkgJson = JSON.parse(await fs.readTextFile(vfPackageJsonPath));
+      exportsMap = pkgJson.exports || {};
+    } catch {
+      // Ignore - veryfront may not be in node_modules
+    }
+
+    transformed = transformed.replace(
+      /from\s+["'](veryfront\/[^"']+)["']/g,
+      (_match, fullSpecifier: string) => {
+        const subpath = "./" + fullSpecifier.replace("veryfront/", "");
+        const exportEntry = exportsMap[subpath];
+        if (exportEntry?.import) {
+          const resolvedPath = pathHelper.join(vfPackagePath, exportEntry.import);
+          return `from "${pathToFileURL(resolvedPath).href}"`;
+        }
+        return _match;
+      },
+    );
+
+    transformed = transformed.replace(
+      /from\s+["']veryfront["']/g,
+      () => {
+        const exportEntry = exportsMap["."];
+        if (exportEntry?.import) {
+          const resolvedPath = pathHelper.join(vfPackagePath, exportEntry.import);
+          return `from "${pathToFileURL(resolvedPath).href}"`;
+        }
+        return 'from "veryfront"';
+      },
+    );
+  } catch {
+    // If node:url import fails, return code as-is
+  }
+
+  return transformed;
 }
 
 export interface DiscoveryConfig {
@@ -87,6 +336,7 @@ export async function discoverAll(
   const context: FileDiscoveryContext = {
     platform: detectPlatform(),
     fsAdapter: config.fsAdapter,
+    baseDir,
   };
 
   const result: DiscoveryResult = {
@@ -137,8 +387,8 @@ async function discoverTools(
 
   for (const file of files) {
     try {
-      const module = await import(file);
-      const tool = module.default as Tool;
+      const module = await importModule(file, context);
+      const tool = (module as { default?: Tool }).default as Tool;
 
       if (!tool || typeof tool.execute !== "function") {
         if (verbose) {
@@ -185,8 +435,8 @@ async function discoverAgents(
 
   for (const file of files) {
     try {
-      const module = await import(file);
-      const agent = module.default as Agent;
+      const module = await importModule(file, context);
+      const agent = (module as { default?: Agent }).default as Agent;
 
       if (!agent || typeof agent.generate !== "function") {
         if (verbose) {
@@ -237,8 +487,8 @@ async function discoverResources(
 
   for (const file of files) {
     try {
-      const module = await import(file);
-      const resource = module.default as Resource;
+      const module = await importModule(file, context);
+      const resource = (module as { default?: Resource }).default as Resource;
 
       if (!resource || typeof resource.load !== "function") {
         if (verbose) {
@@ -286,8 +536,8 @@ async function discoverPrompts(
 
   for (const file of files) {
     try {
-      const module = await import(file);
-      const promptInstance = module.default as Prompt;
+      const module = await importModule(file, context);
+      const promptInstance = (module as { default?: Prompt }).default as Prompt;
 
       if (!promptInstance || typeof promptInstance.getContent !== "function") {
         if (verbose) {
@@ -520,4 +770,11 @@ function trackAgentPath(id: string, filePath: string): void {
  */
 export function clearTrackedAgents(): void {
   discoveredAgentPaths.clear();
+}
+
+/**
+ * Clear the transpile cache (for HMR/development)
+ */
+export function clearTranspileCache(): void {
+  transpileCache.clear();
 }

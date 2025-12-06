@@ -1,0 +1,16 @@
+# Environment variables
+DATABASE_URL=postgresql://user:password@localhost:5432/myapp
+REDIS_URL=redis://localhost:6379
+JWT_SECRET=your-secret-key-here
+
+# OAuth providers
+GITHUB_CLIENT_ID=
+GITHUB_CLIENT_SECRET=
+GOOGLE_CLIENT_ID=
+GOOGLE_CLIENT_SECRET=
+
+# Email service
+SMTP_HOST=smtp.example.com
+SMTP_PORT=587
+SMTP_USER=
+SMTP_PASS=

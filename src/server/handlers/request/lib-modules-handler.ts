@@ -128,7 +128,7 @@ export class LibModulesHandler extends BaseHandler {
       // In production, use immutable caching (modules are versioned)
       const builder = this.createResponseBuilder(ctx);
       const body = method === "HEAD" ? null : content;
-      const isDev = ctx.config?.mode === "development";
+      const isDev = ctx.mode === "development";
 
       const response = builder
         .withCORS(req, ctx.securityConfig?.cors)
