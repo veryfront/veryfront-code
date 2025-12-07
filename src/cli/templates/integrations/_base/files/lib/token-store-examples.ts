@@ -13,7 +13,7 @@ import {
   decryptToken,
   type TokenStore,
   type OAuthToken,
-} from "./token-store";
+} from "./token-store.ts";
 
 // ============================================================================
 // Vercel KV Store
