@@ -9,6 +9,7 @@ import type { LoadComponentOptions } from "./types.ts";
 import { createError, toError } from "../../core/errors/veryfront-error.ts";
 import { createFileSystem } from "../../platform/compat/fs.ts";
 import { isNodeRuntime } from "../../platform/compat/runtime.ts";
+import { SSRModuleLoader } from "./ssr-module-loader.ts";
 
 export async function loadComponentFromSource(
   source: string,
@@ -19,22 +20,30 @@ export async function loadComponentFromSource(
 ): Promise<React.ComponentType<Record<string, unknown>>> {
   const projectId = options?.projectId || projectDir;
   const dev = options?.dev ?? true;
-  // Check runtime at call time for correct evaluation in bundled code
   const isNode = isNodeRuntime();
-  // On Node.js, always use SSR mode to avoid module server URLs
-  // This uses absolute file:// paths instead of /_vf_modules/ paths
   const ssr = isNode ? true : (options?.ssr ?? false);
-  // Use relative path for module server (integrated into main dev server at /_vf_modules/)
-  // On Node.js, don't use moduleServerUrl since there's no dev server
-  const moduleServerUrl = isNode ? undefined : (options?.moduleServerUrl ?? "/_vf_modules");
-  const vendorBundleHash = isNode ? undefined : options?.vendorBundleHash;
+
+  // SSR mode: Use SSRModuleLoader for proper recursive dependency transformation
+  if (ssr) {
+    const loader = new SSRModuleLoader({
+      projectDir,
+      projectId,
+      adapter,
+      dev,
+    });
+    return loader.loadModule(filePath, source);
+  }
+
+  // Browser mode: Single file transform (dependencies loaded via module server)
+  const moduleServerUrl = options?.moduleServerUrl ?? "/_vf_modules";
+  const vendorBundleHash = options?.vendorBundleHash;
 
   const transformOpts: TransformOptions = {
     projectId,
     dev,
     moduleServerUrl,
     vendorBundleHash,
-    ssr,
+    ssr: false,
   };
 
   const transformedCode = await transformToESM(
@@ -45,15 +54,7 @@ export async function loadComponentFromSource(
     transformOpts,
   );
 
-  // On Node.js, use a project-relative cache directory so module resolution works
-  // Node.js resolves bare imports relative to the file location
-  let tmpDir: string;
-  if (isNode) {
-    tmpDir = join(projectDir, "node_modules", ".cache", "veryfront-components");
-  } else {
-    tmpDir = await getGlobalTmpDir();
-  }
-
+  const tmpDir = await getGlobalTmpDir();
   const relativeFilePath = resolveRelativePath(filePath, projectDir);
   const componentFile = join(tmpDir, normalizeModulePath(relativeFilePath));
 
