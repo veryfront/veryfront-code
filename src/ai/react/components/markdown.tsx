@@ -32,20 +32,34 @@ export interface CodeBlockProps {
 // Check if we're in a browser environment
 const isBrowser = typeof window !== "undefined" && typeof document !== "undefined";
 
+// esm.sh CDN URLs for browser-side dynamic imports
+// These URLs are stored in variables to prevent bundler transforms
+const ESM_REACT_MARKDOWN = "https://esm.sh/react-markdown@9?external=react";
+const ESM_REMARK_GFM = "https://esm.sh/remark-gfm@4";
+const ESM_REHYPE_HIGHLIGHT = "https://esm.sh/rehype-highlight@7";
+const ESM_MERMAID = "https://esm.sh/mermaid@11";
+
 // Lazy load heavy dependencies
-let ReactMarkdown: typeof import("react-markdown").default | null = null;
-let remarkGfm: typeof import("remark-gfm").default | null = null;
-let rehypeHighlight: typeof import("rehype-highlight").default | null = null;
+// deno-lint-ignore no-explicit-any
+let ReactMarkdown: any = null;
+// deno-lint-ignore no-explicit-any
+let remarkGfm: any = null;
+// deno-lint-ignore no-explicit-any
+let rehypeHighlight: any = null;
 
 // Mermaid state (browser only)
-let mermaidPromise: Promise<typeof import("mermaid")> | null = null;
-let mermaidModule: typeof import("mermaid") | null = null;
+// deno-lint-ignore no-explicit-any
+let mermaidPromise: Promise<any> | null = null;
+// deno-lint-ignore no-explicit-any
+let mermaidModule: any = null;
 
 async function loadMermaid() {
   if (!isBrowser) return null;
   if (mermaidModule) return mermaidModule;
   if (!mermaidPromise) {
-    mermaidPromise = import("mermaid");
+    // Use Function constructor to prevent bundler from transforming the import
+    const dynamicImport = new Function("url", "return import(url)");
+    mermaidPromise = dynamicImport(ESM_MERMAID);
   }
   mermaidModule = await mermaidPromise;
   mermaidModule.default.initialize({
@@ -188,10 +202,13 @@ export function Markdown({
   React.useEffect(() => {
     async function load() {
       if (!ReactMarkdown) {
+        // Always use esm.sh URLs - the bundle runs in browser
+        // Using Function constructor to prevent bundler from transforming the imports
+        const dynamicImport = new Function("url", "return import(url)");
         const [rmModule, gfmModule, highlightModule] = await Promise.all([
-          import("react-markdown"),
-          import("remark-gfm"),
-          import("rehype-highlight"),
+          dynamicImport(ESM_REACT_MARKDOWN),
+          dynamicImport(ESM_REMARK_GFM),
+          dynamicImport(ESM_REHYPE_HIGHLIGHT),
         ]);
         ReactMarkdown = rmModule.default;
         remarkGfm = gfmModule.default;
