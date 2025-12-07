@@ -46,18 +46,12 @@ const gmailService = new OAuthService(gmailConfig, memoryTokenStore);
  * Create a Gmail client for API operations
  */
 export function createGmailClient() {
+  // OAuthService.fetch() already handles auth, error checking, and JSON parsing
   async function apiRequest<T>(
     endpoint: string,
     options: RequestInit = {},
   ): Promise<T> {
-    const response = await gmailService.fetch(endpoint, options);
-
-    if (!response.ok) {
-      const error = await response.text();
-      throw new Error(`Gmail API error: ${response.status} - ${error}`);
-    }
-
-    return response.json();
+    return gmailService.fetch<T>(endpoint, options);
   }
 
   return {

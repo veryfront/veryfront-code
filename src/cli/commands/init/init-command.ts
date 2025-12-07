@@ -19,7 +19,7 @@ import {
   installDependencies,
 } from "../../utils/package-manager.ts";
 import { generateGitignoreContent, promptForEnvVars } from "../../utils/env-prompt.ts";
-import type { EnvVarConfig, TemplateFile } from "../../templates/types.ts";
+import type { EnvVarConfig, ResolvedIntegration, TemplateFile } from "../../templates/types.ts";
 import {
   loadFeature,
   mergeFiles,
@@ -33,6 +33,108 @@ import {
   validateIntegrations,
 } from "../../templates/integration-loader.ts";
 import { runInteractiveWizard, shouldRunWizard } from "./interactive-wizard.ts";
+
+/**
+ * Icon mapping for integrations based on category/name
+ */
+const INTEGRATION_ICONS: Record<string, string> = {
+  gmail: "mail",
+  outlook: "mail",
+  slack: "slack",
+  teams: "teams",
+  discord: "discord",
+  calendar: "calendar",
+  github: "github",
+  gitlab: "gitlab",
+  bitbucket: "bitbucket",
+  jira: "jira",
+  confluence: "confluence",
+  notion: "notion",
+  linear: "linear",
+  asana: "asana",
+  trello: "trello",
+  monday: "monday",
+  clickup: "clickup",
+  figma: "figma",
+  dropbox: "dropbox",
+  drive: "drive",
+  onedrive: "onedrive",
+  sharepoint: "sharepoint",
+  box: "box",
+  sheets: "sheets",
+  airtable: "airtable",
+  supabase: "database",
+  neon: "database",
+  snowflake: "database",
+  salesforce: "salesforce",
+  hubspot: "hubspot",
+  pipedrive: "pipedrive",
+  zendesk: "zendesk",
+  intercom: "intercom",
+  freshdesk: "freshdesk",
+  servicenow: "servicenow",
+  stripe: "stripe",
+  quickbooks: "quickbooks",
+  xero: "xero",
+  shopify: "shopify",
+  mailchimp: "mailchimp",
+  twitter: "twitter",
+  zoom: "zoom",
+  webex: "webex",
+  twilio: "twilio",
+  sentry: "sentry",
+  posthog: "posthog",
+  mixpanel: "mixpanel",
+  anthropic: "ai",
+  aws: "cloud",
+};
+
+/**
+ * Generate the integrations status route based on loaded integrations
+ */
+function generateIntegrationsStatusRoute(integrations: ResolvedIntegration[]): string {
+  const integrationEntries = integrations.map((integration) => {
+    const icon = INTEGRATION_ICONS[integration.config.name] || "default";
+    return `  { id: "${integration.config.name}", name: "${integration.config.displayName}", icon: "${icon}" },`;
+  }).join("\n");
+
+  return `/**
+ * Integration Status API
+ *
+ * Returns the connection status of all configured integrations.
+ * Used by the setup guide to show which services are connected.
+ *
+ * This file is auto-generated based on the integrations you selected.
+ */
+
+import { tokenStore } from "../../../../lib/token-store";
+
+// Integrations configured for this project
+const INTEGRATIONS = [
+${integrationEntries}
+];
+
+export async function GET(_req: Request) {
+  // Get actual user ID from session in production
+  const userId = "current-user";
+
+  const statuses = await Promise.all(
+    INTEGRATIONS.map(async (integration) => {
+      const connected = await tokenStore.isConnected(userId, integration.id);
+      return {
+        id: integration.id,
+        name: integration.name,
+        icon: integration.icon,
+        connected,
+        connectUrl: \`/api/auth/\${integration.id}\`,
+      };
+    }),
+  );
+
+  return Response.json({ integrations: statuses });
+}
+`;
+}
 
 /**
  * Initializes a new Veryfront project with the specified template
@@ -206,6 +308,14 @@ export async function initCommand(options: InitOptions): Promise<void> {
         allEnvVars.push(...integration.config.envVars);
       }
     }
+
+    // Generate dynamic integrations status route based on loaded integrations
+    const statusRouteContent = generateIntegrationsStatusRoute(loadedIntegrations);
+    const statusRouteFile: TemplateFile = {
+      path: "app/api/integrations/status/route.ts",
+      content: statusRouteContent,
+    };
+    templateFiles = mergeFiles(templateFiles, [statusRouteFile]);
 
     logger.debug(
       `Loaded ${loadedIntegrations.length} integrations with ${integrationFiles.length} files`,
