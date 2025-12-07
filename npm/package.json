@@ -1,6 +1,6 @@
 {
   "name": "veryfront",
-  "version": "0.0.47",
+  "version": "0.0.48",
   "description": "Zero-config React meta-framework for building agentic AI applications",
   "type": "module",
   "main": "./dist/index.js",
