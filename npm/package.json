@@ -53,6 +53,30 @@
     "./ai/dev": {
       "types": "./dist/ai/dev.d.ts",
       "import": "./dist/ai/dev.js"
+    },
+    "./ai/workflow": {
+      "types": "./dist/ai/workflow.d.ts",
+      "import": "./dist/ai/workflow.js"
+    },
+    "./ai/workflow/react": {
+      "types": "./dist/ai/workflow-react.d.ts",
+      "import": "./dist/ai/workflow-react.js"
+    },
+    "./oauth": {
+      "types": "./dist/oauth/index.d.ts",
+      "import": "./dist/oauth/index.js"
+    },
+    "./oauth/providers": {
+      "types": "./dist/oauth/providers.d.ts",
+      "import": "./dist/oauth/providers.js"
+    },
+    "./oauth/handlers": {
+      "types": "./dist/oauth/handlers.d.ts",
+      "import": "./dist/oauth/handlers.js"
+    },
+    "./oauth/token-store": {
+      "types": "./dist/oauth/token-store.d.ts",
+      "import": "./dist/oauth/token-store.js"
     }
   },
   "files": [

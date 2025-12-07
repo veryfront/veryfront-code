@@ -28,7 +28,11 @@
     "./ai/production": "./src/ai/production/index.ts",
     "./ai/dev": "./src/ai/dev/index.ts",
     "./ai/workflow": "./src/ai/workflow/index.ts",
-    "./ai/workflow/react": "./src/ai/workflow/react/index.ts"
+    "./ai/workflow/react": "./src/ai/workflow/react/index.ts",
+    "./oauth": "./src/core/oauth/index.ts",
+    "./oauth/providers": "./src/core/oauth/providers/index.ts",
+    "./oauth/handlers": "./src/core/oauth/handlers/index.ts",
+    "./oauth/token-store": "./src/core/oauth/token-store/index.ts"
   },
   "imports": {
     "@veryfront": "./src/index.ts",
@@ -72,6 +76,8 @@
     "@veryfront/modules/": "./src/module-system/",
     "@veryfront/compat/console": "./src/platform/compat/console/index.ts",
     "@veryfront/compat/": "./src/platform/compat/",
+    "@veryfront/oauth": "./src/core/oauth/index.ts",
+    "@veryfront/oauth/": "./src/core/oauth/",
     "std/": "https://deno.land/std@0.220.0/",
     "@std/path": "https://deno.land/std@0.220.0/path/mod.ts",
     "@std/testing/bdd.ts": "https://deno.land/std@0.220.0/testing/bdd.ts",
