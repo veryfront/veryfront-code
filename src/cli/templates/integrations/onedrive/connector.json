@@ -1,0 +1,100 @@
+{
+  "name": "onedrive",
+  "displayName": "OneDrive",
+  "icon": "onedrive.svg",
+  "description": "Access and manage files in Microsoft OneDrive",
+  "auth": {
+    "type": "oauth2",
+    "provider": "microsoft",
+    "authorizationUrl": "https://login.microsoftonline.com/common/oauth2/v2.0/authorize",
+    "tokenUrl": "https://login.microsoftonline.com/common/oauth2/v2.0/token",
+    "scopes": [
+      "Files.Read",
+      "Files.ReadWrite",
+      "Files.Read.All",
+      "Files.ReadWrite.All",
+      "offline_access"
+    ],
+    "callbackPath": "/api/auth/onedrive/callback",
+    "tokenAuthMethod": "body",
+    "requiredApis": [
+      {
+        "name": "Microsoft Graph API",
+        "enableUrl": "https://portal.azure.com/#blade/Microsoft_AAD_RegisteredApps/ApplicationsListBlade"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "MICROSOFT_CLIENT_ID",
+      "description": "Microsoft Azure App Client ID (shared with Outlook/Teams/SharePoint)",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://portal.azure.com/#blade/Microsoft_AAD_RegisteredApps/ApplicationsListBlade"
+    },
+    {
+      "name": "MICROSOFT_CLIENT_SECRET",
+      "description": "Microsoft Azure App Client Secret",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://portal.azure.com/#blade/Microsoft_AAD_RegisteredApps/ApplicationsListBlade"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list-files",
+      "name": "List Files",
+      "description": "List files and folders in a OneDrive folder",
+      "requiresWrite": false
+    },
+    {
+      "id": "search-files",
+      "name": "Search Files",
+      "description": "Search for files and folders in OneDrive by name or content",
+      "requiresWrite": false
+    },
+    {
+      "id": "upload-file",
+      "name": "Upload File",
+      "description": "Upload or update a file in OneDrive",
+      "requiresWrite": true
+    },
+    {
+      "id": "download-file",
+      "name": "Download File",
+      "description": "Download file content from OneDrive",
+      "requiresWrite": false
+    }
+  ],
+  "prompts": [
+    {
+      "id": "search-documents",
+      "title": "Search documents",
+      "prompt": "Search for documents in OneDrive and summarize their content.",
+      "category": "productivity",
+      "icon": "search"
+    },
+    {
+      "id": "list-recent-files",
+      "title": "List recent files",
+      "prompt": "Show me the most recently modified files in my OneDrive.",
+      "category": "productivity",
+      "icon": "document"
+    },
+    {
+      "id": "organize-files",
+      "title": "Organize files",
+      "prompt": "Help me organize and manage files in my OneDrive storage.",
+      "category": "productivity",
+      "icon": "folder"
+    },
+    {
+      "id": "backup-file",
+      "title": "Backup a file",
+      "prompt": "Upload and backup a file to my OneDrive storage.",
+      "category": "productivity",
+      "icon": "upload"
+    }
+  ],
+  "suggestedWith": ["outlook", "teams", "sharepoint"]
+}

@@ -1,5 +1,6 @@
 import { exchangeCodeForTokens } from "../../../../../lib/oauth";
 import { setTokens } from "../../../../../lib/token-store";
+import { Buffer } from "node:buffer";
 
 export async function GET(request: Request) {
   const url = new URL(request.url);

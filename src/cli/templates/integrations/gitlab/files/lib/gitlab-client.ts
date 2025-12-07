@@ -133,11 +133,11 @@ async function gitlabFetch<T>(
   return response.json();
 }
 
-export async function getCurrentUser(): Promise<GitLabUser> {
+export function getCurrentUser(): Promise<GitLabUser> {
   return gitlabFetch<GitLabUser>("/user");
 }
 
-export async function listProjects(options?: {
+export function listProjects(options?: {
   membership?: boolean;
   search?: string;
   orderBy?: "id" | "name" | "created_at" | "updated_at" | "last_activity_at";
@@ -166,12 +166,12 @@ export async function listProjects(options?: {
   return gitlabFetch<GitLabProject[]>(`/projects${query ? `?${query}` : ""}`);
 }
 
-export async function getProject(projectId: number | string): Promise<GitLabProject> {
+export function getProject(projectId: number | string): Promise<GitLabProject> {
   const encodedId = typeof projectId === "string" ? encodeURIComponent(projectId) : projectId;
   return gitlabFetch<GitLabProject>(`/projects/${encodedId}`);
 }
 
-export async function searchIssues(options: {
+export function searchIssues(options: {
   scope?: "created_by_me" | "assigned_to_me" | "all";
   state?: "opened" | "closed" | "all";
   labels?: string[];
@@ -209,7 +209,7 @@ export async function searchIssues(options: {
   return gitlabFetch<GitLabIssue[]>(`/issues${query ? `?${query}` : ""}`);
 }
 
-export async function getIssue(
+export function getIssue(
   projectId: number | string,
   issueIid: number,
 ): Promise<GitLabIssue> {
@@ -217,7 +217,7 @@ export async function getIssue(
   return gitlabFetch<GitLabIssue>(`/projects/${encodedId}/issues/${issueIid}`);
 }
 
-export async function createIssue(
+export function createIssue(
   projectId: number | string,
   options: {
     title: string;
@@ -256,7 +256,7 @@ export async function createIssue(
   });
 }
 
-export async function updateIssue(
+export function updateIssue(
   projectId: number | string,
   issueIid: number,
   options: {
@@ -293,7 +293,7 @@ export async function updateIssue(
   });
 }
 
-export async function listMergeRequests(options?: {
+export function listMergeRequests(options?: {
   scope?: "created_by_me" | "assigned_to_me" | "all";
   state?: "opened" | "closed" | "merged" | "all";
   labels?: string[];
@@ -329,7 +329,7 @@ export async function listMergeRequests(options?: {
   return gitlabFetch<GitLabMergeRequest[]>(`/merge_requests${query ? `?${query}` : ""}`);
 }
 
-export async function getMergeRequest(
+export function getMergeRequest(
   projectId: number | string,
   mrIid: number,
 ): Promise<GitLabMergeRequest> {

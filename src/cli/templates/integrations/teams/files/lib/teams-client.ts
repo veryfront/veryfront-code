@@ -178,7 +178,7 @@ export async function getChatMessages(
 /**
  * Send a message to a chat
  */
-export async function sendChatMessage(
+export function sendChatMessage(
   chatId: string,
   content: string,
   contentType: "text" | "html" = "text",
@@ -238,7 +238,7 @@ export async function listChannels(
 /**
  * Send a message to a team channel
  */
-export async function sendChannelMessage(
+export function sendChannelMessage(
   teamId: string,
   channelId: string,
   content: string,
@@ -297,7 +297,7 @@ export async function getChannelMessages(
 /**
  * Get current user's profile
  */
-export async function getCurrentUser(): Promise<{
+export function getCurrentUser(): Promise<{
   id: string;
   displayName: string;
   mail?: string;

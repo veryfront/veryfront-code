@@ -1,0 +1,84 @@
+{
+  "name": "posthog",
+  "displayName": "PostHog",
+  "icon": "posthog.svg",
+  "description": "Access analytics, feature flags, and user insights from PostHog",
+  "auth": {
+    "type": "api-key",
+    "keyName": "POSTHOG_API_KEY",
+    "headerName": "Authorization",
+    "headerPrefix": "Bearer",
+    "requiredApis": [
+      {
+        "name": "PostHog API",
+        "enableUrl": "https://app.posthog.com/project/settings"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "POSTHOG_API_KEY",
+      "description": "PostHog Personal API Key",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://posthog.com/docs/api/overview"
+    },
+    {
+      "name": "POSTHOG_HOST",
+      "description": "PostHog API host (defaults to https://app.posthog.com)",
+      "required": false,
+      "sensitive": false,
+      "docsUrl": "https://posthog.com/docs/self-host"
+    }
+  ],
+  "tools": [
+    {
+      "id": "get-trends",
+      "name": "Get Trends",
+      "description": "Retrieve event trends and analytics data",
+      "requiresWrite": false
+    },
+    {
+      "id": "list-feature-flags",
+      "name": "List Feature Flags",
+      "description": "List all feature flags in your PostHog project",
+      "requiresWrite": false
+    },
+    {
+      "id": "list-persons",
+      "name": "List Persons",
+      "description": "List persons/users tracked in PostHog",
+      "requiresWrite": false
+    },
+    {
+      "id": "capture-event",
+      "name": "Capture Event",
+      "description": "Track a custom event in PostHog",
+      "requiresWrite": true
+    }
+  ],
+  "prompts": [
+    {
+      "id": "trend-analysis",
+      "title": "Trend analysis",
+      "prompt": "Show me the trends for key events in my PostHog project over the last 7 days.",
+      "category": "analytics",
+      "icon": "chart"
+    },
+    {
+      "id": "feature-flag-status",
+      "title": "Feature flag status",
+      "prompt": "List all active feature flags and their current rollout status.",
+      "category": "analytics",
+      "icon": "flag"
+    },
+    {
+      "id": "user-insights",
+      "title": "User insights",
+      "prompt": "Give me insights about recent user activity and top users in my PostHog project.",
+      "category": "analytics",
+      "icon": "users"
+    }
+  ],
+  "suggestedWith": ["slack", "analytics", "monitoring"]
+}

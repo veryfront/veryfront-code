@@ -48,6 +48,12 @@ export const AVAILABLE_INTEGRATIONS: IntegrationName[] = [
   "stripe",
   "dropbox",
   "salesforce",
+  "twitter",
+  "onedrive",
+  "bitbucket",
+  "sentry",
+  "posthog",
+  "zendesk",
 ];
 
 /**

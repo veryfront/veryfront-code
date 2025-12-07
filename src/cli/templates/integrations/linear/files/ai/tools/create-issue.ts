@@ -1,6 +1,6 @@
 import { tool } from "veryfront/ai";
 import { z } from "zod";
-import { createIssue, getTeams } from "../../lib/linear-client.ts";
+import { createIssue } from "../../lib/linear-client.ts";
 
 export default tool({
   id: "create-issue",

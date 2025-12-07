@@ -121,7 +121,13 @@ export type IntegrationName =
   | "hubspot"
   | "stripe"
   | "dropbox"
-  | "salesforce";
+  | "salesforce"
+  | "twitter"
+  | "onedrive"
+  | "bitbucket"
+  | "sentry"
+  | "posthog"
+  | "zendesk";
 
 /**
  * OAuth configuration for an integration

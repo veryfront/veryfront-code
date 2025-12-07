@@ -158,16 +158,16 @@ async function dropboxContent<T>(
 }
 
 // Account Operations
-export async function getCurrentAccount(): Promise<AccountInfo> {
+export function getCurrentAccount(): Promise<AccountInfo> {
   return dropboxRPC<AccountInfo>("/users/get_current_account");
 }
 
-export async function getSpaceUsage(): Promise<SpaceUsage> {
+export function getSpaceUsage(): Promise<SpaceUsage> {
   return dropboxRPC<SpaceUsage>("/users/get_space_usage");
 }
 
 // File and Folder Operations
-export async function listFolder(
+export function listFolder(
   path: string = "",
   options?: {
     recursive?: boolean;
@@ -185,11 +185,11 @@ export async function listFolder(
   });
 }
 
-export async function listFolderContinue(cursor: string): Promise<ListFolderResult> {
+export function listFolderContinue(cursor: string): Promise<ListFolderResult> {
   return dropboxRPC<ListFolderResult>("/files/list_folder/continue", { cursor });
 }
 
-export async function getMetadata(
+export function getMetadata(
   path: string,
   options?: {
     includeMediaInfo?: boolean;
@@ -234,7 +234,7 @@ export async function downloadFile(path: string): Promise<{
   return { content, metadata };
 }
 
-export async function uploadFile(
+export function uploadFile(
   path: string,
   content: string | Uint8Array,
   options?: {
@@ -255,7 +255,7 @@ export async function uploadFile(
   );
 }
 
-export async function deleteFile(
+export function deleteFile(
   path: string,
 ): Promise<DropboxFileMetadata | DropboxFolderMetadata> {
   return dropboxRPC<DropboxFileMetadata | DropboxFolderMetadata>("/files/delete_v2", {
@@ -263,7 +263,7 @@ export async function deleteFile(
   }).then((result: any) => result.metadata);
 }
 
-export async function moveFile(
+export function moveFile(
   fromPath: string,
   toPath: string,
   options?: {
@@ -281,7 +281,7 @@ export async function moveFile(
   }).then((result) => result.metadata);
 }
 
-export async function copyFile(
+export function copyFile(
   fromPath: string,
   toPath: string,
   options?: {
@@ -299,7 +299,7 @@ export async function copyFile(
   }).then((result) => result.metadata);
 }
 
-export async function createFolder(
+export function createFolder(
   path: string,
   autorename?: boolean,
 ): Promise<DropboxFolderMetadata> {
@@ -310,7 +310,7 @@ export async function createFolder(
 }
 
 // Search Operations
-export async function searchFiles(
+export function searchFiles(
   query: string,
   options?: {
     path?: string;

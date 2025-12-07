@@ -180,7 +180,7 @@ export async function searchIssues(
   return data.issueSearch.nodes;
 }
 
-export async function getIssue(issueId: string): Promise<LinearIssue> {
+export function getIssue(issueId: string): Promise<LinearIssue> {
   const query = `
     query GetIssue($id: String!) {
       issue(id: $id) {
@@ -223,11 +223,10 @@ export async function getIssue(issueId: string): Promise<LinearIssue> {
     }
   `;
 
-  const data = await linearFetch<{ issue: LinearIssue }>(query, { id: issueId });
-  return data.issue;
+  return linearFetch<{ issue: LinearIssue }>(query, { id: issueId }).then((data) => data.issue);
 }
 
-export async function createIssue(options: {
+export function createIssue(options: {
   teamId: string;
   title: string;
   description?: string;
@@ -294,15 +293,14 @@ export async function createIssue(options: {
   if (options.projectId) input.projectId = options.projectId;
   if (options.labelIds && options.labelIds.length > 0) input.labelIds = options.labelIds;
 
-  const data = await linearFetch<{
+  return linearFetch<{
     issueCreate: { success: boolean; issue: LinearIssue };
-  }>(mutation, { input });
-
-  if (!data.issueCreate.success) {
-    throw new Error("Failed to create issue");
-  }
-
-  return data.issueCreate.issue;
+  }>(mutation, { input }).then((data) => {
+    if (!data.issueCreate.success) {
+      throw new Error("Failed to create issue");
+    }
+    return data.issueCreate.issue;
+  });
 }
 
 export async function updateIssue(
@@ -346,7 +344,7 @@ export async function updateIssue(
           project {
             id
             name
-          }
+            }
           labels {
             nodes {
               id
@@ -425,7 +423,7 @@ export async function listProjects(options?: {
   return data.projects.nodes;
 }
 
-export async function getTeams(): Promise<LinearTeam[]> {
+export function getTeams(): Promise<LinearTeam[]> {
   const query = `
     query GetTeams {
       teams {
@@ -438,11 +436,9 @@ export async function getTeams(): Promise<LinearTeam[]> {
     }
   `;
 
-  const data = await linearFetch<{
+  return linearFetch<{
     teams: { nodes: LinearTeam[] };
-  }>(query);
-
-  return data.teams.nodes;
+  }>(query).then((data) => data.teams.nodes);
 }
 
 export async function getWorkflowStates(teamId: string): Promise<LinearWorkflowState[]> {

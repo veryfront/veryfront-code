@@ -162,7 +162,7 @@ export async function searchIssues(
   };
 }
 
-export async function getIssue(issueIdOrKey: string): Promise<JiraIssue> {
+export function getIssue(issueIdOrKey: string): Promise<JiraIssue> {
   return jiraFetch<JiraIssue>(`/issue/${issueIdOrKey}`);
 }
 
@@ -224,7 +224,7 @@ export async function createIssue(options: {
   return getIssue(response.key);
 }
 
-export async function updateIssue(
+export function updateIssue(
   issueIdOrKey: string,
   updates: {
     summary?: string;
@@ -270,7 +270,7 @@ export async function updateIssue(
     fields.labels = updates.labels;
   }
 
-  await jiraFetch<void>(`/issue/${issueIdOrKey}`, {
+  return jiraFetch<void>(`/issue/${issueIdOrKey}`, {
     method: "PUT",
     body: JSON.stringify({ fields }),
   });
@@ -300,7 +300,7 @@ export async function listProjects(): Promise<JiraProject[]> {
   return response;
 }
 
-export async function getProject(projectIdOrKey: string): Promise<JiraProject> {
+export function getProject(projectIdOrKey: string): Promise<JiraProject> {
   return jiraFetch<JiraProject>(`/project/${projectIdOrKey}`);
 }
 
@@ -321,14 +321,14 @@ export function extractDescriptionText(description: unknown): string {
     const content = (description as { content: unknown[] }).content;
     const texts: string[] = [];
 
-    function extractText(node: any): void {
+    const extractText = (node: any): void => {
       if (node.type === "text" && node.text) {
         texts.push(node.text);
       }
       if (node.content && Array.isArray(node.content)) {
         node.content.forEach(extractText);
       }
-    }
+    };
 
     content.forEach(extractText);
     return texts.join(" ");

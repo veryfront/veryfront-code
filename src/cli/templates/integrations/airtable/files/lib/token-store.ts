@@ -14,7 +14,7 @@ export function setTokens(data: TokenData): void {
   tokenStore = data;
 }
 
-export async function getAccessToken(): Promise<string | null> {
+export function getAccessToken(): string | null {
   if (!tokenStore) return null;
 
   // Check if token is expired

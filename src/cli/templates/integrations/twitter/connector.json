@@ -1,0 +1,87 @@
+{
+  "name": "twitter",
+  "displayName": "Twitter / X",
+  "icon": "twitter.svg",
+  "description": "Post tweets, read timeline, search tweets, and manage Twitter account",
+  "auth": {
+    "type": "oauth2",
+    "provider": "twitter",
+    "authorizationUrl": "https://twitter.com/i/oauth2/authorize",
+    "tokenUrl": "https://api.twitter.com/2/oauth2/token",
+    "scopes": [
+      "tweet.read",
+      "tweet.write",
+      "users.read",
+      "follows.read",
+      "offline.access"
+    ],
+    "callbackPath": "/api/auth/twitter/callback",
+    "usePKCE": true,
+    "requiredApis": [
+      {
+        "name": "Twitter API v2",
+        "enableUrl": "https://developer.twitter.com/en/portal/dashboard"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "TWITTER_CLIENT_ID",
+      "description": "Twitter OAuth 2.0 Client ID",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://developer.twitter.com/en/portal/dashboard"
+    },
+    {
+      "name": "TWITTER_CLIENT_SECRET",
+      "description": "Twitter OAuth 2.0 Client Secret",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://developer.twitter.com/en/portal/dashboard"
+    }
+  ],
+  "tools": [
+    {
+      "id": "search-tweets",
+      "name": "Search Tweets",
+      "description": "Search recent tweets on Twitter/X",
+      "requiresWrite": false
+    },
+    {
+      "id": "post-tweet",
+      "name": "Post Tweet",
+      "description": "Create a new tweet on Twitter/X",
+      "requiresWrite": true
+    },
+    {
+      "id": "get-timeline",
+      "name": "Get Timeline",
+      "description": "Get the authenticated user's home timeline",
+      "requiresWrite": false
+    }
+  ],
+  "prompts": [
+    {
+      "id": "catch-up-twitter",
+      "title": "Catch up on Twitter",
+      "prompt": "Summarize the important tweets from my Twitter timeline today. Highlight trending topics and mentions.",
+      "category": "productivity",
+      "icon": "twitter"
+    },
+    {
+      "id": "compose-tweet",
+      "title": "Compose a tweet",
+      "prompt": "Help me compose and post an engaging tweet about my current work or thoughts.",
+      "category": "productivity",
+      "icon": "message"
+    },
+    {
+      "id": "search-topic",
+      "title": "Search Twitter topic",
+      "prompt": "Search Twitter for recent tweets about a specific topic and summarize the key discussions.",
+      "category": "research",
+      "icon": "search"
+    }
+  ],
+  "suggestedWith": ["slack", "linkedin", "notion"]
+}

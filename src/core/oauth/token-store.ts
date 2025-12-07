@@ -15,20 +15,22 @@ import type { TokenData, TokenStore } from "./types.ts";
 export class MemoryTokenStore implements TokenStore {
   private tokens: Map<string, TokenData> = new Map();
 
-  async getTokens(service: string): Promise<TokenData | null> {
-    return this.tokens.get(service) || null;
+  getTokens(service: string): Promise<TokenData | null> {
+    return Promise.resolve(this.tokens.get(service) || null);
   }
 
-  async setTokens(service: string, tokens: TokenData): Promise<void> {
+  setTokens(service: string, tokens: TokenData): Promise<void> {
     this.tokens.set(service, tokens);
+    return Promise.resolve();
   }
 
-  async deleteTokens(service: string): Promise<void> {
+  deleteTokens(service: string): Promise<void> {
     this.tokens.delete(service);
+    return Promise.resolve();
   }
 
-  async hasTokens(service: string): Promise<boolean> {
-    return this.tokens.has(service);
+  hasTokens(service: string): Promise<boolean> {
+    return Promise.resolve(this.tokens.has(service));
   }
 }
 

@@ -1,15 +1,14 @@
-import { NextRequest, NextResponse } from "next/server";
 import { setApiKey } from "../../../../lib/token-store.ts";
 
 // Simple API key validation endpoint
 // In production, you may want to validate the key against Stripe API
-export async function POST(request: NextRequest) {
+export async function POST(request: Request) {
   try {
     const body = await request.json();
     const { apiKey } = body;
 
     if (!apiKey || typeof apiKey !== "string") {
-      return NextResponse.json(
+      return Response.json(
         { error: "API key is required" },
         { status: 400 },
       );
@@ -17,7 +16,7 @@ export async function POST(request: NextRequest) {
 
     // Validate that it looks like a Stripe key
     if (!apiKey.startsWith("sk_test_") && !apiKey.startsWith("sk_live_")) {
-      return NextResponse.json(
+      return Response.json(
         { error: "Invalid Stripe API key format. Key should start with sk_test_ or sk_live_" },
         { status: 400 },
       );
@@ -34,13 +33,13 @@ export async function POST(request: NextRequest) {
 
       if (!response.ok) {
         const error = await response.json();
-        return NextResponse.json(
+        return Response.json(
           { error: `Invalid API key: ${error.error?.message || "Authentication failed"}` },
           { status: 401 },
         );
       }
-    } catch (error) {
-      return NextResponse.json(
+    } catch (_error) {
+      return Response.json(
         { error: "Failed to validate API key with Stripe" },
         { status: 500 },
       );
@@ -49,12 +48,12 @@ export async function POST(request: NextRequest) {
     // Store the API key
     setApiKey(apiKey);
 
-    return NextResponse.json({
+    return Response.json({
       success: true,
       message: "Stripe API key validated and stored successfully",
     });
-  } catch (error) {
-    return NextResponse.json(
+  } catch (_error) {
+    return Response.json(
       { error: "Internal server error" },
       { status: 500 },
     );
@@ -62,10 +61,10 @@ export async function POST(request: NextRequest) {
 }
 
 // Get authentication status
-export async function GET() {
+export function GET() {
   const apiKey = process.env.STRIPE_SECRET_KEY;
 
-  return NextResponse.json({
+  return Response.json({
     authenticated: !!apiKey,
     hasEnvKey: !!apiKey,
   });

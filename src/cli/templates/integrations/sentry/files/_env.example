@@ -1,0 +1,6 @@
+# Sentry Integration
+# Create an Auth Token at https://sentry.io/settings/account/api/auth-tokens/
+# Find your organization slug in your Sentry URL: https://sentry.io/organizations/YOUR_ORG_SLUG/
+
+SENTRY_AUTH_TOKEN=your_auth_token_here
+SENTRY_ORG=your_organization_slug

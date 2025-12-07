@@ -15,16 +15,18 @@ export interface ServiceNowTokens {
 // In-memory storage (replace with persistent storage in production)
 let tokens: ServiceNowTokens | null = null;
 
-export async function getServiceNowTokens(): Promise<ServiceNowTokens | null> {
-  return tokens;
+export function getServiceNowTokens(): Promise<ServiceNowTokens | null> {
+  return Promise.resolve(tokens);
 }
 
-export async function setServiceNowTokens(newTokens: ServiceNowTokens): Promise<void> {
+export function setServiceNowTokens(newTokens: ServiceNowTokens): Promise<void> {
   tokens = newTokens;
+  return Promise.resolve();
 }
 
-export async function clearServiceNowTokens(): Promise<void> {
+export function clearServiceNowTokens(): Promise<void> {
   tokens = null;
+  return Promise.resolve();
 }
 
 export async function isServiceNowConnected(): Promise<boolean> {

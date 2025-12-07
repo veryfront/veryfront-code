@@ -1,6 +1,6 @@
 import { tool } from "veryfront/ai";
 import { z } from "zod";
-import { formatFieldValue, listRecords } from "../../lib/airtable-client.ts";
+import { listRecords } from "../../lib/airtable-client.ts";
 
 export default tool({
   id: "list-records",

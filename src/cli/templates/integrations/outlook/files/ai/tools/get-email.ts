@@ -1,6 +1,6 @@
 import { tool } from "veryfront/ai";
 import { z } from "zod";
-import { formatEmail, getEmail } from "../../lib/outlook-client.ts";
+import { getEmail } from "../../lib/outlook-client.ts";
 
 export default tool({
   id: "get-email",

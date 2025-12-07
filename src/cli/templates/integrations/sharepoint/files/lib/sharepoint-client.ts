@@ -128,14 +128,14 @@ export async function listSites(options?: {
 /**
  * Get details about a specific SharePoint site
  */
-export async function getSite(siteId: string): Promise<SharePointSite> {
+export function getSite(siteId: string): Promise<SharePointSite> {
   return graphFetch<SharePointSite>(`/sites/${siteId}`);
 }
 
 /**
  * Get a site by hostname and path
  */
-export async function getSiteByPath(
+export function getSiteByPath(
   hostname: string,
   sitePath: string,
 ): Promise<SharePointSite> {
@@ -157,7 +157,7 @@ export async function listDrives(siteId: string): Promise<SharePointDrive[]> {
 /**
  * Get the default document library for a site
  */
-export async function getDefaultDrive(siteId: string): Promise<SharePointDrive> {
+export function getDefaultDrive(siteId: string): Promise<SharePointDrive> {
   return graphFetch<SharePointDrive>(`/sites/${siteId}/drive`);
 }
 
@@ -192,7 +192,7 @@ export async function listFiles(
 /**
  * Get file metadata
  */
-export async function getFile(
+export function getFile(
   siteId: string,
   driveId: string,
   itemId: string,
@@ -205,7 +205,7 @@ export async function getFile(
 /**
  * Get file by path
  */
-export async function getFileByPath(
+export function getFileByPath(
   siteId: string,
   driveId: string,
   path: string,
@@ -229,7 +229,7 @@ export async function downloadFile(
     throw new Error("Not authenticated with Microsoft. Please connect your account.");
   }
 
-  const metadata = await getFile(siteId, driveId, itemId);
+  const _metadata = await getFile(siteId, driveId, itemId);
 
   // Get download URL
   const downloadUrl = `${GRAPH_BASE_URL}/sites/${siteId}/drives/${driveId}/items/${itemId}/content`;
@@ -310,7 +310,7 @@ export async function uploadFile(
 /**
  * Create a folder
  */
-export async function createFolder(
+export function createFolder(
   siteId: string,
   driveId: string,
   folderName: string,
@@ -367,7 +367,7 @@ export async function deleteItem(
 /**
  * Move or rename a file or folder
  */
-export async function moveItem(
+export function moveItem(
   siteId: string,
   driveId: string,
   itemId: string,

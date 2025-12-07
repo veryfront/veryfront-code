@@ -133,27 +133,27 @@ async function discordFetch<T>(
   return response.json();
 }
 
-export async function getCurrentUser(): Promise<DiscordUser> {
+export function getCurrentUser(): Promise<DiscordUser> {
   return discordFetch<DiscordUser>("/users/@me");
 }
 
-export async function listGuilds(): Promise<DiscordGuild[]> {
+export function listGuilds(): Promise<DiscordGuild[]> {
   return discordFetch<DiscordGuild[]>("/users/@me/guilds");
 }
 
-export async function getGuild(guildId: string): Promise<DiscordGuild> {
+export function getGuild(guildId: string): Promise<DiscordGuild> {
   return discordFetch<DiscordGuild>(`/guilds/${guildId}`);
 }
 
-export async function listChannels(guildId: string): Promise<DiscordChannel[]> {
+export function listChannels(guildId: string): Promise<DiscordChannel[]> {
   return discordFetch<DiscordChannel[]>(`/guilds/${guildId}/channels`);
 }
 
-export async function getChannel(channelId: string): Promise<DiscordChannel> {
+export function getChannel(channelId: string): Promise<DiscordChannel> {
   return discordFetch<DiscordChannel>(`/channels/${channelId}`);
 }
 
-export async function getMessages(
+export function getMessages(
   channelId: string,
   options?: {
     limit?: number;
@@ -183,7 +183,7 @@ export async function getMessages(
   return discordFetch<DiscordMessage[]>(endpoint);
 }
 
-export async function sendMessage(
+export function sendMessage(
   channelId: string,
   content: string,
   options?: {
@@ -206,7 +206,7 @@ export async function sendMessage(
   });
 }
 
-export async function getGuildMembers(
+export function getGuildMembers(
   guildId: string,
   options?: {
     limit?: number;

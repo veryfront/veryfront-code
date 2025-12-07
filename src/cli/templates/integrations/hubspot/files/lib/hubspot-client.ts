@@ -100,7 +100,7 @@ async function hubspotFetch<T>(
 // CONTACTS
 // ============================================================================
 
-export async function listContacts(options?: {
+export function listContacts(options?: {
   limit?: number;
   after?: string;
   properties?: string[];
@@ -128,7 +128,7 @@ export async function listContacts(options?: {
   return hubspotFetch<HubSpotResponse<HubSpotContact>>(url);
 }
 
-export async function getContact(
+export function getContact(
   contactId: string,
   properties?: string[],
 ): Promise<HubSpotContact> {
@@ -148,7 +148,7 @@ export async function getContact(
   return hubspotFetch<HubSpotContact>(url);
 }
 
-export async function createContact(properties: {
+export function createContact(properties: {
   email: string;
   firstname?: string;
   lastname?: string;
@@ -164,7 +164,7 @@ export async function createContact(properties: {
   });
 }
 
-export async function updateContact(
+export function updateContact(
   contactId: string,
   properties: {
     email?: string;
@@ -183,7 +183,7 @@ export async function updateContact(
   });
 }
 
-export async function searchContacts(options: {
+export function searchContacts(options: {
   query?: string;
   filterGroups?: Array<{
     filters: Array<{
@@ -226,7 +226,7 @@ export async function searchContacts(options: {
 // COMPANIES
 // ============================================================================
 
-export async function listCompanies(options?: {
+export function listCompanies(options?: {
   limit?: number;
   after?: string;
   properties?: string[];
@@ -253,7 +253,7 @@ export async function listCompanies(options?: {
   return hubspotFetch<HubSpotResponse<HubSpotCompany>>(url);
 }
 
-export async function getCompany(
+export function getCompany(
   companyId: string,
   properties?: string[],
 ): Promise<HubSpotCompany> {
@@ -273,7 +273,7 @@ export async function getCompany(
   return hubspotFetch<HubSpotCompany>(url);
 }
 
-export async function createCompany(properties: {
+export function createCompany(properties: {
   name: string;
   domain?: string;
   city?: string;
@@ -293,7 +293,7 @@ export async function createCompany(properties: {
 // DEALS
 // ============================================================================
 
-export async function listDeals(options?: {
+export function listDeals(options?: {
   limit?: number;
   after?: string;
   properties?: string[];
@@ -320,7 +320,7 @@ export async function listDeals(options?: {
   return hubspotFetch<HubSpotResponse<HubSpotDeal>>(url);
 }
 
-export async function getDeal(
+export function getDeal(
   dealId: string,
   properties?: string[],
 ): Promise<HubSpotDeal> {
@@ -340,7 +340,7 @@ export async function getDeal(
   return hubspotFetch<HubSpotDeal>(url);
 }
 
-export async function createDeal(properties: {
+export function createDeal(properties: {
   dealname: string;
   amount?: string;
   dealstage?: string;
@@ -354,7 +354,7 @@ export async function createDeal(properties: {
   });
 }
 
-export async function updateDeal(
+export function updateDeal(
   dealId: string,
   properties: {
     dealname?: string;

@@ -1,6 +1,6 @@
 import { getAuthorizationUrl } from "../../../../lib/oauth";
 
-export async function GET(request: Request) {
+export function GET(request: Request) {
   const url = new URL(request.url);
   const baseUrl = `${url.protocol}//${url.host}`;
   const redirectUri = `${baseUrl}/api/auth/confluence/callback`;

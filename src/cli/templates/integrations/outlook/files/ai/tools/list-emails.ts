@@ -1,6 +1,6 @@
 import { tool } from "veryfront/ai";
 import { z } from "zod";
-import { formatEmail, listEmails } from "../../lib/outlook-client.ts";
+import { listEmails } from "../../lib/outlook-client.ts";
 
 export default tool({
   id: "list-emails",

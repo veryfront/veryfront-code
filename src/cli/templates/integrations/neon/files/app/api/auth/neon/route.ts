@@ -43,7 +43,7 @@ export async function POST(request: Request) {
   }
 }
 
-export async function GET() {
+export function GET() {
   return Response.json({
     authenticated: false,
     message: "Use POST to authenticate with API key",
