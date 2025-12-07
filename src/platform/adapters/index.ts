@@ -40,3 +40,23 @@ export {
   withFallback,
   withFallbackSync,
 } from "./fallback-wrapper.ts";
+
+// Token Storage Adapter
+export {
+  MemoryTokenAdapter,
+  TokenStorageAPIClient,
+  TokenStorageError,
+  type TokenStorageAdapter,
+  type TokenStorageAdapterConfig,
+  VeryfrontTokenAdapter,
+  type VeryfrontTokenConfig,
+} from "./veryfront-token-adapter/index.ts";
+
+export { createTokenStorageAdapter, createTokenStorageAdapterFromEnv } from "./token-adapter-factory.ts";
+
+export {
+  getTokenStorageAdapter,
+  getTokenStorageType,
+  isTokenStorageConfigured,
+  resetTokenStorageAdapter,
+} from "./token-adapter-integration.ts";
