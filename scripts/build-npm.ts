@@ -516,6 +516,8 @@ for (const [name, entryPath] of Object.entries(entryPoints)) {
 				"@opentelemetry/*",
 				"redis",
 				"@redis/*",
+				"react-markdown",
+				"mermaid",
 				"node:*",
 				"fs",
 				"fs/*",
