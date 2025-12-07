@@ -8,6 +8,7 @@
  */
 
 import React, { useEffect, useState, useRef } from 'react';
+import { Markdown } from 'veryfront/ai/components';
 
 interface Message {
   id: string;
@@ -108,7 +109,11 @@ function MessageBubble({ message }: { message: Message }) {
               : 'bg-neutral-100 dark:bg-neutral-800 text-neutral-900 dark:text-neutral-100 rounded-[20px] rounded-bl-[4px]'
           }`}
         >
-          <p className="whitespace-pre-wrap text-[15px] leading-relaxed">{message.content}</p>
+          {isUser ? (
+            <p className="whitespace-pre-wrap text-[15px] leading-relaxed">{message.content}</p>
+          ) : (
+            <Markdown className="text-[15px] leading-relaxed">{message.content}</Markdown>
+          )}
         </div>
 
         {/* Tool Calls */}
