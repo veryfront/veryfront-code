@@ -143,7 +143,7 @@ export class AgentRuntime {
    */
   async stream(
     messages: Message[],
-    _context?: Record<string, unknown>,
+    context?: Record<string, unknown>,
     callbacks?: {
       onToolCall?: (toolCall: ToolCall) => void;
       onChunk?: (chunk: string) => void;
@@ -159,6 +159,12 @@ export class AgentRuntime {
 
     const encoder = new TextEncoder();
     const messageId = `msg_${Date.now()}`;
+
+    // Build tool execution context - merge user context with agent context
+    const toolContext = {
+      agentId: this.id,
+      ...context,
+    };
 
     return new ReadableStream({
       start: async (controller) => {
@@ -181,6 +187,7 @@ export class AgentRuntime {
             encoder,
             callbacks,
             messageId,
+            toolContext,
           );
 
           // Send finish event
@@ -411,6 +418,7 @@ export class AgentRuntime {
       onChunk?: (chunk: string) => void;
     },
     _messageId?: string,
+    toolContext?: Record<string, unknown>,
   ): Promise<AgentResponse> {
     const capabilities = getPlatformCapabilities();
     const maxSteps = this.getMaxSteps(capabilities.maxAgentSteps);
@@ -694,6 +702,7 @@ export class AgentRuntime {
 
             const result = await executeTool(tc.name, toolCall.args, {
               agentId: this.id,
+              ...toolContext,
             });
 
             toolCall.status = "completed";

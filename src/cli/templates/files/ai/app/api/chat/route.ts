@@ -20,7 +20,14 @@ export async function POST(request: Request) {
       return Response.json({ error: "Agent not found" }, { status: 404 });
     }
 
-    const result = await agent.stream({ messages });
+    // In production, extract userId from session/cookie
+    // For development, we use a default user
+    const userId = "current-user";
+
+    const result = await agent.stream({
+      messages,
+      context: { userId },
+    });
     return result.toDataStreamResponse();
   } catch (error) {
     if (error instanceof z.ZodError) {

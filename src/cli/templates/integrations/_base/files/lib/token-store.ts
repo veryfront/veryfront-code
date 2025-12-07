@@ -21,7 +21,11 @@ export interface TokenStore {
 }
 
 // In-memory storage for development
-const tokens = new Map<string, OAuthToken>();
+// Use globalThis to share across esbuild bundles (each API route is bundled separately)
+const TOKENS_KEY = "__veryfront_oauth_tokens__";
+// deno-lint-ignore no-explicit-any
+const globalStore = globalThis as any;
+const tokens: Map<string, OAuthToken> = globalStore[TOKENS_KEY] ||= new Map<string, OAuthToken>();
 
 function getKey(userId: string, service: string): string {
   return `${userId}:${service}`;

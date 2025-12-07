@@ -22,12 +22,8 @@ export default tool({
       .describe("Maximum number of repositories to return"),
   }),
   execute: async ({ type, sort, limit }, context) => {
-    const userId = context?.userId as string | undefined;
-    if (!userId) {
-      return {
-        error: "User not authenticated. Please log in first.",
-      };
-    }
+    // Default to "current-user" for development; in production, always pass userId from session
+    const userId = (context?.userId as string | undefined) || "current-user";
 
     try {
       const github = createGitHubClient(userId);
