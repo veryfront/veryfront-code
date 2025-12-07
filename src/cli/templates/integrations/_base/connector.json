@@ -6,6 +6,14 @@
   "auth": {
     "type": "none"
   },
-  "envVars": [],
+  "envVars": [
+    {
+      "name": "APP_URL",
+      "description": "Base URL for OAuth callbacks (e.g., http://localhost:3000)",
+      "required": false,
+      "sensitive": false,
+      "default": "http://localhost:3000"
+    }
+  ],
   "tools": []
 }

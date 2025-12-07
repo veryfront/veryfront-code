@@ -32,9 +32,8 @@ export default {
     },
   },
 
-  // Development
+  // Development (port defaults to 3000)
   dev: {
-    port: 3002,
     open: true,
   },
 

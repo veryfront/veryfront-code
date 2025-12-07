@@ -16,7 +16,7 @@ import type {
   WatchOptions,
   WebSocketUpgrade,
 } from "./base.ts";
-import { DEFAULT_DEV_PORT } from "@veryfront/config";
+import { DEFAULT_PORT } from "@veryfront/config";
 import { serverLogger } from "@veryfront/utils";
 
 class DenoFileSystemAdapter implements FileSystemAdapter {
@@ -269,7 +269,7 @@ export class DenoAdapter implements RuntimeAdapter {
     handler: (request: Request) => Promise<Response> | Response,
     options: ServeOptions = {},
   ): Promise<Server> {
-    const { port = DEFAULT_DEV_PORT, hostname = "localhost", onListen } = options;
+    const { port = DEFAULT_PORT, hostname = "localhost", onListen } = options;
 
     const controller = new AbortController();
     const signal = options.signal || controller.signal;

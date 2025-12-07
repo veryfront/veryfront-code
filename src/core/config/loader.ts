@@ -5,6 +5,7 @@ import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import { serverLogger } from "@veryfront/utils/logger/logger.ts";
 import { getReactImportMap, REACT_DEFAULT_VERSION } from "@veryfront/utils/constants/cdn.ts";
 import { DEFAULT_CACHE_DIR } from "@veryfront/utils/constants/server.ts";
+import { DEFAULT_PORT } from "./defaults.ts";
 
 export type { VeryfrontConfig } from "./types.ts";
 
@@ -45,7 +46,7 @@ const DEFAULT_CONFIG: Partial<VeryfrontConfig> = {
     },
   },
   dev: {
-    port: 3002,
+    port: DEFAULT_PORT,
     host: "localhost",
     open: false,
   },

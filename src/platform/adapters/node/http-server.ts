@@ -1,6 +1,6 @@
 import type { ServeOptions, Server } from "../base.ts";
 import type { NodeHttpServer, WSWebSocket, WSWebSocketServer } from "./types.ts";
-import { DEFAULT_DEV_PORT } from "@veryfront/config";
+import { DEFAULT_PORT } from "@veryfront/config";
 
 // Track pending WebSocket upgrades by request ID
 const pendingWebSocketUpgrades = new Map<string, {
@@ -63,7 +63,7 @@ export async function createNodeServer(
   handler: (request: Request) => Promise<Response> | Response,
   options: ServeOptions = {},
 ): Promise<Server> {
-  const { port = DEFAULT_DEV_PORT, hostname = "localhost", onListen } = options;
+  const { port = DEFAULT_PORT, hostname = "localhost", onListen } = options;
   const { createServer } = await import("node:http");
 
   const server = createServer(async (_req, _res) => {

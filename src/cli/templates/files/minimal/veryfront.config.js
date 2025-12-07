@@ -3,7 +3,7 @@ export default {
   description: "A minimal Veryfront starter",
 
   dev: {
-    port: 3002,
+    // Port defaults to 3000
     open: true,
   },
 

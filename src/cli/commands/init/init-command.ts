@@ -28,6 +28,7 @@ import {
 } from "../../templates/feature-loader.ts";
 import {
   getIntegrationBaseFiles,
+  loadIntegrationBaseConfig,
   loadIntegrationBaseFilesFromDirectory,
   loadIntegrations,
   validateIntegrations,
@@ -288,6 +289,12 @@ export async function initCommand(options: InitOptions): Promise<void> {
     // Load additional base files from _base directory (setup guide, status API)
     const baseDirectoryFiles = await loadIntegrationBaseFilesFromDirectory();
     templateFiles = mergeFiles(templateFiles, baseDirectoryFiles);
+
+    // Load base config for shared env vars (APP_URL, etc.)
+    const baseConfig = await loadIntegrationBaseConfig();
+    if (baseConfig?.envVars) {
+      allEnvVars.push(...baseConfig.envVars);
+    }
 
     // Load each integration
     const { integrations: loadedIntegrations, files: integrationFiles, errors: integrationErrors } =

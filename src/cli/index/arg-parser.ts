@@ -7,6 +7,7 @@
  */
 
 import type { ParsedArgs } from "./types.ts";
+import { DEFAULT_PORT } from "@veryfront/config/defaults.ts";
 
 /**
  * Flags that should accumulate values instead of replacing
@@ -122,6 +123,6 @@ export function parseCliArgs(args: string[]): ParsedArgs {
       j: "json",
       w: "with",
     },
-    default: { port: 3002 },
+    default: { port: DEFAULT_PORT },
   }) as ParsedArgs;
 }
