@@ -5,7 +5,8 @@
  * using the veryfront/oauth module for authentication.
  */
 
-import { gmailConfig, memoryTokenStore, OAuthService } from "veryfront/oauth";
+import { gmailConfig, OAuthService } from "veryfront/oauth";
+import { tokenStore } from "./token-store.ts";
 
 export interface GmailMessage {
   id: string;
@@ -39,8 +40,25 @@ export interface SendEmailOptions {
   isHtml?: boolean;
 }
 
-// Create Gmail service using the OAuth module
-const gmailService = new OAuthService(gmailConfig, memoryTokenStore);
+// Adapter to bridge user's tokenStore with framework's TokenStore interface
+const tokenStoreAdapter = {
+  async getTokens(serviceId: string) {
+    return tokenStore.getToken("current-user", serviceId);
+  },
+  async setTokens(serviceId: string, tokens: { accessToken: string; refreshToken?: string; expiresAt?: number }) {
+    await tokenStore.setToken("current-user", serviceId, tokens);
+  },
+  async clearTokens(serviceId: string) {
+    await tokenStore.revokeToken("current-user", serviceId);
+  },
+  // State methods not needed for API client
+  async getState() { return null; },
+  async setState() {},
+  async clearState() {},
+};
+
+// Create Gmail service using the user's token store
+const gmailService = new OAuthService(gmailConfig, tokenStoreAdapter);
 
 /**
  * Create a Gmail client for API operations

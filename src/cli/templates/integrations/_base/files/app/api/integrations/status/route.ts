@@ -5,7 +5,7 @@
  * Used by the setup guide to show which services are connected.
  */
 
-import { tokenStore } from "../../../../lib/token-store";
+import { tokenStore } from "../../../../lib/token-store.ts";
 
 // Define available integrations - will be populated based on project config
 const INTEGRATIONS = [

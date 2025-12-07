@@ -156,15 +156,28 @@ export async function devCommand(options: DevOptions) {
   // Graceful shutdown on termination signals
   let shuttingDown = false;
   const shutdown = async (signal: "SIGINT" | "SIGTERM") => {
-    if (shuttingDown) return;
+    if (shuttingDown) {
+      // Second signal - force exit immediately
+      cliLogger.info("Force exiting...");
+      exitProcess(0);
+      return;
+    }
     shuttingDown = true;
     cliLogger.info(`Received ${signal}, shutting down dev server...`);
+
+    // Force exit after 3 seconds if graceful shutdown hangs
+    const forceExitTimeout = setTimeout(() => {
+      cliLogger.warn("Graceful shutdown timed out, forcing exit...");
+      exitProcess(0);
+    }, 3000);
+
     try {
       shutdownController.abort();
       await devServer?.stop();
     } catch (error) {
       cliLogger.warn("Error while shutting down dev server:", error);
     } finally {
+      clearTimeout(forceExitTimeout);
       exitProcess(0);
     }
   };

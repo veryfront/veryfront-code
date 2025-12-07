@@ -1,4 +1,4 @@
-import { setApiKey } from "../../../../lib/token-store";
+import { setApiKey } from "../../../../lib/token-store.ts";
 
 export async function POST(request: Request) {
   try {
