@@ -28,6 +28,8 @@ import type { ParsedArgs } from "./types.ts";
 import type { InitTemplate } from "../commands/init/types.ts";
 import type { IntegrationName } from "../templates/types.ts";
 import { cwd } from "../../platform/compat/process.ts";
+import { createFileSystem } from "../../platform/compat/fs.ts";
+import { join } from "../../platform/compat/path/index.ts";
 import { COMMANDS } from "../help/command-definitions.ts";
 import {
   calculateMaxLength,
@@ -139,11 +141,53 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
   try {
     switch (command) {
       case "init": {
-        const name = args._[1] as string | undefined;
-        const template = (args.t || args.template) as InitTemplate | undefined;
+        let name = args._[1] as string | undefined;
+        let template = (args.t || args.template) as InitTemplate | undefined;
+        let integrations: IntegrationName[] | undefined;
+        let skipInstall = Boolean(args["skip-install"]);
+        let skipEnvPrompt = Boolean(args["skip-env-prompt"]);
+        let env: Record<string, string> | undefined;
+
+        // Support --config flag for JSON-based configuration
+        const configPath = args.config || args.c;
+        if (configPath) {
+          const fs = createFileSystem();
+          const resolvedPath = String(configPath).startsWith("/")
+            ? String(configPath)
+            : join(cwd(), String(configPath));
+
+          try {
+            const configContent = await fs.readTextFile(resolvedPath);
+            const config = JSON.parse(configContent) as {
+              name?: string;
+              template?: InitTemplate;
+              integrations?: IntegrationName[];
+              skipInstall?: boolean;
+              skipEnvPrompt?: boolean;
+              env?: Record<string, string>;
+            };
+
+            // Config file values (can be overridden by CLI flags)
+            name = name || config.name;
+            template = template || config.template;
+            integrations = integrations || config.integrations;
+            skipInstall = skipInstall || config.skipInstall || false;
+            skipEnvPrompt = skipEnvPrompt || config.skipEnvPrompt || false;
+            env = config.env;
+
+            cliLogger.debug(`Loaded config from ${resolvedPath}`);
+          } catch (error) {
+            cliLogger.error(`Failed to read config file: ${resolvedPath}`);
+            if (error instanceof SyntaxError) {
+              cliLogger.error("Invalid JSON syntax in config file");
+            }
+            exitProcess(1);
+            return;
+          }
+        }
 
         // Parse integrations from --integrations flag (comma-separated)
-        let integrations: IntegrationName[] | undefined;
+        // This overrides config file if provided
         if (args.integrations) {
           const integrationsArg = String(args.integrations);
           integrations = integrationsArg.split(",").map((s) => s.trim()) as IntegrationName[];
@@ -152,8 +196,10 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
         await initCommand({
           name,
           template,
-          skipInstall: Boolean(args["skip-install"]),
+          skipInstall,
+          skipEnvPrompt,
           integrations,
+          env,
         });
         break;
       }

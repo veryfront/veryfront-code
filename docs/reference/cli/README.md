@@ -2,11 +2,11 @@
 title: "CLI Reference"
 category: "reference"
 level: "reference"
-keywords: ["cli", "commands", "dev", "build", "start", "init", "command-line"]
-ai_summary: "Complete command-line interface reference for all Veryfront CLI commands including options, flags, and usage examples"
-related: ["reference/configuration", "getting-started/installation", "quick-start"]
+keywords: ["cli", "commands", "dev", "build", "start", "init", "command-line", "config", "scaffolding", "ci-cd"]
+ai_summary: "Complete command-line interface reference for all Veryfront CLI commands including options, flags, usage examples, and JSON config file scaffolding for CI/CD automation"
+related: ["reference/configuration", "getting-started/installation", "quick-start", "reference/ai/integrations"]
 version: "0.1.0"
-last_updated: "2025-11-22"
+last_updated: "2025-12-07"
 ---
 
 # CLI Reference
@@ -404,91 +404,468 @@ veryfront init [directory] [options]
 
 | Option | Alias | Type | Default | Description |
 |--------|-------|------|---------|-------------|
-| `--template` | `-t` | string | minimal | Project template to use |
+| `--template` | `-t` | string | ai | Project template to use |
+| `--integrations` | | string | | Comma-separated service integrations (e.g., `gmail,slack,github`) |
+| `--config` | `-c` | string | | Path to JSON config file for programmatic scaffolding |
+| `--skip-install` | | boolean | false | Skip automatic dependency installation |
+| `--skip-env-prompt` | | boolean | false | Skip environment variable prompts |
 | `--runtime` | `-r` | string | auto | Target runtime: `deno`, `node`, `bun` |
-| `--router` | | string | app | Router type: `app`, `pages` |
-| `--ai` | | boolean | false | Enable AI features |
-| `--git` | | boolean | true | Initialize git repository |
-| `--install` | | boolean | true | Install dependencies automatically |
 | `--force` | `-f` | boolean | false | Override existing files |
 
 ### Templates
 
 Available templates:
 
-- `minimal` - Minimal App Router setup
-- `minimal-pages` - Minimal Pages Router setup
+- `ai` - AI Agent with service integrations (default)
+- `app` - Full app with auth and dashboard
 - `blog` - Blog with MDX support
-- `saas` - SaaS starter with authentication
-- `ai-app` - Full-stack app with AI integration
-- `dashboard` - Admin dashboard template
+- `docs` - Documentation site
+- `minimal` - Simple starting point
 
 ### Examples
 
 ```bash
-# Initialize in current directory
+# Interactive wizard (recommended for first-time users)
 veryfront init
 
-# Create new project
-veryfront init my-app
+# Create new AI agent project
+veryfront init my-agent
 
-# Use specific template
+# AI agent with specific integrations
+veryfront init my-agent --template ai --integrations gmail,slack,github
+
+# Create a blog
 veryfront init my-blog --template blog
 
-# Initialize for specific runtime
-veryfront init my-app --runtime deno
+# Create documentation site
+veryfront init my-docs --template docs
 
-# Pages Router instead of App Router
-veryfront init my-app --router pages
+# Programmatic scaffolding from config file
+veryfront init --config project.json
 
-# Enable AI features
-veryfront init my-app --ai
-
-# Skip git and npm install
-veryfront init my-app --git=false --install=false
-
-# Force overwrite existing files
-veryfront init existing-project --force
+# Skip all prompts (for CI/CD)
+veryfront init my-app --config project.json --skip-install --skip-env-prompt
 ```
 
 ### Behavior
 
 **Initialization Process:**
-1. Creates project directory (if specified)
-2. Copies template files
-3. Generates `veryfront.config.ts`
-4. Creates appropriate runtime config (`deno.json`, `package.json`, etc.)
-5. Initializes git repository (unless `--git=false`)
-6. Installs dependencies (unless `--install=false`)
-7. Displays next steps
+1. Runs interactive wizard (if no template specified)
+2. Creates project directory (if specified)
+3. Copies template files
+4. Loads and merges integration files (for AI template)
+5. Prompts for environment variables (unless skipped)
+6. Generates `package.json` and config files
+7. Installs dependencies (unless `--skip-install`)
+8. Displays next steps
 
 **Generated Files:**
 
-**Minimal template:**
+**AI template with integrations:**
 ```
-my-app/
+my-agent/
 ├── app/
 │   ├── layout.tsx
-│   └── page.tsx
-├── public/
-│   └── favicon.ico
+│   ├── page.tsx
+│   ├── api/
+│   │   ├── chat/route.ts
+│   │   └── auth/[service]/route.ts
+│   └── setup/page.tsx
+├── ai/
+│   ├── agents/assistant.ts
+│   └── tools/
+├── lib/
+│   └── token-store.ts
+├── .env
+├── .env.example
 ├── veryfront.config.ts
-├── tsconfig.json or deno.json
-└── package.json or deno.json
+└── package.json
 ```
 
-**With AI:**
+---
+
+## Config File Scaffolding
+
+For CI/CD pipelines and automation, use a JSON config file to scaffold projects programmatically.
+
+### Config File Format
+
+Create a `project.json` file:
+
+```json
+{
+  "name": "my-ai-agent",
+  "template": "ai",
+  "integrations": ["gmail", "slack", "github", "calendar"],
+  "skipInstall": false,
+  "skipEnvPrompt": true,
+  "env": {
+    "GOOGLE_CLIENT_ID": "your-client-id.apps.googleusercontent.com",
+    "GOOGLE_CLIENT_SECRET": "your-google-secret",
+    "SLACK_CLIENT_ID": "123456789.987654321",
+    "SLACK_CLIENT_SECRET": "your-slack-secret",
+    "GITHUB_CLIENT_ID": "Iv1.abc123def456",
+    "GITHUB_CLIENT_SECRET": "your-github-secret",
+    "OPENAI_API_KEY": "sk-..."
+  }
+}
 ```
-my-app/
-├── app/
-├── ai/
-│   ├── tools/
-│   │   └── example.ts
-│   └── agents/
-│       └── assistant.ts
-├── public/
-├── veryfront.config.ts
-└── ...
+
+### Config Properties
+
+| Property | Type | Required | Description |
+|----------|------|:--------:|-------------|
+| `name` | string | No | Project directory name |
+| `template` | string | No | Template: `ai`, `app`, `blog`, `docs`, `minimal` |
+| `integrations` | string[] | No | Service integrations to include |
+| `skipInstall` | boolean | No | Skip dependency installation |
+| `skipEnvPrompt` | boolean | No | Skip interactive env prompts |
+| `env` | object | No | Pre-filled environment variable values |
+
+### Usage
+
+```bash
+# Scaffold from config file
+veryfront init --config project.json
+
+# Override config with CLI flags
+veryfront init my-custom-name --config project.json --template app
+
+# Fully automated (no prompts)
+veryfront init --config project.json --skip-env-prompt
+```
+
+### Environment Variables by Integration
+
+Each integration requires specific credentials. Use the `env` object to pre-fill them:
+
+**Google Services** (Gmail, Calendar, Drive, Sheets, Docs):
+```json
+{
+  "env": {
+    "GOOGLE_CLIENT_ID": "your-id.apps.googleusercontent.com",
+    "GOOGLE_CLIENT_SECRET": "your-secret"
+  }
+}
+```
+
+**Microsoft Services** (Outlook, Teams, OneDrive, SharePoint):
+```json
+{
+  "env": {
+    "MICROSOFT_CLIENT_ID": "your-azure-app-id",
+    "MICROSOFT_CLIENT_SECRET": "your-secret"
+  }
+}
+```
+
+**Atlassian** (Jira, Confluence):
+```json
+{
+  "env": {
+    "ATLASSIAN_CLIENT_ID": "your-client-id",
+    "ATLASSIAN_CLIENT_SECRET": "your-secret"
+  }
+}
+```
+
+**Slack**:
+```json
+{
+  "env": {
+    "SLACK_CLIENT_ID": "123456789.987654321",
+    "SLACK_CLIENT_SECRET": "your-secret"
+  }
+}
+```
+
+**GitHub**:
+```json
+{
+  "env": {
+    "GITHUB_CLIENT_ID": "Iv1.abc123",
+    "GITHUB_CLIENT_SECRET": "your-secret"
+  }
+}
+```
+
+**AI Providers**:
+```json
+{
+  "env": {
+    "OPENAI_API_KEY": "sk-...",
+    "ANTHROPIC_API_KEY": "sk-ant-..."
+  }
+}
+```
+
+### CI/CD Example
+
+**GitHub Actions:**
+```yaml
+name: Scaffold Project
+
+on:
+  workflow_dispatch:
+    inputs:
+      project_name:
+        description: 'Project name'
+        required: true
+
+jobs:
+  scaffold:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create config file
+        run: |
+          cat > project.json << 'EOF'
+          {
+            "name": "${{ github.event.inputs.project_name }}",
+            "template": "ai",
+            "integrations": ["gmail", "slack", "github"],
+            "skipInstall": true,
+            "skipEnvPrompt": true,
+            "env": {
+              "GOOGLE_CLIENT_ID": "${{ secrets.GOOGLE_CLIENT_ID }}",
+              "GOOGLE_CLIENT_SECRET": "${{ secrets.GOOGLE_CLIENT_SECRET }}",
+              "SLACK_CLIENT_ID": "${{ secrets.SLACK_CLIENT_ID }}",
+              "SLACK_CLIENT_SECRET": "${{ secrets.SLACK_CLIENT_SECRET }}",
+              "GITHUB_CLIENT_ID": "${{ secrets.GH_OAUTH_CLIENT_ID }}",
+              "GITHUB_CLIENT_SECRET": "${{ secrets.GH_OAUTH_CLIENT_SECRET }}"
+            }
+          }
+          EOF
+
+      - name: Install Veryfront
+        run: npm install -g veryfront
+
+      - name: Scaffold project
+        run: veryfront init --config project.json
+
+      - name: Install dependencies
+        run: cd ${{ github.event.inputs.project_name }} && npm install
+```
+
+### Complete Config Example
+
+Here's a full example with all 50+ integrations configured:
+
+```json
+{
+  "name": "enterprise-ai-agent",
+  "template": "ai",
+  "integrations": [
+    "gmail", "calendar", "drive", "sheets",
+    "outlook", "teams", "onedrive",
+    "slack", "discord",
+    "github", "gitlab", "jira", "confluence",
+    "notion", "linear", "asana",
+    "salesforce", "hubspot",
+    "stripe", "zendesk"
+  ],
+  "skipInstall": false,
+  "skipEnvPrompt": true,
+  "env": {
+    "OPENAI_API_KEY": "sk-...",
+    "GOOGLE_CLIENT_ID": "...",
+    "GOOGLE_CLIENT_SECRET": "...",
+    "MICROSOFT_CLIENT_ID": "...",
+    "MICROSOFT_CLIENT_SECRET": "...",
+    "SLACK_CLIENT_ID": "...",
+    "SLACK_CLIENT_SECRET": "...",
+    "GITHUB_CLIENT_ID": "...",
+    "GITHUB_CLIENT_SECRET": "...",
+    "ATLASSIAN_CLIENT_ID": "...",
+    "ATLASSIAN_CLIENT_SECRET": "...",
+    "NOTION_API_KEY": "...",
+    "LINEAR_CLIENT_ID": "...",
+    "LINEAR_CLIENT_SECRET": "...",
+    "SALESFORCE_CLIENT_ID": "...",
+    "SALESFORCE_CLIENT_SECRET": "...",
+    "HUBSPOT_CLIENT_ID": "...",
+    "HUBSPOT_CLIENT_SECRET": "...",
+    "STRIPE_SECRET_KEY": "...",
+    "ZENDESK_CLIENT_ID": "...",
+    "ZENDESK_CLIENT_SECRET": "..."
+  }
+}
+```
+
+---
+
+## Token Storage & Security
+
+When using OAuth integrations, tokens (access tokens, refresh tokens) must be stored securely. Veryfront provides a flexible token storage system with encryption support.
+
+### Storage Modes
+
+| Mode | Environment Variable | Best For |
+|------|---------------------|----------|
+| In-Memory | (default) | Development only |
+| PostgreSQL | `DATABASE_URL` | Production apps |
+| Vercel KV | `KV_REST_API_URL` | Vercel deployments |
+| Redis | `REDIS_URL` | High-performance needs |
+| SQLite/D1 | Custom | Edge/serverless |
+
+### Quick Setup
+
+**Development (default):**
+No configuration needed. Tokens are stored in memory and lost on restart.
+
+**Production with Vercel KV:**
+```bash
+# .env
+KV_REST_API_URL=https://your-kv.vercel-storage.com
+KV_REST_API_TOKEN=your-token
+TOKEN_ENCRYPTION_KEY=your-32-byte-hex-key
+```
+
+**Production with PostgreSQL:**
+```bash
+# .env
+DATABASE_URL=postgres://user:pass@host:5432/db
+TOKEN_ENCRYPTION_KEY=your-32-byte-hex-key
+```
+
+Generate an encryption key:
+```bash
+openssl rand -hex 32
+```
+
+### Token Store Implementation
+
+The default `lib/token-store.ts` provides:
+
+```typescript
+import { tokenStore, createTokenStore, getStorageMode } from './token-store';
+
+// Check current mode
+console.log(getStorageMode()); // "memory" | "database" | "kv" | "redis"
+
+// Use default store
+const token = await tokenStore.getToken(userId, 'gmail');
+
+// Create custom store
+const customStore = createTokenStore({
+  get: (key) => myDb.get(key),
+  set: (key, value) => myDb.set(key, value),
+  delete: (key) => myDb.delete(key),
+});
+```
+
+### Production Examples
+
+See `lib/token-store-examples.ts` for copy-paste implementations:
+
+```typescript
+// Vercel KV
+import { createVercelKVStore } from './token-store-examples';
+export const tokenStore = createVercelKVStore();
+
+// PostgreSQL
+import { createPostgresStore } from './token-store-examples';
+export const tokenStore = createPostgresStore();
+
+// Redis
+import { createRedisStore } from './token-store-examples';
+export const tokenStore = createRedisStore();
+
+// Auto-select based on environment
+import { createAutoStore } from './token-store-examples';
+export const tokenStore = createAutoStore();
+```
+
+### Database Schema
+
+**PostgreSQL:**
+```sql
+CREATE TABLE oauth_tokens (
+  key VARCHAR(255) PRIMARY KEY,
+  value TEXT NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX idx_oauth_tokens_key ON oauth_tokens(key);
+```
+
+**SQLite:**
+```sql
+CREATE TABLE oauth_tokens (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL,
+  updated_at INTEGER DEFAULT (strftime('%s', 'now'))
+);
+```
+
+**Prisma:**
+```prisma
+model OAuthToken {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
+}
+```
+
+### Security Best Practices
+
+1. **Always encrypt tokens in production**
+   - Set `TOKEN_ENCRYPTION_KEY` environment variable
+   - Uses AES-256-GCM encryption
+   - Key should be 32 bytes (64 hex characters)
+
+2. **Use HTTPS everywhere**
+   - OAuth callbacks must use HTTPS
+   - All API routes should use HTTPS in production
+
+3. **Rotate encryption keys**
+   - Periodically generate new keys
+   - Re-encrypt existing tokens during rotation
+
+4. **Secure environment variables**
+   - Never commit `.env` files
+   - Use secrets management (Vercel, GitHub Secrets, etc.)
+   - Restrict access to production credentials
+
+5. **Token lifecycle**
+   - Tokens auto-refresh when expired (if refresh token available)
+   - Implement token revocation for user logout
+   - Clean up stale tokens periodically
+
+### Encryption Details
+
+Tokens are encrypted using AES-256-GCM:
+
+```typescript
+import { encryptToken, decryptToken } from './token-store';
+
+// Encrypt (automatic if TOKEN_ENCRYPTION_KEY is set)
+const encrypted = await encryptToken(token);
+// Returns: "encrypted:base64..." or plain JSON if no key
+
+// Decrypt
+const token = await decryptToken(encrypted);
+```
+
+### Troubleshooting
+
+**Tokens lost after restart:**
+- You're using in-memory storage (development mode)
+- Set `DATABASE_URL`, `KV_REST_API_URL`, or `REDIS_URL`
+
+**Cannot decrypt tokens:**
+- `TOKEN_ENCRYPTION_KEY` not set or changed
+- Key must be exactly 64 hex characters
+
+**Storage mode not detected:**
+- Check environment variable names (case-sensitive)
+- Verify credentials are valid
+
+**Check current mode:**
+```typescript
+import { getStorageMode, isEncryptionEnabled } from './token-store';
+
+console.log('Storage:', getStorageMode());
+console.log('Encrypted:', isEncryptionEnabled());
 ```
 
 ---

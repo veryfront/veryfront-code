@@ -24,8 +24,16 @@ export const COMMANDS: CommandRegistry = {
         description: "Service integrations for AI template (gmail,slack,github,calendar)",
       },
       {
+        flag: "-c, --config <file>",
+        description: "JSON config file for programmatic scaffolding",
+      },
+      {
         flag: "--skip-install",
         description: "Skip automatic dependency installation",
+      },
+      {
+        flag: "--skip-env-prompt",
+        description: "Skip environment variable prompts",
       },
     ],
     examples: [
@@ -34,10 +42,13 @@ export const COMMANDS: CommandRegistry = {
       "veryfront init my-agent --template ai --integrations gmail,slack",
       "veryfront init my-blog --template blog",
       "veryfront init my-docs --template docs",
+      "veryfront init --config project.json       # From config file",
     ],
     notes: [
       "Run without arguments for interactive wizard",
       "Using --integrations implies --template ai",
+      "Config file supports: name, template, integrations, skipInstall, skipEnvPrompt, env",
+      "Use env object to pre-fill credentials: { env: { GOOGLE_CLIENT_ID: '...', ... } }",
     ],
   },
   dev: {

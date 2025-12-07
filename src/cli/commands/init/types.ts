@@ -11,6 +11,13 @@ import type { FeatureName, IntegrationName } from "../../templates/types.ts";
 export type InitTemplate = "ai" | "app" | "blog" | "docs" | "minimal";
 
 /**
+ * Pre-filled environment variable values for programmatic scaffolding
+ */
+export interface EnvValues {
+  [key: string]: string;
+}
+
+/**
  * Options for initializing a new project
  */
 export interface InitOptions {
@@ -47,4 +54,11 @@ export interface InitOptions {
    * Using this implies template: "ai"
    */
   integrations?: IntegrationName[];
+
+  /**
+   * Pre-filled environment variable values.
+   * Use this to provide credentials programmatically (e.g., from CI/CD).
+   * Keys should match expected env var names like GOOGLE_CLIENT_ID, SLACK_CLIENT_SECRET, etc.
+   */
+  env?: EnvValues;
 }
