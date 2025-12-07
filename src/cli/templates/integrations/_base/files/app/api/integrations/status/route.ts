@@ -5,7 +5,7 @@
  * Used by the setup guide to show which services are connected.
  */
 
-import { tokenStore } from "../../../../lib/token-store.ts";
+import { tokenStore } from "../../../../lib/token-store";
 
 // Define available integrations - will be populated based on project config
 const INTEGRATIONS = [
@@ -23,12 +23,12 @@ export async function GET(_req: Request) {
 
   const statuses = await Promise.all(
     INTEGRATIONS.map(async (integration) => {
-      const token = await tokenStore.getToken(userId, integration.id);
+      const connected = await tokenStore.isConnected(userId, integration.id);
       return {
         id: integration.id,
         name: integration.name,
         icon: integration.icon,
-        connected: !!token,
+        connected,
         connectUrl: `/api/auth/${integration.id}`,
       };
     }),

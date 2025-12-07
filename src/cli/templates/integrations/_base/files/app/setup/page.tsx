@@ -719,10 +719,16 @@ export default function SetupPage() {
   async function fetchStatus() {
     try {
       const res = await fetch("/api/integrations/status");
+      if (!res.ok) {
+        console.error("Failed to fetch integration status:", res.status);
+        setIntegrations([]);
+        return;
+      }
       const data = await res.json();
-      setIntegrations(data.integrations);
+      setIntegrations(data.integrations || []);
     } catch (error) {
       console.error("Failed to fetch integration status:", error);
+      setIntegrations([]);
     } finally {
       setLoading(false);
     }
@@ -731,6 +737,10 @@ export default function SetupPage() {
   async function fetchTokenStorage() {
     try {
       const res = await fetch("/api/integrations/token-storage");
+      if (!res.ok) {
+        setTokenStorage({ mode: "memory", encrypted: false });
+        return;
+      }
       const data = await res.json();
       setTokenStorage(data);
     } catch {
