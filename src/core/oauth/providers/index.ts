@@ -31,18 +31,32 @@ export { atlassianServices, bitbucketConfig, confluenceConfig, jiraConfig } from
 // Common SaaS services
 export {
   airtableConfig,
+  asanaConfig,
+  boxConfig,
+  clickupConfig,
   commonServices,
   discordConfig,
   dropboxConfig,
   figmaConfig,
+  freshdeskConfig,
   githubConfig,
   gitlabConfig,
   hubspotConfig,
+  intercomConfig,
   linearConfig,
+  mailchimpConfig,
+  mondayConfig,
   notionConfig,
+  pipedriveConfig,
+  quickbooksConfig,
   salesforceConfig,
+  shopifyConfig,
   slackConfig,
+  trelloConfig,
   twitterConfig,
+  webexConfig,
+  xeroConfig,
+  zoomConfig,
 } from "./common.ts";
 
 // Re-export types

@@ -1,0 +1,134 @@
+{
+  "name": "drive",
+  "displayName": "Google Drive",
+  "icon": "drive.svg",
+  "description": "Access, search, and manage files and folders in Google Drive",
+  "auth": {
+    "type": "oauth2",
+    "provider": "google",
+    "authorizationUrl": "https://accounts.google.com/o/oauth2/v2/auth",
+    "tokenUrl": "https://oauth2.googleapis.com/token",
+    "scopes": [
+      "https://www.googleapis.com/auth/drive.readonly",
+      "https://www.googleapis.com/auth/drive.file"
+    ],
+    "callbackPath": "/api/auth/drive/callback",
+    "requiredApis": [
+      {
+        "name": "Google Drive API",
+        "enableUrl": "https://console.cloud.google.com/apis/library/drive.googleapis.com"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "GOOGLE_CLIENT_ID",
+      "description": "Google OAuth Client ID",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://console.cloud.google.com/apis/credentials"
+    },
+    {
+      "name": "GOOGLE_CLIENT_SECRET",
+      "description": "Google OAuth Client Secret",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://console.cloud.google.com/apis/credentials"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list-files",
+      "name": "List Files",
+      "description": "List files and folders in a Google Drive folder or root",
+      "requiresWrite": false
+    },
+    {
+      "id": "get-file",
+      "name": "Get File",
+      "description": "Get metadata and details about a specific file or folder",
+      "requiresWrite": false
+    },
+    {
+      "id": "search-files",
+      "name": "Search Files",
+      "description": "Search for files and folders using queries",
+      "requiresWrite": false
+    },
+    {
+      "id": "create-folder",
+      "name": "Create Folder",
+      "description": "Create a new folder in Google Drive",
+      "requiresWrite": true
+    },
+    {
+      "id": "upload-file",
+      "name": "Upload File",
+      "description": "Upload or create a file in Google Drive",
+      "requiresWrite": true
+    }
+  ],
+  "prompts": [
+    {
+      "id": "organize-files",
+      "title": "Organize Drive files",
+      "prompt": "Help me organize files in Google Drive by creating folders and moving files based on file types or names.",
+      "category": "productivity",
+      "icon": "folder"
+    },
+    {
+      "id": "find-document",
+      "title": "Find a document",
+      "prompt": "Search Google Drive for a specific file or document by name, type, or content.",
+      "category": "productivity",
+      "icon": "search"
+    },
+    {
+      "id": "backup-files",
+      "title": "Create backup structure",
+      "prompt": "Create a backup folder structure in Google Drive and organize important files.",
+      "category": "productivity",
+      "icon": "upload"
+    }
+  ],
+  "suggestedWith": ["gmail", "calendar", "sheets"],
+  "setupGuide": {
+    "title": "Google Drive Integration Setup",
+    "steps": [
+      {
+        "title": "Create a Google Cloud Project",
+        "description": "Go to the Google Cloud Console and create a new project",
+        "url": "https://console.cloud.google.com/projectcreate"
+      },
+      {
+        "title": "Enable the Google Drive API",
+        "description": "Navigate to APIs & Services > Library and enable the Google Drive API",
+        "url": "https://console.cloud.google.com/apis/library/drive.googleapis.com"
+      },
+      {
+        "title": "Configure OAuth Consent Screen",
+        "description": "Go to APIs & Services > OAuth consent screen. Set up your app name, user support email, and developer contact. Add scopes: drive.readonly and drive.file",
+        "url": "https://console.cloud.google.com/apis/credentials/consent"
+      },
+      {
+        "title": "Create OAuth 2.0 Client ID",
+        "description": "Go to APIs & Services > Credentials. Click 'Create Credentials' > 'OAuth client ID'. Choose 'Web application'. Add authorized redirect URI: http://localhost:3000/api/auth/drive/callback (adjust port/domain for production)",
+        "url": "https://console.cloud.google.com/apis/credentials"
+      },
+      {
+        "title": "Copy Credentials to .env",
+        "description": "Copy the Client ID and Client Secret to your .env file as GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET"
+      },
+      {
+        "title": "Test the Integration",
+        "description": "Start your application and navigate to /api/auth/drive to initiate the OAuth flow"
+      }
+    ],
+    "notes": [
+      "The same Google OAuth credentials work for all Google services (Gmail, Calendar, Sheets, Drive)",
+      "In production, make sure to add your production callback URL to authorized redirect URIs",
+      "The drive.file scope only grants access to files created by your app, use drive for full access",
+      "You may need to verify your app if you plan to distribute it publicly"
+    ]
+  }
+}

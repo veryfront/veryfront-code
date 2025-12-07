@@ -1,0 +1,85 @@
+{
+  "name": "freshdesk",
+  "displayName": "Freshdesk",
+  "icon": "freshdesk.svg",
+  "description": "Manage customer support tickets and contacts in Freshdesk",
+  "auth": {
+    "type": "oauth2",
+    "provider": "freshdesk",
+    "authorizationUrl": "https://accounts.freshworks.com/authorize",
+    "tokenUrl": "https://accounts.freshworks.com/oauth/token",
+    "scopes": ["freshdesk"],
+    "callbackPath": "/api/auth/freshdesk/callback",
+    "requiredApis": [
+      {
+        "name": "Freshdesk Developer Portal",
+        "enableUrl": "https://developers.freshdesk.com/apps/"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "FRESHDESK_CLIENT_ID",
+      "description": "Freshdesk OAuth Client ID",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://developers.freshdesk.com/api/"
+    },
+    {
+      "name": "FRESHDESK_CLIENT_SECRET",
+      "description": "Freshdesk OAuth Client Secret",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://developers.freshdesk.com/api/"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list-tickets",
+      "name": "List Tickets",
+      "description": "List support tickets from Freshdesk",
+      "requiresWrite": false
+    },
+    {
+      "id": "get-ticket",
+      "name": "Get Ticket",
+      "description": "Get details of a specific ticket",
+      "requiresWrite": false
+    },
+    {
+      "id": "create-ticket",
+      "name": "Create Ticket",
+      "description": "Create a new support ticket",
+      "requiresWrite": true
+    },
+    {
+      "id": "update-ticket",
+      "name": "Update Ticket",
+      "description": "Update an existing ticket",
+      "requiresWrite": true
+    },
+    {
+      "id": "list-contacts",
+      "name": "List Contacts",
+      "description": "List customer contacts in Freshdesk",
+      "requiresWrite": false
+    }
+  ],
+  "prompts": [
+    {
+      "id": "my-tickets",
+      "title": "Show my tickets",
+      "prompt": "List all open support tickets assigned to me with their priority and status.",
+      "category": "support",
+      "icon": "inbox"
+    },
+    {
+      "id": "create-ticket",
+      "title": "Create a ticket",
+      "prompt": "Create a new support ticket with a subject, description, priority, and contact.",
+      "category": "support",
+      "icon": "plus"
+    }
+  ],
+  "suggestedWith": ["slack", "intercom", "zendesk"]
+}

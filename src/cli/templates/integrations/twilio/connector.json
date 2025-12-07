@@ -1,0 +1,146 @@
+{
+  "name": "twilio",
+  "displayName": "Twilio",
+  "icon": "twilio.svg",
+  "description": "Send SMS, WhatsApp messages, make calls, and manage communications with Twilio",
+  "auth": {
+    "type": "api-key",
+    "keyName": "TWILIO_AUTH_TOKEN",
+    "headerName": "Authorization",
+    "headerPrefix": "Basic",
+    "requiredApis": [
+      {
+        "name": "Twilio API",
+        "enableUrl": "https://console.twilio.com/us1/develop/sms/overview"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "TWILIO_ACCOUNT_SID",
+      "description": "Twilio Account SID (starts with AC)",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://console.twilio.com/"
+    },
+    {
+      "name": "TWILIO_AUTH_TOKEN",
+      "description": "Twilio Auth Token",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://console.twilio.com/"
+    },
+    {
+      "name": "TWILIO_PHONE_NUMBER",
+      "description": "Your Twilio phone number (E.164 format: +1234567890)",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://console.twilio.com/us1/develop/phone-numbers/manage/incoming"
+    }
+  ],
+  "tools": [
+    {
+      "id": "send-sms",
+      "name": "Send SMS",
+      "description": "Send an SMS text message to a phone number",
+      "requiresWrite": true
+    },
+    {
+      "id": "send-whatsapp",
+      "name": "Send WhatsApp Message",
+      "description": "Send a WhatsApp message to a phone number",
+      "requiresWrite": true
+    },
+    {
+      "id": "list-messages",
+      "name": "List Messages",
+      "description": "List recent SMS and WhatsApp messages",
+      "requiresWrite": false
+    },
+    {
+      "id": "get-message",
+      "name": "Get Message",
+      "description": "Get details about a specific message",
+      "requiresWrite": false
+    },
+    {
+      "id": "list-calls",
+      "name": "List Calls",
+      "description": "List recent phone calls",
+      "requiresWrite": false
+    }
+  ],
+  "prompts": [
+    {
+      "id": "send-notification",
+      "title": "Send SMS notification",
+      "prompt": "Help me send an SMS notification to a customer about their order status.",
+      "category": "communication",
+      "icon": "message"
+    },
+    {
+      "id": "check-messages",
+      "title": "Check recent messages",
+      "prompt": "Show me the most recent SMS and WhatsApp messages from the last 24 hours.",
+      "category": "communication",
+      "icon": "inbox"
+    },
+    {
+      "id": "call-summary",
+      "title": "Call summary",
+      "prompt": "Give me a summary of recent calls including duration and status.",
+      "category": "analytics",
+      "icon": "phone"
+    },
+    {
+      "id": "whatsapp-outreach",
+      "title": "WhatsApp outreach",
+      "prompt": "Help me draft and send a WhatsApp message for customer outreach.",
+      "category": "communication",
+      "icon": "message"
+    }
+  ],
+  "suggestedWith": ["slack", "gmail", "calendar"],
+  "setupGuide": {
+    "title": "Setting up Twilio Integration",
+    "steps": [
+      {
+        "title": "Create a Twilio Account",
+        "description": "Sign up for a free Twilio account at https://www.twilio.com/try-twilio",
+        "url": "https://www.twilio.com/try-twilio"
+      },
+      {
+        "title": "Get Your Account SID and Auth Token",
+        "description": "Navigate to the Twilio Console Dashboard. Your Account SID and Auth Token are displayed on the main dashboard page. Click the eye icon to reveal your Auth Token.",
+        "url": "https://console.twilio.com/"
+      },
+      {
+        "title": "Get a Phone Number",
+        "description": "Go to Phone Numbers > Manage > Buy a number. Select a phone number with SMS and Voice capabilities. Trial accounts come with one free phone number.",
+        "url": "https://console.twilio.com/us1/develop/phone-numbers/manage/search"
+      },
+      {
+        "title": "Set Up WhatsApp (Optional)",
+        "description": "To send WhatsApp messages, join the Twilio Sandbox for WhatsApp. Go to Messaging > Try it out > Send a WhatsApp message. Follow the instructions to connect your WhatsApp to the sandbox.",
+        "url": "https://console.twilio.com/us1/develop/sms/try-it-out/whatsapp-learn"
+      },
+      {
+        "title": "Add Environment Variables",
+        "description": "Add your Twilio credentials to your .env file:\n- TWILIO_ACCOUNT_SID=ACxxxxx\n- TWILIO_AUTH_TOKEN=your_auth_token\n- TWILIO_PHONE_NUMBER=+1234567890",
+        "url": null
+      },
+      {
+        "title": "Test the Integration",
+        "description": "Try sending a test SMS using the send-sms tool. For trial accounts, you can only send messages to verified phone numbers. Add your phone number at Phone Numbers > Manage > Verified Caller IDs.",
+        "url": "https://console.twilio.com/us1/develop/phone-numbers/manage/verified"
+      }
+    ],
+    "notes": [
+      "Trial accounts have limitations: you can only send messages to verified phone numbers",
+      "All trial messages will be prefixed with 'Sent from your Twilio trial account'",
+      "WhatsApp messages require recipients to first opt-in by messaging your sandbox number",
+      "Phone numbers must be in E.164 format: +[country code][number] (e.g., +14155552671)",
+      "Upgrade your account to remove trial restrictions and enable production features"
+    ]
+  }
+}

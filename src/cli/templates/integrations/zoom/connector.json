@@ -1,0 +1,85 @@
+{
+  "name": "zoom",
+  "displayName": "Zoom",
+  "icon": "zoom.svg",
+  "description": "Manage video meetings and webinars in Zoom",
+  "auth": {
+    "type": "oauth2",
+    "provider": "zoom",
+    "authorizationUrl": "https://zoom.us/oauth/authorize",
+    "tokenUrl": "https://zoom.us/oauth/token",
+    "scopes": ["meeting:read", "meeting:write", "user:read"],
+    "callbackPath": "/api/auth/zoom/callback",
+    "requiredApis": [
+      {
+        "name": "Zoom Marketplace",
+        "enableUrl": "https://marketplace.zoom.us/develop/create"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "ZOOM_CLIENT_ID",
+      "description": "Zoom OAuth Client ID",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://developers.zoom.us/docs/integrations/oauth/"
+    },
+    {
+      "name": "ZOOM_CLIENT_SECRET",
+      "description": "Zoom OAuth Client Secret",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://developers.zoom.us/docs/integrations/oauth/"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list-meetings",
+      "name": "List Meetings",
+      "description": "List all scheduled meetings for a user",
+      "requiresWrite": false
+    },
+    {
+      "id": "get-meeting",
+      "name": "Get Meeting",
+      "description": "Get details of a specific meeting",
+      "requiresWrite": false
+    },
+    {
+      "id": "create-meeting",
+      "name": "Create Meeting",
+      "description": "Create a new Zoom meeting",
+      "requiresWrite": true
+    },
+    {
+      "id": "update-meeting",
+      "name": "Update Meeting",
+      "description": "Update an existing meeting",
+      "requiresWrite": true
+    },
+    {
+      "id": "delete-meeting",
+      "name": "Delete Meeting",
+      "description": "Delete a scheduled meeting",
+      "requiresWrite": true
+    }
+  ],
+  "prompts": [
+    {
+      "id": "my-meetings",
+      "title": "Show my meetings",
+      "prompt": "List all my upcoming Zoom meetings with their dates, times, and join URLs.",
+      "category": "productivity",
+      "icon": "video"
+    },
+    {
+      "id": "create-meeting",
+      "title": "Schedule a meeting",
+      "prompt": "Create a new Zoom meeting with a topic, time, duration, and password.",
+      "category": "productivity",
+      "icon": "plus"
+    }
+  ],
+  "suggestedWith": ["calendar", "slack", "notion"]
+}

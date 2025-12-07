@@ -1,0 +1,4 @@
+# Box OAuth Configuration
+# Get your credentials from https://app.box.com/developers/console
+BOX_CLIENT_ID=your-client-id
+BOX_CLIENT_SECRET=your-client-secret

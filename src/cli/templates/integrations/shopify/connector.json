@@ -1,0 +1,99 @@
+{
+  "name": "shopify",
+  "displayName": "Shopify",
+  "icon": "shopify.svg",
+  "description": "Manage products, orders, and customers in your Shopify store",
+  "auth": {
+    "type": "oauth2",
+    "provider": "shopify",
+    "authorizationUrl": "https://shop.myshopify.com/admin/oauth/authorize",
+    "tokenUrl": "https://shop.myshopify.com/admin/oauth/access_token",
+    "scopes": ["read_products", "write_products", "read_orders"],
+    "callbackPath": "/api/auth/shopify/callback",
+    "requiredApis": [
+      {
+        "name": "Shopify Admin API",
+        "enableUrl": "https://partners.shopify.com"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "SHOPIFY_CLIENT_ID",
+      "description": "Shopify OAuth Client ID (API Key)",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://shopify.dev/docs/apps/auth/oauth"
+    },
+    {
+      "name": "SHOPIFY_CLIENT_SECRET",
+      "description": "Shopify OAuth Client Secret (API Secret Key)",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://shopify.dev/docs/apps/auth/oauth"
+    },
+    {
+      "name": "SHOPIFY_SHOP_DOMAIN",
+      "description": "Your Shopify store domain (e.g., mystore.myshopify.com)",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://shopify.dev/docs/apps/auth/oauth"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list-products",
+      "name": "List Products",
+      "description": "List products in your Shopify store",
+      "requiresWrite": false
+    },
+    {
+      "id": "get-product",
+      "name": "Get Product",
+      "description": "Get details of a specific product",
+      "requiresWrite": false
+    },
+    {
+      "id": "list-orders",
+      "name": "List Orders",
+      "description": "List orders from your Shopify store",
+      "requiresWrite": false
+    },
+    {
+      "id": "get-order",
+      "name": "Get Order",
+      "description": "Get details of a specific order",
+      "requiresWrite": false
+    },
+    {
+      "id": "list-customers",
+      "name": "List Customers",
+      "description": "List customers in your Shopify store",
+      "requiresWrite": false
+    }
+  ],
+  "prompts": [
+    {
+      "id": "list-products",
+      "title": "Show my products",
+      "prompt": "List all products in my Shopify store with their prices and inventory levels.",
+      "category": "ecommerce",
+      "icon": "shopping-bag"
+    },
+    {
+      "id": "recent-orders",
+      "title": "Show recent orders",
+      "prompt": "Show me the most recent orders from my Shopify store with customer details and order totals.",
+      "category": "ecommerce",
+      "icon": "receipt"
+    },
+    {
+      "id": "customer-list",
+      "title": "Show my customers",
+      "prompt": "List all customers in my Shopify store with their contact information and order history.",
+      "category": "ecommerce",
+      "icon": "users"
+    }
+  ],
+  "suggestedWith": ["stripe", "mailchimp", "analytics"]
+}

@@ -1,0 +1,16 @@
+# Snowflake Integration
+# Get your account details from https://app.snowflake.com/
+
+# Your Snowflake account identifier (e.g., xy12345.us-east-1)
+SNOWFLAKE_ACCOUNT=xy12345.us-east-1
+
+# Authentication credentials
+SNOWFLAKE_USERNAME=your_username
+SNOWFLAKE_PASSWORD=your_password
+
+# Default warehouse for compute resources
+SNOWFLAKE_WAREHOUSE=COMPUTE_WH
+
+# Optional: Default database and schema
+SNOWFLAKE_DATABASE=your_database
+SNOWFLAKE_SCHEMA=PUBLIC

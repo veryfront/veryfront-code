@@ -1,0 +1,85 @@
+{
+  "name": "xero",
+  "displayName": "Xero",
+  "icon": "xero.svg",
+  "description": "Manage invoices, contacts, and accounting data in Xero",
+  "auth": {
+    "type": "oauth2",
+    "provider": "xero",
+    "authorizationUrl": "https://login.xero.com/identity/connect/authorize",
+    "tokenUrl": "https://identity.xero.com/connect/token",
+    "scopes": ["openid", "profile", "email", "accounting.transactions", "offline_access"],
+    "callbackPath": "/api/auth/xero/callback",
+    "requiredApis": [
+      {
+        "name": "Xero Developer Portal",
+        "enableUrl": "https://developer.xero.com/app/manage"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "XERO_CLIENT_ID",
+      "description": "Xero OAuth Client ID",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://developer.xero.com/documentation/guides/oauth2/overview"
+    },
+    {
+      "name": "XERO_CLIENT_SECRET",
+      "description": "Xero OAuth Client Secret",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://developer.xero.com/documentation/guides/oauth2/overview"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list-invoices",
+      "name": "List Invoices",
+      "description": "List invoices from Xero",
+      "requiresWrite": false
+    },
+    {
+      "id": "get-invoice",
+      "name": "Get Invoice",
+      "description": "Get details of a specific invoice",
+      "requiresWrite": false
+    },
+    {
+      "id": "create-invoice",
+      "name": "Create Invoice",
+      "description": "Create a new invoice in Xero",
+      "requiresWrite": true
+    },
+    {
+      "id": "list-contacts",
+      "name": "List Contacts",
+      "description": "List contacts from Xero",
+      "requiresWrite": false
+    },
+    {
+      "id": "get-contact",
+      "name": "Get Contact",
+      "description": "Get details of a specific contact",
+      "requiresWrite": false
+    }
+  ],
+  "prompts": [
+    {
+      "id": "recent-invoices",
+      "title": "Show recent invoices",
+      "prompt": "List the most recent invoices from Xero with their status and amounts.",
+      "category": "accounting",
+      "icon": "receipt"
+    },
+    {
+      "id": "create-invoice",
+      "title": "Create an invoice",
+      "prompt": "Create a new invoice in Xero with line items and contact details.",
+      "category": "accounting",
+      "icon": "plus"
+    }
+  ],
+  "suggestedWith": ["quickbooks", "stripe", "hubspot"]
+}

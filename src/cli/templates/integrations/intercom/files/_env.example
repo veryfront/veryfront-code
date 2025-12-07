@@ -1,0 +1,4 @@
+# Intercom OAuth Configuration
+# Get your credentials from https://developers.intercom.com/building-apps/
+INTERCOM_CLIENT_ID=your-client-id
+INTERCOM_CLIENT_SECRET=your-client-secret

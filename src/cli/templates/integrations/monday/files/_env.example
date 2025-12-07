@@ -1,0 +1,4 @@
+# Monday.com OAuth Configuration
+# Get your credentials from https://monday.com/developers/apps
+MONDAY_CLIENT_ID=your-client-id
+MONDAY_CLIENT_SECRET=your-client-secret

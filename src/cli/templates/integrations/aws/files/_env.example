@@ -1,0 +1,10 @@
+# AWS Integration Configuration
+
+# AWS Access Key ID (from IAM user)
+AWS_ACCESS_KEY_ID=your_access_key_id_here
+
+# AWS Secret Access Key (from IAM user)
+AWS_SECRET_ACCESS_KEY=your_secret_access_key_here
+
+# AWS Region (e.g., us-east-1, us-west-2, eu-west-1)
+AWS_REGION=us-east-1

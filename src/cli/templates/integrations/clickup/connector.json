@@ -1,0 +1,85 @@
+{
+  "name": "clickup",
+  "displayName": "ClickUp",
+  "icon": "clickup.svg",
+  "description": "Manage tasks, lists, and projects in ClickUp",
+  "auth": {
+    "type": "oauth2",
+    "provider": "clickup",
+    "authorizationUrl": "https://app.clickup.com/api",
+    "tokenUrl": "https://api.clickup.com/api/v2/oauth/token",
+    "scopes": [],
+    "callbackPath": "/api/auth/clickup/callback",
+    "requiredApis": [
+      {
+        "name": "ClickUp Developer Portal",
+        "enableUrl": "https://app.clickup.com/settings/apps"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "CLICKUP_CLIENT_ID",
+      "description": "ClickUp OAuth Client ID",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://clickup.com/api/developer-portal/authentication"
+    },
+    {
+      "name": "CLICKUP_CLIENT_SECRET",
+      "description": "ClickUp OAuth Client Secret",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://clickup.com/api/developer-portal/authentication"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list-tasks",
+      "name": "List Tasks",
+      "description": "List tasks in a list or assigned to a user",
+      "requiresWrite": false
+    },
+    {
+      "id": "get-task",
+      "name": "Get Task",
+      "description": "Get details of a specific task",
+      "requiresWrite": false
+    },
+    {
+      "id": "create-task",
+      "name": "Create Task",
+      "description": "Create a new task in a list",
+      "requiresWrite": true
+    },
+    {
+      "id": "update-task",
+      "name": "Update Task",
+      "description": "Update an existing task",
+      "requiresWrite": true
+    },
+    {
+      "id": "list-lists",
+      "name": "List Lists",
+      "description": "List all lists in a folder or space",
+      "requiresWrite": false
+    }
+  ],
+  "prompts": [
+    {
+      "id": "my-tasks",
+      "title": "Show my tasks",
+      "prompt": "List all tasks assigned to me in ClickUp with their due dates and priorities.",
+      "category": "productivity",
+      "icon": "list"
+    },
+    {
+      "id": "create-task",
+      "title": "Create a task",
+      "prompt": "Create a new task with a title, description, due date, and assignee.",
+      "category": "productivity",
+      "icon": "plus"
+    }
+  ],
+  "suggestedWith": ["slack", "notion", "calendar"]
+}

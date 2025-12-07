@@ -1,0 +1,96 @@
+{
+  "name": "mixpanel",
+  "displayName": "Mixpanel",
+  "icon": "mixpanel.svg",
+  "description": "Track events, analyze funnels, and understand user behavior with Mixpanel analytics",
+  "auth": {
+    "type": "api-key",
+    "keyName": "MIXPANEL_PROJECT_TOKEN",
+    "requiredApis": [
+      {
+        "name": "Mixpanel API",
+        "enableUrl": "https://mixpanel.com/settings/project"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "MIXPANEL_PROJECT_TOKEN",
+      "description": "Mixpanel Project Token for event tracking",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://docs.mixpanel.com/docs/tracking-methods/id-management/authentication"
+    },
+    {
+      "name": "MIXPANEL_API_SECRET",
+      "description": "Mixpanel API Secret for data export and query operations",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://developer.mixpanel.com/reference/authentication"
+    },
+    {
+      "name": "MIXPANEL_PROJECT_ID",
+      "description": "Mixpanel Project ID (found in project settings)",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://docs.mixpanel.com/docs/admin/organizations-projects/manage-projects"
+    }
+  ],
+  "tools": [
+    {
+      "id": "track-event",
+      "name": "Track Event",
+      "description": "Track a custom event in Mixpanel with properties",
+      "requiresWrite": true
+    },
+    {
+      "id": "query-events",
+      "name": "Query Events",
+      "description": "Query and export event data from Mixpanel",
+      "requiresWrite": false
+    },
+    {
+      "id": "get-funnel",
+      "name": "Get Funnel",
+      "description": "Retrieve funnel analysis data to understand conversion rates",
+      "requiresWrite": false
+    },
+    {
+      "id": "get-retention",
+      "name": "Get Retention",
+      "description": "Analyze user retention cohorts over time",
+      "requiresWrite": false
+    },
+    {
+      "id": "list-cohorts",
+      "name": "List Cohorts",
+      "description": "List all user cohorts defined in your Mixpanel project",
+      "requiresWrite": false
+    }
+  ],
+  "prompts": [
+    {
+      "id": "event-analysis",
+      "title": "Event analysis",
+      "prompt": "Show me the most important events tracked in my Mixpanel project over the last 7 days and their trends.",
+      "category": "analytics",
+      "icon": "chart"
+    },
+    {
+      "id": "funnel-performance",
+      "title": "Funnel performance",
+      "prompt": "Analyze my key conversion funnels and identify where users are dropping off.",
+      "category": "analytics",
+      "icon": "funnel"
+    },
+    {
+      "id": "retention-insights",
+      "title": "Retention insights",
+      "prompt": "Give me insights about user retention and cohort behavior over the past month.",
+      "category": "analytics",
+      "icon": "users"
+    }
+  ],
+  "suggestedWith": ["slack", "analytics", "monitoring"],
+  "SETUP_GUIDE": "# Mixpanel Integration Setup\n\n## Step 1: Get Your Project Token\n1. Log in to your Mixpanel account at https://mixpanel.com\n2. Navigate to your project settings\n3. Under 'Project Settings', find your **Project Token**\n4. Copy the token and add it as `MIXPANEL_PROJECT_TOKEN` in your .env file\n\n## Step 2: Get Your API Secret\n1. In Mixpanel, go to Settings > Project Settings\n2. Scroll to 'Service Accounts' section\n3. Create a new Service Account or use an existing one\n4. Copy the **API Secret** and add it as `MIXPANEL_API_SECRET` in your .env file\n\n## Step 3: Get Your Project ID\n1. In Mixpanel project settings URL, your Project ID is the number in the URL\n2. Format: https://mixpanel.com/project/YOUR_PROJECT_ID/settings\n3. Copy this ID and add it as `MIXPANEL_PROJECT_ID` in your .env file\n\n## Step 4: Set Up Environment Variables\nAdd these to your `.env` file:\n```\nMIXPANEL_PROJECT_TOKEN=your_project_token_here\nMIXPANEL_API_SECRET=your_api_secret_here\nMIXPANEL_PROJECT_ID=your_project_id_here\n```\n\n## Step 5: Test the Integration\nRun your application and try tracking a test event to verify the setup is working correctly.\n\n## Important Notes\n- **Project Token** is used for tracking events (ingestion)\n- **API Secret** is used for querying and exporting data\n- Keep both credentials secure and never commit them to version control\n- For production deployments, use environment variables or secure secret management\n\n## Useful Resources\n- [Mixpanel API Documentation](https://developer.mixpanel.com/reference/overview)\n- [Event Tracking Guide](https://docs.mixpanel.com/docs/tracking-methods/sdks)\n- [Query API Guide](https://developer.mixpanel.com/reference/query-api)"
+}

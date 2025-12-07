@@ -1,0 +1,85 @@
+{
+  "name": "pipedrive",
+  "displayName": "Pipedrive",
+  "icon": "pipedrive.svg",
+  "description": "Manage deals, contacts, and sales pipeline in Pipedrive",
+  "auth": {
+    "type": "oauth2",
+    "provider": "pipedrive",
+    "authorizationUrl": "https://oauth.pipedrive.com/oauth/authorize",
+    "tokenUrl": "https://oauth.pipedrive.com/oauth/token",
+    "scopes": [],
+    "callbackPath": "/api/auth/pipedrive/callback",
+    "requiredApis": [
+      {
+        "name": "Pipedrive Developer Hub",
+        "enableUrl": "https://developers.pipedrive.com/docs/marketplace"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "PIPEDRIVE_CLIENT_ID",
+      "description": "Pipedrive OAuth Client ID",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://developers.pipedrive.com/docs/marketplace/oauth"
+    },
+    {
+      "name": "PIPEDRIVE_CLIENT_SECRET",
+      "description": "Pipedrive OAuth Client Secret",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://developers.pipedrive.com/docs/marketplace/oauth"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list-deals",
+      "name": "List Deals",
+      "description": "List deals in the sales pipeline",
+      "requiresWrite": false
+    },
+    {
+      "id": "get-deal",
+      "name": "Get Deal",
+      "description": "Get details of a specific deal",
+      "requiresWrite": false
+    },
+    {
+      "id": "create-deal",
+      "name": "Create Deal",
+      "description": "Create a new deal in the pipeline",
+      "requiresWrite": true
+    },
+    {
+      "id": "update-deal",
+      "name": "Update Deal",
+      "description": "Update an existing deal",
+      "requiresWrite": true
+    },
+    {
+      "id": "list-persons",
+      "name": "List Persons",
+      "description": "List contacts/persons in Pipedrive",
+      "requiresWrite": false
+    }
+  ],
+  "prompts": [
+    {
+      "id": "my-deals",
+      "title": "Show my deals",
+      "prompt": "List all deals in my Pipedrive pipeline with their values and stages.",
+      "category": "sales",
+      "icon": "currency"
+    },
+    {
+      "id": "create-deal",
+      "title": "Create a deal",
+      "prompt": "Create a new deal with a title, value, and contact person.",
+      "category": "sales",
+      "icon": "plus"
+    }
+  ],
+  "suggestedWith": ["hubspot", "salesforce", "slack"]
+}

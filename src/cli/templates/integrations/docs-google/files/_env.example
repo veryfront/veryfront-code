@@ -1,0 +1,8 @@
+# Google Docs Integration
+# Create OAuth credentials at https://console.cloud.google.com/apis/credentials
+# Make sure to enable:
+# - Google Docs API: https://console.cloud.google.com/apis/library/docs.googleapis.com
+# - Google Drive API: https://console.cloud.google.com/apis/library/drive.googleapis.com
+
+GOOGLE_CLIENT_ID=your_client_id_here
+GOOGLE_CLIENT_SECRET=your_client_secret_here

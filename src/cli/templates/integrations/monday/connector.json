@@ -1,0 +1,85 @@
+{
+  "name": "monday",
+  "displayName": "Monday.com",
+  "icon": "monday.svg",
+  "description": "Manage projects, tasks, and workflows in Monday.com",
+  "auth": {
+    "type": "oauth2",
+    "provider": "monday",
+    "authorizationUrl": "https://auth.monday.com/oauth2/authorize",
+    "tokenUrl": "https://auth.monday.com/oauth2/token",
+    "scopes": ["me:read", "boards:read", "boards:write"],
+    "callbackPath": "/api/auth/monday/callback",
+    "requiredApis": [
+      {
+        "name": "Monday.com Developers",
+        "enableUrl": "https://monday.com/developers/apps"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "MONDAY_CLIENT_ID",
+      "description": "Monday.com OAuth Client ID",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://developer.monday.com/apps/docs/oauth"
+    },
+    {
+      "name": "MONDAY_CLIENT_SECRET",
+      "description": "Monday.com OAuth Client Secret",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://developer.monday.com/apps/docs/oauth"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list-boards",
+      "name": "List Boards",
+      "description": "List all boards in the workspace",
+      "requiresWrite": false
+    },
+    {
+      "id": "list-items",
+      "name": "List Items",
+      "description": "List items in a board",
+      "requiresWrite": false
+    },
+    {
+      "id": "get-item",
+      "name": "Get Item",
+      "description": "Get details of a specific item",
+      "requiresWrite": false
+    },
+    {
+      "id": "create-item",
+      "name": "Create Item",
+      "description": "Create a new item in a board",
+      "requiresWrite": true
+    },
+    {
+      "id": "update-item",
+      "name": "Update Item",
+      "description": "Update an existing item",
+      "requiresWrite": true
+    }
+  ],
+  "prompts": [
+    {
+      "id": "my-items",
+      "title": "Show my items",
+      "prompt": "List all items assigned to me in Monday.com with their status and due dates.",
+      "category": "productivity",
+      "icon": "list"
+    },
+    {
+      "id": "create-item",
+      "title": "Create an item",
+      "prompt": "Create a new item with a name, status, and assign it to someone.",
+      "category": "productivity",
+      "icon": "plus"
+    }
+  ],
+  "suggestedWith": ["slack", "notion", "asana"]
+}

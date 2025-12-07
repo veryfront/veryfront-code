@@ -1,0 +1,85 @@
+{
+  "name": "trello",
+  "displayName": "Trello",
+  "icon": "trello.svg",
+  "description": "Manage boards, lists, and cards in Trello",
+  "auth": {
+    "type": "oauth2",
+    "provider": "trello",
+    "authorizationUrl": "https://trello.com/1/authorize",
+    "tokenUrl": "https://trello.com/1/OAuthGetAccessToken",
+    "scopes": ["read", "write"],
+    "callbackPath": "/api/auth/trello/callback",
+    "requiredApis": [
+      {
+        "name": "Trello Developer Portal",
+        "enableUrl": "https://trello.com/app-key"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "TRELLO_CLIENT_ID",
+      "description": "Trello API Key",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://developer.atlassian.com/cloud/trello/guides/rest-api/authorization/"
+    },
+    {
+      "name": "TRELLO_CLIENT_SECRET",
+      "description": "Trello OAuth Secret",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://developer.atlassian.com/cloud/trello/guides/rest-api/authorization/"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list-boards",
+      "name": "List Boards",
+      "description": "List all boards accessible to the user",
+      "requiresWrite": false
+    },
+    {
+      "id": "list-cards",
+      "name": "List Cards",
+      "description": "List cards in a board or list",
+      "requiresWrite": false
+    },
+    {
+      "id": "get-card",
+      "name": "Get Card",
+      "description": "Get details of a specific card",
+      "requiresWrite": false
+    },
+    {
+      "id": "create-card",
+      "name": "Create Card",
+      "description": "Create a new card in a list",
+      "requiresWrite": true
+    },
+    {
+      "id": "update-card",
+      "name": "Update Card",
+      "description": "Update an existing card",
+      "requiresWrite": true
+    }
+  ],
+  "prompts": [
+    {
+      "id": "my-boards",
+      "title": "Show my boards",
+      "prompt": "List all my Trello boards with their lists and card counts.",
+      "category": "productivity",
+      "icon": "grid"
+    },
+    {
+      "id": "create-card",
+      "title": "Create a card",
+      "prompt": "Create a new card with a title, description, and due date.",
+      "category": "productivity",
+      "icon": "plus"
+    }
+  ],
+  "suggestedWith": ["slack", "asana", "notion"]
+}

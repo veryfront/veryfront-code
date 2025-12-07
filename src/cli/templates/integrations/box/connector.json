@@ -1,0 +1,85 @@
+{
+  "name": "box",
+  "displayName": "Box",
+  "icon": "box.svg",
+  "description": "Access and manage files, folders, and content in Box",
+  "auth": {
+    "type": "oauth2",
+    "provider": "box",
+    "authorizationUrl": "https://account.box.com/api/oauth2/authorize",
+    "tokenUrl": "https://api.box.com/oauth2/token",
+    "scopes": ["root_readwrite"],
+    "callbackPath": "/api/auth/box/callback",
+    "requiredApis": [
+      {
+        "name": "Box Developer Console",
+        "enableUrl": "https://app.box.com/developers/console"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "BOX_CLIENT_ID",
+      "description": "Box OAuth Client ID",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://developer.box.com/guides/authentication/oauth2/"
+    },
+    {
+      "name": "BOX_CLIENT_SECRET",
+      "description": "Box OAuth Client Secret",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://developer.box.com/guides/authentication/oauth2/"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list-files",
+      "name": "List Files",
+      "description": "List files and folders in a Box folder",
+      "requiresWrite": false
+    },
+    {
+      "id": "get-file",
+      "name": "Get File",
+      "description": "Get details of a specific file or folder",
+      "requiresWrite": false
+    },
+    {
+      "id": "search-files",
+      "name": "Search Files",
+      "description": "Search for files and folders in Box",
+      "requiresWrite": false
+    },
+    {
+      "id": "create-folder",
+      "name": "Create Folder",
+      "description": "Create a new folder in Box",
+      "requiresWrite": true
+    },
+    {
+      "id": "upload-file",
+      "name": "Upload File",
+      "description": "Upload a file to Box",
+      "requiresWrite": true
+    }
+  ],
+  "prompts": [
+    {
+      "id": "my-files",
+      "title": "Show my files",
+      "prompt": "List all files in my Box root folder with their details.",
+      "category": "productivity",
+      "icon": "folder"
+    },
+    {
+      "id": "search-content",
+      "title": "Search for files",
+      "prompt": "Search for files in Box by name or content.",
+      "category": "productivity",
+      "icon": "search"
+    }
+  ],
+  "suggestedWith": ["dropbox", "onedrive", "notion"]
+}

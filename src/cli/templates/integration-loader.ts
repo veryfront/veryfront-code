@@ -54,6 +54,29 @@ export const AVAILABLE_INTEGRATIONS: IntegrationName[] = [
   "sentry",
   "posthog",
   "zendesk",
+  // New integrations
+  "asana",
+  "monday",
+  "zoom",
+  "trello",
+  "box",
+  "shopify",
+  "clickup",
+  "intercom",
+  "pipedrive",
+  "mailchimp",
+  "webex",
+  "freshdesk",
+  "quickbooks",
+  "xero",
+  // 50+ integrations
+  "drive",
+  "docs-google",
+  "snowflake",
+  "mixpanel",
+  "twilio",
+  "anthropic",
+  "aws",
 ];
 
 /**

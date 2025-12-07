@@ -1,0 +1,4 @@
+# Asana OAuth Configuration
+# Get your credentials from https://app.asana.com/0/developer-console
+ASANA_CLIENT_ID=your-client-id
+ASANA_CLIENT_SECRET=your-client-secret

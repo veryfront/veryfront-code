@@ -1,0 +1,72 @@
+{
+  "name": "aws",
+  "displayName": "Amazon Web Services",
+  "description": "Integration with AWS services including S3, EC2, and Lambda",
+  "version": "1.0.0",
+  "auth": {
+    "type": "api-key",
+    "fields": [
+      {
+        "name": "accessKeyId",
+        "label": "AWS Access Key ID",
+        "type": "string",
+        "required": true,
+        "envVar": "AWS_ACCESS_KEY_ID"
+      },
+      {
+        "name": "secretAccessKey",
+        "label": "AWS Secret Access Key",
+        "type": "password",
+        "required": true,
+        "envVar": "AWS_SECRET_ACCESS_KEY"
+      },
+      {
+        "name": "region",
+        "label": "AWS Region",
+        "type": "string",
+        "required": true,
+        "default": "us-east-1",
+        "envVar": "AWS_REGION"
+      }
+    ]
+  },
+  "envVars": [
+    "AWS_ACCESS_KEY_ID",
+    "AWS_SECRET_ACCESS_KEY",
+    "AWS_REGION"
+  ],
+  "tools": [
+    {
+      "name": "list-s3-buckets",
+      "description": "List all S3 buckets in your AWS account",
+      "file": "ai/tools/list-s3-buckets.ts"
+    },
+    {
+      "name": "list-s3-objects",
+      "description": "List objects in a specific S3 bucket",
+      "file": "ai/tools/list-s3-objects.ts"
+    },
+    {
+      "name": "get-s3-object",
+      "description": "Get the contents of an object from S3",
+      "file": "ai/tools/get-s3-object.ts"
+    },
+    {
+      "name": "list-ec2-instances",
+      "description": "List EC2 instances in your AWS account",
+      "file": "ai/tools/list-ec2-instances.ts"
+    },
+    {
+      "name": "list-lambda-functions",
+      "description": "List Lambda functions in your AWS account",
+      "file": "ai/tools/list-lambda-functions.ts"
+    }
+  ],
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.600.0",
+    "@aws-sdk/client-ec2": "^3.600.0",
+    "@aws-sdk/client-lambda": "^3.600.0",
+    "@aws-sdk/credential-providers": "^3.600.0"
+  },
+  "SETUP_GUIDE": "# AWS Integration Setup Guide\n\n## Step 1: Create an IAM User\n\n1. Log in to the [AWS Console](https://console.aws.amazon.com/)\n2. Navigate to **IAM** (Identity and Access Management)\n3. Click on **Users** in the left sidebar\n4. Click **Add users**\n5. Enter a username (e.g., `veryfront-integration`)\n6. Select **Access key - Programmatic access**\n7. Click **Next: Permissions**\n\n## Step 2: Attach Permissions\n\nYou can either:\n\n### Option A: Create a Custom Policy (Recommended)\n\n1. Click **Attach existing policies directly**\n2. Click **Create policy**\n3. Choose the **JSON** tab\n4. Paste the following policy:\n\n```json\n{\n  \"Version\": \"2012-10-17\",\n  \"Statement\": [\n    {\n      \"Effect\": \"Allow\",\n      \"Action\": [\n        \"s3:ListAllMyBuckets\",\n        \"s3:ListBucket\",\n        \"s3:GetObject\",\n        \"ec2:DescribeInstances\",\n        \"lambda:ListFunctions\"\n      ],\n      \"Resource\": \"*\"\n    }\n  ]\n}\n```\n\n5. Click **Review policy**\n6. Name it `VeryfrontAWSIntegration`\n7. Click **Create policy**\n8. Go back to the user creation tab and refresh the policy list\n9. Search for and select `VeryfrontAWSIntegration`\n\n### Option B: Use AWS Managed Policies\n\nAttach these managed policies:\n- `AmazonS3ReadOnlyAccess`\n- `AmazonEC2ReadOnlyAccess`\n- `AWSLambdaReadOnlyAccess`\n\n**Note:** Option B provides broader read access than Option A.\n\n## Step 3: Complete User Creation\n\n1. Click **Next: Tags** (optional)\n2. Click **Next: Review**\n3. Click **Create user**\n4. **Important:** Save your credentials:\n   - **Access Key ID**\n   - **Secret Access Key**\n   \n   ⚠️ This is the only time you'll be able to see the Secret Access Key!\n\n## Step 4: Configure Environment Variables\n\n1. Copy the `.env.example` file to `.env.local`\n2. Add your AWS credentials:\n\n```env\nAWS_ACCESS_KEY_ID=your_access_key_id_here\nAWS_SECRET_ACCESS_KEY=your_secret_access_key_here\nAWS_REGION=us-east-1\n```\n\n3. Replace `your_access_key_id_here` and `your_secret_access_key_here` with your actual credentials\n4. Update `AWS_REGION` to your preferred region (e.g., `us-west-2`, `eu-west-1`)\n\n## Step 5: Install Dependencies\n\nRun the following command to install required AWS SDK packages:\n\n```bash\nnpm install @aws-sdk/client-s3 @aws-sdk/client-ec2 @aws-sdk/client-lambda @aws-sdk/credential-providers\n```\n\n## Step 6: Test Your Integration\n\nYou can test your integration by using any of the available tools:\n\n- `list-s3-buckets` - List all your S3 buckets\n- `list-s3-objects` - List objects in a specific bucket\n- `get-s3-object` - Retrieve an object from S3\n- `list-ec2-instances` - List your EC2 instances\n- `list-lambda-functions` - List your Lambda functions\n\n## Security Best Practices\n\n1. **Never commit your `.env.local` file** - It's already in `.gitignore`\n2. **Use the principle of least privilege** - Only grant permissions needed\n3. **Rotate credentials regularly** - Update your access keys periodically\n4. **Use different credentials for different environments** - Dev, staging, and production\n5. **Consider using AWS IAM Roles** - For production environments, use IAM roles with EC2/ECS/Lambda\n\n## Troubleshooting\n\n### \"Access Denied\" Errors\n\n- Verify your IAM user has the correct permissions\n- Check that the region in your `.env.local` matches where your resources are located\n\n### \"Invalid Access Key\" Errors\n\n- Double-check your `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`\n- Ensure there are no extra spaces or newlines in your credentials\n- Verify the IAM user is active and the access key hasn't been deleted\n\n### Region Issues\n\n- Some resources are region-specific (EC2, Lambda)\n- S3 bucket listing is global, but object access respects bucket regions\n- Update `AWS_REGION` to match where your resources are located\n\n## Additional Resources\n\n- [AWS IAM User Guide](https://docs.aws.amazon.com/IAM/latest/UserGuide/)\n- [AWS SDK for JavaScript v3](https://docs.aws.amazon.com/AWSJavaScriptSDK/v3/latest/)\n- [AWS Security Best Practices](https://aws.amazon.com/security/best-practices/)"
+}
