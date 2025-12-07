@@ -4,7 +4,6 @@ import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import { transformToESM } from "@veryfront/transforms/esm/transform-core.ts";
 import type { TransformOptions } from "@veryfront/transforms/esm/types.ts";
 import { parseLocalImports } from "@veryfront/transforms/esm/import-parser.ts";
-import { isNodeRuntime } from "../../platform/compat/runtime.ts";
 import { createFileSystem } from "../../platform/compat/fs.ts";
 import { createError, toError } from "../../core/errors/veryfront-error.ts";
 
@@ -15,10 +14,12 @@ export interface SSRModuleLoaderOptions {
   dev: boolean;
 }
 
+// Shared cache across all SSRModuleLoader instances (persists across requests)
+const globalModuleCache = new Map<string, string>(); // absolutePath -> tempPath
+const globalInProgress = new Set<string>();
+const globalTmpDirs = new Map<string, string>(); // projectDir -> tmpDir
+
 export class SSRModuleLoader {
-  private loadedModules = new Map<string, string>();
-  private inProgress = new Set<string>();
-  private tmpDir: string | null = null;
   private fs = createFileSystem();
 
   constructor(private options: SSRModuleLoaderOptions) {}
@@ -29,7 +30,7 @@ export class SSRModuleLoader {
   ): Promise<React.ComponentType<Record<string, unknown>>> {
     await this.transformWithDependencies(filePath, source);
 
-    const tempPath = this.loadedModules.get(filePath);
+    const tempPath = globalModuleCache.get(filePath);
     if (!tempPath) {
       throw toError(createError({
         type: "build",
@@ -48,15 +49,17 @@ export class SSRModuleLoader {
     filePath: string,
     source?: string,
   ): Promise<void> {
-    if (this.loadedModules.has(filePath)) {
+    // Check global cache first (shared across requests)
+    if (globalModuleCache.has(filePath)) {
       return;
     }
 
-    if (this.inProgress.has(filePath)) {
+    // Prevent circular imports
+    if (globalInProgress.has(filePath)) {
       return;
     }
 
-    this.inProgress.add(filePath);
+    globalInProgress.add(filePath);
 
     try {
       const code = source ?? await this.fs.readTextFile(filePath);
@@ -90,9 +93,9 @@ export class SSRModuleLoader {
       await this.fs.mkdir(tempDir, { recursive: true });
       await this.fs.writeTextFile(tempPath, transformed);
 
-      this.loadedModules.set(filePath, tempPath);
+      globalModuleCache.set(filePath, tempPath);
     } finally {
-      this.inProgress.delete(filePath);
+      globalInProgress.delete(filePath);
     }
   }
 
@@ -110,28 +113,21 @@ export class SSRModuleLoader {
   }
 
   private async ensureTmpDir(): Promise<string> {
-    if (this.tmpDir) {
-      return this.tmpDir;
+    const projectDir = this.options.projectDir;
+
+    // Check global cache first (shared across loader instances for same project)
+    const existingDir = globalTmpDirs.get(projectDir);
+    if (existingDir) {
+      return existingDir;
     }
 
-    const isNode = isNodeRuntime();
+    // Use node_modules/.cache for consistent temp directory across Node/Deno
+    // This avoids temp dir leaks and enables cross-request caching
+    const tmpDir = join(projectDir, "node_modules", ".cache", "veryfront-ssr");
 
-    if (isNode) {
-      this.tmpDir = join(
-        this.options.projectDir,
-        "node_modules",
-        ".cache",
-        "veryfront-ssr",
-      );
-    } else {
-      const os = await import("node:os");
-      const tmpBase = os.tmpdir();
-      const tmpName = `vf-ssr-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
-      this.tmpDir = join(tmpBase, tmpName);
-    }
-
-    await this.fs.mkdir(this.tmpDir, { recursive: true });
-    return this.tmpDir;
+    await this.fs.mkdir(tmpDir, { recursive: true });
+    globalTmpDirs.set(projectDir, tmpDir);
+    return tmpDir;
   }
 
   private extractComponent(
