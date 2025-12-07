@@ -172,24 +172,52 @@ export async function decryptToken(encrypted: string): Promise<OAuthToken | null
   }
 }
 
-/** Get encryption key from environment */
+// Auto-generated encryption key storage (persists for the session)
+const AUTO_KEY_STORAGE = "__veryfront_auto_encryption_key__";
+// deno-lint-ignore no-explicit-any
+const globalStore = globalThis as any;
+
+/**
+ * Generate a cryptographically secure encryption key
+ * Returns a 64-character hex string (32 bytes)
+ */
+export function generateEncryptionKey(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(32));
+  return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+/** Get encryption key from environment or auto-generate for development */
 function getEncryptionKey(): Uint8Array | null {
   const keyHex = typeof process !== "undefined"
     ? process.env?.TOKEN_ENCRYPTION_KEY
     // deno-lint-ignore no-explicit-any
     : (globalThis as any).Deno?.env?.get("TOKEN_ENCRYPTION_KEY");
 
-  if (!keyHex) return null;
+  if (keyHex) {
+    // Convert hex string to Uint8Array (32 bytes = 64 hex chars)
+    if (keyHex.length !== 64) {
+      console.error("[Token Store] TOKEN_ENCRYPTION_KEY must be 64 hex characters (32 bytes)");
+      return null;
+    }
 
-  // Convert hex string to Uint8Array (32 bytes = 64 hex chars)
-  if (keyHex.length !== 64) {
-    console.error("[Token Store] TOKEN_ENCRYPTION_KEY must be 64 hex characters (32 bytes)");
-    return null;
+    const key = new Uint8Array(32);
+    for (let i = 0; i < 32; i++) {
+      key[i] = parseInt(keyHex.slice(i * 2, i * 2 + 2), 16);
+    }
+    return key;
   }
 
+  // Auto-generate key for development (persists in memory for the session)
+  // This ensures tokens remain encrypted even in dev mode
+  if (!globalStore[AUTO_KEY_STORAGE]) {
+    globalStore[AUTO_KEY_STORAGE] = generateEncryptionKey();
+    console.log("[Token Store] Auto-generated encryption key for this session");
+  }
+
+  const autoKey = globalStore[AUTO_KEY_STORAGE] as string;
   const key = new Uint8Array(32);
   for (let i = 0; i < 32; i++) {
-    key[i] = parseInt(keyHex.slice(i * 2, i * 2 + 2), 16);
+    key[i] = parseInt(autoKey.slice(i * 2, i * 2 + 2), 16);
   }
   return key;
 }
@@ -225,8 +253,6 @@ export function isEncryptionEnabled(): boolean {
 
 // Use globalThis to share across esbuild bundles (each API route is bundled separately)
 const TOKENS_KEY = "__veryfront_oauth_tokens__";
-// deno-lint-ignore no-explicit-any
-const globalStore = globalThis as any;
 const tokens: Map<string, OAuthToken> = globalStore[TOKENS_KEY] ||= new Map<string, OAuthToken>();
 
 function getKey(userId: string, service: string): string {
