@@ -8,6 +8,32 @@ import { assertEquals, assertExists } from "std/assert/mod.ts";
 import { describe, it } from "std/testing/bdd.ts";
 import { LibModulesHandler } from "./lib-modules-handler.ts";
 
+/** Helper to get pattern as RegExp (throws if not RegExp) */
+function getRegExpPattern(handler: LibModulesHandler, index: number): RegExp {
+  const patterns = handler.metadata.patterns;
+  if (!patterns || patterns.length === 0) {
+    throw new Error("No patterns defined");
+  }
+  const pattern = patterns[index]?.pattern;
+  if (!(pattern instanceof RegExp)) {
+    throw new Error(`Pattern at index ${index} is not a RegExp`);
+  }
+  return pattern;
+}
+
+/** Helper to find pattern by method */
+function findPatternByMethod(handler: LibModulesHandler, method: string): RegExp {
+  const patterns = handler.metadata.patterns;
+  if (!patterns) {
+    throw new Error("No patterns defined");
+  }
+  const found = patterns.find((p) => p.method === method);
+  if (!found || !(found.pattern instanceof RegExp)) {
+    throw new Error(`Pattern for method ${method} not found or not a RegExp`);
+  }
+  return found.pattern;
+}
+
 describe("LibModulesHandler", () => {
   describe("metadata", () => {
     it("should have correct handler name", () => {
@@ -23,60 +49,55 @@ describe("LibModulesHandler", () => {
 
     it("should have two patterns (GET and HEAD)", () => {
       const handler = new LibModulesHandler();
-      assertEquals(handler.metadata.patterns.length, 2);
+      assertExists(handler.metadata.patterns);
+      assertEquals(handler.metadata.patterns!.length, 2);
     });
 
     it("should match GET requests to /_veryfront/lib/", () => {
       const handler = new LibModulesHandler();
-      const getPattern = handler.metadata.patterns.find((p) => p.method === "GET");
+      const pattern = findPatternByMethod(handler, "GET");
 
-      assertExists(getPattern);
-      assertEquals(getPattern.pattern.test("/_veryfront/lib/ai/react.js"), true);
-      assertEquals(getPattern.pattern.test("/_veryfront/lib/ai/components.js"), true);
-      assertEquals(getPattern.pattern.test("/_veryfront/lib/ai/primitives.js"), true);
+      assertEquals(pattern.test("/_veryfront/lib/ai/react.js"), true);
+      assertEquals(pattern.test("/_veryfront/lib/ai/components.js"), true);
+      assertEquals(pattern.test("/_veryfront/lib/ai/primitives.js"), true);
     });
 
     it("should match HEAD requests to /_veryfront/lib/", () => {
       const handler = new LibModulesHandler();
-      const headPattern = handler.metadata.patterns.find((p) => p.method === "HEAD");
+      const pattern = findPatternByMethod(handler, "HEAD");
 
-      assertExists(headPattern);
-      assertEquals(headPattern.pattern.test("/_veryfront/lib/ai/react.js"), true);
+      assertEquals(pattern.test("/_veryfront/lib/ai/react.js"), true);
     });
 
     it("should not match other paths", () => {
       const handler = new LibModulesHandler();
-      const getPattern = handler.metadata.patterns.find((p) => p.method === "GET");
+      const pattern = findPatternByMethod(handler, "GET");
 
-      assertExists(getPattern);
-      assertEquals(getPattern.pattern.test("/api/users"), false);
-      assertEquals(getPattern.pattern.test("/veryfront/lib/ai/react.js"), false);
-      assertEquals(getPattern.pattern.test("/"), false);
+      assertEquals(pattern.test("/api/users"), false);
+      assertEquals(pattern.test("/veryfront/lib/ai/react.js"), false);
+      assertEquals(pattern.test("/"), false);
     });
   });
 
   describe("ALLOWED_MODULES whitelist", () => {
     it("should allow ai/react.js path pattern", () => {
       const handler = new LibModulesHandler();
-      const pattern = handler.metadata.patterns[0]?.pattern;
+      const pattern = getRegExpPattern(handler, 0);
 
-      assertExists(pattern);
       assertEquals(pattern.test("/_veryfront/lib/ai/react.js"), true);
     });
 
     it("should allow ai/components.js path pattern", () => {
       const handler = new LibModulesHandler();
-      const pattern = handler.metadata.patterns[0]?.pattern;
+      const pattern = getRegExpPattern(handler, 0);
 
-      assertExists(pattern);
       assertEquals(pattern.test("/_veryfront/lib/ai/components.js"), true);
     });
 
     it("should allow ai/primitives.js path pattern", () => {
       const handler = new LibModulesHandler();
-      const pattern = handler.metadata.patterns[0]?.pattern;
+      const pattern = getRegExpPattern(handler, 0);
 
-      assertExists(pattern);
       assertEquals(pattern.test("/_veryfront/lib/ai/primitives.js"), true);
     });
   });
@@ -84,9 +105,8 @@ describe("LibModulesHandler", () => {
   describe("URL pattern matching", () => {
     it("should match lib module path prefix", () => {
       const handler = new LibModulesHandler();
-      const pattern = handler.metadata.patterns[0]?.pattern;
+      const pattern = getRegExpPattern(handler, 0);
 
-      assertExists(pattern);
       // The pattern matches the prefix /_veryfront/lib/
       assertEquals(pattern.test("/_veryfront/lib/"), true);
       assertEquals(pattern.test("/_veryfront/lib/anything"), true);
@@ -94,9 +114,8 @@ describe("LibModulesHandler", () => {
 
     it("should not match paths without /_veryfront/lib/ prefix", () => {
       const handler = new LibModulesHandler();
-      const pattern = handler.metadata.patterns[0]?.pattern;
+      const pattern = getRegExpPattern(handler, 0);
 
-      assertExists(pattern);
       assertEquals(pattern.test("/veryfront/lib/ai/react.js"), false);
       assertEquals(pattern.test("/_veryfront/ai/react.js"), false);
       assertEquals(pattern.test("/lib/ai/react.js"), false);
@@ -104,9 +123,8 @@ describe("LibModulesHandler", () => {
 
     it("should be case sensitive", () => {
       const handler = new LibModulesHandler();
-      const pattern = handler.metadata.patterns[0]?.pattern;
+      const pattern = getRegExpPattern(handler, 0);
 
-      assertExists(pattern);
       assertEquals(pattern.test("/_veryfront/lib/ai/react.js"), true);
       assertEquals(pattern.test("/_VERYFRONT/lib/ai/react.js"), false);
       assertEquals(pattern.test("/_Veryfront/lib/ai/react.js"), false);
