@@ -1,0 +1,100 @@
+{
+  "name": "figma",
+  "displayName": "Figma",
+  "icon": "figma.svg",
+  "description": "Access Figma designs, files, comments, and collaborate on design projects",
+  "auth": {
+    "type": "oauth2",
+    "provider": "figma",
+    "authorizationUrl": "https://www.figma.com/oauth",
+    "tokenUrl": "https://www.figma.com/api/oauth/token",
+    "scopes": ["file_read"],
+    "callbackPath": "/api/auth/figma/callback",
+    "tokenAuthMethod": "client_secret_post",
+    "requiredApis": [
+      {
+        "name": "Figma OAuth App",
+        "enableUrl": "https://www.figma.com/developers/apps"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "FIGMA_CLIENT_ID",
+      "description": "Figma OAuth Client ID (from your app settings)",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://www.figma.com/developers/apps"
+    },
+    {
+      "name": "FIGMA_CLIENT_SECRET",
+      "description": "Figma OAuth Client Secret",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://www.figma.com/developers/apps"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list-files",
+      "name": "List Files",
+      "description": "List recent Figma files accessible to the user",
+      "requiresWrite": false
+    },
+    {
+      "id": "get-file",
+      "name": "Get File",
+      "description": "Get detailed information about a Figma file including components and styles",
+      "requiresWrite": false
+    },
+    {
+      "id": "get-comments",
+      "name": "Get Comments",
+      "description": "Get all comments on a Figma file",
+      "requiresWrite": false
+    },
+    {
+      "id": "post-comment",
+      "name": "Post Comment",
+      "description": "Post a comment on a Figma file",
+      "requiresWrite": true
+    },
+    {
+      "id": "list-projects",
+      "name": "List Projects",
+      "description": "List all projects in a team",
+      "requiresWrite": false
+    }
+  ],
+  "prompts": [
+    {
+      "id": "review-design",
+      "title": "Review a design",
+      "prompt": "Review a Figma design file and provide feedback on the components, layout, and design system usage.",
+      "category": "design",
+      "icon": "eye"
+    },
+    {
+      "id": "summarize-comments",
+      "title": "Summarize comments",
+      "prompt": "Read all comments on a Figma file and summarize the feedback, action items, and unresolved discussions.",
+      "category": "design",
+      "icon": "message"
+    },
+    {
+      "id": "extract-components",
+      "title": "Extract components",
+      "prompt": "List all components in a Figma file and describe their structure, variants, and properties.",
+      "category": "design",
+      "icon": "component"
+    },
+    {
+      "id": "design-feedback",
+      "title": "Give design feedback",
+      "prompt": "Review the design file and post constructive feedback as comments on specific elements.",
+      "category": "design",
+      "icon": "plus"
+    }
+  ],
+  "suggestedWith": ["linear", "slack", "notion"]
+}

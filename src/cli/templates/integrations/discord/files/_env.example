@@ -1,0 +1,12 @@
+# Discord OAuth Configuration
+# Get these from https://discord.com/developers/applications
+
+# Required: Your Discord application's Client ID
+DISCORD_CLIENT_ID=your_client_id_here
+
+# Required: Your Discord application's Client Secret
+DISCORD_CLIENT_SECRET=your_client_secret_here
+
+# Optional: Bot token for advanced bot features
+# Only needed if you want to use bot-specific functionality
+DISCORD_BOT_TOKEN=your_bot_token_here

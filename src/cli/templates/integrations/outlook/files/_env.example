@@ -1,0 +1,8 @@
+# Microsoft Outlook Integration
+# Get these from: https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade
+
+# Your Microsoft Azure App Client ID (Application ID)
+MICROSOFT_CLIENT_ID=your_client_id_here
+
+# Your Microsoft Azure App Client Secret
+MICROSOFT_CLIENT_SECRET=your_client_secret_here

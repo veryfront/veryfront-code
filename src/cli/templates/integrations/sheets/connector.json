@@ -1,0 +1,99 @@
+{
+  "name": "sheets",
+  "displayName": "Google Sheets",
+  "icon": "sheets.svg",
+  "description": "Read, write, and manage Google Sheets spreadsheets",
+  "auth": {
+    "type": "oauth2",
+    "provider": "google",
+    "authorizationUrl": "https://accounts.google.com/o/oauth2/v2/auth",
+    "tokenUrl": "https://oauth2.googleapis.com/token",
+    "scopes": [
+      "https://www.googleapis.com/auth/spreadsheets",
+      "https://www.googleapis.com/auth/drive.readonly"
+    ],
+    "callbackPath": "/api/auth/sheets/callback",
+    "requiredApis": [
+      {
+        "name": "Google Sheets API",
+        "enableUrl": "https://console.cloud.google.com/apis/library/sheets.googleapis.com"
+      },
+      {
+        "name": "Google Drive API",
+        "enableUrl": "https://console.cloud.google.com/apis/library/drive.googleapis.com"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "GOOGLE_CLIENT_ID",
+      "description": "Google OAuth Client ID",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://console.cloud.google.com/apis/credentials"
+    },
+    {
+      "name": "GOOGLE_CLIENT_SECRET",
+      "description": "Google OAuth Client Secret",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://console.cloud.google.com/apis/credentials"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list-spreadsheets",
+      "name": "List Spreadsheets",
+      "description": "List recent Google Sheets spreadsheets from Drive",
+      "requiresWrite": false
+    },
+    {
+      "id": "get-spreadsheet",
+      "name": "Get Spreadsheet",
+      "description": "Get spreadsheet metadata including sheet names and properties",
+      "requiresWrite": false
+    },
+    {
+      "id": "read-range",
+      "name": "Read Range",
+      "description": "Read cell data from a spreadsheet range",
+      "requiresWrite": false
+    },
+    {
+      "id": "write-range",
+      "name": "Write Range",
+      "description": "Write data to a spreadsheet range",
+      "requiresWrite": true
+    },
+    {
+      "id": "create-spreadsheet",
+      "name": "Create Spreadsheet",
+      "description": "Create a new spreadsheet with optional initial data",
+      "requiresWrite": true
+    }
+  ],
+  "prompts": [
+    {
+      "id": "analyze-data",
+      "title": "Analyze spreadsheet data",
+      "prompt": "Read and analyze data from a Google Sheets spreadsheet. Provide insights, trends, and statistics.",
+      "category": "productivity",
+      "icon": "chart"
+    },
+    {
+      "id": "create-report",
+      "title": "Create a report spreadsheet",
+      "prompt": "Create a new Google Sheets spreadsheet with formatted data, headers, and calculations.",
+      "category": "productivity",
+      "icon": "plus"
+    },
+    {
+      "id": "update-tracker",
+      "title": "Update a tracker",
+      "prompt": "Update a tracking spreadsheet with new data. Add rows, update values, or calculate totals.",
+      "category": "productivity",
+      "icon": "edit"
+    }
+  ],
+  "suggestedWith": ["gmail", "calendar", "notion"]
+}

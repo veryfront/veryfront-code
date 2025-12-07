@@ -1,0 +1,89 @@
+{
+  "name": "neon",
+  "displayName": "Neon",
+  "icon": "neon.svg",
+  "description": "Manage Neon Postgres projects, branches, and execute database queries",
+  "auth": {
+    "type": "api-key",
+    "tokenName": "API Key",
+    "docsUrl": "https://neon.tech/docs/manage/api-keys",
+    "requiredApis": [
+      {
+        "name": "Neon Management API",
+        "enableUrl": "https://console.neon.tech/app/settings/api-keys"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "NEON_API_KEY",
+      "description": "Neon API Key for Management API access",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://neon.tech/docs/manage/api-keys"
+    },
+    {
+      "name": "DATABASE_URL",
+      "description": "PostgreSQL connection string for database queries",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://neon.tech/docs/connect/connect-from-any-app"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list-projects",
+      "name": "List Projects",
+      "description": "List all Neon projects in your account",
+      "requiresWrite": false
+    },
+    {
+      "id": "list-branches",
+      "name": "List Branches",
+      "description": "List all branches for a specific project",
+      "requiresWrite": false
+    },
+    {
+      "id": "query-database",
+      "name": "Query Database",
+      "description": "Execute SQL queries against the connected database",
+      "requiresWrite": false
+    },
+    {
+      "id": "list-tables",
+      "name": "List Tables",
+      "description": "List all tables in the connected database",
+      "requiresWrite": false
+    },
+    {
+      "id": "describe-table",
+      "name": "Describe Table",
+      "description": "Get detailed schema information for a specific table",
+      "requiresWrite": false
+    }
+  ],
+  "prompts": [
+    {
+      "id": "check-db-status",
+      "title": "Check database status",
+      "prompt": "Show me the status of my Neon projects and their branches.",
+      "category": "database",
+      "icon": "database"
+    },
+    {
+      "id": "explore-schema",
+      "title": "Explore database schema",
+      "prompt": "List all tables in my database and show me the schema for the main tables.",
+      "category": "database",
+      "icon": "table"
+    },
+    {
+      "id": "query-data",
+      "title": "Query database",
+      "prompt": "Help me query my database to find specific data.",
+      "category": "database",
+      "icon": "search"
+    }
+  ],
+  "suggestedWith": ["stripe", "clerk", "vercel"]
+}

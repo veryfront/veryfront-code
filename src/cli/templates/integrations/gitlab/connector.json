@@ -1,0 +1,100 @@
+{
+  "name": "gitlab",
+  "displayName": "GitLab",
+  "icon": "gitlab.svg",
+  "description": "Search and manage GitLab issues, merge requests, and projects",
+  "auth": {
+    "type": "oauth2",
+    "provider": "gitlab",
+    "authorizationUrl": "https://gitlab.com/oauth/authorize",
+    "tokenUrl": "https://gitlab.com/oauth/token",
+    "scopes": ["api", "read_user", "read_repository"],
+    "callbackPath": "/api/auth/gitlab/callback",
+    "tokenAuthMethod": "body",
+    "requiredApis": [
+      {
+        "name": "GitLab Application",
+        "enableUrl": "https://gitlab.com/-/profile/applications"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "GITLAB_CLIENT_ID",
+      "description": "GitLab OAuth Application ID",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://docs.gitlab.com/ee/api/oauth2.html"
+    },
+    {
+      "name": "GITLAB_CLIENT_SECRET",
+      "description": "GitLab OAuth Application Secret",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://docs.gitlab.com/ee/api/oauth2.html"
+    }
+  ],
+  "tools": [
+    {
+      "id": "search-issues",
+      "name": "Search Issues",
+      "description": "Search for issues across projects",
+      "requiresWrite": false
+    },
+    {
+      "id": "get-issue",
+      "name": "Get Issue",
+      "description": "Get detailed information about a specific issue",
+      "requiresWrite": false
+    },
+    {
+      "id": "create-issue",
+      "name": "Create Issue",
+      "description": "Create a new issue in a project",
+      "requiresWrite": true
+    },
+    {
+      "id": "list-merge-requests",
+      "name": "List Merge Requests",
+      "description": "List merge requests for a project or across projects",
+      "requiresWrite": false
+    },
+    {
+      "id": "list-projects",
+      "name": "List Projects",
+      "description": "List accessible GitLab projects",
+      "requiresWrite": false
+    }
+  ],
+  "prompts": [
+    {
+      "id": "find-issues",
+      "title": "Find my issues",
+      "prompt": "Search for issues assigned to me that are open. Show me the most important ones.",
+      "category": "development",
+      "icon": "bug"
+    },
+    {
+      "id": "review-mrs",
+      "title": "Review merge requests",
+      "prompt": "Show me all open merge requests that need my review. Summarize what each one does.",
+      "category": "development",
+      "icon": "git-merge"
+    },
+    {
+      "id": "create-bug-report",
+      "title": "Create bug report",
+      "prompt": "Help me create a detailed bug report issue with steps to reproduce, expected vs actual behavior.",
+      "category": "development",
+      "icon": "plus"
+    },
+    {
+      "id": "project-status",
+      "title": "Project status",
+      "prompt": "Give me a summary of my projects: open issues, merge requests, and recent activity.",
+      "category": "development",
+      "icon": "list"
+    }
+  ],
+  "suggestedWith": ["github", "jira", "slack"]
+}

@@ -1,0 +1,99 @@
+{
+  "name": "teams",
+  "displayName": "Microsoft Teams",
+  "icon": "teams.svg",
+  "description": "Send messages and manage Teams chats and channels",
+  "auth": {
+    "type": "oauth2",
+    "provider": "microsoft",
+    "authorizationUrl": "https://login.microsoftonline.com/common/oauth2/v2.0/authorize",
+    "tokenUrl": "https://login.microsoftonline.com/common/oauth2/v2.0/token",
+    "scopes": [
+      "Chat.Read",
+      "Chat.ReadWrite",
+      "ChannelMessage.Send",
+      "Team.ReadBasic.All",
+      "offline_access"
+    ],
+    "callbackPath": "/api/auth/teams/callback",
+    "tokenAuthMethod": "body",
+    "requiredApis": [
+      {
+        "name": "Microsoft Graph API",
+        "enableUrl": "https://portal.azure.com/#blade/Microsoft_AAD_RegisteredApps/ApplicationsListBlade"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "MICROSOFT_CLIENT_ID",
+      "description": "Microsoft Azure App Client ID (Application ID)",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://portal.azure.com/#blade/Microsoft_AAD_RegisteredApps/ApplicationsListBlade"
+    },
+    {
+      "name": "MICROSOFT_CLIENT_SECRET",
+      "description": "Microsoft Azure App Client Secret",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://portal.azure.com/#blade/Microsoft_AAD_RegisteredApps/ApplicationsListBlade"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list-chats",
+      "name": "List Chats",
+      "description": "List recent Teams chats",
+      "requiresWrite": false
+    },
+    {
+      "id": "get-messages",
+      "name": "Get Messages",
+      "description": "Get messages from a specific chat",
+      "requiresWrite": false
+    },
+    {
+      "id": "send-message",
+      "name": "Send Message",
+      "description": "Send a message to a chat or channel",
+      "requiresWrite": true
+    },
+    {
+      "id": "list-teams",
+      "name": "List Teams",
+      "description": "List all joined Teams",
+      "requiresWrite": false
+    },
+    {
+      "id": "list-channels",
+      "name": "List Channels",
+      "description": "List channels in a specific Team",
+      "requiresWrite": false
+    }
+  ],
+  "prompts": [
+    {
+      "id": "check-messages",
+      "title": "Check my messages",
+      "prompt": "Check my recent Teams messages and summarize any important conversations or action items.",
+      "category": "communication",
+      "icon": "message"
+    },
+    {
+      "id": "send-update",
+      "title": "Send team update",
+      "prompt": "Send a status update message to a specific Teams channel about project progress.",
+      "category": "communication",
+      "icon": "send"
+    },
+    {
+      "id": "find-conversation",
+      "title": "Find a conversation",
+      "prompt": "Search through my Teams chats to find discussions about a specific topic.",
+      "category": "communication",
+      "icon": "search"
+    }
+  ],
+  "suggestedWith": ["outlook", "slack", "calendar"]
+}

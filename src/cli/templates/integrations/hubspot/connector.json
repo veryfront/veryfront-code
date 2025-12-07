@@ -1,0 +1,98 @@
+{
+  "name": "hubspot",
+  "displayName": "HubSpot",
+  "icon": "hubspot.svg",
+  "description": "Manage contacts, companies, and deals in your HubSpot CRM",
+  "auth": {
+    "type": "oauth2",
+    "provider": "hubspot",
+    "authorizationUrl": "https://app.hubspot.com/oauth/authorize",
+    "tokenUrl": "https://api.hubapi.com/oauth/v1/token",
+    "scopes": [
+      "crm.objects.contacts.read",
+      "crm.objects.contacts.write",
+      "crm.objects.companies.read",
+      "crm.objects.deals.read"
+    ],
+    "callbackPath": "/api/auth/hubspot/callback",
+    "tokenAuthMethod": "request_body",
+    "requiredApis": [
+      {
+        "name": "HubSpot App",
+        "enableUrl": "https://app.hubspot.com/developer"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "HUBSPOT_CLIENT_ID",
+      "description": "HubSpot OAuth Client ID (from your app)",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://app.hubspot.com/developer"
+    },
+    {
+      "name": "HUBSPOT_CLIENT_SECRET",
+      "description": "HubSpot OAuth Client Secret",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://app.hubspot.com/developer"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list-contacts",
+      "name": "List Contacts",
+      "description": "List contacts from your HubSpot CRM",
+      "requiresWrite": false
+    },
+    {
+      "id": "get-contact",
+      "name": "Get Contact",
+      "description": "Get detailed information about a specific contact",
+      "requiresWrite": false
+    },
+    {
+      "id": "create-contact",
+      "name": "Create Contact",
+      "description": "Create a new contact in HubSpot CRM",
+      "requiresWrite": true
+    },
+    {
+      "id": "list-deals",
+      "name": "List Deals",
+      "description": "List sales deals from your HubSpot CRM",
+      "requiresWrite": false
+    },
+    {
+      "id": "create-deal",
+      "name": "Create Deal",
+      "description": "Create a new deal in HubSpot CRM",
+      "requiresWrite": true
+    }
+  ],
+  "prompts": [
+    {
+      "id": "find-contacts",
+      "title": "Find contacts",
+      "prompt": "Search for contacts in my HubSpot CRM and show me their key information.",
+      "category": "crm",
+      "icon": "search"
+    },
+    {
+      "id": "create-contact",
+      "title": "Create a contact",
+      "prompt": "Create a new contact in HubSpot CRM with the information I provide.",
+      "category": "crm",
+      "icon": "plus"
+    },
+    {
+      "id": "pipeline-summary",
+      "title": "Pipeline summary",
+      "prompt": "Show me a summary of my current sales deals and pipeline status.",
+      "category": "crm",
+      "icon": "chart"
+    }
+  ],
+  "suggestedWith": ["gmail", "slack", "calendar"]
+}

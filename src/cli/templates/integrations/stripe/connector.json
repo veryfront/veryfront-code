@@ -1,0 +1,97 @@
+{
+  "name": "stripe",
+  "displayName": "Stripe",
+  "icon": "stripe.svg",
+  "description": "Access Stripe payment data, customers, subscriptions, and balance information",
+  "auth": {
+    "type": "api-key",
+    "keyName": "STRIPE_SECRET_KEY",
+    "headerName": "Authorization",
+    "headerPrefix": "Bearer",
+    "requiredApis": [
+      {
+        "name": "Stripe API",
+        "enableUrl": "https://dashboard.stripe.com/apikeys"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "STRIPE_SECRET_KEY",
+      "description": "Stripe Secret Key (starts with sk_)",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://dashboard.stripe.com/apikeys"
+    },
+    {
+      "name": "STRIPE_WEBHOOK_SECRET",
+      "description": "Stripe Webhook Secret (optional, for webhook verification)",
+      "required": false,
+      "sensitive": true,
+      "docsUrl": "https://dashboard.stripe.com/webhooks"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list-customers",
+      "name": "List Customers",
+      "description": "List Stripe customers with optional filtering",
+      "requiresWrite": false
+    },
+    {
+      "id": "get-customer",
+      "name": "Get Customer",
+      "description": "Retrieve detailed information about a specific customer",
+      "requiresWrite": false
+    },
+    {
+      "id": "list-payments",
+      "name": "List Payments",
+      "description": "List payment intents with optional status filtering",
+      "requiresWrite": false
+    },
+    {
+      "id": "get-balance",
+      "name": "Get Balance",
+      "description": "Retrieve the current account balance",
+      "requiresWrite": false
+    },
+    {
+      "id": "list-subscriptions",
+      "name": "List Subscriptions",
+      "description": "List subscriptions with optional status filtering",
+      "requiresWrite": false
+    }
+  ],
+  "prompts": [
+    {
+      "id": "check-balance",
+      "title": "Check account balance",
+      "prompt": "Check my Stripe account balance and provide a summary of available and pending funds.",
+      "category": "finance",
+      "icon": "currency"
+    },
+    {
+      "id": "recent-payments",
+      "title": "Recent payments",
+      "prompt": "Show me the most recent successful payments in my Stripe account.",
+      "category": "finance",
+      "icon": "payment"
+    },
+    {
+      "id": "customer-overview",
+      "title": "Customer overview",
+      "prompt": "Give me an overview of my Stripe customers including total count and recent additions.",
+      "category": "analytics",
+      "icon": "users"
+    },
+    {
+      "id": "subscription-status",
+      "title": "Subscription status",
+      "prompt": "Show me the status of all active subscriptions and any that are expiring soon.",
+      "category": "analytics",
+      "icon": "repeat"
+    }
+  ],
+  "suggestedWith": ["slack", "email", "analytics"]
+}

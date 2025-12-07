@@ -1,0 +1,104 @@
+{
+  "name": "salesforce",
+  "displayName": "Salesforce",
+  "icon": "salesforce.svg",
+  "description": "Manage accounts, contacts, opportunities, and leads in your Salesforce CRM",
+  "auth": {
+    "type": "oauth2",
+    "provider": "salesforce",
+    "authorizationUrl": "https://login.salesforce.com/services/oauth2/authorize",
+    "tokenUrl": "https://login.salesforce.com/services/oauth2/token",
+    "scopes": [
+      "api",
+      "refresh_token",
+      "offline_access"
+    ],
+    "callbackPath": "/api/auth/salesforce/callback",
+    "tokenAuthMethod": "request_body",
+    "requiredApis": [
+      {
+        "name": "Salesforce Connected App",
+        "enableUrl": "https://login.salesforce.com/"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "SALESFORCE_CLIENT_ID",
+      "description": "Salesforce OAuth Consumer Key (from your Connected App)",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://help.salesforce.com/s/articleView?id=sf.connected_app_create.htm"
+    },
+    {
+      "name": "SALESFORCE_CLIENT_SECRET",
+      "description": "Salesforce OAuth Consumer Secret",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://help.salesforce.com/s/articleView?id=sf.connected_app_create.htm"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list-accounts",
+      "name": "List Accounts",
+      "description": "List accounts from your Salesforce CRM",
+      "requiresWrite": false
+    },
+    {
+      "id": "get-account",
+      "name": "Get Account",
+      "description": "Get detailed information about a specific account",
+      "requiresWrite": false
+    },
+    {
+      "id": "list-contacts",
+      "name": "List Contacts",
+      "description": "List contacts from your Salesforce CRM",
+      "requiresWrite": false
+    },
+    {
+      "id": "list-opportunities",
+      "name": "List Opportunities",
+      "description": "List sales opportunities from your Salesforce CRM",
+      "requiresWrite": false
+    },
+    {
+      "id": "create-lead",
+      "name": "Create Lead",
+      "description": "Create a new lead in Salesforce CRM",
+      "requiresWrite": true
+    }
+  ],
+  "prompts": [
+    {
+      "id": "find-accounts",
+      "title": "Find accounts",
+      "prompt": "Search for accounts in my Salesforce CRM and show me their key information.",
+      "category": "crm",
+      "icon": "search"
+    },
+    {
+      "id": "create-lead",
+      "title": "Create a lead",
+      "prompt": "Create a new lead in Salesforce CRM with the information I provide.",
+      "category": "crm",
+      "icon": "plus"
+    },
+    {
+      "id": "pipeline-summary",
+      "title": "Pipeline summary",
+      "prompt": "Show me a summary of my current sales opportunities and pipeline status.",
+      "category": "crm",
+      "icon": "chart"
+    },
+    {
+      "id": "contact-lookup",
+      "title": "Contact lookup",
+      "prompt": "Find and display information about specific contacts in my Salesforce CRM.",
+      "category": "crm",
+      "icon": "user"
+    }
+  ],
+  "suggestedWith": ["gmail", "slack", "calendar"]
+}

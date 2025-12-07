@@ -1,0 +1,104 @@
+{
+  "name": "confluence",
+  "displayName": "Confluence",
+  "icon": "confluence.svg",
+  "description": "Search, read, and create documentation in Confluence",
+  "auth": {
+    "type": "oauth2",
+    "provider": "atlassian",
+    "authorizationUrl": "https://auth.atlassian.com/authorize",
+    "tokenUrl": "https://auth.atlassian.com/oauth/token",
+    "scopes": ["read:confluence-content.all", "write:confluence-content"],
+    "callbackPath": "/api/auth/confluence/callback",
+    "tokenAuthMethod": "client_secret_post",
+    "additionalParams": {
+      "audience": "api.atlassian.com",
+      "prompt": "consent"
+    },
+    "requiredApis": [
+      {
+        "name": "Atlassian OAuth 2.0 App",
+        "enableUrl": "https://developer.atlassian.com/console/myapps/"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "ATLASSIAN_CLIENT_ID",
+      "description": "Atlassian OAuth Client ID (from your OAuth 2.0 app)",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://developer.atlassian.com/console/myapps/"
+    },
+    {
+      "name": "ATLASSIAN_CLIENT_SECRET",
+      "description": "Atlassian OAuth Client Secret",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://developer.atlassian.com/console/myapps/"
+    }
+  ],
+  "tools": [
+    {
+      "id": "search-content",
+      "name": "Search Confluence",
+      "description": "Search for pages and blog posts in Confluence",
+      "requiresWrite": false
+    },
+    {
+      "id": "get-page",
+      "name": "Get Page",
+      "description": "Get the content of a specific Confluence page",
+      "requiresWrite": false
+    },
+    {
+      "id": "create-page",
+      "name": "Create Page",
+      "description": "Create a new page in a Confluence space",
+      "requiresWrite": true
+    },
+    {
+      "id": "update-page",
+      "name": "Update Page",
+      "description": "Update the content of an existing Confluence page",
+      "requiresWrite": true
+    },
+    {
+      "id": "list-spaces",
+      "name": "List Spaces",
+      "description": "List all accessible Confluence spaces",
+      "requiresWrite": false
+    }
+  ],
+  "prompts": [
+    {
+      "id": "search-docs",
+      "title": "Search documentation",
+      "prompt": "Search Confluence for documentation about a specific topic or feature.",
+      "category": "productivity",
+      "icon": "search"
+    },
+    {
+      "id": "summarize-page",
+      "title": "Summarize a page",
+      "prompt": "Read and summarize a Confluence page. Extract key information and action items.",
+      "category": "productivity",
+      "icon": "document"
+    },
+    {
+      "id": "create-doc",
+      "title": "Create documentation",
+      "prompt": "Create a new documentation page in Confluence with structured content.",
+      "category": "productivity",
+      "icon": "plus"
+    },
+    {
+      "id": "update-doc",
+      "title": "Update documentation",
+      "prompt": "Update an existing Confluence page with new information while preserving existing content.",
+      "category": "productivity",
+      "icon": "edit"
+    }
+  ],
+  "suggestedWith": ["jira", "slack", "notion"]
+}

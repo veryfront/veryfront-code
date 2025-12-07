@@ -1,0 +1,6 @@
+# Notion Integration
+# Create an integration at https://www.notion.so/my-integrations
+# Make sure to enable "Public Integration" for OAuth
+
+NOTION_CLIENT_ID=your_client_id_here
+NOTION_CLIENT_SECRET=your_client_secret_here

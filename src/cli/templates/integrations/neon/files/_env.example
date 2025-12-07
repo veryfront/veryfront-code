@@ -1,0 +1,6 @@
+# Neon Integration
+# Create an API key at https://console.neon.tech/app/settings/api-keys
+# Get your connection string from your Neon project dashboard
+
+NEON_API_KEY=your_api_key_here
+DATABASE_URL=postgres://user:password@ep-xxxx.region.neon.tech/dbname?sslmode=require

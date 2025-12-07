@@ -1,0 +1,99 @@
+{
+  "name": "airtable",
+  "displayName": "Airtable",
+  "icon": "airtable.svg",
+  "description": "Read and write records in Airtable bases and tables",
+  "auth": {
+    "type": "oauth2",
+    "provider": "airtable",
+    "authorizationUrl": "https://airtable.com/oauth2/v1/authorize",
+    "tokenUrl": "https://airtable.com/oauth2/v1/token",
+    "scopes": [
+      "data.records:read",
+      "data.records:write",
+      "schema.bases:read",
+      "schema.bases:write"
+    ],
+    "callbackPath": "/api/auth/airtable/callback",
+    "tokenAuthMethod": "basic",
+    "pkce": true,
+    "requiredApis": [
+      {
+        "name": "Airtable OAuth Integration",
+        "enableUrl": "https://airtable.com/create/oauth"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "AIRTABLE_CLIENT_ID",
+      "description": "Airtable OAuth Client ID (from your OAuth integration)",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://airtable.com/create/oauth"
+    },
+    {
+      "name": "AIRTABLE_CLIENT_SECRET",
+      "description": "Airtable OAuth Client Secret",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://airtable.com/create/oauth"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list-bases",
+      "name": "List Bases",
+      "description": "List all accessible Airtable bases",
+      "requiresWrite": false
+    },
+    {
+      "id": "get-base",
+      "name": "Get Base",
+      "description": "Get schema information for a specific base",
+      "requiresWrite": false
+    },
+    {
+      "id": "list-records",
+      "name": "List Records",
+      "description": "List records from a table with optional filtering",
+      "requiresWrite": false
+    },
+    {
+      "id": "get-record",
+      "name": "Get Record",
+      "description": "Get a specific record by ID",
+      "requiresWrite": false
+    },
+    {
+      "id": "create-record",
+      "name": "Create Record",
+      "description": "Create a new record in a table",
+      "requiresWrite": true
+    }
+  ],
+  "prompts": [
+    {
+      "id": "query-data",
+      "title": "Query my data",
+      "prompt": "Search and query records from my Airtable bases. Find specific information across tables.",
+      "category": "productivity",
+      "icon": "search"
+    },
+    {
+      "id": "add-record",
+      "title": "Add a record",
+      "prompt": "Create a new record in an Airtable table with the specified field values.",
+      "category": "productivity",
+      "icon": "plus"
+    },
+    {
+      "id": "analyze-base",
+      "title": "Analyze base structure",
+      "prompt": "Analyze the structure and schema of an Airtable base, including all tables and their fields.",
+      "category": "productivity",
+      "icon": "document"
+    }
+  ],
+  "suggestedWith": ["gmail", "slack", "notion"]
+}

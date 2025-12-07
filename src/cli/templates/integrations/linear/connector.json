@@ -1,0 +1,100 @@
+{
+  "name": "linear",
+  "displayName": "Linear",
+  "icon": "linear.svg",
+  "description": "Search, create, and manage Linear issues and projects",
+  "auth": {
+    "type": "oauth2",
+    "provider": "linear",
+    "authorizationUrl": "https://linear.app/oauth/authorize",
+    "tokenUrl": "https://api.linear.app/oauth/token",
+    "scopes": ["read", "write"],
+    "callbackPath": "/api/auth/linear/callback",
+    "tokenAuthMethod": "basic",
+    "requiredApis": [
+      {
+        "name": "Linear OAuth Application",
+        "enableUrl": "https://linear.app/settings/api"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "LINEAR_CLIENT_ID",
+      "description": "Linear OAuth Client ID (from your OAuth application)",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://linear.app/settings/api"
+    },
+    {
+      "name": "LINEAR_CLIENT_SECRET",
+      "description": "Linear OAuth Client Secret",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://linear.app/settings/api"
+    }
+  ],
+  "tools": [
+    {
+      "id": "search-issues",
+      "name": "Search Issues",
+      "description": "Search for Linear issues by title or description",
+      "requiresWrite": false
+    },
+    {
+      "id": "get-issue",
+      "name": "Get Issue",
+      "description": "Get detailed information about a specific Linear issue",
+      "requiresWrite": false
+    },
+    {
+      "id": "create-issue",
+      "name": "Create Issue",
+      "description": "Create a new Linear issue in a team",
+      "requiresWrite": true
+    },
+    {
+      "id": "update-issue",
+      "name": "Update Issue",
+      "description": "Update the status, assignee, or other properties of an issue",
+      "requiresWrite": true
+    },
+    {
+      "id": "list-projects",
+      "name": "List Projects",
+      "description": "List all projects in the workspace",
+      "requiresWrite": false
+    }
+  ],
+  "prompts": [
+    {
+      "id": "find-issues",
+      "title": "Find my issues",
+      "prompt": "Search for Linear issues assigned to me or related to a specific topic.",
+      "category": "productivity",
+      "icon": "search"
+    },
+    {
+      "id": "create-bug-report",
+      "title": "Create bug report",
+      "prompt": "Create a new bug report in Linear with title, description, and relevant labels.",
+      "category": "productivity",
+      "icon": "plus"
+    },
+    {
+      "id": "update-issue-status",
+      "title": "Update issue status",
+      "prompt": "Update the status of a Linear issue (e.g., mark as done, in progress, blocked).",
+      "category": "productivity",
+      "icon": "check"
+    },
+    {
+      "id": "project-overview",
+      "title": "Project overview",
+      "prompt": "Get an overview of all projects in Linear, including their status and key issues.",
+      "category": "productivity",
+      "icon": "list"
+    }
+  ],
+  "suggestedWith": ["github", "slack", "figma"]
+}

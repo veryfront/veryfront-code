@@ -1,0 +1,24 @@
+# Dropbox Integration Environment Variables
+
+# Dropbox App Key (Client ID)
+# Get this from https://www.dropbox.com/developers/apps
+DROPBOX_APP_KEY=your_app_key_here
+
+# Dropbox App Secret
+# Get this from https://www.dropbox.com/developers/apps
+DROPBOX_APP_SECRET=your_app_secret_here
+
+# Setup Instructions:
+# 1. Go to https://www.dropbox.com/developers/apps
+# 2. Create a new app or select an existing one
+# 3. Choose "Scoped access" as the API type
+# 4. Select "Full Dropbox" or "App folder" access
+# 5. Copy the App Key and App Secret
+# 6. Add the OAuth2 redirect URI: http://localhost:3000/api/auth/dropbox/callback
+# 7. Enable the following permissions in the Permissions tab:
+#    - files.content.read
+#    - files.content.write
+#    - files.metadata.read
+#    - files.metadata.write
+#    - account_info.read
+# 8. Submit the app for production use if needed

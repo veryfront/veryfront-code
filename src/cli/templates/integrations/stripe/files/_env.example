@@ -1,0 +1,6 @@
+# Stripe Integration
+# Get your API keys at https://dashboard.stripe.com/apikeys
+# Use test keys (sk_test_...) for development, live keys (sk_live_...) for production
+
+STRIPE_SECRET_KEY=sk_test_your_secret_key_here
+STRIPE_WEBHOOK_SECRET=whsec_your_webhook_secret_here
