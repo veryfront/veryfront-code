@@ -58,8 +58,7 @@ export async function createTokenStorageAdapter(
   throw toError(
     createError({
       type: "config",
-      message:
-        `Token storage adapter type "${type}" is not implemented. ` +
+      message: `Token storage adapter type "${type}" is not implemented. ` +
         `Supported types: "memory", "veryfront-api".`,
     }),
   );

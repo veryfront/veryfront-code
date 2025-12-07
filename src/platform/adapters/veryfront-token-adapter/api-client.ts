@@ -187,7 +187,9 @@ export class TokenStorageAPIClient {
   }
 
   private buildUrl(key: string): string {
-    return `${this.config.apiBaseUrl}/api/v1/projects/${encodeURIComponent(this.config.projectSlug)}/tokens/${encodeURIComponent(key)}`;
+    return `${this.config.apiBaseUrl}/api/v1/projects/${
+      encodeURIComponent(this.config.projectSlug)
+    }/tokens/${encodeURIComponent(key)}`;
   }
 
   private buildHeaders(): Record<string, string> {
