@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 interface Integration {
   id: string;
@@ -19,72 +19,686 @@ interface SetupStep {
   link?: string;
 }
 
-const OAUTH_SETUP_GUIDES: Record<string, { title: string; steps: string[]; link: string }> = {
+interface SetupGuide {
+  title: string;
+  steps: string[];
+  link: string;
+  envVars: string[];
+  category: string;
+}
+
+interface TokenStorageStatus {
+  mode: "memory" | "database" | "kv" | "redis" | "custom";
+  encrypted: boolean;
+}
+
+// Categories for organizing integrations
+const CATEGORIES = [
+  { id: "google", name: "Google Services", icon: "google" },
+  { id: "microsoft", name: "Microsoft Services", icon: "microsoft" },
+  { id: "atlassian", name: "Atlassian", icon: "atlassian" },
+  { id: "communication", name: "Communication", icon: "chat" },
+  { id: "development", name: "Development", icon: "code" },
+  { id: "productivity", name: "Productivity", icon: "tasks" },
+  { id: "storage", name: "Storage", icon: "folder" },
+  { id: "infrastructure", name: "Infrastructure", icon: "server" },
+  { id: "sales", name: "Sales & CRM", icon: "users" },
+  { id: "support", name: "Support", icon: "headset" },
+  { id: "finance", name: "Finance", icon: "dollar" },
+  { id: "marketing", name: "Marketing", icon: "megaphone" },
+  { id: "design", name: "Design", icon: "palette" },
+  { id: "ai", name: "AI Providers", icon: "brain" },
+] as const;
+
+const OAUTH_SETUP_GUIDES: Record<string, SetupGuide> = {
+  // Google Services
   gmail: {
-    title: "Google OAuth Setup (Gmail & Calendar)",
+    title: "Google OAuth Setup (Gmail)",
+    category: "google",
     steps: [
       "Go to Google Cloud Console",
       "Create a new project or select existing one",
-      "Enable Gmail API and Calendar API",
+      "Enable Gmail API in APIs & Services > Library",
+      "Go to APIs & Services > Credentials",
       "Create OAuth 2.0 credentials (Web application)",
       "Add redirect URI: http://localhost:3000/api/auth/gmail/callback",
       "Copy Client ID and Secret to your .env file",
     ],
     link: "https://console.cloud.google.com/apis/credentials",
+    envVars: ["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET"],
   },
   calendar: {
     title: "Google Calendar Setup",
+    category: "google",
     steps: [
-      "Uses same credentials as Gmail",
-      "Make sure Calendar API is enabled",
+      "Uses same Google OAuth credentials as Gmail",
+      "Enable Calendar API in Google Cloud Console",
       "Add redirect URI: http://localhost:3000/api/auth/calendar/callback",
     ],
-    link: "https://console.cloud.google.com/apis/credentials",
+    link: "https://console.cloud.google.com/apis/library/calendar-json.googleapis.com",
+    envVars: ["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET"],
   },
-  slack: {
-    title: "Slack App Setup",
+  drive: {
+    title: "Google Drive Setup",
+    category: "google",
     steps: [
-      "Go to Slack API Apps page",
-      "Create New App > From scratch",
-      "Add OAuth Scopes: channels:read, chat:write, users:read",
-      "Install to Workspace",
-      "Copy Client ID and Secret to your .env file",
-      "Add redirect URL: http://localhost:3000/api/auth/slack/callback",
+      "Uses same Google OAuth credentials",
+      "Enable Drive API in Google Cloud Console",
+      "Add redirect URI: http://localhost:3000/api/auth/drive/callback",
     ],
-    link: "https://api.slack.com/apps",
+    link: "https://console.cloud.google.com/apis/library/drive.googleapis.com",
+    envVars: ["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET"],
   },
-  github: {
-    title: "GitHub OAuth App Setup",
+  sheets: {
+    title: "Google Sheets Setup",
+    category: "google",
     steps: [
-      "Go to GitHub Developer Settings",
-      "Click 'New OAuth App'",
-      "Set Homepage URL to http://localhost:3000",
-      "Set callback URL to http://localhost:3000/api/auth/github/callback",
-      "Copy Client ID and Secret to your .env file",
+      "Uses same Google OAuth credentials",
+      "Enable Sheets API in Google Cloud Console",
+      "Add redirect URI: http://localhost:3000/api/auth/sheets/callback",
     ],
-    link: "https://github.com/settings/developers",
+    link: "https://console.cloud.google.com/apis/library/sheets.googleapis.com",
+    envVars: ["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET"],
   },
+  "docs-google": {
+    title: "Google Docs Setup",
+    category: "google",
+    steps: [
+      "Uses same Google OAuth credentials",
+      "Enable Docs API in Google Cloud Console",
+      "Add redirect URI: http://localhost:3000/api/auth/docs-google/callback",
+    ],
+    link: "https://console.cloud.google.com/apis/library/docs.googleapis.com",
+    envVars: ["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET"],
+  },
+
+  // Microsoft Services
+  outlook: {
+    title: "Microsoft Outlook Setup",
+    category: "microsoft",
+    steps: [
+      "Go to Azure Portal > Azure Active Directory",
+      "Click App registrations > New registration",
+      "Set redirect URI: http://localhost:3000/api/auth/outlook/callback",
+      "Go to API permissions > Add Microsoft Graph permissions",
+      "Add: Mail.Read, Mail.Send, Mail.ReadWrite",
+      "Go to Certificates & secrets > New client secret",
+      "Copy Application ID and Secret to .env",
+    ],
+    link: "https://portal.azure.com/#blade/Microsoft_AAD_RegisteredApps/ApplicationsListBlade",
+    envVars: ["MICROSOFT_CLIENT_ID", "MICROSOFT_CLIENT_SECRET"],
+  },
+  teams: {
+    title: "Microsoft Teams Setup",
+    category: "microsoft",
+    steps: [
+      "Uses same Microsoft OAuth credentials as Outlook",
+      "Add Teams permissions: Chat.Read, Chat.ReadWrite, Channel.ReadBasic.All",
+      "Add redirect URI: http://localhost:3000/api/auth/teams/callback",
+    ],
+    link: "https://portal.azure.com/#blade/Microsoft_AAD_RegisteredApps/ApplicationsListBlade",
+    envVars: ["MICROSOFT_CLIENT_ID", "MICROSOFT_CLIENT_SECRET"],
+  },
+  onedrive: {
+    title: "Microsoft OneDrive Setup",
+    category: "microsoft",
+    steps: [
+      "Uses same Microsoft OAuth credentials",
+      "Add permissions: Files.Read, Files.ReadWrite",
+      "Add redirect URI: http://localhost:3000/api/auth/onedrive/callback",
+    ],
+    link: "https://portal.azure.com/#blade/Microsoft_AAD_RegisteredApps/ApplicationsListBlade",
+    envVars: ["MICROSOFT_CLIENT_ID", "MICROSOFT_CLIENT_SECRET"],
+  },
+  sharepoint: {
+    title: "Microsoft SharePoint Setup",
+    category: "microsoft",
+    steps: [
+      "Uses same Microsoft OAuth credentials",
+      "Add permissions: Sites.Read.All, Sites.ReadWrite.All",
+      "Add redirect URI: http://localhost:3000/api/auth/sharepoint/callback",
+    ],
+    link: "https://portal.azure.com/#blade/Microsoft_AAD_RegisteredApps/ApplicationsListBlade",
+    envVars: ["MICROSOFT_CLIENT_ID", "MICROSOFT_CLIENT_SECRET"],
+  },
+
+  // Atlassian Services
   jira: {
-    title: "Atlassian (Jira) Setup",
+    title: "Atlassian Jira Setup",
+    category: "atlassian",
     steps: [
       "Go to Atlassian Developer Console",
-      "Create OAuth 2.0 integration",
-      "Add Jira API scopes",
+      "Click Create > OAuth 2.0 integration",
+      "Add Jira API scopes: read:jira-work, write:jira-work",
       "Set callback URL: http://localhost:3000/api/auth/jira/callback",
-      "Copy Client ID and Secret to your .env file",
+      "Copy Client ID and Secret to .env",
     ],
     link: "https://developer.atlassian.com/console/myapps/",
+    envVars: ["ATLASSIAN_CLIENT_ID", "ATLASSIAN_CLIENT_SECRET"],
   },
+  confluence: {
+    title: "Atlassian Confluence Setup",
+    category: "atlassian",
+    steps: [
+      "Uses same Atlassian OAuth credentials as Jira",
+      "Add Confluence scopes: read:confluence-content.all, write:confluence-content",
+      "Add callback URL: http://localhost:3000/api/auth/confluence/callback",
+    ],
+    link: "https://developer.atlassian.com/console/myapps/",
+    envVars: ["ATLASSIAN_CLIENT_ID", "ATLASSIAN_CLIENT_SECRET"],
+  },
+  bitbucket: {
+    title: "Atlassian Bitbucket Setup",
+    category: "atlassian",
+    steps: [
+      "Go to Bitbucket Settings > OAuth consumers",
+      "Click Add consumer",
+      "Set callback URL: http://localhost:3000/api/auth/bitbucket/callback",
+      "Add permissions: repository:read, repository:write",
+      "Copy Key and Secret to .env",
+    ],
+    link: "https://bitbucket.org/account/settings/app-passwords/",
+    envVars: ["BITBUCKET_CLIENT_ID", "BITBUCKET_CLIENT_SECRET"],
+  },
+
+  // Communication
+  slack: {
+    title: "Slack App Setup",
+    category: "communication",
+    steps: [
+      "Go to Slack API Apps page",
+      "Click Create New App > From scratch",
+      "Go to OAuth & Permissions",
+      "Add scopes: channels:read, chat:write, users:read, channels:history",
+      "Add redirect URL: http://localhost:3000/api/auth/slack/callback",
+      "Install to Workspace",
+      "Copy Client ID and Secret to .env",
+    ],
+    link: "https://api.slack.com/apps",
+    envVars: ["SLACK_CLIENT_ID", "SLACK_CLIENT_SECRET"],
+  },
+  discord: {
+    title: "Discord App Setup",
+    category: "communication",
+    steps: [
+      "Go to Discord Developer Portal",
+      "Click New Application",
+      "Go to OAuth2 section",
+      "Add redirect: http://localhost:3000/api/auth/discord/callback",
+      "Copy Client ID and Secret to .env",
+      "Add bot permissions as needed",
+    ],
+    link: "https://discord.com/developers/applications",
+    envVars: ["DISCORD_CLIENT_ID", "DISCORD_CLIENT_SECRET"],
+  },
+  zoom: {
+    title: "Zoom App Setup",
+    category: "communication",
+    steps: [
+      "Go to Zoom App Marketplace",
+      "Click Develop > Build App",
+      "Choose OAuth app type",
+      "Add redirect URL: http://localhost:3000/api/auth/zoom/callback",
+      "Add scopes: meeting:read, meeting:write, user:read",
+      "Copy Client ID and Secret to .env",
+    ],
+    link: "https://marketplace.zoom.us/develop/create",
+    envVars: ["ZOOM_CLIENT_ID", "ZOOM_CLIENT_SECRET"],
+  },
+  webex: {
+    title: "Webex Integration Setup",
+    category: "communication",
+    steps: [
+      "Go to Webex Developer Portal",
+      "Create a new integration",
+      "Add redirect URI: http://localhost:3000/api/auth/webex/callback",
+      "Select required scopes",
+      "Copy Client ID and Secret to .env",
+    ],
+    link: "https://developer.webex.com/my-apps",
+    envVars: ["WEBEX_CLIENT_ID", "WEBEX_CLIENT_SECRET"],
+  },
+  twilio: {
+    title: "Twilio Setup",
+    category: "communication",
+    steps: [
+      "Go to Twilio Console",
+      "Copy Account SID and Auth Token",
+      "Get a phone number for SMS",
+      "Add credentials to .env",
+    ],
+    link: "https://console.twilio.com/",
+    envVars: ["TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN", "TWILIO_PHONE_NUMBER"],
+  },
+
+  // Development
+  github: {
+    title: "GitHub OAuth App Setup",
+    category: "development",
+    steps: [
+      "Go to GitHub Developer Settings",
+      "Click OAuth Apps > New OAuth App",
+      "Set Homepage URL: http://localhost:3000",
+      "Set callback URL: http://localhost:3000/api/auth/github/callback",
+      "Copy Client ID and Secret to .env",
+    ],
+    link: "https://github.com/settings/developers",
+    envVars: ["GITHUB_CLIENT_ID", "GITHUB_CLIENT_SECRET"],
+  },
+  gitlab: {
+    title: "GitLab OAuth Setup",
+    category: "development",
+    steps: [
+      "Go to GitLab User Settings > Applications",
+      "Create new application",
+      "Add redirect URI: http://localhost:3000/api/auth/gitlab/callback",
+      "Select scopes: api, read_user, read_repository",
+      "Copy Application ID and Secret to .env",
+    ],
+    link: "https://gitlab.com/-/profile/applications",
+    envVars: ["GITLAB_CLIENT_ID", "GITLAB_CLIENT_SECRET"],
+  },
+  sentry: {
+    title: "Sentry Setup",
+    category: "development",
+    steps: [
+      "Go to Sentry Settings > Developer Settings",
+      "Create new integration",
+      "Add redirect URL: http://localhost:3000/api/auth/sentry/callback",
+      "Copy Client ID and Secret to .env",
+    ],
+    link: "https://sentry.io/settings/developer-settings/",
+    envVars: ["SENTRY_CLIENT_ID", "SENTRY_CLIENT_SECRET"],
+  },
+  posthog: {
+    title: "PostHog Setup",
+    category: "development",
+    steps: [
+      "Go to PostHog Project Settings",
+      "Copy your Project API Key",
+      "Add to .env file",
+    ],
+    link: "https://app.posthog.com/project/settings",
+    envVars: ["POSTHOG_API_KEY", "POSTHOG_HOST"],
+  },
+  mixpanel: {
+    title: "Mixpanel Setup",
+    category: "development",
+    steps: [
+      "Go to Mixpanel Project Settings",
+      "Copy your Project Token",
+      "For API access, create a Service Account",
+      "Add credentials to .env",
+    ],
+    link: "https://mixpanel.com/settings/project",
+    envVars: ["MIXPANEL_TOKEN", "MIXPANEL_API_SECRET"],
+  },
+
+  // Productivity
   notion: {
     title: "Notion Integration Setup",
+    category: "productivity",
     steps: [
       "Go to Notion Integrations page",
-      "Create new integration",
+      "Click New integration",
+      "Name your integration and select workspace",
       "Copy the Internal Integration Token",
-      "Add token to your .env file",
-      "Share desired pages with your integration",
+      "Share desired pages/databases with your integration",
+      "Add token to .env",
     ],
     link: "https://www.notion.so/my-integrations",
+    envVars: ["NOTION_API_KEY"],
+  },
+  linear: {
+    title: "Linear OAuth Setup",
+    category: "productivity",
+    steps: [
+      "Go to Linear Settings > API",
+      "Create new OAuth application",
+      "Add redirect URI: http://localhost:3000/api/auth/linear/callback",
+      "Copy Client ID and Secret to .env",
+    ],
+    link: "https://linear.app/settings/api",
+    envVars: ["LINEAR_CLIENT_ID", "LINEAR_CLIENT_SECRET"],
+  },
+  asana: {
+    title: "Asana OAuth Setup",
+    category: "productivity",
+    steps: [
+      "Go to Asana Developer Console",
+      "Create new app",
+      "Add redirect URI: http://localhost:3000/api/auth/asana/callback",
+      "Copy Client ID and Secret to .env",
+    ],
+    link: "https://app.asana.com/0/developer-console",
+    envVars: ["ASANA_CLIENT_ID", "ASANA_CLIENT_SECRET"],
+  },
+  trello: {
+    title: "Trello Power-Up Setup",
+    category: "productivity",
+    steps: [
+      "Go to Trello Power-Ups Admin",
+      "Create new Power-Up",
+      "Add redirect URI: http://localhost:3000/api/auth/trello/callback",
+      "Copy API Key and Secret to .env",
+    ],
+    link: "https://trello.com/power-ups/admin",
+    envVars: ["TRELLO_API_KEY", "TRELLO_API_SECRET"],
+  },
+  monday: {
+    title: "Monday.com App Setup",
+    category: "productivity",
+    steps: [
+      "Go to monday.com Developers",
+      "Create new app",
+      "Add OAuth redirect: http://localhost:3000/api/auth/monday/callback",
+      "Copy Client ID and Secret to .env",
+    ],
+    link: "https://monday.com/developers/apps",
+    envVars: ["MONDAY_CLIENT_ID", "MONDAY_CLIENT_SECRET"],
+  },
+  clickup: {
+    title: "ClickUp OAuth Setup",
+    category: "productivity",
+    steps: [
+      "Go to ClickUp Settings > Apps",
+      "Create new app",
+      "Add redirect URI: http://localhost:3000/api/auth/clickup/callback",
+      "Copy Client ID and Secret to .env",
+    ],
+    link: "https://app.clickup.com/settings/apps",
+    envVars: ["CLICKUP_CLIENT_ID", "CLICKUP_CLIENT_SECRET"],
+  },
+
+  // Storage
+  dropbox: {
+    title: "Dropbox App Setup",
+    category: "storage",
+    steps: [
+      "Go to Dropbox App Console",
+      "Create new app",
+      "Choose Scoped access and Full Dropbox",
+      "Add redirect URI: http://localhost:3000/api/auth/dropbox/callback",
+      "Copy App Key and Secret to .env",
+    ],
+    link: "https://www.dropbox.com/developers/apps",
+    envVars: ["DROPBOX_CLIENT_ID", "DROPBOX_CLIENT_SECRET"],
+  },
+  box: {
+    title: "Box App Setup",
+    category: "storage",
+    steps: [
+      "Go to Box Developer Console",
+      "Create new app with OAuth 2.0",
+      "Add redirect URI: http://localhost:3000/api/auth/box/callback",
+      "Copy Client ID and Secret to .env",
+    ],
+    link: "https://app.box.com/developers/console",
+    envVars: ["BOX_CLIENT_ID", "BOX_CLIENT_SECRET"],
+  },
+  airtable: {
+    title: "Airtable OAuth Setup",
+    category: "storage",
+    steps: [
+      "Go to Airtable Developer Hub",
+      "Create new OAuth integration",
+      "Add redirect URI: http://localhost:3000/api/auth/airtable/callback",
+      "Select required scopes",
+      "Copy Client ID and Secret to .env",
+    ],
+    link: "https://airtable.com/create/oauth",
+    envVars: ["AIRTABLE_CLIENT_ID", "AIRTABLE_CLIENT_SECRET"],
+  },
+
+  // Infrastructure
+  supabase: {
+    title: "Supabase Setup",
+    category: "infrastructure",
+    steps: [
+      "Go to Supabase Dashboard",
+      "Create new project or select existing",
+      "Go to Settings > API",
+      "Copy Project URL and anon/service_role keys",
+      "Add to .env file",
+    ],
+    link: "https://supabase.com/dashboard",
+    envVars: ["SUPABASE_URL", "SUPABASE_ANON_KEY", "SUPABASE_SERVICE_ROLE_KEY"],
+  },
+  neon: {
+    title: "Neon Database Setup",
+    category: "infrastructure",
+    steps: [
+      "Go to Neon Console",
+      "Create new project",
+      "Copy connection string from Dashboard",
+      "Add to .env file",
+    ],
+    link: "https://console.neon.tech/",
+    envVars: ["DATABASE_URL"],
+  },
+  snowflake: {
+    title: "Snowflake Setup",
+    category: "infrastructure",
+    steps: [
+      "Go to Snowflake Console",
+      "Create a service account or use existing credentials",
+      "Note your account identifier, warehouse, database",
+      "Add credentials to .env",
+    ],
+    link: "https://app.snowflake.com/",
+    envVars: ["SNOWFLAKE_ACCOUNT", "SNOWFLAKE_USER", "SNOWFLAKE_PASSWORD", "SNOWFLAKE_WAREHOUSE"],
+  },
+  aws: {
+    title: "AWS Setup",
+    category: "infrastructure",
+    steps: [
+      "Go to AWS IAM Console",
+      "Create new IAM user with programmatic access",
+      "Attach required policies (S3, Lambda, DynamoDB)",
+      "Copy Access Key ID and Secret",
+      "Add to .env file",
+    ],
+    link: "https://console.aws.amazon.com/iam/",
+    envVars: ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_REGION"],
+  },
+
+  // Sales & CRM
+  salesforce: {
+    title: "Salesforce Connected App Setup",
+    category: "sales",
+    steps: [
+      "Go to Salesforce Setup > App Manager",
+      "Create new Connected App",
+      "Enable OAuth Settings",
+      "Add callback URL: http://localhost:3000/api/auth/salesforce/callback",
+      "Select OAuth scopes: api, refresh_token",
+      "Copy Consumer Key and Secret to .env",
+    ],
+    link: "https://login.salesforce.com/",
+    envVars: ["SALESFORCE_CLIENT_ID", "SALESFORCE_CLIENT_SECRET"],
+  },
+  hubspot: {
+    title: "HubSpot App Setup",
+    category: "sales",
+    steps: [
+      "Go to HubSpot Developer Portal",
+      "Create new app",
+      "Add redirect URI: http://localhost:3000/api/auth/hubspot/callback",
+      "Select required scopes",
+      "Copy Client ID and Secret to .env",
+    ],
+    link: "https://developers.hubspot.com/",
+    envVars: ["HUBSPOT_CLIENT_ID", "HUBSPOT_CLIENT_SECRET"],
+  },
+  pipedrive: {
+    title: "Pipedrive OAuth Setup",
+    category: "sales",
+    steps: [
+      "Go to Pipedrive Developer Hub",
+      "Create new app",
+      "Add redirect URI: http://localhost:3000/api/auth/pipedrive/callback",
+      "Copy Client ID and Secret to .env",
+    ],
+    link: "https://developers.pipedrive.com/",
+    envVars: ["PIPEDRIVE_CLIENT_ID", "PIPEDRIVE_CLIENT_SECRET"],
+  },
+
+  // Support
+  zendesk: {
+    title: "Zendesk OAuth Setup",
+    category: "support",
+    steps: [
+      "Go to Zendesk Admin > API > OAuth Clients",
+      "Add new OAuth client",
+      "Set redirect URI: http://localhost:3000/api/auth/zendesk/callback",
+      "Copy Client ID and Secret to .env",
+      "Add your Zendesk subdomain",
+    ],
+    link: "https://support.zendesk.com/hc/en-us/articles/4408845965210",
+    envVars: ["ZENDESK_CLIENT_ID", "ZENDESK_CLIENT_SECRET", "ZENDESK_SUBDOMAIN"],
+  },
+  intercom: {
+    title: "Intercom OAuth Setup",
+    category: "support",
+    steps: [
+      "Go to Intercom Developer Hub",
+      "Create new app",
+      "Add redirect URI: http://localhost:3000/api/auth/intercom/callback",
+      "Copy Client ID and Secret to .env",
+    ],
+    link: "https://developers.intercom.com/",
+    envVars: ["INTERCOM_CLIENT_ID", "INTERCOM_CLIENT_SECRET"],
+  },
+  freshdesk: {
+    title: "Freshdesk OAuth Setup",
+    category: "support",
+    steps: [
+      "Go to Freshdesk Admin > Apps > Custom Apps",
+      "Create new OAuth application",
+      "Add redirect URI: http://localhost:3000/api/auth/freshdesk/callback",
+      "Copy Client ID and Secret to .env",
+    ],
+    link: "https://developers.freshdesk.com/",
+    envVars: ["FRESHDESK_CLIENT_ID", "FRESHDESK_CLIENT_SECRET", "FRESHDESK_DOMAIN"],
+  },
+  servicenow: {
+    title: "ServiceNow OAuth Setup",
+    category: "support",
+    steps: [
+      "Go to ServiceNow System OAuth > Application Registry",
+      "Create OAuth API endpoint for external clients",
+      "Add redirect URL: http://localhost:3000/api/auth/servicenow/callback",
+      "Copy Client ID and Secret to .env",
+    ],
+    link: "https://docs.servicenow.com/",
+    envVars: ["SERVICENOW_CLIENT_ID", "SERVICENOW_CLIENT_SECRET", "SERVICENOW_INSTANCE"],
+  },
+
+  // Finance
+  stripe: {
+    title: "Stripe Setup",
+    category: "finance",
+    steps: [
+      "Go to Stripe Dashboard",
+      "Go to Developers > API keys",
+      "Copy Publishable and Secret keys",
+      "For Connect, set up OAuth in Connect settings",
+      "Add to .env file",
+    ],
+    link: "https://dashboard.stripe.com/apikeys",
+    envVars: ["STRIPE_SECRET_KEY", "STRIPE_PUBLISHABLE_KEY"],
+  },
+  quickbooks: {
+    title: "QuickBooks OAuth Setup",
+    category: "finance",
+    steps: [
+      "Go to Intuit Developer Portal",
+      "Create new app",
+      "Add redirect URI: http://localhost:3000/api/auth/quickbooks/callback",
+      "Select Accounting scope",
+      "Copy Client ID and Secret to .env",
+    ],
+    link: "https://developer.intuit.com/app/developer/dashboard",
+    envVars: ["QUICKBOOKS_CLIENT_ID", "QUICKBOOKS_CLIENT_SECRET"],
+  },
+  xero: {
+    title: "Xero OAuth Setup",
+    category: "finance",
+    steps: [
+      "Go to Xero Developer Portal",
+      "Create new app",
+      "Add redirect URI: http://localhost:3000/api/auth/xero/callback",
+      "Select required scopes",
+      "Copy Client ID and Secret to .env",
+    ],
+    link: "https://developer.xero.com/app/manage",
+    envVars: ["XERO_CLIENT_ID", "XERO_CLIENT_SECRET"],
+  },
+
+  // Marketing
+  mailchimp: {
+    title: "Mailchimp OAuth Setup",
+    category: "marketing",
+    steps: [
+      "Go to Mailchimp Developer Portal",
+      "Register new app",
+      "Add redirect URI: http://localhost:3000/api/auth/mailchimp/callback",
+      "Copy Client ID and Secret to .env",
+    ],
+    link: "https://admin.mailchimp.com/account/oauth2/",
+    envVars: ["MAILCHIMP_CLIENT_ID", "MAILCHIMP_CLIENT_SECRET"],
+  },
+  shopify: {
+    title: "Shopify App Setup",
+    category: "marketing",
+    steps: [
+      "Go to Shopify Partners Dashboard",
+      "Create new app",
+      "Add redirect URI: http://localhost:3000/api/auth/shopify/callback",
+      "Copy API Key and Secret to .env",
+    ],
+    link: "https://partners.shopify.com/",
+    envVars: ["SHOPIFY_API_KEY", "SHOPIFY_API_SECRET"],
+  },
+  twitter: {
+    title: "Twitter/X OAuth Setup",
+    category: "marketing",
+    steps: [
+      "Go to Twitter Developer Portal",
+      "Create new project and app",
+      "Enable OAuth 2.0",
+      "Add redirect URI: http://localhost:3000/api/auth/twitter/callback",
+      "Copy Client ID and Secret to .env",
+    ],
+    link: "https://developer.twitter.com/en/portal/dashboard",
+    envVars: ["TWITTER_CLIENT_ID", "TWITTER_CLIENT_SECRET"],
+  },
+
+  // Design
+  figma: {
+    title: "Figma OAuth Setup",
+    category: "design",
+    steps: [
+      "Go to Figma Developer Settings",
+      "Create new app",
+      "Add redirect URI: http://localhost:3000/api/auth/figma/callback",
+      "Copy Client ID and Secret to .env",
+    ],
+    link: "https://www.figma.com/developers/apps",
+    envVars: ["FIGMA_CLIENT_ID", "FIGMA_CLIENT_SECRET"],
+  },
+
+  // AI
+  anthropic: {
+    title: "Anthropic API Setup",
+    category: "ai",
+    steps: [
+      "Go to Anthropic Console",
+      "Create new API key",
+      "Copy API key to .env",
+    ],
+    link: "https://console.anthropic.com/",
+    envVars: ["ANTHROPIC_API_KEY"],
   },
 };
 
@@ -93,9 +707,13 @@ export default function SetupPage() {
   const [loading, setLoading] = useState(true);
   const [expandedGuide, setExpandedGuide] = useState<string | null>(null);
   const [envChecked, setEnvChecked] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
+  const [tokenStorage, setTokenStorage] = useState<TokenStorageStatus | null>(null);
 
   useEffect(() => {
     fetchStatus();
+    fetchTokenStorage();
   }, []);
 
   async function fetchStatus() {
@@ -109,6 +727,45 @@ export default function SetupPage() {
       setLoading(false);
     }
   }
+
+  async function fetchTokenStorage() {
+    try {
+      const res = await fetch("/api/integrations/token-storage");
+      const data = await res.json();
+      setTokenStorage(data);
+    } catch {
+      // Token storage endpoint may not exist yet
+      setTokenStorage({ mode: "memory", encrypted: false });
+    }
+  }
+
+  // Filter integrations based on search and category
+  const filteredIntegrations = useMemo(() => {
+    return integrations.filter((integration) => {
+      const guide = OAUTH_SETUP_GUIDES[integration.id];
+      const matchesSearch =
+        searchQuery === "" ||
+        integration.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        integration.id.toLowerCase().includes(searchQuery.toLowerCase());
+      const matchesCategory =
+        selectedCategory === null || (guide && guide.category === selectedCategory);
+      return matchesSearch && matchesCategory;
+    });
+  }, [integrations, searchQuery, selectedCategory]);
+
+  // Group integrations by category for display
+  const groupedIntegrations = useMemo(() => {
+    const groups: Record<string, Integration[]> = {};
+    for (const integration of filteredIntegrations) {
+      const guide = OAUTH_SETUP_GUIDES[integration.id];
+      const category = guide?.category || "other";
+      if (!groups[category]) {
+        groups[category] = [];
+      }
+      groups[category].push(integration);
+    }
+    return groups;
+  }, [filteredIntegrations]);
 
   const connectedCount = integrations.filter((i) => i.connected).length;
   const totalCount = integrations.length;
@@ -166,6 +823,76 @@ export default function SetupPage() {
             />
           </div>
         </div>
+
+        {/* Token Storage Status */}
+        {tokenStorage && (
+          <div className={`rounded-2xl p-6 shadow-sm border mb-8 ${
+            tokenStorage.mode === "memory"
+              ? "bg-amber-50 dark:bg-amber-900/20 border-amber-200 dark:border-amber-800"
+              : "bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800"
+          }`}>
+            <div className="flex items-start gap-4">
+              <div className={`w-10 h-10 rounded-full flex items-center justify-center ${
+                tokenStorage.mode === "memory"
+                  ? "bg-amber-100 dark:bg-amber-900"
+                  : "bg-green-100 dark:bg-green-900"
+              }`}>
+                {tokenStorage.mode === "memory" ? (
+                  <svg className="w-5 h-5 text-amber-600 dark:text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                  </svg>
+                ) : (
+                  <svg className="w-5 h-5 text-green-600 dark:text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+                  </svg>
+                )}
+              </div>
+              <div className="flex-1">
+                <h3 className={`font-semibold ${
+                  tokenStorage.mode === "memory"
+                    ? "text-amber-800 dark:text-amber-200"
+                    : "text-green-800 dark:text-green-200"
+                }`}>
+                  Token Storage: {tokenStorage.mode === "memory" ? "Development Mode" : `${tokenStorage.mode.charAt(0).toUpperCase() + tokenStorage.mode.slice(1)} Storage`}
+                </h3>
+                <p className={`text-sm mt-1 ${
+                  tokenStorage.mode === "memory"
+                    ? "text-amber-700 dark:text-amber-300"
+                    : "text-green-700 dark:text-green-300"
+                }`}>
+                  {tokenStorage.mode === "memory" ? (
+                    <>Tokens are stored in memory and will be lost on restart. Set <code className="px-1 py-0.5 bg-amber-100 dark:bg-amber-900 rounded text-xs">DATABASE_URL</code>, <code className="px-1 py-0.5 bg-amber-100 dark:bg-amber-900 rounded text-xs">KV_REST_API_URL</code>, or <code className="px-1 py-0.5 bg-amber-100 dark:bg-amber-900 rounded text-xs">REDIS_URL</code> for production.</>
+                  ) : (
+                    <>Tokens are persisted to {tokenStorage.mode} storage.</>
+                  )}
+                </p>
+                <div className="mt-2 flex items-center gap-4 text-sm">
+                  <span className={`inline-flex items-center gap-1.5 ${
+                    tokenStorage.encrypted
+                      ? "text-green-600 dark:text-green-400"
+                      : "text-amber-600 dark:text-amber-400"
+                  }`}>
+                    {tokenStorage.encrypted ? (
+                      <>
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                        </svg>
+                        Encryption enabled
+                      </>
+                    ) : (
+                      <>
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 11V7a4 4 0 118 0m-4 8v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2z" />
+                        </svg>
+                        Set <code className="px-1 py-0.5 bg-amber-100 dark:bg-amber-900 rounded text-xs">TOKEN_ENCRYPTION_KEY</code> for encryption
+                      </>
+                    )}
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Setup Steps */}
         <div className="bg-white dark:bg-neutral-800 rounded-2xl shadow-sm border border-neutral-200 dark:border-neutral-700 mb-8 overflow-hidden">
@@ -227,13 +954,71 @@ export default function SetupPage() {
             <p className="text-sm text-neutral-600 dark:text-neutral-400 mt-1">
               Click on a service to see setup instructions or connect
             </p>
+
+            {/* Search Input */}
+            <div className="mt-4">
+              <input
+                type="text"
+                placeholder="Search services..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full px-4 py-2 bg-neutral-100 dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-700 rounded-xl text-neutral-900 dark:text-white placeholder-neutral-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+
+            {/* Category Filter Pills */}
+            <div className="mt-4 flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => setSelectedCategory(null)}
+                className={`px-3 py-1.5 text-sm font-medium rounded-lg transition-colors ${
+                  selectedCategory === null
+                    ? "bg-neutral-900 dark:bg-white text-white dark:text-neutral-900"
+                    : "bg-neutral-100 dark:bg-neutral-700 text-neutral-600 dark:text-neutral-300 hover:bg-neutral-200 dark:hover:bg-neutral-600"
+                }`}
+              >
+                All
+              </button>
+              {CATEGORIES.map((category) => (
+                <button
+                  key={category.id}
+                  type="button"
+                  onClick={() =>
+                    setSelectedCategory(selectedCategory === category.id ? null : category.id)}
+                  className={`px-3 py-1.5 text-sm font-medium rounded-lg transition-colors ${
+                    selectedCategory === category.id
+                      ? "bg-neutral-900 dark:bg-white text-white dark:text-neutral-900"
+                      : "bg-neutral-100 dark:bg-neutral-700 text-neutral-600 dark:text-neutral-300 hover:bg-neutral-200 dark:hover:bg-neutral-600"
+                  }`}
+                >
+                  {category.name}
+                </button>
+              ))}
+            </div>
           </div>
 
           {loading
             ? <div className="p-12 text-center text-neutral-500">Loading...</div>
-            : (
-              <div className="divide-y divide-neutral-200 dark:divide-neutral-700">
-                {integrations.map((integration) => (
+            : filteredIntegrations.length === 0
+              ? (
+                <div className="p-12 text-center text-neutral-500">
+                  No services found matching your search
+                </div>
+              )
+              : (
+                <div>
+                  {CATEGORIES.filter((cat) => groupedIntegrations[cat.id]?.length > 0).map(
+                    (category) => (
+                      <div key={category.id}>
+                        {/* Category Header */}
+                        <div className="px-6 py-3 bg-neutral-50 dark:bg-neutral-900 border-b border-neutral-200 dark:border-neutral-700">
+                          <h3 className="text-sm font-semibold text-neutral-500 dark:text-neutral-400 uppercase tracking-wider">
+                            {category.name}
+                          </h3>
+                        </div>
+                        {/* Services in this category */}
+                        <div className="divide-y divide-neutral-200 dark:divide-neutral-700">
+                          {groupedIntegrations[category.id]?.map((integration) => (
                   <div key={integration.id}>
                     <div className="p-6 flex items-center justify-between">
                       <div className="flex items-center gap-4">
@@ -256,16 +1041,18 @@ export default function SetupPage() {
                         </div>
                       </div>
                       <div className="flex items-center gap-3">
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setExpandedGuide(
-                              expandedGuide === integration.id ? null : integration.id,
-                            )}
-                          className="px-4 py-2 text-sm font-medium text-neutral-600 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-white"
-                        >
-                          {expandedGuide === integration.id ? "Hide Guide" : "Setup Guide"}
-                        </button>
+                        {OAUTH_SETUP_GUIDES[integration.id] && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setExpandedGuide(
+                                expandedGuide === integration.id ? null : integration.id,
+                              )}
+                            className="px-4 py-2 text-sm font-medium text-neutral-600 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-white"
+                          >
+                            {expandedGuide === integration.id ? "Hide Guide" : "Setup Guide"}
+                          </button>
+                        )}
                         {integration.connected
                           ? (
                             <span className="inline-flex items-center gap-1.5 px-4 py-2 bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-400 rounded-xl text-sm font-medium">
@@ -294,7 +1081,7 @@ export default function SetupPage() {
                             <h4 className="font-semibold text-neutral-900 dark:text-white mb-4">
                               {guide.title}
                             </h4>
-                            <ol className="space-y-3">
+                            <ol className="space-y-3 mb-6">
                               {guide.steps.map((step, i) => (
                                 <li key={i} className="flex items-start gap-3">
                                   <span className="w-6 h-6 bg-neutral-200 dark:bg-neutral-700 rounded-full flex items-center justify-center text-sm font-medium text-neutral-600 dark:text-neutral-400 flex-shrink-0">
@@ -306,11 +1093,22 @@ export default function SetupPage() {
                                 </li>
                               ))}
                             </ol>
+
+                            {/* Environment Variables */}
+                            <div className="mb-4 p-4 bg-neutral-100 dark:bg-neutral-800 rounded-lg">
+                              <h5 className="text-sm font-semibold text-neutral-700 dark:text-neutral-300 mb-2">
+                                Required Environment Variables:
+                              </h5>
+                              <pre className="text-sm text-neutral-600 dark:text-neutral-400 font-mono whitespace-pre-wrap">
+                                {guide.envVars.map((v) => `${v}=your_value`).join("\n")}
+                              </pre>
+                            </div>
+
                             <a
                               href={guide.link}
                               target="_blank"
                               rel="noopener noreferrer"
-                              className="mt-4 inline-flex items-center gap-2 text-blue-600 dark:text-blue-400 text-sm font-medium hover:underline"
+                              className="inline-flex items-center gap-2 text-blue-600 dark:text-blue-400 text-sm font-medium hover:underline"
                             >
                               Open Developer Console
                               <svg
@@ -332,9 +1130,13 @@ export default function SetupPage() {
                       );
                     })()}
                   </div>
-                ))}
-              </div>
-            )}
+                          ))}
+                        </div>
+                      </div>
+                    ),
+                  )}
+                </div>
+              )}
         </div>
 
         {/* All Connected Message */}
@@ -446,16 +1248,18 @@ function ServiceIcon({ name }: { name: string }) {
         <path d="M4.459 4.208c.746.606 1.026.56 2.428.466l13.215-.793c.28 0 .047-.28-.046-.326L17.86 1.968c-.42-.326-.98-.7-2.055-.607L3.01 2.295c-.466.046-.56.28-.374.466l1.823 1.447zm.793 3.08v13.904c0 .747.373 1.027 1.214.98l14.523-.84c.84-.046.933-.56.933-1.167V6.354c0-.606-.233-.933-.746-.886l-15.177.887c-.56.046-.747.326-.747.933zm14.337.745c.093.42 0 .84-.42.888l-.7.14v10.264c-.608.327-1.168.514-1.635.514-.746 0-.933-.234-1.495-.933l-4.577-7.186v6.952L12.21 19s0 .84-1.168.84l-3.222.186c-.093-.186 0-.653.327-.746l.84-.233V9.854L7.822 9.76c-.094-.42.14-1.026.793-1.073l3.456-.233 4.764 7.279v-6.44l-1.215-.14c-.093-.514.28-.886.747-.933l3.222-.186zM1.936 1.035l13.31-.98c1.634-.14 2.055-.047 3.082.7l4.249 2.986c.7.513.933.653.933 1.213v16.378c0 1.026-.373 1.634-1.68 1.726l-15.458.934c-.98.047-1.448-.093-1.962-.747l-3.129-4.06c-.56-.747-.793-1.306-.793-1.96V2.667c0-.839.374-1.54 1.448-1.632z" />
       </svg>
     ),
+    // Default icon for services without specific icons
+    default: (
+      <svg className="w-6 h-6 text-neutral-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeWidth={2}
+          d="M13 10V3L4 14h7v7l9-11h-7z"
+        />
+      </svg>
+    ),
   };
 
-  return iconMap[name] || (
-    <svg className="w-6 h-6 text-neutral-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-      <path
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        strokeWidth={2}
-        d="M13 10V3L4 14h7v7l9-11h-7z"
-      />
-    </svg>
-  );
+  return iconMap[name] || iconMap.default;
 }

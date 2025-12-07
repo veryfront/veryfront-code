@@ -6,21 +6,25 @@ keywords: ["api", "reference", "types", "functions", "components", "configuratio
 ai_summary: "Complete API reference for Veryfront including configuration, components, data fetching, routing, and types"
 related: ["api/configuration", "api/components", "api/data-fetching", "api/routes"]
 version: "0.1.0"
-last_updated: "2025-11-22"
+last_updated: "2025-12-07"
 ---
 
 # API Reference
 
-Complete reference for all public APIs, types, and interfaces in Veryfront.
+This reference documents all public APIs, types, and interfaces in Veryfront.
 
-## Quick Links
+## Contents
 
-- [Configuration](#configuration) - `veryfront.config.ts` options
-- [Components](#components) - Built-in React components
-- [Data Fetching](#data-fetching) - Server-side data loading
-- [Routing](#routing) - File-based routing APIs
-- [Types](#types) - TypeScript type definitions
-- [Runtime](#runtime) - Platform-specific APIs
+| Section | Description |
+|---------|-------------|
+| [Configuration](#configuration) | Project configuration options |
+| [Components](#components) | Built-in React components |
+| [Data Fetching](#data-fetching) | Server-side data loading |
+| [Routing](#routing) | File-based routing APIs |
+| [API Routes](#api-routes) | HTTP endpoint handlers |
+| [Types](#types) | TypeScript definitions |
+| [AI APIs](#ai-apis-beta) | Agents, tools, and integrations |
+| [Runtime](#runtime-apis) | Platform-specific APIs |
 
 ## Configuration
 
@@ -613,17 +617,37 @@ export const config = {
 ### Agent System
 
 ```typescript
-import { Agent } from 'veryfront/ai';
+import { agent } from 'veryfront/ai';
 
-const agent = new Agent({
-  provider: 'anthropic',
-  model: 'claude-3-5-sonnet-20241022',
-  tools: ['web-search', 'calculator'],
+const assistant = agent({
+  model: 'openai/gpt-4',
+  system: 'You are a helpful assistant.',
+  tools: ['gmail/*', 'calendar/*'], // Use integration tools
 });
 
-const response = await agent.run('What is 2 + 2?');
+const response = await assistant.generate('Summarize my emails');
 console.log(response.text);
 ```
+
+### Service Integrations
+
+Veryfront includes 50+ pre-built integrations with 235 AI tools:
+
+```bash
+# Add integrations when initializing
+veryfront init my-project --integrations gmail,slack,notion
+```
+
+**Available Categories:**
+- **Communication**: Gmail, Slack, Outlook, Teams, Discord, Zoom, Twilio
+- **Productivity**: Calendar, Notion, Jira, Linear, Asana, Trello
+- **Development**: GitHub, GitLab, Bitbucket, Sentry
+- **Data**: Google Drive, Sheets, Dropbox, Airtable, Supabase
+- **CRM/Sales**: Salesforce, HubSpot, Pipedrive
+- **Support**: Zendesk, Intercom, Freshdesk
+- **Finance**: Stripe, QuickBooks, Xero
+
+**Full reference:** [Integrations](/reference/ai/integrations.md)
 
 ### Tool Definition
 

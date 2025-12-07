@@ -14,6 +14,8 @@ export interface EnvPromptOptions {
   interactive?: boolean;
   /** Whether to skip prompting entirely */
   skipPrompt?: boolean;
+  /** Pre-filled environment variable values (from config file) */
+  prefilledValues?: Record<string, string>;
 }
 
 export interface EnvPromptResult {
@@ -56,6 +58,15 @@ export async function promptForEnvVars(
     logger.info(dim("  Press Enter to skip and set values later\n"));
   }
 
+  // Get pre-filled values from options
+  const prefilledValues = options.prefilledValues || {};
+  const hasPrefilledValues = Object.keys(prefilledValues).length > 0;
+
+  if (hasPrefilledValues && envVars.length > 0) {
+    logger.info("");
+    logger.info(`${cyan("Environment Setup:")} Using values from config file`);
+  }
+
   for (const envVar of envVars) {
     // Build the .env.example entry
     const commentLines: string[] = [];
@@ -72,10 +83,22 @@ export async function promptForEnvVars(
     exampleLines.push(`${envVar.name}=${placeholder}`);
     exampleLines.push("");
 
-    // Prompt for value if interactive
-    let value = "";
-    if (interactive) {
+    // Check for pre-filled value first
+    let value = prefilledValues[envVar.name] || "";
+
+    // If no pre-filled value and interactive mode, prompt
+    if (!value && interactive) {
       value = await promptForSingleEnvVar(envVar);
+    } else if (value && hasPrefilledValues) {
+      // Log that we're using a pre-filled value
+      if (envVar.sensitive) {
+        const masked = value.length > 8
+          ? value.substring(0, 4) + "..." + value.substring(value.length - 4)
+          : "****";
+        logger.debug(`  ${cyan(envVar.name)}: ${dim(masked)}`);
+      } else {
+        logger.debug(`  ${cyan(envVar.name)}: ${dim(value)}`);
+      }
     }
 
     values[envVar.name] = value;

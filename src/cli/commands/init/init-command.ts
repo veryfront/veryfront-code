@@ -256,6 +256,7 @@ export async function initCommand(options: InitOptions): Promise<void> {
 
     const envResult = await promptForEnvVars(uniqueEnvVars, {
       skipPrompt: options.skipEnvPrompt,
+      prefilledValues: options.env,
     });
 
     // Write .env file

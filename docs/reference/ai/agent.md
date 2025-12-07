@@ -1,87 +1,85 @@
 ---
-title: "Agent API Reference"
+title: "Agent Reference"
 category: "reference"
 level: "advanced"
 keywords: ["agent", "ai", "configuration", "runtime", "memory"]
 ai_summary: "Complete API reference for creating and configuring AI agents in Veryfront."
-related: ["guides/ai/getting-started"]
+related: ["guides/ai/getting-started", "reference/ai/tools", "reference/ai/integrations"]
 version: "0.1.0"
-last_updated: "2025-11-22"
+last_updated: "2025-12-07"
 ---
 
-# Agent API Reference
+# Agent Reference
 
-The `agent()` function is the core primitive for defining AI behaviors. It wraps an LLM with tools, memory, and middleware to create an autonomous or semi-autonomous entity.
+The `agent()` function creates AI agents with tools, memory, and middleware.
 
 ## Import
 
 ```typescript
-import { agent } from 'veryfront/ai';
+import { agent } from "veryfront/ai";
 ```
 
-## Signature
+## Syntax
 
 ```typescript
 function agent(config: AgentConfig): AgentRuntime
 ```
 
-## Configuration Object (`AgentConfig`)
+## Configuration
 
 | Property | Type | Required | Description |
 |----------|------|:--------:|-------------|
-| `model` | `string` | ✅ | The model ID (e.g., `'openai/gpt-4o'`, `'anthropic/claude-3.5-sonnet'`). |
-| `system` | `string` \| `() => string` | ❌ | System prompt instructions. Can be a static string or a function returning a string. |
-| `tools` | `Record<string, Tool>` | ❌ | Tools available to this agent. Can include auto-discovered tools referenced by name. |
-| `memory` | `MemoryConfig` | ❌ | Persistence strategy. Defaults to ephemeral (no memory). |
-| `maxSteps` | `number` | ❌ | Maximum number of tool execution loops (default: 5). |
-| `middleware` | `AgentMiddleware[]` | ❌ | Array of middleware functions for security, observability, etc. |
-| `edge` | `EdgeConfig` | ❌ | Optimization settings for edge runtimes (Cloudflare Workers). |
+| `model` | `string` | Yes | Model ID (e.g., `"openai/gpt-4"`, `"anthropic/claude-3-5-sonnet"`) |
+| `system` | `string` \| `() => string` | No | System prompt instructions |
+| `tools` | `string[]` | No | Tool names or glob patterns (e.g., `["gmail/*", "calculator"]`) |
+| `memory` | `MemoryConfig` | No | Context persistence strategy |
+| `maxSteps` | `number` | No | Maximum tool execution loops (default: 5) |
+| `middleware` | `AgentMiddleware[]` | No | Middleware for security, logging, etc. |
+| `edge` | `EdgeConfig` | No | Settings for edge runtimes |
 
-### `MemoryConfig`
-
-| Property | Type | Description |
-|----------|------|-------------|
-| `type` | `'conversation'` \| `'buffer'` \| `'summary'` | Strategy for retaining context. |
-| `maxTokens` | `number` | Maximum tokens to keep in history (for 'conversation'). |
-| `maxMessages` | `number` | Maximum number of messages to keep (for 'buffer'). |
-
-### `EdgeConfig`
+### MemoryConfig
 
 | Property | Type | Description |
 |----------|------|-------------|
-| `enabled` | `boolean` | Enable edge optimizations. |
-| `maxSteps` | `number` | Hard limit on steps to prevent timeout on edge platforms. |
-| `timeoutMs` | `number` | Execution timeout in milliseconds. |
+| `type` | `"conversation"` \| `"buffer"` \| `"summary"` | Context retention strategy |
+| `maxTokens` | `number` | Maximum tokens to retain |
+| `maxMessages` | `number` | Maximum messages to retain |
 
-## Methods (`AgentRuntime`)
+### EdgeConfig
 
-The object returned by `agent()` exposes methods to interact with the agent.
+| Property | Type | Description |
+|----------|------|-------------|
+| `enabled` | `boolean` | Enable edge optimizations |
+| `maxSteps` | `number` | Step limit for edge timeouts |
+| `timeoutMs` | `number` | Execution timeout in milliseconds |
 
-### `.generate(input, context?)`
+## Methods
 
-Generates a single response (non-streaming).
+### generate(input, context?)
+
+Generate a single response.
 
 ```typescript
-const response = await myAgent.generate("Hello world");
+const response = await myAgent.generate("What's the weather in London?");
 console.log(response.text);
 ```
 
 **Returns:** `Promise<AgentResponse>`
 
-### `.stream(messages, context?)`
+### stream(messages, context?)
 
-Returns a readable stream for real-time responses.
+Return a readable stream for real-time responses.
 
 ```typescript
 const stream = await myAgent.stream(messages);
-return new Response(stream); // Compatible with AI SDK
+return new Response(stream);
 ```
 
 **Returns:** `Promise<ReadableStream>`
 
-### `.respond(request)`
+### respond(request)
 
-Helper to handle a standard HTTP Request (useful for API routes).
+Handle an HTTP request directly. Useful for API routes.
 
 ```typescript
 export async function POST(req: Request) {
@@ -94,43 +92,133 @@ export async function POST(req: Request) {
 ## Examples
 
 ### Basic Agent
+
 ```typescript
-export default agent({
-  model: 'anthropic/claude-3-opus',
-  system: 'You are a coding assistant.',
+import { agent } from "veryfront/ai";
+
+export const assistant = agent({
+  model: "anthropic/claude-3-5-sonnet",
+  system: "You are a helpful assistant.",
 });
 ```
 
-### Stateful Agent with Tools
-```typescript
-import { calculator } from '../tools/calculator';
+### Agent with Integration Tools
 
-export default agent({
-  model: 'openai/gpt-4-turbo',
-  system: 'You help with math problems.',
-  tools: {
-    calc: calculator,
-  },
+```typescript
+import { agent } from "veryfront/ai";
+
+export const assistant = agent({
+  model: "openai/gpt-4",
+  system: "You help users manage email and calendar.",
+  tools: ["gmail/*", "calendar/*"],
+});
+```
+
+### Agent with Custom Tools
+
+```typescript
+import { agent } from "veryfront/ai";
+import { calculator } from "@/ai/tools/calculator";
+
+export const mathHelper = agent({
+  model: "openai/gpt-4",
+  system: "You solve math problems step by step.",
+  tools: ["calculator"],
   memory: {
-    type: 'summary',
-    maxMessages: 20
-  }
+    type: "conversation",
+    maxMessages: 20,
+  },
 });
 ```
 
-### Production-Grade Agent
-```typescript
-import { rateLimit, securityMiddleware } from 'veryfront/ai/production';
+### Production Agent
 
-export default agent({
-  model: 'google/gemini-pro',
+```typescript
+import { agent } from "veryfront/ai";
+import { rateLimit, securityMiddleware } from "veryfront/ai/middleware";
+
+export const productionAgent = agent({
+  model: "anthropic/claude-3-5-sonnet",
+  system: "You are a customer support assistant.",
+  tools: ["zendesk/*", "slack/*"],
   middleware: [
     rateLimit({ windowMs: 60000, max: 10 }),
-    securityMiddleware({ sanitize: true })
+    securityMiddleware({ sanitize: true }),
   ],
   edge: {
     enabled: true,
-    maxSteps: 3
-  }
+    maxSteps: 3,
+    timeoutMs: 25000,
+  },
 });
 ```
+
+### API Route Handler
+
+```typescript
+// app/api/chat/route.ts
+import { assistant } from "@/ai/agents/assistant";
+
+export async function POST(req: Request) {
+  return await assistant.respond(req);
+}
+```
+
+## Memory Strategies
+
+### Conversation
+
+Retains full message history up to a token limit:
+
+```typescript
+memory: {
+  type: "conversation",
+  maxTokens: 4000,
+}
+```
+
+### Buffer
+
+Retains a fixed number of recent messages:
+
+```typescript
+memory: {
+  type: "buffer",
+  maxMessages: 10,
+}
+```
+
+### Summary
+
+Summarizes older messages to retain context efficiently:
+
+```typescript
+memory: {
+  type: "summary",
+  maxMessages: 50,
+}
+```
+
+## Middleware
+
+Add middleware for cross-cutting concerns:
+
+```typescript
+import { agent } from "veryfront/ai";
+import { logging, rateLimit, auth } from "veryfront/ai/middleware";
+
+export const secureAgent = agent({
+  model: "openai/gpt-4",
+  middleware: [
+    logging({ level: "info" }),
+    rateLimit({ windowMs: 60000, max: 100 }),
+    auth({ required: true }),
+  ],
+});
+```
+
+## Related Documentation
+
+- [Tools Reference](./tools.md) - Define custom tools
+- [Integrations](./integrations.md) - Pre-built service integrations
+- [Hooks](./hooks.md) - React hooks for AI features
