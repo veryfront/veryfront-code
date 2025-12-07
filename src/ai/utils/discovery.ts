@@ -40,27 +40,146 @@ interface FileDiscoveryContext {
 const transpileCache = new Map<string, unknown>();
 
 /**
+ * Create an esbuild plugin for loading files from fsAdapter (Veryfront Cloud).
+ * This allows esbuild to properly resolve and bundle relative imports from remote storage.
+ *
+ * The plugin intercepts relative imports (./foo or ../foo), resolves them to absolute paths,
+ * and loads the file content from the fsAdapter instead of the local filesystem.
+ */
+function createFsAdapterPlugin(fsAdapter: FileSystemAdapter) {
+  // Cache existence checks to avoid repeated remote calls
+  const existsCache = new Map<string, boolean>();
+
+  async function checkExists(filePath: string): Promise<boolean> {
+    if (existsCache.has(filePath)) {
+      return existsCache.get(filePath)!;
+    }
+    const exists = await fsAdapter.exists(filePath);
+    existsCache.set(filePath, exists);
+    return exists;
+  }
+
+  // Try to resolve a path with various extensions
+  async function resolveWithExtensions(basePath: string): Promise<string | null> {
+    // If path already has an extension, use it directly
+    if (/\.(ts|tsx|js|jsx|mjs|json)$/i.test(basePath)) {
+      if (await checkExists(basePath)) {
+        return basePath;
+      }
+      return null;
+    }
+
+    // Try common TypeScript/JavaScript extensions
+    const extensions = [".ts", ".tsx", ".js", ".jsx", ".mjs"];
+    for (const ext of extensions) {
+      const fullPath = basePath + ext;
+      if (await checkExists(fullPath)) {
+        return fullPath;
+      }
+    }
+
+    // Try index files (for directory imports)
+    for (const ext of extensions) {
+      const indexPath = pathHelper.join(basePath, `index${ext}`);
+      if (await checkExists(indexPath)) {
+        return indexPath;
+      }
+    }
+
+    return null;
+  }
+
+  return {
+    name: "veryfront-fsadapter",
+    // deno-lint-ignore no-explicit-any
+    setup(build: any) {
+      // Intercept relative imports (./foo or ../foo)
+      build.onResolve(
+        { filter: /^\.\.?\// },
+        async (args: { path: string; importer: string; resolveDir: string }) => {
+          // Resolve path relative to importer's directory
+          const importerDir = args.importer ? pathHelper.dirname(args.importer) : args.resolveDir;
+          const basePath = pathHelper.resolve(importerDir, args.path);
+
+          // Try to find the file with various extensions
+          const resolvedPath = await resolveWithExtensions(basePath);
+          if (resolvedPath) {
+            return {
+              path: resolvedPath,
+              namespace: "fsadapter",
+            };
+          }
+
+          // File not found - return error
+          return {
+            errors: [{
+              text: `Could not resolve "${args.path}" from "${importerDir}" via fsAdapter`,
+            }],
+          };
+        },
+      );
+
+      // Load files from fsAdapter
+      build.onLoad(
+        { filter: /.*/, namespace: "fsadapter" },
+        async (args: { path: string }) => {
+          try {
+            const content = await fsAdapter.readFile(args.path);
+            const ext = pathHelper.extname(args.path).toLowerCase();
+            const loader = ext === ".tsx"
+              ? "tsx"
+              : ext === ".jsx"
+              ? "jsx"
+              : ext === ".ts"
+              ? "ts"
+              : "js";
+
+            return {
+              contents: content,
+              loader,
+              // Set resolveDir for nested imports from this file
+              resolveDir: pathHelper.dirname(args.path),
+            };
+          } catch (error) {
+            return {
+              errors: [{
+                text: `Failed to load "${args.path}" from fsAdapter: ${error}`,
+              }],
+            };
+          }
+        },
+      );
+    },
+  };
+}
+
+/**
  * Import a TypeScript module in a platform-aware way.
- * - Deno: Transpile to rewrite npm package imports, then import
- * - Node.js: Transpile with esbuild first, then import
+ * - Deno: Transpile to rewrite npm package imports, then import natively
+ * - Node.js: Transpile with esbuild, then import
+ * - Node.js + fsAdapter: Use esbuild plugin to load from remote storage
  */
 async function importModule(
   file: string,
   context: FileDiscoveryContext,
 ): Promise<unknown> {
-  // Check cache first (applies to both Deno and Node.js)
+  // Check cache first
   const cacheKey = file;
   if (transpileCache.has(cacheKey)) {
     return transpileCache.get(cacheKey);
   }
 
-  const fs = createFileSystem();
   const filePath = file.replace("file://", "");
 
-  // Read the source file
+  // Read the source file - use fsAdapter if available (Veryfront Cloud), otherwise local fs
   let source: string;
   try {
-    source = await fs.readTextFile(filePath);
+    if (context.fsAdapter) {
+      source = await context.fsAdapter.readFile(filePath);
+    } else {
+      const fs = createFileSystem();
+      source = await fs.readTextFile(filePath);
+    }
   } catch (error) {
     throw new Error(`Failed to read file ${filePath}: ${error}`);
   }
@@ -76,16 +195,23 @@ async function importModule(
   // Get the directory containing the file for resolving relative imports
   const fileDir = pathHelper.dirname(filePath);
 
-  // Extract relative imports from source to mark them as external
-  // This is needed because esbuild in WASM mode has limited filesystem access
-  const relativeImportPattern = /from\s+["'](\.\.[^"']+)["']/g;
+  // In Deno, esbuild runs as WASM which doesn't support plugins.
+  // We mark relative imports as external and let Deno's native TS support handle them.
   const relativeImports: string[] = [];
-  let match;
-  while ((match = relativeImportPattern.exec(source)) !== null) {
-    if (match[1]) {
-      relativeImports.push(match[1]);
+  if (isDeno) {
+    const relativeImportPattern = /from\s+["'](\.\.[^"']+)["']/g;
+    let match;
+    while ((match = relativeImportPattern.exec(source)) !== null) {
+      if (match[1]) {
+        relativeImports.push(match[1]);
+      }
     }
   }
+
+  // In Node.js with fsAdapter, use plugin to load relative imports from remote storage.
+  // This properly bundles all dependencies instead of marking them external.
+  const usePlugin = !isDeno && !!context.fsAdapter;
+  const plugins = usePlugin ? [createFsAdapterPlugin(context.fsAdapter!)] : [];
 
   const result = await build({
     bundle: true,
@@ -96,6 +222,7 @@ async function importModule(
     jsx: "automatic",
     jsxImportSource: "react",
     resolveExtensions: [".ts", ".tsx", ".js", ".jsx", ".mjs"],
+    plugins,
     external: [
       "ai",
       "ai/*",
@@ -106,7 +233,7 @@ async function importModule(
       "veryfront/*",
       "@opentelemetry/*",
       "path",
-      // Mark relative imports as external to avoid filesystem access issues
+      // Only mark relative imports as external in Deno (plugin handles them in Node.js)
       ...relativeImports,
     ],
     stdin: {
@@ -124,29 +251,29 @@ async function importModule(
 
   const js = result.outputFiles?.[0]?.text ?? "export {}";
 
-  // Write to temp file and import
-  const tempDir = await fs.makeTempDir({ prefix: "vf-discovery-" });
+  // Use local filesystem for temp files
+  const localFs = createFileSystem();
+  const tempDir = await localFs.makeTempDir({ prefix: "vf-discovery-" });
   const tempFile = pathHelper.join(tempDir, "module.mjs");
 
-  // Rewrite imports based on platform
+  // Rewrite package imports based on platform
+  // - Deno: npm: specifiers + file:// for relative imports
+  // - Node.js: resolve packages to file:// URLs from node_modules
   let transformedCode: string;
   if (isDeno) {
-    // In Deno, rewrite to npm: specifiers and resolve relative imports
     transformedCode = rewriteForDeno(js, fileDir);
   } else {
-    // In Node.js, rewrite to absolute paths
-    transformedCode = await rewriteDiscoveryImports(js, context.baseDir || ".", fs, fileDir);
+    transformedCode = await rewriteDiscoveryImports(js, context.baseDir || ".", localFs, fileDir);
   }
 
-  await fs.writeTextFile(tempFile, transformedCode);
+  await localFs.writeTextFile(tempFile, transformedCode);
 
   try {
     const module = await import(`file://${tempFile}?v=${Date.now()}`);
     transpileCache.set(cacheKey, module);
     return module;
   } finally {
-    // Clean up temp file
-    await fs.remove(tempDir, { recursive: true });
+    await localFs.remove(tempDir, { recursive: true });
   }
 }
 
@@ -198,7 +325,7 @@ async function rewriteDiscoveryImports(
     const { pathToFileURL } = await import("node:url");
 
     // Rewrite relative imports to absolute file:// URLs
-    // This handles imports like "../../lib/github-client.ts" that were marked external
+    // This handles imports like "../../lib/github-client" that were marked external in Deno
     transformed = transformed.replace(
       /from\s+["'](\.\.\/[^"']+)["']/g,
       (_match, relativePath: string) => {

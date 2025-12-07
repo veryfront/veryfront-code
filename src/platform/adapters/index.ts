@@ -44,15 +44,18 @@ export {
 // Token Storage Adapter
 export {
   MemoryTokenAdapter,
-  TokenStorageAPIClient,
-  TokenStorageError,
   type TokenStorageAdapter,
   type TokenStorageAdapterConfig,
+  TokenStorageAPIClient,
+  TokenStorageError,
   VeryfrontTokenAdapter,
   type VeryfrontTokenConfig,
 } from "./veryfront-token-adapter/index.ts";
 
-export { createTokenStorageAdapter, createTokenStorageAdapterFromEnv } from "./token-adapter-factory.ts";
+export {
+  createTokenStorageAdapter,
+  createTokenStorageAdapterFromEnv,
+} from "./token-adapter-factory.ts";
 
 export {
   getTokenStorageAdapter,

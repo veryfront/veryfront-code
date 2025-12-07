@@ -35,8 +35,8 @@ export { MemoryTokenAdapter } from "./memory-adapter.ts";
 export { TokenStorageAPIClient } from "./api-client.ts";
 export {
   createTokenConfig,
-  TokenStorageError,
   type TokenStorageAdapter,
   type TokenStorageAdapterConfig,
+  TokenStorageError,
   type VeryfrontTokenConfig,
 } from "./types.ts";
