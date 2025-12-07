@@ -341,6 +341,13 @@ export function loadIntegrationBaseFilesFromDirectory(): Promise<TemplateFile[]>
 }
 
 /**
+ * Load the _base integration config to get shared env vars like APP_URL
+ */
+export function loadIntegrationBaseConfig(): Promise<IntegrationConfig | null> {
+  return loadIntegrationConfig("_base" as IntegrationName);
+}
+
+/**
  * Generate base files needed for any integration setup
  * These are shared across all integrations
  */

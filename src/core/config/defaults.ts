@@ -1,4 +1,8 @@
-export const DEFAULT_DEV_PORT = 3000;
+/**
+ * Default port for veryfront dev server.
+ * This is the single source of truth for the default port.
+ */
+export const DEFAULT_PORT = 3000;
 
 export const DEFAULT_TIMEOUT_MS = 5000;
 
@@ -10,7 +14,7 @@ export const DEFAULT_CACHE_MAX_SIZE = 100;
 
 export const defaultConfig = {
   server: {
-    port: DEFAULT_DEV_PORT,
+    port: DEFAULT_PORT,
     hostname: "0.0.0.0",
   },
 

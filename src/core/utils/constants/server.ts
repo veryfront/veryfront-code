@@ -5,11 +5,11 @@
  * This prevents hardcoding URLs across the codebase and makes refactoring easier.
  */
 
+// Re-export DEFAULT_PORT from config/defaults.ts (the single source of truth)
+export { DEFAULT_PORT } from "@veryfront/config/defaults.ts";
+
 /** Default port for development dashboard */
 export const DEFAULT_DASHBOARD_PORT = 3002;
-
-/** Default port for veryfront server */
-export const DEFAULT_PORT = 3000;
 
 /** Internal URL prefix for all veryfront endpoints */
 export const INTERNAL_PREFIX = "/_veryfront" as const;

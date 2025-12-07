@@ -51,6 +51,7 @@ export function createOAuthInitHandler(
       );
     }
 
+    // Use APP_URL from env, or default to localhost:3000 (the standard veryfront dev port)
     const appUrl = baseUrl ||
       getEnv("APP_URL") ||
       getEnv("NEXT_PUBLIC_APP_URL") ||

@@ -301,7 +301,7 @@ export function GET(): Response {
     );
   }
 
-  const redirectUri = \`\${process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3002"}/api/auth/${config.name}/callback\`;
+  const redirectUri = \`\${process.env.APP_URL || process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"}/api/auth/${config.name}/callback\`;
   const state = crypto.randomUUID();
 
   const params = new URLSearchParams({
@@ -345,7 +345,7 @@ export async function GET(request: Request): Promise<Response> {
 
   const clientId = process.env.${config.envVarPrefix}_CLIENT_ID;
   const clientSecret = process.env.${config.envVarPrefix}_CLIENT_SECRET;
-  const redirectUri = \`\${process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3002"}/api/auth/${config.name}/callback\`;
+  const redirectUri = \`\${process.env.APP_URL || process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"}/api/auth/${config.name}/callback\`;
 
   try {
     const response = await fetch("${config.tokenUrl}", {

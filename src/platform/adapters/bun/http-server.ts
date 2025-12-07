@@ -1,6 +1,6 @@
 import type { ServeOptions, Server } from "../base.ts";
 import type { BunServer as BunServerType } from "./types.ts";
-import { DEFAULT_DEV_PORT } from "@veryfront/config";
+import { DEFAULT_PORT } from "@veryfront/config";
 import { serverLogger } from "@veryfront/utils";
 
 export class BunServer implements Server {
@@ -24,7 +24,7 @@ export function createBunServer(
   handler: (request: Request) => Promise<Response> | Response,
   options: ServeOptions = {},
 ): Promise<Server> {
-  const { port = DEFAULT_DEV_PORT, hostname = "localhost", onListen } = options;
+  const { port = DEFAULT_PORT, hostname = "localhost", onListen } = options;
 
   const server = Bun.serve({
     port,

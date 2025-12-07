@@ -59,7 +59,7 @@ export const COMMANDS: CommandRegistry = {
       {
         flag: "-p, --port <number>",
         description: "Port to run on",
-        default: "3002",
+        default: "3000",
       },
       {
         flag: "--no-hmr",
@@ -72,7 +72,7 @@ export const COMMANDS: CommandRegistry = {
     ],
     examples: [
       "veryfront dev",
-      "veryfront dev --port 3000",
+      "veryfront dev --port 8080",
       "veryfront dev --open",
       "veryfront dev --no-hmr",
     ],
