@@ -1,74 +1,82 @@
 /**
  * OAuth Module
  *
- * Provides reusable OAuth utilities for service integrations.
- * Reduces boilerplate code per integration by ~50%.
+ * Reusable OAuth 2.0 infrastructure for Veryfront integrations.
  *
  * @example
+ * ```typescript
+ * // Create OAuth routes with pre-configured providers
+ * import { createOAuthInitHandler, createOAuthCallbackHandler, gmailConfig } from "veryfront/oauth";
+ *
  * // app/api/auth/gmail/route.ts
- * import { createOAuthInitHandler, createGmailConfig } from "@veryfront/oauth";
- * export const GET = createOAuthInitHandler({ config: createGmailConfig() });
+ * export const GET = createOAuthInitHandler(gmailConfig);
  *
- * @example
  * // app/api/auth/gmail/callback/route.ts
- * import { createOAuthCallbackHandler, createGmailConfig } from "@veryfront/oauth";
- * export const GET = createOAuthCallbackHandler({ config: createGmailConfig() });
+ * export const GET = createOAuthCallbackHandler(gmailConfig);
+ * ```
  *
  * @module oauth
  */
 
 // Types
 export type {
-  OAuthErrorResponse,
-  OAuthHandlerOptions,
+  AuthorizationUrlOptions,
   OAuthProviderConfig,
-  OAuthTokenResponse,
-  ServiceOAuthConfig,
-  TokenData,
+  OAuthServiceConfig,
+  OAuthState,
+  OAuthTokens,
+  TokenExchangeOptions,
+  TokenExchangeResult,
   TokenStore,
 } from "./types.ts";
 
-// Token Store
-export {
-  getKVTokenStore,
-  getMemoryTokenStore,
-  getTokenStore,
-  KVTokenStore,
-  MemoryTokenStore,
-} from "./token-store.ts";
+// Base classes
+export { OAuthProvider, OAuthService } from "./providers/base.ts";
 
-// Providers
+// Pre-configured providers
 export {
-  ATLASSIAN_OAUTH,
-  createCalendarConfig,
-  createConfluenceConfig,
-  // Service config factories
-  createGmailConfig,
-  createJiraConfig,
-  createOutlookConfig,
-  createSheetsConfig,
-  createTeamsConfig,
-  getProviderConfig,
-  GITHUB_OAUTH,
-  // Base provider configs
-  GOOGLE_OAUTH,
-  HUBSPOT_OAUTH,
-  MICROSOFT_OAUTH,
-  NOTION_OAUTH,
-  // Provider registry
-  PROVIDERS,
-  SALESFORCE_OAUTH,
-  SLACK_OAUTH,
-} from "./providers.ts";
+  // Common SaaS services
+  airtableConfig,
+  // Atlassian
+  atlassianServices,
+  bitbucketConfig,
+  // Google
+  calendarConfig,
+  commonServices,
+  confluenceConfig,
+  discordConfig,
+  driveConfig,
+  dropboxConfig,
+  figmaConfig,
+  githubConfig,
+  gitlabConfig,
+  gmailConfig,
+  googleServices,
+  hubspotConfig,
+  jiraConfig,
+  linearConfig,
+  // Microsoft
+  microsoftServices,
+  notionConfig,
+  oneDriveConfig,
+  outlookConfig,
+  salesforceConfig,
+  sharePointConfig,
+  sheetsConfig,
+  slackConfig,
+  teamsConfig,
+  twitterConfig,
+} from "./providers/index.ts";
 
-// Handlers
+// Token stores
+export { MemoryTokenStore, memoryTokenStore } from "./token-store/index.ts";
+
+// Route handlers
 export {
-  buildAuthorizationUrl,
   createOAuthCallbackHandler,
+  createOAuthDisconnectHandler,
   createOAuthInitHandler,
-  disconnectService,
-  exchangeCodeForTokens,
-  getValidAccessToken,
-  isServiceConnected,
-  refreshAccessToken,
-} from "./handlers.ts";
+  createOAuthStatusHandler,
+  type OAuthCallbackHandlerOptions,
+  type OAuthInitHandlerOptions,
+} from "./handlers/index.ts";

@@ -97,6 +97,12 @@ const entryPoints: Record<string, string> = {
 	"ai/components": "./src/ai/react/components/index.ts",
 	"ai/production": "./src/ai/production/index.ts",
 	"ai/dev": "./src/ai/dev/index.ts",
+	"ai/workflow": "./src/ai/workflow/index.ts",
+	"ai/workflow-react": "./src/ai/workflow/react/index.ts",
+	"oauth/index": "./src/core/oauth/index.ts",
+	"oauth/providers": "./src/core/oauth/providers/index.ts",
+	"oauth/handlers": "./src/core/oauth/handlers/index.ts",
+	"oauth/token-store": "./src/core/oauth/token-store/index.ts",
 	config: "./src/core/config/index.ts",
 	data: "./src/data/index.ts",
 	components: "./src/react/components/index.ts",
@@ -1290,6 +1296,30 @@ const packageJson = {
 		"./ai/dev": {
 			types: "./dist/ai/dev.d.ts",
 			import: "./dist/ai/dev.js",
+		},
+		"./ai/workflow": {
+			types: "./dist/ai/workflow.d.ts",
+			import: "./dist/ai/workflow.js",
+		},
+		"./ai/workflow/react": {
+			types: "./dist/ai/workflow-react.d.ts",
+			import: "./dist/ai/workflow-react.js",
+		},
+		"./oauth": {
+			types: "./dist/oauth/index.d.ts",
+			import: "./dist/oauth/index.js",
+		},
+		"./oauth/providers": {
+			types: "./dist/oauth/providers.d.ts",
+			import: "./dist/oauth/providers.js",
+		},
+		"./oauth/handlers": {
+			types: "./dist/oauth/handlers.d.ts",
+			import: "./dist/oauth/handlers.js",
+		},
+		"./oauth/token-store": {
+			types: "./dist/oauth/token-store.d.ts",
+			import: "./dist/oauth/token-store.js",
 		},
 	},
 	files: ["bin", "dist", "README.md", "LICENSE"],

@@ -1,14 +1,9 @@
-import { getAuthorizationUrl } from "../../../../lib/oauth";
+/**
+ * Outlook OAuth Initiation
+ */
 
-export function GET(request: Request) {
-  const url = new URL(request.url);
-  const baseUrl = `${url.protocol}//${url.host}`;
-  const redirectUri = `${baseUrl}/api/auth/outlook/callback`;
+import { createOAuthInitHandler, memoryTokenStore, outlookConfig } from "veryfront/oauth";
 
-  // Generate state for CSRF protection
-  const state = crypto.randomUUID();
-
-  const authUrl = getAuthorizationUrl(redirectUri, state);
-
-  return Response.redirect(authUrl);
-}
+export const GET = createOAuthInitHandler(outlookConfig, {
+  tokenStore: memoryTokenStore,
+});

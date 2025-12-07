@@ -1,14 +1,9 @@
-import { getAuthorizationUrl } from "../../../../lib/oauth";
+/**
+ * Airtable OAuth Initiation
+ */
 
-export async function GET(request: Request) {
-  const url = new URL(request.url);
-  const baseUrl = `${url.protocol}//${url.host}`;
-  const redirectUri = `${baseUrl}/api/auth/airtable/callback`;
+import { airtableConfig, createOAuthInitHandler, memoryTokenStore } from "veryfront/oauth";
 
-  // Generate state for CSRF protection
-  const state = crypto.randomUUID();
-
-  const { url: authUrl } = await getAuthorizationUrl(redirectUri, state);
-
-  return Response.redirect(authUrl);
-}
+export const GET = createOAuthInitHandler(airtableConfig, {
+  tokenStore: memoryTokenStore,
+});

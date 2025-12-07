@@ -1,129 +1,157 @@
 /**
- * OAuth Types
+ * OAuth Types and Interfaces
  *
- * Shared type definitions for OAuth providers and token management.
+ * Common types used across OAuth providers and handlers.
  */
 
 /**
- * OAuth provider configuration
+ * OAuth 2.0 provider configuration
  */
 export interface OAuthProviderConfig {
-  /** Unique provider identifier (e.g., "google", "microsoft", "github") */
-  provider: string;
+  /** Unique identifier for the provider (e.g., "google", "microsoft") */
+  providerId: string;
 
-  /** OAuth authorization URL */
+  /** Human-readable name */
+  displayName: string;
+
+  /** Authorization endpoint URL */
   authorizationUrl: string;
 
-  /** OAuth token URL */
+  /** Token endpoint URL */
   tokenUrl: string;
 
-  /** Required OAuth scopes */
-  scopes: string[];
+  /** User info endpoint URL (optional) */
+  userInfoUrl?: string;
+
+  /** Revocation endpoint URL (optional) */
+  revocationUrl?: string;
 
   /** Environment variable name for client ID */
-  clientIdEnv: string;
+  clientIdEnvVar: string;
 
   /** Environment variable name for client secret */
-  clientSecretEnv: string;
+  clientSecretEnvVar: string;
 
-  /** Additional parameters to add to authorization URL */
-  additionalParams?: Record<string, string>;
+  /** Additional params to include in authorization URL */
+  additionalAuthParams?: Record<string, string>;
 
-  /** Token endpoint authentication method */
-  tokenAuthMethod?: "post" | "basic";
+  /** Additional params to include in token request */
+  additionalTokenParams?: Record<string, string>;
 
-  /** Whether refresh tokens should be requested */
-  requestRefreshToken?: boolean;
+  /** Whether to use basic auth for token requests (default: false, uses body params) */
+  useBasicAuth?: boolean;
+
+  /** Token response field mapping (if non-standard) */
+  tokenResponseMapping?: {
+    accessToken?: string;
+    refreshToken?: string;
+    expiresIn?: string;
+    tokenType?: string;
+    scope?: string;
+  };
 }
 
 /**
- * Service-specific OAuth configuration (extends provider config)
+ * Service-specific OAuth configuration (extends provider)
  */
-export interface ServiceOAuthConfig extends OAuthProviderConfig {
-  /** Service name (e.g., "gmail", "slack") */
-  service: string;
+export interface OAuthServiceConfig extends OAuthProviderConfig {
+  /** Service identifier (e.g., "gmail", "jira") */
+  serviceId: string;
 
-  /** Callback path (e.g., "/api/auth/gmail/callback") */
-  callbackPath: string;
+  /** Default scopes for this service */
+  defaultScopes: string[];
 
-  /** Service-specific scopes (appended to provider scopes) */
-  serviceScopes?: string[];
+  /** API base URL for the service */
+  apiBaseUrl: string;
 }
 
 /**
- * Token data stored by the token store
+ * OAuth tokens stored after authentication
  */
-export interface TokenData {
-  /** OAuth access token */
+export interface OAuthTokens {
   accessToken: string;
-
-  /** OAuth refresh token (if available) */
   refreshToken?: string;
-
-  /** Token expiration timestamp (milliseconds since epoch) */
   expiresAt?: number;
+  tokenType?: string;
+  scope?: string;
+  idToken?: string;
+}
 
-  /** Additional data from token response (e.g., instance_url for Salesforce) */
+/**
+ * OAuth state for CSRF protection
+ */
+export interface OAuthState {
+  state: string;
+  codeVerifier?: string; // For PKCE
+  redirectUri: string;
+  scopes: string[];
+  createdAt: number;
   metadata?: Record<string, unknown>;
 }
 
 /**
- * Token store interface for storing/retrieving OAuth tokens
+ * Result of OAuth token exchange
+ */
+export interface TokenExchangeResult {
+  success: boolean;
+  tokens?: OAuthTokens;
+  error?: string;
+  errorDescription?: string;
+}
+
+/**
+ * Options for creating OAuth authorization URL
+ */
+export interface AuthorizationUrlOptions {
+  /** Scopes to request (uses defaultScopes if not provided) */
+  scopes?: string[];
+
+  /** Custom state value (generated if not provided) */
+  state?: string;
+
+  /** Use PKCE (default: true for public clients) */
+  usePkce?: boolean;
+
+  /** Additional query parameters */
+  additionalParams?: Record<string, string>;
+
+  /** Custom redirect URI (uses configured default if not provided) */
+  redirectUri?: string;
+}
+
+/**
+ * Options for exchanging authorization code for tokens
+ */
+export interface TokenExchangeOptions {
+  /** Authorization code from callback */
+  code: string;
+
+  /** Redirect URI used in authorization request */
+  redirectUri: string;
+
+  /** Code verifier for PKCE */
+  codeVerifier?: string;
+}
+
+/**
+ * Token store interface
  */
 export interface TokenStore {
   /** Get tokens for a service */
-  getTokens(service: string): Promise<TokenData | null>;
+  getTokens(serviceId: string): Promise<OAuthTokens | null>;
 
   /** Set tokens for a service */
-  setTokens(service: string, tokens: TokenData): Promise<void>;
+  setTokens(serviceId: string, tokens: OAuthTokens): Promise<void>;
 
-  /** Delete tokens for a service */
-  deleteTokens(service: string): Promise<void>;
+  /** Clear tokens for a service */
+  clearTokens(serviceId: string): Promise<void>;
 
-  /** Check if tokens exist for a service */
-  hasTokens(service: string): Promise<boolean>;
-}
+  /** Get OAuth state by state string */
+  getState(state: string): Promise<OAuthState | null>;
 
-/**
- * OAuth token response from token endpoint
- */
-export interface OAuthTokenResponse {
-  access_token: string;
-  token_type: string;
-  expires_in?: number;
-  refresh_token?: string;
-  scope?: string;
-  // Additional fields vary by provider
-  [key: string]: unknown;
-}
+  /** Set OAuth state */
+  setState(state: OAuthState): Promise<void>;
 
-/**
- * OAuth error response
- */
-export interface OAuthErrorResponse {
-  error: string;
-  error_description?: string;
-}
-
-/**
- * Options for creating OAuth handlers
- */
-export interface OAuthHandlerOptions {
-  /** Service configuration */
-  config: ServiceOAuthConfig;
-
-  /** Token store implementation */
-  tokenStore?: TokenStore;
-
-  /** Custom success redirect URL */
-  successRedirect?: string;
-
-  /** Custom error redirect URL */
-  errorRedirect?: string;
-
-  /** Callback function after successful authentication */
-  onSuccess?: (tokens: TokenData, request: Request) => Promise<void>;
-
-  /** Callback function on authentication error */
-  onError?: (error: Error, request: Request) => Promise<void>;
+  /** Clear OAuth state */
+  clearState(state: string): Promise<void>;
 }

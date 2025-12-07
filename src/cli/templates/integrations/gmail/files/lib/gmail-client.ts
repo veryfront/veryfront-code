@@ -1,27 +1,11 @@
 /**
  * Gmail API Client
  *
- * Provides a type-safe interface to Gmail API operations.
+ * Provides a type-safe interface to Gmail API operations
+ * using the veryfront/oauth module for authentication.
  */
 
-import { tokenStore as _tokenStore } from "./token-store.ts";
-import { getValidToken } from "./oauth.ts";
-
-// Helper for Cross-Platform environment access
-function getEnv(key: string): string | undefined {
-  // @ts-ignore - Deno global
-  if (typeof Deno !== "undefined") {
-    // @ts-ignore - Deno global
-    return Deno.env.get(key);
-  } // @ts-ignore - process global
-  else if (typeof process !== "undefined" && process.env) {
-    // @ts-ignore - process global
-    return process.env[key];
-  }
-  return undefined;
-}
-
-const GMAIL_API_BASE = "https://gmail.googleapis.com/gmail/v1";
+import { gmailConfig, memoryTokenStore, OAuthService } from "veryfront/oauth";
 
 export interface GmailMessage {
   id: string;
@@ -55,49 +39,18 @@ export interface SendEmailOptions {
   isHtml?: boolean;
 }
 
-/**
- * Gmail OAuth provider configuration
- */
-export const gmailOAuthProvider = {
-  name: "gmail",
-  authorizationUrl: "https://accounts.google.com/o/oauth2/v2/auth",
-  tokenUrl: "https://oauth2.googleapis.com/token",
-  clientId: getEnv("GOOGLE_CLIENT_ID") || "",
-  clientSecret: getEnv("GOOGLE_CLIENT_SECRET") || "",
-  scopes: [
-    "https://www.googleapis.com/auth/gmail.readonly",
-    "https://www.googleapis.com/auth/gmail.send",
-    "https://www.googleapis.com/auth/gmail.modify",
-  ],
-  callbackPath: "/api/auth/gmail/callback",
-};
+// Create Gmail service using the OAuth module
+const gmailService = new OAuthService(gmailConfig, memoryTokenStore);
 
 /**
- * Create a Gmail client for a specific user
+ * Create a Gmail client for API operations
  */
-export function createGmailClient(userId: string) {
-  async function getAccessToken(): Promise<string> {
-    const token = await getValidToken(gmailOAuthProvider, userId, "gmail");
-    if (!token) {
-      throw new Error("Gmail not connected. Please connect your Gmail account first.");
-    }
-    return token;
-  }
-
+export function createGmailClient() {
   async function apiRequest<T>(
     endpoint: string,
     options: RequestInit = {},
   ): Promise<T> {
-    const accessToken = await getAccessToken();
-
-    const response = await fetch(`${GMAIL_API_BASE}${endpoint}`, {
-      ...options,
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        "Content-Type": "application/json",
-        ...options.headers,
-      },
-    });
+    const response = await gmailService.fetch(endpoint, options);
 
     if (!response.ok) {
       const error = await response.text();
@@ -108,6 +61,14 @@ export function createGmailClient(userId: string) {
   }
 
   return {
+    /**
+     * Check if Gmail is connected
+     */
+    async isConnected(): Promise<boolean> {
+      const token = await gmailService.getAccessToken();
+      return token !== null;
+    },
+
     /**
      * List messages from the user's mailbox
      */
