@@ -941,6 +941,7 @@ export interface ToolContext {
 }
 
 export interface ToolConfig<TInput = unknown, TOutput = unknown> {
+  id?: string;
   description: string;
   inputSchema: z.ZodType<TInput, z.ZodTypeDef, unknown>;
   execute: (input: TInput, context?: ToolContext) => Promise<TOutput> | TOutput;

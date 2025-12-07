@@ -1,0 +1,100 @@
+{
+  "name": "discord",
+  "displayName": "Discord",
+  "icon": "discord.svg",
+  "description": "Read messages, send messages, and interact with Discord servers",
+  "auth": {
+    "type": "oauth2",
+    "provider": "discord",
+    "authorizationUrl": "https://discord.com/api/oauth2/authorize",
+    "tokenUrl": "https://discord.com/api/oauth2/token",
+    "scopes": ["identify", "guilds", "guilds.members.read", "messages.read"],
+    "callbackPath": "/api/auth/discord/callback",
+    "tokenAuthMethod": "body",
+    "requiredApis": [
+      {
+        "name": "Discord Application",
+        "enableUrl": "https://discord.com/developers/applications"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "DISCORD_CLIENT_ID",
+      "description": "Discord OAuth Client ID (from your application)",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://discord.com/developers/applications"
+    },
+    {
+      "name": "DISCORD_CLIENT_SECRET",
+      "description": "Discord OAuth Client Secret",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://discord.com/developers/applications"
+    },
+    {
+      "name": "DISCORD_BOT_TOKEN",
+      "description": "Discord Bot Token (optional, for advanced bot features)",
+      "required": false,
+      "sensitive": true,
+      "docsUrl": "https://discord.com/developers/applications"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list-guilds",
+      "name": "List Guilds",
+      "description": "List Discord servers (guilds) the user is a member of",
+      "requiresWrite": false
+    },
+    {
+      "id": "list-channels",
+      "name": "List Channels",
+      "description": "List channels in a Discord server",
+      "requiresWrite": false
+    },
+    {
+      "id": "get-messages",
+      "name": "Get Messages",
+      "description": "Get recent messages from a Discord channel",
+      "requiresWrite": false
+    },
+    {
+      "id": "send-message",
+      "name": "Send Message",
+      "description": "Send a message to a Discord channel",
+      "requiresWrite": true
+    },
+    {
+      "id": "get-user",
+      "name": "Get User",
+      "description": "Get information about the authenticated Discord user",
+      "requiresWrite": false
+    }
+  ],
+  "prompts": [
+    {
+      "id": "check-messages",
+      "title": "Check my Discord messages",
+      "prompt": "Check my recent Discord messages across all servers and summarize any important updates or mentions.",
+      "category": "communication",
+      "icon": "message"
+    },
+    {
+      "id": "send-announcement",
+      "title": "Send an announcement",
+      "prompt": "Send an announcement message to a specific Discord channel.",
+      "category": "communication",
+      "icon": "megaphone"
+    },
+    {
+      "id": "list-servers",
+      "title": "List my servers",
+      "prompt": "Show me all the Discord servers I'm a member of with their details.",
+      "category": "communication",
+      "icon": "list"
+    }
+  ],
+  "suggestedWith": ["slack", "github", "notion"]
+}

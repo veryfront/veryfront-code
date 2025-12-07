@@ -1,0 +1,99 @@
+{
+  "name": "sharepoint",
+  "displayName": "SharePoint",
+  "icon": "sharepoint.svg",
+  "description": "Access and manage SharePoint sites, document libraries, and files",
+  "auth": {
+    "type": "oauth2",
+    "provider": "microsoft",
+    "authorizationUrl": "https://login.microsoftonline.com/common/oauth2/v2.0/authorize",
+    "tokenUrl": "https://login.microsoftonline.com/common/oauth2/v2.0/token",
+    "scopes": [
+      "Sites.Read.All",
+      "Sites.ReadWrite.All",
+      "Files.Read.All",
+      "Files.ReadWrite.All",
+      "offline_access"
+    ],
+    "callbackPath": "/api/auth/sharepoint/callback",
+    "tokenAuthMethod": "body",
+    "requiredApis": [
+      {
+        "name": "Microsoft Graph API",
+        "enableUrl": "https://portal.azure.com/#blade/Microsoft_AAD_RegisteredApps/ApplicationsListBlade"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "MICROSOFT_CLIENT_ID",
+      "description": "Microsoft Azure App Client ID (shared with Outlook/Teams)",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://portal.azure.com/#blade/Microsoft_AAD_RegisteredApps/ApplicationsListBlade"
+    },
+    {
+      "name": "MICROSOFT_CLIENT_SECRET",
+      "description": "Microsoft Azure App Client Secret",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://portal.azure.com/#blade/Microsoft_AAD_RegisteredApps/ApplicationsListBlade"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list-sites",
+      "name": "List SharePoint Sites",
+      "description": "List all SharePoint sites the user has access to",
+      "requiresWrite": false
+    },
+    {
+      "id": "get-site",
+      "name": "Get Site Details",
+      "description": "Get detailed information about a specific SharePoint site",
+      "requiresWrite": false
+    },
+    {
+      "id": "list-files",
+      "name": "List Files",
+      "description": "List files and folders in a SharePoint document library",
+      "requiresWrite": false
+    },
+    {
+      "id": "get-file",
+      "name": "Get File",
+      "description": "Get file metadata and content from SharePoint",
+      "requiresWrite": false
+    },
+    {
+      "id": "upload-file",
+      "name": "Upload File",
+      "description": "Upload a file to a SharePoint document library",
+      "requiresWrite": true
+    }
+  ],
+  "prompts": [
+    {
+      "id": "search-documents",
+      "title": "Search documents",
+      "prompt": "Search for documents in SharePoint sites and summarize their content.",
+      "category": "productivity",
+      "icon": "search"
+    },
+    {
+      "id": "list-recent-files",
+      "title": "List recent files",
+      "prompt": "Show me the most recently modified files across all SharePoint sites I have access to.",
+      "category": "productivity",
+      "icon": "document"
+    },
+    {
+      "id": "organize-documents",
+      "title": "Organize documents",
+      "prompt": "Help me organize and categorize documents in a SharePoint library.",
+      "category": "productivity",
+      "icon": "folder"
+    }
+  ],
+  "suggestedWith": ["outlook", "teams", "onedrive"]
+}

@@ -1,0 +1,98 @@
+{
+  "name": "outlook",
+  "displayName": "Microsoft Outlook",
+  "icon": "outlook.svg",
+  "description": "Read, send, and manage Outlook emails",
+  "auth": {
+    "type": "oauth2",
+    "provider": "microsoft",
+    "authorizationUrl": "https://login.microsoftonline.com/common/oauth2/v2.0/authorize",
+    "tokenUrl": "https://login.microsoftonline.com/common/oauth2/v2.0/token",
+    "scopes": [
+      "Mail.Read",
+      "Mail.Send",
+      "Mail.ReadWrite",
+      "offline_access"
+    ],
+    "callbackPath": "/api/auth/outlook/callback",
+    "tokenAuthMethod": "body",
+    "requiredApis": [
+      {
+        "name": "Microsoft Graph API",
+        "enableUrl": "https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "MICROSOFT_CLIENT_ID",
+      "description": "Microsoft Azure App Client ID (Application ID)",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade"
+    },
+    {
+      "name": "MICROSOFT_CLIENT_SECRET",
+      "description": "Microsoft Azure App Client Secret",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list-emails",
+      "name": "List Emails",
+      "description": "List recent emails from inbox or a specific folder",
+      "requiresWrite": false
+    },
+    {
+      "id": "get-email",
+      "name": "Get Email",
+      "description": "Get detailed information about a specific email",
+      "requiresWrite": false
+    },
+    {
+      "id": "send-email",
+      "name": "Send Email",
+      "description": "Send a new email message",
+      "requiresWrite": true
+    },
+    {
+      "id": "search-emails",
+      "name": "Search Emails",
+      "description": "Search emails by query, subject, sender, or date",
+      "requiresWrite": false
+    },
+    {
+      "id": "list-folders",
+      "name": "List Folders",
+      "description": "List all mail folders in the mailbox",
+      "requiresWrite": false
+    }
+  ],
+  "prompts": [
+    {
+      "id": "check-emails",
+      "title": "Check my emails",
+      "prompt": "List my recent unread emails and summarize the most important ones.",
+      "category": "productivity",
+      "icon": "mail"
+    },
+    {
+      "id": "search-emails",
+      "title": "Search my emails",
+      "prompt": "Search my emails for specific topics, senders, or date ranges.",
+      "category": "productivity",
+      "icon": "search"
+    },
+    {
+      "id": "draft-email",
+      "title": "Draft an email",
+      "prompt": "Help me draft a professional email with proper formatting and tone.",
+      "category": "productivity",
+      "icon": "compose"
+    }
+  ],
+  "suggestedWith": ["teams", "calendar", "gmail"]
+}

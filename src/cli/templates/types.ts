@@ -106,7 +106,22 @@ export type IntegrationName =
   | "jira"
   | "notion"
   | "servicenow"
-  | "twitter";
+  | "confluence"
+  | "linear"
+  | "gitlab"
+  | "outlook"
+  | "teams"
+  | "figma"
+  | "sheets"
+  | "airtable"
+  | "supabase"
+  | "neon"
+  | "sharepoint"
+  | "discord"
+  | "hubspot"
+  | "stripe"
+  | "dropbox"
+  | "salesforce";
 
 /**
  * OAuth configuration for an integration

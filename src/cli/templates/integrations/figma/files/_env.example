@@ -1,0 +1,5 @@
+# Figma OAuth Integration
+# Get these credentials from https://www.figma.com/developers/apps
+
+FIGMA_CLIENT_ID=your_figma_client_id
+FIGMA_CLIENT_SECRET=your_figma_client_secret

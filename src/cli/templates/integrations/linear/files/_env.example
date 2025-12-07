@@ -1,0 +1,6 @@
+# Linear Integration
+# Create an OAuth application at https://linear.app/settings/api
+# Set the callback URL to: http://localhost:3000/api/auth/linear/callback (or your production URL)
+
+LINEAR_CLIENT_ID=your_client_id_here
+LINEAR_CLIENT_SECRET=your_client_secret_here

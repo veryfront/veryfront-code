@@ -1,0 +1,66 @@
+{
+  "name": "servicenow",
+  "displayName": "ServiceNow",
+  "icon": "servicenow.svg",
+  "description": "IT Service Management - incidents, changes, and service requests",
+  "category": "enterprise",
+  "auth": {
+    "type": "oauth2",
+    "provider": "servicenow",
+    "scopes": ["useraccount", "openid"],
+    "callbackPath": "/api/auth/servicenow/callback"
+  },
+  "tools": [
+    {
+      "id": "list-incidents",
+      "name": "List Incidents",
+      "description": "List ServiceNow incidents with optional filters"
+    },
+    {
+      "id": "get-incident",
+      "name": "Get Incident",
+      "description": "Get details of a specific incident"
+    },
+    {
+      "id": "create-incident",
+      "name": "Create Incident",
+      "description": "Create a new incident in ServiceNow"
+    },
+    {
+      "id": "update-incident",
+      "name": "Update Incident",
+      "description": "Update an existing incident"
+    },
+    {
+      "id": "search-knowledge",
+      "name": "Search Knowledge Base",
+      "description": "Search ServiceNow knowledge base articles"
+    }
+  ],
+  "prompts": [
+    {
+      "id": "check-ticket-status",
+      "title": "Check ticket status",
+      "prompt": "Check the status of my recent ServiceNow incidents and summarize any that need attention.",
+      "category": "productivity"
+    },
+    {
+      "id": "create-incident-report",
+      "title": "Create incident",
+      "prompt": "Help me create a new incident in ServiceNow with the appropriate priority and category.",
+      "category": "productivity"
+    },
+    {
+      "id": "search-kb",
+      "title": "Search knowledge base",
+      "prompt": "Search the ServiceNow knowledge base for solutions to common issues.",
+      "category": "research"
+    }
+  ],
+  "envVars": [
+    "SERVICENOW_INSTANCE",
+    "SERVICENOW_CLIENT_ID",
+    "SERVICENOW_CLIENT_SECRET"
+  ],
+  "suggestedWith": ["slack", "jira"]
+}

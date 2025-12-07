@@ -3,6 +3,10 @@ import { getConfig } from "@veryfront/config";
 import { cliLogger } from "@veryfront/utils";
 import { createError, toError } from "../../core/errors/veryfront-error.ts";
 import { createFileSystem, type FileSystem } from "../../platform/compat/fs.ts";
+import {
+  generateIntegration,
+  type IntegrationGeneratorOptions,
+} from "./generate/integration-generator.ts";
 
 let fs: FileSystem;
 
@@ -148,6 +152,11 @@ export async function generateCommand(projectDir: string, type: string, name: st
         `export function GET(_req: Request) {\n  return new Response(JSON.stringify({ ok: true }), { headers: { 'content-type': 'application/json' } });\n}\n`;
       await fs.writeTextFile(file, content);
       cliLogger.info(`Created ${file}`);
+      break;
+    }
+    case "integration": {
+      // Integration generator handles its own name/prompts
+      await generateIntegration(projectDir, { name: name || undefined });
       break;
     }
     default:

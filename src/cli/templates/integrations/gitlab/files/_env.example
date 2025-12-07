@@ -1,0 +1,7 @@
+# GitLab OAuth Configuration
+# Create a new application at: https://gitlab.com/-/profile/applications
+# Set the redirect URI to: http://localhost:3000/api/auth/gitlab/callback
+# (Update the URL for production)
+
+GITLAB_CLIENT_ID=your_gitlab_application_id
+GITLAB_CLIENT_SECRET=your_gitlab_application_secret

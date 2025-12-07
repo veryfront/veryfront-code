@@ -1,0 +1,109 @@
+{
+  "name": "jira",
+  "displayName": "Jira",
+  "icon": "jira.svg",
+  "description": "Search, create, and manage Jira issues and projects",
+  "auth": {
+    "type": "oauth2",
+    "provider": "atlassian",
+    "authorizationUrl": "https://auth.atlassian.com/authorize",
+    "tokenUrl": "https://auth.atlassian.com/oauth/token",
+    "scopes": [
+      "read:jira-work",
+      "write:jira-work",
+      "read:jira-user",
+      "offline_access"
+    ],
+    "callbackPath": "/api/auth/jira/callback",
+    "tokenAuthMethod": "body",
+    "additionalAuthParams": {
+      "audience": "api.atlassian.com",
+      "prompt": "consent"
+    },
+    "requiredApis": [
+      {
+        "name": "Atlassian OAuth 2.0",
+        "enableUrl": "https://developer.atlassian.com/console/myapps/"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "ATLASSIAN_CLIENT_ID",
+      "description": "Atlassian OAuth 2.0 Client ID (from your app)",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://developer.atlassian.com/console/myapps/"
+    },
+    {
+      "name": "ATLASSIAN_CLIENT_SECRET",
+      "description": "Atlassian OAuth 2.0 Client Secret",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://developer.atlassian.com/console/myapps/"
+    }
+  ],
+  "tools": [
+    {
+      "id": "search-issues",
+      "name": "Search Issues",
+      "description": "Search Jira issues using JQL (Jira Query Language)",
+      "requiresWrite": false
+    },
+    {
+      "id": "get-issue",
+      "name": "Get Issue",
+      "description": "Get detailed information about a specific Jira issue",
+      "requiresWrite": false
+    },
+    {
+      "id": "create-issue",
+      "name": "Create Issue",
+      "description": "Create a new Jira issue in a project",
+      "requiresWrite": true
+    },
+    {
+      "id": "update-issue",
+      "name": "Update Issue",
+      "description": "Update an existing Jira issue (status, fields, etc.)",
+      "requiresWrite": true
+    },
+    {
+      "id": "list-projects",
+      "name": "List Projects",
+      "description": "List all accessible Jira projects",
+      "requiresWrite": false
+    }
+  ],
+  "prompts": [
+    {
+      "id": "find-bugs",
+      "title": "Find open bugs",
+      "prompt": "Search for all open bugs assigned to me or in my current sprint.",
+      "category": "productivity",
+      "icon": "bug"
+    },
+    {
+      "id": "create-task",
+      "title": "Create a task",
+      "prompt": "Create a new task in Jira with a title, description, and priority.",
+      "category": "productivity",
+      "icon": "plus"
+    },
+    {
+      "id": "sprint-summary",
+      "title": "Sprint summary",
+      "prompt": "Get a summary of all issues in the current sprint, organized by status.",
+      "category": "productivity",
+      "icon": "list"
+    },
+    {
+      "id": "update-status",
+      "title": "Update issue status",
+      "prompt": "Move an issue to a different status (To Do, In Progress, Done, etc.).",
+      "category": "productivity",
+      "icon": "check"
+    }
+  ],
+  "suggestedWith": ["github", "slack", "confluence"]
+}

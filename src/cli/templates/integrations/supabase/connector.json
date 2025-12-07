@@ -1,0 +1,101 @@
+{
+  "name": "supabase",
+  "displayName": "Supabase",
+  "icon": "supabase.svg",
+  "description": "Query and manage your Supabase database with full CRUD operations",
+  "auth": {
+    "type": "api-key",
+    "requiredApis": [
+      {
+        "name": "Supabase Project",
+        "enableUrl": "https://supabase.com/dashboard/projects"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "SUPABASE_URL",
+      "description": "Your Supabase project URL (e.g., https://xxxxx.supabase.co)",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://supabase.com/docs/guides/api#api-url-and-keys"
+    },
+    {
+      "name": "SUPABASE_ANON_KEY",
+      "description": "Supabase anonymous/public API key for client-side operations",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://supabase.com/docs/guides/api#api-url-and-keys"
+    },
+    {
+      "name": "SUPABASE_SERVICE_KEY",
+      "description": "Supabase service role key for server-side operations (bypasses RLS)",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://supabase.com/docs/guides/api#api-url-and-keys"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list-tables",
+      "name": "List Tables",
+      "description": "List all tables in your Supabase database",
+      "requiresWrite": false
+    },
+    {
+      "id": "query-table",
+      "name": "Query Table",
+      "description": "Select rows from a table with optional filters and sorting",
+      "requiresWrite": false
+    },
+    {
+      "id": "insert-row",
+      "name": "Insert Row",
+      "description": "Insert a new row into a table",
+      "requiresWrite": true
+    },
+    {
+      "id": "update-row",
+      "name": "Update Row",
+      "description": "Update an existing row in a table",
+      "requiresWrite": true
+    },
+    {
+      "id": "delete-row",
+      "name": "Delete Row",
+      "description": "Delete a row from a table",
+      "requiresWrite": true
+    }
+  ],
+  "prompts": [
+    {
+      "id": "query-data",
+      "title": "Query my database",
+      "prompt": "Help me query data from my Supabase database. Show me specific records or analyze patterns.",
+      "category": "data",
+      "icon": "search"
+    },
+    {
+      "id": "create-record",
+      "title": "Create a record",
+      "prompt": "Create a new record in my Supabase database with the information I provide.",
+      "category": "data",
+      "icon": "plus"
+    },
+    {
+      "id": "update-records",
+      "title": "Update records",
+      "prompt": "Find and update records in my Supabase database based on specific criteria.",
+      "category": "data",
+      "icon": "edit"
+    },
+    {
+      "id": "database-stats",
+      "title": "Database statistics",
+      "prompt": "Show me statistics and insights about my Supabase database tables and data.",
+      "category": "analytics",
+      "icon": "chart"
+    }
+  ],
+  "suggestedWith": ["github", "slack", "linear"]
+}
