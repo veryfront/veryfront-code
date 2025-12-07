@@ -1,0 +1,4 @@
+# QuickBooks OAuth Configuration
+# Get your credentials from https://developer.intuit.com/app/developer/myapps
+QUICKBOOKS_CLIENT_ID=your-client-id
+QUICKBOOKS_CLIENT_SECRET=your-client-secret

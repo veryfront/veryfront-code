@@ -1,0 +1,4 @@
+# Webex OAuth Configuration
+# Get your credentials from https://developer.webex.com/my-apps
+WEBEX_CLIENT_ID=your-client-id
+WEBEX_CLIENT_SECRET=your-client-secret

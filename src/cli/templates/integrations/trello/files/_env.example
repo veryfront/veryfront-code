@@ -1,0 +1,4 @@
+# Trello OAuth Configuration
+# Get your credentials from https://trello.com/app-key
+TRELLO_CLIENT_ID=your-api-key
+TRELLO_CLIENT_SECRET=your-oauth-secret

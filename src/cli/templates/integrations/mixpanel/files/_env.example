@@ -1,0 +1,11 @@
+# Mixpanel Integration
+# Get your credentials at https://mixpanel.com/settings/project
+
+# Project Token - used for tracking events (ingestion)
+MIXPANEL_PROJECT_TOKEN=your_project_token_here
+
+# API Secret - used for querying and exporting data
+MIXPANEL_API_SECRET=your_api_secret_here
+
+# Project ID - found in your project settings URL
+MIXPANEL_PROJECT_ID=your_project_id_here

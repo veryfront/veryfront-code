@@ -1,0 +1,85 @@
+{
+  "name": "webex",
+  "displayName": "Webex",
+  "icon": "webex.svg",
+  "description": "Manage meetings, rooms, and messages in Webex",
+  "auth": {
+    "type": "oauth2",
+    "provider": "webex",
+    "authorizationUrl": "https://webexapis.com/v1/authorize",
+    "tokenUrl": "https://webexapis.com/v1/access_token",
+    "scopes": ["spark:all", "spark:kms"],
+    "callbackPath": "/api/auth/webex/callback",
+    "requiredApis": [
+      {
+        "name": "Webex Developer Portal",
+        "enableUrl": "https://developer.webex.com/my-apps"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "WEBEX_CLIENT_ID",
+      "description": "Webex OAuth Client ID",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://developer.webex.com/docs/integrations"
+    },
+    {
+      "name": "WEBEX_CLIENT_SECRET",
+      "description": "Webex OAuth Client Secret",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://developer.webex.com/docs/integrations"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list-meetings",
+      "name": "List Meetings",
+      "description": "List scheduled Webex meetings",
+      "requiresWrite": false
+    },
+    {
+      "id": "get-meeting",
+      "name": "Get Meeting",
+      "description": "Get details of a specific meeting",
+      "requiresWrite": false
+    },
+    {
+      "id": "create-meeting",
+      "name": "Create Meeting",
+      "description": "Schedule a new Webex meeting",
+      "requiresWrite": true
+    },
+    {
+      "id": "list-rooms",
+      "name": "List Rooms",
+      "description": "List Webex spaces/rooms",
+      "requiresWrite": false
+    },
+    {
+      "id": "send-message",
+      "name": "Send Message",
+      "description": "Send a message to a Webex room",
+      "requiresWrite": true
+    }
+  ],
+  "prompts": [
+    {
+      "id": "my-meetings",
+      "title": "Show my meetings",
+      "prompt": "List all my upcoming Webex meetings with their times and join links.",
+      "category": "productivity",
+      "icon": "video"
+    },
+    {
+      "id": "create-meeting",
+      "title": "Schedule a meeting",
+      "prompt": "Create a new Webex meeting with a title, start time, duration, and agenda.",
+      "category": "productivity",
+      "icon": "plus"
+    }
+  ],
+  "suggestedWith": ["calendar", "slack", "teams"]
+}

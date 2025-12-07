@@ -1,0 +1,9 @@
+# Google Drive Integration
+# Create OAuth credentials at https://console.cloud.google.com/apis/credentials
+# Make sure to enable:
+# - Google Drive API: https://console.cloud.google.com/apis/library/drive.googleapis.com
+#
+# Note: These credentials are shared across all Google integrations (Gmail, Calendar, Sheets, Drive)
+
+GOOGLE_CLIENT_ID=your_client_id_here
+GOOGLE_CLIENT_SECRET=your_client_secret_here

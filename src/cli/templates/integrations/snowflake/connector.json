@@ -1,0 +1,151 @@
+{
+  "name": "snowflake",
+  "displayName": "Snowflake",
+  "icon": "snowflake.svg",
+  "description": "Query and manage your Snowflake data warehouse with SQL operations across databases, schemas, and tables",
+  "auth": {
+    "type": "api-key",
+    "requiredApis": [
+      {
+        "name": "Snowflake Account",
+        "enableUrl": "https://app.snowflake.com/"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "SNOWFLAKE_ACCOUNT",
+      "description": "Your Snowflake account identifier (e.g., xy12345.us-east-1)",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://docs.snowflake.com/en/user-guide/admin-account-identifier"
+    },
+    {
+      "name": "SNOWFLAKE_USERNAME",
+      "description": "Snowflake username for authentication",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://docs.snowflake.com/en/user-guide/admin-user-management"
+    },
+    {
+      "name": "SNOWFLAKE_PASSWORD",
+      "description": "Snowflake password for authentication",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://docs.snowflake.com/en/user-guide/admin-user-management"
+    },
+    {
+      "name": "SNOWFLAKE_WAREHOUSE",
+      "description": "Default warehouse to use for queries (e.g., COMPUTE_WH)",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://docs.snowflake.com/en/user-guide/warehouses"
+    },
+    {
+      "name": "SNOWFLAKE_DATABASE",
+      "description": "Default database to use for queries",
+      "required": false,
+      "sensitive": false,
+      "docsUrl": "https://docs.snowflake.com/en/user-guide/databases"
+    },
+    {
+      "name": "SNOWFLAKE_SCHEMA",
+      "description": "Default schema to use for queries (defaults to PUBLIC)",
+      "required": false,
+      "sensitive": false,
+      "docsUrl": "https://docs.snowflake.com/en/user-guide/schemas"
+    }
+  ],
+  "tools": [
+    {
+      "id": "run-query",
+      "name": "Run Query",
+      "description": "Execute a SQL query against your Snowflake data warehouse",
+      "requiresWrite": false
+    },
+    {
+      "id": "list-databases",
+      "name": "List Databases",
+      "description": "List all databases in your Snowflake account",
+      "requiresWrite": false
+    },
+    {
+      "id": "list-schemas",
+      "name": "List Schemas",
+      "description": "List all schemas in a Snowflake database",
+      "requiresWrite": false
+    },
+    {
+      "id": "list-tables",
+      "name": "List Tables",
+      "description": "List all tables in a Snowflake database schema",
+      "requiresWrite": false
+    },
+    {
+      "id": "describe-table",
+      "name": "Describe Table",
+      "description": "Get detailed column information for a specific table",
+      "requiresWrite": false
+    }
+  ],
+  "prompts": [
+    {
+      "id": "query-data",
+      "title": "Query my data warehouse",
+      "prompt": "Help me query data from my Snowflake data warehouse. Show me specific records or analyze patterns.",
+      "category": "data",
+      "icon": "search"
+    },
+    {
+      "id": "analyze-tables",
+      "title": "Analyze table structure",
+      "prompt": "Show me the structure of tables in my Snowflake database and help me understand the schema.",
+      "category": "data",
+      "icon": "database"
+    },
+    {
+      "id": "data-insights",
+      "title": "Generate insights",
+      "prompt": "Analyze my Snowflake data and generate insights about trends, patterns, and anomalies.",
+      "category": "analytics",
+      "icon": "chart"
+    },
+    {
+      "id": "optimize-queries",
+      "title": "Optimize queries",
+      "prompt": "Help me optimize my SQL queries for better performance in Snowflake.",
+      "category": "analytics",
+      "icon": "lightning"
+    }
+  ],
+  "setupGuide": {
+    "steps": [
+      {
+        "title": "Locate Your Account Identifier",
+        "description": "Find your Snowflake account identifier in the Snowflake web interface URL (e.g., xy12345.us-east-1 from https://xy12345.us-east-1.snowflakecomputing.com)",
+        "docsUrl": "https://docs.snowflake.com/en/user-guide/admin-account-identifier"
+      },
+      {
+        "title": "Create or Use Existing User",
+        "description": "Use an existing Snowflake user or create a new one with appropriate permissions. The user needs USAGE privileges on the warehouse and database, and SELECT privileges on tables.",
+        "docsUrl": "https://docs.snowflake.com/en/user-guide/admin-user-management"
+      },
+      {
+        "title": "Configure Warehouse",
+        "description": "Ensure you have a warehouse created and running. The default warehouse is typically named COMPUTE_WH.",
+        "docsUrl": "https://docs.snowflake.com/en/user-guide/warehouses"
+      },
+      {
+        "title": "Set Environment Variables",
+        "description": "Add the following environment variables to your .env file with your Snowflake credentials",
+        "code": "SNOWFLAKE_ACCOUNT=xy12345.us-east-1\nSNOWFLAKE_USERNAME=your_username\nSNOWFLAKE_PASSWORD=your_password\nSNOWFLAKE_WAREHOUSE=COMPUTE_WH\nSNOWFLAKE_DATABASE=your_database\nSNOWFLAKE_SCHEMA=PUBLIC"
+      },
+      {
+        "title": "Test Connection",
+        "description": "Test your connection by listing databases or running a simple query",
+        "code": "SELECT CURRENT_VERSION()"
+      }
+    ]
+  },
+  "suggestedWith": ["github", "slack", "notion"]
+}

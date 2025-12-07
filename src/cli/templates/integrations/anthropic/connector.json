@@ -1,0 +1,88 @@
+{
+  "name": "anthropic",
+  "displayName": "Anthropic",
+  "description": "Integrate with Anthropic Admin API to manage workspaces, monitor usage, and access organization data",
+  "auth": {
+    "type": "api-key",
+    "envVars": {
+      "ANTHROPIC_ADMIN_API_KEY": {
+        "description": "Admin API key for Anthropic organization management",
+        "required": true
+      }
+    }
+  },
+  "tools": [
+    {
+      "name": "list-workspaces",
+      "description": "List all workspaces in the organization"
+    },
+    {
+      "name": "get-usage",
+      "description": "Get API usage statistics for a date range"
+    },
+    {
+      "name": "list-api-keys",
+      "description": "List API keys for a workspace or organization"
+    },
+    {
+      "name": "list-members",
+      "description": "List all members in the organization"
+    },
+    {
+      "name": "get-organization",
+      "description": "Get organization details and settings"
+    }
+  ],
+  "SETUP_GUIDE": {
+    "title": "Anthropic Admin API Setup",
+    "steps": [
+      {
+        "step": 1,
+        "title": "Access Anthropic Console",
+        "description": "Go to https://console.anthropic.com and sign in to your organization account"
+      },
+      {
+        "step": 2,
+        "title": "Navigate to Organization Settings",
+        "description": "Click on your organization name in the top-right corner, then select 'Organization Settings'"
+      },
+      {
+        "step": 3,
+        "title": "Go to API Keys",
+        "description": "In the left sidebar, click on 'API Keys' under the Organization section"
+      },
+      {
+        "step": 4,
+        "title": "Create Admin API Key",
+        "description": "Click 'Create API Key' and select 'Admin' as the key type. Admin keys have full access to organization management features including workspaces, usage data, members, and API key management"
+      },
+      {
+        "step": 5,
+        "title": "Name Your Key",
+        "description": "Give your key a descriptive name (e.g., 'Veryfront Admin Integration') to identify its purpose"
+      },
+      {
+        "step": 6,
+        "title": "Copy and Secure Your Key",
+        "description": "Copy the API key immediately after creation. This is the only time you'll be able to see the full key. Store it securely - you'll need it for the ANTHROPIC_ADMIN_API_KEY environment variable"
+      },
+      {
+        "step": 7,
+        "title": "Set Environment Variable",
+        "description": "Add the API key to your .env file: ANTHROPIC_ADMIN_API_KEY=sk-ant-admin-***"
+      },
+      {
+        "step": 8,
+        "title": "Verify Access",
+        "description": "Test the integration by calling the get-organization tool to confirm your admin key has the correct permissions"
+      }
+    ],
+    "notes": [
+      "Admin API keys have full access to organization management features. Keep them secure and never commit them to version control",
+      "For production use, consider using workspace-specific keys with limited permissions where appropriate",
+      "You can revoke API keys at any time from the Anthropic Console",
+      "Rate limits apply to all API endpoints. See https://docs.anthropic.com/en/api/rate-limits for details"
+    ],
+    "documentation": "https://docs.anthropic.com/en/api/admin-api"
+  }
+}

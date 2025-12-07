@@ -1,0 +1,4 @@
+# Pipedrive OAuth Configuration
+# Get your credentials from https://developers.pipedrive.com/docs/marketplace
+PIPEDRIVE_CLIENT_ID=your-client-id
+PIPEDRIVE_CLIENT_SECRET=your-client-secret

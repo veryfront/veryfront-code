@@ -1,0 +1,85 @@
+{
+  "name": "mailchimp",
+  "displayName": "Mailchimp",
+  "icon": "mailchimp.svg",
+  "description": "Manage email campaigns, lists, and subscribers in Mailchimp",
+  "auth": {
+    "type": "oauth2",
+    "provider": "mailchimp",
+    "authorizationUrl": "https://login.mailchimp.com/oauth2/authorize",
+    "tokenUrl": "https://login.mailchimp.com/oauth2/token",
+    "scopes": [],
+    "callbackPath": "/api/auth/mailchimp/callback",
+    "requiredApis": [
+      {
+        "name": "Mailchimp API",
+        "enableUrl": "https://admin.mailchimp.com/account/oauth2/"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "MAILCHIMP_CLIENT_ID",
+      "description": "Mailchimp OAuth Client ID",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://mailchimp.com/developer/marketing/guides/access-user-data-oauth-2/"
+    },
+    {
+      "name": "MAILCHIMP_CLIENT_SECRET",
+      "description": "Mailchimp OAuth Client Secret",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://mailchimp.com/developer/marketing/guides/access-user-data-oauth-2/"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list-campaigns",
+      "name": "List Campaigns",
+      "description": "List all email campaigns in Mailchimp",
+      "requiresWrite": false
+    },
+    {
+      "id": "get-campaign",
+      "name": "Get Campaign",
+      "description": "Get details of a specific campaign",
+      "requiresWrite": false
+    },
+    {
+      "id": "list-lists",
+      "name": "List Audience Lists",
+      "description": "List all audience lists (mailing lists) in Mailchimp",
+      "requiresWrite": false
+    },
+    {
+      "id": "get-list",
+      "name": "Get Audience List",
+      "description": "Get details of a specific audience list",
+      "requiresWrite": false
+    },
+    {
+      "id": "list-members",
+      "name": "List Members",
+      "description": "List subscribers/members in an audience list",
+      "requiresWrite": false
+    }
+  ],
+  "prompts": [
+    {
+      "id": "campaign-stats",
+      "title": "Show campaign stats",
+      "prompt": "Show me the performance statistics for my recent email campaigns in Mailchimp.",
+      "category": "marketing",
+      "icon": "chart"
+    },
+    {
+      "id": "list-subscribers",
+      "title": "List subscribers",
+      "prompt": "Show me the subscribers in my main email list with their subscription status.",
+      "category": "marketing",
+      "icon": "users"
+    }
+  ],
+  "suggestedWith": ["slack", "notion", "hubspot"]
+}

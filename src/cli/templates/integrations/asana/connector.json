@@ -1,0 +1,85 @@
+{
+  "name": "asana",
+  "displayName": "Asana",
+  "icon": "asana.svg",
+  "description": "Manage tasks, projects, and teams in Asana",
+  "auth": {
+    "type": "oauth2",
+    "provider": "asana",
+    "authorizationUrl": "https://app.asana.com/-/oauth_authorize",
+    "tokenUrl": "https://app.asana.com/-/oauth_token",
+    "scopes": ["default"],
+    "callbackPath": "/api/auth/asana/callback",
+    "requiredApis": [
+      {
+        "name": "Asana Developer Console",
+        "enableUrl": "https://app.asana.com/0/developer-console"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "ASANA_CLIENT_ID",
+      "description": "Asana OAuth Client ID",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://developers.asana.com/docs/oauth"
+    },
+    {
+      "name": "ASANA_CLIENT_SECRET",
+      "description": "Asana OAuth Client Secret",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://developers.asana.com/docs/oauth"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list-tasks",
+      "name": "List Tasks",
+      "description": "List tasks in a project or assigned to a user",
+      "requiresWrite": false
+    },
+    {
+      "id": "get-task",
+      "name": "Get Task",
+      "description": "Get details of a specific task",
+      "requiresWrite": false
+    },
+    {
+      "id": "create-task",
+      "name": "Create Task",
+      "description": "Create a new task in a project",
+      "requiresWrite": true
+    },
+    {
+      "id": "update-task",
+      "name": "Update Task",
+      "description": "Update an existing task",
+      "requiresWrite": true
+    },
+    {
+      "id": "list-projects",
+      "name": "List Projects",
+      "description": "List all projects in the workspace",
+      "requiresWrite": false
+    }
+  ],
+  "prompts": [
+    {
+      "id": "my-tasks",
+      "title": "Show my tasks",
+      "prompt": "List all tasks assigned to me in Asana with their due dates and priorities.",
+      "category": "productivity",
+      "icon": "list"
+    },
+    {
+      "id": "create-task",
+      "title": "Create a task",
+      "prompt": "Create a new task with a title, description, due date, and assignee.",
+      "category": "productivity",
+      "icon": "plus"
+    }
+  ],
+  "suggestedWith": ["slack", "notion", "calendar"]
+}

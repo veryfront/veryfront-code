@@ -1,0 +1,85 @@
+{
+  "name": "quickbooks",
+  "displayName": "QuickBooks",
+  "icon": "quickbooks.svg",
+  "description": "Manage invoices, customers, and accounting in QuickBooks",
+  "auth": {
+    "type": "oauth2",
+    "provider": "quickbooks",
+    "authorizationUrl": "https://appcenter.intuit.com/connect/oauth2",
+    "tokenUrl": "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer",
+    "scopes": ["com.intuit.quickbooks.accounting"],
+    "callbackPath": "/api/auth/quickbooks/callback",
+    "requiredApis": [
+      {
+        "name": "QuickBooks Developer Portal",
+        "enableUrl": "https://developer.intuit.com/app/developer/myapps"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "QUICKBOOKS_CLIENT_ID",
+      "description": "QuickBooks OAuth Client ID",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://developer.intuit.com/app/developer/qbo/docs/develop/authentication-and-authorization/oauth-2.0"
+    },
+    {
+      "name": "QUICKBOOKS_CLIENT_SECRET",
+      "description": "QuickBooks OAuth Client Secret",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://developer.intuit.com/app/developer/qbo/docs/develop/authentication-and-authorization/oauth-2.0"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list-invoices",
+      "name": "List Invoices",
+      "description": "List invoices from QuickBooks",
+      "requiresWrite": false
+    },
+    {
+      "id": "get-invoice",
+      "name": "Get Invoice",
+      "description": "Get details of a specific invoice",
+      "requiresWrite": false
+    },
+    {
+      "id": "create-invoice",
+      "name": "Create Invoice",
+      "description": "Create a new invoice in QuickBooks",
+      "requiresWrite": true
+    },
+    {
+      "id": "list-customers",
+      "name": "List Customers",
+      "description": "List all customers in QuickBooks",
+      "requiresWrite": false
+    },
+    {
+      "id": "get-customer",
+      "name": "Get Customer",
+      "description": "Get details of a specific customer",
+      "requiresWrite": false
+    }
+  ],
+  "prompts": [
+    {
+      "id": "recent-invoices",
+      "title": "Show recent invoices",
+      "prompt": "List the most recent invoices from QuickBooks with their status and amounts.",
+      "category": "accounting",
+      "icon": "receipt"
+    },
+    {
+      "id": "create-invoice",
+      "title": "Create an invoice",
+      "prompt": "Create a new invoice for a customer with line items and amounts.",
+      "category": "accounting",
+      "icon": "plus"
+    }
+  ],
+  "suggestedWith": ["stripe", "xero", "hubspot"]
+}

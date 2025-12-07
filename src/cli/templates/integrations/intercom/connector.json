@@ -1,0 +1,85 @@
+{
+  "name": "intercom",
+  "displayName": "Intercom",
+  "icon": "intercom.svg",
+  "description": "Customer messaging platform for support and engagement",
+  "auth": {
+    "type": "oauth2",
+    "provider": "intercom",
+    "authorizationUrl": "https://app.intercom.com/oauth",
+    "tokenUrl": "https://api.intercom.io/auth/eagle/token",
+    "scopes": [],
+    "callbackPath": "/api/auth/intercom/callback",
+    "requiredApis": [
+      {
+        "name": "Intercom Developer Hub",
+        "enableUrl": "https://developers.intercom.com/building-apps/"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "INTERCOM_CLIENT_ID",
+      "description": "Intercom OAuth Client ID",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://developers.intercom.com/building-apps/docs/setting-up-oauth"
+    },
+    {
+      "name": "INTERCOM_CLIENT_SECRET",
+      "description": "Intercom OAuth Client Secret",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://developers.intercom.com/building-apps/docs/setting-up-oauth"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list-contacts",
+      "name": "List Contacts",
+      "description": "List contacts from Intercom workspace",
+      "requiresWrite": false
+    },
+    {
+      "id": "get-contact",
+      "name": "Get Contact",
+      "description": "Get details of a specific contact",
+      "requiresWrite": false
+    },
+    {
+      "id": "list-conversations",
+      "name": "List Conversations",
+      "description": "List conversations from Intercom",
+      "requiresWrite": false
+    },
+    {
+      "id": "get-conversation",
+      "name": "Get Conversation",
+      "description": "Get details of a specific conversation",
+      "requiresWrite": false
+    },
+    {
+      "id": "send-message",
+      "name": "Send Message",
+      "description": "Send a message in a conversation",
+      "requiresWrite": true
+    }
+  ],
+  "prompts": [
+    {
+      "id": "recent-conversations",
+      "title": "Show recent conversations",
+      "prompt": "List the most recent customer conversations from Intercom with their status and priority.",
+      "category": "support",
+      "icon": "message-circle"
+    },
+    {
+      "id": "find-contact",
+      "title": "Find a contact",
+      "prompt": "Search for a contact in Intercom and show their details and conversation history.",
+      "category": "support",
+      "icon": "user"
+    }
+  ],
+  "suggestedWith": ["slack", "zendesk", "hubspot"]
+}

@@ -1,0 +1,4 @@
+# Mailchimp OAuth Configuration
+# Get your credentials from https://admin.mailchimp.com/account/oauth2/
+MAILCHIMP_CLIENT_ID=your-client-id
+MAILCHIMP_CLIENT_SECRET=your-client-secret

@@ -127,7 +127,30 @@ export type IntegrationName =
   | "bitbucket"
   | "sentry"
   | "posthog"
-  | "zendesk";
+  | "zendesk"
+  // New integrations
+  | "asana"
+  | "monday"
+  | "zoom"
+  | "trello"
+  | "box"
+  | "shopify"
+  | "clickup"
+  | "intercom"
+  | "pipedrive"
+  | "mailchimp"
+  | "webex"
+  | "freshdesk"
+  | "quickbooks"
+  | "xero"
+  // 50+ integrations
+  | "drive"
+  | "docs-google"
+  | "snowflake"
+  | "mixpanel"
+  | "twilio"
+  | "anthropic"
+  | "aws";
 
 /**
  * OAuth configuration for an integration

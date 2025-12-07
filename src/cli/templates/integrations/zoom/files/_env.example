@@ -1,0 +1,4 @@
+# Zoom OAuth Configuration
+# Get your credentials from https://marketplace.zoom.us/develop/create
+ZOOM_CLIENT_ID=your-client-id
+ZOOM_CLIENT_SECRET=your-client-secret

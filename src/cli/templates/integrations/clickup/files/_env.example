@@ -1,0 +1,4 @@
+# ClickUp OAuth Configuration
+# Get your credentials from https://app.clickup.com/settings/apps
+CLICKUP_CLIENT_ID=your-client-id
+CLICKUP_CLIENT_SECRET=your-client-secret
