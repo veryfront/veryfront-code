@@ -104,7 +104,7 @@ function resolveRelativePath(currentDir: string, importPath: string): string {
   return resolvedParts.join("/");
 }
 
-export function resolveRelativeImportsToAbsolute(
+export async function resolveRelativeImportsToAbsolute(
   code: string,
   filePath: string,
   _projectDir: string,
@@ -112,19 +112,77 @@ export function resolveRelativeImportsToAbsolute(
   const normalizedFilePath = filePath.replace(/\\/g, "/");
   const fileDir = normalizedFilePath.substring(0, normalizedFilePath.lastIndexOf("/"));
 
-  return Promise.resolve(replaceSpecifiers(code, (specifier) => {
+  // Build a map of specifiers to resolved paths with extensions
+  const resolvedImports = new Map<string, string>();
+  const specifiersToResolve: string[] = [];
+
+  // First pass: collect all relative import specifiers
+  await replaceSpecifiers(code, (specifier) => {
     if (specifier.startsWith("./") || specifier.startsWith("../")) {
-      const absolutePath = resolveAbsolutePath(fileDir, specifier);
-      return `file://${absolutePath}`;
+      specifiersToResolve.push(specifier);
     }
     return null;
-  }));
+  });
+
+  // Resolve each specifier to an absolute path with extension
+  for (const specifier of specifiersToResolve) {
+    const absolutePath = resolveAbsolutePath(fileDir, specifier);
+    const resolvedPath = await findFileWithExtension(absolutePath);
+    resolvedImports.set(specifier, `file://${resolvedPath}`);
+  }
+
+  // Second pass: replace specifiers with resolved paths
+  return replaceSpecifiers(code, (specifier) => {
+    return resolvedImports.get(specifier) || null;
+  });
+}
+
+/**
+ * Find a file by trying common TypeScript/JavaScript extensions
+ * If the path already has an extension, return it as-is
+ */
+async function findFileWithExtension(basePath: string): Promise<string> {
+  // If already has a valid extension, return as-is
+  if (/\.(tsx?|jsx?|mjs|cjs|mdx)$/.test(basePath)) {
+    return basePath;
+  }
+
+  const extensions = [".tsx", ".ts", ".jsx", ".js", ".mdx"];
+
+  for (const ext of extensions) {
+    const fullPath = basePath + ext;
+    try {
+      const stat = await Deno.stat(fullPath);
+      if (stat.isFile) {
+        return fullPath;
+      }
+    } catch {
+      // File doesn't exist with this extension, try next
+    }
+  }
+
+  // If no file found, return with .ts extension as fallback
+  // (Deno will give a clearer error message)
+  return basePath + ".ts";
 }
 
 export function resolveRelativeImportsForNodeSSR(code: string): Promise<string> {
   return Promise.resolve(replaceSpecifiers(code, (specifier) => {
     if (specifier.startsWith("./") || specifier.startsWith("../")) {
       return specifier.replace(/\.(tsx|ts|jsx)$/, ".js");
+    }
+    return null;
+  }));
+}
+
+export function resolveRelativeImportsForSSR(code: string): Promise<string> {
+  return Promise.resolve(replaceSpecifiers(code, (specifier) => {
+    if (specifier.startsWith("./") || specifier.startsWith("../")) {
+      if (/\.(js|mjs|cjs)$/.test(specifier)) {
+        return null;
+      }
+      const withoutExt = specifier.replace(/\.(tsx?|jsx|mdx)$/, "");
+      return withoutExt + ".js";
     }
     return null;
   }));

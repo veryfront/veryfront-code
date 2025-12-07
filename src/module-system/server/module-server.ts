@@ -135,6 +135,7 @@ export async function serveModule(
  * Find source file by trying different extensions
  *
  * Tries in order: .tsx, .ts, .jsx, .js, .mdx
+ * Also tries common directories (app/, pages/, lib/) if file not found at root
  *
  * @param secureFs - Secure filesystem wrapper
  * @param projectDir - Project root directory
@@ -148,6 +149,7 @@ async function findSourceFile(
 ): Promise<string | null> {
   const extensions = [".tsx", ".ts", ".jsx", ".js", ".mdx"];
 
+  // First, try the basePath as-is
   for (const ext of extensions) {
     const fullPath = join(projectDir, basePath + ext);
 
@@ -162,6 +164,28 @@ async function findSourceFile(
         fullPath,
         error,
       });
+    }
+  }
+
+  // If not found, try common directories as fallbacks
+  // This handles imports like "components/Button" which should resolve to "app/components/Button"
+  const commonDirs = ["app", "pages", "lib", "src"];
+  for (const dir of commonDirs) {
+    for (const ext of extensions) {
+      const fullPath = join(projectDir, dir, basePath + ext);
+
+      try {
+        const stat = await secureFs.stat(fullPath);
+        if (stat.isFile) {
+          serverLogger.debug("[ModuleServer] Found file in common directory", {
+            basePath,
+            resolvedPath: fullPath,
+          });
+          return fullPath;
+        }
+      } catch {
+        // Continue trying other paths
+      }
     }
   }
 

@@ -2,12 +2,10 @@ import * as esbuild from "esbuild";
 import { generateCacheKey, getCachedTransform, setCachedTransform } from "./transform-cache.ts";
 import { computeContentHash, getLoaderFromPath } from "./transform-utils.ts";
 import { addDepsToEsmShUrls, resolveReactImports } from "./react-imports.ts";
-import { isNode } from "../../../platform/compat/runtime.ts";
 import {
   resolvePathAliases,
   resolveRelativeImports,
-  resolveRelativeImportsForNodeSSR,
-  resolveRelativeImportsToAbsolute,
+  resolveRelativeImportsForSSR,
   resolveVeryfrontImports,
 } from "./path-resolver.ts";
 import { rewriteBareImports, rewriteVendorImports } from "./import-rewriter.ts";
@@ -77,17 +75,11 @@ export async function transformToESM(
 
   // Different import resolution strategies for SSR vs browser
   if (ssr) {
-    if (isNode) {
-      // Node.js SSR: Rewrite @veryfront/* imports to veryfront/* for npm compatibility
-      code = await resolveVeryfrontImports(code);
-      // Node.js SSR: Keep relative imports but convert .tsx/.ts/.jsx extensions to .js
-      // This works because the cache directory mirrors the project structure
-      code = await resolveRelativeImportsForNodeSSR(code);
-    } else {
-      // Deno SSR: Convert relative imports to absolute file:// URLs pointing to original source files
-      // This allows Deno to resolve them correctly even though the transformed file is in temp directory
-      code = await resolveRelativeImportsToAbsolute(code, filePath, projectDir);
-    }
+    // SSR: Keep relative imports but normalize extensions to .js
+    // SSRModuleLoader ensures all dependencies are transformed to temp directory
+    code = await resolveRelativeImportsForSSR(code);
+    // Rewrite @veryfront/* imports for npm compatibility (both Node.js and Deno)
+    code = await resolveVeryfrontImports(code);
   } else {
     // Browser: Rewrite imports to use module server (HTTP paths)
     code = await resolveRelativeImports(code, filePath, projectDir, moduleServerUrl);

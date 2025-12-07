@@ -8,10 +8,11 @@ export default function ChatPage() {
 
   return (
     <div className="flex flex-col h-screen bg-white dark:bg-neutral-900">
-      {/* Header - sticky at top */}
+      {/* Header - sticky at top, full width */}
       <header className="sticky top-0 z-10 flex-shrink-0 border-b border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900">
-        <div className="max-w-2xl mx-auto px-4 py-3 flex items-center justify-center">
+        <div className="px-4 py-3 flex items-center justify-between">
           <h1 className="font-medium text-neutral-900 dark:text-white">AI Assistant</h1>
+          {/* Add ServiceConnections here when integrations are added */}
         </div>
       </header>
 
