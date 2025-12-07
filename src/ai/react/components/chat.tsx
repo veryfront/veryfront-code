@@ -16,6 +16,7 @@ import {
 import { useVoiceInput } from "../hooks/use-voice-input.ts";
 import type { Message, ToolCall } from "../../types/agent.ts";
 import { type ChatTheme, cn, defaultChatTheme, mergeThemes } from "./theme.ts";
+import { Markdown } from "./markdown.tsx";
 
 export interface ChatProps {
   /** Messages to display */
@@ -169,9 +170,17 @@ export const Chat = React.forwardRef<HTMLDivElement, ChatProps>(
                     )}
                   >
                     <div className={theme.message?.[msg.role] || theme.message?.assistant}>
-                      <p className="whitespace-pre-wrap text-[15px] leading-relaxed">
-                        {msg.content}
-                      </p>
+                      {msg.role === "user"
+                        ? (
+                          <p className="whitespace-pre-wrap text-[15px] leading-relaxed">
+                            {msg.content}
+                          </p>
+                        )
+                        : (
+                          <Markdown className="text-[15px] leading-relaxed">
+                            {msg.content}
+                          </Markdown>
+                        )}
                     </div>
                   </MessageItem>
                 )

@@ -150,7 +150,9 @@
     "lightningcss": "^1.22.0",
     "@unocss/core": "^0.59.0",
     "@unocss/preset-wind": "^0.59.0",
-    "glob": "^11.0.0"
+    "glob": "^11.0.0",
+    "react-markdown": "^9.0.0",
+    "mermaid": "^11.0.0"
   },
   "devDependencies": {
     "@types/react": "^18.2.0",
