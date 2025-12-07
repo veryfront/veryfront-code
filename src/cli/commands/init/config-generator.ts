@@ -29,7 +29,7 @@ export async function createPackageJson(
     dependencies: {
       react: "^19.0.0",
       "react-dom": "^19.0.0",
-      veryfront: "^0.0.52",
+      veryfront: "^0.0.54",
       zod: "^3.24.0",
     },
   };
