@@ -23,6 +23,8 @@ export interface EnvVarConfig {
   placeholder?: string;
   /** URL to documentation for obtaining this value */
   docsUrl?: string;
+  /** Default value to use if not provided by user */
+  default?: string;
 }
 
 /**

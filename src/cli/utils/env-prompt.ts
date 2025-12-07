@@ -83,7 +83,7 @@ export async function promptForEnvVars(
     exampleLines.push(`${envVar.name}=${placeholder}`);
     exampleLines.push("");
 
-    // Check for pre-filled value first
+    // Check for pre-filled value first, then default from config
     let value = prefilledValues[envVar.name] || "";
 
     // If no pre-filled value and interactive mode, prompt
@@ -101,9 +101,14 @@ export async function promptForEnvVars(
       }
     }
 
+    // Use default value from config if no value was provided or prompted
+    if (!value && envVar.default) {
+      value = envVar.default;
+    }
+
     values[envVar.name] = value;
 
-    // Add to .env content (use placeholder if no value provided)
+    // Add to .env content (use default or placeholder if no value provided)
     if (value) {
       envLines.push(`${envVar.name}=${value}`);
     } else {
