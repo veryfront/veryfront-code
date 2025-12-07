@@ -85,7 +85,7 @@ export async function listTables(): Promise<TableInfo[]> {
       },
     );
     return tables || [];
-  } catch (error) {
+  } catch (_error) {
     // Fallback: query information_schema directly
     const query =
       `?select=table_name,table_schema,table_type&table_schema=eq.public&table_type=eq.BASE TABLE`;
@@ -272,7 +272,7 @@ export async function deleteRows<T = Record<string, unknown>>(
  * Execute a raw SQL query using RPC
  * Note: This requires a stored procedure to be created in your Supabase database
  */
-export async function runRawQuery<T = unknown>(
+export function runRawQuery<T = unknown>(
   query: string,
 ): Promise<T> {
   return supabaseFetch<T>(

@@ -1,5 +1,6 @@
 // Airtable OAuth utilities with PKCE support
 
+import { Buffer } from "node:buffer";
 const AIRTABLE_AUTH_URL = "https://airtable.com/oauth2/v1/authorize";
 const AIRTABLE_TOKEN_URL = "https://airtable.com/oauth2/v1/token";
 

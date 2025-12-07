@@ -140,7 +140,7 @@ async function salesforceFetch<T>(
 // SOQL QUERY
 // ============================================================================
 
-export async function query<T = any>(soql: string): Promise<SalesforceQueryResponse<T>> {
+export function query<T = any>(soql: string): Promise<SalesforceQueryResponse<T>> {
   const encodedQuery = encodeURIComponent(soql);
   return salesforceFetch<SalesforceQueryResponse<T>>(`/query?q=${encodedQuery}`);
 }
@@ -149,7 +149,7 @@ export async function query<T = any>(soql: string): Promise<SalesforceQueryRespo
 // ACCOUNTS
 // ============================================================================
 
-export async function listAccounts(options?: {
+export function listAccounts(options?: {
   limit?: number;
   offset?: number;
   fields?: string[];
@@ -211,7 +211,7 @@ export async function getAccount(
   return result.records[0];
 }
 
-export async function createAccount(data: {
+export function createAccount(data: {
   Name: string;
   Type?: string;
   Industry?: string;
@@ -237,7 +237,7 @@ export async function createAccount(data: {
 // CONTACTS
 // ============================================================================
 
-export async function listContacts(options?: {
+export function listContacts(options?: {
   limit?: number;
   offset?: number;
   fields?: string[];
@@ -306,7 +306,7 @@ export async function getContact(
   return result.records[0];
 }
 
-export async function createContact(data: {
+export function createContact(data: {
   LastName: string;
   FirstName?: string;
   Email?: string;
@@ -333,7 +333,7 @@ export async function createContact(data: {
 // OPPORTUNITIES
 // ============================================================================
 
-export async function listOpportunities(options?: {
+export function listOpportunities(options?: {
   limit?: number;
   offset?: number;
   fields?: string[];
@@ -402,7 +402,7 @@ export async function getOpportunity(
   return result.records[0];
 }
 
-export async function createOpportunity(data: {
+export function createOpportunity(data: {
   Name: string;
   StageName: string;
   CloseDate: string;
@@ -425,7 +425,7 @@ export async function createOpportunity(data: {
 // LEADS
 // ============================================================================
 
-export async function listLeads(options?: {
+export function listLeads(options?: {
   limit?: number;
   offset?: number;
   fields?: string[];
@@ -463,7 +463,7 @@ export async function listLeads(options?: {
   return query<SalesforceLead>(soql);
 }
 
-export async function createLead(data: {
+export function createLead(data: {
   LastName: string;
   Company: string;
   FirstName?: string;

@@ -16,7 +16,7 @@ export default tool({
     let rowCount: number | undefined;
     try {
       rowCount = await getTableRowCount(tableName, schema);
-    } catch (error) {
+    } catch (_error) {
       // Row count is optional
       rowCount = undefined;
     }

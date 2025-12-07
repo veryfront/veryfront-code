@@ -3,10 +3,7 @@ import { getConfig } from "@veryfront/config";
 import { cliLogger } from "@veryfront/utils";
 import { createError, toError } from "../../core/errors/veryfront-error.ts";
 import { createFileSystem, type FileSystem } from "../../platform/compat/fs.ts";
-import {
-  generateIntegration,
-  type IntegrationGeneratorOptions,
-} from "./generate/integration-generator.ts";
+import { generateIntegration } from "./generate/integration-generator.ts";
 
 let fs: FileSystem;
 

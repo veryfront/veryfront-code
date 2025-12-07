@@ -1,0 +1,84 @@
+{
+  "name": "sentry",
+  "displayName": "Sentry",
+  "icon": "sentry.svg",
+  "description": "Monitor errors, track issues, and manage Sentry projects",
+  "category": "development",
+  "auth": {
+    "type": "api-key",
+    "tokenName": "Auth Token",
+    "docsUrl": "https://docs.sentry.io/api/auth/",
+    "requiredApis": [
+      {
+        "name": "Sentry API",
+        "enableUrl": "https://sentry.io/settings/account/api/auth-tokens/"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "SENTRY_AUTH_TOKEN",
+      "description": "Sentry Auth Token for API access",
+      "required": true,
+      "sensitive": true,
+      "docsUrl": "https://docs.sentry.io/api/auth/"
+    },
+    {
+      "name": "SENTRY_ORG",
+      "description": "Your Sentry organization slug",
+      "required": true,
+      "sensitive": false,
+      "docsUrl": "https://docs.sentry.io/api/"
+    }
+  ],
+  "tools": [
+    {
+      "id": "list-projects",
+      "name": "List Projects",
+      "description": "List all projects in your Sentry organization",
+      "requiresWrite": false
+    },
+    {
+      "id": "list-issues",
+      "name": "List Issues",
+      "description": "List issues/errors in a Sentry project with optional filters",
+      "requiresWrite": false
+    },
+    {
+      "id": "get-issue",
+      "name": "Get Issue",
+      "description": "Get detailed information about a specific Sentry issue",
+      "requiresWrite": false
+    },
+    {
+      "id": "resolve-issue",
+      "name": "Resolve Issue",
+      "description": "Mark a Sentry issue as resolved",
+      "requiresWrite": true
+    }
+  ],
+  "prompts": [
+    {
+      "id": "check-errors",
+      "title": "Check recent errors",
+      "prompt": "Show me recent errors and issues in my Sentry projects and help me prioritize which ones to fix.",
+      "category": "development",
+      "icon": "alert-triangle"
+    },
+    {
+      "id": "analyze-issue",
+      "title": "Analyze an issue",
+      "prompt": "Help me analyze a specific Sentry issue, understand its root cause, and suggest a fix.",
+      "category": "development",
+      "icon": "bug"
+    },
+    {
+      "id": "project-health",
+      "title": "Project health check",
+      "prompt": "Give me an overview of the health of my Sentry projects, including error rates and trending issues.",
+      "category": "analytics",
+      "icon": "activity"
+    }
+  ],
+  "suggestedWith": ["github", "slack", "linear"]
+}

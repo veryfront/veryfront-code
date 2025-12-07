@@ -1,0 +1,9 @@
+# Bitbucket OAuth Configuration
+# Create a new OAuth consumer at: https://bitbucket.org/account/settings/app-passwords/
+# Or create an OAuth consumer at: https://bitbucket.org/{workspace}/workspace/settings/oauth-consumers/new
+# Set the callback URL to: http://localhost:3000/api/auth/bitbucket/callback
+# (Update the URL for production)
+# Required permissions: repository, pullrequest, issue, account
+
+BITBUCKET_CLIENT_ID=your_bitbucket_client_id
+BITBUCKET_CLIENT_SECRET=your_bitbucket_client_secret

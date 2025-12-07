@@ -17,3 +17,6 @@ export type { UseCompletionOptions, UseCompletionResult } from "./use-completion
 
 export { useStreaming } from "./use-streaming.ts";
 export type { UseStreamingOptions, UseStreamingResult } from "./use-streaming.ts";
+
+export { useVoiceInput } from "./use-voice-input.ts";
+export type { UseVoiceInputOptions, UseVoiceInputResult } from "./use-voice-input.ts";

@@ -1,0 +1,61 @@
+{
+  "name": "zendesk",
+  "displayName": "Zendesk",
+  "icon": "zendesk.svg",
+  "description": "Manage support tickets, users, and help center content",
+  "category": "support",
+  "auth": {
+    "type": "oauth2",
+    "provider": "zendesk",
+    "scopes": ["read", "write"],
+    "callbackPath": "/api/auth/zendesk/callback"
+  },
+  "tools": [
+    {
+      "id": "list-tickets",
+      "name": "List Tickets",
+      "description": "List Zendesk tickets with optional filters"
+    },
+    {
+      "id": "get-ticket",
+      "name": "Get Ticket",
+      "description": "Get details of a specific ticket"
+    },
+    {
+      "id": "create-ticket",
+      "name": "Create Ticket",
+      "description": "Create a new ticket in Zendesk"
+    },
+    {
+      "id": "search-tickets",
+      "name": "Search Tickets",
+      "description": "Search tickets using Zendesk query syntax"
+    }
+  ],
+  "prompts": [
+    {
+      "id": "check-ticket-status",
+      "title": "Check ticket status",
+      "prompt": "Check the status of my recent Zendesk tickets and summarize any that need attention.",
+      "category": "productivity"
+    },
+    {
+      "id": "create-support-ticket",
+      "title": "Create support ticket",
+      "prompt": "Help me create a new support ticket in Zendesk with the appropriate priority and tags.",
+      "category": "productivity"
+    },
+    {
+      "id": "search-tickets",
+      "title": "Search tickets",
+      "prompt": "Search Zendesk tickets for specific issues or customer inquiries.",
+      "category": "research"
+    }
+  ],
+  "envVars": [
+    "ZENDESK_SUBDOMAIN",
+    "ZENDESK_CLIENT_ID",
+    "ZENDESK_CLIENT_SECRET"
+  ],
+  "suggestedWith": ["slack", "intercom"]
+}

@@ -1,0 +1,5 @@
+# Zendesk OAuth Configuration
+# Get these from your Zendesk Admin Center: Apps and integrations > APIs > Zendesk API > OAuth Clients
+ZENDESK_SUBDOMAIN=your-subdomain
+ZENDESK_CLIENT_ID=your_client_id
+ZENDESK_CLIENT_SECRET=your_client_secret

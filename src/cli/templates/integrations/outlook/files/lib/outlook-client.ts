@@ -114,7 +114,7 @@ export async function listEmails(options?: {
   return response.value || [];
 }
 
-export async function getEmail(messageId: string): Promise<OutlookMessage> {
+export function getEmail(messageId: string): Promise<OutlookMessage> {
   return graphFetch<OutlookMessage>(`/messages/${messageId}`);
 }
 

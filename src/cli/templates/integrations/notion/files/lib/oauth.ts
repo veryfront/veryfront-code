@@ -1,5 +1,6 @@
 // Notion OAuth utilities
 
+import { Buffer } from "node:buffer";
 const NOTION_AUTH_URL = "https://api.notion.com/v1/oauth/authorize";
 const NOTION_TOKEN_URL = "https://api.notion.com/v1/oauth/token";
 

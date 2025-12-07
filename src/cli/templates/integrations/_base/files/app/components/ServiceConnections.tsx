@@ -68,7 +68,7 @@ export function ServiceConnections({ services, className = "" }: ServiceConnecti
 
 function ServiceBadge({ service }: { service: Service }) {
   const handleConnect = () => {
-    window.location.href = service.authUrl;
+    globalThis.location.href = service.authUrl;
   };
 
   if (service.connected) {
@@ -85,6 +85,7 @@ function ServiceBadge({ service }: { service: Service }) {
 
   return (
     <button
+      type="button"
       onClick={handleConnect}
       className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-neutral-100 text-neutral-600 hover:bg-neutral-200 dark:bg-neutral-800 dark:text-neutral-400 dark:hover:bg-neutral-700 transition-colors"
       title={`Connect ${service.name}`}

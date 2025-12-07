@@ -1,0 +1,6 @@
+# Twitter / X Integration
+# Create an app at https://developer.twitter.com/en/portal/dashboard
+# Enable OAuth 2.0 and add callback URL: http://localhost:3000/api/auth/twitter/callback
+
+TWITTER_CLIENT_ID=your_client_id_here
+TWITTER_CLIENT_SECRET=your_client_secret_here

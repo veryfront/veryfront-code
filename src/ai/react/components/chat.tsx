@@ -13,6 +13,7 @@ import {
   MessageList,
   SubmitButton,
 } from "../primitives/index.ts";
+import { useVoiceInput } from "../hooks/use-voice-input.ts";
 import type { Message, ToolCall } from "../../types/agent.ts";
 import { type ChatTheme, cn, defaultChatTheme, mergeThemes } from "./theme.ts";
 
@@ -34,6 +35,18 @@ export interface ChatProps {
 
   /** Submit handler (from useChat) */
   handleSubmit?: (e: React.FormEvent) => void | Promise<void>;
+
+  /** Stop handler - called when stop button is clicked during loading */
+  stop?: () => void;
+
+  /** Enable built-in voice input (uses Web Speech API) */
+  enableVoice?: boolean;
+
+  /** Custom voice input handler - overrides built-in voice if provided */
+  onVoice?: () => void;
+
+  /** Setter for input value (required for voice input to work) */
+  setInput?: (value: string) => void;
 
   /** Loading state */
   isLoading?: boolean;
@@ -88,6 +101,10 @@ export const Chat = React.forwardRef<HTMLDivElement, ChatProps>(
       handleInputChange,
       onSubmit,
       handleSubmit,
+      stop,
+      enableVoice = false,
+      onVoice,
+      setInput,
       isLoading,
       error,
       placeholder = "Type a message...",
@@ -106,6 +123,24 @@ export const Chat = React.forwardRef<HTMLDivElement, ChatProps>(
     // Support both naming conventions from useChat
     const inputChangeHandler = onChange || handleInputChange || (() => {});
     const submitHandler = onSubmit || handleSubmit;
+
+    // Built-in voice input
+    const voice = useVoiceInput({
+      onTranscript: (transcript, isFinal) => {
+        if (setInput && isFinal) {
+          setInput(transcript);
+        }
+      },
+    });
+
+    // Determine voice handler - custom or built-in
+    const voiceHandler = React.useMemo(() => {
+      if (onVoice) return onVoice;
+      if (enableVoice && voice.isSupported && setInput) {
+        return voice.toggle;
+      }
+      return undefined;
+    }, [onVoice, enableVoice, voice.isSupported, voice.toggle, setInput]);
 
     // Auto-scroll to bottom on new messages
     React.useEffect(() => {
@@ -175,22 +210,21 @@ export const Chat = React.forwardRef<HTMLDivElement, ChatProps>(
           >
             <div className="flex gap-2 items-center">
               <InputBox
-                value={input}
+                value={voice.isListening ? voice.transcript || input : input}
                 onChange={inputChangeHandler}
-                placeholder={placeholder}
-                disabled={isLoading}
+                placeholder={voice.isListening ? "Listening..." : placeholder}
+                disabled={isLoading || voice.isListening}
                 multiline={multiline}
                 className={theme.input}
               />
               <SubmitButton
-                isLoading={isLoading}
-                disabled={!input.trim() || isLoading}
+                isLoading={isLoading || voice.isListening}
+                hasInput={!!input.trim()}
+                onStop={voice.isListening ? voice.stop : stop}
+                onVoice={voiceHandler}
+                disabled={!input.trim()}
                 className={theme.button}
-              >
-                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
-                  <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" />
-                </svg>
-              </SubmitButton>
+              />
             </div>
           </form>
         </div>

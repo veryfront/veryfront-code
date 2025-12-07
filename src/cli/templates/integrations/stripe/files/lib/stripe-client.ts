@@ -205,11 +205,11 @@ export async function listCustomers(options?: {
   return response.data;
 }
 
-export async function getCustomer(customerId: string): Promise<StripeCustomer> {
+export function getCustomer(customerId: string): Promise<StripeCustomer> {
   return stripeFetch<StripeCustomer>(`/customers/${customerId}`);
 }
 
-export async function createCustomer(data: {
+export function createCustomer(data: {
   email?: string;
   name?: string;
   description?: string;
@@ -221,7 +221,7 @@ export async function createCustomer(data: {
   });
 }
 
-export async function updateCustomer(
+export function updateCustomer(
   customerId: string,
   data: {
     email?: string;
@@ -265,11 +265,11 @@ export async function listPaymentIntents(options?: {
   return response.data;
 }
 
-export async function getPaymentIntent(paymentIntentId: string): Promise<StripePaymentIntent> {
+export function getPaymentIntent(paymentIntentId: string): Promise<StripePaymentIntent> {
   return stripeFetch<StripePaymentIntent>(`/payment_intents/${paymentIntentId}`);
 }
 
-export async function createPaymentIntent(data: {
+export function createPaymentIntent(data: {
   amount: number;
   currency: string;
   customer?: string;
@@ -326,12 +326,12 @@ export async function listSubscriptions(options?: {
   return response.data;
 }
 
-export async function getSubscription(subscriptionId: string): Promise<StripeSubscription> {
+export function getSubscription(subscriptionId: string): Promise<StripeSubscription> {
   return stripeFetch<StripeSubscription>(`/subscriptions/${subscriptionId}`);
 }
 
 // Balance operations
-export async function getBalance(): Promise<StripeBalance> {
+export function getBalance(): Promise<StripeBalance> {
   return stripeFetch<StripeBalance>("/balance");
 }
 

@@ -143,12 +143,12 @@ async function figmaFetch<T>(
 }
 
 // Get current user info
-export async function getMe(): Promise<FigmaUser> {
+export function getMe(): Promise<FigmaUser> {
   return figmaFetch<FigmaUser>("/me");
 }
 
 // Get file details
-export async function getFile(fileKey: string, options?: {
+export function getFile(fileKey: string, options?: {
   version?: string;
   ids?: string[];
   depth?: number;
@@ -170,7 +170,7 @@ export async function getFile(fileKey: string, options?: {
 }
 
 // Get file nodes (specific nodes within a file)
-export async function getFileNodes(fileKey: string, nodeIds: string[]): Promise<{
+export function getFileNodes(fileKey: string, nodeIds: string[]): Promise<{
   name: string;
   lastModified: string;
   thumbnailUrl: string;
@@ -184,7 +184,7 @@ export async function getFileNodes(fileKey: string, nodeIds: string[]): Promise<
 }
 
 // Get file images (exports)
-export async function getFileImages(fileKey: string, nodeIds: string[], options?: {
+export function getFileImages(fileKey: string, nodeIds: string[], options?: {
   format?: "jpg" | "png" | "svg" | "pdf";
   scale?: number;
   svg_include_id?: boolean;
@@ -211,12 +211,12 @@ export async function getFileImages(fileKey: string, nodeIds: string[], options?
 }
 
 // Get comments on a file
-export async function getComments(fileKey: string): Promise<{ comments: FigmaComment[] }> {
+export function getComments(fileKey: string): Promise<{ comments: FigmaComment[] }> {
   return figmaFetch<{ comments: FigmaComment[] }>(`/files/${fileKey}/comments`);
 }
 
 // Post a comment on a file
-export async function postComment(fileKey: string, message: string, options?: {
+export function postComment(fileKey: string, message: string, options?: {
   client_meta?: { x?: number; y?: number; node_id?: string[] };
   parent_id?: string;
 }): Promise<FigmaComment> {
@@ -231,12 +231,12 @@ export async function postComment(fileKey: string, message: string, options?: {
 }
 
 // Get team projects
-export async function getTeamProjects(teamId: string): Promise<{ projects: FigmaTeamProject[] }> {
+export function getTeamProjects(teamId: string): Promise<{ projects: FigmaTeamProject[] }> {
   return figmaFetch<{ projects: FigmaTeamProject[] }>(`/teams/${teamId}/projects`);
 }
 
 // Get project files
-export async function getProjectFiles(projectId: string): Promise<{
+export function getProjectFiles(projectId: string): Promise<{
   files: Array<{
     key: string;
     name: string;
@@ -248,7 +248,7 @@ export async function getProjectFiles(projectId: string): Promise<{
 }
 
 // Get user's recent files
-export async function getUserFiles(): Promise<{
+export function getUserFiles(): Promise<{
   files: Array<{
     key: string;
     name: string;

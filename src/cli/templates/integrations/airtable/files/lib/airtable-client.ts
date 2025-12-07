@@ -49,7 +49,7 @@ async function airtableFetch<T>(
   endpoint: string,
   options: RequestInit = {},
 ): Promise<T> {
-  const token = await getAccessToken();
+  const token = getAccessToken();
   if (!token) {
     throw new Error("Not authenticated with Airtable. Please connect your account.");
   }
@@ -78,7 +78,7 @@ async function metaFetch<T>(
   endpoint: string,
   options: RequestInit = {},
 ): Promise<T> {
-  const token = await getAccessToken();
+  const token = getAccessToken();
   if (!token) {
     throw new Error("Not authenticated with Airtable. Please connect your account.");
   }
@@ -165,7 +165,7 @@ export async function listRecords(
   };
 }
 
-export async function getRecord(
+export function getRecord(
   baseId: string,
   tableIdOrName: string,
   recordId: string,
@@ -175,7 +175,7 @@ export async function getRecord(
   );
 }
 
-export async function createRecord(
+export function createRecord(
   baseId: string,
   tableIdOrName: string,
   fields: Record<string, unknown>,
@@ -204,7 +204,7 @@ export async function createRecords(
   return response.records;
 }
 
-export async function updateRecord(
+export function updateRecord(
   baseId: string,
   tableIdOrName: string,
   recordId: string,
@@ -220,7 +220,7 @@ export async function updateRecord(
   );
 }
 
-export async function deleteRecord(
+export function deleteRecord(
   baseId: string,
   tableIdOrName: string,
   recordId: string,

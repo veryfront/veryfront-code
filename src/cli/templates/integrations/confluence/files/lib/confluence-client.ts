@@ -161,7 +161,7 @@ export async function searchContent(
   return response.results || [];
 }
 
-export async function getPage(pageId: string, expand?: string[]): Promise<ConfluencePage> {
+export function getPage(pageId: string, expand?: string[]): Promise<ConfluencePage> {
   const params = new URLSearchParams();
 
   if (expand && expand.length > 0) {
@@ -174,11 +174,11 @@ export async function getPage(pageId: string, expand?: string[]): Promise<Conflu
   return confluenceFetch<ConfluencePage>(endpoint);
 }
 
-export async function getPageContent(pageId: string): Promise<ConfluencePage> {
+export function getPageContent(pageId: string): Promise<ConfluencePage> {
   return getPage(pageId, ["body.storage", "body.view", "version", "space"]);
 }
 
-export async function createPage(options: {
+export function createPage(options: {
   spaceKey: string;
   title: string;
   content: string;
@@ -217,7 +217,7 @@ export async function updatePage(
     versionMessage?: string;
   },
 ): Promise<ConfluencePage> {
-  const currentPage = await getPage(pageId, ["version"]);
+  const _currentPage = await getPage(pageId, ["version"]);
 
   const body: Record<string, unknown> = {
     version: {

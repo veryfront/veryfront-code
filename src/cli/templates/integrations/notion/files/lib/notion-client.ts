@@ -93,7 +93,7 @@ export async function searchNotion(
   return response.results || [];
 }
 
-export async function getPage(pageId: string): Promise<NotionPage> {
+export function getPage(pageId: string): Promise<NotionPage> {
   return notionFetch<NotionPage>(`/pages/${pageId}`);
 }
 
@@ -104,7 +104,7 @@ export async function getPageContent(pageId: string): Promise<NotionBlock[]> {
   return response.results || [];
 }
 
-export async function queryDatabase(
+export function queryDatabase(
   databaseId: string,
   options?: {
     filter?: Record<string, unknown>;
@@ -124,15 +124,13 @@ export async function queryDatabase(
     body.page_size = options.pageSize;
   }
 
-  const response = await notionFetch<NotionResponse<NotionPage>>(
+  return notionFetch<NotionResponse<NotionPage>>(
     `/databases/${databaseId}/query`,
     { method: "POST", body: JSON.stringify(body) },
-  );
-
-  return response.results || [];
+  ).then((response) => response.results || []);
 }
 
-export async function createPage(options: {
+export function createPage(options: {
   parentId: string;
   parentType: "database" | "page";
   title: string;

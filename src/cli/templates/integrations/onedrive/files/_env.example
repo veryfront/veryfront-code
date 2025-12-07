@@ -1,0 +1,23 @@
+# OneDrive Integration Environment Variables
+
+# Microsoft Azure App Client ID
+# Get this from https://portal.azure.com/#blade/Microsoft_AAD_RegisteredApps/ApplicationsListBlade
+MICROSOFT_CLIENT_ID=your_client_id_here
+
+# Microsoft Azure App Client Secret
+# Get this from https://portal.azure.com/#blade/Microsoft_AAD_RegisteredApps/ApplicationsListBlade
+MICROSOFT_CLIENT_SECRET=your_client_secret_here
+
+# Setup Instructions:
+# 1. Go to https://portal.azure.com/#blade/Microsoft_AAD_RegisteredApps/ApplicationsListBlade
+# 2. Create a new app registration or select an existing one
+# 3. Note the Application (client) ID
+# 4. Create a new client secret under "Certificates & secrets"
+# 5. Add the OAuth2 redirect URI under "Authentication": http://localhost:3000/api/auth/onedrive/callback
+# 6. Grant the following Microsoft Graph API permissions under "API permissions":
+#    - Files.Read
+#    - Files.ReadWrite
+#    - Files.Read.All
+#    - Files.ReadWrite.All
+#    - offline_access
+# 7. Grant admin consent if required by your organization

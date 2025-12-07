@@ -6,7 +6,7 @@
  */
 
 import { join } from "@std/path";
-import { cyan, dim, green, yellow } from "@veryfront/compat/console";
+import { cyan, dim, green } from "@veryfront/compat/console";
 import { cliLogger } from "@veryfront/utils";
 import { createFileSystem, type FileSystem } from "../../../platform/compat/fs.ts";
 import { getEnv, isInteractive as checkIsInteractive } from "../../../platform/compat/process.ts";
@@ -59,7 +59,6 @@ async function promptText(question: string, defaultValue?: string): Promise<stri
   const defaultHint = defaultValue ? dim(` (${defaultValue})`) : "";
   console.log(`${cyan("?")} ${question}${defaultHint}`);
 
-  const stdin = typeof Deno !== "undefined" ? Deno.stdin : process.stdin;
   const buf = new Uint8Array(1024);
 
   if (typeof Deno !== "undefined") {
@@ -390,7 +389,7 @@ export async function GET(request: Request): Promise<Response> {
  * Create API key-specific files
  */
 async function createApiKeyFiles(
-  projectDir: string,
+  _projectDir: string,
   baseDir: string,
   config: IntegrationConfig,
 ): Promise<void> {

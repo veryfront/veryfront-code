@@ -152,7 +152,7 @@ export async function listProjects(): Promise<NeonProject[]> {
   return response.projects;
 }
 
-export async function getProject(projectId: string): Promise<NeonProject> {
+export function getProject(projectId: string): Promise<NeonProject> {
   return neonFetch<NeonProject>(`/projects/${projectId}`);
 }
 

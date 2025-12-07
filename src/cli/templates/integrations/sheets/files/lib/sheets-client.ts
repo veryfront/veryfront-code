@@ -178,7 +178,7 @@ export function createSheetsClient(userId: string) {
     /**
      * Get spreadsheet metadata
      */
-    async getSpreadsheet(spreadsheetId: string): Promise<Spreadsheet> {
+    getSpreadsheet(spreadsheetId: string): Promise<Spreadsheet> {
       return sheetsApiRequest<Spreadsheet>(
         `/spreadsheets/${spreadsheetId}`,
       );
@@ -313,7 +313,7 @@ export function createSheetsClient(userId: string) {
     /**
      * Create a new spreadsheet
      */
-    async createSpreadsheet(
+    createSpreadsheet(
       options: CreateSpreadsheetOptions,
     ): Promise<Spreadsheet> {
       const body: {
