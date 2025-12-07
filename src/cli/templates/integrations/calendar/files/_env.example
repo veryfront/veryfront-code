@@ -1,0 +1,29 @@
+# =============================================================================
+# Google Calendar Integration Setup
+# =============================================================================
+#
+# STEP 1: Create a Google Cloud Project
+#   Visit: https://console.cloud.google.com/projectcreate
+#
+# STEP 2: Enable the Google Calendar API
+#   Visit: https://console.cloud.google.com/apis/library/calendar-json.googleapis.com
+#   Click "Enable" to activate the Calendar API for your project
+#
+# STEP 3: Configure OAuth Consent Screen
+#   Visit: https://console.cloud.google.com/apis/credentials/consent
+#   - Choose "External" user type (or "Internal" for Workspace)
+#   - Fill in app name, support email
+#   - Add scopes: calendar.readonly, calendar.events
+#   - Add your email as a test user (required for development)
+#
+# STEP 4: Create OAuth Credentials
+#   Visit: https://console.cloud.google.com/apis/credentials
+#   - Click "Create Credentials" > "OAuth client ID"
+#   - Application type: "Web application"
+#   - Add Authorized redirect URI: http://localhost:3000/api/auth/calendar/callback
+#   - Copy the Client ID and Client Secret below
+#
+# =============================================================================
+
+GOOGLE_CLIENT_ID=your-client-id.apps.googleusercontent.com
+GOOGLE_CLIENT_SECRET=your-client-secret

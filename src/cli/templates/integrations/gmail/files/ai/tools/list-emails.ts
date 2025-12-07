@@ -23,12 +23,8 @@ export default tool({
       .describe("Filter by Gmail label (e.g., 'INBOX', 'IMPORTANT', 'STARRED')"),
   }),
   execute: async ({ maxResults, unreadOnly, label }, context) => {
-    const userId = context?.userId as string | undefined;
-    if (!userId) {
-      return {
-        error: "User not authenticated. Please log in first.",
-      };
-    }
+    // Default to "current-user" for development; in production, always pass userId from session
+    const userId = (context?.userId as string | undefined) || "current-user";
 
     try {
       const gmail = createGmailClient(userId);

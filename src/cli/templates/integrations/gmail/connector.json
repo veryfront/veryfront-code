@@ -13,7 +13,13 @@
       "https://www.googleapis.com/auth/gmail.send",
       "https://www.googleapis.com/auth/gmail.modify"
     ],
-    "callbackPath": "/api/auth/gmail/callback"
+    "callbackPath": "/api/auth/gmail/callback",
+    "requiredApis": [
+      {
+        "name": "Gmail API",
+        "enableUrl": "https://console.cloud.google.com/apis/library/gmail.googleapis.com"
+      }
+    ]
   },
   "envVars": [
     {

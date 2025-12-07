@@ -12,7 +12,13 @@
       "https://www.googleapis.com/auth/calendar.readonly",
       "https://www.googleapis.com/auth/calendar.events"
     ],
-    "callbackPath": "/api/auth/calendar/callback"
+    "callbackPath": "/api/auth/calendar/callback",
+    "requiredApis": [
+      {
+        "name": "Google Calendar API",
+        "enableUrl": "https://console.cloud.google.com/apis/library/calendar-json.googleapis.com"
+      }
+    ]
   },
   "envVars": [
     {
