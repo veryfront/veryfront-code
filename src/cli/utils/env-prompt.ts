@@ -108,13 +108,15 @@ export async function promptForEnvVars(
 
     values[envVar.name] = value;
 
-    // Add to .env content (use default or placeholder if no value provided)
+    // Add to .env content only if we have a real value
+    // Skip env vars with no value - they're documented in .env.example
     if (value) {
       envLines.push(`${envVar.name}=${value}`);
-    } else {
-      // Still add the line with placeholder so user knows it needs to be set
-      envLines.push(`${envVar.name}=${placeholder}`);
+    } else if (envVar.required) {
+      // Only add placeholder comment for required vars so user knows they need to set them
+      envLines.push(`# ${envVar.name}= # Required - see .env.example`);
     }
+    // Optional vars without values are omitted entirely - see .env.example for reference
   }
 
   if (interactive && envVars.length > 0) {

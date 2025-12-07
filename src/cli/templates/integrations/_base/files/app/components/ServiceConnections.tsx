@@ -25,10 +25,15 @@ export function ServiceConnections({ services, className = "" }: ServiceConnecti
   useEffect(() => {
     async function checkStatus() {
       try {
-        const res = await fetch("/api/auth/status");
+        const res = await fetch("/api/integrations/status");
         if (res.ok) {
           const data = await res.json();
-          setStatus(data.services || {});
+          // Convert array to Record<id, boolean> for status lookup
+          const statusMap: Record<string, boolean> = {};
+          for (const integration of data.integrations || []) {
+            statusMap[integration.id] = integration.connected;
+          }
+          setStatus(statusMap);
         }
       } catch (err) {
         console.error("Failed to check service status:", err);
@@ -103,10 +108,15 @@ export function ServiceConnectionsCard({ services, className = "" }: ServiceConn
   useEffect(() => {
     async function checkStatus() {
       try {
-        const res = await fetch("/api/auth/status");
+        const res = await fetch("/api/integrations/status");
         if (res.ok) {
           const data = await res.json();
-          setStatus(data.services || {});
+          // Convert array to Record<id, boolean> for status lookup
+          const statusMap: Record<string, boolean> = {};
+          for (const integration of data.integrations || []) {
+            statusMap[integration.id] = integration.connected;
+          }
+          setStatus(statusMap);
         }
       } catch (err) {
         console.error("Failed to check service status:", err);
