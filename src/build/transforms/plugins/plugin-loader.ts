@@ -12,10 +12,10 @@ import {
   remarkMdxRemoveParagraphs,
 } from "./remark-mdx-utils.ts";
 import { remarkAddNodeId } from "./remark-node-id.ts";
-import remarkGfm from "https://esm.sh/remark-gfm@4.0.1";
-import remarkFrontmatter from "https://esm.sh/remark-frontmatter@5.0.0";
-import rehypeHighlight from "https://esm.sh/rehype-highlight@7.0.2";
-import rehypeSlug from "https://esm.sh/rehype-slug@6.0.0";
+import remarkGfm from "remark-gfm";
+import remarkFrontmatter from "remark-frontmatter";
+import rehypeHighlight from "rehype-highlight";
+import rehypeSlug from "rehype-slug";
 
 export type PluginFunction = (
   tree: MdastRoot | HastRoot,
