@@ -171,7 +171,8 @@ Deno.test("remark-mdx-utils - remarkCodeBlocks handles code without meta", () =>
 
 Deno.test("remark-mdx-utils - remarkCodeBlocks preserves existing data", () => {
   const code = createCode("typescript", "const x = 1");
-  code.data = { customProp: "value" };
+  // deno-lint-ignore no-explicit-any
+  (code as any).data = { customProp: "value" };
   const tree = createTree(code);
 
   const plugin = remarkCodeBlocks();

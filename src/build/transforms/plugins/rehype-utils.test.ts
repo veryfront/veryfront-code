@@ -2,6 +2,12 @@ import { assertEquals, assertExists } from "std/assert/mod.ts";
 import { rehypeAddClasses, rehypeMdxComponents, rehypePreserveNodeIds } from "./rehype-utils.ts";
 import type { Element, Root } from "hast";
 
+// Helper to set element data with hProperties (avoids strict type issues in tests)
+// deno-lint-ignore no-explicit-any
+function setElementData(element: Element, data: any): void {
+  element.data = data;
+}
+
 function createElement(
   tagName: string,
   properties: Record<string, any> = {},
@@ -24,11 +30,11 @@ function createTree(...children: Element[]): Root {
 
 Deno.test("rehype-utils - rehypePreserveNodeIds preserves data-node-id", () => {
   const element = createElement("p");
-  element.data = {
+  setElementData(element, {
     hProperties: {
       "data-node-id": "node-123",
     },
-  };
+  });
   const tree = createTree(element);
 
   const plugin = rehypePreserveNodeIds();
@@ -39,11 +45,11 @@ Deno.test("rehype-utils - rehypePreserveNodeIds preserves data-node-id", () => {
 
 Deno.test("rehype-utils - rehypePreserveNodeIds preserves data-node-start", () => {
   const element = createElement("p");
-  element.data = {
+  setElementData(element, {
     hProperties: {
       "data-node-start": 100,
     },
-  };
+  });
   const tree = createTree(element);
 
   const plugin = rehypePreserveNodeIds();
@@ -54,11 +60,11 @@ Deno.test("rehype-utils - rehypePreserveNodeIds preserves data-node-start", () =
 
 Deno.test("rehype-utils - rehypePreserveNodeIds preserves data-node-end", () => {
   const element = createElement("p");
-  element.data = {
+  setElementData(element, {
     hProperties: {
       "data-node-end": 200,
     },
-  };
+  });
   const tree = createTree(element);
 
   const plugin = rehypePreserveNodeIds();
@@ -69,11 +75,11 @@ Deno.test("rehype-utils - rehypePreserveNodeIds preserves data-node-end", () => 
 
 Deno.test("rehype-utils - rehypePreserveNodeIds preserves data-node-line", () => {
   const element = createElement("p");
-  element.data = {
+  setElementData(element, {
     hProperties: {
       "data-node-line": 5,
     },
-  };
+  });
   const tree = createTree(element);
 
   const plugin = rehypePreserveNodeIds();
@@ -84,14 +90,14 @@ Deno.test("rehype-utils - rehypePreserveNodeIds preserves data-node-line", () =>
 
 Deno.test("rehype-utils - rehypePreserveNodeIds preserves multiple data attributes", () => {
   const element = createElement("p");
-  element.data = {
+  setElementData(element, {
     hProperties: {
       "data-node-id": "node-123",
       "data-node-start": 100,
       "data-node-end": 200,
       "data-node-line": 5,
     },
-  };
+  });
   const tree = createTree(element);
 
   const plugin = rehypePreserveNodeIds();
@@ -105,12 +111,12 @@ Deno.test("rehype-utils - rehypePreserveNodeIds preserves multiple data attribut
 
 Deno.test("rehype-utils - rehypePreserveNodeIds ignores non-data-node attributes", () => {
   const element = createElement("p");
-  element.data = {
+  setElementData(element, {
     hProperties: {
       "data-custom": "value",
       className: "test",
     },
-  };
+  });
   const tree = createTree(element);
 
   const plugin = rehypePreserveNodeIds();
@@ -123,11 +129,11 @@ Deno.test("rehype-utils - rehypePreserveNodeIds ignores non-data-node attributes
 Deno.test("rehype-utils - rehypePreserveNodeIds initializes properties if missing", () => {
   const element = createElement("p");
   element.properties = undefined as any;
-  element.data = {
+  setElementData(element, {
     hProperties: {
       "data-node-id": "node-123",
     },
-  };
+  });
   const tree = createTree(element);
 
   const plugin = rehypePreserveNodeIds();
@@ -389,17 +395,17 @@ Deno.test("rehype-utils - rehypeMdxComponents preserves existing hProperties", (
 
 Deno.test("rehype-utils - rehypePreserveNodeIds handles nested elements", () => {
   const inner = createElement("span");
-  inner.data = {
+  setElementData(inner, {
     hProperties: {
       "data-node-id": "inner-123",
     },
-  };
+  });
   const outer = createElement("div", {}, [inner]);
-  outer.data = {
+  setElementData(outer, {
     hProperties: {
       "data-node-id": "outer-456",
     },
-  };
+  });
   const tree = createTree(outer);
 
   const plugin = rehypePreserveNodeIds();

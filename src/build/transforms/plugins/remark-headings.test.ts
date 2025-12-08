@@ -319,7 +319,7 @@ Deno.test("remark-headings - handles unicode characters", () => {
 Deno.test("remark-headings - preserves existing heading data", () => {
   type CustomHeadingData = { customProp?: string; hProperties?: { id?: string } };
   const heading = createHeading(1, "Existing Data");
-  heading.data = {
+  (heading as unknown as { data: CustomHeadingData }).data = {
     customProp: "value",
   };
   const tree = createTree(heading);
