@@ -5,8 +5,8 @@
  * files from a remote filesystem adapter.
  */
 
-import { assertEquals, assertStringIncludes } from "jsr:@std/assert";
-import { describe, it } from "jsr:@std/testing/bdd";
+import { assertEquals, assertStringIncludes } from "std/assert/mod.ts";
+import { describe, it } from "std/testing/bdd.ts";
 import type { FileSystemAdapter } from "../../platform/adapters/base.ts";
 
 // Mock fsAdapter that simulates Veryfront Cloud
