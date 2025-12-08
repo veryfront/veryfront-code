@@ -155,7 +155,8 @@ export class StaticHandler extends BaseHandler {
         const builder = this.createResponseBuilder(ctx);
 
         // For HEAD requests, don't include body
-        const body = req.method.toUpperCase() === "HEAD" ? null : fileData;
+        // Cast to Uint8Array to satisfy BodyInit type in newer TypeScript
+        const body = req.method.toUpperCase() === "HEAD" ? null : fileData as Uint8Array;
 
         const response = builder
           .withCORS(req, ctx.securityConfig?.cors)
