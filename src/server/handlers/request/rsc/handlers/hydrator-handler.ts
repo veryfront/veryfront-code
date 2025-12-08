@@ -49,7 +49,18 @@ export class HydratorHandler {
           resolveDir: pathHelper.dirname(path),
           sourcefile: path,
         },
-        external: ["react", "react-dom", "react-dom/client"],
+        // External: React packages + Node.js built-ins that may be referenced
+        // in cross-platform code but are never available in browsers
+        external: [
+          "react",
+          "react-dom",
+          "react-dom/client",
+          // Node.js built-ins that may be dynamically imported in platform compat code
+          "node:os",
+          "node:fs",
+          "node:fs/promises",
+          "node:process",
+        ],
         logLevel: "warning",
       });
 
