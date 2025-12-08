@@ -3,7 +3,7 @@
  * Main OpenTelemetry metrics initialization and management
  */
 
-import type { Meter } from "npm:@opentelemetry/api@1";
+import type { Meter } from "@opentelemetry/api";
 import { serverLogger as logger } from "@veryfront/utils";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import { loadConfig } from "./config.ts";
@@ -86,7 +86,7 @@ class MetricsManager {
 
     try {
       // Load OpenTelemetry API
-      this.api = await import("npm:@opentelemetry/api@1");
+      this.api = await import("@opentelemetry/api");
 
       // Get or create meter
       this.meter = this.api.metrics.getMeter(finalConfig.prefix, "0.1.0");

@@ -5,7 +5,7 @@
  * @module
  */
 
-import type { Counter, Meter, ObservableGauge, ObservableResult } from "npm:@opentelemetry/api@1";
+import type { Counter, Meter, ObservableGauge, ObservableResult } from "@opentelemetry/api";
 import type { MetricsConfig, RuntimeState } from "../metrics/types.ts";
 
 /**

@@ -1,4 +1,4 @@
-import type { Span } from "npm:@opentelemetry/api@1";
+import type { Span } from "@opentelemetry/api";
 import { endSpan, setSpanAttributes, SpanNames, startSpan, withSpan } from "../tracing/index.ts";
 import { recordRenderError } from "../metrics/index.ts";
 

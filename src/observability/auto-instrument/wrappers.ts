@@ -1,4 +1,4 @@
-import type { Span } from "npm:@opentelemetry/api@1";
+import type { Span } from "@opentelemetry/api";
 import { endSpan, setSpanAttributes, type SpanOptions, startSpan } from "../tracing/index.ts";
 import type { BatchOptions, InstrumentOptions } from "./types.ts";
 

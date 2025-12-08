@@ -6,7 +6,7 @@ import {
   SpanKind,
   SpanStatusCode,
   trace,
-} from "npm:@opentelemetry/api@1";
+} from "@opentelemetry/api";
 import type { ErrorAttributes, HttpAttributes } from "./types.ts";
 
 const tracer = trace.getTracer("veryfront-http");

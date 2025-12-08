@@ -9,7 +9,7 @@ import type {
   Meter,
   ObservableGauge,
   UpDownCounter,
-} from "npm:@opentelemetry/api@1";
+} from "@opentelemetry/api";
 
 /**
  * OpenTelemetry API module type

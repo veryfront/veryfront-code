@@ -1,4 +1,4 @@
-import type { Context, Span, SpanKind, TextMapPropagator, Tracer } from "npm:@opentelemetry/api@1";
+import type { Context, Span, SpanKind, TextMapPropagator, Tracer } from "@opentelemetry/api";
 
 export interface TracingConfig {
   enabled: boolean;
