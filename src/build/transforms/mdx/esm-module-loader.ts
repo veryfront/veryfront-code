@@ -8,8 +8,11 @@ import {
 } from "@veryfront/modules/import-map/index.ts";
 import type { MDXFrontmatter, MDXModule } from "./types.ts";
 import { join } from "https://deno.land/std@0.220.0/path/mod.ts";
-import { isNode as IS_NODE } from "../../../platform/compat/runtime.ts";
+import { isDeno, isNode } from "../../../platform/compat/runtime.ts";
 import { cwd } from "../../../platform/compat/process.ts";
+
+// True Node.js runtime (not Deno with Node.js compat)
+const IS_TRUE_NODE = isNode && !isDeno;
 
 // Constants
 const LOG_PREFIX_MDX_LOADER = "[mdx-loader]";
@@ -20,6 +23,76 @@ const HTTP_IMPORT_PATTERN = /['"]https?:\/\/[^'"]+['"]/;
 const ESBUILD_JSX_FACTORY = "React.createElement";
 const ESBUILD_JSX_FRAGMENT = "React.Fragment";
 const HTTP_MODULE_FETCH_TIMEOUT_MS = 30000;
+
+// Cache for resolved react package paths (Node.js only)
+const _resolvedPaths: Record<string, string | null> = {};
+
+/**
+ * Resolve a Node.js package path using require.resolve
+ * Returns null if resolution fails
+ */
+async function resolveNodePackage(packageSpec: string): Promise<string | null> {
+  if (!IS_TRUE_NODE) return null;
+  if (packageSpec in _resolvedPaths) return _resolvedPaths[packageSpec]!;
+
+  try {
+    // Use Node.js createRequire to resolve the package from THIS file's location
+    // This ensures react is found from veryfront's node_modules, not the project's
+    const { createRequire } = await import("node:module");
+    const require = createRequire(import.meta.url);
+    const resolved = require.resolve(packageSpec);
+    _resolvedPaths[packageSpec] = resolved;
+    return resolved;
+  } catch {
+    _resolvedPaths[packageSpec] = null;
+    return null;
+  }
+}
+
+/**
+ * Transform react imports to absolute file:// paths for Node.js.
+ * This is needed because MDX modules are cached in arbitrary directories
+ * (like temp dirs) where Node.js cannot resolve bare 'react' imports.
+ */
+async function transformReactImportsToAbsolute(code: string): Promise<string> {
+  if (!IS_TRUE_NODE) return code;
+
+  // Resolve the actual react package paths
+  const reactPath = await resolveNodePackage("react");
+  const reactJsxPath = await resolveNodePackage("react/jsx-runtime");
+  const reactJsxDevPath = await resolveNodePackage("react/jsx-dev-runtime");
+  const reactDomPath = await resolveNodePackage("react-dom");
+
+  let result = code;
+
+  // Replace bare react imports with absolute file:// paths
+  if (reactJsxPath) {
+    result = result.replace(
+      /from\s+['"]react\/jsx-runtime['"]/g,
+      `from "file://${reactJsxPath}"`,
+    );
+  }
+  if (reactJsxDevPath) {
+    result = result.replace(
+      /from\s+['"]react\/jsx-dev-runtime['"]/g,
+      `from "file://${reactJsxDevPath}"`,
+    );
+  }
+  if (reactDomPath) {
+    result = result.replace(
+      /from\s+['"]react-dom['"]/g,
+      `from "file://${reactDomPath}"`,
+    );
+  }
+  if (reactPath) {
+    result = result.replace(
+      /from\s+['"]react['"]/g,
+      `from "file://${reactPath}"`,
+    );
+  }
+
+  return result;
+}
 
 export interface ESMLoaderContext {
   esmCacheDir?: string;
@@ -120,7 +193,7 @@ export async function loadModuleESM(
     const adapter = await getAdapter();
 
     if (!context.esmCacheDir) {
-      if (IS_NODE) {
+      if (IS_TRUE_NODE) {
         // On Node.js, use a cache dir inside the project so module resolution works
         // Node.js resolves bare imports relative to the file location
         const projectCacheDir = join(
@@ -137,11 +210,13 @@ export async function loadModuleESM(
       }
     }
 
-    // Transform imports with import map (skip on Node.js - uses npm packages directly)
+    // Transform imports with import map
     let rewritten: string;
-    if (IS_NODE) {
-      // On Node.js, keep bare imports as-is (npm packages)
-      rewritten = compiledProgramCode;
+    if (IS_TRUE_NODE) {
+      // On Node.js, transform react imports to absolute file:// paths
+      // This is needed because MDX modules are cached in temp directories
+      // where Node.js cannot resolve bare imports
+      rewritten = await transformReactImportsToAbsolute(compiledProgramCode);
     } else {
       // On Deno/browser, transform to esm.sh URLs
       rewritten = transformImportsWithMap(
@@ -219,7 +294,7 @@ export async function loadModuleESM(
     }
 
     // On Node.js, bundle HTTP imports via esbuild instead of trying to import them directly
-    if (IS_NODE && HTTP_IMPORT_PATTERN.test(rewritten)) {
+    if (IS_TRUE_NODE && HTTP_IMPORT_PATTERN.test(rewritten)) {
       logger.info(`${LOG_PREFIX_MDX_LOADER} Bundling HTTP imports via esbuild for Node.js`);
       const { build } = await import("esbuild/mod.js");
 
