@@ -227,7 +227,8 @@ Deno.test("remark-node-id - stores correct position data", () => {
 
 Deno.test("remark-node-id - preserves existing data properties", () => {
   const para = createParagraph("Test");
-  para.data = { customProp: "value" };
+  // deno-lint-ignore no-explicit-any
+  (para as any).data = { customProp: "value" };
   const tree = createTree(para);
   const file = { data: {} };
 
