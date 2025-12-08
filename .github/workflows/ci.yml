@@ -19,7 +19,7 @@ jobs:
         with:
           deno-version: lts
           cache: true
-          cache-hash: ${{ hashFiles('deno.lock') }}
+          cache-hash: ${{ hashFiles('deno.json') }}
 
       - name: Verify Formatting
         run: deno fmt --check
