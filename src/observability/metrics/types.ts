@@ -3,13 +3,7 @@
  * Type definitions for OpenTelemetry metrics system
  */
 
-import type {
-  Counter,
-  Histogram,
-  Meter,
-  ObservableGauge,
-  UpDownCounter,
-} from "@opentelemetry/api";
+import type { Counter, Histogram, Meter, ObservableGauge, UpDownCounter } from "@opentelemetry/api";
 
 /**
  * OpenTelemetry API module type
