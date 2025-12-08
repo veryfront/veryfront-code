@@ -18,6 +18,8 @@ jobs:
         uses: denoland/setup-deno@v2
         with:
           deno-version: v2.x
+          cache: true
+          cache-hash: ${{ hashFiles('deno.lock') }}
 
       - name: Verify Formatting
         run: deno fmt --check
