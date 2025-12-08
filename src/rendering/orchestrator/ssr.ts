@@ -125,11 +125,13 @@ export class VeryfrontRenderer {
       this.lifecycle.clearSlugCache(slug);
     } else {
       this.lifecycle.clearAllCaches();
+      this.layoutOrchestrator.clearCache();
     }
   }
 
   clearAllState(): void {
     this.lifecycle.clearAllCaches();
+    this.layoutOrchestrator.clearCache();
   }
 
   getVirtualModuleSystem() {

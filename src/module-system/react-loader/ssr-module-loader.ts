@@ -19,6 +19,15 @@ const globalModuleCache = new Map<string, string>(); // absolutePath -> tempPath
 const globalInProgress = new Set<string>();
 const globalTmpDirs = new Map<string, string>(); // projectDir -> tmpDir
 
+/**
+ * Clear the global SSR module cache.
+ * This should be called when file contents change and modules need to be re-transformed.
+ */
+export function clearSSRModuleCache(): void {
+  globalModuleCache.clear();
+  globalInProgress.clear();
+}
+
 export class SSRModuleLoader {
   private fs = createFileSystem();
 
@@ -49,8 +58,17 @@ export class SSRModuleLoader {
     filePath: string,
     source?: string,
   ): Promise<void> {
+    const code = source ?? await this.fs.readTextFile(filePath);
+
+    // Use content hash in cache key to invalidate when file changes
+    const contentHash = this.hashCode(code);
+    const cacheKey = `${filePath}:${contentHash}`;
+
     // Check global cache first (shared across requests)
-    if (globalModuleCache.has(filePath)) {
+    if (globalModuleCache.has(cacheKey)) {
+      // Update the filePath -> tempPath mapping for the loadModule lookup
+      const tempPath = globalModuleCache.get(cacheKey)!;
+      globalModuleCache.set(filePath, tempPath);
       return;
     }
 
@@ -62,8 +80,6 @@ export class SSRModuleLoader {
     globalInProgress.add(filePath);
 
     try {
-      const code = source ?? await this.fs.readTextFile(filePath);
-
       const localImports = await parseLocalImports(
         code,
         filePath,
@@ -88,18 +104,31 @@ export class SSRModuleLoader {
         transformOpts,
       );
 
-      const tempPath = await this.getTempPath(filePath);
+      // Include content hash in temp path to avoid Deno module cache issues
+      const tempPath = await this.getTempPath(filePath, contentHash);
       const tempDir = tempPath.substring(0, tempPath.lastIndexOf("/"));
       await this.fs.mkdir(tempDir, { recursive: true });
       await this.fs.writeTextFile(tempPath, transformed);
 
+      // Store both the content-keyed and filePath-keyed entries
+      globalModuleCache.set(cacheKey, tempPath);
       globalModuleCache.set(filePath, tempPath);
     } finally {
       globalInProgress.delete(filePath);
     }
   }
 
-  private async getTempPath(filePath: string): Promise<string> {
+  private hashCode(str: string): string {
+    let hash = 0;
+    for (let i = 0; i < str.length; i++) {
+      const char = str.charCodeAt(i);
+      hash = ((hash << 5) - hash) + char;
+      hash = hash & hash;
+    }
+    return Math.abs(hash).toString(16);
+  }
+
+  private async getTempPath(filePath: string, contentHash?: string): Promise<string> {
     const tmpDir = await this.ensureTmpDir();
 
     let relativePath = filePath;
@@ -108,7 +137,10 @@ export class SSRModuleLoader {
       relativePath = filePath.substring(projectDir.length);
     }
 
-    const jsPath = relativePath.replace(/\.(tsx?|jsx|mdx)$/, ".js");
+    // Include content hash in filename to avoid Deno module cache issues
+    // Different file versions get different temp paths
+    const hashSuffix = contentHash ? `.${contentHash}` : "";
+    const jsPath = relativePath.replace(/\.(tsx?|jsx|mdx)$/, `${hashSuffix}.js`);
     return join(tmpDir, jsPath);
   }
 
