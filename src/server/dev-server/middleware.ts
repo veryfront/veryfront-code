@@ -94,7 +94,7 @@ async function enrichSpanWithRequestInfo(
   requestId: string,
 ): Promise<void> {
   try {
-    const { trace } = await import("npm:@opentelemetry/api@1");
+    const { trace } = await import("@opentelemetry/api");
     const span = trace.getActiveSpan();
     if (span) {
       span.setAttribute("http.route", pathname);

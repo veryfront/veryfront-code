@@ -3,7 +3,7 @@
  * @module
  */
 
-import type { Counter, Histogram, Meter } from "npm:@opentelemetry/api@1";
+import type { Counter, Histogram, Meter } from "@opentelemetry/api";
 
 /**
  * Observability metrics interface for lazy-loaded metrics recording

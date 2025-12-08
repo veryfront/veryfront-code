@@ -5,7 +5,7 @@
  * @module
  */
 
-import type { Meter } from "npm:@opentelemetry/api@1";
+import type { Meter } from "@opentelemetry/api";
 import { serverLogger as logger } from "@veryfront/utils";
 import type { MetricsConfig, MetricsInstruments, RuntimeState } from "../metrics/types.ts";
 import { createBuildInstruments } from "./build-instruments.ts";

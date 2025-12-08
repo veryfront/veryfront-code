@@ -5,7 +5,7 @@
  * @module
  */
 
-import type { Counter, Histogram, Meter, UpDownCounter } from "npm:@opentelemetry/api@1";
+import type { Counter, Histogram, Meter, UpDownCounter } from "@opentelemetry/api";
 import { DURATION_HISTOGRAM_BOUNDARIES_MS } from "@veryfront/config";
 import type { MetricsConfig } from "../metrics/types.ts";
 

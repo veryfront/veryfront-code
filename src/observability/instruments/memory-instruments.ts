@@ -5,7 +5,7 @@
  * @module
  */
 
-import type { Meter, ObservableGauge, ObservableResult } from "npm:@opentelemetry/api@1";
+import type { Meter, ObservableGauge, ObservableResult } from "@opentelemetry/api";
 import { getMemoryUsage } from "../metrics/config.ts";
 import type { MetricsConfig } from "../metrics/types.ts";
 

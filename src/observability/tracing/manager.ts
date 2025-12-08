@@ -46,16 +46,12 @@ class TracingManager {
   }
 
   private async initializeTracer(config: TracingConfig): Promise<void> {
-    // Construct module names dynamically to prevent Deno static analyzer
-    // from trying to resolve these npm packages during lint/check
-    const otelApiModule = ["npm:@opentelemetry/", "api@1"].join("");
-    const api = await import(otelApiModule) as OpenTelemetryAPI;
+    const api = await import("@opentelemetry/api") as OpenTelemetryAPI;
     this.state.api = api;
 
     this.state.tracer = api.trace.getTracer(config.serviceName || "veryfront", "0.1.0");
 
-    const otelCoreModule = ["npm:@opentelemetry/", "core@1"].join("");
-    const { W3CTraceContextPropagator } = await import(otelCoreModule);
+    const { W3CTraceContextPropagator } = await import("@opentelemetry/core");
     const propagator = new W3CTraceContextPropagator();
     this.state.propagator = propagator;
     api.propagation.setGlobalPropagator(propagator);
