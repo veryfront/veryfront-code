@@ -1,8 +1,11 @@
 import * as React from "react";
 import { rendererLogger as logger } from "@veryfront/utils";
 import { getReactVersionInfo } from "../version-detector/index.ts";
-import { isNode } from "../../../platform/compat/runtime.ts";
+import { isDeno, isNode } from "../../../platform/compat/runtime.ts";
 import { cwd } from "../../../platform/compat/process.ts";
+
+// True Node.js runtime (not Deno with Node.js compat)
+const IS_TRUE_NODE = isNode && !isDeno;
 
 export interface ReactDOMServer {
   renderToString: typeof import("react-dom/server").renderToString;
@@ -27,7 +30,7 @@ async function canResolveReactFromProject(): Promise<boolean> {
     return useProjectReact;
   }
 
-  if (!isNode) {
+  if (!IS_TRUE_NODE) {
     useProjectReact = false;
     return false;
   }
