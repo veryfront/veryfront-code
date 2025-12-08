@@ -161,7 +161,7 @@ export class GCSBlobStorage implements BlobStorage {
     const response = await fetch(uploadUrl, {
       method: "POST",
       headers,
-      body: body,
+      body: body as BodyInit,
     });
 
     if (!response.ok) {
