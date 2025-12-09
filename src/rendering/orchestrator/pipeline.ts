@@ -84,7 +84,7 @@ export class RenderPipeline {
     if (options?.request && options?.url) {
       try {
         if (!options.params || Object.keys(options.params).length === 0) {
-          logger.info("[renderPage] Attempting to extract Pages Router params", {
+          logger.info("[renderPage] Attempting to extract route params", {
             slug,
             pageId: pageInfo.entity.id,
           });
@@ -92,11 +92,20 @@ export class RenderPipeline {
           try {
             const params: Record<string, string | string[]> = {};
             const pagesIndex = pageInfo.entity.id.indexOf("/pages/");
+            const appIndex = pageInfo.entity.id.indexOf("/app/");
+
+            // Determine the base path for param extraction
+            let relativePath: string | null = null;
             if (pagesIndex !== -1) {
-              const relativePath = pageInfo.entity.id.substring(pagesIndex + 7); // Skip "/pages/"
+              relativePath = pageInfo.entity.id.substring(pagesIndex + 7); // Skip "/pages/"
+            } else if (appIndex !== -1) {
+              relativePath = pageInfo.entity.id.substring(appIndex + 5); // Skip "/app/"
+            }
+
+            if (relativePath) {
               const pathSegments = relativePath.split("/").map((s) =>
                 s.replace(/\.(tsx|jsx|ts|js|mdx)$/, "")
-              );
+              ).filter((s) => s !== "page" && s !== "route"); // Exclude App Router file names
               const slugSegments = slug.split("/").filter(Boolean);
 
               for (let i = 0; i < pathSegments.length && i < slugSegments.length; i++) {
@@ -127,13 +136,13 @@ export class RenderPipeline {
 
             if (Object.keys(params).length > 0) {
               options.params = params;
-              logger.info("[renderPage] Extracted Pages Router params", {
+              logger.info("[renderPage] Extracted route params", {
                 slug,
                 params,
               });
             }
           } catch (paramError) {
-            logger.error("[renderPage] Failed to extract Pages Router params", {
+            logger.error("[renderPage] Failed to extract route params", {
               slug,
               error: paramError instanceof Error ? paramError.message : String(paramError),
               stack: paramError instanceof Error ? paramError.stack : undefined,

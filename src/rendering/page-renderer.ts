@@ -113,6 +113,60 @@ export class PageRenderer {
   }
 
   /**
+   * Extract route params from path and slug (fallback extraction)
+   * Handles both App Router (/app/) and Pages Router (/pages/) patterns
+   */
+  private extractParamsFromPath(
+    pageEntityId: string,
+    slug: string,
+  ): Record<string, string | string[]> | undefined {
+    const params: Record<string, string | string[]> = {};
+
+    // Find router base path
+    const appIndex = pageEntityId.indexOf("/app/");
+    const pagesIndex = pageEntityId.indexOf("/pages/");
+
+    let relativePath: string | null = null;
+    if (appIndex !== -1) {
+      relativePath = pageEntityId.substring(appIndex + 5); // Skip "/app/"
+    } else if (pagesIndex !== -1) {
+      relativePath = pageEntityId.substring(pagesIndex + 7); // Skip "/pages/"
+    }
+
+    if (!relativePath) {
+      return undefined;
+    }
+
+    // Extract path segments, removing file extensions and App Router file names
+    const pathSegments = relativePath
+      .split("/")
+      .map((s) => s.replace(/\.(tsx|jsx|ts|js|mdx)$/, ""))
+      .filter((s) => s !== "page" && s !== "route" && s.length > 0);
+
+    const slugSegments = slug.split("/").filter(Boolean);
+
+    // Match dynamic segments with slug values
+    for (let i = 0; i < pathSegments.length && i < slugSegments.length; i++) {
+      const pathSeg = pathSegments[i];
+      const slugSeg = slugSegments[i];
+
+      if (pathSeg && pathSeg.startsWith("[") && pathSeg.endsWith("]")) {
+        const isCatchAll = pathSeg.startsWith("[...");
+        const paramName = pathSeg.replace(/\[\.\.\.|\[|\]/g, "");
+
+        if (isCatchAll) {
+          params[paramName] = slugSegments.slice(i);
+          break;
+        } else if (slugSeg !== undefined) {
+          params[paramName] = slugSeg;
+        }
+      }
+    }
+
+    return Object.keys(params).length > 0 ? params : undefined;
+  }
+
+  /**
    * Prepare page bundles based on file type
    * Handles MDX, TSX/JSX components, and TS/JS scripts
    *
@@ -148,10 +202,16 @@ export class PageRenderer {
     // Dispatch to appropriate handler based on page type
     switch (pageType.type) {
       case "component": {
+        // Extract params from path if not provided (fallback extraction)
+        let params = options?.params;
+        if (!params || Object.keys(params).length === 0) {
+          params = this.extractParamsFromPath(pageInfo.entity.id, slug);
+        }
+
         // For App Router pages, params should be passed as props
         const componentProps = {
           ...options?.props,
-          ...(options?.params ? { params: options.params } : {}),
+          ...(params && Object.keys(params).length > 0 ? { params } : {}),
         };
 
         const result = await handleComponentPage(
