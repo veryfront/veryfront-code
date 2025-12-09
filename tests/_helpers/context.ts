@@ -102,6 +102,7 @@ export class TestContext {
   private readonly testName: string;
   private tempDir?: string;
   private servers: TestServer[] = [];
+  private serverControllers: AbortController[] = [];
   private allocatedPorts: number[] = [];
   private originalEnv: Map<string, string | undefined> = new Map();
   private originalDisableLru?: string;
@@ -217,10 +218,15 @@ export class TestContext {
     const port = options.port || (await this.allocatePort());
     const hostname = options.hostname || "127.0.0.1";
 
+    // Create AbortController for proper cleanup
+    const controller = new AbortController();
+    this.serverControllers.push(controller);
+
     const server = await startProductionServer({
       projectDir: this.projectDir,
       port,
       hostname,
+      signal: controller.signal,
     });
 
     // Add to tracked servers
@@ -277,15 +283,28 @@ export class TestContext {
       }
     }
 
+    // Abort all server controllers first to signal shutdown
+    for (const controller of this.serverControllers) {
+      try {
+        controller.abort();
+      } catch {
+        // Ignore abort errors - server may already be stopped
+      }
+    }
+
     // Stop all servers
     for (const server of this.servers) {
       try {
         await server.stop();
         await this.waitForServerStopped(server);
-      } catch (error) {
-        errors.push(error as Error);
+      } catch {
+        // Ignore stop errors - server may already be stopped
       }
     }
+
+    // Clear the arrays to prevent double cleanup
+    this.serverControllers.length = 0;
+    this.servers.length = 0;
 
     // Clean up renderers and caches to prevent resource leaks
     try {
@@ -483,11 +502,8 @@ export class TestContext {
         const response = await fetch(url, { signal: AbortSignal.timeout(100) });
         // Consume the response body
         await response.body?.cancel();
-        // If fetch succeeds, server is still running
-        await new Promise<void>((resolve) => {
-          const timeoutId = setTimeout(resolve, 100);
-          Promise.resolve().then(() => clearTimeout(timeoutId));
-        });
+        // If fetch succeeds, server is still running, wait before next attempt
+        await new Promise<void>((resolve) => setTimeout(resolve, 100));
       } catch {
         // Server has stopped
         return;

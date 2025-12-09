@@ -109,9 +109,10 @@ export async function checkRSCEndpoints(): Promise<DiagnosticResult[]> {
  * Check RSC counters snapshot (metrics endpoint)
  */
 export async function checkRSCCounters(): Promise<DiagnosticResult> {
+  let met: Response | null = null;
   try {
     const base = new URL("http://127.0.0.1:3000/");
-    const met = await fetch(new URL("/_metrics", base)).catch(() => null);
+    met = await fetch(new URL("/_metrics", base)).catch(() => null);
     if (met?.ok) {
       const j = (await met.json().catch(() => null)) as any;
       const c = j && (j as any).counters ? (j as any).counters : {};
@@ -120,6 +121,7 @@ export async function checkRSCCounters(): Promise<DiagnosticResult> {
       } action:${c.rscAction ?? 0} errors:${c.rscErrors ?? 0}`;
       return { name: "RSC Counters", status: "pass", message: msg };
     } else {
+      await safeCancelBody(met);
       return {
         name: "RSC Counters",
         status: "warn",
@@ -128,6 +130,7 @@ export async function checkRSCCounters(): Promise<DiagnosticResult> {
     }
   } catch (error) {
     cliLogger.debug("Failed to check RSC counters:", error);
+    await safeCancelBody(met);
     return {
       name: "RSC Counters",
       status: "warn",

@@ -6,9 +6,10 @@ import { clearConfigCache } from "@veryfront/config";
 import { type TestContext, withTestContext } from "../../../_helpers/context.ts";
 
 // Create a mock dev command that captures arguments and logs output
+// Uses AbortSignal to allow proper cleanup and prevent hanging tests
 const createMockDevCommand = () => {
-  return async (options: any) => {
-    const { port = 3002, projectDir } = options;
+  return async (options: any & { signal?: AbortSignal }) => {
+    const { port = 3002, projectDir, signal } = options;
 
     // This mimics the logic in dev.ts exactly
     console.log("Starting development server...");
@@ -29,10 +30,20 @@ const createMockDevCommand = () => {
     console.log(`🧧 Client routing: enabled`);
     console.log(`🔮 Prefetching: enabled`);
 
-    // Don't actually start the server
-    return new Promise(() => {
-      /* empty */
-    }); // Never resolves
+    // If already aborted, return immediately
+    if (signal?.aborted) {
+      return;
+    }
+
+    // Wait for abort signal, or resolve after a short timeout for tests
+    return new Promise<void>((resolve) => {
+      const cleanup = () => resolve();
+      signal?.addEventListener("abort", cleanup);
+      // Auto-resolve after 100ms if no abort signal provided (for test safety)
+      if (!signal) {
+        setTimeout(resolve, 100);
+      }
+    });
   };
 };
 
@@ -68,18 +79,26 @@ export default {
 `,
       );
 
+      const controller = new AbortController();
       try {
-        // Run dev command with project directory in a way that doesn't block
-        devCommand({ projectDir: context.projectDir, port: 3002 }).catch(() => {
-          // Ignore errors as the server runs indefinitely
+        // Run dev command with project directory and abort signal
+        const devPromise = devCommand({
+          projectDir: context.projectDir,
+          port: 3002,
+          signal: controller.signal,
         });
 
         // Give it a moment to start and log messages
         await new Promise((resolve) => setTimeout(resolve, 50));
 
         // Note: Console output assertions removed as dev command no longer logs to console
+
+        // Abort the dev command to clean up
+        controller.abort();
+        await devPromise;
       } finally {
-        // Cleanup
+        // Ensure cleanup
+        controller.abort();
       }
     });
   });
@@ -88,24 +107,29 @@ export default {
     await withTestContext("dev-custom", async (context: TestContext) => {
       clearConfigCache();
 
+      const controller = new AbortController();
       try {
         // Run dev command with custom options
-        const options: DevCommandOptions = {
+        const options: DevCommandOptions & { signal: AbortSignal } = {
           port: 4000,
           projectDir: context.projectDir,
+          signal: controller.signal,
         };
 
-        // Run command without blocking
-        devCommand(options).catch(() => {
-          // Ignore errors as the server runs indefinitely
-        });
+        // Run command with abort signal
+        const devPromise = devCommand(options);
 
         // Give it a moment to start
         await new Promise((resolve) => setTimeout(resolve, 50));
 
         // Note: When no config file exists, DEFAULT_CONFIG.dev.port (3002) is used
+
+        // Abort the dev command to clean up
+        controller.abort();
+        await devPromise;
       } finally {
-        // Cleanup
+        // Ensure cleanup
+        controller.abort();
       }
     });
   });
@@ -114,18 +138,26 @@ export default {
     await withTestContext("dev-noconfig", async (context: TestContext) => {
       clearConfigCache();
 
+      const controller = new AbortController();
       try {
         // Run dev command without config
-        devCommand({ projectDir: context.projectDir, port: 3002 }).catch(() => {
-          // Ignore errors as the server runs indefinitely
+        const devPromise = devCommand({
+          projectDir: context.projectDir,
+          port: 3002,
+          signal: controller.signal,
         });
 
         // Give it a moment to start
         await new Promise((resolve) => setTimeout(resolve, 50));
 
         // Should use default port 3002
+
+        // Abort the dev command to clean up
+        controller.abort();
+        await devPromise;
       } finally {
-        // Cleanup
+        // Ensure cleanup
+        controller.abort();
       }
     });
   });
@@ -144,22 +176,28 @@ export default {
 `,
       );
 
+      const controller = new AbortController();
       try {
         // Run dev command with custom port
-        devCommand({ projectDir: context.projectDir, port: 5000 }).catch(() => {
-          /* empty */
+        const devPromise = devCommand({
+          projectDir: context.projectDir,
+          port: 5000,
+          signal: controller.signal,
         });
 
         // Give it a moment to start
-        await new Promise((resolve) => setTimeout(resolve, 200));
+        await new Promise((resolve) => setTimeout(resolve, 50));
 
         // Note: Due to config merging with DEFAULT_CONFIG, even minimal configs get dev.port = 3002
         // The CLI --port option is only used when DEFAULT_CONFIG.dev.port is not set
+
+        // Abort the dev command to clean up
+        controller.abort();
+        await devPromise;
       } finally {
-        // Cleanup
+        // Ensure cleanup
+        controller.abort();
       }
     });
   });
 });
-
-// No need to restore since we're using mocks differently
