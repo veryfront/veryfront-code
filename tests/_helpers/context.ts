@@ -502,11 +502,8 @@ export class TestContext {
         const response = await fetch(url, { signal: AbortSignal.timeout(100) });
         // Consume the response body
         await response.body?.cancel();
-        // If fetch succeeds, server is still running
-        await new Promise<void>((resolve) => {
-          const timeoutId = setTimeout(resolve, 100);
-          Promise.resolve().then(() => clearTimeout(timeoutId));
-        });
+        // If fetch succeeds, server is still running, wait before next attempt
+        await new Promise<void>((resolve) => setTimeout(resolve, 100));
       } catch {
         // Server has stopped
         return;
