@@ -2,7 +2,7 @@
  * Integration tests for full request lifecycle
  */
 
-import { assertEquals, assertExists } from "std/assert/mod.ts";
+import { assert, assertEquals, assertExists } from "std/assert/mod.ts";
 import { join } from "std/path/mod.ts";
 import { DevServer } from "@veryfront/server/dev-server.ts";
 
@@ -32,9 +32,8 @@ Deno.test(
   },
   async () => {
     await withTestContext("full-lifecycle-static-home", async (context) => {
-      // Create test project structure
+      // Create test project structure - only Pages Router for this test
       await Deno.mkdir(join(context.projectDir, "pages"), { recursive: true });
-      await Deno.mkdir(join(context.projectDir, "app"), { recursive: true });
 
       // Ensure project-level Deno config enforces automatic JSX runtime for TSX pages
       await Deno.writeTextFile(
@@ -56,7 +55,7 @@ Deno.test(
         ),
       );
 
-      // Create test pages
+      // Create test page - Pages Router only (no App Router to avoid routing conflicts)
       await Deno.writeTextFile(
         join(context.projectDir, "pages", "index.tsx"),
         `
@@ -67,19 +66,6 @@ export default function HomePage() {
     </div>);
 }
         `,
-      );
-
-      // App Router: root layout and page
-      await Deno.writeTextFile(
-        join(context.projectDir, "app", "layout.tsx"),
-        `export default function RootLayout({ children }: { children: React.ReactNode }) {
-  return (<html><body><div id="root">{children}</div></body></html>);
-}
-`,
-      );
-      await Deno.writeTextFile(
-        join(context.projectDir, "app", "page.tsx"),
-        `export default function AppHome() { return <h1>App Router Home</h1>; }\n`,
       );
 
       const port = await context.allocatePort();
@@ -93,8 +79,8 @@ export default function HomePage() {
       assertEquals(response.status, 200);
 
       const html = await response.text();
-      assertExists(html.includes("Welcome to Veryfront"));
-      assertExists(html.includes("Testing new features integration"));
+      assert(html.includes("Welcome to Veryfront"));
+      assert(html.includes("Testing new features integration"));
     });
   },
 );
@@ -162,8 +148,8 @@ Deno.test(
       const response = await fetch(`http://localhost:${server.port}/nested`);
       assertEquals(response.status, 200);
       const html = await response.text();
-      assertExists(html.includes("Nested App Page"));
-      assertExists(html.includes('data-layout="nested"'));
+      assert(html.includes("Nested App Page"));
+      assert(html.includes('data-layout="nested"'));
     });
   },
 );
@@ -219,7 +205,7 @@ Deno.test(
       assertEquals(response.status, 200);
       // We can't guarantee streaming in all envs; just ensure HTML arrives
       const html = await response.text();
-      assertExists(html.includes("App Router Home") || html.includes("Welcome to Veryfront"));
+      assert(html.includes("App Router Home") || html.includes("Welcome to Veryfront"));
     });
   },
 );
@@ -278,7 +264,8 @@ Deno.test(
       const response = await fetch(`http://localhost:${server.port}/app-posts/42`);
       assertEquals(response.status, 200);
       const html = await response.text();
-      assertExists(html.includes("App Post ID: 42"));
+      // Check for both "App Post ID:" and "42" - React SSR may insert comment markers between text nodes
+      assert(html.includes("App Post ID:") && html.includes("42"), `Expected "App Post ID:" and "42" but got: ${html}`);
     });
   },
 );
@@ -337,7 +324,8 @@ Deno.test(
       const response = await fetch(`http://localhost:${server.port}/docs/one/two/three`);
       assertEquals(response.status, 200);
       const html = await response.text();
-      assertExists(html.includes("Docs Path: one/two/three"));
+      // Check for both "Docs Path:" and "one/two/three" - React SSR may insert comment markers between text nodes
+      assert(html.includes("Docs Path:") && html.includes("one/two/three"), `Expected "Docs Path:" and "one/two/three" but got: ${html}`);
     });
   },
 );
@@ -412,9 +400,10 @@ export default function BlogPost({ slug, title, content }) {
       assertEquals(response.status, 200);
 
       const html = await response.text();
-      assertExists(html.includes("Post: test-post"));
-      assertExists(html.includes("This is the content for test-post"));
-      assertExists(html.includes("Slug: test-post"));
+      // React SSR may insert comment markers between text nodes, check for parts separately
+      assert(html.includes("Post:") && html.includes("test-post"), `Expected "Post:" and "test-post" in HTML`);
+      assert(html.includes("This is the content for") && html.includes("test-post"), `Expected content text in HTML`);
+      assert(html.includes("Slug:") && html.includes("test-post"), `Expected "Slug:" and "test-post" in HTML`);
     });
   },
 );
@@ -814,9 +803,9 @@ export default function ProductPage({ id, name, price, timestamp }) {
       assertEquals(response.status, 200);
 
       const html = await response.text();
-      assertExists(html.includes("Product 1"));
-      assertExists(html.includes("Price: $100"));
-      assertExists(html.includes("ID: 1"));
+      assert(html.includes("Product 1"));
+      assert(html.includes("Price: $100"));
+      assert(html.includes("ID: 1"));
     });
   },
 );
@@ -985,9 +974,9 @@ export default function SearchPage({ query, page, results }) {
       assertEquals(response.status, 200);
 
       const html = await response.text();
-      assertExists(html.includes("Search: veryfront"));
-      assertExists(html.includes("Page: 2"));
-      assertExists(html.includes("Result for veryfront"));
+      assert(html.includes("Search: veryfront"));
+      assert(html.includes("Page: 2"));
+      assert(html.includes("Result for veryfront"));
       // Body already consumed by text()
     });
   },
@@ -1047,7 +1036,7 @@ export default function ErrorPage() {
       assertEquals(response.status, 500);
 
       const html = await response.text();
-      assertExists(html.includes("Test error in getServerData"));
+      assert(html.includes("Test error in getServerData"));
       // Body already consumed by text()
     });
   },
