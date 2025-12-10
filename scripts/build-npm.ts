@@ -551,9 +551,11 @@ for (const [name, entryPath] of Object.entries(entryPoints)) {
 				"process",
 			],
 			define: {
-				"Deno.env.get": "process.env",
+				// Note: We inject deno-env.ts shim to handle Deno.env.get properly
+				// Simple replacement doesn't work because Deno.env.get(key) != process.env(key)
 				"Deno.cwd": "process.cwd",
 			},
+			inject: [pathHelper.resolve(PROJECT_ROOT, "src/_shims/deno-env.ts")],
 			jsx: "automatic",
 			jsxImportSource: "react",
 		});
@@ -1356,16 +1358,16 @@ const packageJson = {
 		react: "^17.0.0 || ^18.0.0 || ^19.0.0",
 		"react-dom": "^17.0.0 || ^18.0.0 || ^19.0.0",
 		zod: "^3.22.0",
-		ai: "^5.0.0",
+		ai: "5.0.76",
 	},
 	peerDependenciesMeta: {
 		zod: { optional: false },
 		ai: { optional: false },
 	},
 	dependencies: {
-		"@ai-sdk/openai": "^2.0.0",
-		"@ai-sdk/anthropic": "^2.0.0",
-		"@ai-sdk/react": "^2.0.0",
+		"@ai-sdk/openai": "2.0.1",
+		"@ai-sdk/anthropic": "2.0.1",
+		"@ai-sdk/react": "2.0.1",
 		"@opentelemetry/api": "^1.9.0",
 		"@opentelemetry/core": "^1.30.0",
 		esbuild: "^0.20.0",
