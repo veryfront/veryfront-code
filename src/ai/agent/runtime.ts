@@ -158,7 +158,6 @@ export class AgentRuntime {
     const { provider, model } = getProviderFromModel(this.config.model);
 
     const encoder = new TextEncoder();
-    const messageId = generateId("msg");
 
     // Build tool execution context - merge user context with agent context
     const toolContext = {
@@ -185,7 +184,7 @@ export class AgentRuntime {
           });
           controller.enqueue(encoder.encode(`data: ${textStartEvent}\n\n`));
 
-          const response = await this.executeAgentLoopStreaming(
+          await this.executeAgentLoopStreaming(
             provider,
             model,
             systemPrompt,
