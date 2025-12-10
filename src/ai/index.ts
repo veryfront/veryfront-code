@@ -146,8 +146,31 @@ export { createMCPServer, MCPServer } from "./mcp/server.ts";
 // import { useChat, useCompletion } from "veryfront/ai/client";
 // This prevents server-side bundling issues
 
-// Re-export AI SDK core
-export { generateObject, generateText, streamText } from "ai";
+// Re-export AI SDK core functions
+// - Text generation: generateText, streamText
+// - Structured data: generateObject, streamObject
+// - Message conversion: convertToModelMessages
+// - Embeddings: embed, embedMany
+// - Utilities: createIdGenerator, smoothStream, cosineSimilarity
+// - Tool helper: aiTool (renamed from 'tool' to avoid conflict with veryfront's tool)
+// - Experimental: experimental_generateImage, experimental_generateSpeech, experimental_transcribe, experimental_createMCPClient
+export {
+  convertToModelMessages,
+  cosineSimilarity,
+  createIdGenerator,
+  embed,
+  embedMany,
+  experimental_createMCPClient,
+  experimental_generateImage,
+  experimental_generateSpeech,
+  experimental_transcribe,
+  generateObject,
+  generateText,
+  smoothStream,
+  streamObject,
+  streamText,
+  tool as aiTool,
+} from "ai";
 
 // Re-export AI SDK providers (30+ providers available)
 export { openai } from "@ai-sdk/openai";
