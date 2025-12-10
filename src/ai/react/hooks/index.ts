@@ -10,9 +10,16 @@ export { useChat } from "./use-chat.ts";
 export type {
   UseChatOptions,
   UseChatResult,
-  ToolCallUI,
-  ReasoningUI,
-  MessageWithParts,
+  // AI SDK v5 compatible types
+  UIMessage,
+  UIMessagePart,
+  TextUIPart,
+  ReasoningUIPart,
+  ToolUIPart,
+  ToolResultUIPart,
+  ToolState,
+  ToolOutput,
+  OnToolCallArg,
 } from "./use-chat.ts";
 
 export { useAgent } from "./use-agent.ts";

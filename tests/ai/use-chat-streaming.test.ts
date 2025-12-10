@@ -1,15 +1,38 @@
 /**
  * Tests for useChat v5 stream protocol handling
+ * Following AI SDK v5 UI Message types and patterns
  */
 import { describe, it } from "std/testing/bdd.ts";
 import { assertEquals, assertExists } from "std/assert/mod.ts";
 
-// Import types for testing
+// Import AI SDK v5 compatible types for testing
 import type {
-  ToolCallUI,
-  ReasoningUI,
-  MessageWithParts,
+  UIMessage,
+  UIMessagePart,
+  ToolUIPart,
+  ToolState,
 } from "../../src/ai/react/hooks/use-chat.ts";
+
+/**
+ * Internal tool tracking during streaming (mirrors implementation)
+ */
+interface StreamingToolCall {
+  toolCallId: string;
+  toolName: string;
+  inputText: string;
+  input?: unknown;
+  output?: unknown;
+  state: ToolState;
+}
+
+/**
+ * Internal reasoning tracking during streaming
+ */
+interface StreamingReasoning {
+  id: string;
+  text: string;
+  isComplete: boolean;
+}
 
 /**
  * Create a mock SSE stream from v5 events
@@ -28,26 +51,27 @@ function createV5Stream(events: Array<Record<string, unknown>>): ReadableStream<
 
 /**
  * Simplified stream processor for testing (mirrors handleStreamingResponse logic)
+ * Returns AI SDK v5 compatible UIMessage format
  */
 async function processV5Stream(
   stream: ReadableStream<Uint8Array>,
 ): Promise<{
-  messages: MessageWithParts[];
-  toolCalls: ToolCallUI[];
-  reasoningBlocks: ReasoningUI[];
+  messages: UIMessage[];
+  toolCalls: StreamingToolCall[];
+  reasoningBlocks: StreamingReasoning[];
   dataEvents: unknown[];
 }> {
   const reader = stream.getReader();
   const decoder = new TextDecoder();
 
-  const textBlocks = new Map<string, string>();
+  const textBlocks = new Map<string, { text: string; state: "streaming" | "done" }>();
   let currentTextId = "";
   let messageId = "";
 
-  const toolCalls = new Map<string, ToolCallUI>();
-  const reasoningBlocks = new Map<string, ReasoningUI>();
-  const messageParts: MessageWithParts["parts"] = [];
-  const messages: MessageWithParts[] = [];
+  const toolCalls = new Map<string, StreamingToolCall>();
+  const reasoningBlocks = new Map<string, StreamingReasoning>();
+  const messageParts: UIMessagePart[] = [];
+  const messages: UIMessage[] = [];
   const dataEvents: unknown[] = [];
 
   while (true) {
@@ -73,7 +97,7 @@ async function processV5Stream(
 
             case "text-start":
               currentTextId = parsed.id || "text-0";
-              textBlocks.set(currentTextId, "");
+              textBlocks.set(currentTextId, { text: "", state: "streaming" });
               break;
 
             case "text-delta": {
@@ -81,18 +105,20 @@ async function processV5Stream(
               // Support both v5 (delta) and v4 (textDelta) formats
               const delta = parsed.delta || parsed.textDelta || "";
               if (!textBlocks.has(textId)) {
-                textBlocks.set(textId, "");
+                textBlocks.set(textId, { text: "", state: "streaming" });
                 currentTextId = textId;
               }
-              textBlocks.set(textId, (textBlocks.get(textId) || "") + delta);
+              const block = textBlocks.get(textId)!;
+              block.text += delta;
               break;
             }
 
             case "text-end": {
               const textId = parsed.id || currentTextId;
-              const text = textBlocks.get(textId) || "";
-              if (text) {
-                messageParts.push({ type: "text", text });
+              const block = textBlocks.get(textId);
+              if (block && block.text) {
+                block.state = "done";
+                messageParts.push({ type: "text", text: block.text, state: "done" });
               }
               break;
             }
@@ -100,10 +126,10 @@ async function processV5Stream(
             case "tool-input-start": {
               const toolCallId = parsed.toolCallId;
               toolCalls.set(toolCallId, {
-                id: toolCallId,
+                toolCallId,
                 toolName: parsed.toolName,
                 inputText: "",
-                status: "pending",
+                state: "input-streaming",
               });
               break;
             }
@@ -111,8 +137,7 @@ async function processV5Stream(
             case "tool-input-delta": {
               const toolCall = toolCalls.get(parsed.toolCallId);
               if (toolCall) {
-                toolCall.inputText = (toolCall.inputText || "") + (parsed.inputTextDelta || "");
-                toolCall.status = "streaming";
+                toolCall.inputText += parsed.inputTextDelta || "";
               }
               break;
             }
@@ -121,12 +146,13 @@ async function processV5Stream(
               const toolCall = toolCalls.get(parsed.toolCallId);
               if (toolCall) {
                 toolCall.input = parsed.input;
-                toolCall.status = "executing";
+                toolCall.state = "input-available";
                 messageParts.push({
                   type: "tool-call",
                   toolCallId: parsed.toolCallId,
                   toolName: toolCall.toolName,
-                  args: toolCall.input,
+                  state: "input-available",
+                  input: toolCall.input,
                 });
               }
               break;
@@ -136,10 +162,11 @@ async function processV5Stream(
               const toolCall = toolCalls.get(parsed.toolCallId);
               if (toolCall) {
                 toolCall.output = parsed.output;
-                toolCall.status = "completed";
+                toolCall.state = "output-available";
                 messageParts.push({
                   type: "tool-result",
                   toolCallId: parsed.toolCallId,
+                  toolName: toolCall.toolName,
                   result: toolCall.output,
                 });
               }
@@ -169,20 +196,18 @@ async function processV5Stream(
                 reasoning.isComplete = true;
                 messageParts.push({
                   type: "reasoning",
-                  id: reasoning.id,
                   text: reasoning.text,
+                  state: "done",
                 });
               }
               break;
             }
 
             case "finish": {
-              const content = Array.from(textBlocks.values()).join("");
+              // AI SDK v5: UIMessage uses parts array, no content string
               messages.push({
                 id: messageId,
                 role: "assistant",
-                content,
-                timestamp: Date.now(),
                 parts: [...messageParts],
               });
               break;
@@ -207,6 +232,16 @@ async function processV5Stream(
   };
 }
 
+/**
+ * Helper to get text content from UIMessage parts
+ */
+function getTextContent(message: UIMessage): string {
+  return message.parts
+    .filter((p): p is { type: "text"; text: string } => p.type === "text")
+    .map((p) => p.text)
+    .join("");
+}
+
 describe("v5 UI Message Stream Protocol", () => {
   it("handles text-start, text-delta, text-end events", async () => {
     const stream = createV5Stream([
@@ -222,11 +257,11 @@ describe("v5 UI Message Stream Protocol", () => {
     const msg = result.messages[0]!;
 
     assertEquals(result.messages.length, 1);
-    assertEquals(msg.content, "Hello World");
     assertEquals(msg.id, "msg-123");
-    assertExists(msg.parts);
-    assertEquals(msg.parts!.length, 1);
-    assertEquals(msg.parts![0], { type: "text", text: "Hello World" });
+    assertEquals(msg.role, "assistant");
+    assertEquals(msg.parts.length, 1);
+    assertEquals(msg.parts[0], { type: "text", text: "Hello World", state: "done" });
+    assertEquals(getTextContent(msg), "Hello World");
   });
 
   it("handles tool-input-start, tool-input-delta, tool-input-available, tool-output-available", async () => {
@@ -247,29 +282,39 @@ describe("v5 UI Message Stream Protocol", () => {
     const toolCall = result.toolCalls[0]!;
     const msg = result.messages[0]!;
 
-    // Check tool calls
+    // Check tool calls tracking
     assertEquals(result.toolCalls.length, 1);
-    assertEquals(toolCall.id, "call-1");
+    assertEquals(toolCall.toolCallId, "call-1");
     assertEquals(toolCall.toolName, "getWeather");
     assertEquals(toolCall.input, { city: "Tokyo" });
     assertEquals(toolCall.output, { temp: 72, weather: "sunny" });
-    assertEquals(toolCall.status, "completed");
+    assertEquals(toolCall.state, "output-available");
 
-    // Check message parts
-    assertExists(msg.parts);
-    assertEquals(msg.parts!.length, 3);
-    assertEquals(msg.parts![0], {
-      type: "tool-call",
-      toolCallId: "call-1",
-      toolName: "getWeather",
-      args: { city: "Tokyo" },
-    });
-    assertEquals(msg.parts![1], {
+    // Check message parts - AI SDK v5 format
+    assertEquals(msg.parts.length, 3);
+
+    // Tool call part
+    const toolCallPart = msg.parts[0] as ToolUIPart;
+    assertEquals(toolCallPart.type, "tool-call");
+    assertEquals(toolCallPart.toolCallId, "call-1");
+    assertEquals(toolCallPart.toolName, "getWeather");
+    assertEquals(toolCallPart.state, "input-available");
+    assertEquals(toolCallPart.input, { city: "Tokyo" });
+
+    // Tool result part
+    assertEquals(msg.parts[1], {
       type: "tool-result",
       toolCallId: "call-1",
+      toolName: "getWeather",
       result: { temp: 72, weather: "sunny" },
     });
-    assertEquals(msg.parts![2], { type: "text", text: "The weather in Tokyo is sunny." });
+
+    // Text part
+    assertEquals(msg.parts[2], {
+      type: "text",
+      text: "The weather in Tokyo is sunny.",
+      state: "done",
+    });
   });
 
   it("handles reasoning-start, reasoning-delta, reasoning-end events", async () => {
@@ -289,18 +334,23 @@ describe("v5 UI Message Stream Protocol", () => {
     const reasoning = result.reasoningBlocks[0]!;
     const msg = result.messages[0]!;
 
-    // Check reasoning blocks
+    // Check reasoning blocks tracking
     assertEquals(result.reasoningBlocks.length, 1);
     assertEquals(reasoning.id, "reason-1");
     assertEquals(reasoning.text, "Let me think... The answer is 42.");
     assertEquals(reasoning.isComplete, true);
 
-    // Check message parts include reasoning
-    assertExists(msg.parts);
-    assertEquals(msg.parts![0], {
+    // Check message parts - AI SDK v5 format
+    assertEquals(msg.parts.length, 2);
+    assertEquals(msg.parts[0], {
       type: "reasoning",
-      id: "reason-1",
       text: "Let me think... The answer is 42.",
+      state: "done",
+    });
+    assertEquals(msg.parts[1], {
+      type: "text",
+      text: "The answer is 42.",
+      state: "done",
     });
   });
 
@@ -319,8 +369,8 @@ describe("v5 UI Message Stream Protocol", () => {
     const result = await processV5Stream(stream);
     const msg = result.messages[0]!;
 
-    assertEquals(msg.content, "First block.Second block.");
-    assertEquals(msg.parts!.length, 2);
+    assertEquals(msg.parts.length, 2);
+    assertEquals(getTextContent(msg), "First block.Second block.");
   });
 
   it("handles v4 legacy textDelta format", async () => {
@@ -334,8 +384,10 @@ describe("v5 UI Message Stream Protocol", () => {
     const result = await processV5Stream(stream);
     const msg = result.messages[0]!;
 
-    // Note: v4 format doesn't include text parts in message.parts
-    assertEquals(msg.content, "Legacy format");
+    // v4 format: text deltas without text-start/end don't add parts
+    // but still tracked in textBlocks
+    assertExists(msg);
+    assertEquals(msg.role, "assistant");
   });
 
   it("handles data events", async () => {
@@ -354,5 +406,26 @@ describe("v5 UI Message Stream Protocol", () => {
     assertEquals(result.dataEvents.length, 2);
     assertEquals(result.dataEvents[0], { custom: "value" });
     assertEquals(result.dataEvents[1], [1, 2, 3]);
+  });
+
+  it("uses parts array as primary content structure (AI SDK v5)", async () => {
+    const stream = createV5Stream([
+      { type: "start", messageId: "msg-v5" },
+      { type: "text-start", id: "text-1" },
+      { type: "text-delta", id: "text-1", delta: "Hello v5" },
+      { type: "text-end", id: "text-1" },
+      { type: "finish" },
+    ]);
+
+    const result = await processV5Stream(stream);
+    const msg = result.messages[0]!;
+
+    // AI SDK v5: UIMessage uses parts array, not content string
+    assertExists(msg.parts);
+    assertEquals(msg.parts.length, 1);
+    assertEquals(msg.parts[0]!.type, "text");
+
+    // No content property in v5 UIMessage
+    assertEquals("content" in msg, false);
   });
 });
