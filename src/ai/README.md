@@ -104,6 +104,42 @@ ai/
 
 ### AI SDK Integration
 
+#### Re-exported Core Functions
+
+These functions are re-exported from the `ai` package for convenience:
+
+| Export | Description |
+|--------|-------------|
+| `generateText` | Generate text from a model |
+| `streamText` | Stream text generation |
+| `generateObject` | Generate structured objects |
+| `streamObject` | Stream structured object generation |
+| `convertToModelMessages` | Convert UI messages to model-compatible format |
+| `embed` | Generate single embeddings |
+| `embedMany` | Batch embedding generation |
+| `aiTool` | AI SDK's type-safe tool helper (renamed from `tool` to avoid conflict with veryfront's `tool`) |
+| `createIdGenerator` | Generate consistent message IDs |
+| `smoothStream` | Smooth streaming output |
+| `cosineSimilarity` | Vector similarity calculations |
+
+#### Experimental Functions
+
+| Export | Description |
+|--------|-------------|
+| `experimental_generateImage` | Image generation |
+| `experimental_transcribe` | Audio to text transcription |
+| `experimental_generateSpeech` | Text to speech generation |
+| `experimental_createMCPClient` | MCP server connection client |
+
+#### Provider Re-exports
+
+| Export | Description |
+|--------|-------------|
+| `openai` | OpenAI provider from `@ai-sdk/openai` |
+| `anthropic` | Anthropic provider from `@ai-sdk/anthropic` |
+
+#### Adapter Utilities
+
 - `useAISDK()` - Use AI SDK with Veryfront
 - `aiSDKModel(provider, model)` - Create AI SDK model
 - `toAISDKTools(tools)` - Convert Veryfront tools to AI SDK
@@ -251,6 +287,58 @@ const server = createMCPServer({
 
 // Start server
 await server.listen({ port: 3100 });
+```
+
+### Using AI SDK Re-exports
+
+```typescript
+import {
+  streamText,
+  convertToModelMessages,
+  openai,
+  aiTool,
+  cosineSimilarity,
+} from "veryfront/ai";
+import { z } from "zod";
+
+// Use AI SDK's streamText directly
+export async function POST(req: Request) {
+  const { messages } = await req.json();
+
+  const result = streamText({
+    model: openai("gpt-4o"),
+    messages: convertToModelMessages(messages),
+    tools: {
+      weather: aiTool({
+        description: "Get the weather for a location",
+        parameters: z.object({
+          location: z.string().describe("The location to get weather for"),
+        }),
+        execute: async ({ location }) => {
+          return { temperature: 72, condition: "sunny", location };
+        },
+      }),
+    },
+  });
+
+  return result.toDataStreamResponse();
+}
+
+// Use embeddings and similarity
+import { embed, embedMany } from "veryfront/ai";
+
+const { embedding } = await embed({
+  model: openai.embedding("text-embedding-3-small"),
+  value: "What is the meaning of life?",
+});
+
+const { embeddings } = await embedMany({
+  model: openai.embedding("text-embedding-3-small"),
+  values: ["Hello world", "Goodbye world"],
+});
+
+// Calculate similarity between embeddings
+const similarity = cosineSimilarity(embedding, embeddings[0]);
 ```
 
 ### React Integration
