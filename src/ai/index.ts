@@ -147,29 +147,29 @@ export { createMCPServer, MCPServer } from "./mcp/server.ts";
 // This prevents server-side bundling issues
 
 // Re-export AI SDK core functions
+// - Text generation: generateText, streamText
+// - Structured data: generateObject, streamObject
+// - Message conversion: convertToModelMessages
+// - Embeddings: embed, embedMany
+// - Utilities: createIdGenerator, smoothStream, cosineSimilarity
+// - Tool helper: aiTool (renamed from 'tool' to avoid conflict with veryfront's tool)
+// - Experimental: experimental_generateImage, experimental_generateSpeech, experimental_transcribe, experimental_createMCPClient
 export {
-  // Text generation
-  generateText,
-  streamText,
-  // Structured data generation
-  generateObject,
-  streamObject,
-  // Message conversion
   convertToModelMessages,
-  // Embeddings
+  cosineSimilarity,
+  createIdGenerator,
   embed,
   embedMany,
-  // Tool helper
-  tool as aiTool, // Renamed to avoid conflict with veryfront's tool
-  // Utilities
-  createIdGenerator,
-  smoothStream,
-  cosineSimilarity,
-  // Experimental (subject to change)
-  experimental_generateImage,
-  experimental_transcribe,
-  experimental_generateSpeech,
   experimental_createMCPClient,
+  experimental_generateImage,
+  experimental_generateSpeech,
+  experimental_transcribe,
+  generateObject,
+  generateText,
+  smoothStream,
+  streamObject,
+  streamText,
+  tool as aiTool,
 } from "ai";
 
 // Re-export AI SDK providers (30+ providers available)
