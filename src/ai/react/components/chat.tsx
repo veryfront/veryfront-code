@@ -14,13 +14,24 @@ import {
   SubmitButton,
 } from "../primitives/index.ts";
 import { useVoiceInput } from "../hooks/use-voice-input.ts";
-import type { Message, ToolCall } from "../../types/agent.ts";
+import type { ToolCall } from "../../types/agent.ts";
+import type { UIMessage, UIMessagePart } from "../hooks/use-chat.ts";
 import { type ChatTheme, cn, defaultChatTheme, mergeThemes } from "./theme.ts";
 import { Markdown } from "./markdown.tsx";
 
+/**
+ * Get text content from UIMessage parts
+ */
+function getTextContent(message: UIMessage): string {
+  return message.parts
+    .filter((p): p is UIMessagePart & { type: "text" } => p.type === "text")
+    .map((p) => p.text)
+    .join("");
+}
+
 export interface ChatProps {
-  /** Messages to display */
-  messages: Message[];
+  /** Messages to display (AI SDK v5 format) */
+  messages: UIMessage[];
 
   /** Current input value */
   input: string;
@@ -68,7 +79,7 @@ export interface ChatProps {
   theme?: Partial<ChatTheme>;
 
   /** Custom message renderer */
-  renderMessage?: (message: Message) => React.ReactNode;
+  renderMessage?: (message: UIMessage) => React.ReactNode;
 
   /** Custom tool renderer */
   renderTool?: (toolCall: ToolCall) => React.ReactNode;
@@ -157,8 +168,9 @@ export const Chat = React.forwardRef<HTMLDivElement, ChatProps>(
         {/* Message List - scrollable content area */}
         <MessageList className="flex-1 min-h-0 overflow-y-auto">
           <div className="max-w-2xl mx-auto px-4 py-4 space-y-2">
-            {messages.map((msg) =>
-              renderMessage
+            {messages.map((msg) => {
+              const content = getTextContent(msg);
+              return renderMessage
                 ? <React.Fragment key={msg.id}>{renderMessage(msg)}</React.Fragment>
                 : (
                   <MessageItem
@@ -173,18 +185,18 @@ export const Chat = React.forwardRef<HTMLDivElement, ChatProps>(
                       {msg.role === "user"
                         ? (
                           <p className="whitespace-pre-wrap text-[15px] leading-relaxed">
-                            {msg.content}
+                            {content}
                           </p>
                         )
                         : (
                           <Markdown className="text-[15px] leading-relaxed">
-                            {msg.content}
+                            {content}
                           </Markdown>
                         )}
                     </div>
                   </MessageItem>
-                )
-            )}
+                );
+            })}
 
             {/* Loading indicator */}
             {isLoading && (
