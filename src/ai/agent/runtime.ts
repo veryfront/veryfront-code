@@ -21,7 +21,7 @@ import type {
 import type { ToolDefinition } from "../types/tool.ts";
 import type { Provider } from "../types/provider.ts";
 import { getProviderFromModel } from "../providers/factory.ts";
-import { executeTool, toolRegistry, toolToProviderDefinition } from "../utils/tool.ts";
+import { executeTool, toolRegistry, toolToProviderDefinition, generateId } from "../utils/index.ts";
 import { detectPlatform, getPlatformCapabilities } from "../runtime/platform.ts";
 import { createMemory, type Memory } from "./memory.ts";
 import { serverLogger as logger } from "@veryfront/utils";
@@ -158,8 +158,7 @@ export class AgentRuntime {
     const { provider, model } = getProviderFromModel(this.config.model);
 
     const encoder = new TextEncoder();
-    // Use prefix + 12 chars from UUID (matches AI SDK generateId pattern)
-    const messageId = `msg_${crypto.randomUUID().replace(/-/g, "").slice(0, 12)}`;
+    const messageId = generateId("msg");
 
     // Build tool execution context - merge user context with agent context
     const toolContext = {
@@ -168,7 +167,7 @@ export class AgentRuntime {
     };
 
     // Generate a unique text part ID for UI message stream
-    const textPartId = `text_${crypto.randomUUID().replace(/-/g, "").slice(0, 12)}`;
+    const textPartId = generateId("text");
 
     return new ReadableStream({
       start: async (controller) => {
