@@ -158,7 +158,7 @@ export class AgentRuntime {
     const { provider, model } = getProviderFromModel(this.config.model);
 
     const encoder = new TextEncoder();
-    const messageId = `msg_${Date.now()}`;
+    const messageId = `msg_${crypto.randomUUID()}`;
 
     // Build tool execution context - merge user context with agent context
     const toolContext = {
@@ -166,17 +166,24 @@ export class AgentRuntime {
       ...context,
     };
 
+    // Generate a unique text part ID for UI message stream
+    const textPartId = `text_${crypto.randomUUID()}`;
+
     return new ReadableStream({
       start: async (controller) => {
         try {
           this.status = "streaming";
 
-          // Send start event (Vercel AI SDK Data Stream Protocol)
-          const startEvent = JSON.stringify({
-            type: "start",
-            messageId,
-          });
+          // Send start event (UI Message Stream Protocol v5)
+          const startEvent = JSON.stringify({ type: "start" });
           controller.enqueue(encoder.encode(`data: ${startEvent}\n\n`));
+
+          // Send text-start event with ID
+          const textStartEvent = JSON.stringify({
+            type: "text-start",
+            id: textPartId,
+          });
+          controller.enqueue(encoder.encode(`data: ${textStartEvent}\n\n`));
 
           const response = await this.executeAgentLoopStreaming(
             provider,
@@ -186,19 +193,20 @@ export class AgentRuntime {
             controller,
             encoder,
             callbacks,
-            messageId,
+            textPartId,
             toolContext,
           );
 
-          // Send finish event
-          const finishEvent = JSON.stringify({
-            type: "finish",
-            usage: response.usage,
+          // Send text-end event (UI Message Stream Protocol v5)
+          const textEndEvent = JSON.stringify({
+            type: "text-end",
+            id: textPartId,
           });
-          controller.enqueue(encoder.encode(`data: ${finishEvent}\n\n`));
+          controller.enqueue(encoder.encode(`data: ${textEndEvent}\n\n`));
 
-          // Send [DONE] to signal end of stream
-          controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+          // Send finish event (UI Message Stream Protocol v5)
+          const finishEvent = JSON.stringify({ type: "finish" });
+          controller.enqueue(encoder.encode(`data: ${finishEvent}\n\n`));
 
           controller.close();
         } catch (error) {
@@ -404,7 +412,7 @@ export class AgentRuntime {
 
   /**
    * Execute agent loop with streaming
-   * Uses Vercel AI SDK Data Stream Protocol format
+   * Uses Vercel AI SDK UI Message Stream Protocol v5 format
    */
   private async executeAgentLoopStreaming(
     provider: Provider,
@@ -512,10 +520,11 @@ export class AgentRuntime {
           case "content": {
             accumulatedText += event.content;
 
-            // Use Vercel AI SDK text-delta format
+            // Use Vercel AI SDK UI Message Stream Protocol v5 format
             const textDeltaEvent = JSON.stringify({
               type: "text-delta",
-              textDelta: event.content,
+              id: _messageId,
+              delta: event.content,
             });
             controller.enqueue(encoder.encode(`data: ${textDeltaEvent}\n\n`));
 
