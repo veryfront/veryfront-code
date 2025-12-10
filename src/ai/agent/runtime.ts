@@ -21,7 +21,7 @@ import type {
 import type { ToolDefinition } from "../types/tool.ts";
 import type { Provider } from "../types/provider.ts";
 import { getProviderFromModel } from "../providers/factory.ts";
-import { executeTool, toolRegistry, toolToProviderDefinition } from "../utils/tool.ts";
+import { executeTool, generateId, toolRegistry, toolToProviderDefinition } from "../utils/index.ts";
 import { detectPlatform, getPlatformCapabilities } from "../runtime/platform.ts";
 import { createMemory, type Memory } from "./memory.ts";
 import { serverLogger as logger } from "@veryfront/utils";
@@ -158,7 +158,6 @@ export class AgentRuntime {
     const { provider, model } = getProviderFromModel(this.config.model);
 
     const encoder = new TextEncoder();
-    const messageId = `msg_${Date.now()}`;
 
     // Build tool execution context - merge user context with agent context
     const toolContext = {
@@ -166,19 +165,26 @@ export class AgentRuntime {
       ...context,
     };
 
+    // Generate a unique text part ID for UI message stream
+    const textPartId = generateId("text");
+
     return new ReadableStream({
       start: async (controller) => {
         try {
           this.status = "streaming";
 
-          // Send start event (Vercel AI SDK Data Stream Protocol)
-          const startEvent = JSON.stringify({
-            type: "start",
-            messageId,
-          });
+          // Send start event (UI Message Stream Protocol v5)
+          const startEvent = JSON.stringify({ type: "start" });
           controller.enqueue(encoder.encode(`data: ${startEvent}\n\n`));
 
-          const response = await this.executeAgentLoopStreaming(
+          // Send text-start event with ID
+          const textStartEvent = JSON.stringify({
+            type: "text-start",
+            id: textPartId,
+          });
+          controller.enqueue(encoder.encode(`data: ${textStartEvent}\n\n`));
+
+          await this.executeAgentLoopStreaming(
             provider,
             model,
             systemPrompt,
@@ -186,19 +192,20 @@ export class AgentRuntime {
             controller,
             encoder,
             callbacks,
-            messageId,
+            textPartId,
             toolContext,
           );
 
-          // Send finish event
-          const finishEvent = JSON.stringify({
-            type: "finish",
-            usage: response.usage,
+          // Send text-end event (UI Message Stream Protocol v5)
+          const textEndEvent = JSON.stringify({
+            type: "text-end",
+            id: textPartId,
           });
-          controller.enqueue(encoder.encode(`data: ${finishEvent}\n\n`));
+          controller.enqueue(encoder.encode(`data: ${textEndEvent}\n\n`));
 
-          // Send [DONE] to signal end of stream
-          controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+          // Send finish event (UI Message Stream Protocol v5)
+          const finishEvent = JSON.stringify({ type: "finish" });
+          controller.enqueue(encoder.encode(`data: ${finishEvent}\n\n`));
 
           controller.close();
         } catch (error) {
@@ -404,7 +411,7 @@ export class AgentRuntime {
 
   /**
    * Execute agent loop with streaming
-   * Uses Vercel AI SDK Data Stream Protocol format
+   * Uses Vercel AI SDK UI Message Stream Protocol v5 format
    */
   private async executeAgentLoopStreaming(
     provider: Provider,
@@ -417,7 +424,7 @@ export class AgentRuntime {
       onToolCall?: (toolCall: ToolCall) => void;
       onChunk?: (chunk: string) => void;
     },
-    _messageId?: string,
+    textPartId?: string,
     toolContext?: Record<string, unknown>,
   ): Promise<AgentResponse> {
     const capabilities = getPlatformCapabilities();
@@ -512,10 +519,11 @@ export class AgentRuntime {
           case "content": {
             accumulatedText += event.content;
 
-            // Use Vercel AI SDK text-delta format
+            // Use Vercel AI SDK UI Message Stream Protocol v5 format
             const textDeltaEvent = JSON.stringify({
               type: "text-delta",
-              textDelta: event.content,
+              id: textPartId,
+              delta: event.content,
             });
             controller.enqueue(encoder.encode(`data: ${textDeltaEvent}\n\n`));
 
