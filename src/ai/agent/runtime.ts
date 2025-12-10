@@ -425,7 +425,7 @@ export class AgentRuntime {
       onToolCall?: (toolCall: ToolCall) => void;
       onChunk?: (chunk: string) => void;
     },
-    _messageId?: string,
+    textPartId?: string,
     toolContext?: Record<string, unknown>,
   ): Promise<AgentResponse> {
     const capabilities = getPlatformCapabilities();
@@ -523,7 +523,7 @@ export class AgentRuntime {
             // Use Vercel AI SDK UI Message Stream Protocol v5 format
             const textDeltaEvent = JSON.stringify({
               type: "text-delta",
-              id: _messageId,
+              id: textPartId,
               delta: event.content,
             });
             controller.enqueue(encoder.encode(`data: ${textDeltaEvent}\n\n`));

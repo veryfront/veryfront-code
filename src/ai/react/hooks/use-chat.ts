@@ -346,8 +346,8 @@ async function handleStreamingResponse(
             messageId = parsed.messageId || `msg_${Date.now()}`;
             accumulatedText = "";
           } else if (parsed.type === "text-delta") {
-            // Text chunk - accumulate and update UI
-            accumulatedText += parsed.textDelta || "";
+            // Text chunk - accumulate and update UI (v5 uses `delta`, fallback to `textDelta` for v4)
+            accumulatedText += parsed.delta || parsed.textDelta || "";
             // Call onUpdate to show text progressively
             if (onUpdate) {
               onUpdate(accumulatedText, messageId);
