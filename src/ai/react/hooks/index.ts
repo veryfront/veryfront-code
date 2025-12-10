@@ -7,7 +7,20 @@
  */
 
 export { useChat } from "./use-chat.ts";
-export type { UseChatOptions, UseChatResult } from "./use-chat.ts";
+export type {
+  OnToolCallArg,
+  ReasoningUIPart,
+  TextUIPart,
+  ToolOutput,
+  ToolResultUIPart,
+  ToolState,
+  ToolUIPart,
+  // AI SDK v5 compatible types
+  UIMessage,
+  UIMessagePart,
+  UseChatOptions,
+  UseChatResult,
+} from "./use-chat.ts";
 
 export { useAgent } from "./use-agent.ts";
 export type { UseAgentOptions, UseAgentResult } from "./use-agent.ts";
