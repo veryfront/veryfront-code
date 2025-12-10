@@ -291,9 +291,7 @@ export function useChat(options: UseChatOptions): UseChatResult {
                   parts,
                 }]);
               } else {
-                setMessages((prev) => prev.map((m) =>
-                  m.id === id ? { ...m, parts } : m
-                ));
+                setMessages((prev) => prev.map((m) => m.id === id ? { ...m, parts } : m));
               }
             },
             onToolCall: options.onToolCall,

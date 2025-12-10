@@ -21,7 +21,7 @@ import type {
 import type { ToolDefinition } from "../types/tool.ts";
 import type { Provider } from "../types/provider.ts";
 import { getProviderFromModel } from "../providers/factory.ts";
-import { executeTool, toolRegistry, toolToProviderDefinition, generateId } from "../utils/index.ts";
+import { executeTool, generateId, toolRegistry, toolToProviderDefinition } from "../utils/index.ts";
 import { detectPlatform, getPlatformCapabilities } from "../runtime/platform.ts";
 import { createMemory, type Memory } from "./memory.ts";
 import { serverLogger as logger } from "@veryfront/utils";
