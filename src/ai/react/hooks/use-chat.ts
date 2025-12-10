@@ -295,7 +295,14 @@ export function useChat(options: UseChatOptions): UseChatResult {
 
 /**
  * Handle streaming response from server
- * Uses Vercel AI SDK data stream format
+ * Supports AI SDK v5 UI Message Stream Protocol
+ *
+ * v5 Event Types:
+ * - start: Stream beginning
+ * - start-step / finish-step: Step boundaries (for multi-step/tools)
+ * - text-start / text-delta / text-end: Text block lifecycle
+ * - finish: Stream end
+ * - data: Custom data
  */
 async function handleStreamingResponse(
   body: ReadableStream,
@@ -305,8 +312,11 @@ async function handleStreamingResponse(
 ): Promise<void> {
   const reader = body.getReader();
   const decoder = new TextDecoder();
-  let accumulatedText = "";
-  let messageId = `msg_${Date.now()}`;
+
+  // Track text blocks by ID (v5 uses IDs to group text-start/delta/end)
+  const textBlocks = new Map<string, string>();
+  let currentTextId = "";
+  let messageId = "";
 
   while (true) {
     const { done, value } = await reader.read();
@@ -322,16 +332,11 @@ async function handleStreamingResponse(
       if (line.startsWith("data: ")) {
         const data = line.slice(6);
 
+        // Legacy [DONE] marker (v4 compatibility)
         if (data === "[DONE]") {
-          // Stream finished - create the assistant message
+          const accumulatedText = getAccumulatedText(textBlocks);
           if (accumulatedText) {
-            const assistantMessage: Message = {
-              id: messageId,
-              role: "assistant",
-              content: accumulatedText,
-              timestamp: Date.now(),
-            };
-            onMessage(assistantMessage);
+            onMessage(createAssistantMessage(messageId, accumulatedText));
           }
           continue;
         }
@@ -339,30 +344,78 @@ async function handleStreamingResponse(
         try {
           const parsed = JSON.parse(data);
 
-          if (parsed.type === "data") {
-            onData(parsed.data);
-          } else if (parsed.type === "start") {
-            // New message starting
-            messageId = parsed.messageId || `msg_${Date.now()}`;
-            accumulatedText = "";
-          } else if (parsed.type === "text-delta") {
-            // Text chunk - accumulate and update UI (v5 uses `delta`, fallback to `textDelta` for v4)
-            accumulatedText += parsed.delta || parsed.textDelta || "";
-            // Call onUpdate to show text progressively
-            if (onUpdate) {
-              onUpdate(accumulatedText, messageId);
+          switch (parsed.type) {
+            // v5: Stream start
+            case "start":
+              messageId = parsed.messageId || generateClientId("msg");
+              textBlocks.clear();
+              break;
+
+            // v5: Step boundaries (for multi-step tool calls)
+            case "start-step":
+            case "finish-step":
+              // Currently no-op, but could track step state
+              break;
+
+            // v5: Text block start
+            case "text-start":
+              currentTextId = parsed.id || generateClientId("text");
+              textBlocks.set(currentTextId, "");
+              break;
+
+            // v5: Text delta (also handles v4 format)
+            case "text-delta": {
+              const textId = parsed.id || currentTextId || "default";
+              const delta = parsed.delta || parsed.textDelta || "";
+
+              // Initialize text block if needed
+              if (!textBlocks.has(textId)) {
+                textBlocks.set(textId, "");
+                currentTextId = textId;
+              }
+
+              // Append delta to text block
+              textBlocks.set(textId, (textBlocks.get(textId) || "") + delta);
+
+              // Update UI with accumulated text
+              if (onUpdate) {
+                onUpdate(getAccumulatedText(textBlocks), messageId);
+              }
+              break;
             }
-          } else if (parsed.type === "finish") {
-            // Stream completed
-            if (accumulatedText) {
-              const assistantMessage: Message = {
-                id: messageId,
-                role: "assistant",
-                content: accumulatedText,
-                timestamp: Date.now(),
-              };
-              onMessage(assistantMessage);
+
+            // v5: Text block end
+            case "text-end":
+              // Text block complete, no action needed
+              break;
+
+            // v5: Stream finish
+            case "finish": {
+              const accumulatedText = getAccumulatedText(textBlocks);
+              if (accumulatedText) {
+                onMessage(createAssistantMessage(messageId, accumulatedText));
+              }
+              break;
             }
+
+            // Custom data events
+            case "data":
+              onData(parsed.data || parsed.value);
+              break;
+
+            // Tool events (future support)
+            case "tool-input-start":
+            case "tool-input-delta":
+            case "tool-result":
+              // TODO: Implement tool call UI updates
+              break;
+
+            // Reasoning events (future support)
+            case "reasoning-start":
+            case "reasoning-delta":
+            case "reasoning-end":
+              // TODO: Implement reasoning UI updates
+              break;
           }
         } catch {
           // Skip invalid JSON
@@ -370,4 +423,30 @@ async function handleStreamingResponse(
       }
     }
   }
+}
+
+/**
+ * Get accumulated text from all text blocks
+ */
+function getAccumulatedText(textBlocks: Map<string, string>): string {
+  return Array.from(textBlocks.values()).join("");
+}
+
+/**
+ * Create assistant message
+ */
+function createAssistantMessage(messageId: string, content: string): Message {
+  return {
+    id: messageId || generateClientId("msg"),
+    role: "assistant",
+    content,
+    timestamp: Date.now(),
+  };
+}
+
+/**
+ * Generate client-side ID (fallback when server doesn't provide one)
+ */
+function generateClientId(prefix: string): string {
+  return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
