@@ -158,7 +158,8 @@ export class AgentRuntime {
     const { provider, model } = getProviderFromModel(this.config.model);
 
     const encoder = new TextEncoder();
-    const messageId = `msg_${crypto.randomUUID()}`;
+    // Use prefix + 12 chars from UUID (matches AI SDK generateId pattern)
+    const messageId = `msg_${crypto.randomUUID().replace(/-/g, "").slice(0, 12)}`;
 
     // Build tool execution context - merge user context with agent context
     const toolContext = {
@@ -167,7 +168,7 @@ export class AgentRuntime {
     };
 
     // Generate a unique text part ID for UI message stream
-    const textPartId = `text_${crypto.randomUUID()}`;
+    const textPartId = `text_${crypto.randomUUID().replace(/-/g, "").slice(0, 12)}`;
 
     return new ReadableStream({
       start: async (controller) => {
