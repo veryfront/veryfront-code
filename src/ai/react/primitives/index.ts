@@ -4,6 +4,8 @@
  * Composable UI primitives with zero styling opinions.
  * Built on Radix UI patterns (shadcn-compatible).
  *
+ * Uses AI SDK v5 UI Message format with parts-based content structure.
+ *
  * @module veryfront/ai/primitives
  * @example
  * ```tsx
@@ -14,6 +16,15 @@
  *   InputBox,
  * } from 'veryfront/ai/primitives';
  * import { useChat } from 'veryfront/ai/react';
+ * import type { UIMessage } from 'veryfront/ai/react';
+ *
+ * // Helper to extract text from v5 parts array
+ * function getTextContent(message: UIMessage): string {
+ *   return message.parts
+ *     .filter((p) => p.type === 'text')
+ *     .map((p) => p.text)
+ *     .join('');
+ * }
  *
  * function MyChat() {
  *   const chat = useChat({ api: '/api/chat' });
@@ -27,16 +38,17 @@
  *             role={msg.role}
  *             className="p-4"
  *           >
- *             {msg.content}
+ *             {getTextContent(msg)}
  *           </MessageItem>
  *         ))}
  *       </MessageList>
- *       <InputBox
- *         value={chat.input}
- *         onChange={chat.handleInputChange}
- *         onSubmit={() => chat.append({ role: 'user', content: chat.input })}
- *         className="border-t p-4"
- *       />
+ *       <form onSubmit={chat.handleSubmit}>
+ *         <InputBox
+ *           value={chat.input}
+ *           onChange={chat.handleInputChange}
+ *           className="border-t p-4"
+ *         />
+ *       </form>
  *     </ChatContainer>
  *   );
  * }

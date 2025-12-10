@@ -8,30 +8,84 @@
 
 This module provides **headless React hooks** for AI interactions with zero UI opinions. These hooks give you complete control over state, behavior, and rendering.
 
+**Uses AI SDK v5 UI Message format** with parts-based content structure.
+
 ## Available Hooks
 
 ### useChat
 
-Complete chat state management:
+Complete chat state management with v5 UI Message format:
 
 ```typescript
 import { useChat } from "veryfront/ai/react";
+import type { UIMessage } from "veryfront/ai/react";
+
+// Helper to extract text from v5 parts array
+function getTextContent(message: UIMessage): string {
+  return message.parts
+    .filter((p) => p.type === "text")
+    .map((p) => p.text)
+    .join("");
+}
 
 function MyChat() {
   const {
-    messages, // Message history
-    input, // Current input
-    isLoading, // Loading state
-    setInput, // Update input
-    append, // Add message
-    reload, // Retry last
-    stop, // Stop generation
+    messages,        // UIMessage[] with parts array
+    input,           // Current input
+    isLoading,       // Loading state
+    setInput,        // Update input
+    sendMessage,     // Send message: sendMessage({ text: "..." })
+    handleSubmit,    // Form submit handler
+    reload,          // Retry last
+    stop,            // Stop generation
   } = useChat({
     api: "/api/chat",
   });
 
-  return <YourCustomUI {...{ messages, input, setInput, append }} />;
+  return (
+    <div>
+      {messages.map((msg) => (
+        <div key={msg.id}>
+          <strong>{msg.role}:</strong> {getTextContent(msg)}
+        </div>
+      ))}
+      <form onSubmit={handleSubmit}>
+        <input
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+        />
+        <button type="submit" disabled={isLoading}>
+          Send
+        </button>
+      </form>
+    </div>
+  );
 }
+```
+
+### UIMessage Format (AI SDK v5)
+
+Messages use the v5 parts-based structure:
+
+```typescript
+interface UIMessage {
+  id: string;
+  role: "system" | "user" | "assistant";
+  parts: UIMessagePart[];  // Content as parts array
+}
+
+type UIMessagePart =
+  | { type: "text"; text: string; state?: "streaming" | "done" }
+  | { type: "reasoning"; text: string; state?: "streaming" | "done" }
+  | { type: "tool-call"; toolCallId: string; toolName: string; state: ToolState; input?: unknown }
+  | { type: "tool-result"; toolCallId: string; toolName: string; result: unknown };
+
+type ToolState =
+  | "input-streaming"
+  | "input-available"
+  | "output-streaming"
+  | "output-available"
+  | "output-error";
 ```
 
 ### useAgent
@@ -45,10 +99,10 @@ function MyAgent() {
   const {
     messages,
     toolCalls, // Active tool invocations
-    status, // Agent status
-    thinking, // Reasoning text
-    invoke, // Start agent
-    stop, // Stop agent
+    status,    // Agent status
+    thinking,  // Reasoning text
+    invoke,    // Start agent
+    stop,      // Stop agent
   } = useAgent({
     agent: "support",
     onToolCall: (tool) => console.log("Tool:", tool.name),
@@ -69,8 +123,8 @@ function MyCompletion() {
   const {
     completion, // Generated text
     isLoading,
-    complete, // Trigger completion
-    stop, // Stop generation
+    complete,   // Trigger completion
+    stop,       // Stop generation
   } = useCompletion({
     api: "/api/complete",
   });
@@ -88,10 +142,10 @@ import { useStreaming } from "veryfront/ai/react";
 
 function MyStreaming() {
   const {
-    data, // Streaming data
+    data,        // Streaming data
     isStreaming,
-    start, // Start stream
-    stop, // Stop stream
+    start,       // Start stream
+    stop,        // Stop stream
   } = useStreaming({
     url: "/api/stream",
     onChunk: (chunk) => console.log("Chunk:", chunk),
@@ -105,8 +159,8 @@ function MyStreaming() {
 
 - **Zero UI opinions** - Build any interface
 - **Complete control** - Full access to state and behavior
-- **TypeScript first** - Full type safety
-- **Streaming support** - Real-time responses
+- **TypeScript first** - Full type safety with v5 types
+- **Streaming support** - Real-time responses with v5 events
 - **Error handling** - Built-in error states
 - **Abort support** - Cancel requests anytime
 - **Flexible** - Customize everything
@@ -120,7 +174,8 @@ npm install veryfront
 ```
 
 ```typescript
-import { useAgent, useChat } from "veryfront/ai/react";
+import { useChat, useAgent } from "veryfront/ai/react";
+import type { UIMessage, UIMessagePart, ToolState } from "veryfront/ai/react";
 ```
 
 ## Next: Layer 2 & 3
@@ -140,12 +195,12 @@ See `examples/ai-react-hooks/` for full examples (coming soon).
 
 **Phase 4: Headless Hooks** **COMPLETE**
 
-- useChat - Complete chat state management
+- useChat - Complete chat state management (v5 format)
 - useAgent - Agent orchestration
 - useCompletion - Single completions
 - useStreaming - Low-level streaming
-- Full TypeScript support
-- Streaming support
+- Full TypeScript support with v5 types
+- Streaming support with v5 events
 - Error handling
 - Abort controllers
 

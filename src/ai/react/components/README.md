@@ -8,6 +8,8 @@
 
 Production-ready, fully styled components built on Layer 2 primitives. Get started in seconds with sensible defaults.
 
+**Uses AI SDK v5 UI Message format** with parts-based content structure.
+
 ## Philosophy
 
 - **Production-ready** - Fully styled with Tailwind CSS
@@ -39,6 +41,8 @@ export default function ChatPage() {
 }
 ```
 
+The `Chat` component handles v5 UIMessage format internally, extracting text from the `parts` array automatically.
+
 **Customization via theme:**
 
 ```tsx
@@ -59,13 +63,24 @@ export default function ChatPage() {
 **Customization via render props:**
 
 ```tsx
+import type { UIMessage } from "veryfront/ai/react";
+
+// Helper to extract text from v5 parts array
+function getTextContent(message: UIMessage): string {
+  return message.parts
+    .filter((p) => p.type === "text")
+    .map((p) => p.text)
+    .join("");
+}
+
 <Chat
   {...chat}
   renderMessage={(msg) => (
     <CustomMessage
-      {...msg}
-      avatar={getUserAvatar(msg.role)}
-      timestamp={formatTime(msg.timestamp)}
+      id={msg.id}
+      role={msg.role}
+      content={getTextContent(msg)}
+      parts={msg.parts}
     />
   )}
 />;
@@ -122,13 +137,13 @@ export default function AgentInterface() {
 
 ### Message
 
-Standalone message component.
+Standalone message component for v5 UIMessage format.
 
 ```tsx
 import { Message } from "veryfront/ai/components";
 
 <Message
-  message={msg}
+  message={msg}  // UIMessage with parts array
   showRole={true}
   showTimestamp={true}
   theme={{
@@ -301,13 +316,52 @@ export default function AgentChat() {
 }
 ```
 
+### Working with v5 Message Parts
+
+```tsx
+import { Chat } from "veryfront/ai/components";
+import { useChat } from "veryfront/ai/react";
+import type { UIMessage, UIMessagePart } from "veryfront/ai/react";
+
+// Custom renderer that handles all part types
+function CustomMessage({ message }: { message: UIMessage }) {
+  return (
+    <div>
+      {message.parts.map((part, i) => {
+        switch (part.type) {
+          case "text":
+            return <p key={i}>{part.text}</p>;
+          case "reasoning":
+            return <blockquote key={i}>{part.text}</blockquote>;
+          case "tool-call":
+            return <div key={i}>Tool: {part.toolName} ({part.state})</div>;
+          case "tool-result":
+            return <div key={i}>Result: {JSON.stringify(part.result)}</div>;
+        }
+      })}
+    </div>
+  );
+}
+
+export default function AdvancedChat() {
+  const chat = useChat({ api: "/api/chat" });
+
+  return (
+    <Chat
+      {...chat}
+      renderMessage={(msg) => <CustomMessage message={msg} />}
+    />
+  );
+}
+```
+
 ## Status
 
 **Phase 6: Styled Components** **COMPLETE**
 
 **Created:**
 
-- Chat component with theme system
+- Chat component with theme system (v5 UIMessage support)
 - AgentCard component
 - Message component
 - StreamingMessage component
@@ -322,6 +376,32 @@ export default function AgentChat() {
 
 ## Migration Path
 
+### From v4 to v5 Message Format
+
+```tsx
+// Before (v4 - deprecated)
+{messages.map((msg) => (
+  <div key={msg.id}>{msg.content}</div>
+))}
+
+// After (v5)
+import type { UIMessage } from "veryfront/ai/react";
+
+function getTextContent(message: UIMessage): string {
+  return message.parts
+    .filter((p) => p.type === "text")
+    .map((p) => p.text)
+    .join("");
+}
+
+{messages.map((msg) => (
+  <div key={msg.id}>{getTextContent(msg)}</div>
+))}
+
+// Or just use the Chat component which handles this automatically
+<Chat {...chat} />
+```
+
 ### From Custom UI → Styled Components
 
 ```tsx
@@ -329,7 +409,7 @@ export default function AgentChat() {
 <div className="chat-container">
   {messages.map((msg) => (
     <div key={msg.id} className="message">
-      {msg.content}
+      {getTextContent(msg)}
     </div>
   ))}
 </div>
@@ -349,7 +429,7 @@ export default function AgentChat() {
   <MessageList>
     {messages.map((msg) => (
       <MessageItem key={msg.id} className="your-styles">
-        {msg.content}
+        {getTextContent(msg)}
       </MessageItem>
     ))}
   </MessageList>
@@ -364,8 +444,8 @@ export default function AgentChat() {
   <MessageList />
 </ChatContainer>;
 
-// Hooks only
-const { messages, input, append } = useChat({ api: "/api/chat" });
+// Hooks only (v5 API)
+const { messages, input, sendMessage, handleSubmit } = useChat({ api: "/api/chat" });
 return <YourCompletelyCustomUI />;
 ```
 
