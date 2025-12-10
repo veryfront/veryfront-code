@@ -7,7 +7,13 @@
  */
 
 export { useChat } from "./use-chat.ts";
-export type { UseChatOptions, UseChatResult } from "./use-chat.ts";
+export type {
+  UseChatOptions,
+  UseChatResult,
+  ToolCallUI,
+  ReasoningUI,
+  MessageWithParts,
+} from "./use-chat.ts";
 
 export { useAgent } from "./use-agent.ts";
 export type { UseAgentOptions, UseAgentResult } from "./use-agent.ts";

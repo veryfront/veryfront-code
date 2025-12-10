@@ -12,6 +12,49 @@ import { useCallback, useRef, useState } from "react";
 import type { Message } from "../../types/agent.ts";
 import { createError, toError } from "../../../core/errors/veryfront-error.ts";
 
+/**
+ * Tool call information for UI
+ */
+export interface ToolCallUI {
+  /** Tool call ID */
+  id: string;
+  /** Tool name */
+  toolName: string;
+  /** Tool input (parsed JSON) */
+  input?: unknown;
+  /** Tool input as raw text (for streaming) */
+  inputText?: string;
+  /** Tool output/result */
+  output?: unknown;
+  /** Tool call status */
+  status: "pending" | "streaming" | "executing" | "completed" | "error";
+}
+
+/**
+ * Reasoning block for UI
+ */
+export interface ReasoningUI {
+  /** Reasoning block ID */
+  id: string;
+  /** Accumulated reasoning text */
+  text: string;
+  /** Whether reasoning is complete */
+  isComplete: boolean;
+}
+
+/**
+ * Extended message with parts (v5 compatible)
+ */
+export interface MessageWithParts extends Message {
+  /** Message parts for rich content */
+  parts?: Array<
+    | { type: "text"; text: string }
+    | { type: "tool-call"; toolCallId: string; toolName: string; args: unknown }
+    | { type: "tool-result"; toolCallId: string; result: unknown }
+    | { type: "reasoning"; id: string; text: string }
+  >;
+}
+
 export interface UseChatOptions {
   /** API endpoint for chat */
   api: string;
@@ -32,10 +75,16 @@ export interface UseChatOptions {
   onResponse?: (response: Response) => void;
 
   /** Callback when message finished */
-  onFinish?: (message: Message) => void;
+  onFinish?: (message: MessageWithParts) => void;
 
   /** Callback when error occurs */
   onError?: (error: Error) => void;
+
+  /** Callback when tool call starts */
+  onToolCall?: (toolCall: ToolCallUI) => void;
+
+  /** Callback when tool result received */
+  onToolResult?: (toolCall: ToolCallUI) => void;
 }
 
 export interface UseChatResult {
@@ -138,58 +187,39 @@ export function useChat(options: UseChatOptions): UseChatResult {
 
         // Handle streaming response
         if (response.body) {
-          // Create a placeholder message ID for streaming
           const streamingMessageId = `msg_${Date.now()}`;
           let hasAddedStreamingMessage = false;
 
-          await handleStreamingResponse(
-            response.body,
-            // onMessage - when streaming is complete
-            (assistantMessage) => {
-              // Replace the streaming message with the final message
+          await handleStreamingResponse(response.body, {
+            onMessage: (assistantMessage) => {
               setMessages((prev) => {
-                // If we had a streaming message, replace it
                 if (hasAddedStreamingMessage) {
                   return prev.map((m) => m.id === streamingMessageId ? assistantMessage : m);
                 }
-                // Otherwise just add it
                 return [...prev, assistantMessage];
               });
-
-              if (options.onFinish) {
-                options.onFinish(assistantMessage);
-              }
+              options.onFinish?.(assistantMessage);
             },
-            // onData - for data events
-            (partialData) => {
-              setData(partialData);
-            },
-            // onUpdate - for real-time streaming updates
-            (partialContent, messageId) => {
+            onData: (partialData) => setData(partialData),
+            onUpdate: (partialContent, messageId) => {
+              const id = messageId || streamingMessageId;
               if (!hasAddedStreamingMessage) {
-                // Add the streaming message for the first time
                 hasAddedStreamingMessage = true;
-                setMessages((prev) => [
-                  ...prev,
-                  {
-                    id: messageId || streamingMessageId,
-                    role: "assistant" as const,
-                    content: partialContent,
-                    timestamp: Date.now(),
-                  },
-                ]);
+                setMessages((prev) => [...prev, {
+                  id,
+                  role: "assistant" as const,
+                  content: partialContent,
+                  timestamp: Date.now(),
+                }]);
               } else {
-                // Update the streaming message content
-                setMessages((prev) =>
-                  prev.map((m) =>
-                    m.id === (messageId || streamingMessageId)
-                      ? { ...m, content: partialContent }
-                      : m
-                  )
-                );
+                setMessages((prev) => prev.map((m) =>
+                  m.id === id ? { ...m, content: partialContent } : m
+                ));
               }
             },
-          );
+            onToolCall: options.onToolCall,
+            onToolResult: options.onToolResult,
+          });
         }
       } catch (err) {
         if (err instanceof Error && err.name === "AbortError") {
@@ -294,6 +324,17 @@ export function useChat(options: UseChatOptions): UseChatResult {
 }
 
 /**
+ * Streaming response callbacks
+ */
+interface StreamingCallbacks {
+  onMessage: (message: MessageWithParts) => void;
+  onData: (data: unknown) => void;
+  onUpdate?: (partialContent: string, messageId: string) => void;
+  onToolCall?: (toolCall: ToolCallUI) => void;
+  onToolResult?: (toolCall: ToolCallUI) => void;
+}
+
+/**
  * Handle streaming response from server
  * Supports AI SDK v5 UI Message Stream Protocol
  *
@@ -301,15 +342,17 @@ export function useChat(options: UseChatOptions): UseChatResult {
  * - start: Stream beginning
  * - start-step / finish-step: Step boundaries (for multi-step/tools)
  * - text-start / text-delta / text-end: Text block lifecycle
+ * - tool-input-start / tool-input-delta / tool-input-available: Tool input streaming
+ * - tool-output-available: Tool result
+ * - reasoning-start / reasoning-delta / reasoning-end: Reasoning block lifecycle
  * - finish: Stream end
  * - data: Custom data
  */
 async function handleStreamingResponse(
   body: ReadableStream,
-  onMessage: (message: Message) => void,
-  onData: (data: unknown) => void,
-  onUpdate?: (partialContent: string, messageId: string) => void,
+  callbacks: StreamingCallbacks,
 ): Promise<void> {
+  const { onMessage, onData, onUpdate, onToolCall, onToolResult } = callbacks;
   const reader = body.getReader();
   const decoder = new TextDecoder();
 
@@ -317,6 +360,15 @@ async function handleStreamingResponse(
   const textBlocks = new Map<string, string>();
   let currentTextId = "";
   let messageId = "";
+
+  // Track tool calls by ID
+  const toolCalls = new Map<string, ToolCallUI>();
+
+  // Track reasoning blocks by ID
+  const reasoningBlocks = new Map<string, ReasoningUI>();
+
+  // Message parts for v5 structured messages
+  const messageParts: MessageWithParts["parts"] = [];
 
   while (true) {
     const { done, value } = await reader.read();
@@ -336,7 +388,7 @@ async function handleStreamingResponse(
         if (data === "[DONE]") {
           const accumulatedText = getAccumulatedText(textBlocks);
           if (accumulatedText) {
-            onMessage(createAssistantMessage(messageId, accumulatedText));
+            onMessage(createAssistantMessage(messageId, accumulatedText, messageParts));
           }
           continue;
         }
@@ -349,12 +401,17 @@ async function handleStreamingResponse(
             case "start":
               messageId = parsed.messageId || generateClientId("msg");
               textBlocks.clear();
+              toolCalls.clear();
+              reasoningBlocks.clear();
+              messageParts.length = 0;
               break;
 
             // v5: Step boundaries (for multi-step tool calls)
             case "start-step":
+              // Step started - could track step ID if needed
+              break;
             case "finish-step":
-              // Currently no-op, but could track step state
+              // Step finished - finalize any pending tool calls for this step
               break;
 
             // v5: Text block start
@@ -385,15 +442,143 @@ async function handleStreamingResponse(
             }
 
             // v5: Text block end
-            case "text-end":
-              // Text block complete, no action needed
+            case "text-end": {
+              // Add text part to message parts
+              const textId = parsed.id || currentTextId;
+              const text = textBlocks.get(textId) || "";
+              if (text) {
+                messageParts.push({ type: "text", text });
+              }
               break;
+            }
+
+            // v5: Tool input start
+            case "tool-input-start": {
+              const toolCallId = parsed.toolCallId || generateClientId("tool");
+              const toolCall: ToolCallUI = {
+                id: toolCallId,
+                toolName: parsed.toolName || "unknown",
+                inputText: "",
+                status: "pending",
+              };
+              toolCalls.set(toolCallId, toolCall);
+              onToolCall?.(toolCall);
+              break;
+            }
+
+            // v5: Tool input delta (streaming tool arguments)
+            case "tool-input-delta": {
+              const toolCallId = parsed.toolCallId;
+              const toolCall = toolCalls.get(toolCallId);
+              if (toolCall) {
+                toolCall.inputText = (toolCall.inputText || "") + (parsed.inputTextDelta || parsed.delta || "");
+                toolCall.status = "streaming";
+                onToolCall?.(toolCall);
+              }
+              break;
+            }
+
+            // v5: Tool input available (complete input ready)
+            case "tool-input-available": {
+              const toolCallId = parsed.toolCallId;
+              const toolCall = toolCalls.get(toolCallId);
+              if (toolCall) {
+                toolCall.input = parsed.input;
+                toolCall.toolName = parsed.toolName || toolCall.toolName;
+                toolCall.status = "executing";
+                onToolCall?.(toolCall);
+
+                // Add tool-call part
+                messageParts.push({
+                  type: "tool-call",
+                  toolCallId,
+                  toolName: toolCall.toolName,
+                  args: toolCall.input,
+                });
+              }
+              break;
+            }
+
+            // v5: Tool output available (result)
+            case "tool-output-available": {
+              const toolCallId = parsed.toolCallId;
+              const toolCall = toolCalls.get(toolCallId);
+              if (toolCall) {
+                toolCall.output = parsed.output;
+                toolCall.status = "completed";
+                onToolResult?.(toolCall);
+
+                // Add tool-result part
+                messageParts.push({
+                  type: "tool-result",
+                  toolCallId,
+                  result: toolCall.output,
+                });
+              }
+              break;
+            }
+
+            // Legacy tool-result event (alternative format)
+            case "tool-result": {
+              const toolCallId = parsed.toolCallId || parsed.id;
+              const toolCall = toolCalls.get(toolCallId);
+              if (toolCall) {
+                toolCall.output = parsed.result || parsed.output;
+                toolCall.status = "completed";
+                onToolResult?.(toolCall);
+
+                messageParts.push({
+                  type: "tool-result",
+                  toolCallId,
+                  result: toolCall.output,
+                });
+              }
+              break;
+            }
+
+            // v5: Reasoning start
+            case "reasoning-start": {
+              const reasoningId = parsed.id || generateClientId("reasoning");
+              const reasoning: ReasoningUI = {
+                id: reasoningId,
+                text: "",
+                isComplete: false,
+              };
+              reasoningBlocks.set(reasoningId, reasoning);
+              break;
+            }
+
+            // v5: Reasoning delta
+            case "reasoning-delta": {
+              const reasoningId = parsed.id;
+              const reasoning = reasoningBlocks.get(reasoningId);
+              if (reasoning) {
+                reasoning.text += parsed.delta || "";
+              }
+              break;
+            }
+
+            // v5: Reasoning end
+            case "reasoning-end": {
+              const reasoningId = parsed.id;
+              const reasoning = reasoningBlocks.get(reasoningId);
+              if (reasoning) {
+                reasoning.isComplete = true;
+                // Add reasoning part to message
+                messageParts.push({
+                  type: "reasoning",
+                  id: reasoningId,
+                  text: reasoning.text,
+                });
+              }
+              break;
+            }
 
             // v5: Stream finish
             case "finish": {
               const accumulatedText = getAccumulatedText(textBlocks);
-              if (accumulatedText) {
-                onMessage(createAssistantMessage(messageId, accumulatedText));
+              if (accumulatedText || messageParts.length > 0) {
+                onMessage(createAssistantMessage(messageId, accumulatedText, messageParts));
               }
               break;
             }
@@ -401,20 +586,6 @@ async function handleStreamingResponse(
             // Custom data events
             case "data":
               onData(parsed.data || parsed.value);
-              break;
-
-            // Tool events (future support)
-            case "tool-input-start":
-            case "tool-input-delta":
-            case "tool-result":
-              // TODO: Implement tool call UI updates
-              break;
-
-            // Reasoning events (future support)
-            case "reasoning-start":
-            case "reasoning-delta":
-            case "reasoning-end":
-              // TODO: Implement reasoning UI updates
               break;
           }
         } catch {
@@ -433,15 +604,26 @@ function getAccumulatedText(textBlocks: Map<string, string>): string {
 }
 
 /**
- * Create assistant message
+ * Create assistant message with optional parts
  */
-function createAssistantMessage(messageId: string, content: string): Message {
-  return {
+function createAssistantMessage(
+  messageId: string,
+  content: string,
+  parts?: MessageWithParts["parts"],
+): MessageWithParts {
+  const message: MessageWithParts = {
     id: messageId || generateClientId("msg"),
     role: "assistant",
     content,
     timestamp: Date.now(),
   };
+
+  // Add parts if there are any (for v5 structured content)
+  if (parts && parts.length > 0) {
+    message.parts = parts;
+  }
+
+  return message;
 }
 
 /**
