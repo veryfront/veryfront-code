@@ -9,7 +9,6 @@
  */
 
 import { useCallback, useRef, useState } from "react";
-import type { Message } from "../../types/agent.ts";
 import { createError, toError } from "../../../core/errors/veryfront-error.ts";
 
 /**
@@ -181,9 +180,6 @@ export interface UseChatResult {
 
   /** Handle form submit */
   handleSubmit: (e: React.FormEvent) => Promise<void>;
-
-  /** @deprecated Use sendMessage instead */
-  append: (message: Omit<Message, "id" | "timestamp">) => Promise<void>;
 }
 
 /**
@@ -318,16 +314,6 @@ export function useChat(options: UseChatOptions): UseChatResult {
   );
 
   /**
-   * @deprecated Use sendMessage instead
-   */
-  const append = useCallback(
-    async (message: Omit<Message, "id" | "timestamp">) => {
-      await sendMessage({ text: message.content });
-    },
-    [sendMessage],
-  );
-
-  /**
    * Reload last message
    */
   const reload = useCallback(async () => {
@@ -390,7 +376,6 @@ export function useChat(options: UseChatOptions): UseChatResult {
     error,
     setInput,
     sendMessage,
-    append,
     reload,
     stop,
     setMessages,
@@ -517,14 +502,6 @@ async function handleStreamingResponse(
       if (line.startsWith("data: ")) {
         const data = line.slice(6);
 
-        // Legacy [DONE] marker (v4 compatibility)
-        if (data === "[DONE]") {
-          if (messageParts.length > 0 || textBlocks.size > 0) {
-            onMessage(createAssistantMessage(messageId, messageParts));
-          }
-          continue;
-        }
-
         try {
           const parsed = JSON.parse(data);
 
@@ -552,10 +529,10 @@ async function handleStreamingResponse(
               textBlocks.set(currentTextId, { text: "", state: "streaming" });
               break;
 
-            // v5: Text delta (also handles v4 format)
+            // v5: Text delta
             case "text-delta": {
               const textId = parsed.id || currentTextId || "default";
-              const delta = parsed.delta || parsed.textDelta || "";
+              const delta = parsed.delta || "";
 
               // Initialize text block if needed
               if (!textBlocks.has(textId)) {
@@ -652,26 +629,6 @@ async function handleStreamingResponse(
                 toolCall.state = "output-available";
 
                 // Add tool-result part
-                messageParts.push({
-                  type: "tool-result",
-                  toolCallId,
-                  toolName: toolCall.toolName,
-                  result: toolCall.output,
-                });
-
-                onUpdate?.(buildCurrentParts(), messageId);
-              }
-              break;
-            }
-
-            // Legacy tool-result event (alternative format)
-            case "tool-result": {
-              const toolCallId = parsed.toolCallId || parsed.id;
-              const toolCall = toolCalls.get(toolCallId);
-              if (toolCall) {
-                toolCall.output = parsed.result || parsed.output;
-                toolCall.state = "output-available";
-
                 messageParts.push({
                   type: "tool-result",
                   toolCallId,

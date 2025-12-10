@@ -102,8 +102,7 @@ async function processV5Stream(
 
             case "text-delta": {
               const textId = parsed.id || currentTextId || "default";
-              // Support both v5 (delta) and v4 (textDelta) formats
-              const delta = parsed.delta || parsed.textDelta || "";
+              const delta = parsed.delta || "";
               if (!textBlocks.has(textId)) {
                 textBlocks.set(textId, { text: "", state: "streaming" });
                 currentTextId = textId;
@@ -371,23 +370,6 @@ describe("v5 UI Message Stream Protocol", () => {
 
     assertEquals(msg.parts.length, 2);
     assertEquals(getTextContent(msg), "First block.Second block.");
-  });
-
-  it("handles v4 legacy textDelta format", async () => {
-    const stream = createV5Stream([
-      { type: "start", messageId: "msg-v4" },
-      { type: "text-delta", textDelta: "Legacy " },
-      { type: "text-delta", textDelta: "format" },
-      { type: "finish" },
-    ]);
-
-    const result = await processV5Stream(stream);
-    const msg = result.messages[0]!;
-
-    // v4 format: text deltas without text-start/end don't add parts
-    // but still tracked in textBlocks
-    assertExists(msg);
-    assertEquals(msg.role, "assistant");
   });
 
   it("handles data events", async () => {
