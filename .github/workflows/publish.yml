@@ -1,0 +1,67 @@
+name: Publish to npm
+
+on:
+  push:
+    tags:
+      - 'v*'  # Trigger on version tags like v0.0.67, v1.0.0
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Clone repository
+        uses: actions/checkout@v4
+
+      - name: Validate tag matches deno.json version
+        run: |
+          TAG_VERSION="${GITHUB_REF#refs/tags/v}"
+          DENO_VERSION=$(jq -r '.version' deno.json)
+
+          if [ "$TAG_VERSION" != "$DENO_VERSION" ]; then
+            echo "Error: Tag version ($TAG_VERSION) doesn't match deno.json version ($DENO_VERSION)"
+            echo "Please ensure deno.json version is updated before tagging."
+            exit 1
+          fi
+
+          echo "Version validated: $TAG_VERSION"
+
+      - name: Setup Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: lts
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Build npm package
+        run: deno task build:npm
+
+      - name: Verify package version
+        working-directory: npm
+        run: |
+          PKG_VERSION=$(jq -r '.version' package.json)
+          TAG_VERSION="${GITHUB_REF#refs/tags/v}"
+
+          if [ "$PKG_VERSION" != "$TAG_VERSION" ]; then
+            echo "Error: Built package version ($PKG_VERSION) doesn't match tag ($TAG_VERSION)"
+            exit 1
+          fi
+
+          echo "Package version verified: $PKG_VERSION"
+
+      - name: Publish to npm
+        working-directory: npm
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

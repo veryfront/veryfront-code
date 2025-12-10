@@ -336,17 +336,28 @@ Brief description of changes
 
 ## Release Process
 
-We use an automated script to handle versioning, testing, building, and publishing.
+Releases are automated via GitHub Actions. When you push a version tag, CI automatically builds and publishes to npm.
 
-### Prerequisites
+### Quick Release
 
-- Ensure you are on the `main` branch.
-- Ensure your working directory is clean.
-- Ensure you have `npm` authenticated (if publishing).
+```bash
+# 1. Update version in deno.json (e.g., "version": "0.0.68")
+# 2. Commit and merge to main
+# 3. Create and push tag:
+git checkout main && git pull
+git tag v0.0.68
+git push origin v0.0.68
+```
 
-### Creating a Release
+CI will automatically:
+- Validate tag matches `deno.json` version
+- Build the npm package (`deno task build:npm`)
+- Publish to npm
+- Create a GitHub Release with auto-generated notes
 
-Use the `release` task to create a new version:
+### Using the Release Script (Alternative)
+
+For a guided release process, use the release task:
 
 ```bash
 # Patch release (0.0.1 -> 0.0.2)
@@ -362,20 +373,46 @@ deno task release major
 deno task release 1.2.3
 ```
 
-### What the script does
-
-1.  **Runs Tests**: Executes `deno task test` to ensure stability.
-2.  **Updates Version**: Bumps the version in `deno.json`.
-3.  **Builds Package**: Runs `deno task build:npm` to generate the npm package.
-4.  **Publishes**: Prompts to publish to npm (optional).
+The script will:
+1. Run tests to ensure stability
+2. Update the version in `deno.json`
+3. Build the npm package
+4. Prompt to publish (or you can push the tag for CI to publish)
 
 ### Dry Run
 
-You can preview the release process without making changes:
+Preview the release process without making changes:
 
 ```bash
 deno task release patch --dry-run
 ```
+
+### Version Numbering
+
+We follow [Semantic Versioning](https://semver.org/):
+- **Patch** (0.0.x): Bug fixes, documentation updates
+- **Minor** (0.x.0): New features, backward-compatible changes
+- **Major** (x.0.0): Breaking changes
+
+### CI/CD Pipeline
+
+| Trigger | Workflow | Action |
+|---------|----------|--------|
+| PR to main | `ci.yml` | Runs tests, lint, typecheck |
+| Push to main | `ci.yml` | Runs tests |
+| Push tag `v*` | `publish.yml` | Builds and publishes to npm |
+
+### Troubleshooting
+
+**Tag doesn't match deno.json version:**
+```
+Error: Tag version (0.0.68) doesn't match deno.json version (0.0.67)
+```
+Fix: Update `deno.json` version before creating the tag.
+
+**npm publish fails:**
+- Check that `NPM_TOKEN` secret is set in GitHub repository settings
+- Verify the token has publish permissions
 
 ## Module Guidelines
 
