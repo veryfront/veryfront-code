@@ -192,8 +192,16 @@ export function createMockAgent(
       return {
         text,
         messages: [
-          { role: "user" as const, content: inputStr },
-          { role: "assistant" as const, content: text },
+          {
+            id: `msg_${Date.now()}_0`,
+            role: "user" as const,
+            parts: [{ type: "text" as const, text: inputStr }],
+          },
+          {
+            id: `msg_${Date.now()}_1`,
+            role: "assistant" as const,
+            parts: [{ type: "text" as const, text }],
+          },
         ],
         toolCalls: options.toolCalls?.map((tc) => ({
           ...tc,
