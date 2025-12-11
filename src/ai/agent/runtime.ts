@@ -15,6 +15,7 @@ import {
   type AgentResponse,
   type AgentStatus,
   getTextFromParts,
+  getToolArguments,
   type Message,
   type MessagePart,
   type ToolCall,
@@ -116,8 +117,8 @@ function convertMessageToProvider(msg: Message): ProviderMessage {
       type: "function",
       function: {
         name: tc.toolName,
-        // Support both 'args' (runtime-generated) and 'input' (useChat-generated) field names
-        arguments: JSON.stringify(tc.args || (tc as unknown as { input: unknown }).input || {}),
+        // Use type-safe helper to extract args/input (throws if missing)
+        arguments: JSON.stringify(getToolArguments(tc as ToolCallPart)),
       },
     }));
   }
