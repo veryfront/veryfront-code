@@ -264,6 +264,7 @@ export function createMockTool(
 
   return {
     id,
+    type: "function" as const,
     description: options.description ?? `Mock tool: ${id}`,
     inputSchema: mockSchema,
     async execute(args: Record<string, unknown>) {

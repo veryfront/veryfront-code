@@ -42,6 +42,7 @@ export function agentAsTool(
 ): Tool {
   return {
     id: `agent_${agent.id}`,
+    type: "function",
     description,
     inputSchema: z.object({
       input: z.string().describe("Input for the agent"),
