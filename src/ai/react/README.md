@@ -77,7 +77,8 @@ interface UIMessage {
 type UIMessagePart =
   | { type: "text"; text: string; state?: "streaming" | "done" }
   | { type: "reasoning"; text: string; state?: "streaming" | "done" }
-  | { type: "tool-call"; toolCallId: string; toolName: string; state: ToolState; input?: unknown }
+  | { type: `tool-${string}`; toolCallId: string; toolName: string; state: ToolState; input?: unknown }  // AI SDK v5 pattern
+  | { type: "dynamic-tool"; toolCallId: string; toolName: string; state: ToolState; input?: unknown }  // For MCP/runtime tools
   | { type: "tool-result"; toolCallId: string; toolName: string; result: unknown };
 
 type ToolState =
