@@ -5,7 +5,7 @@
 import { assertEquals, assertExists } from "https://deno.land/std@0.220.0/assert/mod.ts";
 import { describe, it } from "@std/testing/bdd.ts";
 import { createMemory } from "./memory.ts";
-import type { Message } from "../types/agent.ts";
+import { getTextFromParts, type Message } from "../types/agent.ts";
 
 describe("Memory System", () => {
   describe("ConversationMemory", () => {
@@ -27,7 +27,7 @@ describe("Memory System", () => {
       const message: Message = {
         id: "msg1",
         role: "user",
-        content: "Hello",
+        parts: [{ type: "text", text: "Hello" }],
         timestamp: Date.now(),
       };
 
@@ -35,7 +35,7 @@ describe("Memory System", () => {
 
       const messages = await memory.getMessages();
       assertEquals(messages.length, 1);
-      assertEquals(messages[0]!.content, "Hello");
+      assertEquals(getTextFromParts(messages[0]!.parts), "Hello");
     });
 
     it("should maintain message order", async () => {
@@ -47,21 +47,21 @@ describe("Memory System", () => {
       await memory.add({
         id: "msg1",
         role: "user",
-        content: "First",
+        parts: [{ type: "text", text: "First" }],
         timestamp: Date.now(),
       });
 
       await memory.add({
         id: "msg2",
         role: "assistant",
-        content: "Second",
+        parts: [{ type: "text", text: "Second" }],
         timestamp: Date.now(),
       });
 
       const messages = await memory.getMessages();
       assertEquals(messages.length, 2);
-      assertEquals(messages[0]!.content, "First");
-      assertEquals(messages[1]!.content, "Second");
+      assertEquals(getTextFromParts(messages[0]!.parts), "First");
+      assertEquals(getTextFromParts(messages[1]!.parts), "Second");
     });
 
     it("should provide memory stats", async () => {
@@ -73,7 +73,7 @@ describe("Memory System", () => {
       await memory.add({
         id: "msg1",
         role: "user",
-        content: "Test message",
+        parts: [{ type: "text", text: "Test message" }],
         timestamp: Date.now(),
       });
 
@@ -92,7 +92,7 @@ describe("Memory System", () => {
       await memory.add({
         id: "msg1",
         role: "user",
-        content: "Test",
+        parts: [{ type: "text", text: "Test" }],
         timestamp: Date.now(),
       });
 
@@ -124,7 +124,7 @@ describe("Memory System", () => {
         await memory.add({
           id: `msg${i}`,
           role: "user",
-          content: `Message ${i}`,
+          parts: [{ type: "text", text: `Message ${i}` }],
           timestamp: Date.now(),
         });
       }
@@ -133,9 +133,9 @@ describe("Memory System", () => {
 
       // Should only have last 3
       assertEquals(messages.length, 3);
-      assertEquals(messages[0]!.content, "Message 3");
-      assertEquals(messages[1]!.content, "Message 4");
-      assertEquals(messages[2]!.content, "Message 5");
+      assertEquals(getTextFromParts(messages[0]!.parts), "Message 3");
+      assertEquals(getTextFromParts(messages[1]!.parts), "Message 4");
+      assertEquals(getTextFromParts(messages[2]!.parts), "Message 5");
     });
 
     it("should provide correct stats", async () => {
@@ -147,7 +147,7 @@ describe("Memory System", () => {
       await memory.add({
         id: "msg1",
         role: "user",
-        content: "Test",
+        parts: [{ type: "text", text: "Test" }],
         timestamp: Date.now(),
       });
 
@@ -176,7 +176,7 @@ describe("Memory System", () => {
       await memory.add({
         id: "msg1",
         role: "user",
-        content: "Test",
+        parts: [{ type: "text", text: "Test" }],
         timestamp: Date.now(),
       });
 
@@ -193,7 +193,7 @@ describe("Memory System", () => {
       await memory.add({
         id: "msg1",
         role: "user",
-        content: "Test",
+        parts: [{ type: "text", text: "Test" }],
         timestamp: Date.now(),
       });
 

@@ -187,9 +187,7 @@ export class ToolExecutionCore {
     return {
       id: `tool_${toolCallId}`,
       role: "tool",
-      content: JSON.stringify(result),
-      toolCallId, // Required by OpenAI API
-      toolCall,
+      parts: [{ type: "tool-result", toolCallId, toolName: toolCall.name, result }],
       timestamp: Date.now(),
     };
   }
@@ -201,9 +199,7 @@ export class ToolExecutionCore {
     return {
       id: `tool_error_${toolCallId}`,
       role: "tool",
-      content: `Error: ${error}`,
-      toolCallId, // Required by OpenAI API
-      toolCall,
+      parts: [{ type: "tool-result", toolCallId, toolName: toolCall.name, result: { error } }],
       timestamp: Date.now(),
     };
   }
