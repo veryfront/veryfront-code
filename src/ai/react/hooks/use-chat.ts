@@ -287,12 +287,15 @@ export function useChat(options: UseChatOptions): UseChatResult {
         if (response.body) {
           const streamingMessageId = generateClientId("msg");
           let hasAddedStreamingMessage = false;
+          // Track the actual message ID used (server ID takes precedence once received)
+          let currentMessageId = streamingMessageId;
 
           await handleStreamingResponse(response.body, {
             onMessage: (assistantMessage) => {
               setMessages((prev) => {
                 if (hasAddedStreamingMessage) {
-                  return prev.map((m) => m.id === streamingMessageId ? assistantMessage : m);
+                  // Use currentMessageId which may have been updated to server's ID
+                  return prev.map((m) => m.id === currentMessageId ? assistantMessage : m);
                 }
                 return [...prev, assistantMessage];
               });
@@ -301,6 +304,16 @@ export function useChat(options: UseChatOptions): UseChatResult {
             onData: setData,
             onUpdate: (parts, messageId) => {
               const id = messageId || streamingMessageId;
+              // Update currentMessageId when server provides one
+              if (messageId && messageId !== currentMessageId) {
+                const oldId = currentMessageId;
+                currentMessageId = messageId;
+                // Update existing message to use new ID if already added
+                if (hasAddedStreamingMessage) {
+                  setMessages((prev) => prev.map((m) => m.id === oldId ? { ...m, id, parts } : m));
+                  return;
+                }
+              }
               if (!hasAddedStreamingMessage) {
                 hasAddedStreamingMessage = true;
                 setMessages((prev) => [...prev, {
@@ -309,7 +322,7 @@ export function useChat(options: UseChatOptions): UseChatResult {
                   parts,
                 }]);
               } else {
-                setMessages((prev) => prev.map((m) => m.id === id ? { ...m, parts } : m));
+                setMessages((prev) => prev.map((m) => m.id === currentMessageId ? { ...m, parts } : m));
               }
             },
             onToolCall: options.onToolCall,
@@ -514,6 +527,7 @@ async function handleStreamingResponse(
           state: tool.state,
           input: tool.input,
           output: tool.output,
+          errorText: tool.error,
         });
       }
     }
