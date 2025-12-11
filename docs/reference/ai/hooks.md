@@ -59,6 +59,7 @@ const chat = useChat(options?: ChatOptions);
 "use client";
 
 import { useChat } from "veryfront/ai/react";
+import { getTextFromParts } from "veryfront/ai";
 
 export default function Chat() {
   const { messages, input, handleInputChange, handleSubmit, isLoading } = useChat();
@@ -68,7 +69,7 @@ export default function Chat() {
       <div className="messages">
         {messages.map((m) => (
           <div key={m.id} className={m.role}>
-            {m.content}
+            {getTextFromParts(m.parts)}
           </div>
         ))}
       </div>
@@ -95,7 +96,7 @@ export default function Chat() {
 const { messages, handleSubmit } = useChat({
   api: "/api/assistant",
   onFinish: (message) => {
-    console.log("Response:", message.content);
+    console.log("Response:", getTextFromParts(message.parts));
   },
   onError: (error) => {
     console.error("Chat error:", error);
@@ -108,7 +109,7 @@ const { messages, handleSubmit } = useChat({
 ```tsx
 const { messages } = useChat({
   initialMessages: [
-    { id: "1", role: "assistant", content: "Hello! How can I help you?" },
+    { id: "1", role: "assistant", parts: [{ type: "text", text: "Hello! How can I help you?" }] },
   ],
 });
 ```
@@ -262,17 +263,33 @@ export default function TextGenerator() {
 }
 ```
 
-## Message Type
+## Message Type (AI SDK v5)
 
-The `Message` type used by `useChat`:
+The `Message` type uses a parts array for content (AI SDK v5 format):
 
 ```typescript
+type MessagePart =
+  | { type: "text"; text: string }
+  | { type: "tool-call"; toolCallId: string; toolName: string; args: Record<string, unknown> }
+  | { type: "tool-result"; toolCallId: string; toolName: string; result: unknown };
+
 interface Message {
   id: string;
-  role: "user" | "assistant" | "system";
-  content: string;
-  createdAt?: Date;
+  role: "user" | "assistant" | "system" | "tool";
+  parts: MessagePart[];
+  timestamp?: number;
+  metadata?: Record<string, unknown>;
 }
+```
+
+### Helper Function
+
+Use `getTextFromParts()` to extract text content:
+
+```typescript
+import { getTextFromParts } from "veryfront/ai";
+
+const text = getTextFromParts(message.parts);
 ```
 
 ## Backend Integration
