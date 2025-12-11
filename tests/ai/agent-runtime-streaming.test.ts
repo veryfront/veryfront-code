@@ -121,14 +121,15 @@ describe("AgentRuntime streaming JSON buffering", () => {
 
     assert(response.text.includes("Hello"), "should include streamed content");
     // No tool execution because finishReason=stop, but assistant message should carry parsed tool-call parts
+    // AI SDK v5 uses tool-${toolName} pattern (e.g., "tool-testTool")
     const assistant = response.messages.find((m) => m.role === "assistant");
-    const toolCallParts = assistant?.parts.filter((p): p is MessagePart & { type: "tool-call" } =>
-      p.type === "tool-call"
+    const toolCallParts = assistant?.parts.filter(
+      (p): p is ToolCallPart => p.type.startsWith("tool-") && p.type !== "tool-result",
     );
     assert(toolCallParts && toolCallParts.length === 1, "assistant tool-call parts captured");
     const tc = toolCallParts![0]!;
     assertEquals(tc.toolName, "testTool");
-    assertEquals(getToolArguments(tc as ToolCallPart), { x: 1 });
+    assertEquals(getToolArguments(tc), { x: 1 });
     // Restore env if we modified it
     if (restoreEnv) {
       restoreEnv();
