@@ -44,7 +44,7 @@ export function selectComponent(
 
   if (extractLayout) {
     return (
-      module.MDXLayout || // This is what function-body format exports
+      module.MDXLayout ||
       module.MainLayout ||
       module.default ||
       module.MDXContent ||

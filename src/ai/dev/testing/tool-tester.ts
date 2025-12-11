@@ -1,70 +1,32 @@
-/**
- * Tool Testing Utilities
- *
- * Utilities for testing individual tools.
- */
 
 import type { Tool } from "../../types/tool.ts";
 
 export interface ToolTestCase {
-  /** Test name */
   name: string;
 
-  /** Tool input */
   input: any;
 
-  /** Expected output (partial match) */
   expectedOutput?: any;
 
-  /** Custom validator */
   validate?: (result: any) => boolean | Promise<boolean>;
 
-  /** Should throw error */
   shouldThrow?: boolean;
 
-  /** Expected error message pattern */
   expectedError?: RegExp | string;
 }
 
 export interface ToolTestResult {
-  /** Test case name */
   name: string;
 
-  /** Pass/fail */
   passed: boolean;
 
-  /** Tool result */
   result?: any;
 
-  /** Error if test failed */
   error?: string;
 
-  /** Execution time */
   executionTime: number;
 }
 
-/**
- * Test a tool with multiple test cases
- *
- * @example
- * ```typescript
- * import { testTool } from 'veryfront/ai/dev';
- *
- * const results = await testTool(calculatorTool, [
- *   {
- *     name: 'Addition',
- *     input: { operation: 'add', a: 2, b: 3 },
- *     expectedOutput: { result: 5 },
- *   },
- *   {
- *     name: 'Division by zero',
- *     input: { operation: 'divide', a: 5, b: 0 },
- *     shouldThrow: true,
- *     expectedError: /cannot divide by zero/i,
- *   },
- * ]);
- * ```
- */
 export async function testTool(
   tool: Tool,
   testCases: ToolTestCase[],
@@ -79,9 +41,6 @@ export async function testTool(
   return results;
 }
 
-/**
- * Run a single tool test
- */
 async function runToolTest(
   tool: Tool,
   testCase: ToolTestCase,
@@ -89,11 +48,9 @@ async function runToolTest(
   const startTime = Date.now();
 
   try {
-    // Execute tool
     const result = await tool.execute(testCase.input);
     const executionTime = Date.now() - startTime;
 
-    // If we expected an error but didn't get one
     if (testCase.shouldThrow) {
       return {
         name: testCase.name,
@@ -103,7 +60,6 @@ async function runToolTest(
       };
     }
 
-    // Validate output
     let passed = true;
     let error: string | undefined;
 
@@ -139,7 +95,6 @@ async function runToolTest(
     const executionTime = Date.now() - startTime;
     const errorMessage = err instanceof Error ? err.message : String(err);
 
-    // If we expected an error
     if (testCase.shouldThrow) {
       let passed = true;
       let error: string | undefined;
@@ -165,7 +120,6 @@ async function runToolTest(
       };
     }
 
-    // Unexpected error
     return {
       name: testCase.name,
       passed: false,
@@ -175,9 +129,6 @@ async function runToolTest(
   }
 }
 
-/**
- * Deep match for partial object comparison
- */
 function deepMatch(actual: any, expected: any): boolean {
   if (expected === actual) return true;
   if (typeof expected !== "object" || expected === null) return false;
@@ -199,9 +150,6 @@ function deepMatch(actual: any, expected: any): boolean {
   return true;
 }
 
-/**
- * Print tool test results
- */
 export function printToolTestResults(
   toolId: string,
   results: ToolTestResult[],

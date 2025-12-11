@@ -1,6 +1,3 @@
-/**
- * Workflow DSL Tests
- */
 
 import {
   assertEquals,
@@ -57,7 +54,6 @@ describe("workflow()", () => {
 
   it("should throw on missing id", () => {
     assertThrows(
-      // @ts-expect-error Testing invalid input
       () => workflow({ steps: [] }),
       Error,
       "id",
@@ -66,7 +62,6 @@ describe("workflow()", () => {
 
   it("should throw on missing steps", () => {
     assertThrows(
-      // @ts-expect-error Testing invalid input
       () => workflow({ id: "test" }),
       Error,
       "steps",

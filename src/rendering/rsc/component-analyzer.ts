@@ -21,7 +21,6 @@ export async function analyzeComponent(
   } else if (hasUseServer) {
     type = "server";
   } else if (filePath.includes(".client.")) {
-    // File naming convention
     type = "client";
   } else if (filePath.includes(".server.")) {
     type = "server";
@@ -41,7 +40,6 @@ export async function analyzeComponent(
 }
 
 function detectDirective(content: string, directive: string): boolean {
-  // Match directives like 'use client' or "use client" at the start of a line
   const directivePattern = new RegExp(`^\\s*['"]${directive}['"];?\\s*$`, "m");
 
   return directivePattern.test(content);
@@ -111,7 +109,6 @@ export async function buildClientManifest(
   const manifest = new Map<string, import("./types.ts").ClientComponentMeta>();
   const appPath = join(projectDir, appDir);
 
-  // Get adapter if not provided
   let fsAdapter = fs;
   if (!fsAdapter) {
     try {

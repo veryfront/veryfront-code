@@ -98,9 +98,6 @@ async function boxFetch<T>(
   return response.json();
 }
 
-/**
- * List files and folders in a Box folder
- */
 export async function listFiles(options: {
   folderId?: string;
   limit?: number;
@@ -121,9 +118,6 @@ export async function listFiles(options: {
   return response.entries;
 }
 
-/**
- * Get details of a specific file or folder
- */
 export async function getFile(itemId: string, itemType: "file" | "folder" = "file"): Promise<BoxItem> {
   const endpoint = itemType === "file" ? `/files/${itemId}` : `/folders/${itemId}`;
   const params = new URLSearchParams({
@@ -133,9 +127,6 @@ export async function getFile(itemId: string, itemType: "file" | "folder" = "fil
   return await boxFetch<BoxItem>(`${endpoint}?${params}`);
 }
 
-/**
- * Upload a file to Box
- */
 export async function uploadFile(options: {
   parentFolderId: string;
   fileName: string;
@@ -156,7 +147,6 @@ export async function uploadFile(options: {
 
   formData.append("attributes", attributes);
 
-  // Convert content to Blob if it's a string or Buffer
   const blob = typeof fileContent === "string"
     ? new Blob([fileContent], { type: "text/plain" })
     : fileContent instanceof Buffer
@@ -184,9 +174,6 @@ export async function uploadFile(options: {
   return result.entries[0];
 }
 
-/**
- * Download a file from Box
- */
 export async function downloadFile(fileId: string): Promise<{
   content: ArrayBuffer;
   fileName: string;
@@ -197,7 +184,6 @@ export async function downloadFile(fileId: string): Promise<{
     throw new Error("Not authenticated with Box. Please connect your account.");
   }
 
-  // First get file metadata to get the name
   const fileInfo = await getFile(fileId, "file") as BoxFile;
 
   const response = await fetch(`${BOX_BASE_URL}/files/${fileId}/content`, {
@@ -223,9 +209,6 @@ export async function downloadFile(fileId: string): Promise<{
   };
 }
 
-/**
- * Create a new folder in Box
- */
 export async function createFolder(options: {
   parentFolderId: string;
   name: string;
@@ -243,9 +226,6 @@ export async function createFolder(options: {
   return response;
 }
 
-/**
- * Search for files and folders in Box
- */
 export async function searchFiles(options: {
   query: string;
   limit?: number;
@@ -272,9 +252,6 @@ export async function searchFiles(options: {
   return response.entries;
 }
 
-/**
- * Get current user info
- */
 export async function getMe(): Promise<{ id: string; name: string; login: string }> {
   return await boxFetch<{ id: string; name: string; login: string }>("/users/me");
 }

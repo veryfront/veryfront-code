@@ -1,7 +1,3 @@
-/**
- * Authentication Handler
- * Handles Basic and Bearer authentication
- */
 
 import { BaseHandler } from "./base-handler.ts";
 import { createError, toError } from "../../core/errors/veryfront-error.ts";
@@ -17,7 +13,6 @@ function encodeBase64(value: string): string {
     try {
       return globalThis.btoa(value);
     } catch {
-      // Fallback for non-Latin1 strings
       const bytes = new TextEncoder().encode(value);
       let binary = "";
       for (const byte of bytes) binary += String.fromCharCode(byte);
@@ -42,8 +37,8 @@ function encodeBase64(value: string): string {
 export class AuthHandler extends BaseHandler {
   metadata: HandlerMetadata = {
     name: "AuthHandler",
-    priority: 0 as HandlerPriority, // CRITICAL priority - runs first
-    patterns: [], // Checks all requests
+    priority: 0 as HandlerPriority,
+    patterns: [],
   };
 
   private basicUser: string | null = null;
@@ -51,21 +46,17 @@ export class AuthHandler extends BaseHandler {
   private bearerToken: string | null = null;
 
   handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
-    // Load auth config from environment
     this.loadAuthConfig(ctx);
 
-    // Skip auth for OPTIONS requests
     if (req.method.toUpperCase() === "OPTIONS") {
       return Promise.resolve(this.continue());
     }
 
-    // Check Basic Auth
     if (this.shouldUseBasic()) {
       const result = this.checkBasicAuth(req);
       if (result) return Promise.resolve(result);
     }
 
-    // Check Bearer Auth
     if (this.shouldUseBearer()) {
       const result = this.checkBearerAuth(req);
       if (result) return Promise.resolve(result);

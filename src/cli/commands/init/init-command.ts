@@ -1,7 +1,3 @@
-/**
- * Main init command implementation
- * @module
- */
 
 import { cliLogger as logger } from "@veryfront/utils";
 import { FileSystemError } from "@veryfront/errors";
@@ -35,9 +31,6 @@ import {
 } from "../../templates/integration-loader.ts";
 import { runInteractiveWizard, shouldRunWizard } from "./interactive-wizard.ts";
 
-/**
- * Icon mapping for integrations based on category/name
- */
 const INTEGRATION_ICONS: Record<string, string> = {
   gmail: "mail",
   outlook: "mail",
@@ -90,33 +83,21 @@ const INTEGRATION_ICONS: Record<string, string> = {
   aws: "cloud",
 };
 
-/**
- * Generate the integrations status route based on loaded integrations
- */
 function generateIntegrationsStatusRoute(integrations: ResolvedIntegration[]): string {
   const integrationEntries = integrations.map((integration) => {
     const icon = INTEGRATION_ICONS[integration.config.name] || "default";
     return `  { id: "${integration.config.name}", name: "${integration.config.displayName}", icon: "${icon}" },`;
   }).join("\n");
 
-  return `/**
- * Integration Status API
- *
- * Returns the connection status of all configured integrations.
- * Used by the setup guide to show which services are connected.
- *
- * This file is auto-generated based on the integrations you selected.
- */
+  return `
 
 import { tokenStore } from "../../../../lib/token-store";
 
-// Integrations configured for this project
 const INTEGRATIONS = [
 ${integrationEntries}
 ];
 
 export async function GET(_req: Request) {
-  // Get actual user ID from session in production
   const userId = "current-user";
 
   const statuses = await Promise.all(
@@ -137,30 +118,10 @@ export async function GET(_req: Request) {
 `;
 }
 
-/**
- * Initializes a new Veryfront project with the specified template
- *
- * @param options - Configuration options for project initialization
- * @throws {FileSystemError} If target directory already exists
- * @throws {Error} If template not found or file operations fail
- *
- * @example
- * ```ts
- * // Create new project in current directory
- * await initCommand({ template: 'minimal' })
- *
- * // Create new project in named directory
- * await initCommand({ name: 'my-app', template: 'app' })
- *
- * // Create AI agent with integrations
- * await initCommand({ name: 'my-agent', template: 'ai', integrations: ['gmail', 'slack'] })
- * ```
- */
 export async function initCommand(options: InitOptions): Promise<void> {
   const { name, features = [] } = options;
   let { integrations = [] } = options;
 
-  // Run interactive wizard if no template/integrations specified
   let template: InitTemplate;
   if (shouldRunWizard(options)) {
     const wizardResult = await runInteractiveWizard();
@@ -169,7 +130,6 @@ export async function initCommand(options: InitOptions): Promise<void> {
       integrations = wizardResult.integrations;
     }
   } else {
-    // Determine template: explicit > default to AI (primary use case)
     if (options.template) {
       template = options.template;
     } else {
@@ -179,7 +139,6 @@ export async function initCommand(options: InitOptions): Promise<void> {
   const projectDir = name ? join(cwd(), name) : cwd();
   const fs = createFileSystem();
 
-  // Validate features if provided
   if (features.length > 0) {
     const validation = validateFeatures(features);
     if (!validation.valid) {
@@ -193,7 +152,6 @@ export async function initCommand(options: InitOptions): Promise<void> {
     }
   }
 
-  // Validate integrations if provided
   if (integrations.length > 0) {
     const validation = validateIntegrations(integrations);
     if (!validation.valid) {
@@ -217,7 +175,6 @@ export async function initCommand(options: InitOptions): Promise<void> {
     } with template: ${template}${featuresStr}${integrationsStr}`,
   );
 
-  // Check if directory exists
   if (name) {
     const exists = await fs.exists(projectDir);
     if (exists) {
@@ -237,11 +194,9 @@ export async function initCommand(options: InitOptions): Promise<void> {
     }));
   }
 
-  // Collect env vars from template and features
   const allEnvVars: EnvVarConfig[] = templateConfig?.envVars ? [...templateConfig.envVars] : [];
   const featureTips: string[] = [];
 
-  // Load and merge features if provided
   if (features.length > 0) {
     const { ordered, errors } = await resolveFeatures(features);
     if (errors.length > 0) {
@@ -256,19 +211,16 @@ export async function initCommand(options: InitOptions): Promise<void> {
 
     logger.debug(`Resolved feature order: ${ordered.join(" -> ")}`);
 
-    // Load and merge each feature
     for (const featureName of ordered) {
       const feature = await loadFeature(featureName);
       if (feature) {
         logger.debug(`Loading feature: ${featureName} (${feature.files.length} files)`);
         templateFiles = mergeFiles(templateFiles, feature.files);
 
-        // Collect feature env vars
         if (feature.config.envVars) {
           allEnvVars.push(...feature.config.envVars);
         }
 
-        // Collect feature tips
         if (feature.config.tips) {
           featureTips.push(...feature.config.tips);
         }
@@ -278,25 +230,20 @@ export async function initCommand(options: InitOptions): Promise<void> {
     }
   }
 
-  // Load and merge integrations if provided
   if (integrations.length > 0) {
     logger.debug(`Loading integrations: ${integrations.join(", ")}`);
 
-    // Add base integration files (token store, oauth utils, shared components)
     const baseFiles = getIntegrationBaseFiles();
     templateFiles = mergeFiles(templateFiles, baseFiles);
 
-    // Load additional base files from _base directory (setup guide, status API)
     const baseDirectoryFiles = await loadIntegrationBaseFilesFromDirectory();
     templateFiles = mergeFiles(templateFiles, baseDirectoryFiles);
 
-    // Load base config for shared env vars (APP_URL, etc.)
     const baseConfig = await loadIntegrationBaseConfig();
     if (baseConfig?.envVars) {
       allEnvVars.push(...baseConfig.envVars);
     }
 
-    // Load each integration
     const { integrations: loadedIntegrations, files: integrationFiles, errors: integrationErrors } =
       await loadIntegrations(integrations);
 
@@ -306,17 +253,14 @@ export async function initCommand(options: InitOptions): Promise<void> {
       }
     }
 
-    // Merge integration files
     templateFiles = mergeFiles(templateFiles, integrationFiles);
 
-    // Collect env vars from integrations
     for (const integration of loadedIntegrations) {
       if (integration.config.envVars) {
         allEnvVars.push(...integration.config.envVars);
       }
     }
 
-    // Generate dynamic integrations status route based on loaded integrations
     const statusRouteContent = generateIntegrationsStatusRoute(loadedIntegrations);
     const statusRouteFile: TemplateFile = {
       path: "app/api/integrations/status/route.ts",
@@ -328,7 +272,6 @@ export async function initCommand(options: InitOptions): Promise<void> {
       `Loaded ${loadedIntegrations.length} integrations with ${integrationFiles.length} files`,
     );
 
-    // Add integration setup tips
     featureTips.push(`Integrations loaded: ${integrations.join(", ")}`);
     featureTips.push("Visit /setup for guided OAuth app setup");
     featureTips.push("Connect services at /api/auth/<service>");
@@ -338,9 +281,7 @@ export async function initCommand(options: InitOptions): Promise<void> {
     await ensureDir(projectDir);
   }
 
-  // Create all template files (excluding .env which we'll generate separately)
   for (const file of templateFiles as TemplateFile[]) {
-    // Skip .env files - we'll generate them with prompting
     if (file.path === ".env" || file.path === ".env.example") {
       continue;
     }
@@ -356,12 +297,9 @@ export async function initCommand(options: InitOptions): Promise<void> {
     logger.debug(`Created file: ${file.path}`);
   }
 
-  // Create package.json with ES module support
   await createPackageJson(projectDir, name);
 
-  // Handle environment variables from both template and features
   if (allEnvVars.length > 0) {
-    // Deduplicate env vars by name (keep first occurrence)
     const seenEnvVars = new Set<string>();
     const uniqueEnvVars = allEnvVars.filter((envVar) => {
       if (seenEnvVars.has(envVar.name)) {
@@ -376,33 +314,27 @@ export async function initCommand(options: InitOptions): Promise<void> {
       prefilledValues: options.env,
     });
 
-    // Write .env file
     await fs.writeTextFile(join(projectDir, ".env"), envResult.envContent);
     logger.debug("Created file: .env");
 
-    // Write .env.example file
     await fs.writeTextFile(join(projectDir, ".env.example"), envResult.envExampleContent);
     logger.debug("Created file: .env.example");
   }
 
-  // Ensure .gitignore includes .env
   const gitignorePath = join(projectDir, ".gitignore");
   let existingGitignore: string | undefined;
   try {
     existingGitignore = await fs.readTextFile(gitignorePath);
   } catch {
-    // File doesn't exist, that's fine
   }
   const gitignoreContent = generateGitignoreContent(existingGitignore);
   await fs.writeTextFile(gitignorePath, gitignoreContent);
   logger.debug("Updated file: .gitignore");
 
-  // Store feature tips for later display
   (options as InitOptions & { _featureTips?: string[] })._featureTips = featureTips;
 
   logger.info(`${green("✅")} Created Veryfront project${name ? ` at ${name}` : ""}`);
 
-  // Auto-install dependencies unless skipInstall is true
   if (!options.skipInstall) {
     logger.info("");
     const installSuccess = await installDependencies(projectDir);
@@ -425,7 +357,6 @@ export async function initCommand(options: InitOptions): Promise<void> {
   }
   logger.info(`  veryfront dev`);
 
-  // Add template-specific instructions
   if (template === "blog") {
     logger.info(`\n${cyan("Blog tips:")}`);
     logger.info(`  - Add posts to content/posts/`);
@@ -449,7 +380,6 @@ export async function initCommand(options: InitOptions): Promise<void> {
     logger.info(`  - Add prompts in ai/prompts/ (auto-discovered)`);
   }
 
-  // Display feature tips if any
   const displayFeatureTips = (options as InitOptions & { _featureTips?: string[] })._featureTips;
   if (displayFeatureTips && displayFeatureTips.length > 0) {
     logger.info(`\n${cyan("Feature tips:")}`);

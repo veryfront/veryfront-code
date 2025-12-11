@@ -1,17 +1,10 @@
-/**
- * ServiceNow OAuth Callback Route
- *
- * Handles the OAuth callback and exchanges the code for tokens.
- */
 
 import { setServiceNowTokens } from "../../../../../lib/token-store.ts";
 
 const getEnv = (name: string): string | undefined => {
   if (typeof Deno !== "undefined") {
-    // @ts-ignore: Deno global
     return Deno.env.get(name);
   }
-  // @ts-ignore: Node process
   return globalThis.process?.env?.[name];
 };
 
@@ -50,7 +43,6 @@ export async function GET(request: Request): Promise<Response> {
   const redirectUri = `${baseUrl}/api/auth/servicenow/callback`;
 
   try {
-    // Exchange code for tokens
     const tokenResponse = await fetch(`${instanceUrl}/oauth_token.do`, {
       method: "POST",
       headers: {
@@ -73,7 +65,6 @@ export async function GET(request: Request): Promise<Response> {
 
     const tokens = await tokenResponse.json();
 
-    // Store tokens
     await setServiceNowTokens({
       accessToken: tokens.access_token,
       refreshToken: tokens.refresh_token,

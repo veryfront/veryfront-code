@@ -1,7 +1,3 @@
-/**
- * Not Found Handler
- * Fallback handler for 404 responses
- */
 
 import { BaseHandler } from "./base.ts";
 import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } from "../types.ts";
@@ -15,8 +11,8 @@ import {
 export class NotFoundHandler extends BaseHandler {
   metadata: HandlerMetadata = {
     name: "NotFoundHandler",
-    priority: PRIORITY_FALLBACK as HandlerPriority, // FALLBACK priority - runs last
-    patterns: [], // Matches everything as fallback
+    priority: PRIORITY_FALLBACK as HandlerPriority,
+    patterns: [],
   };
 
   handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
@@ -38,7 +34,6 @@ export class NotFoundHandler extends BaseHandler {
         error: this.getErrorMessage(e),
       }, ctx);
 
-      // Last resort error response
       return Promise.resolve(this.respond(
         ResponseBuilder.error(HTTP_INTERNAL_SERVER_ERROR, "Internal Server Error", req, {
           securityConfig: ctx.securityConfig ?? undefined,

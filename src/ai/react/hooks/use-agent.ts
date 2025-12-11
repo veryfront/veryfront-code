@@ -1,56 +1,36 @@
-/**
- * useAgent Hook - Layer 1 (Headless)
- *
- * Agent orchestration with tool execution visualization.
- */
 
 import { useCallback, useRef, useState } from "react";
 import type { AgentStatus, Message, ToolCall } from "../../types/agent.ts";
 import { createError, toError } from "../../../core/errors/veryfront-error.ts";
 
 export interface UseAgentOptions {
-  /** Agent ID or endpoint */
   agent: string;
 
-  /** Callback when tool is called */
   onToolCall?: (toolCall: ToolCall) => void;
 
-  /** Callback when tool result received */
   onToolResult?: (toolCall: ToolCall, result: unknown) => void;
 
-  /** Callback when error occurs */
   onError?: (error: Error) => void;
 }
 
 export interface UseAgentResult {
-  /** Message history */
   messages: Message[];
 
-  /** Active tool calls */
   toolCalls: ToolCall[];
 
-  /** Agent status */
   status: AgentStatus;
 
-  /** Thinking/reasoning text */
   thinking?: string;
 
-  /** Invoke the agent */
   invoke: (input: string) => Promise<void>;
 
-  /** Stop agent execution */
   stop: () => void;
 
-  /** Loading state */
   isLoading: boolean;
 
-  /** Error state */
   error: Error | null;
 }
 
-/**
- * useAgent hook for agent orchestration
- */
 export function useAgent(options: UseAgentOptions): UseAgentResult {
   const [messages, setMessages] = useState<Message[]>([]);
   const [toolCalls, setToolCalls] = useState<ToolCall[]>([]);
@@ -60,9 +40,6 @@ export function useAgent(options: UseAgentOptions): UseAgentResult {
   const [error, setError] = useState<Error | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
 
-  /**
-   * Invoke the agent
-   */
   const invoke = useCallback(
     async (input: string) => {
       setIsLoading(true);
@@ -74,7 +51,6 @@ export function useAgent(options: UseAgentOptions): UseAgentResult {
       abortControllerRef.current = abortController;
 
       try {
-        // Call agent API
         const response = await fetch(`/api/agents/${options.agent}`, {
           method: "POST",
           headers: {
@@ -94,16 +70,13 @@ export function useAgent(options: UseAgentOptions): UseAgentResult {
           }));
         }
 
-        // Parse response
         const data = await response.json();
 
-        // Update state
         setMessages(data.messages || []);
         setToolCalls(data.toolCalls || []);
         setStatus(data.status || "completed");
         setThinking(data.thinking);
 
-        // Call callbacks for tool calls
         if (data.toolCalls && options.onToolCall) {
           data.toolCalls.forEach((tc: ToolCall) => {
             options.onToolCall!(tc);
@@ -133,9 +106,6 @@ export function useAgent(options: UseAgentOptions): UseAgentResult {
     [messages, options],
   );
 
-  /**
-   * Stop agent execution
-   */
   const stop = useCallback(() => {
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();

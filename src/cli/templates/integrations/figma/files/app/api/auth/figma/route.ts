@@ -1,6 +1,3 @@
-/**
- * Figma OAuth Initiation
- */
 
 import { createOAuthInitHandler, figmaConfig, memoryTokenStore } from "veryfront/oauth";
 

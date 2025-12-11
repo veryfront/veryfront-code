@@ -1,6 +1,3 @@
-/**
- * Deno console styling implementation using std/fmt/colors.ts
- */
 
 import {
   blue,

@@ -1,6 +1,3 @@
-/**
- * Jira OAuth Initiation
- */
 
 import { createOAuthInitHandler, jiraConfig, memoryTokenStore } from "veryfront/oauth";
 

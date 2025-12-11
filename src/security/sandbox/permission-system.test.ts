@@ -324,7 +324,7 @@ describe("Permission System", () => {
     it("should handle URL-encoded host", async () => {
       const request: PermissionRequest = {
         name: "net",
-        host: "%65%78%61%6D%70%6C%65%2E%63%6F%6D", // "example.com" encoded
+        host: "%65%78%61%6D%70%6C%65%2E%63%6F%6D",
       };
       const result = await requestPermission(request);
 

@@ -2,9 +2,6 @@ import { tool } from 'veryfront/ai';
 import { z } from 'zod';
 import { getAnthropicAdminClient } from '../../lib/anthropic-admin-client';
 
-/**
- * Tool for listing API keys in the Anthropic organization
- */
 export const listAPIKeys = tool({
   name: 'list_api_keys',
   description:
@@ -22,7 +19,6 @@ export const listAPIKeys = tool({
       const client = getAnthropicAdminClient();
       const result = await client.listAPIKeys(workspaceId);
 
-      // Group keys by status and type for summary
       const activeKeys = result.api_keys.filter(key => key.status === 'active');
       const revokedKeys = result.api_keys.filter(
         key => key.status === 'revoked'

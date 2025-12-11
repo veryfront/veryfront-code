@@ -30,6 +30,5 @@ export function resolveRelativePath(
 }
 
 export function normalizeModulePath(filePath: string): string {
-  // Convert all TypeScript/JSX extensions to .js for Node.js compatibility
   return filePath.replace(/\.(tsx?|jsx)$/, ".js");
 }

@@ -126,9 +126,6 @@ async function graphFetch<T>(
   return response.json();
 }
 
-/**
- * List recent chats for the authenticated user
- */
 export async function listChats(options?: {
   limit?: number;
   expand?: string[];
@@ -148,9 +145,6 @@ export async function listChats(options?: {
   return response.value || [];
 }
 
-/**
- * Get messages from a specific chat
- */
 export async function getChatMessages(
   chatId: string,
   options?: {
@@ -175,9 +169,6 @@ export async function getChatMessages(
   return response.value || [];
 }
 
-/**
- * Send a message to a chat
- */
 export function sendChatMessage(
   chatId: string,
   content: string,
@@ -196,9 +187,6 @@ export function sendChatMessage(
   });
 }
 
-/**
- * List all teams the user is a member of
- */
 export async function listTeams(options?: {
   limit?: number;
 }): Promise<Team[]> {
@@ -214,9 +202,6 @@ export async function listTeams(options?: {
   return response.value || [];
 }
 
-/**
- * List channels in a team
- */
 export async function listChannels(
   teamId: string,
   options?: {
@@ -235,9 +220,6 @@ export async function listChannels(
   return response.value || [];
 }
 
-/**
- * Send a message to a team channel
- */
 export function sendChannelMessage(
   teamId: string,
   channelId: string,
@@ -264,9 +246,6 @@ export function sendChannelMessage(
   });
 }
 
-/**
- * Get channel messages
- */
 export async function getChannelMessages(
   teamId: string,
   channelId: string,
@@ -294,9 +273,6 @@ export async function getChannelMessages(
   return response.value || [];
 }
 
-/**
- * Get current user's profile
- */
 export function getCurrentUser(): Promise<{
   id: string;
   displayName: string;
@@ -306,9 +282,6 @@ export function getCurrentUser(): Promise<{
   return graphFetch("/me");
 }
 
-/**
- * Helper to format chat display name
- */
 export function getChatDisplayName(chat: TeamsChat): string {
   if (chat.topic) {
     return chat.topic;
@@ -325,15 +298,11 @@ export function getChatDisplayName(chat: TeamsChat): string {
   return chat.chatType === "oneOnOne" ? "Direct Chat" : "Group Chat";
 }
 
-/**
- * Helper to extract plain text from message body
- */
 export function getPlainTextContent(message: ChatMessage): string {
   if (message.body.contentType === "text") {
     return message.body.content;
   }
 
-  // Basic HTML stripping for html content
   return message.body.content
     .replace(/<[^>]*>/g, "")
     .replace(/&nbsp;/g, " ")

@@ -1,17 +1,8 @@
-/**
- * RSC Metrics Instruments
- * Creation of React Server Components metric instruments
- *
- * @module
- */
 
 import type { Counter, Histogram, Meter } from "@opentelemetry/api";
 import { DURATION_HISTOGRAM_BOUNDARIES_MS } from "@veryfront/config";
 import type { MetricsConfig } from "../metrics/types.ts";
 
-/**
- * RSC metric instruments
- */
 export interface RscInstruments {
   rscRenderDuration: Histogram | null;
   rscStreamDuration: Histogram | null;
@@ -22,19 +13,6 @@ export interface RscInstruments {
   rscErrorCounter: Counter | null;
 }
 
-/**
- * Create RSC metric instruments
- *
- * @param meter - OpenTelemetry meter instance
- * @param config - Metrics configuration
- * @returns RSC metric instruments
- *
- * @example
- * ```ts
- * const rscInstruments = createRscInstruments(meter, config);
- * rscInstruments.rscPageCounter?.add(1);
- * ```
- */
 export function createRscInstruments(
   meter: Meter,
   config: MetricsConfig,

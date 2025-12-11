@@ -6,7 +6,6 @@ interface Stats {
 }
 
 export async function getStats(userId: string): Promise<Stats> {
-  // Mock data - replace with real database queries
   return {
     totalUsers: 1234,
     activeToday: 89,
@@ -16,7 +15,6 @@ export async function getStats(userId: string): Promise<Stats> {
 }
 
 export async function getRecentActivity(userId: string) {
-  // Mock data
   return [
     {
       id: "1",

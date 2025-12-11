@@ -11,25 +11,21 @@ export class HydratorHandler {
   constructor(private fsAdapter?: FileSystemAdapter) {}
 
   async handle(): Promise<Response> {
-    // Use correct path to hydrate-client.ts in rendering/rsc
     const hydratorPath = pathHelper.join(
       pathHelper.dirname(pathHelper.fromFileUrl(import.meta.url)),
       "../../../../../rendering/rsc/hydrate-client.ts",
     );
 
     try {
-      // Enable bundling for production-ready JavaScript
       const bundled = await this.bundleHydrator(hydratorPath);
       return this.createJavaScriptResponse(bundled);
     } catch (error) {
       logger.error("[RSC] Hydrator bundling failed:", error);
-      // Fallback to serving source if bundling fails
       return await this.fallbackToSource(hydratorPath);
     }
   }
 
   private async bundleHydrator(path: string): Promise<string> {
-    // Use native esbuild for proper file system access during bundling
     const { build, stop } = await import("esbuild/mod.js");
 
     try {
@@ -49,13 +45,10 @@ export class HydratorHandler {
           resolveDir: pathHelper.dirname(path),
           sourcefile: path,
         },
-        // External: React packages + Node.js built-ins that may be referenced
-        // in cross-platform code but are never available in browsers
         external: [
           "react",
           "react-dom",
           "react-dom/client",
-          // Node.js built-ins that may be dynamically imported in platform compat code
           "node:os",
           "node:fs",
           "node:fs/promises",
@@ -64,7 +57,6 @@ export class HydratorHandler {
         logLevel: "warning",
       });
 
-      // Validate output exists
       const outputFile = result.outputFiles?.[0];
       if (!outputFile || !outputFile.text) {
         throw toError(createError({
@@ -79,7 +71,6 @@ export class HydratorHandler {
 
       return outputFile.text;
     } finally {
-      // Cleanup esbuild resources
       await stop();
     }
   }

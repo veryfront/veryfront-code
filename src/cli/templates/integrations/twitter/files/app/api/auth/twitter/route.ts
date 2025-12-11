@@ -1,6 +1,3 @@
-/**
- * Twitter OAuth Initiation
- */
 
 import { createOAuthInitHandler, memoryTokenStore, twitterConfig } from "veryfront/oauth";
 

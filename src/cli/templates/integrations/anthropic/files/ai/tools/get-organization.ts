@@ -2,9 +2,6 @@ import { tool } from 'veryfront/ai';
 import { z } from 'zod';
 import { getAnthropicAdminClient } from '../../lib/anthropic-admin-client';
 
-/**
- * Tool for retrieving Anthropic organization details
- */
 export const getOrganization = tool({
   name: 'get_organization',
   description:

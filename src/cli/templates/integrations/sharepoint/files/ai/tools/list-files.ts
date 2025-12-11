@@ -24,10 +24,8 @@ export default tool({
     let files;
 
     if (search) {
-      // Use search functionality
       files = await searchFiles(siteId, search, { limit });
     } else {
-      // List files in folder
       files = await listFiles(siteId, driveId, folderId, {
         limit,
         orderBy,

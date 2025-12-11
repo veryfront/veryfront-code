@@ -33,11 +33,11 @@ export interface HandlerResult {
 }
 
 export enum HandlerPriority {
-  CRITICAL = 0, // Auth, security checks
-  HIGH = 100, // Health checks, metrics
-  MEDIUM = 500, // Static files, API routes
-  LOW = 1000, // SSR, fallbacks
-  FALLBACK = 10000, // 404 handlers
+  CRITICAL = 0,
+  HIGH = 100,
+  MEDIUM = 500,
+  LOW = 1000,
+  FALLBACK = 10000,
 }
 
 export interface RoutePattern {

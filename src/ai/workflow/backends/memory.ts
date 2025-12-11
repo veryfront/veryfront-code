@@ -1,9 +1,3 @@
-/**
- * Memory Workflow Backend
- *
- * In-memory implementation of WorkflowBackend for development and testing.
- * Data is NOT persisted across restarts.
- */
 
 import type {
   ApprovalDecision,
@@ -15,27 +9,12 @@ import type {
 } from "../types.ts";
 import type { BackendConfig, WorkflowBackend } from "./types.ts";
 
-/**
- * Memory backend configuration
- */
 export interface MemoryBackendConfig extends BackendConfig {
-  /** Maximum queue size (default: 10000) */
   maxQueueSize?: number;
 }
 
-/** Default max queue size */
 const DEFAULT_MAX_QUEUE_SIZE = 10000;
 
-/**
- * In-memory workflow backend
- *
- * @example
- * ```typescript
- * import { MemoryBackend } from 'veryfront/ai/workflow/backends/memory';
- *
- * const backend = new MemoryBackend();
- * ```
- */
 export class MemoryBackend implements WorkflowBackend {
   private runs = new Map<string, WorkflowRun>();
   private checkpoints = new Map<string, Checkpoint[]>();
@@ -53,9 +32,6 @@ export class MemoryBackend implements WorkflowBackend {
     };
   }
 
-  // =========================================================================
-  // Run Management
-  // =========================================================================
 
   createRun(run: WorkflowRun): Promise<void> {
     if (this.config.debug) {
@@ -80,11 +56,9 @@ export class MemoryBackend implements WorkflowBackend {
       console.log(`[MemoryBackend] Updating run: ${runId}`, patch);
     }
 
-    // Deep merge the patch
     const updated = {
       ...run,
       ...patch,
-      // Deep merge specific fields
       nodeStates: { ...run.nodeStates, ...patch.nodeStates },
       context: { ...run.context, ...patch.context },
     };
@@ -103,7 +77,6 @@ export class MemoryBackend implements WorkflowBackend {
   listRuns(filter: RunFilter): Promise<WorkflowRun[]> {
     let runs = Array.from(this.runs.values());
 
-    // Apply filters
     if (filter.workflowId) {
       runs = runs.filter((r) => r.workflowId === filter.workflowId);
     }
@@ -121,10 +94,8 @@ export class MemoryBackend implements WorkflowBackend {
       runs = runs.filter((r) => r.createdAt <= filter.createdBefore!);
     }
 
-    // Sort by creation date (newest first)
     runs.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
 
-    // Apply pagination (offset and limit together)
     const start = filter.offset ?? 0;
     const end = filter.limit ? start + filter.limit : undefined;
     runs = runs.slice(start, end);
@@ -137,9 +108,6 @@ export class MemoryBackend implements WorkflowBackend {
     return runs.length;
   }
 
-  // =========================================================================
-  // Checkpointing
-  // =========================================================================
 
   saveCheckpoint(runId: string, checkpoint: Checkpoint): Promise<void> {
     if (this.config.debug) {
@@ -158,7 +126,6 @@ export class MemoryBackend implements WorkflowBackend {
       return Promise.resolve(null);
     }
 
-    // Return the most recent checkpoint
     const latest = checkpoints[checkpoints.length - 1];
     return Promise.resolve(latest ? structuredClone(latest) : null);
   }
@@ -200,9 +167,6 @@ export class MemoryBackend implements WorkflowBackend {
     return Promise.resolve();
   }
 
-  // =========================================================================
-  // Approvals
-  // =========================================================================
 
   savePendingApproval(
     runId: string,
@@ -278,7 +242,6 @@ export class MemoryBackend implements WorkflowBackend {
       }
 
       for (const approval of approvals) {
-        // Check status
         if (filter?.status === "pending" && approval.status !== "pending") {
           continue;
         }
@@ -288,7 +251,6 @@ export class MemoryBackend implements WorkflowBackend {
           if (!isExpired) continue;
         }
 
-        // Check approver
         if (
           filter?.approver &&
           approval.approvers &&
@@ -304,12 +266,8 @@ export class MemoryBackend implements WorkflowBackend {
     return Promise.resolve(result);
   }
 
-  // =========================================================================
-  // Queue Operations
-  // =========================================================================
 
   enqueue(job: WorkflowJob): Promise<void> {
-    // Check queue size limit
     const maxSize = this.config.maxQueueSize ?? DEFAULT_MAX_QUEUE_SIZE;
     if (this.queue.length >= maxSize) {
       return Promise.reject(
@@ -321,7 +279,6 @@ export class MemoryBackend implements WorkflowBackend {
       console.log(`[MemoryBackend] Enqueueing job: ${job.runId}`);
     }
 
-    // Insert based on priority (higher priority first)
     const priority = job.priority ?? 0;
     const insertIndex = this.queue.findIndex((j) => (j.priority ?? 0) < priority);
 
@@ -342,13 +299,10 @@ export class MemoryBackend implements WorkflowBackend {
     if (this.config.debug) {
       console.log(`[MemoryBackend] Acknowledging job: ${runId}`);
     }
-    // For memory backend, acknowledgment is a no-op
-    // The job is already removed from queue on dequeue
     return Promise.resolve();
   }
 
   async nack(runId: string): Promise<void> {
-    // Re-enqueue the job
     const run = await this.getRun(runId);
     if (run) {
       await this.enqueue({
@@ -360,15 +314,11 @@ export class MemoryBackend implements WorkflowBackend {
     }
   }
 
-  // =========================================================================
-  // Distributed Locking
-  // =========================================================================
 
   acquireLock(runId: string, duration: number): Promise<boolean> {
     const existing = this.locks.get(runId);
     const now = Date.now();
 
-    // If lock exists and hasn't expired, fail to acquire
     if (existing && existing.expiresAt > now) {
       return Promise.resolve(false);
     }
@@ -410,9 +360,6 @@ export class MemoryBackend implements WorkflowBackend {
     return Promise.resolve(!!existing && existing.expiresAt > Date.now());
   }
 
-  // =========================================================================
-  // Lifecycle
-  // =========================================================================
 
   initialize(): Promise<void> {
     if (this.config.debug) {
@@ -438,13 +385,7 @@ export class MemoryBackend implements WorkflowBackend {
     return Promise.resolve();
   }
 
-  // =========================================================================
-  // Development Helpers
-  // =========================================================================
 
-  /**
-   * Get statistics about the backend (for debugging)
-   */
   getStats(): {
     runs: number;
     checkpoints: number;
@@ -472,9 +413,6 @@ export class MemoryBackend implements WorkflowBackend {
     };
   }
 
-  /**
-   * Clear all data (for testing)
-   */
   clear(): Promise<void> {
     this.runs.clear();
     this.checkpoints.clear();

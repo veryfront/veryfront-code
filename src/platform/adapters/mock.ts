@@ -8,29 +8,7 @@ export interface MockRuntimeAdapter extends RuntimeAdapter {
   };
 }
 
-/**
- * Mock RuntimeAdapter for testing
- *
- * Provides an in-memory filesystem and environment for unit testing.
- * This adapter is useful for testing code that depends on the filesystem
- * without requiring actual file I/O.
- *
- * @example
- * ```typescript
- * const adapter = createMockAdapter();
- * adapter.fs.files.set("/project/pages/index.tsx", "export default () => <div>Home</div>");
- * const content = await adapter.fs.readFile("/project/pages/index.tsx");
- * ```
- */
 
-/**
- * Creates a mock RuntimeAdapter for testing
- *
- * The mock adapter uses in-memory Map and Set for file storage:
- * - `files`: Map<string, string> for file contents
- * - `directories`: Set<string> for tracking directories
- * - `envVars`: Map<string, string> for environment variables
- */
 export function createMockAdapter(): MockRuntimeAdapter {
   const files = new Map<string, string>();
   const directories = new Set<string>();
@@ -39,7 +17,6 @@ export function createMockAdapter(): MockRuntimeAdapter {
   return {
     id: "memory" as const,
     name: "mock",
-    /** @deprecated Use `id` instead */
     platform: "memory" as const,
     capabilities: {
       typescript: false,
@@ -50,7 +27,7 @@ export function createMockAdapter(): MockRuntimeAdapter {
       fileWatching: false,
       shell: false,
       kvStore: false,
-      writableFs: true, // In-memory writes work
+      writableFs: true,
     },
     serve: (_handler, _options) => {
       return Promise.resolve({

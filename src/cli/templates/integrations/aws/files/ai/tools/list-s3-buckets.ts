@@ -2,9 +2,6 @@ import { tool } from 'veryfront/ai';
 import { z } from 'zod';
 import { getAWSClient } from '../../lib/aws-client';
 
-/**
- * Tool for listing all S3 buckets in the AWS account
- */
 export const listS3BucketsTool = tool({
   name: 'list-s3-buckets',
   description: 'List all S3 buckets in your AWS account. Returns bucket names and creation dates.',

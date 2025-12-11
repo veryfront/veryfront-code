@@ -28,7 +28,7 @@ interface CleanOptions {
   cache?: boolean;
   build?: boolean;
   all?: boolean;
-  force?: boolean; // Skip confirmation prompts
+  force?: boolean;
 }
 
 export async function cleanCommand(options: CleanOptions) {
@@ -40,7 +40,6 @@ export async function cleanCommand(options: CleanOptions) {
     force = false,
   } = options;
 
-  // Require confirmation for destructive --all operation unless --force is used
   if (all && !force) {
     logWarning("This will remove node_modules, .deno, and .veryfront directories.");
     const confirmed = await confirmPrompt(
@@ -88,7 +87,6 @@ async function cleanDirectory(path: string): Promise<void> {
   try {
     await fs.remove(path, { recursive: true });
   } catch (error) {
-    // Log the error but don't throw - cleanup should be best effort
     cliLogger.error(`Failed to clean directory ${path}:`, error);
   }
 }
@@ -119,7 +117,6 @@ async function cleanCacheStore(projectDir: string): Promise<void> {
 
     await cleanDirectory(join(projectDir, cacheDir));
   } catch (error) {
-    // Fall back to removing default cache directory on error
     cliLogger.error("Failed to clean cache store, falling back to default cache directory:", error);
     await cleanDirectory(fallbackCacheDir);
   }

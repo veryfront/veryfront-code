@@ -34,7 +34,7 @@ export class LRUCacheAdapter implements CacheAdapter {
 
   constructor(options: LRUCacheOptions = {}) {
     this.maxEntries = options.maxEntries || 1000;
-    this.maxSizeBytes = options.maxSizeBytes || 50 * 1024 * 1024; // 50MB default
+    this.maxSizeBytes = options.maxSizeBytes || 50 * 1024 * 1024;
     this.defaultTtlMs = options.ttlMs;
     this.onEvict = options.onEvict;
 

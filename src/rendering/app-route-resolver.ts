@@ -1,49 +1,33 @@
-/**
- * App Router Entity Resolution
- *
- * Handles resolution of App Router page entities, including:
- * - Exact route matching
- * - Dynamic segment matching ([id], [...slug], etc.)
- * - Page file loading with frontmatter extraction
- */
 
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import type { EntityInfo, Frontmatter } from "@veryfront/types";
 import { join } from "../platform/compat/path-helper.ts";
 import { serverLogger as logger } from "@veryfront/utils";
 
-// Conditional import for front-matter extraction
 let extractYaml: ((content: string) => any) | undefined;
 let jsYamlModule: typeof import("js-yaml") | null = null;
 
-// Initialize extractYaml based on runtime
-// @ts-ignore - Deno global
 if (typeof Deno === "undefined") {
-  // Node.js environment - use lazy loading for js-yaml
   extractYaml = (content: string) => {
-    const frontMatterRegex = /^---\n([\s\S]*?)\n---/; // Basic regex for YAML front matter
+    const frontMatterRegex = /^---\n([\s\S]*?)\n---/;
     const match = content.match(frontMatterRegex);
     if (match && match[1]) {
-      // Synchronous parsing with cached module
       if (jsYamlModule) {
         const attrs = jsYamlModule.load(match[1]);
         const body = content.slice(match[0].length);
         return { attrs, body };
       }
-      // Fallback: return content without parsing if module not loaded
       return { attrs: {}, body: content };
     }
     return { attrs: {}, body: content };
   };
 
-  // Eagerly load js-yaml module
   import("js-yaml").then((mod) => {
     jsYamlModule = mod;
   }).catch((e) => {
     logger.warn("Could not import js-yaml for Node.js frontmatter parsing.", e);
   });
 } else {
-  // @ts-ignore - Deno global
   const { extract } = await import("std/front_matter/yaml.ts");
   extractYaml = extract;
 }
@@ -73,7 +57,6 @@ async function tryExactMatch(
     `${base}/page.jsx`,
     `${base}/page.ts`,
     `${base}/page.js`,
-    // index-like shorthand
     `${base}.mdx`,
     `${base}.tsx`,
     `${base}.jsx`,
@@ -110,7 +93,6 @@ async function tryDynamicMatch(
         continue;
       }
     } catch {
-      // Exact match failed, try dynamic segments
     }
 
     let foundDynamic = false;
@@ -128,7 +110,6 @@ async function tryDynamicMatch(
         }
       }
     } catch {
-      // adapter.fs.readDir failed - no fallback to Deno for npm compatibility
     }
 
     if (!foundDynamic) {
@@ -174,7 +155,6 @@ async function tryLoadPageFile(
         fm = (ex.attrs as Record<string, unknown>) || {};
       }
     } catch {
-      /* best-effort frontmatter extraction */
     }
 
     const coercedFm: Record<string, unknown> = { ...fm };

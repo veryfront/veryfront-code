@@ -15,7 +15,7 @@ export default tool({
 
     const filteredChannels = includeCategories
       ? channels
-      : channels.filter((channel) => channel.type !== 4); // Filter out categories
+      : channels.filter((channel) => channel.type !== 4);
 
     return filteredChannels.map((channel) => ({
       id: channel.id,

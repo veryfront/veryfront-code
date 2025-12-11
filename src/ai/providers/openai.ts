@@ -1,6 +1,3 @@
-/**
- * OpenAI provider implementation
- */
 
 import { z } from "zod";
 import { BaseProvider } from "./base.ts";
@@ -69,7 +66,6 @@ export class OpenAIProvider extends BaseProvider {
     };
 
     if (request.system) {
-      // Add system message at the beginning
       body.messages = [
         { role: "system", content: request.system },
         ...request.messages,

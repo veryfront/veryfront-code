@@ -1,8 +1,3 @@
-/**
- * Command routing logic for CLI
- *
- * @module cli/index/command-router
- */
 
 import { VERSION } from "@veryfront/utils";
 import { handleError } from "@veryfront/errors";
@@ -41,21 +36,15 @@ import {
 } from "../help/formatters.ts";
 import { dim } from "@veryfront/compat/console";
 
-/**
- * Show basic help information
- */
 function showBasicHelp(command?: string): void {
   if (command && COMMANDS[command]) {
     const cmd = COMMANDS[command];
 
-    // Header
     cliLogger.info(formatCommandHeader(cmd.name));
     cliLogger.info(`${cmd.description}\n`);
 
-    // Usage
     cliLogger.info(formatUsage(cmd.usage));
 
-    // Options
     if (cmd.options && cmd.options.length > 0) {
       cliLogger.info(`\n${formatSectionHeader("Options")}`);
       const maxFlagLength = calculateMaxLength(cmd.options.map((o) => ({ length: o.flag.length })));
@@ -64,7 +53,6 @@ function showBasicHelp(command?: string): void {
       }
     }
 
-    // Examples
     if (cmd.examples && cmd.examples.length > 0) {
       cliLogger.info(`\n${formatSectionHeader("Examples")}`);
       for (const example of cmd.examples) {
@@ -72,7 +60,6 @@ function showBasicHelp(command?: string): void {
       }
     }
 
-    // Notes
     if (cmd.notes && cmd.notes.length > 0) {
       cliLogger.info(`\n${formatSectionHeader("Notes")}`);
       for (const note of cmd.notes) {
@@ -101,28 +88,19 @@ Use 'veryfront <command> --help' for command-specific help.`);
   }
 }
 
-/**
- * Route and execute the appropriate CLI command
- *
- * @param args - Parsed CLI arguments
- */
 export async function routeCommand(args: ParsedArgs): Promise<void> {
-  // Initialize global CLI modes (clig.dev compliance)
-  // Color mode: --no-color disables, --color forces, NO_COLOR env also respected
   if (args["no-color"]) {
     setColorMode(false);
   } else if (args.color) {
     setColorMode(true);
   }
 
-  // Verbose/Quiet mode
   if (args.verbose) {
     setVerboseMode(true);
   } else if (args.quiet || args.q) {
     setQuietMode(true);
   }
 
-  // Handle version flag
   if (args.version || args.v) {
     cliLogger.info(`Veryfront CLI v${VERSION}`);
     exitProcess(0);
@@ -131,7 +109,6 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
 
   const command = args._[0] as string;
 
-  // Handle help flag
   if (args.help || args.h) {
     showBasicHelp(command);
     exitProcess(0);
@@ -148,7 +125,6 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
         let skipEnvPrompt = Boolean(args["skip-env-prompt"]);
         let env: Record<string, string> | undefined;
 
-        // Support --config flag for JSON-based configuration
         const configPath = args.config || args.c;
         if (configPath) {
           const fs = createFileSystem();
@@ -167,7 +143,6 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
               env?: Record<string, string>;
             };
 
-            // Config file values (can be overridden by CLI flags)
             name = name || config.name;
             template = template || config.template;
             integrations = integrations || config.integrations;
@@ -186,8 +161,6 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
           }
         }
 
-        // Parse integrations from --integrations flag (comma-separated)
-        // This overrides config file if provided
         if (args.integrations) {
           const integrationsArg = String(args.integrations);
           integrations = integrationsArg.split(",").map((s) => s.trim()) as IntegrationName[];
@@ -237,7 +210,6 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
           });
           await server.ready;
 
-          // Graceful shutdown for preview/serve mode
           let shuttingDown = false;
           const shutdown = async (signal: "SIGINT" | "SIGTERM") => {
             if (shuttingDown) return;
@@ -257,9 +229,7 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
             void shutdown(signal);
           });
 
-          // Keep process alive until Ctrl+C
           await new Promise(() => {
-            /* never resolve */
           });
         }
         break;

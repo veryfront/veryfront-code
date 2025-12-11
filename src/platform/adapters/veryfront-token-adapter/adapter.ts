@@ -1,9 +1,3 @@
-/**
- * Veryfront Token Storage Adapter
- *
- * Stores encrypted OAuth tokens in Veryfront Cloud.
- * Tokens are encrypted client-side before being sent to the API.
- */
 
 import { logger } from "@veryfront/utils";
 import { TokenStorageAPIClient } from "./api-client.ts";

@@ -1,7 +1,3 @@
-/**
- * Package manager detection and installation utilities
- * @module cli/utils/package-manager
- */
 
 import { join } from "../../platform/compat/path/index.ts";
 import { cliLogger as logger } from "@veryfront/utils";
@@ -10,12 +6,8 @@ import { isDeno, isNode } from "../../platform/compat/runtime.ts";
 
 export type PackageManager = "npm" | "yarn" | "pnpm" | "bun";
 
-/**
- * Check if running on Windows
- */
 function isWindows(): boolean {
   if (isDeno) {
-    // @ts-ignore - Deno global
     return Deno.build.os === "windows";
   }
   if (isNode) {
@@ -26,19 +18,13 @@ function isWindows(): boolean {
   return false;
 }
 
-/**
- * Execute a shell command cross-runtime (Deno/Node.js)
- * @returns Promise with exit code
- */
 async function executeCommand(
   cmd: string,
   args: string[],
   cwd: string,
   silent: boolean,
 ): Promise<number> {
-  // Try Deno.Command first (Deno runtime)
   if (isDeno) {
-    // @ts-ignore - Deno global
     const process = new Deno.Command(cmd, {
       args,
       cwd,
@@ -49,15 +35,13 @@ async function executeCommand(
     return code;
   }
 
-  // Fall back to Node.js child_process (npm package runtime)
-  // Use dynamic import to avoid Deno type errors
   const { spawn } = await import("node:child_process");
 
   return new Promise((resolve, reject) => {
     const child = spawn(cmd, args, {
       cwd,
       stdio: silent ? "ignore" : "inherit",
-      shell: isWindows(), // Use shell on Windows for .cmd files
+      shell: isWindows(),
     });
 
     child.on("error", (error: Error) => {
@@ -70,15 +54,6 @@ async function executeCommand(
   });
 }
 
-/**
- * Detect the package manager to use based on lockfiles or user preference
- *
- * Priority:
- * 1. Explicit preference (if provided)
- * 2. Existing lockfile in project directory
- * 3. Parent directory lockfile (for monorepos)
- * 4. Default to npm
- */
 export async function detectPackageManager(
   projectDir: string,
   preference?: PackageManager,
@@ -89,7 +64,6 @@ export async function detectPackageManager(
 
   const fs = createFileSystem();
 
-  // Check for lockfiles in project directory
   const lockfiles: Array<{ file: string; pm: PackageManager }> = [
     { file: "bun.lockb", pm: "bun" },
     { file: "pnpm-lock.yaml", pm: "pnpm" },
@@ -105,7 +79,6 @@ export async function detectPackageManager(
     }
   }
 
-  // Check parent directory (monorepo support)
   const parentDir = join(projectDir, "..");
   for (const { file, pm } of lockfiles) {
     const lockPath = join(parentDir, file);
@@ -115,13 +88,9 @@ export async function detectPackageManager(
     }
   }
 
-  // Default to npm
   return "npm";
 }
 
-/**
- * Get the install command for a package manager
- */
 export function getInstallCommand(pm: PackageManager): string {
   switch (pm) {
     case "bun":
@@ -136,13 +105,6 @@ export function getInstallCommand(pm: PackageManager): string {
   }
 }
 
-/**
- * Install dependencies using the detected package manager
- *
- * @param projectDir - Directory to install dependencies in
- * @param options - Installation options
- * @returns true if installation succeeded, false otherwise
- */
 export async function installDependencies(
   projectDir: string,
   options: {

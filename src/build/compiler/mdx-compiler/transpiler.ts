@@ -3,7 +3,7 @@ import type { CompileOptions } from "./types.ts";
 
 export async function transpileCode(code: string, options: CompileOptions): Promise<string> {
   const result = await esbuild.transform(code, {
-    loader: "jsx",
+    loader: "tsx",
     jsx: "automatic",
     jsxImportSource: "react",
     format: "esm",

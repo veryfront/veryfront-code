@@ -1,12 +1,3 @@
-/**
- * Integration loader for service connectors
- *
- * Loads integrations from the integrations/ directory and handles:
- * - Integration file overlay
- * - OAuth configuration
- * - Tool auto-discovery
- * - Prompt/action loading
- */
 
 import { createFileSystem } from "../../platform/compat/fs.ts";
 import * as pathHelper from "../../platform/compat/path-helper.ts";
@@ -21,9 +12,6 @@ import type {
   UseCaseName,
 } from "./types.ts";
 
-/**
- * Available integrations that can be added via --integrations flag
- */
 export const AVAILABLE_INTEGRATIONS: IntegrationName[] = [
   "gmail",
   "slack",
@@ -54,7 +42,6 @@ export const AVAILABLE_INTEGRATIONS: IntegrationName[] = [
   "sentry",
   "posthog",
   "zendesk",
-  // New integrations
   "asana",
   "monday",
   "zoom",
@@ -69,7 +56,6 @@ export const AVAILABLE_INTEGRATIONS: IntegrationName[] = [
   "freshdesk",
   "quickbooks",
   "xero",
-  // 50+ integrations
   "drive",
   "docs-google",
   "snowflake",
@@ -79,9 +65,6 @@ export const AVAILABLE_INTEGRATIONS: IntegrationName[] = [
   "aws",
 ];
 
-/**
- * Available use-cases that can be selected via --usecase flag
- */
 export const AVAILABLE_USECASES: UseCaseName[] = [
   "productivity",
   "developer",
@@ -90,9 +73,6 @@ export const AVAILABLE_USECASES: UseCaseName[] = [
   "custom",
 ];
 
-/**
- * Pre-defined use-case configurations
- */
 export const USE_CASE_CONFIGS: Record<UseCaseName, UseCaseConfig> = {
   productivity: {
     name: "productivity",
@@ -157,9 +137,6 @@ export const USE_CASE_CONFIGS: Record<UseCaseName, UseCaseConfig> = {
   },
 };
 
-/**
- * Get the directory path for an integration
- */
 export function getIntegrationDirectory(integrationName: string): string {
   const moduleUrl = new URL(".", import.meta.url);
   let moduleDir: string;
@@ -184,9 +161,6 @@ export function getIntegrationDirectory(integrationName: string): string {
   }
 }
 
-/**
- * Load integration configuration from connector.json
- */
 export async function loadIntegrationConfig(
   integrationName: IntegrationName,
 ): Promise<IntegrationConfig | null> {
@@ -202,9 +176,6 @@ export async function loadIntegrationConfig(
   }
 }
 
-/**
- * Load an integration with its files
- */
 export async function loadIntegration(
   integrationName: IntegrationName,
 ): Promise<ResolvedIntegration | null> {
@@ -216,7 +187,6 @@ export async function loadIntegration(
   const integrationDir = getIntegrationDirectory(integrationName);
   const filesDir = pathHelper.join(integrationDir, "files");
 
-  // Load integration files
   const files = await loadTemplateFromDirectory(filesDir);
 
   return {
@@ -225,9 +195,6 @@ export async function loadIntegration(
   };
 }
 
-/**
- * Validate integration names
- */
 export function validateIntegrations(integrations: IntegrationName[]): {
   valid: boolean;
   errors: string[];
@@ -248,9 +215,6 @@ export function validateIntegrations(integrations: IntegrationName[]): {
   };
 }
 
-/**
- * Load multiple integrations and merge their files
- */
 export async function loadIntegrations(
   integrationNames: IntegrationName[],
 ): Promise<{
@@ -272,7 +236,6 @@ export async function loadIntegrations(
     }
   }
 
-  // Merge files (later integrations override earlier ones)
   const fileMap = new Map<string, TemplateFile>();
   for (const file of allFiles) {
     fileMap.set(file.path, file);
@@ -285,9 +248,6 @@ export async function loadIntegrations(
   };
 }
 
-/**
- * Check if an integration exists
- */
 export async function integrationExists(
   integrationName: string,
 ): Promise<boolean> {
@@ -302,16 +262,10 @@ export async function integrationExists(
   }
 }
 
-/**
- * Get use-case configuration
- */
 export function getUseCaseConfig(useCaseName: UseCaseName): UseCaseConfig {
   return USE_CASE_CONFIGS[useCaseName];
 }
 
-/**
- * Get all available prompts for a set of integrations
- */
 export async function getAvailablePrompts(
   integrationNames: IntegrationName[],
 ): Promise<Array<{ integration: IntegrationName; prompts: IntegrationConfig["prompts"] }>> {
@@ -330,37 +284,21 @@ export async function getAvailablePrompts(
   return result;
 }
 
-/**
- * Load base files from the _base integration directory
- * These include setup guide page and status API
- */
 export function loadIntegrationBaseFilesFromDirectory(): Promise<TemplateFile[]> {
   const baseDir = getIntegrationDirectory("_base");
   const filesDir = pathHelper.join(baseDir, "files");
   return loadTemplateFromDirectory(filesDir);
 }
 
-/**
- * Load the _base integration config to get shared env vars like APP_URL
- */
 export function loadIntegrationBaseConfig(): Promise<IntegrationConfig | null> {
   return loadIntegrationConfig("_base" as IntegrationName);
 }
 
-/**
- * Generate base files needed for any integration setup
- * These are shared across all integrations
- */
 export function getIntegrationBaseFiles(): TemplateFile[] {
   return [
     {
       path: "lib/token-store.ts",
-      content: `/**
- * OAuth Token Store
- *
- * Manages OAuth tokens for service integrations.
- * Override this with a database implementation for production.
- */
+      content: `
 
 export interface OAuthToken {
   accessToken: string;
@@ -376,8 +314,6 @@ export interface TokenStore {
   deleteToken(userId: string, service: string): Promise<void>;
 }
 
-// In-memory store for development
-// Replace with database/KV store in production
 const tokens = new Map<string, OAuthToken>();
 
 function makeKey(userId: string, service: string): string {
@@ -389,9 +325,7 @@ export const tokenStore: TokenStore = {
     const token = tokens.get(makeKey(userId, service));
     if (!token) return null;
 
-    // Check if expired
     if (token.expiresAt && Date.now() > token.expiresAt) {
-      // Token expired - in production, attempt refresh here
       return null;
     }
 
@@ -412,22 +346,15 @@ export default tokenStore;
     },
     {
       path: "lib/oauth.ts",
-      content: `/**
- * OAuth utilities for service integrations
- */
+      content: `
 
 import { tokenStore, type OAuthToken } from "./token-store.ts";
 
-// Helper for Cross-Platform environment access
 function getEnv(key: string): string | undefined {
-  // @ts-ignore - Deno global
   if (typeof Deno !== "undefined") {
-    // @ts-ignore - Deno global
     return Deno.env.get(key);
   }
-  // @ts-ignore - process global
   else if (typeof process !== "undefined" && process.env) {
-    // @ts-ignore - process global
     return process.env[key];
   }
   return undefined;
@@ -443,9 +370,6 @@ export interface OAuthProvider {
   callbackPath: string;
 }
 
-/**
- * Generate OAuth authorization URL
- */
 export function getAuthorizationUrl(
   provider: OAuthProvider,
   state: string,
@@ -464,9 +388,6 @@ export function getAuthorizationUrl(
   return \`\${provider.authorizationUrl}?\${params.toString()}\`;
 }
 
-/**
- * Exchange authorization code for tokens
- */
 export async function exchangeCodeForTokens(
   provider: OAuthProvider,
   code: string,
@@ -502,9 +423,6 @@ export async function exchangeCodeForTokens(
   };
 }
 
-/**
- * Refresh an expired token
- */
 export async function refreshAccessToken(
   provider: OAuthProvider,
   refreshToken: string,
@@ -538,9 +456,6 @@ export async function refreshAccessToken(
   };
 }
 
-/**
- * Get a valid access token, refreshing if necessary
- */
 export async function getValidToken(
   provider: OAuthProvider,
   userId: string,
@@ -549,7 +464,6 @@ export async function getValidToken(
   const token = await tokenStore.getToken(userId, serviceName);
   if (!token) return null;
 
-  // Check if token needs refresh
   if (token.expiresAt && Date.now() > token.expiresAt - 60000) {
     if (token.refreshToken) {
       try {
@@ -557,7 +471,6 @@ export async function getValidToken(
         await tokenStore.setToken(userId, serviceName, newToken);
         return newToken.accessToken;
       } catch {
-        // Refresh failed, token is invalid
         await tokenStore.deleteToken(userId, serviceName);
         return null;
       }

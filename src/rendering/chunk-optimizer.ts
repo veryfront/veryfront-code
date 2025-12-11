@@ -28,7 +28,7 @@ function analyzeImports(content: string) {
 
 export interface ChunkAnalysis {
   pages: Map<string, PageImports>;
-  sharedDeps: Map<string, number>; // dep -> usage count
+  sharedDeps: Map<string, number>;
   suggestedChunks: ChunkSuggestion[];
 }
 
@@ -43,7 +43,7 @@ export interface ChunkSuggestion {
   name: string;
   deps: string[];
   pages: string[];
-  benefit: number; // estimated bytes saved
+  benefit: number;
 }
 
 export interface ChunkManifest {
@@ -166,7 +166,7 @@ function generateChunkSuggestions(
       name: "react-vendor",
       deps: reactDeps,
       pages: pagesUsingReact,
-      benefit: 200000, // React is ~200KB
+      benefit: 200000,
     });
   }
 

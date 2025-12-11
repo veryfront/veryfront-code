@@ -13,7 +13,7 @@
   ],
   "exports": {
     ".": "./src/index.ts",
-    "./cli": "./src/cli/main.ts",
+    "./cli": "./src/cli/index/cli-main.ts",
     "./server": "./src/server/index.ts",
     "./middleware": "./src/middleware/index.ts",
     "./components": "./src/react/components/index.ts",
@@ -139,8 +139,8 @@
   },
   "tasks": {
     "setup": "deno run --allow-all scripts/setup.ts",
-    "dev": "deno run --allow-all --no-lock --unstable-net --unstable-worker-options src/cli/main.ts dev",
-    "build": "deno compile --allow-all --output ../../bin/veryfront src/cli/main.ts",
+    "dev": "deno run --allow-all --no-lock --unstable-net --unstable-worker-options src/cli/index/cli-main.ts dev",
+    "build": "deno compile --allow-all --output ../../bin/veryfront src/cli/index/cli-main.ts",
     "build:npm": "deno run -A scripts/build-npm.ts",
     "release": "deno run -A scripts/release.ts",
     "test": "DENO_JOBS=1 deno test --parallel --fail-fast --allow-all --unstable-worker-options --unstable-net",
@@ -153,7 +153,7 @@
     "coverage:html": "deno coverage coverage --include=src/ --exclude=tests --exclude=src/**/*_test.ts --exclude=src/**/*_test.tsx --exclude=src/**/*.test.ts --exclude=src/**/*.test.tsx --html",
     "lint": "DENO_NO_PACKAGE_JSON=1 deno lint src/",
     "fmt": "deno fmt src/",
-    "typecheck": "deno check src/index.ts src/cli/main.ts src/server/index.ts src/routing/api/index.ts src/rendering/index.ts src/platform/index.ts src/platform/adapters/index.ts src/build/index.ts src/build/production-build/index.ts src/build/transforms/index.ts src/core/config/index.ts src/core/utils/index.ts src/data/index.ts src/security/index.ts src/middleware/index.ts src/server/handlers/dev/index.ts src/server/handlers/request/api/index.ts src/rendering/cache/index.ts src/rendering/cache/stores/index.ts src/rendering/rsc/actions/index.ts src/html/index.ts src/module-system/index.ts",
+    "typecheck": "deno check src/index.ts src/cli/index/cli-main.ts src/server/index.ts src/routing/api/index.ts src/rendering/index.ts src/platform/index.ts src/platform/adapters/index.ts src/build/index.ts src/build/production-build/index.ts src/build/transforms/index.ts src/core/config/index.ts src/core/utils/index.ts src/data/index.ts src/security/index.ts src/middleware/index.ts src/server/handlers/dev/index.ts src/server/handlers/request/api/index.ts src/rendering/cache/index.ts src/rendering/cache/stores/index.ts src/rendering/rsc/actions/index.ts src/html/index.ts src/module-system/index.ts",
     "docs:check-links": "deno run -A scripts/check-doc-links.ts",
     "lint:ban-console": "deno run --allow-read scripts/ban-console.ts",
     "lint:ban-deep-imports": "deno run --allow-read scripts/ban-deep-imports.ts",

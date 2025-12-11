@@ -9,11 +9,8 @@ export async function POST(req: Request) {
       return Response.json({ error: "sourceUrl is required" }, { status: 400 });
     }
 
-    // Start the workflow
     const runId = crypto.randomUUID();
 
-    // In a real implementation, this would start the workflow asynchronously
-    // and return the run ID for status polling
     console.log(`Starting workflow ${dataProcessingPipeline.id} with run ID: ${runId}`);
 
     return Response.json({

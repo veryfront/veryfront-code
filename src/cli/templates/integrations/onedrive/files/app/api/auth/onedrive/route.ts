@@ -1,6 +1,3 @@
-/**
- * OneDrive OAuth Initiation
- */
 
 import { createOAuthInitHandler, memoryTokenStore, oneDriveConfig } from "veryfront/oauth";
 

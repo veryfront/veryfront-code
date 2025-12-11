@@ -1,9 +1,3 @@
-/**
- * Metrics Instruments Module
- * Barrel exports for all metric instruments
- *
- * @module
- */
 
 export { initializeInstruments } from "./instruments-factory.ts";
 export type { HttpInstruments } from "./http-instruments.ts";

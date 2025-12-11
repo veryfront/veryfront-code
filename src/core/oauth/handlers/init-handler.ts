@@ -1,8 +1,3 @@
-/**
- * OAuth Init Handler
- *
- * Reusable handler for initiating OAuth flows.
- */
 
 import { OAuthService } from "../providers/base.ts";
 import type { AuthorizationUrlOptions, OAuthServiceConfig, TokenStore } from "../types.ts";
@@ -10,28 +5,13 @@ import { memoryTokenStore } from "../token-store/memory.ts";
 import { getEnv } from "../../../platform/compat/process.ts";
 
 export interface OAuthInitHandlerOptions {
-  /** Token store to use (defaults to memory store) */
   tokenStore?: TokenStore;
 
-  /** Base URL for callbacks (defaults to APP_URL or localhost) */
   baseUrl?: string;
 
-  /** Additional authorization options */
   authOptions?: AuthorizationUrlOptions;
 }
 
-/**
- * Create an OAuth init route handler
- *
- * @example
- * ```typescript
- * // app/api/auth/gmail/route.ts
- * import { createOAuthInitHandler } from "veryfront/oauth";
- * import { gmailConfig } from "veryfront/oauth/providers";
- *
- * export const GET = createOAuthInitHandler(gmailConfig);
- * ```
- */
 export function createOAuthInitHandler(
   config: OAuthServiceConfig,
   options: OAuthInitHandlerOptions = {},
@@ -51,7 +31,6 @@ export function createOAuthInitHandler(
       );
     }
 
-    // Use APP_URL from env, or default to localhost:3000 (the standard veryfront dev port)
     const appUrl = baseUrl ||
       getEnv("APP_URL") ||
       getEnv("NEXT_PUBLIC_APP_URL") ||
@@ -65,7 +44,6 @@ export function createOAuthInitHandler(
         redirectUri,
       });
 
-      // Store state for CSRF protection
       await tokenStore.setState(state);
 
       return Response.redirect(url);
@@ -82,18 +60,6 @@ export function createOAuthInitHandler(
   };
 }
 
-/**
- * Create an OAuth status check handler
- *
- * @example
- * ```typescript
- * // app/api/auth/gmail/status/route.ts
- * import { createOAuthStatusHandler } from "veryfront/oauth";
- * import { gmailConfig } from "veryfront/oauth/providers";
- *
- * export const GET = createOAuthStatusHandler(gmailConfig);
- * ```
- */
 export function createOAuthStatusHandler(
   config: OAuthServiceConfig,
   options: { tokenStore?: TokenStore } = {},
@@ -118,18 +84,6 @@ export function createOAuthStatusHandler(
   };
 }
 
-/**
- * Create an OAuth disconnect handler
- *
- * @example
- * ```typescript
- * // app/api/auth/gmail/route.ts
- * import { createOAuthDisconnectHandler } from "veryfront/oauth";
- * import { gmailConfig } from "veryfront/oauth/providers";
- *
- * export const DELETE = createOAuthDisconnectHandler(gmailConfig);
- * ```
- */
 export function createOAuthDisconnectHandler(
   config: OAuthServiceConfig,
   options: { tokenStore?: TokenStore } = {},

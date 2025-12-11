@@ -63,7 +63,6 @@ export default tool({
 
       const allLists = [];
 
-      // Add folderless lists
       allLists.push(
         ...folderlessLists.map((list) => ({
           id: list.id,
@@ -79,7 +78,6 @@ export default tool({
         })),
       );
 
-      // Add lists from each folder
       for (const folder of folders) {
         const lists = await listLists(folder.id);
         allLists.push(

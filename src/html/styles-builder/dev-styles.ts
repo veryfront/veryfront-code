@@ -1,16 +1,9 @@
 import { Z_INDEX_DEV_INDICATOR, Z_INDEX_ERROR_OVERLAY } from "@veryfront/utils";
 
-/**
- * Dev-mode specific styles
- *
- * Note: Tailwind utility classes are now handled by Tailwind CDN in development mode.
- * This file only contains dev-specific UI styles (error overlay, dev indicators).
- */
 export function getDevStyles(nonce?: string): string {
   const nonceAttr = nonce ? ` nonce="${nonce}"` : "";
   return `
   <style${nonceAttr}>
-    /* Dev-mode indicators */
     .dev-indicator {
       position: fixed;
       bottom: 1rem;
@@ -40,7 +33,6 @@ export function getDevStyles(nonce?: string): string {
       opacity: 1;
     }
 
-    /* Error overlay */
     #veryfront-error-overlay {
       position: fixed;
       top: 0;
@@ -55,7 +47,6 @@ export function getDevStyles(nonce?: string): string {
       padding: 2rem;
     }
 
-    /* Custom animations for dev UI (CSP-compliant) */
     .animate-bounce-delay-200 {
       animation: vf-bounce 1s infinite;
       animation-delay: 0.2s;

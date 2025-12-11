@@ -16,7 +16,6 @@ export default tool({
       .describe("Pull request number"),
   }),
   execute: async ({ repo, prNumber }, context) => {
-    // Default to "current-user" for development; in production, always pass userId from session
     const userId = (context?.userId as string | undefined) || "current-user";
 
     const [owner, repoName] = repo.split("/");
@@ -29,13 +28,10 @@ export default tool({
     try {
       const github = createGitHubClient(userId);
 
-      // Get PR details first
       const pr = await github.getPullRequest(owner, repoName, prNumber);
 
-      // Get the diff
       const diff = await github.getPullRequestDiff(owner, repoName, prNumber);
 
-      // Truncate very long diffs
       const maxDiffLength = 50000;
       const truncatedDiff = diff.length > maxDiffLength
         ? diff.substring(0, maxDiffLength) +

@@ -1,61 +1,40 @@
-/**
- * useVoiceInput - Web Speech API hook for voice input
- *
- * Provides browser-based speech recognition for chat input.
- */
 
 import * as React from "react";
 
 export interface UseVoiceInputOptions {
-  /** Language for speech recognition (default: browser default) */
   language?: string;
 
-  /** Continuous listening mode (default: false) */
   continuous?: boolean;
 
-  /** Show interim results while speaking (default: true) */
   interimResults?: boolean;
 
-  /** Callback when transcript is received */
   onTranscript?: (transcript: string, isFinal: boolean) => void;
 
-  /** Callback when an error occurs */
   onError?: (error: string) => void;
 
-  /** Callback when listening starts */
   onStart?: () => void;
 
-  /** Callback when listening ends */
   onEnd?: () => void;
 }
 
 export interface UseVoiceInputResult {
-  /** Whether voice input is supported in this browser */
   isSupported: boolean;
 
-  /** Whether currently listening */
   isListening: boolean;
 
-  /** Current transcript (interim or final) */
   transcript: string;
 
-  /** Start listening */
   start: () => void;
 
-  /** Stop listening */
   stop: () => void;
 
-  /** Toggle listening on/off */
   toggle: () => void;
 
-  /** Clear the transcript */
   clear: () => void;
 
-  /** Last error message */
   error: string | null;
 }
 
-// Type for SpeechRecognition (not in all TypeScript libs)
 interface SpeechRecognitionEvent extends Event {
   results: SpeechRecognitionResultList;
   resultIndex: number;
@@ -104,26 +83,6 @@ declare global {
   }
 }
 
-/**
- * useVoiceInput - Voice input hook using Web Speech API
- *
- * @example
- * ```tsx
- * const { isListening, transcript, toggle, isSupported } = useVoiceInput({
- *   onTranscript: (text, isFinal) => {
- *     if (isFinal) setInput(text);
- *   }
- * });
- *
- * if (!isSupported) return <span>Voice not supported</span>;
- *
- * return (
- *   <button onClick={toggle}>
- *     {isListening ? 'Stop' : 'Start'} Voice
- *   </button>
- * );
- * ```
- */
 export function useVoiceInput(
   options: UseVoiceInputOptions = {},
 ): UseVoiceInputResult {
@@ -143,7 +102,6 @@ export function useVoiceInput(
 
   const recognitionRef = React.useRef<SpeechRecognition | null>(null);
 
-  // Check browser support
   const isSupported = React.useMemo(() => {
     if (typeof globalThis === "undefined") return false;
     // deno-lint-ignore no-explicit-any
@@ -151,7 +109,6 @@ export function useVoiceInput(
     return !!(g.SpeechRecognition || g.webkitSpeechRecognition);
   }, []);
 
-  // Initialize recognition
   React.useEffect(() => {
     if (!isSupported) return;
 
@@ -235,7 +192,6 @@ export function useVoiceInput(
     try {
       recognitionRef.current.start();
     } catch {
-      // Already started
       console.warn("Speech recognition already started");
     }
   }, [isListening]);

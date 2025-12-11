@@ -11,7 +11,6 @@ import { RenderPipeline } from "./pipeline.ts";
 import { SSROrchestrator } from "./ssr-orchestrator.ts";
 import type { RendererOptions, RenderOptions, RenderResult } from "./types.ts";
 
-// Re-export types for backward compatibility
 export type { RendererOptions, RenderOptions, RenderResult } from "./types.ts";
 
 export class VeryfrontRenderer {

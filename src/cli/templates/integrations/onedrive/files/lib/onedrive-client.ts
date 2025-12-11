@@ -2,7 +2,6 @@ import { getAccessToken } from "./token-store.ts";
 
 const GRAPH_API_URL = "https://graph.microsoft.com/v1.0";
 
-// OneDrive API Types (Microsoft Graph API)
 export interface DriveItem {
   id: string;
   name: string;
@@ -59,7 +58,6 @@ export interface SearchResult {
   "@odata.nextLink"?: string;
 }
 
-// Helper function for OneDrive API calls
 async function onedriveFetch<T>(
   endpoint: string,
   options: RequestInit = {},
@@ -90,12 +88,7 @@ async function onedriveFetch<T>(
   return response.json();
 }
 
-// File and Folder Operations
 
-/**
- * List files in a folder
- * @param folderId Folder ID or path (use "root" for root folder)
- */
 export function listFiles(
   folderId: string = "root",
   options?: {
@@ -122,16 +115,10 @@ export function listFiles(
   return onedriveFetch<ListFilesResult>(endpoint);
 }
 
-/**
- * Get file or folder metadata
- */
 export function getFile(itemId: string): Promise<DriveItem> {
   return onedriveFetch<DriveItem>(`/me/drive/items/${itemId}`);
 }
 
-/**
- * Download file content
- */
 export async function downloadFile(itemId: string): Promise<{
   content: string;
   metadata: FileMetadata;
@@ -168,10 +155,6 @@ export async function downloadFile(itemId: string): Promise<{
   return { content, metadata };
 }
 
-/**
- * Upload file
- * For files smaller than 4MB, use simple upload
- */
 export async function uploadFile(
   fileName: string,
   content: string,
@@ -203,9 +186,6 @@ export async function uploadFile(
   return response.json();
 }
 
-/**
- * Create folder
- */
 export function createFolder(
   folderName: string,
   parentFolderId: string = "root",
@@ -220,9 +200,6 @@ export function createFolder(
   });
 }
 
-/**
- * Search files
- */
 export function searchFiles(
   query: string,
   options?: {
@@ -242,9 +219,6 @@ export function searchFiles(
   );
 }
 
-/**
- * Delete file or folder
- */
 export async function deleteFile(itemId: string): Promise<void> {
   const token = await getAccessToken();
   if (!token) {
@@ -266,9 +240,6 @@ export async function deleteFile(itemId: string): Promise<void> {
   }
 }
 
-/**
- * Move file or folder
- */
 export function moveFile(
   itemId: string,
   newParentId: string,
@@ -290,7 +261,6 @@ export function moveFile(
   });
 }
 
-// Helper Functions
 
 export function formatFileSize(bytes: number): string {
   const units = ["B", "KB", "MB", "GB", "TB"];

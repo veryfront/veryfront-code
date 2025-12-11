@@ -2,9 +2,6 @@ import { tool } from 'veryfront/ai';
 import { z } from 'zod';
 import { getAWSClient } from '../../lib/aws-client';
 
-/**
- * Tool for retrieving an object from S3
- */
 export const getS3ObjectTool = tool({
   name: 'get-s3-object',
   description: 'Get the contents of an object from an S3 bucket. Returns the object content as a string.',
@@ -17,7 +14,6 @@ export const getS3ObjectTool = tool({
       const client = getAWSClient();
       const content = await client.getS3Object(bucket, key);
 
-      // Check if content is likely binary (this is a simple heuristic)
       const isBinary = /[\x00-\x08\x0E-\x1F]/.test(content.substring(0, 8000));
 
       if (isBinary) {
@@ -32,7 +28,6 @@ export const getS3ObjectTool = tool({
         };
       }
 
-      // For text content, provide preview if too long
       const maxPreviewLength = 10000;
       const contentPreview = content.length > maxPreviewLength
         ? content.substring(0, maxPreviewLength) + '\n... [truncated]'

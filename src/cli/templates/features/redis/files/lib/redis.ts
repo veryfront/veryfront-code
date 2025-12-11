@@ -1,16 +1,9 @@
-/**
- * Redis client for job queue operations
- */
 
-// Helper for Cross-Platform environment access
 function getEnv(key: string): string | undefined {
-  // @ts-ignore - Deno global
   if (typeof Deno !== "undefined") {
-    // @ts-ignore - Deno global
     return Deno.env.get(key);
-  } // @ts-ignore - process global
+  }
   else if (typeof process !== "undefined" && process.env) {
-    // @ts-ignore - process global
     return process.env[key];
   }
   return undefined;
@@ -18,8 +11,6 @@ function getEnv(key: string): string | undefined {
 
 const _REDIS_URL = getEnv("REDIS_URL") || "redis://localhost:6379";
 
-// Simple Redis-like job queue using in-memory storage
-// In production, replace with actual redis client
 interface Job {
   id: string;
   type: string;
@@ -45,7 +36,6 @@ export function queueJob(type: string, data: Record<string, unknown>): Promise<s
   jobs.set(id, job);
   console.log(`[Redis] Queued job ${id} of type ${type}`);
 
-  // Simulate async processing
   setTimeout(() => {
     processJob(id);
   }, 100);
@@ -65,7 +55,6 @@ export async function processJob(id: string): Promise<void> {
   console.log(`[Redis] Processing job ${id}`);
 
   try {
-    // Simulate job processing
     await new Promise((resolve) => setTimeout(resolve, 500));
 
     job.status = "completed";

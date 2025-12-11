@@ -1,18 +1,9 @@
-/**
- * Build Error Handler Module
- *
- * Handles build errors and displays user-friendly error messages.
- */
 
 import { bold, cyan, dim, red } from "@veryfront/compat/console";
 import { cliLogger } from "@veryfront/utils";
 import { exit, getStdout } from "../../../platform/compat/process.ts";
 
-/**
- * Handle build error with user-friendly messaging
- */
 export function handleBuildError(error: unknown): never {
-  // Clear any progress indicators
   const stdout = getStdout();
   if (stdout?.write) {
     stdout.write(`\r${" ".repeat(80)}\r`);

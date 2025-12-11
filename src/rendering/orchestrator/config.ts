@@ -37,13 +37,10 @@ export class ConfigurationManager {
       mode: this.mode,
     });
 
-    // Load config
     this.config = await getConfig(this.projectDir, this.adapter);
 
-    // Initialize bundle manifest store
     await initializeBundleManifest(this.config, this.mode, this.adapter);
 
-    // Compute project cache key
     this.projectCacheKey = await handleErrorWithFallback(
       async () => await getContentHash(this.projectDir),
       this.projectDir,
@@ -74,7 +71,6 @@ export class ConfigurationManager {
     const baseDirFromEnv = this.adapter.env?.get?.("VERYFRONT_CACHE_DIR");
     const configDir = this.config?.cache?.dir;
 
-    // Return cached result if inputs haven't changed
     if (
       this.cacheBaseDir !== undefined &&
       this.lastEnvCacheValue === baseDirFromEnv &&
@@ -83,7 +79,6 @@ export class ConfigurationManager {
       return this.cacheBaseDir;
     }
 
-    // Recompute and cache
     const candidate = baseDirFromEnv || configDir;
     const result = candidate
       ? (isAbsolute(candidate) ? candidate : join(this.projectDir, candidate))

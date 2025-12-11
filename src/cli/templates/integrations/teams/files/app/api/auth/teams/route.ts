@@ -1,6 +1,3 @@
-/**
- * Teams OAuth Initiation
- */
 
 import { createOAuthInitHandler, memoryTokenStore, teamsConfig } from "veryfront/oauth";
 

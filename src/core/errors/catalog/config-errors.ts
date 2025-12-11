@@ -100,7 +100,7 @@ export default {
       "Ensure origin is a string, not an array",
     ],
     example: `security: {
-  cors: true  // or { origin: "https://example.com" }
+  cors: true
 }`,
   }),
 };

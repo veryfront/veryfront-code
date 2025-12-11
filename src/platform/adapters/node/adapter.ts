@@ -13,7 +13,6 @@ import { createNodeServer } from "./http-server.ts";
 export class NodeAdapter implements RuntimeAdapter {
   readonly id = "node" as const;
   readonly name = "node";
-  /** @deprecated Use `id` instead */
   readonly platform = "node" as const;
 
   fs = new NodeFileSystemAdapter();
@@ -21,8 +20,8 @@ export class NodeAdapter implements RuntimeAdapter {
   server = new NodeServerAdapter();
 
   readonly capabilities: RuntimeCapabilities = {
-    typescript: false, // Requires compilation
-    jsx: false, // Requires compilation
+    typescript: false,
+    jsx: false,
     http2: true,
     websocket: true,
     workers: true,
@@ -32,7 +31,6 @@ export class NodeAdapter implements RuntimeAdapter {
     writableFs: true,
   };
 
-  /** @deprecated Use `capabilities` instead */
   readonly features: RuntimeFeatures = {
     websocket: true,
     http2: true,

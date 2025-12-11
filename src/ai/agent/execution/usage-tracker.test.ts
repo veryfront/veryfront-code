@@ -1,8 +1,3 @@
-/**
- * Unit tests for UsageTracker
- *
- * Tests the token usage tracking functionality across multiple LLM provider calls.
- */
 
 import { assertEquals } from "std/assert/mod.ts";
 import { createUsageTracker, type ProviderUsage, UsageTracker } from "./usage-tracker.ts";
@@ -416,33 +411,26 @@ Deno.test("UsageTracker - multiple resets work correctly", () => {
 Deno.test("UsageTracker - complex workflow simulation", () => {
   const tracker = new UsageTracker();
 
-  // Initial state
   assertEquals(tracker.hasUsage(), false);
 
-  // First call with complete usage
   tracker.add({ promptTokens: 100, completionTokens: 50, totalTokens: 150 });
   assertEquals(tracker.hasUsage(), true);
   assertEquals(tracker.getTotal().callCount, 1);
 
-  // Second call with partial usage
   tracker.add({ promptTokens: 80, completionTokens: undefined, totalTokens: 80 });
   assertEquals(tracker.getTotal().callCount, 2);
 
-  // Undefined usage (no effect)
   tracker.add(undefined);
   assertEquals(tracker.getTotal().callCount, 2);
 
-  // Third call with complete usage
   tracker.add({ promptTokens: 120, completionTokens: 60, totalTokens: 180 });
 
-  // Verify totals
   const total = tracker.getTotal();
   assertEquals(total.promptTokens, 300);
   assertEquals(total.completionTokens, 110);
   assertEquals(total.totalTokens, 410);
   assertEquals(total.callCount, 3);
 
-  // Reset and verify
   tracker.reset();
   assertEquals(tracker.hasUsage(), false);
   assertEquals(tracker.getTotal().promptTokens, 0);

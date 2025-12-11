@@ -1,14 +1,6 @@
-/**
- * Common OAuth Providers
- *
- * Pre-configured OAuth service configurations for popular SaaS providers.
- */
 
 import type { OAuthServiceConfig } from "../types.ts";
 
-/**
- * GitHub OAuth configuration
- */
 export const githubConfig: OAuthServiceConfig = {
   providerId: "github",
   serviceId: "github",
@@ -22,9 +14,6 @@ export const githubConfig: OAuthServiceConfig = {
   additionalAuthParams: {},
 };
 
-/**
- * Slack OAuth configuration
- */
 export const slackConfig: OAuthServiceConfig = {
   providerId: "slack",
   serviceId: "slack",
@@ -38,9 +27,6 @@ export const slackConfig: OAuthServiceConfig = {
   additionalAuthParams: {},
 };
 
-/**
- * Notion OAuth configuration
- */
 export const notionConfig: OAuthServiceConfig = {
   providerId: "notion",
   serviceId: "notion",
@@ -57,9 +43,6 @@ export const notionConfig: OAuthServiceConfig = {
   },
 };
 
-/**
- * Figma OAuth configuration
- */
 export const figmaConfig: OAuthServiceConfig = {
   providerId: "figma",
   serviceId: "figma",
@@ -73,9 +56,6 @@ export const figmaConfig: OAuthServiceConfig = {
   additionalAuthParams: {},
 };
 
-/**
- * Discord OAuth configuration
- */
 export const discordConfig: OAuthServiceConfig = {
   providerId: "discord",
   serviceId: "discord",
@@ -89,9 +69,6 @@ export const discordConfig: OAuthServiceConfig = {
   additionalAuthParams: {},
 };
 
-/**
- * Linear OAuth configuration
- */
 export const linearConfig: OAuthServiceConfig = {
   providerId: "linear",
   serviceId: "linear",
@@ -105,9 +82,6 @@ export const linearConfig: OAuthServiceConfig = {
   additionalAuthParams: {},
 };
 
-/**
- * GitLab OAuth configuration
- */
 export const gitlabConfig: OAuthServiceConfig = {
   providerId: "gitlab",
   serviceId: "gitlab",
@@ -121,9 +95,6 @@ export const gitlabConfig: OAuthServiceConfig = {
   additionalAuthParams: {},
 };
 
-/**
- * Airtable OAuth configuration
- */
 export const airtableConfig: OAuthServiceConfig = {
   providerId: "airtable",
   serviceId: "airtable",
@@ -138,9 +109,6 @@ export const airtableConfig: OAuthServiceConfig = {
   additionalAuthParams: {},
 };
 
-/**
- * Dropbox OAuth configuration
- */
 export const dropboxConfig: OAuthServiceConfig = {
   providerId: "dropbox",
   serviceId: "dropbox",
@@ -156,9 +124,6 @@ export const dropboxConfig: OAuthServiceConfig = {
   },
 };
 
-/**
- * HubSpot OAuth configuration
- */
 export const hubspotConfig: OAuthServiceConfig = {
   providerId: "hubspot",
   serviceId: "hubspot",
@@ -172,9 +137,6 @@ export const hubspotConfig: OAuthServiceConfig = {
   additionalAuthParams: {},
 };
 
-/**
- * Salesforce OAuth configuration
- */
 export const salesforceConfig: OAuthServiceConfig = {
   providerId: "salesforce",
   serviceId: "salesforce",
@@ -188,9 +150,6 @@ export const salesforceConfig: OAuthServiceConfig = {
   additionalAuthParams: {},
 };
 
-/**
- * Twitter/X OAuth configuration
- */
 export const twitterConfig: OAuthServiceConfig = {
   providerId: "twitter",
   serviceId: "twitter",
@@ -205,9 +164,6 @@ export const twitterConfig: OAuthServiceConfig = {
   additionalAuthParams: {},
 };
 
-/**
- * Asana OAuth configuration
- */
 export const asanaConfig: OAuthServiceConfig = {
   providerId: "asana",
   serviceId: "asana",
@@ -221,9 +177,6 @@ export const asanaConfig: OAuthServiceConfig = {
   additionalAuthParams: {},
 };
 
-/**
- * Monday.com OAuth configuration
- */
 export const mondayConfig: OAuthServiceConfig = {
   providerId: "monday",
   serviceId: "monday",
@@ -237,9 +190,6 @@ export const mondayConfig: OAuthServiceConfig = {
   additionalAuthParams: {},
 };
 
-/**
- * Zoom OAuth configuration
- */
 export const zoomConfig: OAuthServiceConfig = {
   providerId: "zoom",
   serviceId: "zoom",
@@ -254,9 +204,6 @@ export const zoomConfig: OAuthServiceConfig = {
   additionalAuthParams: {},
 };
 
-/**
- * Intercom OAuth configuration
- */
 export const intercomConfig: OAuthServiceConfig = {
   providerId: "intercom",
   serviceId: "intercom",
@@ -270,9 +217,6 @@ export const intercomConfig: OAuthServiceConfig = {
   additionalAuthParams: {},
 };
 
-/**
- * Freshdesk OAuth configuration
- */
 export const freshdeskConfig: OAuthServiceConfig = {
   providerId: "freshdesk",
   serviceId: "freshdesk",
@@ -286,9 +230,6 @@ export const freshdeskConfig: OAuthServiceConfig = {
   additionalAuthParams: {},
 };
 
-/**
- * Mailchimp OAuth configuration
- */
 export const mailchimpConfig: OAuthServiceConfig = {
   providerId: "mailchimp",
   serviceId: "mailchimp",
@@ -302,9 +243,6 @@ export const mailchimpConfig: OAuthServiceConfig = {
   additionalAuthParams: {},
 };
 
-/**
- * Shopify OAuth configuration
- */
 export const shopifyConfig: OAuthServiceConfig = {
   providerId: "shopify",
   serviceId: "shopify",
@@ -318,9 +256,6 @@ export const shopifyConfig: OAuthServiceConfig = {
   additionalAuthParams: {},
 };
 
-/**
- * QuickBooks OAuth configuration
- */
 export const quickbooksConfig: OAuthServiceConfig = {
   providerId: "quickbooks",
   serviceId: "quickbooks",
@@ -334,9 +269,6 @@ export const quickbooksConfig: OAuthServiceConfig = {
   additionalAuthParams: {},
 };
 
-/**
- * Xero OAuth configuration
- */
 export const xeroConfig: OAuthServiceConfig = {
   providerId: "xero",
   serviceId: "xero",
@@ -350,9 +282,6 @@ export const xeroConfig: OAuthServiceConfig = {
   additionalAuthParams: {},
 };
 
-/**
- * Box OAuth configuration
- */
 export const boxConfig: OAuthServiceConfig = {
   providerId: "box",
   serviceId: "box",
@@ -366,9 +295,6 @@ export const boxConfig: OAuthServiceConfig = {
   additionalAuthParams: {},
 };
 
-/**
- * Webex OAuth configuration
- */
 export const webexConfig: OAuthServiceConfig = {
   providerId: "webex",
   serviceId: "webex",
@@ -382,9 +308,6 @@ export const webexConfig: OAuthServiceConfig = {
   additionalAuthParams: {},
 };
 
-/**
- * Trello OAuth configuration
- */
 export const trelloConfig: OAuthServiceConfig = {
   providerId: "trello",
   serviceId: "trello",
@@ -400,9 +323,6 @@ export const trelloConfig: OAuthServiceConfig = {
   },
 };
 
-/**
- * Clickup OAuth configuration
- */
 export const clickupConfig: OAuthServiceConfig = {
   providerId: "clickup",
   serviceId: "clickup",
@@ -416,9 +336,6 @@ export const clickupConfig: OAuthServiceConfig = {
   additionalAuthParams: {},
 };
 
-/**
- * Pipedrive OAuth configuration
- */
 export const pipedriveConfig: OAuthServiceConfig = {
   providerId: "pipedrive",
   serviceId: "pipedrive",
@@ -432,9 +349,6 @@ export const pipedriveConfig: OAuthServiceConfig = {
   additionalAuthParams: {},
 };
 
-/**
- * Export grouped services for convenience
- */
 export const commonServices = {
   github: githubConfig,
   slack: slackConfig,

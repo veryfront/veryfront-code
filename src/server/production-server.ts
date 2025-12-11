@@ -29,7 +29,6 @@ export async function startUniversalServer(
   const { projectDir, port, hostname = "0.0.0.0", signal, debug, mode = "production" } = options;
   const baseAdapter = options.adapter ?? (await getAdapter());
 
-  // Bootstrap framework to initialize FSAdapter if configured
   const bootstrap = await bootstrapProd(projectDir, baseAdapter);
   const adapter = bootstrap.adapter;
 
@@ -62,7 +61,6 @@ export async function startUniversalServer(
         onListenResolve?.();
         logger.info("Universal server listening", params);
       } catch {
-        /* ignore */
       }
     },
   });
@@ -71,7 +69,6 @@ export async function startUniversalServer(
     try {
       await server.stop();
     } catch {
-      /* ignore */
     }
   };
 
@@ -98,11 +95,10 @@ if (import.meta.main) {
       port,
       hostname,
       debug: isDebugEnabled(adapter.env),
-      adapter, // Pass adapter to avoid re-detection
+      adapter,
       signal: shutdownController.signal,
     });
 
-    // Graceful shutdown for direct CLI execution (e.g., deno run)
     let shuttingDown = false;
     const shutdown = async (signal: "SIGINT" | "SIGTERM") => {
       if (shuttingDown) return;

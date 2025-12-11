@@ -1,7 +1,5 @@
 import { setApiKey } from "../../../../lib/token-store.ts";
 
-// Simple API key validation endpoint
-// In production, you may want to validate the key against Stripe API
 export async function POST(request: Request) {
   try {
     const body = await request.json();
@@ -14,7 +12,6 @@ export async function POST(request: Request) {
       );
     }
 
-    // Validate that it looks like a Stripe key
     if (!apiKey.startsWith("sk_test_") && !apiKey.startsWith("sk_live_")) {
       return Response.json(
         { error: "Invalid Stripe API key format. Key should start with sk_test_ or sk_live_" },
@@ -22,7 +19,6 @@ export async function POST(request: Request) {
       );
     }
 
-    // Optionally validate the key by making a test API call
     try {
       const response = await fetch("https://api.stripe.com/v1/balance", {
         headers: {
@@ -45,7 +41,6 @@ export async function POST(request: Request) {
       );
     }
 
-    // Store the API key
     setApiKey(apiKey);
 
     return Response.json({
@@ -60,7 +55,6 @@ export async function POST(request: Request) {
   }
 }
 
-// Get authentication status
 export function GET() {
   const apiKey = process.env.STRIPE_SECRET_KEY;
 

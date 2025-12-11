@@ -59,8 +59,6 @@ export function runInWorker<T = unknown>(code: string, options: SandboxOptions =
     `  self.postMessage({ result });` +
     `};`;
 
-  // Use data URL for compiled binaries (blob URLs don't work in deno compile)
-  // See: https://github.com/denoland/deno/issues/18327
   const workerUrl = isCompiledBinary()
     ? `data:text/javascript;base64,${btoa(workerCode)}`
     : URL.createObjectURL(

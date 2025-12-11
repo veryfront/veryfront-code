@@ -1,7 +1,3 @@
-/**
- * API Server Module
- * Handles API routes and data endpoints
- */
 
 import { serverLogger as logger } from "@veryfront/utils";
 
@@ -23,7 +19,6 @@ export class APIServer {
   constructor(private options: APIServerOptions) {}
 
   async handleRequest(pathname: string): Promise<Response | null> {
-    // Handle page data API (for client-side navigation)
     if (pathname.startsWith("/_veryfront/data/")) {
       const slug = pathname.replace("/_veryfront/data/", "").replace(".json", "");
 
@@ -59,9 +54,7 @@ export class APIServer {
       }
     }
 
-    // Handle user-defined API routes
     if (pathname.startsWith("/api/")) {
-      // Pages Router API routes are handled in the main server via APIRouteHandler
       return null;
     }
 

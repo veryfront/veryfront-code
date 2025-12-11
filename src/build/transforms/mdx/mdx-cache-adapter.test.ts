@@ -16,7 +16,7 @@ describe("MDXCacheAdapter", () => {
       bundleManifest: {
         enabled: true,
         type: "memory",
-        ttl: 60000, // 1 minute for testing
+        ttl: 60000,
       },
     },
   };
@@ -42,7 +42,7 @@ describe("MDXCacheAdapter", () => {
       const hash2 = await adapter.computeHash(content);
 
       expect(hash1).toBe(hash2);
-      expect(hash1).toMatch(/^[a-f0-9]{64}$/); // SHA-256 hex string
+      expect(hash1).toMatch(/^[a-f0-9]{64}$/);
     });
 
     it("should compute different hash for different content", async () => {
@@ -130,7 +130,7 @@ describe("MDXCacheAdapter", () => {
 
     it("should not cache bundle without compiled code", async () => {
       const incompleteBundle = {
-        compiledCode: "", // Empty compiled code
+        compiledCode: "",
         frontmatter: {},
         headings: [],
         nodeMap: new Map(),
@@ -150,7 +150,7 @@ describe("MDXCacheAdapter", () => {
           bundleManifest: {
             enabled: true,
             type: "memory",
-            ttl: 100, // 100ms for testing
+            ttl: 100,
           },
         },
       };

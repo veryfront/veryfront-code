@@ -1,7 +1,3 @@
-/**
- * Unit Tests for State Bridge
- * Tests client-server state synchronization and persistence
- */
 
 import { assertEquals, assertExists } from "std/assert/mod.ts";
 import { afterEach, beforeEach, describe, it } from "std/testing/bdd.ts";
@@ -13,7 +9,6 @@ import {
   useBridgedState,
 } from "./state-bridge.ts";
 
-// Mock sessionStorage
 class MockSessionStorage {
   private storage: Map<string, string> = new Map();
 
@@ -34,13 +29,11 @@ class MockSessionStorage {
   }
 }
 
-// Mock React hooks
 class MockReactHooks {
   private states: Map<string, { value: unknown; setter: Dispatch<SetStateAction<unknown>> }> =
     new Map();
   private effects: Array<EffectCallback> = [];
 
-  // Bind methods in constructor to preserve 'this' context
   constructor() {
     this.useState = this.useState.bind(this);
     this.useEffect = this.useEffect.bind(this);
@@ -102,8 +95,6 @@ describe("State Bridge", () => {
   let mockReact: MockReactHooks;
 
   beforeEach(() => {
-    // Reset the singleton BEFORE setting up mocks
-    // This ensures the bridge is recreated with the mocked sessionStorage
     __resetBridgeForTesting();
 
     mockSessionStorage = new MockSessionStorage();
@@ -117,7 +108,6 @@ describe("State Bridge", () => {
     mockReact = new MockReactHooks();
     (globalThis as any).React = mockReact;
 
-    // Now get the bridge - it will be created with mocked sessionStorage
     const bridge = getStateBridge();
     bridge.clear();
   });
@@ -129,7 +119,6 @@ describe("State Bridge", () => {
       writable: true,
     });
     mockReact.reset();
-    // Reset singleton for next test
     __resetBridgeForTesting();
   });
 
@@ -241,7 +230,7 @@ describe("State Bridge", () => {
       });
 
       unsubscribe();
-      unsubscribe(); // Should not throw
+      unsubscribe();
 
       bridge.set("key", "value1");
 
@@ -319,24 +308,17 @@ describe("State Bridge", () => {
     it("should restore state from sessionStorage", () => {
       mockSessionStorage.setItem("veryfront-state", JSON.stringify({ key: "value" }));
 
-      // Create new bridge instance to trigger restore
-      // Since we have a singleton, we need to clear and recreate
       const bridge = getStateBridge();
       bridge.clear();
 
-      // Manually trigger restore by creating a new StateBridge (simulated)
-      // In real scenario, this would happen on page load
-      assertEquals(bridge.get("key"), undefined); // Current instance is cleared
+      assertEquals(bridge.get("key"), undefined);
 
-      // Test by setting up persistence scenario
       mockSessionStorage.setItem("veryfront-state", JSON.stringify({ restored: "data" }));
-      // The actual restore happens in constructor, so we test indirectly
     });
 
     it("should handle invalid JSON in sessionStorage", () => {
       mockSessionStorage.setItem("veryfront-state", "invalid json");
 
-      // Should not throw, should silently ignore
       const bridge = getStateBridge();
       assertEquals(bridge.get("any-key"), undefined);
     });
@@ -423,11 +405,9 @@ describe("State Bridge", () => {
 
       const cleanups = mockReact.runEffects();
 
-      // Should have registered subscription
       assertEquals(cleanups.length, 1);
       assertEquals(typeof cleanups[0], "function");
 
-      // Cleanup
       cleanups.forEach((cleanup) => cleanup());
     });
 
@@ -466,7 +446,6 @@ describe("State Bridge", () => {
       bridge.set("key", "value");
       bridge.persist("key");
 
-      // Should not throw
       assertEquals(bridge.get("key"), "value");
     });
 
@@ -475,7 +454,6 @@ describe("State Bridge", () => {
 
       const [value, setValue] = useBridgedState("key", "initial", undefined, mockReact);
 
-      // Should use fallback hooks
       assertEquals(value, "initial");
       assertExists(setValue);
     });
@@ -501,12 +479,9 @@ describe("State Bridge", () => {
       const obj: any = { key: "value" };
       obj.self = obj;
 
-      // Should store reference
       bridge.set("circular", obj);
       assertEquals(bridge.get("circular"), obj);
 
-      // Persistence might fail due to JSON.stringify
-      // but should not crash the app
     });
   });
 
@@ -516,7 +491,6 @@ describe("State Bridge", () => {
       bridge.set("key1", "value1");
       bridge.persist("key1");
 
-      // Simulate beforeunload
       const event = new Event("beforeunload");
       globalThis.dispatchEvent(event);
 
@@ -538,8 +512,6 @@ describe("State Bridge", () => {
 
       callbacks.forEach((cb) => cb());
 
-      // All listeners should be cleaned up
-      // We can't directly test Map size, but we can verify behavior
       const updates: string[] = [];
       bridge.subscribe("key0", (value) => updates.push(value as string));
       bridge.set("key0", "test");

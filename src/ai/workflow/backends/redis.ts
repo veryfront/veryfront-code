@@ -1,9 +1,3 @@
-/**
- * Redis Workflow Backend
- *
- * Production-grade Redis implementation of WorkflowBackend.
- * Uses Redis hashes for state storage and Redis Streams for job queuing.
- */
 
 import type {
   ApprovalDecision,
@@ -18,29 +12,17 @@ import type { BackendConfig, WorkflowBackend } from "./types.ts";
 import { agentLogger as logger } from "@veryfront/utils";
 import { isDeno } from "@veryfront/platform/compat/runtime.ts";
 
-// Lazy-loaded Redis client modules (loaded only when Redis backend is used)
-// @ts-ignore - Deno global
 let DenoRedis: any = null;
 let NodeRedis: any = null;
 
-/**
- * Lazily load the Redis module for the current runtime.
- * This ensures the redis package is only required when the Redis backend is actually used.
- *
- * NOTE: We construct module names dynamically to prevent Deno's static analyzer
- * from pre-fetching these optional dependencies during lint/check tasks.
- */
 async function getRedisModule(): Promise<{ DenoRedis: any; NodeRedis: any }> {
-  // Return cached modules if already loaded
   if (DenoRedis || NodeRedis) {
     return { DenoRedis, NodeRedis };
   }
 
   if (isDeno) {
     try {
-      // Construct URL dynamically to prevent static analysis from pre-fetching
       const denoRedisUrl = ["https://deno.land/x/redis", "@v0.32.1/mod.ts"].join("");
-      // @ts-ignore - Deno global
       DenoRedis = await import(denoRedisUrl);
     } catch (error) {
       throw new Error(
@@ -51,8 +33,6 @@ async function getRedisModule(): Promise<{ DenoRedis: any; NodeRedis: any }> {
     }
   } else {
     try {
-      // Construct module name dynamically to prevent Deno static analyzer
-      // from trying to resolve this npm package during lint/check
       const redisModuleName = ["re", "dis"].join("");
       NodeRedis = await import(redisModuleName);
     } catch (error) {
@@ -66,30 +46,22 @@ async function getRedisModule(): Promise<{ DenoRedis: any; NodeRedis: any }> {
   return { DenoRedis, NodeRedis };
 }
 
-/**
- * Standardized Redis Adapter Interface
- * Normalizes differences between Deno and Node Redis clients
- */
 export interface RedisAdapter {
-  // Hash operations
   hset(key: string, fields: Record<string, string>): Promise<number | string>;
   hgetall(key: string): Promise<Record<string, string>>;
   hdel(key: string, ...fields: string[]): Promise<number>;
   del(...keys: string[]): Promise<number>;
 
-  // Set operations (for indexing)
   sadd(key: string, ...members: string[]): Promise<number>;
   srem(key: string, ...members: string[]): Promise<number>;
   smembers(key: string): Promise<string[]>;
 
-  // List operations (for checkpoints)
   rpush(key: string, ...values: string[]): Promise<number>;
   lrange(key: string, start: number, stop: number): Promise<string[]>;
   lindex(key: string, index: number): Promise<string | null>;
   lset(key: string, index: number, value: string): Promise<string | "OK">;
   llen(key: string): Promise<number>;
 
-  // Stream operations
   xadd(key: string, id: string, fields: Record<string, string>): Promise<string>;
   xgroupCreate(key: string, group: string, id: string, mkstream?: boolean): Promise<string>;
   xreadgroup(
@@ -98,12 +70,10 @@ export interface RedisAdapter {
   ): Promise<Array<{ key: string; messages: Array<{ id: string; data: Record<string, string> }> }>>;
   xack(key: string, group: string, ...ids: string[]): Promise<number>;
 
-  // Key operations
   keys(pattern: string): Promise<string[]>;
   exists(...keys: string[]): Promise<number>;
   expire(key: string, seconds: number): Promise<number>;
 
-  // Lock operations (using SET with NX and PX)
   set(
     key: string,
     value: string,
@@ -111,12 +81,10 @@ export interface RedisAdapter {
   ): Promise<string | null>;
   get(key: string): Promise<string | null>;
 
-  // Connection
   quit(): Promise<void>;
   disconnect(): Promise<void>;
 }
 
-// Helper to convert array [k1, v1, k2, v2] to object
 function arrayToObject(arr: string[]): Record<string, string> {
   const obj: Record<string, string> = {};
   for (let i = 0; i < arr.length; i += 2) {
@@ -129,9 +97,6 @@ function arrayToObject(arr: string[]): Record<string, string> {
   return obj;
 }
 
-/**
- * Adapter for Node.js 'redis' package
- */
 class NodeRedisAdapter implements RedisAdapter {
   constructor(private client: any) {}
 
@@ -197,10 +162,6 @@ class NodeRedisAdapter implements RedisAdapter {
   ): Promise<
     Array<{ key: string; messages: Array<{ id: string; data: Record<string, string> }> }>
   > {
-    // Node redis format: { key: string, messages: Array<{ id: string, message: Record<string, string> }> }
-    // OR if single stream: Array<{ id: string, message: Record<string, string> }> ??
-    // The node-redis v4 API is slightly different.
-    // Assuming commandOptions style:
     const result = await this.client.xReadGroup(
       options.group,
       options.consumer,
@@ -213,8 +174,6 @@ class NodeRedisAdapter implements RedisAdapter {
 
     if (!result) return [];
 
-    // Normalize output
-    // node-redis v4 returns: Array<{ name: string, messages: Array<{ id: string, message: Record<string, string> }> }>
     return (result as any[]).map((stream: any) => ({
       key: stream.name,
       messages: stream.messages.map((msg: any) => ({
@@ -265,9 +224,6 @@ class NodeRedisAdapter implements RedisAdapter {
   }
 }
 
-/**
- * Adapter for Deno 'redis' module
- */
 class DenoRedisAdapter implements RedisAdapter {
   constructor(private client: any) {}
 
@@ -277,7 +233,6 @@ class DenoRedisAdapter implements RedisAdapter {
 
   async hgetall(key: string): Promise<Record<string, string>> {
     const res = await this.client.hgetall(key);
-    // Deno redis returns array [k1, v1, k2, v2]
     return arrayToObject(res);
   }
 
@@ -337,7 +292,6 @@ class DenoRedisAdapter implements RedisAdapter {
   > {
     if (streams.length === 0) return [];
 
-    // Deno redis returns: Array<{ key: string, messages: Array<{ id: string, fieldValues: string[] }> }>
     const res = await this.client.xreadgroup(
       streams.map((s) => ({ key: s.key, xid: s.xid })),
       options,
@@ -383,7 +337,7 @@ class DenoRedisAdapter implements RedisAdapter {
   }
 
   async quit(): Promise<void> {
-    await this.client.close(); // Deno redis uses close
+    await this.client.close();
   }
 
   async disconnect(): Promise<void> {
@@ -391,35 +345,19 @@ class DenoRedisAdapter implements RedisAdapter {
   }
 }
 
-/**
- * Redis backend configuration
- */
 export interface RedisBackendConfig extends BackendConfig {
-  /** Redis connection URL or config */
   url?: string;
-  /** Redis hostname */
   hostname?: string;
-  /** Redis port */
   port?: number;
-  /** Key prefix for namespacing */
   prefix?: string;
-  /** Stream name for job queue */
   streamKey?: string;
-  /** Consumer group name */
   groupName?: string;
-  /** Consumer name (unique per worker) */
   consumerName?: string;
-  /** Default TTL for runs (in seconds) */
   runTtl?: number;
-  /** Enable debug logging */
   debug?: boolean;
-  /** Existing Redis client (optional) */
   client?: RedisAdapter;
 }
 
-/**
- * Redis Workflow Backend
- */
 export class RedisBackend implements WorkflowBackend {
   private client: RedisAdapter | null = null;
   private connectionPromise: Promise<RedisAdapter> | null = null;
@@ -440,15 +378,11 @@ export class RedisBackend implements WorkflowBackend {
       ...config,
     };
 
-    // Use provided client if available
     if (config.client) {
       this.client = config.client;
     }
   }
 
-  // =========================================================================
-  // Key Generation
-  // =========================================================================
 
   private runKey(runId: string): string {
     return `${this.config.prefix}run:${runId}`;
@@ -474,9 +408,6 @@ export class RedisBackend implements WorkflowBackend {
     return `${this.config.prefix}lock:${runId}`;
   }
 
-  // =========================================================================
-  // Serialization
-  // =========================================================================
 
   private serializeRun(run: WorkflowRun): Record<string, string> {
     return {
@@ -497,7 +428,6 @@ export class RedisBackend implements WorkflowBackend {
   }
 
   private deserializeRun(data: Record<string, string>): WorkflowRun {
-    // Validate required fields
     if (!data.id) {
       throw new Error("Invalid workflow run data: missing 'id' field");
     }
@@ -505,7 +435,6 @@ export class RedisBackend implements WorkflowBackend {
       throw new Error(`Invalid workflow run data for run "${data.id}": missing 'workflowId' field`);
     }
 
-    // Validate status is a known value
     const validStatuses: WorkflowStatus[] = [
       "pending",
       "running",
@@ -522,7 +451,6 @@ export class RedisBackend implements WorkflowBackend {
       );
     }
 
-    // Safely parse JSON fields with error context
     const safeJsonParse = <T>(field: string, value: string | undefined, defaultValue: T): T => {
       if (!value) return defaultValue;
       try {
@@ -545,8 +473,8 @@ export class RedisBackend implements WorkflowBackend {
       nodeStates: safeJsonParse("nodeStates", data.nodeStates, {}),
       currentNodes: safeJsonParse("currentNodes", data.currentNodes, []),
       context: safeJsonParse("context", data.context, { input: undefined }),
-      checkpoints: [], // Loaded separately
-      pendingApprovals: [], // Loaded separately
+      checkpoints: [],
+      pendingApprovals: [],
       error: safeJsonParse("error", data.error, undefined),
       createdAt: data.createdAt ? new Date(data.createdAt) : new Date(),
       startedAt: data.startedAt ? new Date(data.startedAt) : undefined,
@@ -554,18 +482,12 @@ export class RedisBackend implements WorkflowBackend {
     };
   }
 
-  // =========================================================================
-  // Connection Management
-  // =========================================================================
 
   private ensureClient(): Promise<RedisAdapter> {
-    // Return existing client if available
     if (this.client) {
       return Promise.resolve(this.client);
     }
 
-    // Use existing connection promise to prevent race conditions
-    // Multiple concurrent calls will share the same connection promise
     if (!this.connectionPromise) {
       this.connectionPromise = this.createConnection();
     }
@@ -573,11 +495,7 @@ export class RedisBackend implements WorkflowBackend {
     return this.connectionPromise;
   }
 
-  /**
-   * Create a new Redis connection
-   */
   private async createConnection(): Promise<RedisAdapter> {
-    // Lazily load the Redis module for the current runtime
     const { DenoRedis: denoRedis, NodeRedis: nodeRedis } = await getRedisModule();
 
     if (nodeRedis) {
@@ -607,7 +525,6 @@ export class RedisBackend implements WorkflowBackend {
       logger.debug(`[RedisBackend] Connecting to ${hostname}:${port}`);
     }
 
-    // Ensure client is not null for TS
     return this.client!;
   }
 
@@ -616,7 +533,6 @@ export class RedisBackend implements WorkflowBackend {
 
     const client = await this.ensureClient();
 
-    // Create consumer group for stream
     try {
       await client.xgroupCreate(
         this.config.streamKey,
@@ -637,9 +553,6 @@ export class RedisBackend implements WorkflowBackend {
     this.initialized = true;
   }
 
-  // =========================================================================
-  // Run Management
-  // =========================================================================
 
   async createRun(run: WorkflowRun): Promise<void> {
     const client = await this.ensureClient();
@@ -648,14 +561,11 @@ export class RedisBackend implements WorkflowBackend {
       logger.debug(`[RedisBackend] Creating run: ${run.id}`);
     }
 
-    // Store run in hash
     await client.hset(this.runKey(run.id), this.serializeRun(run));
 
-    // Add to indexes
     await client.sadd(this.statusIndexKey(run.status), run.id);
     await client.sadd(this.workflowIndexKey(run.workflowId), run.id);
 
-    // Set TTL if configured
     if (this.config.runTtl) {
       await client.expire(this.runKey(run.id), this.config.runTtl);
     }
@@ -671,7 +581,6 @@ export class RedisBackend implements WorkflowBackend {
 
     const run = this.deserializeRun(data);
 
-    // Load approvals
     run.pendingApprovals = await this.getPendingApprovals(runId);
 
     return run;
@@ -684,11 +593,9 @@ export class RedisBackend implements WorkflowBackend {
       logger.debug(`[RedisBackend] Updating run: ${runId}`);
     }
 
-    // Get current status for index update
     const currentRun = await this.getRun(runId);
     const oldStatus = currentRun?.status;
 
-    // Build fields to update
     const fields: Record<string, string> = {};
 
     if (patch.status !== undefined) fields.status = patch.status;
@@ -704,7 +611,6 @@ export class RedisBackend implements WorkflowBackend {
       await client.hset(this.runKey(runId), fields);
     }
 
-    // Update status index
     if (patch.status && oldStatus && patch.status !== oldStatus) {
       await client.srem(this.statusIndexKey(oldStatus), runId);
       await client.sadd(this.statusIndexKey(patch.status), runId);
@@ -714,18 +620,15 @@ export class RedisBackend implements WorkflowBackend {
   async deleteRun(runId: string): Promise<void> {
     const client = await this.ensureClient();
 
-    // Get run for index cleanup
     const run = await this.getRun(runId);
     if (!run) return;
 
-    // Delete run data
     await client.del(
       this.runKey(runId),
       this.checkpointsKey(runId),
       this.approvalsKey(runId),
     );
 
-    // Remove from indexes
     await client.srem(this.statusIndexKey(run.status), runId);
     await client.srem(this.workflowIndexKey(run.workflowId), runId);
   }
@@ -734,7 +637,6 @@ export class RedisBackend implements WorkflowBackend {
     const client = await this.ensureClient();
     let runIds: string[] = [];
 
-    // Get run IDs from indexes
     if (filter.workflowId) {
       runIds = await client.smembers(this.workflowIndexKey(filter.workflowId));
     } else if (filter.status) {
@@ -743,21 +645,17 @@ export class RedisBackend implements WorkflowBackend {
         const ids = await client.smembers(this.statusIndexKey(status));
         runIds.push(...ids);
       }
-      // Deduplicate
       runIds = [...new Set(runIds)];
     } else {
-      // Get all runs (expensive - should use cursor in production)
       const keys = await client.keys(`${this.config.prefix}run:*`);
       runIds = keys.map((k) => k.replace(`${this.config.prefix}run:`, ""));
     }
 
-    // Load runs
     const runs: WorkflowRun[] = [];
     for (const runId of runIds) {
       const run = await this.getRun(runId);
       if (!run) continue;
 
-      // Apply filters
       if (filter.status) {
         const statuses = Array.isArray(filter.status) ? filter.status : [filter.status];
         if (!statuses.includes(run.status)) continue;
@@ -769,10 +667,8 @@ export class RedisBackend implements WorkflowBackend {
       runs.push(run);
     }
 
-    // Sort by creation date (newest first)
     runs.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
 
-    // Apply pagination
     let result = runs;
     if (filter.offset) {
       result = result.slice(filter.offset);
@@ -789,9 +685,6 @@ export class RedisBackend implements WorkflowBackend {
     return runs.length;
   }
 
-  // =========================================================================
-  // Checkpointing
-  // =========================================================================
 
   async saveCheckpoint(runId: string, checkpoint: Checkpoint): Promise<void> {
     const client = await this.ensureClient();
@@ -811,7 +704,6 @@ export class RedisBackend implements WorkflowBackend {
   async getLatestCheckpoint(runId: string): Promise<Checkpoint | null> {
     const client = await this.ensureClient();
 
-    // Get last element
     const raw = await client.lindex(this.checkpointsKey(runId), -1);
     if (!raw) return null;
 
@@ -836,9 +728,6 @@ export class RedisBackend implements WorkflowBackend {
     });
   }
 
-  // =========================================================================
-  // Approvals
-  // =========================================================================
 
   async savePendingApproval(runId: string, approval: PendingApproval): Promise<void> {
     const client = await this.ensureClient();
@@ -888,10 +777,8 @@ export class RedisBackend implements WorkflowBackend {
     const client = await this.ensureClient();
     const key = this.approvalsKey(runId);
 
-    // Get all approvals to find the index
     const rawList = await client.lrange(key, 0, -1);
 
-    // Find the index of the approval to update
     let targetIndex = -1;
     for (let i = 0; i < rawList.length; i++) {
       const data = JSON.parse(rawList[i]!);
@@ -905,15 +792,12 @@ export class RedisBackend implements WorkflowBackend {
       throw new Error(`Approval not found: ${approvalId}`);
     }
 
-    // Parse and update the approval data
     const data = JSON.parse(rawList[targetIndex]!);
     data.status = decision.approved ? "approved" : "rejected";
     data.decidedBy = decision.approver;
     data.decidedAt = new Date().toISOString();
     data.comment = decision.comment;
 
-    // Use LSET to atomically update the specific index
-    // This is more atomic than del + rpush as it only modifies one element
     await client.lset(key, targetIndex, JSON.stringify(data));
   }
 
@@ -925,13 +809,11 @@ export class RedisBackend implements WorkflowBackend {
     const client = await this.ensureClient();
     const result: Array<{ runId: string; approval: PendingApproval }> = [];
 
-    // Get all approval keys
     const keys = await client.keys(`${this.config.prefix}approvals:*`);
 
     for (const key of keys) {
       const runId = key.replace(`${this.config.prefix}approvals:`, "");
 
-      // Check workflow filter
       if (filter?.workflowId) {
         const run = await this.getRun(runId);
         if (!run || run.workflowId !== filter.workflowId) continue;
@@ -948,14 +830,12 @@ export class RedisBackend implements WorkflowBackend {
           decidedAt: data.decidedAt ? new Date(data.decidedAt) : undefined,
         };
 
-        // Check status filter
         if (filter?.status === "pending" && approval.status !== "pending") continue;
         if (filter?.status === "expired") {
           const isExpired = approval.expiresAt && new Date() > approval.expiresAt;
           if (!isExpired) continue;
         }
 
-        // Check approver filter
         if (
           filter?.approver && approval.approvers && !approval.approvers.includes(filter.approver)
         ) {
@@ -969,9 +849,6 @@ export class RedisBackend implements WorkflowBackend {
     return result;
   }
 
-  // =========================================================================
-  // Queue Operations
-  // =========================================================================
 
   async enqueue(job: WorkflowJob): Promise<void> {
     const client = await this.ensureClient();
@@ -997,7 +874,7 @@ export class RedisBackend implements WorkflowBackend {
       {
         group: this.config.groupName,
         consumer: this.config.consumerName,
-        block: 5000, // 5 second timeout
+        block: 5000,
         count: 1,
       },
     );
@@ -1006,7 +883,6 @@ export class RedisBackend implements WorkflowBackend {
       return null;
     }
 
-    // Now streams is strongly typed due to Adapter
     const stream = streams[0];
     if (!stream || !stream.messages || stream.messages.length === 0) {
       return null;
@@ -1030,7 +906,6 @@ export class RedisBackend implements WorkflowBackend {
 
   acknowledge(runId: string): Promise<void> {
     // Note: In a full implementation, we'd need to track the message ID
-    // For now, this is a placeholder
     if (this.config.debug) {
       logger.debug(`[RedisBackend] Acknowledged: ${runId}`);
     }
@@ -1038,7 +913,6 @@ export class RedisBackend implements WorkflowBackend {
   }
 
   async nack(runId: string): Promise<void> {
-    // Re-enqueue the job
     const run = await this.getRun(runId);
     if (run) {
       await this.enqueue({
@@ -1050,9 +924,6 @@ export class RedisBackend implements WorkflowBackend {
     }
   }
 
-  // =========================================================================
-  // Distributed Locking
-  // =========================================================================
 
   async acquireLock(runId: string, duration: number): Promise<boolean> {
     const client = await this.ensureClient();
@@ -1087,9 +958,6 @@ export class RedisBackend implements WorkflowBackend {
     return exists > 0;
   }
 
-  // =========================================================================
-  // Lifecycle
-  // =========================================================================
 
   async healthCheck(): Promise<boolean> {
     try {

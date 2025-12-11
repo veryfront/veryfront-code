@@ -1,10 +1,3 @@
-/**
- * Layer 1: Headless Hooks
- *
- * React hooks for AI interactions with zero UI opinions.
- *
- * @module veryfront/ai/react
- */
 
 export { useChat } from "./use-chat.ts";
 export type {

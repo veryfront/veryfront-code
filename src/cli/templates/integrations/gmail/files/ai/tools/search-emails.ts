@@ -21,7 +21,6 @@ export default tool({
       .describe("Maximum number of results to return"),
   }),
   execute: async ({ query, maxResults }, context) => {
-    // Default to "current-user" for development; in production, always pass userId from session
     const userId = (context?.userId as string | undefined) || "current-user";
 
     try {
@@ -49,7 +48,6 @@ export default tool({
         };
       }
 
-      // Fetch metadata for each email
       const emails = await Promise.all(
         list.messages.map(async (m: { id: string }) => {
           const message = await gmail.getMessage(m.id, "metadata");

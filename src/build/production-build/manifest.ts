@@ -1,12 +1,7 @@
-/**
- * Build Manifest Generation
- * Handles generation of build manifest and _redirects file
- */
 
 import type { AppRouteInfo, BuildStats, RouteInfo } from "../../server/build-types.ts";
 import { bundlerLogger } from "@veryfront/utils";
 
-// Stub type for deleted ChunkManifest module
 interface ChunkManifest {
   version: string;
   routes: Record<string, { chunks: string[] }>;
@@ -48,14 +43,10 @@ export interface ManifestOptions {
   chunkManifest: ChunkManifest | null;
 }
 
-/**
- * Validates chunk manifest structure
- */
 function isValidChunkManifest(manifest: unknown): manifest is ChunkManifest {
   if (!manifest || typeof manifest !== "object") return false;
   const m = manifest as Record<string, unknown>;
 
-  // Check required fields
   if (typeof m.version !== "string") return false;
   if (!m.routes || typeof m.routes !== "object") return false;
   if (!m.chunks || typeof m.chunks !== "object") return false;
@@ -64,9 +55,6 @@ function isValidChunkManifest(manifest: unknown): manifest is ChunkManifest {
   return true;
 }
 
-/**
- * Generate build manifest
- */
 export function generateManifest(options: ManifestOptions): BuildManifest {
   const {
     routes,
@@ -78,7 +66,6 @@ export function generateManifest(options: ManifestOptions): BuildManifest {
     chunkManifest,
   } = options;
 
-  // Validate chunk manifest if provided
   const validatedManifest = chunkManifest && isValidChunkManifest(chunkManifest)
     ? chunkManifest
     : null;
@@ -105,7 +92,6 @@ export function generateManifest(options: ManifestOptions): BuildManifest {
           ? validatedManifest.routes[r.path]?.chunks || []
           : [],
       })),
-      // App routes do not produce chunks currently
       ...appRoutes.map((r) => ({
         path: r.path,
         slug: r.path === "/" ? "index" : r.path.slice(1),
@@ -122,12 +108,6 @@ export function generateManifest(options: ManifestOptions): BuildManifest {
   };
 }
 
-/**
- * Generate _redirects file for SPA support
- */
 export function generateRedirects(): string {
   return `
 # SPA support - all routes go to index.html
-/*    /index.html   200
-`;
-}

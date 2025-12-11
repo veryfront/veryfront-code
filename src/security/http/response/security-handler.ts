@@ -1,31 +1,14 @@
-/**
- * Security Handler
- * Handles security headers (CSP, COOP, CORP, COEP) with nonce-based CSP
- */
 
 import type { SecurityConfig } from "./types.ts";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import { recordSecurityHeaders } from "@veryfront/observability";
 
-/**
- * Generate cryptographic nonce for CSP
- */
 export function generateNonce(): string {
   const array = new Uint8Array(16);
   crypto.getRandomValues(array);
   return btoa(String.fromCharCode(...array));
 }
 
-/**
- * Build Content Security Policy header with nonce
- *
- * @param isDev - Development mode flag
- * @param nonce - Cryptographic nonce for inline scripts/styles
- * @param cspUserHeader - User-provided CSP header
- * @param config - Security configuration
- * @param adapter - Runtime adapter for environment variables
- * @returns CSP header string
- */
 export function buildCSP(
   isDev: boolean,
   nonce: string,
@@ -36,7 +19,6 @@ export function buildCSP(
   const envCsp = adapter?.env?.get?.("VERYFRONT_CSP");
   if (envCsp?.trim()) return envCsp.replace(/{NONCE}/g, nonce);
 
-  // Development CSP - relaxed for HMR and dev tools
   // Note: unsafe-eval allowed in dev only for source maps and dev tools
   // Note: 'self' covers /_vf_modules/ (same-origin module server)
   // Note: Nonces REQUIRED for inline module scripts - 'unsafe-inline' doesn't work for modules
@@ -61,7 +43,6 @@ export function buildCSP(
     return `${cspUserHeader.replace(/{NONCE}/g, nonce)}; ${defaultCsp}`;
   }
 
-  // If config has CSP directives, merge them
   const cfgCsp = config?.csp;
   if (cfgCsp && typeof cfgCsp === "object") {
     const pieces: string[] = [];
@@ -79,15 +60,6 @@ export function buildCSP(
   return defaultCsp;
 }
 
-/**
- * Get security header value from config or environment
- *
- * @param headerName - Header name (COOP, CORP, COEP)
- * @param defaultValue - Default value if not configured
- * @param config - Security configuration
- * @param adapter - Runtime adapter for environment variables
- * @returns Header value
- */
 export function getSecurityHeader(
   headerName: string,
   defaultValue: string,
@@ -100,16 +72,6 @@ export function getSecurityHeader(
   return (typeof configValue === "string" ? configValue : undefined) || envValue || defaultValue;
 }
 
-/**
- * Apply security headers to Headers object with nonce
- *
- * @param headers - Headers object to modify
- * @param isDev - Development mode flag
- * @param nonce - Cryptographic nonce for CSP
- * @param cspUserHeader - User-provided CSP header
- * @param config - Security configuration
- * @param adapter - Runtime adapter for environment variables
- */
 export function applySecurityHeaders(
   headers: Headers,
   isDev: boolean,
@@ -130,7 +92,6 @@ export function applySecurityHeaders(
     return undefined;
   };
 
-  // Always set basic security headers
   const contentTypeOptions = getHeaderOverride("x-content-type-options") ?? "nosniff";
   headers.set("X-Content-Type-Options", contentTypeOptions);
 
@@ -140,16 +101,13 @@ export function applySecurityHeaders(
   const xssProtection = getHeaderOverride("x-xss-protection") ?? "1; mode=block";
   headers.set("X-XSS-Protection", xssProtection);
 
-  // Build and set CSP with nonce
   const csp = buildCSP(isDev, nonce, cspUserHeader, config, adapter);
   if (csp) {
     headers.set("Content-Security-Policy", csp);
   }
 
-  // Set HSTS (Strict-Transport-Security) for HTTPS connections
-  // Only set in production to enforce HTTPS
   if (!isDev) {
-    const hstsMaxAge = config?.hsts?.maxAge ?? 31536000; // 1 year default
+    const hstsMaxAge = config?.hsts?.maxAge ?? 31536000;
     const hstsIncludeSubDomains = config?.hsts?.includeSubDomains ?? true;
     const hstsPreload = config?.hsts?.preload ?? false;
 
@@ -165,7 +123,6 @@ export function applySecurityHeaders(
     headers.set("Strict-Transport-Security", hstsOverride ?? hstsValue);
   }
 
-  // Set COOP, CORP, COEP
   const coop = getSecurityHeader("COOP", "same-origin", config, adapter);
   const corp = getSecurityHeader("CORP", "same-origin", config, adapter);
   const coep = getSecurityHeader("COEP", "", config, adapter);
@@ -183,6 +140,5 @@ export function applySecurityHeaders(
     }
   }
 
-  // Record metrics for security headers application
   recordSecurityHeaders();
 }

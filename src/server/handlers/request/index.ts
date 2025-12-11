@@ -1,7 +1,3 @@
-/**
- * Request Handlers
- * Export all request-handling implementations
- */
 
 export * from "./api/index.ts";
 export { RSCHandler } from "./rsc/index.ts";

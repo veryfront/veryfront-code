@@ -10,7 +10,7 @@ export function generateDevErrorLoggerScript(nonce?: string): string {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ level, message, details, timestamp: new Date().toISOString() })
-          }).catch(() => {}); // Silently fail if server is unreachable
+          }).catch(() => {});
         } catch (e) {
           void e;
         }

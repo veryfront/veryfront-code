@@ -1,8 +1,3 @@
-/**
- * Step Executor
- *
- * Executes individual workflow steps (agents and tools)
- */
 
 import type { Agent, AgentResponse } from "../../types/agent.ts";
 import type { Tool } from "../../types/tool.ts";
@@ -10,67 +5,35 @@ import type { NodeState, StepNodeConfig, WorkflowContext, WorkflowNode } from ".
 import { parseDuration } from "../types.ts";
 import type { BlobStorage } from "../blob/types.ts";
 
-/** Default timeout for workflow steps (5 minutes) */
 const DEFAULT_STEP_TIMEOUT_MS = 5 * 60 * 1000;
 
-/**
- * Agent registry for looking up agents by ID
- */
 export interface AgentRegistry {
   get(id: string): Agent | undefined;
-  /** Optional: List all registered agent IDs (for error messages) */
   list?(): string[];
 }
 
-/**
- * Tool registry for looking up tools by ID
- */
 export interface ToolRegistry {
   get(id: string): Tool | undefined;
-  /** Optional: List all registered tool IDs (for error messages) */
   list?(): string[];
 }
 
-/**
- * Step executor configuration
- */
 export interface StepExecutorConfig {
-  /** Agent registry for looking up agents */
   agentRegistry?: AgentRegistry;
-  /** Tool registry for looking up tools */
   toolRegistry?: ToolRegistry;
-  /** Default timeout for steps (in milliseconds) */
   defaultTimeout?: number;
-  /** Blob storage access */
   blobStorage?: BlobStorage;
-  /** Callback when step starts */
   onStepStart?: (nodeId: string, input: unknown) => void;
-  /** Callback when step completes */
   onStepComplete?: (nodeId: string, output: unknown) => void;
-  /** Callback when step fails */
   onStepError?: (nodeId: string, error: Error) => void;
 }
 
-/**
- * Result of executing a step
- */
 export interface StepResult {
-  /** Whether the step succeeded */
   success: boolean;
-  /** Output from the step (if successful) */
   output?: unknown;
-  /** Error message (if failed) */
   error?: string;
-  /** Execution time in milliseconds */
   executionTime: number;
 }
 
-/**
- * Step Executor class
- *
- * Responsible for executing individual workflow steps by invoking
- * the appropriate agent or tool.
- */
 export class StepExecutor {
   private config: StepExecutorConfig;
 
@@ -81,9 +44,6 @@ export class StepExecutor {
     };
   }
 
-  /**
-   * Execute a step node
-   */
   async execute(
     node: WorkflowNode,
     context: WorkflowContext,
@@ -99,11 +59,9 @@ export class StepExecutor {
     }
 
     try {
-      // Notify start
       const resolvedInput = await this.resolveInput(config.input, context);
       this.config.onStepStart?.(node.id, resolvedInput);
 
-      // Execute with timeout
       const timeout = config.timeout ? parseDuration(config.timeout) : this.config.defaultTimeout!;
 
       const output = await this.executeWithTimeout(
@@ -112,7 +70,6 @@ export class StepExecutor {
         node.id,
       );
 
-      // Notify completion
       this.config.onStepComplete?.(node.id, output);
 
       return {
@@ -123,7 +80,6 @@ export class StepExecutor {
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
 
-      // Notify error
       this.config.onStepError?.(node.id, error as Error);
 
       return {
@@ -134,15 +90,11 @@ export class StepExecutor {
     }
   }
 
-  /**
-   * Resolve step input from context
-   */
   private async resolveInput(
     input: StepNodeConfig["input"],
     context: WorkflowContext,
   ): Promise<unknown> {
     if (input === undefined) {
-      // Default to the original workflow input
       return context.input;
     }
 
@@ -153,12 +105,6 @@ export class StepExecutor {
     return input;
   }
 
-  /**
-   * Execute step with timeout
-   *
-   * Uses Promise.race() to properly handle timeout cleanup.
-   * The timeout is always cleared in the finally block to prevent memory leaks.
-   */
   private async executeWithTimeout<T>(
     fn: () => Promise<T>,
     timeout: number,
@@ -181,9 +127,6 @@ export class StepExecutor {
     }
   }
 
-  /**
-   * Execute the actual step (agent or tool)
-   */
   private async executeStep(
     config: StepNodeConfig,
     input: unknown,
@@ -200,27 +143,20 @@ export class StepExecutor {
     throw new Error("Step must have either 'agent' or 'tool' specified");
   }
 
-  /**
-   * Execute an agent
-   */
   private async executeAgent(
     agent: string | Agent,
     input: unknown,
     context: WorkflowContext,
   ): Promise<unknown> {
-    // Resolve agent from registry if string
     const resolvedAgent = typeof agent === "string" ? this.getAgent(agent) : agent;
 
-    // Prepare input for agent
     const agentInput = typeof input === "string" ? input : JSON.stringify(input);
 
-    // Execute agent
     const response: AgentResponse = await resolvedAgent.generate({
       input: agentInput,
       context,
     });
 
-    // Return the agent's response
     return {
       text: response.text,
       toolCalls: response.toolCalls,
@@ -229,17 +165,12 @@ export class StepExecutor {
     };
   }
 
-  /**
-   * Execute a tool
-   */
   private async executeTool(
     tool: string | Tool,
     input: unknown,
   ): Promise<unknown> {
-    // Resolve tool from registry if string
     const resolvedTool = typeof tool === "string" ? this.getTool(tool) : tool;
 
-    // Execute tool
     const result = await resolvedTool.execute(
       input as Record<string, unknown>,
       {
@@ -251,9 +182,6 @@ export class StepExecutor {
     return result;
   }
 
-  /**
-   * Get agent from registry
-   */
   private getAgent(id: string): Agent {
     if (!this.config.agentRegistry) {
       throw new Error(
@@ -275,9 +203,6 @@ export class StepExecutor {
     return agent;
   }
 
-  /**
-   * Get tool from registry
-   */
   private getTool(id: string): Tool {
     if (!this.config.toolRegistry) {
       throw new Error(
@@ -299,9 +224,6 @@ export class StepExecutor {
     return tool;
   }
 
-  /**
-   * Check if a step should be skipped
-   */
   async shouldSkip(
     node: WorkflowNode,
     context: WorkflowContext,
@@ -315,9 +237,6 @@ export class StepExecutor {
     return await config.skip(context);
   }
 
-  /**
-   * Create initial node state
-   */
   createInitialState(nodeId: string): NodeState {
     return {
       nodeId,
@@ -326,9 +245,6 @@ export class StepExecutor {
     };
   }
 
-  /**
-   * Update node state for running
-   */
   createRunningState(nodeId: string, input: unknown, attempt: number): NodeState {
     return {
       nodeId,
@@ -339,12 +255,6 @@ export class StepExecutor {
     };
   }
 
-  /**
-   * Update node state for completion
-   *
-   * @param result - The step execution result
-   * @param previousState - The previous node state (contains nodeId)
-   */
   createCompletedState(
     result: StepResult,
     previousState: NodeState,
@@ -366,9 +276,6 @@ export class StepExecutor {
     };
   }
 
-  /**
-   * Update node state for skip
-   */
   createSkippedState(nodeId: string): NodeState {
     return {
       nodeId,

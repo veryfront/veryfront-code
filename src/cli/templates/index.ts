@@ -1,10 +1,3 @@
-/**
- * Template registry for Veryfront CLI
- *
- * Templates are loaded from the `files/` directory as actual files.
- * This provides better IDE support (syntax highlighting, linting) compared
- * to inline string templates.
- */
 
 import {
   getTemplateDirectory,
@@ -21,7 +14,6 @@ import type {
   TemplateName,
 } from "./types.ts";
 
-// Re-export types
 export type {
   EnvVarConfig,
   FeatureConfig,
@@ -32,7 +24,6 @@ export type {
   TemplateName,
 };
 
-// Re-export feature functions
 export {
   AVAILABLE_FEATURES,
   featureExists,
@@ -45,9 +36,6 @@ export {
   validateFeatures,
 } from "./feature-loader.ts";
 
-/**
- * AI template configuration including required environment variables
- */
 const aiTemplateConfig: TemplateConfig = {
   envVars: [
     {
@@ -61,34 +49,15 @@ const aiTemplateConfig: TemplateConfig = {
   ],
 };
 
-/**
- * Template configurations (env vars, etc.)
- */
 export const templateConfigs: Partial<Record<TemplateName, TemplateConfig>> = {
   ai: aiTemplateConfig,
 };
 
-/**
- * Templates that use directory-based loading.
- * All templates now use directory-based loading for better maintainability.
- */
 const DIRECTORY_BASED_TEMPLATES: TemplateName[] = ["minimal", "ai", "app", "blog", "docs"];
 
-/**
- * Legacy inline templates (for backward compatibility during migration).
- * All templates have been migrated to directory-based templates.
- */
 const legacyTemplates: Partial<Record<TemplateName, TemplateFile[]>> = {};
 
-/**
- * Get a template by name.
- * Prefers directory-based templates, falls back to inline templates.
- *
- * @param name - Template name
- * @returns Array of template files, or null if template not found
- */
 export async function getTemplate(name: TemplateName): Promise<TemplateFile[] | null> {
-  // Try directory-based template first
   if (DIRECTORY_BASED_TEMPLATES.includes(name)) {
     const exists = await templateDirectoryExists(name);
     if (exists) {
@@ -100,13 +69,11 @@ export async function getTemplate(name: TemplateName): Promise<TemplateFile[] | 
     }
   }
 
-  // Fall back to legacy inline template
   const legacyTemplate = legacyTemplates[name];
   if (legacyTemplate) {
     return legacyTemplate;
   }
 
-  // Handle aliases
   if (name === "pages-router" || name === "app-router") {
     return getTemplate("minimal");
   }
@@ -114,29 +81,16 @@ export async function getTemplate(name: TemplateName): Promise<TemplateFile[] | 
   return null;
 }
 
-/**
- * Get template configuration (env vars, etc.)
- *
- * @param name - Template name
- * @returns Template configuration, or null if none defined
- */
 export function getTemplateConfig(name: TemplateName): TemplateConfig | null {
   return templateConfigs[name] || null;
 }
 
-/**
- * Synchronous version of getTemplate for backward compatibility.
- * Only returns inline templates. Use async getTemplate() for directory-based templates.
- *
- * @deprecated Use the async getTemplate() function instead
- */
 export function getTemplateSync(name: TemplateName): TemplateFile[] | null {
   const legacyTemplate = legacyTemplates[name];
   if (legacyTemplate) {
     return legacyTemplate;
   }
 
-  // Handle aliases
   if (name === "pages-router" || name === "app-router") {
     return getTemplateSync("minimal");
   }
@@ -144,6 +98,4 @@ export function getTemplateSync(name: TemplateName): TemplateFile[] | null {
   return null;
 }
 
-// Legacy exports for backward compatibility
-// All templates should be loaded via async getTemplate()
 export const templates: Record<string, TemplateFile[]> = {};

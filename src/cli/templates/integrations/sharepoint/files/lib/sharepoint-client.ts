@@ -2,7 +2,6 @@ import { getAccessToken } from "./token-store.ts";
 
 const GRAPH_BASE_URL = "https://graph.microsoft.com/v1.0";
 
-// Type definitions for SharePoint responses
 export interface SharePointSite {
   id: string;
   name: string;
@@ -102,9 +101,6 @@ async function graphFetch<T>(
   return response.json();
 }
 
-/**
- * List all SharePoint sites the user has access to
- */
 export async function listSites(options?: {
   search?: string;
   limit?: number;
@@ -125,16 +121,10 @@ export async function listSites(options?: {
   return sites;
 }
 
-/**
- * Get details about a specific SharePoint site
- */
 export function getSite(siteId: string): Promise<SharePointSite> {
   return graphFetch<SharePointSite>(`/sites/${siteId}`);
 }
 
-/**
- * Get a site by hostname and path
- */
 export function getSiteByPath(
   hostname: string,
   sitePath: string,
@@ -144,9 +134,6 @@ export function getSiteByPath(
   );
 }
 
-/**
- * List all document libraries (drives) in a site
- */
 export async function listDrives(siteId: string): Promise<SharePointDrive[]> {
   const response = await graphFetch<GraphResponse<SharePointDrive>>(
     `/sites/${siteId}/drives`,
@@ -154,16 +141,10 @@ export async function listDrives(siteId: string): Promise<SharePointDrive[]> {
   return response.value || [];
 }
 
-/**
- * Get the default document library for a site
- */
 export function getDefaultDrive(siteId: string): Promise<SharePointDrive> {
   return graphFetch<SharePointDrive>(`/sites/${siteId}/drive`);
 }
 
-/**
- * List files and folders in a drive or folder
- */
 export async function listFiles(
   siteId: string,
   driveId: string,
@@ -189,9 +170,6 @@ export async function listFiles(
   return response.value || [];
 }
 
-/**
- * Get file metadata
- */
 export function getFile(
   siteId: string,
   driveId: string,
@@ -202,9 +180,6 @@ export function getFile(
   );
 }
 
-/**
- * Get file by path
- */
 export function getFileByPath(
   siteId: string,
   driveId: string,
@@ -216,9 +191,6 @@ export function getFileByPath(
   );
 }
 
-/**
- * Download file content
- */
 export async function downloadFile(
   siteId: string,
   driveId: string,
@@ -231,7 +203,6 @@ export async function downloadFile(
 
   const _metadata = await getFile(siteId, driveId, itemId);
 
-  // Get download URL
   const downloadUrl = `${GRAPH_BASE_URL}/sites/${siteId}/drives/${driveId}/items/${itemId}/content`;
 
   const response = await fetch(downloadUrl, {
@@ -247,9 +218,6 @@ export async function downloadFile(
   return response.arrayBuffer();
 }
 
-/**
- * Download file content as text
- */
 export async function downloadFileAsText(
   siteId: string,
   driveId: string,
@@ -259,9 +227,6 @@ export async function downloadFileAsText(
   return new TextDecoder().decode(buffer);
 }
 
-/**
- * Upload a file to a folder
- */
 export async function uploadFile(
   siteId: string,
   driveId: string,
@@ -307,9 +272,6 @@ export async function uploadFile(
   return response.json();
 }
 
-/**
- * Create a folder
- */
 export function createFolder(
   siteId: string,
   driveId: string,
@@ -330,9 +292,6 @@ export function createFolder(
   });
 }
 
-/**
- * Search for files in a site
- */
 export async function searchFiles(
   siteId: string,
   query: string,
@@ -350,9 +309,6 @@ export async function searchFiles(
   return response.value || [];
 }
 
-/**
- * Delete a file or folder
- */
 export async function deleteItem(
   siteId: string,
   driveId: string,
@@ -364,9 +320,6 @@ export async function deleteItem(
   );
 }
 
-/**
- * Move or rename a file or folder
- */
 export function moveItem(
   siteId: string,
   driveId: string,
@@ -391,9 +344,6 @@ export function moveItem(
   );
 }
 
-/**
- * Copy a file or folder
- */
 export async function copyItem(
   siteId: string,
   driveId: string,
@@ -409,7 +359,6 @@ export async function copyItem(
     body.name = newName;
   }
 
-  // Copy is async, returns 202 Accepted with a Location header
   await graphFetch<void>(
     `/sites/${siteId}/drives/${driveId}/items/${itemId}/copy`,
     {

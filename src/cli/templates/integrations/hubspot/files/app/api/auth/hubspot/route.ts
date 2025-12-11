@@ -1,6 +1,3 @@
-/**
- * HubSpot OAuth Initiation
- */
 
 import { createOAuthInitHandler, hubspotConfig, memoryTokenStore } from "veryfront/oauth";
 

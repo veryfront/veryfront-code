@@ -1,6 +1,3 @@
-/**
- * Update ServiceNow Incident Tool
- */
 
 import { z } from "zod";
 import { defineTool } from "veryfront/ai";
@@ -36,7 +33,6 @@ export default defineTool({
       const client = getServiceNowClient();
       const { sys_id, ...updateData } = input;
 
-      // Filter out undefined values
       const cleanData = Object.fromEntries(
         Object.entries(updateData).filter(([_, v]) => v !== undefined),
       );

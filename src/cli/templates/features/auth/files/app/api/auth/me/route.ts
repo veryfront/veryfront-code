@@ -15,7 +15,6 @@ export async function GET(req: Request) {
     return Response.json({ user: null });
   }
 
-  // Fetch fresh user data from DB
   const user = await db.user.findUnique({ where: { email: payload.email } });
 
   if (!user) {

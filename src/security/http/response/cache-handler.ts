@@ -1,17 +1,7 @@
-/**
- * Cache Handler
- * Handles cache control header generation
- */
 
 import { CACHE_DURATIONS } from "./constants.ts";
 import type { CacheStrategy } from "./types.ts";
 
-/**
- * Build cache control header value from strategy
- *
- * @param strategy - Cache strategy configuration
- * @returns Cache-Control header value
- */
 export function buildCacheControl(strategy: CacheStrategy): string {
   let cacheControl: string;
 
@@ -36,7 +26,6 @@ export function buildCacheControl(strategy: CacheStrategy): string {
         cacheControl = `public, max-age=${CACHE_DURATIONS.LONG}, immutable`;
         break;
       case "none":
-        // Prevent all caching - used in development to avoid nonce mismatches
         cacheControl = "no-cache, no-store, must-revalidate";
         break;
       default:

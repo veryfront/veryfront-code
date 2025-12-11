@@ -1,15 +1,10 @@
 import type { DiagnosticResult } from "./types.ts";
 import { getRuntimeVersion } from "../../../platform/compat/process.ts";
 
-/**
- * Check runtime version compatibility
- * Supports Deno 1.40.0+, Node.js 18+, Bun 1.0+
- */
 export function checkDenoVersion(): Promise<DiagnosticResult> {
   try {
     const runtimeVersion = getRuntimeVersion();
 
-    // Deno runtime check
     if (runtimeVersion.startsWith("Deno")) {
       const versionNum = runtimeVersion.replace("Deno ", "");
       if (versionNum >= "1.40.0") {
@@ -27,7 +22,6 @@ export function checkDenoVersion(): Promise<DiagnosticResult> {
       }
     }
 
-    // Node.js runtime check
     if (runtimeVersion.startsWith("Node.js")) {
       const versionNum = runtimeVersion.replace("Node.js v", "");
       const major = parseInt(versionNum.split(".")[0] || "0", 10);
@@ -46,7 +40,6 @@ export function checkDenoVersion(): Promise<DiagnosticResult> {
       }
     }
 
-    // Bun runtime check
     if (runtimeVersion.startsWith("Bun")) {
       return Promise.resolve({
         name: "Runtime Version",
@@ -55,7 +48,6 @@ export function checkDenoVersion(): Promise<DiagnosticResult> {
       });
     }
 
-    // Unknown runtime
     return Promise.resolve({
       name: "Runtime Version",
       status: "pass",
@@ -70,9 +62,6 @@ export function checkDenoVersion(): Promise<DiagnosticResult> {
   }
 }
 
-/**
- * Check React compatibility and version detection
- */
 export async function checkReactCompatibility(): Promise<DiagnosticResult> {
   try {
     const { getReactVersionInfo } = await import(

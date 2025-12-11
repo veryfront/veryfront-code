@@ -47,7 +47,6 @@ export class DevServer {
       const stub = this.adapter.env.get("VERYFRONT_FORCE_FLIGHT_STUB") === "1" ? " (stub)" : "";
       logger.info(`[RSC] ${rsc ? "enabled" : "disabled"}${rsc ? stub : ""}`);
     } catch {
-      /* optional */
     }
   }
 
@@ -72,8 +71,6 @@ export class DevServer {
 
     await this.logRSCStatus();
 
-    // Module serving is now handled by the main server at /_vf_modules/
-    // No separate module server needed
     if (this.options.enableHMR) {
       this.hmrServer = new HMRServer({
         port: this.options.hmrPort || this.options.port + 1,
@@ -85,7 +82,6 @@ export class DevServer {
       await this.setupFileWatchers();
     }
 
-    // Module server is integrated into main server now
     const moduleServerUrl = buildLocalhostUrl(this.options.port);
     const vendorBundleHash = "dev-vendor-bundle";
 

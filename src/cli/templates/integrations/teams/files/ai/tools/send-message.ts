@@ -28,7 +28,6 @@ export default tool({
     },
   ),
   async execute({ chatId, teamId, channelId, content, contentType, subject }) {
-    // Send to chat
     if (chatId) {
       const message = await sendChatMessage(chatId, content, contentType);
       return {
@@ -41,7 +40,6 @@ export default tool({
       };
     }
 
-    // Send to channel
     if (teamId && channelId) {
       const message = await sendChannelMessage(teamId, channelId, content, contentType, subject);
       return {

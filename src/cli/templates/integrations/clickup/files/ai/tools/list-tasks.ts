@@ -37,7 +37,6 @@ export default tool({
         return { tasks: [], message: "No teams found" };
       }
 
-      // Get the first team's first space
       const spaces = await listSpaces(teams[0].id);
       if (spaces.length === 0) {
         return { tasks: [], message: "No spaces found in team" };

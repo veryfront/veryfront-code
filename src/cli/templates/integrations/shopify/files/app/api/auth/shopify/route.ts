@@ -1,6 +1,3 @@
-/**
- * Shopify OAuth Init
- */
 
 import { shopifyConfig, createOAuthInitHandler } from "veryfront/oauth";
 

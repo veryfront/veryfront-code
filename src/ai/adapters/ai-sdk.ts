@@ -21,31 +21,21 @@ export function isAISDKModel(value: unknown): value is AISDKModelWrapper {
 
 export const useAISDK = aiSDKModel;
 
-/**
- * Get JSON Schema from a tool, preferring pre-converted schema if available
- */
 function getToolSchema(tool: Tool): JsonSchema {
-  // Use pre-converted JSON Schema if available (set during tool() creation)
-  // This is the preferred path - no zod schema needed at runtime
   if (tool.inputSchemaJson) {
     return tool.inputSchemaJson;
   }
 
-  // Runtime conversion - may fail if zod schema is not properly initialized
-  // This can happen when the user's zod instance differs from the bundled one
   try {
     if (tool.inputSchema && typeof tool.inputSchema === "object") {
-      // Check for zod schema markers
       const schema = tool.inputSchema as { _def?: { typeName?: string } };
       if (schema._def && schema._def.typeName) {
         return zodToJsonSchema(tool.inputSchema);
       }
     }
   } catch {
-    // Schema conversion failed - fall through to fallback
   }
 
-  // Fallback: empty object schema
   return { type: "object", properties: {} };
 }
 

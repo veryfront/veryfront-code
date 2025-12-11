@@ -1,6 +1,3 @@
-/**
- * GitHub OAuth Initiation
- */
 
 import { createOAuthInitHandler, githubConfig, memoryTokenStore } from "veryfront/oauth";
 

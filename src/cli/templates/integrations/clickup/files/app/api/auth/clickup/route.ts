@@ -1,6 +1,3 @@
-/**
- * ClickUp OAuth Init
- */
 
 import { clickupConfig, createOAuthInitHandler } from "veryfront/oauth";
 

@@ -1,6 +1,3 @@
-/**
- * JavaScript/TypeScript bundling service
- */
 
 import { bundlerLogger as logger } from "@veryfront/utils";
 import type * as esbuild from "esbuild";
@@ -19,9 +16,6 @@ interface BundleCodeOptions {
   fileCache: Map<string, string>;
 }
 
-/**
- * Bundle JavaScript/TypeScript files
- */
 export function bundleScript(
   source: { path: string; content: string; type: string },
   options: BundlerOptions,
@@ -38,9 +32,6 @@ export function bundleScript(
   });
 }
 
-/**
- * Bundle code with esbuild
- */
 export async function bundleCode({
   source,
   options,
@@ -49,7 +40,6 @@ export async function bundleCode({
   fileCache,
 }: BundleCodeOptions): Promise<void> {
   try {
-    // Add to file cache for resolution
     fileCache.set(source.path, source.content);
 
     const buildResult = await esbuildInstance.build({
@@ -96,14 +86,12 @@ export async function bundleCode({
         type: "js",
       });
 
-      // Track dependencies
       const imports = extractImports(source.content);
       result.dependencies.set(source.path, imports);
 
       logger.debug(`Bundled script: ${source.path} -> ${outputPath}`);
     }
 
-    // Add warnings
     if (buildResult.warnings.length > 0) {
       buildResult.warnings.forEach((warning) => {
         result.warnings.push(formatEsbuildMessage(warning));

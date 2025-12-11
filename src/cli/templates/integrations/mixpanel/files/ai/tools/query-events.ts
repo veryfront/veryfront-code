@@ -23,7 +23,6 @@ export default tool({
   async execute({ from, to, event, limit }) {
     const events = await queryEvents(from, to, event);
 
-    // Limit results
     const limitedEvents = events.slice(0, limit);
 
     return {

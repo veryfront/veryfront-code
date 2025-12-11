@@ -19,12 +19,10 @@ export default tool({
     ),
   }),
   async execute({ path, content, mode, autorename }) {
-    // Validate path
     if (!path.startsWith("/")) {
       throw new Error('Path must start with "/" (e.g., "/Documents/file.txt")');
     }
 
-    // Upload the file
     const result = await uploadFile(path, content, {
       mode,
       autorename,

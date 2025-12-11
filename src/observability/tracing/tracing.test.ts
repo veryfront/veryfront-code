@@ -1,22 +1,7 @@
-/**
- * OpenTelemetry Tracing Tests
- *
- * Tests the distributed tracing infrastructure:
- * - Initialization with different configurations
- * - Environment variable override logic
- * - Span lifecycle (start, end, attributes, events)
- * - Context extraction from/injection to HTTP headers
- * - withSpan and withSpanSync helpers
- * - Child span creation from parent
- * - Error recording in spans
- * - isTracingEnabled checks
- * - Edge cases: tracing disabled, null spans, missing API
- */
 
 import { assert, assertEquals, assertExists } from "std/assert/mod.ts";
 import { afterEach, beforeEach, describe, it } from "std/testing/bdd.ts";
 
-// Mock OpenTelemetry API
 const mockSpan = {
   end: () => {},
   setStatus: () => {},
@@ -60,17 +45,13 @@ const _mockApi = {
 
 const _mockPropagator = {};
 
-// Store original module state
 let _originalModule: any;
 
 describe("Tracing Module", () => {
   beforeEach(async () => {
-    // Reset module state before each test by re-importing
-    // We need to clear the module cache and reset singleton state
   });
 
   afterEach(() => {
-    // Cleanup
   });
 
   describe("Initialization", () => {
@@ -165,10 +146,6 @@ describe("Tracing Module", () => {
     });
 
     it("should have correct SpanNames constants", async () => {
-      /**
-       * Verifies that all expected span name constants are defined
-       * and follow the correct naming convention (category.operation)
-       */
       const { SpanNames } = await import("../index.ts");
 
       assertEquals(SpanNames.HTTP_REQUEST, "http.request", "HTTP request span name");
@@ -195,10 +172,6 @@ describe("Tracing Module", () => {
 
   describe("isTracingEnabled", () => {
     it("should return false when not initialized", async () => {
-      /**
-       * Before initialization, tracing should be disabled.
-       * This test ensures the module has safe defaults.
-       */
       const { isTracingEnabled } = await import("../index.ts");
       const enabled = isTracingEnabled();
       assertEquals(typeof enabled, "boolean", "Should return a boolean");
@@ -207,72 +180,53 @@ describe("Tracing Module", () => {
 
   describe("startSpan", () => {
     it("should return null when tracing is not initialized", async () => {
-      /**
-       * When tracing is disabled or not initialized,
-       * startSpan should gracefully return null instead of throwing.
-       */
       const { startSpan } = await import("../index.ts");
       const span = startSpan("test-span");
       assertEquals(span, null, "Should return null when not initialized");
     });
 
     it("should accept span name parameter", async () => {
-      /**
-       * Verifies that startSpan accepts a name parameter
-       * and doesn't throw when called with a valid name.
-       */
       const { startSpan } = await import("../index.ts");
       const _span = startSpan("my-operation");
-      // Should not throw
       assert(true, "Should accept span name");
     });
 
     it("should accept optional SpanOptions", async () => {
-      /**
-       * Verifies that startSpan accepts optional configuration
-       * including kind and attributes.
-       */
       const { startSpan } = await import("../index.ts");
       const _span = startSpan("my-operation", {
         kind: "server",
         attributes: { "http.method": "GET" },
       });
-      // Should not throw
       assert(true, "Should accept span options");
     });
 
     it("should handle internal span kind", async () => {
       const { startSpan } = await import("../index.ts");
       const _span = startSpan("internal-op", { kind: "internal" });
-      // Should not throw
       assert(true, "Should accept internal kind");
     });
 
     it("should handle server span kind", async () => {
       const { startSpan } = await import("../index.ts");
       const _span = startSpan("server-op", { kind: "server" });
-      // Should not throw
       assert(true, "Should accept server kind");
     });
 
     it("should handle client span kind", async () => {
       const { startSpan } = await import("../index.ts");
       const _span = startSpan("client-op", { kind: "client" });
-      // Should not throw
       assert(true, "Should accept client kind");
     });
 
     it("should handle producer span kind", async () => {
       const { startSpan } = await import("../index.ts");
       const _span = startSpan("producer-op", { kind: "producer" });
-      // Should not throw
       assert(true, "Should accept producer kind");
     });
 
     it("should handle consumer span kind", async () => {
       const { startSpan } = await import("../index.ts");
       const _span = startSpan("consumer-op", { kind: "consumer" });
-      // Should not throw
       assert(true, "Should accept consumer kind");
     });
 
@@ -315,10 +269,6 @@ describe("Tracing Module", () => {
 
   describe("endSpan", () => {
     it("should handle null span gracefully", async () => {
-      /**
-       * When passed a null span, endSpan should not throw.
-       * This allows code to call endSpan unconditionally.
-       */
       const { endSpan } = await import("../index.ts");
       endSpan(null);
       assert(true, "Should handle null span without throwing");
@@ -332,10 +282,6 @@ describe("Tracing Module", () => {
     });
 
     it("should accept optional error parameter", async () => {
-      /**
-       * When an error is passed, endSpan should record it
-       * and set the span status to ERROR.
-       */
       const { startSpan, endSpan } = await import("../index.ts");
       const span = startSpan("test-span");
       const error = new Error("Test error");
@@ -353,9 +299,6 @@ describe("Tracing Module", () => {
 
   describe("setSpanAttributes", () => {
     it("should handle null span gracefully", async () => {
-      /**
-       * When passed a null span, setSpanAttributes should not throw.
-       */
       const { setSpanAttributes } = await import("../index.ts");
       setSpanAttributes(null, { key: "value" });
       assert(true, "Should handle null span without throwing");
@@ -399,9 +342,6 @@ describe("Tracing Module", () => {
 
   describe("addSpanEvent", () => {
     it("should handle null span gracefully", async () => {
-      /**
-       * When passed a null span, addSpanEvent should not throw.
-       */
       const { addSpanEvent } = await import("../index.ts");
       addSpanEvent(null, "event-name");
       assert(true, "Should handle null span without throwing");
@@ -431,10 +371,6 @@ describe("Tracing Module", () => {
 
   describe("withSpan", () => {
     it("should execute async function", async () => {
-      /**
-       * withSpan should create a span, execute the provided async function,
-       * and end the span when complete.
-       */
       const { withSpan } = await import("../index.ts");
       let executed = false;
 
@@ -465,17 +401,10 @@ describe("Tracing Module", () => {
         return Promise.resolve();
       });
 
-      // Span will be null when tracing is not initialized
       assert(true, "Should pass span to function");
     });
 
     it("should handle function that throws error", async () => {
-      /**
-       * When the function throws an error, withSpan should:
-       * 1. Record the error on the span
-       * 2. End the span with error status
-       * 3. Re-throw the error
-       */
       const { withSpan } = await import("../index.ts");
       const testError = new Error("Test error");
 
@@ -517,10 +446,6 @@ describe("Tracing Module", () => {
 
   describe("withSpanSync", () => {
     it("should execute synchronous function", async () => {
-      /**
-       * withSpanSync should create a span, execute the provided sync function,
-       * and end the span when complete.
-       */
       const { withSpanSync } = await import("../index.ts");
       let executed = false;
 
@@ -550,17 +475,10 @@ describe("Tracing Module", () => {
         _receivedSpan = span;
       });
 
-      // Span will be null when tracing is not initialized
       assert(true, "Should pass span to function");
     });
 
     it("should handle function that throws error", async () => {
-      /**
-       * When the function throws an error, withSpanSync should:
-       * 1. Record the error on the span
-       * 2. End the span with error status
-       * 3. Re-throw the error
-       */
       const { withSpanSync } = await import("../index.ts");
       const testError = new Error("Test error");
 
@@ -620,16 +538,11 @@ describe("Tracing Module", () => {
 
   describe("extractContext", () => {
     it("should handle Headers object", async () => {
-      /**
-       * extractContext should parse W3C Trace Context headers
-       * and return a context object for distributed tracing.
-       */
       const { extractContext } = await import("../index.ts");
       const headers = new Headers();
       headers.set("traceparent", "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01");
 
       const _context = extractContext(headers);
-      // Will be undefined when tracing is not initialized
       assert(true, "Should handle Headers object");
     });
 
@@ -673,10 +586,6 @@ describe("Tracing Module", () => {
 
   describe("injectContext", () => {
     it("should inject context into Headers", async () => {
-      /**
-       * injectContext should add W3C Trace Context headers
-       * to the provided Headers object for distributed tracing.
-       */
       const { getActiveContext, injectContext } = await import("../index.ts");
       const context = getActiveContext();
       const headers = new Headers();
@@ -716,14 +625,9 @@ describe("Tracing Module", () => {
 
   describe("getActiveContext", () => {
     it("should return context or undefined", async () => {
-      /**
-       * getActiveContext should return the current active context
-       * from OpenTelemetry's context API.
-       */
       const { getActiveContext } = await import("../index.ts");
       const _context = getActiveContext();
 
-      // Will be undefined when tracing is not initialized
       assert(true, "Should return context or undefined");
     });
 
@@ -737,10 +641,6 @@ describe("Tracing Module", () => {
 
   describe("withActiveSpan", () => {
     it("should execute function with active span", async () => {
-      /**
-       * withActiveSpan should set the span as active in the context
-       * and execute the provided function within that context.
-       */
       const { startSpan, withActiveSpan } = await import("../index.ts");
       const span = startSpan("test-span");
       let executed = false;
@@ -805,15 +705,10 @@ describe("Tracing Module", () => {
 
   describe("createChildSpan", () => {
     it("should create child span from parent", async () => {
-      /**
-       * createChildSpan should create a new span with the parent span
-       * set in its context, enabling distributed tracing hierarchies.
-       */
       const { startSpan, createChildSpan } = await import("../index.ts");
       const parent = startSpan("parent-span");
       const _child = createChildSpan(parent, "child-span");
 
-      // Will be null when tracing is not initialized
       assert(true, "Should create child span");
     });
 
@@ -856,10 +751,6 @@ describe("Tracing Module", () => {
 
   describe("shutdownTracing", () => {
     it("should not throw when called", async () => {
-      /**
-       * shutdownTracing should gracefully shutdown the tracing system,
-       * allowing spans to be flushed before process termination.
-       */
       const { shutdownTracing } = await import("../index.ts");
       await shutdownTracing();
 
@@ -877,10 +768,6 @@ describe("Tracing Module", () => {
 
   describe("Edge Cases", () => {
     it("should handle span operations when tracing is disabled", async () => {
-      /**
-       * All span operations should gracefully handle the case
-       * where tracing is disabled and return null/undefined.
-       */
       const { startSpan, endSpan, setSpanAttributes, addSpanEvent } = await import("../index.ts");
 
       const _span = startSpan("test");
@@ -973,9 +860,6 @@ describe("Tracing Module", () => {
 
   describe("TracingConfig Types", () => {
     it("should accept console exporter config", async () => {
-      /**
-       * Verifies that TracingConfig accepts all valid exporter types.
-       */
       const { initTracing } = await import("../index.ts");
 
       await initTracing({

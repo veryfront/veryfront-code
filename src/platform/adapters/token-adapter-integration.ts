@@ -1,9 +1,3 @@
-/**
- * Token Storage Adapter Integration
- *
- * Provides singleton access to the token storage adapter.
- * Auto-detects configuration from environment variables.
- */
 
 import { logger } from "@veryfront/utils";
 import { createTokenStorageAdapter } from "./token-adapter-factory.ts";
@@ -12,15 +6,8 @@ import type {
   TokenStorageAdapterConfig,
 } from "./veryfront-token-adapter/types.ts";
 
-// Singleton adapter instance
 let tokenStorageAdapter: TokenStorageAdapter | null = null;
 
-/**
- * Get or create the token storage adapter
- *
- * Uses singleton pattern to share adapter across the application.
- * Configuration is auto-detected from environment variables.
- */
 export async function getTokenStorageAdapter(): Promise<TokenStorageAdapter> {
   if (tokenStorageAdapter) {
     return tokenStorageAdapter;
@@ -32,9 +19,6 @@ export async function getTokenStorageAdapter(): Promise<TokenStorageAdapter> {
   return tokenStorageAdapter;
 }
 
-/**
- * Check if token storage is configured for production (Veryfront Cloud)
- */
 export function isTokenStorageConfigured(): boolean {
   const apiToken = getEnvVar("VERYFRONT_API_TOKEN");
   const projectSlug = getEnvVar("VERYFRONT_PROJECT_SLUG");
@@ -42,9 +26,6 @@ export function isTokenStorageConfigured(): boolean {
   return !!(apiToken && projectSlug);
 }
 
-/**
- * Get the current token storage type
- */
 export function getTokenStorageType(): string {
   if (isTokenStorageConfigured()) {
     return "veryfront-api";
@@ -52,9 +33,6 @@ export function getTokenStorageType(): string {
   return "memory";
 }
 
-/**
- * Reset the singleton adapter (for testing)
- */
 export function resetTokenStorageAdapter(): void {
   if (tokenStorageAdapter?.dispose) {
     tokenStorageAdapter.dispose();
@@ -62,9 +40,6 @@ export function resetTokenStorageAdapter(): void {
   tokenStorageAdapter = null;
 }
 
-/**
- * Build adapter config from environment variables
- */
 function buildAdapterConfigFromEnv(): TokenStorageAdapterConfig {
   const apiToken = getEnvVar("VERYFRONT_API_TOKEN");
   const projectSlug = getEnvVar("VERYFRONT_PROJECT_SLUG");
@@ -90,9 +65,6 @@ function buildAdapterConfigFromEnv(): TokenStorageAdapterConfig {
   return { type: "memory" };
 }
 
-/**
- * Get environment variable (works in both Deno and Node)
- */
 function getEnvVar(name: string): string | undefined {
   // deno-lint-ignore no-explicit-any
   return (globalThis as any).Deno?.env?.get(name) ||

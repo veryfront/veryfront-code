@@ -1,14 +1,7 @@
-/**
- * In-Memory Token Storage Adapter
- *
- * Development-only adapter that stores tokens in memory.
- * Tokens are lost when the process restarts.
- */
 
 import { logger } from "@veryfront/utils";
 import type { TokenStorageAdapter } from "./types.ts";
 
-// Use globalThis to share across esbuild bundles
 const STORAGE_KEY = "__veryfront_token_storage__";
 // deno-lint-ignore no-explicit-any
 const globalStore = globalThis as any;
@@ -17,7 +10,6 @@ export class MemoryTokenAdapter implements TokenStorageAdapter {
   private storage: Map<string, string>;
 
   constructor() {
-    // Share storage across bundles
     this.storage = globalStore[STORAGE_KEY] ||= new Map<string, string>();
 
     logger.warn(
@@ -28,7 +20,6 @@ export class MemoryTokenAdapter implements TokenStorageAdapter {
   }
 
   async initialize(): Promise<void> {
-    // No initialization needed for memory adapter
   }
 
   get(key: string): Promise<string | null> {
@@ -54,16 +45,13 @@ export class MemoryTokenAdapter implements TokenStorageAdapter {
   }
 
   dispose(): void {
-    // Don't clear storage on dispose - it's shared across bundles
     logger.debug("[MemoryTokenAdapter] Disposed");
   }
 
-  /** Get the number of stored tokens (for testing/debugging) */
   get size(): number {
     return this.storage.size;
   }
 
-  /** Clear all tokens (for testing) */
   clear(): void {
     this.storage.clear();
   }

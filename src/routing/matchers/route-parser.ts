@@ -61,13 +61,13 @@ export function getSpecificityScore(route: Route): number {
 
   for (const segment of segments) {
     if (segment.includes("[[...")) {
-      score += 1; // Optional catch-all - lowest priority
+      score += 1;
     } else if (segment.includes("[...")) {
-      score += 2; // Catch-all
+      score += 2;
     } else if (segment.includes("[")) {
-      score += 3; // Dynamic segment
+      score += 3;
     } else {
-      score += 4; // Static segment - highest priority
+      score += 4;
     }
   }
 

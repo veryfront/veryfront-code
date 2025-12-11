@@ -1,23 +1,6 @@
-/**
- * Security Headers
- *
- * Handles security-related HTTP headers (CSP, COOP, CORP, COEP).
- */
 
 import type { HandlerContext } from "../../types.ts";
 
-/**
- * Builds a Content Security Policy string
- *
- * @param ctx - Handler context containing configuration
- * @returns CSP string
- *
- * @example
- * ```ts
- * const csp = buildCSP(ctx);
- * // Returns "default-src 'self'; script-src 'self' 'unsafe-inline'; ..."
- * ```
- */
 export function buildCSP(ctx: HandlerContext): string {
   const envCsp = ctx.adapter.env.get("VERYFRONT_CSP");
   if (envCsp?.trim()) return envCsp;
@@ -50,19 +33,6 @@ export function buildCSP(ctx: HandlerContext): string {
   return DEFAULT_CSP;
 }
 
-/**
- * Gets a security header value from config or environment
- *
- * @param headerName - The header name (e.g., "COOP", "CORP", "COEP")
- * @param defaultValue - Default value if not configured
- * @param ctx - Handler context
- * @returns The header value
- *
- * @example
- * ```ts
- * const coop = getSecurityHeader("COOP", "same-origin", ctx);
- * ```
- */
 export function getSecurityHeader(
   headerName: string,
   defaultValue: string,
@@ -77,36 +47,15 @@ export function getSecurityHeader(
   );
 }
 
-/**
- * Applies all security headers to a response
- *
- * Includes:
- * - X-Content-Type-Options
- * - Content-Security-Policy
- * - Cross-Origin-Opener-Policy (COOP)
- * - Cross-Origin-Resource-Policy (CORP)
- * - Cross-Origin-Embedder-Policy (COEP)
- *
- * @param headers - Headers object to modify
- * @param ctx - Handler context
- *
- * @example
- * ```ts
- * const headers = new Headers();
- * applySecurityHeaders(headers, ctx);
- * ```
- */
 export function applySecurityHeaders(
   headers: Headers,
   ctx: HandlerContext,
 ): void {
   headers.set("x-content-type-options", "nosniff");
 
-  // Build CSP
   const csp = buildCSP(ctx);
   headers.set("content-security-policy", csp);
 
-  // COOP, CORP, COEP
   const coop = getSecurityHeader("COOP", "same-origin", ctx);
   const corp = getSecurityHeader("CORP", "same-origin", ctx);
   const coep = getSecurityHeader("COEP", "", ctx);

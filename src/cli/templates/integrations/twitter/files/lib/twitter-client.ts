@@ -1,21 +1,12 @@
-/**
- * Twitter API Client
- *
- * Provides a type-safe interface to Twitter API v2 operations.
- */
 
 import { tokenStore as _tokenStore } from "./token-store.ts";
 import { getValidToken } from "./oauth.ts";
 
-// Helper for Cross-Platform environment access
 function getEnv(key: string): string | undefined {
-  // @ts-ignore - Deno global
   if (typeof Deno !== "undefined") {
-    // @ts-ignore - Deno global
     return Deno.env.get(key);
-  } // @ts-ignore - process global
+  }
   else if (typeof process !== "undefined" && process.env) {
-    // @ts-ignore - process global
     return process.env[key];
   }
   return undefined;
@@ -72,9 +63,6 @@ export interface SearchResult {
   };
 }
 
-/**
- * Twitter OAuth provider configuration
- */
 export const twitterOAuthProvider = {
   name: "twitter",
   authorizationUrl: "https://twitter.com/i/oauth2/authorize",
@@ -92,9 +80,6 @@ export const twitterOAuthProvider = {
   usePKCE: true,
 };
 
-/**
- * Create a Twitter client for a specific user
- */
 export function createTwitterClient(userId: string) {
   const getAccessToken = async (): Promise<string> => {
     const token = await getValidToken(twitterOAuthProvider, userId, "twitter");
@@ -128,9 +113,6 @@ export function createTwitterClient(userId: string) {
   };
 
   return {
-    /**
-     * Get authenticated user information
-     */
     getMe: async (): Promise<TwitterUser> => {
       const result = await twitterFetch<{ data: TwitterUser }>(
         "/users/me?user.fields=created_at,description,location,profile_image_url,public_metrics,verified",
@@ -138,9 +120,6 @@ export function createTwitterClient(userId: string) {
       return result.data;
     },
 
-    /**
-     * Get user by ID
-     */
     getUserById: async (userId: string): Promise<TwitterUser> => {
       const result = await twitterFetch<{ data: TwitterUser }>(
         `/users/${userId}?user.fields=created_at,description,location,profile_image_url,public_metrics,verified`,
@@ -148,9 +127,6 @@ export function createTwitterClient(userId: string) {
       return result.data;
     },
 
-    /**
-     * Get user's tweets
-     */
     getTweets: async (
       userId: string,
       options: { maxResults?: number; excludeReplies?: boolean } = {},
@@ -170,9 +146,6 @@ export function createTwitterClient(userId: string) {
       return result.data || [];
     },
 
-    /**
-     * Get single tweet by ID
-     */
     getTweet: async (tweetId: string): Promise<Tweet> => {
       const result = await twitterFetch<{ data: Tweet }>(
         `/tweets/${tweetId}?tweet.fields=created_at,public_metrics,referenced_tweets,entities,author_id`,
@@ -180,9 +153,6 @@ export function createTwitterClient(userId: string) {
       return result.data;
     },
 
-    /**
-     * Post a new tweet
-     */
     postTweet: async (text: string): Promise<{ id: string; text: string }> => {
       const result = await twitterFetch<{ data: { id: string; text: string } }>(
         "/tweets",
@@ -194,9 +164,6 @@ export function createTwitterClient(userId: string) {
       return result.data;
     },
 
-    /**
-     * Search recent tweets
-     */
     searchTweets: (
       query: string,
       options: { maxResults?: number; sortOrder?: "recency" | "relevancy" } = {},
@@ -213,9 +180,6 @@ export function createTwitterClient(userId: string) {
       );
     },
 
-    /**
-     * Get home timeline (reverse chronological tweets from followed accounts)
-     */
     getTimeline: async (options: { maxResults?: number } = {}): Promise<Tweet[]> => {
       const me = await twitterFetch<{ data: TwitterUser }>("/users/me");
       const userId = me.data.id;

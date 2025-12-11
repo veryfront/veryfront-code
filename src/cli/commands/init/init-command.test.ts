@@ -1,8 +1,3 @@
-/**
- * Init Command Tests
- *
- * Tests the init command types and options validation.
- */
 
 import { assertEquals, assertExists } from "std/assert/mod.ts";
 import { describe, it } from "std/testing/bdd.ts";

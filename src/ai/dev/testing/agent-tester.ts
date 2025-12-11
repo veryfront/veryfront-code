@@ -1,88 +1,44 @@
-/**
- * Agent Testing Utilities
- *
- * Utilities for testing agents in development and CI/CD.
- */
 
 import type { Agent, AgentResponse, Message } from "../../types/agent.ts";
 
 export interface TestCase {
-  /** Test name */
   name: string;
 
-  /** Input to agent */
   input: string | Message[];
 
-  /** Expected output pattern (regex or string) */
   expected?: RegExp | string;
 
-  /** Expected tool calls */
   expectToolCalls?: string[];
 
-  /** Maximum execution time (ms) */
   timeout?: number;
 
-  /** Custom validator */
   validate?: (response: AgentResponse) => boolean | Promise<boolean>;
 }
 
 export interface TestResult {
-  /** Test case name */
   name: string;
 
-  /** Pass/fail */
   passed: boolean;
 
-  /** Response from agent */
   response?: AgentResponse;
 
-  /** Error if test failed */
   error?: string;
 
-  /** Execution time */
   executionTime: number;
 
-  /** Tool calls made */
   toolCalls: string[];
 }
 
 export interface TestSuite {
-  /** Suite name */
   name: string;
 
-  /** Test results */
   results: TestResult[];
 
-  /** Overall pass/fail */
   passed: boolean;
 
-  /** Total execution time */
   totalTime: number;
 }
 
-/**
- * Test an agent with multiple test cases
- *
- * @example
- * ```typescript
- * import { testAgent } from 'veryfront/ai/dev';
- *
- * const results = await testAgent(myAgent, [
- *   {
- *     name: 'Simple greeting',
- *     input: 'Hello',
- *     expected: /hello|hi|hey/i,
- *   },
- *   {
- *     name: 'Tool usage',
- *     input: 'Search for AI frameworks',
- *     expectToolCalls: ['searchWeb'],
- *   },
- * ]);
- *
- * console.log(`Passed: ${results.results.filter(r => r.passed).length}/${results.results.length}`);
- * ```
- */
 export async function testAgent(
   agent: Agent,
   testCases: TestCase[],
@@ -110,20 +66,15 @@ export async function testAgent(
   return suite;
 }
 
-/**
- * Run a single test case
- */
 async function runTestCase(agent: Agent, testCase: TestCase): Promise<TestResult> {
   const startTime = Date.now();
 
   try {
-    // Set timeout
     const timeout = testCase.timeout || 30000;
     const timeoutPromise = new Promise<never>((_, reject) => {
       setTimeout(() => reject(new Error("Test timeout")), timeout);
     });
 
-    // Execute agent
     const responsePromise = agent.generate({
       input: testCase.input,
     });
@@ -133,11 +84,9 @@ async function runTestCase(agent: Agent, testCase: TestCase): Promise<TestResult
     const executionTime = Date.now() - startTime;
     const toolCalls = response.toolCalls.map((tc) => tc.name);
 
-    // Validate response
     let passed = true;
     let error: string | undefined;
 
-    // Check expected output
     if (testCase.expected) {
       if (testCase.expected instanceof RegExp) {
         passed = testCase.expected.test(response.text);
@@ -152,7 +101,6 @@ async function runTestCase(agent: Agent, testCase: TestCase): Promise<TestResult
       }
     }
 
-    // Check expected tool calls
     if (passed && testCase.expectToolCalls) {
       const expectedTools = testCase.expectToolCalls;
       const missingTools = expectedTools.filter((t) => !toolCalls.includes(t));
@@ -163,7 +111,6 @@ async function runTestCase(agent: Agent, testCase: TestCase): Promise<TestResult
       }
     }
 
-    // Custom validation
     if (passed && testCase.validate) {
       try {
         passed = await testCase.validate(response);
@@ -195,9 +142,6 @@ async function runTestCase(agent: Agent, testCase: TestCase): Promise<TestResult
   }
 }
 
-/**
- * Print test results in a readable format
- */
 export function printTestResults(suite: TestSuite): void {
   console.log(`\n=== Test Suite: ${suite.name} ===\n`);
 
@@ -224,23 +168,14 @@ export function printTestResults(suite: TestSuite): void {
   console.log(`Status: ${suite.passed ? "✅ PASSED" : "❌ FAILED"}\n`);
 }
 
-/**
- * Assert that an agent response contains text
- */
 export function assertContains(response: AgentResponse, text: string): boolean {
   return response.text.toLowerCase().includes(text.toLowerCase());
 }
 
-/**
- * Assert that an agent called a specific tool
- */
 export function assertToolCalled(response: AgentResponse, toolName: string): boolean {
   return response.toolCalls.some((tc) => tc.name === toolName);
 }
 
-/**
- * Assert that an agent completed successfully
- */
 export function assertCompleted(response: AgentResponse): boolean {
   return response.status === "completed";
 }

@@ -75,7 +75,6 @@ export class LinkObserver {
     this.mutationObserver = new MutationObserver((mutations) => {
       for (const mutation of mutations) {
         if (mutation.type === "childList") {
-          // Handle added nodes
           mutation.addedNodes.forEach((node) => {
             if (node.nodeType === Node.ELEMENT_NODE) {
               this.observeElement(node as Element);
@@ -110,7 +109,6 @@ export class LinkObserver {
       }
     }
 
-    // Clear timeouts for any child links
     const links = element.querySelectorAll("a");
     links.forEach((link) => {
       const timeoutKey = this.elementTimeoutMap.get(link);

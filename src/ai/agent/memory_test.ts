@@ -1,6 +1,3 @@
-/**
- * Memory System Tests
- */
 
 import { assertEquals, assertExists } from "https://deno.land/std@0.220.0/assert/mod.ts";
 import { describe, it } from "@std/testing/bdd.ts";
@@ -119,7 +116,6 @@ describe("Memory System", () => {
         maxMessages: 3,
       });
 
-      // Add 5 messages
       for (let i = 1; i <= 5; i++) {
         await memory.add({
           id: `msg${i}`,
@@ -131,7 +127,6 @@ describe("Memory System", () => {
 
       const messages = await memory.getMessages();
 
-      // Should only have last 3
       assertEquals(messages.length, 3);
       assertEquals(getTextFromParts(messages[0]!.parts), "Message 3");
       assertEquals(getTextFromParts(messages[1]!.parts), "Message 4");

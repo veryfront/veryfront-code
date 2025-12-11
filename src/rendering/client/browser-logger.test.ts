@@ -1,7 +1,3 @@
-/**
- * Unit Tests for Browser Logger
- * Tests browser-specific logging functionality with conditional log levels
- */
 
 import { assertEquals, assertExists } from "std/assert/mod.ts";
 import { describe, it } from "std/testing/bdd.ts";
@@ -14,7 +10,6 @@ import {
   rscLogger,
 } from "./browser-logger.ts";
 
-// Mock console methods
 class MockConsole {
   logs: Array<{ level: string; args: unknown[] }> = [];
 
@@ -58,7 +53,6 @@ describe("Browser Logger", () => {
       const mockConsole = new MockConsole();
       const originalConsole = globalThis.console;
 
-      // @ts-ignore - Mock console
       globalThis.console = mockConsole;
 
       class TestLogger implements BrowserLogger {
@@ -108,7 +102,6 @@ describe("Browser Logger", () => {
       const mockConsole = new MockConsole();
       const originalConsole = globalThis.console;
 
-      // @ts-ignore - Mock console
       globalThis.console = mockConsole;
 
       class TestLogger implements BrowserLogger {
@@ -154,7 +147,6 @@ describe("Browser Logger", () => {
       const mockConsole = new MockConsole();
       const originalConsole = globalThis.console;
 
-      // @ts-ignore - Mock console
       globalThis.console = mockConsole;
 
       class TestLogger implements BrowserLogger {
@@ -204,7 +196,6 @@ describe("Browser Logger", () => {
       const mockConsole = new MockConsole();
       const originalConsole = globalThis.console;
 
-      // @ts-ignore - Mock console
       globalThis.console = mockConsole;
 
       class TestLogger implements BrowserLogger {
@@ -286,18 +277,13 @@ describe("Browser Logger", () => {
       const originalWindow = (globalThis as any).window;
       (globalThis as any).window = {};
 
-      // The default level should be WARN in non-development
       const mockConsole = new MockConsole();
       const originalConsole = globalThis.console;
-      // @ts-ignore - Mock console
       globalThis.console = mockConsole;
 
-      // Since we can't easily reimport, we'll verify the behavior indirectly
-      // by checking that loggers exist and are callable
       assertExists(browserLogger);
       browserLogger.info("test");
 
-      // Restore
       globalThis.console = originalConsole;
       (globalThis as any).window = originalWindow;
     });
@@ -309,7 +295,6 @@ describe("Browser Logger", () => {
         __VERYFRONT_DEBUG__: true,
       };
 
-      // Verify loggers exist
       assertExists(browserLogger);
       assertExists(rscLogger);
       (globalThis as any).window = originalWindow;
@@ -321,7 +306,6 @@ describe("Browser Logger", () => {
         __VERYFRONT_DEV__: true,
       };
 
-      // Verify loggers exist
       assertExists(browserLogger);
       assertExists(prefetchLogger);
       (globalThis as any).window = originalWindow;
@@ -333,7 +317,6 @@ describe("Browser Logger", () => {
       const mockConsole = new MockConsole();
       const originalConsole = globalThis.console;
 
-      // @ts-ignore - Mock console
       globalThis.console = mockConsole;
 
       class TestLogger implements BrowserLogger {
@@ -390,7 +373,6 @@ describe("Browser Logger", () => {
         error: () => {},
       };
 
-      // @ts-ignore - Partial console
       globalThis.console = partialConsole;
 
       class TestLogger implements BrowserLogger {
@@ -424,7 +406,6 @@ describe("Browser Logger", () => {
 
       const logger = new TestLogger();
 
-      // Should not throw
       logger.debug("test");
       logger.info("test");
 

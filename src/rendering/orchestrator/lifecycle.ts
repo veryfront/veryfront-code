@@ -64,7 +64,6 @@ export class RendererLifecycle {
       mode: this.configManager.getMode(),
     });
 
-    // Get or detect adapter
     this.adapter = this.configManager.getAdapter();
     if (!this.adapter) {
       const { getAdapter } = await import("@veryfront/platform/adapters/detect.ts");
@@ -73,7 +72,6 @@ export class RendererLifecycle {
 
     const config = this.configManager.getConfig();
 
-    // Initialize core services
     const virtualModules = new VirtualModuleSystem("/_veryfront/modules", this.adapter);
     const componentRegistry = new ComponentRegistry(
       virtualModules,
@@ -82,7 +80,6 @@ export class RendererLifecycle {
       this.moduleServerUrl,
     );
 
-    // Initialize cache system (pluggable)
     const renderCacheConfig = config.cache?.render ?? {};
     const cacheBaseDir = config.cache?.dir ?? DEFAULT_CACHE_DIR;
 
@@ -119,17 +116,14 @@ export class RendererLifecycle {
       ttlMs: renderCacheConfig.ttl,
     });
 
-    // Initialize MDX cache adapter
     const mdxCacheAdapter = new MDXCacheAdapter({
       config,
       mode: this.configManager.getMode(),
     });
 
-    // Initialize compiler service to handle late binding
     const compilerService = new CompilerService();
     const compileMDXProxy = compilerService.getCompileFunction();
 
-    // Initialize layout system components
     const layoutCollector = new LayoutCollector({
       projectDir: this.configManager.getProjectDir(),
       adapter: this.adapter,
@@ -148,7 +142,6 @@ export class RendererLifecycle {
       compileMDX: compileMDXProxy,
     });
 
-    // Initialize rendering pipeline components
     const debugMode = this.configManager.isDebugMode();
 
     const elementValidator = new ElementValidator({
@@ -171,7 +164,6 @@ export class RendererLifecycle {
       moduleServerUrl: this.moduleServerUrl,
     });
 
-    // Initialize page resolver
     const pageResolver = new PageResolver({
       projectDir: this.configManager.getProjectDir(),
       config,
@@ -193,8 +185,6 @@ export class RendererLifecycle {
       compilerService,
     };
 
-    // Skip eager component loading in compiled binaries to avoid @mdx-js/mdx Worker issues
-    // Components will be loaded lazily on-demand instead
     if (!isCompiledBinary()) {
       logger.info("Loading components eagerly for MDX import mapping");
 
@@ -231,7 +221,6 @@ export class RendererLifecycle {
       }));
     }
 
-    // Update the compiler service, which updates the proxy function used by all services
     this.services.compilerService.setCompileMDX(compileMDX);
   }
 
@@ -261,7 +250,6 @@ export class RendererLifecycle {
     void this.services.cacheCoordinator.clearAll();
     this.services.virtualModules.clear();
 
-    // Clear component registry state
     this.services.componentRegistry.clear();
   }
 

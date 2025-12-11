@@ -2,9 +2,6 @@ import { tool } from 'veryfront/ai';
 import { z } from 'zod';
 import { getAWSClient } from '../../lib/aws-client';
 
-/**
- * Tool for listing Lambda functions
- */
 export const listLambdaFunctionsTool = tool({
   name: 'list-lambda-functions',
   description: 'List all Lambda functions in your AWS account. Returns function details including name, ARN, runtime, and configuration.',

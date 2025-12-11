@@ -10,8 +10,8 @@ export function getLoaderFromPath(filePath: string): Loader {
   if (filePath.endsWith(".ts")) return "ts";
   if (filePath.endsWith(".jsx")) return "jsx";
   if (filePath.endsWith(".js")) return "js";
-  if (filePath.endsWith(".mdx")) return "jsx"; // MDX pre-compiled to JSX
-  return "tsx"; // Default
+  if (filePath.endsWith(".mdx")) return "tsx";
+  return "tsx";
 }
 
 export function needsTransform(filePath: string): boolean {

@@ -14,7 +14,6 @@ describe("react-imports", () => {
     it("should resolve bare React import with single quotes", async () => {
       const code = "import React from 'react'";
       const result = await resolveReactImports(code);
-      // Preserves single quotes
       expect(result).toBe("import React from 'https://esm.sh/react@18.3.1'");
     });
 
@@ -206,7 +205,6 @@ import bar from "https://example.com/package.js"`;
     it("should handle single quotes", async () => {
       const code = "import foo from 'https://esm.sh/package@1.0.0'";
       const result = await addDepsToEsmShUrls(code);
-      // Preserves single quotes
       expect(result).toBe(
         "import foo from 'https://esm.sh/package@1.0.0?deps=react@18.3.1,react-dom@18.3.1'",
       );
@@ -268,7 +266,6 @@ import { Button } from "next-themes"`;
       expect(result).toContain(
         `export * from "https://modules/_vendor.js?v=abc123"`,
       );
-      // Should not inject an extra const/assignment for exports
       expect(result.includes("const {")).toBe(false);
     });
   });

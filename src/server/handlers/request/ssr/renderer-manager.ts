@@ -1,35 +1,10 @@
-/**
- * Renderer Manager
- *
- * Manages renderer lifecycle with lazy initialization and caching.
- * Ensures only one renderer instance is created per handler.
- *
- * @module server/handlers/request/ssr/renderer-manager
- */
 
 import type { HandlerContext } from "../../types.ts";
 import { createRenderer } from "@veryfront/rendering/index.ts";
 import { rendererLogger } from "@veryfront/utils";
 
-// Global registry of renderer instances for cleanup
 const rendererRegistry = new Set<Awaited<ReturnType<typeof createRenderer>>>();
 
-/**
- * Get or create renderer instance
- *
- * Uses lazy initialization pattern with promise caching to ensure
- * only one renderer is created even with concurrent requests.
- *
- * @param rendererInit - Cached renderer initialization promise
- * @param ctx - Handler context with projectDir, mode, adapter
- * @returns Renderer instance
- *
- * @example
- * ```typescript
- * const renderer = await getRenderer(this.rendererInit, ctx);
- * const result = await renderer.renderPage(slug);
- * ```
- */
 export async function getRenderer(
   rendererInit: Promise<Awaited<ReturnType<typeof createRenderer>>> | null,
   ctx: HandlerContext,
@@ -47,7 +22,6 @@ export async function getRenderer(
         moduleServerUrl: ctx.moduleServerUrl,
       });
 
-      // Register renderer for cleanup
       rendererRegistry.add(renderer);
 
       rendererLogger.debug("[SSRHandler] Renderer created successfully");
@@ -63,19 +37,6 @@ export async function getRenderer(
   return await rendererInit;
 }
 
-/**
- * Cleanup all cached renderer instances
- *
- * Destroys all renderer instances that were created, cleaning up
- * their internal resources (cache stores, intervals, etc.).
- * Should be called during test cleanup or server shutdown.
- *
- * @example
- * ```typescript
- * // In test cleanup
- * await cleanupBundler();
- * ```
- */
 export async function cleanupRenderers(): Promise<void> {
   rendererLogger.debug("[RendererManager] Cleaning up renderers", {
     count: rendererRegistry.size,

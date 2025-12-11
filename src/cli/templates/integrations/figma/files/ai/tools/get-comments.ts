@@ -15,15 +15,12 @@ export default tool({
     const response = await getComments(fileKey);
     let comments = response.comments;
 
-    // Filter out resolved comments if requested
     if (!includeResolved) {
       comments = comments.filter((comment) => !comment.resolved_at);
     }
 
-    // Limit the number of comments
     comments = comments.slice(0, limit);
 
-    // Transform comments into a more readable format
     const formattedComments = comments.map((comment) => ({
       id: comment.id,
       message: comment.message,
@@ -45,7 +42,6 @@ export default tool({
         : null,
     }));
 
-    // Group comments into threads
     const threads: Array<{
       rootComment: typeof formattedComments[0];
       replies: typeof formattedComments;

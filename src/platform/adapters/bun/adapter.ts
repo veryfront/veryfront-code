@@ -13,7 +13,6 @@ import { createBunServer } from "./http-server.ts";
 export class BunAdapter implements RuntimeAdapter {
   readonly id = "bun" as const;
   readonly name = "bun";
-  /** @deprecated Use `id` instead */
   readonly platform = "bun" as const;
 
   fs = new BunFileSystemAdapter();
@@ -23,7 +22,7 @@ export class BunAdapter implements RuntimeAdapter {
   readonly capabilities: RuntimeCapabilities = {
     typescript: true,
     jsx: true,
-    http2: false, // Bun's HTTP/2 support is experimental
+    http2: false,
     websocket: true,
     workers: true,
     fileWatching: true,
@@ -32,7 +31,6 @@ export class BunAdapter implements RuntimeAdapter {
     writableFs: true,
   };
 
-  /** @deprecated Use `capabilities` instead */
   readonly features: RuntimeFeatures = {
     websocket: true,
     http2: false,

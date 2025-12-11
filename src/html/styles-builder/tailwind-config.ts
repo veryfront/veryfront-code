@@ -2,9 +2,6 @@ import type { VeryfrontConfig } from "../../core/config/types.ts";
 
 type TailwindConfig = VeryfrontConfig["tailwind"];
 
-/**
- * Deep merge two objects, with source values overwriting target values
- */
 function deepMerge<T extends Record<string, unknown>>(
   target: T,
   source: Partial<T>,
@@ -32,9 +29,6 @@ function deepMerge<T extends Record<string, unknown>>(
   return result;
 }
 
-/**
- * Get the Tailwind CDN URL with plugins
- */
 export function getTailwindCDNUrl(userConfig?: TailwindConfig): string {
   const baseUrl = "https://cdn.tailwindcss.com";
   const plugins = userConfig?.plugins;
@@ -46,9 +40,6 @@ export function getTailwindCDNUrl(userConfig?: TailwindConfig): string {
   return baseUrl;
 }
 
-/**
- * Default veryfront theme colors (CSS variable based)
- */
 const defaultThemeExtend = {
   colors: {
     background: "hsl(var(--background))",
@@ -101,14 +92,12 @@ const defaultThemeExtend = {
 };
 
 export function generateTailwindConfig(userConfig?: TailwindConfig): string {
-  // Merge user theme extensions with defaults
   const userExtend = userConfig?.theme?.extend || {};
   const mergedExtend = deepMerge(
     defaultThemeExtend as Record<string, unknown>,
     userExtend as Record<string, unknown>,
   );
 
-  // Build the config object
   const configObject = {
     darkMode: ["class", '[data-theme="dark"]'],
     theme: {

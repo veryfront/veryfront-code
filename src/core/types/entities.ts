@@ -63,7 +63,6 @@ export function detectEntityType(
   const baseName = fileName.replace(/\.[^.]+$/, "");
   const lowerBase = baseName.toLowerCase();
 
-  // Detect file extension to determine kind
   const ext = fileName.match(/\.([^.]+)$/)?.[1]?.toLowerCase();
   const kind: "mdx" | "tsx" | undefined = ext === "mdx"
     ? "mdx"

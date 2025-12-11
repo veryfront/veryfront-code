@@ -1,6 +1,3 @@
-/**
- * Tests for CSS Cache Manager
- */
 
 import { assertEquals, assertExists } from "std/assert/mod.ts";
 import { join } from "std/path/mod.ts";
@@ -14,7 +11,6 @@ async function cleanupTestDir() {
   try {
     await Deno.remove(TEST_DIR, { recursive: true });
   } catch {
-    // Directory doesn't exist
   }
 }
 
@@ -149,7 +145,6 @@ Deno.test("CacheManager - writeManifest", async () => {
   assertEquals(parsed["test.css"].file, "test.css");
   assertEquals(parsed["test.css"].size, 100);
 
-  // Content and sourceMap should be excluded
   assertEquals(parsed["test.css"].content, undefined);
   assertEquals(parsed["test.css"].sourceMap, undefined);
 
@@ -213,14 +208,13 @@ Deno.test("CacheManager - getTotalSavings format", () => {
   cache.addBundle("test.css", {
     file: "test.css",
     content: ".test {}",
-    size: 10240, // 10KB
-    minifiedSize: 5120, // 5KB
+    size: 10240,
+    minifiedSize: 5120,
     savings: 50,
   });
 
   const savings = cache.getTotalSavings();
 
-  // Should be formatted like "10.0KB → 5.0KB (50.0%)"
   assertEquals(typeof savings, "string");
   assertEquals(savings.includes("KB"), true);
   assertEquals(savings.includes("→"), true);

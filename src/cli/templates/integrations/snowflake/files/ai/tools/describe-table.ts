@@ -28,7 +28,6 @@ export default tool({
       try {
         rowCount = await getTableRowCount(database, schema, table);
       } catch (_error) {
-        // Silently fail if row count cannot be retrieved
         rowCount = null;
       }
     }

@@ -10,14 +10,12 @@ export function getProductionStyles(nonce?: string): string {
   const nonceAttr = nonce ? ` nonce="${nonce}"` : "";
   return `
   <style${nonceAttr}>
-    /* Basic reset and typography */
     body {
       margin: 0;
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
       line-height: 1.5;
     }
 
-    /* Prose styles for content */
     .prose {
       max-width: 65ch;
       margin: 0 auto;
@@ -54,7 +52,6 @@ export function getProductionStyles(nonce?: string): string {
       color: inherit;
     }
 
-    /* Tailwind-like utility classes */
     .vf-tailwind {
       width: 100%;
     }

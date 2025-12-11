@@ -1,7 +1,7 @@
 import { logger } from "./logger/logger.ts";
 
 export function normalizePath(pathname: string): string {
-  pathname = pathname.replace(/\\+/g, "/").replace(/\/\.+\//g, "/");
+  pathname = pathname.replace(/\\+/g, "/").replace(/\/\.+\
 
   if (pathname !== "/" && pathname.endsWith("/")) {
     pathname = pathname.slice(0, -1);

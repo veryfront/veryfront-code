@@ -115,7 +115,6 @@ export function toError(veryfrontError: VeryfrontError): Error {
 
 export function fromError(error: unknown): VeryfrontError | null {
   if (error && typeof error === "object" && "context" in error) {
-    // Safe access after 'in' check
     const context = (error as Record<string, unknown>).context;
     if (
       context &&

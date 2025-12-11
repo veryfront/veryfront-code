@@ -228,16 +228,13 @@ export function getGuildMembers(
   return discordFetch<DiscordGuildMember[]>(endpoint);
 }
 
-// Helper to format username with discriminator
 export function formatUsername(user: DiscordUser): string {
   if (user.discriminator === "0") {
-    // New username system without discriminator
     return user.username;
   }
   return `${user.username}#${user.discriminator}`;
 }
 
-// Helper to get user avatar URL
 export function getAvatarUrl(user: DiscordUser, size: number = 128): string | null {
   if (!user.avatar) return null;
 
@@ -245,7 +242,6 @@ export function getAvatarUrl(user: DiscordUser, size: number = 128): string | nu
   return `https://cdn.discordapp.com/avatars/${user.id}/${user.avatar}.${extension}?size=${size}`;
 }
 
-// Helper to get guild icon URL
 export function getGuildIconUrl(guild: DiscordGuild, size: number = 128): string | null {
   if (!guild.icon) return null;
 
@@ -253,7 +249,6 @@ export function getGuildIconUrl(guild: DiscordGuild, size: number = 128): string
   return `https://cdn.discordapp.com/icons/${guild.id}/${guild.icon}.${extension}?size=${size}`;
 }
 
-// Helper to get channel type name
 export function getChannelTypeName(type: number): string {
   const types: Record<number, string> = {
     0: "Text",

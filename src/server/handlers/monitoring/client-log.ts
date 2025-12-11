@@ -1,7 +1,3 @@
-/**
- * Client Logging Handler
- * Handles client-side logging in development mode
- */
 
 import { BaseHandler } from "../response/base.ts";
 import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } from "../types.ts";
@@ -12,11 +8,11 @@ import { HTTP_OK, PRIORITY_HIGH_CLIENT_LOG } from "@veryfront/core/constants/ind
 export class ClientLogHandler extends BaseHandler {
   metadata: HandlerMetadata = {
     name: "ClientLogHandler",
-    priority: PRIORITY_HIGH_CLIENT_LOG as HandlerPriority, // HIGH priority
+    priority: PRIORITY_HIGH_CLIENT_LOG as HandlerPriority,
     patterns: [
       { pattern: "/_veryfront/log", exact: true, method: "POST" },
     ],
-    enabled: (ctx) => ctx.mode === "development", // Only in dev mode
+    enabled: (ctx) => ctx.mode === "development",
   };
 
   async handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
@@ -32,11 +28,9 @@ export class ClientLogHandler extends BaseHandler {
       body = await req.text();
       const logData = JSON.parse(body);
 
-      // Format and log
       const prefix = this.getLogPrefix(logData.level);
       serverLogger.info(`${prefix} ${logData.message}`, logData.details || undefined);
 
-      // Return success response
       return this.respond(
         ResponseBuilder.json({ ok: true }, req, {
           corsConfig: ctx.securityConfig?.cors,
@@ -44,10 +38,8 @@ export class ClientLogHandler extends BaseHandler {
         }),
       );
     } catch (e) {
-      // Log parsing error details for debugging
       this.handleParseError(e, body);
 
-      // Still return OK to prevent client errors
       return this.respond(
         ResponseBuilder.json({ ok: true }, req, {
           corsConfig: ctx.securityConfig?.cors,
@@ -80,7 +72,6 @@ export class ClientLogHandler extends BaseHandler {
     );
     serverLogger.error("[ClientLogHandler] Body length:", body.length);
 
-    // Try to identify the problematic character for SyntaxError
     if (e instanceof SyntaxError && e.message.includes("position")) {
       const match = e.message.match(/position (\d+)/);
       if (match && match[1]) {

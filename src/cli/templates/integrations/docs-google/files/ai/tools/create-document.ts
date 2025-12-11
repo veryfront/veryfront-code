@@ -2,8 +2,6 @@ import { tool } from "veryfront/ai";
 import { z } from "zod";
 import { createDocsClient } from "../../lib/docs-client.ts";
 
-// Default user ID for demo/dev purposes
-// In production, get from authenticated session
 const DEFAULT_USER_ID = "demo-user";
 
 export default tool({
@@ -25,14 +23,11 @@ export default tool({
     let document;
 
     if (content) {
-      // Create document with content
       document = await client.createDocumentWithContent(title, content);
     } else {
-      // Create empty document
       document = await client.createDocument({ title });
     }
 
-    // Get the web view link from Drive
     const documents = await client.listDocuments({ maxResults: 1 });
     const webViewLink = documents.find(d => d.id === document.documentId)?.webViewLink;
 

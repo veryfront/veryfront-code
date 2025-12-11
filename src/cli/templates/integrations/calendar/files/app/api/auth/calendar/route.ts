@@ -1,6 +1,3 @@
-/**
- * Calendar OAuth Initiation
- */
 
 import { calendarConfig, createOAuthInitHandler, memoryTokenStore } from "veryfront/oauth";
 

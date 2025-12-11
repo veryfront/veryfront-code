@@ -1,13 +1,8 @@
-/**
- * Unit Tests for Link Observer
- * Tests intersection observer-based link prefetching functionality
- */
 
 import { assertEquals, assertExists } from "std/assert/mod.ts";
 import { describe, it } from "std/testing/bdd.ts";
 import { LinkObserver, LinkObserverOptions } from "./link-observer.ts";
 
-// Mock IntersectionObserver
 class MockIntersectionObserver {
   callback: IntersectionObserverCallback;
   options: IntersectionObserverInit;
@@ -44,7 +39,6 @@ class MockIntersectionObserver {
   }
 }
 
-// Mock MutationObserver
 class MockMutationObserver {
   callback: MutationCallback;
   observedTarget: Node | null = null;
@@ -80,7 +74,6 @@ class MockMutationObserver {
   }
 }
 
-// Setup global mocks
 const setupMocks = () => {
   const originalIntersectionObserver = (globalThis as any).IntersectionObserver;
   const originalMutationObserver = (globalThis as any).MutationObserver;
@@ -103,7 +96,6 @@ const setupMocks = () => {
     }
   };
 
-  // Mock Node constants
   (globalThis as any).Node = {
     ELEMENT_NODE: 1,
     TEXT_NODE: 3,
@@ -112,12 +104,11 @@ const setupMocks = () => {
     DOCUMENT_FRAGMENT_NODE: 11,
   };
 
-  // Mock document
   const mockDocument = {
     querySelectorAll: (_selector: string) => [],
     body: {},
   };
-  (globalThis as any).document = mockDocument; // Mock location
+  (globalThis as any).document = mockDocument;
   (globalThis as any).location = {
     hostname: "example.com",
     href: "http://example.com/current",
@@ -544,7 +535,6 @@ describe("LinkObserver", () => {
       const mockIO = mocks.getMockIntersectionObserver();
       mockIO.triggerIntersection(link as any, true);
 
-      // Wait for callback to be called
       await new Promise((resolve) => setTimeout(resolve, 10));
 
       assertEquals(callbackCalled, true);
@@ -589,7 +579,6 @@ describe("LinkObserver", () => {
       const startTime = Date.now();
       mockIO.triggerIntersection(link as any, true);
 
-      // Wait for delay
       await new Promise((resolve) => setTimeout(resolve, 100));
 
       const elapsed = callbackTime - startTime;
@@ -665,7 +654,7 @@ describe("LinkObserver", () => {
       const mockIO = mocks.getMockIntersectionObserver();
 
       const newLink = {
-        nodeType: 1, // Node.ELEMENT_NODE
+        nodeType: 1,
         tagName: "A",
         href: "http://example.com/new-page",
         hostname: "example.com",
@@ -680,7 +669,6 @@ describe("LinkObserver", () => {
       const mockMO = mocks.getMockMutationObserver();
       mockMO.triggerMutation([newLink as any]);
 
-      // Should have observed the new link
       assertEquals(mockIO.observedElements.has(newLink as any), true);
 
       observer.destroy();
@@ -732,7 +720,6 @@ describe("LinkObserver", () => {
       const mockMO = mocks.getMockMutationObserver();
       mockMO.triggerMutation([newContainer as any]);
 
-      // Should have observed the inner link
       assertEquals(mockIO.observedElements.has(innerLink as any), true);
 
       observer.destroy();
@@ -760,7 +747,7 @@ describe("LinkObserver", () => {
       const mockIO = mocks.getMockIntersectionObserver();
 
       const textNode = {
-        nodeType: 3, // Node.TEXT_NODE
+        nodeType: 3,
       };
 
       const mockMO = mocks.getMockMutationObserver();

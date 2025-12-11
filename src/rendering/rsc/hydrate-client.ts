@@ -1,12 +1,9 @@
-// Experimental client-side hydrator for RSC "use client" boundaries
-// Minimal: hydrate default export without props in dev
 
 import { rscLogger } from "../client/browser-logger.ts";
 import { getReactCDNUrl, getReactDOMClientCDNUrl } from "../../core/utils/constants/cdn.ts";
 // Note: Using centralized version from cdn.ts
 import type { Root } from "https://esm.sh/react-dom@18.3.1/client";
 
-// React CDN URLs - derived from centralized constants
 const REACT_URL = getReactCDNUrl();
 const REACT_DOM_CLIENT_URL = getReactDOMClientCDNUrl();
 
@@ -20,13 +17,11 @@ type Manifest = {
   };
 };
 
-// ClientModule represents a dynamically imported client component module
 interface ClientModule {
   default?: React.ComponentType<unknown>;
   [exportName: string]: React.ComponentType<unknown> | unknown;
 }
 
-// GlobalHydrationState extends globalThis with Veryfront-specific properties
 interface GlobalHydrationState {
   __VF_CLIENT_MOD_CACHE?: Map<string, ClientModule>;
   __VF_MANIFEST_HASH?: string;
@@ -35,7 +30,6 @@ interface GlobalHydrationState {
   VeryfrontHydrate?: VeryfrontHydrate;
 }
 
-// VeryfrontHydrate exposes the public hydration API
 interface VeryfrontHydrate {
   run: () => Promise<void>;
 }
@@ -89,7 +83,6 @@ async function importClientModule(manifest: Manifest, rel: string): Promise<Clie
     return mod;
   } catch (e) {
     rscLogger.debug("hydrate: failed to import dev url", { devUrl, error: e });
-    // Prod fallback: serve by rel path under /_veryfront/rsc/module?rel=/comp/widget.tsx
     try {
       const v = manifest.hash ? `&v=${encodeURIComponent(manifest.hash)}` : "";
       const url = `/_veryfront/rsc/module?rel=${encodeURIComponent(rel)}${v}`;
@@ -121,7 +114,6 @@ export async function hydrateAllClientBoundaries(doc: Document = document): Prom
   }
 
   const nodes = Array.from(doc.querySelectorAll("[data-client-ref]")) as HTMLElement[];
-  // If nothing to hydrate and manifest hash unchanged, skip work
   try {
     const lastHash = globalThis.__VF_MANIFEST_HASH;
     const needsHydrate = nodes.some((el) => el.dataset?.hydrated !== "true");
@@ -140,7 +132,6 @@ export async function hydrateAllClientBoundaries(doc: Document = document): Prom
     return;
   }
 
-  // Test mode: allow HMR re-hydration assertions without loading React
   try {
     if (globalThis.__VF_TEST_MODE__) {
       globalThis.__VF_HYDRATE_CALLED = true;
@@ -165,7 +156,6 @@ export async function hydrateAllClientBoundaries(doc: Document = document): Prom
     if (typeof Cmp !== "function") continue;
     try {
       const root: Root = createRoot(el);
-      // Type assertion: Cmp is validated as function above
       root.render(React.createElement(Cmp as unknown as React.FC, {}));
       el.dataset.hydrated = "true";
     } catch (e) {

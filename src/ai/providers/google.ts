@@ -1,6 +1,3 @@
-/**
- * Google AI provider implementation
- */
 
 import { z } from "zod";
 import { BaseProvider } from "./base.ts";
@@ -48,7 +45,6 @@ export class GoogleProvider extends BaseProvider {
   }
 
   protected getEndpoint(_path: string): string {
-    // Google uses OpenAI-compatible format
     return `${this.baseURL}/chat/completions`;
   }
 

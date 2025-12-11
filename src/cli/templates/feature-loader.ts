@@ -1,12 +1,3 @@
-/**
- * Feature loader for composable templates
- *
- * Loads features from the features/ directory and handles:
- * - Feature file overlay
- * - Dependency merging
- * - Config merging
- * - Feature validation (requires/conflicts)
- */
 
 import { createFileSystem } from "../../platform/compat/fs.ts";
 import * as pathHelper from "../../platform/compat/path-helper.ts";
@@ -14,9 +5,6 @@ import { isDeno } from "../../platform/compat/runtime.ts";
 import { loadTemplateFromDirectory } from "./loader.ts";
 import type { FeatureConfig, FeatureName, ResolvedFeature, TemplateFile } from "./types.ts";
 
-/**
- * Available features that can be added via --with flag
- */
 export const AVAILABLE_FEATURES: FeatureName[] = [
   "ai",
   "auth",
@@ -26,9 +14,6 @@ export const AVAILABLE_FEATURES: FeatureName[] = [
   "blob",
 ];
 
-/**
- * Get the directory path for a feature
- */
 export function getFeatureDirectory(featureName: string): string {
   const moduleUrl = new URL(".", import.meta.url);
   let moduleDir: string;
@@ -53,9 +38,6 @@ export function getFeatureDirectory(featureName: string): string {
   }
 }
 
-/**
- * Load feature configuration from feature.json
- */
 export async function loadFeatureConfig(
   featureName: FeatureName,
 ): Promise<FeatureConfig | null> {
@@ -71,9 +53,6 @@ export async function loadFeatureConfig(
   }
 }
 
-/**
- * Load a feature with its files
- */
 export async function loadFeature(
   featureName: FeatureName,
 ): Promise<ResolvedFeature | null> {
@@ -85,7 +64,6 @@ export async function loadFeature(
   const featureDir = getFeatureDirectory(featureName);
   const filesDir = pathHelper.join(featureDir, "files");
 
-  // Load feature files
   const files = await loadTemplateFromDirectory(filesDir);
 
   return {
@@ -94,16 +72,12 @@ export async function loadFeature(
   };
 }
 
-/**
- * Validate feature combinations
- */
 export function validateFeatures(features: FeatureName[]): {
   valid: boolean;
   errors: string[];
 } {
   const errors: string[] = [];
 
-  // Check for unknown features
   for (const feature of features) {
     if (!AVAILABLE_FEATURES.includes(feature)) {
       errors.push(`Unknown feature: ${feature}. Available: ${AVAILABLE_FEATURES.join(", ")}`);
@@ -116,9 +90,6 @@ export function validateFeatures(features: FeatureName[]): {
   };
 }
 
-/**
- * Resolve feature dependencies and order
- */
 export async function resolveFeatures(
   requestedFeatures: FeatureName[],
 ): Promise<{
@@ -129,7 +100,6 @@ export async function resolveFeatures(
   const resolved = new Set<FeatureName>();
   const ordered: FeatureName[] = [];
 
-  // Load all feature configs
   const configs = new Map<FeatureName, FeatureConfig>();
   for (const name of requestedFeatures) {
     const config = await loadFeatureConfig(name);
@@ -140,7 +110,6 @@ export async function resolveFeatures(
     }
   }
 
-  // Check conflicts
   for (const [name, config] of configs) {
     if (config.conflicts) {
       for (const conflict of config.conflicts) {
@@ -151,14 +120,12 @@ export async function resolveFeatures(
     }
   }
 
-  // Topological sort based on requires
   const visit = (name: FeatureName): boolean => {
     if (resolved.has(name)) return true;
 
     const config = configs.get(name);
     if (!config) return false;
 
-    // Visit dependencies first
     if (config.requires) {
       for (const dep of config.requires) {
         if (!requestedFeatures.includes(dep)) {
@@ -181,22 +148,16 @@ export async function resolveFeatures(
   return { ordered, errors };
 }
 
-/**
- * Merge feature files with base template files
- * Later files override earlier ones
- */
 export function mergeFiles(
   baseFiles: TemplateFile[],
   featureFiles: TemplateFile[],
 ): TemplateFile[] {
   const fileMap = new Map<string, TemplateFile>();
 
-  // Add base files
   for (const file of baseFiles) {
     fileMap.set(file.path, file);
   }
 
-  // Overlay feature files
   for (const file of featureFiles) {
     fileMap.set(file.path, file);
   }
@@ -204,9 +165,6 @@ export function mergeFiles(
   return Array.from(fileMap.values()).sort((a, b) => a.path.localeCompare(b.path));
 }
 
-/**
- * Merge dependencies from features
- */
 export function mergeDependencies(
   baseDeps: Record<string, string>,
   featureDeps: Record<string, string>,
@@ -214,9 +172,6 @@ export function mergeDependencies(
   return { ...baseDeps, ...featureDeps };
 }
 
-/**
- * Deep merge config objects
- */
 export function mergeConfig(
   base: Record<string, unknown>,
   overlay: Record<string, unknown>,
@@ -232,7 +187,6 @@ export function mergeConfig(
       result[key] !== null &&
       !Array.isArray(result[key])
     ) {
-      // Deep merge objects
       result[key] = mergeConfig(
         result[key] as Record<string, unknown>,
         value as Record<string, unknown>,
@@ -245,9 +199,6 @@ export function mergeConfig(
   return result;
 }
 
-/**
- * Check if a feature exists
- */
 export async function featureExists(featureName: string): Promise<boolean> {
   const fs = createFileSystem();
   const featureDir = getFeatureDirectory(featureName);

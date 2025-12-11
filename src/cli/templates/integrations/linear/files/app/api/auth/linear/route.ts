@@ -1,6 +1,3 @@
-/**
- * Linear OAuth Initiation
- */
 
 import { createOAuthInitHandler, linearConfig, memoryTokenStore } from "veryfront/oauth";
 

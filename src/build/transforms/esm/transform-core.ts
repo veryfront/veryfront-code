@@ -38,7 +38,6 @@ export async function transformToESM(
     return cached.code;
   }
 
-  // If this is an MDX file, compile it to JSX first
   let transformSource = source;
   if (filePath.endsWith(".mdx")) {
     const mdxResult = await compileMDXRuntime(
@@ -55,15 +54,23 @@ export async function transformToESM(
     logger.debug("[MDX-TRANSFORM] First 500 chars:", transformSource.substring(0, 500));
   }
 
+  const loader = getLoaderFromPath(filePath);
+  logger.debug("[TRANSFORM] esbuild transform starting", {
+    filePath,
+    loader,
+    sourcePreview: transformSource.substring(0, 200),
+    sourceLength: transformSource.length,
+  });
+
   const result = await esbuild.transform(transformSource, {
-    loader: getLoaderFromPath(filePath),
+    loader,
     format: "esm",
     target: "es2020",
     jsx: "automatic",
     jsxImportSource,
     minify: !dev,
     sourcemap: dev ? "inline" : false,
-    treeShaking: !dev, // Disable in dev mode to preserve import errors
+    treeShaking: !dev,
     keepNames: true,
   });
 
@@ -73,25 +80,6 @@ export async function transformToESM(
   code = await addDepsToEsmShUrls(code);
   code = await resolvePathAliases(code, filePath, projectDir);
 
-  // Different import resolution strategies for SSR vs browser
   if (ssr) {
-    // SSR: Keep relative imports but normalize extensions to .js
-    // SSRModuleLoader ensures all dependencies are transformed to temp directory
     code = await resolveRelativeImportsForSSR(code);
-    // Rewrite @veryfront/* imports for npm compatibility (both Node.js and Deno)
-    code = await resolveVeryfrontImports(code);
-  } else {
-    // Browser: Rewrite imports to use module server (HTTP paths)
-    code = await resolveRelativeImports(code, filePath, projectDir, moduleServerUrl);
-
-    if (moduleServerUrl && vendorBundleHash) {
-      code = await rewriteVendorImports(code, moduleServerUrl, vendorBundleHash);
-    } else {
-      code = await rewriteBareImports(code, moduleServerUrl);
-    }
-  }
-
-  setCachedTransform(cacheKey, code, contentHash);
-
-  return code;
-}
+    // Rewrite @veryfront

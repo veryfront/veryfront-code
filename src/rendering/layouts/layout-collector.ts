@@ -123,7 +123,7 @@ export class LayoutCollector {
     });
 
     if (projectData?.layout) {
-      const layoutPath = join(this.projectDir, "components", projectData.layout);
+      const layoutPath = join(this.projectDir, projectData.layout);
       const layoutExists = await (wrappedAdapter as { exists: (path: string) => Promise<boolean> })
         .exists(layoutPath);
 
@@ -133,15 +133,33 @@ export class LayoutCollector {
       });
 
       if (layoutExists) {
-        nestedLayouts.push({
-          kind: "tsx",
-          component: undefined,
-          componentPath: layoutPath,
-          path: layoutPath,
-        });
+        const isMdx = layoutPath.endsWith(".mdx");
+
+        if (isMdx) {
+          const layoutContent = await (wrappedAdapter as { readFile: (path: string) => Promise<string> })
+            .readFile(layoutPath);
+          const layoutBundle = await this.compileMDX(
+            layoutContent,
+            { isLayout: true },
+            layoutPath,
+          );
+          nestedLayouts.push({
+            kind: "mdx",
+            bundle: layoutBundle,
+            path: layoutPath,
+          });
+        } else {
+          nestedLayouts.push({
+            kind: "tsx",
+            component: undefined,
+            componentPath: layoutPath,
+            path: layoutPath,
+          });
+        }
 
         logger.debug("[LayoutCollector] Added API layout to nestedLayouts", {
           layoutPath,
+          kind: isMdx ? "mdx" : "tsx",
         });
       }
     }

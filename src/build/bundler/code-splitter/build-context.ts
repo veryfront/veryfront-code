@@ -1,7 +1,3 @@
-/**
- * ESBuild context creation and configuration
- * @module code-splitter/build-context
- */
 
 import { type BuildContext, context } from "esbuild/mod.js";
 import { join } from "std/path/mod.ts";
@@ -10,20 +6,12 @@ import type { SplitOptions } from "./types.ts";
 import { createSplitterPlugin } from "./esbuild-plugin.ts";
 import { createFileSystem } from "../../../platform/compat/fs.ts";
 
-/** Veryfront AI modules that may be externalized based on moduleResolution setting */
 const VERYFRONT_AI_MODULES = [
   "veryfront/ai/react",
   "veryfront/ai/components",
   "veryfront/ai/primitives",
 ];
 
-/**
- * Gets list of external dependencies to exclude from bundle
- *
- * @param customExternal - Additional external packages from options
- * @param moduleResolution - Module resolution mode: 'cdn', 'self-hosted', or 'bundled'
- * @returns Array of package names to mark as external
- */
 export function getExternalDependencies(
   customExternal: string[] = [],
   moduleResolution: "cdn" | "self-hosted" | "bundled" = "cdn",
@@ -36,8 +24,6 @@ export function getExternalDependencies(
     "react/jsx-dev-runtime",
   ];
 
-  // In 'bundled' mode, veryfront/ai modules are NOT external (bundled into client JS)
-  // In 'cdn' or 'self-hosted' mode, they ARE external (resolved via import map)
   if (moduleResolution !== "bundled") {
     baseExternal.push(...VERYFRONT_AI_MODULES);
   }
@@ -45,12 +31,6 @@ export function getExternalDependencies(
   return [...baseExternal, ...customExternal];
 }
 
-/**
- * Creates a browser shim file for global compatibility
- *
- * @param outDir - Output directory for the shim file
- * @returns Path to the created shim file
- */
 export async function createShimFile(outDir: string): Promise<string> {
   const shimPath = join(outDir, ".veryfront-shim.js");
   const reactImports = JSON.stringify(getReactImportMap(REACT_DEFAULT_VERSION));
@@ -72,13 +52,6 @@ if (typeof window !== 'undefined' && !window.__veryfront_react_imports) {
   return shimPath;
 }
 
-/**
- * Creates an ESBuild context with code splitting configuration
- *
- * @param options - Code splitting options
- * @param entryPoints - Map of entry point names to file paths
- * @returns Configured ESBuild context
- */
 export async function createBuildContext(
   options: SplitOptions,
   entryPoints: Record<string, string>,

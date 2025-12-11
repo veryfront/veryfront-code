@@ -1,36 +1,14 @@
-/**
- * Data Fetching Metrics Instruments
- * Creation of data fetching metric instruments
- *
- * @module
- */
 
 import type { Counter, Histogram, Meter } from "@opentelemetry/api";
 import { DURATION_HISTOGRAM_BOUNDARIES_MS } from "@veryfront/config";
 import type { MetricsConfig } from "../metrics/types.ts";
 
-/**
- * Data fetching metric instruments
- */
 export interface DataInstruments {
   dataFetchDuration: Histogram | null;
   dataFetchCounter: Counter | null;
   dataFetchErrorCounter: Counter | null;
 }
 
-/**
- * Create data fetching metric instruments
- *
- * @param meter - OpenTelemetry meter instance
- * @param config - Metrics configuration
- * @returns Data fetching metric instruments
- *
- * @example
- * ```ts
- * const dataInstruments = createDataInstruments(meter, config);
- * dataInstruments.dataFetchCounter?.add(1);
- * ```
- */
 export function createDataInstruments(
   meter: Meter,
   config: MetricsConfig,

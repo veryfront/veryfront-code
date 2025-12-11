@@ -19,7 +19,6 @@ export default tool({
     ),
   }),
   async execute({ tableName, id, filter, confirm }) {
-    // Require confirmation for delete operations
     if (!confirm) {
       return {
         success: false,
@@ -30,7 +29,6 @@ export default tool({
     }
 
     try {
-      // Validate that either id or filter is provided
       if (!id && !filter) {
         return {
           success: false,
@@ -40,7 +38,6 @@ export default tool({
         };
       }
 
-      // Delete by ID (single row)
       if (id) {
         const result = await deleteRow(tableName, id);
         return {
@@ -52,7 +49,6 @@ export default tool({
         };
       }
 
-      // Delete by filter (multiple rows)
       if (filter) {
         const results = await deleteRows(tableName, filter);
         return {

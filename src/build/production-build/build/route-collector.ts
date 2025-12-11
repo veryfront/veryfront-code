@@ -1,11 +1,3 @@
-/**
- * Route Collector Module
- *
- * Handles collection of routes from the project:
- * - Pages routes collection
- * - App routes collection
- * - Route filtering based on include/exclude patterns
- */
 
 import { serverLogger as logger } from "@veryfront/utils";
 import { collectAppRoutes, collectPagesRoutes } from "@veryfront/server/build-routes.ts";
@@ -17,9 +9,6 @@ export interface CollectedRoutes {
   app: AppRouteInfo[];
 }
 
-/**
- * Collect all routes from the project
- */
 export async function collectAllRoutes(
   adapter: RuntimeAdapter,
   projectDir: string,

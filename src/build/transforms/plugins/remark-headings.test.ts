@@ -182,7 +182,7 @@ Deno.test("remark-headings - exports headings as MDX variable", () => {
   const plugin = remarkMdxHeadings();
   plugin(tree, file);
 
-  assertEquals(tree.children.length, 2); // original heading + export
+  assertEquals(tree.children.length, 2);
   assertEquals((tree.children[0] as MdxNode).type, "mdxjsEsm");
 });
 

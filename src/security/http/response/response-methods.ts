@@ -1,21 +1,11 @@
-/**
- * ResponseBuilder - Response Creation Methods
- * Methods for creating different types of HTTP responses
- */
 
 import { CONTENT_TYPES } from "./constants.ts";
 
-/**
- * Internal state interface for response methods
- */
 export interface ResponseMethodsContext {
   headers: Headers;
   status: number;
 }
 
-/**
- * Build JSON response
- */
 export function json(
   this: ResponseMethodsContext,
   data: unknown,
@@ -28,9 +18,6 @@ export function json(
   });
 }
 
-/**
- * Build text response
- */
 export function text(
   this: ResponseMethodsContext,
   body: string,
@@ -43,9 +30,6 @@ export function text(
   });
 }
 
-/**
- * Build HTML response
- */
 export function html(
   this: ResponseMethodsContext,
   body: string,
@@ -58,9 +42,6 @@ export function html(
   });
 }
 
-/**
- * Build JavaScript response
- */
 export function javascript(
   this: ResponseMethodsContext,
   code: string,
@@ -73,9 +54,6 @@ export function javascript(
   });
 }
 
-/**
- * Build response with custom content type
- */
 export function withContentType(
   this: ResponseMethodsContext,
   contentType: string,
@@ -89,9 +67,6 @@ export function withContentType(
   });
 }
 
-/**
- * Build response with body and current headers
- */
 export function build(
   this: ResponseMethodsContext,
   body: BodyInit | null = null,
@@ -103,9 +78,6 @@ export function build(
   });
 }
 
-/**
- * Build 304 Not Modified response
- */
 export function notModified(
   this: ResponseMethodsContext,
   etag?: string,

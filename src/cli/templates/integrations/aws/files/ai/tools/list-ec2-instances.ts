@@ -2,9 +2,6 @@ import { tool } from 'veryfront/ai';
 import { z } from 'zod';
 import { getAWSClient } from '../../lib/aws-client';
 
-/**
- * Tool for listing EC2 instances
- */
 export const listEC2InstancesTool = tool({
   name: 'list-ec2-instances',
   description: 'List all EC2 instances in your AWS account. Returns instance details including ID, type, state, and IP addresses.',

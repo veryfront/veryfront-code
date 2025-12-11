@@ -34,10 +34,6 @@ export function isAutoInstrumentEnabled(): boolean {
   return initialized;
 }
 
-/**
- * Reset initialization state (for testing only)
- * @internal
- */
 export function __resetAutoInstrumentForTests(): void {
   initialized = false;
 }

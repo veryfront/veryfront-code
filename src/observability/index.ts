@@ -1,10 +1,4 @@
-/**
- * Veryfront Observability
- *
- * Comprehensive OpenTelemetry integration for distributed tracing and metrics
- */
 
-// Export tracing utilities
 export {
   addSpanEvent,
   createChildSpan,
@@ -25,7 +19,6 @@ export {
   withSpanSync,
 } from "./tracing/index.ts";
 
-// Export metrics utilities
 export {
   getMetricsState,
   initMetrics,

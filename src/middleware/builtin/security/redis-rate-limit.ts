@@ -2,7 +2,6 @@ import { createError, toError } from "../../../core/errors/veryfront-error.ts";
 import { serverLogger as logger } from "@veryfront/utils";
 import type { RateLimitEntry, RateLimitStore } from "./types.ts";
 
-// Define minimal Redis client interface to avoid hard dependency
 interface RedisClient {
   connect(): Promise<void>;
   disconnect(): Promise<void>;
@@ -18,10 +17,6 @@ export interface RedisRateLimitOptions {
   keyPrefix?: string;
 }
 
-/**
- * Redis-backed Rate Limit Store
- * Enables distributed rate limiting across multiple server instances.
- */
 export class RedisRateLimitStore implements RateLimitStore {
   private client: RedisClient | null = null;
   private readonly url?: string;
@@ -39,8 +34,6 @@ export class RedisRateLimitStore implements RateLimitStore {
 
     let createClient: ((options: { url?: string }) => RedisClient) | undefined;
     try {
-      // Construct module name dynamically to prevent Deno static analyzer
-      // from trying to resolve this npm package during lint/check
       const redisClientModule = ["npm:@redis/client", "@1.5.8"].join("");
       const mod = await import(redisClientModule);
       createClient = mod.createClient as unknown as (options: { url?: string }) => RedisClient;
@@ -74,15 +67,12 @@ export class RedisRateLimitStore implements RateLimitStore {
 
     const count = await client.incr(redisKey);
 
-    // If new key (count === 1), set expiry
     if (count === 1) {
       await client.pExpire(redisKey, windowMs);
     }
 
-    // Get remaining time for accurate resetAt
     const pttl = await client.pTTL(redisKey);
 
-    // Handle case where expiry failed or key persisted unexpectedly
     if (pttl === -1) {
       await client.pExpire(redisKey, windowMs);
       return {
@@ -91,11 +81,6 @@ export class RedisRateLimitStore implements RateLimitStore {
       };
     }
 
-    // Handle expired key (pttl -2) - rare race condition if expired between incr and pttl?
-    // Actually INCR resets expiry? No, INCR preserves expiry in Redis.
-    // If key expired *before* INCR, INCR creates it (count 1).
-    // If key expired *between* INCR and PTTL? PTTL returns -2.
-    // This implies strict timing issues, but for rate limiting, we can default to windowMs.
 
     const ttl = pttl > 0 ? pttl : windowMs;
 

@@ -1,6 +1,3 @@
-/**
- * AI Playground Client HTML/JS
- */
 
 export const PLAYGROUND_HTML = `<!DOCTYPE html>
 <html lang="en">
@@ -271,7 +268,6 @@ export const PLAYGROUND_HTML = `<!DOCTYPE html>
         let activeAgent = null;
         let activeTool = null;
 
-        // Fetch agents and tools
         async function fetchRegistry() {
             try {
                 const response = await fetch('/_vf/playground/api/registry');
@@ -312,7 +308,6 @@ export const PLAYGROUND_HTML = `<!DOCTYPE html>
             document.getElementById('chat-view').style.display = 'flex';
             document.getElementById('tool-view').style.display = 'none';
             
-            // Clear messages
             document.getElementById('messages').innerHTML = \`
                 <div class="message assistant">
                     Chatting with agent: <strong>\${id}</strong>
@@ -336,10 +331,8 @@ export const PLAYGROUND_HTML = `<!DOCTYPE html>
 
         function updateActiveNav() {
             document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
-            // Highlight logic would go here based on text content matching
         }
 
-        // Chat Form Handler
         document.getElementById('chat-form').addEventListener('submit', async (e) => {
             e.preventDefault();
             if (!activeAgent) return alert('Select an agent first');
@@ -348,7 +341,6 @@ export const PLAYGROUND_HTML = `<!DOCTYPE html>
             const message = input.value.trim();
             if (!message) return;
 
-            // Add user message
             addMessage(message, 'user');
             input.value = '';
 
@@ -378,7 +370,6 @@ export const PLAYGROUND_HTML = `<!DOCTYPE html>
             messages.scrollTop = messages.scrollHeight;
         }
 
-        // Tool Form Handler
         document.getElementById('tool-form').addEventListener('submit', async (e) => {
             e.preventDefault();
             if (!activeTool) return;
@@ -408,7 +399,6 @@ export const PLAYGROUND_HTML = `<!DOCTYPE html>
             }
         });
 
-        // Init
         fetchRegistry();
     </script>
 </body>

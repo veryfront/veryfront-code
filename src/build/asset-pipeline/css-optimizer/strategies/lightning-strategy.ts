@@ -1,12 +1,3 @@
-/**
- * Lightning CSS Optimization Strategy
- *
- * Uses Lightning CSS library for advanced CSS transformations including:
- * - Minification
- * - Autoprefixing
- * - Modern CSS feature compilation
- * - Source map generation
- */
 
 import { logger } from "@veryfront/utils";
 import type {
@@ -19,21 +10,17 @@ import { parseBrowserTargets } from "../utils.ts";
 
 export class LightningCSSStrategy implements CSSOptimizationStrategy {
   readonly name = "lightning-css";
-  readonly priority = 100; // Highest priority when available
+  readonly priority = 100;
 
   private lightningCSS: LightningCSSModule | null = null;
   private initialized = false;
 
-  /**
-   * Initialize Lightning CSS library
-   */
   async init(): Promise<boolean> {
     if (this.initialized) {
       return this.lightningCSS !== null;
     }
 
     try {
-      // Try to load Lightning CSS from npm via esm.sh (Deno-compatible)
       const lightningModule = await import("https://esm.sh/lightningcss@1.22.0");
       this.lightningCSS = lightningModule;
       this.initialized = true;
@@ -48,16 +35,10 @@ export class LightningCSSStrategy implements CSSOptimizationStrategy {
     }
   }
 
-  /**
-   * Check if this strategy can process the CSS
-   */
   canProcess(options: CSSOptimizationOptions): boolean {
     return this.lightningCSS !== null && options.enabled !== false;
   }
 
-  /**
-   * Process CSS with Lightning CSS
-   */
   process(
     content: string,
     filename: string,
@@ -89,9 +70,6 @@ export class LightningCSSStrategy implements CSSOptimizationStrategy {
     }
   }
 
-  /**
-   * Check if Lightning CSS is available
-   */
   isAvailable(): boolean {
     return this.lightningCSS !== null;
   }

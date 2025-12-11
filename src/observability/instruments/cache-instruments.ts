@@ -1,16 +1,7 @@
-/**
- * Cache Metrics Instruments
- * Creation of cache-related metric instruments
- *
- * @module
- */
 
 import type { Counter, Meter, ObservableGauge, ObservableResult } from "@opentelemetry/api";
 import type { MetricsConfig, RuntimeState } from "../metrics/types.ts";
 
-/**
- * Cache metric instruments
- */
 export interface CacheInstruments {
   cacheGetCounter: Counter | null;
   cacheHitCounter: Counter | null;
@@ -20,20 +11,6 @@ export interface CacheInstruments {
   cacheSizeGauge: ObservableGauge | null;
 }
 
-/**
- * Create cache metric instruments
- *
- * @param meter - OpenTelemetry meter instance
- * @param config - Metrics configuration
- * @param runtimeState - Runtime state for observable metrics
- * @returns Cache metric instruments
- *
- * @example
- * ```ts
- * const cacheInstruments = createCacheInstruments(meter, config, runtimeState);
- * cacheInstruments.cacheHitCounter?.add(1);
- * ```
- */
 export function createCacheInstruments(
   meter: Meter,
   config: MetricsConfig,

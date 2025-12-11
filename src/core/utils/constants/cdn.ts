@@ -55,12 +55,10 @@ export function getDenoStdNodeBase(): string {
   return `${DENO_STD_BASE}/std@${DENO_STD_VERSION}/node`;
 }
 
-// UnoCSS constants
 export const UNOCSS_VERSION = "0.59.0";
 
 export function getUnoCSSTailwindResetUrl(): string {
   return `${ESM_CDN_BASE}/@unocss/reset@${UNOCSS_VERSION}/tailwind.css`;
 }
 
-// Veryfront package version - derived from deno.json (single source of truth)
 export { VERSION as VERYFRONT_VERSION } from "../version.ts";

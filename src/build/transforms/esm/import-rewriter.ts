@@ -2,9 +2,6 @@ import { parseImports, replaceSpecifiers, rewriteImports } from "./lexer.ts";
 import { REACT_DEFAULT_VERSION } from "@veryfront/utils/constants/cdn.ts";
 
 export function rewriteBareImports(code: string, _moduleServerUrl?: string): Promise<string> {
-  // Always use esm.sh URLs for React packages in browser mode
-  // The _vendor/ path approach requires a handler to serve vendor modules,
-  // which is not implemented. Using esm.sh ensures React is loaded correctly.
   const importMap: Record<string, string> = {
     "react": `https://esm.sh/react@${REACT_DEFAULT_VERSION}`,
     "react-dom": `https://esm.sh/react-dom@${REACT_DEFAULT_VERSION}`,
@@ -13,7 +10,6 @@ export function rewriteBareImports(code: string, _moduleServerUrl?: string): Pro
     "react/jsx-runtime": `https://esm.sh/react@${REACT_DEFAULT_VERSION}/jsx-runtime`,
     "react/jsx-dev-runtime": `https://esm.sh/react@${REACT_DEFAULT_VERSION}/jsx-dev-runtime`,
     // NOTE: veryfront/ai/react is NOT rewritten here - it's handled by the HTML import map
-    // which points to /_veryfront/lib/ai/react.js served from the local package
   };
 
   return Promise.resolve(replaceSpecifiers(code, (specifier) => {
@@ -37,7 +33,6 @@ export async function rewriteVendorImports(
     "react/jsx-dev-runtime",
   ]);
 
-  // First, preserve export statements by only swapping the specifier
   let result = await rewriteImports(code, (imp, statement) => {
     if (!imp.n || !reactPackages.has(imp.n)) return null;
     const trimmed = statement.trimStart();
@@ -50,27 +45,20 @@ export async function rewriteVendorImports(
     return `${before}${vendorUrl}${after}`;
   });
 
-  // Re-parse after export rewrites
   const baseSource = result;
   const imports = await parseImports(baseSource);
 
-  // Process in reverse order to maintain indices
   for (let i = imports.length - 1; i >= 0; i--) {
     const imp = imports[i];
     if (!imp) continue;
 
-    // Skip if not a vendor package
     if (!imp.n || !reactPackages.has(imp.n)) continue;
 
     const exportName = sanitizeVendorExportName(imp.n);
 
     if (imp.d > -1) {
-      // Dynamic import: import('react') -> import('vendor').then(m => m.react)
-      // imp.d is start of `import(`, imp.e is end of specifier content
 
-      // Find closing paren after the specifier
       const afterSpecifier = baseSource.substring(imp.e);
-      // Matches closing quote then closing paren
       const match = afterSpecifier.match(/^['"]\s*\)/);
 
       if (!match) continue;
@@ -83,35 +71,25 @@ export async function rewriteVendorImports(
 
       result = before + replacement + after;
     } else {
-      // Static import
-      // Extract the part between "import" and "from"
       const beforeSpecifier = baseSource.substring(imp.ss, imp.s);
       const fromIndex = beforeSpecifier.lastIndexOf("from");
 
       if (fromIndex === -1) {
-        // Side-effect import: import 'react'
         const before = result.substring(0, imp.ss);
         const after = result.substring(imp.se);
         result = before + `import '${vendorUrl}'` + after;
         continue;
       }
 
-      // Extract the import clause (e.g., "{ useState }", "React", "* as React")
-      // "import " is length 7
       const clause = beforeSpecifier.substring(6, fromIndex).trim();
 
       let replacement = "";
       if (clause.startsWith("*")) {
-        // import * as React from 'react'
         replacement = `import ${clause} from '${vendorUrl}'`;
       } else if (clause.startsWith("{")) {
-        // import { useState } from 'react'
-        // -> import { react } from 'vendor'; const { useState } = react;
         replacement =
           `import { ${exportName} } from '${vendorUrl}'; const ${clause} = ${exportName}`;
       } else {
-        // import React from 'react'
-        // -> import { react as React } from 'vendor'
         replacement = `import { ${exportName} as ${clause} } from '${vendorUrl}'`;
       }
 
@@ -126,8 +104,8 @@ export async function rewriteVendorImports(
 
 function sanitizeVendorExportName(pkg: string): string {
   return pkg
-    .replace(/^@/, "") // Remove @ prefix
-    .replace(/[\/\-]/g, "_") // Replace / and - with _
-    .replace(/_([a-z])/g, (_, letter) => letter.toUpperCase()) // camelCase
-    .replace(/^_/, ""); // Remove leading underscore
+    .replace(/^@/, "")
+    .replace(/[\/\-]/g, "_")
+    .replace(/_([a-z])/g, (_, letter) => letter.toUpperCase())
+    .replace(/^_/, "");
 }

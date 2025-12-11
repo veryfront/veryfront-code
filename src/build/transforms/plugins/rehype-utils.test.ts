@@ -2,7 +2,6 @@ import { assertEquals, assertExists } from "std/assert/mod.ts";
 import { rehypeAddClasses, rehypeMdxComponents, rehypePreserveNodeIds } from "./rehype-utils.ts";
 import type { Element, Root } from "hast";
 
-// Helper to set element data with hProperties (avoids strict type issues in tests)
 // deno-lint-ignore no-explicit-any
 function setElementData(element: Element, data: any): void {
   element.data = data;

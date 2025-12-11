@@ -155,7 +155,7 @@ const _Fragment = Fragment;
 
 async function ensureTempDir(): Promise<string> {
   const adapter = await getAdapter();
-  const { cwd } = await import("../../platform/compat/process.ts"); // Import cwd helper
+  const { cwd } = await import("../../platform/compat/process.ts");
   const tempDir = `${cwd()}/.veryfront/temp/mdx-modules`;
 
   try {
@@ -179,6 +179,5 @@ async function cleanupTempModule(modulePath: string): Promise<void> {
     const adapter = await getAdapter();
     await adapter.fs.remove(modulePath);
   } catch {
-    // Best-effort cleanup
   }
 }

@@ -2,13 +2,11 @@ import type { ServeOptions, Server } from "../base.ts";
 import type { NodeHttpServer, WSWebSocket, WSWebSocketServer } from "./types.ts";
 import { DEFAULT_PORT } from "@veryfront/config";
 
-// Track pending WebSocket upgrades by request ID
 const pendingWebSocketUpgrades = new Map<string, {
   resolve: (ws: WSWebSocket) => void;
   reject: (error: Error) => void;
 }>();
 
-// Singleton WebSocket server instance (one per HTTP server)
 let wsServer: WSWebSocketServer | null = null;
 
 export class NodeServer implements Server {
@@ -20,7 +18,6 @@ export class NodeServer implements Server {
 
   stop(): Promise<void> {
     return new Promise((resolve) => {
-      // Close WebSocket server first
       if (wsServer) {
         wsServer.close();
         wsServer = null;
@@ -34,22 +31,14 @@ export class NodeServer implements Server {
   }
 }
 
-/**
- * Create a request ID for matching WebSocket upgrades
- */
 function createRequestId(req: { headers: Record<string, string | string[] | undefined> }): string {
   const key = req.headers["sec-websocket-key"];
   return typeof key === "string" ? key : (Array.isArray(key) ? key[0] : "") || crypto.randomUUID();
 }
 
-/**
- * Register a pending WebSocket upgrade
- * Called by NodeServerAdapter.upgradeWebSocket
- */
 export function registerWebSocketUpgrade(requestId: string): Promise<WSWebSocket> {
   return new Promise((resolve, reject) => {
     pendingWebSocketUpgrades.set(requestId, { resolve, reject });
-    // Cleanup after timeout (30 seconds)
     setTimeout(() => {
       if (pendingWebSocketUpgrades.has(requestId)) {
         pendingWebSocketUpgrades.delete(requestId);
@@ -80,13 +69,11 @@ export async function createNodeServer(
         }
       }
 
-      // Node.js 18+ requires duplex: "half" when creating a Request with a streaming body
       const requestInit: RequestInit & { duplex?: string } = {
         method: _req.method,
         headers: headersRecord,
         body: body as BodyInit | null,
       };
-      // Only add duplex for requests with a body (POST, PUT, PATCH, etc.)
       if (body !== null) {
         requestInit.duplex = "half";
       }
@@ -94,10 +81,7 @@ export async function createNodeServer(
 
       const response = await handler(request);
 
-      // Check if this is a WebSocket upgrade response (status 101)
-      // The actual WebSocket handling is done in the 'upgrade' event
       if (response.status === 101) {
-        // Don't end the response - the upgrade handler will take over
         return;
       }
 
@@ -126,21 +110,16 @@ export async function createNodeServer(
     }
   });
 
-  // Handle WebSocket upgrades
   server.on("upgrade", async (request, socket, head) => {
     try {
-      // Lazy load ws package
       const { WebSocketServer } = await import("ws");
 
-      // Create WebSocket server if not exists
       if (!wsServer) {
         wsServer = new WebSocketServer({ noServer: true }) as unknown as WSWebSocketServer;
       }
 
-      // Get request ID to match with pending upgrade
       const requestId = createRequestId(request);
 
-      // Handle the upgrade
       (wsServer as unknown as {
         handleUpgrade: (
           req: unknown,
@@ -155,7 +134,6 @@ export async function createNodeServer(
             pendingWebSocketUpgrades.delete(requestId);
             pending.resolve(ws);
           }
-          // Emit connection event
           (wsServer as unknown as { emit: (event: string, ws: WSWebSocket, req: unknown) => void })
             .emit("connection", ws, request);
         });

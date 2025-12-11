@@ -1,6 +1,3 @@
-/**
- * Outlook OAuth Initiation
- */
 
 import { createOAuthInitHandler, memoryTokenStore, outlookConfig } from "veryfront/oauth";
 

@@ -2,7 +2,6 @@ import { getAccessToken } from "./token-store.ts";
 
 const LINEAR_API_URL = "https://api.linear.app/graphql";
 
-// Type definitions for Linear API responses
 export interface LinearIssue {
   id: string;
   identifier: string;

@@ -1,6 +1,3 @@
-/**
- * Wait DSL Tests
- */
 
 import { assertEquals } from "https://deno.land/std@0.220.0/assert/mod.ts";
 import { describe, it } from "https://deno.land/std@0.220.0/testing/bdd.ts";
@@ -77,7 +74,6 @@ describe("delay()", () => {
     assertEquals(node.config.type, "wait");
 
     const config = node.config as WaitNodeConfig;
-    // delay uses waitType: "event" with special eventName
     assertEquals(config.waitType, "event");
     assertEquals(config.timeout, "5m");
   });

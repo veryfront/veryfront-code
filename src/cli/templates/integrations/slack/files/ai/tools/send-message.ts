@@ -19,7 +19,6 @@ export default tool({
       .describe("Thread timestamp to reply to (for threaded messages)"),
   }),
   execute: async ({ channel, text, threadTs }, context) => {
-    // Default to "current-user" for development; in production, always pass userId from session
     const userId = (context?.userId as string | undefined) || "current-user";
 
     try {

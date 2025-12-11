@@ -29,7 +29,6 @@ Deno.test("remarkAddNodeId basic functionality", () => {
   const plugin = remarkAddNodeId();
   assertEquals(typeof plugin, "function");
 
-  // Test with options
   const pluginWithOptions = remarkAddNodeId({
     prefix: "test",
     includePosition: false,
@@ -54,16 +53,13 @@ Deno.test("remarkAddNodeId adds node IDs", () => {
     ],
   };
 
-  // Execute plugin
   plugin(tree as any, {
-    /* empty */
   });
 
-  // Check that data properties were added
   const paragraph = tree.children[0] as any;
   assertExists(paragraph.data);
   assertExists(paragraph.data.hProperties);
-  assertEquals(paragraph.data.hProperties["data-node-id"], "test-1"); // Root gets 0, paragraph gets 1
+  assertEquals(paragraph.data.hProperties["data-node-id"], "test-1");
 });
 
 Deno.test("remarkMdxHeadings basic functionality", () => {
@@ -92,12 +88,10 @@ Deno.test("remarkMdxHeadings extracts headings", () => {
 
   const file = {
     data: {
-      /* empty */
     } as any,
   };
   plugin(tree as any, file);
 
-  // Check headings were extracted
   assertExists(file.data.headings);
   assertEquals(Array.isArray(file.data.headings), true);
   assertEquals(file.data.headings.length, 2);
@@ -140,9 +134,7 @@ Deno.test("getRehypePlugins returns array", async () => {
   assertEquals(plugins.length > 0, true);
 });
 
-// Additional comprehensive tests from plugins_basic_test.ts
 
-// Minimal unified-like runner shims to apply our plugins to plain trees
 function runRemark(tree: any, file: any, plugins: any[]) {
   for (const p of plugins) {
     const plugin = typeof p === "function" ? p() : p;
@@ -173,7 +165,7 @@ Deno.test("remarkAddNodeId adds ids and counts", () => {
   };
   const file: any = { data: {} };
   runRemark(tree, file, [() => remarkAddNodeId({ prefix: "x" })]);
-  assertEquals(file.data.nodeCount, 3); // root + paragraph + text
+  assertEquals(file.data.nodeCount, 3);
   const para: any = tree.children[0];
   assert(para.data?.hProperties?.["data-node-id"]?.startsWith("x-"));
 });

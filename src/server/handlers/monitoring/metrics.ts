@@ -1,7 +1,3 @@
-/**
- * Metrics Handler
- * Handles /_metrics endpoint for monitoring
- */
 
 import { BaseHandler } from "../response/base.ts";
 import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } from "../types.ts";
@@ -17,7 +13,7 @@ import { memoryUsage, uptime } from "../../../platform/compat/process.ts";
 export class MetricsHandler extends BaseHandler {
   metadata: HandlerMetadata = {
     name: "MetricsHandler",
-    priority: PRIORITY_HIGH as HandlerPriority, // HIGH priority
+    priority: PRIORITY_HIGH as HandlerPriority,
     patterns: [
       { pattern: "/_metrics", exact: true },
     ],
@@ -34,7 +30,6 @@ export class MetricsHandler extends BaseHandler {
     try {
       const snap = metrics.snapshot();
 
-      // Best-effort memory and uptime using platform abstraction
       const memory = (() => {
         try {
           return memoryUsage();
@@ -69,7 +64,6 @@ export class MetricsHandler extends BaseHandler {
         error: this.getErrorMessage(e),
       }, ctx);
 
-      // Return error response
       const response = ResponseBuilder.error(
         HTTP_INTERNAL_SERVER_ERROR,
         "Failed to gather metrics",

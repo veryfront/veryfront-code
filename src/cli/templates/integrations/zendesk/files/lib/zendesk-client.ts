@@ -1,17 +1,10 @@
-/**
- * Zendesk API Client
- *
- * Handles authentication and API calls to Zendesk REST API.
- */
 
 import { getZendeskTokens } from "./token-store.ts";
 
 const getEnv = (name: string): string | undefined => {
   if (typeof Deno !== "undefined") {
-    // @ts-ignore: Deno global
     return Deno.env.get(name);
   }
-  // @ts-ignore: Node process
   return globalThis.process?.env?.[name];
 };
 
@@ -116,9 +109,6 @@ export class ZendeskClient {
     return response.json();
   }
 
-  /**
-   * List tickets with optional filters
-   */
   async listTickets(options: {
     limit?: number;
     status?: string;
@@ -130,7 +120,6 @@ export class ZendeskClient {
 
     let endpoint = "/tickets.json";
 
-    // Build query if filters are provided
     const queryParts: string[] = [];
     if (options.status) queryParts.push(`status:${options.status}`);
     if (options.priority) queryParts.push(`priority:${options.priority}`);
@@ -147,9 +136,6 @@ export class ZendeskClient {
     return response.tickets || response.results || [];
   }
 
-  /**
-   * Get a specific ticket by ID
-   */
   async getTicket(ticketId: number): Promise<ZendeskTicket> {
     const response = await this.request<ZendeskResponse<ZendeskTicket>>(
       `/tickets/${ticketId}.json`,
@@ -157,9 +143,6 @@ export class ZendeskClient {
     return response.ticket;
   }
 
-  /**
-   * Create a new ticket
-   */
   async createTicket(data: {
     subject: string;
     comment: { body: string };
@@ -179,9 +162,6 @@ export class ZendeskClient {
     return response.ticket;
   }
 
-  /**
-   * Update an existing ticket
-   */
   async updateTicket(
     ticketId: number,
     data: Partial<{
@@ -203,9 +183,6 @@ export class ZendeskClient {
     return response.ticket;
   }
 
-  /**
-   * List users
-   */
   async listUsers(options: { limit?: number; role?: string } = {}): Promise<ZendeskUser[]> {
     const params = new URLSearchParams();
     if (options.limit) params.set("per_page", String(options.limit));
@@ -216,9 +193,6 @@ export class ZendeskClient {
     return response.users || [];
   }
 
-  /**
-   * Get a specific user by ID
-   */
   async getUser(userId: number): Promise<ZendeskUser> {
     const response = await this.request<ZendeskResponse<ZendeskUser>>(
       `/users/${userId}.json`,
@@ -226,9 +200,6 @@ export class ZendeskClient {
     return response.user;
   }
 
-  /**
-   * Search tickets using Zendesk query syntax
-   */
   async searchTickets(query: string, limit = 20): Promise<ZendeskTicket[]> {
     const params = new URLSearchParams();
     params.set("query", `type:ticket ${query}`);
@@ -240,9 +211,6 @@ export class ZendeskClient {
     return response.results || [];
   }
 
-  /**
-   * Add a comment to a ticket
-   */
   addComment(
     ticketId: number,
     body: string,
@@ -254,7 +222,6 @@ export class ZendeskClient {
   }
 }
 
-// Singleton instance
 let client: ZendeskClient | null = null;
 
 export function getZendeskClient(): ZendeskClient {

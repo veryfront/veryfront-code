@@ -4,7 +4,6 @@ const MIXPANEL_API_BASE = "https://mixpanel.com/api";
 const MIXPANEL_TRACK_BASE = "https://api.mixpanel.com";
 const MIXPANEL_DATA_BASE = "https://data.mixpanel.com/api/2.0";
 
-// Types
 export interface MixpanelEvent {
   event: string;
   properties: Record<string, unknown>;
@@ -64,7 +63,6 @@ interface MixpanelError {
   request: string;
 }
 
-// Helper function to create basic auth header
 function getAuthHeader(): string {
   const apiSecret = getApiSecret();
   if (!apiSecret) {
@@ -72,18 +70,15 @@ function getAuthHeader(): string {
       "Not authenticated with Mixpanel. Please set MIXPANEL_API_SECRET.",
     );
   }
-  // Mixpanel uses Basic auth with API secret as username and empty password
   const credentials = btoa(`${apiSecret}:`);
   return `Basic ${credentials}`;
 }
 
-// Helper function for Mixpanel API calls with auth
 async function mixpanelFetch<T>(
   baseUrl: string,
   endpoint: string,
   options: RequestInit & { params?: Record<string, string | number | boolean> } = {},
 ): Promise<T> {
-  // Build URL with query parameters
   let url = `${baseUrl}${endpoint}`;
   if (options.params) {
     const params = new URLSearchParams();
@@ -98,7 +93,6 @@ async function mixpanelFetch<T>(
     ...options.headers as Record<string, string>,
   };
 
-  // Add auth header for data API calls
   if (baseUrl === MIXPANEL_DATA_BASE || baseUrl === MIXPANEL_API_BASE) {
     headers["Authorization"] = getAuthHeader();
   }
@@ -116,7 +110,6 @@ async function mixpanelFetch<T>(
         errorMessage = `Mixpanel API error: ${errorData.error}`;
       }
     } catch {
-      // If parsing JSON fails, use default error message
     }
     throw new Error(errorMessage);
   }
@@ -125,7 +118,6 @@ async function mixpanelFetch<T>(
   return data as T;
 }
 
-// Track event - uses ingestion API with project token
 export async function trackEvent(
   event: string,
   properties: Record<string, unknown>,
@@ -168,7 +160,6 @@ export async function trackEvent(
   return result;
 }
 
-// Query events - uses export API
 export async function queryEvents(
   from: string,
   to: string,
@@ -194,7 +185,6 @@ export async function queryEvents(
     { params },
   );
 
-  // Parse JSONL response (each line is a JSON object)
   const events: MixpanelEventResult[] = [];
   if (Array.isArray(response)) {
     for (const line of response) {
@@ -206,7 +196,6 @@ export async function queryEvents(
             properties: parsed.properties,
           });
         } catch {
-          // Skip malformed lines
         }
       }
     }
@@ -215,7 +204,6 @@ export async function queryEvents(
   return events;
 }
 
-// Get funnel data
 export async function getFunnel(
   funnelId: number,
   from: string,
@@ -235,7 +223,6 @@ export async function getFunnel(
   );
 }
 
-// Get retention data
 export async function getRetention(
   from: string,
   to: string,
@@ -257,14 +244,12 @@ export async function getRetention(
     { params },
   );
 
-  // Convert object to array
   return Object.entries(response).map(([date, data]) => ({
     date,
     ...data,
   }));
 }
 
-// List cohorts
 export async function listCohorts(): Promise<MixpanelCohort[]> {
   const projectId = getProjectId();
   if (!projectId) {
@@ -284,7 +269,6 @@ export async function listCohorts(): Promise<MixpanelCohort[]> {
   return response;
 }
 
-// Helper functions
 export function formatDate(date: Date): string {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, "0");

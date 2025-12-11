@@ -141,7 +141,6 @@ export async function searchContent(
 ): Promise<ConfluenceSearchResult[]> {
   const params = new URLSearchParams();
 
-  // Build CQL query
   let cqlQuery = options?.cql || `title ~ "${query}" OR text ~ "${query}"`;
 
   if (options?.spaceKey) {
@@ -246,9 +245,7 @@ export async function updatePage(
   });
 }
 
-// Helper function to convert storage format to plain text
 export function extractPlainText(storageHtml: string): string {
-  // Remove HTML tags and decode entities
   return storageHtml
     .replace(/<[^>]*>/g, " ")
     .replace(/&nbsp;/g, " ")
@@ -261,9 +258,7 @@ export function extractPlainText(storageHtml: string): string {
     .trim();
 }
 
-// Helper to format text as Confluence storage format (simple HTML)
 export function formatAsStorage(text: string): string {
-  // Split by double newlines for paragraphs
   const paragraphs = text.split("\n\n").filter((p) => p.trim());
 
   return paragraphs

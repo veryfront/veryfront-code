@@ -1,7 +1,3 @@
-/**
- * Health Check Handler
- * Handles /healthz, /readyz, and /_health endpoints
- */
 
 import { BaseHandler } from "../response/base.ts";
 import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } from "../types.ts";
@@ -11,7 +7,7 @@ import { HTTP_OK, HTTP_UNAVAILABLE, PRIORITY_HIGH } from "@veryfront/core/consta
 export class HealthHandler extends BaseHandler {
   metadata: HandlerMetadata = {
     name: "HealthHandler",
-    priority: PRIORITY_HIGH as HandlerPriority, // HIGH priority
+    priority: PRIORITY_HIGH as HandlerPriority,
     patterns: [
       { pattern: "/healthz", exact: true },
       { pattern: "/readyz", exact: true },
@@ -19,27 +15,19 @@ export class HealthHandler extends BaseHandler {
     ],
   };
 
-  /**
-   * Check if system is ready to serve requests
-   * Verifies adapter, filesystem access, and project directory
-   */
   private async checkReadiness(ctx: HandlerContext): Promise<boolean> {
     try {
-      // Check adapter is available
       if (!ctx.adapter) {
         return false;
       }
 
-      // Check filesystem is accessible by reading project directory
       const projectDirStat = await ctx.adapter.fs.stat(ctx.projectDir);
       if (!projectDirStat?.isDirectory) {
         return false;
       }
 
-      // All checks passed
       return true;
     } catch {
-      // Any error means not ready
       return false;
     }
   }
@@ -48,14 +36,12 @@ export class HealthHandler extends BaseHandler {
     const url = new URL(req.url);
     const pathname = url.pathname;
 
-    // Check if this handler should process the request
     if (!this.shouldHandle(req, ctx)) {
       return this.continue();
     }
 
     const builder = this.createResponseBuilder(ctx);
 
-    // K8s-style health endpoint
     if (pathname === "/healthz") {
       const response = builder
         .withCORS(req, ctx.securityConfig?.cors)
@@ -64,7 +50,6 @@ export class HealthHandler extends BaseHandler {
       return this.respond(response);
     }
 
-    // K8s-style readiness endpoint
     if (pathname === "/readyz") {
       const isReady = await this.checkReadiness(ctx);
       const response = builder
@@ -74,14 +59,12 @@ export class HealthHandler extends BaseHandler {
       return this.respond(response);
     }
 
-    // Production-compatible health endpoint with more details
     if (pathname === "/_health") {
       let hasStaticBuild = false;
       try {
         const st = await ctx.adapter.fs.stat(joinPath(ctx.projectDir, "dist"));
         hasStaticBuild = !!st?.isDirectory;
       } catch {
-        // ignore
       }
 
       const payload = {

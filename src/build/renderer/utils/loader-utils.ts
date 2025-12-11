@@ -1,12 +1,6 @@
-/**
- * File loader utilities
- */
 
 import type * as esbuild from "esbuild";
 
-/**
- * Get esbuild loader based on file extension
- */
 export function getLoaderFromPath(path: string): esbuild.Loader {
   const ext = path.split(".").pop()?.toLowerCase();
 
@@ -25,15 +19,12 @@ export function getLoaderFromPath(path: string): esbuild.Loader {
     case "css":
       return "css";
     case "mdx":
-      return "tsx"; // MDX compiles to TSX
+      return "tsx";
     default:
       return "default";
   }
 }
 
-/**
- * Get file type from path
- */
 export function getFileType(path: string): "mdx" | "tsx" | "ts" | "jsx" | "js" | "css" | "json" {
   const ext = path.split(".").pop()?.toLowerCase();
 
@@ -58,12 +49,9 @@ export function getFileType(path: string): "mdx" | "tsx" | "ts" | "jsx" | "js" |
   }
 }
 
-/**
- * Get slug from file path
- */
 export function getSlugFromPath(path: string): string {
   return path
-    .replace(/^\.\//, "")
+    .replace(/^\.\
     .replace(/\.(mdx|tsx|ts|jsx|js)$/, "")
     .replace(/\/index$/, "")
     .replace(/[^a-zA-Z0-9-/]/g, "-")

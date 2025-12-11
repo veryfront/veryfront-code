@@ -1,9 +1,4 @@
-/**
- * Centralized HTTP response factory for clean, consistent error handling.
- * Follows clean code principles: DRY, single responsibility, and clear naming.
- */
 
-/** HTTP Status codes as named constants for clarity */
 export const HttpStatus = {
   OK: 200,
   CREATED: 201,
@@ -28,16 +23,11 @@ export const HttpStatus = {
 
 export type HttpStatusCode = typeof HttpStatus[keyof typeof HttpStatus];
 
-/** Response options for additional headers and metadata */
 interface ResponseOptions extends ResponseInit {
   headers?: HeadersInit;
   correlationId?: string;
 }
 
-/**
- * Creates a standardized error response.
- * Simple, clear, and consistent across the application.
- */
 export function errorResponse(
   status: HttpStatusCode,
   message?: string,
@@ -61,10 +51,6 @@ export function errorResponse(
   });
 }
 
-/**
- * Creates a JSON response with proper content type.
- * Handles serialization errors gracefully.
- */
 export function jsonResponse<T>(
   data: T,
   status: HttpStatusCode = HttpStatus.OK,
@@ -88,16 +74,11 @@ export function jsonResponse<T>(
   }
 }
 
-/**
- * Creates a redirect response.
- * Validates URL to prevent open redirect vulnerabilities.
- */
 export function redirectResponse(
   url: string,
   permanent = false,
   options?: ResponseOptions,
 ): Response {
-  // Simple URL validation to prevent open redirects
   if (!isValidRedirectUrl(url)) {
     return errorResponse(
       HttpStatus.BAD_REQUEST,
@@ -116,7 +97,6 @@ export function redirectResponse(
   });
 }
 
-// Convenience methods for common responses
 export const notFound = (message?: string, options?: ResponseOptions) =>
   errorResponse(HttpStatus.NOT_FOUND, message, options);
 
@@ -166,10 +146,6 @@ export const created = <T>(data?: T, location?: string, options?: ResponseOption
 export const noContent = (options?: ResponseOptions) =>
   new Response(null, { status: HttpStatus.NO_CONTENT, ...options });
 
-/**
- * Helper function to get human-readable status text.
- * Keeps the mapping simple and maintainable.
- */
 function getStatusText(status: HttpStatusCode): string {
   const statusTexts: Record<HttpStatusCode, string> = {
     [HttpStatus.OK]: "OK",
@@ -196,20 +172,14 @@ function getStatusText(status: HttpStatusCode): string {
   return statusTexts[status] || "Unknown Status";
 }
 
-/**
- * Simple URL validation for redirect safety.
- * Prevents open redirect vulnerabilities.
- */
 function isValidRedirectUrl(url: string): boolean {
   try {
     const parsed = new URL(url, "http://localhost"); // Base URL for relative URLs
 
-    // Allow relative URLs and same-origin absolute URLs
     if (url.startsWith("/") || url.startsWith("./") || url.startsWith("../")) {
       return true;
     }
 
-    // For absolute URLs, could add domain whitelist here if needed
     return parsed.protocol === "http:" || parsed.protocol === "https:";
   } catch {
     return false;

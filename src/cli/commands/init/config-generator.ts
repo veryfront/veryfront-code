@@ -1,18 +1,8 @@
-/**
- * Configuration file generation utilities
- * @module
- */
 
 import { cliLogger as logger } from "@veryfront/utils";
 import { join } from "std/path/mod.ts";
 import { createFileSystem } from "../../../platform/compat/fs.ts";
 
-/**
- * Creates a package.json file with ES module support
- *
- * @param projectDir - Root directory of the project
- * @param projectName - Name of the project
- */
 export async function createPackageJson(
   projectDir: string,
   projectName?: string,

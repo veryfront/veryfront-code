@@ -1,6 +1,3 @@
-/**
- * Agent Factory Tests
- */
 
 import { assertEquals, assertExists } from "https://deno.land/std@0.220.0/assert/mod.ts";
 import { describe, it } from "https://deno.land/std@0.220.0/testing/bdd.ts";
@@ -31,8 +28,6 @@ describe("Agent Factory", () => {
   });
 
   it("should validate platform compatibility", () => {
-    // Mock platform detection to force error (if possible, or just test valid config)
-    // For now, we test valid config as mocking platform detection requires dependency injection or stubbing
 
     const myAgent = agent({
       model: "openai/gpt-4",

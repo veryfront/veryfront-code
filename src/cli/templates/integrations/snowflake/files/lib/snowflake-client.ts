@@ -7,10 +7,6 @@ import {
   getSnowflakeWarehouse,
 } from "./token-store.ts";
 
-/**
- * Snowflake SQL REST API Response Types
- * Based on: https://docs.snowflake.com/en/developer-guide/sql-api/reference
- */
 
 interface SnowflakeStatementResponse {
   statementHandle: string;
@@ -104,9 +100,6 @@ interface SnowflakeError extends Error {
   sqlState?: string;
 }
 
-/**
- * Execute a Snowflake SQL API request
- */
 async function snowflakeFetch<T>(
   endpoint: string,
   options: RequestInit = {},
@@ -115,10 +108,8 @@ async function snowflakeFetch<T>(
   const username = getSnowflakeUsername();
   const password = getSnowflakePassword();
 
-  // Construct the base URL for Snowflake SQL REST API
   const baseUrl = `https://${account}.snowflakecomputing.com/api/v2`;
 
-  // Create basic auth header
   const authHeader = `Basic ${btoa(`${username}:${password}`)}`;
 
   const response = await fetch(`${baseUrl}${endpoint}`, {
@@ -145,9 +136,6 @@ async function snowflakeFetch<T>(
   return await response.json();
 }
 
-/**
- * Submit a SQL statement for execution
- */
 async function submitStatement(
   sqlText: string,
   database?: string,
@@ -171,8 +159,6 @@ async function submitStatement(
     parameters: {},
   };
 
-  // For async execution, use the /statements endpoint
-  // For sync execution, use /statements with async=false
   const endpoint = async_exec
     ? "/statements?async=true"
     : "/statements";
@@ -186,9 +172,6 @@ async function submitStatement(
   );
 }
 
-/**
- * Get the status and results of a statement
- */
 export async function getQueryStatus(
   statementHandle: string,
 ): Promise<SnowflakeQueryStatusResponse> {
@@ -197,18 +180,12 @@ export async function getQueryStatus(
   );
 }
 
-/**
- * Cancel a running statement
- */
 export async function cancelQuery(statementHandle: string): Promise<void> {
   await snowflakeFetch(`/statements/${statementHandle}/cancel`, {
     method: "POST",
   });
 }
 
-/**
- * Transform Snowflake result format to more usable JSON objects
- */
 function transformResults(result: SnowflakeQueryResult): Record<string, unknown>[] {
   if (!result.data || result.data.length === 0) {
     return [];
@@ -225,9 +202,6 @@ function transformResults(result: SnowflakeQueryResult): Record<string, unknown>
   });
 }
 
-/**
- * Run a SQL query and return results
- */
 export async function runQuery(
   sql: string,
   database?: string,
@@ -250,7 +224,6 @@ export async function runQuery(
     options.async,
   );
 
-  // Handle async execution
   if ("statementHandle" in result && !("data" in result)) {
     return {
       columns: [],
@@ -260,7 +233,6 @@ export async function runQuery(
     };
   }
 
-  // Handle synchronous result
   const queryResult = result as SnowflakeQueryResult;
 
   const columns = queryResult.resultSetMetaData.rowType.map((col) => ({
@@ -279,25 +251,16 @@ export async function runQuery(
   };
 }
 
-/**
- * List all databases in the account
- */
 export async function listDatabases(): Promise<DatabaseInfo[]> {
   const result = await runQuery("SHOW DATABASES");
   return result.rows as DatabaseInfo[];
 }
 
-/**
- * List all schemas in a database
- */
 export async function listSchemas(database: string): Promise<SchemaInfo[]> {
   const result = await runQuery(`SHOW SCHEMAS IN DATABASE ${database}`);
   return result.rows as SchemaInfo[];
 }
 
-/**
- * List all tables in a database schema
- */
 export async function listTables(
   database: string,
   schema: string,
@@ -308,9 +271,6 @@ export async function listTables(
   return result.rows as TableInfo[];
 }
 
-/**
- * Get detailed information about a table's columns
- */
 export async function describeTable(
   database: string,
   schema: string,
@@ -334,9 +294,6 @@ export async function describeTable(
   };
 }
 
-/**
- * Get table row count
- */
 export async function getTableRowCount(
   database: string,
   schema: string,
@@ -353,9 +310,6 @@ export async function getTableRowCount(
   return 0;
 }
 
-/**
- * Get current Snowflake version and session info
- */
 export async function getSessionInfo(): Promise<{
   version: string;
   warehouse: string;

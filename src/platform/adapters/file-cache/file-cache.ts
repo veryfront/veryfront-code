@@ -4,10 +4,8 @@ import { estimateSize } from "./size-estimator.ts";
 import { LRUTracker } from "./lru-tracker.ts";
 import { EvictionManager } from "@veryfront/utils/cache/eviction/eviction-manager.ts";
 
-/** Default maximum memory for file cache (100 MB) */
 const DEFAULT_MAX_MEMORY_BYTES = 100 * 1024 * 1024;
 
-/** Default TTL for cache entries (1 minute) */
 const DEFAULT_CACHE_TTL_MS = 60_000;
 
 export class FileCache {

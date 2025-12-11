@@ -1,16 +1,8 @@
-/**
- * Build Configuration Display Module
- *
- * Handles displaying build configuration to the user.
- */
 
 import { bold, cyan, dim, green, red, yellow } from "@veryfront/compat/console";
 import { cliLogger } from "@veryfront/utils";
 import type { BuildOptions } from "./types.ts";
 
-/**
- * Display build header and configuration
- */
 export function displayBuildConfig(options: BuildOptions): void {
   const {
     projectDir,
@@ -49,9 +41,6 @@ export function displayBuildConfig(options: BuildOptions): void {
   cliLogger.info("");
 }
 
-/**
- * Display build start message
- */
 export function displayBuildStart(): void {
   cliLogger.info(cyan("Building your application...\n"));
 }

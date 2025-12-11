@@ -187,7 +187,7 @@ Deno.test("computeContentHash - generates consistent hash", async () => {
   const hash2 = await computeContentHash(content);
 
   assertEquals(hash1, hash2);
-  assertEquals(hash1.length, 64); // SHA-256 hex string
+  assertEquals(hash1.length, 64);
 });
 
 Deno.test("computeCodeHash - generates consistent hash", async () => {
@@ -200,7 +200,7 @@ Deno.test("computeCodeHash - generates consistent hash", async () => {
   const hash2 = await computeCodeHash(code);
 
   assertEquals(hash1, hash2);
-  assertEquals(hash1.length, 64); // SHA-256 hex string
+  assertEquals(hash1.length, 64);
 });
 
 Deno.test("computeCodeHash - different for different content", async () => {

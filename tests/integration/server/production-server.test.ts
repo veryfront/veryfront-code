@@ -153,11 +153,57 @@ describe(
   "Production Server - App Router",
   {},
   () => {
+    it("serves App Router pages", async () => {
+      await withTestContext("production-basic-app-router", async (context) => {
+        // Create a simple App Router page
+        await Deno.writeTextFile(
+          join(context.projectDir, "app", "page.tsx"),
+          `export default function HomePage() {
+          return <h1>Production App Router</h1>;
+        }`,
+        );
+
+        // Add layout
+        await Deno.writeTextFile(
+          join(context.projectDir, "app", "layout.tsx"),
+          `export default function RootLayout({ children }: { children: React.ReactNode }) {
+          return (
+            <html>
+              <body>{children}</body>
+            </html>
+          );
+        }`,
+        );
+
+        const port = getFreePort(9502, 10000);
+        const { withTestServer, createTestProductionServer } = await import("../../_helpers/server.ts");
+
+        await withTestServer(
+          () =>
+            createTestProductionServer({
+              projectDir: context.projectDir,
+              port,
+              hostname: "127.0.0.1",
+            }),
+          async () => {
+            console.log("[TEST] Starting test callback, port:", port);
+            const res = await fetch(`http://127.0.0.1:${port}/`);
+            console.log("[TEST] Got response, status:", res.status);
+            assertEquals(res.status, 200);
+            const html = await res.text();
+            console.log("[TEST] Received HTML:", {
+              length: html.length,
+              preview: html.substring(0, 500),
+              includesContent: html.includes("Production App Router"),
+            });
+            assertExists(html.includes("Production App Router"));
+          },
+        );
+      });
+    });
+
     it("serves App Router pages with layouts", async () => {
       await withTestContext("prod-app-router", async (context) => {
-        // Enable cache closing for tests
-        context.setEnv({ VF_CACHE_ALLOW_CLOSE: "1" });
-
         // Create App Router structure
         await Deno.mkdir(join(context.projectDir, "app"), { recursive: true });
         await Deno.writeTextFile(
@@ -170,15 +216,6 @@ describe(
         return <h1>App Router Home</h1>;
       }`,
         );
-
-        // Build production assets before starting server
-        await buildProduction({
-          projectDir: context.projectDir,
-          outputDir: join(context.projectDir, "dist"),
-          enableSplitting: false,
-          enableCompression: false,
-          enablePrefetch: false,
-        });
 
         const server = await context.createProductionServer();
         const response = await fetch(`http://localhost:${server.port}/`);
@@ -398,23 +435,11 @@ describe(
       // Production servers need at least one page to initialize properly
       // This test creates a simple index page and then tests 404 handling for other routes
       await withTestContext("prod-404-page", async (context) => {
-        // Enable cache closing for tests
-        context.setEnv({ VF_CACHE_ALLOW_CLOSE: "1" });
-
         // Create a minimal index page
         await Deno.writeTextFile(
           join(context.projectDir, "pages", "index.tsx"),
           `export default function Home() { return <h1>Home</h1>; }`,
         );
-
-        // Build production assets before starting server
-        await buildProduction({
-          projectDir: context.projectDir,
-          outputDir: join(context.projectDir, "dist"),
-          enableSplitting: false,
-          enableCompression: false,
-          enablePrefetch: false,
-        });
 
         const server = await context.createProductionServer();
 
@@ -433,14 +458,13 @@ describe(
 
     it("handles errors securely in production mode", async () => {
       await withTestContext("prod-error-security", async (context) => {
-        // Enable cache closing for tests
-        context.setEnv({ VF_CACHE_ALLOW_CLOSE: "1", NODE_ENV: "production" });
-
         // Create a page that throws during render
         await Deno.writeTextFile(
           join(context.projectDir, "pages", "error.mdx"),
           `# Error Page\n\n<UndefinedComponent />`,
         );
+
+        context.setEnv({ NODE_ENV: "production" });
 
         // Build production assets first
         await buildProduction({

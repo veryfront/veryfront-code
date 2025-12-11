@@ -1,7 +1,3 @@
-/**
- * Action request handler with guard checks
- * @module rsc-endpoints/action-handler
- */
 
 import { createError, toError } from "../../../../../core/errors/veryfront-error.ts";
 import { HTTP_BAD_REQUEST, HTTP_FORBIDDEN, HTTP_NOT_FOUND } from "@veryfront/utils";
@@ -9,11 +5,6 @@ import { serverLogger } from "@veryfront/utils";
 import { parseActionBody } from "./action-parser.ts";
 import type { ActionRequestParams } from "./types.ts";
 
-/**
- * Handle action request with guard checks
- * @param params - Action request parameters
- * @returns Response with action result or error
- */
 export async function handleActionRequest(
   { req, projectDir, adapter }: ActionRequestParams,
 ): Promise<Response> {
@@ -26,7 +17,6 @@ export async function handleActionRequest(
 
   const { id, args } = parseResult;
 
-  // Optional guard
   try {
     const guard = (await import("../../rsc/server-action-guard.ts")).rscActionGuard;
     if (typeof guard === "function") {

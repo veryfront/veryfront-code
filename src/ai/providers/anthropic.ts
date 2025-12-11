@@ -1,15 +1,9 @@
-/**
- * Anthropic provider implementation
- */
 
 import { BaseProvider } from "./base.ts";
 import { createError, toError } from "../../core/errors/veryfront-error.ts";
 import type { AnthropicConfig, CompletionRequest, CompletionResponse } from "../types/provider.ts";
 import { agentLogger } from "../../core/utils/logger/logger.ts";
 
-/**
- * Anthropic content block types
- */
 interface AnthropicTextContent {
   type: "text";
   text: string;
@@ -33,17 +27,11 @@ type AnthropicContentBlock =
   | AnthropicToolUseContent
   | AnthropicToolResultContent;
 
-/**
- * Anthropic message types
- */
 interface AnthropicMessage {
   role: "user" | "assistant";
   content: string | AnthropicContentBlock[];
 }
 
-/**
- * Anthropic API response
- */
 interface AnthropicResponse {
   content: AnthropicContentBlock[];
   usage?: {
@@ -72,18 +60,14 @@ export class AnthropicProvider extends BaseProvider {
   }
 
   protected getEndpoint(_path: string): string {
-    // Anthropic uses /v1/messages endpoint
     return `${this.baseURL}/v1/messages`;
   }
 
   protected transformRequest(
     request: CompletionRequest,
   ): Record<string, unknown> {
-    // Transform messages to Anthropic format
-    // Anthropic doesn't support "tool" role - tool results must be sent as "user" messages
     const transformedMessages = request.messages.map((msg): AnthropicMessage => {
       if (msg.role === "tool") {
-        // Convert tool result message to user message with tool_result content block
         if (!msg.tool_call_id) {
           throw toError(createError({
             type: "agent",
@@ -102,11 +86,9 @@ export class AnthropicProvider extends BaseProvider {
         };
       }
 
-      // Transform assistant messages with tool_calls to Anthropic format
       if (msg.role === "assistant" && msg.tool_calls && msg.tool_calls.length > 0) {
         const content: AnthropicContentBlock[] = [];
 
-        // Add text content if present
         if (msg.content) {
           content.push({
             type: "text",
@@ -114,7 +96,6 @@ export class AnthropicProvider extends BaseProvider {
           });
         }
 
-        // Add tool use blocks (runtime sends OpenAI-format tool_calls)
         for (const toolCall of msg.tool_calls) {
           content.push({
             type: "tool_use",
@@ -132,7 +113,6 @@ export class AnthropicProvider extends BaseProvider {
         };
       }
 
-      // For all other assistant messages, ensure only role and content are sent
       if (msg.role === "assistant") {
         return {
           role: "assistant",
@@ -140,7 +120,6 @@ export class AnthropicProvider extends BaseProvider {
         };
       }
 
-      // For user messages, only send role and content
       if (msg.role === "user") {
         return {
           role: "user",
@@ -148,11 +127,9 @@ export class AnthropicProvider extends BaseProvider {
         };
       }
 
-      // Fallback for any other message types - cast to unknown format
       return msg as unknown as AnthropicMessage;
     });
 
-    // Debug: Log transformed messages
     agentLogger.debug(
       "Anthropic transformRequest - transformed messages:",
       JSON.stringify(transformedMessages, null, 2),
@@ -164,7 +141,6 @@ export class AnthropicProvider extends BaseProvider {
       stream: request.stream || false,
     };
 
-    // Anthropic requires system prompt as separate field
     if (request.system) {
       body.system = request.system;
     }
@@ -172,7 +148,6 @@ export class AnthropicProvider extends BaseProvider {
     if (request.maxTokens) {
       body.max_tokens = request.maxTokens;
     } else {
-      // Anthropic requires max_tokens
       body.max_tokens = 4096;
     }
 
@@ -205,13 +180,11 @@ export class AnthropicProvider extends BaseProvider {
       }));
     }
 
-    // Extract text content
     const textContent = content
       .filter((c): c is AnthropicTextContent => c.type === "text")
       .map((c) => c.text)
       .join("");
 
-    // Extract tool calls
     const toolCalls = content
       .filter((c): c is AnthropicToolUseContent => c.type === "tool_use")
       .map((c) => ({
@@ -248,18 +221,13 @@ export class AnthropicProvider extends BaseProvider {
     }
   }
 
-  /**
-   * Override stream transformation for Anthropic's specific format
-   */
   protected override transformStream(stream: ReadableStream): ReadableStream {
     const reader = stream.getReader();
     const decoder = new TextDecoder();
     const encoder = new TextEncoder();
 
-    // Capture mapStopReason method reference before entering ReadableStream context
     const mapStopReason = this.mapStopReason.bind(this);
 
-    // Track tool calls being accumulated
     const toolCalls = new Map<number, {
       id?: string;
       name?: string;
@@ -289,16 +257,8 @@ export class AnthropicProvider extends BaseProvider {
                 try {
                   const parsed = JSON.parse(data);
 
-                  // Anthropic stream event types:
-                  // - message_start: Contains model, role, usage
-                  // - content_block_start: Start of content/tool_use block
-                  // - content_block_delta: Text or tool input deltas
-                  // - content_block_stop: End of block
-                  // - message_delta: Contains stop_reason, usage delta
-                  // - message_stop: End of message
 
                   if (parsed.type === "message_start") {
-                    // Extract and emit initial usage (input tokens)
                     if (parsed.message?.usage) {
                       const usageEvent = JSON.stringify({
                         type: "usage",
@@ -314,7 +274,6 @@ export class AnthropicProvider extends BaseProvider {
                   } else if (parsed.type === "content_block_start") {
                     const block = parsed.content_block;
 
-                    // Track tool use blocks
                     if (block?.type === "tool_use") {
                       const index = parsed.index ?? currentBlockIndex;
                       currentBlockIndex = index;
@@ -325,7 +284,6 @@ export class AnthropicProvider extends BaseProvider {
                         input: "",
                       });
 
-                      // Emit tool call start event
                       const startEvent = JSON.stringify({
                         type: "tool_call_start",
                         toolCall: {
@@ -339,7 +297,6 @@ export class AnthropicProvider extends BaseProvider {
                   } else if (parsed.type === "content_block_delta") {
                     const delta = parsed.delta;
 
-                    // Handle text content deltas
                     if (delta?.type === "text_delta" && delta.text) {
                       const contentEvent = JSON.stringify({
                         type: "content",
@@ -348,7 +305,6 @@ export class AnthropicProvider extends BaseProvider {
                       controller.enqueue(encoder.encode(contentEvent + "\n"));
                     }
 
-                    // Handle tool input deltas
                     if (delta?.type === "input_json_delta" && delta.partial_json) {
                       const index = parsed.index ?? currentBlockIndex;
                       const tc = toolCalls.get(index);
@@ -356,7 +312,6 @@ export class AnthropicProvider extends BaseProvider {
                       if (tc) {
                         tc.input += delta.partial_json;
 
-                        // Emit tool call delta event
                         const deltaEvent = JSON.stringify({
                           type: "tool_call_delta",
                           id: tc.id,
@@ -367,12 +322,11 @@ export class AnthropicProvider extends BaseProvider {
                       }
                     }
                   } else if (parsed.type === "message_delta") {
-                    // Extract and emit usage delta (output tokens)
                     if (parsed.usage) {
                       const usageDeltaEvent = JSON.stringify({
                         type: "usage",
                         usage: {
-                          promptTokens: 0, // Only output tokens in delta
+                          promptTokens: 0,
                           completionTokens: parsed.usage.output_tokens || 0,
                           totalTokens: parsed.usage.output_tokens || 0,
                         },
@@ -380,11 +334,9 @@ export class AnthropicProvider extends BaseProvider {
                       controller.enqueue(encoder.encode(usageDeltaEvent + "\n"));
                     }
 
-                    // Handle stop reason
                     if (parsed.delta?.stop_reason) {
                       const stopReason = parsed.delta.stop_reason;
 
-                      // Emit complete tool calls if stop reason is tool_use
                       if (stopReason === "tool_use") {
                         for (const [index, tc] of toolCalls.entries()) {
                           const completeEvent = JSON.stringify({
@@ -400,10 +352,8 @@ export class AnthropicProvider extends BaseProvider {
                         }
                       }
 
-                      // Map Anthropic stop reason to our format
                       const finishReason = mapStopReason(stopReason);
 
-                      // Emit finish event
                       const finishEvent = JSON.stringify({
                         type: "finish",
                         finishReason,
@@ -412,7 +362,6 @@ export class AnthropicProvider extends BaseProvider {
                     }
                   }
                 } catch (e) {
-                  // Skip invalid JSON
                   agentLogger.warn("Failed to parse stream chunk:", e);
                 }
               }

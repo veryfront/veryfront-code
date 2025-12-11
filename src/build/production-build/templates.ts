@@ -1,12 +1,4 @@
-/**
- * Embedded templates for production builds
- * These are embedded as strings to avoid file system dependencies in npm bundle
- * @module
- */
 
-/**
- * Client-side CSS styles for loading states, error display, and prose formatting
- */
 export const CLIENT_STYLES = `body {
   margin: 0;
   font-family:
@@ -83,10 +75,6 @@ export const CLIENT_STYLES = `body {
   color: inherit;
 }`;
 
-/**
- * Pre-bundled client router script for npm builds
- * Placeholder - this is auto-generated during build:npm
- */
 export let CLIENT_ROUTER_BUNDLE: string | undefined;
 
 export let CLIENT_PREFETCH_BUNDLE: string | undefined;

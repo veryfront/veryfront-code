@@ -1,6 +1,3 @@
-/**
- * QuickBooks OAuth Init
- */
 
 import { quickbooksConfig, createOAuthInitHandler } from "veryfront/oauth";
 

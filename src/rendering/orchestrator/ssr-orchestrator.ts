@@ -48,8 +48,6 @@ export class SSROrchestrator {
       },
     );
 
-    // Merge options from generationContext with the passed options parameter
-    // to avoid losing props that were set in generationContext.options
     const mergedOptions = {
       ...generationContext.options,
       ...options,
@@ -59,9 +57,7 @@ export class SSROrchestrator {
       },
     };
 
-    // If we have a stream, use streaming HTML generation
     if (stream && wantsStream) {
-      // Compute hash from buffered HTML (if available) for better cache consistency
       const ssrHash = await getContentHash(html);
 
       const contextWithHash = {
@@ -75,11 +71,9 @@ export class SSROrchestrator {
         contextWithHash,
       );
 
-      // Return buffered HTML alongside stream for fallback scenarios
       return { fullHtml: html, finalStream, ssrHash };
     }
 
-    // Otherwise, use buffered HTML generation
     const ssrHash = await getContentHash(html);
 
     const fullHtml = await this.config.htmlGenerator.generateFullHTML({
@@ -98,7 +92,6 @@ export class SSROrchestrator {
     try {
       return new Response(html).body ?? null;
     } catch (error) {
-      // Failed to create ReadableStream from HTML string - this should not be silently ignored
       logger.error("Failed to create stream from HTML:", error);
       throw toError(
         createError({

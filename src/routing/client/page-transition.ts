@@ -46,7 +46,6 @@ export class PageTransition {
 
     this.pendingTransitionTimeout = setTimeout(() => {
       this.pendingTransitionTimeout = undefined;
-      // Server-rendered RSC HTML is trusted; validateTrustedHtml provides defense-in-depth
       rootElement.innerHTML = validateTrustedHtml(String(data.html ?? ""));
       rootElement.style.opacity = "1";
 

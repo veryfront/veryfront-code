@@ -1,6 +1,3 @@
-/**
- * Tests for entry point creation and path conversion utilities
- */
 
 import { describe, it } from "@std/testing/bdd.ts";
 import { expect } from "@std/expect";

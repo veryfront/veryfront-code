@@ -218,7 +218,6 @@ export async function getConfig(
         throw error;
       }
 
-      // Only log at debug level - this is expected when .ts exists but .js is tried first
       const errorMessage = error instanceof Error ? error.message : String(error);
       serverLogger.debug(`[CONFIG] Failed to load ${configFile}, trying next config file:`, {
         error: errorMessage,

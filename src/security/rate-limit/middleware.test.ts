@@ -1,6 +1,3 @@
-/**
- * Rate Limiting Middleware Tests
- */
 
 import { assertEquals, assertExists } from "https://deno.land/std@0.220.0/assert/mod.ts";
 import { describe, it } from "https://deno.land/std@0.220.0/testing/bdd.ts";
@@ -20,7 +17,6 @@ describe("Rate Limiting Middleware", () => {
     const request = new Request("http://localhost/test");
     const next = () => Promise.resolve(new Response("OK"));
 
-    // First 5 requests should succeed
     for (let i = 0; i < 5; i++) {
       const response = await limiter(request, next);
       assertEquals(response.status, 200);
@@ -42,13 +38,11 @@ describe("Rate Limiting Middleware", () => {
     const request = new Request("http://localhost/test");
     const next = () => Promise.resolve(new Response("OK"));
 
-    // First 3 requests should succeed
     for (let i = 0; i < 3; i++) {
       const response = await limiter(request, next);
       assertEquals(response.status, 200);
     }
 
-    // 4th request should be blocked
     const blockedResponse = await limiter(request, next);
     assertEquals(blockedResponse.status, 429);
     assertExists(blockedResponse.headers.get("X-RateLimit-Limit"));
@@ -91,7 +85,6 @@ describe("Rate Limiting Middleware", () => {
     });
     const next = () => Promise.resolve(new Response("OK"));
 
-    // Should allow unlimited requests when skip returns true
     for (let i = 0; i < 10; i++) {
       const response = await limiter(request, next);
       assertEquals(response.status, 200);
@@ -111,18 +104,15 @@ describe("Rate Limiting Middleware", () => {
 
     const next = () => Promise.resolve(new Response("OK"));
 
-    // User 1 makes 2 requests
     const req1 = new Request("http://localhost/test", {
       headers: { "x-api-key": "user1" },
     });
     await limiter(req1, next);
     await limiter(req1, next);
 
-    // User 1's 3rd request should be blocked
     const blocked1 = await limiter(req1, next);
     assertEquals(blocked1.status, 429);
 
-    // User 2 should have separate limit
     const req2 = new Request("http://localhost/test", {
       headers: { "x-api-key": "user2" },
     });

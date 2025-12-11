@@ -2,9 +2,6 @@ import { tool } from 'veryfront/ai';
 import { z } from 'zod';
 import { getAnthropicAdminClient } from '../../lib/anthropic-admin-client';
 
-/**
- * Tool for listing all workspaces in the Anthropic organization
- */
 export const listWorkspaces = tool({
   name: 'list_workspaces',
   description:

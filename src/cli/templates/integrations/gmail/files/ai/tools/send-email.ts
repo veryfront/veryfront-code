@@ -31,7 +31,6 @@ export default tool({
       .describe("Whether the body contains HTML"),
   }),
   execute: async ({ to, subject, body, cc, bcc, isHtml }, context) => {
-    // Default to "current-user" for development; in production, always pass userId from session
     const userId = (context?.userId as string | undefined) || "current-user";
 
     try {

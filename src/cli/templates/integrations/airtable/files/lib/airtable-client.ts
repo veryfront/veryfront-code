@@ -73,7 +73,6 @@ async function airtableFetch<T>(
   return response.json();
 }
 
-// Meta API for listing bases
 async function metaFetch<T>(
   endpoint: string,
   options: RequestInit = {},
@@ -231,7 +230,6 @@ export function deleteRecord(
   );
 }
 
-// Helper to format field value for display
 export function formatFieldValue(value: unknown): string {
   if (value === null || value === undefined) return "";
   if (Array.isArray(value)) {

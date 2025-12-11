@@ -27,10 +27,10 @@ export const ERROR_SOLUTIONS: Record<string, ErrorSolution> = {
       "Remove any trailing commas in objects",
     ],
     example: `export default {
-  title: "My App",  // ✓ Valid string
+  title: "My App",
   dev: {
-    port: 3002,     // ✓ Valid number
-    open: true      // ✓ No trailing comma
+    port: 3002,
+    open: true
   }
 };`,
   },
@@ -62,7 +62,7 @@ export async function POST(request: Request) {
     ],
     example: `// ❌ Wrong - database import in client component
 'use client';
-import { db } from './database'; // Error!
+import { db } from './database';
 
 import { db } from './database';
 export default async function ServerComponent() {

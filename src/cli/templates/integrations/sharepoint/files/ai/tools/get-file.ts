@@ -45,7 +45,6 @@ export default tool({
       hashes: file.file?.hashes,
     };
 
-    // Only try to download content for text-based files
     if (includeContent && file.file?.mimeType) {
       const textMimeTypes = [
         "text/",

@@ -1,4 +1,3 @@
-// Main bundler exports
 
 export * from "./services/css-bundler.ts";
 export * from "./services/mdx-bundler.ts";

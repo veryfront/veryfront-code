@@ -1,9 +1,3 @@
-/**
- * Page Renderer
- *
- * Handles preparation and dispatching of different page types (MDX, Component, Script).
- * Manages client module code generation and page bundle creation.
- */
 
 import * as React from "react";
 import { rendererLogger as logger } from "@veryfront/utils";
@@ -34,16 +28,6 @@ export interface PageBundleResult {
   scriptResult?: RenderResult;
 }
 
-/**
- * PageRenderer - Handles page type detection and rendering
- *
- * This class manages the preparation of different page types:
- * - MDX pages (.mdx files)
- * - Component pages (.tsx, .jsx files)
- * - Script pages (.ts, .js files that return Response)
- *
- * It dispatches to the appropriate handler and manages client module code.
- */
 export class PageRenderer {
   private readonly projectDir: string;
   private readonly mode: string;
@@ -79,23 +63,16 @@ export class PageRenderer {
     this.moduleServerUrl = options.moduleServerUrl;
   }
 
-  /**
-   * Get merged MDX components (default + registered)
-   */
   private getMergedComponents(): MDXComponents {
     const components = this.componentRegistry.getAllAsComponents();
     const defaultComponents = createDefaultMDXComponents();
     return { ...defaultComponents, ...components };
   }
 
-  /**
-   * Detect page type from file extension
-   */
   private detectPageType(pageInfo: EntityInfo): {
     type: "mdx" | "component" | "script";
     extension: string;
   } {
-    // More explicit array access - handles edge cases safely
     const parts = pageInfo.entity.id.split(".");
     const lastPart = parts[parts.length - 1];
     const fileExtension = parts.length > 1 && lastPart ? lastPart.toLowerCase() : "";
@@ -112,70 +89,6 @@ export class PageRenderer {
     }
   }
 
-  /**
-   * Extract route params from path and slug (fallback extraction)
-   * Handles both App Router (/app/) and Pages Router (/pages/) patterns
-   */
-  private extractParamsFromPath(
-    pageEntityId: string,
-    slug: string,
-  ): Record<string, string | string[]> | undefined {
-    const params: Record<string, string | string[]> = {};
-
-    // Find router base path
-    const appIndex = pageEntityId.indexOf("/app/");
-    const pagesIndex = pageEntityId.indexOf("/pages/");
-
-    let relativePath: string | null = null;
-    if (appIndex !== -1) {
-      relativePath = pageEntityId.substring(appIndex + 5); // Skip "/app/"
-    } else if (pagesIndex !== -1) {
-      relativePath = pageEntityId.substring(pagesIndex + 7); // Skip "/pages/"
-    }
-
-    if (!relativePath) {
-      return undefined;
-    }
-
-    // Extract path segments, removing file extensions and App Router file names
-    const pathSegments = relativePath
-      .split("/")
-      .map((s) => s.replace(/\.(tsx|jsx|ts|js|mdx)$/, ""))
-      .filter((s) => s !== "page" && s !== "route" && s.length > 0);
-
-    const slugSegments = slug.split("/").filter(Boolean);
-
-    // Match dynamic segments with slug values
-    for (let i = 0; i < pathSegments.length && i < slugSegments.length; i++) {
-      const pathSeg = pathSegments[i];
-      const slugSeg = slugSegments[i];
-
-      if (pathSeg && pathSeg.startsWith("[") && pathSeg.endsWith("]")) {
-        const isCatchAll = pathSeg.startsWith("[...");
-        const paramName = pathSeg.replace(/\[\.\.\.|\[|\]/g, "");
-
-        if (isCatchAll) {
-          params[paramName] = slugSegments.slice(i);
-          break;
-        } else if (slugSeg !== undefined) {
-          params[paramName] = slugSeg;
-        }
-      }
-    }
-
-    return Object.keys(params).length > 0 ? params : undefined;
-  }
-
-  /**
-   * Prepare page bundles based on file type
-   * Handles MDX, TSX/JSX components, and TS/JS scripts
-   *
-   * @param pageInfo - The page entity information
-   * @param slug - The page slug
-   * @param cachedModule - Optional cached module code
-   * @param options - Rendering options (params, props)
-   * @returns Page bundle result with element, metadata, and client code
-   */
   async preparePageBundles(
     pageInfo: EntityInfo,
     slug: string,
@@ -192,26 +105,17 @@ export class PageRenderer {
       slug,
     });
 
-    // Initialize result
     let pageElement: React.ReactElement | undefined;
     let pageBundle: PageBundle | undefined;
     let clientModuleCode: string | undefined = cachedModule?.code;
     let pageModuleType: "mdx" | "component" | undefined = cachedModule?.type;
     let collectedMetadata: Record<string, unknown> = {};
 
-    // Dispatch to appropriate handler based on page type
     switch (pageType.type) {
       case "component": {
-        // Extract params from path if not provided (fallback extraction)
-        let params = options?.params;
-        if (!params || Object.keys(params).length === 0) {
-          params = this.extractParamsFromPath(pageInfo.entity.id, slug);
-        }
-
-        // For App Router pages, params should be passed as props
         const componentProps = {
           ...options?.props,
-          ...(params && Object.keys(params).length > 0 ? { params } : {}),
+          ...(options?.params ? { params: options.params } : {}),
         };
 
         const result = await handleComponentPage(
@@ -234,7 +138,6 @@ export class PageRenderer {
       }
 
       case "script": {
-        // Script pages return early with their own result
         const scriptResult = await handleScriptPage(pageInfo, slug, {
           mode: this.mode,
           config: this.config,
@@ -282,9 +185,6 @@ export class PageRenderer {
     };
   }
 
-  /**
-   * Get page type information
-   */
   getPageType(pageInfo: EntityInfo): {
     type: "mdx" | "component" | "script";
     extension: string;
@@ -304,11 +204,7 @@ export class PageRenderer {
     };
   }
 
-  /**
-   * Validate that page bundle was successfully created
-   */
   validatePageBundle(result: PageBundleResult, slug: string): void {
-    // Script pages are valid even without element/bundle
     if (result.scriptResult) {
       return;
     }

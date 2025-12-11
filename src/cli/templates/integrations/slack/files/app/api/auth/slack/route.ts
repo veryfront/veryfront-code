@@ -1,6 +1,3 @@
-/**
- * Slack OAuth Initiation
- */
 
 import { createOAuthInitHandler, memoryTokenStore, slackConfig } from "veryfront/oauth";
 

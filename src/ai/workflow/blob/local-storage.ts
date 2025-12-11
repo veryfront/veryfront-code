@@ -1,8 +1,3 @@
-/**
- * Local File System Blob Storage
- *
- * Stores blobs as files on the local disk
- */
 
 import { dirname, join } from "../../../platform/compat/path-helper.ts";
 import { createFileSystem, FileSystem } from "../../../platform/compat/fs.ts";
@@ -21,7 +16,6 @@ export class LocalBlobStorage implements BlobStorage {
   }
 
   private getPath(id: string): string {
-    // Partition by first 2 chars to avoid too many files in one dir
     const prefix = id.slice(0, 2);
     return join(this.rootDir, prefix, id);
   }
@@ -53,7 +47,6 @@ export class LocalBlobStorage implements BlobStorage {
       await this.fs.writeFile(filePath, arr);
       size = data.size;
     } else if (data instanceof ReadableStream) {
-      // Normalize stream to bytes for cross-runtime compatibility
       const buffer = new Uint8Array(await new Response(data).arrayBuffer());
       await this.fs.writeFile(filePath, buffer);
       size = buffer.length;
@@ -81,7 +74,6 @@ export class LocalBlobStorage implements BlobStorage {
     try {
       const bytes = await this.getBytes(id);
       if (!bytes) return null;
-      // Create a minimal cross-runtime ReadableStream from the bytes
       return new ReadableStream({
         start(controller) {
           controller.enqueue(bytes);
@@ -118,7 +110,6 @@ export class LocalBlobStorage implements BlobStorage {
       await this.fs.remove(filePath);
       await this.fs.remove(metaPath);
     } catch {
-      // Ignore if not found
     }
   }
 
@@ -142,12 +133,7 @@ export class LocalBlobStorage implements BlobStorage {
     }
   }
 
-  /**
-   * Cleans up all expired blobs from storage.
-   * This method should typically be run periodically by an external process.
-   */
   async cleanupExpiredBlobs(): Promise<void> {
-    // Iterate over prefixes (00-ff)
     for (let i = 0; i < 256; i++) {
       const prefix = i.toString(16).padStart(2, "0");
       const prefixDir = join(this.rootDir, prefix);
@@ -163,7 +149,6 @@ export class LocalBlobStorage implements BlobStorage {
           }
         }
       } catch (_e) {
-        // Directory not found is fine, skip
         continue;
       }
     }

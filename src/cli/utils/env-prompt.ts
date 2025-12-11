@@ -1,7 +1,3 @@
-/**
- * Environment variable prompting utilities for CLI scaffolding
- * @module
- */
 
 import { cliLogger as logger } from "@veryfront/utils";
 import { cyan, dim, green, yellow } from "@veryfront/compat/console";
@@ -10,30 +6,17 @@ import type { EnvVarConfig } from "../templates/index.ts";
 import { promptUser } from "./index.ts";
 
 export interface EnvPromptOptions {
-  /** Whether to run in interactive mode (prompt for values) */
   interactive?: boolean;
-  /** Whether to skip prompting entirely */
   skipPrompt?: boolean;
-  /** Pre-filled environment variable values (from config file) */
   prefilledValues?: Record<string, string>;
 }
 
 export interface EnvPromptResult {
-  /** Content for .env file */
   envContent: string;
-  /** Content for .env.example file */
   envExampleContent: string;
-  /** Map of env var names to their values */
   values: Record<string, string>;
 }
 
-/**
- * Prompts the user for environment variable values during scaffolding
- *
- * @param envVars - Array of environment variable configurations
- * @param options - Prompting options
- * @returns Object containing .env content, .env.example content, and values map
- */
 export async function promptForEnvVars(
   envVars: EnvVarConfig[],
   options: EnvPromptOptions = {},
@@ -46,7 +29,6 @@ export async function promptForEnvVars(
     "",
   ];
 
-  // Determine if we should prompt interactively
   const disablePrompt = options.skipPrompt ||
     getEnv("CI") === "1" ||
     getEnv("DENO_TESTING") === "1";
@@ -58,7 +40,6 @@ export async function promptForEnvVars(
     logger.info(dim("  Press Enter to skip and set values later\n"));
   }
 
-  // Get pre-filled values from options
   const prefilledValues = options.prefilledValues || {};
   const hasPrefilledValues = Object.keys(prefilledValues).length > 0;
 
@@ -68,7 +49,6 @@ export async function promptForEnvVars(
   }
 
   for (const envVar of envVars) {
-    // Build the .env.example entry
     const commentLines: string[] = [];
     commentLines.push(`# ${envVar.description}`);
     if (envVar.docsUrl) {
@@ -83,14 +63,11 @@ export async function promptForEnvVars(
     exampleLines.push(`${envVar.name}=${placeholder}`);
     exampleLines.push("");
 
-    // Check for pre-filled value first, then default from config
     let value = prefilledValues[envVar.name] || "";
 
-    // If no pre-filled value and interactive mode, prompt
     if (!value && interactive) {
       value = await promptForSingleEnvVar(envVar);
     } else if (value && hasPrefilledValues) {
-      // Log that we're using a pre-filled value
       if (envVar.sensitive) {
         const masked = value.length > 8
           ? value.substring(0, 4) + "..." + value.substring(value.length - 4)
@@ -101,22 +78,17 @@ export async function promptForEnvVars(
       }
     }
 
-    // Use default value from config if no value was provided or prompted
     if (!value && envVar.default) {
       value = envVar.default;
     }
 
     values[envVar.name] = value;
 
-    // Add to .env content only if we have a real value
-    // Skip env vars with no value - they're documented in .env.example
     if (value) {
       envLines.push(`${envVar.name}=${value}`);
     } else if (envVar.required) {
-      // Only add placeholder comment for required vars so user knows they need to set them
       envLines.push(`# ${envVar.name}= # Required - see .env.example`);
     }
-    // Optional vars without values are omitted entirely - see .env.example for reference
   }
 
   if (interactive && envVars.length > 0) {
@@ -143,15 +115,11 @@ export async function promptForEnvVars(
   };
 }
 
-/**
- * Prompts for a single environment variable value
- */
 async function promptForSingleEnvVar(envVar: EnvVarConfig): Promise<string> {
   const requiredIndicator = envVar.required ? `${yellow("*")}` : "";
   const docsHint = envVar.docsUrl ? dim(` (${envVar.docsUrl})`) : "";
 
   try {
-    // Use cross-platform promptUser which handles both Deno and Node.js
     const value = await promptUser(
       `  ${
         cyan(envVar.name)
@@ -161,7 +129,6 @@ async function promptForSingleEnvVar(envVar: EnvVarConfig): Promise<string> {
     const trimmedValue = value.trim();
 
     if (trimmedValue && envVar.sensitive) {
-      // Mask the displayed value for sensitive inputs
       const masked = trimmedValue.length > 8
         ? trimmedValue.substring(0, 4) + "..." + trimmedValue.substring(trimmedValue.length - 4)
         : "****";
@@ -174,16 +141,12 @@ async function promptForSingleEnvVar(envVar: EnvVarConfig): Promise<string> {
 
     return trimmedValue;
   } catch (error) {
-    // Prompt may fail in non-interactive environments
     logger.debug("Failed to read stdin:", error);
     logger.info(dim("    Skipped (will use placeholder)"));
     return "";
   }
 }
 
-/**
- * Generates content for .gitignore to ensure .env is not committed
- */
 export function generateGitignoreContent(existingContent?: string): string {
   const requiredEntries = [
     "# Environment files",
@@ -210,11 +173,9 @@ export function generateGitignoreContent(existingContent?: string): string {
     ].join("\n");
   }
 
-  // Check if .env is already in gitignore
   if (existingContent.includes(".env")) {
     return existingContent;
   }
 
-  // Append env entries to existing content
   return existingContent.trimEnd() + "\n\n" + requiredEntries.join("\n");
 }

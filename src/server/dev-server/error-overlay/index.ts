@@ -1,7 +1,3 @@
-/**
- * Error Overlay Module
- * Handles error display in development mode
- */
 
 export { ErrorOverlay } from "./overlay-renderer.ts";
 export {

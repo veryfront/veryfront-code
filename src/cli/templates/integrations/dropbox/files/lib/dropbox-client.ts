@@ -3,7 +3,6 @@ import { getAccessToken } from "./token-store.ts";
 const DROPBOX_API_URL = "https://api.dropboxapi.com/2";
 const DROPBOX_CONTENT_URL = "https://content.dropboxapi.com/2";
 
-// Dropbox API Types
 export interface DropboxMetadata {
   ".tag": "file" | "folder" | "deleted";
   name: string;
@@ -85,7 +84,6 @@ export interface SharedLinkMetadata {
   };
 }
 
-// Helper function for Dropbox RPC API calls
 async function dropboxRPC<T>(
   endpoint: string,
   body: Record<string, unknown> = {},
@@ -114,7 +112,6 @@ async function dropboxRPC<T>(
   return response.json();
 }
 
-// Helper function for Dropbox Content API calls
 async function dropboxContent<T>(
   endpoint: string,
   args: Record<string, unknown>,
@@ -157,7 +154,6 @@ async function dropboxContent<T>(
   return response.json();
 }
 
-// Account Operations
 export function getCurrentAccount(): Promise<AccountInfo> {
   return dropboxRPC<AccountInfo>("/users/get_current_account");
 }
@@ -166,7 +162,6 @@ export function getSpaceUsage(): Promise<SpaceUsage> {
   return dropboxRPC<SpaceUsage>("/users/get_space_usage");
 }
 
-// File and Folder Operations
 export function listFolder(
   path: string = "",
   options?: {
@@ -309,7 +304,6 @@ export function createFolder(
   }).then((result) => result.metadata);
 }
 
-// Search Operations
 export function searchFiles(
   query: string,
   options?: {
@@ -341,7 +335,6 @@ export function searchFiles(
   });
 }
 
-// Sharing Operations
 export async function createSharedLink(
   path: string,
   settings?: {
@@ -356,7 +349,6 @@ export async function createSharedLink(
       settings: settings || {},
     });
   } catch (error) {
-    // If link already exists, get the existing link
     if (error instanceof Error && error.message.includes("shared_link_already_exists")) {
       const links = await listSharedLinks(path);
       if (links.length > 0) {
@@ -374,7 +366,6 @@ export async function listSharedLinks(path?: string): Promise<SharedLinkMetadata
   return result.links;
 }
 
-// Helper Functions
 export function formatFileSize(bytes: number): string {
   const units = ["B", "KB", "MB", "GB", "TB"];
   let size = bytes;

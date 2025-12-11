@@ -1,8 +1,3 @@
-/**
- * OAuth Helper Functions
- *
- * Provides utilities for OAuth 2.0 authorization flows.
- */
 
 import { type OAuthToken, tokenStore } from "./token-store.ts";
 
@@ -16,9 +11,6 @@ export interface OAuthProvider {
   callbackPath: string;
 }
 
-/**
- * Generate OAuth authorization URL
- */
 export function getAuthorizationUrl(
   provider: OAuthProvider,
   state: string,
@@ -37,9 +29,6 @@ export function getAuthorizationUrl(
   return `${provider.authorizationUrl}?${params.toString()}`;
 }
 
-/**
- * Exchange authorization code for tokens
- */
 export async function exchangeCodeForTokens(
   provider: OAuthProvider,
   code: string,
@@ -75,9 +64,6 @@ export async function exchangeCodeForTokens(
   };
 }
 
-/**
- * Refresh an expired access token
- */
 export async function refreshAccessToken(
   provider: OAuthProvider,
   refreshToken: string,
@@ -111,9 +97,6 @@ export async function refreshAccessToken(
   };
 }
 
-/**
- * Get a valid access token, refreshing if necessary
- */
 export async function getValidToken(
   provider: OAuthProvider,
   userId: string,
@@ -125,8 +108,6 @@ export async function getValidToken(
     return null;
   }
 
-  // Check if token is expired (with 5 minute buffer)
-  // If no expiresAt, token doesn't expire (e.g., GitHub)
   const isExpired = token.expiresAt ? token.expiresAt < Date.now() + 5 * 60 * 1000 : false;
 
   if (isExpired && token.refreshToken) {
@@ -135,7 +116,6 @@ export async function getValidToken(
       await tokenStore.setToken(userId, service, newToken);
       return newToken.accessToken;
     } catch {
-      // Refresh failed, user needs to re-authorize
       await tokenStore.revokeToken(userId, service);
       return null;
     }

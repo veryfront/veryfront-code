@@ -17,7 +17,6 @@ export default tool({
   }),
   async execute({ tableName, id, filter, data }) {
     try {
-      // Validate that either id or filter is provided
       if (!id && !filter) {
         return {
           success: false,
@@ -27,7 +26,6 @@ export default tool({
         };
       }
 
-      // Update by ID (single row)
       if (id) {
         const result = await updateRow(tableName, id, data);
         return {
@@ -39,7 +37,6 @@ export default tool({
         };
       }
 
-      // Update by filter (multiple rows)
       if (filter) {
         const results = await updateRows(tableName, filter, data);
         return {

@@ -12,7 +12,6 @@ export async function POST(request: Request) {
       );
     }
 
-    // Validate the API key by making a test request to Neon API
     const response = await fetch("https://console.neon.tech/api/v2/projects", {
       headers: {
         "Authorization": `Bearer ${apiKey}`,
@@ -27,7 +26,6 @@ export async function POST(request: Request) {
       );
     }
 
-    // Store the API key
     setApiKey(apiKey, databaseUrl);
 
     return Response.json({

@@ -1,7 +1,3 @@
-/**
- * Base handler abstract class
- * Provides common functionality for all handlers
- */
 
 import type {
   Handler,
@@ -16,21 +12,13 @@ import { serverLogger } from "@veryfront/utils";
 export abstract class BaseHandler implements Handler {
   abstract metadata: HandlerMetadata;
 
-  /**
-   * Main handler method to be implemented by subclasses
-   */
   abstract handle(req: Request, ctx: HandlerContext): Promise<HandlerResult>;
 
-  /**
-   * Check if this handler should process the request
-   */
   protected shouldHandle(req: Request, ctx: HandlerContext): boolean {
-    // Check if handler is enabled
     if (this.metadata.enabled && !this.metadata.enabled(ctx)) {
       return false;
     }
 
-    // If no patterns specified, handler decides internally
     if (!this.metadata.patterns || this.metadata.patterns.length === 0) {
       return true;
     }
@@ -39,7 +27,6 @@ export abstract class BaseHandler implements Handler {
     const pathname = url.pathname;
     const method = req.method.toUpperCase();
 
-    // Check each pattern
     for (const pattern of this.metadata.patterns) {
       if (this.matchesPattern(pathname, method, pattern)) {
         return true;
@@ -49,11 +36,7 @@ export abstract class BaseHandler implements Handler {
     return false;
   }
 
-  /**
-   * Check if request matches a pattern
-   */
   private matchesPattern(pathname: string, method: string, pattern: RoutePattern): boolean {
-    // Check method if specified
     if (pattern.method) {
       const methods = Array.isArray(pattern.method) ? pattern.method : [pattern.method];
       if (!methods.map((m) => m.toUpperCase()).includes(method)) {
@@ -61,14 +44,12 @@ export abstract class BaseHandler implements Handler {
       }
     }
 
-    // Check path pattern
     if (typeof pattern.pattern === "string") {
       if (pattern.exact) {
         return pathname === pattern.pattern;
       } else if (pattern.prefix) {
         return pathname.startsWith(pattern.pattern);
       } else {
-        // Default to exact match for strings
         return pathname === pattern.pattern;
       }
     } else if (pattern.pattern instanceof RegExp) {
@@ -78,48 +59,31 @@ export abstract class BaseHandler implements Handler {
     return false;
   }
 
-  /**
-   * Create a response builder with context
-   * @param ctx - Handler context
-   * @param nonce - Optional pre-generated nonce for CSP consistency
-   */
   protected createResponseBuilder(ctx: HandlerContext, nonce?: string): ResponseBuilder {
     return new ResponseBuilder({
       securityConfig: ctx.securityConfig ?? undefined,
       isDev: ctx.mode === "development",
       cspUserHeader: ctx.cspUserHeader,
       adapter: ctx.adapter,
-      nonce, // Pass through the nonce if provided
+      nonce,
     });
   }
 
-  /**
-   * Log debug message if debug mode is enabled
-   */
   protected logDebug(message: string, extra?: Record<string, unknown>, ctx?: HandlerContext): void {
     if (ctx?.debug || ctx?.adapter.env.get("VERYFRONT_DEBUG")) {
       serverLogger.debug(`[${this.metadata.name}] ${message}`, extra || undefined);
     }
   }
 
-  /**
-   * Helper to extract error message safely
-   */
   protected getErrorMessage(error: unknown): string {
     if (error instanceof Error) return error.message;
     return String(error);
   }
 
-  /**
-   * Continue to next handler
-   */
   protected continue(): HandlerResult {
     return { continue: true };
   }
 
-  /**
-   * Return a response and stop the chain
-   */
   protected respond(response: Response, metadata?: Record<string, unknown>): HandlerResult {
     return { response, continue: false, metadata };
   }

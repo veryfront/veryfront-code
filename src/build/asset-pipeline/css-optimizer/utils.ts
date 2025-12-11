@@ -13,7 +13,6 @@ export async function findCSSFiles(dir: string): Promise<string[]> {
       cssFiles.push(entry.path);
     }
   } catch (error) {
-    // Directory doesn't exist or can't be read
     logger.warn(`Could not read directory ${dir}`, { error });
   }
 
@@ -23,17 +22,14 @@ export async function findCSSFiles(dir: string): Promise<string[]> {
 export async function globFiles(pattern: string): Promise<string[]> {
   const files: string[] = [];
 
-  // Extract base directory and pattern
   const parts = pattern.split("**");
   const baseDir = parts[0] ? parts[0] : ".";
   const _filePattern = parts[1] ? parts[1] : "";
 
-  // Normalize pattern (remove leading ./ for consistent matching)
   const normalizedPattern = pattern.startsWith("./") ? pattern.slice(2) : pattern;
 
   try {
     for await (const entry of walk(baseDir, { includeDirs: false })) {
-      // Normalize entry path (remove leading ./ for consistent matching)
       const normalizedPath = entry.path.startsWith("./") ? entry.path.slice(2) : entry.path;
 
       if (matchPattern(normalizedPath, normalizedPattern)) {
@@ -48,13 +44,8 @@ export async function globFiles(pattern: string): Promise<string[]> {
 }
 
 export function matchPattern(path: string, pattern: string): boolean {
-  // Handle simple wildcards and braces
-  // Order matters: expand braces first, then escape dots, then handle /** / (globstar), then * (wildcard)
-  const regexPattern = pattern
-    .replace(/\{([^}]+)\}/g, (_, group) => `(${group.split(",").join("|")})`)
-    .replace(/\./g, "\\.")
-    .replace(/\/\*\*\//g, "/(.*/)?") // /** / matches zero or more directories (slash + optional subdirs)
-    .replace(/\*/g, "[^/]*"); // * matches within a directory (not across /)
+  // Order matters: expand braces first, then escape dots, then handle
+    .replace(/\*/g, "[^/]*");
 
   const regex = new RegExp("^" + regexPattern + "$");
   return regex.test(path);
@@ -87,7 +78,6 @@ export function extractSelectors(content: string): {
   const tags: string[] = [];
   const selectors = new Set<string>();
 
-  // Extract className attributes (JSX)
   const classNameMatches = content.matchAll(/className=["']([^"']+)["']/g);
   for (const match of classNameMatches) {
     if (match[1]) {
@@ -97,7 +87,6 @@ export function extractSelectors(content: string): {
     }
   }
 
-  // Extract class attributes (HTML)
   const classMatches = content.matchAll(/class=["']([^"']+)["']/g);
   for (const match of classMatches) {
     if (match[1]) {
@@ -107,7 +96,6 @@ export function extractSelectors(content: string): {
     }
   }
 
-  // Extract id attributes
   const idMatches = content.matchAll(/id=["']([^"']+)["']/g);
   for (const match of idMatches) {
     if (match[1]) {
@@ -116,7 +104,6 @@ export function extractSelectors(content: string): {
     }
   }
 
-  // Extract HTML tags
   const tagMatches = content.matchAll(/<(\w+)[\s>]/g);
   for (const match of tagMatches) {
     if (match[1]) {
@@ -137,25 +124,22 @@ export function extractSelectorsFromHTML(html: string): string[] {
 }
 
 export function shouldKeepSelector(selector: string, usedSelectors: Set<string>): boolean {
-  // Always keep universal rules
   const universal = ["*", ":root", "html", "body", "@"];
   if (universal.some((u) => selector.includes(u))) {
     return true;
   }
 
-  // Keep if exact match
   if (usedSelectors.has(selector)) {
     return true;
   }
 
-  // Keep if any part of compound selector is used
   const parts = selector.split(/[\s>+~]/).map((p) => p.trim());
   return parts.some((part) => usedSelectors.has(part));
 }
 
 export function basicMinify(css: string): string {
   return css
-    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/\/\*[\s\S]*?\*\
     .replace(/\s+/g, " ")
     .replace(/\s*([{};:,])\s*/g, "$1")
     .replace(/;}/g, "}")

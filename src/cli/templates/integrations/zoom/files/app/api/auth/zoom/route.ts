@@ -1,6 +1,3 @@
-/**
- * Zoom OAuth Init
- */
 
 import { zoomConfig, createOAuthInitHandler } from "veryfront/oauth";
 

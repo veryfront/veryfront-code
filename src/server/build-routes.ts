@@ -1,6 +1,3 @@
-/**
- * Route Collection and Discovery for Build
- */
 
 import { serverLogger as logger } from "@veryfront/utils";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
@@ -63,9 +60,6 @@ export async function collectPagesRoutes(
   return routes;
 }
 
-/**
- * Collect App Router literal routes (static analyzable)
- */
 export async function collectAppRoutes(
   adapter: RuntimeAdapter,
   projectDir: string,
@@ -135,7 +129,6 @@ async function walkAppSSG(
         break;
       }
     } catch {
-      /* continue */
     }
   }
   for await (const e of adapter.fs.readDir(dir)) {

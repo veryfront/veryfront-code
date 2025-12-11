@@ -1,8 +1,3 @@
-/**
- * OAuth Handlers Index
- *
- * Export reusable OAuth route handlers.
- */
 
 export {
   createOAuthCallbackHandler,

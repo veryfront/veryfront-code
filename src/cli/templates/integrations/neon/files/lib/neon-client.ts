@@ -3,7 +3,6 @@ import { Client } from "pg";
 
 const NEON_API_BASE_URL = "https://console.neon.tech/api/v2";
 
-// Management API Types
 interface NeonProject {
   id: string;
   platform_id: string;
@@ -95,7 +94,6 @@ interface NeonEndpointsResponse {
   endpoints: NeonEndpoint[];
 }
 
-// Database Query Types
 interface QueryResult {
   rows: Record<string, unknown>[];
   rowCount: number;
@@ -145,7 +143,6 @@ async function neonFetch<T>(
   return response.json();
 }
 
-// Management API Functions
 
 export async function listProjects(): Promise<NeonProject[]> {
   const response = await neonFetch<NeonProjectsResponse>("/projects");
@@ -206,7 +203,6 @@ export async function listEndpoints(projectId: string): Promise<NeonEndpoint[]> 
   return response.endpoints;
 }
 
-// Database Query Functions
 
 async function getDbClient(): Promise<Client> {
   const databaseUrl = getDatabaseUrl();

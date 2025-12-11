@@ -1,26 +1,13 @@
-/**
- * Router Detection
- *
- * Determines whether to use App Router or Pages Router based on:
- * - Explicit configuration (config.router)
- * - Directory structure analysis
- * - Route file presence detection
- */
 
 import { join } from "../platform/compat/path-helper.ts";
 import { createFileSystem } from "../platform/compat/fs.ts";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "@veryfront/config";
 
-// Re-export from app-route-resolver for backward compatibility
 export { getAppRouteEntity } from "./app-route-resolver.ts";
 
-// Re-export from route-params-extractor for backward compatibility
 export { extractAppRouteParams, extractPagesRouteParams } from "./route-params-extractor.ts";
 
-/**
- * Detect if app router should be used based on config and directory structure
- */
 export async function detectAppRouter(
   projectDir: string,
   config: VeryfrontConfig,
@@ -30,7 +17,6 @@ export async function detectAppRouter(
   if (forced === "app") return true;
   if (forced === "pages") return false;
 
-  // Check if app directory exists AND contains route files
   const appDirName = config?.directories?.app || "app";
   const pagesDirName = config?.directories?.pages || "pages";
 
@@ -45,33 +31,22 @@ export async function detectAppRouter(
     hasAppRoutes = await hasRouteFiles(appDir, adapter);
   }
 
-  // Check for pages routes
   const pagesStat = await statWithFallback(pagesDir, adapter);
   if (pagesStat?.isDirectory) {
     hasPagesRoutes = await hasRouteFiles(pagesDir, adapter);
   }
 
-  // If both have routes, prefer app router
-  // If only one has routes, use that one
   if (hasAppRoutes) return true;
   if (hasPagesRoutes) return false;
 
-  // If neither has routes, check which directory exists
-  // Prefer app router for new projects, but allow pages router for legacy
   const hasAppDir = Boolean(appStat?.isDirectory);
   const hasPagesDir = Boolean(pagesStat?.isDirectory);
 
-  // If both exist but neither has routes, prefer app router (modern default)
-  // If only one exists, use that one
-  // If neither exists, default to app router
-  if (hasAppDir) return true; // Prefer app router when it exists
+  if (hasAppDir) return true;
   if (hasPagesDir) return false;
-  return false; // If nothing is detectable, fall back to pages router to avoid false positives
+  return false;
 }
 
-/**
- * Check if a directory contains route files
- */
 async function hasRouteFiles(
   dir: string,
   adapter: RuntimeAdapter,
@@ -83,7 +58,6 @@ async function hasRouteFiles(
   for (const entry of entries) {
     if (entry.isFile) {
       const name = entry.name.toLowerCase();
-      // Check if file matches a route pattern or is a valid route file
       const hasRouteExtension = routeExtensions.some((ext) => name.endsWith(ext));
       if (hasRouteExtension) {
         const isRouteFile = routePatterns.some((pattern) => name.startsWith(pattern));
@@ -93,7 +67,6 @@ async function hasRouteFiles(
         }
       }
     } else if (entry.isDirectory) {
-      // Recursively check subdirectories
       const hasNested = await hasRouteFiles(join(dir, entry.name), adapter);
       if (hasNested) return true;
     }

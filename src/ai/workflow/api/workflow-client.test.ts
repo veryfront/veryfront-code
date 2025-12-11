@@ -1,6 +1,3 @@
-/**
- * Workflow Client Tests
- */
 
 import {
   assertEquals,
@@ -52,14 +49,12 @@ describe("WorkflowClient", () => {
     it("should register a workflow", async () => {
       const newClient = createWorkflowClient({ backend: new MemoryBackend() });
       newClient.register(testWorkflow as Workflow);
-      // Should not throw
       await newClient.destroy();
     });
 
     it("should register workflow definition directly", async () => {
       const newClient = createWorkflowClient({ backend: new MemoryBackend() });
       newClient.register(testWorkflow.definition);
-      // Should not throw
       await newClient.destroy();
     });
   });
@@ -139,7 +134,6 @@ describe("WorkflowClient", () => {
 
   describe("approve() and reject()", () => {
     it("should approve a pending approval", async () => {
-      // Create run directly in waiting state (avoid async execution race)
       const runId = "test-run-approval";
       await backend.createRun({
         id: runId,
@@ -172,7 +166,6 @@ describe("WorkflowClient", () => {
     });
 
     it("should reject a pending approval", async () => {
-      // Create run directly in waiting state (avoid async execution race)
       const runId = "test-run-rejection";
       await backend.createRun({
         id: runId,

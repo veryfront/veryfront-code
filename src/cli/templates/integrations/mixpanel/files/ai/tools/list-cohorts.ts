@@ -14,7 +14,6 @@ export default tool({
   async execute({ includeHidden }) {
     const allCohorts = await listCohorts();
 
-    // Filter by visibility if needed
     const cohorts = includeHidden
       ? allCohorts
       : allCohorts.filter((c) => c.is_visible);

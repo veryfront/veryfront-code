@@ -14,7 +14,6 @@ export default tool({
     limit: z.number().min(1).max(1000).default(100).describe("Maximum number of rows to return"),
   }),
   async execute({ sql, params, limit }) {
-    // Add LIMIT clause if not present and it's a SELECT query
     let finalSql = sql.trim();
     const isSelectQuery = /^SELECT/i.test(finalSql);
 

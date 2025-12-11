@@ -1,7 +1,3 @@
-/**
- * Static Site Generation (SSG) for Build
- * Handles rendering pages to static HTML
- */
 
 import { serverLogger as logger } from "@veryfront/utils";
 import { mkdir } from "node:fs/promises";
@@ -46,9 +42,6 @@ export interface SSGOptions {
   traceStep?: <T>(name: string, fn: () => Promise<T>) => Promise<T>;
 }
 
-/**
- * Build all pages from Pages Router
- */
 export async function buildPagesRoutes(
   routes: RouteInfo[],
   options: SSGOptions,
@@ -72,26 +65,21 @@ export async function buildPagesRoutes(
     ssgPaths: [],
   };
 
-  // Load client styles once (embedded, no I/O)
   const clientStyles = loadClientStyles();
 
   for (const route of routes) {
     try {
-      // Render page
       const result = (await traceStep(`page:${route.slug}`, () =>
         renderer.renderPage(route.slug))) as PageRenderResult;
 
-      // Inject advanced features into HTML
       let enhancedHtml = result.html;
 
-      // Add preload hints
       if (enablePrefetch && chunkManifest) {
         const { generatePreloadLinks } = await import("../../build/bundler/code-splitter/index.ts");
         const preloadLinks = generatePreloadLinks(chunkManifest, route.path, "/_veryfront/chunks");
         enhancedHtml = enhancedHtml.replace("</head>", `${preloadLinks}\n</head>`);
       }
 
-      // Add import map and styles
       const importMap = await generateImportMap();
       enhancedHtml = enhancedHtml.replace(
         "</head>",
@@ -105,35 +93,29 @@ ${clientStyles}
 </head>`,
       );
 
-      // Add client-side runtime
       enhancedHtml = enhancedHtml.replace("</body>", generateClientRuntime(route, result, baseUrl));
 
-      // Determine output path
       const outputPath = route.slug === "index"
         ? join(outputDir, "index.html")
         : join(outputDir, route.slug, "index.html");
 
-      // Ensure directory exists
       await mkdir(dirname(outputPath), { recursive: true });
 
-      // Write HTML
       if (!dryRun) {
         await traceStep(`write:${route.slug}`, () =>
           adapter.fs.writeFile(outputPath, enhancedHtml));
       }
 
       // Note: Pages Router paths are NOT added to ssgPaths (only App Router paths are)
-      // This is intentional per SSG design - ssgPaths only tracks App Router static paths
       stats.pages++;
       stats.totalSize += new TextEncoder().encode(enhancedHtml).length;
 
-      // Generate page data for client-side navigation
       const pageData = {
         slug: route.slug,
         path: route.path,
         frontmatter: result.frontmatter,
         headings: result.headings,
-        html: result.html, // Include rendered HTML for client navigation
+        html: result.html,
       };
 
       if (!dryRun) {
@@ -159,9 +141,6 @@ ${clientStyles}
   return stats;
 }
 
-/**
- * Build App Router literal pages
- */
 export async function buildAppRoutes(
   appRoutes: AppRouteInfo[],
   options: SSGOptions,

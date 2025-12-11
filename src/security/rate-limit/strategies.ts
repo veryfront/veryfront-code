@@ -1,18 +1,7 @@
-/**
- * Rate Limiting Strategies
- *
- * Different algorithms for rate limiting
- */
 
 import type { RateLimitConfig, RateLimitStore } from "./types.ts";
 import { MemoryRateLimitStore } from "./memory-store.ts";
 
-/**
- * Fixed Window Strategy
- *
- * Simple counter that resets at fixed intervals.
- * Fast but can allow bursts at window boundaries.
- */
 export async function fixedWindowStrategy(
   key: string,
   config: RateLimitConfig,
@@ -26,12 +15,6 @@ export async function fixedWindowStrategy(
   return { allowed, remaining, resetTime };
 }
 
-/**
- * Sliding Window Strategy
- *
- * More accurate than fixed window, prevents burst attacks.
- * Tracks individual request timestamps.
- */
 export function slidingWindowStrategy(
   key: string,
   config: RateLimitConfig,
@@ -40,9 +23,7 @@ export function slidingWindowStrategy(
   const now = Date.now();
   const windowStart = now - config.windowMs;
 
-  // Get state (need memory store for this)
   if (!(store instanceof MemoryRateLimitStore)) {
-    // Fallback to fixed window for non-memory stores
     return fixedWindowStrategy(key, config, store);
   }
 
@@ -56,7 +37,6 @@ export function slidingWindowStrategy(
     };
   }
 
-  // Remove old timestamps outside the window
   if (state.requestTimestamps) {
     state.requestTimestamps = state.requestTimestamps.filter(
       (timestamp) => timestamp > windowStart,
@@ -65,12 +45,10 @@ export function slidingWindowStrategy(
     state.requestTimestamps = [];
   }
 
-  // Add current timestamp
   state.requestTimestamps.push(now);
   state.count = state.requestTimestamps.length;
   state.resetTime = now + config.windowMs;
 
-  // Save state
   store.setState(key, state);
 
   const allowed = state.count <= config.maxRequests;
@@ -79,23 +57,15 @@ export function slidingWindowStrategy(
   return Promise.resolve({ allowed, remaining, resetTime: state.resetTime });
 }
 
-/**
- * Token Bucket Strategy
- *
- * Allows burst traffic up to bucket capacity.
- * Tokens refill at a constant rate.
- */
 export function tokenBucketStrategy(
   key: string,
   config: RateLimitConfig,
   store: RateLimitStore,
 ): Promise<{ allowed: boolean; remaining: number; resetTime: number }> {
   const now = Date.now();
-  const refillRate = config.maxRequests / config.windowMs; // tokens per ms
+  const refillRate = config.maxRequests / config.windowMs;
 
-  // Get state
   if (!(store instanceof MemoryRateLimitStore)) {
-    // Fallback to fixed window for non-memory stores
     return fixedWindowStrategy(key, config, store);
   }
 
@@ -103,31 +73,26 @@ export function tokenBucketStrategy(
 
   if (!state) {
     state = {
-      count: config.maxRequests - 1, // Start with full bucket, consume one token
+      count: config.maxRequests - 1,
       resetTime: now,
       requestTimestamps: [now],
     };
   } else {
-    // Refill tokens based on time elapsed
     const timeElapsed = now - state.resetTime;
     const tokensToAdd = timeElapsed * refillRate;
     state.count = Math.min(config.maxRequests, state.count + tokensToAdd);
     state.resetTime = now;
 
-    // Check if we have tokens available before consuming
     if (state.count < 1) {
-      // No tokens available - request denied
       store.setState(key, state);
       const remaining = 0;
       const resetTime = now + (config.maxRequests - state.count) / refillRate;
       return Promise.resolve({ allowed: false, remaining, resetTime: Math.floor(resetTime) });
     }
 
-    // Consume one token
     state.count = state.count - 1;
   }
 
-  // Save state
   store.setState(key, state);
 
   const remaining = Math.floor(state.count);

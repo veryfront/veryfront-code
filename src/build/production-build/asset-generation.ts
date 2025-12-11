@@ -1,7 +1,3 @@
-/**
- * Asset Generation for Build
- * Handles copying static assets from public directory
- */
 
 import { serverLogger as logger } from "@veryfront/utils";
 import { dirname, join, relative } from "node:path";
@@ -105,9 +101,6 @@ async function ensureDirPath(path: string, adapter: RuntimeAdapter): Promise<voi
   await adapter.fs.mkdir(path, { recursive: true });
 }
 
-/**
- * Copy static assets from public directory to output directory
- */
 export async function copyStaticAssets(
   adapter: RuntimeAdapter,
   projectDir: string,
@@ -158,7 +151,6 @@ export async function copyStaticAssets(
         const fs = createFileSystem();
         await fs.remove(testFilePath);
       } catch (_error) {
-        // Best-effort cleanup; ignore failures to remove test file.
       }
     } catch (error) {
       throw error;
@@ -205,9 +197,6 @@ export async function copyStaticAssets(
   return stats;
 }
 
-/**
- * Load CSS template (embedded for npm compatibility)
- */
 export function loadClientStyles(): string {
   return CLIENT_STYLES;
 }

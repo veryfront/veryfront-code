@@ -3,9 +3,6 @@ import { join } from "std/path/mod.ts";
 import { getConfig } from "@veryfront/config";
 import type { DiagnosticResult } from "./types.ts";
 
-/**
- * Check project structure for required files and directories
- */
 export async function checkProjectStructure(projectDir: string): Promise<DiagnosticResult[]> {
   const results: DiagnosticResult[] = [];
   const requiredFiles = ["pages", "pages/index.mdx"];
@@ -33,9 +30,6 @@ export async function checkProjectStructure(projectDir: string): Promise<Diagnos
   return results;
 }
 
-/**
- * Check configuration loading and validity
- */
 export async function checkConfiguration(projectDir: string): Promise<DiagnosticResult> {
   try {
     const { getAdapter } = await import("@veryfront/platform/adapters/detect.ts");
@@ -57,9 +51,6 @@ export async function checkConfiguration(projectDir: string): Promise<Diagnostic
   }
 }
 
-/**
- * Check cache system initialization
- */
 export function checkCacheSystem(): Promise<DiagnosticResult> {
   return Promise.resolve({
     name: "Cache System",

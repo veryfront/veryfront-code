@@ -1,13 +1,3 @@
-/**
- * CSS Optimizer Service
- *
- * Main orchestrator for CSS optimization using pluggable strategies.
- * Coordinates between different optimization strategies and manages the
- * optimization pipeline.
- *
- * Updated to use RuntimeAdapter for cross-platform compatibility and
- * path validation for security.
- */
 
 import { dirname, relative } from "std/path/mod.ts";
 import { logger } from "@veryfront/utils";
@@ -33,13 +23,10 @@ const DEFAULT_OPTIONS: Required<CSSOptimizationOptions> = {
   inputDir: "./styles",
   outputDir: "./.veryfront/optimized-css",
   browsers: ["defaults", "not IE 11"],
-  purgeContent: ["./app/**/*.{tsx,jsx,ts,js}", "./pages/**/*.{tsx,jsx,ts,js}"],
+  purgeContent: ["./app *.{tsx,jsx,ts,js}", "./pages/**/*.{tsx,jsx,ts,js}"],
   sourceMap: false,
 };
 
-/**
- * CSS Optimizer Service using Strategy Pattern
- */
 export class CSSOptimizerService {
   private options: Required<CSSOptimizationOptions>;
   private strategies: CSSOptimizationStrategy[] = [];
@@ -61,7 +48,6 @@ export class CSSOptimizerService {
     this.options = { ...DEFAULT_OPTIONS, ...options };
     this.cacheManager = new CacheManager();
 
-    // Initialize secure filesystem with build context
     this.secureFs = createSecureFs({
       baseDir,
       adapter,
@@ -69,7 +55,6 @@ export class CSSOptimizerService {
       throwOnError: true,
     });
 
-    // Initialize strategies
     this.lightningStrategy = new LightningCSSStrategy();
     this.minificationStrategy = new MinificationStrategy();
     this.purgeStrategy = new PurgeStrategy();
@@ -81,16 +66,12 @@ export class CSSOptimizerService {
     ];
   }
 
-  /**
-   * Initialize the optimizer (loads external dependencies)
-   */
   async init(): Promise<boolean> {
     if (!this.options.enabled) {
       logger.info("CSS optimization is disabled");
       return false;
     }
 
-    // Try to initialize Lightning CSS
     const lightningReady = await this.lightningStrategy.init();
 
     if (lightningReady) {
@@ -102,9 +83,6 @@ export class CSSOptimizerService {
     return true;
   }
 
-  /**
-   * Optimize all CSS files
-   */
   async optimize(): Promise<Map<string, CSSBundle>> {
     const _isReady = await this.init();
 
@@ -120,22 +98,18 @@ export class CSSOptimizerService {
       purge: this.options.purge,
     });
 
-    // Create output directory using secure filesystem
     await this.secureFs.mkdir(this.options.outputDir, { recursive: true });
 
-    // Find all CSS files
     const cssFiles = this.options.inputFiles.length > 0
       ? this.options.inputFiles
       : await findCSSFiles(this.options.inputDir);
 
     logger.info(`Found ${cssFiles.length} CSS files to optimize`);
 
-    // Process CSS files
     for (const cssFile of cssFiles) {
       await this.optimizeFile(cssFile);
     }
 
-    // Write manifest
     await this.cacheManager.writeManifest(this.options.outputDir);
 
     logger.info("CSS optimization complete", {
@@ -146,22 +120,17 @@ export class CSSOptimizerService {
     return this.cacheManager.getAllBundles();
   }
 
-  /**
-   * Optimize a single CSS file
-   */
   private async optimizeFile(cssPath: string): Promise<void> {
     const relPath = relative(this.options.inputDir, cssPath);
     logger.debug(`Optimizing: ${relPath}`);
 
     try {
-      // Read file using secure filesystem (with path validation)
       const content = await this.secureFs.readFile(cssPath);
       const originalSize = new TextEncoder().encode(content).length;
 
       let optimized = content;
       let sourceMap: string | undefined;
 
-      // Select and apply the best strategy
       const strategy = this.selectStrategy();
 
       if (strategy) {
@@ -173,22 +142,18 @@ export class CSSOptimizerService {
           logger.warn(`Strategy ${strategy.name} failed, using fallback`, {
             error: error instanceof Error ? error.message : String(error),
           });
-          // Fallback to basic minification
           optimized = basicMinify(content);
         }
       } else {
-        // No strategy available, keep original or use basic minification
         if (this.options.minify) {
           optimized = basicMinify(content);
         }
       }
 
-      // Write optimized file using secure filesystem
       const outputPath = getOutputPath(relPath, this.options.outputDir);
       await this.secureFs.mkdir(dirname(outputPath), { recursive: true });
       await this.secureFs.writeFile(outputPath, optimized);
 
-      // Write source map if enabled
       if (sourceMap && this.options.sourceMap) {
         await this.secureFs.writeFile(`${outputPath}.map`, sourceMap);
       }
@@ -196,7 +161,6 @@ export class CSSOptimizerService {
       const minifiedSize = new TextEncoder().encode(optimized).length;
       const savings = calculateSavings(originalSize, minifiedSize);
 
-      // Store bundle info
       this.cacheManager.addBundle(relPath, {
         file: relPath,
         content: optimized,
@@ -218,14 +182,9 @@ export class CSSOptimizerService {
     }
   }
 
-  /**
-   * Select the best strategy for the current options
-   */
   private selectStrategy(): CSSOptimizationStrategy | null {
-    // Sort strategies by priority (descending)
     const sortedStrategies = [...this.strategies].sort((a, b) => b.priority - a.priority);
 
-    // Find the first strategy that can process
     for (const strategy of sortedStrategies) {
       if (strategy.canProcess(this.options)) {
         logger.debug(`Selected strategy: ${strategy.name}`);
@@ -236,30 +195,18 @@ export class CSSOptimizerService {
     return null;
   }
 
-  /**
-   * Get optimization statistics
-   */
   getStats(): CSSOptimizerStats {
     return this.cacheManager.getStats();
   }
 
-  /**
-   * Get the current options
-   */
   getOptions(): Required<CSSOptimizationOptions> {
     return this.options;
   }
 
-  /**
-   * Get the cache manager (for advanced use cases)
-   */
   getCacheManager(): CacheManager {
     return this.cacheManager;
   }
 
-  /**
-   * Get the purge strategy (for testing/debugging)
-   */
   getPurgeStrategy(): PurgeStrategy {
     return this.purgeStrategy;
   }

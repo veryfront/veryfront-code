@@ -63,6 +63,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
     logger.debug("[VeryfrontFSAdapter] Fetching all files from API");
     const files = await this.client.listAllFiles();
     this.cache.set(cacheKey, files);
+
     logger.debug("[VeryfrontFSAdapter] Fetched files during initialization", {
       count: files.length,
     });

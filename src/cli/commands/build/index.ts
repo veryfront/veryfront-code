@@ -1,12 +1,3 @@
-/**
- * Build Command Orchestrator
- *
- * Thin orchestration layer that coordinates build phases:
- * - Configuration display
- * - Build execution
- * - Statistics display
- * - Error handling
- */
 
 import { join } from "std/path/mod.ts";
 import { getAdapter } from "@veryfront/platform/adapters/index.ts";
@@ -17,25 +8,18 @@ import { handleBuildError } from "./error-handler.ts";
 import { displayBuildSuccess } from "./stats-display.ts";
 import type { BuildOptions } from "./types.ts";
 
-/**
- * Main build command entry point
- */
 export async function buildCommand(options: BuildOptions): Promise<void> {
   const outputDir = options.outputDir || join(options.projectDir, "dist");
   const startTime = Date.now();
 
   try {
-    // Display configuration
     displayBuildConfig({ ...options, outputDir });
 
-    // Initialize adapter and config
     const adapter = await getAdapter();
     await getConfig(options.projectDir, adapter);
 
-    // Start build
     displayBuildStart();
 
-    // Execute production build
     const stats = await buildProduction({
       projectDir: options.projectDir,
       outputDir,
@@ -48,7 +32,6 @@ export async function buildCommand(options: BuildOptions): Promise<void> {
       dryRun: options.dryRun ?? false,
     });
 
-    // Display success and statistics
     displayBuildSuccess(stats, startTime, outputDir, options.dryRun ?? false);
   } catch (error) {
     handleBuildError(error);

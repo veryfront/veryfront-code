@@ -3,13 +3,11 @@ import { nanoid } from "nanoid";
 let hash: (password: string) => Promise<string>;
 let compare: (password: string, hash: string) => Promise<boolean>;
 
-// @ts-ignore - Deno global
 if (typeof Deno !== 'undefined') {
   const bcrypt = await import("https://deno.land/x/bcrypt@v0.4.1/mod.ts");
   hash = bcrypt.hash;
   compare = bcrypt.compare;
 } else {
-  // @ts-ignore
   const bcrypt = await import('@node-rs/bcrypt');
   hash = bcrypt.hash;
   compare = bcrypt.compare;
@@ -24,10 +22,8 @@ interface User {
   createdAt: Date;
 }
 
-// In-memory storage (replace with database)
 const users = new Map<string, User>();
 
-// Demo user
 const demoUser: User = {
   id: "demo-user",
   email: "demo@example.com",

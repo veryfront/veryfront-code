@@ -1,6 +1,3 @@
-/**
- * Tests for CSS utility functions
- */
 
 import { describe, it } from "@std/testing/bdd.ts";
 import { expect } from "@std/expect";
@@ -9,67 +6,29 @@ import { countUtilities, minifyCSS } from "./css-utils.ts";
 describe("css-utils", () => {
   describe("minifyCSS", () => {
     it("should remove CSS comments", () => {
-      const css = "/* Comment */ .container { padding: 1rem; }";
+      const css = " .container { padding: 1rem; }";
       const result = minifyCSS(css);
-      expect(result).not.toContain("/*");
-      expect(result).not.toContain("*/");
+      expect(result).not.toContain("
       expect(result).toContain(".container");
     });
 
     it("should remove multiline comments", () => {
       const css = `
-        /* This is a
-           multiline comment */
         .btn { color: blue; }
       `;
       const result = minifyCSS(css);
-      expect(result).not.toContain("/*");
-      expect(result).toContain(".btn");
-    });
-
-    it("should collapse whitespace", () => {
-      const css = ".container  {  padding:  1rem;  }";
-      const result = minifyCSS(css);
-      expect(result).toBe(".container{padding:1rem;}");
-    });
-
-    it("should remove spaces around punctuation", () => {
-      const css = ".btn { color : red ; }";
-      const result = minifyCSS(css);
-      expect(result).toBe(".btn{color:red;}");
-    });
-
-    it("should trim leading and trailing whitespace", () => {
-      const css = "  .container { padding: 1rem; }  ";
-      const result = minifyCSS(css);
-      expect(result).toBe(".container{padding:1rem;}");
-    });
-
-    it("should handle empty CSS", () => {
-      const result = minifyCSS("");
-      expect(result).toBe("");
-    });
-
-    it("should handle CSS with only whitespace", () => {
-      const result = minifyCSS("   \n  \t  ");
-      expect(result).toBe("");
-    });
-
-    it("should handle CSS with only comments", () => {
-      const css = "/* Comment 1 */ /* Comment 2 */";
+      expect(result).not.toContain("
       const result = minifyCSS(css);
       expect(result).toBe("");
     });
 
     it("should handle complex CSS", () => {
       const css = `
-        /* Header styles */
         .header {
           display: flex;
           padding: 1rem;
         }
 
-        /* Body styles */
         .body {
           margin: 0;
         }
@@ -166,19 +125,19 @@ describe("css-utils", () => {
     it("should count classes in complex selectors", () => {
       const css = ".container .btn { } .container .link { }";
       const count = countUtilities(css);
-      expect(count).toBe(3); // .container, .btn, .link
+      expect(count).toBe(3);
     });
 
     it("should count pseudo-class selectors", () => {
       const css = ".btn:hover { } .btn:active { }";
       const count = countUtilities(css);
-      expect(count).toBe(1); // Only .btn counts
+      expect(count).toBe(1);
     });
 
     it("should handle mixed selectors", () => {
       const css = ".btn, #id, div, .link { }";
       const count = countUtilities(css);
-      expect(count).toBe(2); // .btn and .link
+      expect(count).toBe(2);
     });
 
     it("should handle classes with special characters", () => {
@@ -190,7 +149,7 @@ describe("css-utils", () => {
     it("should handle minified CSS", () => {
       const css = ".a{}.b{}.c{}.a{}";
       const count = countUtilities(css);
-      expect(count).toBe(3); // .a, .b, .c
+      expect(count).toBe(3);
     });
   });
 });

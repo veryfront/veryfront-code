@@ -11,7 +11,6 @@ interface GlobalWithDenoKv {
 }
 
 export async function openKv(path?: string): Promise<Kv> {
-  // 1. Try native Deno KV
   if (isDeno) {
     const global = globalThis as unknown as GlobalWithDenoKv;
     if (typeof global.Deno?.openKv === "function") {
@@ -23,7 +22,6 @@ export async function openKv(path?: string): Promise<Kv> {
     }
   }
 
-  // 2. Try SQLite (Node.js/Bun compatible)
   try {
     const Database = (await import("better-sqlite3")).default;
     const dbPath = path || ":memory:";
@@ -33,7 +31,6 @@ export async function openKv(path?: string): Promise<Kv> {
     serverLogger.debug("SQLite not available, using memory KV:", error);
   }
 
-  // 3. Fallback to in-memory KV
   return new MemoryKv();
 }
 

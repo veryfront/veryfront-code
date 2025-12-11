@@ -1,9 +1,3 @@
-/**
- * Gmail API Client
- *
- * Provides a type-safe interface to Gmail API operations
- * using the veryfront/oauth module for authentication.
- */
 
 import { gmailConfig, OAuthService } from "veryfront/oauth";
 import { tokenStore } from "./token-store.ts";
@@ -40,7 +34,6 @@ export interface SendEmailOptions {
   isHtml?: boolean;
 }
 
-// Adapter to bridge user's tokenStore with framework's TokenStore interface
 const tokenStoreAdapter = {
   async getTokens(serviceId: string) {
     return tokenStore.getToken("current-user", serviceId);
@@ -51,20 +44,14 @@ const tokenStoreAdapter = {
   async clearTokens(serviceId: string) {
     await tokenStore.revokeToken("current-user", serviceId);
   },
-  // State methods not needed for API client
   async getState() { return null; },
   async setState() {},
   async clearState() {},
 };
 
-// Create Gmail service using the user's token store
 const gmailService = new OAuthService(gmailConfig, tokenStoreAdapter);
 
-/**
- * Create a Gmail client for API operations
- */
 export function createGmailClient() {
-  // OAuthService.fetch() already handles auth, error checking, and JSON parsing
   async function apiRequest<T>(
     endpoint: string,
     options: RequestInit = {},
@@ -73,17 +60,11 @@ export function createGmailClient() {
   }
 
   return {
-    /**
-     * Check if Gmail is connected
-     */
     async isConnected(): Promise<boolean> {
       const token = await gmailService.getAccessToken();
       return token !== null;
     },
 
-    /**
-     * List messages from the user's mailbox
-     */
     listMessages(options: {
       maxResults?: number;
       query?: string;
@@ -102,9 +83,6 @@ export function createGmailClient() {
       );
     },
 
-    /**
-     * Get a specific message by ID
-     */
     getMessage(
       messageId: string,
       format: "full" | "metadata" | "minimal" = "full",
@@ -114,9 +92,6 @@ export function createGmailClient() {
       );
     },
 
-    /**
-     * Send an email
-     */
     sendEmail(options: SendEmailOptions): Promise<{ id: string; threadId: string }> {
       const toAddresses = Array.isArray(options.to) ? options.to.join(", ") : options.to;
       const ccAddresses = options.cc
@@ -140,10 +115,9 @@ export function createGmailClient() {
 
       const email = `${headers.join("\r\n")}\r\n\r\n${options.body}`;
 
-      // Encode email as base64url
       const encodedEmail = btoa(email)
         .replace(/\+/g, "-")
-        .replace(/\//g, "_")
+        .replace(/\
         .replace(/=+$/, "");
 
       return apiRequest<{ id: string; threadId: string }>("/users/me/messages/send", {
@@ -152,9 +126,6 @@ export function createGmailClient() {
       });
     },
 
-    /**
-     * Search emails by query
-     */
     async searchEmails(query: string, maxResults = 10): Promise<GmailMessage[]> {
       const list = await this.listMessages({ query, maxResults });
 
@@ -162,7 +133,6 @@ export function createGmailClient() {
         return [];
       }
 
-      // Fetch full message details
       const messages = await Promise.all(
         list.messages.map((m) => this.getMessage(m.id, "metadata")),
       );
@@ -170,16 +140,10 @@ export function createGmailClient() {
       return messages;
     },
 
-    /**
-     * Get unread emails
-     */
     getUnreadEmails(maxResults = 10): Promise<GmailMessage[]> {
       return this.searchEmails("is:unread", maxResults);
     },
 
-    /**
-     * Mark email as read
-     */
     async markAsRead(messageId: string): Promise<void> {
       await apiRequest(`/users/me/messages/${messageId}/modify`, {
         method: "POST",
@@ -189,9 +153,6 @@ export function createGmailClient() {
       });
     },
 
-    /**
-     * Archive an email
-     */
     async archiveEmail(messageId: string): Promise<void> {
       await apiRequest(`/users/me/messages/${messageId}/modify`, {
         method: "POST",
@@ -203,9 +164,6 @@ export function createGmailClient() {
   };
 }
 
-/**
- * Parse email headers to extract common fields
- */
 export function parseEmailHeaders(
   headers: Array<{ name: string; value: string }>,
 ): {

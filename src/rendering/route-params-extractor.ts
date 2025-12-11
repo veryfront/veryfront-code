@@ -24,7 +24,6 @@ export async function extractAppRouteParams(
         continue;
       }
     } catch {
-      // Exact match failed
     }
 
     let foundDynamic = false;
@@ -43,7 +42,6 @@ export async function extractAppRouteParams(
         }
       }
     } catch {
-      // Directory not readable
     }
 
     if (!foundDynamic) {
@@ -76,7 +74,6 @@ export async function extractPagesRouteParams(
 
     const exactPath = join(currentDir, segment);
 
-    // Try exact match first
     try {
       const stat = await adapter.fs.stat(exactPath);
       if (stat.isDirectory) {
@@ -85,10 +82,8 @@ export async function extractPagesRouteParams(
         continue;
       }
     } catch {
-      // Not an exact directory match
     }
 
-    // Try to find a dynamic segment file or directory
     let foundDynamic = false;
     try {
       const entries = await adapter.fs.readDir(currentDir);
@@ -100,7 +95,6 @@ export async function extractPagesRouteParams(
           const isFile = routeExtensions.some((ext) => entryName.endsWith(ext));
 
           if (isFile && i === segments.length - 1) {
-            // This is the page file
             patternParts.push(entryName.replace(/\.(tsx|jsx|ts|js|mdx)$/, ""));
             foundDynamic = true;
             break;
@@ -110,7 +104,6 @@ export async function extractPagesRouteParams(
             foundDynamic = true;
 
             if (isCatchAll) {
-              // Catch-all captures remaining segments
               break;
             }
             break;
@@ -118,7 +111,6 @@ export async function extractPagesRouteParams(
         }
       }
     } catch {
-      // Directory not readable
     }
 
     if (!foundDynamic) {

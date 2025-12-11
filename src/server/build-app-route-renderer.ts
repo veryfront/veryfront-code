@@ -1,6 +1,3 @@
-/**
- * App Route HTML Rendering for Build
- */
 
 import { serverLogger as logger } from "@veryfront/utils";
 import { join } from "std/path/mod.ts";
@@ -9,9 +6,6 @@ import { getProjectReact, renderToStringAdapter } from "@veryfront/react";
 import { loadComponentFromSource } from "@veryfront/modules/react-loader/index.ts";
 import { CompilationError } from "@veryfront/errors/index.ts";
 
-/**
- * Render an App Router route to HTML
- */
 export async function renderAppRouteToHTML(args: {
   adapter: RuntimeAdapter;
   projectDir: string;
@@ -19,7 +13,6 @@ export async function renderAppRouteToHTML(args: {
   pageFile: string;
 }): Promise<string> {
   const { adapter, projectDir, routePath, pageFile } = args;
-  // Load root and segment layouts
   const appRoot = join(projectDir, "app");
   const layouts: string[] = [];
   const rootLayout = join(appRoot, "layout.tsx");
@@ -27,7 +20,6 @@ export async function renderAppRouteToHTML(args: {
     const st = await adapter.fs.stat(rootLayout);
     if (st.isFile) layouts.push(rootLayout);
   } catch {
-    // Root layout not found, continue without it
   }
   const segments = routePath === "/" ? [] : routePath.split("/").filter(Boolean);
   let current = appRoot;
@@ -38,14 +30,11 @@ export async function renderAppRouteToHTML(args: {
       const st = await adapter.fs.stat(lf);
       if (st.isFile) layouts.push(lf);
     } catch {
-      // Segment layout not found, continue without it
     }
   }
 
-  // Get React from the project's node_modules to ensure element symbols match
   const React = await getProjectReact();
 
-  // Load page component using ESM loader
   const pageSrc = await adapter.fs.readFile(pageFile);
   const Page = await loadComponentFromSource(
     pageSrc,
@@ -55,7 +44,7 @@ export async function renderAppRouteToHTML(args: {
     {
       projectId: projectDir,
       dev: false,
-      moduleServerUrl: "", // Empty string forces CDN URLs, no module server available
+      moduleServerUrl: "",
     },
   );
   if (typeof Page !== "function") {
@@ -65,10 +54,8 @@ export async function renderAppRouteToHTML(args: {
     });
   }
 
-  // Type-safe component wrapper
   type ReactComponentLike = React.ComponentType<{ children?: React.ReactNode }>;
 
-  // Wrap with layouts using project's React.createElement
   let element: React.ReactNode = React.createElement(Page as ReactComponentLike);
   for (let i = layouts.length - 1; i >= 0; i--) {
     const layoutPath = layouts[i]!;
@@ -82,7 +69,7 @@ export async function renderAppRouteToHTML(args: {
         {
           projectId: projectDir,
           dev: false,
-          moduleServerUrl: "", // Empty string forces CDN URLs, no module server available
+          moduleServerUrl: "",
         },
       );
       if (typeof Layout === "function") {
@@ -183,7 +170,6 @@ export async function renderAppRouteToHTML(args: {
       color: inherit;
     }
 
-    /* Tailwind-like utility classes */
     .vf-tailwind {
       width: 100%;
     }
@@ -230,10 +216,8 @@ export async function renderAppRouteToHTML(args: {
 
   <!-- Veryfront Runtime -->
   <script type="module">
-    // Basic app initialization for App Router pages
     async function initializeApp() {
       try {
-        // Import the app module if it exists
         const appModule = await import('/_veryfront/app.js').catch(() => null);
         if (appModule) {
           console.log('App module loaded');

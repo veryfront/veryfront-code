@@ -1,6 +1,3 @@
-/**
- * Google Drive OAuth Initiation
- */
 
 import { createOAuthInitHandler, memoryTokenStore, driveConfig } from "veryfront/oauth";
 

@@ -16,7 +16,6 @@ export default tool({
     ),
   }),
   async execute({ fileName, content, parentFolderId }) {
-    // Validate filename
     if (!fileName || fileName.trim().length === 0) {
       throw new Error("Filename cannot be empty");
     }
@@ -25,7 +24,6 @@ export default tool({
       throw new Error("Filename cannot contain path separators");
     }
 
-    // Upload the file
     const result = await uploadFile(fileName, content, parentFolderId);
 
     return {

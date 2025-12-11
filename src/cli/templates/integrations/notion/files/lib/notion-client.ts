@@ -143,9 +143,7 @@ export function createPage(options: {
 
   const properties: Record<string, unknown> = options.properties || {};
 
-  // Set title based on parent type
   if (options.parentType === "database") {
-    // For database pages, title goes in the title property
     properties.title = properties.title || {
       title: [{ text: { content: options.title } }],
     };
@@ -153,7 +151,6 @@ export function createPage(options: {
 
   const children: Array<Record<string, unknown>> = [];
 
-  // Add title as heading for page children
   if (options.parentType === "page") {
     children.push({
       object: "block",
@@ -164,7 +161,6 @@ export function createPage(options: {
     });
   }
 
-  // Add content as paragraph blocks
   if (options.content) {
     const paragraphs = options.content.split("\n\n");
     for (const paragraph of paragraphs) {
@@ -190,7 +186,6 @@ export function createPage(options: {
   });
 }
 
-// Helper to extract plain text from Notion rich text
 export function extractPlainText(blocks: NotionBlock[]): string {
   const texts: string[] = [];
 
@@ -207,7 +202,6 @@ export function extractPlainText(blocks: NotionBlock[]): string {
   return texts.join("\n\n");
 }
 
-// Helper to get page title
 export function getPageTitle(page: NotionPage): string {
   for (const prop of Object.values(page.properties)) {
     if (prop.type === "title" && prop.title) {

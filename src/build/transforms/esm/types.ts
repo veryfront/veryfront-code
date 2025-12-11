@@ -6,7 +6,7 @@ export interface TransformOptions {
   jsxImportSource?: string;
   moduleServerUrl?: string;
   vendorBundleHash?: string;
-  ssr?: boolean; // If true, don't rewrite imports for module server (for server-side execution)
+  ssr?: boolean;
 }
 
 export interface TransformContext {

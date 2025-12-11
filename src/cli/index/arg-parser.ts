@@ -1,17 +1,7 @@
-/**
- * Argument parsing utilities for CLI
- *
- * Cross-platform argument parser that works on Deno, Node.js, and Bun.
- *
- * @module cli/index/arg-parser
- */
 
 import type { ParsedArgs } from "./types.ts";
 import { DEFAULT_PORT } from "@veryfront/config/defaults.ts";
 
-/**
- * Flags that should accumulate values instead of replacing
- */
 const ARRAY_FLAGS = new Set(["with"]);
 
 function parse(
@@ -30,9 +20,6 @@ function parse(
     }
   }
 
-  /**
-   * Set a value, handling array flags that accumulate
-   */
   const setValue = (key: string, value: unknown) => {
     if (ARRAY_FLAGS.has(key)) {
       if (!result[key]) {
@@ -83,33 +70,12 @@ function parse(
   return result;
 }
 
-/**
- * Parse an argument that may be a string or array of strings
- *
- * @param arg - The argument to parse
- * @returns Array of strings or undefined
- */
 export function parseArrayArg(arg: unknown): string[] | undefined {
   if (Array.isArray(arg)) return arg as string[];
   if (arg) return [String(arg)];
   return undefined;
 }
 
-/**
- * Parse CLI arguments with default configuration
- *
- * Supports standard CLI flags per clig.dev guidelines:
- * - -h, --help: Show help
- * - -v, --version: Show version
- * - -q, --quiet: Suppress non-essential output
- * - --verbose: Show detailed output
- * - -f, --force: Skip confirmations for dangerous operations
- * - --no-color: Disable colored output
- * - --color: Force colored output
- *
- * @param args - Raw CLI arguments
- * @returns Parsed arguments object
- */
 export function parseCliArgs(args: string[]): ParsedArgs {
   return parse(args, {
     alias: {

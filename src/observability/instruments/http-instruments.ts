@@ -1,36 +1,14 @@
-/**
- * HTTP Metrics Instruments
- * Creation of HTTP-related metric instruments
- *
- * @module
- */
 
 import type { Counter, Histogram, Meter, UpDownCounter } from "@opentelemetry/api";
 import { DURATION_HISTOGRAM_BOUNDARIES_MS } from "@veryfront/config";
 import type { MetricsConfig } from "../metrics/types.ts";
 
-/**
- * HTTP metric instruments
- */
 export interface HttpInstruments {
   httpRequestCounter: Counter | null;
   httpRequestDuration: Histogram | null;
   httpActiveRequests: UpDownCounter | null;
 }
 
-/**
- * Create HTTP metric instruments
- *
- * @param meter - OpenTelemetry meter instance
- * @param config - Metrics configuration
- * @returns HTTP metric instruments
- *
- * @example
- * ```ts
- * const httpInstruments = createHttpInstruments(meter, config);
- * httpInstruments.httpRequestCounter?.add(1);
- * ```
- */
 export function createHttpInstruments(
   meter: Meter,
   config: MetricsConfig,

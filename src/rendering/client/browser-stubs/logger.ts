@@ -1,7 +1,3 @@
-/**
- * Browser-compatible logger stub for @veryfront/internal
- * Provides console-based logging for client-side bundles
- */
 
 const noop = () => {};
 

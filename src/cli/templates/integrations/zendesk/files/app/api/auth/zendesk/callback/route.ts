@@ -1,17 +1,10 @@
-/**
- * Zendesk OAuth Callback Route
- *
- * Handles the OAuth callback and exchanges the code for tokens.
- */
 
 import { setZendeskTokens } from "../../../../../lib/token-store.ts";
 
 const getEnv = (name: string): string | undefined => {
   if (typeof Deno !== "undefined") {
-    // @ts-ignore: Deno global
     return Deno.env.get(name);
   }
-  // @ts-ignore: Node process
   return globalThis.process?.env?.[name];
 };
 
@@ -48,7 +41,6 @@ export async function GET(request: Request): Promise<Response> {
   const redirectUri = `${baseUrl}/api/auth/zendesk/callback`;
 
   try {
-    // Exchange code for tokens
     const tokenResponse = await fetch(
       `https://${subdomain}.zendesk.com/oauth/tokens`,
       {
@@ -75,7 +67,6 @@ export async function GET(request: Request): Promise<Response> {
 
     const tokens = await tokenResponse.json();
 
-    // Store tokens
     await setZendeskTokens({
       accessToken: tokens.access_token,
       refreshToken: tokens.refresh_token,

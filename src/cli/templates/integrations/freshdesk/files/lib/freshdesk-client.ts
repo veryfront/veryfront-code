@@ -161,7 +161,6 @@ export async function listContacts(options: {
   return freshdeskFetch<FreshdeskContact[]>(endpoint);
 }
 
-// Ticket status constants
 export const TicketStatus = {
   OPEN: 2,
   PENDING: 3,
@@ -169,7 +168,6 @@ export const TicketStatus = {
   CLOSED: 5,
 } as const;
 
-// Ticket priority constants
 export const TicketPriority = {
   LOW: 1,
   MEDIUM: 2,

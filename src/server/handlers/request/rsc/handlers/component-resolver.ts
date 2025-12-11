@@ -29,7 +29,6 @@ export async function resolveComponentPath(
 ): Promise<string | null> {
   const cleanPath = cleanPathname(pathname);
 
-  // Check root patterns first if this is the root/index
   if (cleanPath === "index" || cleanPath === "") {
     for (const pattern of ROOT_PATTERNS) {
       const fullPath = pathHelper.join(projectDir, pattern);
@@ -39,7 +38,6 @@ export async function resolveComponentPath(
     }
   }
 
-  // Then check regular patterns
   for (const pattern of FILE_PATTERNS) {
     const fullPath = pathHelper.join(projectDir, pattern.replace("{path}", cleanPath));
     if (await fileExists(fullPath, fsAdapter)) {
@@ -51,7 +49,7 @@ export async function resolveComponentPath(
 }
 
 function cleanPathname(pathname: string): string {
-  const cleaned = pathname.replace(/^\//, "").replace(/^_veryfront\/rsc\/render\//, "");
+  const cleaned = pathname.replace(/^\
   return cleaned || "index";
 }
 

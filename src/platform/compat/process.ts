@@ -65,10 +65,6 @@ export function getEnv(key: string): string | undefined {
   return undefined;
 }
 
-/**
- * Get an environment variable or throw if not set
- * @throws Error if the environment variable is not set
- */
 export function requireEnv(key: string): string {
   const value = getEnv(key);
   if (value === undefined) {
@@ -150,9 +146,6 @@ export function memoryUsage(): {
   };
 }
 
-/**
- * Check if stdin is a TTY (terminal)
- */
 export function isInteractive(): boolean {
   if (IS_DENO) {
     return Deno.stdin.isTerminal();
@@ -163,9 +156,6 @@ export function isInteractive(): boolean {
   return false;
 }
 
-/**
- * Get network interfaces
- */
 export async function getNetworkInterfaces(): Promise<
   Array<{ name: string; address: string; family: "IPv4" | "IPv6" }>
 > {
@@ -200,9 +190,6 @@ export async function getNetworkInterfaces(): Promise<
   return result;
 }
 
-/**
- * Get runtime version string
- */
 export function getRuntimeVersion(): string {
   if (IS_DENO) {
     return `Deno ${Deno.version.deno}`;
@@ -216,9 +203,6 @@ export function getRuntimeVersion(): string {
   return "unknown";
 }
 
-/**
- * Register a signal handler (SIGINT, SIGTERM) for graceful shutdown
- */
 export function onSignal(signal: "SIGINT" | "SIGTERM", handler: () => void): void {
   if (IS_DENO) {
     Deno.addSignalListener(signal, handler);
@@ -227,9 +211,6 @@ export function onSignal(signal: "SIGINT" | "SIGTERM", handler: () => void): voi
   }
 }
 
-/**
- * Unreference a timer to prevent it from keeping the process alive
- */
 export function unrefTimer(timerId: ReturnType<typeof setInterval>): void {
   if (IS_DENO) {
     Deno.unrefTimer(timerId as number);
@@ -238,9 +219,6 @@ export function unrefTimer(timerId: ReturnType<typeof setInterval>): void {
   }
 }
 
-/**
- * Get the executable path of the current runtime
- */
 export function execPath(): string {
   if (IS_DENO) {
     return Deno.execPath();
@@ -251,26 +229,16 @@ export function execPath(): string {
   return "";
 }
 
-/**
- * Get process uptime in seconds
- * Returns OS uptime on Deno, process uptime on Node.js
- */
 export function uptime(): number {
   if (IS_DENO) {
-    // Deno.osUptime() returns system uptime in seconds
     return Deno.osUptime?.() ?? 0;
   }
   if (hasNodeProcess) {
-    // process.uptime() returns process uptime in seconds
     return nodeProcess!.uptime?.() ?? 0;
   }
   return 0;
 }
 
-/**
- * Get stdout stream for writing
- * Returns null if not available (e.g., in browser/workers)
- */
 export function getStdout(): { write: (data: string) => void } | null {
   if (IS_DENO) {
     const encoder = new TextEncoder();
@@ -290,34 +258,22 @@ export function getStdout(): { write: (data: string) => void } | null {
   return null;
 }
 
-// Cached Node.js modules for synchronous prompt
 let cachedNodeFs: typeof import("node:fs") | null = null;
 
-/**
- * Synchronous prompt function that works across Deno and Node.js
- * Displays a message and reads user input from stdin
- */
 export function promptSync(message?: string): string | null {
   if (IS_DENO) {
-    // Deno has a built-in prompt() function
     return prompt(message);
   }
 
   if (hasNodeProcess) {
-    // Print the message
     if (message) {
       nodeProcess!.stdout.write(message + " ");
     }
 
-    // Lazy load fs module
     if (!cachedNodeFs) {
-      // Dynamic import converted to sync require for bundling
-      // @ts-ignore - dynamic require for Node.js
       cachedNodeFs = globalThis.require?.("node:fs") || null;
       if (!cachedNodeFs) {
-        // Try alternative approach
         try {
-          // @ts-ignore: __require is injected by bundlers for Node.js require
           cachedNodeFs = __require("node:fs");
         } catch {
           return null;
@@ -329,22 +285,17 @@ export function promptSync(message?: string): string | null {
       return null;
     }
 
-    // Read synchronously using fs
-    // This works by reading from file descriptor 0 (stdin)
-    // Use Uint8Array for cross-platform compatibility
     const bufferSize = 1024;
     const uint8Array = new Uint8Array(bufferSize);
     let input = "";
 
     try {
-      // Read from stdin (fd 0) synchronously
       const bytesRead = cachedNodeFs.readSync(0, uint8Array, 0, bufferSize, null);
       if (bytesRead > 0) {
         const decoder = new TextDecoder("utf-8");
         input = decoder.decode(uint8Array.subarray(0, bytesRead)).trim();
       }
     } catch {
-      // If stdin is not available or EOF, return null
       return null;
     }
 

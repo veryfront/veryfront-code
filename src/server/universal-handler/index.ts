@@ -1,21 +1,14 @@
-/**
- * Universal Veryfront HTTP handler - Modular Architecture
- *
- * Runtime-agnostic HTTP handler using handler-based architecture
- */
 
 import { serverLogger as logger } from "@veryfront/utils";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import { metrics } from "@veryfront/observability/simple-metrics/index.ts";
 
-// Import handler system (from new location)
 import type { HandlerContext } from "../handlers/types.ts";
 import { RouteRegistry } from "@veryfront/routing/registry/index.ts";
 import { SecurityConfigLoader } from "@veryfront/security/http/config.ts";
 import { getConfig } from "@veryfront/config/loader.ts";
 import type { VeryfrontConfig } from "@veryfront/config";
 
-// Import handlers (from new location)
 import { AuthHandler } from "@veryfront/security/http/auth.ts";
 import { CorsHandler } from "../handlers/response/cors.ts";
 import { HealthHandler } from "../handlers/monitoring/health.ts";
@@ -33,23 +26,11 @@ import { NotFoundHandler } from "../handlers/response/not-found.ts";
 
 export interface UniversalHandlerOptions {
   projectDir: string;
-  /** When true, expose additional debug logging. */
   debug?: boolean;
-  /** Renderer mode: 'development' or 'production'. Defaults to 'production'. */
   mode?: "development" | "production";
-  /** Module server URL for ESM imports (e.g., 'http://localhost:8765') */
   moduleServerUrl?: string;
 }
 
-/**
- * Create a universal, runtime-agnostic HTTP handler using the provided adapter.
- *
- * This implementation uses a modular handler-based architecture with:
- * - RouteRegistry for managing handlers
- * - Priority-based handler execution
- * - Clean separation of concerns
- * - Easy extensibility
- */
 export function createVeryfrontHandler(
   projectDir: string,
   adapter: RuntimeAdapter,
@@ -66,17 +47,14 @@ export function createVeryfrontHandler(
         }
       }
     } catch (err) {
-      // Silently ignore logging errors in non-deno hosts
       logger.error("Debug logging failed:", err);
     }
   };
 
   logDebug("[universal] handler initialized", { projectDir });
 
-  // Initialize security config loader
   const securityLoader = new SecurityConfigLoader(projectDir, adapter);
 
-  // Load config eagerly
   let config: VeryfrontConfig | undefined;
   const configPromise = getConfig(projectDir, adapter).then((c) => {
     config = c;
@@ -88,92 +66,20 @@ export function createVeryfrontHandler(
     return undefined;
   });
 
-  // Initialize route registry
   const registry = new RouteRegistry({
     debug: opts.debug,
     enableMetrics: true,
   });
 
-  // Create API handler with eager initialization
   const apiHandler = new ApiHandlerWrapper(projectDir, adapter);
 
-  // Register handlers in priority order
   registry.registerAll([
-    new AuthHandler(), // Priority: 0 (CRITICAL)
-    new CorsHandler(), // Priority: 50
-    new HealthHandler(), // Priority: 100 (HIGH)
-    new MetricsHandler(), // Priority: 100 (HIGH)
-    new ClientLogHandler(), // Priority: 200 (HIGH, dev only)
-    new DevEndpointsHandler(), // Priority: 300 (HIGH, dev only)
-    new DevFileHandler(), // Priority: 400 (dev only)
-    new StaticHandler(), // Priority: 500 (MEDIUM_STATIC)
-    new LibModulesHandler(), // Priority: 550 (MEDIUM_LIB_MODULES, self-hosted veryfront/ai/*)
-    new RSCHandler(), // Priority: 600 (MEDIUM, runs before static to expose RSC endpoints)
-    new ModuleHandler(), // Priority: 600 (MEDIUM)
-    apiHandler, // Priority: 700 (MEDIUM)
-    new SSRHandler(), // Priority: 1000 (LOW)
-    new NotFoundHandler(), // Priority: 10000 (FALLBACK)
-  ]);
-
-  // Pre-initialize API handler to discover routes before any requests
-  const readyPromise = apiHandler.initialize().catch((err) => {
-    logger.error("[universal] API handler initialization failed", {
-      error: err instanceof Error ? err.message : String(err),
-      stack: err instanceof Error ? err.stack : undefined,
-    });
-    // Re-throw to prevent server from starting with broken API routing
-    throw err;
-  });
-
-  const handler = async (req: Request): Promise<Response> => {
-    // Ensure API handler is ready before processing requests
-    await readyPromise;
-
-    // Ensure security config is loaded
-    await securityLoader.ensureLoaded();
-
-    // Ensure config is loaded
-    await configPromise;
-
-    const _url = new URL(req.url);
-
-    // Create handler context
-    const ctx: HandlerContext = {
-      projectDir,
-      adapter,
-      mode: opts.mode ?? "production",
-      moduleServerUrl: opts.moduleServerUrl,
-      securityConfig: securityLoader.getSecurityConfig(),
-      cspUserHeader: securityLoader.getCspUserHeader(),
-      debug: opts.debug,
-      config,
-    };
-
-    // Track metrics
-    await metrics.incRequest();
-
-    // Execute handler chain
-    const response = await registry.execute(req, ctx);
-
-    // If no handler produced a response, this should not happen
-    // as NotFoundHandler is the fallback
-    if (!response) {
-      logDebug("[universal] No handler produced response (unexpected)", {
-        path: new URL(req.url).pathname,
-      });
-      return new Response("Internal Server Error", { status: 500 });
-    }
-
-    return response;
-  };
-
-  // Attach ready promise for external initialization tracking
-  handler.ready = readyPromise;
-
-  return handler;
-}
-
-// Re-export types and utilities for backward compatibility
-export type { HandlerContext } from "../handlers/types.ts";
-export { RouteRegistry } from "@veryfront/routing/registry/index.ts";
-export { BaseHandler } from "../handlers/response/base.ts";
+    new AuthHandler(),
+    new CorsHandler(),
+    new HealthHandler(),
+    new MetricsHandler(),
+    new ClientLogHandler(),
+    new DevEndpointsHandler(),
+    new DevFileHandler(),
+    new StaticHandler(),
+    new LibModulesHandler(), // Priority: 550 (MEDIUM_LIB_MODULES, self-hosted veryfront/ai

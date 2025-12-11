@@ -1,9 +1,4 @@
-/**
- * Response Handler Types
- * Shared types for response handlers
- */
 
-// Re-export common handler types
 export type {
   Handler,
   HandlerContext,

@@ -1,16 +1,8 @@
-/**
- * Build Statistics Display Module
- *
- * Handles displaying build statistics and completion messages.
- */
 
 import { bold, cyan, dim, green, yellow } from "@veryfront/compat/console";
 import { cliLogger } from "@veryfront/utils";
 import type { BuildStats } from "./types.ts";
 
-/**
- * Display build success message with statistics
- */
 export function displayBuildSuccess(
   stats: BuildStats,
   startTime: number,
@@ -19,10 +11,8 @@ export function displayBuildSuccess(
 ): void {
   const duration = ((Date.now() - startTime) / 1000).toFixed(2);
 
-  // Success message with stats
   cliLogger.info(`\n${green("✓")}${bold(green(" Build completed successfully!\n"))}`);
 
-  // Build statistics in a nice table format
   cliLogger.info(cyan("📊 Build Statistics"));
   cliLogger.info(dim("─".repeat(40)));
   cliLogger.info(`  Pages       ${bold(String(stats.pages).padStart(6))} files`);
@@ -35,7 +25,6 @@ export function displayBuildSuccess(
   cliLogger.info(`  Build time  ${bold(duration.padStart(6))} seconds`);
   cliLogger.info("");
 
-  // Show SSG paths in dry-run mode
   if (dryRun && stats.ssgPaths && Array.isArray(stats.ssgPaths)) {
     cliLogger.info(yellow("📝 SSG routes that would be generated:"));
     for (const p of stats.ssgPaths) {
@@ -44,7 +33,6 @@ export function displayBuildSuccess(
     cliLogger.info("");
   }
 
-  // Deployment ready message
   cliLogger.info(green("✨") + bold(" Your site is ready for deployment!"));
   cliLogger.info(`\n  ${dim("Output directory:")} ${cyan(outputDir)}`);
   cliLogger.info(`\n  ${dim("Next steps:")}`);

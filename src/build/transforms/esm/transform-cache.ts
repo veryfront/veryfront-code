@@ -1,4 +1,4 @@
-const DEFAULT_TTL = 5 * 60 * 1000; // 5 minutes
+const DEFAULT_TTL = 5 * 60 * 1000;
 const MAX_ENTRIES = 2_000;
 
 export interface TransformCacheEntry {

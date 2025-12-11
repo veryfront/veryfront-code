@@ -22,7 +22,7 @@ export default tool({
     });
 
     return messages
-      .filter((msg) => msg.messageType === "message") // Filter out typing indicators and events
+      .filter((msg) => msg.messageType === "message")
       .map((msg) => ({
         id: msg.id,
         content: getPlainTextContent(msg),

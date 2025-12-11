@@ -1,37 +1,29 @@
-// Conditional imports for front_matter (path is handled via path-helper)
 let extractYaml: ((content: string) => any) | undefined;
 let jsYamlModule: typeof import("js-yaml") | null = null;
 import { createFileSystem } from "../../../platform/compat/fs.ts";
 import * as pathHelper from "../../../platform/compat/path-helper.ts";
 
-// Initialize extractYaml based on runtime
-// @ts-ignore - Deno global
 if (typeof Deno === "undefined") {
-  // Node.js environment - use lazy loading for js-yaml
   extractYaml = (content: string) => {
-    const frontMatterRegex = /^---\n([\s\S]*?)\n---/; // Basic regex for YAML front matter
+    const frontMatterRegex = /^---\n([\s\S]*?)\n---/;
     const match = content.match(frontMatterRegex);
     if (match && match[1]) {
-      // Synchronous parsing with cached module
       if (jsYamlModule) {
         const attrs = jsYamlModule.load(match[1]);
         const body = content.slice(match[0].length);
         return { attrs, body };
       }
-      // Fallback: return content without parsing if module not loaded
       return { attrs: {}, body: content };
     }
     return { attrs: {}, body: content };
   };
 
-  // Eagerly load js-yaml module
   import("js-yaml").then((mod) => {
     jsYamlModule = mod;
   }).catch((e) => {
     console.warn("Could not import js-yaml for Node.js frontmatter parsing.", e);
   });
 } else {
-  // @ts-ignore - Deno global
   const { extract } = await import("std/front_matter/yaml.ts");
   extractYaml = extract;
 }
@@ -49,7 +41,6 @@ export async function getEntityInfo(
   adapter?: RuntimeAdapter,
 ): Promise<EntityInfo | null> {
   try {
-    // Check file existence using adapter with fallback to local filesystem
     if (adapter) {
       try {
         const stat = await withFallback(
@@ -95,7 +86,6 @@ export async function getEntityInfo(
         frontmatter = extracted.attrs as Frontmatter;
         body = extracted.body;
       } catch {
-        // Malformed frontmatter - use empty
       }
     }
 
@@ -154,17 +144,13 @@ export async function getEntityBySlug(
     );
   }
 
-  // First try exact matches
   for (const p of possiblePaths) {
     const info = await getEntityInfo(p, adapter);
     if (info?.entity.isPage) return info;
   }
 
-  // If no exact match found, try dynamic routes with [param] notation
-  // e.g., slug "blog/my-post" should match "pages/blog/[slug].tsx"
   const slugParts = slug.split("/");
 
-  // Try to match dynamic routes for all path depths
   for (let depth = slugParts.length - 1; depth >= 0; depth--) {
     const parentPath = slugParts.slice(0, depth).join("/");
     const pagesDir = parentPath
@@ -172,7 +158,6 @@ export async function getEntityBySlug(
       : pathHelper.join(projectDir, "pages");
 
     try {
-      // Check if directory exists
       let dirExists = false;
       if (adapter) {
         try {
@@ -191,13 +176,15 @@ export async function getEntityBySlug(
 
       if (dirExists) {
         const entries: { name: string; isFile: boolean; isDirectory: boolean }[] = [];
-        for await (const entry of fs.readDir(pagesDir)) {
+        const readDirFn = adapter?.fs?.readDir
+          ? adapter.fs.readDir(pagesDir)
+          : fs.readDir(pagesDir);
+        for await (const entry of readDirFn) {
           entries.push(entry);
         }
 
         for (const entry of entries) {
           if (entry.isFile && /\[.+\]\.(mdx|tsx|jsx|ts|js)$/.test(entry.name)) {
-            // Found a dynamic route file like [slug].tsx
             const dynamicPath = pathHelper.join(pagesDir, entry.name);
             const info = await getEntityInfo(dynamicPath, adapter);
             if (info?.entity.isPage) return info;
@@ -205,7 +192,6 @@ export async function getEntityBySlug(
         }
       }
     } catch {
-      // Directory doesn't exist or error reading it, continue to next depth
     }
   }
 
@@ -244,7 +230,6 @@ export async function getProviderEntities(
   ];
 
   for (const dir of providerDirs) {
-    // Check directory existence using adapter with fallback
     let dirExists = false;
     if (adapter) {
       try {
@@ -263,7 +248,10 @@ export async function getProviderEntities(
 
     if (dirExists) {
       const entries: { name: string; isFile: boolean; isDirectory: boolean }[] = [];
-      for await (const entry of fs.readDir(dir)) {
+      const dirReader = adapter?.fs?.readDir
+        ? adapter.fs.readDir(dir)
+        : fs.readDir(dir);
+      for await (const entry of dirReader) {
         entries.push(entry);
       }
 

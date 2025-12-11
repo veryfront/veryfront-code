@@ -1,6 +1,3 @@
-/**
- * Pipedrive OAuth Init
- */
 
 import { pipedriveConfig, createOAuthInitHandler } from "veryfront/oauth";
 

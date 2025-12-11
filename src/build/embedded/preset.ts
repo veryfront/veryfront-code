@@ -13,13 +13,6 @@ export interface BuildEmbeddedOptions {
   runtime: "deno" | "node" | "bun";
 }
 
-/**
- * Build the embedded preset bundle.
- * Outputs:
- * - outDir/embedded/manifest.json
- * - outDir/embedded/app.js (SSR entry)
- * - outDir/embedded/rsc/*.js (RSC support)
- */
 export async function buildEmbeddedPreset(
   options: BuildEmbeddedOptions,
 ): Promise<{ manifest: EmbeddedBundleManifest }> {
@@ -39,7 +32,6 @@ export async function buildEmbeddedPreset(
         break;
       }
     } catch (error) {
-      // File not found, continue checking other paths
       logger.debug(`Entry path not found: ${c}`, error);
     }
   }
@@ -119,7 +111,6 @@ export async function buildEmbeddedPreset(
     try {
       await walk(base);
     } catch {
-      // no app directory
     }
     return results;
   }
@@ -149,7 +140,6 @@ export async function buildEmbeddedPreset(
     try {
       await walk(base);
     } catch {
-      // no pages directory
     }
     return results;
   }
@@ -232,7 +222,6 @@ export async function buildEmbeddedPreset(
   try {
     esbuild.stop();
   } catch {
-    // ignore
   }
   return { manifest };
 }

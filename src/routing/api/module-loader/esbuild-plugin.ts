@@ -22,7 +22,7 @@ export function createHTTPPlugin(allowedHosts: string[]): Plugin {
         return null;
       };
 
-      build.onResolve({ filter: /^(http|https):\/\// }, (args) => ({
+      build.onResolve({ filter: /^(http|https):\/\
         path: args.path,
         namespace: "http-url",
       }));

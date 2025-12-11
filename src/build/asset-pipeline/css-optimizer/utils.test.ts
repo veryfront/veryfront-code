@@ -1,6 +1,3 @@
-/**
- * Tests for CSS Optimizer Utilities
- */
 
 import { assert, assertEquals, assertExists as _assertExists } from "std/assert/mod.ts";
 import { join } from "std/path/mod.ts";
@@ -22,7 +19,6 @@ async function cleanupTestDir() {
   try {
     await Deno.remove(TEST_DIR, { recursive: true });
   } catch {
-    // Directory doesn't exist
   }
 }
 
@@ -30,7 +26,6 @@ Deno.test("utils - findCSSFiles", async () => {
   await cleanupTestDir();
   await ensureDir(join(TEST_DIR, "styles"));
 
-  // Create test CSS files
   await Deno.writeTextFile(join(TEST_DIR, "styles", "main.css"), ".test {}");
   await Deno.writeTextFile(join(TEST_DIR, "styles", "theme.css"), ".theme {}");
 
@@ -121,41 +116,10 @@ Deno.test("utils - shouldKeepSelector with compound selectors", () => {
 });
 
 Deno.test("utils - basicMinify removes comments", () => {
-  const css = "/* Comment */ .button { color: red; }";
+  const css = " .button { color: red; }";
   const minified = basicMinify(css);
 
-  assertEquals(minified.includes("/*"), false);
-});
-
-Deno.test("utils - basicMinify removes whitespace", () => {
-  const css = ".button   {   color:   red;   }";
-  const minified = basicMinify(css);
-
-  assertEquals(minified, ".button{color:red}");
-});
-
-Deno.test("utils - basicMinify removes semicolons before braces", () => {
-  const css = ".button { color: red; }";
-  const minified = basicMinify(css);
-
-  assertEquals(minified, ".button{color:red}");
-});
-
-Deno.test("utils - calculateSavings", () => {
-  assertEquals(calculateSavings(1000, 500), 50);
-  assertEquals(calculateSavings(1000, 750), 25);
-  assertEquals(calculateSavings(0, 0), 0);
-});
-
-Deno.test("utils - globFiles with pattern", async () => {
-  await cleanupTestDir();
-  await ensureDir(join(TEST_DIR, "src"));
-
-  await Deno.writeTextFile(join(TEST_DIR, "src", "test.tsx"), "content");
-  await Deno.writeTextFile(join(TEST_DIR, "src", "test.ts"), "content");
-  await Deno.writeTextFile(join(TEST_DIR, "src", "test.js"), "content");
-
-  const files = await globFiles(`${TEST_DIR}/**/*.{ts,tsx}`);
+  assertEquals(minified.includes("
 
   assertEquals(files.length >= 2, true);
   assert(files.some((f) => f.includes("test.tsx")));

@@ -61,7 +61,6 @@ export default tool({
         };
       }
 
-      // Format messages for better readability
       const formattedMessages = messages.map((msg) => ({
         sid: msg.sid,
         direction: msg.direction,

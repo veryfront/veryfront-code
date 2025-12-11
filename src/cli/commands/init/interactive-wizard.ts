@@ -1,7 +1,3 @@
-/**
- * Interactive CLI wizard for project initialization
- * Guides users through template and integration selection with arrow key navigation
- */
 
 import { cyan, dim, green } from "@veryfront/compat/console";
 import { cliLogger as logger } from "@veryfront/utils";
@@ -24,7 +20,6 @@ const TEMPLATES = [
   { value: "minimal", label: "Minimal", description: "Simple starting point" },
 ];
 
-// All integrations grouped by category
 const INTEGRATION_CATEGORIES = [
   {
     name: "Communication",
@@ -133,13 +128,11 @@ const INTEGRATION_CATEGORIES = [
   },
 ];
 
-// Flatten for multi-select with category headers
 function getIntegrationChoices() {
   const choices: Array<{ value: string; label: string; description: string; isHeader?: boolean }> =
     [];
 
   for (const category of INTEGRATION_CATEGORIES) {
-    // Add category header (not selectable, just visual)
     choices.push({
       value: `__header_${category.name}`,
       label: `── ${category.name} ──`,
@@ -147,7 +140,6 @@ function getIntegrationChoices() {
       isHeader: true,
     });
 
-    // Add integrations in this category
     for (const integration of category.integrations) {
       choices.push(integration);
     }
@@ -156,17 +148,11 @@ function getIntegrationChoices() {
   return choices;
 }
 
-/**
- * Check if we're in an interactive terminal
- */
 function canRunWizard(): boolean {
   const disablePrompt = getEnv("CI") === "1" || getEnv("DENO_TESTING") === "1";
   return !disablePrompt && checkIsInteractive();
 }
 
-/**
- * Run the interactive wizard
- */
 export async function runInteractiveWizard(): Promise<WizardResult> {
   if (!canRunWizard()) {
     return {
@@ -180,11 +166,10 @@ export async function runInteractiveWizard(): Promise<WizardResult> {
   console.log(green("Welcome to Veryfront!"));
   console.log("Let's set up your project.");
 
-  // Step 1: Select template type
   const templateChoice = await select(
     "What would you like to build?",
     TEMPLATES,
-    0, // Default to AI Agent
+    0,
   );
 
   if (!templateChoice) {
@@ -198,7 +183,6 @@ export async function runInteractiveWizard(): Promise<WizardResult> {
 
   const template = templateChoice as InitTemplate;
 
-  // If not AI template, we're done
   if (template !== "ai") {
     const templateLabel = TEMPLATES.find((t) => t.value === template)?.label || template;
     console.log("");
@@ -210,7 +194,6 @@ export async function runInteractiveWizard(): Promise<WizardResult> {
     };
   }
 
-  // Step 2: For AI template, select integrations from all categories
   console.log("");
   console.log(dim("Use arrow keys to navigate, space to select, enter to confirm"));
   console.log(dim("Popular choices: Gmail, Slack, GitHub, Calendar, Notion"));
@@ -219,11 +202,10 @@ export async function runInteractiveWizard(): Promise<WizardResult> {
   const choices = getIntegrationChoices();
   const selected = await multiSelect(
     "Which services should your agent connect to?",
-    choices.filter((c) => !c.isHeader), // Filter out headers for selection
+    choices.filter((c) => !c.isHeader),
   );
   const integrations = selected as IntegrationName[];
 
-  // Summary
   console.log("");
   console.log(green("Perfect!") + " Here's what we'll create:");
   console.log("");
@@ -242,10 +224,6 @@ export async function runInteractiveWizard(): Promise<WizardResult> {
   };
 }
 
-/**
- * Check if wizard should run (no template specified)
- */
 export function shouldRunWizard(options: { template?: string; integrations?: string[] }): boolean {
-  // Run wizard if no template or integrations specified
   return !options.template && (!options.integrations || options.integrations.length === 0);
 }

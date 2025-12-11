@@ -1,56 +1,24 @@
-/**
- * Agent Memory System
- *
- * Manages conversation history with different strategies:
- * - Conversation: Keep all messages
- * - Buffer: Keep last N messages
- * - Summary: Summarize old messages to save tokens
- */
 
 import { getTextFromParts, type MemoryConfig, type Message } from "../types/agent.ts";
 
-/**
- * Memory interface
- */
 export interface Memory {
-  /**
-   * Add a message to memory
-   */
   add(message: Message): Promise<void>;
 
-  /**
-   * Get messages for the current context
-   */
   getMessages(): Promise<Message[]>;
 
-  /**
-   * Clear all messages
-   */
   clear(): Promise<void>;
 
-  /**
-   * Get memory stats
-   */
   getStats(): Promise<MemoryStats>;
 }
 
-/**
- * Memory statistics
- */
 export interface MemoryStats {
-  /** Total messages stored */
   totalMessages: number;
 
-  /** Estimated token count */
   estimatedTokens: number;
 
-  /** Memory type */
   type: string;
 }
 
-/**
- * Conversation Memory - Keeps all messages
- */
 export class ConversationMemory implements Memory {
   private messages: Message[] = [];
   private config: MemoryConfig;
@@ -62,7 +30,6 @@ export class ConversationMemory implements Memory {
   async add(message: Message): Promise<void> {
     this.messages.push(message);
 
-    // Trim if max messages exceeded
     if (
       this.config.maxMessages &&
       this.messages.length > this.config.maxMessages
@@ -70,7 +37,6 @@ export class ConversationMemory implements Memory {
       this.messages = this.messages.slice(-this.config.maxMessages);
     }
 
-    // Trim if max tokens exceeded
     if (this.config.maxTokens) {
       await this.trimToTokenLimit();
     }
@@ -98,7 +64,6 @@ export class ConversationMemory implements Memory {
 
     let tokenCount = this.estimateTokens(this.messages);
 
-    // Remove oldest messages until under limit
     while (
       tokenCount > this.config.maxTokens &&
       this.messages.length > 1
@@ -110,7 +75,6 @@ export class ConversationMemory implements Memory {
   }
 
   private estimateTokens(messages: Message[]): number {
-    // Rough estimation: ~4 characters per token
     const totalChars = messages.reduce(
       (sum, msg) => sum + getTextFromParts(msg.parts).length,
       0,
@@ -119,9 +83,6 @@ export class ConversationMemory implements Memory {
   }
 }
 
-/**
- * Buffer Memory - Keeps last N messages
- */
 export class BufferMemory implements Memory {
   private messages: Message[] = [];
   private config: MemoryConfig;
@@ -135,7 +96,6 @@ export class BufferMemory implements Memory {
   add(message: Message): Promise<void> {
     this.messages.push(message);
 
-    // Keep only last N messages
     if (this.messages.length > this.bufferSize) {
       this.messages = this.messages.slice(-this.bufferSize);
     }
@@ -168,10 +128,6 @@ export class BufferMemory implements Memory {
   }
 }
 
-/**
- * Summary Memory - Summarizes old messages
- * (Simplified version - full implementation would use LLM for summarization)
- */
 export class SummaryMemory implements Memory {
   private messages: Message[] = [];
   private summary: string = "";
@@ -186,14 +142,12 @@ export class SummaryMemory implements Memory {
   async add(message: Message): Promise<void> {
     this.messages.push(message);
 
-    // Summarize if threshold exceeded
     if (this.messages.length > this.summaryThreshold) {
       await this.summarizeOldMessages();
     }
   }
 
   getMessages(): Promise<Message[]> {
-    // If we have a summary, include it as first message
     if (this.summary) {
       return Promise.resolve([
         {
@@ -225,11 +179,9 @@ export class SummaryMemory implements Memory {
   }
 
   private summarizeOldMessages(): Promise<void> {
-    // Take first half of messages for summarization
     const toSummarize = this.messages.slice(0, Math.floor(this.messages.length / 2));
     const remaining = this.messages.slice(Math.floor(this.messages.length / 2));
 
-    // Simple summarization (in production, use LLM)
     const topics = toSummarize
       .filter((m) => m.role === "user")
       .map((m) => getTextFromParts(m.parts).substring(0, 50))
@@ -247,9 +199,6 @@ export class SummaryMemory implements Memory {
   }
 }
 
-/**
- * Create memory instance based on config
- */
 export function createMemory(config: MemoryConfig): Memory {
   switch (config.type) {
     case "conversation":
@@ -266,9 +215,6 @@ export function createMemory(config: MemoryConfig): Memory {
   }
 }
 
-/**
- * Memory persistence interface (for future implementation)
- */
 export interface MemoryPersistence {
   save(agentId: string, messages: Message[]): Promise<void>;
   load(agentId: string): Promise<Message[]>;

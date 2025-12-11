@@ -1,11 +1,3 @@
-/**
- * Client-side hydration for Veryfront's minimal RSC implementation
- *
- * This handles:
- * - Finding RSC placeholders in the DOM
- * - Loading client components dynamically
- * - Hydrating placeholders with React components
- */
 
 import * as React from "react";
 import { createRoot, hydrateRoot } from "react-dom/client";
@@ -25,27 +17,20 @@ export class RSCHydrator {
     this.onError = options.onError;
   }
 
-  /**
-   * Hydrate all RSC placeholders in the document
-   */
   async hydrate(): Promise<void> {
     try {
-      // Load manifest first
       await this.loadManifest();
 
-      // Find all RSC placeholders
       const placeholders = document.querySelectorAll("[data-rsc-component]");
 
       rscLogger.info(`Found ${placeholders.length} components to hydrate`);
 
-      // Hydrate each placeholder
       const hydrationPromises: Promise<void>[] = [];
 
       for (const placeholder of placeholders) {
         hydrationPromises.push(this.hydratePlaceholder(placeholder as HTMLElement));
       }
 
-      // Wait for all hydrations to complete
       await Promise.all(hydrationPromises);
 
       rscLogger.info("Hydration complete");
@@ -56,9 +41,6 @@ export class RSCHydrator {
     }
   }
 
-  /**
-   * Hydrate a single placeholder element
-   */
   private async hydratePlaceholder(element: HTMLElement): Promise<void> {
     const componentName = element.dataset.rscComponent;
     const propsJson = element.dataset.rscProps;
@@ -70,22 +52,16 @@ export class RSCHydrator {
     }
 
     try {
-      // Parse props
       const props = propsJson ? JSON.parse(propsJson) : {};
 
-      // Load the client component
       const Component = await this.loadClientComponent(componentName);
 
-      // Create React element
       const reactElement = React.createElement(Component, props);
 
-      // Check if element has children (for hydration)
       if (element.innerHTML.trim()) {
-        // Hydrate existing content - hydrateRoot accepts Element, not just HTMLElement
         rscLogger.debug(`Hydrating ${componentName} #${instanceId}`);
         hydrateRoot(element, reactElement);
       } else {
-        // Render into empty container
         rscLogger.debug(`Rendering ${componentName} #${instanceId}`);
         const root = createRoot(element);
         root.render(reactElement);
@@ -94,9 +70,8 @@ export class RSCHydrator {
       rscLogger.error(`Failed to hydrate component ${componentName}:`, error);
       this.onError?.(error as Error);
 
-      // Show error in development (using safe DOM APIs to prevent XSS)
       if (this.isDevelopment()) {
-        element.textContent = ""; // Clear safely
+        element.textContent = "";
         element.appendChild(
           createErrorDisplay({
             title: "RSC Hydration Error",
@@ -108,16 +83,11 @@ export class RSCHydrator {
     }
   }
 
-  /**
-   * Load a client component module
-   */
   private async loadClientComponent(name: string): Promise<React.ComponentType<any>> {
-    // Check cache first
     if (this.componentCache.has(name)) {
       return this.componentCache.get(name)!;
     }
 
-    // Get component path from manifest
     const componentPath = await this.getComponentPath(name);
 
     if (!componentPath) {
@@ -128,11 +98,9 @@ export class RSCHydrator {
     }
 
     try {
-      // Dynamic import
       rscLogger.debug(`Loading component ${name} from ${componentPath}`);
       const module = await import(componentPath);
 
-      // Get the component (support both default and named exports)
       const Component = module.default || module[name];
 
       if (!Component) {
@@ -142,7 +110,6 @@ export class RSCHydrator {
         });
       }
 
-      // Validate it's a valid React component
       if (typeof Component !== "function" && typeof Component !== "object") {
         throw new CompilationError(`Invalid component type for ${name}`, {
           type: typeof Component,
@@ -150,7 +117,6 @@ export class RSCHydrator {
         });
       }
 
-      // Cache for future use
       this.componentCache.set(name, Component);
 
       return Component;
@@ -163,9 +129,6 @@ export class RSCHydrator {
     }
   }
 
-  /**
-   * Get component path from manifest
-   */
   private async getComponentPath(name: string): Promise<string | null> {
     if (!this.manifest) {
       await this.loadManifest();
@@ -174,9 +137,6 @@ export class RSCHydrator {
     return this.manifest?.[name] || null;
   }
 
-  /**
-   * Load the client component manifest
-   */
   private async loadManifest(): Promise<void> {
     if (this.manifest) return;
 
@@ -192,14 +152,12 @@ export class RSCHydrator {
 
       const data = await response.json();
 
-      // The manifest should be a map of component names to paths
       this.manifest = data.components || data;
 
       rscLogger.debug("Loaded manifest:", this.manifest);
     } catch (error) {
       rscLogger.error("Failed to load manifest:", error);
 
-      // In development, try to continue without manifest
       if (this.isDevelopment()) {
         rscLogger.warn("Continuing without manifest - will try direct imports");
         this.manifest = {};
@@ -209,11 +167,7 @@ export class RSCHydrator {
     }
   }
 
-  /**
-   * Check if running in development mode
-   */
   private isDevelopment(): boolean {
-    // Type-safe access to window globals
     interface WindowWithVeryfront extends Window {
       __VERYFRONT_DEV__?: boolean;
     }
@@ -221,19 +175,12 @@ export class RSCHydrator {
   }
 }
 
-/**
- * Global hydration function for easy use
- */
 export function hydrateRSC(options?: RSCHydratorOptions): Promise<void> {
   const hydrator = new RSCHydrator(options);
   return hydrator.hydrate();
 }
 
-/**
- * Auto-hydrate on DOMContentLoaded if enabled
- */
 if (typeof window !== "undefined") {
-  // Type-safe access to window globals for auto-hydrate flag
   interface WindowWithAutoHydrate extends Window {
     __RSC_AUTO_HYDRATE__?: boolean;
   }
@@ -247,7 +194,6 @@ if (typeof window !== "undefined") {
         });
       });
     } else {
-      // DOM already loaded
       hydrateRSC().catch((error) => {
         rscLogger.error("Auto-hydration failed:", error);
       });

@@ -11,14 +11,10 @@ export const getRendererScript = () => `
 
         console.log('[Veryfront] Hydration data:', data);
 
-        // Try using pagePath from hydration data first (supports App Router)
         let pagePath;
         let pageModule;
 
         if (data.pagePath) {
-          // Use the server-provided page path
-          // Convert: /project/app/page.tsx -> /app/page.js
-          // Convert: /project/pages/index.tsx -> /pages/index.js
           const match = data.pagePath.match(/\\/(pages|app|components|lib)\\/(.+)\\.(tsx|ts|jsx|js)$/);
           if (match) {
             pagePath = \`\${MODULE_SERVER_URL}/\${match[1]}/\${match[2]}.js\`;
@@ -31,7 +27,6 @@ export const getRendererScript = () => `
           }
         }
 
-        // Fallback to old Pages Router behavior if pagePath not available
         if (!pageModule) {
           const pageSlug = pathname === '/' ? 'index' : pathname.slice(1);
           console.log('[Veryfront] Falling back to Pages Router pattern:', pageSlug);

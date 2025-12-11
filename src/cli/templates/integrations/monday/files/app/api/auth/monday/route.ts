@@ -1,6 +1,3 @@
-/**
- * Monday.com OAuth Init
- */
 
 import { mondayConfig, createOAuthInitHandler } from "veryfront/oauth";
 

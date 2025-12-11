@@ -6,7 +6,6 @@ import type { HMRServer } from "./hmr-server.ts";
 import { OptimizedFileWatcher } from "./file-watcher.ts";
 import type { RouteDiscovery } from "./route-discovery.ts";
 
-// Log metrics every N batches (deterministic instead of random sampling)
 const METRICS_LOG_INTERVAL = 10;
 
 export class FileWatchSetup {
@@ -123,7 +122,6 @@ export class FileWatchSetup {
 
     this.hmrServer.sendUpdate({ type: "reload", timestamp: Date.now() });
 
-    // Log metrics every METRICS_LOG_INTERVAL batches (deterministic)
     this.batchCount++;
     if (this.optimizedWatcher && this.batchCount % METRICS_LOG_INTERVAL === 0) {
       const metrics = this.optimizedWatcher.getMetrics();

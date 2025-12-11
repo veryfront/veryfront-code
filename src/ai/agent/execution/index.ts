@@ -1,12 +1,3 @@
-/**
- * Agent Execution Module
- *
- * Contains extracted utilities for agent execution:
- * - ToolExecutionCore: Unified tool execution logic
- * - UsageTracker: Token usage tracking
- * - MessageTransformer: Message format conversion
- * - MiddlewareChain: Middleware execution pattern
- */
 
 export {
   createToolExecutionCore,

@@ -1,6 +1,5 @@
 import { getAccessToken } from "./token-store.ts";
 
-// Mailchimp API base URL - note that the actual server prefix is obtained from metadata
 let MAILCHIMP_BASE_URL = "https://us1.api.mailchimp.com/3.0";
 
 interface MailchimpResponse<T> {
@@ -131,13 +130,11 @@ interface MailchimpMetadata {
   };
 }
 
-// Initialize the API base URL with the correct datacenter
 async function initializeBaseUrl() {
   const token = await getAccessToken();
   if (!token) return;
 
   try {
-    // Get metadata to determine the correct datacenter
     const response = await fetch("https://login.mailchimp.com/oauth2/metadata", {
       headers: {
         Authorization: `OAuth ${token}`,
@@ -149,7 +146,6 @@ async function initializeBaseUrl() {
       MAILCHIMP_BASE_URL = `https://${metadata.dc}.api.mailchimp.com/3.0`;
     }
   } catch (error) {
-    // Fallback to us1 if metadata fetch fails
     console.error("Failed to fetch Mailchimp metadata:", error);
   }
 }
@@ -163,7 +159,6 @@ async function mailchimpFetch<T>(
     throw new Error("Not authenticated with Mailchimp. Please connect your account.");
   }
 
-  // Initialize base URL if not done yet
   if (MAILCHIMP_BASE_URL === "https://us1.api.mailchimp.com/3.0") {
     await initializeBaseUrl();
   }

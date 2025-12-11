@@ -25,7 +25,6 @@ export default tool({
       .describe("Sort order: 'recency' (default) or 'relevancy'"),
   }),
   execute: async ({ query, maxResults, sortOrder }, context) => {
-    // Default to "current-user" for development; in production, always pass userId from session
     const userId = (context?.userId as string | undefined) || "current-user";
 
     try {

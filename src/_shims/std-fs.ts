@@ -1,15 +1,7 @@
-/**
- * Cross-platform shim for Deno std/fs module
- * Provides Node.js-compatible implementations of Deno std/fs functions
- */
-
 import * as fs from "node:fs/promises";
 import { accessSync } from "node:fs";
 import * as nodePath from "node:path";
 
-/**
- * Check if a file or directory exists
- */
 export async function exists(path: string): Promise<boolean> {
   try {
     await fs.access(path);
@@ -19,9 +11,6 @@ export async function exists(path: string): Promise<boolean> {
   }
 }
 
-/**
- * Synchronous version of exists (uses require for sync access)
- */
 export function existsSync(path: string): boolean {
   try {
     accessSync(path);
@@ -31,16 +20,10 @@ export function existsSync(path: string): boolean {
   }
 }
 
-/**
- * Ensure directory exists, creating it if necessary
- */
 export async function ensureDir(path: string): Promise<void> {
   await fs.mkdir(path, { recursive: true });
 }
 
-/**
- * Walk entry type matching Deno's std/fs/walk
- */
 export interface WalkEntry {
   path: string;
   name: string;
@@ -57,9 +40,6 @@ export interface WalkOptions {
   skip?: RegExp[];
 }
 
-/**
- * Walk directory recursively
- */
 export async function* walk(
   root: string,
   options: WalkOptions = {},
@@ -82,7 +62,6 @@ export async function* walk(
     for (const entry of entries) {
       const path = nodePath.join(dir, entry.name);
 
-      // Check skip patterns
       if (skip && skip.some((pattern: RegExp) => pattern.test(path))) continue;
 
       if (entry.isDirectory()) {
@@ -97,7 +76,6 @@ export async function* walk(
         }
         yield* walkDir(path, depth + 1);
       } else if (entry.isFile() && includeFiles) {
-        // Check extension filter
         if (exts) {
           const ext = path.split(".").pop();
           if (!ext || !exts.includes(ext)) continue;
@@ -116,7 +94,6 @@ export async function* walk(
   yield* walkDir(root, 0);
 }
 
-// Re-export node:fs/promises functions for direct use
 export const readFile = fs.readFile;
 export const writeFile = fs.writeFile;
 export const mkdir = fs.mkdir;

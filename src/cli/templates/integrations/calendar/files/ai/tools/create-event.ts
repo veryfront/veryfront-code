@@ -37,7 +37,6 @@ export default tool({
     { title, startTime, endTime, description, location, attendees, timeZone },
     context,
   ) => {
-    // Default to "current-user" for development; in production, always pass userId from session
     const userId = (context?.userId as string | undefined) || "current-user";
 
     try {

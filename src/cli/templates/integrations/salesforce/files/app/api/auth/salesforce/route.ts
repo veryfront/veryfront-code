@@ -1,6 +1,3 @@
-/**
- * Salesforce OAuth Initiation
- */
 
 import { createOAuthInitHandler, memoryTokenStore, salesforceConfig } from "veryfront/oauth";
 

@@ -1,7 +1,3 @@
-/**
- * Lazy-loading observability metrics
- * @module
- */
 
 import { serverLogger as logger } from "@veryfront/utils";
 import type { ObservabilityMetrics } from "./types.ts";
@@ -9,17 +5,6 @@ import type { ObservabilityMetrics } from "./types.ts";
 let observabilityMetrics: ObservabilityMetrics | null = null;
 let observabilityLoadAttempted = false;
 
-/**
- * Get observability metrics with lazy loading
- *
- * @returns Observability metrics instance or null if unavailable
- *
- * @example
- * ```ts
- * const obs = await getObservabilityMetrics()
- * obs?.recordRender(100)
- * ```
- */
 export async function getObservabilityMetrics(): Promise<ObservabilityMetrics | null> {
   if (observabilityLoadAttempted) {
     return observabilityMetrics;
@@ -45,9 +30,6 @@ export async function getObservabilityMetrics(): Promise<ObservabilityMetrics | 
   }
 }
 
-/**
- * Reset observability loader state (useful for testing)
- */
 export function resetObservabilityLoader(): void {
   observabilityMetrics = null;
   observabilityLoadAttempted = false;

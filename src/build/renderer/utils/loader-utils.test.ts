@@ -1,12 +1,3 @@
-/**
- * Loader Utils Tests
- *
- * Comprehensive tests for loader utility functions covering:
- * - File extension to esbuild loader mapping
- * - File type detection
- * - Slug generation from file paths
- * - Edge cases and error handling
- */
 
 import { assertEquals } from "std/assert/mod.ts";
 import { describe, it } from "std/testing/bdd.ts";

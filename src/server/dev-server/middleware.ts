@@ -19,7 +19,6 @@ export function createRequestLoggerMiddleware() {
       await enrichSpanWithRequestInfo(method, url.pathname, requestId);
       logger.info(`[${requestId}] --> ${method} ${url.pathname}`);
     } catch {
-      /* dev only */
     }
 
     let response: Response | undefined;
@@ -45,7 +44,6 @@ export function createRequestLoggerMiddleware() {
         `[${requestId}] <-- ${method} ${url.pathname} ${response?.status ?? 0} ${duration}ms`,
       );
     } catch {
-      /* dev only */
     }
 
     return response;
@@ -102,6 +100,5 @@ async function enrichSpanWithRequestInfo(
       span.updateName(`${method} ${pathname}`);
     }
   } catch {
-    /* otel optional */
   }
 }

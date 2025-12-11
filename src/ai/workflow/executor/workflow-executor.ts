@@ -1,8 +1,3 @@
-/**
- * Workflow Executor
- *
- * Main orchestrator for executing durable workflows
- */
 
 import type {
   BlobResolver,
@@ -21,57 +16,27 @@ import { CheckpointManager } from "./checkpoint-manager.ts";
 import { StepExecutor, type StepExecutorConfig } from "./step-executor.ts";
 import type { BlobStorage } from "../blob/types.ts";
 
-/**
- * Workflow executor configuration
- */
 export interface WorkflowExecutorConfig {
-  /** Backend for persistence */
   backend: WorkflowBackend;
-  /** Blob storage for large data */
   blobStorage?: BlobStorage;
-  /** Step executor configuration */
   stepExecutor?: StepExecutorConfig;
-  /** Maximum concurrent parallel executions */
   maxConcurrency?: number;
-  /** Enable debug logging */
   debug?: boolean;
-  /** Lock duration in milliseconds for distributed execution (default: 30000) */
   lockDuration?: number;
-  /** Enable distributed locking (default: true if backend supports it) */
   enableLocking?: boolean;
-  /** Callback when workflow starts */
   onStart?: (run: WorkflowRun) => void;
-  /** Callback when workflow completes */
   onComplete?: (run: WorkflowRun) => void;
-  /** Callback when workflow fails */
   onError?: (run: WorkflowRun, error: Error) => void;
-  /** Callback when workflow is waiting */
   onWaiting?: (run: WorkflowRun, nodeId: string) => void;
 }
 
-/**
- * Handle for a running workflow
- */
 export interface WorkflowHandle<TOutput = unknown> {
-  /** Run ID */
   runId: string;
-  /** Get current status */
   status(): Promise<WorkflowRun>;
-  /** Wait for completion and get result */
   result(): Promise<TOutput>;
-  /** Cancel the workflow */
   cancel(): Promise<void>;
 }
 
-/**
- * Workflow Executor class
- *
- * Main entry point for executing workflows. Handles:
- * - Starting new workflow runs
- * - Resuming from checkpoints
- * - Coordinating DAG execution
- * - Managing workflow lifecycle
- */
 export class WorkflowExecutor {
   private config: WorkflowExecutorConfig;
   private stepExecutor: StepExecutor;
@@ -80,7 +45,6 @@ export class WorkflowExecutor {
   private workflows = new Map<string, WorkflowDefinition<any, any>>();
   private blobResolver?: BlobResolver;
 
-  /** Default lock duration: 30 seconds */
   private static readonly DEFAULT_LOCK_DURATION = 30000;
 
   constructor(config: WorkflowExecutorConfig) {
@@ -91,7 +55,6 @@ export class WorkflowExecutor {
       ...config,
     };
 
-    // Initialize components
     this.stepExecutor = new StepExecutor({
       ...this.config.stepExecutor,
       blobStorage: this.config.blobStorage,
@@ -107,8 +70,6 @@ export class WorkflowExecutor {
       checkpointManager: this.checkpointManager,
       maxConcurrency: this.config.maxConcurrency,
       debug: this.config.debug,
-      // onWaiting is intentionally a no-op here - waiting state is handled
-      // by executeAsync() after DAG execution returns with waiting: true
       onWaiting: () => {},
     });
 
@@ -124,23 +85,14 @@ export class WorkflowExecutor {
     }
   }
 
-  /**
-   * Register a workflow definition
-   */
   register<TInput, TOutput>(workflow: WorkflowDefinition<TInput, TOutput>): void {
     this.workflows.set(workflow.id, workflow);
   }
 
-  /**
-   * Get a registered workflow
-   */
   getWorkflow(id: string): WorkflowDefinition<any, any> | undefined {
     return this.workflows.get(id);
   }
 
-  /**
-   * Start a new workflow run
-   */
   async start<TInput, TOutput>(
     workflowId: string,
     input: TInput,
@@ -151,12 +103,10 @@ export class WorkflowExecutor {
       throw new Error(`Workflow not found: ${workflowId}`);
     }
 
-    // Validate input if schema provided
     if (workflow.inputSchema) {
       workflow.inputSchema.parse(input);
     }
 
-    // Create run
     const run: WorkflowRun<TInput, TOutput> = {
       id: options?.runId || generateId("run"),
       workflowId,
@@ -171,10 +121,8 @@ export class WorkflowExecutor {
       createdAt: new Date(),
     };
 
-    // Persist run
     await this.config.backend.createRun(run);
 
-    // Start execution asynchronously
     this.executeAsync(run.id).catch((error) => {
       console.error(`Workflow ${run.id} failed:`, error);
     });
@@ -182,9 +130,6 @@ export class WorkflowExecutor {
     return this.createHandle<TOutput>(run.id);
   }
 
-  /**
-   * Resume a paused/waiting workflow
-   */
   async resume(runId: string, fromCheckpoint?: string): Promise<void> {
     const run = await this.config.backend.getRun(runId);
     if (!run) {
@@ -198,23 +143,19 @@ export class WorkflowExecutor {
       );
     }
 
-    // Get workflow definition
     const workflow = this.workflows.get(run.workflowId);
     if (!workflow) {
       throw new Error(`Workflow not found: ${run.workflowId}`);
     }
 
-    // Get nodes
     const nodes = this.resolveNodes(workflow, run.context);
 
-    // Get resume point
     const resumeInfo = await this.checkpointManager.prepareResume(
       runId,
       nodes,
       fromCheckpoint,
     );
 
-    // If an explicit checkpoint was requested but not found, throw error
     if (fromCheckpoint && !resumeInfo) {
       throw new Error(
         `Checkpoint "${fromCheckpoint}" not found for run "${runId}". ` +
@@ -223,7 +164,6 @@ export class WorkflowExecutor {
     }
 
     if (resumeInfo) {
-      // Update run state from checkpoint
       await this.config.backend.updateRun(runId, {
         status: "running",
         context: resumeInfo.context,
@@ -231,29 +171,20 @@ export class WorkflowExecutor {
       });
     }
 
-    // Resume execution
     await this.executeAsync(runId, resumeInfo?.startFromNode);
   }
 
-  /**
-   * Execute a workflow run asynchronously
-   *
-   * Uses distributed locking (when backend supports it) to prevent
-   * concurrent execution of the same workflow run.
-   */
   async executeAsync(runId: string, startFromNode?: string): Promise<void> {
     const run = await this.config.backend.getRun(runId);
     if (!run) {
       throw new Error(`Run not found: ${runId}`);
     }
 
-    // Get workflow definition
     const workflow = this.workflows.get(run.workflowId);
     if (!workflow) {
       throw new Error(`Workflow not found: ${run.workflowId}`);
     }
 
-    // Try to acquire lock if backend supports it and locking is enabled
     const useLocking = this.config.enableLocking !== false &&
       hasLockSupport(this.config.backend);
     const lockDuration = this.config.lockDuration!;
@@ -273,44 +204,35 @@ export class WorkflowExecutor {
     }
 
     try {
-      // Update status to running
       await this.config.backend.updateRun(runId, {
         status: "running",
         startedAt: run.startedAt || new Date(),
       });
 
-      // Notify start
       const updatedRun = await this.config.backend.getRun(runId);
       this.config.onStart?.(updatedRun!);
 
-      // Resolve workflow nodes
       const nodes = this.resolveNodes(workflow, run.context);
 
-      // Execute with timeout if configured
       const result = await this.executeWithTimeout(
         () => this.dagExecutor.execute(nodes, run as WorkflowRun, startFromNode),
         workflow.timeout,
       );
 
-      // Update run based on result
       if (result.completed) {
-        // Workflow completed successfully
         const finalRun = await this.completeRun(
           runId,
           result.context,
           result.nodeStates,
         );
 
-        // Validate output if schema provided
         if (workflow.outputSchema) {
           workflow.outputSchema.parse(finalRun.output);
         }
 
-        // Call completion handler
         await workflow.onComplete?.(finalRun.output, finalRun.context);
         this.config.onComplete?.(finalRun);
       } else if (result.waiting) {
-        // Workflow is waiting for approval/event
         await this.pauseRun(
           runId,
           result.waitingNode!,
@@ -321,7 +243,6 @@ export class WorkflowExecutor {
         const pausedRun = await this.config.backend.getRun(runId);
         this.config.onWaiting?.(pausedRun!, result.waitingNode!);
       } else {
-        // Workflow failed
         const error = new Error(result.error || "Unknown error");
         await this.failRun(runId, error, result.context, result.nodeStates);
 
@@ -329,7 +250,6 @@ export class WorkflowExecutor {
         this.config.onError?.(run, error);
       }
     } catch (error) {
-      // Unexpected error during execution
       const err = error instanceof Error ? error : new Error(String(error));
       await this.failRun(runId, err, run.context, run.nodeStates);
 
@@ -338,7 +258,6 @@ export class WorkflowExecutor {
 
       throw error;
     } finally {
-      // Always release lock when done
       if (useLocking) {
         await this.config.backend.releaseLock!(runId);
 
@@ -349,9 +268,6 @@ export class WorkflowExecutor {
     }
   }
 
-  /**
-   * Resolve workflow nodes from definition
-   */
   private resolveNodes(
     workflow: WorkflowDefinition,
     context: WorkflowContext,
@@ -361,10 +277,7 @@ export class WorkflowExecutor {
     if (Array.isArray(workflow.steps)) {
       nodes = workflow.steps;
     } else {
-      // Dynamic steps - call the function
       if (!this.config.blobStorage) {
-        // Warn if blobStorage is missing but dynamic steps might need it?
-        // For now, we allow it to be undefined if user doesn't use it.
       }
 
       const builderContext: StepBuilderContext = {
@@ -376,15 +289,11 @@ export class WorkflowExecutor {
       nodes = workflow.steps(builderContext);
     }
 
-    // Validate resolved nodes
     this.validateNodes(nodes, workflow.id);
 
     return nodes;
   }
 
-  /**
-   * Validate workflow nodes
-   */
   private validateNodes(nodes: WorkflowNode[], workflowId: string): void {
     if (!Array.isArray(nodes)) {
       throw new Error(`Workflow "${workflowId}" steps must resolve to an array`);
@@ -422,12 +331,6 @@ export class WorkflowExecutor {
     }
   }
 
-  /**
-   * Execute with optional timeout
-   *
-   * Uses Promise.race() to properly handle timeout cleanup.
-   * The timeout is always cleared in the finally block to prevent memory leaks.
-   */
   private async executeWithTimeout<T>(
     fn: () => Promise<T>,
     timeout?: string | number,
@@ -454,15 +357,11 @@ export class WorkflowExecutor {
     }
   }
 
-  /**
-   * Mark run as completed
-   */
   private async completeRun(
     runId: string,
     context: WorkflowContext,
     nodeStates: Record<string, NodeState>,
   ): Promise<WorkflowRun> {
-    // Determine output (last node's output or accumulated context)
     const output = this.determineOutput(context);
 
     await this.config.backend.updateRun(runId, {
@@ -476,9 +375,6 @@ export class WorkflowExecutor {
     return (await this.config.backend.getRun(runId))!;
   }
 
-  /**
-   * Mark run as failed
-   */
   private async failRun(
     runId: string,
     error: Error,
@@ -497,9 +393,6 @@ export class WorkflowExecutor {
     });
   }
 
-  /**
-   * Mark run as waiting
-   */
   private async pauseRun(
     runId: string,
     waitingNode: string,
@@ -514,18 +407,11 @@ export class WorkflowExecutor {
     });
   }
 
-  /**
-   * Determine workflow output from context
-   */
   private determineOutput(context: WorkflowContext): unknown {
-    // Remove 'input' and return the rest as output
     const { input: _input, ...rest } = context;
     return rest;
   }
 
-  /**
-   * Create a handle for a workflow run
-   */
   private createHandle<TOutput>(runId: string): WorkflowHandle<TOutput> {
     return {
       runId,
@@ -535,9 +421,6 @@ export class WorkflowExecutor {
     };
   }
 
-  /**
-   * Wait for workflow result
-   */
   private async waitForResult<TOutput>(
     runId: string,
     pollInterval: number = 1000,
@@ -560,14 +443,10 @@ export class WorkflowExecutor {
         throw new Error("Workflow was cancelled");
       }
 
-      // Wait before polling again
       await new Promise((resolve) => setTimeout(resolve, pollInterval));
     }
   }
 
-  /**
-   * Cancel a workflow run
-   */
   async cancel(runId: string): Promise<void> {
     const run = await this.config.backend.getRun(runId);
     if (!run) {
@@ -587,16 +466,10 @@ export class WorkflowExecutor {
     });
   }
 
-  /**
-   * Get workflow run status
-   */
   getStatus(runId: string): Promise<WorkflowRun | null> {
     return this.config.backend.getRun(runId);
   }
 
-  /**
-   * List workflow runs
-   */
   listRuns(options?: {
     workflowId?: string;
     status?: WorkflowStatus | WorkflowStatus[];

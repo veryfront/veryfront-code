@@ -3,7 +3,6 @@ import { getApiKey } from "./token-store.ts";
 const STRIPE_API_VERSION = "2024-12-18.acacia";
 const STRIPE_BASE_URL = "https://api.stripe.com/v1";
 
-// Types
 export interface StripeCustomer {
   id: string;
   object: "customer";
@@ -104,7 +103,6 @@ interface StripeError {
   };
 }
 
-// Helper function for Stripe API calls
 async function stripeFetch<T>(
   endpoint: string,
   options: RequestInit & { params?: Record<string, string | number | boolean> } = {},
@@ -114,7 +112,6 @@ async function stripeFetch<T>(
     throw new Error("Not authenticated with Stripe. Please set STRIPE_SECRET_KEY.");
   }
 
-  // Build URL with query parameters
   let url = `${STRIPE_BASE_URL}${endpoint}`;
   if (options.params) {
     const params = new URLSearchParams();
@@ -124,21 +121,18 @@ async function stripeFetch<T>(
     url += `?${params.toString()}`;
   }
 
-  // For POST requests with body data, use form-urlencoded
   const headers: Record<string, string> = {
     "Authorization": `Bearer ${apiKey}`,
     "Stripe-Version": STRIPE_API_VERSION,
     ...options.headers as Record<string, string>,
   };
 
-  // Convert JSON body to form-urlencoded for Stripe API
   let body = options.body;
   if (options.method === "POST" && options.body && typeof options.body === "string") {
     try {
       const jsonBody = JSON.parse(options.body);
       const formData = new URLSearchParams();
 
-      // Flatten nested objects for form encoding
       const flattenObject = (obj: Record<string, unknown>, prefix = "") => {
         for (const [key, value] of Object.entries(obj)) {
           const formKey = prefix ? `${prefix}[${key}]` : key;
@@ -154,7 +148,6 @@ async function stripeFetch<T>(
       body = formData.toString();
       headers["Content-Type"] = "application/x-www-form-urlencoded";
     } catch {
-      // If not JSON, use as-is
     }
   }
 
@@ -176,7 +169,6 @@ async function stripeFetch<T>(
   return data as T;
 }
 
-// Customer operations
 export async function listCustomers(options?: {
   limit?: number;
   email?: string;
@@ -236,7 +228,6 @@ export function updateCustomer(
   });
 }
 
-// Payment Intent operations
 export async function listPaymentIntents(options?: {
   limit?: number;
   customer?: string;
@@ -284,7 +275,6 @@ export function createPaymentIntent(data: {
   });
 }
 
-// Subscription operations
 export async function listSubscriptions(options?: {
   limit?: number;
   customer?: string;
@@ -330,7 +320,6 @@ export function getSubscription(subscriptionId: string): Promise<StripeSubscript
   return stripeFetch<StripeSubscription>(`/subscriptions/${subscriptionId}`);
 }
 
-// Balance operations
 export function getBalance(): Promise<StripeBalance> {
   return stripeFetch<StripeBalance>("/balance");
 }
@@ -363,7 +352,6 @@ export async function listBalanceTransactions(options?: {
   return response.data;
 }
 
-// Helper functions
 export function formatAmount(amount: number, currency: string): string {
   return new Intl.NumberFormat("en-US", {
     style: "currency",

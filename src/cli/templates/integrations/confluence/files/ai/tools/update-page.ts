@@ -17,10 +17,8 @@ export default tool({
     versionMessage: z.string().optional().describe("Optional message describing the changes made"),
   }),
   async execute({ pageId, title, content, versionMessage }) {
-    // Get current page to retrieve version number
     const currentPage = await getPage(pageId, ["version"]);
 
-    // Format content if provided
     let storageContent: string | undefined;
     if (content) {
       storageContent = content.trim().startsWith("<") ? content : formatAsStorage(content);

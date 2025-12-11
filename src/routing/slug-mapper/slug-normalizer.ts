@@ -11,7 +11,7 @@ export function slugToPath(slug: string): string {
 }
 
 export function pathToSlug(path: string): string {
-  return normalizeSlug(path.replace(/^\//, ""));
+  return normalizeSlug(path.replace(/^\
 }
 
 export function getSlugFromPath(filePath: string): string {

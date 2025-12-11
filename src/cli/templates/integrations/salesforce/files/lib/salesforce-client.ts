@@ -1,6 +1,5 @@
 import { getAccessToken, getInstanceUrl } from "./token-store.ts";
 
-// Salesforce REST API version
 const API_VERSION = "v59.0";
 
 interface SalesforceQueryResponse<T> {
@@ -136,18 +135,12 @@ async function salesforceFetch<T>(
   return response.json();
 }
 
-// ============================================================================
-// SOQL QUERY
-// ============================================================================
 
 export function query<T = any>(soql: string): Promise<SalesforceQueryResponse<T>> {
   const encodedQuery = encodeURIComponent(soql);
   return salesforceFetch<SalesforceQueryResponse<T>>(`/query?q=${encodedQuery}`);
 }
 
-// ============================================================================
-// ACCOUNTS
-// ============================================================================
 
 export function listAccounts(options?: {
   limit?: number;
@@ -233,9 +226,6 @@ export function createAccount(data: {
   });
 }
 
-// ============================================================================
-// CONTACTS
-// ============================================================================
 
 export function listContacts(options?: {
   limit?: number;
@@ -329,9 +319,6 @@ export function createContact(data: {
   });
 }
 
-// ============================================================================
-// OPPORTUNITIES
-// ============================================================================
 
 export function listOpportunities(options?: {
   limit?: number;
@@ -421,9 +408,6 @@ export function createOpportunity(data: {
   });
 }
 
-// ============================================================================
-// LEADS
-// ============================================================================
 
 export function listLeads(options?: {
   limit?: number;
@@ -484,7 +468,6 @@ export function createLead(data: {
   Rating?: string;
   [key: string]: any;
 }): Promise<{ id: string; success: boolean; errors: any[] }> {
-  // Set default status if not provided
   const leadData = {
     ...data,
     Status: data.Status || "Open - Not Contacted",
@@ -496,9 +479,6 @@ export function createLead(data: {
   });
 }
 
-// ============================================================================
-// HELPER FUNCTIONS
-// ============================================================================
 
 export function formatContactName(contact: SalesforceContact): string {
   const parts = [];

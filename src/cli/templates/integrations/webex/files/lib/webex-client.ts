@@ -86,9 +86,6 @@ export async function getMe(): Promise<WebexPerson> {
   return webexFetch<WebexPerson>("/people/me");
 }
 
-/**
- * List meetings for the authenticated user
- */
 export async function listMeetings(options?: {
   max?: number;
   from?: string;
@@ -110,16 +107,10 @@ export async function listMeetings(options?: {
   return response.items || [];
 }
 
-/**
- * Get details of a specific meeting
- */
 export async function getMeeting(meetingId: string): Promise<WebexMeeting> {
   return webexFetch<WebexMeeting>(`/meetings/${meetingId}`);
 }
 
-/**
- * Create a new Webex meeting
- */
 export async function createMeeting(options: {
   title: string;
   agenda?: string;
@@ -154,9 +145,6 @@ export async function createMeeting(options: {
   });
 }
 
-/**
- * Update an existing meeting
- */
 export async function updateMeeting(
   meetingId: string,
   updates: {
@@ -174,18 +162,12 @@ export async function updateMeeting(
   });
 }
 
-/**
- * Delete a meeting
- */
 export async function deleteMeeting(meetingId: string): Promise<void> {
   await webexFetch<void>(`/meetings/${meetingId}`, {
     method: "DELETE",
   });
 }
 
-/**
- * List Webex rooms (spaces)
- */
 export async function listRooms(options?: {
   max?: number;
   type?: "direct" | "group";
@@ -203,16 +185,10 @@ export async function listRooms(options?: {
   return response.items || [];
 }
 
-/**
- * Get details of a specific room
- */
 export async function getRoom(roomId: string): Promise<WebexRoom> {
   return webexFetch<WebexRoom>(`/rooms/${roomId}`);
 }
 
-/**
- * Create a new room
- */
 export async function createRoom(options: {
   title: string;
   teamId?: string;
@@ -223,9 +199,6 @@ export async function createRoom(options: {
   });
 }
 
-/**
- * Send a message to a Webex room
- */
 export async function sendMessage(options: {
   roomId?: string;
   toPersonId?: string;
@@ -248,9 +221,6 @@ export async function sendMessage(options: {
   });
 }
 
-/**
- * List messages in a room
- */
 export async function listMessages(options: {
   roomId: string;
   max?: number;
@@ -269,9 +239,6 @@ export async function listMessages(options: {
   return response.items || [];
 }
 
-/**
- * Delete a message
- */
 export async function deleteMessage(messageId: string): Promise<void> {
   await webexFetch<void>(`/messages/${messageId}`, {
     method: "DELETE",

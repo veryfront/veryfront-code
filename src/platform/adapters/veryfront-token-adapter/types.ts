@@ -1,55 +1,27 @@
-/**
- * Token Storage Adapter Types
- *
- * Defines the interface for token storage backends.
- * Tokens are encrypted client-side before being sent to the backend.
- */
 
 import { createError, toError } from "../../../core/errors/veryfront-error.ts";
 
-/**
- * Token storage adapter interface
- *
- * Simple key-value interface for storing encrypted tokens.
- * Keys are formatted as "{userId}:{serviceId}" (e.g., "user123:gmail").
- * Values are encrypted token blobs (client encrypts before sending).
- */
 export interface TokenStorageAdapter {
-  /** Get encrypted token by key */
   get(key: string): Promise<string | null>;
 
-  /** Set encrypted token by key (upsert) */
   set(key: string, value: string): Promise<void>;
 
-  /** Delete token by key (idempotent) */
   delete(key: string): Promise<void>;
 
-  /** List all keys with optional prefix filter */
   list?(prefix?: string): Promise<string[]>;
 
-  /** Initialize the adapter (e.g., verify connection) */
   initialize?(): Promise<void>;
 
-  /** Cleanup resources */
   dispose?(): void;
 }
 
-/**
- * Configuration for token storage adapters
- */
 export interface TokenStorageAdapterConfig {
-  /** Storage type */
   type: "memory" | "veryfront-api";
 
-  /** Veryfront Cloud configuration */
   veryfront?: {
-    /** API token for authentication */
     apiToken?: string;
-    /** Project slug */
     projectSlug?: string;
-    /** API base URL (defaults to production) */
     baseUrl?: string;
-    /** Retry configuration */
     retry?: {
       maxRetries?: number;
       initialDelay?: number;
@@ -58,9 +30,6 @@ export interface TokenStorageAdapterConfig {
   };
 }
 
-/**
- * Internal config with defaults applied
- */
 export interface VeryfrontTokenConfig {
   apiBaseUrl: string;
   apiToken: string;
@@ -72,9 +41,6 @@ export interface VeryfrontTokenConfig {
   };
 }
 
-/**
- * Create verified config from adapter config
- */
 export function createTokenConfig(config: TokenStorageAdapterConfig): VeryfrontTokenConfig {
   if (!config.veryfront) {
     throw toError(
@@ -115,9 +81,6 @@ export function createTokenConfig(config: TokenStorageAdapterConfig): VeryfrontT
   };
 }
 
-/**
- * Error thrown by token storage operations
- */
 export class TokenStorageError extends Error {
   constructor(
     message: string,

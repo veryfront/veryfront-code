@@ -1,11 +1,4 @@
-/**
- * Response Builder Constants
- * Content types and cache duration constants
- */
 
-/**
- * Content type constants
- */
 export const CONTENT_TYPES = {
   JSON: "application/json; charset=utf-8",
   HTML: "text/html; charset=utf-8",
@@ -15,9 +8,6 @@ export const CONTENT_TYPES = {
   XML: "application/xml; charset=utf-8",
 } as const;
 
-/**
- * Cache duration constants (in seconds)
- */
 export const CACHE_DURATIONS = {
   SHORT: 60,
   MEDIUM: 3600,

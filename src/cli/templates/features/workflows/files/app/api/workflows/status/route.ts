@@ -6,8 +6,6 @@ export function GET(req: Request) {
     return Response.json({ error: "runId is required" }, { status: 400 });
   }
 
-  // In a real implementation, this would fetch the workflow status from storage
-  // For now, return a mock status
   return Response.json({
     runId,
     status: "completed",

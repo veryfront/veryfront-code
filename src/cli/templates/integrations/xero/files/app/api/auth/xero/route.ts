@@ -1,6 +1,3 @@
-/**
- * Xero OAuth Init
- */
 
 import { xeroConfig, createOAuthInitHandler } from "veryfront/oauth";
 

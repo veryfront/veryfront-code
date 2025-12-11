@@ -1,6 +1,3 @@
-/**
- * Tests for consolidated file discovery utility
- */
 
 import { assertEquals, assertExists } from "std/assert/mod.ts";
 import { join } from "std/path/mod.ts";

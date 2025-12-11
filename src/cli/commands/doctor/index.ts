@@ -10,9 +10,6 @@ import { checkRSCCounters, checkRSCEndpoints, checkRSCFlag } from "./server-chec
 import { checkAIConfig } from "./ai-checks.ts";
 import { cliLogger } from "@veryfront/utils";
 
-/**
- * Summarize diagnostic results
- */
 function summarizeResults(results: DiagnosticResult[]): { warnCount: number; failCount: number } {
   return results.reduce(
     (acc, result) => {
@@ -24,14 +21,9 @@ function summarizeResults(results: DiagnosticResult[]): { warnCount: number; fai
   );
 }
 
-/**
- * Main doctor command orchestrator
- * Runs all diagnostic checks and reports results
- */
 export async function doctorCommand(projectDir: string, opts: { strict?: boolean } = {}) {
   const results: DiagnosticResult[] = [];
 
-  // Run all diagnostic checks
   results.push(await checkDenoVersion());
   results.push(...(await checkProjectStructure(projectDir)));
   results.push(await checkConfiguration(projectDir));
@@ -42,7 +34,6 @@ export async function doctorCommand(projectDir: string, opts: { strict?: boolean
   results.push(await checkRSCCounters());
   results.push(...(await checkAIConfig(projectDir)));
 
-  // Print concise summary to stdout (non-interactive)
   for (const r of results) {
     const tag = r.status === "pass" ? "[PASS]" : r.status === "warn" ? "[WARN]" : "[FAIL]";
     cliLogger.info(`${tag} ${r.name}: ${r.message}`);

@@ -33,7 +33,7 @@ Deno.test("React version detection", async (t) => {
     const info1 = getReactVersionInfo();
     const info2 = getReactVersionInfo();
 
-    assertEquals(info1, info2); // Should be the same reference
+    assertEquals(info1, info2);
   });
 });
 

@@ -1,6 +1,3 @@
-/**
- * MDX bundling service
- */
 
 import { compile as compileMdx } from "@mdx-js/mdx";
 import { bundlerLogger as logger } from "@veryfront/utils";
@@ -20,9 +17,6 @@ import { getSlugFromPath } from "../utils/loader-utils.ts";
 
 const fs = createFileSystem();
 
-/**
- * Bundle MDX content
- */
 export async function bundleMdx(
   source: { path: string; content: string },
   options: BundlerOptions,
@@ -30,7 +24,6 @@ export async function bundleMdx(
   compileMDXForImport: (source: string, options: BundlerOptions) => Promise<string>,
 ): Promise<void> {
   try {
-    // Extract frontmatter (handle content without frontmatter)
     let body = source.content;
     let frontmatter: Record<string, unknown> = {};
 
@@ -53,7 +46,6 @@ export async function bundleMdx(
             const importContent = await fs.readTextFile(importPath);
             const compiledImport = await compileMDXForImport(importContent, options);
 
-            // Add to outputs
             const outputPath = importPath.replace(/\.mdx$/, ".js");
             result.outputs.set(outputPath, {
               path: outputPath,
@@ -67,13 +59,11 @@ export async function bundleMdx(
           }
         }
 
-        // Validate local imports
         if (importPath.startsWith(".") || importPath.startsWith("/")) {
           const basePath = importPath.startsWith("/")
             ? join(options.projectDir, importPath)
             : join(dirname(source.path), importPath);
 
-          // Check with various extensions
           const extensions = ["", ".js", ".ts", ".jsx", ".tsx", ".mjs"];
           let found = false;
 
@@ -85,7 +75,6 @@ export async function bundleMdx(
                 break;
               }
             } catch {
-              // Extension not found, continue checking others
             }
           }
 
@@ -155,9 +144,6 @@ export const meta = ${
   }
 }
 
-/**
- * Bundle MDX with additional options
- */
 export async function bundleMDXWithOptions(options: MDXBundleOptions): Promise<MDXBundleResult> {
   const {
     content,
@@ -172,7 +158,6 @@ export async function bundleMDXWithOptions(options: MDXBundleOptions): Promise<M
   logger.info(`Bundling MDX file: ${filePath}`);
 
   try {
-    // Extract frontmatter (handle content without frontmatter)
     let body = content;
     let frontmatter: Record<string, unknown> = {};
 

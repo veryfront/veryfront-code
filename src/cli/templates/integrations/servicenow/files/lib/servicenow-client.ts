@@ -1,17 +1,10 @@
-/**
- * ServiceNow API Client
- *
- * Handles authentication and API calls to ServiceNow REST API.
- */
 
 import { getServiceNowTokens } from "./token-store.ts";
 
 const getEnv = (name: string): string | undefined => {
   if (typeof Deno !== "undefined") {
-    // @ts-ignore: Deno global
     return Deno.env.get(name);
   }
-  // @ts-ignore: Node process
   return globalThis.process?.env?.[name];
 };
 
@@ -62,7 +55,7 @@ export class ServiceNowClient {
     if (!instance) {
       throw new Error("SERVICENOW_INSTANCE not configured");
     }
-    this.instance = instance.replace(/^https?:\/\//, "").replace(/\/$/, "");
+    this.instance = instance.replace(/^https?:\/\
   }
 
   private get baseUrl(): string {
@@ -104,9 +97,6 @@ export class ServiceNowClient {
     return response.json();
   }
 
-  /**
-   * List incidents with optional filters
-   */
   async listIncidents(options: {
     limit?: number;
     offset?: number;
@@ -136,11 +126,7 @@ export class ServiceNowClient {
     return response.result;
   }
 
-  /**
-   * Get a specific incident by sys_id or number
-   */
   async getIncident(idOrNumber: string): Promise<ServiceNowIncident> {
-    // Check if it's a number (INC0010001) or sys_id
     const isNumber = idOrNumber.toUpperCase().startsWith("INC");
     const params = new URLSearchParams();
     params.set("sysparm_display_value", "all");
@@ -162,9 +148,6 @@ export class ServiceNowClient {
     return response.result;
   }
 
-  /**
-   * Create a new incident
-   */
   async createIncident(data: {
     short_description: string;
     description?: string;
@@ -184,9 +167,6 @@ export class ServiceNowClient {
     return response.result;
   }
 
-  /**
-   * Update an existing incident
-   */
   async updateIncident(
     sysId: string,
     data: Partial<{
@@ -210,9 +190,6 @@ export class ServiceNowClient {
     return response.result;
   }
 
-  /**
-   * Search knowledge base articles
-   */
   async searchKnowledge(query: string, limit = 10): Promise<ServiceNowKnowledgeArticle[]> {
     const params = new URLSearchParams();
     params.set("sysparm_limit", String(limit));
@@ -228,7 +205,6 @@ export class ServiceNowClient {
   }
 }
 
-// Singleton instance
 let client: ServiceNowClient | null = null;
 
 export function getServiceNowClient(): ServiceNowClient {

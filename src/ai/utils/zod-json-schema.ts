@@ -3,7 +3,6 @@ import { ZodFirstPartyTypeKind } from "zod";
 import type { JsonSchema } from "../types/json-schema.ts";
 
 export function zodToJsonSchema(schema: z.ZodTypeAny): JsonSchema {
-  // Guard against invalid schemas (can happen with different zod instances in npm bundle)
   if (!schema || typeof schema !== "object" || !("_def" in schema)) {
     throw new Error("Invalid Zod schema: missing _def property");
   }
@@ -60,7 +59,6 @@ function convert(schema: z.ZodTypeAny): JsonSchema {
       const properties: Record<string, JsonSchema> = {};
       const required: string[] = [];
 
-      // Access shape - it might be a function (lazy getter) or an object
       const shape = typeof obj._def.shape === "function" ? obj._def.shape() : obj._def.shape;
 
       for (const [key, value] of Object.entries(shape || {})) {

@@ -1,14 +1,6 @@
-/**
- * HTML Template Generator
- * Generates HTML templates for error display
- */
 
 import { type ErrorInfo, formatErrorType } from "./error-formatter.ts";
 
-/**
- * Escape HTML entities to prevent XSS (server-side).
- * Used for error messages, stack traces, and file paths.
- */
 function escapeHtml(str: string): string {
   return str
     .replace(/&/g, "&amp;")
@@ -18,14 +10,9 @@ function escapeHtml(str: string): string {
     .replace(/'/g, "&#39;");
 }
 
-/**
- * Generates runtime script for browser error overlay
- */
 export function generateRuntimeScript(): string {
   return `
-    // Veryfront Error Overlay Runtime
 
-    // Escape HTML to prevent XSS (client-side)
     function escapeHtml(str) {
       if (typeof str !== 'string') return String(str);
       return str
@@ -37,13 +24,11 @@ export function generateRuntimeScript(): string {
     }
 
     window.showErrorOverlay = function(errorInfo) {
-      // Remove any existing overlay
       const existing = document.getElementById('veryfront-error-overlay');
       if (existing) {
         existing.remove();
       }
 
-      // Safely extract and escape error info
       const errorType = escapeHtml(errorInfo.type || 'unknown');
       const errorName = escapeHtml((errorInfo.error && errorInfo.error.name) || 'Error');
       const errorMessage = escapeHtml((errorInfo.error && errorInfo.error.message) || 'Unknown error');
@@ -55,7 +40,6 @@ export function generateRuntimeScript(): string {
         ? escapeHtml(errorInfo.error.stack)
         : '';
 
-      // Create error display
       const overlay = document.createElement('div');
       overlay.id = 'veryfront-error-overlay';
       overlay.innerHTML = \`
@@ -145,7 +129,6 @@ export function generateRuntimeScript(): string {
       document.body.appendChild(overlay);
     };
 
-    // Catch unhandled errors
     window.addEventListener('error', (event) => {
       window.showErrorOverlay({
         type: 'runtime',
@@ -165,9 +148,6 @@ export function generateRuntimeScript(): string {
   `;
 }
 
-/**
- * Generates full HTML page for error display
- */
 export function generateErrorHTML(errorInfo: ErrorInfo, suggestion?: string): string {
   const errorType = escapeHtml(formatErrorType(errorInfo.type));
   const errorName = escapeHtml(errorInfo.error.name);

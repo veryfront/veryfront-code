@@ -14,15 +14,10 @@ export interface SSRModuleLoaderOptions {
   dev: boolean;
 }
 
-// Shared cache across all SSRModuleLoader instances (persists across requests)
-const globalModuleCache = new Map<string, string>(); // absolutePath -> tempPath
+export const globalModuleCache = new Map<string, string>();
 const globalInProgress = new Set<string>();
-const globalTmpDirs = new Map<string, string>(); // projectDir -> tmpDir
+const globalTmpDirs = new Map<string, string>();
 
-/**
- * Clear the global SSR module cache.
- * This should be called when file contents change and modules need to be re-transformed.
- */
 export function clearSSRModuleCache(): void {
   globalModuleCache.clear();
   globalInProgress.clear();
@@ -37,7 +32,16 @@ export class SSRModuleLoader {
     filePath: string,
     source: string,
   ): Promise<React.ComponentType<Record<string, unknown>>> {
-    await this.transformWithDependencies(filePath, source);
+    const mod = await this.loadFullModule(filePath, source);
+    return this.extractComponent(mod, filePath);
+  }
+
+  async loadFullModule(
+    filePath: string,
+    source?: string,
+  ): Promise<Record<string, unknown>> {
+    const fileContent = source ?? await this.options.adapter.fs.readFile(filePath);
+    await this.transformWithDependencies(filePath, fileContent);
 
     const tempPath = globalModuleCache.get(filePath);
     if (!tempPath) {
@@ -49,30 +53,24 @@ export class SSRModuleLoader {
     }
 
     const cacheBuster = Date.now();
-    const mod = await import(`file://${tempPath}?t=${cacheBuster}`);
-
-    return this.extractComponent(mod, filePath);
+    return await import(`file://${tempPath}?t=${cacheBuster}`);
   }
 
   private async transformWithDependencies(
     filePath: string,
     source?: string,
   ): Promise<void> {
-    const code = source ?? await this.fs.readTextFile(filePath);
+    const code = source ?? await this.options.adapter.fs.readFile(filePath);
 
-    // Use content hash in cache key to invalidate when file changes
     const contentHash = this.hashCode(code);
     const cacheKey = `${filePath}:${contentHash}`;
 
-    // Check global cache first (shared across requests)
     if (globalModuleCache.has(cacheKey)) {
-      // Update the filePath -> tempPath mapping for the loadModule lookup
       const tempPath = globalModuleCache.get(cacheKey)!;
       globalModuleCache.set(filePath, tempPath);
       return;
     }
 
-    // Prevent circular imports
     if (globalInProgress.has(filePath)) {
       return;
     }
@@ -84,6 +82,7 @@ export class SSRModuleLoader {
         code,
         filePath,
         this.options.projectDir,
+        { adapter: this.options.adapter },
       );
 
       for (const imp of localImports) {
@@ -104,13 +103,11 @@ export class SSRModuleLoader {
         transformOpts,
       );
 
-      // Include content hash in temp path to avoid Deno module cache issues
-      const tempPath = await this.getTempPath(filePath, contentHash);
+      const tempPath = await this.getTempPath(filePath);
       const tempDir = tempPath.substring(0, tempPath.lastIndexOf("/"));
       await this.fs.mkdir(tempDir, { recursive: true });
       await this.fs.writeTextFile(tempPath, transformed);
 
-      // Store both the content-keyed and filePath-keyed entries
       globalModuleCache.set(cacheKey, tempPath);
       globalModuleCache.set(filePath, tempPath);
     } finally {
@@ -128,7 +125,7 @@ export class SSRModuleLoader {
     return Math.abs(hash).toString(16);
   }
 
-  private async getTempPath(filePath: string, contentHash?: string): Promise<string> {
+  private async getTempPath(filePath: string): Promise<string> {
     const tmpDir = await this.ensureTmpDir();
 
     let relativePath = filePath;
@@ -137,24 +134,18 @@ export class SSRModuleLoader {
       relativePath = filePath.substring(projectDir.length);
     }
 
-    // Include content hash in filename to avoid Deno module cache issues
-    // Different file versions get different temp paths
-    const hashSuffix = contentHash ? `.${contentHash}` : "";
-    const jsPath = relativePath.replace(/\.(tsx?|jsx|mdx)$/, `${hashSuffix}.js`);
+    const jsPath = relativePath.replace(/\.(tsx?|jsx|mdx)$/, ".js");
     return join(tmpDir, jsPath);
   }
 
   private async ensureTmpDir(): Promise<string> {
     const projectDir = this.options.projectDir;
 
-    // Check global cache first (shared across loader instances for same project)
     const existingDir = globalTmpDirs.get(projectDir);
     if (existingDir) {
       return existingDir;
     }
 
-    // Use node_modules/.cache for consistent temp directory across Node/Deno
-    // This avoids temp dir leaks and enables cross-request caching
     const tmpDir = join(projectDir, "node_modules", ".cache", "veryfront-ssr");
 
     await this.fs.mkdir(tmpDir, { recursive: true });

@@ -139,7 +139,6 @@ export class VeryfrontRouter {
       const data = this.pageLoader.getCached(path);
       if (!data) {
         logger.warn(`[router] Cache entry for ${path} was unexpectedly null, fetching fresh data`);
-        // Fall through to fetch fresh data
       } else {
         if (updateUI) {
           this.updatePage(data);

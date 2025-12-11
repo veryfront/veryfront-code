@@ -1,5 +1,4 @@
 export const getRouterScript = () => `
-    // Use current origin for module server (modules are served by main dev server at /_vf_modules/)
     const MODULE_SERVER_URL = window.location.origin + '/_vf_modules';
     console.log('[DEBUG] MODULE_SERVER_URL set to:', MODULE_SERVER_URL);
     console.log('[DEBUG] window.location.origin:', window.location.origin);

@@ -18,8 +18,8 @@ export interface MDXFrontmatter {
 export interface CompileToJSOptions {
   projectDir: string;
   mode: "development" | "production";
-  components?: string[]; // List of available component names
-  adapter: RuntimeAdapter; // Required for secure filesystem access
+  components?: string[];
+  adapter: RuntimeAdapter;
 }
 
 let esbuildInitialized = false;
@@ -45,9 +45,6 @@ async function initializeEsbuild() {
   }
 }
 
-/**
- * Compile MDX to a standalone JS module
- */
 export async function compileMDXToJS(
   mdxPath: string,
   mdxContent: string,
@@ -104,7 +101,6 @@ export async function compileMDXToJS(
   });
 
   const moduleCode = `
-// Generated from ${mdxPath}
 import * as React from "react";
 
 export const frontmatter = ${JSON.stringify(frontmatter, null, 2)};
@@ -148,7 +144,7 @@ export default function MDXPage({ components = {} }) {
 `;
 
   const result = await esbuild.transform(moduleCode, {
-    loader: "jsx",
+    loader: "tsx",
     jsx: "automatic",
     jsxImportSource: "react",
     format: "esm",
@@ -169,7 +165,7 @@ export async function compileMDXFile(
   const secureFs = createSecureFs({
     baseDir: options.projectDir,
     adapter: options.adapter,
-    context: "build", // Build context allows more flexibility
+    context: "build",
     throwOnError: true,
   });
 
@@ -177,7 +173,7 @@ export async function compileMDXFile(
     const content = await secureFs.readFile(mdxPath);
     const { code, frontmatter: _frontmatter } = await compileMDXToJS(mdxPath, content, options);
 
-    const relativePath = mdxPath.replace(options.projectDir, "").replace(/^\//, "");
+    const relativePath = mdxPath.replace(options.projectDir, "").replace(/^\
     const outputPath = join(outputDir, relativePath.replace(".mdx", ".mdx.js"));
 
     const dirPath = dirname(outputPath);
@@ -211,7 +207,6 @@ export async function compileProjectMDX(
       }
     }
   } catch {
-    // Components directory might not exist
   }
 
   compileOptions.components = components;
@@ -232,7 +227,6 @@ export async function compileProjectMDX(
         }
       }
     } catch {
-      // Directory might not exist
     }
   }
 

@@ -1,6 +1,3 @@
-/**
- * Service Worker Generation
- */
 
 import type { BuildManifest } from "../build/production-build/manifest.ts";
 
@@ -18,7 +15,7 @@ function normalizeChunkPath(value: string | null | undefined, base: string): str
   if (!value) return null;
   if (value.startsWith("http://") || value.startsWith("https://")) return null;
 
-  const candidate = value.replace(/^\.\//, "");
+  const candidate = value.replace(/^\.\
 
   if (candidate.startsWith("/")) {
     return candidate;
@@ -78,32 +75,26 @@ function buildManifestAssets(manifest: BuildManifest): string[] {
   return Array.from(assets).sort();
 }
 
-/**
- * Generate service worker with advanced caching
- */
 export function generateServiceWorker(manifest: BuildManifest): string {
   const cacheVersion = buildCacheVersion(manifest);
   const staticAssets = buildManifestAssets(manifest);
 
   return `// Veryfront Service Worker
-// Generated at: ${new Date().toISOString()}
 
 const CACHE_VERSION = '${cacheVersion}';
 const RUNTIME_CACHE = 'veryfront-runtime';
 
-// Static resources to cache
 const STATIC_CACHE_URLS = ${JSON.stringify(staticAssets, null, 2)};
 
-// Cache strategies
 const CACHE_STRATEGIES = {
   networkFirst: [
-    /\\/api\\//,
-    /\\/_veryfront\\/data\\//,
+    /\\/api\\
+    /\\/_veryfront\\/data\\
   ],
   cacheFirst: [
     /\\.(?:png|jpg|jpeg|svg|gif|webp|woff2?)$/,
-    /\\/_veryfront\\/chunks\\//,
-    /\\/assets\\//,
+    /\\/_veryfront\\/chunks\\
+    /\\/assets\\
   ],
   staleWhileRevalidate: [
     /\\.(?:js|css)$/,
@@ -135,13 +126,10 @@ self.addEventListener('fetch', (event) => {
   const { request } = event;
   const url = new URL(request.url);
 
-  // Skip non-GET requests
   if (request.method !== 'GET') return;
 
-  // Skip Chrome extensions
   if (url.protocol === 'chrome-extension:') return;
 
-  // Determine cache strategy
   let strategy = 'networkFirst';
 
   for (const [strat, patterns] of Object.entries(CACHE_STRATEGIES)) {
@@ -195,7 +183,6 @@ async function handleRequest(request, strategy) {
   }
 }
 
-// Handle messages from the client
 self.addEventListener('message', (event) => {
   if (event.data.type === 'SKIP_WAITING') {
     self.skipWaiting();

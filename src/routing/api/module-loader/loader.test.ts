@@ -4,10 +4,6 @@ import { loadHandlerModule } from "./loader.ts";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import { createFileSystem } from "../../../platform/compat/fs.ts";
 
-/**
- * Minimal adapter stub that reads files from the real fs via compat,
- * and fails other operations (we don't exercise server/kv here).
- */
 const fs = createFileSystem();
 
 const adapter: RuntimeAdapter = {
@@ -38,7 +34,6 @@ const adapter: RuntimeAdapter = {
     exists: fs.exists.bind(fs),
     async *readDir(path: string) {
       for await (const entry of fs.readDir(path)) {
-        // Normalize to DirEntry shape
         yield {
           name: entry.name,
           isFile: entry.isFile,
@@ -52,7 +47,6 @@ const adapter: RuntimeAdapter = {
     remove: fs.remove.bind(fs),
     makeTempDir: (prefix: string) => fs.makeTempDir({ prefix }),
     watch() {
-      // Minimal watcher stub for tests
       return {
         async *[Symbol.asyncIterator]() {},
         close() {},

@@ -1,6 +1,3 @@
-/**
- * Asana OAuth Init
- */
 
 import { asanaConfig, createOAuthInitHandler } from "veryfront/oauth";
 

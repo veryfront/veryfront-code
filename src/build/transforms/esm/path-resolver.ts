@@ -1,14 +1,8 @@
 import { replaceSpecifiers } from "./lexer.ts";
 
-/**
- * Rewrite @veryfront/* imports to veryfront/* for npm compatibility
- * This allows Deno-style imports to work in Node.js environments
- */
 export function resolveVeryfrontImports(code: string): Promise<string> {
   return Promise.resolve(replaceSpecifiers(code, (specifier) => {
     if (specifier.startsWith("@veryfront/")) {
-      // @veryfront/ai -> veryfront/ai
-      // @veryfront/ai/react -> veryfront/ai/react
       return specifier.replace("@veryfront/", "veryfront/");
     }
     if (specifier === "@veryfront") {
@@ -95,9 +89,9 @@ function resolveRelativePath(currentDir: string, importPath: string): string {
   const resolvedParts = [...currentParts];
   for (const part of importParts) {
     if (part === "..") {
-      resolvedParts.pop(); // Go up one directory
+      resolvedParts.pop();
     } else if (part !== ".") {
-      resolvedParts.push(part); // Add to path
+      resolvedParts.push(part);
     }
   }
 
@@ -112,11 +106,9 @@ export async function resolveRelativeImportsToAbsolute(
   const normalizedFilePath = filePath.replace(/\\/g, "/");
   const fileDir = normalizedFilePath.substring(0, normalizedFilePath.lastIndexOf("/"));
 
-  // Build a map of specifiers to resolved paths with extensions
   const resolvedImports = new Map<string, string>();
   const specifiersToResolve: string[] = [];
 
-  // First pass: collect all relative import specifiers
   await replaceSpecifiers(code, (specifier) => {
     if (specifier.startsWith("./") || specifier.startsWith("../")) {
       specifiersToResolve.push(specifier);
@@ -124,25 +116,18 @@ export async function resolveRelativeImportsToAbsolute(
     return null;
   });
 
-  // Resolve each specifier to an absolute path with extension
   for (const specifier of specifiersToResolve) {
     const absolutePath = resolveAbsolutePath(fileDir, specifier);
     const resolvedPath = await findFileWithExtension(absolutePath);
     resolvedImports.set(specifier, `file://${resolvedPath}`);
   }
 
-  // Second pass: replace specifiers with resolved paths
   return replaceSpecifiers(code, (specifier) => {
     return resolvedImports.get(specifier) || null;
   });
 }
 
-/**
- * Find a file by trying common TypeScript/JavaScript extensions
- * If the path already has an extension, return it as-is
- */
 async function findFileWithExtension(basePath: string): Promise<string> {
-  // If already has a valid extension, return as-is
   if (/\.(tsx?|jsx?|mjs|cjs|mdx)$/.test(basePath)) {
     return basePath;
   }
@@ -157,12 +142,9 @@ async function findFileWithExtension(basePath: string): Promise<string> {
         return fullPath;
       }
     } catch {
-      // File doesn't exist with this extension, try next
     }
   }
 
-  // If no file found, return with .ts extension as fallback
-  // (Deno will give a clearer error message)
   return basePath + ".ts";
 }
 

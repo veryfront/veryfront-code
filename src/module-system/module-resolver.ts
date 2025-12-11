@@ -84,7 +84,6 @@ export class ModuleResolver {
     if (specifier.startsWith("/")) {
       const fullPath = join(this.options.projectDir, specifier);
 
-      // Security check: prevent path traversal outside projectDir
       const relativePath = relative(this.options.projectDir, fullPath);
       if (relativePath.startsWith("..") || isAbsolute(relativePath)) {
         logger.warn(`Path traversal attempt blocked: ${specifier}`);

@@ -1,12 +1,8 @@
-/**
- * Tests for Dynamic Router
- */
 
 import { assertEquals, assertExists, assertStrictEquals } from "std/assert/mod.ts";
 import { afterEach, describe, it } from "std/testing/bdd.ts";
 import { DynamicRouter } from "./api-route-matcher.ts";
 
-// Track all routers to clean up after tests
 const routers: DynamicRouter[] = [];
 
 function createRouter(): DynamicRouter {
@@ -15,7 +11,6 @@ function createRouter(): DynamicRouter {
   return router;
 }
 
-// Clean up all routers after each test to prevent interval leaks
 afterEach(() => {
   while (routers.length > 0) {
     const router = routers.pop();
@@ -34,7 +29,6 @@ describe("DynamicRouter", () => {
       assertExists(match);
       assertEquals(match.route.page, "pages/about.tsx");
       assertEquals(match.params, {
-        /* empty */
       });
     });
 
@@ -230,7 +224,7 @@ describe("DynamicRouter", () => {
       const match1 = router.match("/blog/test");
       const match2 = router.match("/blog/test");
 
-      assertStrictEquals(match1, match2); // Same object reference
+      assertStrictEquals(match1, match2);
     });
   });
 
@@ -262,20 +256,17 @@ describe("DynamicRouter", () => {
     it("handles many routes efficiently", () => {
       const router = createRouter();
 
-      // Add 100 routes
       for (let i = 0; i < 100; i++) {
         router.addRoute(`/page${i}`, `pages/page${i}.tsx`);
         router.addRoute(`/dynamic${i}/[id]`, `pages/dynamic${i}/[id].tsx`);
       }
 
-      // Test matching performance
       const start = performance.now();
       for (let i = 0; i < 1000; i++) {
         router.match("/dynamic50/test");
       }
       const end = performance.now();
 
-      // Should be fast (less than 50ms for 1000 matches, increased threshold for CI environments)
       assert(end - start < 50, `Route matching took ${end - start}ms`);
     });
   });
@@ -286,14 +277,11 @@ describe("DynamicRouter", () => {
       router.addRoute("/api/users", "pages/api/users.tsx");
       router.addRoute("/api/[id]", "pages/api/[id].tsx");
 
-      // Pre-populate cache
       router.match("/api/users");
       router.match("/api/123");
 
-      // Clear everything
       router.clear();
 
-      // Should not match any routes
       assertEquals(router.match("/api/users"), null);
       assertEquals(router.match("/api/123"), null);
     });
@@ -302,14 +290,11 @@ describe("DynamicRouter", () => {
       const router = createRouter();
       router.addRoute("/api/users", "pages/api/users.tsx");
 
-      // First match - populates cache
       const match1 = router.match("/api/users");
       assertExists(match1);
 
-      // Clear cache
       router.clearCache();
 
-      // Should still match (routes not cleared)
       const match2 = router.match("/api/users");
       assertExists(match2);
       assertEquals(match2.route.page, "pages/api/users.tsx");
@@ -319,18 +304,14 @@ describe("DynamicRouter", () => {
       const router = createRouter();
       router.addRoute("/api/users", "pages/api/users.tsx");
 
-      // First non-match - should cache null
       const match1 = router.match("/api/posts");
       assertEquals(match1, null);
 
-      // Add a route that would match
       router.addRoute("/api/posts", "pages/api/posts.tsx");
 
-      // Should still return cached null (unless cache is cleared)
       const match2 = router.match("/api/posts");
       assertEquals(match2, null);
 
-      // Clear cache and try again
       router.clearCache();
       const match3 = router.match("/api/posts");
       assertExists(match3);
@@ -351,10 +332,8 @@ describe("DynamicRouter", () => {
     it("normalizes trailing slashes in route patterns during registration", () => {
       const router = createRouter();
 
-      // Add route with trailing slash - it gets normalized
       router.addRoute("/contact/", "pages/contact.tsx");
 
-      // Both /contact and /contact/ should match
       const match1 = router.match("/contact");
       const match2 = router.match("/contact/");
 
@@ -362,10 +341,8 @@ describe("DynamicRouter", () => {
       assertExists(match2);
       assertEquals(match1.route.page, "pages/contact.tsx");
       assertEquals(match2.route.page, "pages/contact.tsx");
-      // Pattern is normalized to /contact (without trailing slash)
       assertEquals(match1.route.pattern, "/contact");
 
-      // Test root with trailing slash
       router.addRoute("/", "pages/index.tsx");
       const match3 = router.match("/");
       assertExists(match3);
@@ -385,7 +362,6 @@ describe("DynamicRouter", () => {
       const router = createRouter();
       router.addRoute("/search/[query]", "pages/search/[query].tsx");
 
-      // Test various encoded characters
       const match1 = router.match("/search/hello%20world%21");
       assertExists(match1);
       assertEquals(match1.params, { query: "hello world!" });
@@ -394,7 +370,7 @@ describe("DynamicRouter", () => {
       assertExists(match2);
       assertEquals(match2.params, { query: "<script>" });
 
-      const match3 = router.match("/search/%E2%9C%93"); // checkmark symbol
+      const match3 = router.match("/search/%E2%9C%93");
       assertExists(match3);
       assertEquals(match3.params, { query: "✓" });
     });
@@ -403,17 +379,14 @@ describe("DynamicRouter", () => {
       const router = createRouter();
       router.addRoute("/files/[...path]", "pages/files/[...path].tsx");
 
-      // Normal catch-all behavior - splits by actual slashes
       const match = router.match("/files/folder/file.txt");
       assertExists(match);
       assertEquals(match.params, { path: ["folder", "file.txt"] });
 
-      // URL encoded segments in catch-all are decoded individually
       const match2 = router.match("/files/my%20folder/file%20name.txt");
       assertExists(match2);
       assertEquals(match2.params, { path: ["my folder", "file name.txt"] });
 
-      // Encoded slashes within segments are preserved
       const match3 = router.match("/files/folder%2Fwith%2Fslashes/normal");
       assertExists(match3);
       assertEquals(match3.params, { path: ["folder/with/slashes", "normal"] });

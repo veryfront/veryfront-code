@@ -13,7 +13,6 @@ export default tool({
     ),
   }),
   async execute({ path, includeContent }) {
-    // Get metadata first
     const metadata = await getMetadata(path);
 
     if (!isFile(metadata)) {
@@ -32,13 +31,11 @@ export default tool({
       rev: metadata.rev,
     };
 
-    // Download content if requested
     if (includeContent) {
       if (!metadata.is_downloadable) {
         throw new Error(`File "${path}" is not downloadable`);
       }
 
-      // Only download small files (< 1MB) to avoid memory issues
       if (metadata.size > 1024 * 1024) {
         throw new Error(
           `File is too large to download content (${

@@ -1,6 +1,3 @@
-/**
- * Discord OAuth Initiation
- */
 
 import { createOAuthInitHandler, discordConfig, memoryTokenStore } from "veryfront/oauth";
 

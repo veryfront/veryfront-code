@@ -1,6 +1,3 @@
-/**
- * Confluence OAuth Initiation
- */
 
 import { confluenceConfig, createOAuthInitHandler, memoryTokenStore } from "veryfront/oauth";
 

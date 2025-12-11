@@ -1,7 +1,3 @@
-/**
- * Individual command help display
- * @module
- */
 
 import { cliLogger } from "@veryfront/utils";
 import { COMMANDS } from "./command-definitions.ts";
@@ -16,10 +12,6 @@ import {
 import { getCommandTips } from "./tips.ts";
 import { showMainHelp } from "./main-help.ts";
 
-/**
- * Displays detailed help for a specific command
- * @param command - Command name to show help for
- */
 export function showCommandHelp(command: string): void {
   const cmd = COMMANDS[command];
   if (!cmd) {

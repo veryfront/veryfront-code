@@ -1,19 +1,8 @@
-/**
- * Metrics state management
- * @module
- */
 
 import type { MetricsState, VeryfrontMetrics } from "./types.ts";
 
-/**
- * Duration histogram boundaries in milliseconds
- * Inlined to avoid circular dependency with @veryfront/config
- */
 const SSR_BOUNDARIES_MS = [5, 10, 25, 50, 75, 100, 250, 500, 750, 1000, 2500, 5000, 7500, 10000];
 
-/**
- * Internal metrics state
- */
 export const state: MetricsState = {
   requests: 0,
   jitHttpResolved: 0,
@@ -36,26 +25,10 @@ export const state: MetricsState = {
   _ssrCounts: Array.from({ length: SSR_BOUNDARIES_MS.length + 1 }, () => 0),
 };
 
-/**
- * Get SSR histogram boundaries
- *
- * @returns SSR histogram boundaries in milliseconds
- */
 export function getSSRBoundaries(): number[] {
   return SSR_BOUNDARIES_MS;
 }
 
-/**
- * Create a snapshot of current metrics
- *
- * @returns Immutable snapshot of metrics
- *
- * @example
- * ```ts
- * const snapshot = createSnapshot()
- * console.log(snapshot.requests)
- * ```
- */
 export function createSnapshot(): VeryfrontMetrics {
   return {
     requests: state.requests,
@@ -87,14 +60,6 @@ export function createSnapshot(): VeryfrontMetrics {
   };
 }
 
-/**
- * Reset all metrics to zero
- *
- * @example
- * ```ts
- * resetMetrics()
- * ```
- */
 export function resetMetrics(): void {
   state.requests = 0;
   state.jitHttpResolved = 0;
@@ -116,11 +81,6 @@ export function resetMetrics(): void {
   state.rscStreamHistogram = undefined;
 }
 
-/**
- * Get current request count
- *
- * @returns Current request count
- */
 export function getRequestCount(): number {
   return state.requests;
 }

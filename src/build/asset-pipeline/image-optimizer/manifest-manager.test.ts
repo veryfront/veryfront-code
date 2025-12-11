@@ -22,7 +22,6 @@ Deno.test("manifest-manager writes and loads manifests via compat fs", async () 
   const manifestContent = await Deno.readTextFile(manifestPath);
   const parsed = JSON.parse(manifestContent);
 
-  // Basic sanity check on file contents
   assertEquals(parsed.logo, undefined);
   assertEquals(parsed["logo.png"].defaultFormat, "webp");
 

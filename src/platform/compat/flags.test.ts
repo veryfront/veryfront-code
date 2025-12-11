@@ -65,7 +65,7 @@ Deno.test("Flags Compat | parse with string option", () => {
   });
 
   assertEquals(parsed.port, "3000");
-  assertEquals(parsed.count, 42); // Not specified as string, so parsed as number
+  assertEquals(parsed.count, 42);
 });
 
 Deno.test("Flags Compat | parse string array", () => {
@@ -84,8 +84,8 @@ Deno.test("Flags Compat | parse with default values", () => {
     default: { foo: "default-foo", baz: "default-baz" },
   });
 
-  assertEquals(parsed.foo, "bar"); // Overridden by args
-  assertEquals(parsed.baz, "default-baz"); // Uses default
+  assertEquals(parsed.foo, "bar");
+  assertEquals(parsed.baz, "default-baz");
 });
 
 Deno.test("Flags Compat | parse with stopEarly option", () => {
@@ -163,7 +163,7 @@ Deno.test("Flags Compat | parse with unknown option handler", () => {
     unknown: (arg: string) => {
       if (arg.startsWith("--unknown")) {
         unknownArgs.push(arg);
-        return false; // Reject unknown
+        return false;
       }
       return true;
     },

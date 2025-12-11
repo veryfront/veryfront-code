@@ -155,7 +155,7 @@ export function useBridgedState<T>(
   key: string,
   initialValue: T,
   options?: { persist?: boolean },
-  testReact?: ReactHooksSubset, // Use the new subset type
+  testReact?: ReactHooksSubset,
 ): [T, (value: T) => void] {
   const { useState, useEffect, useCallback } = testReact || React;
   const bridge = getStateBridge();

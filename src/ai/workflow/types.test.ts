@@ -1,6 +1,3 @@
-/**
- * Workflow Types Tests
- */
 
 import { assertEquals, assertThrows } from "https://deno.land/std@0.220.0/assert/mod.ts";
 import { describe, it } from "https://deno.land/std@0.220.0/testing/bdd.ts";
@@ -57,7 +54,6 @@ describe("generateId", () => {
     assertEquals(typeof id1, "string");
     assertEquals(id1.length > 0, true);
 
-    // IDs should be unique
     assertEquals(id1 !== id2, true);
     assertEquals(id2 !== id3, true);
     assertEquals(id1 !== id3, true);
@@ -79,7 +75,6 @@ describe("generateId", () => {
 
 describe("validateRetryConfig", () => {
   it("should accept valid config", () => {
-    // Should not throw
     validateRetryConfig({});
     validateRetryConfig({ maxAttempts: 3 });
     validateRetryConfig({ backoff: "exponential", initialDelay: 100, maxDelay: 5000 });

@@ -82,7 +82,6 @@ async function xeroFetch<T>(
     throw new Error("Not authenticated with Xero. Please connect your account.");
   }
 
-  // Get the tenant ID (organization)
   const tenantsResponse = await fetch("https://api.xero.com/connections", {
     headers: {
       "Authorization": `Bearer ${token}`,

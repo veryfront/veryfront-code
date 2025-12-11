@@ -24,7 +24,6 @@ export default tool({
       .describe("Only show events for today"),
   }),
   execute: async ({ maxResults, daysAhead, todayOnly }, context) => {
-    // Default to "current-user" for development; in production, always pass userId from session
     const userId = (context?.userId as string | undefined) || "current-user";
 
     try {

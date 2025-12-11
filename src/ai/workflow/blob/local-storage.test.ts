@@ -2,7 +2,6 @@ import { assert, assertEquals, assertExists } from "https://deno.land/std@0.220.
 import { LocalBlobStorage } from "./local-storage.ts";
 import { join } from "https://deno.land/std@0.220.0/path/mod.ts";
 
-// Helper function to replace std's remove
 async function remove(path: string, options?: { recursive?: boolean }): Promise<void> {
   await Deno.remove(path, options);
 }
@@ -50,33 +49,26 @@ Deno.test("LocalBlobStorage - put with TTL and cleanup", async () => {
   const storage = new LocalBlobStorage(testDir);
 
   try {
-    // Put an expired blob
     const expiredData = "Expired content";
-    const expiredRef = await storage.put(expiredData, { ttl: 1 }); // 1 second TTL
+    const expiredRef = await storage.put(expiredData, { ttl: 1 });
     assertExists(expiredRef.expiresAt);
-    // Use <= since expiresAt = createdAt + ttl*1000, and createdAt ≈ Date.now()
     assert(expiredRef.expiresAt! <= new Date(Date.now() + 2000));
 
-    // Put a non-expired blob
     const validData = "Valid content";
-    const validRef = await storage.put(validData, { ttl: 3600 }); // 1 hour TTL
+    const validRef = await storage.put(validData, { ttl: 3600 });
     assertExists(validRef.expiresAt);
-    assert(validRef.expiresAt! > new Date(Date.now() + 3000)); // Should be > 3 seconds from now
+    assert(validRef.expiresAt! > new Date(Date.now() + 3000));
 
-    // Wait for expired blob to actually expire
     await new Promise((resolve) => setTimeout(resolve, 1500));
 
-    // Before cleanup, expired blob should still exist
     assert(await storage.exists(expiredRef.id));
     assert(await storage.exists(validRef.id));
 
     await storage.cleanupExpiredBlobs();
 
-    // After cleanup, expired blob should be gone, valid one should remain
     assert(!await storage.exists(expiredRef.id));
     assert(await storage.exists(validRef.id));
 
-    // Check stat for valid blob
     const validStat = await storage.stat(validRef.id);
     assertExists(validStat);
     assertEquals(validStat?.id, validRef.id);
@@ -112,7 +104,6 @@ Deno.test("LocalBlobStorage - delete non-existent blob (no error)", async () => 
   const storage = new LocalBlobStorage(testDir);
 
   try {
-    // Should not throw an error
     await storage.delete("non-existent-id");
     assert(true, "Delete did not throw for non-existent blob");
   } finally {
@@ -149,7 +140,6 @@ Deno.test("LocalBlobStorage - rootDir is created if not exists", async () => {
   try {
     const data = "Initial data";
     const ref = await storage.put(data);
-    // Verify the blob exists using the returned reference ID
     assert(await storage.exists(ref.id), "Blob should exist after put");
     const statResult = await Deno.stat(nonExistentDir);
     assert(statResult.isDirectory, "Root directory should be created");

@@ -8,21 +8,21 @@ export { VERSION } from "./version.ts";
 export * from "./paths.ts";
 
 export {
-  type BundleCode as HashBundleCode, // Alias to avoid conflict with bundle-manifest
+  type BundleCode as HashBundleCode,
   computeCodeHash,
   computeContentHash,
   computeHash,
   getContentHash,
   shortHash,
   simpleHash,
-  simpleHash as numericHash, // Alias to avoid conflict with memoize
+  simpleHash as numericHash,
 } from "./hash-utils.ts";
 
 export {
   MemoCache,
   memoize,
   memoizeAsync,
-  simpleHash as memoizeHash, // Alias to distinguish from hash-utils version
+  simpleHash as memoizeHash,
 } from "./memoize.ts";
 
 export * from "./path-utils.ts";

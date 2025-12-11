@@ -183,7 +183,7 @@ describe("ViewportPrefetch", () => {
       const viewportPrefetch = new ViewportPrefetch(prefetchCallback);
 
       const mockDoc = createMockDocument([]);
-      viewportPrefetch.setup(mockDoc); // Should not throw
+      viewportPrefetch.setup(mockDoc);
 
       (globalThis as any).IntersectionObserver = originalIO;
     });
@@ -515,7 +515,7 @@ describe("ViewportPrefetch", () => {
 
       const viewportPrefetch = new ViewportPrefetch(prefetchCallback, { viewport: true });
 
-      const anchor = createMockAnchor(""); // No href
+      const anchor = createMockAnchor("");
       const mockDoc = createMockDocument([anchor]);
 
       viewportPrefetch.setup(mockDoc);
@@ -664,9 +664,9 @@ describe("ViewportPrefetch", () => {
       const prefetchCallback = () => {};
       const viewportPrefetch = new ViewportPrefetch(prefetchCallback, { viewport: false });
 
-      const link1 = createMockAnchor("/page1"); // No attribute, viewport disabled
-      const link2 = createMockAnchor("/page2", { "data-prefetch": "viewport" }); // Explicit viewport
-      const link3 = createMockAnchor("/page3", { "data-prefetch": "false" }); // Explicit false
+      const link1 = createMockAnchor("/page1");
+      const link2 = createMockAnchor("/page2", { "data-prefetch": "viewport" });
+      const link3 = createMockAnchor("/page3", { "data-prefetch": "false" });
 
       const mockDoc = createMockDocument([link1, link2, link3]);
 

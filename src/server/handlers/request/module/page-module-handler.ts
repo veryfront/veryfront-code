@@ -1,11 +1,3 @@
-/**
- * Page Module Handler
- *
- * Handles requests for generated page modules (/_veryfront/pages/).
- * Generates JavaScript modules for client-side hydration.
- *
- * @module server/handlers/request/module/page-module-handler
- */
 
 import type { HandlerContext, HandlerResult } from "../../types.ts";
 import { computeEtag, hasMatchingEtag } from "../../utils/etag.ts";
@@ -13,32 +5,6 @@ import { ResponseBuilder } from "@veryfront/security/index.ts";
 import { getRenderer } from "./renderer-manager.ts";
 import type { createRenderer } from "@veryfront/rendering/index.ts";
 
-/**
- * Handles page module generation requests.
- * Generates JavaScript modules from markdown pages for client hydration.
- *
- * @param req - Incoming HTTP request
- * @param pathname - Request pathname
- * @param ctx - Handler context with project configuration
- * @param rendererInit - Optional cached renderer promise
- * @param createResponseBuilder - Factory function to create response builder
- * @param respond - Function to wrap response in handler result
- * @param getErrorMessage - Error message extraction function
- * @returns Promise resolving to handler result
- *
- * @example
- * ```ts
- * const result = await handlePageModule(
- *   req,
- *   pathname,
- *   ctx,
- *   this.rendererInit,
- *   this.createResponseBuilder.bind(this),
- *   this.respond.bind(this),
- *   this.getErrorMessage.bind(this)
- * );
- * ```
- */
 export async function handlePageModule(
   req: Request,
   pathname: string,

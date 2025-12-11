@@ -2,13 +2,9 @@ import type { DiagnosticResult } from "./types.ts";
 import { getConfig } from "../../../core/config/loader.ts";
 import { createMockAdapter } from "../../../platform/adapters/mock.ts";
 
-/**
- * Check AI Configuration and API Keys
- */
 export async function checkAIConfig(projectDir: string): Promise<DiagnosticResult[]> {
   const results: DiagnosticResult[] = [];
 
-  // Load config (using mock adapter for filesystem access if needed)
   const adapter = createMockAdapter();
   let config;
 
@@ -36,7 +32,6 @@ export async function checkAIConfig(projectDir: string): Promise<DiagnosticResul
     message: "Enabled",
   });
 
-  // Check Providers
   const providers = config.ai.providers || {};
   const providerNames = Object.keys(providers);
 

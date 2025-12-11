@@ -1,21 +1,12 @@
-/**
- * Google Docs API Client
- *
- * Provides a type-safe interface to Google Docs API operations.
- */
 
 import { tokenStore as _tokenStore } from "./token-store.ts";
 import { getValidToken } from "./oauth.ts";
 
-// Helper for Cross-Platform environment access
 function getEnv(key: string): string | undefined {
-  // @ts-ignore - Deno global
   if (typeof Deno !== "undefined") {
-    // @ts-ignore - Deno global
     return Deno.env.get(key);
-  } // @ts-ignore - process global
+  }
   else if (typeof process !== "undefined" && process.env) {
-    // @ts-ignore - process global
     return process.env[key];
   }
   return undefined;
@@ -327,9 +318,6 @@ export interface WriteControl {
   targetRevisionId: string;
 }
 
-/**
- * Google Docs OAuth provider configuration
- */
 export const docsOAuthProvider = {
   name: "docs-google",
   authorizationUrl: "https://accounts.google.com/o/oauth2/v2/auth",
@@ -344,9 +332,6 @@ export const docsOAuthProvider = {
   callbackPath: "/api/auth/docs-google/callback",
 };
 
-/**
- * Create a Docs client for a specific user
- */
 export function createDocsClient(userId: string) {
   async function getAccessToken(): Promise<string> {
     const token = await getValidToken(docsOAuthProvider, userId, "docs-google");
@@ -403,9 +388,6 @@ export function createDocsClient(userId: string) {
   }
 
   return {
-    /**
-     * List documents from Google Drive
-     */
     async listDocuments(options: {
       maxResults?: number;
       orderBy?: "createdTime" | "modifiedTime" | "name";
@@ -424,16 +406,10 @@ export function createDocsClient(userId: string) {
       return result.files || [];
     },
 
-    /**
-     * Get document content and metadata
-     */
     getDocument(documentId: string): Promise<Document> {
       return docsApiRequest<Document>(`/documents/${documentId}`);
     },
 
-    /**
-     * Create a new document
-     */
     createDocument(options: CreateDocumentOptions): Promise<Document> {
       return docsApiRequest<Document>("/documents", {
         method: "POST",
@@ -443,9 +419,6 @@ export function createDocsClient(userId: string) {
       });
     },
 
-    /**
-     * Update document using batch requests
-     */
     async updateDocument(
       documentId: string,
       requests: Request[],
@@ -459,9 +432,6 @@ export function createDocsClient(userId: string) {
       );
     },
 
-    /**
-     * Insert text at a specific location
-     */
     async insertText(
       documentId: string,
       text: string,
@@ -477,9 +447,6 @@ export function createDocsClient(userId: string) {
       ]);
     },
 
-    /**
-     * Delete content in a range
-     */
     async deleteContent(
       documentId: string,
       startIndex: number,
@@ -494,9 +461,6 @@ export function createDocsClient(userId: string) {
       ]);
     },
 
-    /**
-     * Replace all occurrences of text
-     */
     async replaceAllText(
       documentId: string,
       searchText: string,
@@ -516,9 +480,6 @@ export function createDocsClient(userId: string) {
       ]);
     },
 
-    /**
-     * Search documents by query
-     */
     async searchDocuments(query: string, maxResults = 20): Promise<DocumentFile[]> {
       const params = new URLSearchParams({
         q: `mimeType='application/vnd.google-apps.document' and trashed=false and fullText contains '${query}'`,
@@ -534,9 +495,6 @@ export function createDocsClient(userId: string) {
       return result.files || [];
     },
 
-    /**
-     * Extract plain text from document body
-     */
     extractText(document: Document): string {
       const textParts: string[] = [];
 
@@ -560,20 +518,14 @@ export function createDocsClient(userId: string) {
       return textParts.join("");
     },
 
-    /**
-     * Create a document with initial content
-     */
     async createDocumentWithContent(
       title: string,
       content: string,
     ): Promise<Document> {
-      // Create the document
       const doc = await this.createDocument({ title });
 
-      // Insert content at index 1 (after the title)
       await this.insertText(doc.documentId, content, 1);
 
-      // Fetch and return the updated document
       return this.getDocument(doc.documentId);
     },
   };

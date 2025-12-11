@@ -10,6 +10,7 @@ import type { SSROrchestrator } from "./ssr-orchestrator.ts";
 import type { RenderOptions, RenderResult } from "./types.ts";
 import { DataFetcher } from "@veryfront/data/index.ts";
 import type { DataContext } from "@veryfront/data/types.ts";
+import { SSRModuleLoader } from "@veryfront/modules/react-loader/ssr-module-loader.ts";
 
 export interface RenderPipelineConfig {
   pageResolver: PageResolver;
@@ -25,52 +26,26 @@ export interface RenderPipelineConfig {
 export class RenderPipeline {
   private config: RenderPipelineConfig;
   private dataFetcher: DataFetcher;
+  private ssrModuleLoader: SSRModuleLoader;
 
   constructor(config: RenderPipelineConfig) {
     this.config = config;
     this.dataFetcher = new DataFetcher(config.adapter);
-  }
-
-  private async generateHash(str: string): Promise<string> {
-    const encoder = new TextEncoder();
-    const data = encoder.encode(str);
-    const hashBuffer = await crypto.subtle.digest("SHA-256", data);
-    const hashArray = Array.from(new Uint8Array(hashBuffer));
-    return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("").slice(0, 16);
+    this.ssrModuleLoader = new SSRModuleLoader({
+      projectDir: config.projectDir,
+      projectId: config.projectDir,
+      adapter: config.adapter,
+      dev: config.mode === "development",
+    });
   }
 
   private async loadModule(filePath: string): Promise<any> {
-    const fileContent = await this.config.adapter.fs.readFile(filePath);
-    const { transformToESM } = await import("@veryfront/transforms/esm-transform.ts");
-    const { getGlobalTmpDir } = await import(
-      "@veryfront/modules/react-loader/index.ts"
-    );
-
-    const transformedCode = await transformToESM(
-      fileContent,
-      filePath,
-      this.config.projectDir,
-      this.config.adapter,
-      {
-        projectId: this.config.projectDir,
-        dev: this.config.mode === "development",
-        ssr: true, // Required for Node.js SSR - prevents esm.sh URL transformation
-      },
-    );
-
-    const tmpDir = await getGlobalTmpDir();
-    const hash = await this.generateHash(filePath);
-    const tempFilePath = `${tmpDir}/mod-${hash}.js`;
-    await this.config.adapter.fs.writeFile(tempFilePath, transformedCode);
-
-    const moduleUrl = `file://${tempFilePath}?t=${Date.now()}`;
-    return await import(moduleUrl);
+    return this.ssrModuleLoader.loadFullModule(filePath);
   }
 
   async renderPage(slug: string, options?: RenderOptions): Promise<RenderResult> {
     const pageInfo = await this.config.pageResolver.resolvePage(slug);
 
-    // 1. Collect layouts first to enable parallel data fetching
     const layoutResult = await this.config.layoutOrchestrator.collectLayouts(pageInfo);
     const providerResult = await this.config.layoutOrchestrator.collectProviders();
 
@@ -84,7 +59,7 @@ export class RenderPipeline {
     if (options?.request && options?.url) {
       try {
         if (!options.params || Object.keys(options.params).length === 0) {
-          logger.info("[renderPage] Attempting to extract route params", {
+          logger.info("[renderPage] Attempting to extract Pages Router params", {
             slug,
             pageId: pageInfo.entity.id,
           });
@@ -92,20 +67,11 @@ export class RenderPipeline {
           try {
             const params: Record<string, string | string[]> = {};
             const pagesIndex = pageInfo.entity.id.indexOf("/pages/");
-            const appIndex = pageInfo.entity.id.indexOf("/app/");
-
-            // Determine the base path for param extraction
-            let relativePath: string | null = null;
             if (pagesIndex !== -1) {
-              relativePath = pageInfo.entity.id.substring(pagesIndex + 7); // Skip "/pages/"
-            } else if (appIndex !== -1) {
-              relativePath = pageInfo.entity.id.substring(appIndex + 5); // Skip "/app/"
-            }
-
-            if (relativePath) {
+              const relativePath = pageInfo.entity.id.substring(pagesIndex + 7);
               const pathSegments = relativePath.split("/").map((s) =>
                 s.replace(/\.(tsx|jsx|ts|js|mdx)$/, "")
-              ).filter((s) => s !== "page" && s !== "route"); // Exclude App Router file names
+              );
               const slugSegments = slug.split("/").filter(Boolean);
 
               for (let i = 0; i < pathSegments.length && i < slugSegments.length; i++) {
@@ -136,13 +102,13 @@ export class RenderPipeline {
 
             if (Object.keys(params).length > 0) {
               options.params = params;
-              logger.info("[renderPage] Extracted route params", {
+              logger.info("[renderPage] Extracted Pages Router params", {
                 slug,
                 params,
               });
             }
           } catch (paramError) {
-            logger.error("[renderPage] Failed to extract route params", {
+            logger.error("[renderPage] Failed to extract Pages Router params", {
               slug,
               error: paramError instanceof Error ? paramError.message : String(paramError),
               stack: paramError instanceof Error ? paramError.stack : undefined,
@@ -150,7 +116,6 @@ export class RenderPipeline {
           }
         }
 
-        // Parallel Data Fetching
         const jobs: Array<{ type: "page" | "layout"; id: string; run: () => Promise<any> }> = [];
 
         const dataContext: DataContext = {
@@ -160,7 +125,6 @@ export class RenderPipeline {
           url: options.url,
         };
 
-        // Page Job
         if (isComponentPage && isInPagesDir) {
           jobs.push({
             type: "page",
@@ -175,7 +139,6 @@ export class RenderPipeline {
           });
         }
 
-        // Layout Jobs
         for (const layout of layoutResult.nestedLayouts) {
           if (layout.kind === "tsx" && layout.componentPath) {
             jobs.push({
@@ -332,6 +295,7 @@ export class RenderPipeline {
       hasHtml: !!result.html,
       hasStream: !!result.stream,
       htmlLength: result.html?.length || 0,
+      htmlPreview: result.html?.substring(0, 500) || "empty",
     });
 
     return result;

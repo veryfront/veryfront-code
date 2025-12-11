@@ -1,6 +1,3 @@
-/**
- * List Zendesk Tickets Tool
- */
 
 import { z } from "zod";
 import { defineTool } from "veryfront/ai";

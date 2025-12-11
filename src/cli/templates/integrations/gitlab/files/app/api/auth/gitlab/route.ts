@@ -1,6 +1,3 @@
-/**
- * GitLab OAuth Initiation
- */
 
 import { createOAuthInitHandler, gitlabConfig, memoryTokenStore } from "veryfront/oauth";
 

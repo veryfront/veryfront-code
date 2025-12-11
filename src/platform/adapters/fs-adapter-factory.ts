@@ -4,9 +4,6 @@ import { createError, toError } from "../../core/errors/veryfront-error.ts";
 export async function createFSAdapter(config: FSAdapterConfig): Promise<FSAdapter> {
   const type = config.type || "local";
 
-  // Local filesystem uses the native runtime adapter directly.
-  // This factory should not be called for "local" type - the caller
-  // should use RuntimeAdapter.fs directly instead (see fs-integration.ts).
   if (type === "local") {
     throw toError(
       createError({

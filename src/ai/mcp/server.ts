@@ -1,9 +1,3 @@
-/**
- * MCP Server Implementation
- *
- * Implements the Model Context Protocol (MCP) specification
- * Exposes tools, resources, and prompts via JSON-RPC 2.0
- */
 
 import { getMCPRegistry } from "./registry.ts";
 import { executeTool, zodToJsonSchema } from "../utils/tool.ts";
@@ -12,14 +6,8 @@ import { promptRegistry } from "./prompt.ts";
 import type { MCPServerConfig } from "../types/mcp.ts";
 import { createError, toError } from "../../core/errors/veryfront-error.ts";
 
-/**
- * JSON-RPC 2.0 Params type
- */
 type JSONRPCParams = Record<string, unknown> | unknown[];
 
-/**
- * JSON-RPC 2.0 Request
- */
 interface JSONRPCRequest {
   jsonrpc: "2.0";
   id?: string | number;
@@ -27,9 +15,6 @@ interface JSONRPCRequest {
   params?: JSONRPCParams;
 }
 
-/**
- * JSON-RPC 2.0 Response
- */
 interface JSONRPCResponse {
   jsonrpc: "2.0";
   id?: string | number;
@@ -41,9 +26,6 @@ interface JSONRPCResponse {
   };
 }
 
-/**
- * MCP Server
- */
 export class MCPServer {
   private config: MCPServerConfig;
 
@@ -51,9 +33,6 @@ export class MCPServer {
     this.config = config;
   }
 
-  /**
-   * Handle JSON-RPC request
-   */
   async handleRequest(request: JSONRPCRequest): Promise<JSONRPCResponse> {
     try {
       const result = await this.dispatch(request.method, request.params);
@@ -75,33 +54,26 @@ export class MCPServer {
     }
   }
 
-  /**
-   * Dispatch request to appropriate handler
-   */
   private dispatch(method: string, params: JSONRPCParams | undefined): Promise<unknown> {
     switch (method) {
-      // Tool methods
       case "tools/list":
         return this.listTools();
 
       case "tools/call":
         return this.callTool(params);
 
-      // Resource methods
       case "resources/list":
         return this.listResources();
 
       case "resources/read":
         return this.readResource(params);
 
-      // Prompt methods
       case "prompts/list":
         return this.listPrompts();
 
       case "prompts/get":
         return this.getPrompt(params);
 
-      // Server info
       case "initialize":
         return this.initialize(params);
 
@@ -113,9 +85,6 @@ export class MCPServer {
     }
   }
 
-  /**
-   * Initialize connection
-   */
   private initialize(_params: JSONRPCParams | undefined): Promise<Record<string, unknown>> {
     return Promise.resolve({
       protocolVersion: "2024-11-05",
@@ -131,17 +100,12 @@ export class MCPServer {
     });
   }
 
-  /**
-   * List all available tools
-   */
   private listTools(): Promise<{ tools: Array<Record<string, unknown>> }> {
     const registry = getMCPRegistry();
     const tools: Array<Record<string, unknown>> = [];
 
     for (const [id, tool] of registry.tools.entries()) {
-      // Only expose tools with MCP enabled
       if (tool.mcp?.enabled !== false) {
-        // Use pre-converted schema or convert at runtime
         const inputSchema = tool.inputSchemaJson || zodToJsonSchema(tool.inputSchema);
 
         tools.push({
@@ -155,9 +119,6 @@ export class MCPServer {
     return Promise.resolve({ tools });
   }
 
-  /**
-   * Call a tool
-   */
   private async callTool(params: JSONRPCParams | undefined): Promise<Record<string, unknown>> {
     const paramsObj = params as Record<string, unknown> | undefined;
     const { name, arguments: args } = paramsObj || {};
@@ -181,9 +142,6 @@ export class MCPServer {
     };
   }
 
-  /**
-   * List all available resources
-   */
   private listResources(): Promise<{ resources: Array<Record<string, unknown>> }> {
     const registry = getMCPRegistry();
     const resources: Array<Record<string, unknown>> = [];
@@ -200,9 +158,6 @@ export class MCPServer {
     return Promise.resolve({ resources });
   }
 
-  /**
-   * Read a resource
-   */
   private async readResource(params: JSONRPCParams | undefined): Promise<Record<string, unknown>> {
     const paramsObj = params as Record<string, unknown> | undefined;
     const { uri } = paramsObj || {};
@@ -223,10 +178,8 @@ export class MCPServer {
       }));
     }
 
-    // Extract params from URI
     const resourceParams = resourceRegistry.extractParams(uri as string, resource.pattern);
 
-    // Load resource data
     const data = await resource.load(resourceParams);
 
     return {
@@ -240,9 +193,6 @@ export class MCPServer {
     };
   }
 
-  /**
-   * List all available prompts
-   */
   private listPrompts(): Promise<{ prompts: Array<Record<string, unknown>> }> {
     const registry = getMCPRegistry();
     const prompts: Array<Record<string, unknown>> = [];
@@ -257,9 +207,6 @@ export class MCPServer {
     return Promise.resolve({ prompts });
   }
 
-  /**
-   * Get a prompt
-   */
   private async getPrompt(params: JSONRPCParams | undefined): Promise<Record<string, unknown>> {
     const paramsObj = params as Record<string, unknown> | undefined;
     const { name, arguments: args } = paramsObj || {};
@@ -290,17 +237,12 @@ export class MCPServer {
     };
   }
 
-  /**
-   * Create HTTP handler for MCP server
-   */
   createHTTPHandler(): (request: Request) => Promise<Response> {
     return async (request: Request) => {
-      // Handle CORS
       if (request.method === "OPTIONS") {
         return this.handleCORS();
       }
 
-      // Validate auth
       if (this.config.auth && this.config.auth.type !== "none") {
         const authorized = await this.validateAuth(request);
         if (!authorized) {
@@ -308,7 +250,6 @@ export class MCPServer {
         }
       }
 
-      // Parse JSON-RPC request
       try {
         const rpcRequest: JSONRPCRequest = await request.json();
         const rpcResponse = await this.handleRequest(rpcRequest);
@@ -339,9 +280,6 @@ export class MCPServer {
     };
   }
 
-  /**
-   * Validate authentication
-   */
   private async validateAuth(request: Request): Promise<boolean> {
     if (!this.config.auth || this.config.auth.type === "none") {
       return true;
@@ -366,9 +304,6 @@ export class MCPServer {
     return false;
   }
 
-  /**
-   * Handle CORS preflight
-   */
   private handleCORS(): Response {
     return new Response(null, {
       status: 204,
@@ -376,9 +311,6 @@ export class MCPServer {
     });
   }
 
-  /**
-   * Get CORS headers
-   */
   private getCORSHeaders(): Record<string, string> {
     if (!this.config.cors?.enabled) {
       return {};
@@ -394,9 +326,6 @@ export class MCPServer {
   }
 }
 
-/**
- * Create an MCP server instance
- */
 export function createMCPServer(config: MCPServerConfig): MCPServer {
   return new MCPServer(config);
 }

@@ -9,7 +9,7 @@ export interface LoadComponentOptions {
 
   vendorBundleHash?: string;
 
-  ssr?: boolean; // If true, don't rewrite imports for module server (for server-side execution)
+  ssr?: boolean;
 }
 
 export interface ComponentSource {

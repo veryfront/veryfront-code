@@ -1,10 +1,4 @@
-/**
- * Cross-platform shim for Deno std/front_matter module
- * Uses gray-matter as the underlying implementation for npm builds
- *
- * NOTE: This file is ONLY used in the npm bundle build process.
- * During Deno execution, the actual std/front_matter module is used.
- */
+// NOTE: This file is ONLY used in the npm bundle build process.
 
 export interface FrontMatterResult<T = Record<string, unknown>> {
   attrs: T;
@@ -14,14 +8,11 @@ export interface FrontMatterResult<T = Record<string, unknown>> {
 
 import { createRequire } from "node:module";
 
-// Lazy-loaded gray-matter module (kept as any to avoid Deno type issues)
 let grayMatter: typeof import("gray-matter") | null = null;
 const require = createRequire(import.meta.url);
 
 async function getGrayMatter(): Promise<typeof import("gray-matter")> {
   if (!grayMatter) {
-    // Dynamic import to avoid Deno type checking issues
-    // This module is only used in npm builds where gray-matter is available
     grayMatter = await import("gray-matter");
   }
   return grayMatter;
@@ -45,14 +36,9 @@ function getGrayMatterSync(): typeof import("gray-matter")["default"] | null {
   }
 }
 
-/**
- * Extract front matter from content
- * Compatible with Deno std/front_matter/yaml.ts extract function
- */
 export function extract<T = Record<string, unknown>>(
   content: string,
 ): FrontMatterResult<T> {
-  // Prefer real gray-matter parsing to avoid regex-based YAML guesses
   const gm = getGrayMatterSync();
   if (gm) {
     const result = gm(content);
@@ -63,7 +49,6 @@ export function extract<T = Record<string, unknown>>(
     };
   }
 
-  // Fallback: behave like Deno std extract when gray-matter is unavailable
   const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/);
 
   if (!match) {
@@ -74,16 +59,10 @@ export function extract<T = Record<string, unknown>>(
   return { attrs: {} as T, body: body || "", frontMatter: frontMatterStr || "" };
 }
 
-/**
- * Test if content has front matter
- */
 export function test(content: string): boolean {
   return /^---\r?\n/.test(content);
 }
 
-/**
- * Async extract using gray-matter (for npm builds with complex YAML)
- */
 export async function extractAsync<T = Record<string, unknown>>(
   content: string,
 ): Promise<FrontMatterResult<T>> {

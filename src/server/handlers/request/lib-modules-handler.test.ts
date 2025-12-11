@@ -1,14 +1,8 @@
-/**
- * LibModulesHandler Tests
- *
- * Tests the allowed modules whitelist and module path resolution logic.
- */
 
 import { assertEquals, assertExists } from "std/assert/mod.ts";
 import { describe, it } from "std/testing/bdd.ts";
 import { LibModulesHandler } from "./lib-modules-handler.ts";
 
-/** Helper to get pattern as RegExp (throws if not RegExp) */
 function getRegExpPattern(handler: LibModulesHandler, index: number): RegExp {
   const patterns = handler.metadata.patterns;
   if (!patterns || patterns.length === 0) {
@@ -21,7 +15,6 @@ function getRegExpPattern(handler: LibModulesHandler, index: number): RegExp {
   return pattern;
 }
 
-/** Helper to find pattern by method */
 function findPatternByMethod(handler: LibModulesHandler, method: string): RegExp {
   const patterns = handler.metadata.patterns;
   if (!patterns) {
@@ -107,7 +100,6 @@ describe("LibModulesHandler", () => {
       const handler = new LibModulesHandler();
       const pattern = getRegExpPattern(handler, 0);
 
-      // The pattern matches the prefix /_veryfront/lib/
       assertEquals(pattern.test("/_veryfront/lib/"), true);
       assertEquals(pattern.test("/_veryfront/lib/anything"), true);
     });

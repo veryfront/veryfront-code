@@ -1,31 +1,16 @@
-/**
- * Agent Runtime - Core execution engine
- *
- * Handles agent execution with:
- * - Multi-step reasoning (agent loop)
- * - Tool calling and execution
- * - Streaming responses
- * - Memory management
- * - Middleware execution
- */
-
-import {
-  type AgentConfig,
-  type AgentContext,
-  type AgentResponse,
-  type AgentStatus,
-  getTextFromParts,
-  getToolArguments,
-  type Message,
-  type MessagePart,
-  type ToolCall,
-  type ToolCallPart,
-  type ToolResultPart,
+import type {
+  AgentConfig,
+  AgentContext,
+  AgentResponse,
+  AgentStatus,
+  Message,
+  StreamToolCall,
+  ToolCall,
 } from "../types/agent.ts";
 import type { ToolDefinition } from "../types/tool.ts";
 import type { Provider } from "../types/provider.ts";
 import { getProviderFromModel } from "../providers/factory.ts";
-import { executeTool, generateId, toolRegistry, toolToProviderDefinition } from "../utils/index.ts";
+import { executeTool, toolRegistry, toolToProviderDefinition } from "../utils/tool.ts";
 import { detectPlatform, getPlatformCapabilities } from "../runtime/platform.ts";
 import { createMemory, type Memory } from "./memory.ts";
 import { serverLogger as logger } from "@veryfront/utils";
@@ -76,65 +61,6 @@ type AgentStreamEvent = z.infer<typeof AgentStreamEventSchema>;
 const DEFAULT_MAX_TOKENS = 4096;
 const DEFAULT_TEMPERATURE = 0.7;
 
-/**
- * Provider message format
- */
-interface ProviderMessage {
-  role: string;
-  content: string;
-  tool_calls?: Array<{
-    id: string;
-    type: string;
-    function: { name: string; arguments: string };
-  }>;
-  tool_call_id?: string;
-}
-
-/**
- * Convert v5 Message to provider format.
- * Empty parts array results in empty content string, which is valid for
- * providers (e.g., assistant message with only tool calls, no text).
- */
-function convertMessageToProvider(msg: Message): ProviderMessage {
-  const content = getTextFromParts(msg.parts);
-
-  const providerMsg: ProviderMessage = {
-    role: msg.role,
-    content,
-  };
-
-  // Extract tool calls from parts
-  // AI SDK v5 uses tool-${toolName} pattern (e.g., "tool-weather")
-  // Also support legacy "tool-call" for backwards compatibility
-  // Exclude "tool-result" which also starts with "tool-"
-  const toolCallParts = msg.parts.filter(
-    (p): p is ToolCallPart | (MessagePart & { type: "tool-call" }) =>
-      p.type === "tool-call" || (p.type.startsWith("tool-") && p.type !== "tool-result"),
-  );
-  if (toolCallParts.length > 0) {
-    providerMsg.tool_calls = toolCallParts.map((tc) => ({
-      id: tc.toolCallId,
-      type: "function",
-      function: {
-        name: tc.toolName,
-        // Use type-safe helper to extract args/input (throws if missing)
-        arguments: JSON.stringify(getToolArguments(tc as ToolCallPart)),
-      },
-    }));
-  }
-
-  // Extract tool result info from parts
-  const toolResultPart = msg.parts.find(
-    (p): p is ToolResultPart => p.type === "tool-result",
-  );
-  if (toolResultPart && msg.role === "tool") {
-    providerMsg.tool_call_id = toolResultPart.toolCallId;
-    providerMsg.content = JSON.stringify(toolResultPart.result);
-  }
-
-  return providerMsg;
-}
-
 export class AgentRuntime {
   private id: string;
   private config: AgentConfig;
@@ -149,9 +75,6 @@ export class AgentRuntime {
     this.memory = createMemory(memoryConfig);
   }
 
-  /**
-   * Generate a response (non-streaming)
-   */
   async generate(
     input: string | Message[],
     context?: Record<string, unknown>,
@@ -200,10 +123,6 @@ export class AgentRuntime {
     });
   }
 
-  /**
-   * Stream a response
-   * Returns a ReadableStream compatible with Vercel AI SDK Data Stream Protocol
-   */
   async stream(
     messages: Message[],
     context?: Record<string, unknown>,
@@ -221,36 +140,25 @@ export class AgentRuntime {
     const { provider, model } = getProviderFromModel(this.config.model);
 
     const encoder = new TextEncoder();
+    const messageId = `msg_${Date.now()}`;
 
-    // Build tool execution context - merge user context with agent context
     const toolContext = {
       agentId: this.id,
       ...context,
     };
-
-    // Generate a unique text part ID for UI message stream
-    const textPartId = generateId("text");
 
     return new ReadableStream({
       start: async (controller) => {
         try {
           this.status = "streaming";
 
-          // Send start event (UI Message Stream Protocol v5)
-          const messageId = `msg-${Date.now().toString(36)}-${
-            Math.random().toString(36).slice(2, 8)
-          }`;
-          const startEvent = JSON.stringify({ type: "start", messageId });
+          const startEvent = JSON.stringify({
+            type: "start",
+            messageId,
+          });
           controller.enqueue(encoder.encode(`data: ${startEvent}\n\n`));
 
-          // Send text-start event with ID
-          const textStartEvent = JSON.stringify({
-            type: "text-start",
-            id: textPartId,
-          });
-          controller.enqueue(encoder.encode(`data: ${textStartEvent}\n\n`));
-
-          await this.executeAgentLoopStreaming(
+          const response = await this.executeAgentLoopStreaming(
             provider,
             model,
             systemPrompt,
@@ -258,20 +166,17 @@ export class AgentRuntime {
             controller,
             encoder,
             callbacks,
-            textPartId,
+            messageId,
             toolContext,
           );
 
-          // Send text-end event (UI Message Stream Protocol v5)
-          const textEndEvent = JSON.stringify({
-            type: "text-end",
-            id: textPartId,
+          const finishEvent = JSON.stringify({
+            type: "finish",
+            usage: response.usage,
           });
-          controller.enqueue(encoder.encode(`data: ${textEndEvent}\n\n`));
-
-          // Send finish event (UI Message Stream Protocol v5)
-          const finishEvent = JSON.stringify({ type: "finish" });
           controller.enqueue(encoder.encode(`data: ${finishEvent}\n\n`));
+
+          controller.enqueue(encoder.encode("data: [DONE]\n\n"));
 
           controller.close();
         } catch (error) {
@@ -289,9 +194,6 @@ export class AgentRuntime {
     });
   }
 
-  /**
-   * Execute agent loop (with tool calling)
-   */
   private async executeAgentLoop(
     provider: Provider,
     model: string,
@@ -324,7 +226,41 @@ export class AgentRuntime {
           return await provider.complete({
             model,
             system: systemPrompt,
-            messages: currentMessages.map((m) => convertMessageToProvider(m)),
+            messages: currentMessages.map((m) => {
+              const msg: {
+                role: string;
+                content: string;
+                tool_calls?: Array<{
+                  id: string;
+                  type?: string;
+                  function: {
+                    name: string;
+                    arguments: string;
+                  };
+                }>;
+                tool_call_id?: string;
+              } = {
+                role: m.role,
+                content: m.content,
+              };
+
+              if (m.role === "assistant" && m.toolCalls) {
+                msg.tool_calls = m.toolCalls.map((tc) => ({
+                  id: tc.id,
+                  type: "function",
+                  function: {
+                    name: tc.name,
+                    arguments: JSON.stringify(tc.arguments),
+                  },
+                }));
+              }
+
+              if (m.role === "tool" && m.toolCallId) {
+                msg.tool_call_id = m.toolCallId;
+              }
+
+              return msg;
+            }),
             tools: tools.length > 0 ? tools : undefined,
             maxTokens: this.config.memory?.maxTokens || DEFAULT_MAX_TOKENS,
             temperature: DEFAULT_TEMPERATURE,
@@ -335,27 +271,11 @@ export class AgentRuntime {
         totalUsage.completionTokens += response.usage.completionTokens;
         totalUsage.totalTokens += response.usage.totalTokens;
 
-        // Build parts array for v5 Message
-        const assistantParts: MessagePart[] = [];
-        if (response.text) {
-          assistantParts.push({ type: "text", text: response.text });
-        }
-        if (response.toolCalls) {
-          for (const tc of response.toolCalls) {
-            // Use AI SDK v5 tool-${toolName} pattern
-            assistantParts.push({
-              type: `tool-${tc.name}`,
-              toolCallId: tc.id,
-              toolName: tc.name,
-              args: tc.arguments,
-            });
-          }
-        }
-
         const assistantMessage: Message = {
           id: `msg_${Date.now()}_${step}`,
           role: "assistant",
-          parts: assistantParts,
+          content: response.text,
+          toolCalls: response.toolCalls,
           timestamp: Date.now(),
         };
         currentMessages.push(assistantMessage);
@@ -396,12 +316,9 @@ export class AgentRuntime {
                 const toolResultMessage: Message = {
                   id: `tool_${tc.id}`,
                   role: "tool",
-                  parts: [{
-                    type: "tool-result",
-                    toolCallId: tc.id,
-                    toolName: tc.name,
-                    result,
-                  }],
+                  content: JSON.stringify(result),
+                  toolCallId: tc.id,
+                  toolCall,
                   timestamp: Date.now(),
                 };
                 currentMessages.push(toolResultMessage);
@@ -414,12 +331,9 @@ export class AgentRuntime {
                 const errorMessage: Message = {
                   id: `tool_error_${tc.id}`,
                   role: "tool",
-                  parts: [{
-                    type: "tool-result",
-                    toolCallId: tc.id,
-                    toolName: tc.name,
-                    result: { error: toolCall.error },
-                  }],
+                  content: `Error: ${toolCall.error}`,
+                  toolCallId: tc.id,
+                  toolCall,
                   timestamp: Date.now(),
                 };
                 currentMessages.push(errorMessage);
@@ -448,9 +362,8 @@ export class AgentRuntime {
       this.status = "completed";
       addSpanEvent(loopSpan, "max_steps_reached", { maxSteps });
 
-      const lastMsg = currentMessages[currentMessages.length - 1];
       return {
-        text: lastMsg ? getTextFromParts(lastMsg.parts) : "",
+        text: currentMessages[currentMessages.length - 1]?.content || "",
         messages: currentMessages,
         toolCalls,
         status: this.status,
@@ -462,10 +375,6 @@ export class AgentRuntime {
     });
   }
 
-  /**
-   * Execute agent loop with streaming
-   * Uses Vercel AI SDK UI Message Stream Protocol v5 format
-   */
   private async executeAgentLoopStreaming(
     provider: Provider,
     model: string,
@@ -477,7 +386,7 @@ export class AgentRuntime {
       onToolCall?: (toolCall: ToolCall) => void;
       onChunk?: (chunk: string) => void;
     },
-    textPartId?: string,
+    _messageId?: string,
     toolContext?: Record<string, unknown>,
   ): Promise<AgentResponse> {
     const capabilities = getPlatformCapabilities();
@@ -492,16 +401,24 @@ export class AgentRuntime {
     };
 
     for (let step = 0; step < maxSteps; step++) {
-      // Send start-step event (Veryfront extension, not part of standard AI SDK v5 protocol)
-      const startStepEvent = JSON.stringify({ type: "start-step" });
-      controller.enqueue(encoder.encode(`data: ${startStepEvent}\n\n`));
-
       const tools = this.getAvailableTools();
 
       const stream = await provider.stream({
         model,
         system: systemPrompt,
-        messages: currentMessages.map((m) => convertMessageToProvider(m)),
+        messages: currentMessages.map((m) => ({
+          role: m.role,
+          content: m.content,
+          tool_calls: m.toolCalls?.map((tc) => ({
+            id: tc.id,
+            type: "function",
+            function: {
+              name: tc.name,
+              arguments: JSON.stringify(tc.arguments),
+            },
+          })),
+          tool_call_id: m.toolCallId,
+        })),
         tools: tools.length > 0 ? tools : undefined,
         maxTokens: this.config.memory?.maxTokens || DEFAULT_MAX_TOKENS,
         temperature: DEFAULT_TEMPERATURE,
@@ -540,44 +457,32 @@ export class AgentRuntime {
         toolCall.error = errorStr;
         toolCalls.push(toolCall);
 
-        // Send tool-output-error event (AI SDK v5 UI Message Stream Protocol)
-        // Check if this is a dynamic tool
-        const errorTool = toolRegistry.get(toolCall.name);
-        const errorIsDynamic = errorTool?.type === "dynamic";
         const errorData = JSON.stringify({
-          type: "tool-output-error",
-          toolCallId: toolCall.id,
-          errorText: errorStr,
-          ...(errorIsDynamic && { dynamic: true }),
+          type: "error",
+          error: errorStr,
         });
         controller.enqueue(encoder.encode(`data: ${errorData}\n\n`));
 
         const errorMessage: Message = {
           id: `tool_error_${toolCall.id}`,
           role: "tool",
-          parts: [{
-            type: "tool-result",
-            toolCallId: toolCall.id,
-            toolName: toolCall.name,
-            result: { error: errorStr },
-          }],
+          content: `Error: ${errorStr}`,
+          toolCallId: toolCall.id,
+          toolCall,
           timestamp: Date.now(),
         };
         currentMessages.push(errorMessage);
         await this.memory.add(errorMessage);
       };
 
-      // Vercel AI SDK Data Stream Protocol event handler
       const handleEvent = (event: AgentStreamEvent) => {
         switch (event.type) {
           case "content": {
             accumulatedText += event.content;
 
-            // Use Vercel AI SDK UI Message Stream Protocol v5 format
             const textDeltaEvent = JSON.stringify({
               type: "text-delta",
-              id: textPartId,
-              delta: event.content,
+              textDelta: event.content,
             });
             controller.enqueue(encoder.encode(`data: ${textDeltaEvent}\n\n`));
 
@@ -595,15 +500,10 @@ export class AgentRuntime {
                 arguments: "",
               });
 
-              // Send tool-input-start event (AI SDK v5 UI Message Stream Protocol)
-              // Check if this is a dynamic tool
-              const startTool = toolRegistry.get(event.toolCall.name);
-              const startIsDynamic = startTool?.type === "dynamic";
               const toolStartEvent = JSON.stringify({
-                type: "tool-input-start",
+                type: "tool-call-streaming-start",
                 toolCallId: event.toolCall.id,
                 toolName: event.toolCall.name,
-                ...(startIsDynamic && { dynamic: true }),
               });
               controller.enqueue(encoder.encode(`data: ${toolStartEvent}\n\n`));
             }
@@ -614,11 +514,10 @@ export class AgentRuntime {
               const tc = streamToolCalls.get(event.id)!;
               tc.arguments += event.arguments;
 
-              // Send tool-input-delta event (AI SDK v5 UI Message Stream Protocol)
               const toolDeltaEvent = JSON.stringify({
-                type: "tool-input-delta",
+                type: "tool-call-delta",
                 toolCallId: event.id,
-                inputTextDelta: event.arguments,
+                argsTextDelta: event.arguments,
               });
               controller.enqueue(encoder.encode(`data: ${toolDeltaEvent}\n\n`));
             }
@@ -632,17 +531,12 @@ export class AgentRuntime {
                 arguments: event.toolCall.arguments,
               });
 
-              // Send tool-input-available event (AI SDK v5 UI Message Stream Protocol)
-              // Check if this is a dynamic tool
-              const completeTool = toolRegistry.get(event.toolCall.name);
-              const completeIsDynamic = completeTool?.type === "dynamic";
               const { args } = parseStreamToolArgs(event.toolCall.arguments);
               const toolCallEvent = JSON.stringify({
-                type: "tool-input-available",
+                type: "tool-call",
                 toolCallId: event.toolCall.id,
                 toolName: event.toolCall.name,
-                input: args,
-                ...(completeIsDynamic && { dynamic: true }),
+                args,
               });
               controller.enqueue(encoder.encode(`data: ${toolCallEvent}\n\n`));
             }
@@ -699,40 +593,34 @@ export class AgentRuntime {
             handleEvent(parseResult.data);
           }
         } catch {
-          // Ignore trailing partial
-        }
-      }
-
-      // Build v5 parts array
-      const streamParts: MessagePart[] = [];
-      if (accumulatedText) {
-        streamParts.push({ type: "text", text: accumulatedText });
-      }
-      if (streamToolCalls.size > 0) {
-        for (const tc of streamToolCalls.values()) {
-          const { args, error } = parseStreamToolArgs(tc.arguments);
-          if (error) {
-            logger.warn("[AGENT] Failed to parse streamed tool arguments", {
-              toolCallId: tc.id,
-              error,
-            });
-          }
-          // Use AI SDK v5 tool-${toolName} pattern
-          streamParts.push({
-            type: `tool-${tc.name}`,
-            toolCallId: tc.id,
-            toolName: tc.name,
-            args,
-          });
         }
       }
 
       const assistantMessage: Message = {
         id: `msg_${Date.now()}_${step}`,
         role: "assistant",
-        parts: streamParts,
+        content: accumulatedText,
         timestamp: Date.now(),
       };
+
+      if (streamToolCalls.size > 0) {
+        assistantMessage.toolCalls = Array.from(streamToolCalls.values()).map(
+          (tc): StreamToolCall => {
+            const { args, error } = parseStreamToolArgs(tc.arguments);
+            if (error) {
+              logger.warn("[AGENT] Failed to parse streamed tool arguments", {
+                toolCallId: tc.id,
+                error,
+              });
+            }
+            return {
+              id: tc.id,
+              name: tc.name,
+              arguments: args,
+            };
+          },
+        );
+      }
 
       currentMessages.push(assistantMessage);
       await this.memory.add(assistantMessage);
@@ -754,17 +642,6 @@ export class AgentRuntime {
               toolCallId: tc.id,
               error: argError,
             });
-            // Send tool-input-error event (AI SDK v5 UI Message Stream Protocol)
-            // Check if this is a dynamic tool
-            const inputErrorTool = toolRegistry.get(tc.name);
-            const inputErrorIsDynamic = inputErrorTool?.type === "dynamic";
-            const inputErrorEvent = JSON.stringify({
-              type: "tool-input-error",
-              toolCallId: tc.id,
-              errorText: `Invalid tool arguments: ${argError}`,
-              ...(inputErrorIsDynamic && { dynamic: true }),
-            });
-            controller.enqueue(encoder.encode(`data: ${inputErrorEvent}\n\n`));
             await recordToolError(toolCall, `Invalid tool arguments: ${argError}`);
             continue;
           }
@@ -777,8 +654,13 @@ export class AgentRuntime {
               callbacks.onToolCall(toolCall);
             }
 
-            // Note: tool-input-available was already sent during streaming
-            // Proceed directly to tool execution
+            const toolCallEvent = JSON.stringify({
+              type: "tool-call",
+              toolCallId: toolCall.id,
+              toolName: toolCall.name,
+              args: toolCall.args,
+            });
+            controller.enqueue(encoder.encode(`data: ${toolCallEvent}\n\n`));
 
             const result = await executeTool(tc.name, toolCall.args, {
               agentId: this.id,
@@ -790,27 +672,19 @@ export class AgentRuntime {
             toolCall.executionTime = Date.now() - startTime;
             toolCalls.push(toolCall);
 
-            // Send tool-output-available event (AI SDK v5 UI Message Stream Protocol)
-            // Check if this is a dynamic tool
-            const outputTool = toolRegistry.get(tc.name);
-            const outputIsDynamic = outputTool?.type === "dynamic";
             const toolResultEvent = JSON.stringify({
-              type: "tool-output-available",
+              type: "tool-result",
               toolCallId: toolCall.id,
-              output: result,
-              ...(outputIsDynamic && { dynamic: true }),
+              result,
             });
             controller.enqueue(encoder.encode(`data: ${toolResultEvent}\n\n`));
 
             const toolResultMessage: Message = {
               id: `tool_${tc.id}`,
               role: "tool",
-              parts: [{
-                type: "tool-result",
-                toolCallId: tc.id,
-                toolName: tc.name,
-                result,
-              }],
+              content: JSON.stringify(result),
+              toolCallId: tc.id,
+              toolCall,
               timestamp: Date.now(),
             };
             currentMessages.push(toolResultMessage);
@@ -821,24 +695,15 @@ export class AgentRuntime {
           }
         }
 
-        // Send finish-step event (Veryfront extension, not part of standard AI SDK v5 protocol)
-        const finishStepToolsEvent = JSON.stringify({ type: "finish-step" });
-        controller.enqueue(encoder.encode(`data: ${finishStepToolsEvent}\n\n`));
-
         this.status = "thinking";
         continue;
       }
 
-      // Send finish-step event (Veryfront extension, not part of standard AI SDK v5 protocol)
-      const finishStepEvent = JSON.stringify({ type: "finish-step" });
-      controller.enqueue(encoder.encode(`data: ${finishStepEvent}\n\n`));
-
       break;
     }
 
-    const lastMessage = currentMessages[currentMessages.length - 1];
     return {
-      text: lastMessage ? getTextFromParts(lastMessage.parts) : "",
+      text: currentMessages[currentMessages.length - 1]?.content || "",
       messages: currentMessages,
       toolCalls,
       status: "completed",
@@ -846,9 +711,6 @@ export class AgentRuntime {
     };
   }
 
-  /**
-   * Execute middleware chain
-   */
   private executeMiddleware(
     context: AgentContext,
     next: () => Promise<AgentResponse>,
@@ -882,7 +744,6 @@ export class AgentRuntime {
 
     const tools: ToolDefinition[] = [];
 
-    // When tools === true, load ALL tools from the registry
     if (this.config.tools === true) {
       const allTools = toolRegistry.getAll();
       logger.debug(`[AGENT] Loading all ${allTools.size} tools from registry`);
@@ -894,7 +755,6 @@ export class AgentRuntime {
       return tools;
     }
 
-    // Otherwise, load specific tools from the config
     for (const [name, entry] of Object.entries(this.config.tools)) {
       if (entry === true) {
         const tool = toolRegistry.get(name);
@@ -917,9 +777,6 @@ export class AgentRuntime {
     return tools;
   }
 
-  /**
-   * Resolve system prompt (handle string or function)
-   */
   private async resolveSystemPrompt(): Promise<string> {
     const system = this.config.system;
 
@@ -934,16 +791,13 @@ export class AgentRuntime {
     return "You are a helpful AI assistant.";
   }
 
-  /**
-   * Normalize input to messages array (v5 format with parts)
-   */
   private normalizeInput(input: string | Message[]): Message[] {
     if (typeof input === "string") {
       return [
         {
           id: `msg_${Date.now()}`,
           role: "user",
-          parts: [{ type: "text", text: input }],
+          content: input,
           timestamp: Date.now(),
         },
       ];
@@ -956,41 +810,26 @@ export class AgentRuntime {
     }));
   }
 
-  /**
-   * Get max steps considering edge config and platform limits
-   */
   private getMaxSteps(platformLimit: number): number {
-    // Edge config takes precedence
     if (this.config.edge?.enabled && this.config.edge.maxSteps) {
       return Math.min(this.config.edge.maxSteps, platformLimit);
     }
 
-    // Use agent config
     if (this.config.maxSteps) {
       return Math.min(this.config.maxSteps, platformLimit);
     }
 
-    // Default
     return Math.min(20, platformLimit);
   }
 
-  /**
-   * Get memory instance (for advanced use cases)
-   */
   getMemory(): Memory {
     return this.memory;
   }
 
-  /**
-   * Get memory stats
-   */
   async getMemoryStats() {
     return await this.memory.getStats();
   }
 
-  /**
-   * Clear agent memory
-   */
   async clearMemory(): Promise<void> {
     await this.memory.clear();
   }

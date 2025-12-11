@@ -61,7 +61,7 @@ describe("VeryfrontAPIClient", () => {
         throw new Error("Should have thrown");
       } catch (error) {
         assertEquals(error instanceof VeryfrontAPIError, true);
-        assertEquals(callCount, 1); // Should not retry
+        assertEquals(callCount, 1);
       } finally {
         globalThis.fetch = originalFetch;
       }
@@ -90,7 +90,7 @@ describe("VeryfrontAPIClient", () => {
 
       try {
         const result = await client.listProjects();
-        assertEquals(callCount, 3); // Should retry twice and succeed on third attempt
+        assertEquals(callCount, 3);
         assertEquals(result.length, 0);
       } finally {
         globalThis.fetch = originalFetch;
@@ -122,7 +122,7 @@ describe("VeryfrontAPIClient", () => {
         throw new Error("Should have thrown");
       } catch (error) {
         assertEquals(error instanceof VeryfrontAPIError, true);
-        assertEquals(callCount, 2); // Initial attempt + 1 retry
+        assertEquals(callCount, 2);
       } finally {
         globalThis.fetch = originalFetch;
       }

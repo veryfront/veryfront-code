@@ -24,7 +24,6 @@ export default tool({
       .describe("Only show slots during working hours (9 AM - 6 PM)"),
   }),
   execute: async ({ durationMinutes, daysToSearch, workingHoursOnly }, context) => {
-    // Default to "current-user" for development; in production, always pass userId from session
     const userId = (context?.userId as string | undefined) || "current-user";
 
     try {
@@ -41,7 +40,6 @@ export default tool({
         durationMinutes: durationMinutes ?? 60,
       })) as FreeSlot[];
 
-      // Filter to working hours if requested
       let filteredSlots = freeSlots;
       if (workingHoursOnly) {
         filteredSlots = freeSlots.filter((slot: FreeSlot) => {
@@ -51,7 +49,6 @@ export default tool({
         });
       }
 
-      // Format slots for display
       const formattedSlots = filteredSlots.slice(0, 10).map((slot: FreeSlot) => {
         const duration = Math.round(
           (slot.end.getTime() - slot.start.getTime()) / (1000 * 60),

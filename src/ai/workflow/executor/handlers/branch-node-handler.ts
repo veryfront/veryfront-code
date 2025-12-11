@@ -1,8 +1,3 @@
-/**
- * Branch Node Handler
- *
- * Handles execution of branch nodes - conditional workflow branches.
- */
 
 import type { BranchNodeConfig, NodeState, WorkflowNode, WorkflowNodeConfig } from "../../types.ts";
 import type { IDAGSubExecutor } from "./dag-executor-interface.ts";
@@ -12,19 +7,10 @@ import {
   type NodeHandlerContext,
 } from "./node-handler.ts";
 
-/**
- * Callbacks for branch node events
- */
 export interface BranchNodeCallbacks {
   onNodeComplete?: (nodeId: string, state: NodeState) => void;
 }
 
-/**
- * Handler for branch nodes.
- *
- * Branch nodes evaluate a condition and execute either
- * the "then" or "else" branch based on the result.
- */
 export class BranchNodeHandler extends BaseNodeHandler<BranchNodeConfig> {
   readonly nodeType = "branch" as const;
 
@@ -47,14 +33,11 @@ export class BranchNodeHandler extends BaseNodeHandler<BranchNodeConfig> {
     const config = node.config as BranchNodeConfig;
     const startTime = Date.now();
 
-    // Evaluate condition
     const conditionResult = await config.condition(context);
 
-    // Select branch to execute
     const branchNodes = conditionResult ? config.then : (config.else || []);
 
     if (branchNodes.length === 0) {
-      // No nodes to execute - branch is skipped
       const state: NodeState = {
         nodeId: node.id,
         status: "completed",
@@ -67,7 +50,6 @@ export class BranchNodeHandler extends BaseNodeHandler<BranchNodeConfig> {
       return { state, contextUpdates: {}, waiting: false };
     }
 
-    // Execute branch nodes
     const result = await this.subExecutor.executeSubDAG(branchNodes, {
       id: `${node.id}_branch`,
       workflowId: "",
@@ -81,7 +63,6 @@ export class BranchNodeHandler extends BaseNodeHandler<BranchNodeConfig> {
       createdAt: new Date(),
     });
 
-    // Merge child node states
     Object.assign(nodeStates, result.nodeStates);
 
     const state: NodeState = {
@@ -107,9 +88,6 @@ export class BranchNodeHandler extends BaseNodeHandler<BranchNodeConfig> {
   }
 }
 
-/**
- * Create a branch node handler.
- */
 export function createBranchNodeHandler(
   subExecutor: IDAGSubExecutor,
   callbacks?: BranchNodeCallbacks,

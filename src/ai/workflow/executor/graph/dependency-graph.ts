@@ -1,33 +1,12 @@
-/**
- * Dependency Graph
- *
- * Manages workflow node dependencies and topological ordering.
- * Extracted from DAGExecutor to separate graph concerns from execution.
- */
 
 import type { NodeState, WorkflowNode } from "../../types.ts";
 
-/**
- * Graph structure for workflow dependencies
- */
 export interface GraphStructure {
-  /** Adjacency list: node -> nodes that depend on it */
   adjList: Map<string, string[]>;
-  /** In-degree count for topological ordering */
   inDegree: Map<string, number>;
-  /** Node lookup map */
   nodeMap: Map<string, WorkflowNode>;
 }
 
-/**
- * Dependency Graph class
- *
- * Builds and manages the dependency graph for workflow nodes.
- * Supports:
- * - Topological ordering
- * - Cycle detection
- * - Finding ready-to-execute nodes
- */
 export class DependencyGraph {
   private adjList: Map<string, string[]>;
   private inDegree: Map<string, number>;
@@ -40,23 +19,14 @@ export class DependencyGraph {
     this.nodeMap = structure.nodeMap;
   }
 
-  /**
-   * Get node by ID
-   */
   getNode(nodeId: string): WorkflowNode | undefined {
     return this.nodeMap.get(nodeId);
   }
 
-  /**
-   * Get all dependents of a node (nodes that depend on this node)
-   */
   getDependents(nodeId: string): string[] {
     return this.adjList.get(nodeId) || [];
   }
 
-  /**
-   * Decrement in-degree for dependents of a completed node
-   */
   markNodeCompleted(nodeId: string): void {
     for (const dependent of this.getDependents(nodeId)) {
       const currentDegree = this.inDegree.get(dependent) ?? 0;
@@ -64,13 +34,6 @@ export class DependencyGraph {
     }
   }
 
-  /**
-   * Get nodes that are ready to execute.
-   *
-   * A node is ready if:
-   * 1. All dependencies are satisfied (in-degree = 0)
-   * 2. Not already completed/running/failed
-   */
   getReadyNodes(nodeStates: Record<string, NodeState>): string[] {
     const ready: string[] = [];
 
@@ -86,9 +49,6 @@ export class DependencyGraph {
     return ready;
   }
 
-  /**
-   * Check if the graph contains cycles (using DFS).
-   */
   hasCycle(): boolean {
     const visited = new Set<string>();
     const recursionStack = new Set<string>();
@@ -118,9 +78,6 @@ export class DependencyGraph {
     return false;
   }
 
-  /**
-   * Get the underlying graph structure.
-   */
   getStructure(): GraphStructure {
     return {
       adjList: this.adjList,
@@ -129,22 +86,17 @@ export class DependencyGraph {
     };
   }
 
-  /**
-   * Build dependency graph from nodes.
-   */
   private buildGraph(nodes: WorkflowNode[]): GraphStructure {
     const adjList = new Map<string, string[]>();
     const inDegree = new Map<string, number>();
     const nodeMap = new Map<string, WorkflowNode>();
 
-    // Initialize nodes
     for (const node of nodes) {
       adjList.set(node.id, []);
       inDegree.set(node.id, 0);
       nodeMap.set(node.id, node);
     }
 
-    // Build edges from explicit dependencies
     for (const node of nodes) {
       for (const dep of node.dependsOn || []) {
         if (!adjList.has(dep)) {
@@ -155,8 +107,6 @@ export class DependencyGraph {
       }
     }
 
-    // Handle implicit sequential dependencies
-    // Nodes without explicit deps follow sequential order
     let prevNodeId: string | null = null;
     for (const node of nodes) {
       if (!node.dependsOn || node.dependsOn.length === 0) {
@@ -171,17 +121,11 @@ export class DependencyGraph {
     return { adjList, inDegree, nodeMap };
   }
 
-  /**
-   * Check if a node has any dependents.
-   */
   private hasAnyDependents(nodes: WorkflowNode[], nodeId: string): boolean {
     return nodes.some((n) => n.dependsOn?.includes(nodeId));
   }
 }
 
-/**
- * Create a new dependency graph.
- */
 export function createDependencyGraph(nodes: WorkflowNode[]): DependencyGraph {
   return new DependencyGraph(nodes);
 }

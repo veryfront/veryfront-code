@@ -4,104 +4,61 @@ import { cliLogger } from "@veryfront/utils";
 import { exit } from "../../platform/compat/process.ts";
 import { isDeno } from "../../platform/compat/runtime.ts";
 
-// ============================================================================
-// TTY and Color Detection (clig.dev compliance)
-// ============================================================================
 
-/**
- * Check if stdout is a TTY (interactive terminal)
- * @returns true if stdout is a TTY
- */
 export function isTTY(): boolean {
   if (isDeno) {
-    // @ts-ignore - Deno global
     return typeof Deno !== "undefined" && Deno.stdout?.isTerminal?.() === true;
   }
-  // Node.js/Bun
   return typeof process !== "undefined" && process.stdout?.isTTY === true;
 }
 
-/**
- * Check if stderr is a TTY
- * @returns true if stderr is a TTY
- */
 export function isStderrTTY(): boolean {
   if (isDeno) {
-    // @ts-ignore - Deno global
     return typeof Deno !== "undefined" && Deno.stderr?.isTerminal?.() === true;
   }
   return typeof process !== "undefined" && process.stderr?.isTTY === true;
 }
 
-/**
- * Determine if colors should be used in output
- * Respects NO_COLOR environment variable (https://no-color.org/)
- * and checks if output is a TTY
- *
- * @param forceColor - Optional flag to force color on/off (from --color/--no-color flags)
- * @returns true if colors should be used
- */
 export function shouldUseColor(forceColor?: boolean): boolean {
-  // If explicitly forced via CLI flag, respect that
   if (forceColor !== undefined) {
     return forceColor;
   }
 
-  // Check NO_COLOR environment variable (https://no-color.org/)
   const noColor = getEnv("NO_COLOR");
   if (noColor !== undefined && noColor !== "") {
     return false;
   }
 
-  // Check FORCE_COLOR environment variable
   const forceColorEnv = getEnv("FORCE_COLOR");
   if (forceColorEnv !== undefined && forceColorEnv !== "0") {
     return true;
   }
 
-  // Default: use color only if stdout is a TTY
   return isTTY();
 }
 
-/**
- * Get environment variable cross-platform
- */
 function getEnv(name: string): string | undefined {
   if (isDeno) {
-    // @ts-ignore - Deno global
     return Deno.env?.get?.(name);
   }
   return process?.env?.[name];
 }
 
-// Global color state - can be set by CLI flags
 let _colorEnabled: boolean | undefined;
 
-/**
- * Set global color mode (used by CLI to propagate --no-color flag)
- */
 export function setColorMode(enabled: boolean | undefined): void {
   _colorEnabled = enabled;
 }
 
-/**
- * Get current color mode
- */
 export function getColorEnabled(): boolean {
   return shouldUseColor(_colorEnabled);
 }
 
-/**
- * Strip ANSI color codes from a string
- */
 export function stripColors(str: string): string {
   // deno-lint-ignore no-control-regex
   return str.replace(/\x1b\[[0-9;]*m/g, "");
 }
 
-/**
- * Conditionally apply color function based on color mode
- */
 export function conditionalColor<T extends (s: string) => string>(
   colorFn: T,
   text: string,
@@ -109,7 +66,6 @@ export function conditionalColor<T extends (s: string) => string>(
   return getColorEnabled() ? colorFn(text) : text;
 }
 
-// Logo and help display
 export function showLogo() {
   const useColor = getColorEnabled();
   const c = (fn: (s: string) => string, s: string) => (useColor ? fn(s) : s);
@@ -183,7 +139,6 @@ ${c(cyan, "Examples:")}
   NO_COLOR=1 veryfront build
 
 ${c(cyan, "Config tips:")}
-  // veryfront.config.js
   export default {
     generate: { preferredRouter: "app-router" },
     security: { remoteHosts: ["https://esm.sh", "https://deno.land"] }
@@ -204,7 +159,6 @@ export function showVersion() {
   cliLogger.info(`Veryfront v${VERSION}`);
 }
 
-// Logging utilities
 export function logSuccess(message: string) {
   cliLogger.info(`✅ ${message}`);
 }
@@ -221,10 +175,6 @@ export function logInfo(message: string) {
   cliLogger.info(`ℹ️  ${message}`);
 }
 
-/**
- * Register handlers for termination signals in both Node/Bun and Deno runtimes.
- * Returns a cleanup function to remove listeners.
- */
 export function registerTerminationSignals(
   handler: (signal: "SIGINT" | "SIGTERM") => void | Promise<void>,
 ): () => void {
@@ -232,25 +182,20 @@ export function registerTerminationSignals(
   const signals: Array<"SIGINT" | "SIGTERM"> = ["SIGINT", "SIGTERM"];
 
   for (const signal of signals) {
-    // Deno (with Node compat available)
     if (typeof Deno !== "undefined" && "addSignalListener" in Deno) {
       const listener = () => {
         void handler(signal);
       };
-      // @ts-ignore - Deno types are available at runtime when using Deno
       Deno.addSignalListener(signal, listener);
       cleanupFns.push(() => {
         try {
-          // @ts-ignore - optional on older Deno versions
           Deno.removeSignalListener?.(signal, listener);
         } catch {
-          /* ignore */
         }
       });
       continue;
     }
 
-    // Node/Bun
     if (typeof process !== "undefined" && typeof process.on === "function") {
       const listener = () => {
         void handler(signal);
@@ -261,11 +206,9 @@ export function registerTerminationSignals(
           if (typeof process.off === "function") {
             process.off(signal, listener);
           } else {
-            // @ts-ignore - removeListener exists on Node process
             process.removeListener?.(signal, listener);
           }
         } catch {
-          /* ignore */
         }
       });
     }
@@ -278,66 +221,40 @@ export function registerTerminationSignals(
   };
 }
 
-// ============================================================================
-// Verbose/Quiet Mode (clig.dev compliance)
-// ============================================================================
 
 let _verboseMode = false;
 let _quietMode = false;
 
-/**
- * Set verbose mode (--verbose flag)
- */
 export function setVerboseMode(enabled: boolean): void {
   _verboseMode = enabled;
-  if (enabled) _quietMode = false; // Verbose overrides quiet
+  if (enabled) _quietMode = false;
 }
 
-/**
- * Set quiet mode (--quiet flag)
- */
 export function setQuietMode(enabled: boolean): void {
   _quietMode = enabled;
-  if (enabled) _verboseMode = false; // Quiet overrides verbose
+  if (enabled) _verboseMode = false;
 }
 
-/**
- * Check if verbose mode is enabled
- */
 export function isVerbose(): boolean {
   return _verboseMode;
 }
 
-/**
- * Check if quiet mode is enabled
- */
 export function isQuiet(): boolean {
   return _quietMode;
 }
 
-/**
- * Log verbose message (only shown with --verbose)
- */
 export function logVerbose(message: string): void {
   if (_verboseMode) {
     cliLogger.info(dim(`[verbose] ${message}`));
   }
 }
 
-// ============================================================================
-// User Interaction & Prompts
-// ============================================================================
 
-/**
- * Prompt user for text input
- */
 export async function promptUser(message: string): Promise<string> {
   cliLogger.info(message);
 
   if (isDeno) {
-    // Deno-specific stdin reading
     const buf = new Uint8Array(1024);
-    // @ts-ignore - Deno global
     const n = await Deno.stdin.read(buf);
     if (n === null) {
       return "";
@@ -345,7 +262,6 @@ export async function promptUser(message: string): Promise<string> {
     const input = new TextDecoder().decode(buf.subarray(0, n));
     return input.trim();
   } else {
-    // Node.js/Bun fallback using readline
     const readline = await import("node:readline");
     const rl = readline.createInterface({
       input: process.stdin,
@@ -361,17 +277,10 @@ export async function promptUser(message: string): Promise<string> {
   }
 }
 
-/**
- * Prompt user for yes/no confirmation
- * @param message - The confirmation message to display
- * @param defaultValue - Default value if user just presses Enter (default: false)
- * @returns true if confirmed, false otherwise
- */
 export async function confirmPrompt(
   message: string,
   defaultValue = false,
 ): Promise<boolean> {
-  // If not interactive (not a TTY), return default value
   if (!isTTY()) {
     return defaultValue;
   }
@@ -387,9 +296,6 @@ export async function confirmPrompt(
   return normalized === "y" || normalized === "yes";
 }
 
-// ============================================================================
-// Progress Spinner (clig.dev compliance)
-// ============================================================================
 
 const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
@@ -399,13 +305,6 @@ interface Spinner {
   update: (message: string) => void;
 }
 
-/**
- * Create a progress spinner for long-running operations
- * Only shows spinner if stdout is a TTY
- *
- * @param message - Initial spinner message
- * @returns Spinner control object
- */
 export function createSpinner(message: string): Spinner {
   let frameIndex = 0;
   let intervalId: ReturnType<typeof setInterval> | null = null;
@@ -414,7 +313,6 @@ export function createSpinner(message: string): Spinner {
 
   const clearLine = () => {
     if (isInteractive) {
-      // Move cursor to beginning of line and clear it
       process.stdout?.write?.("\r\x1b[K");
     }
   };
@@ -430,7 +328,6 @@ export function createSpinner(message: string): Spinner {
   return {
     start: () => {
       if (!isInteractive) {
-        // Non-interactive: just log the message once
         cliLogger.info(`... ${message}`);
         return;
       }
@@ -456,14 +353,8 @@ export function createSpinner(message: string): Spinner {
   };
 }
 
-// Process utilities
-/**
- * Exit the process with a given code
- * @param code - Exit code
- */
 export function exitProcess(code: number): void {
   exit(code);
 }
 
-// Re-export formatBytes from shared format utils for backward compatibility
 export { formatBytes } from "@veryfront/utils";

@@ -1,15 +1,3 @@
-/**
- * Build Orchestrator Module
- *
- * Main orchestration module that coordinates the entire build process:
- * - Initializes build context
- * - Sets up build environment
- * - Collects routes
- * - Runs code splitting
- * - Executes build
- * - Generates outputs
- * - Performs cleanup
- */
 
 import { serverLogger as logger } from "@veryfront/utils";
 import type { BuildOptions, BuildStats } from "@veryfront/server/build-types.ts";
@@ -28,16 +16,11 @@ import { runCodeSplitting } from "./code-splitter-orchestrator.ts";
 import { generateAllOutputs } from "./output-generator.ts";
 import { collectAllRoutes } from "./route-collector.ts";
 
-/**
- * Main build production orchestrator
- */
 export async function buildProduction(options: BuildOptions): Promise<BuildStats> {
   const startTime = Date.now();
 
-  // Normalize options
   const normalizedOptions = normalizeBuildOptions(options);
 
-  // Validate project directory exists (using cross-platform filesystem)
   try {
     const fs = createFileSystem();
     const exists = await fs.exists(normalizedOptions.projectDir);
@@ -54,17 +37,14 @@ export async function buildProduction(options: BuildOptions): Promise<BuildStats
 
   logger.info("Starting production build", options);
 
-  // Initialize build context
   const context = await initializeBuildContext(options);
 
-  // Setup build directories
   await setupBuildDirectories(
     context.adapter,
     normalizedOptions.outputDir,
     normalizedOptions.dryRun,
   );
 
-  // Collect routes
   const routes = await collectAllRoutes(
     context.adapter,
     normalizedOptions.projectDir,
@@ -73,7 +53,6 @@ export async function buildProduction(options: BuildOptions): Promise<BuildStats
     normalizedOptions.exclude,
   );
 
-  // Run code splitting
   const splitResult = await runCodeSplitting(
     normalizedOptions.projectDir,
     normalizedOptions.outputDir,
@@ -83,7 +62,6 @@ export async function buildProduction(options: BuildOptions): Promise<BuildStats
   );
   context.stats.chunks = splitResult.chunks;
 
-  // Execute build
   const buildResult = await executeBuild(routes.pages, routes.app, {
     adapter: context.adapter,
     projectDir: normalizedOptions.projectDir,
@@ -99,7 +77,6 @@ export async function buildProduction(options: BuildOptions): Promise<BuildStats
   context.stats.pages = buildResult.pages;
   context.stats.totalSize = buildResult.totalSize;
 
-  // Generate all outputs
   await generateAllOutputs({
     adapter: context.adapter,
     projectDir: normalizedOptions.projectDir,
@@ -114,16 +91,12 @@ export async function buildProduction(options: BuildOptions): Promise<BuildStats
     dryRun: normalizedOptions.dryRun,
   });
 
-  // Finalize stats
   context.stats.duration = Date.now() - startTime;
 
-  // Log completion
   logBuildCompletion(context.stats);
 
-  // Cleanup
   await performCleanup(context.renderer);
 
-  // Add SSG paths to stats
   interface StatsWithSSG extends BuildStats {
     ssgPaths?: string[];
   }
@@ -132,5 +105,4 @@ export async function buildProduction(options: BuildOptions): Promise<BuildStats
   return context.stats;
 }
 
-// Re-export helper functions for testing
 export { cleanupCaches, cleanupRenderer, logBuildCompletion };

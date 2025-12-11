@@ -23,7 +23,7 @@ export default tool({
       name: project.name,
       description: project.description,
       state: project.state,
-      progress: Math.round(project.progress * 100), // Convert to percentage
+      progress: Math.round(project.progress * 100),
       url: project.url,
       lead: project.lead
         ? {

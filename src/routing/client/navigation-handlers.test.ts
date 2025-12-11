@@ -572,7 +572,7 @@ describe("NavigationHandlers", () => {
       const handlers = new NavigationHandlers();
 
       handlers.saveScrollPosition("/page2");
-      mocks.setScrollY(0); // Change scroll position
+      mocks.setScrollY(0);
 
       const savedPosition = handlers.getScrollPosition("/page2");
 

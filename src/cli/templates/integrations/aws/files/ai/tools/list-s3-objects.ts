@@ -2,9 +2,6 @@ import { tool } from 'veryfront/ai';
 import { z } from 'zod';
 import { getAWSClient } from '../../lib/aws-client';
 
-/**
- * Tool for listing objects in an S3 bucket
- */
 export const listS3ObjectsTool = tool({
   name: 'list-s3-objects',
   description: 'List objects in a specific S3 bucket. Optionally filter by prefix and limit the number of results.',

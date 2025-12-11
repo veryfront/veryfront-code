@@ -2,8 +2,6 @@ import { tool } from "veryfront/ai";
 import { z } from "zod";
 import { createSheetsClient } from "../../lib/sheets-client.ts";
 
-// Default user ID for demo/dev purposes
-// In production, get from authenticated session
 const DEFAULT_USER_ID = "demo-user";
 
 export default tool({
@@ -54,13 +52,11 @@ export default tool({
   async execute({ title, sheets, initialData }) {
     const client = createSheetsClient(DEFAULT_USER_ID);
 
-    // Create the spreadsheet
     const spreadsheet = await client.createSpreadsheet({
       title,
       sheets,
     });
 
-    // Write initial data if provided
     if (initialData) {
       const range = `${initialData.sheetTitle}!${initialData.range}`;
       await client.writeRange({

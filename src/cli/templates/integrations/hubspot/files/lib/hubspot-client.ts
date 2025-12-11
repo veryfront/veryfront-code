@@ -96,9 +96,6 @@ async function hubspotFetch<T>(
   return response.json();
 }
 
-// ============================================================================
-// CONTACTS
-// ============================================================================
 
 export function listContacts(options?: {
   limit?: number;
@@ -116,7 +113,6 @@ export function listContacts(options?: {
   if (options?.properties && options.properties.length > 0) {
     options.properties.forEach((prop) => params.append("properties", prop));
   } else {
-    // Default properties
     ["email", "firstname", "lastname", "phone", "company", "jobtitle"].forEach(
       (prop) => params.append("properties", prop),
     );
@@ -222,9 +218,6 @@ export function searchContacts(options: {
   });
 }
 
-// ============================================================================
-// COMPANIES
-// ============================================================================
 
 export function listCompanies(options?: {
   limit?: number;
@@ -289,9 +282,6 @@ export function createCompany(properties: {
   });
 }
 
-// ============================================================================
-// DEALS
-// ============================================================================
 
 export function listDeals(options?: {
   limit?: number;
@@ -371,9 +361,6 @@ export function updateDeal(
   });
 }
 
-// ============================================================================
-// HELPER FUNCTIONS
-// ============================================================================
 
 export function formatContactName(contact: HubSpotContact): string {
   const parts = [];

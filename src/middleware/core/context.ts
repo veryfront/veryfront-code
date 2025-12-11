@@ -20,7 +20,7 @@ export class MiddlewareContext implements Context {
     executionCtx?: ExecutionContext,
   ) {
     this.req = req;
-    this.request = req; // Alias for compatibility
+    this.request = req;
     this.env = env;
     this.executionCtx = executionCtx;
   }

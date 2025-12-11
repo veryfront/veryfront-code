@@ -1,20 +1,13 @@
-/**
- * Unit Tests for Resource Hints Manager
- * Tests resource hint generation and application (preload, prefetch, dns-prefetch)
- */
 
 import { assertEquals, assertExists } from "std/assert/mod.ts";
 import { describe, it } from "std/testing/bdd.ts";
 import { ResourceHint, ResourceHintsManager } from "./resource-hints.ts";
 
-// Mock DOMParser
 class MockDOMParser {
   parseFromString(html: string, _mimeType: DOMParserSupportedType): Document {
-    // Simple HTML parser mock
     const scripts: HTMLScriptElement[] = [];
     const links: HTMLLinkElement[] = [];
 
-    // Parse script tags
     const scriptRegex = /<script\s+src="([^"]+)"/g;
     let match;
     while ((match = scriptRegex.exec(html)) !== null) {
@@ -24,7 +17,6 @@ class MockDOMParser {
       } as HTMLScriptElement);
     }
 
-    // Parse link tags
     const linkRegex = /<link\s+([^>]+)>/g;
     while ((match = linkRegex.exec(html)) !== null) {
       const attrs = match[1] || "";
@@ -60,7 +52,6 @@ class MockDOMParser {
   }
 }
 
-// Setup global mocks
 const setupMocks = () => {
   const originalDOMParser = (globalThis as any).DOMParser;
   const originalDocument = globalThis.document;
@@ -255,7 +246,7 @@ describe("ResourceHintsManager", () => {
     });
 
     it("should not apply hint if already exists in DOM", () => {
-      const mocks = setupMocks(); // Mock existing hint
+      const mocks = setupMocks();
       (globalThis as any).document.querySelector = (selector: string) => {
         if (selector === 'link[rel="prefetch"][href="http://example.com/page"]') {
           return { rel: "prefetch", href: "http://example.com/page" };
@@ -398,7 +389,7 @@ describe("ResourceHintsManager", () => {
     });
 
     it("should handle parsing errors gracefully", () => {
-      const mocks = setupMocks(); // Mock parser to throw error
+      const mocks = setupMocks();
       (globalThis as any).DOMParser = class {
         parseFromString() {
           throw new Error("Parse error");
@@ -437,7 +428,7 @@ describe("ResourceHintsManager", () => {
           return {
             querySelectorAll: (selector: string) => {
               if (selector === "script[src]") {
-                return [{ src: "" }]; // Empty src
+                return [{ src: "" }];
               }
               return [];
             },
@@ -550,7 +541,6 @@ describe("ResourceHintsManager", () => {
     it("should handle empty assets array", () => {
       const hints = ResourceHintsManager.generateResourceHints("/route", []);
 
-      // Should still have CDN hints
       assertEquals(hints.includes("cdn.jsdelivr.net"), true);
     });
 

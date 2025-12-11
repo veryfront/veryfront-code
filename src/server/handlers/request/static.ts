@@ -1,9 +1,3 @@
-/**
- * Static File Handler
- * Serves static files from dist/ and public/ directories
- *
- * Security: Uses secure filesystem wrapper to prevent path traversal attacks
- */
 
 import { BaseHandler } from "../response/base.ts";
 import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } from "../types.ts";
@@ -37,15 +31,14 @@ export class StaticHandler extends BaseHandler {
 
   metadata: HandlerMetadata = {
     name: "StaticHandler",
-    priority: PRIORITY_MEDIUM_STATIC as HandlerPriority, // MEDIUM priority
+    priority: PRIORITY_MEDIUM_STATIC as HandlerPriority,
     patterns: [
-      { pattern: /^\/[^_].*/, method: "GET" }, // All GET requests not starting with _
-      { pattern: /^\/[^_].*/, method: "HEAD" }, // Support HEAD for static files
+      { pattern: /^\/[^_].*/, method: "GET" },
+      { pattern: /^\/[^_].*/, method: "HEAD" },
     ],
   };
 
   async handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
-    // Only handle GET and HEAD requests
     const method = req.method.toUpperCase();
     if (method !== "GET" && method !== "HEAD") {
       return this.continue();
@@ -54,18 +47,15 @@ export class StaticHandler extends BaseHandler {
     const url = new URL(req.url);
     const pathname = url.pathname;
 
-    // Skip internal paths
     if (pathname.startsWith("/_")) {
       return this.continue();
     }
 
-    // Try to serve static file
     const response = await this.tryServeStatic(req, pathname, ctx);
     if (response) {
       return this.respond(response);
     }
 
-    // Not a static file, continue to next handler
     return this.continue();
   }
 
@@ -74,12 +64,11 @@ export class StaticHandler extends BaseHandler {
     pathname: string,
     ctx: HandlerContext,
   ): Promise<Response | null> {
-    // Create secure filesystem wrapper for static file serving
     const secureFs = createSecureFs({
       baseDir: ctx.projectDir,
       adapter: ctx.adapter,
       context: "static-serving",
-      throwOnError: false, // Don't throw, just skip invalid paths
+      throwOnError: false,
     });
 
     const tryDirs = ["dist", "public"] as const;
@@ -107,7 +96,6 @@ export class StaticHandler extends BaseHandler {
       const root = joinPath(ctx.projectDir, dir);
       const abs = normalizePath(joinPath(root, reqPath));
 
-      // Security check: ensure path is within directory
       // Note: secureFs will perform additional validation
       if (!isWithinDirectory(root, abs)) {
         continue;
@@ -118,14 +106,12 @@ export class StaticHandler extends BaseHandler {
 
     for (const candidate of candidates) {
       try {
-        // Use secure filesystem wrapper (automatic path validation)
         const info = await secureFs.stat(candidate.abs);
         if (!info.isFile) continue;
 
         const fileData = await secureFs.readFileBytes(candidate.abs);
         const etag = computeEtag(fileData);
 
-        // Check if-none-match
         if (hasMatchingEtag(req, etag)) {
           const builder = this.createResponseBuilder(ctx);
           return builder
@@ -134,14 +120,11 @@ export class StaticHandler extends BaseHandler {
             .notModified(etag);
         }
 
-        // Determine cache strategy
         const ext = getExtension(candidate.abs);
         const isHashed = hasHashedFilename(candidate.abs);
         const isVeryfrontAsset = reqPath.includes("/_veryfront/");
 
         let cacheStrategy: CacheStrategy;
-        // Immutable cache for hashed files regardless of source directory
-        // or for dist/manifest assets including _veryfront resources
         if (
           isHashed ||
           ((candidate.source === "dist" || candidate.source === "manifest") && isVeryfrontAsset)
@@ -154,9 +137,7 @@ export class StaticHandler extends BaseHandler {
         const contentType = getContentType(ext);
         const builder = this.createResponseBuilder(ctx);
 
-        // For HEAD requests, don't include body
-        // Cast to BodyInit to satisfy type in newer TypeScript/Deno versions
-        const body = req.method.toUpperCase() === "HEAD" ? null : fileData as BodyInit;
+        const body = req.method.toUpperCase() === "HEAD" ? null : fileData as Uint8Array;
 
         const response = builder
           .withCORS(req, ctx.securityConfig?.cors)
@@ -174,7 +155,6 @@ export class StaticHandler extends BaseHandler {
 
         return response;
       } catch (error) {
-        // File not found or read error, try next candidate
         this.logDebug(
           `Failed to serve ${candidate.abs}: ${this.getErrorMessage(error)}`,
           { source: candidate.source },
@@ -218,7 +198,6 @@ export class StaticHandler extends BaseHandler {
   private async loadManifestIndex(
     ctx: HandlerContext,
   ): Promise<{ assets: Map<string, string>; mtime: number | null } | null> {
-    // Create secure filesystem wrapper for manifest loading
     const secureFs = createSecureFs({
       baseDir: ctx.projectDir,
       adapter: ctx.adapter,
@@ -288,7 +267,7 @@ export class StaticHandler extends BaseHandler {
       if (!value) return null;
       if (value.startsWith("http://") || value.startsWith("https://")) return null;
 
-      const candidate = value.replace(/^\.\//, "");
+      const candidate = value.replace(/^\.\
 
       if (candidate.startsWith("/")) {
         return candidate;

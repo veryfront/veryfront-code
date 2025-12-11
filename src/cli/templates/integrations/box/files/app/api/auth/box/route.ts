@@ -1,6 +1,3 @@
-/**
- * Box OAuth Init
- */
 
 import { boxConfig, createOAuthInitHandler } from "veryfront/oauth";
 

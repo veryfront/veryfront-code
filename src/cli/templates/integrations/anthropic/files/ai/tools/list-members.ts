@@ -2,9 +2,6 @@ import { tool } from 'veryfront/ai';
 import { z } from 'zod';
 import { getAnthropicAdminClient } from '../../lib/anthropic-admin-client';
 
-/**
- * Tool for listing members in the Anthropic organization
- */
 export const listMembers = tool({
   name: 'list_members',
   description:
@@ -15,7 +12,6 @@ export const listMembers = tool({
       const client = getAnthropicAdminClient();
       const result = await client.listMembers();
 
-      // Group members by role and status for summary
       const membersByRole = result.members.reduce(
         (acc, member) => {
           acc[member.role] = (acc[member.role] || 0) + 1;

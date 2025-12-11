@@ -1,17 +1,10 @@
-/**
- * Import resolution and extraction utilities
- */
 
 import { existsSync } from "std/fs/mod.ts";
 import { dirname, join, resolve } from "std/path/mod.ts";
 
-/**
- * Extract import statements from code
- */
 export function extractImports(code: string): string[] {
   const imports: string[] = [];
 
-  // Match ES6 imports
   const importRegex = /import\s+(?:(?:\{[^}]*\}|\*\s+as\s+\w+|\w+)\s+from\s+)?['"]([^'"]+)['"]/g;
   let match: RegExpExecArray | null;
 
@@ -19,18 +12,14 @@ export function extractImports(code: string): string[] {
     if (match[1]) imports.push(match[1]);
   }
 
-  // Match dynamic imports
   const dynamicImportRegex = /import\s*\(['"]([^'"]+)['"]\)/g;
   while ((match = dynamicImportRegex.exec(code)) !== null) {
     if (match[1]) imports.push(match[1]);
   }
 
-  return [...new Set(imports)]; // Remove duplicates
+  return [...new Set(imports)];
 }
 
-/**
- * Resolve import path relative to file
- */
 export function resolveImportPath(
   importPath: string,
   fromFile: string,
@@ -40,17 +29,13 @@ export function resolveImportPath(
     return resolve(dirname(fromFile), importPath);
   }
 
-  // Check if it's a node_modules import
   if (!importPath.startsWith("/") && !importPath.includes(":")) {
-    return importPath; // Keep as-is for esbuild to resolve
+    return importPath;
   }
 
   return importPath;
 }
 
-/**
- * Find component file with various extensions
- */
 export function findComponent(basePath: string, _projectDir: string): string | null {
   const extensions = [".tsx", ".ts", ".jsx", ".js", ".mdx"];
 
@@ -60,7 +45,6 @@ export function findComponent(basePath: string, _projectDir: string): string | n
       return fullPath;
     }
 
-    // Check with /index suffix
     const indexPath = join(basePath, `index${ext}`);
     if (existsSync(indexPath)) {
       return indexPath;
@@ -70,9 +54,6 @@ export function findComponent(basePath: string, _projectDir: string): string | n
   return null;
 }
 
-/**
- * Process and update import paths in code
- */
 export async function processImports(
   code: string,
   filePath: string,
@@ -87,7 +68,6 @@ export async function processImports(
     const newPath = await processImport(resolvedPath);
 
     if (newPath && newPath !== importPath) {
-      // Replace the import path in the code
       processedCode = processedCode.replace(
         new RegExp(`(['"])${importPath}\\1`, "g"),
         `$1${newPath}$1`,

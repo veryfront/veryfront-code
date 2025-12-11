@@ -1,8 +1,3 @@
-/**
- * Token Storage Adapter Factory
- *
- * Creates the appropriate token storage adapter based on configuration.
- */
 
 import { logger } from "@veryfront/utils";
 import { createError, toError } from "../../core/errors/veryfront-error.ts";
@@ -11,25 +6,6 @@ import type {
   TokenStorageAdapterConfig,
 } from "./veryfront-token-adapter/types.ts";
 
-/**
- * Create a token storage adapter based on configuration
- *
- * @example Veryfront Cloud
- * ```typescript
- * const adapter = await createTokenStorageAdapter({
- *   type: "veryfront-api",
- *   veryfront: {
- *     apiToken: process.env.VERYFRONT_API_TOKEN,
- *     projectSlug: "my-project",
- *   },
- * });
- * ```
- *
- * @example In-memory (development)
- * ```typescript
- * const adapter = await createTokenStorageAdapter({ type: "memory" });
- * ```
- */
 export async function createTokenStorageAdapter(
   config: TokenStorageAdapterConfig,
 ): Promise<TokenStorageAdapter> {
@@ -64,13 +40,6 @@ export async function createTokenStorageAdapter(
   );
 }
 
-/**
- * Create token storage adapter from environment variables
- *
- * Automatically detects configuration from:
- * - VERYFRONT_API_TOKEN + VERYFRONT_PROJECT_SLUG → veryfront-api
- * - Otherwise → memory (development)
- */
 export function createTokenStorageAdapterFromEnv(): Promise<TokenStorageAdapter> {
   const apiToken =
     // deno-lint-ignore no-explicit-any

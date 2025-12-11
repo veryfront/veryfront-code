@@ -60,11 +60,9 @@ function handleSyncRender<T>(result: T, span: Span | null, startTime: number): T
 
 function handleRenderError(span: Span | null, error: unknown, componentName: string): void {
   recordRenderError({ component: componentName });
-  // endSpan is handled by withActiveSpan automatically,
-  // but we need to record the exception and status
   if (span) {
     span.recordException(error as Error);
-    span.setStatus({ code: 2, message: String(error) }); // 2 = ERROR
+    span.setStatus({ code: 2, message: String(error) });
   }
 }
 

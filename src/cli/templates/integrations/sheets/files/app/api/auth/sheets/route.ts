@@ -1,6 +1,3 @@
-/**
- * Google Sheets OAuth Initiation
- */
 
 import { createOAuthInitHandler, memoryTokenStore, sheetsConfig } from "veryfront/oauth";
 

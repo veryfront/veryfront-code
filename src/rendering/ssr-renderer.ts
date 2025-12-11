@@ -1,9 +1,3 @@
-/**
- * SSR Renderer
- *
- * Handles server-side rendering of React elements using both streaming and string methods.
- * Provides React 18/19 streaming support with fallback to string rendering.
- */
 
 import { ErrorCode, VeryfrontError } from "@veryfront/errors/index.ts";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
@@ -16,18 +10,9 @@ import { isCompiledBinary, rendererLogger as logger } from "@veryfront/utils";
 import type * as React from "react";
 import { streamToString } from "./utils/index.ts";
 
-/**
- * Convert Node.js pipeable stream to string
- *
- * renderToPipeableStream returns { pipe, abort } instead of a ReadableStream.
- * This function creates a PassThrough stream, pipes the content to it,
- * and collects the output as a string.
- */
 async function pipeToString(
   pipeFn: (writable: NodeJS.WritableStream) => void,
 ): Promise<string> {
-  // Dynamically import Node.js modules for Node environments
-  // In Deno, renderToReadableStream is used instead, so this won't be called
   const { PassThrough } = await import("node:stream");
   const { Buffer } = await import("node:buffer");
 
@@ -47,7 +32,6 @@ async function pipeToString(
       reject(err);
     });
 
-    // Pipe the React output to our PassThrough stream
     try {
       pipeFn(passThrough);
     } catch (err) {
@@ -67,15 +51,6 @@ export interface SSRRenderResult {
   stream: ReadableStream | null;
 }
 
-/**
- * SSRRenderer - Handles server-side rendering of React elements
- *
- * This class manages the React SSR process, supporting:
- * - React 18/19 streaming SSR (renderToReadableStream)
- * - React 17 string SSR (renderToString)
- * - Automatic version detection and method selection
- * - Stream/string delivery modes
- */
 export class SSRRenderer {
   private readonly mode: string;
   private readonly adapter?: RuntimeAdapter;
@@ -85,18 +60,6 @@ export class SSRRenderer {
     this.adapter = adapter;
   }
 
-  /**
-   * Render React element to HTML
-   *
-   * Automatically selects the best rendering method based on:
-   * - React version (18/19 for streaming, 17 for string)
-   * - Delivery mode (stream vs string)
-   * - Production vs development mode
-   *
-   * @param pageElement - The React element to render
-   * @param options - Rendering options
-   * @returns HTML string and optional stream
-   */
   async renderToHTML(
     pageElement: React.ReactElement,
     options: SSRRenderOptions,
@@ -105,10 +68,7 @@ export class SSRRenderer {
     let stream: ReadableStream | null = null;
     const versionInfo = getReactVersionInfo();
 
-    // Determine if we should use streaming
     // IMPORTANT: Disable streaming in compiled binaries because React's streaming SSR
-    // uses Workers with blob URLs internally, which fail in deno compile binaries
-    // Error: "Module not found: blob:null/..." in worker
     const useStreaming = !isCompiledBinary() &&
       (this.mode === "production" || options.wantsStream) &&
       (versionInfo.isReact18 || versionInfo.isReact19);
@@ -135,7 +95,6 @@ export class SSRRenderer {
       const renderResult = await renderToStreamAdapter(pageElement);
 
       if (renderResult.stream) {
-        // If client wants stream, return it directly without buffering
         if (
           options.wantsStream && typeof (renderResult.stream as ReadableStream).tee === "function"
         ) {
@@ -149,7 +108,6 @@ export class SSRRenderer {
             });
           }
         } else {
-          // Client doesn't want stream or can't tee - buffer it
           html = await streamToString(renderResult.stream);
 
           if (options.debugMode) {
@@ -159,8 +117,6 @@ export class SSRRenderer {
           }
         }
       } else if (renderResult.pipe) {
-        // Handle Node.js renderToPipeableStream result
-        // This is the case when running in Node.js - the result has { pipe, abort }
         logger.debug(
           "Converting pipeable stream to string (Node.js renderToPipeableStream)",
         );
@@ -179,10 +135,7 @@ export class SSRRenderer {
       }
 
       // Note: We don't do a second render pass if stream is unavailable
-      // The client will receive the HTML string, which is sufficient
-      // A second render would double the SSR time (300ms -> 600ms) with no benefit
     } else {
-      // Use string rendering for React 17 or development mode
       logger.debug("Using string SSR", {
         mode: this.mode,
         reactVersion: versionInfo.version,
@@ -194,9 +147,6 @@ export class SSRRenderer {
     return { html, stream };
   }
 
-  /**
-   * Get rendering strategy info for current React version
-   */
   getRenderingStrategy(): {
     method: "streaming" | "string";
     reactVersion: string;
@@ -221,9 +171,6 @@ export class SSRRenderer {
     };
   }
 
-  /**
-   * Check if streaming is supported and recommended
-   */
   supportsStreaming(): boolean {
     const versionInfo = getReactVersionInfo();
     return versionInfo.isReact18 || versionInfo.isReact19;

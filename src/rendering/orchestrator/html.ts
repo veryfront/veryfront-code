@@ -55,10 +55,6 @@ export class HTMLGenerator {
     return await this.wrapHTMLFragment(context);
   }
 
-  /**
-   * Generate HTML stream for streaming SSR
-   * Wraps the React stream with HTML shell parts
-   */
   async generateHTMLStream(
     reactStream: ReadableStream,
     context: Omit<HTMLGenerationContext, "html">,
@@ -138,12 +134,10 @@ export class HTMLGenerator {
       (context.layoutBundle?.frontmatter || {}) as MDXFrontmatter,
     );
 
-    // Detect if the page has 'use client' directive for hydration
     let isClientPage = false;
     const pagePath = context.pageInfo.entity.id;
     try {
       const pageContent = await this.config.adapter.fs.readFile(pagePath);
-      // Match 'use client' or "use client" at start of line
       isClientPage = /^\s*['"]use client['"];?\s*$/m.test(pageContent);
       if (isClientPage) {
         logger.info(`[HTMLGenerator] Detected 'use client' page: ${pagePath}`);

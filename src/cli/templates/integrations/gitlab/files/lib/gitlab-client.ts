@@ -337,7 +337,6 @@ export function getMergeRequest(
   return gitlabFetch<GitLabMergeRequest>(`/projects/${encodedId}/merge_requests/${mrIid}`);
 }
 
-// Helper function to format issue for display
 export function formatIssueForDisplay(issue: GitLabIssue): string {
   const assignees = issue.assignees.map((a) => `@${a.username}`).join(", ");
   const labels = issue.labels.length > 0 ? `[${issue.labels.join(", ")}]` : "";
@@ -349,7 +348,6 @@ Created: ${new Date(issue.created_at).toLocaleDateString()}
 URL: ${issue.web_url}`;
 }
 
-// Helper function to format merge request for display
 export function formatMergeRequestForDisplay(mr: GitLabMergeRequest): string {
   const assignees = mr.assignees.map((a) => `@${a.username}`).join(", ");
   const reviewers = mr.reviewers.map((r) => `@${r.username}`).join(", ");

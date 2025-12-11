@@ -27,17 +27,10 @@ export function getContainer(doc: Document, id: string): HTMLElement {
 export function applySlotMessage(doc: Document, msg: SlotMessage) {
   if (msg.type !== "slot") return;
   const el = getContainer(doc, msg.id);
-  // Server-rendered RSC HTML is trusted; validateTrustedHtml provides defense-in-depth
   el.innerHTML = validateTrustedHtml(String(msg.html || ""));
 }
 
-/**
- * Process an NDJSON chunk with possible partial trailing line.
- * Returns the leftover (incomplete) fragment that should be
- * prefixed to the next chunk.
- */
 export function processNdjsonChunk(doc: Document, buffered: string): string {
-  // Split into lines; keep last fragment unprocessed
   const parts = buffered.split("\n");
   const remainder = parts.pop() ?? "";
   const queue: SlotMessage[] = [];
@@ -65,15 +58,10 @@ export function processNdjsonChunk(doc: Document, buffered: string): string {
   return remainder;
 }
 
-// Back-compat helper: process a full NDJSON string (no remainder)
 export function processNdjsonLines(doc: Document, ndjson: string) {
-  // Ensure trailing newline so the final line is flushed
   processNdjsonChunk(doc, ndjson.endsWith("\n") ? ndjson : `${ndjson}\n`);
 }
 
-/**
- * Stream consumer with cancellation and backpressure-friendly loop.
- */
 export async function consumeNdjsonStream(
   input: Response | ReadableStream<Uint8Array>,
   doc: Document = document,
@@ -92,7 +80,6 @@ export async function consumeNdjsonStream(
     for (;;) {
       if (signal?.aborted) throw new DOMException("aborted", "AbortError");
 
-      // Race reader.read() against abort signal
       const readPromise = reader.read();
       if (signal) {
         const abortPromise = new Promise<never>((_, reject) => {
@@ -124,7 +111,6 @@ export async function consumeNdjsonStream(
     }
     if (buffer) processNdjsonChunk(doc, `${buffer}\n`);
   } catch (e) {
-    // If aborted, throw AbortError; otherwise rethrow
     if (e instanceof Error && e.name === "AbortError") throw e;
     rscLogger.debug("[client-dom] consumeNdjsonStream error", e);
     throw e;
@@ -163,7 +149,6 @@ export async function consumeNdjsonStream(
   }
 }
 
-// Hydration stubs for client boundaries
 export function findClientBoundaries(
   doc: Document,
   slotId: string,
@@ -180,18 +165,11 @@ export function findClientBoundaries(
   return out;
 }
 
-/**
- * Mark client boundaries as seen during streaming.
- * This is a lightweight marker to track elements for hydration.
- * Actual React component hydration happens in hydrate-client.ts via bootHydration()
- * after streaming completes (called from script-handlers.ts boot function).
- */
 export function hydrateClientBoundaries(doc: Document, slotId: string) {
   const nodes = findClientBoundaries(doc, slotId);
   for (const el of nodes) {
     if (!el.dataset) continue;
     const ref = el.dataset.clientRef as string;
-    // Mark as seen - real hydration happens via hydrate-client.ts after streaming
     el.dataset.hydrated = "true";
     rscLogger.debug("[client-dom] marked for hydration", ref);
   }

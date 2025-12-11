@@ -1,6 +1,3 @@
-/**
- * Tests for MDX compiler validator functions
- */
 
 import { afterEach, beforeEach, describe, it } from "@std/testing/bdd.ts";
 import { expect } from "@std/expect";
@@ -127,7 +124,6 @@ describe("MDX compiler validator", () => {
       try {
         await Deno.remove(tempFile);
       } catch {
-        // Ignore cleanup errors
       }
     });
 
@@ -169,7 +165,6 @@ describe("MDX compiler validator", () => {
         await Deno.remove(tempFile);
         await Deno.remove(tempDir);
       } catch {
-        // Ignore cleanup errors
       }
     });
 

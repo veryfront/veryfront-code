@@ -1,21 +1,14 @@
-/**
- * Bundle optimization service
- */
 
 import { bundlerLogger as logger } from "@veryfront/utils";
 import * as esbuild from "esbuild";
 import type { BundleResult, BundlerOptions } from "../types/bundler-types.ts";
 
-/**
- * Optimize the bundle for production
- */
 export async function optimizeBundle(result: BundleResult, options: BundlerOptions): Promise<void> {
   if (options.mode !== "production") {
-    return; // Only optimize in production
+    return;
   }
 
   try {
-    // Process each JS output file
     for (const [_path, output] of result.outputs) {
       if (output.type !== "js") continue;
 
@@ -25,7 +18,6 @@ export async function optimizeBundle(result: BundleResult, options: BundlerOptio
         loader: "js",
       });
 
-      // Update the output with optimized content
       output.content = optimized.code;
     }
 
@@ -35,6 +27,5 @@ export async function optimizeBundle(result: BundleResult, options: BundlerOptio
     });
   } catch (error) {
     logger.error("Bundle optimization failed", { error });
-    // Don't fail the build if optimization fails
   }
 }

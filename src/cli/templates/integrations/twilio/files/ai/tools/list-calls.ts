@@ -79,7 +79,6 @@ export default tool({
         };
       }
 
-      // Format calls for better readability
       const formattedCalls = calls.map((call) => ({
         sid: call.sid,
         direction: call.direction,
@@ -95,7 +94,6 @@ export default tool({
         answeredBy: call.answered_by,
       }));
 
-      // Calculate statistics
       const totalDuration = calls.reduce((sum, call) => {
         return sum + (call.duration ? parseInt(call.duration, 10) : 0);
       }, 0);

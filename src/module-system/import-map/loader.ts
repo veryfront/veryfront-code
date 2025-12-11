@@ -24,7 +24,6 @@ export async function loadImportMap(
       };
     }
   } catch {
-    // Config not found or invalid, fall through to file-based discovery
   }
 
   let currentPath = startPath;
@@ -44,11 +43,10 @@ export async function loadImportMap(
         };
       }
     } catch {
-      // deno.json not found in this directory, continue searching
     }
 
     const parent = dirname(currentPath);
-    if (parent === currentPath) break; // Reached root
+    if (parent === currentPath) break;
     currentPath = parent;
   }
 

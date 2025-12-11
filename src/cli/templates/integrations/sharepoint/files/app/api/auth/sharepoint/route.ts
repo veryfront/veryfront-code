@@ -1,6 +1,3 @@
-/**
- * SharePoint OAuth Initiation
- */
 
 import { createOAuthInitHandler, memoryTokenStore, sharePointConfig } from "veryfront/oauth";
 

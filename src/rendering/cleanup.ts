@@ -16,6 +16,5 @@ export async function configureRendererNamespace(namespace: string) {
     );
     setCacheNamespace(namespace);
   } catch {
-    // Cache namespace configuration is optional
   }
 }

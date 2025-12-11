@@ -1,7 +1,3 @@
-/**
- * React Server Components Handler
- * Handles RSC endpoints and streaming
- */
 
 import { BaseHandler } from "../../response/base.ts";
 import type {
@@ -19,7 +15,7 @@ import { HTTP_NOT_FOUND, PRIORITY_MEDIUM } from "@veryfront/core/constants/index
 export class RSCHandler extends BaseHandler {
   metadata: HandlerMetadata = {
     name: "RSCHandler",
-    priority: PRIORITY_MEDIUM as HandlerPriority, // MEDIUM priority
+    priority: PRIORITY_MEDIUM as HandlerPriority,
     patterns: [
       { pattern: "/_veryfront/rsc/", prefix: true },
     ],
@@ -33,8 +29,6 @@ export class RSCHandler extends BaseHandler {
       return this.continue();
     }
 
-    // Always allow client.js, dom.js (needed for basic hydration even without full RSC)
-    // and flight_page (deprecated endpoint that always returns 410 Gone)
     const sub = pathname.replace("/_veryfront/rsc/", "");
     const isHydrationScript = sub === "client.js" || sub === "dom.js";
     const isDeprecatedEndpoint = sub === "flight_page";
@@ -52,7 +46,6 @@ export class RSCHandler extends BaseHandler {
     });
 
     if (res) {
-      // Wrap response with security and CORS headers
       const headers = new Headers(res.headers);
       await applyCORSHeaders({
         request: req,

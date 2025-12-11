@@ -15,7 +15,6 @@ export default tool({
   }),
   async execute({ teamId, projectId, limit }) {
     if (projectId) {
-      // List files from a specific project
       const response = await getProjectFiles(projectId);
       return response.files.slice(0, limit).map((file) => ({
         key: file.key,
@@ -25,7 +24,6 @@ export default tool({
         url: `https://www.figma.com/file/${file.key}`,
       }));
     } else {
-      // List all projects in the team
       const response = await getTeamProjects(teamId);
       return {
         projects: response.projects.slice(0, limit).map((project) => ({

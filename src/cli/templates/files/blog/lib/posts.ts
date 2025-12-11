@@ -53,7 +53,6 @@ export async function getPosts(): Promise<Post[]> {
     console.error("Error reading posts:", error);
   }
 
-  // Sort by date, newest first
   return posts.sort((a, b) =>
     new Date(b.date).getTime() - new Date(a.date).getTime()
   );

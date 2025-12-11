@@ -1,6 +1,3 @@
-/**
- * Parallel DSL Tests
- */
 
 import { assertEquals, assertThrows } from "https://deno.land/std@0.220.0/assert/mod.ts";
 import { describe, it } from "https://deno.land/std@0.220.0/testing/bdd.ts";
@@ -20,7 +17,6 @@ describe("parallel()", () => {
 
     const config = node.config as ParallelNodeConfig;
     assertEquals(config.nodes?.length, 2);
-    // parallel() prefixes child IDs
     assertEquals(config.nodes?.[0]?.id, "generate/write");
     assertEquals(config.nodes?.[1]?.id, "generate/images");
   });

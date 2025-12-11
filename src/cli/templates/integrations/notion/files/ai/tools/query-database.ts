@@ -22,7 +22,6 @@ export default tool({
     });
 
     return results.map((page) => {
-      // Extract all text properties
       const properties: Record<string, string> = {};
       for (const [key, prop] of Object.entries(page.properties)) {
         if (prop.type === "title" && prop.title) {

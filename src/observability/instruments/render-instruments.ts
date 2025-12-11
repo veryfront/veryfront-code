@@ -1,36 +1,14 @@
-/**
- * Render Metrics Instruments
- * Creation of render-related metric instruments
- *
- * @module
- */
 
 import type { Counter, Histogram, Meter } from "@opentelemetry/api";
 import { DURATION_HISTOGRAM_BOUNDARIES_MS } from "@veryfront/config";
 import type { MetricsConfig } from "../metrics/types.ts";
 
-/**
- * Render metric instruments
- */
 export interface RenderInstruments {
   renderDuration: Histogram | null;
   renderCounter: Counter | null;
   renderErrorCounter: Counter | null;
 }
 
-/**
- * Create render metric instruments
- *
- * @param meter - OpenTelemetry meter instance
- * @param config - Metrics configuration
- * @returns Render metric instruments
- *
- * @example
- * ```ts
- * const renderInstruments = createRenderInstruments(meter, config);
- * renderInstruments.renderCounter?.add(1);
- * ```
- */
 export function createRenderInstruments(
   meter: Meter,
   config: MetricsConfig,

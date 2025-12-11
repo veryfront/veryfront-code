@@ -71,7 +71,6 @@ export class RenderHandler {
       }));
     }
 
-    // Type assertion: component is a React component (validated in loadComponent)
     let payload = await renderer.renderToPayload(component as React.ComponentType<any>, props);
 
     if (!payload) {

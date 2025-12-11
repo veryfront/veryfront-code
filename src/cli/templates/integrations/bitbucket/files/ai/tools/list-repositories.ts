@@ -18,7 +18,6 @@ export default tool({
       .describe("Maximum number of repositories to return"),
   }),
   execute: async ({ role, limit }, context) => {
-    // Default to "current-user" for development; in production, always pass userId from session
     const userId = (context?.userId as string | undefined) || "current-user";
 
     try {

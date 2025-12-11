@@ -37,7 +37,6 @@ export class FilesystemCacheStore implements CacheStore {
     try {
       await this.adapter.fs.remove(filePath);
     } catch {
-      // ignore missing files
     }
   }
 
@@ -45,7 +44,6 @@ export class FilesystemCacheStore implements CacheStore {
     try {
       await this.adapter.fs.remove(this.baseDir, { recursive: true });
     } catch {
-      /* ignore */
     }
   }
 

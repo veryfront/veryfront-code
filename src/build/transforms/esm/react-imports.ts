@@ -3,28 +3,15 @@ import { REACT_DEFAULT_VERSION } from "@veryfront/utils/constants/cdn.ts";
 import { isNodeRuntime } from "../../../platform/compat/runtime.ts";
 import { cwd } from "../../../platform/compat/process.ts";
 
-/**
- * Get the absolute path to the veryfront AI React module for Deno SSR.
- * This resolves relative to this file's location in the veryfront source tree.
- */
 function getVeryfrontAIReactPath(subpath: string = ""): string {
-  // This file is at: src/build/transforms/esm/react-imports.ts
-  // AI react is at: src/ai/react/index.ts
-  // So we need to go up 4 levels: esm -> transforms -> build -> src
   const currentDir = new URL(".", import.meta.url).pathname;
   const srcDir = currentDir.replace(/\/build\/transforms\/esm\/?$/, "");
   const modulePath = subpath || "index.ts";
   return `file://${srcDir}/ai/react/${modulePath}`;
 }
 
-// Cache whether project has both react and react-dom
 let projectHasReactDom: boolean | null = null;
 
-/**
- * Check if the project has both react and react-dom installed.
- * This is used to determine whether to use project's React or bundled React
- * during SSR to avoid the "multiple React instances" error.
- */
 async function checkProjectHasReactDom(): Promise<boolean> {
   if (projectHasReactDom !== null) {
     return projectHasReactDom;
@@ -40,7 +27,6 @@ async function checkProjectHasReactDom(): Promise<boolean> {
     const { pathToFileURL } = await import("node:url");
     const projectRequire = createRequire(pathToFileURL(cwd() + "/").href);
 
-    // Check that BOTH can be resolved
     projectRequire.resolve("react");
     projectRequire.resolve("react-dom/server");
     projectHasReactDom = true;
@@ -51,10 +37,6 @@ async function checkProjectHasReactDom(): Promise<boolean> {
   }
 }
 
-/**
- * Get the path to the bundled React in the CLI's node_modules.
- * This is used when the project doesn't have react-dom installed.
- */
 async function getBundledReactPath(subpath: string = ""): Promise<string | null> {
   if (!isNodeRuntime()) {
     return null;
@@ -73,14 +55,12 @@ async function getBundledReactPath(subpath: string = ""): Promise<string | null>
 export async function resolveReactImports(code: string, forSSR: boolean = false): Promise<string> {
   const isNode = isNodeRuntime();
 
-  // For Node.js SSR, always resolve to absolute file:// URLs
   // This is required because temp modules can't resolve bare imports
   if (isNode && forSSR) {
     const hasReactDom = await checkProjectHasReactDom();
     const { pathToFileURL } = await import("node:url");
 
     if (hasReactDom) {
-      // Project has react and react-dom, resolve to project's node_modules
       try {
         const { createRequire } = await import("node:module");
         const projectRequire = createRequire(pathToFileURL(cwd() + "/").href);
@@ -96,11 +76,9 @@ export async function resolveReactImports(code: string, forSSR: boolean = false)
           return projectImports[specifier] || null;
         });
       } catch {
-        // Fall through to bundled React
       }
     }
 
-    // Project doesn't have react-dom or resolution failed, use bundled React
     const bundledReact = await getBundledReactPath();
     const bundledJsxRuntime = await getBundledReactPath("/jsx-runtime");
     const bundledJsxDevRuntime = await getBundledReactPath("/jsx-dev-runtime");
@@ -117,17 +95,13 @@ export async function resolveReactImports(code: string, forSSR: boolean = false)
       });
     }
 
-    // Last resort: keep bare imports
     return code;
   }
 
-  // For Node.js (non-SSR), keep bare imports as-is (npm packages)
   if (isNode) {
     return code;
   }
 
-  // For Deno SSR, resolve veryfront imports to local source files (not esm.sh)
-  // and React imports to esm.sh
   if (forSSR) {
     const denoSSRImports: Record<string, string> = {
       "react/jsx-runtime": `https://esm.sh/react@${REACT_DEFAULT_VERSION}/jsx-runtime`,
@@ -136,8 +110,6 @@ export async function resolveReactImports(code: string, forSSR: boolean = false)
       "react-dom/client": `https://esm.sh/react-dom@${REACT_DEFAULT_VERSION}/client`,
       "react-dom": `https://esm.sh/react-dom@${REACT_DEFAULT_VERSION}`,
       "react": `https://esm.sh/react@${REACT_DEFAULT_VERSION}`,
-      // For Deno SSR, resolve veryfront imports to absolute file:// URLs
-      // This prevents "react not in import map" errors when esm.sh module tries to import react
       "veryfront/ai/react": getVeryfrontAIReactPath(),
       "veryfront/ai/components": getVeryfrontAIReactPath("components/index.ts"),
       "veryfront/ai/primitives": getVeryfrontAIReactPath("primitives/index.ts"),
@@ -148,7 +120,6 @@ export async function resolveReactImports(code: string, forSSR: boolean = false)
     });
   }
 
-  // For Deno/browser, transform to esm.sh URLs
   const reactImports: Record<string, string> = {
     "react/jsx-runtime": `https://esm.sh/react@${REACT_DEFAULT_VERSION}/jsx-runtime`,
     "react/jsx-dev-runtime": `https://esm.sh/react@${REACT_DEFAULT_VERSION}/jsx-dev-runtime`,
@@ -164,7 +135,6 @@ export async function resolveReactImports(code: string, forSSR: boolean = false)
 }
 
 export function addDepsToEsmShUrls(code: string): Promise<string> {
-  // Skip for Node.js - no esm.sh URLs needed
   if (isNodeRuntime()) {
     return Promise.resolve(code);
   }

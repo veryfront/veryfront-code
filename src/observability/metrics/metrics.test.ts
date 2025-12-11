@@ -1,19 +1,3 @@
-/**
- * OpenTelemetry Metrics Tests
- *
- * Comprehensive tests covering:
- * - Initialization with different configurations
- * - Environment variable override logic
- * - Counter recording (HTTP, cache, render, RSC, build, data fetch)
- * - Histogram recording (duration, size)
- * - Observable gauge creation and callbacks
- * - UpDownCounter for active request tracking
- * - Runtime state management
- * - Exporter configuration (console, OTLP, Prometheus)
- * - Error handling and edge cases
- * - isMetricsEnabled checks
- * - Graceful shutdown
- */
 
 import { assert, assertEquals, assertExists } from "std/assert/mod.ts";
 import {
@@ -23,7 +7,6 @@ import {
   it,
 } from "std/testing/bdd.ts";
 
-// Mock OpenTelemetry API types
 const _mockObservableResult = {
   observe: () => {},
 };
@@ -57,7 +40,6 @@ const _mockApi = {
   },
 };
 
-// Mock adapter with environment access
 function createMockAdapter(envVars: Record<string, string> = {}) {
   return {
     env: {
@@ -224,9 +206,8 @@ describe("Metrics Module", () => {
       const { initMetrics } = await import("../index.ts");
 
       await initMetrics({ enabled: false });
-      await initMetrics({ enabled: true }); // Second init should be skipped
+      await initMetrics({ enabled: true });
 
-      // No error should be thrown
     });
   });
 
@@ -234,7 +215,6 @@ describe("Metrics Module", () => {
     it("should use default configuration when no config provided", async () => {
       const { initMetrics } = await import("../index.ts");
 
-      // Should not throw
       await initMetrics();
     });
 
@@ -246,7 +226,6 @@ describe("Metrics Module", () => {
         prefix: "custom-prefix",
       });
 
-      // Should accept partial config
     });
 
     it("should use console exporter by default", async () => {
@@ -254,7 +233,6 @@ describe("Metrics Module", () => {
 
       await initMetrics({ enabled: false });
 
-      // Default exporter should be 'console'
     });
   });
 
@@ -265,7 +243,6 @@ describe("Metrics Module", () => {
 
       await initMetrics({ enabled: false }, adapter as any);
 
-      // Environment variable should override config
     });
 
     it("should enable metrics via VERYFRONT_OTEL=1", async () => {
@@ -274,7 +251,6 @@ describe("Metrics Module", () => {
 
       await initMetrics({ enabled: false }, adapter as any);
 
-      // Environment variable should override config
     });
 
     it("should read OTLP endpoint from OTEL_EXPORTER_OTLP_ENDPOINT", async () => {
@@ -285,7 +261,6 @@ describe("Metrics Module", () => {
 
       await initMetrics({ enabled: false }, adapter as any);
 
-      // Endpoint should be read from env
     });
 
     it("should read OTLP endpoint from OTEL_EXPORTER_OTLP_METRICS_ENDPOINT", async () => {
@@ -296,7 +271,6 @@ describe("Metrics Module", () => {
 
       await initMetrics({ enabled: false }, adapter as any);
 
-      // Metrics-specific endpoint should be read from env
     });
 
     it("should set exporter type from OTEL_METRICS_EXPORTER=prometheus", async () => {
@@ -305,7 +279,6 @@ describe("Metrics Module", () => {
 
       await initMetrics({ enabled: false }, adapter as any);
 
-      // Exporter type should be set from env
     });
 
     it("should set exporter type from OTEL_METRICS_EXPORTER=otlp", async () => {
@@ -314,7 +287,6 @@ describe("Metrics Module", () => {
 
       await initMetrics({ enabled: false }, adapter as any);
 
-      // Exporter type should be set from env
     });
 
     it("should ignore invalid exporter types from env", async () => {
@@ -323,7 +295,6 @@ describe("Metrics Module", () => {
 
       await initMetrics({ enabled: false }, adapter as any);
 
-      // Should use default exporter
     });
 
     it("should handle env without get method (Node.js style)", async () => {
@@ -336,7 +307,6 @@ describe("Metrics Module", () => {
 
       await initMetrics({ enabled: false }, adapter as any);
 
-      // Should read from env object directly
     });
   });
 
@@ -420,28 +390,24 @@ describe("Metrics Module", () => {
     it("should record HTTP request without attributes", async () => {
       const { recordHttpRequest } = await import("../index.ts");
 
-      // Should not throw
       recordHttpRequest();
     });
 
     it("should record HTTP request with attributes", async () => {
       const { recordHttpRequest } = await import("../index.ts");
 
-      // Should not throw
       recordHttpRequest({ method: "GET", path: "/api/users" });
     });
 
     it("should record HTTP request completion with duration", async () => {
       const { recordHttpRequestComplete } = await import("../index.ts");
 
-      // Should not throw
       recordHttpRequestComplete(250);
     });
 
     it("should record HTTP request completion with attributes", async () => {
       const { recordHttpRequestComplete } = await import("../index.ts");
 
-      // Should not throw
       recordHttpRequestComplete(250, { status: "200", method: "POST" });
     });
   });
@@ -450,42 +416,36 @@ describe("Metrics Module", () => {
     it("should record cache hit", async () => {
       const { recordCacheGet } = await import("../index.ts");
 
-      // Should not throw
       recordCacheGet(true);
     });
 
     it("should record cache miss", async () => {
       const { recordCacheGet } = await import("../index.ts");
 
-      // Should not throw
       recordCacheGet(false);
     });
 
     it("should record cache get with attributes", async () => {
       const { recordCacheGet } = await import("../index.ts");
 
-      // Should not throw
       recordCacheGet(true, { key: "user:123", type: "memory" });
     });
 
     it("should record cache set with attributes", async () => {
       const { recordCacheSet } = await import("../index.ts");
 
-      // Should not throw
       recordCacheSet({ key: "user:123", ttl: "3600" });
     });
 
     it("should record cache invalidation with count", async () => {
       const { recordCacheInvalidate } = await import("../index.ts");
 
-      // Should not throw
       recordCacheInvalidate(5);
     });
 
     it("should record cache invalidation with attributes", async () => {
       const { recordCacheInvalidate } = await import("../index.ts");
 
-      // Should not throw
       recordCacheInvalidate(5, { pattern: "user:*" });
     });
   });
@@ -494,28 +454,24 @@ describe("Metrics Module", () => {
     it("should record render with duration", async () => {
       const { recordRender } = await import("../index.ts");
 
-      // Should not throw
       recordRender(150);
     });
 
     it("should record render with attributes", async () => {
       const { recordRender } = await import("../index.ts");
 
-      // Should not throw
       recordRender(150, { page: "/dashboard", type: "ssr" });
     });
 
     it("should record render error", async () => {
       const { recordRenderError } = await import("../index.ts");
 
-      // Should not throw
       recordRenderError();
     });
 
     it("should record render error with attributes", async () => {
       const { recordRenderError } = await import("../index.ts");
 
-      // Should not throw
       recordRenderError({ error: "ComponentError", page: "/about" });
     });
   });
@@ -524,63 +480,54 @@ describe("Metrics Module", () => {
     it("should record RSC render with duration", async () => {
       const { recordRSCRender } = await import("../index.ts");
 
-      // Should not throw
       recordRSCRender(200);
     });
 
     it("should record RSC stream with duration", async () => {
       const { recordRSCStream } = await import("../index.ts");
 
-      // Should not throw
       recordRSCStream(300);
     });
 
     it("should record RSC manifest request", async () => {
       const { recordRSCRequest } = await import("../index.ts");
 
-      // Should not throw
       recordRSCRequest("manifest");
     });
 
     it("should record RSC page request", async () => {
       const { recordRSCRequest } = await import("../index.ts");
 
-      // Should not throw
       recordRSCRequest("page");
     });
 
     it("should record RSC stream request", async () => {
       const { recordRSCRequest } = await import("../index.ts");
 
-      // Should not throw
       recordRSCRequest("stream");
     });
 
     it("should record RSC action request", async () => {
       const { recordRSCRequest } = await import("../index.ts");
 
-      // Should not throw
       recordRSCRequest("action");
     });
 
     it("should record RSC request with attributes", async () => {
       const { recordRSCRequest } = await import("../index.ts");
 
-      // Should not throw
       recordRSCRequest("page", { path: "/products" });
     });
 
     it("should record RSC error", async () => {
       const { recordRSCError } = await import("../index.ts");
 
-      // Should not throw
       recordRSCError();
     });
 
     it("should record RSC error with attributes", async () => {
       const { recordRSCError } = await import("../index.ts");
 
-      // Should not throw
       recordRSCError({ type: "StreamError", component: "ProductList" });
     });
   });
@@ -589,28 +536,24 @@ describe("Metrics Module", () => {
     it("should record build with duration", async () => {
       const { recordBuild } = await import("../index.ts");
 
-      // Should not throw
       recordBuild(5000);
     });
 
     it("should record build with attributes", async () => {
       const { recordBuild } = await import("../index.ts");
 
-      // Should not throw
       recordBuild(5000, { type: "production", target: "browser" });
     });
 
     it("should record bundle with size", async () => {
       const { recordBundle } = await import("../index.ts");
 
-      // Should not throw
       recordBundle(250.5);
     });
 
     it("should record bundle with attributes", async () => {
       const { recordBundle } = await import("../index.ts");
 
-      // Should not throw
       recordBundle(250.5, { name: "app.js", type: "client" });
     });
   });
@@ -619,28 +562,24 @@ describe("Metrics Module", () => {
     it("should record data fetch with duration", async () => {
       const { recordDataFetch } = await import("../index.ts");
 
-      // Should not throw
       recordDataFetch(120);
     });
 
     it("should record data fetch with attributes", async () => {
       const { recordDataFetch } = await import("../index.ts");
 
-      // Should not throw
       recordDataFetch(120, { source: "api", endpoint: "/users" });
     });
 
     it("should record data fetch error", async () => {
       const { recordDataFetchError } = await import("../index.ts");
 
-      // Should not throw
       recordDataFetchError();
     });
 
     it("should record data fetch error with attributes", async () => {
       const { recordDataFetchError } = await import("../index.ts");
 
-      // Should not throw
       recordDataFetchError({ error: "NetworkError", endpoint: "/products" });
     });
   });
@@ -649,7 +588,6 @@ describe("Metrics Module", () => {
     it("should shutdown metrics without error when not initialized", async () => {
       const { shutdownMetrics } = await import("../index.ts");
 
-      // Should not throw
       await shutdownMetrics();
     });
 
@@ -658,7 +596,6 @@ describe("Metrics Module", () => {
 
       await initMetrics({ enabled: false });
 
-      // Should not throw
       await shutdownMetrics();
     });
   });
@@ -667,49 +604,42 @@ describe("Metrics Module", () => {
     it("should handle metrics recording when not initialized", async () => {
       const { recordHttpRequest } = await import("../index.ts");
 
-      // Should not throw when instruments are null
       recordHttpRequest();
     });
 
     it("should handle null attributes gracefully", async () => {
       const { recordHttpRequest } = await import("../index.ts");
 
-      // Should not throw
       recordHttpRequest(undefined);
     });
 
     it("should handle empty attributes object", async () => {
       const { recordRender } = await import("../index.ts");
 
-      // Should not throw
       recordRender(100, {});
     });
 
     it("should handle zero duration values", async () => {
       const { recordRender } = await import("../index.ts");
 
-      // Should not throw
       recordRender(0);
     });
 
     it("should handle negative duration values", async () => {
       const { recordHttpRequestComplete } = await import("../index.ts");
 
-      // Should not throw (though not recommended in real usage)
       recordHttpRequestComplete(-10);
     });
 
     it("should handle very large duration values", async () => {
       const { recordBuild } = await import("../index.ts");
 
-      // Should not throw
       recordBuild(999999);
     });
 
     it("should handle zero count invalidation", async () => {
       const { recordCacheInvalidate } = await import("../index.ts");
 
-      // Should not throw
       recordCacheInvalidate(0);
     });
 

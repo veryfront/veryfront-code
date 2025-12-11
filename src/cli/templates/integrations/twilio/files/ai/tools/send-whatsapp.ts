@@ -20,7 +20,6 @@ export default tool({
   }),
   execute: async ({ to, body, mediaUrl }) => {
     try {
-      // Format phone number to E.164 if needed
       const formattedPhone = formatPhoneNumber(to);
 
       const message = await sendWhatsApp(formattedPhone, body, {
@@ -41,7 +40,6 @@ export default tool({
       };
     } catch (error) {
       if (error instanceof Error) {
-        // Check for common errors
         if (error.message.includes("not configured")) {
           return {
             error: "Twilio not configured. Please set TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, and TWILIO_PHONE_NUMBER.",
@@ -49,7 +47,6 @@ export default tool({
           };
         }
 
-        // Twilio WhatsApp-specific errors
         if (error.message.includes("63007")) {
           return {
             error: "Recipient has not opted in to receive WhatsApp messages. They must send a message to your WhatsApp sandbox first.",

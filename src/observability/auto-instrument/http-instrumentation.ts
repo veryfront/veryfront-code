@@ -72,19 +72,6 @@ export function instrumentHttpHandler(
   };
 }
 
-/**
- * Create an instrumented fetch function without mutating globals
- * Returns a wrapped fetch that adds OpenTelemetry spans
- *
- * @param baseFetch - The fetch function to instrument (defaults to globalThis.fetch)
- * @returns Instrumented fetch function
- *
- * @example
- * ```ts
- * const instrumentedFetch = createInstrumentedFetch()
- * const response = await instrumentedFetch('https://api.example.com')
- * ```
- */
 export function createInstrumentedFetch(
   baseFetch: typeof fetch = globalThis.fetch,
 ): typeof fetch {
@@ -109,7 +96,6 @@ export function createInstrumentedFetch(
       fetchAttrs["http.host"] = parsed.host;
       fetchAttrs["http.scheme"] = parsed.protocol.replace(":", "");
     } catch {
-      // Relative URLs are fine; leave defaults
     }
 
     try {
@@ -121,7 +107,6 @@ export function createInstrumentedFetch(
         },
         async (span) => {
           try {
-            // Inject trace context into headers
             const headers = new Headers(init?.headers);
             propagation.inject(otContext.active(), headers, {
               set: (h, k, v) => h.set(k, v),
@@ -183,7 +168,6 @@ function recordResponseSuccess(
     span.setStatus({ code: SpanStatusCode.OK });
   }
 
-  // Preserve original request method/path for downstream analysis
   span.setAttributes({
     "http.method": httpAttrs["http.method"],
     "http.target": httpAttrs["http.target"],

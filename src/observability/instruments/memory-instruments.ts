@@ -1,35 +1,13 @@
-/**
- * Memory Metrics Instruments
- * Creation of memory-related metric instruments
- *
- * @module
- */
 
 import type { Meter, ObservableGauge, ObservableResult } from "@opentelemetry/api";
 import { getMemoryUsage } from "../metrics/config.ts";
 import type { MetricsConfig } from "../metrics/types.ts";
 
-/**
- * Memory metric instruments
- */
 export interface MemoryInstruments {
   memoryUsageGauge: ObservableGauge | null;
   heapUsageGauge: ObservableGauge | null;
 }
 
-/**
- * Create memory metric instruments
- *
- * @param meter - OpenTelemetry meter instance
- * @param config - Metrics configuration
- * @returns Memory metric instruments
- *
- * @example
- * ```ts
- * const memoryInstruments = createMemoryInstruments(meter, config);
- * // Observables automatically track memory usage
- * ```
- */
 export function createMemoryInstruments(
   meter: Meter,
   config: MetricsConfig,

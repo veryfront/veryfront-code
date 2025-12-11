@@ -1,9 +1,3 @@
-/**
- * Veryfront Token Storage API Client
- *
- * Handles HTTP communication with the Veryfront Cloud token storage API.
- */
-
 import { logger } from "@veryfront/utils";
 import { TokenStorageError, type VeryfrontTokenConfig } from "./types.ts";
 
@@ -14,10 +8,6 @@ export class TokenStorageAPIClient {
     this.config = config;
   }
 
-  /**
-   * Get a token by key
-   * @returns The encrypted token value, or null if not found
-   */
   async get(key: string): Promise<string | null> {
     const url = this.buildUrl(key);
 
@@ -56,9 +46,6 @@ export class TokenStorageAPIClient {
     }
   }
 
-  /**
-   * Set a token by key (upsert)
-   */
   async set(key: string, value: string): Promise<void> {
     const url = this.buildUrl(key);
 
@@ -94,9 +81,6 @@ export class TokenStorageAPIClient {
     }
   }
 
-  /**
-   * Delete a token by key (idempotent)
-   */
   async delete(key: string): Promise<void> {
     const url = this.buildUrl(key);
 
@@ -106,7 +90,6 @@ export class TokenStorageAPIClient {
         headers: this.buildHeaders(),
       });
 
-      // 404 is OK for delete (idempotent)
       if (!response.ok && response.status !== 404) {
         throw new TokenStorageError(
           `Failed to delete token: ${response.statusText}`,
@@ -129,9 +112,6 @@ export class TokenStorageAPIClient {
     }
   }
 
-  /**
-   * List all token keys (optional, for admin/debugging)
-   */
   async list(prefix?: string): Promise<string[]> {
     const url = new URL(
       `/api/v1/projects/${encodeURIComponent(this.config.projectSlug)}/tokens`,
@@ -173,12 +153,8 @@ export class TokenStorageAPIClient {
     }
   }
 
-  /**
-   * Verify connection to the API
-   */
   async ping(): Promise<boolean> {
     try {
-      // Try to list tokens (empty result is fine)
       await this.list();
       return true;
     } catch {
@@ -199,9 +175,6 @@ export class TokenStorageAPIClient {
     };
   }
 
-  /**
-   * Fetch with retry logic
-   */
   private async fetchWithRetry(
     url: string,
     init: RequestInit,
@@ -213,12 +186,10 @@ export class TokenStorageAPIClient {
       try {
         const response = await fetch(url, init);
 
-        // Don't retry client errors (except 429)
         if (response.status >= 400 && response.status < 500 && response.status !== 429) {
           return response;
         }
 
-        // Retry server errors and rate limits
         if (!response.ok && (response.status >= 500 || response.status === 429)) {
           throw new Error(`Server error: ${response.status}`);
         }

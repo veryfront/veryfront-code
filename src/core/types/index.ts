@@ -52,31 +52,24 @@ export type {
 
 export type { AppProps } from "./app.ts";
 
-// Branded types for compile-time domain type safety
 export type {
   AgentId,
   ApiKey,
-  // Security tokens
   AuthToken,
-  // Brand types
   Brand,
   CsrfToken,
-  // Entity/Resource identifiers
   EntityId,
   LayoutId,
   MessageId,
   PageId,
   PromptId,
-  // Request/Response identifiers
   RequestId,
   ResourceId,
   SessionId,
-  // Content identifiers
   Slug,
   ToolCallId,
   ToolId,
   Unbrand,
-  // User/Agent identifiers
   UserId,
 } from "./branded.ts";
 
@@ -340,7 +333,6 @@ export interface CSSOptimizerStats {
   averageSavings: number;
 }
 
-// Entity utilities
 export {
   getEntityBySlug,
   getEntityInfo,

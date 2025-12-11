@@ -9,7 +9,6 @@ export async function POST(req: Request) {
   try {
     const contentType = req.headers.get("content-type") || "";
 
-    // Handle multipart form data
     if (contentType.includes("multipart/form-data")) {
       const formData = await req.formData();
       const file = formData.get("file") as File | null;
@@ -30,7 +29,6 @@ export async function POST(req: Request) {
       });
     }
 
-    // Handle raw binary upload
     const buffer = await req.arrayBuffer();
     const filename = req.headers.get("x-filename") || undefined;
     const mimeType = contentType || undefined;

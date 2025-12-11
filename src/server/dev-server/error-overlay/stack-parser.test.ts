@@ -1,6 +1,3 @@
-/**
- * Tests for stack trace parser
- */
 
 import { describe, it } from "@std/testing/bdd.ts";
 import { expect } from "@std/expect";
@@ -60,9 +57,9 @@ describe("stack-parser", () => {
 
     it("should parse real Deno stack trace", () => {
       const stack = `Error: Test error
-    at testFunction (file:///path/to/file.ts:10:15)
-    at async runTest (file:///path/to/test.ts:20:5)
-    at async Object.action (file:///path/to/runner.ts:30:7)`;
+    at testFunction (file:
+    at async runTest (file:
+    at async Object.action (file:
       const frames = parseStackTrace(stack);
 
       expect(frames).toHaveLength(4);
@@ -85,8 +82,8 @@ describe("stack-parser", () => {
 
     it("should parse browser stack trace", () => {
       const stack = `Error: Test
-    at testFunc (http://localhost:3000/app.js:10:20)
-    at HTMLButtonElement.onclick (http://localhost:3000/app.js:50:10)`;
+    at testFunc (http:
+    at HTMLButtonElement.onclick (http:
       const frames = parseStackTrace(stack);
 
       expect(frames).toHaveLength(3);
@@ -202,14 +199,11 @@ describe("stack-parser", () => {
     it("should work end-to-end with real error", () => {
       const error = new Error("Test error");
 
-      // Check if error has stack
       expect(hasStackTrace(error)).toBe(true);
 
-      // Parse the stack
       const frames = parseStackTrace(error.stack || "");
       expect(frames.length).toBeGreaterThan(0);
 
-      // Format the stack
       const formatted = formatStackTrace(error.stack || "");
       expect(formatted).toContain("Test error");
     });

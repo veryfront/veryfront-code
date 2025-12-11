@@ -1,62 +1,31 @@
-/**
- * Tool Execution Core
- *
- * Unified tool execution logic for both streaming and non-streaming agent loops.
- * Extracts common patterns to reduce duplication.
- */
 
 import type { Message, ToolCall } from "../../types/agent.ts";
 import { executeTool } from "../../utils/tool.ts";
 import type { Memory } from "../memory.ts";
 
-/**
- * Provider tool call format
- */
 export interface ProviderToolCall {
   id: string;
   name: string;
   arguments: string | Record<string, unknown>;
 }
 
-/**
- * Result of tool execution
- */
 export interface ToolExecutionResult {
   toolCall: ToolCall;
   message: Message;
   success: boolean;
 }
 
-/**
- * Context for tool execution
- */
 export interface ToolExecutionContext {
   agentId: string;
   memory: Memory;
 }
 
-/**
- * Optional streaming callbacks
- */
 export interface StreamingCallbacks {
-  /** Called when tool execution starts */
   onToolCallStart?: (toolCall: ToolCall) => void;
-  /** Called when tool execution completes */
   onToolCallComplete?: (toolCall: ToolCall, result: unknown) => void;
-  /** Called when tool execution fails */
   onToolCallError?: (toolCall: ToolCall, error: string) => void;
 }
 
-/**
- * Unified tool execution core.
- *
- * Handles the common logic of:
- * - Parsing tool call arguments
- * - Executing tools
- * - Creating result/error messages
- * - Tracking execution time
- * - Managing tool call status
- */
 export class ToolExecutionCore {
   private context: ToolExecutionContext;
 
@@ -64,13 +33,6 @@ export class ToolExecutionCore {
     this.context = context;
   }
 
-  /**
-   * Execute a single tool call and return the result.
-   *
-   * @param tc - The provider tool call to execute
-   * @param callbacks - Optional streaming callbacks
-   * @returns Tool execution result with message
-   */
   async execute(
     tc: ProviderToolCall,
     callbacks?: StreamingCallbacks,
@@ -88,26 +50,20 @@ export class ToolExecutionCore {
       toolCall.status = "executing";
       const startTime = Date.now();
 
-      // Notify start callback
       callbacks?.onToolCallStart?.(toolCall);
 
-      // Execute the tool
       const result = await executeTool(tc.name, toolCall.args, {
         agentId: this.context.agentId,
       });
 
-      // Update status
       toolCall.status = "completed";
       toolCall.result = result;
       toolCall.executionTime = Date.now() - startTime;
 
-      // Notify complete callback
       callbacks?.onToolCallComplete?.(toolCall, result);
 
-      // Create success message
       const message = this.createSuccessMessage(tc.id, result, toolCall);
 
-      // Add to memory
       await this.context.memory.add(message);
 
       return {
@@ -118,17 +74,13 @@ export class ToolExecutionCore {
     } catch (error) {
       const errorStr = error instanceof Error ? error.message : String(error);
 
-      // Update status
       toolCall.status = "error";
       toolCall.error = errorStr;
 
-      // Notify error callback
       callbacks?.onToolCallError?.(toolCall, errorStr);
 
-      // Create error message
       const message = this.createErrorMessage(tc.id, errorStr, toolCall);
 
-      // Add to memory
       await this.context.memory.add(message);
 
       return {
@@ -139,10 +91,6 @@ export class ToolExecutionCore {
     }
   }
 
-  /**
-   * Parse provider tool arguments and ensure we always return an object.
-   * Throws an error if the payload is missing or malformed to be handled upstream.
-   */
   private parseArguments(raw: ProviderToolCall["arguments"]): Record<string, unknown> {
     if (typeof raw === "string") {
       const parsed = JSON.parse(raw);
@@ -159,13 +107,6 @@ export class ToolExecutionCore {
     throw new Error("Tool call arguments must be a JSON object");
   }
 
-  /**
-   * Execute multiple tool calls in sequence.
-   *
-   * @param toolCalls - Array of provider tool calls
-   * @param callbacks - Optional streaming callbacks
-   * @returns Array of execution results
-   */
   async executeAll(
     toolCalls: ProviderToolCall[],
     callbacks?: StreamingCallbacks,
@@ -180,34 +121,29 @@ export class ToolExecutionCore {
     return results;
   }
 
-  /**
-   * Create a success message for a tool result.
-   */
   private createSuccessMessage(toolCallId: string, result: unknown, toolCall: ToolCall): Message {
     return {
       id: `tool_${toolCallId}`,
       role: "tool",
-      parts: [{ type: "tool-result", toolCallId, toolName: toolCall.name, result }],
+      content: JSON.stringify(result),
+      toolCallId,
+      toolCall,
       timestamp: Date.now(),
     };
   }
 
-  /**
-   * Create an error message for a failed tool call.
-   */
   private createErrorMessage(toolCallId: string, error: string, toolCall: ToolCall): Message {
     return {
       id: `tool_error_${toolCallId}`,
       role: "tool",
-      parts: [{ type: "tool-result", toolCallId, toolName: toolCall.name, result: { error } }],
+      content: `Error: ${error}`,
+      toolCallId,
+      toolCall,
       timestamp: Date.now(),
     };
   }
 }
 
-/**
- * Create a tool execution core instance.
- */
 export function createToolExecutionCore(context: ToolExecutionContext): ToolExecutionCore {
   return new ToolExecutionCore(context);
 }

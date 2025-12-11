@@ -1,12 +1,3 @@
-/**
- * Build Initializer Module
- *
- * Handles initialization of the build process including:
- * - Options parsing and validation
- * - Adapter detection and configuration
- * - Renderer creation
- * - Stats object initialization
- */
 
 import { join } from "node:path";
 import { getAdapter } from "@veryfront/platform/adapters/index.ts";
@@ -24,9 +15,6 @@ export interface BuildContext {
   stats: BuildStats;
 }
 
-/**
- * Initialize the build context with all necessary dependencies
- */
 export async function initializeBuildContext(options: BuildOptions): Promise<BuildContext> {
   const adapter = await getAdapter();
   const config = await getConfig(options.projectDir, adapter);
@@ -54,9 +42,6 @@ export async function initializeBuildContext(options: BuildOptions): Promise<Bui
   };
 }
 
-/**
- * Parse and normalize build options
- */
 export function normalizeBuildOptions(options: BuildOptions) {
   const defaultOutputDir = join(options.projectDir, ".veryfront", "output");
   return {

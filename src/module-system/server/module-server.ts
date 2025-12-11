@@ -1,11 +1,3 @@
-/**
- * Module Server
- *
- * Serves transformed ESM modules at /_vf_modules/* URLs.
- * Used by client-side for granular module loading and HMR.
- *
- * Security: Uses secure filesystem wrapper to prevent path traversal attacks
- */
 
 import { join } from "std/path/mod.ts";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
@@ -15,37 +7,15 @@ import { HTTP_NOT_FOUND, HTTP_OK, HTTP_SERVER_ERROR } from "@veryfront/utils";
 import { getContentTypeForPath } from "../../server/handlers/utils/content-types.ts";
 import { createSecureFs } from "@veryfront/security";
 
-const DEV_MODULE_PREFIX = /^\/(?:_vf_modules|_veryfront\/modules)\//;
+const DEV_MODULE_PREFIX = /^\/(?:_vf_modules|_veryfront\/modules)\
 
 export interface ModuleServerOptions {
-  /** Project identifier */
   projectId: string;
-  /** Project root directory */
   projectDir: string;
-  /** Runtime adapter */
   adapter: RuntimeAdapter;
-  /** Development mode */
   dev?: boolean;
 }
 
-/**
- * Serve module at /_vf_modules/* path
- *
- * Routes:
- * - /_vf_modules/components/app.js → components/app.tsx
- * - /_vf_modules/pages/index.js → pages/index.tsx
- * - /_vf_modules/lib/utils.js → lib/utils.ts
- *
- * Process:
- * 1. Map URL to file path
- * 2. Read source file
- * 3. Transform TS/JSX to ESM (cached)
- * 4. Return with application/javascript content type
- *
- * @param req - HTTP request
- * @param options - Module server options
- * @returns HTTP response with transformed module
- */
 export async function serveModule(
   req: Request,
   options: ModuleServerOptions,
@@ -55,12 +25,11 @@ export async function serveModule(
   const method = req.method.toUpperCase();
   const isHeadRequest = method === "HEAD";
 
-  // Create secure filesystem wrapper for module loading
   const secureFs = createSecureFs({
     baseDir: projectDir,
     adapter,
     context: "module-loading",
-    throwOnError: false, // Don't throw, return appropriate HTTP error
+    throwOnError: false,
     onSecurityEvent: (event) => {
       if (event.type === "validation-failed") {
         logger.warn("[ModuleServer] Security validation failed", {
@@ -79,13 +48,10 @@ export async function serveModule(
     });
   }
 
-  // Extract file path from URL
-  // /_vf_modules/components/app.js → components/app
   const modulePath = url.pathname.replace(DEV_MODULE_PREFIX, "");
   const filePathWithoutExt = modulePath.replace(/\.(?:mjs|js)$/i, "");
 
   try {
-    // Find source file (try .tsx, .ts, .jsx, .js, .mdx)
     const sourceFile = await findSourceFile(secureFs, projectDir, filePathWithoutExt);
 
     if (!sourceFile) {
@@ -96,17 +62,15 @@ export async function serveModule(
       });
     }
 
-    // Read source content
     let code: string | undefined;
 
     if (!isHeadRequest) {
       const source = await secureFs.readFile(sourceFile);
 
-      // Transform to ESM
       const transformOpts: TransformOptions = { projectId, dev };
       code = await transformToESM(
         source,
-        sourceFile, // Pass actual source file path (with .mdx extension)
+        sourceFile,
         projectDir,
         adapter,
         transformOpts,
@@ -131,17 +95,6 @@ export async function serveModule(
   }
 }
 
-/**
- * Find source file by trying different extensions
- *
- * Tries in order: .tsx, .ts, .jsx, .js, .mdx
- * Also tries common directories (app/, pages/, lib/) if file not found at root
- *
- * @param secureFs - Secure filesystem wrapper
- * @param projectDir - Project root directory
- * @param basePath - Base path without extension
- * @returns Full path to source file or null if not found
- */
 async function findSourceFile(
   secureFs: ReturnType<typeof createSecureFs>,
   projectDir: string,
@@ -149,12 +102,10 @@ async function findSourceFile(
 ): Promise<string | null> {
   const extensions = [".tsx", ".ts", ".jsx", ".js", ".mdx"];
 
-  // First, try the basePath as-is
   for (const ext of extensions) {
     const fullPath = join(projectDir, basePath + ext);
 
     try {
-      // Use secure filesystem wrapper (automatic path validation)
       const stat = await secureFs.stat(fullPath);
       if (stat.isFile) {
         return fullPath;
@@ -167,8 +118,6 @@ async function findSourceFile(
     }
   }
 
-  // If not found, try common directories as fallbacks
-  // This handles imports like "components/Button" which should resolve to "app/components/Button"
   const commonDirs = ["app", "pages", "lib", "src"];
   for (const dir of commonDirs) {
     for (const ext of extensions) {
@@ -184,7 +133,6 @@ async function findSourceFile(
           return fullPath;
         }
       } catch {
-        // Continue trying other paths
       }
     }
   }
@@ -192,12 +140,6 @@ async function findSourceFile(
   return null;
 }
 
-/**
- * Check if request is for a module
- *
- * @param req - HTTP request
- * @returns true if request path starts with /_vf_modules/
- */
 export function isModuleRequest(req: Request): boolean {
   const url = new URL(req.url);
   return DEV_MODULE_PREFIX.test(url.pathname);
@@ -230,8 +172,8 @@ function createDevModuleErrorBody(modulePath: string, errorMessage: string): str
   const normalizedPath = modulePath.toLowerCase();
 
   if (normalizedPath.endsWith(".css")) {
-    const sanitized = errorMessage.replace(/\*\//g, "*\\/");
-    return `/* Transform Error: ${sanitized} */`;
+    const sanitized = errorMessage.replace(/\*\
+    return ` `;
   }
 
   if (normalizedPath.endsWith(".json") || normalizedPath.endsWith(".map")) {

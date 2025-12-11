@@ -41,7 +41,6 @@ export default tool({
     destinationBranch,
     closeSourceBranch,
   }, context) => {
-    // Default to "current-user" for development; in production, always pass userId from session
     const userId = (context?.userId as string | undefined) || "current-user";
 
     try {

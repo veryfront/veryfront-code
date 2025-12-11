@@ -7,42 +7,36 @@ export interface GraphIds {
 }
 
 export interface ManifestModule {
-  id: string; // stable id
-  clientRef: string; // client module reference + export
+  id: string;
+  clientRef: string;
   exports: string[];
 }
 
 export interface Manifest {
   version: number;
-  hash: string; // simple content hash over modules for cache-busting
+  hash: string;
   modules: ManifestModule[];
 }
 
 function extractNamedExportsFromSource(source: string): string[] {
   const names = new Set<string>();
-  // export function Foo() {}
   for (const m of source.matchAll(/export\s+function\s+([A-Za-z0-9_]+)/g)) {
     names.add(m[1]!);
   }
-  // export class Foo {}
   for (const m of source.matchAll(/export\s+class\s+([A-Za-z0-9_]+)/g)) {
     names.add(m[1]!);
   }
-  // export const Foo =
   for (const m of source.matchAll(/export\s+const\s+([A-Za-z0-9_]+)/g)) {
     names.add(m[1]!);
   }
-  // export let Foo =
   for (const m of source.matchAll(/export\s+let\s+([A-Za-z0-9_]+)/g)) {
     names.add(m[1]!);
   }
-  // export { A, B as C }
   for (const m of source.matchAll(/export\s*\{([^}]+)\}/g)) {
     const inner = m[1]?.split(",") ?? [];
     for (const seg of inner) {
       const part = seg.trim();
       if (!part) continue;
-      // Handle "Name as Alias" or just "Name"
       const asMatch = part.match(/([A-Za-z0-9_]+)\s+as\s+([A-Za-z0-9_]+)/i);
       if (asMatch) names.add(asMatch[2]!);
       else {
@@ -63,7 +57,6 @@ export async function buildRscModules(
 
   const adapter = await getAdapter();
 
-  // Emit client components with their own refs (use client)
   for (const e of graphIds.client) {
     let exportsList: string[] = ["default"];
     try {
@@ -71,7 +64,6 @@ export async function buildRscModules(
       const names = extractNamedExportsFromSource(text);
       if (names.length > 0) exportsList = ["default", ...names];
     } catch {
-      /* ignore */
     }
     modules.push({
       id: e.id,
@@ -80,7 +72,6 @@ export async function buildRscModules(
     });
   }
 
-  // Emit server modules with placeholder clientRef (to be mapped to boundaries later)
   for (const e of graphIds.server) {
     let exportsList: string[] = ["default"];
     try {
@@ -88,7 +79,6 @@ export async function buildRscModules(
       const names = extractNamedExportsFromSource(text);
       if (names.length > 0) exportsList = ["default", ...names];
     } catch {
-      // ignore read errors; default only
     }
     modules.push({
       id: e.id,
@@ -96,13 +86,9 @@ export async function buildRscModules(
       exports: exportsList,
     });
   }
-  // In the future, client components could also be emitted with their own ids if needed
   return modules;
 }
 
-/**
- * Build a versioned manifest with a simple content hash for cache-busting.
- */
 export async function buildVersionedManifest(
   projectDir: string,
   graphIds: GraphIds | undefined,
@@ -110,7 +96,6 @@ export async function buildVersionedManifest(
   const modules = await buildRscModules(projectDir, graphIds);
   const enc = new TextEncoder();
   const data = enc.encode(JSON.stringify(modules));
-  // djb2 over bytes -> hex
   let h = HASH_SEED_DJB2;
   for (let i = 0; i < data.length; i++) h = ((h << 5) + h) ^ data[i]!;
   const hash = (h >>> 0).toString(16);

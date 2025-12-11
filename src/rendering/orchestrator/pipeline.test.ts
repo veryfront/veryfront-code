@@ -1,8 +1,3 @@
-/**
- * RenderPipeline Tests
- *
- * Tests the rendering pipeline configuration and types.
- */
 
 import { assertEquals, assertExists } from "std/assert/mod.ts";
 import { describe, it } from "std/testing/bdd.ts";

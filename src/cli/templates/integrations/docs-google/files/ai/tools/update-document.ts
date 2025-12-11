@@ -2,8 +2,6 @@ import { tool } from "veryfront/ai";
 import { z } from "zod";
 import { createDocsClient, type Request } from "../../lib/docs-client.ts";
 
-// Default user ID for demo/dev purposes
-// In production, get from authenticated session
 const DEFAULT_USER_ID = "demo-user";
 
 export default tool({
@@ -61,7 +59,6 @@ export default tool({
 
     let requests: Request[];
 
-    // Handle simple operation format
     if ("operation" in input) {
       const { documentId, operation } = input;
 
@@ -117,7 +114,6 @@ export default tool({
       }
     }
 
-    // Handle raw batch requests format
     const { documentId, requests: batchRequests } = input;
     const result = await client.updateDocument(documentId, batchRequests as Request[]);
 

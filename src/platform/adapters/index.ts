@@ -41,7 +41,6 @@ export {
   withFallbackSync,
 } from "./fallback-wrapper.ts";
 
-// Token Storage Adapter
 export {
   MemoryTokenAdapter,
   type TokenStorageAdapter,

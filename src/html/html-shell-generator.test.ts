@@ -160,7 +160,6 @@ describe("html-generation/html-shell-generator", () => {
 
       const result = await wrapInHTMLShell("<div>Content</div>", meta, options);
 
-      // In development, use Tailwind CDN for runtime CSS compilation (works with 'use client' pages)
       assertStringIncludes(result, "cdn.tailwindcss.com");
       assertStringIncludes(
         result,
@@ -182,7 +181,6 @@ describe("html-generation/html-shell-generator", () => {
 
       const result = await wrapInHTMLShell("<div>Content</div>", meta, options);
 
-      // In production, use UnoCSS pre-generated CSS (no Tailwind CDN)
       assert(!result.includes("cdn.tailwindcss.com"));
     });
 

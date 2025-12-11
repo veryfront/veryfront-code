@@ -46,10 +46,6 @@ const DEFAULT_VERSIONS: DetectedVersions = {
   veryfront: VERYFRONT_VERSION,
 };
 
-/**
- * Detect package versions from project's package.json
- * Falls back to defaults if not found
- */
 export async function detectVersions(projectDir: string): Promise<DetectedVersions> {
   try {
     const { createFileSystem } = await import("../platform/compat/fs.ts");
@@ -74,9 +70,6 @@ export async function detectVersions(projectDir: string): Promise<DetectedVersio
 
 type CdnProvider = "esm.sh" | "unpkg" | "jsdelivr";
 
-/**
- * Generate import map for esm.sh CDN
- */
 function getEsmShImportMap(versions: DetectedVersions): Record<string, string> {
   const { react, veryfront } = versions;
   return {
@@ -91,9 +84,6 @@ function getEsmShImportMap(versions: DetectedVersions): Record<string, string> {
   };
 }
 
-/**
- * Generate import map for unpkg CDN
- */
 function getUnpkgImportMap(versions: DetectedVersions): Record<string, string> {
   const { react, veryfront } = versions;
   return {
@@ -108,9 +98,6 @@ function getUnpkgImportMap(versions: DetectedVersions): Record<string, string> {
   };
 }
 
-/**
- * Generate import map for jsdelivr CDN
- */
 function getJsdelivrImportMap(versions: DetectedVersions): Record<string, string> {
   const { react, veryfront } = versions;
   return {
@@ -128,29 +115,20 @@ function getJsdelivrImportMap(versions: DetectedVersions): Record<string, string
   };
 }
 
-/**
- * Generate import map for self-hosted mode
- * Modules served from /_veryfront/lib/* endpoint
- */
 function getSelfHostedImportMap(versions: DetectedVersions): Record<string, string> {
   const { react } = versions;
   return {
-    // React still from CDN (or can be bundled separately)
     "react": `https://esm.sh/react@${react}`,
     "react-dom": `https://esm.sh/react-dom@${react}`,
     "react-dom/client": `https://esm.sh/react-dom@${react}/client`,
     "react/jsx-runtime": `https://esm.sh/react@${react}/jsx-runtime`,
     "react/jsx-dev-runtime": `https://esm.sh/react@${react}/jsx-dev-runtime`,
-    // Veryfront modules served from local endpoint
     "veryfront/ai/react": "/_veryfront/lib/ai/react.js",
     "veryfront/ai/components": "/_veryfront/lib/ai/components.js",
     "veryfront/ai/primitives": "/_veryfront/lib/ai/primitives.js",
   };
 }
 
-/**
- * Get CDN import map based on provider
- */
 function getCdnImportMap(
   versions: DetectedVersions,
   provider: CdnProvider = "esm.sh",
@@ -166,17 +144,10 @@ function getCdnImportMap(
   }
 }
 
-/**
- * Get default HTML import map (legacy function for backwards compatibility)
- */
 function getDefaultHTMLImportMap(): Record<string, string> {
   return getEsmShImportMap(DEFAULT_VERSIONS);
 }
 
-/**
- * Resolve versions based on config
- * Returns auto-detected versions or explicit config versions
- */
 async function resolveVersions(
   projectDir: string,
   config?: VeryfrontConfig,
@@ -187,7 +158,6 @@ async function resolveVersions(
     return detectVersions(projectDir);
   }
 
-  // Explicit versions from config
   const detected = await detectVersions(projectDir);
   return {
     react: versionsConfig.react || detected.react,
@@ -201,14 +171,9 @@ export interface BuildImportMapOptions {
   customImports?: Record<string, string>;
 }
 
-/**
- * Build import map JSON string
- * Supports multiple modes: cdn, self-hosted, bundled
- */
 export async function buildImportMapJson(
   options?: BuildImportMapOptions | Record<string, string>,
 ): Promise<string> {
-  // Legacy: if passed a plain record, use as import map directly
   if (
     options && !("projectDir" in options) && !("config" in options) && !("customImports" in options)
   ) {
@@ -221,15 +186,11 @@ export async function buildImportMapJson(
   const opts = (options || {}) as BuildImportMapOptions;
   const { projectDir, config, customImports } = opts;
 
-  // Determine mode
   const mode = config?.client?.moduleResolution ?? "cdn";
 
-  // For bundled mode, we might not need veryfront imports in the map
-  // as they'll be bundled into the client JS
   if (mode === "bundled") {
     const versions = projectDir ? await resolveVersions(projectDir, config) : DEFAULT_VERSIONS;
 
-    // Only include React in import map for bundled mode
     const imports: Record<string, string> = {
       "react": `https://esm.sh/react@${versions.react}`,
       "react-dom": `https://esm.sh/react-dom@${versions.react}`,
@@ -242,21 +203,17 @@ export async function buildImportMapJson(
     return JSON.stringify({ imports }, null, 2);
   }
 
-  // Resolve versions
   const versions = projectDir ? await resolveVersions(projectDir, config) : DEFAULT_VERSIONS;
 
-  // Get base import map based on mode
   let imports: Record<string, string>;
 
   if (mode === "self-hosted") {
     imports = getSelfHostedImportMap(versions);
   } else {
-    // CDN mode
     const provider = config?.client?.cdn?.provider ?? "esm.sh";
     imports = getCdnImportMap(versions, provider);
   }
 
-  // Merge with custom imports
   if (customImports) {
     imports = { ...imports, ...customImports };
   }
@@ -264,10 +221,6 @@ export async function buildImportMapJson(
   return JSON.stringify({ imports }, null, 2);
 }
 
-/**
- * Synchronous version for backwards compatibility
- * Uses default versions without project detection
- */
 export function buildImportMapJsonSync(importMap?: Record<string, string>): string {
   const imports = importMap || getDefaultHTMLImportMap();
   return JSON.stringify({ imports }, null, 2);

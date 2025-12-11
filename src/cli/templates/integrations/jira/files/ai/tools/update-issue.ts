@@ -27,7 +27,6 @@ export default tool({
     ),
   }),
   async execute({ issueKey, summary, description, priority, assigneeId, labels, status }) {
-    // Update fields if provided
     if (summary || description || priority || assigneeId || labels) {
       await updateIssue(issueKey, {
         summary,
@@ -38,7 +37,6 @@ export default tool({
       });
     }
 
-    // Transition status if provided
     if (status) {
       const transitions = await getIssueTransitions(issueKey);
       const targetTransition = transitions.find(
@@ -58,7 +56,6 @@ export default tool({
       await transitionIssue(issueKey, targetTransition.id);
     }
 
-    // Fetch and return updated issue
     const updatedIssue = await getIssue(issueKey);
 
     return {

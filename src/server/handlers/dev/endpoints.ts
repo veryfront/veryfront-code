@@ -1,7 +1,3 @@
-/**
- * Development Endpoints Handler
- * Handles HMR runtime, error overlay, and other dev-specific endpoints
- */
 
 import { BaseHandler } from "../response/base.ts";
 import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } from "../types.ts";
@@ -11,7 +7,7 @@ import { HMR_CLIENT_RELOAD_DELAY_MS } from "@veryfront/utils/constants/hmr.ts";
 export class DevEndpointsHandler extends BaseHandler {
   metadata: HandlerMetadata = {
     name: "DevEndpointsHandler",
-    priority: PRIORITY_HIGH_DEV as HandlerPriority, // HIGH priority in dev mode
+    priority: PRIORITY_HIGH_DEV as HandlerPriority,
     patterns: [
       { pattern: "/_veryfront/hmr-runtime.js", exact: true },
       { pattern: "/_veryfront/error-overlay.js", exact: true },
@@ -19,7 +15,7 @@ export class DevEndpointsHandler extends BaseHandler {
       { pattern: "/_veryfront/hmr.js", exact: true },
       { pattern: "/_veryfront/hydrate.js", exact: true },
     ],
-    enabled: (ctx) => ctx.mode === "development", // Only in dev mode
+    enabled: (ctx) => ctx.mode === "development",
   };
 
   handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
@@ -32,7 +28,6 @@ export class DevEndpointsHandler extends BaseHandler {
 
     const builder = this.createResponseBuilder(ctx);
 
-    // HMR script (external module to avoid CSP issues)
     if (pathname === "/_veryfront/hmr.js") {
       const port = url.searchParams.get("port") || "3000";
       const script = this.getHMRScript(parseInt(port, 10));
@@ -42,7 +37,6 @@ export class DevEndpointsHandler extends BaseHandler {
       return Promise.resolve(this.respond(response));
     }
 
-    // Hydrate script (external module to avoid CSP issues)
     if (pathname === "/_veryfront/hydrate.js") {
       const slug = url.searchParams.get("slug") || "";
       const script = this.getHydrateScript(slug);
@@ -52,7 +46,6 @@ export class DevEndpointsHandler extends BaseHandler {
       return Promise.resolve(this.respond(response));
     }
 
-    // HMR runtime
     if (pathname === "/_veryfront/hmr-runtime.js") {
       const script = this.getHMRRuntime();
       const response = builder
@@ -61,7 +54,6 @@ export class DevEndpointsHandler extends BaseHandler {
       return Promise.resolve(this.respond(response));
     }
 
-    // Error overlay
     if (pathname === "/_veryfront/error-overlay.js") {
       const script = this.getErrorOverlay();
       const response = builder
@@ -70,7 +62,6 @@ export class DevEndpointsHandler extends BaseHandler {
       return Promise.resolve(this.respond(response));
     }
 
-    // Dev loader
     if (pathname === "/_veryfront/dev-loader.js") {
       const script = this.getDevLoader();
       const response = builder
@@ -85,7 +76,6 @@ export class DevEndpointsHandler extends BaseHandler {
   private getHMRScript(port: number): string {
     const reloadDelay = HMR_CLIENT_RELOAD_DELAY_MS;
     return `
-// Veryfront HMR WebSocket Client
 const indicator = document.createElement('div');
 indicator.className = 'dev-indicator';
 indicator.textContent = 'Development Mode';
@@ -108,7 +98,6 @@ window.__veryfrontHMRWebSocket = ws;
 
   private getHydrateScript(slug: string): string {
     return `
-// Veryfront Hydration Script
 import { hydrate } from '/_veryfront/rsc/client.js';
 hydrate('${slug}', {
   ssr: true
@@ -118,7 +107,6 @@ hydrate('${slug}', {
 
   private getHMRRuntime(): string {
     return `
-// Veryfront HMR Runtime
 (function() {
   const ws = new WebSocket('ws://localhost:' + (window.__HMR_PORT__ || 3001));
 
@@ -178,7 +166,6 @@ hydrate('${slug}', {
 
   private getErrorOverlay(): string {
     return `
-// Veryfront Error Overlay
 (function() {
   let overlayElement = null;
 
@@ -270,17 +257,14 @@ hydrate('${slug}', {
 
   private getDevLoader(): string {
     return `
-// Veryfront Dev Loader
 console.log('[Veryfront] Development mode active');
 
-// Load HMR if enabled
 if (window.__HMR_ENABLED__) {
   const script = document.createElement('script');
   script.src = '/_veryfront/hmr-runtime.js';
   document.head.appendChild(script);
 }
 
-// Load error overlay
 const errorScript = document.createElement('script');
 errorScript.src = '/_veryfront/error-overlay.js';
 document.head.appendChild(errorScript);

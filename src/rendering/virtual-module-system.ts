@@ -44,7 +44,6 @@ export class VirtualModuleSystem {
     try {
       await initialize({ worker: false });
     } catch {
-      // Already initialized
     }
 
     const result = await transform(source, {

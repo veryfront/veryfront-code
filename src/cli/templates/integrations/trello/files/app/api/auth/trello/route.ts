@@ -1,6 +1,3 @@
-/**
- * Trello OAuth Init
- */
 
 import { trelloConfig, createOAuthInitHandler } from "veryfront/oauth";
 

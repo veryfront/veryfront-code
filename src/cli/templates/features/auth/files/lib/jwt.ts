@@ -13,7 +13,7 @@ export async function sign(payload: Record<string, any>): Promise<string> {
   );
 
   const header = btoa(JSON.stringify({ alg: "HS256", typ: "JWT" }));
-  const body = btoa(JSON.stringify({ ...payload, exp: Date.now() + 7 * 24 * 60 * 60 * 1000 })); // 7 days
+  const body = btoa(JSON.stringify({ ...payload, exp: Date.now() + 7 * 24 * 60 * 60 * 1000 }));
 
   const signature = await crypto.subtle.sign(
     algorithm,
@@ -23,7 +23,7 @@ export async function sign(payload: Record<string, any>): Promise<string> {
 
   const signatureB64 = btoa(String.fromCharCode(...new Uint8Array(signature)))
     .replace(/\+/g, "-")
-    .replace(/\//g, "_")
+    .replace(/\
     .replace(/=+$/, "");
 
   return `${header}.${body}.${signatureB64}`;

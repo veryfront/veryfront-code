@@ -1,13 +1,7 @@
-/**
- * CSS bundling service
- */
 
 import { bundlerLogger as logger } from "@veryfront/utils";
 import type { BundleResult, BundlerOptions } from "../types/bundler-types.ts";
 
-/**
- * Bundle CSS files
- */
 export function bundleCss(
   source: { path: string; content: string },
   options: BundlerOptions,
@@ -16,12 +10,10 @@ export function bundleCss(
   try {
     let processedCss = source.content;
 
-    // In production, minify CSS
     if (options.mode === "production") {
       processedCss = minifyCss(processedCss);
     }
 
-    // Add to outputs
     result.outputs.set(source.path, {
       path: source.path,
       content: processedCss,
@@ -38,7 +30,7 @@ export function bundleCss(
 function minifyCss(css: string): string {
   return (
     css
-      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/\/\*[\s\S]*?\*\
       .replace(/\s+/g, " ")
       .replace(/\s*([{}:;,])\s*/g, "$1")
       .replace(/;}/g, "}")

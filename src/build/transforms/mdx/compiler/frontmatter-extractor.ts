@@ -30,8 +30,8 @@ function extractExportConstants(body: string): { body: string; exports: Record<s
       try {
         const jsonValue = rawValue
           .replace(/'/g, '"') // Single quotes → double quotes
-          .replace(/(\w+):/g, '"$1":') // Unquoted keys → quoted keys
-          .replace(/,\s*}/g, "}"); // Trailing commas
+          .replace(/(\w+):/g, '"$1":')
+          .replace(/,\s*}/g, "}");
 
         exports[key] = JSON.parse(jsonValue);
       } catch {

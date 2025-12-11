@@ -3,7 +3,6 @@ import { getAccessToken } from "./token-store.ts";
 const QUICKBOOKS_BASE_URL = "https://quickbooks.api.intuit.com/v3";
 
 // Note: QuickBooks requires a realmId (company ID) which should be stored during OAuth
-// For this template, we'll use an environment variable or parameter
 const getRealmId = (): string => {
   const realmId = process.env.QUICKBOOKS_REALM_ID;
   if (!realmId) {

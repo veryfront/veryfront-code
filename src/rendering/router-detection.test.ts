@@ -4,7 +4,6 @@ import { detectAppRouter } from "./router-detection.ts";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "@veryfront/config";
 
-// Adapter stub that forces router-detection to use compat fs fallback
 const failingAdapter: RuntimeAdapter = {
   id: "node",
   name: "node-stub",
@@ -29,7 +28,6 @@ const failingAdapter: RuntimeAdapter = {
     async *readDir() {
       throw new Error("adapter readDir failure");
     },
-    // Unused in this test
     // deno-lint-ignore require-await
     async readFile() {
       throw new Error("not implemented");

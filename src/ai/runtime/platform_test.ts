@@ -1,6 +1,3 @@
-/**
- * Platform Detection Tests
- */
 
 import { assertEquals, assertExists } from "https://deno.land/std@0.220.0/assert/mod.ts";
 import { describe, it } from "@std/testing/bdd.ts";
@@ -67,7 +64,6 @@ describe("Platform Detection", () => {
       maxSteps: 20,
     });
 
-    // On Deno this should be compatible, but let's test the function works
     assertExists(result.compatible);
     assertExists(result.errors);
     assertExists(result.warnings);

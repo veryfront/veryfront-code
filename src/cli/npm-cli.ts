@@ -4,9 +4,6 @@ import { cwd, exit, getArgs, getEnv } from "../platform/compat/process.ts";
 
 const VERSION = getEnv("VERYFRONT_VERSION") || "0.0.0-dev";
 
-/**
- * Simple argument parser
- */
 function parseArgs(args: string[]): {
   command: string | undefined;
   flags: Record<string, boolean | string>;
@@ -48,9 +45,6 @@ function parseArgs(args: string[]): {
   return { command, flags, positional };
 }
 
-/**
- * Show help information
- */
 function showHelp(): void {
   console.log(`Veryfront CLI v${VERSION}`);
   console.log(`
@@ -67,9 +61,6 @@ Available commands:
 Use 'veryfront <command> --help' for command-specific help.`);
 }
 
-/**
- * Initialize a new Veryfront project
- */
 async function initCommand(name: string, template: string = "minimal"): Promise<void> {
   const fs = createFileSystem();
   const projectDir = join(cwd(), name);
@@ -77,12 +68,10 @@ async function initCommand(name: string, template: string = "minimal"): Promise<
   console.log(`\nCreating new Veryfront project: ${name}`);
   console.log(`Template: ${template}\n`);
 
-  // Create project structure
   await fs.mkdir(projectDir, { recursive: true });
   await fs.mkdir(join(projectDir, "pages"), { recursive: true });
   await fs.mkdir(join(projectDir, "public"), { recursive: true });
 
-  // Create deno.json
   const denoJson = {
     name: name,
     version: "0.1.0",
@@ -108,16 +97,13 @@ async function initCommand(name: string, template: string = "minimal"): Promise<
     JSON.stringify(denoJson, null, 2),
   );
 
-  // Create veryfront.config.ts
   const config = `import { defineConfig } from "veryfront/config";
 
 export default defineConfig({
-  // Add your configuration here
 });
 `;
   await fs.writeTextFile(join(projectDir, "veryfront.config.ts"), config);
 
-  // Create index page
   const indexPage = `export default function Home() {
   return (
     <div style={{ padding: "2rem", fontFamily: "system-ui" }}>
@@ -129,7 +115,6 @@ export default defineConfig({
 `;
   await fs.writeTextFile(join(projectDir, "pages", "index.tsx"), indexPage);
 
-  // Create package.json for Node.js/Bun compatibility
   const packageJson = {
     name: name,
     version: "0.1.0",
@@ -158,20 +143,15 @@ export default defineConfig({
   console.log("  npm run dev  # or: deno task dev\n");
 }
 
-/**
- * Main CLI function
- */
 async function main(): Promise<void> {
   const args = getArgs();
   const { command, flags, positional } = parseArgs(args);
 
-  // Handle version flag
   if (flags.version || flags.v) {
     console.log(`Veryfront CLI v${VERSION}`);
     exit(0);
   }
 
-  // Handle help flag or no command
   if (flags.help || flags.h || !command) {
     showHelp();
     exit(0);
@@ -198,7 +178,6 @@ async function main(): Promise<void> {
     case "routes":
     case "generate":
     case "g":
-      // These commands require the full Veryfront runtime
       console.log(`
 The '${command}' command requires the Veryfront development server.
 
@@ -221,7 +200,6 @@ Note: dev/build/preview commands work best with Deno runtime.
   }
 }
 
-// Run
 main().catch((error) => {
   console.error("CLI Error:", error);
   exit(1);

@@ -11,7 +11,7 @@ export const RESERVED_COMPONENTS = {
 };
 
 export function collectAncestorDirs(segmentDir: string, appRootDir: string): string[] {
-  const normalize = (p: string) => p.replace(/\\+/g, "/").replace(/\/\.+\//g, "/");
+  const normalize = (p: string) => p.replace(/\\+/g, "/").replace(/\/\.+\
   const getDirname = (p: string) => normalize(p).replace(/\/?[^/]+\/?$/, "");
   const dirs: string[] = [];
   let current = normalize(segmentDir);
@@ -73,7 +73,6 @@ export async function tryLoadReservedInDirs(
       const file = join(dir, candidateName.replace(/\.tsx$/, ext));
       try {
         const src = await adapter.fs.readFile(file);
-        // Use new ESM component loader
         const { loadComponentFromSource } = await import(
           "@veryfront/modules/react-loader/component-loader.ts"
         );
@@ -86,7 +85,6 @@ export async function tryLoadReservedInDirs(
         );
         if (typeof Cmp === "function") return Cmp as ReservedComponent;
       } catch {
-        // Component not found in this path, continue to next
       }
     }
   }

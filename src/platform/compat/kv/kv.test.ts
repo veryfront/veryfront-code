@@ -23,7 +23,7 @@ Deno.test("openKv list operations", async () => {
   const limited: string[] = [];
   for await (const e of kv.list({ prefix: ["a"], limit: 1 })) {
     limited.push(e.key.join(":"));
-    break; // consume only first page/item to respect limit semantics
+    break;
   }
   assertEquals(limited.length, 1);
   try {

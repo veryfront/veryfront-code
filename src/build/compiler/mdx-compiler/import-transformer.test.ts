@@ -1,6 +1,3 @@
-/**
- * Tests for import transformation utilities
- */
 
 import { describe, it } from "@std/testing/bdd.ts";
 import { expect } from "@std/expect";

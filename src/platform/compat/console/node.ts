@@ -1,10 +1,6 @@
-/**
- * Node.js console styling implementation using picocolors
- */
 
 import type { ConsoleStyler } from "./types.ts";
 
-// Lazy-loaded picocolors instance
 type PicoColors = {
   red: (s: string) => string;
   green: (s: string) => string;
@@ -26,15 +22,12 @@ let pc: PicoColors | null = null;
 
 async function ensurePc(): Promise<PicoColors> {
   if (pc) return pc;
-  // Construct module name dynamically to prevent Deno static analyzer
-  // from trying to resolve this npm package during lint/check
   const picocolorsModule = ["npm:", "picocolors"].join("");
   const mod = await import(picocolorsModule);
   pc = mod.default as PicoColors;
   return pc;
 }
 
-// Lazy wrapper that falls back to identity if not loaded
 const lazyColor = (fn: keyof PicoColors) => (s: string) => pc?.[fn]?.(s) ?? s;
 
 export const colors: ConsoleStyler = {
@@ -69,7 +62,6 @@ export const underline = lazyColor("underline");
 export const strikethrough = lazyColor("strikethrough");
 export const reset = lazyColor("reset");
 
-// Initialize picocolors on first use
 export async function initColors(): Promise<void> {
   await ensurePc();
 }

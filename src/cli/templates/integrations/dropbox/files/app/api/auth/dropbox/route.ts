@@ -1,6 +1,3 @@
-/**
- * Dropbox OAuth Initiation
- */
 
 import { createOAuthInitHandler, dropboxConfig, memoryTokenStore } from "veryfront/oauth";
 

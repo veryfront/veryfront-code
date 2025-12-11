@@ -1,7 +1,3 @@
-/**
- * Request Parsers
- * Functions for parsing and validating different request body types
- */
 
 import { z } from "zod";
 import { ValidationError } from "./errors.ts";
@@ -9,36 +5,15 @@ import { readBodyWithLimit, validateRequestLimits } from "./limits.ts";
 import { sanitizeData } from "./sanitizers.ts";
 import { DEFAULT_LIMITS, type ParseFormOptions, type ParseJsonOptions } from "./types.ts";
 
-/**
- * Parse and validate JSON body with schema
- *
- * @param request - Request object with JSON body
- * @param schema - Zod schema to validate against
- * @param options - Optional parsing configuration
- * @returns Validated and optionally sanitized data
- * @throws ValidationError if parsing or validation fails
- *
- * @example
- * ```ts
- * const userSchema = z.object({
- *   name: z.string(),
- *   email: z.string().email()
- * })
- *
- * const user = await parseJsonBody(request, userSchema, { sanitize: true })
- * ```
- */
 export async function parseJsonBody<T>(
   request: Request,
   schema: z.ZodSchema<T>,
   options?: ParseJsonOptions,
 ): Promise<T> {
-  // Validate request limits first
   validateRequestLimits(request, options?.limits);
 
   let data: unknown;
   try {
-    // Parse JSON with size limit enforcement
     const text = await readBodyWithLimit(request, options?.limits?.maxBodySize);
     data = JSON.parse(text);
   } catch (error) {
@@ -48,11 +23,9 @@ export async function parseJsonBody<T>(
     });
   }
 
-  // Validate against schema
   try {
     const validated = await schema.parseAsync(data);
 
-    // Optional sanitization
     if (options?.sanitize) {
       return sanitizeData(validated) as T;
     }
@@ -72,25 +45,6 @@ export async function parseJsonBody<T>(
   }
 }
 
-/**
- * Parse and validate form data
- *
- * @param request - Request object with form data body
- * @param schema - Zod schema to validate against
- * @param options - Optional parsing configuration
- * @returns Validated form data
- * @throws ValidationError if parsing or validation fails
- *
- * @example
- * ```ts
- * const uploadSchema = z.object({
- *   file: z.instanceof(File),
- *   description: z.string()
- * })
- *
- * const data = await parseFormData(request, uploadSchema)
- * ```
- */
 export async function parseFormData<T>(
   request: Request,
   schema: z.ZodSchema<T>,
@@ -102,10 +56,8 @@ export async function parseFormData<T>(
     const formData = await request.formData();
     const data: Record<string, unknown> = {};
 
-    // Convert FormData to object
     for (const [key, value] of formData.entries()) {
       if (value instanceof File) {
-        // Validate file size
         const maxFileSize = options?.limits?.maxFileSize || DEFAULT_LIMITS.maxFileSize;
         if (value.size > maxFileSize) {
           throw new ValidationError(`File ${key} too large`, {
@@ -130,24 +82,6 @@ export async function parseFormData<T>(
   }
 }
 
-/**
- * Parse URL search params with validation
- *
- * @param request - Request object with URL search params
- * @param schema - Zod schema to validate against
- * @returns Validated query parameters
- * @throws ValidationError if validation fails
- *
- * @example
- * ```ts
- * const querySchema = z.object({
- *   page: z.coerce.number(),
- *   search: z.string().optional()
- * })
- *
- * const params = parseQueryParams(request, querySchema)
- * ```
- */
 export function parseQueryParams<T>(
   request: Request,
   schema: z.ZodSchema<T>,
@@ -155,9 +89,7 @@ export function parseQueryParams<T>(
   const url = new URL(request.url);
   const params: Record<string, unknown> = {};
 
-  // Convert URLSearchParams to object
   url.searchParams.forEach((value, key) => {
-    // Handle array parameters (e.g., ?tags=a&tags=b)
     if (params[key]) {
       if (Array.isArray(params[key])) {
         (params[key] as unknown[]).push(value);

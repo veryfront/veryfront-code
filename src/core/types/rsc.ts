@@ -13,7 +13,7 @@ export interface RSCPayload {
     css?: string[];
     js?: string[];
   };
-  tree?: RSCNode; // For debugging
+  tree?: RSCNode;
 }
 
 export interface ClientComponentMeta {

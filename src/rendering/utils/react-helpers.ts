@@ -9,7 +9,6 @@ export const normalizeChild = (() => {
       return child;
     }
 
-    // Memoize object normalization
     if (child && typeof child === "object" && !Array.isArray(child)) {
       const cached = cache.get(child);
       if (cached !== undefined) {

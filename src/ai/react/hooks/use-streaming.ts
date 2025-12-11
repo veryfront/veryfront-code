@@ -1,49 +1,31 @@
-/**
- * useStreaming Hook - Layer 1 (Headless)
- *
- * Low-level streaming control for custom implementations.
- */
 
 import { useCallback, useRef, useState } from "react";
 import { createError, toError } from "../../../core/errors/veryfront-error.ts";
 
 export interface UseStreamingOptions {
-  /** URL to stream from */
   url: string;
 
-  /** Callback for each chunk */
   onChunk?: (chunk: string) => void;
 
-  /** Callback when stream completes */
   onComplete?: () => void;
 
-  /** Callback when error occurs */
   onError?: (error: Error) => void;
 }
 
 export interface UseStreamingResult {
-  /** Streaming data */
   data: string;
 
-  /** Streaming state */
   isStreaming: boolean;
 
-  /** Error state */
   error: Error | null;
 
-  /** Start streaming */
   start: (body?: Record<string, unknown>) => Promise<void>;
 
-  /** Stop streaming */
   stop: () => void;
 
-  /** Reset data */
   reset: () => void;
 }
 
-/**
- * useStreaming hook for low-level streaming control
- */
 export function useStreaming(
   options: UseStreamingOptions,
 ): UseStreamingResult {
@@ -52,9 +34,6 @@ export function useStreaming(
   const [error, setError] = useState<Error | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
 
-  /**
-   * Start streaming
-   */
   const start = useCallback(
     async (body?: Record<string, unknown>) => {
       setIsStreaming(true);
@@ -88,7 +67,6 @@ export function useStreaming(
           }));
         }
 
-        // Read stream
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
         let accumulatedData = "";
@@ -129,9 +107,6 @@ export function useStreaming(
     [options],
   );
 
-  /**
-   * Stop streaming
-   */
   const stop = useCallback(() => {
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
@@ -140,9 +115,6 @@ export function useStreaming(
     setIsStreaming(false);
   }, []);
 
-  /**
-   * Reset data
-   */
   const reset = useCallback(() => {
     setData("");
     setError(null);

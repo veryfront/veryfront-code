@@ -2,7 +2,6 @@ import { join } from "std/path/mod.ts";
 import { HASH_SEED_DJB2 } from "@veryfront/utils";
 
 export function computeStableId(relPath: string): string {
-  // Simple djb2 hash to base36 for readability
   let hash = HASH_SEED_DJB2;
   for (let i = 0; i < relPath.length; i++) {
     hash = (hash << 5) + hash + relPath.charCodeAt(i);

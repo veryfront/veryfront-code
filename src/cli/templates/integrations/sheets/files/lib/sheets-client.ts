@@ -1,21 +1,12 @@
-/**
- * Google Sheets API Client
- *
- * Provides a type-safe interface to Google Sheets API operations.
- */
 
 import { tokenStore as _tokenStore } from "./token-store.ts";
 import { getValidToken } from "./oauth.ts";
 
-// Helper for Cross-Platform environment access
 function getEnv(key: string): string | undefined {
-  // @ts-ignore - Deno global
   if (typeof Deno !== "undefined") {
-    // @ts-ignore - Deno global
     return Deno.env.get(key);
-  } // @ts-ignore - process global
+  }
   else if (typeof process !== "undefined" && process.env) {
-    // @ts-ignore - process global
     return process.env[key];
   }
   return undefined;
@@ -79,9 +70,6 @@ export interface WriteRangeOptions {
   valueInputOption?: "RAW" | "USER_ENTERED";
 }
 
-/**
- * Google Sheets OAuth provider configuration
- */
 export const sheetsOAuthProvider = {
   name: "sheets",
   authorizationUrl: "https://accounts.google.com/o/oauth2/v2/auth",
@@ -95,9 +83,6 @@ export const sheetsOAuthProvider = {
   callbackPath: "/api/auth/sheets/callback",
 };
 
-/**
- * Create a Sheets client for a specific user
- */
 export function createSheetsClient(userId: string) {
   async function getAccessToken(): Promise<string> {
     const token = await getValidToken(sheetsOAuthProvider, userId, "sheets");
@@ -154,9 +139,6 @@ export function createSheetsClient(userId: string) {
   }
 
   return {
-    /**
-     * List spreadsheets from Google Drive
-     */
     async listSpreadsheets(options: {
       maxResults?: number;
       orderBy?: "createdTime" | "modifiedTime" | "name";
@@ -175,18 +157,12 @@ export function createSheetsClient(userId: string) {
       return result.files || [];
     },
 
-    /**
-     * Get spreadsheet metadata
-     */
     getSpreadsheet(spreadsheetId: string): Promise<Spreadsheet> {
       return sheetsApiRequest<Spreadsheet>(
         `/spreadsheets/${spreadsheetId}`,
       );
     },
 
-    /**
-     * Read data from a range
-     */
     async readRange(
       spreadsheetId: string,
       range: string,
@@ -204,9 +180,6 @@ export function createSheetsClient(userId: string) {
       };
     },
 
-    /**
-     * Read multiple ranges at once
-     */
     async readRanges(
       spreadsheetId: string,
       ranges: string[],
@@ -226,9 +199,6 @@ export function createSheetsClient(userId: string) {
       }));
     },
 
-    /**
-     * Write data to a range
-     */
     async writeRange(options: WriteRangeOptions): Promise<{
       updatedRange: string;
       updatedRows: number;
@@ -255,9 +225,6 @@ export function createSheetsClient(userId: string) {
       return result;
     },
 
-    /**
-     * Append data to a range
-     */
     async appendRange(
       spreadsheetId: string,
       range: string,
@@ -293,9 +260,6 @@ export function createSheetsClient(userId: string) {
       return result;
     },
 
-    /**
-     * Clear a range
-     */
     async clearRange(
       spreadsheetId: string,
       range: string,
@@ -310,9 +274,6 @@ export function createSheetsClient(userId: string) {
       return result;
     },
 
-    /**
-     * Create a new spreadsheet
-     */
     createSpreadsheet(
       options: CreateSpreadsheetOptions,
     ): Promise<Spreadsheet> {
@@ -351,9 +312,6 @@ export function createSheetsClient(userId: string) {
       });
     },
 
-    /**
-     * Add a new sheet to an existing spreadsheet
-     */
     async addSheet(
       spreadsheetId: string,
       title: string,
@@ -396,9 +354,6 @@ export function createSheetsClient(userId: string) {
       return { properties: addedSheet.properties };
     },
 
-    /**
-     * Delete a sheet from a spreadsheet
-     */
     async deleteSheet(
       spreadsheetId: string,
       sheetId: number,

@@ -235,7 +235,6 @@ export async function sendMessage(options: {
   adminId?: string;
 }): Promise<IntercomConversation> {
   if (options.conversationId) {
-    // Reply to existing conversation
     const body: Record<string, unknown> = {
       message_type: options.messageType || "comment",
       type: "admin",

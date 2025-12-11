@@ -1,8 +1,3 @@
-/**
- * Build Executor Tests
- *
- * Tests the build executor types and configuration.
- */
 
 import { assertEquals, assertExists } from "std/assert/mod.ts";
 import { describe, it } from "std/testing/bdd.ts";

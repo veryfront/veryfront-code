@@ -4,15 +4,6 @@ import type { CORSOptions } from "./types.ts";
 import { validateOriginSync } from "@veryfront/security/http/cors/validators.ts";
 import { HTTP_NO_CONTENT } from "@veryfront/utils/constants/http.ts";
 
-/**
- * Simple CORS middleware using consolidated validation
- *
- * Uses the consolidated CORS validators from the security module
- * to eliminate duplicate validation logic.
- *
- * @param options - CORS options with optional origin configuration
- * @returns Middleware compatible with builtin middleware system
- */
 export function corsSimple(options: CORSOptions | string = "*"): Middleware {
   const origin = typeof options === "string" ? options : (options.origin ?? "*");
 
@@ -20,7 +11,6 @@ export function corsSimple(options: CORSOptions | string = "*"): Middleware {
     const req = getRequest(ctx);
 
     if (req.method.toUpperCase() === "OPTIONS") {
-      // Use consolidated validator for origin determination
       const validation = validateOriginSync(req.headers.get("origin"), {
         origin,
       });
@@ -38,7 +28,6 @@ export function corsSimple(options: CORSOptions | string = "*"): Middleware {
     const res = await next();
     if (!res) return res;
 
-    // Use consolidated validator for response headers
     const validation = validateOriginSync(req.headers.get("origin"), {
       origin,
     });

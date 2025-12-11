@@ -40,7 +40,11 @@ export async function requestWithRetry<T>(
       }
 
       if (options.returnText) {
-        return (await response.text()) as T;
+        const json = await response.json();
+        if (json && typeof json.content === "string") {
+          return json.content as T;
+        }
+        return (typeof json === "string" ? json : JSON.stringify(json)) as T;
       }
 
       return await response.json();

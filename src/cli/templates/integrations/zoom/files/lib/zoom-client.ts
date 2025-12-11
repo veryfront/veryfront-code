@@ -110,9 +110,9 @@ export async function getMeeting(meetingId: string | number): Promise<ZoomMeetin
 export async function createMeeting(options: {
   userId?: string;
   topic: string;
-  type?: 1 | 2 | 3 | 8; // 1=Instant, 2=Scheduled, 3=Recurring with no fixed time, 8=Recurring with fixed time
-  startTime?: string; // ISO 8601 format
-  duration?: number; // In minutes
+  type?: 1 | 2 | 3 | 8;
+  startTime?: string;
+  duration?: number;
   timezone?: string;
   password?: string;
   agenda?: string;

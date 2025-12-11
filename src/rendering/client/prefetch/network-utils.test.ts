@@ -1,20 +1,14 @@
-/**
- * Unit Tests for Network Utils
- * Tests network connection detection and prefetch eligibility based on network conditions
- */
 
 import { assertEquals, assertExists } from "std/assert/mod.ts";
 import { describe, it } from "std/testing/bdd.ts";
 import { NetworkInfo, NetworkUtils } from "./network-utils.ts";
 
-// Navigator type extension for network connection
 interface NavigatorWithConnection extends Navigator {
   connection?: NetworkInfo;
   mozConnection?: NetworkInfo;
   webkitConnection?: NetworkInfo;
 }
 
-// Helper to properly mock navigator (Deno's navigator is non-configurable)
 function mockNavigator(navObject: any): () => void {
   const original = globalThis.navigator;
   delete (globalThis as any).navigator;
@@ -202,13 +196,6 @@ describe("NetworkUtils", () => {
     });
 
     it("should return true when no network info is available", () => {
-      /**
-       * Test scenario:
-       * When the Network Information API is not available,
-       * we should assume the network is good enough for prefetching.
-       * This is a sensible default for browsers that don't support
-       * the API.
-       */
       const restore = mockNavigator({});
 
       const networkUtils = new NetworkUtils();
@@ -245,12 +232,6 @@ describe("NetworkUtils", () => {
     });
 
     it("should prioritize saveData over effectiveType", () => {
-      /**
-       * Test scenario:
-       * Even if the network is fast (4g), if the user has
-       * enabled data saver mode, we should respect their preference
-       * and not prefetch.
-       */
       const mockConnection: NetworkInfo = {
         effectiveType: "4g",
         saveData: true,
@@ -299,7 +280,6 @@ describe("NetworkUtils", () => {
 
       const networkUtils = new NetworkUtils();
 
-      // Should not throw
       networkUtils.onNetworkChange(() => {});
       restore();
     });
@@ -309,7 +289,6 @@ describe("NetworkUtils", () => {
 
       const networkUtils = new NetworkUtils();
 
-      // Should not throw
       networkUtils.onNetworkChange(() => {});
       restore();
     });
@@ -526,7 +505,7 @@ describe("NetworkUtils", () => {
 
     it("should handle case-sensitive network types", () => {
       const mockConnection: NetworkInfo = {
-        effectiveType: "4G", // uppercase
+        effectiveType: "4G",
         saveData: false,
       };
       const restore = mockNavigator({

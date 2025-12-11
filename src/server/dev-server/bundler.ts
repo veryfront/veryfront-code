@@ -73,7 +73,6 @@ function createRelativeFsPlugin(projectDir: string, shell: ShellAdapter): Plugin
             const stat = shell.statSync(file);
             if (stat.isFile) return { path: file };
           } catch {
-            // File doesn't exist, try next candidate
           }
         }
         return undefined;

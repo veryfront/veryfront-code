@@ -1,8 +1,3 @@
-/**
- * Branch DSL Builder
- *
- * Creates conditional branch nodes for workflow control flow
- */
 
 import type {
   BaseNodeConfig,
@@ -12,57 +7,17 @@ import type {
   WorkflowNode,
 } from "../types.ts";
 
-/**
- * Options for creating a branch node
- */
 export interface BranchOptions extends Omit<BaseNodeConfig, "checkpoint"> {
-  /** Condition to evaluate */
   condition: (context: WorkflowContext) => boolean | Promise<boolean>;
-  /** Nodes to execute if condition is true */
   then: WorkflowNode[];
-  /** Nodes to execute if condition is false (optional) */
   else?: WorkflowNode[];
-  /** Whether to checkpoint after branching */
   checkpoint?: boolean;
-  /** Retry configuration */
   retry?: RetryConfig;
-  /** Timeout for the entire branch */
   timeout?: string | number;
-  /** Condition to skip the entire branch */
   skip?: (context: WorkflowContext) => boolean | Promise<boolean>;
 }
 
-/**
- * Create a conditional branch node
- *
- * @example
- * ```typescript
- * // Simple if-then branch
- * branch('approval-gate', {
- *   condition: (ctx) => ctx.input.requiresApproval,
- *   then: [
- *     waitForApproval('human-review', { timeout: '24h' }),
- *   ],
- * })
- *
- * // If-then-else branch
- * branch('quality-check', {
- *   condition: async (ctx) => {
- *     const score = ctx['analyze'].output.score;
- *     return score >= 0.8;
- *   },
- *   then: [
- *     step('publish', { agent: 'publisher' }),
- *   ],
- *   else: [
- *     step('revise', { agent: 'editor' }),
- *     step('reanalyze', { agent: 'analyzer' }),
- *   ],
- * })
- * ```
- */
 export function branch(id: string, options: BranchOptions): WorkflowNode {
-  // Validate node ID
   if (!id || typeof id !== "string" || id.trim() === "") {
     throw new Error("Node ID must be a non-empty string");
   }
@@ -75,7 +30,6 @@ export function branch(id: string, options: BranchOptions): WorkflowNode {
     throw new Error(`Branch "${id}" must have at least one 'then' node`);
   }
 
-  // Prefix child node IDs for proper namespacing
   const prefixThenNodes = options.then.map((node) => ({
     ...node,
     id: node.id.startsWith(`${id}/then/`) ? node.id : `${id}/then/${node.id}`,
@@ -103,10 +57,6 @@ export function branch(id: string, options: BranchOptions): WorkflowNode {
   };
 }
 
-/**
- * Create a branch that only executes if condition is true (no else)
- * Convenience wrapper around branch()
- */
 export function when(
   id: string,
   condition: (context: WorkflowContext) => boolean | Promise<boolean>,
@@ -115,10 +65,6 @@ export function when(
   return branch(id, { condition, then: nodes });
 }
 
-/**
- * Create a branch that only executes if condition is false
- * Convenience wrapper around branch()
- */
 export function unless(
   id: string,
   condition: (context: WorkflowContext) => boolean | Promise<boolean>,

@@ -1,15 +1,9 @@
-/**
- * Agent & Tool Inspector
- *
- * Debugging utilities for inspecting agent execution and tool calls.
- */
 
 import type { Agent, Message } from "../../types/agent.ts";
 import { getMCPRegistry, getMCPStats } from "../../mcp/registry.ts";
 import { agentLogger } from "@veryfront/utils/logger/logger.ts";
 
 export interface InspectionReport {
-  /** Agent information */
   agent: {
     id: string;
     model: string;
@@ -17,7 +11,6 @@ export interface InspectionReport {
     memoryType: string;
   };
 
-  /** Execution details */
   execution: {
     input: string | Message[];
     output: string;
@@ -26,7 +19,6 @@ export interface InspectionReport {
     executionTime: number;
   };
 
-  /** Tool usage */
   tools: {
     called: Array<{
       name: string;
@@ -38,13 +30,11 @@ export interface InspectionReport {
     available: string[];
   };
 
-  /** Memory usage */
   memory: {
     messagesCount: number;
     estimatedTokens: number;
   };
 
-  /** Token usage */
   usage?: {
     promptTokens: number;
     completionTokens: number;
@@ -52,35 +42,20 @@ export interface InspectionReport {
   };
 }
 
-/**
- * Inspect an agent execution
- *
- * @example
- * ```typescript
- * import { inspectAgent } from 'veryfront/ai/dev';
- *
- * const report = await inspectAgent(myAgent, 'Test input');
- * console.log(report);
- * ```
- */
 export async function inspectAgent(
   agent: Agent,
   input: string | Message[],
 ): Promise<InspectionReport> {
   const startTime = Date.now();
 
-  // Get memory stats before execution
   const _memoryStatsBefore = await agent.getMemoryStats();
 
-  // Execute agent
   const response = await agent.generate({ input });
 
   const executionTime = Date.now() - startTime;
 
-  // Get memory stats after execution
   const memoryStatsAfter = await agent.getMemoryStats();
 
-  // Get available tools
   const availableTools = agent.config.tools ? Object.keys(agent.config.tools) : [];
 
   return {
@@ -94,7 +69,7 @@ export async function inspectAgent(
       input,
       output: response.text,
       status: response.status,
-      steps: response.toolCalls.length + 1, // Tool calls + final response
+      steps: response.toolCalls.length + 1,
       executionTime,
     },
     tools: {
@@ -115,9 +90,6 @@ export async function inspectAgent(
   };
 }
 
-/**
- * Print inspection report
- */
 export function printInspectionReport(report: InspectionReport): void {
   agentLogger.info("\n=== Agent Inspection Report ===\n");
 
@@ -168,9 +140,6 @@ export function printInspectionReport(report: InspectionReport): void {
   }
 }
 
-/**
- * Get MCP registry overview
- */
 export function getRegistryOverview(): {
   tools: Array<{ id: string; description: string }>;
   resources: Array<{ id: string; pattern: string; description: string }>;
@@ -198,9 +167,6 @@ export function getRegistryOverview(): {
   };
 }
 
-/**
- * Print registry overview
- */
 export function printRegistryOverview(): void {
   const overview = getRegistryOverview();
 

@@ -1,11 +1,4 @@
-/**
- * Comprehensive type definitions for Figma API
- * Based on Figma REST API v1 specification
- */
 
-// ============================================================================
-// Core Types
-// ============================================================================
 
 export type NodeType =
   | "DOCUMENT"
@@ -51,9 +44,6 @@ export type EasingType =
   | "EASE_IN_AND_OUT"
   | "LINEAR";
 
-// ============================================================================
-// Geometry Types
-// ============================================================================
 
 export interface Vector2D {
   x: number;
@@ -68,13 +58,9 @@ export interface Rectangle {
 }
 
 export interface Transform {
-  /** 2D transformation matrix [[a, b, tx], [c, d, ty]] */
   matrix: [[number, number, number], [number, number, number]];
 }
 
-// ============================================================================
-// Paint Types
-// ============================================================================
 
 export type PaintType =
   | "SOLID"
@@ -112,9 +98,6 @@ export interface Paint {
   gifRef?: string;
 }
 
-// ============================================================================
-// Effect Types
-// ============================================================================
 
 export type EffectType =
   | "INNER_SHADOW"
@@ -132,9 +115,6 @@ export interface Effect {
   spread?: number;
 }
 
-// ============================================================================
-// Layout Types
-// ============================================================================
 
 export type LayoutConstraintVertical = "TOP" | "BOTTOM" | "CENTER" | "TOP_BOTTOM" | "SCALE";
 export type LayoutConstraintHorizontal = "LEFT" | "RIGHT" | "CENTER" | "LEFT_RIGHT" | "SCALE";
@@ -159,9 +139,6 @@ export interface LayoutGrid {
   count?: number;
 }
 
-// ============================================================================
-// Typography Types
-// ============================================================================
 
 export type TextAlignHorizontal = "LEFT" | "CENTER" | "RIGHT" | "JUSTIFIED";
 export type TextAlignVertical = "TOP" | "CENTER" | "BOTTOM";
@@ -186,9 +163,6 @@ export interface TypeStyle {
   lineHeightUnit?: "PIXELS" | "FONT_SIZE_%" | "INTRINSIC_%";
 }
 
-// ============================================================================
-// Component Types
-// ============================================================================
 
 export interface Component {
   key: string;
@@ -207,9 +181,6 @@ export interface ComponentSet {
   remote?: boolean;
 }
 
-// ============================================================================
-// Style Types
-// ============================================================================
 
 export type StyleType = "FILL" | "TEXT" | "EFFECT" | "GRID";
 
@@ -221,9 +192,6 @@ export interface Style {
   remote?: boolean;
 }
 
-// ============================================================================
-// Export Types
-// ============================================================================
 
 export type ExportFormat = "JPG" | "PNG" | "SVG" | "PDF";
 
@@ -236,9 +204,6 @@ export interface ExportSettings {
   };
 }
 
-// ============================================================================
-// Comment Types
-// ============================================================================
 
 export interface Comment {
   id: string;
@@ -266,9 +231,6 @@ export interface User {
   email?: string;
 }
 
-// ============================================================================
-// File Types
-// ============================================================================
 
 export interface FileResponse {
   document: Node;
@@ -285,9 +247,6 @@ export interface FileResponse {
   linkAccess: "view" | "edit" | "org_view" | "org_edit";
 }
 
-// ============================================================================
-// Node Types (Base)
-// ============================================================================
 
 export interface NodeBase {
   id: string;
@@ -303,9 +262,6 @@ export interface NodeWithChildren extends NodeBase {
   children: Node[];
 }
 
-// ============================================================================
-// Specific Node Types
-// ============================================================================
 
 export interface DocumentNode extends NodeWithChildren {
   type: "DOCUMENT";
@@ -443,9 +399,6 @@ export interface InstanceNode extends FrameNode {
   overrides?: unknown[];
 }
 
-// ============================================================================
-// Union Type for All Nodes
-// ============================================================================
 
 export type Node =
   | DocumentNode
@@ -458,9 +411,6 @@ export type Node =
   | ComponentSetNode
   | InstanceNode;
 
-// ============================================================================
-// Project & Team Types
-// ============================================================================
 
 export interface Project {
   id: string;
@@ -482,9 +432,6 @@ export interface TeamProjectsResponse {
   projects: Project[];
 }
 
-// ============================================================================
-// Version Types
-// ============================================================================
 
 export interface Version {
   id: string;

@@ -1,14 +1,7 @@
-/**
- * Theme System for Styled Components
- *
- * Provides default theme and utilities for customization.
- */
 
 export interface ChatTheme {
-  /** Container styles */
   container?: string;
 
-  /** Message styles by role */
   message?: {
     user?: string;
     assistant?: string;
@@ -16,19 +9,13 @@ export interface ChatTheme {
     tool?: string;
   };
 
-  /** Input styles */
   input?: string;
 
-  /** Button styles */
   button?: string;
 
-  /** Loading indicator styles */
   loading?: string;
 }
 
-/**
- * Default theme using Tailwind CSS - Apple Messages inspired, clean & minimal
- */
 export const defaultChatTheme: ChatTheme = {
   container: "flex flex-col h-full overflow-hidden bg-white dark:bg-neutral-900",
   message: {
@@ -48,25 +35,17 @@ export const defaultChatTheme: ChatTheme = {
 };
 
 export interface AgentTheme {
-  /** Container styles */
   container?: string;
 
-  /** Status styles */
   status?: string;
 
-  /** Thinking indicator styles */
   thinking?: string;
 
-  /** Tool invocation styles */
   tool?: string;
 
-  /** Tool result styles */
   toolResult?: string;
 }
 
-/**
- * Default agent theme - Apple-inspired, clean & minimal
- */
 export const defaultAgentTheme: AgentTheme = {
   container:
     "border border-neutral-200 dark:border-neutral-800 rounded-2xl p-6 space-y-4 bg-white dark:bg-neutral-900",
@@ -79,9 +58,6 @@ export const defaultAgentTheme: AgentTheme = {
     "mt-2 p-3 bg-neutral-100 dark:bg-neutral-800 rounded-xl font-mono text-sm overflow-x-auto",
 };
 
-/**
- * Merge themes (user theme overrides default)
- */
 export function mergeThemes<T extends Record<string, any>>(
   defaultTheme: T,
   userTheme?: Partial<T>,
@@ -98,7 +74,6 @@ export function mergeThemes<T extends Record<string, any>>(
     }
 
     if (typeof value === "object" && !Array.isArray(value)) {
-      // Merge nested objects
       merged[key] = { ...defaultTheme[key], ...value } as T[Extract<keyof T, string>];
     } else {
       merged[key] = value as T[Extract<keyof T, string>];
@@ -108,10 +83,6 @@ export function mergeThemes<T extends Record<string, any>>(
   return merged;
 }
 
-/**
- * Utility to combine class names
- * (Simple version - in production use 'clsx' or 'cn' from shadcn)
- */
 export function cn(...classes: (string | undefined | null | false)[]): string {
   return classes.filter(Boolean).join(" ");
 }

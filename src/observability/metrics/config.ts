@@ -1,22 +1,11 @@
-/**
- * Metrics Configuration
- * Configuration loading and defaults for metrics system
- */
 
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import type { MetricsConfig } from "./types.ts";
 import { getEnv } from "../../platform/compat/process.ts";
 import { memoryUsage as platformMemoryUsage } from "../../platform/compat/process.ts";
 
-/**
- * Default metrics collect interval in milliseconds (60 seconds)
- * Inlined to avoid circular dependency with @veryfront/config
- */
 const DEFAULT_METRICS_COLLECT_INTERVAL_MS = 60000;
 
-/**
- * Default metrics configuration
- */
 export const DEFAULT_CONFIG: MetricsConfig = {
   enabled: false,
   exporter: "console",
@@ -25,16 +14,12 @@ export const DEFAULT_CONFIG: MetricsConfig = {
   debug: false,
 };
 
-/**
- * Load metrics configuration from environment and options
- */
 export function loadConfig(
   config: Partial<MetricsConfig>,
   adapter?: RuntimeAdapter,
 ): MetricsConfig {
   const finalConfig = { ...DEFAULT_CONFIG, ...config };
 
-  // Check environment variables for configuration
   if (adapter?.env) {
     const envAdapter = adapter.env;
     const otelEnabled = envAdapter.get("OTEL_METRICS_ENABLED");
@@ -59,7 +44,6 @@ export function loadConfig(
       finalConfig.exporter = exporterType;
     }
   } else {
-    // Fallback to platform getEnv for cross-platform compatibility
     try {
       finalConfig.enabled = getEnv("OTEL_METRICS_ENABLED") === "true" ||
         getEnv("VERYFRONT_OTEL") === "1" ||
@@ -75,23 +59,18 @@ export function loadConfig(
         finalConfig.exporter = exporterType;
       }
     } catch {
-      // getEnv access may fail, silently continue
     }
   }
 
   return finalConfig;
 }
 
-/**
- * Get memory usage from runtime (Deno or Node.js)
- */
 export function getMemoryUsage(): {
   rss: number;
   heapUsed: number;
   heapTotal: number;
 } | null {
   try {
-    // Use platform abstraction for cross-platform compatibility
     return platformMemoryUsage();
   } catch {
     return null;

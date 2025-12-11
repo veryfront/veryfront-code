@@ -1,10 +1,3 @@
-/**
- * In-Memory Rate Limit Store
- *
- * Simple memory-based implementation for rate limiting.
- * Suitable for single-server deployments or development.
- * For distributed systems, use Redis or similar.
- */
 
 import type { RateLimitState, RateLimitStore } from "./types.ts";
 
@@ -13,10 +6,8 @@ export class MemoryRateLimitStore implements RateLimitStore {
   private cleanupInterval: number | null = null;
 
   constructor(
-    /** How often to clean up expired entries (ms) */
-    private cleanupIntervalMs = 60000, // 1 minute
+    private cleanupIntervalMs = 60000,
   ) {
-    // Start cleanup interval
     if (typeof setInterval !== "undefined") {
       this.cleanupInterval = setInterval(
         () => this.cleanup(),
@@ -30,16 +21,14 @@ export class MemoryRateLimitStore implements RateLimitStore {
     const now = Date.now();
 
     if (!state || now > state.resetTime) {
-      // Create new state or reset expired state
       this.store.set(key, {
         count: 1,
-        resetTime: now + 60000, // Default 1 minute window
+        resetTime: now + 60000,
         requestTimestamps: [now],
       });
       return Promise.resolve(1);
     }
 
-    // Increment existing count
     state.count++;
     if (state.requestTimestamps) {
       state.requestTimestamps.push(now);
@@ -66,23 +55,14 @@ export class MemoryRateLimitStore implements RateLimitStore {
     return Promise.resolve();
   }
 
-  /**
-   * Get state for a key (used by sliding window strategy)
-   */
   getState(key: string): RateLimitState | undefined {
     return this.store.get(key);
   }
 
-  /**
-   * Set state for a key
-   */
   setState(key: string, state: RateLimitState): void {
     this.store.set(key, state);
   }
 
-  /**
-   * Clean up expired entries
-   */
   private cleanup(): void {
     const now = Date.now();
     for (const [key, state] of this.store.entries()) {
@@ -92,9 +72,6 @@ export class MemoryRateLimitStore implements RateLimitStore {
     }
   }
 
-  /**
-   * Stop the cleanup interval
-   */
   destroy(): void {
     if (this.cleanupInterval !== null) {
       clearInterval(this.cleanupInterval);
@@ -102,9 +79,6 @@ export class MemoryRateLimitStore implements RateLimitStore {
     }
   }
 
-  /**
-   * Get current store size (for debugging/monitoring)
-   */
   size(): number {
     return this.store.size;
   }

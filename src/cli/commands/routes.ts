@@ -27,7 +27,6 @@ export async function routesCommand(projectDir: string, options: { json?: boolea
       }
     }
   } catch (error) {
-    // Pages directory might not exist, which is okay for app router projects
     cliLogger.debug("Could not read pages directory:", error);
   }
 

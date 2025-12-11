@@ -1,11 +1,3 @@
-/**
- * Production Token Store Examples
- *
- * Copy-paste implementations for different storage backends.
- * Each example includes encryption support via TOKEN_ENCRYPTION_KEY.
- *
- * @module
- */
 
 import {
   createTokenStore,
@@ -15,27 +7,8 @@ import {
   type OAuthToken,
 } from "./token-store.ts";
 
-// ============================================================================
-// Vercel KV Store
-// ============================================================================
 
-/**
- * Token store using Vercel KV (Redis-compatible)
- *
- * Required environment variables:
- * - KV_REST_API_URL
- * - KV_REST_API_TOKEN
- * - TOKEN_ENCRYPTION_KEY (recommended)
- *
- * @example
- * ```typescript
- * // lib/token-store.ts
- * import { createVercelKVStore } from './token-store-examples';
- * export const tokenStore = createVercelKVStore();
- * ```
- */
 export function createVercelKVStore(): TokenStore {
-  // Dynamic import to avoid bundling @vercel/kv in non-Vercel environments
   let kvPromise: Promise<typeof import("@vercel/kv")> | null = null;
 
   const getKV = async () => {
@@ -61,24 +34,7 @@ export function createVercelKVStore(): TokenStore {
   });
 }
 
-// ============================================================================
-// Redis Store
-// ============================================================================
 
-/**
- * Token store using Redis
- *
- * Required environment variables:
- * - REDIS_URL (e.g., redis://localhost:6379)
- * - TOKEN_ENCRYPTION_KEY (recommended)
- *
- * @example
- * ```typescript
- * // lib/token-store.ts
- * import { createRedisStore } from './token-store-examples';
- * export const tokenStore = createRedisStore();
- * ```
- */
 export function createRedisStore(): TokenStore {
   let clientPromise: Promise<ReturnType<typeof import("redis").createClient>> | null = null;
 
@@ -110,35 +66,7 @@ export function createRedisStore(): TokenStore {
   });
 }
 
-// ============================================================================
-// PostgreSQL Store
-// ============================================================================
 
-/**
- * Token store using PostgreSQL
- *
- * Required environment variables:
- * - DATABASE_URL (e.g., postgres://user:pass@host:5432/db)
- * - TOKEN_ENCRYPTION_KEY (recommended)
- *
- * Required table (create with migration):
- * ```sql
- * CREATE TABLE oauth_tokens (
- *   key VARCHAR(255) PRIMARY KEY,
- *   value TEXT NOT NULL,
- *   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
- *   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
- * );
- * CREATE INDEX idx_oauth_tokens_key ON oauth_tokens(key);
- * ```
- *
- * @example
- * ```typescript
- * // lib/token-store.ts
- * import { createPostgresStore } from './token-store-examples';
- * export const tokenStore = createPostgresStore();
- * ```
- */
 export function createPostgresStore(): TokenStore {
   let poolPromise: Promise<import("pg").Pool> | null = null;
 
@@ -177,40 +105,7 @@ export function createPostgresStore(): TokenStore {
   });
 }
 
-// ============================================================================
-// SQLite Store (for edge/serverless with D1, Turso, etc.)
-// ============================================================================
 
-/**
- * Token store using SQLite (Cloudflare D1, Turso, better-sqlite3)
- *
- * Required table:
- * ```sql
- * CREATE TABLE oauth_tokens (
- *   key TEXT PRIMARY KEY,
- *   value TEXT NOT NULL,
- *   updated_at INTEGER DEFAULT (strftime('%s', 'now'))
- * );
- * ```
- *
- * @param db - SQLite database instance (D1Database, Connection, or Database)
- *
- * @example With Cloudflare D1
- * ```typescript
- * // In your API route
- * export async function GET(request: Request, { env }) {
- *   const tokenStore = createSQLiteStore(env.DB);
- *   // ...
- * }
- * ```
- *
- * @example With Turso
- * ```typescript
- * import { createClient } from '@libsql/client';
- * const db = createClient({ url: process.env.TURSO_URL, authToken: process.env.TURSO_AUTH_TOKEN });
- * export const tokenStore = createSQLiteStore(db);
- * ```
- */
 export function createSQLiteStore(db: {
   prepare(sql: string): { bind(...args: unknown[]): { first(): Promise<{ value?: string } | null>; run(): Promise<void> } };
 }): TokenStore {
@@ -240,26 +135,7 @@ export function createSQLiteStore(db: {
   });
 }
 
-// ============================================================================
-// Cloudflare Workers KV Store
-// ============================================================================
 
-/**
- * Token store using Cloudflare Workers KV
- *
- * @param kv - KV namespace binding from worker environment
- *
- * @example
- * ```typescript
- * // In your worker
- * export default {
- *   async fetch(request, env) {
- *     const tokenStore = createWorkersKVStore(env.OAUTH_TOKENS);
- *     // ...
- *   }
- * };
- * ```
- */
 export function createWorkersKVStore(kv: {
   get(key: string): Promise<string | null>;
   put(key: string, value: string): Promise<void>;
@@ -272,29 +148,7 @@ export function createWorkersKVStore(kv: {
   });
 }
 
-// ============================================================================
-// Prisma Store
-// ============================================================================
 
-/**
- * Token store using Prisma ORM
- *
- * Required Prisma schema:
- * ```prisma
- * model OAuthToken {
- *   key       String   @id
- *   value     String
- *   updatedAt DateTime @updatedAt
- * }
- * ```
- *
- * @example
- * ```typescript
- * import { PrismaClient } from '@prisma/client';
- * const prisma = new PrismaClient();
- * export const tokenStore = createPrismaStore(prisma);
- * ```
- */
 export function createPrismaStore(prisma: {
   oAuthToken: {
     findUnique(args: { where: { key: string } }): Promise<{ value: string } | null>;
@@ -318,41 +172,12 @@ export function createPrismaStore(prisma: {
       try {
         await prisma.oAuthToken.delete({ where: { key } });
       } catch {
-        // Ignore if not found
       }
     },
   });
 }
 
-// ============================================================================
-// Drizzle ORM Store
-// ============================================================================
 
-/**
- * Token store using Drizzle ORM
- *
- * Required schema:
- * ```typescript
- * import { pgTable, text, timestamp } from 'drizzle-orm/pg-core';
- *
- * export const oauthTokens = pgTable('oauth_tokens', {
- *   key: text('key').primaryKey(),
- *   value: text('value').notNull(),
- *   updatedAt: timestamp('updated_at').defaultNow(),
- * });
- * ```
- *
- * @example
- * ```typescript
- * import { drizzle } from 'drizzle-orm/postgres-js';
- * import postgres from 'postgres';
- * import { oauthTokens } from './schema';
- *
- * const client = postgres(process.env.DATABASE_URL!);
- * const db = drizzle(client);
- * export const tokenStore = createDrizzleStore(db, oauthTokens);
- * ```
- */
 export function createDrizzleStore<T extends { key: unknown; value: unknown }>(
   db: {
     select(): { from(table: T): { where(condition: unknown): { get(): Promise<{ value: string } | undefined> } } };
@@ -384,26 +209,7 @@ export function createDrizzleStore<T extends { key: unknown; value: unknown }>(
   });
 }
 
-// ============================================================================
-// Auto-Select Store (Recommended)
-// ============================================================================
 
-/**
- * Automatically selects the appropriate token store based on environment
- *
- * Detection order:
- * 1. DATABASE_URL -> PostgreSQL
- * 2. KV_REST_API_URL -> Vercel KV
- * 3. REDIS_URL -> Redis
- * 4. Fallback -> In-memory (development only)
- *
- * @example
- * ```typescript
- * // lib/token-store.ts
- * import { createAutoStore } from './token-store-examples';
- * export const tokenStore = createAutoStore();
- * ```
- */
 export function createAutoStore(): TokenStore {
   const env = process.env;
 
@@ -422,14 +228,12 @@ export function createAutoStore(): TokenStore {
     return createRedisStore();
   }
 
-  // Fallback to in-memory (imported from main module)
   console.warn(
     "[Token Store] No production storage configured. " +
     "Using in-memory storage (tokens will be lost on restart). " +
     "Set DATABASE_URL, KV_REST_API_URL, or REDIS_URL for production."
   );
 
-  // Return in-memory store from main module
   const { tokenStore } = require("./token-store");
   return tokenStore;
 }

@@ -1,16 +1,4 @@
-/**
- * HMR Runtime Templates
- * Client-side JavaScript template strings for Hot Module Replacement
- */
 
-/**
- * Generate the complete HMR client runtime template
- *
- * @param port - WebSocket server port
- * @param hostname - Default hostname constant
- * @param reloadDelay - Client reload delay in milliseconds
- * @returns JavaScript code for complete HMR runtime
- */
 export function generateHMRClientTemplate(
   port: number,
   hostname: string,
@@ -19,7 +7,6 @@ export function generateHMRClientTemplate(
   return `const HMR_PORT = ${port};
   const HMR_RELOAD_DELAY_MS = ${reloadDelay};
   const host = window.location.hostname || '${hostname}';
-  // Connect to HMR server at ws://localhost:${port}
   const ws = new WebSocket('ws://' + host + ':${port}');
   let reactRefreshEnabled = false;
   let reconnectTimeoutId = null;

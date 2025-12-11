@@ -1,6 +1,3 @@
-/**
- * Tests for MDX module code generator
- */
 
 import { describe, it } from "@std/testing/bdd.ts";
 import { expect } from "@std/expect";
@@ -93,7 +90,7 @@ describe("code-generator", () => {
       const result = generateModuleCode(frontmatter, mdxCode);
 
       expect(result).toContain("export const frontmatter");
-      expect(result).toContain(mdxCode); // Empty string
+      expect(result).toContain(mdxCode);
     });
 
     it("should format frontmatter with indentation", () => {
@@ -105,7 +102,6 @@ describe("code-generator", () => {
       const mdxCode = "export default function MDXContent() {}";
       const result = generateModuleCode(frontmatter, mdxCode);
 
-      // Should have formatted JSON with 2 spaces
       expect(result).toContain('{\n  "title"');
       expect(result).toContain("\n}");
     });
@@ -195,7 +191,6 @@ describe("code-generator", () => {
       const mdxCode = "export default function MDXContent() { return null; }";
       const result = generateModuleCode(frontmatter, mdxCode);
 
-      // Should be valid JS - check for proper exports
       expect(result).toContain("export const frontmatter");
       expect(result).toContain("export const title");
       expect(result).toContain("export const description");

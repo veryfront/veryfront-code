@@ -61,7 +61,6 @@ export function generateThemeVariables(): string {
       --code-block: 220 13% 18%;
     }
 
-    /* Base styles for vf-tailwind container */
     .vf-tailwind,
     .vf-tailwind * {
       margin: 0;

@@ -27,9 +27,9 @@ export function estimateSize(value: unknown): number {
     case "number":
       return 8;
     case "string":
-      return value.length * 2; // UTF-16
+      return value.length * 2;
     case "function":
-      return 0; // Functions not cached
+      return 0;
     case "object":
       return estimateObjectSize(value);
     default:
@@ -81,7 +81,7 @@ function estimateObjectSize(value: object): number {
     return JSON.stringify(value).length * 2;
   } catch (error) {
     logger.debug("Failed to estimate size of non-serializable object:", error);
-    return 1024; // Default estimate for non-serializable
+    return 1024;
   }
 }
 

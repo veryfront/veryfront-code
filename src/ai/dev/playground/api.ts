@@ -1,6 +1,3 @@
-/**
- * AI Playground API Handler
- */
 
 import { PLAYGROUND_HTML } from "./client.ts";
 import { toolRegistry } from "../../utils/tool.ts";
@@ -9,18 +6,15 @@ import { agentRegistry } from "../../agent/composition.ts";
 export async function handlePlaygroundRequest(req: Request): Promise<Response> {
   const url = new URL(req.url);
 
-  // Serve the HTML UI
   if (url.pathname === "/_vf/playground" || url.pathname === "/_vf/playground/") {
     return new Response(PLAYGROUND_HTML, {
       headers: { "Content-Type": "text/html" },
     });
   }
 
-  // API Endpoints
   if (url.pathname === "/_vf/playground/api/registry") {
     const tools = toolRegistry.getToolsForProvider();
 
-    // Map registered agents to simple objects
     const agents = Array.from(agentRegistry.getAll().values()).map((agent) => ({
       id: agent.id,
       description: (agent.config as any).description || `Model: ${agent.config.model}`,
@@ -62,7 +56,6 @@ export async function handlePlaygroundRequest(req: Request): Promise<Response> {
     }
   }
 
-  // Chat endpoint
   if (url.pathname === "/_vf/playground/api/chat" && req.method === "POST") {
     try {
       const body = await req.json();
@@ -73,7 +66,6 @@ export async function handlePlaygroundRequest(req: Request): Promise<Response> {
         return new Response(JSON.stringify({ error: "Agent not found" }), { status: 404 });
       }
 
-      // Execute agent
       const result = await agent.generate({ input: message });
 
       return new Response(

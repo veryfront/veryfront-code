@@ -1,6 +1,3 @@
-/**
- * Memory Backend Tests
- */
 
 import { assertEquals, assertExists } from "https://deno.land/std@0.220.0/assert/mod.ts";
 import { beforeEach, describe, it } from "https://deno.land/std@0.220.0/testing/bdd.ts";
@@ -63,20 +60,16 @@ describe("MemoryBackend", () => {
       await backend.createRun({ ...createTestRun("run-b"), status: "running" });
       await backend.createRun({ ...createTestRun("run-c"), workflowId: "other-workflow" });
 
-      // List all
       const all = await backend.listRuns({});
       assertEquals(all.length, 3);
 
-      // Filter by workflow
       const byWorkflow = await backend.listRuns({ workflowId: "test-workflow" });
       assertEquals(byWorkflow.length, 2);
 
-      // Filter by status
       const byStatus = await backend.listRuns({ status: "running" });
       assertEquals(byStatus.length, 1);
       assertEquals(byStatus[0]?.id, "run-b");
 
-      // With limit
       const limited = await backend.listRuns({ limit: 2 });
       assertEquals(limited.length, 2);
     });
@@ -290,7 +283,6 @@ describe("MemoryBackend", () => {
       });
 
       await backend.destroy();
-      // Should not throw
     });
   });
 });

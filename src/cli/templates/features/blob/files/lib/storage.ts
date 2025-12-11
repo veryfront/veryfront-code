@@ -1,18 +1,9 @@
-/**
- * S3-compatible blob storage client
- *
- * Supports AWS S3, MinIO, Cloudflare R2, and other S3-compatible services
- */
 
-// Helper for Cross-Platform environment access
 function _getEnv(key: string): string | undefined {
-  // @ts-ignore - Deno global
   if (typeof Deno !== "undefined") {
-    // @ts-ignore - Deno global
     return Deno.env.get(key);
-  } // @ts-ignore - process global
+  }
   else if (typeof process !== "undefined" && process.env) {
-    // @ts-ignore - process global
     return process.env[key];
   }
   return undefined;
@@ -33,8 +24,6 @@ export interface UploadOptions {
   metadata?: Record<string, string>;
 }
 
-// In-memory storage for development
-// In production, replace with actual S3 client
 const blobs = new Map<string, { data: ArrayBuffer; ref: BlobRef }>();
 
 export function uploadBlob(

@@ -2,9 +2,6 @@ import { tool } from 'veryfront/ai';
 import { z } from 'zod';
 import { getAnthropicAdminClient } from '../../lib/anthropic-admin-client';
 
-/**
- * Tool for retrieving API usage statistics from Anthropic
- */
 export const getUsage = tool({
   name: 'get_usage',
   description:
@@ -46,7 +43,6 @@ export const getUsage = tool({
         granularity,
       });
 
-      // Calculate summary statistics
       const totalInputTokens = result.usage.reduce(
         (sum, record) => sum + record.input_tokens,
         0

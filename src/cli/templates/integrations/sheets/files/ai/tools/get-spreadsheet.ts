@@ -2,8 +2,6 @@ import { tool } from "veryfront/ai";
 import { z } from "zod";
 import { createSheetsClient } from "../../lib/sheets-client.ts";
 
-// Default user ID for demo/dev purposes
-// In production, get from authenticated session
 const DEFAULT_USER_ID = "demo-user";
 
 export default tool({

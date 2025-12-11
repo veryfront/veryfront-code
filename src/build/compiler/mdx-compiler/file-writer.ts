@@ -9,7 +9,7 @@ export async function writeCompiledFile(
   code: string,
   options: CompileOptions,
 ): Promise<string> {
-  const relativePath = filePath.replace(options.projectDir, "").replace(/^\//, "");
+  const relativePath = filePath.replace(options.projectDir, "").replace(/^\
   const outputPath = join(options.outputDir, relativePath.replace(".mdx", ".js"));
 
   await fs.mkdir(resolve(outputPath, ".."), { recursive: true });

@@ -1,6 +1,3 @@
-/**
- * Tool System Tests
- */
 
 import { assertEquals, assertExists } from "https://deno.land/std@0.220.0/assert/mod.ts";
 import { beforeEach, describe, it } from "@std/testing/bdd.ts";
@@ -9,7 +6,6 @@ import { z } from "zod";
 
 describe("Tool System", () => {
   beforeEach(() => {
-    // Clear registry before each test
     toolRegistry.clear();
   });
 
@@ -65,7 +61,6 @@ describe("Tool System", () => {
     });
 
     try {
-      // @ts-ignore - intentionally passing wrong type
       await myTool.execute({ num: "not a number" });
       throw new Error("Should have thrown validation error");
     } catch (error) {

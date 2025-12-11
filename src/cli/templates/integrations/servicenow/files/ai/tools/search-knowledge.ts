@@ -1,6 +1,3 @@
-/**
- * Search ServiceNow Knowledge Base Tool
- */
 
 import { z } from "zod";
 import { defineTool } from "veryfront/ai";
@@ -35,7 +32,6 @@ export default defineTool({
           category: article.kb_category,
           published: article.published,
           sys_id: article.sys_id,
-          // Truncate text for summary
           summary: article.text?.substring(0, 500) + (article.text?.length > 500 ? "..." : ""),
         })),
       };

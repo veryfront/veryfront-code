@@ -29,7 +29,6 @@ export default tool({
       async: asyncExec,
     });
 
-    // Handle async execution
     if (asyncExec && result.statementHandle) {
       return {
         status: "submitted",
@@ -39,7 +38,6 @@ export default tool({
       };
     }
 
-    // Handle synchronous result
     return {
       status: "completed",
       sql,
@@ -53,9 +51,6 @@ export default tool({
   },
 });
 
-/**
- * Additional tool for checking query status (for async queries)
- */
 export const checkQueryStatus = tool({
   id: "check-query-status",
   description:
@@ -68,9 +63,7 @@ export const checkQueryStatus = tool({
   async execute({ statementHandle }) {
     const status = await getQueryStatus(statementHandle);
 
-    // Check if query is complete
     if (status.code === "090001") {
-      // Query is still running
       return {
         status: "running",
         message: status.message,
@@ -79,7 +72,6 @@ export const checkQueryStatus = tool({
     }
 
     if (status.code === "000000" || !status.code) {
-      // Query completed successfully
       const columns = status.resultSetMetaData?.rowType.map((col) => ({
         name: col.name,
         type: col.type,
@@ -108,7 +100,6 @@ export const checkQueryStatus = tool({
       };
     }
 
-    // Query failed
     return {
       status: "failed",
       code: status.code,

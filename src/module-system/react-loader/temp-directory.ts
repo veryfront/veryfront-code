@@ -4,7 +4,6 @@ let globalTmpDir: string | null = null;
 
 export async function getGlobalTmpDir(): Promise<string> {
   if (!globalTmpDir) {
-    // Always use Node.js compatible API for npm package
     const os = await import("node:os");
     const fs = await import("node:fs/promises");
     const tmpBase = os.tmpdir();

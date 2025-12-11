@@ -21,7 +21,6 @@ export default tool({
       .describe("Maximum number of pull requests to return"),
   }),
   execute: async ({ repo, state, limit }, context) => {
-    // Default to "current-user" for development; in production, always pass userId from session
     const userId = (context?.userId as string | undefined) || "current-user";
 
     const [owner, repoName] = repo.split("/");

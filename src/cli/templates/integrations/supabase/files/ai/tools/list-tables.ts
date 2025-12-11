@@ -24,7 +24,6 @@ export default tool({
       };
     }
 
-    // Fetch column information for each table
     const tablesWithColumns = await Promise.all(
       tables.map(async (table) => {
         try {

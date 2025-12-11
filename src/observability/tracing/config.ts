@@ -53,7 +53,6 @@ function applyEnvFromAdapter(
 
 function applyEnvFromDeno(config: TracingConfig): void {
   try {
-    // Use platform abstraction for cross-platform env access
     config.enabled = getEnv("OTEL_TRACES_ENABLED") === "true" ||
       getEnv("VERYFRONT_OTEL") === "1" ||
       config.enabled;
@@ -68,7 +67,6 @@ function applyEnvFromDeno(config: TracingConfig): void {
       config.exporter = exporterType;
     }
   } catch {
-    // Environment access may fail in some runtimes
   }
 }
 

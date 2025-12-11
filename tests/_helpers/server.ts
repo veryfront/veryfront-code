@@ -98,12 +98,17 @@ export async function waitForServerReady(
     try {
       const response = await fetchWithTimeout(url, 2000);
       try {
-        // Any response (including 404) means server is ready
-        if (response.status >= 200 && response.status < 600) {
+        // For pages (checkPath="/"), require successful response (200-399)
+        // For other endpoints, any response means server is ready
+        const isPageRequest = checkPath === "/";
+        const minAcceptableStatus = isPageRequest ? 200 : 200;
+        const maxAcceptableStatus = isPageRequest ? 400 : 600;
+
+        if (response.status >= minAcceptableStatus && response.status < maxAcceptableStatus) {
           // Make one more request to ensure stability
           const verifyResponse = await fetchWithTimeout(url, 2000);
           try {
-            if (verifyResponse.status >= 200 && verifyResponse.status < 600) {
+            if (verifyResponse.status >= minAcceptableStatus && verifyResponse.status < maxAcceptableStatus) {
               return;
             }
           } finally {

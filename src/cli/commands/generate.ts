@@ -12,8 +12,6 @@ async function ensureDir(path: string) {
   try {
     await fs.mkdir(path, { recursive: true });
   } catch (error) {
-    // Directory might already exist, which is fine
-    // Check for EEXIST/AlreadyExists errors cross-platform
     const code = (error as { code?: string })?.code;
     const isAlreadyExists = code === "EEXIST" ||
       (typeof Deno !== "undefined" && error instanceof Deno.errors.AlreadyExists);
@@ -152,7 +150,6 @@ export async function generateCommand(projectDir: string, type: string, name: st
       break;
     }
     case "integration": {
-      // Integration generator handles its own name/prompts
       await generateIntegration(projectDir, { name: name || undefined });
       break;
     }

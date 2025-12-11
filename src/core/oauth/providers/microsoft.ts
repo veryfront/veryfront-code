@@ -1,14 +1,6 @@
-/**
- * Microsoft OAuth Provider
- *
- * Pre-configured OAuth for Microsoft services: Outlook, Teams, SharePoint, OneDrive
- */
 
 import type { OAuthServiceConfig } from "../types.ts";
 
-/**
- * Base Microsoft OAuth configuration
- */
 const microsoftBase = {
   providerId: "microsoft",
   displayName: "Microsoft",
@@ -22,9 +14,6 @@ const microsoftBase = {
   },
 };
 
-/**
- * Microsoft Outlook OAuth configuration
- */
 export const outlookConfig: OAuthServiceConfig = {
   ...microsoftBase,
   serviceId: "outlook",
@@ -41,9 +30,6 @@ export const outlookConfig: OAuthServiceConfig = {
   ],
 };
 
-/**
- * Microsoft Teams OAuth configuration
- */
 export const teamsConfig: OAuthServiceConfig = {
   ...microsoftBase,
   serviceId: "teams",
@@ -60,9 +46,6 @@ export const teamsConfig: OAuthServiceConfig = {
   ],
 };
 
-/**
- * Microsoft SharePoint OAuth configuration
- */
 export const sharePointConfig: OAuthServiceConfig = {
   ...microsoftBase,
   serviceId: "sharepoint",
@@ -78,9 +61,6 @@ export const sharePointConfig: OAuthServiceConfig = {
   ],
 };
 
-/**
- * Microsoft OneDrive OAuth configuration
- */
 export const oneDriveConfig: OAuthServiceConfig = {
   ...microsoftBase,
   serviceId: "onedrive",
@@ -96,9 +76,6 @@ export const oneDriveConfig: OAuthServiceConfig = {
   ],
 };
 
-/**
- * All Microsoft service configurations
- */
 export const microsoftServices = {
   outlook: outlookConfig,
   teams: teamsConfig,

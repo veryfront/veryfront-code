@@ -74,8 +74,8 @@ export interface VeryfrontConfig {
     >;
   };
   theming?: {
-    brandName?: string; // shown on default 404/500
-    logoHtml?: string; // small HTML snippet injected into the footer area
+    brandName?: string;
+    logoHtml?: string;
   };
   assetPipeline?: {
     images?: {
@@ -165,19 +165,14 @@ export interface VeryfrontConfig {
     };
   };
   client?: {
-    /** How to resolve veryfront client modules in browser */
     moduleResolution?: "cdn" | "self-hosted" | "bundled";
-    /** CDN options when moduleResolution is 'cdn' */
     cdn?: {
       provider?: "esm.sh" | "unpkg" | "jsdelivr";
-      /** 'auto' detects from package.json, or pin specific versions */
       versions?: "auto" | { react?: string; veryfront?: string };
     };
   };
   tailwind?: {
-    /** Enable built-in Tailwind CDN plugins (forms, typography, aspect-ratio, container-queries) */
     plugins?: Array<"forms" | "typography" | "aspect-ratio" | "container-queries">;
-    /** Extend the Tailwind theme (merged with veryfront defaults) */
     theme?: {
       extend?: {
         colors?: Record<string, string | Record<string, string>>;
@@ -193,7 +188,6 @@ export interface VeryfrontConfig {
         [key: string]: unknown;
       };
     };
-    /** Custom CSS content to add (for @layer, @apply directives, etc.) */
     customCSS?: string;
   };
 }

@@ -1,13 +1,4 @@
-/**
- * Bundler module - Unified exports for code splitting and bundling
- *
- * Provides barrel exports to simplify deep import paths within the build system.
- * Instead of importing from `./bundler/code-splitter/index.ts`, use `./bundler/index.ts`
- *
- * @module build/bundler
- */
 
-// Code Splitter exports
 export type {
   ChunkInfo,
   ChunkManifest,
@@ -38,5 +29,4 @@ export {
   writeManifest,
 } from "./code-splitter/index.ts";
 
-// Re-export the code-splitter barrel for backward compatibility
 export * from "./code-splitter/index.ts";

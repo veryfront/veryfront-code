@@ -1,6 +1,3 @@
-/**
- * Dev Command - Development server with HMR and Client-Side Features
- */
 
 import { compileAllMDX, watchMDX } from "@veryfront/build/compiler/mdx-compiler/index.ts";
 import { ErrorCode, VeryfrontError } from "@veryfront/errors/index.ts";
@@ -22,7 +19,6 @@ export interface DevOptions {
   hmr?: boolean;
 }
 
-// Alias for backward compatibility
 export type DevCommandOptions = DevOptions;
 
 async function getLocalIP(): Promise<string> {
@@ -34,7 +30,6 @@ async function getLocalIP(): Promise<string> {
       }
     }
   } catch (error) {
-    // Network interface enumeration may fail due to permissions
     cliLogger.debug("Failed to get network interfaces:", error);
   }
   return LOCALHOST.HOSTNAME;
@@ -43,10 +38,8 @@ async function getLocalIP(): Promise<string> {
 export async function devCommand(options: DevOptions) {
   const { port, projectDir, hmr = true } = options;
 
-  // Get adapter first
   const adapter = await getAdapter();
 
-  // Load config with better error handling
   let config;
   try {
     config = await getConfig(projectDir, adapter);
@@ -61,16 +54,13 @@ export async function devCommand(options: DevOptions) {
     throw error;
   }
 
-  // Use config port if specified
   const finalPort = config?.dev?.port || port;
   const enableHMR = config?.dev?.hmr !== false && hmr;
 
-  // Validate AI configuration
   if (config) {
     runAIConfigValidation(config);
   }
 
-  // Auto-discover AI components (agents, tools, prompts, resources)
   try {
     const aiResult = await discoverAll({
       baseDir: projectDir,
@@ -99,32 +89,27 @@ export async function devCommand(options: DevOptions) {
     cliLogger.debug("AI discovery skipped (no ai/ directory or error):", error);
   }
 
-  // Pre-compile MDX files if enabled
   const usePrecompiledMDX = config?.experimental?.precompileMDX === true;
   if (usePrecompiledMDX) {
     const outputDir = join(projectDir, ".veryfront", "compiled");
 
     try {
-      // Compile all MDX files
       await compileAllMDX({
         projectDir,
         outputDir,
         mode: "development",
       });
 
-      // Start watching for changes
       void watchMDX({
         projectDir,
         outputDir,
         mode: "development",
       });
     } catch (error) {
-      // MDX compilation is non-critical, log but continue
       cliLogger.warn("MDX pre-compilation failed, continuing without it:", error);
     }
   }
 
-  // Start dev server with new features
   const shutdownController = new AbortController();
   let devServer: Awaited<ReturnType<typeof createDevServer>> | null = null;
   try {
@@ -138,7 +123,6 @@ export async function devCommand(options: DevOptions) {
     });
   } catch (error) {
     if (error instanceof Error) {
-      // Check for common errors
       const message = error.message.toLowerCase();
       if (message.includes("eaddrinuse") || message.includes("address already in use")) {
         throw new VeryfrontError(
@@ -153,11 +137,9 @@ export async function devCommand(options: DevOptions) {
     throw error;
   }
 
-  // Graceful shutdown on termination signals
   let shuttingDown = false;
   const shutdown = async (signal: "SIGINT" | "SIGTERM") => {
     if (shuttingDown) {
-      // Second signal - force exit immediately
       cliLogger.info("Force exiting...");
       exitProcess(0);
       return;
@@ -165,7 +147,6 @@ export async function devCommand(options: DevOptions) {
     shuttingDown = true;
     cliLogger.info(`Received ${signal}, shutting down dev server...`);
 
-    // Force exit after 3 seconds if graceful shutdown hangs
     const forceExitTimeout = setTimeout(() => {
       cliLogger.warn("Graceful shutdown timed out, forcing exit...");
       exitProcess(0);
@@ -186,13 +167,12 @@ export async function devCommand(options: DevOptions) {
     void shutdown(signal);
   });
 
-  // Enhanced startup message
   cliLogger.info(`${green("✓")} Server started successfully!\n`);
 
   const localIP = await getLocalIP();
-  cliLogger.info(`  ${bold("Local:")}    ${cyan(`http://${LOCALHOST.HOSTNAME}:${finalPort}`)}`);
-  cliLogger.info(`  ${bold("Network:")}  ${cyan(`http://${localIP}:${finalPort}`)}`);
-  cliLogger.info(`  ${bold("HMR:")}      ${dim(`ws://${LOCALHOST.HOSTNAME}:${finalPort}/_ws`)}\n`);
+  cliLogger.info(`  ${bold("Local:")}    ${cyan(`http:
+  cliLogger.info(`  ${bold("Network:")}  ${cyan(`http:
+  cliLogger.info(`  ${bold("HMR:")}      ${dim(`ws:
 
   cliLogger.info(dim("  Press ") + bold("Ctrl+C") + dim(" to stop the server\n"));
 }

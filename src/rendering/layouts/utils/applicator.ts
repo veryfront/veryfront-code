@@ -94,8 +94,8 @@ export async function applyLayoutsFunctionBody(
   const React = await getProjectReact();
   let element = pageElement;
 
-  logger.debug("Using function-body wrapping for layouts");
-  logger.info("Nested layouts to apply:", {
+  logger.info("[applyLayoutsFunctionBody] Using function-body wrapping for layouts");
+  logger.info("[applyLayoutsFunctionBody] Nested layouts to apply:", {
     count: nestedLayouts.length,
     layouts: nestedLayouts.map((l) => ({
       kind: l.kind,
@@ -227,7 +227,6 @@ async function applyProviders(
           ) as BundledReact.ReactElement;
         }
       } else if (providerItem.kind === "tsx" && providerItem.componentPath) {
-        // TSX provider: load via TSX loader
         const ProviderComponent = await loadTSXComponent(
           providerItem.componentPath,
           projectDir,
@@ -258,7 +257,7 @@ function ensureValidChild(
   React: typeof BundledReact,
 ): BundledReact.ReactNode {
   if (React.isValidElement(child)) {
-    logger.debug("[ensureValidChild] Valid React element", {
+    logger.info("[ensureValidChild] Valid React element", {
       type: getElementTypeName(child as BundledReact.ReactElement),
       isValidElement: true,
     });
@@ -281,6 +280,9 @@ function ensureValidChild(
       symbolValue: debugInfo.symbolValue,
       type: debugInfo.type,
     });
+    logger.error("[ensureValidChild] Returning null for invalid object");
+  } else {
+    logger.info("[ensureValidChild] Returning null for unexpected child type", { childType: typeof child });
   }
 
   return null;

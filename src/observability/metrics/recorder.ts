@@ -1,7 +1,3 @@
-/**
- * Metrics Recorder
- * Functions for recording metrics across all categories
- */
 
 import type { MetricsInstruments, RuntimeState } from "./types.ts";
 
@@ -55,7 +51,6 @@ export class MetricsRecorder {
     this.runtimeState.cacheSize = size;
   }
 
-  // Render Metrics
   recordRender(durationMs: number, attributes?: Record<string, string>): void {
     this.instruments.renderDuration?.record(durationMs, attributes);
     this.instruments.renderCounter?.add(1, attributes);
@@ -65,7 +60,6 @@ export class MetricsRecorder {
     this.instruments.renderErrorCounter?.add(1, attributes);
   }
 
-  // RSC Metrics
   recordRSCRender(
     durationMs: number,
     attributes?: Record<string, string>,
@@ -104,7 +98,6 @@ export class MetricsRecorder {
     this.instruments.rscErrorCounter?.add(1, attributes);
   }
 
-  // Build Metrics
   recordBuild(durationMs: number, attributes?: Record<string, string>): void {
     this.instruments.buildDuration?.record(durationMs, attributes);
   }
@@ -114,7 +107,6 @@ export class MetricsRecorder {
     this.instruments.bundleCounter?.add(1, attributes);
   }
 
-  // Data Fetching Metrics
   recordDataFetch(
     durationMs: number,
     attributes?: Record<string, string>,
@@ -127,7 +119,6 @@ export class MetricsRecorder {
     this.instruments.dataFetchErrorCounter?.add(1, attributes);
   }
 
-  // Security Metrics
   recordCorsRejection(attributes?: Record<string, string>): void {
     this.instruments.corsRejectionCounter?.add(1, attributes);
   }

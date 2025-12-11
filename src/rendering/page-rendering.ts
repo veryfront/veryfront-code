@@ -83,12 +83,10 @@ export async function handleMDXPage(
     } catch (e) {
       const error = e instanceof Error ? e : new Error(String(e));
       logger.warn("generateMetadata threw for MDX page", error);
-      // Re-throw if this was a critical error (not just missing metadata)
       if (error.message.includes("ReferenceError") || error.message.includes("SyntaxError")) {
         throw error;
       }
     }
-    // Get project's React for createElement to ensure element symbols match user components
     const React = await getProjectReact();
     const pageElement = React.createElement(
       MDXComp as BundledReact.ComponentType<{ components?: MDXComponents }>,

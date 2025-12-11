@@ -32,7 +32,6 @@ export default tool({
         try {
           result.rowCount = await getTableRowCount(table.tablename, schema);
         } catch (_error) {
-          // Skip row count if there's an error
           result.rowCount = undefined;
         }
       }

@@ -1,9 +1,3 @@
-/**
- * Path Validation Security Tests
- *
- * Comprehensive test suite for path traversal protection.
- * Tests against OWASP attack vectors and known CVEs.
- */
 
 import { assertEquals, assertExists } from "std/assert/mod.ts";
 import { describe, it } from "std/testing/bdd.ts";
@@ -159,7 +153,6 @@ describe("Path Validation - OWASP Attack Vectors", () => {
       it(`should handle: ${testCase.name}`, () => {
         // Note: These may pass basic validation but fail at filesystem level
         const result = validatePathSync(testCase.path, { baseDir });
-        // Accept either rejection or canonicalization
         if (result.valid) {
           assertExists(result.canonicalPath);
         }
@@ -195,9 +188,7 @@ describe("Path Validation - OWASP Attack Vectors", () => {
     for (const testCase of testCases) {
       it(`should handle: ${testCase.name}`, () => {
         const result = validatePathSync(testCase.path, { baseDir });
-        // These should either be normalized or rejected
         if (result.valid) {
-          // Should not escape base directory after normalization
           assertExists(result.canonicalPath);
         } else {
           assertExists(result.code);
@@ -343,7 +334,6 @@ describe("Path Validation - Helper Functions", () => {
         "app/page.tsx",
         "/project",
       );
-      // If path doesn't start with base, return filename
       assertEquals(sanitized, "page.tsx");
     });
   });
@@ -547,7 +537,6 @@ describe("Path Validation - Performance", () => {
     const duration = performance.now() - start;
     const avgTime = duration / iterations;
 
-    // Should be fast - under 0.1ms per validation
     assertEquals(avgTime < 0.1, true, `Avg time: ${avgTime}ms`);
   });
 });

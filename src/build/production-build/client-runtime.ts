@@ -1,7 +1,3 @@
-/**
- * Client Runtime Generation for Build
- * Handles generation of client-side router and prefetch scripts
- */
 
 import { dirname, extname, isAbsolute, join, resolve } from "node:path";
 import { fromFileUrl } from "@std/path";
@@ -11,7 +7,6 @@ import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import { createError, toError } from "../../core/errors/veryfront-error.ts";
 import { createFileSystem } from "../../platform/compat/fs.ts";
 
-// Try to import pre-bundled client scripts (available in npm builds)
 let CLIENT_ROUTER_BUNDLE: string | undefined;
 let CLIENT_PREFETCH_BUNDLE: string | undefined;
 try {
@@ -20,7 +15,6 @@ try {
   CLIENT_PREFETCH_BUNDLE =
     (templates as { CLIENT_PREFETCH_BUNDLE?: string }).CLIENT_PREFETCH_BUNDLE;
 } catch {
-  // Pre-bundled scripts not available (Deno development mode)
 }
 
 interface FileStatResult {
@@ -33,7 +27,6 @@ async function statFile(path: string): Promise<FileStatResult | null> {
     const stat = await fs.stat(path);
     return { isFile: stat.isFile };
   } catch (error: unknown) {
-    // Swallow not-found; rethrow others
     throw error;
   }
 }
@@ -50,27 +43,20 @@ const moduleExtensions = [".ts", ".tsx", ".js", ".jsx", ".mjs", ".mts", ".cjs", 
 const externalSpecifier = /^(std\/|@std\/|node:|deno:|https?:)/;
 const relativeSpecifier = /^\.{1,2}(?:\/|$)/;
 
-/**
- * Generate app.js module
- */
 export function generateAppModule(): string {
   return `
-// Veryfront App Module
 (() => {
   console.log('[Veryfront] App module loaded');
 
-  // Export for ES modules
   if (typeof window !== 'undefined') {
     window.__veryfront = window.__veryfront || {};
     window.__veryfront.version = '2.0.0';
     window.__veryfront.initialized = true;
   }
 
-  // Basic hydration support
   window.hydrate = async function(slug, options = {}) {
     console.log('[Veryfront] Hydrating page:', slug, options);
 
-    // Mark as hydrated
     const root = document.getElementById('root');
     if (root) {
       root.setAttribute('data-hydrated', 'true');
@@ -83,18 +69,12 @@ export const hydrate = window.hydrate;
 `;
 }
 
-/**
- * Generate client.js module for hydration
- * Uses pre-bundled version for npm builds, or bundles from source for Deno
- */
 export async function generateClientModule(): Promise<string> {
-  // Use pre-bundled version if available (npm builds)
   if (CLIENT_ROUTER_BUNDLE) {
     logger.debug("Using pre-bundled client router script");
     return CLIENT_ROUTER_BUNDLE;
   }
 
-  // Fall back to bundling from source (Deno development)
   try {
     return await bundleClientEntry("../../rendering/client/router.ts");
   } catch (error) {
@@ -103,12 +83,7 @@ export async function generateClientModule(): Promise<string> {
   }
 }
 
-/**
- * Load and transform router script from source
- * Uses pre-bundled version for npm builds, or bundles from source for Deno
- */
 export async function generateRouterScript(_adapter: RuntimeAdapter): Promise<string> {
-  // Use pre-bundled version if available (npm builds)
   if (CLIENT_ROUTER_BUNDLE) {
     logger.debug("Using pre-bundled client router script");
     return CLIENT_ROUTER_BUNDLE;
@@ -117,12 +92,7 @@ export async function generateRouterScript(_adapter: RuntimeAdapter): Promise<st
   return await bundleClientEntry("../../rendering/client/router.ts");
 }
 
-/**
- * Generate prefetch script
- * Uses pre-bundled version for npm builds, or bundles from source for Deno
- */
 export async function generatePrefetchScript(_adapter: RuntimeAdapter): Promise<string> {
-  // Use pre-bundled version if available (npm builds)
   if (CLIENT_PREFETCH_BUNDLE) {
     logger.debug("Using pre-bundled client prefetch script");
     return CLIENT_PREFETCH_BUNDLE;
@@ -131,11 +101,6 @@ export async function generatePrefetchScript(_adapter: RuntimeAdapter): Promise<
   return await bundleClientEntry("../../rendering/client/prefetch.ts");
 }
 
-/**
- * Generate import map for React dependencies
- *
- * Uses centralized React version configuration from cdn.ts
- */
 export async function generateImportMap(): Promise<string> {
   const { getReactImportMap, REACT_DEFAULT_VERSION } = await import(
     "@veryfront/utils/constants/cdn.ts"
@@ -231,20 +196,16 @@ async function resolveFromCandidates(basePath: string): Promise<string | null> {
 function buildCandidatePaths(basePath: string): string[] {
   const normalizedBase = stripTrailingSeparator(basePath);
 
-  // If already has a supported extension, only try that exact file
   if (hasSupportedExtension(normalizedBase)) {
     return [normalizedBase];
   }
 
-  // Try adding each extension to the base path (e.g., ./foo -> ./foo.ts, ./foo.tsx, ...)
   const withExtensions = moduleExtensions.map((extension) => `${normalizedBase}${extension}`);
 
-  // Try index files in the directory (e.g., ./foo -> ./foo/index.ts, ./foo/index.tsx, ...)
   const indexCandidates = moduleExtensions.map((extension) =>
     join(normalizedBase, `index${extension}`)
   );
 
-  // Prioritize direct file matches over index files
   return [...withExtensions, ...indexCandidates];
 }
 

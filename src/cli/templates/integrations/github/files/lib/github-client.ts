@@ -1,21 +1,12 @@
-/**
- * GitHub API Client
- *
- * Provides a type-safe interface to GitHub API operations.
- */
 
 import { tokenStore as _tokenStore } from "./token-store.ts";
 import { getValidToken } from "./oauth.ts";
 
-// Helper for Cross-Platform environment access
 function getEnv(key: string): string | undefined {
-  // @ts-ignore - Deno global
   if (typeof Deno !== "undefined") {
-    // @ts-ignore - Deno global
     return Deno.env.get(key);
-  } // @ts-ignore - process global
+  }
   else if (typeof process !== "undefined" && process.env) {
-    // @ts-ignore - process global
     return process.env[key];
   }
   return undefined;
@@ -82,9 +73,6 @@ export interface GitHubCommit {
   author: { login: string; avatar_url: string } | null;
 }
 
-/**
- * GitHub OAuth provider configuration
- */
 export const githubOAuthProvider = {
   name: "github",
   authorizationUrl: "https://github.com/login/oauth/authorize",
@@ -95,9 +83,6 @@ export const githubOAuthProvider = {
   callbackPath: "/api/auth/github/callback",
 };
 
-/**
- * Create a GitHub client for a specific user
- */
 export function createGitHubClient(userId: string) {
   async function getAccessToken(): Promise<string> {
     const token = await getValidToken(githubOAuthProvider, userId, "github");
@@ -132,9 +117,6 @@ export function createGitHubClient(userId: string) {
   }
 
   return {
-    /**
-     * List user's repositories
-     */
     listRepos(options: {
       sort?: "created" | "updated" | "pushed" | "full_name";
       perPage?: number;
@@ -149,9 +131,6 @@ export function createGitHubClient(userId: string) {
       return apiRequest<GitHubRepo[]>(`/user/repos${query ? `?${query}` : ""}`);
     },
 
-    /**
-     * List pull requests for a repository
-     */
     listPullRequests(
       owner: string,
       repo: string,
@@ -169,9 +148,6 @@ export function createGitHubClient(userId: string) {
       );
     },
 
-    /**
-     * Get a single pull request
-     */
     getPullRequest(
       owner: string,
       repo: string,
@@ -182,9 +158,6 @@ export function createGitHubClient(userId: string) {
       );
     },
 
-    /**
-     * Get pull request diff
-     */
     async getPullRequestDiff(
       owner: string,
       repo: string,
@@ -210,9 +183,6 @@ export function createGitHubClient(userId: string) {
       return response.text();
     },
 
-    /**
-     * Create an issue
-     */
     createIssue(
       owner: string,
       repo: string,
@@ -229,9 +199,6 @@ export function createGitHubClient(userId: string) {
       });
     },
 
-    /**
-     * List issues for a repository
-     */
     listIssues(
       owner: string,
       repo: string,
@@ -249,9 +216,6 @@ export function createGitHubClient(userId: string) {
       );
     },
 
-    /**
-     * List commits for a repository
-     */
     listCommits(
       owner: string,
       repo: string,
@@ -270,9 +234,6 @@ export function createGitHubClient(userId: string) {
       );
     },
 
-    /**
-     * Get authenticated user
-     */
     getUser(): Promise<{ login: string; name: string; email: string }> {
       return apiRequest("/user");
     },

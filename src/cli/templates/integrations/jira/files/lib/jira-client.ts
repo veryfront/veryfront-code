@@ -126,7 +126,6 @@ async function jiraFetch<T>(
     );
   }
 
-  // Handle 204 No Content
   if (response.status === 204) {
     return {} as T;
   }
@@ -182,7 +181,6 @@ export async function createIssue(options: {
   };
 
   if (options.description) {
-    // Use ADF (Atlassian Document Format) for description
     fields.description = {
       type: "doc",
       version: 1,
@@ -220,7 +218,6 @@ export async function createIssue(options: {
     },
   );
 
-  // Fetch the full issue details
   return getIssue(response.key);
 }
 
@@ -311,7 +308,6 @@ export async function getProjectIssueTypes(projectIdOrKey: string): Promise<Jira
   return response;
 }
 
-// Helper to extract plain text from ADF description
 export function extractDescriptionText(description: unknown): string {
   if (typeof description === "string") {
     return description;

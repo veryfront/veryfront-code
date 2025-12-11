@@ -27,7 +27,6 @@ export default tool({
       .describe("GitHub usernames to assign to the issue"),
   }),
   execute: async ({ repo, title, body, labels, assignees }, context) => {
-    // Default to "current-user" for development; in production, always pass userId from session
     const userId = (context?.userId as string | undefined) || "current-user";
 
     const [owner, repoName] = repo.split("/");

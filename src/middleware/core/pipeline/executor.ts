@@ -40,7 +40,7 @@ export async function executeMiddlewarePipeline(
         ...(nodeEnv === "development" &&
           error instanceof Error && {
           message: error.message,
-          stack: error.stack?.split("\n").slice(0, 10), // Limit stack trace length
+          stack: error.stack?.split("\n").slice(0, 10),
         }),
       }),
       {

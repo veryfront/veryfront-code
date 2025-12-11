@@ -78,7 +78,6 @@ export default tool({
       throw new Error(`Failed to create lead: ${JSON.stringify(result.errors)}`);
     }
 
-    // Create a minimal lead object for formatting the name
     const lead = {
       FirstName: firstName,
       LastName: lastName,

@@ -1,6 +1,3 @@
-/**
- * Intercom OAuth Init
- */
 
 import { intercomConfig, createOAuthInitHandler } from "veryfront/oauth";
 

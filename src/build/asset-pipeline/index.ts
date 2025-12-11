@@ -1,12 +1,3 @@
-/**
- * Asset Pipeline - Automated Image and CSS Optimization
- *
- * Provides optional but streamlined integrations for:
- * - Image optimization with Sharp (WebP, AVIF, responsive sizes)
- * - CSS optimization with Lightning CSS (minification, autoprefixer, purging)
- *
- * Dependencies are optional - the pipeline gracefully degrades if not available.
- */
 
 export * from "./css-optimizer/index.ts";
 
@@ -53,9 +44,6 @@ export interface AssetPipelineResult {
   duration: number;
 }
 
-/**
- * Run the complete asset pipeline
- */
 export async function runAssetPipeline(
   options: AssetPipelineOptions = {},
 ): Promise<AssetPipelineResult> {
@@ -63,7 +51,6 @@ export async function runAssetPipeline(
 
   logger.info("Starting asset pipeline");
 
-  // Initialize results
   const result: AssetPipelineResult = {
     images: {
       optimized: 0,
@@ -86,7 +73,6 @@ export async function runAssetPipeline(
     duration: 0,
   };
 
-  // Run image optimization
   if (options.images?.enabled !== false) {
     try {
       const imageOptimizer = new ImageOptimizer(options.images);
@@ -112,7 +98,6 @@ export async function runAssetPipeline(
     }
   }
 
-  // Run Tailwind CSS processing (before general CSS optimization)
   if (options.tailwind && options.tailwind.enabled !== false) {
     const { projectDir, sourceDir = "styles", outputDir = ".veryfront/css" } = options.tailwind;
     if (!projectDir) {
@@ -155,7 +140,6 @@ export async function runAssetPipeline(
     }
   }
 
-  // Run CSS optimization
   if (options.css?.enabled !== false) {
     try {
       const cssOptimizer = new CSSOptimizer(options.css);
@@ -195,9 +179,6 @@ export async function runAssetPipeline(
   return result;
 }
 
-/**
- * Check if asset pipeline dependencies are available
- */
 export async function checkAssetPipelineDependencies(): Promise<{
   sharp: boolean;
   lightningCSS: boolean;
@@ -207,7 +188,6 @@ export async function checkAssetPipelineDependencies(): Promise<{
     lightningCSS: false,
   };
 
-  // Check Sharp
   try {
     await import("https://esm.sh/sharp@0.33.0");
     dependencies.sharp = true;
@@ -215,7 +195,6 @@ export async function checkAssetPipelineDependencies(): Promise<{
     logger.debug("Sharp image processing library not available:", error);
   }
 
-  // Check Lightning CSS
   try {
     await import("https://esm.sh/lightningcss@1.22.0");
     dependencies.lightningCSS = true;
@@ -226,9 +205,6 @@ export async function checkAssetPipelineDependencies(): Promise<{
   return dependencies;
 }
 
-/**
- * Get asset pipeline status and recommendations
- */
 export async function getAssetPipelineStatus(): Promise<{
   available: string[];
   missing: string[];

@@ -2,7 +2,6 @@ import { getApiKey } from "./token-store.ts";
 
 const DEFAULT_POSTHOG_HOST = "https://app.posthog.com";
 
-// Types
 export interface PostHogInsight {
   id: number;
   name: string;
@@ -100,12 +99,10 @@ interface PostHogError {
   attr: string | null;
 }
 
-// Helper function to get PostHog host
 function getPostHogHost(): string {
   return process.env.POSTHOG_HOST || DEFAULT_POSTHOG_HOST;
 }
 
-// Helper function for PostHog API calls
 async function posthogFetch<T>(
   endpoint: string,
   options: RequestInit & { params?: Record<string, string | number | boolean> } = {},
@@ -117,7 +114,6 @@ async function posthogFetch<T>(
 
   const host = getPostHogHost();
 
-  // Build URL with query parameters
   let url = `${host}/api${endpoint}`;
   if (options.params) {
     const params = new URLSearchParams();
@@ -150,7 +146,6 @@ async function posthogFetch<T>(
   return data as T;
 }
 
-// Insights operations
 export function getInsights(options?: {
   limit?: number;
 }): Promise<PostHogListResponse<PostHogInsight>> {
@@ -165,7 +160,6 @@ export function getInsights(options?: {
   });
 }
 
-// Trends operations
 export function getTrends(options: {
   events?: Array<{ id: string; name?: string; type?: string }>;
   date_from?: string;
@@ -187,7 +181,6 @@ export function getTrends(options: {
   });
 }
 
-// Funnels operations
 export function getFunnels(options: {
   events?: Array<{ id: string; name?: string; order: number }>;
   date_from?: string;
@@ -205,7 +198,6 @@ export function getFunnels(options: {
   });
 }
 
-// Feature flags operations
 export function getFeatureFlags(options?: {
   limit?: number;
 }): Promise<PostHogListResponse<PostHogFeatureFlag>> {
@@ -225,7 +217,6 @@ export function getFeatureFlag(flagId: number): Promise<PostHogFeatureFlag> {
   return posthogFetch<PostHogFeatureFlag>(`/projects/@current/feature_flags/${flagId}/`);
 }
 
-// Persons operations
 export function listPersons(options?: {
   limit?: number;
   search?: string;
@@ -249,7 +240,6 @@ export function getPerson(personId: string): Promise<PostHogPerson> {
   return posthogFetch<PostHogPerson>(`/projects/@current/persons/${personId}/`);
 }
 
-// Event capture operations
 export function captureEvent(event: PostHogEvent): Promise<{ status: number }> {
   const body = {
     api_key: getApiKey(),
@@ -265,7 +255,6 @@ export function captureEvent(event: PostHogEvent): Promise<{ status: number }> {
   });
 }
 
-// Helper functions
 export function formatDate(dateString: string): string {
   return new Date(dateString).toISOString();
 }

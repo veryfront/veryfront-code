@@ -1,23 +1,12 @@
-/**
- * Google Cloud Storage Blob Storage
- *
- * Stores blobs in Google Cloud Storage.
- */
 
 import type { BlobRef, BlobStorage, StoreBlobOptions } from "./types.ts";
 
 export interface GCSBlobStorageConfig {
-  /** Google Cloud Project ID */
   projectId: string;
-  /** GCS Bucket name */
   bucket: string;
-  /** Google Cloud Service Account Key (JSON string) */
   serviceAccountKey: string;
-  /** Key prefix for namespacing blobs */
   prefix?: string;
-  /** Base URL for constructing public URLs (if bucket is public) */
   baseUrl?: string;
-  /** Default TTL for blobs in seconds */
   defaultTtl?: number;
 }
 
@@ -53,26 +42,18 @@ export class GCSBlobStorage implements BlobStorage {
       iss: sa.client_email,
       scope: scope,
       aud: tokenEndpoint,
-      exp: Math.floor(now / 1000) + 3600, // 1 hour expiration
+      exp: Math.floor(now / 1000) + 3600,
       iat: Math.floor(now / 1000),
     }));
 
-    // This part requires a proper JWT signing library.
-    // Deno's native crypto.subtle can sign, but creating the RS256 private key from PKCS8 (PEM)
-    // is non-trivial without a dedicated library.
-    // For a quick implementation, we will use a placeholder or assume a pre-signed JWT.
-    // In a real-world Deno project, you'd use `djwt` or a similar library.
     console.warn(
       "[GCSBlobStorage] JWT signing for service account requires a library like `djwt`. " +
         "Proceeding with a placeholder/manual approach, which is not suitable for production.",
     );
 
-    // Placeholder for actual JWT signing
     const signature = "PLACEHOLDER_SIGNATURE";
     const jwt = `${jwtHeader}.${jwtClaimSet}.${signature}`;
 
-    // This is a simplified approach, a real implementation would correctly sign the JWT
-    // and handle key loading from the service account JSON.
 
     const response = await fetch(tokenEndpoint, {
       method: "POST",
@@ -92,11 +73,11 @@ export class GCSBlobStorage implements BlobStorage {
 
     const data = await response.json();
     const accessToken = data.access_token;
-    const expiresIn = data.expires_in; // in seconds
+    const expiresIn = data.expires_in;
 
     this.tokenCache = {
       accessToken,
-      expiresAt: new Date(Date.now() + (expiresIn - 60) * 1000), // Refresh 1 min before actual expiry
+      expiresAt: new Date(Date.now() + (expiresIn - 60) * 1000),
     };
 
     return accessToken;
@@ -127,8 +108,6 @@ export class GCSBlobStorage implements BlobStorage {
       contentLength = data.size;
     } else if (data instanceof ReadableStream) {
       body = data;
-      // ContentLength cannot be easily determined for ReadableStream without consuming it.
-      // GCS can handle chunked uploads without Content-Length, but specifying it is better.
     } else {
       throw new Error("Unsupported data type for GCSBlobStorage");
     }
@@ -145,7 +124,6 @@ export class GCSBlobStorage implements BlobStorage {
       headers["Content-Length"] = String(contentLength);
     }
 
-    // Add custom metadata. GCS accepts x-goog-meta- prefix.
     const gcsMetadata: Record<string, string> = {};
     if (options.metadata) {
       for (const [k, v] of Object.entries(options.metadata)) {
@@ -153,7 +131,6 @@ export class GCSBlobStorage implements BlobStorage {
       }
     }
     if (expiresAt) {
-      // Store expiresAt in metadata for stat retrieval, GCS native TTL is via object lifecycle rules
       gcsMetadata["x-goog-meta-expiresat"] = expiresAt.toISOString();
     }
     Object.assign(headers, gcsMetadata);
@@ -179,9 +156,9 @@ export class GCSBlobStorage implements BlobStorage {
       size: Number(gcsObject.size),
       mimeType: gcsObject.contentType,
       createdAt: new Date(gcsObject.timeCreated),
-      expiresAt: expiresAt, // Derived from TTL passed or default
+      expiresAt: expiresAt,
       metadata: options.metadata,
-      url: this.config.baseUrl ? `${this.config.baseUrl}/${key}` : gcsObject.mediaLink, // mediaLink is the direct download URL
+      url: this.config.baseUrl ? `${this.config.baseUrl}/${key}` : gcsObject.mediaLink,
     };
   }
 
@@ -207,7 +184,7 @@ export class GCSBlobStorage implements BlobStorage {
           `Failed to download from GCS: ${response.status} - ${response.statusText}. Body: ${errorBody}`,
         );
       }
-      return response.body; // Deno's fetch body is a ReadableStream
+      return response.body;
     } catch (e) {
       console.error("GCS getStream error:", e);
       throw e;
@@ -260,7 +237,6 @@ export class GCSBlobStorage implements BlobStorage {
     });
 
     if (response.status === 404) {
-      // Object not found, consider it deleted
       return;
     }
     if (!response.ok) {
@@ -320,7 +296,6 @@ export class GCSBlobStorage implements BlobStorage {
 
     const gcsObject = await response.json();
 
-    // Custom metadata is stored with `x-goog-meta-` prefix and is all lowercase
     const metadata: Record<string, string> = {};
     if (gcsObject.metadata) {
       for (const [k, v] of Object.entries(gcsObject.metadata as Record<string, string>)) {
@@ -334,7 +309,7 @@ export class GCSBlobStorage implements BlobStorage {
 
     let expiresAt: Date | undefined;
     if (metadata["expiresat"]) {
-      expiresAt = new Date(metadata["expiresat"]!); // Retrieve custom expiresAt from metadata
+      expiresAt = new Date(metadata["expiresat"]!);
     }
 
     return {
@@ -343,9 +318,9 @@ export class GCSBlobStorage implements BlobStorage {
       size: Number(gcsObject.size),
       mimeType: gcsObject.contentType,
       createdAt: new Date(gcsObject.timeCreated),
-      expiresAt: expiresAt, // Populated from custom metadata if available
+      expiresAt: expiresAt,
       metadata: metadata,
-      url: gcsObject.mediaLink, // mediaLink is the direct download URL
+      url: gcsObject.mediaLink,
     };
   }
 }

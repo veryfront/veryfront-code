@@ -1,8 +1,3 @@
-/**
- * Base provider implementation
- *
- * All provider implementations extend this base class
- */
 
 import { createError, toError } from "../../core/errors/veryfront-error.ts";
 import type {
@@ -40,9 +35,6 @@ export abstract class BaseProvider implements Provider {
     this.validateConfig();
   }
 
-  /**
-   * Validate provider configuration
-   */
   protected validateConfig(): void {
     if (!this.config.apiKey) {
       throw toError(createError({
@@ -52,33 +44,18 @@ export abstract class BaseProvider implements Provider {
     }
   }
 
-  /**
-   * Get headers for API requests
-   */
   protected abstract getHeaders(): Record<string, string>;
 
-  /**
-   * Get API endpoint URL
-   */
   protected abstract getEndpoint(path: string): string;
 
-  /**
-   * Transform request to provider-specific format
-   */
   protected abstract transformRequest(
     request: CompletionRequest,
   ): Record<string, unknown>;
 
-  /**
-   * Transform provider response to standard format
-   */
   protected abstract transformResponse(
     response: unknown,
   ): CompletionResponse;
 
-  /**
-   * Complete a prompt (non-streaming)
-   */
   async complete(request: CompletionRequest): Promise<CompletionResponse> {
     const endpoint = this.getEndpoint("/chat/completions");
     const headers = this.getHeaders();
@@ -105,9 +82,6 @@ export abstract class BaseProvider implements Provider {
     return this.transformResponse(data);
   }
 
-  /**
-   * Stream a completion
-   */
   async stream(request: CompletionRequest): Promise<ReadableStream> {
     const endpoint = this.getEndpoint("/chat/completions");
     const headers = this.getHeaders();
@@ -140,21 +114,11 @@ export abstract class BaseProvider implements Provider {
     return this.transformStream(response.body);
   }
 
-  /**
-   * Transform provider stream to standard format
-   *
-   * Emits JSON chunks with the following structure:
-   * - { type: "content", content: string }
-   * - { type: "tool_call_start", toolCall: { id, name, index } }
-   * - { type: "tool_call_delta", id, arguments }
-   * - { type: "finish", finishReason }
-   */
   protected transformStream(stream: ReadableStream): ReadableStream {
     const reader = stream.getReader();
     const decoder = new TextDecoder();
     const encoder = new TextEncoder();
 
-    // Track tool calls being accumulated
     const toolCalls = new Map<number, {
       id?: string;
       name?: string;
@@ -188,7 +152,6 @@ export abstract class BaseProvider implements Provider {
                   const result = OpenAIStreamChunkSchema.safeParse(raw);
 
                   if (!result.success) {
-                    // agentLogger.debug("Skipping invalid stream chunk schema", result.error);
                     continue;
                   }
 
@@ -199,7 +162,6 @@ export abstract class BaseProvider implements Provider {
                   const delta = choice.delta;
                   const finishReason = choice.finish_reason;
 
-                  // Handle text content
                   if (delta?.content) {
                     const contentChunk = JSON.stringify({
                       type: "content",
@@ -208,7 +170,6 @@ export abstract class BaseProvider implements Provider {
                     controller.enqueue(encoder.encode(contentChunk + "\n"));
                   }
 
-                  // Handle tool calls
                   if (delta?.tool_calls) {
                     for (const toolCall of delta.tool_calls) {
                       const index = toolCall.index ?? 0;
@@ -219,7 +180,6 @@ export abstract class BaseProvider implements Provider {
 
                       const tc = toolCalls.get(index)!;
 
-                      // Tool call start (has id and name)
                       if (toolCall.id) {
                         tc.id = toolCall.id;
                       }
@@ -227,7 +187,6 @@ export abstract class BaseProvider implements Provider {
                       if (toolCall.function?.name) {
                         tc.name = toolCall.function.name;
 
-                        // Emit tool call start event
                         const startChunk = JSON.stringify({
                           type: "tool_call_start",
                           toolCall: {
@@ -239,11 +198,9 @@ export abstract class BaseProvider implements Provider {
                         controller.enqueue(encoder.encode(startChunk + "\n"));
                       }
 
-                      // Accumulate arguments
                       if (toolCall.function?.arguments) {
                         tc.arguments += toolCall.function.arguments;
 
-                        // Emit delta event
                         const deltaChunk = JSON.stringify({
                           type: "tool_call_delta",
                           id: tc.id,
@@ -255,9 +212,7 @@ export abstract class BaseProvider implements Provider {
                     }
                   }
 
-                  // Handle finish reason
                   if (finishReason) {
-                    // Emit complete tool calls
                     if (finishReason === "tool_calls" || finishReason === "function_call") {
                       for (const [index, tc] of toolCalls.entries()) {
                         const completeChunk = JSON.stringify({
@@ -273,7 +228,6 @@ export abstract class BaseProvider implements Provider {
                       }
                     }
 
-                    // Emit finish event
                     const finishChunk = JSON.stringify({
                       type: "finish",
                       finishReason,
@@ -281,7 +235,6 @@ export abstract class BaseProvider implements Provider {
                     controller.enqueue(encoder.encode(finishChunk + "\n"));
                   }
                 } catch (e) {
-                  // Skip invalid JSON
                   agentLogger.warn("Failed to parse stream chunk:", e);
                 }
               }

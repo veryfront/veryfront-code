@@ -3,26 +3,17 @@ import { EC2Client, DescribeInstancesCommand } from '@aws-sdk/client-ec2';
 import { LambdaClient, ListFunctionsCommand } from '@aws-sdk/client-lambda';
 import { fromEnv } from '@aws-sdk/credential-providers';
 
-/**
- * AWS Client Configuration
- */
 interface AWSClientConfig {
   region?: string;
   accessKeyId?: string;
   secretAccessKey?: string;
 }
 
-/**
- * S3 Bucket Information
- */
 export interface S3Bucket {
   name: string;
   creationDate?: Date;
 }
 
-/**
- * S3 Object Information
- */
 export interface S3Object {
   key: string;
   size: number;
@@ -31,9 +22,6 @@ export interface S3Object {
   storageClass?: string;
 }
 
-/**
- * EC2 Instance Information
- */
 export interface EC2Instance {
   instanceId: string;
   instanceType: string;
@@ -45,9 +33,6 @@ export interface EC2Instance {
   availabilityZone?: string;
 }
 
-/**
- * Lambda Function Information
- */
 export interface LambdaFunction {
   functionName: string;
   functionArn: string;
@@ -60,9 +45,6 @@ export interface LambdaFunction {
   description?: string;
 }
 
-/**
- * AWS Client for interacting with AWS services
- */
 export class AWSClient {
   private region: string;
   private credentials: {
@@ -82,9 +64,6 @@ export class AWSClient {
     }
   }
 
-  /**
-   * Get S3 client instance
-   */
   private getS3Client(): S3Client {
     return new S3Client({
       region: this.region,
@@ -92,9 +71,6 @@ export class AWSClient {
     });
   }
 
-  /**
-   * Get EC2 client instance
-   */
   private getEC2Client(region?: string): EC2Client {
     return new EC2Client({
       region: region || this.region,
@@ -102,9 +78,6 @@ export class AWSClient {
     });
   }
 
-  /**
-   * Get Lambda client instance
-   */
   private getLambdaClient(region?: string): LambdaClient {
     return new LambdaClient({
       region: region || this.region,
@@ -112,9 +85,6 @@ export class AWSClient {
     });
   }
 
-  /**
-   * List all S3 buckets
-   */
   async listS3Buckets(): Promise<S3Bucket[]> {
     const client = this.getS3Client();
     const command = new ListBucketsCommand({});
@@ -130,9 +100,6 @@ export class AWSClient {
     }
   }
 
-  /**
-   * List objects in an S3 bucket
-   */
   async listS3Objects(bucket: string, prefix?: string, maxKeys?: number): Promise<S3Object[]> {
     const client = this.getS3Client();
     const command = new ListObjectsV2Command({
@@ -155,9 +122,6 @@ export class AWSClient {
     }
   }
 
-  /**
-   * Get an object from S3
-   */
   async getS3Object(bucket: string, key: string): Promise<string> {
     const client = this.getS3Client();
     const command = new GetObjectCommand({
@@ -171,7 +135,6 @@ export class AWSClient {
         throw new Error('Object body is empty');
       }
 
-      // Convert stream to string
       const bodyContents = await response.Body.transformToString();
       return bodyContents;
     } catch (error) {
@@ -179,9 +142,6 @@ export class AWSClient {
     }
   }
 
-  /**
-   * List EC2 instances
-   */
   async listEC2Instances(region?: string): Promise<EC2Instance[]> {
     const client = this.getEC2Client(region);
     const command = new DescribeInstancesCommand({});
@@ -192,7 +152,6 @@ export class AWSClient {
 
       for (const reservation of response.Reservations || []) {
         for (const instance of reservation.Instances || []) {
-          // Find name tag
           const nameTag = instance.Tags?.find(tag => tag.Key === 'Name');
 
           instances.push({
@@ -214,9 +173,6 @@ export class AWSClient {
     }
   }
 
-  /**
-   * List Lambda functions
-   */
   async listLambdaFunctions(region?: string): Promise<LambdaFunction[]> {
     const client = this.getLambdaClient(region);
     const command = new ListFunctionsCommand({});
@@ -240,9 +196,6 @@ export class AWSClient {
   }
 }
 
-/**
- * Create a singleton AWS client instance
- */
 let awsClient: AWSClient | null = null;
 
 export function getAWSClient(config?: AWSClientConfig): AWSClient {

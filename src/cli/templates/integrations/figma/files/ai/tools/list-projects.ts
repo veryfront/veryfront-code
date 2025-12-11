@@ -27,7 +27,6 @@ export default tool({
       };
     }
 
-    // Fetch files for each project
     const projectsWithFiles = await Promise.all(
       projects.map(async (project) => {
         try {
@@ -49,7 +48,6 @@ export default tool({
             recentFiles,
           };
         } catch (error) {
-          // If we can't fetch files for a project, return basic info
           return {
             id: project.id,
             name: project.name,

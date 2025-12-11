@@ -1,13 +1,3 @@
-/**
- * Output Generator Module
- *
- * Handles generation of build output files:
- * - Client runtime scripts (app.js, client.js, router.js, prefetch.js)
- * - Build manifest
- * - Service worker
- * - Redirects file
- * - Static asset copying
- */
 
 import { serverLogger as logger } from "@veryfront/utils";
 import { join } from "node:path";
@@ -38,9 +28,6 @@ export interface OutputGeneratorOptions {
   dryRun: boolean;
 }
 
-/**
- * Generate client runtime scripts
- */
 export async function generateClientScripts(
   adapter: RuntimeAdapter,
   outputDir: string,
@@ -68,9 +55,6 @@ export async function generateClientScripts(
   }
 }
 
-/**
- * Generate manifest and service worker
- */
 export async function generateManifestAndServiceWorker(
   adapter: RuntimeAdapter,
   outputDir: string,
@@ -104,9 +88,6 @@ export async function generateManifestAndServiceWorker(
   }
 }
 
-/**
- * Generate redirects file
- */
 export async function generateRedirectsFile(
   adapter: RuntimeAdapter,
   outputDir: string,
@@ -117,9 +98,6 @@ export async function generateRedirectsFile(
   }
 }
 
-/**
- * Copy static assets and return statistics
- */
 export async function copyAssets(
   adapter: RuntimeAdapter,
   projectDir: string,
@@ -129,9 +107,6 @@ export async function copyAssets(
   return await copyStaticAssets(adapter, projectDir, outputDir, dryRun);
 }
 
-/**
- * Generate all output files
- */
 export async function generateAllOutputs(options: OutputGeneratorOptions): Promise<void> {
   await generateClientScripts(options.adapter, options.outputDir, options.dryRun);
 

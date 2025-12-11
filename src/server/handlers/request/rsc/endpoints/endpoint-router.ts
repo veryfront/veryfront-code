@@ -1,7 +1,3 @@
-/**
- * RSC endpoint router and orchestrator
- * @module rsc-endpoints/endpoint-router
- */
 
 import { HTTP_BAD_REQUEST, HTTP_SERVER_ERROR } from "@veryfront/utils";
 import { metrics } from "@veryfront/observability/simple-metrics/index.ts";
@@ -15,23 +11,15 @@ import type { RSCDevServerHandler } from "../handlers/index.ts";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import { isWithinDirectory, joinPath } from "@veryfront/utils/path-utils.ts";
 
-/**
- * Handle RSC endpoints
- * @param params - RSC endpoint parameters
- * @returns Response or null if not an RSC endpoint
- */
 export async function handleRSCEndpoint(
   { req, pathname, projectDir, adapter, config }: RSCEndpointParams,
 ): Promise<Response | null> {
-  // Only handle RSC endpoints
   if (!pathname.startsWith("/_veryfront/rsc/")) {
     return null;
   }
 
   const sub = pathname.replace("/_veryfront/rsc/", "");
 
-  // Always serve client.js and dom.js regardless of RSC being enabled
-  // These are needed for basic hydration even without full RSC
   if (sub === "client.js") {
     return handleClientScript(adapter);
   }
@@ -39,8 +27,6 @@ export async function handleRSCEndpoint(
     return handleDomScript(adapter);
   }
 
-  // Always return 410 Gone for deprecated flight_page endpoint
-  // regardless of RSC being enabled
   if (sub === "flight_page") {
     return new Response(
       "Flight endpoint removed. Use custom RSC endpoints.",
@@ -48,15 +34,13 @@ export async function handleRSCEndpoint(
     );
   }
 
-  // Check if RSC feature is enabled via feature flag for other endpoints
   if (!isRSCEnabled(config)) {
-    return null; // Not enabled, let it 404
+    return null;
   }
   const url = new URL(req.url);
   const handler = getRSCHandler(projectDir);
 
   try {
-    // Handle probe - simple health check endpoint
     if (sub === "probe") {
       return new Response(JSON.stringify({ ok: true, rsc: true }), {
         status: 200,
@@ -64,7 +48,6 @@ export async function handleRSCEndpoint(
       });
     }
 
-    // Handle action POST (dev)
     if (sub === "action") {
       if (req.method !== "POST") {
         return new Response("Method Not Allowed", { status: 405 });
@@ -131,34 +114,28 @@ export async function handleRSCEndpoint(
         return handleStreamEndpoint(url.searchParams);
 
       // Note: flight_page is handled earlier (before RSC enabled check)
-      // to always return 410 Gone for deprecated endpoints
 
       default:
-        // Check if it's a render request
         if (sub.startsWith("render/")) {
           const componentPath = sub.replace("render/", "");
           return handler.handleRender(componentPath, url.searchParams, req);
         }
         if (sub === "render") {
-          // Allow bare /render to resolve to index
           return handler.handleRender("/", url.searchParams, req);
         }
 
-        // Check if it's a page request with path
         if (sub.startsWith("page/")) {
           const pagePath = sub.replace("page/", "");
           metrics.recordRSC("page");
           return handler.handlePage(pagePath, url.searchParams);
         }
 
-        // Check if it's a stream request with path
         if (sub.startsWith("stream/")) {
           const streamPath = sub.replace("stream/", "");
           metrics.recordRSC("stream");
           return handler.handleStream(streamPath, url.searchParams);
         }
 
-        // Let outer server handle other RSC routes like hydrate.js or payload
         return null;
     }
   } catch (e) {

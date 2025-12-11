@@ -1,7 +1,3 @@
-/**
- * Metrics Manager
- * Main OpenTelemetry metrics initialization and management
- */
 
 import type { Meter } from "@opentelemetry/api";
 import { serverLogger as logger } from "@veryfront/utils";
@@ -11,9 +7,6 @@ import { initializeInstruments } from "../instruments/index.ts";
 import { MetricsRecorder } from "./recorder.ts";
 import type { MetricsConfig, MetricsInstruments, OpenTelemetryAPI, RuntimeState } from "./types.ts";
 
-/**
- * Metrics manager singleton state
- */
 class MetricsManager {
   private initialized = false;
   private meter: Meter | null = null;
@@ -28,8 +21,6 @@ class MetricsManager {
       cacheSize: 0,
       activeRequests: 0,
     };
-    // Create recorder immediately so state tracking works even before initialization
-    // The recorder gracefully handles null instruments (optional chaining)
     this.recorder = new MetricsRecorder(this.instruments, this.runtimeState);
   }
 
@@ -85,21 +76,16 @@ class MetricsManager {
     }
 
     try {
-      // Load OpenTelemetry API
       this.api = await import("@opentelemetry/api");
 
-      // Get or create meter
       this.meter = this.api.metrics.getMeter(finalConfig.prefix, "0.1.0");
 
-      // Initialize all metric instruments
       this.instruments = await initializeInstruments(
         this.meter,
         finalConfig,
         this.runtimeState,
       );
 
-      // Update recorder with initialized instruments
-      // Recorder was already created in constructor, just update its instruments reference
       if (this.recorder) {
         (this.recorder as any).instruments = this.instruments;
       }
@@ -112,7 +98,7 @@ class MetricsManager {
       });
     } catch (error) {
       logger.warn("[metrics] Failed to initialize OpenTelemetry metrics", error);
-      this.initialized = true; // Mark as initialized to prevent retry loops
+      this.initialized = true;
     }
   }
 
@@ -143,5 +129,4 @@ class MetricsManager {
   }
 }
 
-// Export singleton instance
 export const metricsManager = new MetricsManager();

@@ -1,6 +1,3 @@
-/**
- * Tests for primitive-checks utility functions
- */
 
 import { describe, it } from "@std/testing/bdd.ts";
 import { expect } from "@std/expect";
@@ -114,7 +111,6 @@ describe("primitive-checks", () => {
       Component.displayName = "CustomDisplayName";
       const element = React.createElement(Component, null);
       // Note: getElementTypeName checks for name first, then displayName
-      // For named functions, it returns the name
       expect(getElementTypeName(element)).toBe("Component");
     });
 
@@ -225,7 +221,7 @@ describe("primitive-checks", () => {
 
     it("should handle circular references", () => {
       const obj: Record<string, unknown> = { foo: "bar" };
-      obj.self = obj; // circular reference
+      obj.self = obj;
       const sample = getObjectSample(obj);
       expect(sample).toBe("[Unable to stringify]");
     });
@@ -249,7 +245,6 @@ describe("primitive-checks", () => {
 
     it("should handle undefined", () => {
       const sample = getObjectSample(undefined);
-      // JSON.stringify(undefined) throws, so it returns error message
       expect(sample).toBe("[Unable to stringify]");
     });
   });

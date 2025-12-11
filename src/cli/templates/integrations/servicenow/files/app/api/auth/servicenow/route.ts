@@ -1,15 +1,8 @@
-/**
- * ServiceNow OAuth Init Route
- *
- * Redirects to ServiceNow OAuth authorization page.
- */
 
 const getEnv = (name: string): string | undefined => {
   if (typeof Deno !== "undefined") {
-    // @ts-ignore: Deno global
     return Deno.env.get(name);
   }
-  // @ts-ignore: Node process
   return globalThis.process?.env?.[name];
 };
 

@@ -124,7 +124,16 @@ export async function applyTSXLayout(
       tsxLayoutModuleCache,
       adapter,
     );
-    return React.createElement(LayoutComponent, props || {}, element) as BundledReact.ReactElement;
+    logger.info("[applyTSXLayout] Applying TSX layout", {
+      layoutPath: item.componentPath,
+      isValidElement: React.isValidElement(element),
+      elementType: element?.type ? String(element.type) : "undefined",
+    });
+    const result = React.createElement(LayoutComponent, props || {}, element) as BundledReact.ReactElement;
+    logger.info("[applyTSXLayout] Layout element created", {
+      isValidResult: React.isValidElement(result),
+    });
+    return result;
   } catch (e) {
     logger.error("Failed to compile/import TSX layout", e);
 

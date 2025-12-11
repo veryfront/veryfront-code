@@ -1,6 +1,3 @@
-/**
- * Script Page Handling (TS/JS files)
- */
 
 import { rendererLogger as logger } from "@veryfront/utils";
 import { join } from "std/path/mod.ts";
@@ -22,9 +19,6 @@ import { type HTMLGenerationOptions, wrapInHTMLShell } from "@veryfront/html";
 import { extractHTMLMetadata, injectHTMLContent, isFullHTMLDocument } from "@veryfront/html";
 import { detectAppRouter } from "./router-detection.ts";
 
-/**
- * Handle plain TS/JS script pages - no React required
- */
 export async function handleScriptPage(
   pageInfo: EntityInfo,
   slug: string,
@@ -42,7 +36,6 @@ export async function handleScriptPage(
     logger.info(`Loading TS/JS page module: ${pageInfo.entity.id}`);
     const mod = (await import(`file://${pageInfo.entity.id}?t=${Date.now()}`)) as ScriptPageModule;
 
-    // Build a minimal context
     const ctx: PageContext = {
       params: options.params
         ? (Object.fromEntries(
@@ -79,7 +72,6 @@ export async function handleScriptPage(
       }));
     }
 
-    // Unwrap Response if returned
     if (output instanceof Response) {
       output = await output.text();
     }
@@ -88,7 +80,6 @@ export async function handleScriptPage(
     let metaFromScript: Record<string, unknown> = {};
     let collectedMetadata: Record<string, unknown> = {};
 
-    // Allow optional generateMetadata(ctx)
     try {
       if (typeof mod?.generateMetadata === "function") {
         const gen = await mod.generateMetadata(ctx);
@@ -106,7 +97,6 @@ export async function handleScriptPage(
     } catch (e) {
       const error = e instanceof Error ? e : new Error(String(e));
       logger.warn("generateMetadata threw for TS/JS page", error);
-      // Re-throw if this was a critical error (not just missing metadata)
       if (error.message.includes("ReferenceError") || error.message.includes("SyntaxError")) {
         throw error;
       }
@@ -118,8 +108,6 @@ export async function handleScriptPage(
       htmlBody = output.html;
       metaFromScript = output.frontmatter || output.meta || {};
     } else if (output && typeof output === "object") {
-      // Handle non-HTML data returns (e.g., JSON API responses)
-      // Wrap in a simple HTML structure for consistency
       htmlBody = `<pre>${JSON.stringify(output, null, 2)}</pre>`;
     } else {
       throw toError(createError({
@@ -143,7 +131,6 @@ export async function handleScriptPage(
       ...collectedMetadata,
     } as MDXFrontmatter;
 
-    // Decide full HTML
     let fullHtml: string;
     if (isFullHTMLDocument(htmlBody)) {
       const metadata = extractHTMLMetadata(mergedFrontmatter, undefined);

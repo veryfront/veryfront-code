@@ -20,7 +20,6 @@ export default tool({
     type: z.enum(["page", "blogpost"]).default("page").describe("Type of content to create"),
   }),
   async execute({ spaceKey, title, content, parentId, type }) {
-    // Check if content looks like HTML, otherwise format as storage
     const storageContent = content.trim().startsWith("<") ? content : formatAsStorage(content);
 
     const page = await createPage({

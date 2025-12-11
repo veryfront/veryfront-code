@@ -1,9 +1,3 @@
-/**
- * Cross-runtime console styling
- *
- * Provides terminal colors that work in Deno, Node.js, and Bun.
- * Falls back to no-op functions in environments without terminal support.
- */
 
 import { isDeno } from "../runtime.ts";
 import type { ColorFunction, ConsoleStyler } from "./types.ts";

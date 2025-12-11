@@ -1,5 +1,3 @@
-// Mock database for the auth feature
-// In a real app, replace this with your actual database connection
 
 export type User = {
   id: string;
@@ -9,12 +7,10 @@ export type User = {
   createdAt: number;
 };
 
-// In-memory store (will reset on server restart)
 const users: User[] = [
   {
     id: "user_1",
     email: "demo@example.com",
-    // hash for "password"
     passwordHash: "5e884898da28047151d0e56f8dc6292773603d0d6aabbdd62a11ef721d1542d8",
     name: "Demo User",
     createdAt: Date.now(),

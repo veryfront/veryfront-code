@@ -1,61 +1,35 @@
-/**
- * CORS Validators
- * Origin validation logic for CORS handling
- *
- * @module core/cors/validators
- */
 
 import type { CORSConfig, CORSValidationResult } from "./types.ts";
 import { serverLogger } from "@veryfront/utils/logger/logger.ts";
 import { recordCorsRejection } from "@veryfront/observability";
 
-/**
- * Validate origin against CORS configuration
- * Returns the allowed origin or null if not allowed
- *
- * This is the main validation entry point that coordinates
- * all origin validation strategies.
- *
- * @param requestOrigin - The origin from the request header
- * @param config - CORS configuration
- * @returns Validation result with allowed origin and credentials
- */
 export async function validateOrigin(
   requestOrigin: string | null,
   config?: boolean | CORSConfig,
 ): Promise<CORSValidationResult> {
-  // Secure by default: no CORS without explicit configuration
   if (!config) {
     return { allowedOrigin: null, allowCredentials: false };
   }
 
-  // Simple boolean true = allow all origins
   if (config === true) {
     const origin = requestOrigin || "*";
     return { allowedOrigin: origin, allowCredentials: false };
   }
 
-  // Object configuration
   const corsConfig = config as CORSConfig;
 
-  // No origin configuration = no CORS
   if (!corsConfig.origin) {
     return { allowedOrigin: null, allowCredentials: false };
   }
 
-  // No origin header (same-origin request or non-browser client)
   if (!requestOrigin) {
-    // For wildcard, return wildcard even without origin header
     if (corsConfig.origin === "*") {
       return { allowedOrigin: "*", allowCredentials: false };
     }
-    // For other configurations, no CORS headers for missing origin
     return { allowedOrigin: null, allowCredentials: false };
   }
 
-  // Wildcard origin
   if (corsConfig.origin === "*") {
-    // Security: Cannot use credentials with wildcard
     if (corsConfig.credentials) {
       serverLogger.warn("[CORS] Cannot use credentials with wildcard origin - denying");
       return {
@@ -67,12 +41,10 @@ export async function validateOrigin(
     return { allowedOrigin: "*", allowCredentials: false };
   }
 
-  // Function-based validation
   if (typeof corsConfig.origin === "function") {
     try {
       const result = await corsConfig.origin(requestOrigin);
 
-      // Function returned specific origin string
       if (typeof result === "string") {
         return {
           allowedOrigin: result,
@@ -80,7 +52,6 @@ export async function validateOrigin(
         };
       }
 
-      // Function returned boolean
       const allowed = result === true;
       return {
         allowedOrigin: allowed ? requestOrigin : null,
@@ -97,7 +68,6 @@ export async function validateOrigin(
     }
   }
 
-  // Array of allowed origins
   if (Array.isArray(corsConfig.origin)) {
     const allowed = corsConfig.origin.includes(requestOrigin);
     if (!allowed) {
@@ -114,7 +84,6 @@ export async function validateOrigin(
     };
   }
 
-  // Single origin string
   if (typeof corsConfig.origin === "string") {
     const allowed = corsConfig.origin === requestOrigin;
     if (!allowed) {
@@ -131,7 +100,6 @@ export async function validateOrigin(
     };
   }
 
-  // Should never reach here
   return {
     allowedOrigin: null,
     allowCredentials: false,
@@ -139,11 +107,6 @@ export async function validateOrigin(
   };
 }
 
-/**
- * Synchronous origin validation helper for environments that require
- * immediate header evaluation (e.g., fluent response builders).
- * Async origin validators are NOT supported here.
- */
 export function validateOriginSync(
   requestOrigin: string | null,
   config?: boolean | CORSConfig,
@@ -256,13 +219,6 @@ export function validateOriginSync(
   };
 }
 
-/**
- * Validate CORS configuration for security issues
- * Prevents dangerous combinations
- *
- * @param config - CORS configuration to validate
- * @returns Validation result with error if invalid
- */
 export function validateCORSConfig(config?: boolean | CORSConfig): {
   valid: boolean;
   error?: string;
@@ -273,7 +229,6 @@ export function validateCORSConfig(config?: boolean | CORSConfig): {
 
   const corsConfig = config as CORSConfig;
 
-  // Cannot use credentials with wildcard origin
   if (corsConfig.origin === "*" && corsConfig.credentials) {
     return {
       valid: false,
@@ -281,7 +236,6 @@ export function validateCORSConfig(config?: boolean | CORSConfig): {
     };
   }
 
-  // Validate methods array if provided
   if (corsConfig.methods && corsConfig.methods.length === 0) {
     return {
       valid: false,
@@ -289,7 +243,6 @@ export function validateCORSConfig(config?: boolean | CORSConfig): {
     };
   }
 
-  // Validate headers arrays
   if (corsConfig.allowedHeaders && corsConfig.allowedHeaders.length === 0) {
     return {
       valid: false,
@@ -304,7 +257,6 @@ export function validateCORSConfig(config?: boolean | CORSConfig): {
     };
   }
 
-  // Validate maxAge is positive
   if (corsConfig.maxAge !== undefined && corsConfig.maxAge < 0) {
     return {
       valid: false,

@@ -1,21 +1,12 @@
-/**
- * Slack API Client
- *
- * Provides a type-safe interface to Slack API operations.
- */
 
 import { tokenStore as _tokenStore } from "./token-store.ts";
 import { getValidToken } from "./oauth.ts";
 
-// Helper for Cross-Platform environment access
 function getEnv(key: string): string | undefined {
-  // @ts-ignore - Deno global
   if (typeof Deno !== "undefined") {
-    // @ts-ignore - Deno global
     return Deno.env.get(key);
-  } // @ts-ignore - process global
+  }
   else if (typeof process !== "undefined" && process.env) {
-    // @ts-ignore - process global
     return process.env[key];
   }
   return undefined;
@@ -54,9 +45,6 @@ export interface SlackUser {
   };
 }
 
-/**
- * Slack OAuth provider configuration
- */
 export const slackOAuthProvider = {
   name: "slack",
   authorizationUrl: "https://slack.com/oauth/v2/authorize",
@@ -74,9 +62,6 @@ export const slackOAuthProvider = {
   callbackPath: "/api/auth/slack/callback",
 };
 
-/**
- * Create a Slack client for a specific user
- */
 export function createSlackClient(userId: string) {
   async function getAccessToken(): Promise<string> {
     const token = await getValidToken(slackOAuthProvider, userId, "slack");
@@ -111,9 +96,6 @@ export function createSlackClient(userId: string) {
   }
 
   return {
-    /**
-     * List channels the user is a member of
-     */
     async listChannels(options: {
       limit?: number;
       excludeArchived?: boolean;
@@ -129,9 +111,6 @@ export function createSlackClient(userId: string) {
       return result.channels;
     },
 
-    /**
-     * Get messages from a channel
-     */
     async getMessages(
       channelId: string,
       options: { limit?: number; oldest?: string } = {},
@@ -147,9 +126,6 @@ export function createSlackClient(userId: string) {
       return result.messages;
     },
 
-    /**
-     * Send a message to a channel
-     */
     async sendMessage(
       channelId: string,
       text: string,
@@ -167,9 +143,6 @@ export function createSlackClient(userId: string) {
       return result;
     },
 
-    /**
-     * Get user info
-     */
     async getUser(userId: string): Promise<SlackUser> {
       const result = await apiRequest<{ user: SlackUser }>("users.info", {
         user: userId,
@@ -177,9 +150,6 @@ export function createSlackClient(userId: string) {
       return result.user;
     },
 
-    /**
-     * Get thread replies
-     */
     async getThread(
       channelId: string,
       threadTs: string,
@@ -194,9 +164,6 @@ export function createSlackClient(userId: string) {
       return result.messages;
     },
 
-    /**
-     * Search messages
-     */
     async searchMessages(
       query: string,
       options: { count?: number } = {},

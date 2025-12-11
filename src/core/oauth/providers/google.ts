@@ -1,14 +1,6 @@
-/**
- * Google OAuth Provider
- *
- * Pre-configured OAuth for Google services: Gmail, Calendar, Sheets, Drive
- */
 
 import type { OAuthServiceConfig } from "../types.ts";
 
-/**
- * Base Google OAuth configuration
- */
 const googleBase = {
   providerId: "google",
   displayName: "Google",
@@ -24,9 +16,6 @@ const googleBase = {
   },
 };
 
-/**
- * Gmail OAuth configuration
- */
 export const gmailConfig: OAuthServiceConfig = {
   ...googleBase,
   serviceId: "gmail",
@@ -40,9 +29,6 @@ export const gmailConfig: OAuthServiceConfig = {
   ],
 };
 
-/**
- * Google Calendar OAuth configuration
- */
 export const calendarConfig: OAuthServiceConfig = {
   ...googleBase,
   serviceId: "calendar",
@@ -54,9 +40,6 @@ export const calendarConfig: OAuthServiceConfig = {
   ],
 };
 
-/**
- * Google Sheets OAuth configuration
- */
 export const sheetsConfig: OAuthServiceConfig = {
   ...googleBase,
   serviceId: "sheets",
@@ -68,9 +51,6 @@ export const sheetsConfig: OAuthServiceConfig = {
   ],
 };
 
-/**
- * Google Drive OAuth configuration
- */
 export const driveConfig: OAuthServiceConfig = {
   ...googleBase,
   serviceId: "drive",
@@ -82,9 +62,6 @@ export const driveConfig: OAuthServiceConfig = {
   ],
 };
 
-/**
- * All Google service configurations
- */
 export const googleServices = {
   gmail: gmailConfig,
   calendar: calendarConfig,

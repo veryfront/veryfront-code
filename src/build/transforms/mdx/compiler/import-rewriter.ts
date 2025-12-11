@@ -5,16 +5,22 @@ export interface ImportRewriterConfig {
   filePath: string;
   target: CompilationTarget;
   baseUrl?: string;
+  projectDir?: string;
 }
 
-function toAbsPath(spec: string, basedir: string): string {
+function toAbsPath(spec: string, basedir: string, projectDir?: string): string {
   try {
     if (spec.startsWith("file://")) return new URL(spec).pathname;
     if (spec.startsWith("/")) return pathResolve(spec);
     if (spec.startsWith("http://") || spec.startsWith("https://")) return spec;
 
+    if (spec.startsWith("@/") && projectDir) {
+      const aliasPath = spec.substring(2);
+      return pathResolve(join(projectDir, aliasPath));
+    }
+
     if (!spec.startsWith(".") && !spec.startsWith("/")) {
-      return spec; // Return unchanged - it's a bare specifier
+      return spec;
     }
 
     return pathResolve(join(basedir, spec));
@@ -35,8 +41,9 @@ function mapSpec(
   basedir: string,
   target: CompilationTarget,
   baseUrl?: string,
+  projectDir?: string,
 ): string {
-  const abs = toAbsPath(spec, basedir);
+  const abs = toAbsPath(spec, basedir, projectDir);
   if (typeof abs !== "string") return spec;
 
   if (
@@ -44,9 +51,10 @@ function mapSpec(
     !spec.startsWith(".") &&
     !spec.startsWith("/") &&
     !spec.startsWith("file://") &&
-    !spec.startsWith("http")
+    !spec.startsWith("http") &&
+    !spec.startsWith("@/")
   ) {
-    return spec; // Bare specifier - leave for import map resolution
+    return spec;
   }
 
   if (target === "browser") return toBrowserFs(abs, baseUrl);
@@ -58,8 +66,9 @@ function rewriteLine(
   basedir: string,
   target: CompilationTarget,
   baseUrl?: string,
+  projectDir?: string,
 ): string {
-  const mapper = (spec: string) => mapSpec(spec, basedir, target, baseUrl);
+  const mapper = (spec: string) => mapSpec(spec, basedir, target, baseUrl, projectDir);
 
   line = line.replace(
     /^(\s*import\s+[^'";]+?from\s+)(["'])([^"']+)(\2)/,
@@ -87,7 +96,7 @@ export function rewriteBodyImports(body: string, config: ImportRewriterConfig): 
     .map((ln) => {
       const trimmed = ln.trimStart();
       if (trimmed.startsWith("import") || trimmed.startsWith("export")) {
-        return rewriteLine(ln, basedir, config.target, config.baseUrl);
+        return rewriteLine(ln, basedir, config.target, config.baseUrl, config.projectDir);
       }
       return ln;
     })
@@ -96,12 +105,17 @@ export function rewriteBodyImports(body: string, config: ImportRewriterConfig): 
 
 export function rewriteCompiledImports(compiledCode: string, config: ImportRewriterConfig): string {
   const basedir = dirname(config.filePath);
-  const mapper = (spec: string) => mapSpec(spec, basedir, config.target, config.baseUrl);
+  const mapper = (spec: string) => mapSpec(spec, basedir, config.target, config.baseUrl, config.projectDir);
 
   let code = compiledCode;
 
   code = code.replace(
     /(from\s+["'])(\.{1,2}\/[^"']+)(["'])/g,
+    (_m, p1, p2, p3) => `${p1}${mapper(p2)}${p3}`,
+  );
+
+  code = code.replace(
+    /(from\s+["'])(@\/[^"']+)(["'])/g,
     (_m, p1, p2, p3) => `${p1}${mapper(p2)}${p3}`,
   );
 
@@ -112,6 +126,11 @@ export function rewriteCompiledImports(compiledCode: string, config: ImportRewri
 
   code = code.replace(
     /(import\(\s*["'])(\.{1,2}\/[^"']+)(["']\s*\))/g,
+    (_m, p1, p2, p3) => `${p1}${mapper(p2)}${p3}`,
+  );
+
+  code = code.replace(
+    /(import\(\s*["'])(@\/[^"']+)(["']\s*\))/g,
     (_m, p1, p2, p3) => `${p1}${mapper(p2)}${p3}`,
   );
 

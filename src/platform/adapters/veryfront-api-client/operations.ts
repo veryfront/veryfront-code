@@ -52,11 +52,27 @@ export class VeryfrontAPIOperations {
     const url = `/projects/${id}/files?${params}`;
     logger.debug("[VeryfrontAPIClient] Listing files", { url, projectId: id, limit, cursor });
     const response = await this.request<ListFilesResponse>(url);
+
+    // deno-lint-ignore no-explicit-any
+    const rawResponse = response as any;
+    const pageInfo = response.pagination || rawResponse.pageInfo;
+
+    const normalizedPagination = pageInfo
+      ? {
+        cursor: pageInfo.cursor || pageInfo.nextCursor || pageInfo.endCursor,
+        hasMore: pageInfo.hasMore ?? pageInfo.hasNextPage,
+      }
+      : undefined;
+
     logger.debug("[VeryfrontAPIClient] Files listed", {
       count: response.data?.length || 0,
-      hasMore: response.pagination?.hasMore,
+      hasMore: normalizedPagination?.hasMore,
     });
-    return response;
+
+    return {
+      data: response.data,
+      pagination: normalizedPagination,
+    };
   }
 
   async listAllFiles(projectId?: string): Promise<ProjectFile[]> {
@@ -69,7 +85,6 @@ export class VeryfrontAPIOperations {
       allFiles.push(...response.data);
       cursor = response.pagination?.hasMore ? response.pagination.cursor : undefined;
     } while (cursor);
-
     return allFiles;
   }
 
@@ -85,7 +100,8 @@ export class VeryfrontAPIOperations {
     const id = projectId || this.getProjectId();
 
     const files = await this.listAllFiles(id);
-    return files.find((f) => f.path === path) || null;
+    const found = files.find((f) => f.path === path);
+    return found || null;
   }
 
   async fileExists(path: string, projectId?: string): Promise<boolean> {

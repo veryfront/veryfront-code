@@ -2,7 +2,6 @@ import { getAccessToken } from "./token-store.ts";
 
 const FIGMA_BASE_URL = "https://api.figma.com/v1";
 
-// Type definitions for Figma API responses
 export interface FigmaFile {
   document: FigmaNode;
   components: Record<string, FigmaComponent>;
@@ -142,12 +141,10 @@ async function figmaFetch<T>(
   return response.json();
 }
 
-// Get current user info
 export function getMe(): Promise<FigmaUser> {
   return figmaFetch<FigmaUser>("/me");
 }
 
-// Get file details
 export function getFile(fileKey: string, options?: {
   version?: string;
   ids?: string[];
@@ -169,7 +166,6 @@ export function getFile(fileKey: string, options?: {
   return figmaFetch<FigmaFile>(`/files/${fileKey}${query ? `?${query}` : ""}`);
 }
 
-// Get file nodes (specific nodes within a file)
 export function getFileNodes(fileKey: string, nodeIds: string[]): Promise<{
   name: string;
   lastModified: string;
@@ -183,7 +179,6 @@ export function getFileNodes(fileKey: string, nodeIds: string[]): Promise<{
   return figmaFetch(`/files/${fileKey}/nodes?${params.toString()}`);
 }
 
-// Get file images (exports)
 export function getFileImages(fileKey: string, nodeIds: string[], options?: {
   format?: "jpg" | "png" | "svg" | "pdf";
   scale?: number;
@@ -210,12 +205,10 @@ export function getFileImages(fileKey: string, nodeIds: string[], options?: {
   return figmaFetch(`/images/${fileKey}?${params.toString()}`);
 }
 
-// Get comments on a file
 export function getComments(fileKey: string): Promise<{ comments: FigmaComment[] }> {
   return figmaFetch<{ comments: FigmaComment[] }>(`/files/${fileKey}/comments`);
 }
 
-// Post a comment on a file
 export function postComment(fileKey: string, message: string, options?: {
   client_meta?: { x?: number; y?: number; node_id?: string[] };
   parent_id?: string;
@@ -230,12 +223,10 @@ export function postComment(fileKey: string, message: string, options?: {
   });
 }
 
-// Get team projects
 export function getTeamProjects(teamId: string): Promise<{ projects: FigmaTeamProject[] }> {
   return figmaFetch<{ projects: FigmaTeamProject[] }>(`/teams/${teamId}/projects`);
 }
 
-// Get project files
 export function getProjectFiles(projectId: string): Promise<{
   files: Array<{
     key: string;
@@ -247,7 +238,6 @@ export function getProjectFiles(projectId: string): Promise<{
   return figmaFetch(`/projects/${projectId}/files`);
 }
 
-// Get user's recent files
 export function getUserFiles(): Promise<{
   files: Array<{
     key: string;
@@ -257,14 +247,11 @@ export function getUserFiles(): Promise<{
   }>;
 }> {
   // Note: Figma API doesn't have a direct endpoint for user files
-  // This would typically require getting the user's teams and then their projects
-  // For now, this is a placeholder that returns an error
   throw new Error(
     "Getting user files requires team ID. Use getTeamProjects and getProjectFiles instead.",
   );
 }
 
-// Helper to extract component information
 export function extractComponents(file: FigmaFile): Array<{
   key: string;
   name: string;
@@ -278,7 +265,6 @@ export function extractComponents(file: FigmaFile): Array<{
     type: "component" | "component_set";
   }> = [];
 
-  // Add regular components
   for (const [key, component] of Object.entries(file.components)) {
     components.push({
       key,
@@ -288,7 +274,6 @@ export function extractComponents(file: FigmaFile): Array<{
     });
   }
 
-  // Add component sets
   for (const [key, componentSet] of Object.entries(file.componentSets)) {
     components.push({
       key,
@@ -301,7 +286,6 @@ export function extractComponents(file: FigmaFile): Array<{
   return components;
 }
 
-// Helper to extract styles
 export function extractStyles(file: FigmaFile): Array<{
   key: string;
   name: string;
@@ -316,7 +300,6 @@ export function extractStyles(file: FigmaFile): Array<{
   }));
 }
 
-// Helper to traverse nodes and find specific types
 export function findNodesByType(node: FigmaNode, type: string): FigmaNode[] {
   const results: FigmaNode[] = [];
 
@@ -333,7 +316,6 @@ export function findNodesByType(node: FigmaNode, type: string): FigmaNode[] {
   return results;
 }
 
-// Helper to get a summary of a file
 export function getFileSummary(file: FigmaFile): {
   name: string;
   lastModified: string;

@@ -26,7 +26,6 @@ export default tool({
   ) {
     let targetFolderId = folderId;
 
-    // Create folder if needed
     if (createFolderIfNeeded && folderPath && !folderId) {
       const folders = folderPath.split("/").filter(Boolean);
       let currentFolderId: string | undefined;
@@ -36,7 +35,6 @@ export default tool({
           const folder = await createFolder(siteId, driveId, folderName, currentFolderId);
           currentFolderId = folder.id;
         } catch (error) {
-          // Folder might already exist, try to continue
           console.warn(`Note: Could not create folder "${folderName}":`, error);
         }
       }

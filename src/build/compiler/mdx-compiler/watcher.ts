@@ -40,7 +40,6 @@ async function getWatchableDirectories(projectDir: string): Promise<string[]> {
         dirsToWatch.push(dir);
       }
     } catch {
-      // Directory doesn't exist, skip it
     }
   }
 

@@ -1,8 +1,3 @@
-/**
- * Parallel Node Handler
- *
- * Handles execution of parallel nodes - executing multiple child nodes concurrently.
- */
 
 import type {
   NodeState,
@@ -17,19 +12,10 @@ import {
   type NodeHandlerContext,
 } from "./node-handler.ts";
 
-/**
- * Callbacks for parallel node events
- */
 export interface ParallelNodeCallbacks {
   onNodeComplete?: (nodeId: string, state: NodeState) => void;
 }
 
-/**
- * Handler for parallel nodes.
- *
- * Parallel nodes execute multiple child nodes concurrently,
- * collecting their results into the context.
- */
 export class ParallelNodeHandler extends BaseNodeHandler<ParallelNodeConfig> {
   readonly nodeType = "parallel" as const;
 
@@ -52,7 +38,6 @@ export class ParallelNodeHandler extends BaseNodeHandler<ParallelNodeConfig> {
     const config = node.config as ParallelNodeConfig;
     const startTime = Date.now();
 
-    // Execute child nodes using sub-executor
     const result = await this.subExecutor.executeSubDAG(config.nodes, {
       id: `${node.id}_parallel`,
       workflowId: "",
@@ -66,7 +51,6 @@ export class ParallelNodeHandler extends BaseNodeHandler<ParallelNodeConfig> {
       createdAt: new Date(),
     });
 
-    // Merge child node states
     Object.assign(nodeStates, result.nodeStates);
 
     const state: NodeState = {
@@ -89,9 +73,6 @@ export class ParallelNodeHandler extends BaseNodeHandler<ParallelNodeConfig> {
   }
 }
 
-/**
- * Create a parallel node handler.
- */
 export function createParallelNodeHandler(
   subExecutor: IDAGSubExecutor,
   callbacks?: ParallelNodeCallbacks,

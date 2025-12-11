@@ -1,6 +1,3 @@
-/**
- * List ServiceNow Incidents Tool
- */
 
 import { z } from "zod";
 import { defineTool } from "veryfront/ai";
@@ -31,7 +28,6 @@ export default defineTool({
     try {
       const client = getServiceNowClient();
 
-      // Map state names to ServiceNow state values
       const stateMap: Record<string, string> = {
         new: "1",
         in_progress: "2",

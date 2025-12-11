@@ -1,8 +1,3 @@
-/**
- * DAG Executor
- *
- * Executes workflow DAGs with proper dependency ordering and parallel execution
- */
 
 import type {
   BranchNodeConfig,
@@ -22,53 +17,25 @@ import { generateId } from "../types.ts";
 import type { StepExecutor } from "./step-executor.ts";
 import type { CheckpointManager } from "./checkpoint-manager.ts";
 
-/**
- * DAG executor configuration
- */
 export interface DAGExecutorConfig {
-  /** Step executor for running individual steps */
   stepExecutor: StepExecutor;
-  /** Checkpoint manager for durability */
   checkpointManager?: CheckpointManager;
-  /** Maximum concurrent parallel executions */
   maxConcurrency?: number;
-  /** Callback when node execution starts */
   onNodeStart?: (nodeId: string) => void;
-  /** Callback when node execution completes */
   onNodeComplete?: (nodeId: string, state: NodeState) => void;
-  /** Callback when waiting for approval/event */
   onWaiting?: (nodeId: string, waitConfig: WaitNodeConfig) => void;
-  /** Enable debug logging */
   debug?: boolean;
 }
 
-/**
- * Result of DAG execution
- */
 export interface DAGExecutionResult {
-  /** Whether the DAG completed successfully */
   completed: boolean;
-  /** Whether the DAG is waiting (for approval/event) */
   waiting: boolean;
-  /** Node that is waiting (if waiting) */
   waitingNode?: string;
-  /** Final context after execution */
   context: WorkflowContext;
-  /** Final node states */
   nodeStates: Record<string, NodeState>;
-  /** Error if failed */
   error?: string;
 }
 
-/**
- * DAG Executor class
- *
- * Responsible for executing workflow DAGs with:
- * - Topological ordering for dependencies
- * - Parallel execution of independent nodes
- * - Support for branching and conditional logic
- * - Checkpointing for durability
- */
 export class DAGExecutor {
   private config: DAGExecutorConfig;
 
@@ -80,9 +47,6 @@ export class DAGExecutor {
     };
   }
 
-  /**
-   * Execute a workflow DAG
-   */
   async execute(
     nodes: WorkflowNode[],
     run: WorkflowRun,
@@ -91,14 +55,10 @@ export class DAGExecutor {
     const context = { ...run.context };
     const nodeStates = { ...run.nodeStates };
 
-    // Build dependency graph
     const { adjList, inDegree, nodeMap } = this.buildGraph(nodes);
 
-    // Update in-degrees for nodes whose dependencies are already completed
-    // This handles resuming from checkpoints
     for (const [nodeId, state] of Object.entries(nodeStates)) {
       if (state.status === "completed" || state.status === "skipped") {
-        // Decrement in-degree for all dependents of this completed node
         for (const dependent of adjList.get(nodeId) || []) {
           const currentDegree = inDegree.get(dependent) ?? 0;
           if (currentDegree > 0) {
@@ -108,7 +68,6 @@ export class DAGExecutor {
       }
     }
 
-    // Validate DAG (no cycles)
     if (this.hasCycle(nodes, adjList)) {
       return {
         completed: false,
@@ -119,19 +78,14 @@ export class DAGExecutor {
       };
     }
 
-    // Find starting nodes
     let ready: string[];
     if (startFromNode) {
-      // Resume from specific node
       ready = [startFromNode];
     } else {
-      // Start from nodes with no dependencies that haven't been completed
       ready = this.getReadyNodes(inDegree, nodeStates);
     }
 
-    // Execute nodes in topological order
     while (ready.length > 0) {
-      // Execute ready nodes in parallel (respecting max concurrency)
       const batch = ready.slice(0, this.config.maxConcurrency);
       ready = ready.slice(this.config.maxConcurrency);
 
@@ -139,7 +93,6 @@ export class DAGExecutor {
         batch.map((nodeId) => this.executeNode(nodeMap.get(nodeId)!, context, nodeStates)),
       );
 
-      // Process results
       for (let i = 0; i < batch.length; i++) {
         const nodeId = batch[i]!;
         const result = results[i]!;
@@ -147,11 +100,9 @@ export class DAGExecutor {
         if (result.status === "fulfilled") {
           const nodeResult = result.value;
 
-          // Update node state
           nodeStates[nodeId] = nodeResult.state;
           Object.assign(context, nodeResult.contextUpdates);
 
-          // Handle waiting state
           if (nodeResult.waiting) {
             return {
               completed: false,
@@ -162,7 +113,6 @@ export class DAGExecutor {
             };
           }
 
-          // Checkpoint if configured
           const nodeConfig = nodeMap.get(nodeId);
           if (
             nodeResult.state.status === "completed" &&
@@ -171,7 +121,6 @@ export class DAGExecutor {
             await this.checkpoint(run.id, nodeId, context, nodeStates);
           }
 
-          // Check if node failed (step returned success: false)
           if (nodeResult.state.status === "failed") {
             return {
               completed: false,
@@ -182,7 +131,6 @@ export class DAGExecutor {
             };
           }
 
-          // Update ready nodes based on completed dependencies
           if (nodeResult.state.status === "completed" || nodeResult.state.status === "skipped") {
             for (const dependent of adjList.get(nodeId) || []) {
               const newDegree = inDegree.get(dependent)! - 1;
@@ -190,7 +138,6 @@ export class DAGExecutor {
             }
           }
         } else {
-          // Node execution failed
           const error = result.reason instanceof Error
             ? result.reason.message
             : String(result.reason);
@@ -203,7 +150,6 @@ export class DAGExecutor {
             completedAt: new Date(),
           };
 
-          // Fail fast - don't continue with other nodes
           return {
             completed: false,
             waiting: false,
@@ -214,7 +160,6 @@ export class DAGExecutor {
         }
       }
 
-      // Get newly ready nodes
       const newReady = this.getReadyNodes(inDegree, nodeStates);
       ready = [...ready, ...newReady];
     }
@@ -227,9 +172,6 @@ export class DAGExecutor {
     };
   }
 
-  /**
-   * Execute a single node
-   */
   private async executeNode(
     node: WorkflowNode,
     context: WorkflowContext,
@@ -241,7 +183,6 @@ export class DAGExecutor {
   }> {
     const nodeId = node.id;
 
-    // Check if node is already completed (resuming from checkpoint)
     const existingState = nodeStates[nodeId];
     if (existingState?.status === "completed") {
       return { state: existingState, contextUpdates: {}, waiting: false };
@@ -249,14 +190,12 @@ export class DAGExecutor {
 
     this.config.onNodeStart?.(nodeId);
 
-    // Check if should skip
     if (node.config.skip && (await node.config.skip(context))) {
       const state = this.config.stepExecutor.createSkippedState(nodeId);
       this.config.onNodeComplete?.(nodeId, state);
       return { state, contextUpdates: {}, waiting: false };
     }
 
-    // Execute based on node type
     const config = node.config;
 
     switch (config.type) {
@@ -291,9 +230,6 @@ export class DAGExecutor {
     }
   }
 
-  /**
-   * Execute a map node (dynamic fan-out)
-   */
   private async executeMapNode(
     node: WorkflowNode,
     config: MapNodeConfig,
@@ -306,7 +242,6 @@ export class DAGExecutor {
   }> {
     const startTime = Date.now();
 
-    // 1. Resolve items collection
     const items = typeof config.items === "function" ? await config.items(context) : config.items;
 
     if (!Array.isArray(items)) {
@@ -314,7 +249,6 @@ export class DAGExecutor {
     }
 
     if (items.length === 0) {
-      // Empty collection, done immediately
       const state: NodeState = {
         nodeId: node.id,
         status: "completed",
@@ -326,17 +260,10 @@ export class DAGExecutor {
       return { state, contextUpdates: { [node.id]: [] }, waiting: false };
     }
 
-    // 2. Generate child nodes for each item
     const childNodes: WorkflowNode[] = [];
 
-    // Check if processor is a WorkflowDefinition or a single node
     const isWorkflowDef = (p: any): p is WorkflowDefinition => !!p.steps;
 
-    // We'll map each item to a set of nodes
-    // For simplicity in this implementation, if processor is a single node, we clone it.
-    // If it's a workflow def, we'd need to expand it (similar to subworkflow).
-    // Here we assume it's a single node structure for the "map" pattern or a simple chain.
-    // To support complex subworkflows per item, best to wrap in a SubWorkflowNode.
 
     for (let i = 0; i < items.length; i++) {
       const item = items[i];
@@ -345,7 +272,6 @@ export class DAGExecutor {
       let childNode: WorkflowNode;
 
       if (isWorkflowDef(config.processor)) {
-        // Create a SubWorkflow node for this item
         childNode = {
           id: childId,
           config: {
@@ -353,15 +279,12 @@ export class DAGExecutor {
             workflow: config.processor,
             input: item,
             retry: config.retry,
-            checkpoint: false, // Don't checkpoint individual map items by default
+            checkpoint: false,
           } as SubWorkflowNodeConfig,
         };
       } else {
-        // Clone the single processor node
-        // We must override the input to be the current item
         const processorConfig = { ...config.processor.config } as any;
 
-        // If it's a step node, ensure input receives the item
         if (processorConfig.type === "step") {
           processorConfig.input = item;
         }
@@ -375,9 +298,6 @@ export class DAGExecutor {
       childNodes.push(childNode);
     }
 
-    // 3. Execute child nodes
-    // We use a temporary DAG execution for these nodes
-    // The maxConcurrency from config overrides default
     const originalConcurrency = this.config.maxConcurrency;
     if (config.concurrency) {
       this.config.maxConcurrency = config.concurrency;
@@ -389,18 +309,16 @@ export class DAGExecutor {
         workflowId: "",
         status: "running",
         input: context.input,
-        nodeStates: {}, // Start fresh for map iteration
+        nodeStates: {},
         currentNodes: [],
-        context: { ...context }, // Pass copy of context so they can read global state
+        context: { ...context },
         checkpoints: [],
         pendingApprovals: [],
         createdAt: new Date(),
       });
 
-      // Merge child node states into parent for visibility
       Object.assign(nodeStates, result.nodeStates);
 
-      // Collect outputs in order
       const outputs = childNodes.map((child) => {
         const childState = result.nodeStates[child.id];
         return childState?.output;
@@ -424,14 +342,10 @@ export class DAGExecutor {
         waiting: result.waiting,
       };
     } finally {
-      // Restore concurrency setting
       this.config.maxConcurrency = originalConcurrency!;
     }
   }
 
-  /**
-   * Execute a sub-workflow node
-   */
   private async executeSubWorkflowNode(
     node: WorkflowNode,
     config: SubWorkflowNodeConfig,
@@ -444,7 +358,6 @@ export class DAGExecutor {
   }> {
     const startTime = Date.now();
 
-    // 1. Resolve workflow definition
     let workflowDef: WorkflowDefinition;
     if (typeof config.workflow === "string") {
       throw new Error(
@@ -454,12 +367,10 @@ export class DAGExecutor {
       workflowDef = config.workflow;
     }
 
-    // 2. Resolve input
     const input = typeof config.input === "function"
       ? await config.input(context)
       : (config.input ?? context.input);
 
-    // 3. Expand steps (handle dynamic steps builder)
     let steps: WorkflowNode[];
     if (typeof workflowDef.steps === "function") {
       steps = workflowDef.steps({
@@ -470,11 +381,8 @@ export class DAGExecutor {
       steps = workflowDef.steps;
     }
 
-    // 4. Execute sub-workflow
-    // We create a new isolated run context for the subworkflow
     const subRunId = `${node.id}_sub_${generateId()}`;
 
-    // Execute recursively
     const result = await this.execute(steps, {
       id: subRunId,
       workflowId: workflowDef.id,
@@ -483,19 +391,15 @@ export class DAGExecutor {
       nodeStates: {},
       currentNodes: [],
       context: {
-        input, // Subworkflow starts with fresh context scoped to its input
-        // We do NOT inherit parent context to ensure isolation,
-        // unless explicitly passed via input.
+        input,
       },
       checkpoints: [],
       pendingApprovals: [],
       createdAt: new Date(),
     });
 
-    // 5. Process result
-    let finalOutput = result.context; // Default output is the final context
+    let finalOutput = result.context;
 
-    // If sub-workflow has explicit output transformation
     if (result.completed && config.output) {
       finalOutput = config.output(result.context) as any;
     }
@@ -519,9 +423,6 @@ export class DAGExecutor {
     };
   }
 
-  /**
-   * Execute a step node
-   */
   private async executeStepNode(
     node: WorkflowNode,
     context: WorkflowContext,
@@ -552,9 +453,6 @@ export class DAGExecutor {
     };
   }
 
-  /**
-   * Execute a parallel node
-   */
   private async executeParallelNode(
     node: WorkflowNode,
     config: ParallelNodeConfig,
@@ -567,7 +465,6 @@ export class DAGExecutor {
   }> {
     const startTime = Date.now();
 
-    // Execute child nodes using DAG executor recursively
     const result = await this.execute(config.nodes, {
       id: `${node.id}_parallel`,
       workflowId: "",
@@ -581,7 +478,6 @@ export class DAGExecutor {
       createdAt: new Date(),
     });
 
-    // Merge child node states
     Object.assign(nodeStates, result.nodeStates);
 
     const state: NodeState = {
@@ -603,9 +499,6 @@ export class DAGExecutor {
     };
   }
 
-  /**
-   * Execute a branch node
-   */
   private async executeBranchNode(
     node: WorkflowNode,
     config: BranchNodeConfig,
@@ -618,14 +511,11 @@ export class DAGExecutor {
   }> {
     const startTime = Date.now();
 
-    // Evaluate condition
     const conditionResult = await config.condition(context);
 
-    // Select branch to execute
     const branchNodes = conditionResult ? config.then : (config.else || []);
 
     if (branchNodes.length === 0) {
-      // No nodes to execute
       const state: NodeState = {
         nodeId: node.id,
         status: "completed",
@@ -638,7 +528,6 @@ export class DAGExecutor {
       return { state, contextUpdates: {}, waiting: false };
     }
 
-    // Execute branch nodes
     const result = await this.execute(branchNodes, {
       id: `${node.id}_branch`,
       workflowId: "",
@@ -652,7 +541,6 @@ export class DAGExecutor {
       createdAt: new Date(),
     });
 
-    // Merge child node states
     Object.assign(nodeStates, result.nodeStates);
 
     const state: NodeState = {
@@ -677,9 +565,6 @@ export class DAGExecutor {
     };
   }
 
-  /**
-   * Execute a wait node (approval or event)
-   */
   private async executeWaitNode(
     node: WorkflowNode,
     config: WaitNodeConfig,
@@ -689,7 +574,6 @@ export class DAGExecutor {
     contextUpdates: Record<string, unknown>;
     waiting: boolean;
   }> {
-    // Notify that we're waiting
     this.config.onWaiting?.(node.id, config);
 
     const state: NodeState = {
@@ -706,7 +590,6 @@ export class DAGExecutor {
       startedAt: new Date(),
     };
 
-    // Signal that workflow is now waiting
     return {
       state,
       contextUpdates: {},
@@ -714,9 +597,6 @@ export class DAGExecutor {
     };
   }
 
-  /**
-   * Build dependency graph from nodes
-   */
   private buildGraph(nodes: WorkflowNode[]): {
     adjList: Map<string, string[]>;
     inDegree: Map<string, number>;
@@ -726,14 +606,12 @@ export class DAGExecutor {
     const inDegree = new Map<string, number>();
     const nodeMap = new Map<string, WorkflowNode>();
 
-    // Initialize
     for (const node of nodes) {
       adjList.set(node.id, []);
       inDegree.set(node.id, 0);
       nodeMap.set(node.id, node);
     }
 
-    // Build edges from dependencies
     for (const node of nodes) {
       for (const dep of node.dependsOn || []) {
         if (!adjList.has(dep)) {
@@ -746,22 +624,13 @@ export class DAGExecutor {
       }
     }
 
-    // Also handle implicit sequential dependencies (nodes without explicit deps)
-    // If no dependencies specified (undefined), assume sequential order
-    // If dependsOn is explicitly set (even to []), respect that choice
     let prevNodeId: string | null = null;
     for (const node of nodes) {
-      // Only add implicit deps if:
-      // 1. dependsOn is undefined (not explicitly set)
-      // 2. No other node explicitly depends on this node
-      // 3. This node has no incoming edges yet
       if (node.dependsOn === undefined && prevNodeId) {
         const isDependent = this.hasAnyDependents(nodes, node.id);
         const currentInDegree = inDegree.get(node.id) ?? 0;
 
         if (!isDependent && currentInDegree === 0) {
-          // This node is "floating" - no explicit deps and nothing depends on it
-          // Create implicit dependency on previous node
           adjList.get(prevNodeId)!.push(node.id);
           inDegree.set(node.id, inDegree.get(node.id)! + 1);
         }
@@ -772,16 +641,10 @@ export class DAGExecutor {
     return { adjList, inDegree, nodeMap };
   }
 
-  /**
-   * Check if any node explicitly depends on the given node
-   */
   private hasAnyDependents(nodes: WorkflowNode[], nodeId: string): boolean {
     return nodes.some((n) => n.dependsOn?.includes(nodeId));
   }
 
-  /**
-   * Get nodes that are ready to execute
-   */
   private getReadyNodes(
     inDegree: Map<string, number>,
     nodeStates: Record<string, NodeState>,
@@ -789,9 +652,6 @@ export class DAGExecutor {
     const ready: string[] = [];
 
     for (const [nodeId, degree] of inDegree) {
-      // Node is ready if:
-      // 1. No remaining dependencies (in-degree = 0)
-      // 2. Not already completed/running/failed
       const state = nodeStates[nodeId];
       const isReady = degree === 0 &&
         (!state || state.status === "pending");
@@ -804,9 +664,6 @@ export class DAGExecutor {
     return ready;
   }
 
-  /**
-   * Check if DAG has cycles (using DFS)
-   */
   private hasCycle(
     nodes: WorkflowNode[],
     adjList: Map<string, string[]>,
@@ -839,16 +696,10 @@ export class DAGExecutor {
     return false;
   }
 
-  /**
-   * Check if node should be checkpointed
-   */
   private shouldCheckpoint(node: WorkflowNode): boolean {
     return node.config.checkpoint ?? false;
   }
 
-  /**
-   * Create a checkpoint
-   */
   private async checkpoint(
     runId: string,
     nodeId: string,

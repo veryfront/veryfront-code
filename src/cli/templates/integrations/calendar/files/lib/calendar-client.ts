@@ -1,21 +1,12 @@
-/**
- * Google Calendar API Client
- *
- * Provides a type-safe interface to Google Calendar API operations.
- */
 
 import { tokenStore as _tokenStore } from "./token-store.ts";
 import { getValidToken } from "./oauth.ts";
 
-// Helper for Cross-Platform environment access
 function getEnv(key: string): string | undefined {
-  // @ts-ignore - Deno global
   if (typeof Deno !== "undefined") {
-    // @ts-ignore - Deno global
     return Deno.env.get(key);
-  } // @ts-ignore - process global
+  }
   else if (typeof process !== "undefined" && process.env) {
-    // @ts-ignore - process global
     return process.env[key];
   }
   return undefined;
@@ -63,9 +54,6 @@ export interface FreeBusySlot {
   end: string;
 }
 
-/**
- * Google Calendar OAuth provider configuration
- */
 export const calendarOAuthProvider = {
   name: "calendar",
   authorizationUrl: "https://accounts.google.com/o/oauth2/v2/auth",
@@ -79,9 +67,6 @@ export const calendarOAuthProvider = {
   callbackPath: "/api/auth/calendar/callback",
 };
 
-/**
- * Create a Calendar client for a specific user
- */
 export function createCalendarClient(userId: string) {
   async function getAccessToken(): Promise<string> {
     const token = await getValidToken(calendarOAuthProvider, userId, "calendar");
@@ -115,9 +100,6 @@ export function createCalendarClient(userId: string) {
   }
 
   return {
-    /**
-     * List upcoming events
-     */
     async listEvents(options: {
       maxResults?: number;
       timeMin?: Date | string;
@@ -147,9 +129,6 @@ export function createCalendarClient(userId: string) {
       return result.items || [];
     },
 
-    /**
-     * Get events for today
-     */
     getTodayEvents(): Promise<CalendarEvent[]> {
       const today = new Date();
       today.setHours(0, 0, 0, 0);
@@ -164,9 +143,6 @@ export function createCalendarClient(userId: string) {
       });
     },
 
-    /**
-     * Create a new event
-     */
     createEvent(
       options: CreateEventOptions,
       calendarId = "primary",
@@ -200,9 +176,6 @@ export function createCalendarClient(userId: string) {
       );
     },
 
-    /**
-     * Get free/busy information
-     */
     async getFreeBusy(options: {
       timeMin: Date | string;
       timeMax: Date | string;
@@ -225,9 +198,6 @@ export function createCalendarClient(userId: string) {
       return result.calendars[calendarId]?.busy || [];
     },
 
-    /**
-     * Find free time slots in a given range
-     */
     async findFreeSlots(options: {
       timeMin: Date | string;
       timeMax: Date | string;
@@ -247,7 +217,6 @@ export function createCalendarClient(userId: string) {
 
       let currentStart = rangeStart;
 
-      // Sort busy slots by start time
       const sortedBusy = busySlots
         .map((s) => ({
           start: new Date(s.start),
@@ -256,20 +225,17 @@ export function createCalendarClient(userId: string) {
         .sort((a, b) => a.start.getTime() - b.start.getTime());
 
       for (const busy of sortedBusy) {
-        // Check if there's a free slot before this busy period
         if (busy.start.getTime() - currentStart.getTime() >= durationMs) {
           freeSlots.push({
             start: new Date(currentStart),
             end: new Date(busy.start),
           });
         }
-        // Move current start to after this busy period
         if (busy.end > currentStart) {
           currentStart = busy.end;
         }
       }
 
-      // Check if there's a free slot after the last busy period
       if (rangeEnd.getTime() - currentStart.getTime() >= durationMs) {
         freeSlots.push({
           start: new Date(currentStart),
@@ -280,9 +246,6 @@ export function createCalendarClient(userId: string) {
       return freeSlots;
     },
 
-    /**
-     * Delete an event
-     */
     async deleteEvent(
       eventId: string,
       calendarId = "primary",

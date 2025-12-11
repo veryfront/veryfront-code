@@ -12,9 +12,7 @@ export interface InjectHTMLContentOptions {
   mode: string;
   slug: string;
   devPort?: number;
-  /** Absolute path to the page file, used for 'use client' hydration */
   pagePath?: string;
-  /** Whether the page has 'use client' directive */
   isClientPage?: boolean;
 }
 
@@ -50,7 +48,6 @@ export function injectHTMLContent(
     html = html.replace(/{{\s*styles\s*}}/gi, styleTags);
   }
 
-  // Inject hydration data for 'use client' pages (before scripts, so client.js can find it)
   if (options.pagePath && options.isClientPage && /<\/body>/i.test(html)) {
     const hydrationData = JSON.stringify({
       pagePath: options.pagePath,
@@ -59,11 +56,9 @@ export function injectHTMLContent(
     });
     const hydrationScript =
       `<script id="veryfront-hydration-data" type="application/json">${hydrationData}</script>`;
-    // Insert before </body> - will be before the dev/prod scripts we add below
     html = html.replace(/<\/body>/i, `${hydrationScript}</body>`);
   }
 
-  // Track if dev scripts placeholder was found and replaced
   let devScriptsInjected = false;
 
   if (options.mode === "development") {
@@ -76,7 +71,6 @@ export function injectHTMLContent(
     }
     html = html.replace(/{{\s*devStyles\s*}}/gi, getDevStyles());
 
-    // If no placeholder was found, inject scripts before </body>
     if (!devScriptsInjected && /<\/body>/i.test(html)) {
       const devScripts = getDevScripts(options.devPort || DEFAULT_DASHBOARD_PORT);
       const devStyles = getDevStyles();
@@ -95,7 +89,6 @@ export function injectHTMLContent(
       prodScriptsInjected = true;
     }
 
-    // If no placeholder was found, inject scripts before </body>
     if (!prodScriptsInjected && /<\/body>/i.test(html)) {
       const prodScripts = getProdScripts(options.slug);
       html = html.replace(/<\/body>/i, `${prodScripts}</body>`);

@@ -1,6 +1,3 @@
-/**
- * Component Page Handling (TSX/JSX files)
- */
 
 import { rendererLogger as logger } from "@veryfront/utils";
 import { ErrorCode, VeryfrontError } from "@veryfront/errors/index.ts";
@@ -17,9 +14,6 @@ export interface ComponentPageResult {
 
 const componentHydrationCache = new Map<string, string>();
 
-/**
- * Load and render a TSX/JSX component page
- */
 export async function handleComponentPage(
   pageInfo: EntityInfo,
   slug: string,
@@ -37,7 +31,6 @@ export async function handleComponentPage(
 
     const fileContent = await adapter.fs.readFile(pageInfo.entity.id);
 
-    // Bundle for client if not cached
     let clientModuleCode = options?.cachedClientModule;
     if (!clientModuleCode) {
       clientModuleCode = await bundleComponentForClient(
@@ -49,7 +42,6 @@ export async function handleComponentPage(
       ) ?? undefined;
     }
 
-    // Load the component using NEW ESM component loader for SSR
     const { loadComponentFromSource } = await import(
       "@veryfront/modules/react-loader/index.ts"
     );
@@ -62,7 +54,7 @@ export async function handleComponentPage(
         projectId: projectDir,
         dev: true,
         moduleServerUrl: options?.moduleServerUrl,
-        ssr: true, // SSR mode for proper import resolution
+        ssr: true,
       },
     );
 
@@ -73,7 +65,6 @@ export async function handleComponentPage(
       }));
     }
 
-    // Get project's React for createElement to ensure element symbols match user components
     const React = await getProjectReact();
     const componentProps = options?.props || {};
     const pageElement = React.createElement(
@@ -106,7 +97,6 @@ export async function handleComponentPage(
   }
 }
 
-// Generate SHA-256 hash for content
 async function generateContentHash(str: string): Promise<string> {
   const encoder = new TextEncoder();
   const data = encoder.encode(str);
@@ -129,9 +119,7 @@ async function bundleComponentForClient(
       return cached;
     }
 
-    // Use ESM transform instead of bundling (modern dev server pattern)
     // This works because the module server serves all dependencies via HTTP
-    // and the browser natively supports ES modules
     const { transformToESM } = await import("@veryfront/transforms/esm-transform.ts");
 
     const transformed = await transformToESM(
@@ -155,7 +143,6 @@ async function bundleComponentForClient(
       filePath,
       error: errorMessage,
     });
-    // Don't silently return null - throw to make the error visible
     throw toError(createError({
       type: "render",
       message: `Component transformation failed for ${filePath}: ${errorMessage}`,

@@ -1,7 +1,3 @@
-/**
- * WebSocket Handler for HMR
- * Manages WebSocket lifecycle and message processing
- */
 
 import { serverLogger as logger } from "@veryfront/utils";
 import {
@@ -11,21 +7,12 @@ import {
 } from "@veryfront/utils";
 import type { WebSocketContext } from "../../server/dev-server/hmr-types.ts";
 
-/**
- * Setup all WebSocket event handlers for an HMR client connection
- * Configures onopen, onmessage, onclose, and onerror handlers
- *
- * @param socket - The WebSocket connection to configure
- * @param context - Shared context for managing connections
- */
 export function setupWebSocketHandlers(
   socket: WebSocket,
   context: WebSocketContext,
 ): void {
-  // Add client to set immediately
   context.clients.add(socket);
 
-  // Function to send the connected message
   const sendConnectedMessage = () => {
     logger.debug("HMR client connected", { totalClients: context.clients.size });
     try {
@@ -40,21 +27,16 @@ export function setupWebSocketHandlers(
     }
   };
 
-  // Server-side WebSockets may be OPEN immediately or CONNECTING
-  // Check the state and send message accordingly
   if (socket.readyState === WebSocket.OPEN) {
     sendConnectedMessage();
   } else {
-    // Socket is still CONNECTING, wait for onopen
     socket.onopen = () => {
       sendConnectedMessage();
     };
   }
 
-  // Handle incoming messages from client
   socket.onmessage = (event) => {
     try {
-      // Validate message size
       const messageSize = typeof event.data === "string"
         ? event.data.length
         : event.data.byteLength || 0;
@@ -68,25 +50,21 @@ export function setupWebSocketHandlers(
         return;
       }
 
-      // Rate limiting
       if (!context.rateLimiter.check(socket)) {
         logger.warn("HMR rate limit exceeded, closing connection");
         socket.close(HMR_CLOSE_RATE_LIMIT, "Rate limit exceeded");
         return;
       }
 
-      // Process message
       if (typeof event.data === "string") {
         try {
           const message = JSON.parse(event.data);
 
-          // Handle ping-pong for connection keep-alive
           if (message.type === "ping") {
             socket.send(JSON.stringify({ type: "pong" }));
             return;
           }
 
-          // Log other message types for debugging
           logger.debug("Received HMR message from client", {
             type: message.type,
             data: event.data.slice(0, 100),
@@ -102,14 +80,12 @@ export function setupWebSocketHandlers(
     }
   };
 
-  // Handle connection closed
   socket.onclose = () => {
     context.clients.delete(socket);
     context.rateLimiter.cleanup(socket);
     logger.debug("HMR client disconnected", { totalClients: context.clients.size });
   };
 
-  // Handle WebSocket errors
   socket.onerror = (error) => {
     logger.error("HMR WebSocket error:", error);
     context.clients.delete(socket);
@@ -117,13 +93,6 @@ export function setupWebSocketHandlers(
   };
 }
 
-/**
- * Close all WebSocket connections gracefully
- * Used during server shutdown
- *
- * @param clients - Set of active WebSocket connections
- * @param rateLimiter - Rate limiter to clean up
- */
 export async function closeAllConnections(
   clients: Set<WebSocket>,
   rateLimiter: { cleanup(socket: WebSocket): void },
@@ -134,7 +103,6 @@ export async function closeAllConnections(
     return;
   }
 
-  // Initiate close on all clients
   for (const client of clients) {
     try {
       if (client.readyState === WebSocket.OPEN || client.readyState === WebSocket.CONNECTING) {
@@ -145,21 +113,11 @@ export async function closeAllConnections(
     }
   }
 
-  // WebSocket close handshake requires multiple round trips through the event loop:
-  // 1. Server calls close() - queues close frame to be sent
-  // 2. Event loop sends close frame to client
-  // 3. Client receives close frame, fires its onclose
-  // 4. Client sends close frame back to server
-  // 5. Server receives close frame, fires its onclose
-  // Each step needs an event loop cycle to process network I/O
-  // Alternate between microtasks and macrotasks to ensure all I/O completes
-  // Increased from 10ms to 50ms per iteration for better cleanup in batch test mode
   for (let i = 0; i < 10; i++) {
-    await Promise.resolve(); // Flush microtasks
-    await new Promise((resolve) => setTimeout(resolve, 50)); // Allow I/O to process
+    await Promise.resolve();
+    await new Promise((resolve) => setTimeout(resolve, 50));
   }
 
-  // Final cleanup for any remaining clients
   for (const client of clients) {
     rateLimiter.cleanup(client);
   }

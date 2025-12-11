@@ -1,8 +1,3 @@
-/**
- * Project directory paths and file extensions
- *
- * For internal veryfront URL endpoints, see ./constants/server.ts
- */
 
 import {
   BUILD_DIRS,
@@ -20,9 +15,6 @@ export const PATHS = {
   CONFIG_FILE: "veryfront.config.js",
 } as const;
 
-/**
- * @deprecated Use INTERNAL_PREFIX, INTERNAL_ENDPOINTS, INTERNAL_PATH_PREFIXES from ./constants/server.ts
- */
 export const VERYFRONT_PATHS = {
   INTERNAL_PREFIX: INTERNAL_PREFIX,
   BUILD_DIR: BUILD_DIRS.ROOT,
@@ -42,5 +34,4 @@ export const FILE_EXTENSIONS = {
   ALL: [".mdx", ".md", ".tsx", ".ts", ".jsx", ".js", ".css"],
 } as const;
 
-// Re-export for convenience
 export { BUILD_DIRS, INTERNAL_ENDPOINTS, INTERNAL_PATH_PREFIXES, INTERNAL_PREFIX };

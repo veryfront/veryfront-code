@@ -1,14 +1,6 @@
-/**
- * Atlassian OAuth Provider
- *
- * Pre-configured OAuth for Atlassian services: Jira, Confluence
- */
 
 import type { OAuthServiceConfig } from "../types.ts";
 
-/**
- * Base Atlassian OAuth configuration
- */
 const atlassianBase = {
   providerId: "atlassian",
   displayName: "Atlassian",
@@ -23,9 +15,6 @@ const atlassianBase = {
   },
 };
 
-/**
- * Jira OAuth configuration
- */
 export const jiraConfig: OAuthServiceConfig = {
   ...atlassianBase,
   serviceId: "jira",
@@ -39,9 +28,6 @@ export const jiraConfig: OAuthServiceConfig = {
   ],
 };
 
-/**
- * Confluence OAuth configuration
- */
 export const confluenceConfig: OAuthServiceConfig = {
   ...atlassianBase,
   serviceId: "confluence",
@@ -56,14 +42,10 @@ export const confluenceConfig: OAuthServiceConfig = {
   ],
 };
 
-/**
- * Bitbucket OAuth configuration (also Atlassian)
- */
 export const bitbucketConfig: OAuthServiceConfig = {
   ...atlassianBase,
   serviceId: "bitbucket",
   displayName: "Bitbucket",
-  // Bitbucket has its own OAuth endpoints
   authorizationUrl: "https://bitbucket.org/site/oauth2/authorize",
   tokenUrl: "https://bitbucket.org/site/oauth2/access_token",
   clientIdEnvVar: "BITBUCKET_CLIENT_ID",
@@ -79,9 +61,6 @@ export const bitbucketConfig: OAuthServiceConfig = {
   ],
 };
 
-/**
- * All Atlassian service configurations
- */
 export const atlassianServices = {
   jira: jiraConfig,
   confluence: confluenceConfig,

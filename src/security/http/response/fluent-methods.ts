@@ -1,16 +1,9 @@
-/**
- * ResponseBuilder - Fluent Builder Methods
- * Fluent methods for configuring response builder state
- */
 
 import { applyCORSHeaders, applyCORSHeadersSync } from "../cors/index.ts";
 import { applySecurityHeaders } from "./security-handler.ts";
 import { buildCacheControl } from "./cache-handler.ts";
 import type { CacheStrategy, CORSConfig, SecurityConfig } from "./types.ts";
 
-/**
- * Internal state interface for fluent methods
- */
 export interface FluentMethodsContext {
   headers: Headers;
   status: number;
@@ -21,9 +14,6 @@ export interface FluentMethodsContext {
   adapter: import("@veryfront/platform/adapters/base.ts").RuntimeAdapter | undefined;
 }
 
-/**
- * Apply CORS headers based on configuration
- */
 export function withCORS<T extends FluentMethodsContext>(
   this: T,
   req: Request,
@@ -38,9 +28,6 @@ export function withCORS<T extends FluentMethodsContext>(
   return this;
 }
 
-/**
- * Apply CORS headers asynchronously (for loading config)
- */
 export function withCORSAsync<T extends FluentMethodsContext>(
   this: T,
   req: Request,
@@ -52,9 +39,6 @@ export function withCORSAsync<T extends FluentMethodsContext>(
   }).then(() => this);
 }
 
-/**
- * Apply security headers (CSP, COOP, CORP, COEP)
- */
 export function withSecurity<T extends FluentMethodsContext>(
   this: T,
   config?: SecurityConfig,
@@ -71,9 +55,6 @@ export function withSecurity<T extends FluentMethodsContext>(
   return this;
 }
 
-/**
- * Apply cache control headers based on strategy
- */
 export function withCache<T extends FluentMethodsContext>(
   this: T,
   strategy: CacheStrategy,
@@ -83,9 +64,6 @@ export function withCache<T extends FluentMethodsContext>(
   return this;
 }
 
-/**
- * Set ETag header
- */
 export function withETag<T extends FluentMethodsContext>(
   this: T,
   etag: string,
@@ -94,9 +72,6 @@ export function withETag<T extends FluentMethodsContext>(
   return this;
 }
 
-/**
- * Set custom headers
- */
 export function withHeaders<T extends FluentMethodsContext>(
   this: T,
   headers: HeadersInit | Record<string, string>,
@@ -117,9 +92,6 @@ export function withHeaders<T extends FluentMethodsContext>(
   return this;
 }
 
-/**
- * Set response status
- */
 export function withStatus<T extends FluentMethodsContext>(
   this: T,
   status: number,
@@ -128,9 +100,6 @@ export function withStatus<T extends FluentMethodsContext>(
   return this;
 }
 
-/**
- * Set Allow header for OPTIONS requests
- */
 export function withAllow<T extends FluentMethodsContext>(
   this: T,
   methods: string | string[],

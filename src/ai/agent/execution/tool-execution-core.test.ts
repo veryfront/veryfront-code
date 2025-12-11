@@ -1,9 +1,3 @@
-/**
- * Unit tests for ToolExecutionCore
- *
- * Tests the argument parsing functionality which doesn't require mocking.
- * Full execution tests would require integration testing with actual tools.
- */
 
 import { assertEquals, assertExists } from "std/assert/mod.ts";
 import { describe, it } from "std/testing/bdd.ts";

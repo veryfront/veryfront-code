@@ -1,21 +1,12 @@
-/**
- * Bitbucket API Client
- *
- * Provides a type-safe interface to Bitbucket API operations.
- */
 
 import { tokenStore as _tokenStore } from "./token-store.ts";
 import { getValidToken } from "./oauth.ts";
 
-// Helper for Cross-Platform environment access
 function getEnv(key: string): string | undefined {
-  // @ts-ignore - Deno global
   if (typeof Deno !== "undefined") {
-    // @ts-ignore - Deno global
     return Deno.env.get(key);
-  } // @ts-ignore - process global
+  }
   else if (typeof process !== "undefined" && process.env) {
-    // @ts-ignore - process global
     return process.env[key];
   }
   return undefined;
@@ -106,9 +97,6 @@ export interface Issue {
   };
 }
 
-/**
- * Bitbucket OAuth provider configuration
- */
 export const bitbucketOAuthProvider = {
   name: "bitbucket",
   authorizationUrl: "https://bitbucket.org/site/oauth2/authorize",
@@ -119,9 +107,6 @@ export const bitbucketOAuthProvider = {
   callbackPath: "/api/auth/bitbucket/callback",
 };
 
-/**
- * Create a Bitbucket client for a specific user
- */
 export function createBitbucketClient(userId: string) {
   async function getAccessToken(): Promise<string> {
     const token = await getValidToken(bitbucketOAuthProvider, userId, "bitbucket");
@@ -156,16 +141,10 @@ export function createBitbucketClient(userId: string) {
   }
 
   return {
-    /**
-     * Get authenticated user
-     */
     getCurrentUser(): Promise<BitbucketUser> {
       return apiRequest("/user");
     },
 
-    /**
-     * List user's repositories
-     */
     async listRepositories(options: {
       role?: "owner" | "contributor" | "member";
       perPage?: number;
@@ -181,16 +160,10 @@ export function createBitbucketClient(userId: string) {
       return response.values;
     },
 
-    /**
-     * Get repository details
-     */
     getRepository(workspace: string, repoSlug: string): Promise<Repository> {
       return apiRequest(`/repositories/${workspace}/${repoSlug}`);
     },
 
-    /**
-     * List pull requests for a repository
-     */
     async listPullRequests(
       workspace: string,
       repoSlug: string,
@@ -210,9 +183,6 @@ export function createBitbucketClient(userId: string) {
       return response.values;
     },
 
-    /**
-     * Get a single pull request
-     */
     getPullRequest(
       workspace: string,
       repoSlug: string,
@@ -223,9 +193,6 @@ export function createBitbucketClient(userId: string) {
       );
     },
 
-    /**
-     * Create a pull request
-     */
     createPullRequest(
       workspace: string,
       repoSlug: string,
@@ -253,9 +220,6 @@ export function createBitbucketClient(userId: string) {
       });
     },
 
-    /**
-     * List issues for a repository
-     */
     async listIssues(
       workspace: string,
       repoSlug: string,
@@ -287,9 +251,6 @@ export function createBitbucketClient(userId: string) {
       return response.values;
     },
 
-    /**
-     * Create an issue
-     */
     createIssue(
       workspace: string,
       repoSlug: string,

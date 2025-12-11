@@ -1,20 +1,10 @@
-/**
- * In-Memory Token Store
- *
- * Simple in-memory storage for OAuth tokens and state.
- * Suitable for development and single-instance deployments.
- */
 
 import type { OAuthState, OAuthTokens, TokenStore } from "../types.ts";
 
-/**
- * In-memory token store implementation
- */
 export class MemoryTokenStore implements TokenStore {
   private tokens: Map<string, OAuthTokens> = new Map();
   private states: Map<string, OAuthState> = new Map();
 
-  /** State expiration time in ms (10 minutes) */
   private stateExpirationMs = 10 * 60 * 1000;
 
   getTokens(serviceId: string): Promise<OAuthTokens | null> {
@@ -37,7 +27,6 @@ export class MemoryTokenStore implements TokenStore {
       return Promise.resolve(null);
     }
 
-    // Check if state has expired
     if (Date.now() - oauthState.createdAt > this.stateExpirationMs) {
       this.states.delete(state);
       return Promise.resolve(null);
@@ -57,9 +46,6 @@ export class MemoryTokenStore implements TokenStore {
     return Promise.resolve();
   }
 
-  /**
-   * Clean up expired states
-   */
   private cleanupExpiredStates(): void {
     const now = Date.now();
     for (const [state, oauthState] of this.states) {
@@ -69,39 +55,25 @@ export class MemoryTokenStore implements TokenStore {
     }
   }
 
-  /**
-   * Get all stored service IDs
-   */
   getConnectedServices(): string[] {
     return Array.from(this.tokens.keys());
   }
 
-  /**
-   * Check if a service is connected
-   */
   isConnected(serviceId: string): boolean {
     const tokens = this.tokens.get(serviceId);
     if (!tokens) return false;
 
-    // Check if token is expired
     if (tokens.expiresAt && Date.now() > tokens.expiresAt) {
-      // Token expired, but might be refreshable
       return !!tokens.refreshToken;
     }
 
     return true;
   }
 
-  /**
-   * Clear all tokens
-   */
   clearAll(): void {
     this.tokens.clear();
     this.states.clear();
   }
 }
 
-/**
- * Default in-memory token store instance
- */
 export const memoryTokenStore = new MemoryTokenStore();

@@ -111,7 +111,7 @@ export class APIRouteHandler {
       return internalServerError("Handler not found");
     }
 
-    const isAppRoute = /\/(app)\//.test(match.route.page);
+    const isAppRoute = /\/(app)\
     const response = isAppRoute
       ? await executeAppRoute(handler, request, match, pathname, adapter)
       : await executePagesRoute(handler, request, match, pathname, adapter);

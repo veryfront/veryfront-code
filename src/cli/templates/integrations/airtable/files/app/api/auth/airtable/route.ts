@@ -1,6 +1,3 @@
-/**
- * Airtable OAuth Initiation
- */
 
 import { airtableConfig, createOAuthInitHandler, memoryTokenStore } from "veryfront/oauth";
 

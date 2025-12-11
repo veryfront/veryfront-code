@@ -1,4 +1,3 @@
-// RSC Server Actions helpers: CSRF and session parsing
 
 export function base64url(bytes: Uint8Array): string {
   const b64 = btoa(String.fromCharCode(...bytes));
@@ -16,7 +15,6 @@ export function parseCookies(headers: Headers): Record<string, string> {
   return out;
 }
 
-/** Generate a CSRF token and return value + Set-Cookie header string */
 import { SERVER_ACTION_DEFAULT_TTL_SEC } from "@veryfront/utils/constants/cache.ts";
 
 export function generateCsrfToken(options?: { cookieName?: string; ttlSec?: number }): {
@@ -32,7 +30,6 @@ export function generateCsrfToken(options?: { cookieName?: string; ttlSec?: numb
   return { token, setCookie: cookie };
 }
 
-/** Validate CSRF token by comparing header and cookie */
 export function validateCsrf(
   req: Request,
   options?: { cookieName?: string; headerName?: string },
@@ -45,7 +42,6 @@ export function validateCsrf(
   return Boolean(cookieToken) && cookieToken === headerToken;
 }
 
-/** Extract a JWT payload from a cookie (no signature verification) */
 export function getSessionFromJwt(
   req: Request,
   options?: { cookieName?: string },

@@ -14,7 +14,6 @@ export default tool({
       .describe("Maximum number of tweets to return (default: 10)"),
   }),
   execute: async ({ maxResults }, context) => {
-    // Default to "current-user" for development; in production, always pass userId from session
     const userId = (context?.userId as string | undefined) || "current-user";
 
     try {

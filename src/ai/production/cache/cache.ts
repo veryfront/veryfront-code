@@ -1,45 +1,28 @@
-/**
- * Response Caching System
- *
- * Cache agent responses to reduce API calls and improve performance.
- */
 
 import type { AgentResponse } from "../../types/agent.ts";
 
 export interface CacheConfig {
-  /** Cache strategy */
   strategy: "memory" | "lru" | "ttl";
 
-  /** Maximum cache size (for LRU) */
   maxSize?: number;
 
-  /** Time to live in milliseconds (for TTL) */
   ttl?: number;
 
-  /** Generate cache key */
   keyGenerator?: (input: string, context?: Record<string, unknown>) => string;
 }
 
 export interface CacheEntry {
-  /** Cached response */
   response: AgentResponse;
 
-  /** Timestamp when cached */
   cachedAt: number;
 
-  /** Expiration timestamp (for TTL) */
   expiresAt?: number;
 
-  /** Access count */
   accessCount: number;
 
-  /** Last accessed timestamp */
   lastAccessedAt: number;
 }
 
-/**
- * Memory Cache (simple in-memory storage)
- */
 class MemoryCache {
   private cache = new Map<string, CacheEntry>();
 
@@ -80,9 +63,6 @@ class MemoryCache {
   }
 }
 
-/**
- * LRU Cache (Least Recently Used eviction)
- */
 class LRUCache {
   private cache = new Map<string, CacheEntry>();
   private maxSize: number;
@@ -92,12 +72,10 @@ class LRUCache {
   }
 
   set(key: string, response: AgentResponse): void {
-    // If key exists, delete it first (will re-add to end)
     if (this.cache.has(key)) {
       this.cache.delete(key);
     }
 
-    // If at max size, remove least recently used (first entry)
     if (this.cache.size >= this.maxSize) {
       const firstKey = this.cache.keys().next().value;
       if (firstKey !== undefined) {
@@ -118,7 +96,6 @@ class LRUCache {
 
     if (!entry) return null;
 
-    // Move to end (mark as recently used)
     this.cache.delete(key);
     entry.accessCount++;
     entry.lastAccessedAt = Date.now();
@@ -144,9 +121,6 @@ class LRUCache {
   }
 }
 
-/**
- * TTL Cache (Time To Live eviction)
- */
 class TTLCache {
   private cache = new Map<string, CacheEntry>();
   private ttl: number;
@@ -174,7 +148,6 @@ class TTLCache {
 
     if (!entry) return null;
 
-    // Check if expired
     if (entry.expiresAt && Date.now() >= entry.expiresAt) {
       this.cache.delete(key);
       return null;
@@ -191,7 +164,6 @@ class TTLCache {
 
     if (!entry) return false;
 
-    // Check if expired
     if (entry.expiresAt && Date.now() >= entry.expiresAt) {
       this.cache.delete(key);
       return false;
@@ -233,9 +205,6 @@ class TTLCache {
   }
 }
 
-/**
- * Create a cache instance
- */
 export function createCache(config: CacheConfig) {
   let cache: MemoryCache | LRUCache | TTLCache;
 
@@ -256,72 +225,48 @@ export function createCache(config: CacheConfig) {
   const keyGenerator = config.keyGenerator || ((input: string) => `cache_${hashString(input)}`);
 
   return {
-    /**
-     * Get cached response
-     */
     get(input: string, context?: Record<string, unknown>): AgentResponse | null {
       const key = keyGenerator(input, context);
       return cache.get(key);
     },
 
-    /**
-     * Set cached response
-     */
     set(input: string, response: AgentResponse, context?: Record<string, unknown>): void {
       const key = keyGenerator(input, context);
       cache.set(key, response);
     },
 
-    /**
-     * Check if cached
-     */
     has(input: string, context?: Record<string, unknown>): boolean {
       const key = keyGenerator(input, context);
       return cache.has(key);
     },
 
-    /**
-     * Delete cached entry
-     */
     delete(input: string, context?: Record<string, unknown>): void {
       const key = keyGenerator(input, context);
       cache.delete(key);
     },
 
-    /**
-     * Clear all cache
-     */
     clear(): void {
       cache.clear();
     },
 
-    /**
-     * Get cache size
-     */
     size(): number {
       return cache.size();
     },
   };
 }
 
-/**
- * Simple string hash function
- */
 function hashString(str: string): string {
   let hash = 0;
 
   for (let i = 0; i < str.length; i++) {
     const char = str.charCodeAt(i);
     hash = (hash << 5) - hash + char;
-    hash = hash & hash; // Convert to 32-bit integer
+    hash = hash & hash;
   }
 
   return Math.abs(hash).toString(36);
 }
 
-/**
- * Cache middleware for agents
- */
 export function cacheMiddleware(config: CacheConfig) {
   const cache = createCache(config);
 
@@ -333,7 +278,6 @@ export function cacheMiddleware(config: CacheConfig) {
       ? context.input
       : JSON.stringify(context.input);
 
-    // Check cache
     const cached = cache.get(inputString, context);
 
     if (cached) {
@@ -347,7 +291,6 @@ export function cacheMiddleware(config: CacheConfig) {
       };
     }
 
-    // Execute and cache
     const result = await next();
     cache.set(inputString, result, context);
 

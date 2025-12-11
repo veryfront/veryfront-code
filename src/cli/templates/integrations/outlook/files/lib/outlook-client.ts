@@ -192,7 +192,6 @@ export async function moveEmail(messageId: string, destinationFolderId: string):
   });
 }
 
-// Helper to format email for display
 export function formatEmail(message: OutlookMessage): string {
   return `From: ${message.from.emailAddress.name || message.from.emailAddress.address}
 To: ${message.toRecipients.map((r) => r.emailAddress.address).join(", ")}

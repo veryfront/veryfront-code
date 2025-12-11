@@ -1,6 +1,3 @@
-/**
- * Branch DSL Tests
- */
 
 import { assertEquals } from "https://deno.land/std@0.220.0/assert/mod.ts";
 import { describe, it } from "https://deno.land/std@0.220.0/testing/bdd.ts";
@@ -109,8 +106,6 @@ describe("unless()", () => {
       [step("a", { agent: "a" })],
     );
 
-    // The unless wrapper should invert the condition
-    // When original is false, inverted should be true
     const config = node.config as BranchNodeConfig;
     const result = await config.condition({} as never);
     assertEquals(result, true);

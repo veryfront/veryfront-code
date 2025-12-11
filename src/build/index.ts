@@ -1,6 +1,3 @@
-/**
- * Build module exports
- */
 
 export { compileMDXToJS } from "./compiler/mdx-to-js.ts";
 export * from "./renderer/index.ts";

@@ -1,6 +1,3 @@
-/**
- * DAG Executor Tests
- */
 
 import { assertEquals } from "https://deno.land/std@0.220.0/assert/mod.ts";
 import { beforeEach, describe, it } from "https://deno.land/std@0.220.0/testing/bdd.ts";
@@ -10,16 +7,12 @@ import { step } from "../dsl/step.ts";
 import { dependsOn } from "../dsl/workflow.ts";
 import type { WorkflowContext, WorkflowNode, WorkflowRun } from "../types.ts";
 
-/**
- * Creates a mock StepExecutor that tracks execution order
- */
 function createMockStepExecutor(
   executionOrder?: string[],
   failingNodes?: Set<string>,
 ): StepExecutor {
   const executor = new StepExecutor({});
 
-  // Override the execute method
   executor.execute = (node: WorkflowNode, _context: WorkflowContext) => {
     executionOrder?.push(node.id);
 
@@ -76,13 +69,11 @@ describe("DAGExecutor", () => {
         dependsOn(step("b", { agent: "a" }), "a"),
         step("a", { agent: "a" }),
       ];
-      // Dependencies: a -> b -> c (c depends on b, b depends on a)
       nodes[0] = dependsOn(nodes[0]!, "b");
 
       const run = createTestRun();
       await executor.execute(nodes, run);
 
-      // a should come before b, b should come before c
       const aIndex = executionOrder.indexOf("a");
       const bIndex = executionOrder.indexOf("b");
       const cIndex = executionOrder.indexOf("c");
@@ -110,8 +101,6 @@ describe("DAGExecutor", () => {
         maxConcurrency: 10,
       });
 
-      // Three independent nodes - should run in parallel
-      // Use explicit empty dependsOn to indicate true independence (avoid implicit sequential deps)
       const nodes: WorkflowNode[] = [
         { ...step("parallel-1", { agent: "a" }), dependsOn: [] },
         { ...step("parallel-2", { agent: "a" }), dependsOn: [] },
@@ -121,7 +110,6 @@ describe("DAGExecutor", () => {
       const run = createTestRun();
       await executor.execute(nodes, run);
 
-      // All should start within ~10ms of each other (parallel)
       const times = Object.values(startTimes);
       const maxDiff = Math.max(...times) - Math.min(...times);
       assertEquals(maxDiff < 30, true, "Independent nodes should start nearly simultaneously");
@@ -138,7 +126,6 @@ describe("DAGExecutor", () => {
 
       const result = await executor.execute(nodes, createTestRun());
 
-      // DAGExecutor returns error in result, doesn't throw
       assertEquals(result.completed, false);
       assertEquals(result.error?.includes("cycle") || result.error?.includes("Cycle"), true);
     });
@@ -207,7 +194,6 @@ describe("DAGExecutor", () => {
         step("step3", { agent: "a" }),
       ];
 
-      // Run with step1 already completed
       const run = {
         ...createTestRun(),
         nodeStates: {

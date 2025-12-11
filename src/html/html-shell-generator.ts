@@ -22,10 +22,6 @@ import {
   shouldDisableLayout,
 } from "./utils.ts";
 
-/**
- * Generate HTML shell parts for streaming
- * Returns the start (before content) and end (after content) parts of the HTML document
- */
 export async function generateHTMLShellParts(
   meta: RenderMetadata,
   options: HTMLGenerationOptions,
@@ -33,9 +29,6 @@ export async function generateHTMLShellParts(
   props?: ComponentProps,
   contentForTailwind?: string,
 ): Promise<{ start: string; end: string }> {
-  // For streaming, we can't generate Tailwind CSS from the content
-  // since the content isn't available yet. Use empty string or provided content.
-  // Pass tailwind config for theme customization in production mode
   const tailwindConfig = options.config?.tailwind;
   const tailwindCSS = contentForTailwind
     ? await generateTailwindCSS(contentForTailwind, tailwindConfig)
@@ -65,7 +58,6 @@ export async function generateHTMLShellParts(
     meta.ssrHash,
   );
 
-  // Build import map with config support (self-hosted mode, CDN versions, etc.)
   const importMapJson = await buildImportMapJson({
     projectDir: options.projectDir,
     config: options.config,
@@ -91,8 +83,6 @@ export async function generateHTMLShellParts(
 
   const syntaxHighlightTheme = options.mode === "development" ? "github-dark" : "github";
 
-  // In development, use Tailwind CDN for runtime CSS compilation (works with 'use client' pages)
-  // In production, use UnoCSS-generated CSS from pre-rendered HTML
   const tailwindCDNUrl = getTailwindCDNUrl(tailwindConfig);
   const tailwindCDN = options.mode === "development"
     ? `<script src="${tailwindCDNUrl}"${nonce ? ` nonce="${nonce}"` : ""}></script>

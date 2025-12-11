@@ -67,14 +67,10 @@ async function supabaseFetch<T>(
     throw err;
   }
 
-  // Handle empty responses (like DELETE)
   const text = await response.text();
   return text ? JSON.parse(text) : null;
 }
 
-/**
- * List all tables in the public schema
- */
 export async function listTables(): Promise<TableInfo[]> {
   try {
     const tables = await supabaseFetch<TableInfo[]>(
@@ -86,7 +82,6 @@ export async function listTables(): Promise<TableInfo[]> {
     );
     return tables || [];
   } catch (_error) {
-    // Fallback: query information_schema directly
     const query =
       `?select=table_name,table_schema,table_type&table_schema=eq.public&table_type=eq.BASE TABLE`;
     const tables = await supabaseFetch<TableInfo[]>(`/information_schema.tables${query}`);
@@ -94,9 +89,6 @@ export async function listTables(): Promise<TableInfo[]> {
   }
 }
 
-/**
- * Get columns for a specific table
- */
 export async function getTableColumns(tableName: string): Promise<ColumnInfo[]> {
   const query =
     `?select=column_name,data_type,is_nullable,column_default&table_name=eq.${tableName}&table_schema=eq.public`;
@@ -104,23 +96,18 @@ export async function getTableColumns(tableName: string): Promise<ColumnInfo[]> 
   return columns || [];
 }
 
-/**
- * Query a table with filters, sorting, and pagination
- */
 export async function queryTable<T = Record<string, unknown>>(
   tableName: string,
   options: QueryOptions = {},
 ): Promise<T[]> {
   const params = new URLSearchParams();
 
-  // Select columns
   if (options.select) {
     params.append("select", options.select);
   } else {
     params.append("select", "*");
   }
 
-  // Add filters
   if (options.filter) {
     for (const [key, value] of Object.entries(options.filter)) {
       if (value === null) {
@@ -135,13 +122,11 @@ export async function queryTable<T = Record<string, unknown>>(
     }
   }
 
-  // Add ordering
   if (options.order) {
     const direction = options.order.ascending === false ? ".desc" : ".asc";
     params.append("order", `${options.order.column}${direction}`);
   }
 
-  // Add pagination
   if (options.limit) {
     params.append("limit", options.limit.toString());
   }
@@ -154,9 +139,6 @@ export async function queryTable<T = Record<string, unknown>>(
   return results || [];
 }
 
-/**
- * Insert a new row into a table
- */
 export async function insertRow<T = Record<string, unknown>>(
   tableName: string,
   data: Record<string, unknown>,
@@ -176,9 +158,6 @@ export async function insertRow<T = Record<string, unknown>>(
   return result[0];
 }
 
-/**
- * Update a row in a table by ID
- */
 export async function updateRow<T = Record<string, unknown>>(
   tableName: string,
   id: string | number,
@@ -199,9 +178,6 @@ export async function updateRow<T = Record<string, unknown>>(
   return result[0];
 }
 
-/**
- * Update rows in a table with custom filter
- */
 export async function updateRows<T = Record<string, unknown>>(
   tableName: string,
   filter: Record<string, unknown>,
@@ -224,9 +200,6 @@ export async function updateRows<T = Record<string, unknown>>(
   return result || [];
 }
 
-/**
- * Delete a row from a table by ID
- */
 export async function deleteRow<T = Record<string, unknown>>(
   tableName: string,
   id: string | number,
@@ -245,9 +218,6 @@ export async function deleteRow<T = Record<string, unknown>>(
   return result[0];
 }
 
-/**
- * Delete rows from a table with custom filter
- */
 export async function deleteRows<T = Record<string, unknown>>(
   tableName: string,
   filter: Record<string, unknown>,
@@ -268,10 +238,6 @@ export async function deleteRows<T = Record<string, unknown>>(
   return result || [];
 }
 
-/**
- * Execute a raw SQL query using RPC
- * Note: This requires a stored procedure to be created in your Supabase database
- */
 export function runRawQuery<T = unknown>(
   query: string,
 ): Promise<T> {
@@ -284,9 +250,6 @@ export function runRawQuery<T = unknown>(
   );
 }
 
-/**
- * Get client instance (for use with @supabase/supabase-js if needed)
- */
 export function getClient() {
   return {
     url: getSupabaseUrl(),

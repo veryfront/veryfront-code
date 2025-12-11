@@ -1,21 +1,7 @@
-/**
- * Comprehensive tests for Auto-Instrumentation
- *
- * Tests cover:
- * - Initialization with different configurations
- * - HTTP handler instrumentation
- * - Fetch API instrumentation
- * - React render instrumentation
- * - Error handling and recording
- * - Distributed trace context propagation
- * - Performance metric recording
- * - Edge cases and error scenarios
- */
 
 import { assertEquals, assertExists } from "std/assert/mod.ts";
 import { beforeEach, describe, it } from "std/testing/bdd.ts";
 
-// Import the module once (no cache-busting needed!)
 import {
   __resetAutoInstrumentForTests,
   initAutoInstrumentation,
@@ -29,7 +15,6 @@ import {
   isAutoInstrumentEnabled,
 } from "./auto-instrument/index.ts";
 
-// Mock modules for tracing and metrics
 const mockSpans: any[] = [];
 const mockMetricsRecorded: any[] = [];
 let tracingInitialized = false;
@@ -90,18 +75,15 @@ const _mockMetricsService = {
   },
 };
 
-// Reset mocks before each test
 function resetMocks() {
   mockSpans.length = 0;
   mockMetricsRecorded.length = 0;
   tracingInitialized = false;
   metricsInitialized = false;
-  // Reset the auto-instrument module state
   __resetAutoInstrumentForTests();
 }
 
 describe("Auto-Instrumentation", () => {
-  // Reset before each test for proper isolation
   beforeEach(() => {
     resetMocks();
   });
@@ -110,7 +92,6 @@ describe("Auto-Instrumentation", () => {
     it("should initialize with default configuration", async () => {
       await initAutoInstrumentation();
 
-      // Should not initialize tracing/metrics without explicit config
       assertEquals(tracingInitialized, false, "Tracing should not be initialized by default");
       assertEquals(metricsInitialized, false, "Metrics should not be initialized by default");
     });
@@ -124,7 +105,6 @@ describe("Auto-Instrumentation", () => {
       });
 
       // Note: In real test, this would verify actual tracing init
-      // For now, we verify the config was passed
       assertExists(initAutoInstrumentation);
     });
 
@@ -156,7 +136,6 @@ describe("Auto-Instrumentation", () => {
     });
 
     it("should handle initialization errors gracefully", async () => {
-      // Should not throw even if tracing/metrics init fails
       await initAutoInstrumentation({
         tracing: { enabled: true, exporter: "console" },
         metrics: { enabled: true, exporter: "console" },
@@ -307,7 +286,6 @@ describe("Auto-Instrumentation", () => {
       try {
         await instrumented(request);
       } catch {
-        // Expected
       }
 
       assertExists(instrumented);
@@ -421,10 +399,8 @@ describe("Auto-Instrumentation", () => {
 
     it("should handle fetch not available", () => {
       const originalFetch = globalThis.fetch;
-      // @ts-ignore - testing missing fetch
       globalThis.fetch = undefined;
 
-      // Should not throw
       instrumentFetch();
 
       globalThis.fetch = originalFetch;
@@ -612,7 +588,6 @@ describe("Auto-Instrumentation", () => {
       try {
         await instrumentReactRender(renderFn, "FailedComponent");
       } catch {
-        // Expected
       }
 
       assertExists(instrumentReactRender);
@@ -779,7 +754,6 @@ describe("Auto-Instrumentation", () => {
 
     it("should measure sync operation duration", () => {
       const fn = () => {
-        // Simulate work
         let sum = 0;
         for (let i = 0; i < 1000; i++) {
           sum += i;
@@ -891,7 +865,6 @@ describe("Auto-Instrumentation", () => {
         batchSize: 7,
       });
 
-      // Should create 4 batches (7 + 7 + 7 + 2)
       assertExists(instrumentBatch);
     });
   });
@@ -902,7 +875,6 @@ describe("Auto-Instrumentation", () => {
         `./auto-instrument/index.ts?t=${Date.now()}`
       );
 
-      // Reset state in case previous tests have initialized it
       __resetAutoInstrumentForTests();
 
       const enabled = isAutoInstrumentEnabled();

@@ -1,6 +1,3 @@
-/**
- * Freshdesk OAuth Init
- */
 
 import { freshdeskConfig, createOAuthInitHandler } from "veryfront/oauth";
 

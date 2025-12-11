@@ -1,11 +1,3 @@
-/**
- * Server-Side Rendering Handler
- *
- * Main handler for SSR pages and dynamic routes.
- * Orchestrates renderer, ETag handling, and not-found fallbacks.
- *
- * @module server/handlers/request/ssr/ssr-handler
- */
 
 import { BaseHandler } from "../../response/base.ts";
 import type {
@@ -30,34 +22,11 @@ import {
 } from "@veryfront/core/constants/index.ts";
 import { generateNonce } from "@veryfront/security/http/response/security-handler.ts";
 
-/**
- * SSR Handler Class
- *
- * Handles server-side rendering for pages and dynamic routes.
- *
- * Features:
- * - Lazy renderer initialization with caching
- * - ETag support for 304 Not Modified responses
- * - App Router not-found.tsx fallback
- * - Streaming and static HTML delivery
- * - CORS and security headers
- * - Short-term caching for rendered pages
- *
- * Priority: 1000 (LOW) - runs after static and API handlers
- * Patterns: All GET/HEAD requests except internal paths
- *
- * @example
- * ```typescript
- * const handler = new SSRHandler();
- * const result = await handler.handle(request, context);
- * ```
- */
 export class SSRHandler extends BaseHandler {
   metadata: HandlerMetadata = {
     name: "SSRHandler",
-    priority: PRIORITY_LOW as HandlerPriority, // LOW priority - runs after static and API
+    priority: PRIORITY_LOW as HandlerPriority,
     patterns: [
-      // Match all paths except internal ones
       { pattern: /^(?!\/_).*/, method: ["GET", "HEAD"] },
     ],
   };
@@ -68,33 +37,32 @@ export class SSRHandler extends BaseHandler {
     const url = new URL(req.url);
     const pathname = url.pathname;
 
-    // Skip internal paths and file extensions (likely static files)
     if (pathname.startsWith("/_veryfront/") || pathname.includes(".")) {
       return this.continue();
     }
 
-    const slug = pathname === "/" ? "" : pathname.replace(/^\//, "").replace(/\/$/, "");
+    const slug = pathname === "/" ? "" : pathname.replace(/^\
     this.logDebug("SSR attempt", { pathname, slug }, ctx);
 
     try {
-      const renderer = await getRenderer(this.rendererInit, ctx);
+      if (!this.rendererInit) {
+        this.rendererInit = getRenderer(null, ctx).then(renderer => renderer);
+      }
+      const renderer = await this.rendererInit;
       this.logDebug("renderer obtained", { mode: ctx.mode }, ctx);
 
-      // Extract route parameters for both App Router and Pages Router
       let params: Record<string, string | string[]> | null | undefined;
       try {
         const { extractAppRouteParams, extractPagesRouteParams } = await import(
           "../../../../rendering/router-detection.ts"
         );
 
-        // Try App Router params first
         let extractedParams: Record<string, string | string[]> | null = await extractAppRouteParams(
           ctx.projectDir,
           slug,
           ctx.adapter,
         );
 
-        // If no App Router params, try Pages Router
         if (!extractedParams && typeof extractPagesRouteParams === "function") {
           extractedParams = await extractPagesRouteParams(
             ctx.projectDir,
@@ -108,14 +76,12 @@ export class SSRHandler extends BaseHandler {
           this.logDebug("Extracted route params", { slug, params }, ctx);
         }
       } catch (paramError) {
-        // Param extraction is best-effort - continue without params if it fails
         this.logDebug("Failed to extract params", {
           slug,
           error: this.getErrorMessage(paramError),
         }, ctx);
       }
 
-      // Generate nonce for CSP before rendering
       const nonce = generateNonce();
       this.logDebug(`[NONCE-TRACE] Generated nonce for SSR: ${nonce}`, { slug }, ctx);
 
@@ -129,17 +95,11 @@ export class SSRHandler extends BaseHandler {
       this.logDebug("SSR successful", { slug, params }, ctx);
 
       const etag = computeSSRETag(result.ssrHash, result.html);
-      // Disable caching in development to prevent nonce mismatches
-      // (cached HTML has old nonces, but each request generates a fresh nonce for CSP)
       const cacheStrategy = ctx.mode === "development" ? "no-cache" : "short";
       const isHeadRequest = req.method.toUpperCase() === "HEAD";
 
-      // Check if-none-match for 304 response
-      // IMPORTANT: Skip 304 in dev mode to prevent CSP nonce mismatch
-      // (304 returns new nonce in CSP but browser uses cached HTML with old nonce)
       const isDev = ctx.mode === "development";
       if (!isDev && hasMatchingEtag(req, etag)) {
-        // Pass nonce to builder to ensure CSP header matches HTML nonce
         const builder = this.createResponseBuilder(ctx, nonce);
         return this.respond(
           builder
@@ -150,7 +110,6 @@ export class SSRHandler extends BaseHandler {
         );
       }
 
-      // Pass nonce to builder to ensure CSP header matches HTML nonce
       const builder = this.createResponseBuilder(ctx, nonce);
       const response = builder
         .withCORS(req, ctx.securityConfig?.cors)
@@ -165,7 +124,6 @@ export class SSRHandler extends BaseHandler {
 
       if (isHeadRequest) {
         await response.body?.cancel().catch(() => {
-          /* ignore */
         });
         return this.respond(
           new Response(null, {
@@ -178,12 +136,15 @@ export class SSRHandler extends BaseHandler {
       return this.respond(response);
     } catch (error) {
       if (error instanceof VeryfrontError && error.code === ErrorCode.FILE_NOT_FOUND) {
+        console.log("[SSR-HANDLER] Returning 404 for FILE_NOT_FOUND:", {
+          slug,
+          error: this.getErrorMessage(error),
+        });
         this.logDebug("SSR renderPage not found", {
           slug,
           error: this.getErrorMessage(error),
         }, ctx);
 
-        // Generate nonce for 404 response HTML
         const notFoundNonce = generateNonce();
         const builder = this.createResponseBuilder(ctx, notFoundNonce);
         const notFoundResponse = await tryNotFoundFallback(req, slug, ctx, builder);
@@ -207,22 +168,24 @@ export class SSRHandler extends BaseHandler {
         return this.respond(response);
       }
 
+      console.error("[SSR-HANDLER] 500 Error:", {
+        slug,
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+      });
       this.logDebug("SSR renderPage failed with error", {
         slug,
         error: this.getErrorMessage(error),
       }, ctx);
 
-      // Generate nonce for error response HTML
       const errorNonce = generateNonce();
       const builder = this.createResponseBuilder(ctx, errorNonce);
       const isHead = req.method.toUpperCase() === "HEAD";
 
-      // In development mode, show error overlay with full stack trace
       let body: string | null;
       if (isHead) {
         body = null;
       } else if (ctx.mode === "development") {
-        // Use error overlay in development
         const { ErrorOverlay } = await import(
           "../../../dev-server/error-overlay/index.ts"
         );
@@ -232,7 +195,6 @@ export class SSRHandler extends BaseHandler {
           type: "runtime",
         });
       } else {
-        // Generic error in production
         body =
           `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>Internal Server Error</title></head><body><h1>500 Internal Server Error</h1><p>Unexpected error rendering this page.</p></body></html>`;
       }

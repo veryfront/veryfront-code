@@ -1,21 +1,14 @@
 import type { DiagnosticResult } from "./types.ts";
 import { cliLogger } from "@veryfront/utils";
 
-/**
- * Safely cancel response body to prevent resource leaks
- */
 async function safeCancelBody(response: Response | null | undefined): Promise<void> {
   try {
     await response?.body?.cancel();
   } catch (error) {
-    // Body cancellation can fail safely, just log for debugging
     cliLogger.debug("Failed to cancel response body:", error);
   }
 }
 
-/**
- * Check RSC experimental flag status
- */
 export async function checkRSCFlag(): Promise<DiagnosticResult> {
   try {
     const { getEnv } = await import("@veryfront/platform/compat/process.ts");
@@ -38,9 +31,6 @@ export async function checkRSCFlag(): Promise<DiagnosticResult> {
   }
 }
 
-/**
- * Probe RSC unified endpoints (manifest, stream, Flight status)
- */
 export async function checkRSCEndpoints(): Promise<DiagnosticResult[]> {
   const results: DiagnosticResult[] = [];
 
@@ -105,9 +95,6 @@ export async function checkRSCEndpoints(): Promise<DiagnosticResult[]> {
   return results;
 }
 
-/**
- * Check RSC counters snapshot (metrics endpoint)
- */
 export async function checkRSCCounters(): Promise<DiagnosticResult> {
   let met: Response | null = null;
   try {

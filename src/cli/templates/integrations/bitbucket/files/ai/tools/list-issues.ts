@@ -32,7 +32,6 @@ export default tool({
       .describe("Maximum number of issues to return"),
   }),
   execute: async ({ workspace, repoSlug, state, kind, priority, limit }, context) => {
-    // Default to "current-user" for development; in production, always pass userId from session
     const userId = (context?.userId as string | undefined) || "current-user";
 
     try {

@@ -27,7 +27,6 @@ export async function renderCompiledMDX(
   projectDir: string,
   slug: string,
   components: MDXComponents = {
-    /* empty */
   },
   type: "pages" | "layouts" | "providers" = "pages",
 ): Promise<{ element: React.ReactElement; frontmatter: MDXFrontmatter } | null> {
@@ -46,7 +45,6 @@ export async function renderCompiledMDX(
       element,
       frontmatter: module.frontmatter ||
         {
-          /* empty */
         },
     };
   } catch (_error) {

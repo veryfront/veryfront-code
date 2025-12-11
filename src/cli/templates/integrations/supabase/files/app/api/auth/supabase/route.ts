@@ -1,15 +1,10 @@
 import { isConfigured, setSupabaseConfig } from "../../../../lib/token-store.ts";
 
-/**
- * POST /api/auth/supabase
- * Initialize Supabase configuration with API keys
- */
 export async function POST(request: Request) {
   try {
     const body = await request.json();
     const { url, anonKey, serviceKey } = body;
 
-    // Validate required fields
     if (!url || !anonKey || !serviceKey) {
       return Response.json(
         { error: "Missing required fields: url, anonKey, serviceKey" },
@@ -17,7 +12,6 @@ export async function POST(request: Request) {
       );
     }
 
-    // Validate URL format
     try {
       new URL(url);
     } catch {
@@ -27,7 +21,6 @@ export async function POST(request: Request) {
       );
     }
 
-    // Store configuration
     setSupabaseConfig({
       url,
       anonKey,
@@ -47,10 +40,6 @@ export async function POST(request: Request) {
   }
 }
 
-/**
- * GET /api/auth/supabase
- * Check if Supabase is configured
- */
 export function GET() {
   try {
     const configured = isConfigured();
@@ -68,10 +57,6 @@ export function GET() {
   }
 }
 
-/**
- * DELETE /api/auth/supabase
- * Clear Supabase configuration
- */
 export async function DELETE() {
   try {
     const { clearConfig } = await import("../../../../lib/token-store.ts");

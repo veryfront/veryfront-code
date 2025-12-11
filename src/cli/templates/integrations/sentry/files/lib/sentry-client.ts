@@ -2,7 +2,6 @@ import { getApiKey, getOrg } from "./token-store.ts";
 
 const SENTRY_API_BASE_URL = "https://sentry.io/api/0";
 
-// Sentry API Types
 
 export interface Organization {
   id: string;
@@ -165,16 +164,10 @@ async function sentryFetch<T>(
   return response.json();
 }
 
-/**
- * List all organizations for the authenticated user
- */
 export function listOrganizations(): Promise<Organization[]> {
   return sentryFetch<Organization[]>("/organizations/");
 }
 
-/**
- * List all projects in the configured organization
- */
 export function listProjects(): Promise<Project[]> {
   const org = getOrg();
   if (!org) {
@@ -186,9 +179,6 @@ export function listProjects(): Promise<Project[]> {
   return sentryFetch<Project[]>(`/organizations/${org}/projects/`);
 }
 
-/**
- * Get details for a specific project
- */
 export function getProject(projectSlug: string): Promise<Project> {
   const org = getOrg();
   if (!org) {
@@ -200,9 +190,6 @@ export function getProject(projectSlug: string): Promise<Project> {
   return sentryFetch<Project>(`/projects/${org}/${projectSlug}/`);
 }
 
-/**
- * List issues in a project with optional filters
- */
 export function listIssues(
   projectSlug: string,
   options: {
@@ -238,16 +225,10 @@ export function listIssues(
   return sentryFetch<Issue[]>(`/organizations/${org}/issues/?${params.toString()}`);
 }
 
-/**
- * Get detailed information about a specific issue
- */
 export function getIssue(issueId: string): Promise<Issue> {
   return sentryFetch<Issue>(`/issues/${issueId}/`);
 }
 
-/**
- * Update an issue (e.g., resolve, ignore, assign)
- */
 export function resolveIssue(issueId: string): Promise<Issue> {
   return sentryFetch<Issue>(`/issues/${issueId}/`, {
     method: "PUT",
@@ -257,9 +238,6 @@ export function resolveIssue(issueId: string): Promise<Issue> {
   });
 }
 
-/**
- * List events for a specific issue
- */
 export function listEvents(issueId: string, limit: number = 10): Promise<Event[]> {
   const params = new URLSearchParams();
   params.append("limit", limit.toString());

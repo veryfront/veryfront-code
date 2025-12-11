@@ -2,10 +2,15 @@ import * as esbuild from "esbuild";
 import { parseImports } from "./lexer.ts";
 import { createFileSystem } from "../../../platform/compat/fs.ts";
 import { getLoaderFromPath } from "./transform-utils.ts";
+import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 
 export interface LocalImport {
   specifier: string;
   absolutePath: string;
+}
+
+export interface ParseLocalImportsOptions {
+  adapter?: RuntimeAdapter;
 }
 
 const EXTENSIONS = [".tsx", ".ts", ".jsx", ".js", ".mdx"];
@@ -13,15 +18,48 @@ const EXTENSIONS = [".tsx", ".ts", ".jsx", ".js", ".mdx"];
 export async function parseLocalImports(
   code: string,
   filePath: string,
-  _projectDir: string,
+  projectDir: string,
+  options?: ParseLocalImportsOptions,
 ): Promise<LocalImport[]> {
-  // es-module-lexer can't parse TypeScript/JSX, so use esbuild to strip types first
-  // This is a minimal transform just for import extraction
+  let transformedCode: string;
+
+  if (filePath.endsWith(".mdx")) {
+    const importMatches = code.matchAll(
+      /^import\s+(?:(?:\{[^}]*\}|\*\s+as\s+\w+|\w+)(?:\s*,\s*(?:\{[^}]*\}|\*\s+as\s+\w+|\w+))*\s+from\s+)?['"]([^'"]+)['"]\s*;?\s*$/gm,
+    );
+    const imports: Array<{ n: string | undefined }> = [];
+    for (const match of importMatches) {
+      imports.push({ n: match[1] });
+    }
+    const localImports: LocalImport[] = [];
+    const normalizedProjectDir = projectDir.replace(/\/$/, "");
+
+    for (const imp of imports) {
+      if (imp.n?.startsWith("./") || imp.n?.startsWith("../")) {
+        const resolved = await resolveLocalImportPath(filePath, imp.n, options?.adapter);
+        if (resolved) {
+          localImports.push({ specifier: imp.n, absolutePath: resolved });
+        }
+      } else if (imp.n?.startsWith("@/")) {
+        const aliasPath = imp.n.substring(2);
+        const resolved = await resolveAliasImportPath(
+          normalizedProjectDir,
+          aliasPath,
+          options?.adapter,
+        );
+        if (resolved) {
+          localImports.push({ specifier: imp.n, absolutePath: resolved });
+        }
+      }
+    }
+    return localImports;
+  }
+
   const result = await esbuild.transform(code, {
     loader: getLoaderFromPath(filePath),
     format: "esm",
     target: "esnext",
-    jsx: "automatic", // Convert JSX to function calls
+    jsx: "automatic",
     jsxImportSource: "react",
     minify: false,
     sourcemap: false,
@@ -29,12 +67,25 @@ export async function parseLocalImports(
     keepNames: true,
   });
 
-  const imports = await parseImports(result.code);
+  transformedCode = result.code;
+  const imports = await parseImports(transformedCode);
   const localImports: LocalImport[] = [];
+  const normalizedProjectDir = projectDir.replace(/\/$/, "");
 
   for (const imp of imports) {
     if (imp.n?.startsWith("./") || imp.n?.startsWith("../")) {
-      const resolved = await resolveLocalImportPath(filePath, imp.n);
+      const resolved = await resolveLocalImportPath(filePath, imp.n, options?.adapter);
+      if (resolved) {
+        localImports.push({ specifier: imp.n, absolutePath: resolved });
+      }
+    }
+    else if (imp.n?.startsWith("@/")) {
+      const aliasPath = imp.n.substring(2);
+      const resolved = await resolveAliasImportPath(
+        normalizedProjectDir,
+        aliasPath,
+        options?.adapter,
+      );
       if (resolved) {
         localImports.push({ specifier: imp.n, absolutePath: resolved });
       }
@@ -47,47 +98,44 @@ export async function parseLocalImports(
 async function resolveLocalImportPath(
   fromFile: string,
   importSpecifier: string,
+  adapter?: RuntimeAdapter,
 ): Promise<string | null> {
-  const fs = createFileSystem();
+  const localFs = createFileSystem();
   const fromDir = fromFile.substring(0, fromFile.lastIndexOf("/"));
   const basePath = resolveRelative(fromDir, importSpecifier);
 
-  // If specifier already has a valid extension, check if file exists
-  if (/\.(tsx?|jsx?|mjs|cjs|mdx)$/.test(importSpecifier)) {
+  const statFile = async (path: string): Promise<{ isFile: boolean } | null> => {
     try {
-      const stat = await fs.stat(basePath);
-      if (stat.isFile) {
-        return basePath;
+      if (adapter) {
+        return await adapter.fs.stat(path);
       }
+      return await localFs.stat(path);
     } catch {
-      // File doesn't exist
+      return null;
+    }
+  };
+
+  if (/\.(tsx?|jsx?|mjs|cjs|mdx)$/.test(importSpecifier)) {
+    const stat = await statFile(basePath);
+    if (stat?.isFile) {
+      return basePath;
     }
     return null;
   }
 
-  // Try each extension
   for (const ext of EXTENSIONS) {
     const fullPath = basePath + ext;
-    try {
-      const stat = await fs.stat(fullPath);
-      if (stat.isFile) {
-        return fullPath;
-      }
-    } catch {
-      // Continue trying other extensions
+    const stat = await statFile(fullPath);
+    if (stat?.isFile) {
+      return fullPath;
     }
   }
 
-  // Try index files (e.g., ./components -> ./components/index.tsx)
   for (const ext of EXTENSIONS) {
     const indexPath = basePath + "/index" + ext;
-    try {
-      const stat = await fs.stat(indexPath);
-      if (stat.isFile) {
-        return indexPath;
-      }
-    } catch {
-      // Continue trying other extensions
+    const stat = await statFile(indexPath);
+    if (stat?.isFile) {
+      return indexPath;
     }
   }
 
@@ -107,4 +155,50 @@ function resolveRelative(fromDir: string, importPath: string): string {
   }
 
   return "/" + parts.join("/");
+}
+
+async function resolveAliasImportPath(
+  projectDir: string,
+  aliasPath: string,
+  adapter?: RuntimeAdapter,
+): Promise<string | null> {
+  const localFs = createFileSystem();
+  const basePath = `${projectDir}/${aliasPath}`;
+
+  const statFile = async (path: string): Promise<{ isFile: boolean } | null> => {
+    try {
+      if (adapter) {
+        return await adapter.fs.stat(path);
+      }
+      return await localFs.stat(path);
+    } catch {
+      return null;
+    }
+  };
+
+  if (/\.(tsx?|jsx?|mjs|cjs|mdx)$/.test(aliasPath)) {
+    const stat = await statFile(basePath);
+    if (stat?.isFile) {
+      return basePath;
+    }
+    return null;
+  }
+
+  for (const ext of EXTENSIONS) {
+    const fullPath = basePath + ext;
+    const stat = await statFile(fullPath);
+    if (stat?.isFile) {
+      return fullPath;
+    }
+  }
+
+  for (const ext of EXTENSIONS) {
+    const indexPath = basePath + "/index" + ext;
+    const stat = await statFile(indexPath);
+    if (stat?.isFile) {
+      return indexPath;
+    }
+  }
+
+  return null;
 }

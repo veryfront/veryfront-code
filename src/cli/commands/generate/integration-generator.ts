@@ -1,9 +1,3 @@
-/**
- * Integration Generator
- *
- * Generates new service integration scaffolds with interactive prompts.
- * Creates connector.json, API client, OAuth routes, token store, and tool skeletons.
- */
 
 import { join } from "@std/path";
 import { cyan, dim, green } from "@veryfront/compat/console";
@@ -15,21 +9,13 @@ import { select } from "../../utils/terminal-select.ts";
 let fs: FileSystem;
 
 export interface IntegrationGeneratorOptions {
-  /** Integration name (lowercase, e.g., "twilio") */
   name?: string;
-  /** Display name (e.g., "Twilio") */
   displayName?: string;
-  /** Authentication type */
   authType?: "oauth2" | "api-key";
-  /** API base URL */
   apiBaseUrl?: string;
-  /** OAuth authorization URL (for oauth2) */
   authorizationUrl?: string;
-  /** OAuth token URL (for oauth2) */
   tokenUrl?: string;
-  /** OAuth scopes (comma-separated) */
   scopes?: string;
-  /** Skip interactive prompts */
   skipPrompts?: boolean;
 }
 
@@ -44,17 +30,11 @@ interface IntegrationConfig {
   envVarPrefix: string;
 }
 
-/**
- * Check if we're in an interactive terminal
- */
 function canRunPrompts(): boolean {
   const disablePrompt = getEnv("CI") === "1" || getEnv("DENO_TESTING") === "1";
   return !disablePrompt && checkIsInteractive();
 }
 
-/**
- * Prompt for text input
- */
 async function promptText(question: string, defaultValue?: string): Promise<string> {
   const defaultHint = defaultValue ? dim(` (${defaultValue})`) : "";
   console.log(`${cyan("?")} ${question}${defaultHint}`);
@@ -62,12 +42,10 @@ async function promptText(question: string, defaultValue?: string): Promise<stri
   const buf = new Uint8Array(1024);
 
   if (typeof Deno !== "undefined") {
-    // @ts-ignore: Deno global
     const n = await Deno.stdin.read(buf);
     const input = new TextDecoder().decode(buf.subarray(0, n || 0)).trim();
     return input || defaultValue || "";
   } else {
-    // Node.js - synchronous readline
     return new Promise((resolve) => {
       const readline = require("readline");
       const rl = readline.createInterface({
@@ -82,9 +60,6 @@ async function promptText(question: string, defaultValue?: string): Promise<stri
   }
 }
 
-/**
- * Run the integration generator
- */
 export async function generateIntegration(
   projectDir: string,
   options: IntegrationGeneratorOptions = {},
@@ -94,7 +69,6 @@ export async function generateIntegration(
   let config: IntegrationConfig;
 
   if (options.skipPrompts || !canRunPrompts()) {
-    // Non-interactive mode - require all options
     if (!options.name || !options.displayName || !options.authType) {
       throw new Error(
         "Non-interactive mode requires --name, --display-name, and --auth-type options",
@@ -112,12 +86,10 @@ export async function generateIntegration(
       envVarPrefix: options.name.toUpperCase(),
     };
   } else {
-    // Interactive mode
     console.log("");
     console.log(green("Integration Generator"));
     console.log("Let's create a new service integration.\n");
 
-    // Step 1: Integration name
     const name = options.name || await promptText(
       "Integration name (lowercase, e.g., twilio, zendesk):",
     );
@@ -126,13 +98,11 @@ export async function generateIntegration(
       throw new Error("Integration name must be lowercase letters, numbers, and hyphens");
     }
 
-    // Step 2: Display name
     const displayName = options.displayName || await promptText(
       "Display name:",
       name.charAt(0).toUpperCase() + name.slice(1),
     );
 
-    // Step 3: Auth type
     const authTypeChoice = options.authType || await select(
       "Authentication type:",
       [
@@ -144,7 +114,6 @@ export async function generateIntegration(
 
     const authType = (authTypeChoice as "oauth2" | "api-key") || "oauth2";
 
-    // Step 4: API base URL
     const apiBaseUrl = options.apiBaseUrl || await promptText(
       "API base URL:",
       `https://api.${name}.com`,
@@ -155,7 +124,6 @@ export async function generateIntegration(
     let scopes: string[] = [];
 
     if (authType === "oauth2") {
-      // Step 5: OAuth URLs (only for OAuth2)
       authorizationUrl = options.authorizationUrl || await promptText(
         "OAuth authorization URL:",
         `https://${name}.com/oauth/authorize`,
@@ -184,10 +152,8 @@ export async function generateIntegration(
     };
   }
 
-  // Generate the integration files
   await createIntegrationFiles(projectDir, config);
 
-  // Show summary
   console.log("");
   console.log(green("Integration created successfully!"));
   console.log("");
@@ -204,16 +170,12 @@ export async function generateIntegration(
   console.log("");
 }
 
-/**
- * Create all integration files
- */
 async function createIntegrationFiles(
   projectDir: string,
   config: IntegrationConfig,
 ): Promise<void> {
   const baseDir = join(projectDir, "ai", "integrations", config.name);
 
-  // Create directories
   await ensureDir(baseDir);
   await ensureDir(join(baseDir, "lib"));
   await ensureDir(join(baseDir, "tools"));
@@ -223,31 +185,23 @@ async function createIntegrationFiles(
     await ensureDir(join(projectDir, "app", "api", "auth", config.name, "callback"));
   }
 
-  // Generate files based on auth type
   if (config.authType === "oauth2") {
     await createOAuth2Files(projectDir, baseDir, config);
   } else {
     await createApiKeyFiles(projectDir, baseDir, config);
   }
 
-  // Create common files
   await createClientFile(baseDir, config);
   await createToolSkeletons(baseDir, config);
   await createEnvExample(projectDir, config);
 }
 
-/**
- * Create OAuth2-specific files
- */
 async function createOAuth2Files(
   projectDir: string,
   baseDir: string,
   config: IntegrationConfig,
 ): Promise<void> {
-  // Token store
-  const tokenStore = `/**
- * Token storage for ${config.displayName} OAuth
- */
+  const tokenStore = `
 
 interface TokenData {
   accessToken: string;
@@ -268,7 +222,6 @@ export function setTokens(access: string, refresh?: string, expiresIn?: number):
 export async function getAccessToken(): Promise<string | null> {
   if (!tokenData) return null;
 
-  // Check if token is expired
   if (tokenData.expiresAt && Date.now() > tokenData.expiresAt) {
     // TODO: Implement token refresh
     return null;
@@ -284,10 +237,7 @@ export function clearTokens(): void {
   await fs.writeTextFile(join(baseDir, "lib", "token-store.ts"), tokenStore);
   cliLogger.debug(`Created ${join(baseDir, "lib", "token-store.ts")}`);
 
-  // OAuth route
-  const oauthRoute = `/**
- * ${config.displayName} OAuth initialization route
- */
+  const oauthRoute = `
 
 import { redirect } from "veryfront";
 
@@ -321,10 +271,7 @@ export function GET(): Response {
   );
   cliLogger.debug(`Created OAuth init route`);
 
-  // OAuth callback route
-  const callbackRoute = `/**
- * ${config.displayName} OAuth callback route
- */
+  const callbackRoute = `
 
 import { redirect } from "veryfront";
 import { setTokens } from "../../../../ai/integrations/${config.name}/lib/token-store.ts";
@@ -385,18 +332,12 @@ export async function GET(request: Request): Promise<Response> {
   cliLogger.debug(`Created OAuth callback route`);
 }
 
-/**
- * Create API key-specific files
- */
 async function createApiKeyFiles(
   _projectDir: string,
   baseDir: string,
   config: IntegrationConfig,
 ): Promise<void> {
-  // Simple token store for API key
-  const tokenStore = `/**
- * API key accessor for ${config.displayName}
- */
+  const tokenStore = `
 
 export function getApiKey(): string | null {
   return process.env.${config.envVarPrefix}_API_KEY || null;
@@ -414,9 +355,6 @@ export function requireApiKey(): string {
   cliLogger.debug(`Created ${join(baseDir, "lib", "token-store.ts")}`);
 }
 
-/**
- * Create the API client file
- */
 async function createClientFile(baseDir: string, config: IntegrationConfig): Promise<void> {
   const authHeader = config.authType === "oauth2"
     ? `"Authorization": \`Bearer \${token}\``
@@ -433,9 +371,7 @@ async function createClientFile(baseDir: string, config: IntegrationConfig): Pro
   }`
     : `const apiKey = requireApiKey();`;
 
-  const client = `/**
- * ${config.displayName} API Client
- */
+  const client = `
 
 ${tokenImport}
 
@@ -446,9 +382,6 @@ interface ${config.displayName}Response<T> {
   error?: string;
 }
 
-/**
- * Make an authenticated request to the ${config.displayName} API
- */
 async function ${config.name}Fetch<T>(
   endpoint: string,
   options: RequestInit = {}
@@ -472,13 +405,7 @@ async function ${config.name}Fetch<T>(
   return response.json();
 }
 
-// ============================================================================
-// API Methods - Customize these for your integration
-// ============================================================================
 
-/**
- * List items from ${config.displayName}
- */
 export async function listItems(options?: {
   limit?: number;
   offset?: number;
@@ -491,16 +418,10 @@ export async function listItems(options?: {
   return ${config.name}Fetch<unknown[]>(\`/items\${query}\`);
 }
 
-/**
- * Get a single item by ID
- */
 export async function getItem(id: string): Promise<unknown> {
   return ${config.name}Fetch<unknown>(\`/items/\${id}\`);
 }
 
-/**
- * Create a new item
- */
 export async function createItem(data: Record<string, unknown>): Promise<unknown> {
   return ${config.name}Fetch<unknown>("/items", {
     method: "POST",
@@ -508,9 +429,6 @@ export async function createItem(data: Record<string, unknown>): Promise<unknown
   });
 }
 
-/**
- * Search items
- */
 export async function searchItems(query: string): Promise<unknown[]> {
   return ${config.name}Fetch<unknown[]>(\`/search?q=\${encodeURIComponent(query)}\`);
 }
@@ -519,9 +437,6 @@ export async function searchItems(query: string): Promise<unknown[]> {
   cliLogger.debug(`Created API client`);
 }
 
-/**
- * Create tool skeleton files
- */
 async function createToolSkeletons(baseDir: string, config: IntegrationConfig): Promise<void> {
   const tools = [
     {
@@ -545,9 +460,7 @@ async function createToolSkeletons(baseDir: string, config: IntegrationConfig): 
   ];
 
   for (const tool of tools) {
-    const toolContent = `/**
- * ${tool.name}
- */
+    const toolContent = `
 
 import { tool } from "veryfront/ai";
 import { z } from "zod";
@@ -618,9 +531,6 @@ export default tool({
   }
 }
 
-/**
- * Create .env.example entry
- */
 async function createEnvExample(projectDir: string, config: IntegrationConfig): Promise<void> {
   const envExamplePath = join(projectDir, ".env.example");
 
@@ -638,7 +548,6 @@ ${config.envVarPrefix}_API_KEY=your_api_key
 `;
   }
 
-  // Try to append to existing .env.example, or create new
   try {
     const existing = await fs.readTextFile(envExamplePath);
     if (!existing.includes(config.envVarPrefix)) {
@@ -646,15 +555,11 @@ ${config.envVarPrefix}_API_KEY=your_api_key
       cliLogger.debug(`Updated .env.example`);
     }
   } catch {
-    // File doesn't exist, create it
     await fs.writeTextFile(envExamplePath, `# Environment Variables${envContent}`);
     cliLogger.debug(`Created .env.example`);
   }
 }
 
-/**
- * Ensure directory exists
- */
 async function ensureDir(path: string): Promise<void> {
   try {
     await fs.mkdir(path, { recursive: true });

@@ -1,7 +1,3 @@
-/**
- * Agent factory
- */
-
 import type { Agent, AgentConfig, AgentResponse, Message, ToolCall } from "../types/agent.ts";
 import { AgentRuntime } from "./runtime.ts";
 import { detectPlatform, validatePlatformCompatibility } from "../runtime/platform.ts";
@@ -10,15 +6,7 @@ import { agentRegistry } from "./composition.ts";
 import { agentLogger } from "../../core/utils/logger/logger.ts";
 import { createError, toError } from "../../core/errors/veryfront-error.ts";
 
-/**
- * Result object returned by agent.stream()
- * Provides toDataStreamResponse() for Vercel AI SDK compatible streaming
- */
 export interface AgentStreamResult {
-  /**
-   * Convert the stream to a Response object for streaming responses
-   * Compatible with Vercel AI SDK's toDataStreamResponse()
-   */
   toDataStreamResponse(options?: {
     headers?: Record<string, string>;
     status?: number;
@@ -26,10 +14,6 @@ export interface AgentStreamResult {
   }): Response;
 }
 
-/**
- * Create an AgentStreamResult from a ReadableStream
- * Returns Vercel AI SDK compatible streaming response
- */
 function createAgentStreamResult(stream: ReadableStream): AgentStreamResult {
   return {
     toDataStreamResponse(options?: {
@@ -44,7 +28,6 @@ function createAgentStreamResult(stream: ReadableStream): AgentStreamResult {
           "Content-Type": "text/event-stream",
           "Cache-Control": "no-cache",
           "Connection": "keep-alive",
-          // Required header for Vercel AI SDK Data Stream Protocol v1
           "x-vercel-ai-ui-message-stream": "v1",
           ...options?.headers,
         },
@@ -53,27 +36,9 @@ function createAgentStreamResult(stream: ReadableStream): AgentStreamResult {
   };
 }
 
-/**
- * Create an agent
- *
- * @example
- * ```typescript
- * import { agent } from 'veryfront/ai';
-
- *
- * export default agent({
- *   model: 'openai/gpt-4',
- *   system: 'You are a helpful assistant',
- *   tools: {
- *     searchWeb: true,
- *   },
- * });
- * ```
- */
 export function agent(config: AgentConfig): Agent {
   const id = config.id || generateAgentId();
 
-  // Register tools if config.tools is a Record (not `true` for all tools)
   if (config.tools && config.tools !== true) {
     for (const [name, entry] of Object.entries(config.tools)) {
       if (entry && typeof entry === "object") {
@@ -153,7 +118,6 @@ export function agent(config: AgentConfig): Agent {
           "Content-Type": "text/event-stream",
           "Cache-Control": "no-cache",
           "Connection": "keep-alive",
-          // Required header for Vercel AI SDK Data Stream Protocol v1
           "x-vercel-ai-ui-message-stream": "v1",
         },
       });
@@ -177,9 +141,6 @@ export function agent(config: AgentConfig): Agent {
   return agentInstance;
 }
 
-/**
- * Generate a unique agent ID
- */
 let agentIdCounter = 0;
 function generateAgentId(): string {
   return `agent_${Date.now()}_${agentIdCounter++}`;

@@ -1,15 +1,8 @@
-/**
- * Tests for AI discovery with fsAdapter (Veryfront Cloud)
- *
- * These tests verify that the esbuild plugin properly resolves and loads
- * files from a remote filesystem adapter.
- */
 
 import { assertEquals, assertStringIncludes } from "std/assert/mod.ts";
 import { describe, it } from "std/testing/bdd.ts";
 import type { FileSystemAdapter } from "../../platform/adapters/base.ts";
 
-// Mock fsAdapter that simulates Veryfront Cloud
 function createMockFsAdapter(files: Record<string, string>): FileSystemAdapter {
   return {
     readFile(path: string): Promise<string> {
@@ -26,7 +19,6 @@ function createMockFsAdapter(files: Record<string, string>): FileSystemAdapter {
       return Promise.reject(new Error("Write not supported in mock"));
     },
     async *readDir(_path: string) {
-      // Return files in the directory
       const dir = _path.endsWith("/") ? _path : _path + "/";
       for (const filePath of Object.keys(files)) {
         if (filePath.startsWith(dir)) {
@@ -67,7 +59,6 @@ function createMockFsAdapter(files: Record<string, string>): FileSystemAdapter {
     watch(_paths: string | string[], _options?: { recursive?: boolean }) {
       return {
         async *[Symbol.asyncIterator]() {
-          // No-op
         },
         close() {},
       };
@@ -89,7 +80,6 @@ describe("fsAdapter plugin", () => {
 
     const fsAdapter = createMockFsAdapter(files);
 
-    // Verify the mock works
     assertEquals(await fsAdapter.exists("/project/ai/tools/my-tool.ts"), true);
     assertEquals(await fsAdapter.exists("/project/lib/helper.ts"), true);
     assertEquals(await fsAdapter.exists("/project/nonexistent.ts"), false);
@@ -111,7 +101,6 @@ describe("fsAdapter plugin", () => {
 
     const fsAdapter = createMockFsAdapter(files);
 
-    // The plugin should try helper.ts when helper doesn't exist
     assertEquals(await fsAdapter.exists("/project/lib/helper"), false);
     assertEquals(await fsAdapter.exists("/project/lib/helper.ts"), true);
   });
@@ -129,7 +118,6 @@ describe("fsAdapter plugin", () => {
 
     const fsAdapter = createMockFsAdapter(files);
 
-    // The plugin should try utils/index.ts when utils doesn't exist
     assertEquals(await fsAdapter.exists("/project/lib/utils"), false);
     assertEquals(await fsAdapter.exists("/project/lib/utils.ts"), false);
     assertEquals(await fsAdapter.exists("/project/lib/utils/index.ts"), true);
@@ -138,7 +126,6 @@ describe("fsAdapter plugin", () => {
 
 describe("fsAdapter integration", () => {
   it("should bundle tool with relative imports via esbuild plugin", async () => {
-    // Skip if not running on Node.js (plugin not supported in Deno WASM)
     const isDeno = "Deno" in globalThis;
     if (isDeno) {
       console.log("Skipping esbuild plugin test in Deno (WASM doesn't support plugins)");
@@ -174,10 +161,8 @@ describe("fsAdapter integration", () => {
 
     const fsAdapter = createMockFsAdapter(files);
 
-    // Import esbuild
     const { build } = await import("esbuild");
 
-    // Recreate the plugin logic for testing
     const existsCache = new Map<string, boolean>();
 
     async function checkExists(filePath: string): Promise<boolean> {
@@ -220,7 +205,7 @@ describe("fsAdapter integration", () => {
       // deno-lint-ignore no-explicit-any
       setup(build: any) {
         build.onResolve(
-          { filter: /^\.\.?\// },
+          { filter: /^\.\.?\
           async (args: { path: string; importer: string; resolveDir: string }) => {
             const { dirname, resolve } = await import("node:path");
             const importerDir = args.importer ? dirname(args.importer) : args.resolveDir;
@@ -261,7 +246,6 @@ describe("fsAdapter integration", () => {
       },
     };
 
-    // Run esbuild with the plugin
     const source = files["/project/ai/tools/github-tool.ts"];
     const result = await build({
       bundle: true,
@@ -270,6 +254,7 @@ describe("fsAdapter integration", () => {
       platform: "neutral",
       target: "es2022",
       plugins: [fsAdapterPlugin],
+      external: ["zod", "ai", "ai
       external: ["zod", "ai", "ai/*", "@ai-sdk/*", "veryfront", "veryfront/*"],
       stdin: {
         contents: source,
@@ -383,12 +368,10 @@ describe("fsAdapter integration", () => {
 
     const bundledCode = result.outputFiles?.[0]?.text ?? "";
 
-    // All files should be bundled - no external imports for our code
     assertStringIncludes(bundledCode, "api", "Should contain api function");
     assertStringIncludes(bundledCode, "http", "Should contain http object");
     assertStringIncludes(bundledCode, "get", "Should contain get method");
 
-    // Should NOT have any relative imports left (everything bundled)
     assertEquals(bundledCode.includes('from "../'), false, "Should not have relative imports");
     assertEquals(bundledCode.includes('from "./'), false, "Should not have relative imports");
   });

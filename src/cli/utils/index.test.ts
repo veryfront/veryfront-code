@@ -12,7 +12,6 @@ import {
   showVersion,
 } from "./index.ts";
 
-// Helper to capture console output
 function captureOutput(fn: () => void | Promise<void>): { stdout: string; stderr: string } {
   const originalLog = console.log;
   const originalError = console.error;
@@ -46,7 +45,6 @@ function captureOutput(fn: () => void | Promise<void>): { stdout: string; stderr
   return { stdout, stderr };
 }
 
-// Helper for async capture
 async function captureAsyncOutput(
   fn: () => Promise<void>,
 ): Promise<{ stdout: string; stderr: string }> {
@@ -81,21 +79,17 @@ async function captureAsyncOutput(
 
 Deno.test("showLogo outputs Veryfront in cyan", () => {
   const { stdout } = captureOutput(() => showLogo());
-  // The cyan color code is ANSI escape sequences
   assertStringIncludes(stdout, "Veryfront");
 });
 
 Deno.test("showHelp displays complete help information", () => {
   const { stdout } = captureOutput(() => showHelp());
 
-  // Check for logo
   assertStringIncludes(stdout, "Veryfront");
 
-  // Check for usage
   assertStringIncludes(stdout, "Usage:");
   assertStringIncludes(stdout, "veryfront <command> [options]");
 
-  // Check for commands
   assertStringIncludes(stdout, "Commands:");
   assertStringIncludes(stdout, "init");
   assertStringIncludes(stdout, "dev");
@@ -106,25 +100,20 @@ Deno.test("showHelp displays complete help information", () => {
   assertStringIncludes(stdout, "routes");
   assertStringIncludes(stdout, "generate");
 
-  // Check for options
   assertStringIncludes(stdout, "Options:");
   assertStringIncludes(stdout, "--version");
   assertStringIncludes(stdout, "--help");
 
-  // Check for examples
   assertStringIncludes(stdout, "Examples:");
   assertStringIncludes(stdout, "veryfront init my-app");
   assertStringIncludes(stdout, "veryfront dev --port 3000");
 
-  // Check for config tips
   assertStringIncludes(stdout, "Config tips:");
   assertStringIncludes(stdout, "veryfront.config.js");
 
-  // Check for docs
   assertStringIncludes(stdout, "Docs:");
   assertStringIncludes(stdout, "RSC Security");
 
-  // Check version is included
   assertStringIncludes(stdout, `Version: ${VERSION}`);
 });
 
@@ -189,26 +178,21 @@ Deno.test("formatBytes formats terabytes", () => {
 });
 
 Deno.test("formatBytes handles edge cases", () => {
-  // Very small decimal - should return as-is with "Bytes"
   assertEquals(formatBytes(0.1), "0.1 Bytes");
   assertEquals(formatBytes(0.5), "0.5 Bytes");
   assertEquals(formatBytes(0.99), "0.99 Bytes");
 
-  // Negative numbers - uses absolute value
   assertEquals(formatBytes(-1024), "1 KB");
   assertEquals(formatBytes(-2048), "2 KB");
 
-  // Large numbers with decimals
   assertEquals(formatBytes(1536), "1.5 KB");
   assertEquals(formatBytes(1792), "1.75 KB");
 
-  // Very large numbers - clamped to TB
-  const veryLarge = 1024 ** 6; // Would be EB
+  const veryLarge = 1024 ** 6;
   assertStringIncludes(formatBytes(veryLarge), "TB");
 });
 
 Deno.test("promptUser reads from stdin", async () => {
-  // Mock stdin
   const originalStdin = Deno.stdin;
   const mockStdin = {
     read: (buf: Uint8Array) => {
@@ -222,7 +206,6 @@ Deno.test("promptUser reads from stdin", async () => {
     close: () => {},
   };
 
-  // Replace stdin temporarily
   Object.defineProperty(Deno, "stdin", {
     value: mockStdin,
     configurable: true,
@@ -236,7 +219,6 @@ Deno.test("promptUser reads from stdin", async () => {
 
     assertStringIncludes(stdout, "Enter something:");
   } finally {
-    // Restore original stdin
     Object.defineProperty(Deno, "stdin", {
       value: originalStdin,
       configurable: true,
@@ -245,7 +227,6 @@ Deno.test("promptUser reads from stdin", async () => {
 });
 
 Deno.test("promptUser handles empty input", async () => {
-  // Mock stdin with null read
   const originalStdin = Deno.stdin;
   const mockStdin = {
     read: (_buf: Uint8Array) => {
@@ -273,7 +254,6 @@ Deno.test("promptUser handles empty input", async () => {
 });
 
 Deno.test("promptUser trims whitespace", async () => {
-  // Mock stdin with whitespace
   const originalStdin = Deno.stdin;
   const mockStdin = {
     read: (buf: Uint8Array) => {
@@ -314,7 +294,6 @@ Deno.test("all exports are available", () => {
   assertExists(logInfo);
   assertExists(formatBytes);
 
-  // Verify they're functions
   assertEquals(typeof showLogo, "function");
   assertEquals(typeof showHelp, "function");
   assertEquals(typeof showVersion, "function");

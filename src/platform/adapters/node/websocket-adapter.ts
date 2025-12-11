@@ -17,10 +17,8 @@ export class NodeServerAdapter implements ServerAdapter {
       }));
     }
 
-    // Create a proxy WebSocket that will be connected when the upgrade completes
     const socket = new NodeWebSocket();
 
-    // Register the upgrade and connect when complete
     registerWebSocketUpgrade(key).then((ws) => {
       socket._attachRealSocket(ws);
     }).catch((error) => {
@@ -28,7 +26,6 @@ export class NodeServerAdapter implements ServerAdapter {
       socket._emitError(error);
     });
 
-    // Return 101 response - the http-server upgrade handler will complete the handshake
     const response = new Response(null, {
       status: 101,
       statusText: "Switching Protocols",
@@ -49,13 +46,9 @@ export class NodeServerAdapter implements ServerAdapter {
   }
 }
 
-/**
- * NodeWebSocket - A WebSocket wrapper that works with Node.js
- * Proxies to the real ws WebSocket once the upgrade completes
- */
 export class NodeWebSocket {
   private ws: WSWebSocket | null = null;
-  public readyState = 0; // CONNECTING
+  public readyState = 0;
 
   public onopen: ((event: Event) => void) | null = null;
   public onclose: ((event: CloseEvent) => void) | null = null;
@@ -67,18 +60,12 @@ export class NodeWebSocket {
   static readonly CLOSING = 2;
   static readonly CLOSED = 3;
 
-  // Queue messages sent before the socket is ready
   private pendingMessages: Array<string | ArrayBuffer> = [];
 
-  /**
-   * Attach the real WebSocket after upgrade completes
-   * Called by NodeServerAdapter
-   */
   _attachRealSocket(ws: WSWebSocket) {
     this.ws = ws;
-    this.readyState = 1; // OPEN
+    this.readyState = 1;
 
-    // Set up event handlers
     ws.on("open", () => {
       this.readyState = 1;
       this.onopen?.(new Event("open"));
@@ -97,22 +84,16 @@ export class NodeWebSocket {
       this.onerror?.(new ErrorEvent("error", { error }));
     });
 
-    // Send any pending messages
     for (const msg of this.pendingMessages) {
       ws.send(msg);
     }
     this.pendingMessages = [];
 
-    // The socket is already open when we get it from handleUpgrade
     this.onopen?.(new Event("open"));
   }
 
-  /**
-   * Emit an error when upgrade fails
-   * Called by NodeServerAdapter
-   */
   _emitError(error: Error) {
-    this.readyState = 3; // CLOSED
+    this.readyState = 3;
     this.onerror?.(new ErrorEvent("error", { error }));
   }
 
@@ -120,7 +101,6 @@ export class NodeWebSocket {
     if (this.ws && this.readyState === 1) {
       this.ws.send(data);
     } else if (this.readyState === 0) {
-      // Queue the message until the socket is ready
       this.pendingMessages.push(data);
     } else {
       throw toError(createError({
@@ -134,10 +114,9 @@ export class NodeWebSocket {
     if (this.ws) {
       this.ws.close(code, reason);
     }
-    this.readyState = 2; // CLOSING
+    this.readyState = 2;
   }
 
-  // WebSocket standard interface
   addEventListener(type: string, listener: EventListener) {
     switch (type) {
       case "open":
@@ -156,7 +135,6 @@ export class NodeWebSocket {
   }
 
   removeEventListener(_type: string, _listener: EventListener) {
-    // Simplified - just null out the handler
     switch (_type) {
       case "open":
         this.onopen = null;

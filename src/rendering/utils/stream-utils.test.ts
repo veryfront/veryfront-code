@@ -1,6 +1,3 @@
-/**
- * Tests for Stream Utilities
- */
 
 import { assertEquals } from "https://deno.land/std@0.220.0/assert/mod.ts";
 import { streamToString } from "./stream-utils.ts";

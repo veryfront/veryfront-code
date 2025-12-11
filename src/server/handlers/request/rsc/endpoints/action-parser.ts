@@ -1,17 +1,8 @@
-/**
- * Action request body parser and validator
- * @module rsc-endpoints/action-parser
- */
 
 import { HTTP_BAD_REQUEST } from "@veryfront/utils";
 import type { ActionBody } from "./types.ts";
 import { serverLogger } from "@veryfront/utils";
 
-/**
- * Parse and validate action request body
- * @param body - Raw request body
- * @returns Parsed action body or error response
- */
 export async function parseActionBody(
   body: unknown,
 ): Promise<ActionBody | Response> {
@@ -49,7 +40,6 @@ export async function parseActionBody(
     });
   }
 
-  // Basic input validation to prevent traversal and malformed ids
   const isValidId = /^[A-Za-z0-9_/-]+(?:\/[A-Za-z0-9_/-]+)*$/.test(id) &&
     !id.startsWith("/") &&
     !id.includes("..") &&

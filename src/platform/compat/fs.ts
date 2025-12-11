@@ -1,50 +1,21 @@
-/**
- * Cross-platform filesystem abstraction for CLI commands and standalone utilities.
- *
- * This module provides a synchronous-style API for filesystem operations that works
- * across Deno, Node.js, and Bun runtimes. It's designed for CLI commands and scripts
- * where you don't have access to a RuntimeAdapter context.
- *
- * For server/rendering contexts where you have an adapter, prefer using adapter.fs directly:
- * ```ts
- * const adapter = await getAdapter();
- * const content = await adapter.fs.readFile(path);
- * ```
- *
- * For CLI commands and standalone utilities, use createFileSystem():
- * ```ts
- * import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
- * const fs = createFileSystem();
- * const content = await fs.readTextFile(path);
- * ```
- *
- * @module
- */
 
 import type { FileInfo } from "@veryfront/platform/adapters/base.ts";
 import { createError, toError } from "../../core/errors/veryfront-error.ts";
 import { isDeno, isNode } from "./runtime.ts";
 
-/**
- * Cross-platform filesystem interface for CLI commands and standalone utilities.
- * Compatible with RuntimeAdapter.fs (FileSystemAdapter) for easy interoperability.
- */
 export interface FileSystem {
   readTextFile(path: string): Promise<string>;
-  readFile(path: string): Promise<Uint8Array>; // Changed to Uint8Array for binary
+  readFile(path: string): Promise<Uint8Array>;
   writeTextFile(path: string, data: string): Promise<void>;
-  writeFile(path: string, data: Uint8Array): Promise<void>; // Changed to Uint8Array for binary
+  writeFile(path: string, data: Uint8Array): Promise<void>;
   exists(path: string): Promise<boolean>;
   stat(path: string): Promise<FileInfo>;
   mkdir(path: string, options?: { recursive?: boolean }): Promise<void>;
   readDir(path: string): AsyncIterable<{ name: string; isFile: boolean; isDirectory: boolean }>;
   remove(path: string, options?: { recursive?: boolean }): Promise<void>;
-  makeTempDir(options?: { prefix?: string }): Promise<string>; // New for temp dirs
+  makeTempDir(options?: { prefix?: string }): Promise<string>;
 }
 
-// ============================================================================
-// Node.js Implementation
-// ============================================================================
 
 interface NodeFsPromises {
   readFile(
@@ -93,7 +64,6 @@ class NodeFileSystem implements FileSystem {
       }));
     }
 
-    // Use dynamic ESM imports for Node.js modules
     const [fsModule, osModule, pathModule] = await Promise.all([
       import("node:fs/promises"),
       import("node:os"),
@@ -172,7 +142,6 @@ class NodeFileSystem implements FileSystem {
 
   async remove(path: string, options?: { recursive?: boolean }): Promise<void> {
     await this.ensureInitialized();
-    // Node.js fs.rm requires force for recursive deletion of non-empty directories
     await this.fs!.rm(path, {
       recursive: options?.recursive ?? false,
       force: options?.recursive ?? false,
@@ -190,38 +159,29 @@ class NodeFileSystem implements FileSystem {
   }
 }
 
-// ============================================================================
-// Deno Implementation
-// ============================================================================
 
 class DenoFileSystem implements FileSystem {
   async readTextFile(path: string): Promise<string> {
-    // @ts-ignore - Deno global
     return await Deno.readTextFile(path);
   }
 
   async readFile(path: string): Promise<Uint8Array> {
-    // @ts-ignore - Deno global
     return await Deno.readFile(path);
   }
 
   async writeTextFile(path: string, data: string): Promise<void> {
-    // @ts-ignore - Deno global
     await Deno.writeTextFile(path, data);
   }
 
   async writeFile(path: string, data: Uint8Array): Promise<void> {
-    // @ts-ignore - Deno global
     await Deno.writeFile(path, data);
   }
 
   async exists(path: string): Promise<boolean> {
     try {
-      // @ts-ignore - Deno global
       await Deno.stat(path);
       return true;
     } catch (error: any) {
-      // @ts-ignore - Deno global
       if (error instanceof Deno.errors.NotFound) {
         return false;
       }
@@ -230,7 +190,6 @@ class DenoFileSystem implements FileSystem {
   }
 
   async stat(path: string): Promise<FileInfo> {
-    // @ts-ignore - Deno global
     const stat = await Deno.stat(path);
     return {
       isFile: stat.isFile,
@@ -242,14 +201,12 @@ class DenoFileSystem implements FileSystem {
   }
 
   async mkdir(path: string, options?: { recursive?: boolean }): Promise<void> {
-    // @ts-ignore - Deno global
     await Deno.mkdir(path, { recursive: options?.recursive ?? false });
   }
 
   async *readDir(
     path: string,
   ): AsyncIterable<{ name: string; isFile: boolean; isDirectory: boolean }> {
-    // @ts-ignore - Deno global
     for await (const entry of Deno.readDir(path)) {
       yield {
         name: entry.name,
@@ -260,35 +217,18 @@ class DenoFileSystem implements FileSystem {
   }
 
   async remove(path: string, options?: { recursive?: boolean }): Promise<void> {
-    // @ts-ignore - Deno global
     await Deno.remove(path, { recursive: options?.recursive ?? false });
   }
 
   async makeTempDir(options?: { prefix?: string }): Promise<string> {
-    // @ts-ignore - Deno global
     return await Deno.makeTempDir({ prefix: options?.prefix });
   }
 }
 
-/**
- * Create a cross-platform filesystem instance for CLI commands and standalone utilities.
- *
- * Use this for CLI commands that don't have access to a RuntimeAdapter context:
- * ```ts
- * const fs = createFileSystem();
- * const content = await fs.readTextFile(path);
- * await fs.writeTextFile(outputPath, result);
- * ```
- *
- * For server/rendering contexts, prefer using adapter.fs directly.
- *
- * Note: For npm package, always uses Node.js fs APIs for cross-platform compatibility.
- */
 export function createFileSystem(): FileSystem {
   if (isDeno) {
     return new DenoFileSystem();
   } else {
-    // Node.js or Bun
     return new NodeFileSystem();
   }
 }

@@ -1,10 +1,13 @@
 import { logger } from "@veryfront/utils";
 
 export class PathNormalizer {
-  constructor(private readonly projectDir?: string) {}
+  constructor(private readonly projectDir?: string) {
+    logger.debug("[PathNormalizer] Initialized", { projectDir });
+  }
 
   normalize(path: string): string {
     let normalized = path;
+    logger.debug("[PathNormalizer] normalize called", { path, projectDir: this.projectDir });
 
     if (this.projectDir && normalized.startsWith(this.projectDir)) {
       normalized = normalized.slice(this.projectDir.length);

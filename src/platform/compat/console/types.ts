@@ -1,8 +1,3 @@
-/**
- * Console styling interface for cross-runtime terminal colors
- *
- * Compatible with both Deno's std/fmt/colors.ts and npm's picocolors
- */
 
 export type ColorFunction = (text: string) => string;
 

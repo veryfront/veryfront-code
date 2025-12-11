@@ -1,12 +1,3 @@
-/**
- * Basic CSS Minification Strategy
- *
- * Fallback strategy for CSS minification when Lightning CSS is not available.
- * Provides basic minification including:
- * - Comment removal
- * - Whitespace reduction
- * - Character optimization
- */
 
 import { logger } from "@veryfront/utils";
 import type {
@@ -18,19 +9,12 @@ import { basicMinify } from "../utils.ts";
 
 export class MinificationStrategy implements CSSOptimizationStrategy {
   readonly name = "basic-minification";
-  readonly priority = 10; // Low priority - used as fallback
+  readonly priority = 10;
 
-  /**
-   * Check if this strategy can process the CSS
-   * This is always available as a fallback
-   */
   canProcess(options: CSSOptimizationOptions): boolean {
     return options.enabled !== false && options.minify !== false;
   }
 
-  /**
-   * Process CSS with basic minification
-   */
   process(
     content: string,
     filename: string,
@@ -42,7 +26,7 @@ export class MinificationStrategy implements CSSOptimizationStrategy {
 
     return Promise.resolve({
       code: minified,
-      sourceMap: undefined, // Basic minification doesn't generate source maps
+      sourceMap: undefined,
     });
   }
 }

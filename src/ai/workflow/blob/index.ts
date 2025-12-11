@@ -1,6 +1,3 @@
-/**
- * Blob Storage Exports
- */
 
 export { type BlobRef, type BlobStorage, type StoreBlobOptions } from "./types.ts";
 export { LocalBlobStorage } from "./local-storage.ts";
