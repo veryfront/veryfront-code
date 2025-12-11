@@ -9,14 +9,15 @@
  * - Middleware execution
  */
 
-import type {
-  AgentConfig,
-  AgentContext,
-  AgentResponse,
-  AgentStatus,
-  Message,
-  StreamToolCall,
-  ToolCall,
+import {
+  type AgentConfig,
+  type AgentContext,
+  type AgentResponse,
+  type AgentStatus,
+  getTextFromParts,
+  type Message,
+  type MessagePart,
+  type ToolCall,
 } from "../types/agent.ts";
 import type { ToolDefinition } from "../types/tool.ts";
 import type { Provider } from "../types/provider.ts";
@@ -71,6 +72,58 @@ type AgentStreamEvent = z.infer<typeof AgentStreamEventSchema>;
 
 const DEFAULT_MAX_TOKENS = 4096;
 const DEFAULT_TEMPERATURE = 0.7;
+
+/**
+ * Provider message format
+ */
+interface ProviderMessage {
+  role: string;
+  content: string;
+  tool_calls?: Array<{
+    id: string;
+    type: string;
+    function: { name: string; arguments: string };
+  }>;
+  tool_call_id?: string;
+}
+
+/**
+ * Convert v5 Message to provider format
+ */
+function convertMessageToProvider(msg: Message): ProviderMessage {
+  const content = getTextFromParts(msg.parts);
+
+  const providerMsg: ProviderMessage = {
+    role: msg.role,
+    content,
+  };
+
+  // Extract tool calls from parts
+  const toolCallParts = msg.parts.filter(
+    (p): p is MessagePart & { type: "tool-call" } => p.type === "tool-call",
+  );
+  if (toolCallParts.length > 0) {
+    providerMsg.tool_calls = toolCallParts.map((tc) => ({
+      id: tc.toolCallId,
+      type: "function",
+      function: {
+        name: tc.toolName,
+        arguments: JSON.stringify(tc.args),
+      },
+    }));
+  }
+
+  // Extract tool result info from parts
+  const toolResultPart = msg.parts.find(
+    (p): p is MessagePart & { type: "tool-result" } => p.type === "tool-result",
+  );
+  if (toolResultPart && msg.role === "tool") {
+    providerMsg.tool_call_id = toolResultPart.toolCallId;
+    providerMsg.content = JSON.stringify(toolResultPart.result);
+  }
+
+  return providerMsg;
+}
 
 export class AgentRuntime {
   private id: string;
@@ -258,43 +311,7 @@ export class AgentRuntime {
           return await provider.complete({
             model,
             system: systemPrompt,
-            messages: currentMessages.map((m) => {
-              const msg: {
-                role: string;
-                content: string;
-                tool_calls?: Array<{
-                  id: string;
-                  type?: string;
-                  function: {
-                    name: string;
-                    arguments: string;
-                  };
-                }>;
-                tool_call_id?: string;
-              } = {
-                role: m.role,
-                content: m.content,
-              };
-
-              // Include tool_calls for assistant messages
-              if (m.role === "assistant" && m.toolCalls) {
-                msg.tool_calls = m.toolCalls.map((tc) => ({
-                  id: tc.id,
-                  type: "function",
-                  function: {
-                    name: tc.name,
-                    arguments: JSON.stringify(tc.arguments),
-                  },
-                }));
-              }
-
-              // Include tool_call_id for tool result messages
-              if (m.role === "tool" && m.toolCallId) {
-                msg.tool_call_id = m.toolCallId;
-              }
-
-              return msg;
-            }),
+            messages: currentMessages.map((m) => convertMessageToProvider(m)),
             tools: tools.length > 0 ? tools : undefined,
             maxTokens: this.config.memory?.maxTokens || DEFAULT_MAX_TOKENS,
             temperature: DEFAULT_TEMPERATURE,
@@ -305,11 +322,26 @@ export class AgentRuntime {
         totalUsage.completionTokens += response.usage.completionTokens;
         totalUsage.totalTokens += response.usage.totalTokens;
 
+        // Build parts array for v5 Message
+        const assistantParts: MessagePart[] = [];
+        if (response.text) {
+          assistantParts.push({ type: "text", text: response.text });
+        }
+        if (response.toolCalls) {
+          for (const tc of response.toolCalls) {
+            assistantParts.push({
+              type: "tool-call",
+              toolCallId: tc.id,
+              toolName: tc.name,
+              args: tc.arguments,
+            });
+          }
+        }
+
         const assistantMessage: Message = {
           id: `msg_${Date.now()}_${step}`,
           role: "assistant",
-          content: response.text,
-          toolCalls: response.toolCalls,
+          parts: assistantParts,
           timestamp: Date.now(),
         };
         currentMessages.push(assistantMessage);
@@ -350,9 +382,12 @@ export class AgentRuntime {
                 const toolResultMessage: Message = {
                   id: `tool_${tc.id}`,
                   role: "tool",
-                  content: JSON.stringify(result),
-                  toolCallId: tc.id,
-                  toolCall,
+                  parts: [{
+                    type: "tool-result",
+                    toolCallId: tc.id,
+                    toolName: tc.name,
+                    result,
+                  }],
                   timestamp: Date.now(),
                 };
                 currentMessages.push(toolResultMessage);
@@ -365,9 +400,12 @@ export class AgentRuntime {
                 const errorMessage: Message = {
                   id: `tool_error_${tc.id}`,
                   role: "tool",
-                  content: `Error: ${toolCall.error}`,
-                  toolCallId: tc.id,
-                  toolCall,
+                  parts: [{
+                    type: "tool-result",
+                    toolCallId: tc.id,
+                    toolName: tc.name,
+                    result: { error: toolCall.error },
+                  }],
                   timestamp: Date.now(),
                 };
                 currentMessages.push(errorMessage);
@@ -396,8 +434,9 @@ export class AgentRuntime {
       this.status = "completed";
       addSpanEvent(loopSpan, "max_steps_reached", { maxSteps });
 
+      const lastMsg = currentMessages[currentMessages.length - 1];
       return {
-        text: currentMessages[currentMessages.length - 1]?.content || "",
+        text: lastMsg ? getTextFromParts(lastMsg.parts) : "",
         messages: currentMessages,
         toolCalls,
         status: this.status,
@@ -444,19 +483,7 @@ export class AgentRuntime {
       const stream = await provider.stream({
         model,
         system: systemPrompt,
-        messages: currentMessages.map((m) => ({
-          role: m.role,
-          content: m.content,
-          tool_calls: m.toolCalls?.map((tc) => ({
-            id: tc.id,
-            type: "function",
-            function: {
-              name: tc.name,
-              arguments: JSON.stringify(tc.arguments),
-            },
-          })),
-          tool_call_id: m.toolCallId,
-        })),
+        messages: currentMessages.map((m) => convertMessageToProvider(m)),
         tools: tools.length > 0 ? tools : undefined,
         maxTokens: this.config.memory?.maxTokens || DEFAULT_MAX_TOKENS,
         temperature: DEFAULT_TEMPERATURE,
@@ -504,9 +531,12 @@ export class AgentRuntime {
         const errorMessage: Message = {
           id: `tool_error_${toolCall.id}`,
           role: "tool",
-          content: `Error: ${errorStr}`,
-          toolCallId: toolCall.id,
-          toolCall,
+          parts: [{
+            type: "tool-result",
+            toolCallId: toolCall.id,
+            toolName: toolCall.name,
+            result: { error: errorStr },
+          }],
           timestamp: Date.now(),
         };
         currentMessages.push(errorMessage);
@@ -641,31 +671,35 @@ export class AgentRuntime {
         }
       }
 
+      // Build v5 parts array
+      const streamParts: MessagePart[] = [];
+      if (accumulatedText) {
+        streamParts.push({ type: "text", text: accumulatedText });
+      }
+      if (streamToolCalls.size > 0) {
+        for (const tc of streamToolCalls.values()) {
+          const { args, error } = parseStreamToolArgs(tc.arguments);
+          if (error) {
+            logger.warn("[AGENT] Failed to parse streamed tool arguments", {
+              toolCallId: tc.id,
+              error,
+            });
+          }
+          streamParts.push({
+            type: "tool-call",
+            toolCallId: tc.id,
+            toolName: tc.name,
+            args,
+          });
+        }
+      }
+
       const assistantMessage: Message = {
         id: `msg_${Date.now()}_${step}`,
         role: "assistant",
-        content: accumulatedText,
+        parts: streamParts,
         timestamp: Date.now(),
       };
-
-      if (streamToolCalls.size > 0) {
-        assistantMessage.toolCalls = Array.from(streamToolCalls.values()).map(
-          (tc): StreamToolCall => {
-            const { args, error } = parseStreamToolArgs(tc.arguments);
-            if (error) {
-              logger.warn("[AGENT] Failed to parse streamed tool arguments", {
-                toolCallId: tc.id,
-                error,
-              });
-            }
-            return {
-              id: tc.id,
-              name: tc.name,
-              arguments: args,
-            };
-          },
-        );
-      }
 
       currentMessages.push(assistantMessage);
       await this.memory.add(assistantMessage);
@@ -729,9 +763,12 @@ export class AgentRuntime {
             const toolResultMessage: Message = {
               id: `tool_${tc.id}`,
               role: "tool",
-              content: JSON.stringify(result),
-              toolCallId: tc.id,
-              toolCall,
+              parts: [{
+                type: "tool-result",
+                toolCallId: tc.id,
+                toolName: tc.name,
+                result,
+              }],
               timestamp: Date.now(),
             };
             currentMessages.push(toolResultMessage);
@@ -749,8 +786,9 @@ export class AgentRuntime {
       break;
     }
 
+    const lastMessage = currentMessages[currentMessages.length - 1];
     return {
-      text: currentMessages[currentMessages.length - 1]?.content || "",
+      text: lastMessage ? getTextFromParts(lastMessage.parts) : "",
       messages: currentMessages,
       toolCalls,
       status: "completed",
@@ -847,7 +885,7 @@ export class AgentRuntime {
   }
 
   /**
-   * Normalize input to messages array
+   * Normalize input to messages array (v5 format with parts)
    */
   private normalizeInput(input: string | Message[]): Message[] {
     if (typeof input === "string") {
@@ -855,7 +893,7 @@ export class AgentRuntime {
         {
           id: `msg_${Date.now()}`,
           role: "user",
-          content: input,
+          parts: [{ type: "text", text: input }],
           timestamp: Date.now(),
         },
       ];

@@ -7,7 +7,7 @@
  * - Summary: Summarize old messages to save tokens
  */
 
-import type { MemoryConfig, Message } from "../types/agent.ts";
+import { getTextFromParts, type MemoryConfig, type Message } from "../types/agent.ts";
 
 /**
  * Memory interface
@@ -112,7 +112,7 @@ export class ConversationMemory implements Memory {
   private estimateTokens(messages: Message[]): number {
     // Rough estimation: ~4 characters per token
     const totalChars = messages.reduce(
-      (sum, msg) => sum + msg.content.length,
+      (sum, msg) => sum + getTextFromParts(msg.parts).length,
       0,
     );
     return Math.ceil(totalChars / 4);
@@ -161,7 +161,7 @@ export class BufferMemory implements Memory {
 
   private estimateTokens(messages: Message[]): number {
     const totalChars = messages.reduce(
-      (sum, msg) => sum + msg.content.length,
+      (sum, msg) => sum + getTextFromParts(msg.parts).length,
       0,
     );
     return Math.ceil(totalChars / 4);
@@ -199,7 +199,7 @@ export class SummaryMemory implements Memory {
         {
           id: "summary",
           role: "system",
-          content: `Previous conversation summary:\n${this.summary}`,
+          parts: [{ type: "text", text: `Previous conversation summary:\n${this.summary}` }],
           timestamp: Date.now(),
         },
         ...this.messages,
@@ -232,7 +232,7 @@ export class SummaryMemory implements Memory {
     // Simple summarization (in production, use LLM)
     const topics = toSummarize
       .filter((m) => m.role === "user")
-      .map((m) => m.content.substring(0, 50))
+      .map((m) => getTextFromParts(m.parts).substring(0, 50))
       .join("; ");
 
     this.summary = `Discussed: ${topics}`;
@@ -241,7 +241,7 @@ export class SummaryMemory implements Memory {
   }
 
   private estimateTokens(messages: Message[]): number {
-    const totalChars = messages.reduce((sum, msg) => sum + msg.content.length, 0) +
+    const totalChars = messages.reduce((sum, msg) => sum + getTextFromParts(msg.parts).length, 0) +
       this.summary.length;
     return Math.ceil(totalChars / 4);
   }
