@@ -1,8 +1,10 @@
 import { describe, it } from "std/testing/bdd.ts";
 import {
   type AgentConfig,
+  getToolArguments,
   type Message,
   type MessagePart,
+  type ToolCallPart,
 } from "../../src/ai/types/agent.ts";
 
 type Provider = {
@@ -126,7 +128,7 @@ describe("AgentRuntime streaming JSON buffering", () => {
     assert(toolCallParts && toolCallParts.length === 1, "assistant tool-call parts captured");
     const tc = toolCallParts![0]!;
     assertEquals(tc.toolName, "testTool");
-    assertEquals(tc.args, { x: 1 });
+    assertEquals(getToolArguments(tc as ToolCallPart), { x: 1 });
     // Restore env if we modified it
     if (restoreEnv) {
       restoreEnv();
