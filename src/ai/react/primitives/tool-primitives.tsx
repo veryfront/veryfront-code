@@ -50,7 +50,7 @@ export interface ToolInvocationProps extends React.HTMLAttributes<HTMLDivElement
 export const ToolInvocation = React.forwardRef<
   HTMLDivElement,
   ToolInvocationProps
->(({ className, name, input, output, state, errorText, dynamic, children, ...props }, ref) => {
+>(({ className, name, input, output: _output, state, errorText, dynamic, children, ...props }, ref) => {
   return (
     <div
       ref={ref}
