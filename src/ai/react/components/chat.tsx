@@ -30,10 +30,12 @@ function getTextContent(message: UIMessage): string {
 
 /**
  * Get tool parts from UIMessage
+ * Matches tool-${toolName} pattern (AI SDK v5) and dynamic-tool
  */
 function getToolParts(message: UIMessage): (ToolUIPart | DynamicToolUIPart)[] {
   return message.parts.filter(
-    (p): p is ToolUIPart | DynamicToolUIPart => p.type === "tool-call" || p.type === "dynamic-tool",
+    (p): p is ToolUIPart | DynamicToolUIPart =>
+      p.type.startsWith("tool-") || p.type === "dynamic-tool",
   );
 }
 

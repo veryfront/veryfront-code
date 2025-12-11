@@ -129,12 +129,36 @@ export interface AgentContext {
 }
 
 /**
+ * Tool call part (AI SDK v5 format)
+ * Uses `tool-${toolName}` pattern (e.g., "tool-weather")
+ */
+export interface ToolCallPart {
+  type: `tool-${string}`;
+  toolCallId: string;
+  toolName: string;
+  args: Record<string, unknown>;
+}
+
+/**
+ * Tool result part (AI SDK v5 format)
+ */
+export interface ToolResultPart {
+  type: "tool-result";
+  toolCallId: string;
+  toolName: string;
+  result: unknown;
+}
+
+/**
  * Message part types (AI SDK v5 format)
+ * Tool calls use `tool-${toolName}` pattern (e.g., "tool-weather")
+ * Legacy "tool-call" type also supported for backwards compatibility
  */
 export type MessagePart =
   | { type: "text"; text: string }
+  | ToolCallPart
   | { type: "tool-call"; toolCallId: string; toolName: string; args: Record<string, unknown> }
-  | { type: "tool-result"; toolCallId: string; toolName: string; result: unknown };
+  | ToolResultPart;
 
 /**
  * Message in a conversation (AI SDK v5 format)

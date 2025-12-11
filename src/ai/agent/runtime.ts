@@ -18,6 +18,8 @@ import {
   type Message,
   type MessagePart,
   type ToolCall,
+  type ToolCallPart,
+  type ToolResultPart,
 } from "../types/agent.ts";
 import type { ToolDefinition } from "../types/tool.ts";
 import type { Provider } from "../types/provider.ts";
@@ -101,8 +103,12 @@ function convertMessageToProvider(msg: Message): ProviderMessage {
   };
 
   // Extract tool calls from parts
+  // AI SDK v5 uses tool-${toolName} pattern (e.g., "tool-weather")
+  // Also support legacy "tool-call" for backwards compatibility
+  // Exclude "tool-result" which also starts with "tool-"
   const toolCallParts = msg.parts.filter(
-    (p): p is MessagePart & { type: "tool-call" } => p.type === "tool-call",
+    (p): p is ToolCallPart | (MessagePart & { type: "tool-call" }) =>
+      p.type === "tool-call" || (p.type.startsWith("tool-") && p.type !== "tool-result"),
   );
   if (toolCallParts.length > 0) {
     providerMsg.tool_calls = toolCallParts.map((tc) => ({
@@ -118,7 +124,7 @@ function convertMessageToProvider(msg: Message): ProviderMessage {
 
   // Extract tool result info from parts
   const toolResultPart = msg.parts.find(
-    (p): p is MessagePart & { type: "tool-result" } => p.type === "tool-result",
+    (p): p is ToolResultPart => p.type === "tool-result",
   );
   if (toolResultPart && msg.role === "tool") {
     providerMsg.tool_call_id = toolResultPart.toolCallId;
@@ -335,8 +341,9 @@ export class AgentRuntime {
         }
         if (response.toolCalls) {
           for (const tc of response.toolCalls) {
+            // Use AI SDK v5 tool-${toolName} pattern
             assistantParts.push({
-              type: "tool-call",
+              type: `tool-${tc.name}`,
               toolCallId: tc.id,
               toolName: tc.name,
               args: tc.arguments,
@@ -709,8 +716,9 @@ export class AgentRuntime {
               error,
             });
           }
+          // Use AI SDK v5 tool-${toolName} pattern
           streamParts.push({
-            type: "tool-call",
+            type: `tool-${tc.name}`,
             toolCallId: tc.id,
             toolName: tc.name,
             args,
