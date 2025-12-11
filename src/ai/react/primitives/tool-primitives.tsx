@@ -70,7 +70,7 @@ export const ToolInvocation = React.forwardRef<
         {dynamic && <span data-tool-dynamic="">[dynamic]</span>}
       </div>
 
-      {input && (
+      {input !== undefined && (
         <div data-tool-input="">
           <pre>{JSON.stringify(input, null, 2)}</pre>
         </div>
@@ -139,12 +139,20 @@ export interface ToolListProps extends React.HTMLAttributes<HTMLDivElement> {
 }
 
 /**
+ * Check if a part is a dynamic tool
+ */
+function isDynamicTool(tool: ToolPart): tool is DynamicToolUIPart {
+  return tool.type === "dynamic-tool";
+}
+
+/**
  * ToolList - Display list of tool calls (v5 compatible)
  *
  * @example
  * ```tsx
+ * // Filter tool parts - matches tool-${toolName} pattern (AI SDK v5) and dynamic-tool
  * const toolParts = message.parts.filter(
- *   p => p.type === 'tool-call' || p.type === 'dynamic-tool'
+ *   p => p.type.startsWith('tool-') || p.type === 'dynamic-tool'
  * );
  *
  * <ToolList
@@ -181,7 +189,7 @@ export const ToolList = React.forwardRef<HTMLDivElement, ToolListProps>(
                 input={tool.input}
                 state={tool.state}
                 errorText={tool.errorText}
-                dynamic={tool.type === "dynamic-tool"}
+                dynamic={isDynamicTool(tool)}
               >
                 {tool.output !== undefined && <ToolResult output={tool.output} />}
               </ToolInvocation>

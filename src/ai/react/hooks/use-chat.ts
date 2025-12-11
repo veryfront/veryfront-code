@@ -41,12 +41,13 @@ export type ToolState =
 
 /**
  * Tool UI part - AI SDK v5 compatible
+ * Uses `tool-${toolName}` type pattern for static tools (e.g., "tool-weather")
  * Generic type allows typed tool inputs/outputs
  */
-export interface ToolUIPart<INPUT = unknown, OUTPUT = unknown> {
-  type: "tool-call";
+export interface ToolUIPart<NAME extends string = string, INPUT = unknown, OUTPUT = unknown> {
+  type: `tool-${NAME}`;
   toolCallId: string;
-  toolName: string;
+  toolName: NAME;
   state: ToolState;
   input?: INPUT;
   output?: OUTPUT;
@@ -226,17 +227,19 @@ export function useChat(options: UseChatOptions): UseChatResult {
     pendingToolOutputsRef.current.set(output.toolCallId, output);
 
     // Update the tool part state in messages
+    // Match tool-${toolName} pattern (AI SDK v5) or dynamic-tool
     setMessages((prev) =>
       prev.map((msg) => ({
         ...msg,
         parts: msg.parts.map((part) => {
-          if (part.type === "tool-call" && part.toolCallId === output.toolCallId) {
+          const isToolPart = part.type.startsWith("tool-") || part.type === "dynamic-tool";
+          if (isToolPart && "toolCallId" in part && part.toolCallId === output.toolCallId) {
             return {
               ...part,
               state: output.state || "output-available",
               output: output.output,
               errorText: output.errorText,
-            } as ToolUIPart;
+            };
           }
           return part;
         }),
@@ -523,16 +526,16 @@ async function handleStreamingResponse(
           errorText: tool.error,
         });
       } else {
-        // Static tools use "tool-call" part type
+        // Static tools use "tool-${toolName}" part type (AI SDK v5)
         parts.push({
-          type: "tool-call",
+          type: `tool-${tool.toolName}` as const,
           toolCallId: tool.toolCallId,
           toolName: tool.toolName,
           state: tool.state,
           input: tool.input,
           output: tool.output,
           errorText: tool.error,
-        });
+        } as ToolUIPart);
       }
     }
 
@@ -663,14 +666,24 @@ async function handleStreamingResponse(
                   },
                 });
 
-                // Add tool-call or dynamic-tool part based on tool type
-                messageParts.push({
-                  type: toolCall.dynamic ? "dynamic-tool" : "tool-call",
-                  toolCallId,
-                  toolName: toolCall.toolName,
-                  state: "input-available",
-                  input: toolCall.input,
-                });
+                // Add tool-${toolName} or dynamic-tool part based on tool type (AI SDK v5)
+                messageParts.push(
+                  toolCall.dynamic
+                    ? {
+                      type: "dynamic-tool",
+                      toolCallId,
+                      toolName: toolCall.toolName,
+                      state: "input-available" as const,
+                      input: toolCall.input,
+                    }
+                    : {
+                      type: `tool-${toolCall.toolName}` as const,
+                      toolCallId,
+                      toolName: toolCall.toolName,
+                      state: "input-available" as const,
+                      input: toolCall.input,
+                    } as ToolUIPart,
+                );
 
                 onUpdate?.(buildCurrentParts(), messageId);
               }
