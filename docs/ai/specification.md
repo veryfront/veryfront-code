@@ -1234,7 +1234,7 @@ function Messages({ messages }) {
                 : 'bg-gray-200 text-gray-900'
             )}
           >
-            {msg.content}
+            {getTextFromParts(msg.parts)}
           </div>
         </MessageItem>
       ))}
@@ -1242,6 +1242,8 @@ function Messages({ messages }) {
   );
 }
 ```
+
+> **Note**: Import `getTextFromParts` from `veryfront/ai` to extract text content from the v5 parts-based message format.
 
 #### InputBox
 
@@ -1309,7 +1311,7 @@ export function ChatMessage({ message }) {
   return (
     <Message role={message.role}>
       <MessageRole>{message.role}</MessageRole>
-      <MessageContent>{message.content}</MessageContent>
+      <MessageContent message={message} />
     </Message>
   );
 }
@@ -1626,9 +1628,7 @@ export default function MixedChat() {
       {/* Layer 2: Custom styled messages */}
       <MessageList>
         {chat.messages.map((msg) => (
-          <MessageItem key={msg.id} role={msg.role} className="my-custom-message">
-            {msg.content}
-          </MessageItem>
+          <MessageItem key={msg.id} message={msg} className="my-custom-message" />
         ))}
       </MessageList>
 
@@ -1680,9 +1680,7 @@ export default function AdvancedChat() {
     <div>
       <MessageList>
         {chat.messages.map((msg) => (
-          <MessageItem key={msg.id} className="custom-styling">
-            {msg.content}
-          </MessageItem>
+          <MessageItem key={msg.id} message={msg} className="custom-styling" />
         ))}
       </MessageList>
 
@@ -2246,9 +2244,7 @@ export default function ChatPage() {
     <ChatContainer className="your-design-system-container">
       <MessageList>
         {chat.messages.map((msg) => (
-          <MessageItem key={msg.id} className="your-design-system-message">
-            {msg.content}
-          </MessageItem>
+          <MessageItem key={msg.id} message={msg} className="your-design-system-message" />
         ))}
       </MessageList>
     </ChatContainer>

@@ -359,9 +359,7 @@ import { useChat } from 'veryfront/ai/react';
 <ChatContainer className="your-styles">
   <MessageList>
     {messages.map((msg) => (
-      <MessageItem key={msg.id} className="your-message-styles">
-        {msg.content}
-      </MessageItem>
+      <MessageItem key={msg.id} message={msg} className="your-message-styles" />
     ))}
   </MessageList>
 </ChatContainer>
@@ -641,7 +639,7 @@ import { useChat } from 'veryfront/ai/react';
 <ChatContainer className="your-design-system">
   <MessageList>
     {messages.map((msg) => (
-      <MessageItem className="your-styles">{msg.content}</MessageItem>
+      <MessageItem key={msg.id} message={msg} className="your-styles" />
     ))}
   </MessageList>
 </ChatContainer>
