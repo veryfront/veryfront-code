@@ -142,17 +142,33 @@ export class MessageTransformer {
 
   /**
    * Normalize input to messages array.
+   * Handles both v4 format (content string) and v5 format (parts array).
    */
   normalizeInput(input: string | Message[]): Message[] {
     if (typeof input === "string") {
       return [this.createUserMessage(input)];
     }
 
-    return input.map((msg) => ({
-      ...msg,
-      id: msg.id || `msg_${Date.now()}`,
-      timestamp: msg.timestamp || Date.now(),
-    }));
+    return input.map((msg) => {
+      // Handle v5 UIMessage format with parts array
+      const msgAny = msg as unknown as Record<string, unknown>;
+      let content = msg.content;
+
+      if (!content && Array.isArray(msgAny.parts)) {
+        // Extract text from parts array (v5 format)
+        content = (msgAny.parts as Array<{ type: string; text?: string }>)
+          .filter((p) => p.type === "text" && p.text)
+          .map((p) => p.text)
+          .join("");
+      }
+
+      return {
+        ...msg,
+        content: content || "",
+        id: msg.id || `msg_${Date.now()}`,
+        timestamp: msg.timestamp || Date.now(),
+      };
+    });
   }
 }
 
