@@ -149,9 +149,9 @@ export const Message = React.forwardRef<HTMLDivElement, MessageProps>(
             }
           })}
 
-          {showTimestamp && (
+          {showTimestamp && message.createdAt && (
             <div className="text-xs opacity-60 mt-1">
-              {new Date().toLocaleTimeString()}
+              {new Date(message.createdAt).toLocaleTimeString()}
             </div>
           )}
         </div>
