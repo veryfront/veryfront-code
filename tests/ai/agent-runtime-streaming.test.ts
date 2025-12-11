@@ -1,7 +1,6 @@
 import { describe, it } from "std/testing/bdd.ts";
 import {
   type AgentConfig,
-  getTextFromParts,
   type Message,
   type MessagePart,
 } from "../../src/ai/types/agent.ts";
