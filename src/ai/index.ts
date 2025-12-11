@@ -53,7 +53,7 @@ export { agent } from "./agent/factory.ts";
 /**
  * Create a tool
  */
-export { tool, dynamicTool } from "./utils/tool.ts";
+export { dynamicTool, tool } from "./utils/tool.ts";
 
 export type { DynamicToolConfig } from "./utils/tool.ts";
 

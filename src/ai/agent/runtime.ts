@@ -229,7 +229,9 @@ export class AgentRuntime {
           this.status = "streaming";
 
           // Send start event (UI Message Stream Protocol v5)
-          const messageId = `msg-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+          const messageId = `msg-${Date.now().toString(36)}-${
+            Math.random().toString(36).slice(2, 8)
+          }`;
           const startEvent = JSON.stringify({ type: "start", messageId });
           controller.enqueue(encoder.encode(`data: ${startEvent}\n\n`));
 
