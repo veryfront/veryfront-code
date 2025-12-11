@@ -322,7 +322,9 @@ export function useChat(options: UseChatOptions): UseChatResult {
                   parts,
                 }]);
               } else {
-                setMessages((prev) => prev.map((m) => m.id === currentMessageId ? { ...m, parts } : m));
+                setMessages((prev) =>
+                  prev.map((m) => m.id === currentMessageId ? { ...m, parts } : m)
+                );
               }
             },
             onToolCall: options.onToolCall,
