@@ -127,8 +127,12 @@ export function agent(config: AgentConfig): Agent {
       onToolCall?: (toolCall: ToolCall) => void;
       onChunk?: (chunk: string) => void;
     }): Promise<AgentStreamResult> {
-      const inputMessages = input.input
-        ? [{ role: "user" as const, content: input.input }]
+      const inputMessages: Message[] = input.input
+        ? [{
+          id: `msg_${Date.now()}`,
+          role: "user" as const,
+          parts: [{ type: "text", text: input.input }],
+        }]
         : input.messages || [];
 
       const stream = await runtime.stream(inputMessages, input.context, {

@@ -129,35 +129,41 @@ export interface AgentContext {
 }
 
 /**
- * Message in a conversation
+ * Message part types (AI SDK v5 format)
+ */
+export type MessagePart =
+  | { type: "text"; text: string }
+  | { type: "tool-call"; toolCallId: string; toolName: string; args: Record<string, unknown> }
+  | { type: "tool-result"; toolCallId: string; toolName: string; result: unknown };
+
+/**
+ * Message in a conversation (AI SDK v5 format)
  */
 export interface Message {
   /** Message ID */
-  id?: string;
+  id: string;
 
   /** Message role */
   role: "user" | "assistant" | "system" | "tool";
 
-  /** Message content */
-  content: string;
-
-  /** Tool calls made by assistant (for assistant messages) */
-  toolCalls?: StreamToolCall[];
-
-  /** Tool call ID (for tool result messages) */
-  toolCallId?: string;
-
-  /** Tool call information (for tool messages) */
-  toolCall?: ToolCall;
-
-  /** Tool result (for tool response messages) */
-  toolResult?: unknown;
+  /** Message parts (v5 format) */
+  parts: MessagePart[];
 
   /** Timestamp */
   timestamp?: number;
 
   /** Additional metadata */
   metadata?: Record<string, unknown>;
+}
+
+/**
+ * Helper to extract text content from message parts
+ */
+export function getTextFromParts(parts: MessagePart[]): string {
+  return parts
+    .filter((p): p is MessagePart & { type: "text" } => p.type === "text")
+    .map((p) => p.text)
+    .join("");
 }
 
 /**

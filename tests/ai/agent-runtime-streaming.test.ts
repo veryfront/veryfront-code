@@ -1,5 +1,9 @@
 import { describe, it } from "std/testing/bdd.ts";
-import type { AgentConfig, Message, StreamToolCall } from "../../src/ai/types/agent.ts";
+import {
+  type AgentConfig,
+  type Message,
+  type MessagePart,
+} from "../../src/ai/types/agent.ts";
 
 type Provider = {
   name: string;
@@ -22,7 +26,9 @@ function assertEquals<T>(actual: T, expected: T, message?: string): void {
     ? JSON.stringify(actual) === JSON.stringify(expected)
     : actual === expected;
   if (!pass) {
-    throw new Error(message || `Assertion failed: ${JSON.stringify(actual)} !== ${JSON.stringify(expected)}`);
+    throw new Error(
+      message || `Assertion failed: ${JSON.stringify(actual)} !== ${JSON.stringify(expected)}`,
+    );
   }
 }
 
@@ -95,7 +101,7 @@ describe("AgentRuntime streaming JSON buffering", () => {
     ]);
 
     const runtime = new AgentRuntime("test", baseConfig);
-    const messages: Message[] = [{ id: "m1", role: "user", content: "hi" }];
+    const messages: Message[] = [{ id: "m1", role: "user", parts: [{ type: "text", text: "hi" }] }];
     const controller = {
       enqueue: (_chunk: Uint8Array) => {},
       close: () => {},
@@ -112,12 +118,15 @@ describe("AgentRuntime streaming JSON buffering", () => {
     );
 
     assert(response.text.includes("Hello"), "should include streamed content");
-    // No tool execution because finishReason=stop, but assistant message should carry parsed toolCalls
+    // No tool execution because finishReason=stop, but assistant message should carry parsed tool-call parts
     const assistant = response.messages.find((m) => m.role === "assistant");
-    assert(assistant?.toolCalls && assistant.toolCalls.length === 1, "assistant toolCalls captured");
-    const tc = assistant!.toolCalls![0]! as StreamToolCall;
-    assertEquals(tc.name, "testTool");
-    assertEquals(tc.arguments, { x: 1 });
+    const toolCallParts = assistant?.parts.filter((p): p is MessagePart & { type: "tool-call" } =>
+      p.type === "tool-call"
+    );
+    assert(toolCallParts && toolCallParts.length === 1, "assistant tool-call parts captured");
+    const tc = toolCallParts![0]!;
+    assertEquals(tc.toolName, "testTool");
+    assertEquals(tc.args, { x: 1 });
     // Restore env if we modified it
     if (restoreEnv) {
       restoreEnv();
