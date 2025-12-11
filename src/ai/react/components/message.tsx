@@ -112,7 +112,7 @@ export const Message = React.forwardRef<HTMLDivElement, MessageProps>(
                 }
                 return (
                   <div key={key} className="text-sm italic opacity-70 my-2 pl-2 border-l-2">
-                    {part.reasoning}
+                    {part.text}
                   </div>
                 );
 
