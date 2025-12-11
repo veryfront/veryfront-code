@@ -670,19 +670,19 @@ async function handleStreamingResponse(
                 messageParts.push(
                   toolCall.dynamic
                     ? {
-                        type: "dynamic-tool",
-                        toolCallId,
-                        toolName: toolCall.toolName,
-                        state: "input-available" as const,
-                        input: toolCall.input,
-                      }
+                      type: "dynamic-tool",
+                      toolCallId,
+                      toolName: toolCall.toolName,
+                      state: "input-available" as const,
+                      input: toolCall.input,
+                    }
                     : {
-                        type: `tool-${toolCall.toolName}` as const,
-                        toolCallId,
-                        toolName: toolCall.toolName,
-                        state: "input-available" as const,
-                        input: toolCall.input,
-                      } as ToolUIPart,
+                      type: `tool-${toolCall.toolName}` as const,
+                      toolCallId,
+                      toolName: toolCall.toolName,
+                      state: "input-available" as const,
+                      input: toolCall.input,
+                    } as ToolUIPart,
                 );
 
                 onUpdate?.(buildCurrentParts(), messageId);
