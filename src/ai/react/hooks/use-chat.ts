@@ -98,6 +98,8 @@ export interface UIMessage {
   role: "system" | "user" | "assistant";
   parts: UIMessagePart[];
   metadata?: Record<string, unknown>;
+  /** Message creation timestamp (optional) */
+  createdAt?: Date | string;
 }
 
 /**

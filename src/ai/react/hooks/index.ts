@@ -8,6 +8,7 @@
 
 export { useChat } from "./use-chat.ts";
 export type {
+  DynamicToolUIPart,
   OnToolCallArg,
   ReasoningUIPart,
   TextUIPart,
