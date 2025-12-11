@@ -7,7 +7,7 @@
  */
 
 import * as React from "react";
-import type { ToolState, ToolUIPart, DynamicToolUIPart } from "../hooks/index.ts";
+import type { DynamicToolUIPart, ToolState, ToolUIPart } from "../hooks/index.ts";
 
 export interface ToolInvocationProps extends React.HTMLAttributes<HTMLDivElement> {
   /** Tool name */

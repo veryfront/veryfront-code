@@ -14,7 +14,7 @@ import {
   SubmitButton,
 } from "../primitives/index.ts";
 import { useVoiceInput } from "../hooks/use-voice-input.ts";
-import type { UIMessage, UIMessagePart, ToolUIPart, DynamicToolUIPart } from "../hooks/use-chat.ts";
+import type { DynamicToolUIPart, ToolUIPart, UIMessage, UIMessagePart } from "../hooks/use-chat.ts";
 import { type ChatTheme, cn, defaultChatTheme, mergeThemes } from "./theme.ts";
 import { Markdown } from "./markdown.tsx";
 
@@ -33,8 +33,7 @@ function getTextContent(message: UIMessage): string {
  */
 function getToolParts(message: UIMessage): (ToolUIPart | DynamicToolUIPart)[] {
   return message.parts.filter(
-    (p): p is ToolUIPart | DynamicToolUIPart =>
-      p.type === "tool-call" || p.type === "dynamic-tool"
+    (p): p is ToolUIPart | DynamicToolUIPart => p.type === "tool-call" || p.type === "dynamic-tool",
   );
 }
 
@@ -207,29 +206,31 @@ export const Chat = React.forwardRef<HTMLDivElement, ChatProps>(
                       {toolParts.length > 0 && (
                         <div className="mt-2 space-y-1">
                           {toolParts.map((tool) =>
-                            renderTool ? (
-                              <React.Fragment key={tool.toolCallId}>
-                                {renderTool(tool)}
-                              </React.Fragment>
-                            ) : (
-                              <div
-                                key={tool.toolCallId}
-                                className={cn(
-                                  "text-xs rounded px-2 py-1",
-                                  tool.type === "dynamic-tool"
-                                    ? "bg-blue-50 dark:bg-blue-900/20"
-                                    : "bg-neutral-100 dark:bg-neutral-800"
-                                )}
-                              >
-                                <span className="font-mono">{tool.toolName}</span>
-                                <span className="ml-2 opacity-70">[{tool.state}]</span>
-                                {tool.errorText && (
-                                  <div className="text-red-600 dark:text-red-400 mt-1">
-                                    {tool.errorText}
-                                  </div>
-                                )}
-                              </div>
-                            )
+                            renderTool
+                              ? (
+                                <React.Fragment key={tool.toolCallId}>
+                                  {renderTool(tool)}
+                                </React.Fragment>
+                              )
+                              : (
+                                <div
+                                  key={tool.toolCallId}
+                                  className={cn(
+                                    "text-xs rounded px-2 py-1",
+                                    tool.type === "dynamic-tool"
+                                      ? "bg-blue-50 dark:bg-blue-900/20"
+                                      : "bg-neutral-100 dark:bg-neutral-800",
+                                  )}
+                                >
+                                  <span className="font-mono">{tool.toolName}</span>
+                                  <span className="ml-2 opacity-70">[{tool.state}]</span>
+                                  {tool.errorText && (
+                                    <div className="text-red-600 dark:text-red-400 mt-1">
+                                      {tool.errorText}
+                                    </div>
+                                  )}
+                                </div>
+                              )
                           )}
                         </div>
                       )}

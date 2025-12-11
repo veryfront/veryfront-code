@@ -124,9 +124,7 @@ export const Message = React.forwardRef<HTMLDivElement, MessageProps>(
                   <div key={key} className="text-xs bg-gray-100 rounded p-2 my-2">
                     <span className="font-mono">{part.toolName}</span>
                     <span className="ml-2 text-gray-500">[{part.state}]</span>
-                    {part.errorText && (
-                      <div className="text-red-600 mt-1">{part.errorText}</div>
-                    )}
+                    {part.errorText && <div className="text-red-600 mt-1">{part.errorText}</div>}
                   </div>
                 );
 
@@ -138,9 +136,7 @@ export const Message = React.forwardRef<HTMLDivElement, MessageProps>(
                   <div key={key} className="text-xs bg-blue-50 rounded p-2 my-2">
                     <span className="font-mono">{part.toolName}</span>
                     <span className="ml-2 text-blue-500">[dynamic: {part.state}]</span>
-                    {part.errorText && (
-                      <div className="text-red-600 mt-1">{part.errorText}</div>
-                    )}
+                    {part.errorText && <div className="text-red-600 mt-1">{part.errorText}</div>}
                   </div>
                 );
 
