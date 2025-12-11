@@ -483,7 +483,7 @@ export class AgentRuntime {
     };
 
     for (let step = 0; step < maxSteps; step++) {
-      // Send start-step event (AI SDK v5 UI Message Stream Protocol)
+      // Send start-step event (Veryfront extension, not part of standard AI SDK v5 protocol)
       const startStepEvent = JSON.stringify({ type: "start-step" });
       controller.enqueue(encoder.encode(`data: ${startStepEvent}\n\n`));
 
@@ -811,7 +811,7 @@ export class AgentRuntime {
           }
         }
 
-        // Send finish-step event (AI SDK v5 UI Message Stream Protocol)
+        // Send finish-step event (Veryfront extension, not part of standard AI SDK v5 protocol)
         const finishStepToolsEvent = JSON.stringify({ type: "finish-step" });
         controller.enqueue(encoder.encode(`data: ${finishStepToolsEvent}\n\n`));
 
@@ -819,7 +819,7 @@ export class AgentRuntime {
         continue;
       }
 
-      // Send finish-step event (AI SDK v5 UI Message Stream Protocol)
+      // Send finish-step event (Veryfront extension, not part of standard AI SDK v5 protocol)
       const finishStepEvent = JSON.stringify({ type: "finish-step" });
       controller.enqueue(encoder.encode(`data: ${finishStepEvent}\n\n`));
 

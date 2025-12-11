@@ -503,6 +503,7 @@ async function handleStreamingResponse(
           state: tool.state,
           input: tool.input,
           output: tool.output,
+          errorText: tool.error,
         });
       } else {
         // Static tools use "tool-call" part type
@@ -686,6 +687,9 @@ async function handleStreamingResponse(
               if (toolCall) {
                 toolCall.state = "output-error";
                 toolCall.error = parsed.errorText;
+                if (parsed.dynamic === true) {
+                  toolCall.dynamic = true;
+                }
                 onUpdate?.(buildCurrentParts(), messageId);
               }
               break;
@@ -698,6 +702,9 @@ async function handleStreamingResponse(
               if (toolCall) {
                 toolCall.state = "output-error";
                 toolCall.error = parsed.errorText;
+                if (parsed.dynamic === true) {
+                  toolCall.dynamic = true;
+                }
                 onUpdate?.(buildCurrentParts(), messageId);
               }
               break;

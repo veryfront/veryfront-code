@@ -154,8 +154,9 @@ export interface DynamicToolConfig {
   description: string;
 
   /**
-   * Input schema - can be a Zod schema (z.unknown(), z.any(), or z.object({}))
-   * A schema is still required for validation even though types are unknown
+   * Input schema - any Zod schema is accepted. For dynamic tools where the input shape
+   * is truly unknown at compile time, it is recommended to use z.unknown(), z.any(),
+   * or z.object({}). A schema is still required for validation even though types are unknown.
    */
   inputSchema: unknown;
 
@@ -267,8 +268,8 @@ export function dynamicTool(config: DynamicToolConfig): Tool<unknown, unknown> {
     inputSchema: config.inputSchema as any,
     inputSchemaJson,
     execute: async (input: unknown, context?: ToolExecutionContext) => {
-      // For dynamic tools, we do minimal validation
-      // The tool implementation is responsible for runtime validation
+      // For dynamic tools, we skip input validation entirely.
+      // The tool implementation is responsible for runtime validation.
       const result = await config.execute(input, context);
 
       // Apply output transformation if provided
