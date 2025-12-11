@@ -110,7 +110,8 @@ function convertMessageToProvider(msg: Message): ProviderMessage {
       type: "function",
       function: {
         name: tc.toolName,
-        arguments: JSON.stringify(tc.args),
+        // Support both 'args' (runtime-generated) and 'input' (useChat-generated) field names
+        arguments: JSON.stringify(tc.args || (tc as unknown as { input: unknown }).input || {}),
       },
     }));
   }
