@@ -88,7 +88,9 @@ interface ProviderMessage {
 }
 
 /**
- * Convert v5 Message to provider format
+ * Convert v5 Message to provider format.
+ * Empty parts array results in empty content string, which is valid for
+ * providers (e.g., assistant message with only tool calls, no text).
  */
 function convertMessageToProvider(msg: Message): ProviderMessage {
   const content = getTextFromParts(msg.parts);
