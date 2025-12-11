@@ -14,8 +14,7 @@ import {
   SubmitButton,
 } from "../primitives/index.ts";
 import { useVoiceInput } from "../hooks/use-voice-input.ts";
-import type { ToolCall } from "../../types/agent.ts";
-import type { UIMessage, UIMessagePart } from "../hooks/use-chat.ts";
+import type { UIMessage, UIMessagePart, ToolUIPart, DynamicToolUIPart } from "../hooks/use-chat.ts";
 import { type ChatTheme, cn, defaultChatTheme, mergeThemes } from "./theme.ts";
 import { Markdown } from "./markdown.tsx";
 
@@ -27,6 +26,16 @@ function getTextContent(message: UIMessage): string {
     .filter((p): p is UIMessagePart & { type: "text" } => p.type === "text")
     .map((p) => p.text)
     .join("");
+}
+
+/**
+ * Get tool parts from UIMessage
+ */
+function getToolParts(message: UIMessage): (ToolUIPart | DynamicToolUIPart)[] {
+  return message.parts.filter(
+    (p): p is ToolUIPart | DynamicToolUIPart =>
+      p.type === "tool-call" || p.type === "dynamic-tool"
+  );
 }
 
 export interface ChatProps {
@@ -81,8 +90,8 @@ export interface ChatProps {
   /** Custom message renderer */
   renderMessage?: (message: UIMessage) => React.ReactNode;
 
-  /** Custom tool renderer */
-  renderTool?: (toolCall: ToolCall) => React.ReactNode;
+  /** Custom tool renderer (v5 format) */
+  renderTool?: (tool: ToolUIPart | DynamicToolUIPart) => React.ReactNode;
 
   /** Enable multiline input */
   multiline?: boolean;
@@ -124,7 +133,7 @@ export const Chat = React.forwardRef<HTMLDivElement, ChatProps>(
       className,
       theme: userTheme,
       renderMessage,
-      renderTool: _renderTool,
+      renderTool,
       multiline = false,
     },
     ref,
@@ -170,6 +179,7 @@ export const Chat = React.forwardRef<HTMLDivElement, ChatProps>(
           <div className="max-w-2xl mx-auto px-4 py-4 space-y-2">
             {messages.map((msg) => {
               const content = getTextContent(msg);
+              const toolParts = getToolParts(msg);
               return renderMessage
                 ? <React.Fragment key={msg.id}>{renderMessage(msg)}</React.Fragment>
                 : (
@@ -193,6 +203,36 @@ export const Chat = React.forwardRef<HTMLDivElement, ChatProps>(
                             {content}
                           </Markdown>
                         )}
+                      {/* Render tool parts (v5) */}
+                      {toolParts.length > 0 && (
+                        <div className="mt-2 space-y-1">
+                          {toolParts.map((tool) =>
+                            renderTool ? (
+                              <React.Fragment key={tool.toolCallId}>
+                                {renderTool(tool)}
+                              </React.Fragment>
+                            ) : (
+                              <div
+                                key={tool.toolCallId}
+                                className={cn(
+                                  "text-xs rounded px-2 py-1",
+                                  tool.type === "dynamic-tool"
+                                    ? "bg-blue-50 dark:bg-blue-900/20"
+                                    : "bg-neutral-100 dark:bg-neutral-800"
+                                )}
+                              >
+                                <span className="font-mono">{tool.toolName}</span>
+                                <span className="ml-2 opacity-70">[{tool.state}]</span>
+                                {tool.errorText && (
+                                  <div className="text-red-600 dark:text-red-400 mt-1">
+                                    {tool.errorText}
+                                  </div>
+                                )}
+                              </div>
+                            )
+                          )}
+                        </div>
+                      )}
                     </div>
                   </MessageItem>
                 );
