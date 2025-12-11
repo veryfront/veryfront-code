@@ -53,7 +53,9 @@ export { agent } from "./agent/factory.ts";
 /**
  * Create a tool
  */
-export { tool } from "./utils/tool.ts";
+export { dynamicTool, tool } from "./utils/tool.ts";
+
+export type { DynamicToolConfig } from "./utils/tool.ts";
 
 /**
  * Re-export zod for schema definitions
@@ -310,4 +312,5 @@ export type {
   ToolCall,
   ToolConfig,
   ToolExecutionContext,
+  ToolType,
 } from "./types/index.ts";

@@ -229,7 +229,10 @@ export class AgentRuntime {
           this.status = "streaming";
 
           // Send start event (UI Message Stream Protocol v5)
-          const startEvent = JSON.stringify({ type: "start" });
+          const messageId = `msg-${Date.now().toString(36)}-${
+            Math.random().toString(36).slice(2, 8)
+          }`;
+          const startEvent = JSON.stringify({ type: "start", messageId });
           controller.enqueue(encoder.encode(`data: ${startEvent}\n\n`));
 
           // Send text-start event with ID
@@ -480,6 +483,10 @@ export class AgentRuntime {
     };
 
     for (let step = 0; step < maxSteps; step++) {
+      // Send start-step event (Veryfront extension, not part of standard AI SDK v5 protocol)
+      const startStepEvent = JSON.stringify({ type: "start-step" });
+      controller.enqueue(encoder.encode(`data: ${startStepEvent}\n\n`));
+
       const tools = this.getAvailableTools();
 
       const stream = await provider.stream({
@@ -524,9 +531,15 @@ export class AgentRuntime {
         toolCall.error = errorStr;
         toolCalls.push(toolCall);
 
+        // Send tool-output-error event (AI SDK v5 UI Message Stream Protocol)
+        // Check if this is a dynamic tool
+        const errorTool = toolRegistry.get(toolCall.name);
+        const errorIsDynamic = errorTool?.type === "dynamic";
         const errorData = JSON.stringify({
-          type: "error",
-          error: errorStr,
+          type: "tool-output-error",
+          toolCallId: toolCall.id,
+          errorText: errorStr,
+          ...(errorIsDynamic && { dynamic: true }),
         });
         controller.enqueue(encoder.encode(`data: ${errorData}\n\n`));
 
@@ -573,11 +586,15 @@ export class AgentRuntime {
                 arguments: "",
               });
 
-              // Send tool-call-streaming-start event (Vercel AI SDK format)
+              // Send tool-input-start event (AI SDK v5 UI Message Stream Protocol)
+              // Check if this is a dynamic tool
+              const startTool = toolRegistry.get(event.toolCall.name);
+              const startIsDynamic = startTool?.type === "dynamic";
               const toolStartEvent = JSON.stringify({
-                type: "tool-call-streaming-start",
+                type: "tool-input-start",
                 toolCallId: event.toolCall.id,
                 toolName: event.toolCall.name,
+                ...(startIsDynamic && { dynamic: true }),
               });
               controller.enqueue(encoder.encode(`data: ${toolStartEvent}\n\n`));
             }
@@ -588,11 +605,11 @@ export class AgentRuntime {
               const tc = streamToolCalls.get(event.id)!;
               tc.arguments += event.arguments;
 
-              // Send tool-call-delta event (Vercel AI SDK format)
+              // Send tool-input-delta event (AI SDK v5 UI Message Stream Protocol)
               const toolDeltaEvent = JSON.stringify({
-                type: "tool-call-delta",
+                type: "tool-input-delta",
                 toolCallId: event.id,
-                argsTextDelta: event.arguments,
+                inputTextDelta: event.arguments,
               });
               controller.enqueue(encoder.encode(`data: ${toolDeltaEvent}\n\n`));
             }
@@ -606,13 +623,17 @@ export class AgentRuntime {
                 arguments: event.toolCall.arguments,
               });
 
-              // Send tool-call event (Vercel AI SDK format)
+              // Send tool-input-available event (AI SDK v5 UI Message Stream Protocol)
+              // Check if this is a dynamic tool
+              const completeTool = toolRegistry.get(event.toolCall.name);
+              const completeIsDynamic = completeTool?.type === "dynamic";
               const { args } = parseStreamToolArgs(event.toolCall.arguments);
               const toolCallEvent = JSON.stringify({
-                type: "tool-call",
+                type: "tool-input-available",
                 toolCallId: event.toolCall.id,
                 toolName: event.toolCall.name,
-                args,
+                input: args,
+                ...(completeIsDynamic && { dynamic: true }),
               });
               controller.enqueue(encoder.encode(`data: ${toolCallEvent}\n\n`));
             }
@@ -723,6 +744,17 @@ export class AgentRuntime {
               toolCallId: tc.id,
               error: argError,
             });
+            // Send tool-input-error event (AI SDK v5 UI Message Stream Protocol)
+            // Check if this is a dynamic tool
+            const inputErrorTool = toolRegistry.get(tc.name);
+            const inputErrorIsDynamic = inputErrorTool?.type === "dynamic";
+            const inputErrorEvent = JSON.stringify({
+              type: "tool-input-error",
+              toolCallId: tc.id,
+              errorText: `Invalid tool arguments: ${argError}`,
+              ...(inputErrorIsDynamic && { dynamic: true }),
+            });
+            controller.enqueue(encoder.encode(`data: ${inputErrorEvent}\n\n`));
             await recordToolError(toolCall, `Invalid tool arguments: ${argError}`);
             continue;
           }
@@ -735,14 +767,8 @@ export class AgentRuntime {
               callbacks.onToolCall(toolCall);
             }
 
-            // Send tool-call event (Vercel AI SDK format)
-            const toolCallEvent = JSON.stringify({
-              type: "tool-call",
-              toolCallId: toolCall.id,
-              toolName: toolCall.name,
-              args: toolCall.args,
-            });
-            controller.enqueue(encoder.encode(`data: ${toolCallEvent}\n\n`));
+            // Note: tool-input-available was already sent during streaming
+            // Proceed directly to tool execution
 
             const result = await executeTool(tc.name, toolCall.args, {
               agentId: this.id,
@@ -754,11 +780,15 @@ export class AgentRuntime {
             toolCall.executionTime = Date.now() - startTime;
             toolCalls.push(toolCall);
 
-            // Send tool-result event (Vercel AI SDK format)
+            // Send tool-output-available event (AI SDK v5 UI Message Stream Protocol)
+            // Check if this is a dynamic tool
+            const outputTool = toolRegistry.get(tc.name);
+            const outputIsDynamic = outputTool?.type === "dynamic";
             const toolResultEvent = JSON.stringify({
-              type: "tool-result",
+              type: "tool-output-available",
               toolCallId: toolCall.id,
-              result,
+              output: result,
+              ...(outputIsDynamic && { dynamic: true }),
             });
             controller.enqueue(encoder.encode(`data: ${toolResultEvent}\n\n`));
 
@@ -781,9 +811,17 @@ export class AgentRuntime {
           }
         }
 
+        // Send finish-step event (Veryfront extension, not part of standard AI SDK v5 protocol)
+        const finishStepToolsEvent = JSON.stringify({ type: "finish-step" });
+        controller.enqueue(encoder.encode(`data: ${finishStepToolsEvent}\n\n`));
+
         this.status = "thinking";
         continue;
       }
+
+      // Send finish-step event (Veryfront extension, not part of standard AI SDK v5 protocol)
+      const finishStepEvent = JSON.stringify({ type: "finish-step" });
+      controller.enqueue(encoder.encode(`data: ${finishStepEvent}\n\n`));
 
       break;
     }

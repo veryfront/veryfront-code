@@ -68,6 +68,7 @@ ai/
 
 - `agent(config)` - Create an AI agent with tools
 - `tool(config)` - Define a tool for agent execution
+- `dynamicTool(config)` - Define a dynamic tool for MCP, user-defined functions, or runtime-loaded tools
 - `resource(config)` - Create an MCP resource
 - `prompt(config)` - Create an MCP prompt template
 
@@ -208,6 +209,38 @@ const response = await myAgent.generate({
 });
 
 console.log(response.text);
+```
+
+### Dynamic Tools (MCP, User-Defined Functions)
+
+```typescript
+import { agent, dynamicTool } from "@veryfront/ai";
+import { z } from "zod";
+
+// Create a dynamic tool for MCP or user-defined functions
+// where input/output types are unknown at compile time
+const mcpTool = dynamicTool({
+  id: "mcp-weather",
+  description: "Get weather from MCP server",
+  inputSchema: z.object({}), // Accepts any input
+  execute: async (input) => {
+    // Input is typed as 'unknown' - validate/cast at runtime
+    const { location } = input as { location: string };
+    return { temperature: 72, location };
+  },
+});
+
+// Use with an agent
+const myAgent = agent({
+  model: "openai/gpt-4",
+  system: "You are a weather assistant",
+  tools: {
+    weather: mcpTool,
+  },
+});
+
+// Dynamic tools emit `dynamic: true` in streaming events
+// and render as `dynamic-tool` type in useChat
 ```
 
 ### Agent with Memory
