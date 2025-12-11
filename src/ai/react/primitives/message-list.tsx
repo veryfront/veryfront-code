@@ -6,7 +6,7 @@
  */
 
 import * as React from "react";
-import type { Message } from "../../types/agent.ts";
+import type { UIMessage } from "../hooks/index.ts";
 
 export interface MessageListProps extends React.HTMLAttributes<HTMLDivElement> {
   children: React.ReactNode;
@@ -47,9 +47,9 @@ MessageList.displayName = "MessageList";
 
 export interface MessageItemProps extends React.HTMLAttributes<HTMLDivElement> {
   /** Message role */
-  role: Message["role"];
+  role: UIMessage["role"];
 
-  /** Message content (can be children or prop) */
+  /** Message content (can be children or prop) - deprecated, use children with parts */
   content?: string;
 
   children?: React.ReactNode;
