@@ -54,11 +54,25 @@ export interface ToolExecutionContext {
 }
 
 /**
+ * Tool type discriminator
+ * - 'function': Standard tool with known input/output types (default)
+ * - 'dynamic': Dynamic tool with unknown types (MCP tools, user-defined functions)
+ */
+export type ToolType = "function" | "dynamic";
+
+/**
  * Tool instance (returned by tool() function)
  */
 export interface Tool<TInput = any, TOutput = any> {
   /** Tool ID */
   id: string;
+
+  /**
+   * Tool type discriminator
+   * - 'function': Standard tool with known types (default)
+   * - 'dynamic': Dynamic tool for MCP, user-defined functions, etc.
+   */
+  type: ToolType;
 
   /** Tool description */
   description: string;

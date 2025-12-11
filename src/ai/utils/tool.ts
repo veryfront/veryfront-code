@@ -100,6 +100,7 @@ export function tool<TInput = any, TOutput = any>(
 
   return {
     id,
+    type: "function" as const,
     description: config.description,
     inputSchema: config.inputSchema,
     inputSchemaJson, // Store pre-converted schema
@@ -137,6 +138,145 @@ export function tool<TInput = any, TOutput = any>(
 
       // Execute tool
       return await config.execute(input, context);
+    },
+    mcp: config.mcp,
+  };
+}
+
+/**
+ * Configuration for dynamic tools where input/output types are unknown at compile time
+ */
+export interface DynamicToolConfig {
+  /** Tool identifier (optional, auto-generated if not provided) */
+  id?: string;
+
+  /** Tool description for the AI model */
+  description: string;
+
+  /**
+   * Input schema - can be a Zod schema (z.unknown(), z.any(), or z.object({}))
+   * A schema is still required for validation even though types are unknown
+   */
+  inputSchema: unknown;
+
+  /**
+   * Tool execution function - input is typed as unknown and must be validated/cast at runtime
+   */
+  execute: (
+    input: unknown,
+    context?: ToolExecutionContext,
+  ) => Promise<unknown> | unknown;
+
+  /**
+   * Optional conversion function that maps the tool result to an output
+   * that can be used by the language model
+   */
+  toModelOutput?: (output: unknown) => unknown;
+
+  /** MCP configuration */
+  mcp?: {
+    /** Expose via MCP */
+    enabled?: boolean;
+    /** Require authentication */
+    requiresAuth?: boolean;
+    /** Cache policy */
+    cachePolicy?: "no-cache" | "cache" | "cache-first";
+  };
+}
+
+/**
+ * Create a dynamic tool where input/output types are not known at compile time.
+ *
+ * Use this for:
+ * - MCP (Model Context Protocol) tools without schemas
+ * - User-defined functions loaded at runtime
+ * - Tools loaded from external sources or databases
+ * - Dynamic tool generation based on user input
+ *
+ * @example
+ * ```typescript
+ * import { dynamicTool } from 'veryfront/ai';
+ * import { z } from 'zod';
+ *
+ * export const customTool = dynamicTool({
+ *   description: 'Execute a custom user-defined function',
+ *   inputSchema: z.object({}),
+ *   execute: async (input) => {
+ *     // input is typed as 'unknown' - validate/cast at runtime
+ *     const { action, parameters } = input as any;
+ *     return { result: `Executed ${action}` };
+ *   },
+ * });
+ * ```
+ */
+export function dynamicTool(config: DynamicToolConfig): Tool<unknown, unknown> {
+  const id = config.id || generateToolId();
+
+  // Try to convert schema to JSON Schema if possible
+  let inputSchemaJson: JsonSchema | undefined;
+
+  // Check if it's a zod-like schema with _def
+  const zodLikeSchema = config.inputSchema as {
+    _def?: { typeName?: string; shape?: (() => Record<string, unknown>) | Record<string, unknown> };
+  };
+
+  if (zodLikeSchema?._def?.typeName) {
+    try {
+      // deno-lint-ignore no-explicit-any
+      inputSchemaJson = zodToJsonSchema(config.inputSchema as any);
+      agentLogger.info(
+        `[DYNAMIC_TOOL] Converted schema for "${id}": ${
+          Object.keys(inputSchemaJson.properties || {}).length
+        } properties`,
+      );
+    } catch {
+      // For z.unknown() or z.any(), create a permissive schema
+      inputSchemaJson = { type: "object", properties: {}, additionalProperties: true };
+      agentLogger.info(`[DYNAMIC_TOOL] Using permissive schema for "${id}"`);
+    }
+  } else if (zodLikeSchema?._def?.shape) {
+    // Try to introspect shape
+    try {
+      const shape = typeof zodLikeSchema._def.shape === "function"
+        ? zodLikeSchema._def.shape()
+        : zodLikeSchema._def.shape;
+
+      const properties: Record<string, JsonSchema> = {};
+      for (const key of Object.keys(shape || {})) {
+        properties[key] = { type: "string" as const };
+      }
+      inputSchemaJson = {
+        type: "object" as const,
+        properties,
+        additionalProperties: true,
+      };
+      agentLogger.info(`[DYNAMIC_TOOL] Introspected schema for "${id}"`);
+    } catch {
+      inputSchemaJson = { type: "object", properties: {}, additionalProperties: true };
+    }
+  } else {
+    // Fully dynamic - accept anything
+    inputSchemaJson = { type: "object", properties: {}, additionalProperties: true };
+    agentLogger.info(`[DYNAMIC_TOOL] Using fully dynamic schema for "${id}"`);
+  }
+
+  return {
+    id,
+    type: "dynamic" as const,
+    description: config.description,
+    inputSchema: config.inputSchema as any,
+    inputSchemaJson,
+    execute: async (input: unknown, context?: ToolExecutionContext) => {
+      // For dynamic tools, we do minimal validation
+      // The tool implementation is responsible for runtime validation
+      const result = await config.execute(input, context);
+
+      // Apply output transformation if provided
+      if (config.toModelOutput) {
+        return config.toModelOutput(result);
+      }
+
+      return result;
     },
     mcp: config.mcp,
   };

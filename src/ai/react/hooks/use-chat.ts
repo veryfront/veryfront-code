@@ -65,13 +65,29 @@ export interface ToolResultUIPart<RESULT = unknown> {
 }
 
 /**
+ * Dynamic tool UI part - AI SDK v5 compatible
+ * Used for MCP tools, user-defined functions, and runtime-loaded tools
+ * where input/output types are unknown at compile time
+ */
+export interface DynamicToolUIPart {
+  type: "dynamic-tool";
+  toolCallId: string;
+  toolName: string;
+  state: ToolState;
+  input?: unknown;
+  output?: unknown;
+  errorText?: string;
+}
+
+/**
  * All possible UI message parts - AI SDK v5 compatible
  */
 export type UIMessagePart =
   | TextUIPart
   | ReasoningUIPart
   | ToolUIPart
-  | ToolResultUIPart;
+  | ToolResultUIPart
+  | DynamicToolUIPart;
 
 /**
  * UI Message - AI SDK v5 compatible
@@ -103,6 +119,8 @@ export interface OnToolCallArg {
     toolCallId: string;
     toolName: string;
     input: unknown;
+    /** Whether this is a dynamic tool (MCP, user-defined, etc.) */
+    dynamic?: boolean;
   };
 }
 
@@ -403,7 +421,10 @@ interface StreamingToolCall {
   inputText: string;
   input?: unknown;
   output?: unknown;
+  error?: string;
   state: ToolState;
+  /** Whether this is a dynamic tool (MCP, user-defined, etc.) */
+  dynamic?: boolean;
 }
 
 /**
@@ -471,16 +492,29 @@ async function handleStreamingResponse(
       });
     }
 
-    // Add tool parts
+    // Add tool parts - use "dynamic-tool" type for dynamic tools
     for (const [, tool] of toolCalls) {
-      parts.push({
-        type: "tool-call",
-        toolCallId: tool.toolCallId,
-        toolName: tool.toolName,
-        state: tool.state,
-        input: tool.input,
-        output: tool.output,
-      });
+      if (tool.dynamic) {
+        // Dynamic tools use "dynamic-tool" part type (AI SDK v5)
+        parts.push({
+          type: "dynamic-tool",
+          toolCallId: tool.toolCallId,
+          toolName: tool.toolName,
+          state: tool.state,
+          input: tool.input,
+          output: tool.output,
+        });
+      } else {
+        // Static tools use "tool-call" part type
+        parts.push({
+          type: "tool-call",
+          toolCallId: tool.toolCallId,
+          toolName: tool.toolName,
+          state: tool.state,
+          input: tool.input,
+          output: tool.output,
+        });
+      }
     }
 
     return parts;
@@ -569,6 +603,7 @@ async function handleStreamingResponse(
                 toolName: parsed.toolName || "unknown",
                 inputText: "",
                 state: "input-streaming",
+                dynamic: parsed.dynamic === true,
               };
               toolCalls.set(toolCallId, toolCall);
               onUpdate?.(buildCurrentParts(), messageId);
@@ -594,6 +629,10 @@ async function handleStreamingResponse(
                 toolCall.input = parsed.input;
                 toolCall.toolName = parsed.toolName || toolCall.toolName;
                 toolCall.state = "input-available";
+                // Update dynamic flag if provided (may not have been set during start)
+                if (parsed.dynamic === true) {
+                  toolCall.dynamic = true;
+                }
 
                 // Notify via onToolCall - AI SDK v5 pattern
                 onToolCall?.({
@@ -601,12 +640,13 @@ async function handleStreamingResponse(
                     toolCallId,
                     toolName: toolCall.toolName,
                     input: toolCall.input,
+                    dynamic: toolCall.dynamic,
                   },
                 });
 
-                // Add tool-call part
+                // Add tool-call or dynamic-tool part based on tool type
                 messageParts.push({
-                  type: "tool-call",
+                  type: toolCall.dynamic ? "dynamic-tool" : "tool-call",
                   toolCallId,
                   toolName: toolCall.toolName,
                   state: "input-available",
@@ -634,6 +674,30 @@ async function handleStreamingResponse(
                   result: toolCall.output,
                 });
 
+                onUpdate?.(buildCurrentParts(), messageId);
+              }
+              break;
+            }
+
+            // v5: Tool input error
+            case "tool-input-error": {
+              const toolCallId = parsed.toolCallId;
+              const toolCall = toolCalls.get(toolCallId);
+              if (toolCall) {
+                toolCall.state = "output-error";
+                toolCall.error = parsed.errorText;
+                onUpdate?.(buildCurrentParts(), messageId);
+              }
+              break;
+            }
+
+            // v5: Tool output error
+            case "tool-output-error": {
+              const toolCallId = parsed.toolCallId;
+              const toolCall = toolCalls.get(toolCallId);
+              if (toolCall) {
+                toolCall.state = "output-error";
+                toolCall.error = parsed.errorText;
                 onUpdate?.(buildCurrentParts(), messageId);
               }
               break;
