@@ -87,7 +87,7 @@ export default function MyChat() {
     <ChatContainer className="your-design-system">
       <MessageList>
         {chat.messages.map((msg) => (
-          <MessageItem key={msg.id}>{msg.content}</MessageItem>
+          <MessageItem key={msg.id} message={msg} />
         ))}
       </MessageList>
     </ChatContainer>
@@ -468,9 +468,7 @@ export default function MyChat() {
     <ChatContainer className="h-screen flex flex-col">
       <MessageList className="flex-1 overflow-y-auto p-4">
         {chat.messages.map((msg) => (
-          <MessageItem key={msg.id} className="my-custom-message">
-            {msg.content}
-          </MessageItem>
+          <MessageItem key={msg.id} message={msg} className="my-custom-message" />
         ))}
       </MessageList>
     </ChatContainer>

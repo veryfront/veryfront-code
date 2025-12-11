@@ -111,9 +111,7 @@ function MyChat() {
     <ChatContainer className="your-design-system-container">
       <MessageList>
         {chat.messages.map((msg) => (
-          <MessageItem key={msg.id} className="your-message-styles">
-            {msg.content}
-          </MessageItem>
+          <MessageItem key={msg.id} message={msg} className="your-message-styles" />
         ))}
       </MessageList>
     </ChatContainer>
