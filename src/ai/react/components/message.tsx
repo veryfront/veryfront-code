@@ -6,7 +6,7 @@
 
 import * as React from "react";
 import { MessageContent, MessageItem, MessageRole } from "../primitives/index.ts";
-import type { UIMessage, UIMessagePart } from "../hooks/index.ts";
+import type { ToolUIPart, UIMessage, UIMessagePart } from "../hooks/index.ts";
 import { type ChatTheme, cn, defaultChatTheme, mergeThemes } from "./theme.ts";
 
 export interface MessageProps {
@@ -25,8 +25,8 @@ export interface MessageProps {
   /** Show timestamp */
   showTimestamp?: boolean;
 
-  /** Custom renderer for tool calls */
-  renderToolCall?: (part: Extract<UIMessagePart, { type: "tool-call" }>) => React.ReactNode;
+  /** Custom renderer for tool calls (matches tool-${toolName} pattern) */
+  renderToolCall?: (part: ToolUIPart) => React.ReactNode;
 
   /** Custom renderer for dynamic tools */
   renderDynamicTool?: (
@@ -116,18 +116,6 @@ export const Message = React.forwardRef<HTMLDivElement, MessageProps>(
                   </div>
                 );
 
-              case "tool-call":
-                if (renderToolCall) {
-                  return <React.Fragment key={key}>{renderToolCall(part)}</React.Fragment>;
-                }
-                return (
-                  <div key={key} className="text-xs bg-gray-100 rounded p-2 my-2">
-                    <span className="font-mono">{part.toolName}</span>
-                    <span className="ml-2 text-gray-500">[{part.state}]</span>
-                    {part.errorText && <div className="text-red-600 mt-1">{part.errorText}</div>}
-                  </div>
-                );
-
               case "dynamic-tool":
                 if (renderDynamicTool) {
                   return <React.Fragment key={key}>{renderDynamicTool(part)}</React.Fragment>;
@@ -141,6 +129,22 @@ export const Message = React.forwardRef<HTMLDivElement, MessageProps>(
                 );
 
               default:
+                // Handle tool-${toolName} pattern (AI SDK v5) - type starts with "tool-"
+                if (part.type.startsWith("tool-") && "toolCallId" in part) {
+                  const toolPart = part as ToolUIPart;
+                  if (renderToolCall) {
+                    return <React.Fragment key={key}>{renderToolCall(toolPart)}</React.Fragment>;
+                  }
+                  return (
+                    <div key={key} className="text-xs bg-gray-100 rounded p-2 my-2">
+                      <span className="font-mono">{toolPart.toolName}</span>
+                      <span className="ml-2 text-gray-500">[{toolPart.state}]</span>
+                      {toolPart.errorText && (
+                        <div className="text-red-600 mt-1">{toolPart.errorText}</div>
+                      )}
+                    </div>
+                  );
+                }
                 return null;
             }
           })}

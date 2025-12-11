@@ -129,12 +129,53 @@ export interface AgentContext {
 }
 
 /**
+ * Tool call part with args (runtime/server format)
+ * Uses `tool-${toolName}` pattern (e.g., "tool-weather")
+ */
+export interface ToolCallPartWithArgs {
+  type: `tool-${string}`;
+  toolCallId: string;
+  toolName: string;
+  args: Record<string, unknown>;
+}
+
+/**
+ * Tool call part with input (useChat/client format)
+ * Uses `tool-${toolName}` pattern (e.g., "tool-weather")
+ */
+export interface ToolCallPartWithInput {
+  type: `tool-${string}`;
+  toolCallId: string;
+  toolName: string;
+  input: Record<string, unknown>;
+}
+
+/**
+ * Tool call part (AI SDK v5 format)
+ * Supports both 'args' (runtime) and 'input' (useChat) field names
+ */
+export type ToolCallPart = ToolCallPartWithArgs | ToolCallPartWithInput;
+
+/**
+ * Tool result part (AI SDK v5 format)
+ */
+export interface ToolResultPart {
+  type: "tool-result";
+  toolCallId: string;
+  toolName: string;
+  result: unknown;
+}
+
+/**
  * Message part types (AI SDK v5 format)
+ * Tool calls use `tool-${toolName}` pattern (e.g., "tool-weather")
+ * Legacy "tool-call" type also supported for backwards compatibility
  */
 export type MessagePart =
   | { type: "text"; text: string }
+  | ToolCallPart
   | { type: "tool-call"; toolCallId: string; toolName: string; args: Record<string, unknown> }
-  | { type: "tool-result"; toolCallId: string; toolName: string; result: unknown };
+  | ToolResultPart;
 
 /**
  * Message in a conversation (AI SDK v5 format)
@@ -164,6 +205,40 @@ export function getTextFromParts(parts: MessagePart[]): string {
     .filter((p): p is MessagePart & { type: "text" } => p.type === "text")
     .map((p) => p.text)
     .join("");
+}
+
+/**
+ * Type guard to check if a tool call part has 'args' field
+ */
+export function hasArgs(part: ToolCallPart): part is ToolCallPartWithArgs {
+  return "args" in part && part.args !== undefined;
+}
+
+/**
+ * Type guard to check if a tool call part has 'input' field
+ */
+export function hasInput(part: ToolCallPart): part is ToolCallPartWithInput {
+  return "input" in part && part.input !== undefined;
+}
+
+/**
+ * Extract tool arguments from a tool call part.
+ * Supports both 'args' (runtime/server) and 'input' (useChat/client) formats.
+ * Throws if neither field is present.
+ */
+export function getToolArguments(part: ToolCallPart): Record<string, unknown> {
+  if ("args" in part && part.args !== undefined) {
+    return part.args;
+  }
+  if ("input" in part && part.input !== undefined) {
+    return part.input;
+  }
+  // Access properties before TypeScript narrows to never
+  const toolName = (part as ToolCallPartWithArgs).toolName;
+  const toolCallId = (part as ToolCallPartWithArgs).toolCallId;
+  throw new Error(
+    `Tool call part for "${toolName}" (${toolCallId}) missing both 'args' and 'input' fields`,
+  );
 }
 
 /**
