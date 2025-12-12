@@ -1,9 +1,16 @@
 import { z } from "zod";
 import { getAgent } from "veryfront/ai";
 
+// AI SDK v5 UIMessage format with parts array
+const textPartSchema = z.object({
+  type: z.literal("text"),
+  text: z.string().max(10000),
+});
+
 const messageSchema = z.object({
+  id: z.string().optional(),
   role: z.enum(["user", "assistant", "system"]),
-  content: z.string().max(10000),
+  parts: z.array(textPartSchema).min(1),
 });
 
 const chatRequestSchema = z.object({
@@ -20,6 +27,7 @@ export async function POST(request: Request) {
       return Response.json({ error: "Agent not found" }, { status: 404 });
     }
 
+    // Pass v5 format messages directly to the agent
     const result = await agent.stream({ messages });
     return result.toDataStreamResponse();
   } catch (error) {

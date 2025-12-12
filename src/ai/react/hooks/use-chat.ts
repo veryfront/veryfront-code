@@ -586,7 +586,7 @@ async function handleStreamingResponse(
             // v5: Text delta
             case "text-delta": {
               const textId = parsed.id || currentTextId || "default";
-              const delta = parsed.delta || "";
+              const delta = parsed.textDelta || parsed.delta || "";
 
               // Initialize text block if needed
               if (!textBlocks.has(textId)) {
