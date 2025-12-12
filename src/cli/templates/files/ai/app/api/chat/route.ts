@@ -2,15 +2,36 @@ import { z } from "zod";
 import { getAgent } from "veryfront/ai";
 
 // AI SDK v5 UIMessage format with parts array
+// Supports text, tool-call, and tool-result parts for full conversation history
 const textPartSchema = z.object({
   type: z.literal("text"),
   text: z.string().max(10000),
 });
 
+const toolCallPartSchema = z.object({
+  type: z.literal("tool-call"),
+  toolCallId: z.string(),
+  toolName: z.string(),
+  args: z.unknown(),
+});
+
+const toolResultPartSchema = z.object({
+  type: z.literal("tool-result"),
+  toolCallId: z.string(),
+  result: z.unknown(),
+});
+
+// Union of all supported part types
+const partSchema = z.union([
+  textPartSchema,
+  toolCallPartSchema,
+  toolResultPartSchema,
+]);
+
 const messageSchema = z.object({
   id: z.string().optional(),
-  role: z.enum(["user", "assistant", "system"]),
-  parts: z.array(textPartSchema).min(1),
+  role: z.enum(["user", "assistant", "system", "tool"]),
+  parts: z.array(partSchema).min(1),
 });
 
 const chatRequestSchema = z.object({
