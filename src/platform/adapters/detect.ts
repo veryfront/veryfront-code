@@ -25,7 +25,9 @@ interface CloudflareGlobal {
 }
 
 function isDeno(global: typeof globalThis): global is typeof globalThis & DenoGlobal {
-  return "Deno" in global && typeof (global as DenoGlobal).Deno === "object";
+  return "Deno" in global &&
+    typeof (global as DenoGlobal).Deno === "object" &&
+    typeof (global as DenoGlobal).Deno.version === "object";
 }
 
 function isBun(global: typeof globalThis): global is typeof globalThis & BunGlobal {
