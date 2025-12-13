@@ -76,11 +76,20 @@ export class OpenAIProvider extends BaseProvider {
       ];
     }
 
+    // o-series models (o1, o3) use different parameter names
+    const isOSeriesModel = request.model.startsWith("o1") || request.model.startsWith("o3");
+
     if (request.maxTokens) {
-      body.max_tokens = request.maxTokens;
+      // o-series models use max_completion_tokens instead of max_tokens
+      if (isOSeriesModel) {
+        body.max_completion_tokens = request.maxTokens;
+      } else {
+        body.max_tokens = request.maxTokens;
+      }
     }
 
-    if (request.temperature !== undefined) {
+    // o-series models don't support temperature parameter
+    if (request.temperature !== undefined && !isOSeriesModel) {
       body.temperature = request.temperature;
     }
 
@@ -99,7 +108,10 @@ export class OpenAIProvider extends BaseProvider {
       }));
       // Disable parallel tool calls to avoid streaming JSON corruption
       // when multiple tool calls are made simultaneously
-      body.parallel_tool_calls = false;
+      // Note: o-series models (o1, o3) don't support this parameter
+      if (!isOSeriesModel) {
+        body.parallel_tool_calls = false;
+      }
     }
 
     // Add reasoning effort for o-series models (o1, o3, etc.)
