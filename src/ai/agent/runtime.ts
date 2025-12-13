@@ -38,6 +38,10 @@ const AgentStreamEventSchema = z.discriminatedUnion("type", [
     content: z.string(),
   }),
   z.object({
+    type: z.literal("reasoning"),
+    content: z.string(),
+  }),
+  z.object({
     type: z.literal("tool_call_start"),
     toolCall: z.object({
       id: z.string(),
@@ -569,6 +573,10 @@ export class AgentRuntime {
         await this.memory.add(errorMessage);
       };
 
+      // Track reasoning part ID for streaming
+      const reasoningPartId = generateId("reasoning");
+      let accumulatedReasoning = "";
+
       // Vercel AI SDK Data Stream Protocol event handler
       const handleEvent = (event: AgentStreamEvent) => {
         switch (event.type) {
@@ -586,6 +594,20 @@ export class AgentRuntime {
             if (callbacks?.onChunk) {
               callbacks.onChunk(event.content);
             }
+            break;
+          }
+
+          case "reasoning": {
+            // Emit reasoning-delta event for reasoning models
+            // This allows the UI to display the reasoning process
+            accumulatedReasoning += event.content;
+
+            const reasoningDeltaEvent = JSON.stringify({
+              type: "reasoning-delta",
+              id: reasoningPartId,
+              delta: event.content,
+            });
+            controller.enqueue(encoder.encode(`data: ${reasoningDeltaEvent}\n\n`));
             break;
           }
 
