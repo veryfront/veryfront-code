@@ -195,7 +195,7 @@ export class OpenAIProvider extends BaseProvider {
    * - Reasoning is enabled
    * - No tools are involved (simpler conversations)
    */
-  stream(request: CompletionRequest): Promise<ReadableStream> {
+  override stream(request: CompletionRequest): Promise<ReadableStream> {
     // Check if this is a reasoning model request
     const isOSeriesModel = request.model.startsWith("o1") || request.model.startsWith("o3");
     const hasTools = request.tools && request.tools.length > 0;
