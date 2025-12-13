@@ -1,6 +1,6 @@
 {
   "name": "veryfront",
-  "version": "0.0.66",
+  "version": "0.0.72",
   "description": "Zero-config React meta-framework for building agentic AI applications",
   "type": "module",
   "main": "./dist/index.js",
@@ -145,7 +145,6 @@
     "picocolors": "^1.1.0",
     "mri": "^1.2.0",
     "yaml": "^2.3.0",
-    "js-yaml": "^4.1.0",
     "gray-matter": "^4.0.3",
     "ws": "^8.18.0",
     "lightningcss": "^1.22.0",
