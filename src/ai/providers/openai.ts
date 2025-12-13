@@ -317,12 +317,16 @@ export class OpenAIProvider extends BaseProvider {
         // They need to be sent as function_call_output items
         // For now, skip tool messages as they require special handling
         // The agent loop will re-run the conversation from scratch
-        agentLogger.debug("[OPENAI] Skipping tool message for Responses API - not yet supported in multi-turn");
+        agentLogger.debug(
+          "[OPENAI] Skipping tool message for Responses API - not yet supported in multi-turn",
+        );
       } else if (msg.role === "assistant") {
         // Check if this assistant message has tool calls
         if (msg.tool_calls && msg.tool_calls.length > 0) {
           // Skip assistant messages with tool calls as they need special handling
-          agentLogger.debug("[OPENAI] Skipping assistant tool call message for Responses API - not yet supported");
+          agentLogger.debug(
+            "[OPENAI] Skipping assistant tool call message for Responses API - not yet supported",
+          );
         } else {
           input.push({
             role: "assistant",
@@ -409,7 +413,10 @@ export class OpenAIProvider extends BaseProvider {
                   }
 
                   // Handle function call start (from output_item.added with function_call type)
-                  if (eventType === "response.output_item.added" && event.item?.type === "function_call") {
+                  if (
+                    eventType === "response.output_item.added" &&
+                    event.item?.type === "function_call"
+                  ) {
                     const item = event.item;
                     const callId = item.call_id || item.id;
                     const index = toolCallIndex++;
