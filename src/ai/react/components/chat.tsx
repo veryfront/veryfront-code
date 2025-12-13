@@ -178,7 +178,7 @@ function ArrowDownIcon({ className }: { className?: string }) {
   );
 }
 
-function SendIcon({ className }: { className?: string }) {
+function _SendIcon({ className }: { className?: string }) {
   return (
     <svg
       className={cn("size-4", className)}
@@ -195,7 +195,7 @@ function SendIcon({ className }: { className?: string }) {
   );
 }
 
-function StopIcon({ className }: { className?: string }) {
+function _StopIcon({ className }: { className?: string }) {
   return (
     <svg
       className={cn("size-4", className)}
@@ -713,7 +713,7 @@ function getTextContent(message: UIMessage): string {
  * Matches tool-${toolName} pattern (AI SDK v5) and dynamic-tool
  * Excludes tool-result parts since those are handled by the main tool part
  */
-function getToolParts(message: UIMessage): (ToolUIPart | DynamicToolUIPart)[] {
+function _getToolParts(message: UIMessage): (ToolUIPart | DynamicToolUIPart)[] {
   return message.parts.filter(
     (p): p is ToolUIPart | DynamicToolUIPart =>
       (p.type.startsWith("tool-") && p.type !== "tool-result") || p.type === "dynamic-tool",
