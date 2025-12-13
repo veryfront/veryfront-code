@@ -23,7 +23,15 @@ import { Markdown } from "./markdown.tsx";
  */
 function CircleIcon({ className }: { className?: string }) {
   return (
-    <svg className={cn("size-4", className)} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <svg
+      className={cn("size-4", className)}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
       <circle cx="12" cy="12" r="10" />
     </svg>
   );
@@ -31,7 +39,15 @@ function CircleIcon({ className }: { className?: string }) {
 
 function ClockIcon({ className }: { className?: string }) {
   return (
-    <svg className={cn("size-4", className)} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <svg
+      className={cn("size-4", className)}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
       <circle cx="12" cy="12" r="10" />
       <polyline points="12 6 12 12 16 14" />
     </svg>
@@ -40,7 +56,15 @@ function ClockIcon({ className }: { className?: string }) {
 
 function CheckCircleIcon({ className }: { className?: string }) {
   return (
-    <svg className={cn("size-4", className)} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <svg
+      className={cn("size-4", className)}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
       <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
       <polyline points="22 4 12 14.01 9 11.01" />
     </svg>
@@ -49,7 +73,15 @@ function CheckCircleIcon({ className }: { className?: string }) {
 
 function XCircleIcon({ className }: { className?: string }) {
   return (
-    <svg className={cn("size-4", className)} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <svg
+      className={cn("size-4", className)}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
       <circle cx="12" cy="12" r="10" />
       <line x1="15" y1="9" x2="9" y2="15" />
       <line x1="9" y1="9" x2="15" y2="15" />
@@ -59,7 +91,15 @@ function XCircleIcon({ className }: { className?: string }) {
 
 function WrenchIcon({ className }: { className?: string }) {
   return (
-    <svg className={cn("size-4", className)} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <svg
+      className={cn("size-4", className)}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
       <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
     </svg>
   );
@@ -67,7 +107,15 @@ function WrenchIcon({ className }: { className?: string }) {
 
 function ChevronDownIcon({ className }: { className?: string }) {
   return (
-    <svg className={cn("size-4", className)} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <svg
+      className={cn("size-4", className)}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
       <polyline points="6 9 12 15 18 9" />
     </svg>
   );
@@ -75,7 +123,15 @@ function ChevronDownIcon({ className }: { className?: string }) {
 
 function BrainIcon({ className }: { className?: string }) {
   return (
-    <svg className={cn("size-4", className)} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <svg
+      className={cn("size-4", className)}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
       <path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z" />
       <path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z" />
       <path d="M15 13a4.5 4.5 0 0 1-3-4 4.5 4.5 0 0 1-3 4" />
@@ -91,7 +147,15 @@ function BrainIcon({ className }: { className?: string }) {
 
 function MessageSquareIcon({ className }: { className?: string }) {
   return (
-    <svg className={cn("size-4", className)} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <svg
+      className={cn("size-4", className)}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
       <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
     </svg>
   );
@@ -99,7 +163,15 @@ function MessageSquareIcon({ className }: { className?: string }) {
 
 function ArrowDownIcon({ className }: { className?: string }) {
   return (
-    <svg className={cn("size-4", className)} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <svg
+      className={cn("size-4", className)}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
       <line x1="12" y1="5" x2="12" y2="19" />
       <polyline points="19 12 12 19 5 12" />
     </svg>
@@ -108,7 +180,15 @@ function ArrowDownIcon({ className }: { className?: string }) {
 
 function SendIcon({ className }: { className?: string }) {
   return (
-    <svg className={cn("size-4", className)} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <svg
+      className={cn("size-4", className)}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
       <line x1="22" y1="2" x2="11" y2="13" />
       <polygon points="22 2 15 22 11 13 2 9 22 2" />
     </svg>
@@ -117,7 +197,15 @@ function SendIcon({ className }: { className?: string }) {
 
 function StopIcon({ className }: { className?: string }) {
   return (
-    <svg className={cn("size-4", className)} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <svg
+      className={cn("size-4", className)}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
       <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
     </svg>
   );
@@ -125,7 +213,15 @@ function StopIcon({ className }: { className?: string }) {
 
 function RefreshCwIcon({ className }: { className?: string }) {
   return (
-    <svg className={cn("size-4", className)} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <svg
+      className={cn("size-4", className)}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
       <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" />
       <path d="M21 3v5h-5" />
       <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" />
@@ -136,7 +232,15 @@ function RefreshCwIcon({ className }: { className?: string }) {
 
 function CopyIcon({ className }: { className?: string }) {
   return (
-    <svg className={cn("size-4", className)} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <svg
+      className={cn("size-4", className)}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
       <rect width="14" height="14" x="8" y="8" rx="2" ry="2" />
       <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
     </svg>
@@ -145,7 +249,15 @@ function CopyIcon({ className }: { className?: string }) {
 
 function CheckIcon({ className }: { className?: string }) {
   return (
-    <svg className={cn("size-4", className)} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <svg
+      className={cn("size-4", className)}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
       <polyline points="20 6 9 17 4 12" />
     </svg>
   );
@@ -188,11 +300,7 @@ function ReasoningCard({ text, isStreaming = false }: { text: string; isStreamin
         className="flex w-full items-center gap-2 text-muted-foreground text-sm transition-colors hover:text-foreground"
       >
         <BrainIcon className="size-4" />
-        {isStreaming ? (
-          <Shimmer>Thinking...</Shimmer>
-        ) : (
-          <span>Thought process</span>
-        )}
+        {isStreaming ? <Shimmer>Thinking...</Shimmer> : <span>Thought process</span>}
         <ChevronDownIcon
           className={cn(
             "size-4 transition-transform",
@@ -290,9 +398,8 @@ export function ConversationEmptyState({
     <div className={cn("flex flex-col items-center justify-center text-center", className)}>
       {icon && <div className="mb-4 text-muted-foreground">{icon}</div>}
       <h1 className="text-3xl font-semibold text-foreground">{title}</h1>
-      {description && (
-        <p className="mt-2 text-base text-muted-foreground max-w-md">{description}</p>
-      )}
+      {description && <p className="mt-2 text-base text-muted-foreground max-w-md">{description}
+      </p>}
       {children}
     </div>
   );
@@ -365,17 +472,19 @@ export function MessageActions({ content, className }: MessageActionsProps) {
         className="inline-flex items-center gap-1 px-2 py-1 text-xs text-muted-foreground hover:text-foreground hover:bg-muted rounded transition-colors"
         title={copied ? "Copied!" : "Copy to clipboard"}
       >
-        {copied ? (
-          <>
-            <CheckIcon className="size-3" />
-            <span>Copied</span>
-          </>
-        ) : (
-          <>
-            <CopyIcon className="size-3" />
-            <span>Copy</span>
-          </>
-        )}
+        {copied
+          ? (
+            <>
+              <CheckIcon className="size-3" />
+              <span>Copied</span>
+            </>
+          )
+          : (
+            <>
+              <CopyIcon className="size-3" />
+              <span>Copy</span>
+            </>
+          )}
       </button>
     </div>
   );
@@ -460,7 +569,12 @@ function formatJsonWithHighlight(obj: unknown): React.ReactNode {
     .replace(/: (\d+)/g, ': <span class="text-blue-600 dark:text-blue-400">$1</span>')
     .replace(/: (true|false)/g, ': <span class="text-purple-600 dark:text-purple-400">$1</span>');
 
-  return <pre className="text-sm font-mono whitespace-pre-wrap" dangerouslySetInnerHTML={{ __html: highlighted }} />;
+  return (
+    <pre
+      className="text-sm font-mono whitespace-pre-wrap"
+      dangerouslySetInnerHTML={{ __html: highlighted }}
+    />
+  );
 }
 
 /**
@@ -481,7 +595,10 @@ function renderOutputAsTable(output: unknown): React.ReactNode | null {
         <thead>
           <tr className="border-b border-neutral-200 dark:border-neutral-700">
             {keys.map((key) => (
-              <th key={key} className="px-4 py-2 text-left font-semibold text-neutral-900 dark:text-neutral-100">
+              <th
+                key={key}
+                className="px-4 py-2 text-left font-semibold text-neutral-900 dark:text-neutral-100"
+              >
                 {key.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())}
               </th>
             ))}
@@ -607,13 +724,16 @@ function getToolParts(message: UIMessage): (ToolUIPart | DynamicToolUIPart)[] {
  * Check if a part is a tool part
  */
 function isToolPart(part: UIMessagePart): part is ToolUIPart | DynamicToolUIPart {
-  return (part.type.startsWith("tool-") && part.type !== "tool-result") || part.type === "dynamic-tool";
+  return (part.type.startsWith("tool-") && part.type !== "tool-result") ||
+    part.type === "dynamic-tool";
 }
 
 /**
  * Check if a part is a reasoning part
  */
-function isReasoningPart(part: UIMessagePart): part is { type: "reasoning"; text: string; state?: string } {
+function isReasoningPart(
+  part: UIMessagePart,
+): part is { type: "reasoning"; text: string; state?: string } {
   return part.type === "reasoning";
 }
 
@@ -833,118 +953,122 @@ export const Chat = React.forwardRef<HTMLDivElement, ChatProps>(
         {/* Message List - scrollable content area */}
         <MessageList className="flex-1 min-h-0 overflow-y-auto relative">
           {/* Empty state - centered vertically like ChatGPT */}
-          {messages.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-full px-4">
-              <div className="flex-1" />
-              <ConversationEmptyState
-                icon={emptyState?.icon || <MessageSquareIcon className="size-10" />}
-                title={emptyState?.title || "What can I help with?"}
-                description={emptyState?.description}
-              />
-              {/* Suggestions grid - ChatGPT style */}
-              {suggestions && suggestions.length > 0 && (
-                <div className="w-full max-w-2xl mt-6 mb-8">
-                  <Suggestions layout="grid">
-                    {suggestions.map((suggestion) => (
-                      <Suggestion
-                        key={suggestion}
-                        suggestion={suggestion}
-                        onClick={onSuggestionClick}
-                      />
-                    ))}
-                  </Suggestions>
-                </div>
-              )}
-              <div className="flex-1" />
-            </div>
-          ) : (
-          <div className="max-w-2xl mx-auto px-4 py-4 space-y-2">
-            {messages.map((msg) => {
-              // For user messages, use simple text extraction
-              if (msg.role === "user") {
-                const content = getTextContent(msg);
-                return renderMessage
-                  ? <React.Fragment key={msg.id}>{renderMessage(msg)}</React.Fragment>
-                  : (
-                    <MessageItem
-                      key={msg.id}
-                      role={msg.role}
-                      className={cn("flex", "justify-end")}
-                    >
-                      <div className={theme.message?.[msg.role] || theme.message?.user}>
-                        <p className="whitespace-pre-wrap text-[15px] leading-relaxed">
-                          {content}
-                        </p>
-                      </div>
-                    </MessageItem>
-                  );
-              }
-
-              // For assistant messages, render parts in order
-              const partGroups = groupPartsInOrder(msg.parts);
-              const textContent = getTextContent(msg);
-              return renderMessage
-                ? <React.Fragment key={msg.id}>{renderMessage(msg)}</React.Fragment>
-                : (
-                  <MessageItem
-                    key={msg.id}
-                    role={msg.role}
-                    className={cn("flex", "justify-start")}
-                  >
-                    <div className={theme.message?.[msg.role] || theme.message?.assistant}>
-                      {partGroups.map((group, index) => {
-                        if (group.type === "text") {
-                          return (
-                            <Markdown key={`text-${index}`} className="text-[15px] leading-relaxed">
-                              {group.content}
-                            </Markdown>
-                          );
-                        }
-                        if (group.type === "reasoning") {
-                          return (
-                            <ReasoningCard
-                              key={`reasoning-${index}`}
-                              text={group.text}
-                              isStreaming={group.isStreaming}
-                            />
-                          );
-                        }
-                        // Tool part
-                        return (
-                          <div key={group.tool.toolCallId} className="my-3">
-                            {renderTool
-                              ? renderTool(group.tool)
-                              : <ToolCallCard tool={group.tool} />
-                            }
-                          </div>
-                        );
-                      })}
-                      {/* Message actions for assistant messages */}
-                      {showMessageActions && textContent && (
-                        <MessageActions content={textContent} />
-                      )}
-                    </div>
-                  </MessageItem>
-                );
-            })}
-
-            {/* Loading indicator */}
-            {isLoading && (
-              <div className="flex justify-start">
-                <div className="bg-neutral-100 dark:bg-neutral-800 rounded-[20px] rounded-bl-[4px] px-4 py-3">
-                  <div className="flex gap-1.5 items-center">
-                    <span className={cn(theme.loading)} />
-                    <span className={cn(theme.loading)} style={{ animationDelay: "0.15s" }} />
-                    <span className={cn(theme.loading)} style={{ animationDelay: "0.3s" }} />
+          {messages.length === 0
+            ? (
+              <div className="flex flex-col items-center justify-center h-full px-4">
+                <div className="flex-1" />
+                <ConversationEmptyState
+                  icon={emptyState?.icon || <MessageSquareIcon className="size-10" />}
+                  title={emptyState?.title || "What can I help with?"}
+                  description={emptyState?.description}
+                />
+                {/* Suggestions grid - ChatGPT style */}
+                {suggestions && suggestions.length > 0 && (
+                  <div className="w-full max-w-2xl mt-6 mb-8">
+                    <Suggestions layout="grid">
+                      {suggestions.map((suggestion) => (
+                        <Suggestion
+                          key={suggestion}
+                          suggestion={suggestion}
+                          onClick={onSuggestionClick}
+                        />
+                      ))}
+                    </Suggestions>
                   </div>
-                </div>
+                )}
+                <div className="flex-1" />
+              </div>
+            )
+            : (
+              <div className="max-w-2xl mx-auto px-4 py-4 space-y-2">
+                {messages.map((msg) => {
+                  // For user messages, use simple text extraction
+                  if (msg.role === "user") {
+                    const content = getTextContent(msg);
+                    return renderMessage
+                      ? <React.Fragment key={msg.id}>{renderMessage(msg)}</React.Fragment>
+                      : (
+                        <MessageItem
+                          key={msg.id}
+                          role={msg.role}
+                          className={cn("flex", "justify-end")}
+                        >
+                          <div className={theme.message?.[msg.role] || theme.message?.user}>
+                            <p className="whitespace-pre-wrap text-[15px] leading-relaxed">
+                              {content}
+                            </p>
+                          </div>
+                        </MessageItem>
+                      );
+                  }
+
+                  // For assistant messages, render parts in order
+                  const partGroups = groupPartsInOrder(msg.parts);
+                  const textContent = getTextContent(msg);
+                  return renderMessage
+                    ? <React.Fragment key={msg.id}>{renderMessage(msg)}</React.Fragment>
+                    : (
+                      <MessageItem
+                        key={msg.id}
+                        role={msg.role}
+                        className={cn("flex", "justify-start")}
+                      >
+                        <div className={theme.message?.[msg.role] || theme.message?.assistant}>
+                          {partGroups.map((group, index) => {
+                            if (group.type === "text") {
+                              return (
+                                <Markdown
+                                  key={`text-${index}`}
+                                  className="text-[15px] leading-relaxed"
+                                >
+                                  {group.content}
+                                </Markdown>
+                              );
+                            }
+                            if (group.type === "reasoning") {
+                              return (
+                                <ReasoningCard
+                                  key={`reasoning-${index}`}
+                                  text={group.text}
+                                  isStreaming={group.isStreaming}
+                                />
+                              );
+                            }
+                            // Tool part
+                            return (
+                              <div key={group.tool.toolCallId} className="my-3">
+                                {renderTool
+                                  ? renderTool(group.tool)
+                                  : <ToolCallCard tool={group.tool} />}
+                              </div>
+                            );
+                          })}
+                          {/* Message actions for assistant messages */}
+                          {showMessageActions && textContent && (
+                            <MessageActions content={textContent} />
+                          )}
+                        </div>
+                      </MessageItem>
+                    );
+                })}
+
+                {/* Loading indicator */}
+                {isLoading && (
+                  <div className="flex justify-start">
+                    <div className="bg-neutral-100 dark:bg-neutral-800 rounded-[20px] rounded-bl-[4px] px-4 py-3">
+                      <div className="flex gap-1.5 items-center">
+                        <span className={cn(theme.loading)} />
+                        <span className={cn(theme.loading)} style={{ animationDelay: "0.15s" }} />
+                        <span className={cn(theme.loading)} style={{ animationDelay: "0.3s" }} />
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Auto-scroll anchor */}
+                <div ref={messagesEndRef} />
               </div>
             )}
-
-            {/* Auto-scroll anchor */}
-            <div ref={messagesEndRef} />
-          </div>
-          )}
 
           {/* Scroll to bottom button */}
           {showScrollButton && (

@@ -480,7 +480,10 @@ async function handleStreamingResponse(
 
   // Track text blocks by ID (v5 uses IDs to group text-start/delta/end)
   // Order is assigned when first content arrives (at text-delta), not at text-start
-  const textBlocks = new Map<string, { text: string; state: "streaming" | "done"; order: number | null }>();
+  const textBlocks = new Map<
+    string,
+    { text: string; state: "streaming" | "done"; order: number | null }
+  >();
   let currentTextId = "";
   let messageId = "";
 
