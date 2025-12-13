@@ -1,0 +1,16 @@
+{
+  "name": "/tmp/test-reasoning-ui",
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "veryfront dev",
+    "build": "veryfront build",
+    "preview": "veryfront preview"
+  },
+  "dependencies": {
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "veryfront": "^0.0.63",
+    "zod": "^3.24.0"
+  }
+}

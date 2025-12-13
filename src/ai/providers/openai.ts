@@ -120,8 +120,8 @@ export class OpenAIProvider extends BaseProvider {
     }
 
     // Add reasoning effort for o-series models (o1, o3, etc.)
-    if (request.reasoning?.enabled && request.reasoning.effort) {
-      body.reasoning_effort = request.reasoning.effort;
+    if (request.reasoning?.enabled) {
+      body.reasoning_effort = request.reasoning.effort ?? "medium";
     }
 
     return body;
