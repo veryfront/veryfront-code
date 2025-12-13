@@ -97,6 +97,9 @@ export class OpenAIProvider extends BaseProvider {
           parameters: tool.parameters,
         },
       }));
+      // Disable parallel tool calls to avoid streaming JSON corruption
+      // when multiple tool calls are made simultaneously
+      body.parallel_tool_calls = false;
     }
 
     return body;
