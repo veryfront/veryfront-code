@@ -195,7 +195,7 @@ export class OpenAIProvider extends BaseProvider {
    * - Reasoning is enabled
    * - No tools are involved (simpler conversations)
    */
-  async stream(request: CompletionRequest): Promise<ReadableStream> {
+  stream(request: CompletionRequest): Promise<ReadableStream> {
     // Check if this is a reasoning model request
     const isOSeriesModel = request.model.startsWith("o1") || request.model.startsWith("o3");
     const hasTools = request.tools && request.tools.length > 0;
@@ -206,7 +206,9 @@ export class OpenAIProvider extends BaseProvider {
     const useResponsesApi = isOSeriesModel && request.reasoning?.enabled && !hasTools;
 
     if (useResponsesApi) {
-      agentLogger.info("[OPENAI] Using Responses API for reasoning without tools");
+      agentLogger.info(
+        "[OPENAI] Using Responses API for reasoning without tools",
+      );
       return this.streamWithResponsesApi(request);
     }
 
