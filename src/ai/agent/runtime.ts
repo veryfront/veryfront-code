@@ -328,6 +328,7 @@ export class AgentRuntime {
             tools: tools.length > 0 ? tools : undefined,
             maxTokens: this.config.memory?.maxTokens || DEFAULT_MAX_TOKENS,
             temperature: DEFAULT_TEMPERATURE,
+            reasoning: this.config.reasoning,
           });
         });
 
@@ -505,6 +506,7 @@ export class AgentRuntime {
         tools: tools.length > 0 ? tools : undefined,
         maxTokens: this.config.memory?.maxTokens || DEFAULT_MAX_TOKENS,
         temperature: DEFAULT_TEMPERATURE,
+        reasoning: this.config.reasoning,
       });
 
       const reader = stream.getReader();

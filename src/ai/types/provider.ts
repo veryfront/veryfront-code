@@ -106,6 +106,12 @@ export interface CompletionRequest {
 
   /** Tools available */
   tools?: ToolDefinition[];
+
+  /** Reasoning configuration for models that support it */
+  reasoning?: {
+    enabled: boolean;
+    effort?: "low" | "medium" | "high";
+  };
 }
 
 /**

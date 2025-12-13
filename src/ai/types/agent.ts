@@ -78,6 +78,14 @@ export interface AgentConfig {
     vision?: boolean;
     audio?: boolean;
   };
+
+  /** Reasoning/thinking configuration for models that support it (e.g., o1, o3) */
+  reasoning?: {
+    /** Enable reasoning output */
+    enabled: boolean;
+    /** Reasoning effort level (OpenAI o-series models) */
+    effort?: "low" | "medium" | "high";
+  };
 }
 
 /**

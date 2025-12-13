@@ -102,6 +102,11 @@ export class OpenAIProvider extends BaseProvider {
       body.parallel_tool_calls = false;
     }
 
+    // Add reasoning effort for o-series models (o1, o3, etc.)
+    if (request.reasoning?.enabled && request.reasoning.effort) {
+      body.reasoning_effort = request.reasoning.effort;
+    }
+
     return body;
   }
 
