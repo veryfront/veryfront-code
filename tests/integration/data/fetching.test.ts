@@ -1,6 +1,3 @@
-/**
- * Tests for Data Fetching System
- */
 
 import { assertEquals, assertExists, assertRejects } from "std/assert/mod.ts";
 import { beforeEach, describe, it } from "std/testing/bdd.ts";
@@ -24,7 +21,6 @@ function makeContext(url: string): DataContext {
   } as const;
 }
 
-// DataFetcher has internal cleanup intervals - disable resource sanitization
 Deno.test({
   name: "DataFetcher",
   sanitizeResources: false,
@@ -414,4 +410,4 @@ Deno.test({
       }
     });
   }, // End of Deno.test fn
-}); // End of Deno.test
+});

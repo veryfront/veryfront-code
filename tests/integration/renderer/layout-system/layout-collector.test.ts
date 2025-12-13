@@ -1,6 +1,3 @@
-/**
- * Tests for LayoutCollector
- */
 
 import { assertEquals, assertExists } from "jsr:@std/assert@1";
 import { join } from "https://deno.land/std@0.220.0/path/mod.ts";
@@ -14,7 +11,6 @@ Deno.test("LayoutCollector - collects named layout from frontmatter", async () =
   const projectDir = await createTestProjectDir();
 
   try {
-    // Create layouts directory and layout file
     await Deno.mkdir(join(projectDir, "layouts"), { recursive: true });
     await Deno.writeTextFile(
       join(projectDir, "layouts/main.mdx"),
@@ -29,7 +25,6 @@ isLayout: true
 `,
     );
 
-    // Create page with layout frontmatter
     const pageInfo: EntityInfo = {
       entity: {
         id: join(projectDir, "pages/test.mdx"),
@@ -70,7 +65,6 @@ Deno.test("LayoutCollector - collects nested directory layouts", async () => {
   const projectDir = await createTestProjectDir();
 
   try {
-    // Create nested layout structure
     await Deno.mkdir(join(projectDir, "pages/blog"), { recursive: true });
     await Deno.writeTextFile(
       join(projectDir, "pages/layout.tsx"),
@@ -108,7 +102,6 @@ Deno.test("LayoutCollector - collects nested directory layouts", async () => {
 
     const result = await collector.collectLayouts(pageInfo);
 
-    // Should find 2 layouts: root and blog
     assertEquals(result.nestedLayouts.length >= 1, true);
   } finally {
     await cleanupTestDir(projectDir);
@@ -155,7 +148,6 @@ Deno.test("LayoutCollector - uses default layout from config", async () => {
   const projectDir = await createTestProjectDir();
 
   try {
-    // Create default layout with isLayout frontmatter
     await Deno.mkdir(join(projectDir, "layouts"), { recursive: true });
     await Deno.writeTextFile(
       join(projectDir, "layouts/default.mdx"),

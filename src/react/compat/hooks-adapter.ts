@@ -83,9 +83,9 @@ export function useOptimisticCompat<State, OptimisticState = State>(
 }
 
 export function useTransitionCompat() {
-  const _versionInfo = getReactVersionInfo();
+  const versionInfo = getReactVersionInfo();
 
-  if (_versionInfo.isReact18 || _versionInfo.isReact19) {
+  if (versionInfo.isReact18 || versionInfo.isReact19) {
     try {
       return React.useTransition();
     } catch (_error) {
@@ -121,9 +121,14 @@ export function useDeferredValueCompat<T>(value: T): T {
   return value;
 }
 
+/**
+ * Counter for generating unique IDs in React 17 fallback.
+ * Note: This is module-level state and may not be suitable for
+ * concurrent rendering scenarios - prefer React 18+ useId when available.
+ */
 let idCounter = 0;
 
-export function useIdCompat() {
+export function useIdCompat(): string {
   const versionInfo = getReactVersionInfo();
 
   if (versionInfo.isReact18 || versionInfo.isReact19) {
@@ -134,6 +139,7 @@ export function useIdCompat() {
     }
   }
 
+  // Fallback for React 17 - generates a stable ID during component mount
   const [id] = React.useState(() => `:r${idCounter++}:`);
   return id;
 }

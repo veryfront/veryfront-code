@@ -20,14 +20,17 @@ export interface PlatformCapabilities {
 }
 
 export function detectPlatform(): Platform {
+  // @ts-ignore - Deno global may not exist
   if (typeof Deno !== "undefined" && Deno.version?.deno) {
     return "deno";
   }
 
+  // @ts-ignore - Bun global may not exist
   if (typeof Bun !== "undefined" && Bun.version) {
     return "bun";
   }
 
+  // @ts-ignore - caches global specific to CF Workers
   if (
     typeof caches !== "undefined" && typeof navigator !== "undefined" &&
     navigator.userAgent === "Cloudflare-Workers"

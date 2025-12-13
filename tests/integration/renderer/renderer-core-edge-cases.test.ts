@@ -1,9 +1,3 @@
-/**
- * VeryfrontRenderer Edge Cases Tests (Part 3 of 3)
- * Tests: Bundle Manifest Validation, MDX Frontmatter Edge Cases,
- *        Concurrent Rendering Isolation, Route Resolution Edge Cases,
- *        Component Loading Edge Cases, Integration Tests
- */
 
 import {
   assert,
@@ -19,7 +13,6 @@ import { withTestContext } from "../../_helpers/context.ts";
 import type { VeryfrontRenderer as _VeryfrontRenderer } from "../../../src/rendering/orchestrator/ssr.ts";
 
   // Note: Sanitizers disabled due to React 19 SSR MessagePort cleanup issue
-  // See: https://github.com/facebook/react/issues/24669
   describe(
   "VeryfrontRenderer Core - Edge Cases",
   {
@@ -55,7 +48,6 @@ import type { VeryfrontRenderer as _VeryfrontRenderer } from "../../../src/rende
             mode: "development",
           });
 
-          // Should handle any manifest errors gracefully
           const bundle = await renderer.compileMDX("# Test", {});
           assertExists(bundle);
         });
@@ -248,7 +240,6 @@ title: Page B
             mode: "development",
           });
 
-          // Render concurrently
           const [resultA, resultB] = await Promise.all([
             renderer.renderPage("page-a"),
             renderer.renderPage("page-b"),
@@ -308,7 +299,6 @@ title: Page B
             mode: "development",
           });
 
-          // Render same page rapidly
           const promises = [];
           for (let i = 0; i < 5; i++) {
             promises.push(renderer.renderPage("test"));
@@ -394,7 +384,6 @@ title: Page B
             mode: "development",
           });
 
-          // Should handle with or without trailing slash
           const result = await renderer.renderPage("about");
           assertExists(result);
         });
@@ -435,10 +424,6 @@ source: app
     });
 
     describe("Component Loading Edge Cases", () => {
-      // SKIPPED: Test expects error but ESBuild removes unused imports during transformation
-      // Root cause: ESBuild's transform() API removes unused imports as optimization, regardless of treeShaking setting
-      // See: src/transforms/esm/transform-core.ts:73
-      // Investigation: RENDERER_CORE_TEST_INVESTIGATION.md (Session 36-37)
       it.skip("should handle component with import errors", async () => {
         await withTestContext("renderer-core-import-error", async (context) => {
           await Deno.remove(join(context.projectDir, "app"), { recursive: true });
@@ -457,7 +442,6 @@ export default function Page() {
             mode: "development",
           });
 
-          // Import errors should propagate during module evaluation/loading
           await assertRejects(
             async () => await renderer.renderPage("broken-import"),
             Error,
@@ -481,13 +465,10 @@ export default function Page() {
             mode: "development",
           });
 
-          // May or may not reject depending on how the system handles missing default exports
           try {
             const result = await renderer.renderPage("no-default");
-            // If it succeeds, it should still return a valid result
             assertExists(result);
           } catch (error) {
-            // If it fails, it should be an error
             assert(error instanceof Error);
           }
         });
@@ -527,7 +508,6 @@ export default function Page() {
             mode: "development",
           });
 
-          // May succeed or fail depending on module system - test it handles gracefully
           try {
             await renderer.renderPage("circular");
           } catch (error) {
@@ -542,7 +522,6 @@ export default function Page() {
         await withTestContext("renderer-core-complex", async (context) => {
           await Deno.remove(join(context.projectDir, "app"), { recursive: true });
 
-          // Create layout
           await Deno.mkdir(join(context.projectDir, "layouts"), { recursive: true });
           await Deno.writeTextFile(
             join(context.projectDir, "layouts", "main.mdx"),
@@ -555,7 +534,6 @@ export default function MainLayout({ children }) {
 }`,
           );
 
-          // Create provider
           await Deno.mkdir(join(context.projectDir, "providers"), { recursive: true });
           await Deno.writeTextFile(
             join(context.projectDir, "providers", "theme.mdx"),
@@ -569,7 +547,6 @@ export default function ThemeProvider({ children }) {
 }`,
           );
 
-          // Create page using layout and provider (without component import to avoid import issues)
           await Deno.writeTextFile(
             join(context.projectDir, "pages", "complex.mdx"),
             `---
@@ -603,7 +580,6 @@ Regular **markdown** content with formatting.
         await withTestContext("renderer-core-app-complex", async (context) => {
           await Deno.mkdir(join(context.projectDir, "app", "dashboard"), { recursive: true });
 
-          // Root layout
           await Deno.writeTextFile(
             join(context.projectDir, "app", "layout.tsx"),
             `export default function RootLayout({ children }) {
@@ -611,7 +587,6 @@ Regular **markdown** content with formatting.
             }`,
           );
 
-          // Loading component
           await Deno.writeTextFile(
             join(context.projectDir, "app", "loading.tsx"),
             `export default function Loading() {
@@ -619,7 +594,6 @@ Regular **markdown** content with formatting.
             }`,
           );
 
-          // Error component
           await Deno.writeTextFile(
             join(context.projectDir, "app", "error.tsx"),
             `export default function Error() {
@@ -627,7 +601,6 @@ Regular **markdown** content with formatting.
             }`,
           );
 
-          // Dashboard layout
           await Deno.writeTextFile(
             join(context.projectDir, "app", "dashboard", "layout.tsx"),
             `export default function DashboardLayout({ children }) {
@@ -635,7 +608,6 @@ Regular **markdown** content with formatting.
             }`,
           );
 
-          // Dashboard page
           await Deno.writeTextFile(
             join(context.projectDir, "app", "dashboard", "page.mdx"),
             `# Dashboard

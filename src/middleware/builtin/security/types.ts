@@ -2,6 +2,7 @@ export type CSPDirectives = Record<string, string>;
 
 export interface SecurityHeadersOptions {
   contentSecurityPolicy?: string | CSPDirectives;
+  /** @deprecated X-XSS-Protection header is deprecated and should not be used in modern browsers */
   xssProtection?: boolean;
   noSniff?: boolean;
   frameOptions?: "DENY" | "SAMEORIGIN" | string;

@@ -1,11 +1,4 @@
-/**
- * Client-side Test Helpers
- * Provides comprehensive DOM and Browser API mocks for client-side testing
- */
 
-// ============================================================================
-// Type Definitions for Global Mocks
-// ============================================================================
 
 type GlobalWithBrowserAPIs = typeof globalThis & {
   location: Location;
@@ -22,9 +15,6 @@ type GlobalWithBrowserAPIs = typeof globalThis & {
   fetch: typeof fetch;
 };
 
-// ============================================================================
-// IntersectionObserver Mock
-// ============================================================================
 
 export class MockIntersectionObserver {
   private callback: IntersectionObserverCallback;
@@ -90,9 +80,6 @@ export class MockIntersectionObserver {
   }
 }
 
-// ============================================================================
-// MutationObserver Mock
-// ============================================================================
 
 export class MockMutationObserver {
   private callback: MutationCallback;
@@ -130,9 +117,6 @@ export class MockMutationObserver {
   }
 }
 
-// ============================================================================
-// Network Information API Mock
-// ============================================================================
 
 export interface MockNetworkInformation {
   effectiveType: "4g" | "wifi" | "3g" | "2g" | "slow-2g";
@@ -157,9 +141,6 @@ export function createMockNavigator(
   } as unknown as Navigator;
 }
 
-// ============================================================================
-// History API Mock
-// ============================================================================
 
 export interface MockHistory {
   state: any;
@@ -191,7 +172,6 @@ export function createMockHistory(options?: {
       currentIndex = states.length - 1;
       options?.onPushState?.(state, title, url);
 
-      // Update location
       if (url) {
         const urlStr = typeof url === "string" ? url : url?.toString() || "";
         const global = globalThis as GlobalWithBrowserAPIs;
@@ -207,7 +187,6 @@ export function createMockHistory(options?: {
       }
       options?.onReplaceState?.(state, title, url);
 
-      // Update location
       if (url) {
         const urlStr = typeof url === "string" ? url : url?.toString() || "";
         const global = globalThis as GlobalWithBrowserAPIs;
@@ -235,9 +214,6 @@ export function createMockHistory(options?: {
   };
 }
 
-// ============================================================================
-// Location API Mock
-// ============================================================================
 
 export interface MockLocation {
   href: string;
@@ -283,9 +259,6 @@ export function createMockLocation(url = "http://localhost:3000/"): MockLocation
   };
 }
 
-// ============================================================================
-// requestIdleCallback Mock
-// ============================================================================
 
 export function setupRequestIdleCallback(): void {
   const global = globalThis as GlobalWithBrowserAPIs;
@@ -312,19 +285,14 @@ export function setupRequestIdleCallback(): void {
   }
 }
 
-// ============================================================================
-// DOMParser Mock
-// ============================================================================
 
 export class MockDOMParser {
   parseFromString(html: string, _type: DOMParserSupportedType): Document {
-    // Create a minimal document with basic DOM methods
     const doc = {
       documentElement: null as unknown as HTMLElement,
       head: null as unknown as HTMLHeadElement,
       body: null as unknown as HTMLBodyElement,
       querySelectorAll(selector: string): NodeListOf<Element> {
-        // Simple parsing for common selectors
         const elements: Element[] = [];
 
         if (selector.includes("script[src")) {
@@ -352,7 +320,6 @@ export class MockDOMParser {
           }
         }
 
-        // Handle script[data-veryfront-page] selector
         if (selector.includes("script[data-veryfront-page]")) {
           const scriptMatches = html.matchAll(
             /<script[^>]*data-veryfront-page[^>]*>([\s\S]*?)<\/script>/g,
@@ -372,7 +339,6 @@ export class MockDOMParser {
         return all.length > 0 ? (all[0] || null) : null;
       },
       getElementById(id: string): Element | null {
-        // Parse the HTML to find element with matching id
         const idMatch = html.match(
           new RegExp(`<[^>]*id=["']${id}["'][^>]*>([\\s\\S]*?)</[^>]+>`, "i"),
         );
@@ -387,7 +353,6 @@ export class MockDOMParser {
       implementation: document.implementation,
     };
 
-    // Parse body content
     const bodyMatch = html.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
     if (bodyMatch && bodyMatch[1] !== undefined) {
       const bodyDiv = document.createElement("div");
@@ -403,9 +368,6 @@ export class MockDOMParser {
   }
 }
 
-// ============================================================================
-// ReactDOM Mock
-// ============================================================================
 
 export interface MockRoot {
   render(component: any): void;
@@ -429,9 +391,6 @@ export const mockReactDOM = {
   },
 };
 
-// ============================================================================
-// Fetch Mock
-// ============================================================================
 
 export type MockFetchResponse =
   | Response
@@ -463,10 +422,8 @@ export class FetchMock {
         ? input.toString()
         : (input as Request).url;
 
-      // Try to find response by exact URL match first
       let response = this.responses.get(url);
 
-      // If not found and URL is absolute, try matching by pathname
       if (!response) {
         try {
           const urlObj = new URL(url);
@@ -499,27 +456,17 @@ export class FetchMock {
   }
 }
 
-// ============================================================================
-// Minimal Document Mock
-// ============================================================================
 
-/**
- * Helper function to match an element against a CSS selector
- * Supports: tag, [attr], [attr="value"], [attr='value']
- */
 function matchesSelector(element: any, selector: string): boolean {
   if (!element || !selector) return false;
 
-  // Parse selector into tag and attribute parts
   const tagMatch = selector.match(/^([a-zA-Z]+)?/);
   const tag = tagMatch?.[1];
 
-  // If tag is specified, check it matches
   if (tag && element.tagName?.toLowerCase() !== tag.toLowerCase()) {
     return false;
   }
 
-  // Extract all attribute conditions like [rel="prefetch"], [href="/script.js"]
   const attrPattern = /\[([a-zA-Z-]+)(?:=["']([^"']+)["'])?\]/g;
   let attrMatch;
 
@@ -528,15 +475,13 @@ function matchesSelector(element: any, selector: string): boolean {
     const attrValue = attrMatch[2];
 
     if (!element.attributes) return false;
-    if (!attrName) continue; // Skip if attribute name is not captured
+    if (!attrName) continue;
 
     if (attrValue !== undefined) {
-      // Attribute must equal specific value
       if (element.attributes[attrName] !== attrValue) {
         return false;
       }
     } else {
-      // Attribute must exist
       if (!(attrName in element.attributes)) {
         return false;
       }
@@ -636,7 +581,6 @@ function createMinimalDocument() {
         body._children = [];
       }
       body._children.push(child);
-      // Track elements by ID
       if (child.id) {
         elementsById.set(child.id, child);
       }
@@ -649,7 +593,6 @@ function createMinimalDocument() {
           body._children.splice(index, 1);
         }
       }
-      // Remove from ID tracking
       if (child.id) {
         elementsById.delete(child.id);
       }
@@ -728,7 +671,6 @@ function createMinimalDocument() {
         removeEventListener: (_type: string, _listener: unknown) => {},
       };
 
-      // Special handling for anchor tags
       if (tag === "a") {
         Object.defineProperty(el, "href", {
           get() {
@@ -738,7 +680,6 @@ function createMinimalDocument() {
               const url = new URL(this._href, global.location?.origin || "http://localhost:3000");
               return url.href;
             } catch {
-              // Invalid URL, return as is
               return this._href;
             }
           },
@@ -758,7 +699,6 @@ function createMinimalDocument() {
         });
       }
 
-      // Special handling for link tags
       if (tag === "link") {
         Object.defineProperty(el, "rel", {
           get() {
@@ -778,7 +718,6 @@ function createMinimalDocument() {
         });
       }
 
-      // Track id if set directly
       if (el.id) {
         elementsById.set(el.id, el);
       }
@@ -786,24 +725,20 @@ function createMinimalDocument() {
       return el;
     },
     querySelector: (selector: string) => {
-      // Handle #id selector
       if (selector.startsWith("#")) {
         const id = selector.slice(1);
         return elementsById.get(id) || null;
       }
-      // Handle simple tag selectors for meta/script tags
       if (selector === 'meta[name="description"]') {
         const meta = doc.createElement("meta");
         meta.setAttribute("name", "description");
         return meta;
       }
 
-      // Search through head and body children
       const allChildren = [...head._children, ...body._children];
       return allChildren.find((el) => matchesSelector(el, selector)) || null;
     },
     querySelectorAll: (selector: string) => {
-      // Search through head and body children
       const allChildren = [...head._children, ...body._children];
       return allChildren.filter((el) => matchesSelector(el, selector));
     },
@@ -816,9 +751,6 @@ function createMinimalDocument() {
   return doc;
 }
 
-// ============================================================================
-// Complete DOM Environment Setup
-// ============================================================================
 
 export interface DOMEnvironmentOptions {
   url?: string;
@@ -839,7 +771,6 @@ export function setupDOMEnvironment(options: DOMEnvironmentOptions = {}): DOMEnv
   const fetchMock = new FetchMock();
   const global = globalThis as GlobalWithBrowserAPIs;
 
-  // Store original values
   const originalDocument = global.document;
   const originalIntersectionObserver = global.IntersectionObserver;
   const originalMutationObserver = global.MutationObserver;
@@ -849,12 +780,10 @@ export function setupDOMEnvironment(options: DOMEnvironmentOptions = {}): DOMEnv
   const originalHistory = global.history;
   const originalReactDOM = global.ReactDOM;
 
-  // Setup mock document if it doesn't exist or is not functional
   if (!originalDocument || typeof originalDocument.createElement !== "function") {
     global.document = createMinimalDocument() as unknown as Document;
   }
 
-  // Setup mocks
   global.IntersectionObserver = class extends MockIntersectionObserver {
     constructor(callback: IntersectionObserverCallback, opts?: IntersectionObserverInit) {
       super(callback, opts);
@@ -882,7 +811,6 @@ export function setupDOMEnvironment(options: DOMEnvironmentOptions = {}): DOMEnv
 
   global.ReactDOM = mockReactDOM;
 
-  // Setup MouseEvent and PopStateEvent if not available
   if (typeof global.MouseEvent === "undefined") {
     global.MouseEvent = class MockMouseEvent extends Event {
       constructor(type: string, eventInitDict?: MouseEventInit) {
@@ -902,7 +830,6 @@ export function setupDOMEnvironment(options: DOMEnvironmentOptions = {}): DOMEnv
   setupRequestIdleCallback();
   fetchMock.install();
 
-  // Cleanup function
   const cleanup = () => {
     global.document = originalDocument;
     global.IntersectionObserver = originalIntersectionObserver;

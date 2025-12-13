@@ -12,6 +12,7 @@ import type { BackendConfig, WorkflowBackend } from "./types.ts";
 import { agentLogger as logger } from "@veryfront/utils";
 import { isDeno } from "@veryfront/platform/compat/runtime.ts";
 
+// @ts-ignore - Deno global
 let DenoRedis: any = null;
 let NodeRedis: any = null;
 

@@ -1,7 +1,3 @@
-/**
- * Unit Tests for Prefetch Manager
- * Tests link prefetching, cache management, and intersection observer
- */
 
 import { assertEquals, assertExists } from "std/assert/mod.ts";
 import { afterEach, beforeEach, describe, it } from "std/testing/bdd.ts";
@@ -14,7 +10,6 @@ describe("Prefetch Manager",  () => {
   let env: DOMEnvironment;
   const managers: PrefetchManager[] = [];
 
-  // Helper to create and track managers for cleanup
   const createManager = (options?: PrefetchOptions) => {
     const manager = new PrefetchManager(options);
     managers.push(manager);
@@ -32,7 +27,6 @@ describe("Prefetch Manager",  () => {
   });
 
   afterEach(() => {
-    // Destroy all managers to clean up timers
     managers.forEach((manager) => {
       try {
         manager.destroy();
@@ -77,7 +71,6 @@ describe("Prefetch Manager",  () => {
       const manager = createManager();
       manager.init();
 
-      // Should not create observers
       assertEquals(env.mockObservers.length, 0);
     });
 
@@ -129,7 +122,6 @@ describe("Prefetch Manager",  () => {
       const manager = createManager();
       manager.init();
 
-      // Should still initialize when network info is unavailable
       assertEquals(env.mockObservers.length > 0, true);
     });
   });
@@ -141,7 +133,6 @@ describe("Prefetch Manager",  () => {
       const manager = createManager();
       await manager.prefetch("/test");
 
-      // Prefetch should complete
       assertExists(manager);
     });
 
@@ -164,7 +155,6 @@ describe("Prefetch Manager",  () => {
       let activeFetches = 0;
       let maxActiveFetches = 0;
 
-      // Set up a mock that tracks concurrent fetches
       const concurrentFetch = async () => {
         activeFetches++;
         maxActiveFetches = Math.max(maxActiveFetches, activeFetches);
@@ -187,7 +177,6 @@ describe("Prefetch Manager",  () => {
         manager.prefetch("/test3"),
       ]);
 
-      // Should not exceed max concurrent
       assertEquals(maxActiveFetches <= 2, true);
     });
 
@@ -211,14 +200,12 @@ describe("Prefetch Manager",  () => {
 
       const manager = createManager();
 
-      // Should not throw
       await manager.prefetch("/error");
       assertExists(manager);
     });
 
     it("should respect timeout", async () => {
       env.fetchMock.set("/slow", (_url: string, options?: RequestInit) => {
-        // Simulate long request that respects abort signal
         return new Promise((resolve, reject) => {
           const timeoutId = setTimeout(() => {
             resolve(new Response("OK", { status: 200 }));
@@ -235,12 +222,10 @@ describe("Prefetch Manager",  () => {
         timeout: 100,
       });
 
-      // Should timeout quickly
       const start = Date.now();
       await manager.prefetch("/slow");
       const duration = Date.now() - start;
 
-      // Should complete quickly due to timeout
       assertEquals(duration < 1000, true);
     });
 
@@ -260,7 +245,6 @@ describe("Prefetch Manager",  () => {
 
       await manager.prefetch("/large");
 
-      // Should complete without error
       assertExists(manager);
     });
   });
@@ -276,7 +260,6 @@ describe("Prefetch Manager",  () => {
 
       manager.applyResourceHints(hints);
 
-      // Should create link elements
       const prefetchLink = document.querySelector('link[rel="prefetch"][href="/script.js"]');
       const preloadLink = document.querySelector('link[rel="preload"][href="/style.css"]');
 
@@ -323,7 +306,6 @@ describe("Prefetch Manager",  () => {
       const manager = createManager();
       (manager as any).resourceHintsManager.extractResourceHints(html, new Set());
 
-      // Should parse HTML and extract hints
       assertExists(manager);
     });
   });
@@ -335,7 +317,6 @@ describe("Prefetch Manager",  () => {
 
       manager.destroy();
 
-      // Should disconnect observers
       assertExists(manager);
     });
 
@@ -361,7 +342,6 @@ describe("Prefetch Manager",  () => {
       const manager = createManager();
       const prefetchPromise = manager.prefetch("/test");
 
-      // Destroy while prefetch is in progress
       manager.destroy();
 
       try {
@@ -370,14 +350,12 @@ describe("Prefetch Manager",  () => {
         // Expected to fail
       }
 
-      // Should have aborted
       assertEquals(aborted, true);
     });
   });
 
   describe("Integration with LinkObserver", () => {
     it("should observe links on init", () => {
-      // Create some test links
       const link1 = document.createElement("a");
       link1.href = "/page1";
       document.body.appendChild(link1);
@@ -389,10 +367,8 @@ describe("Prefetch Manager",  () => {
       const manager = createManager();
       manager.init();
 
-      // Should have created observer
       assertEquals(env.mockObservers.length > 0, true);
 
-      // Cleanup
       document.body.removeChild(link1);
       document.body.removeChild(link2);
       manager.destroy();
@@ -410,16 +386,13 @@ describe("Prefetch Manager",  () => {
       });
       manager.init();
 
-      // Simulate intersection
       if (env.mockObservers.length > 0 && env.mockObservers[0]) {
         env.mockObservers[0].observe(link);
         env.mockObservers[0].triggerIntersection(link, true);
       }
 
-      // Give time for prefetch
       await new Promise((resolve) => setTimeout(resolve, 100));
 
-      // Cleanup
       document.body.removeChild(link);
       manager.destroy();
     });
@@ -455,19 +428,15 @@ describe("Prefetch Manager",  () => {
       });
       manager.init();
 
-      // Simulate intersection
       if (env.mockObservers.length > 0 && env.mockObservers[0]) {
         env.mockObservers[0].observe(link);
         env.mockObservers[0].triggerIntersection(link, true);
       }
 
-      // Check immediately
       assertEquals(prefetchStarted, false);
 
-      // Wait for delay
       await new Promise((resolve) => setTimeout(resolve, 150));
 
-      // Cleanup
       document.body.removeChild(link);
       manager.destroy();
     });
@@ -480,16 +449,14 @@ describe("Prefetch Manager",  () => {
 
       const manager = createManager();
 
-      // Should not crash
       manager.applyResourceHints([{ type: "prefetch", href: "/test.js" }]);
       (document as any).head = originalHead;
     });
 
     it("should handle invalid HTML in resource extraction", () => {
-      const manager = createManager(); // Invalid HTML
+      const manager = createManager();
       (manager as any).resourceHintsManager.extractResourceHints("<invalid", new Set());
 
-      // Should not crash
       assertExists(manager);
     });
 
@@ -498,9 +465,8 @@ describe("Prefetch Manager",  () => {
       manager.init();
 
       manager.destroy();
-      manager.destroy(); // Second call
+      manager.destroy();
 
-      // Should not crash
       assertExists(manager);
     });
 
@@ -509,7 +475,6 @@ describe("Prefetch Manager",  () => {
       manager.init();
       manager.destroy();
 
-      // Should handle gracefully
       await manager.prefetch("/test");
       assertExists(manager);
     });

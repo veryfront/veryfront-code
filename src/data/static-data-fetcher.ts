@@ -1,4 +1,3 @@
-import type { RuntimeAdapter } from "@veryfront/platform/adapters/index.ts";
 import type { CacheManager } from "./data-fetching-cache.ts";
 import type { DataContext, DataResult, PageWithData } from "./types.ts";
 import { serverLogger } from "@veryfront/utils";
@@ -6,10 +5,7 @@ import { serverLogger } from "@veryfront/utils";
 export class StaticDataFetcher {
   private pendingRevalidations = new Map<string, Promise<void>>();
 
-  constructor(
-    private cacheManager: CacheManager,
-    private adapter?: RuntimeAdapter,
-  ) {}
+  constructor(private cacheManager: CacheManager) {}
 
   async fetch(pageModule: PageWithData, context: DataContext): Promise<DataResult> {
     if (!pageModule.getStaticData) {
@@ -59,7 +55,8 @@ export class StaticDataFetcher {
 
       return result;
     } catch (error) {
-      this.logError("Error in getStaticData:", error);
+      // Always log errors for static data fetching failures
+      serverLogger.error("Error in getStaticData:", error);
       throw error;
     }
   }
@@ -85,16 +82,11 @@ export class StaticDataFetcher {
         revalidate: result.revalidate,
       });
     } catch (error) {
-      this.logError("Error revalidating data:", error);
+      // Log background revalidation errors but don't throw
+      // as we're serving stale data and this is a background operation
+      serverLogger.error("Error revalidating data:", error);
     } finally {
       this.pendingRevalidations.delete(cacheKey);
-    }
-  }
-
-  private logError(message: string, error: unknown): void {
-    const debugEnabled = this.adapter?.env.get("VERYFRONT_DEBUG");
-    if (debugEnabled) {
-      serverLogger.error(message, error);
     }
   }
 }

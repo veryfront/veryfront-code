@@ -57,7 +57,6 @@ export async function rewriteVendorImports(
     const exportName = sanitizeVendorExportName(imp.n);
 
     if (imp.d > -1) {
-
       const afterSpecifier = baseSource.substring(imp.e);
       const match = afterSpecifier.match(/^['"]\s*\)/);
 

@@ -2,6 +2,7 @@ export type RuntimeId = "deno" | "node" | "bun" | "cloudflare" | "memory";
 
 export interface RuntimeAdapter {
   readonly id: RuntimeId;
+
   readonly name: string;
 
   readonly platform: RuntimeId;
@@ -11,7 +12,9 @@ export interface RuntimeAdapter {
   readonly features: RuntimeFeatures;
 
   fs: FileSystemAdapter;
+
   env: EnvironmentAdapter;
+
   server: ServerAdapter;
 
   serve(
@@ -20,22 +23,33 @@ export interface RuntimeAdapter {
   ): Promise<Server>;
 
   shell?: ShellAdapter;
+
   kv?: KVStoreAdapter;
+
   watcher?: FileWatcherAdapter;
 
   initialize?(): Promise<void>;
+
   shutdown?(): Promise<void>;
 }
 
 export interface RuntimeCapabilities {
   typescript: boolean;
+
   jsx: boolean;
+
   http2: boolean;
+
   websocket: boolean;
+
   workers: boolean;
+
   fileWatching: boolean;
+
   shell: boolean;
+
   kvStore: boolean;
+
   writableFs: boolean;
 }
 
@@ -142,9 +156,9 @@ export function featuresToCapabilities(features: RuntimeFeatures): RuntimeCapabi
     http2: features.http2,
     websocket: features.websocket,
     workers: features.workers,
-    fileWatching: true,
-    shell: true,
-    kvStore: false,
-    writableFs: true,
+    fileWatching: true, // Assume true for non-workers
+    shell: true, // Assume true for non-workers
+    kvStore: false, // Default false
+    writableFs: true, // Assume true for non-workers
   };
 }

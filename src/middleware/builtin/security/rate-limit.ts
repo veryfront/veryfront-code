@@ -87,7 +87,10 @@ export function rateLimit(
   const windowMs = options.windowMs ?? DEFAULT_RATE_LIMIT_WINDOW_MS;
   const store = options.store ?? new MemoryRateLimitStore(windowMs);
   const keyGenerator = options.keyGenerator ??
-    ((req) => req.headers.get("x-forwarded-for") || "anonymous");
+    ((req) =>
+      req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
+      req.headers.get("x-real-ip") ||
+      "unknown");
 
   return async (ctx, next) => {
     const req = getRequest(ctx);
@@ -97,7 +100,8 @@ export function rateLimit(
 
     if (entry.count > maxRequests) {
       const now = Date.now();
-      const retryAfterSeconds = Math.ceil((entry.resetAt - now) / MS_PER_SECOND);
+      // Ensure Retry-After is at least 1 second (handles clock drift edge cases)
+      const retryAfterSeconds = Math.max(1, Math.ceil((entry.resetAt - now) / MS_PER_SECOND));
       return new Response("Too Many Requests", {
         status: HTTP_TOO_MANY_REQUESTS,
         headers: {

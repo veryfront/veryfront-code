@@ -305,6 +305,16 @@ interface Spinner {
   update: (message: string) => void;
 }
 
+/** Helper to write to stdout in a cross-platform way */
+function writeToStdout(text: string): void {
+  if (isDeno) {
+    // @ts-ignore - Deno global
+    Deno?.stdout?.writeSync?.(new TextEncoder().encode(text));
+  } else if (typeof process !== "undefined") {
+    process.stdout?.write?.(text);
+  }
+}
+
 export function createSpinner(message: string): Spinner {
   let frameIndex = 0;
   let intervalId: ReturnType<typeof setInterval> | null = null;
@@ -313,7 +323,7 @@ export function createSpinner(message: string): Spinner {
 
   const clearLine = () => {
     if (isInteractive) {
-      process.stdout?.write?.("\r\x1b[K");
+      writeToStdout("\r\x1b[K");
     }
   };
 
@@ -321,7 +331,7 @@ export function createSpinner(message: string): Spinner {
     if (!isInteractive) return;
     const frame = SPINNER_FRAMES[frameIndex % SPINNER_FRAMES.length] ?? "⠋";
     const coloredFrame = getColorEnabled() ? cyan(frame) : frame;
-    process.stdout?.write?.(`\r${coloredFrame} ${currentMessage}`);
+    writeToStdout(`\r${coloredFrame} ${currentMessage}`);
     frameIndex++;
   };
 

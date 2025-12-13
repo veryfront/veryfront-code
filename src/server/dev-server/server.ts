@@ -125,7 +125,7 @@ export class DevServer {
         port: this.options.port,
         hostname: LOCALHOST.IPV4,
         signal: this.options.signal,
-        onListen: ({ hostname: _hostname, port }: { hostname: string; port: number }) => {
+        onListen: ({ port }: { hostname: string; port: number }) => {
           const url = buildLocalhostUrl(port);
           logger.info(`Dev server running at ${url}`);
 

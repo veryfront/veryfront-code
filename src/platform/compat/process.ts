@@ -271,9 +271,11 @@ export function promptSync(message?: string): string | null {
     }
 
     if (!cachedNodeFs) {
+      // @ts-ignore - dynamic require for Node.js
       cachedNodeFs = globalThis.require?.("node:fs") || null;
       if (!cachedNodeFs) {
         try {
+          // @ts-ignore: __require is injected by bundlers for Node.js require
           cachedNodeFs = __require("node:fs");
         } catch {
           return null;

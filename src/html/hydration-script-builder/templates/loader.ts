@@ -8,7 +8,6 @@ export const getLoaderScript = () => `
           return null;
         }
         const relativePath = \`\${MODULE_SERVER_URL}/\${match[1]}/\${match[2]}.js\`;
-        console.log('[Veryfront] Loading component:', relativePath);
         const module = await import(relativePath);
         return module.default || module;
       } catch (error) {

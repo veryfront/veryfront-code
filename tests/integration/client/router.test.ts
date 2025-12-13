@@ -1,7 +1,3 @@
-/**
- * Unit Tests for Veryfront Router
- * Tests client-side routing, navigation, history management, and DOM interactions
- */
 
 import { assertEquals, assertExists } from "std/assert/mod.ts";
 import { afterEach, beforeEach, describe, it } from "std/testing/bdd.ts";
@@ -19,7 +15,6 @@ describe("Veryfront Router",  () => {
       url: "http://localhost:3000/",
     });
 
-    // Create root element
     rootElement = document.createElement("div");
     rootElement.id = "root";
     document.body.appendChild(rootElement);
@@ -61,7 +56,6 @@ describe("Veryfront Router",  () => {
       const router = new VeryfrontRouter();
       router.init();
 
-      // Should create React root
       assertEquals(mockRoots.has(rootElement), true);
 
       router.destroy();
@@ -73,12 +67,10 @@ describe("Veryfront Router",  () => {
       const router = new VeryfrontRouter();
       router.init();
 
-      // Should not throw
       assertExists(router);
 
       router.destroy();
 
-      // Re-add for cleanup
       rootElement = document.createElement("div");
       rootElement.id = "root";
       document.body.appendChild(rootElement);
@@ -115,7 +107,6 @@ describe("Veryfront Router",  () => {
 
       await router.navigate("/new-page");
 
-      // Should update history
       assertEquals((globalThis as any).location.pathname, "/new-page");
 
       router.destroy();
@@ -208,7 +199,6 @@ describe("Veryfront Router",  () => {
 
       await router.navigate("/page", false);
 
-      // Pathname should not change
       assertEquals((globalThis as any).location.pathname, originalPathname);
 
       router.destroy();
@@ -245,7 +235,6 @@ describe("Veryfront Router",  () => {
       const router = new VeryfrontRouter();
       router.init();
 
-      // Should cache the current page
       assertExists(router);
 
       document.body.removeChild(pageDataScript);
@@ -266,7 +255,6 @@ describe("Veryfront Router",  () => {
       await router.navigate("/cached");
       await router.navigate("/cached");
 
-      // Should only fetch once
       assertEquals(fetchCount, 1);
 
       router.destroy();
@@ -283,7 +271,6 @@ describe("Veryfront Router",  () => {
 
       await router.prefetch("/prefetch");
 
-      // Track if additional fetch happens (it shouldn't)
       let additionalFetchCount = 0;
       env.fetchMock.set("/prefetch", () => {
         additionalFetchCount++;
@@ -292,7 +279,6 @@ describe("Veryfront Router",  () => {
 
       await router.navigate("/prefetch");
 
-      // Should use cache, not fetch again
       // Note: The first prefetch already happened, so this should be 0 additional fetches
       assertEquals(additionalFetchCount, 0);
 
@@ -309,7 +295,6 @@ describe("Veryfront Router",  () => {
 
       router.destroy();
 
-      // Cache should be cleared
       assertExists(router);
     });
   });
@@ -336,7 +321,6 @@ describe("Veryfront Router",  () => {
 
       link.dispatchEvent(clickEvent);
 
-      // Give time for navigation
       await new Promise((resolve) => setTimeout(resolve, 100));
 
       document.body.removeChild(link);
@@ -359,7 +343,6 @@ describe("Veryfront Router",  () => {
 
       const prevented = !link.dispatchEvent(clickEvent);
 
-      // Should not be prevented
       assertEquals(prevented, false);
 
       document.body.removeChild(link);
@@ -383,7 +366,6 @@ describe("Veryfront Router",  () => {
 
       const prevented = !link.dispatchEvent(clickEvent);
 
-      // Should not be prevented
       assertEquals(prevented, false);
 
       document.body.removeChild(link);
@@ -406,7 +388,6 @@ describe("Veryfront Router",  () => {
 
       const prevented = !link.dispatchEvent(clickEvent);
 
-      // Should not be prevented
       assertEquals(prevented, false);
 
       document.body.removeChild(link);
@@ -423,12 +404,11 @@ describe("Veryfront Router",  () => {
       env.fetchMock.set("/page2", new Response('<div id="root">Page 2</div>', { status: 200 }));
 
       await router.navigate("/page1");
-      await router.navigate("/page2"); // Simulate back button
+      await router.navigate("/page2");
       (globalThis as any).location.pathname = "/page1";
       const popstateEvent = new PopStateEvent("popstate", {});
       globalThis.dispatchEvent(popstateEvent);
 
-      // Give time for navigation
       await new Promise((resolve) => setTimeout(resolve, 100));
 
       router.destroy();
@@ -439,17 +419,16 @@ describe("Veryfront Router",  () => {
       router.init();
 
       env.fetchMock.set("/page1", new Response('<div id="root">Page 1</div>', { status: 200 }));
-      env.fetchMock.set("/page2", new Response('<div id="root">Page 2</div>', { status: 200 })); // Set scroll position
+      env.fetchMock.set("/page2", new Response('<div id="root">Page 2</div>', { status: 200 }));
       (globalThis as any).scrollY = 500;
 
       await router.navigate("/page1");
       (globalThis as any).scrollY = 0;
-      await router.navigate("/page2"); // Simulate back
+      await router.navigate("/page2");
       (globalThis as any).location.pathname = "/page1";
       const popstateEvent = new PopStateEvent("popstate", {});
       globalThis.dispatchEvent(popstateEvent);
 
-      // Give time for scroll restoration
       await new Promise((resolve) => setTimeout(resolve, 200));
 
       router.destroy();
@@ -477,7 +456,6 @@ describe("Veryfront Router",  () => {
 
       link.dispatchEvent(mouseoverEvent);
 
-      // Wait for prefetch delay
       await new Promise((resolve) => setTimeout(resolve, 100));
 
       document.body.removeChild(link);
@@ -507,7 +485,6 @@ describe("Veryfront Router",  () => {
 
       link.dispatchEvent(mouseoverEvent);
 
-      // Wait for prefetch
       await new Promise((resolve) => setTimeout(resolve, 200));
 
       document.body.removeChild(link);
@@ -566,7 +543,6 @@ describe("Veryfront Router",  () => {
 
       await router.navigate("/page");
 
-      // Give time for transition
       await new Promise((resolve) => setTimeout(resolve, 200));
 
       assertEquals(document.title, "New Title");
@@ -591,7 +567,6 @@ describe("Veryfront Router",  () => {
 
       await router.navigate("/page");
 
-      // Give time for meta tag updates
       await new Promise((resolve) => setTimeout(resolve, 200));
 
       const metaTag = document.querySelector('meta[name="description"]');
@@ -608,7 +583,6 @@ describe("Veryfront Router",  () => {
 
       await router.navigate("/error");
 
-      // Give time for error display
       await new Promise((resolve) => setTimeout(resolve, 200));
 
       router.destroy();
@@ -630,7 +604,6 @@ describe("Veryfront Router",  () => {
 
       const navigationPromise = router.navigate("/slow");
 
-      // Check loading state
       await new Promise((resolve) => setTimeout(resolve, 50));
 
       await navigationPromise;
@@ -651,7 +624,6 @@ describe("Veryfront Router",  () => {
 
       router.destroy();
 
-      // Click should not be intercepted after destroy
       const clickEvent = new MouseEvent("click", {
         bubbles: true,
         cancelable: true,
@@ -670,7 +642,6 @@ describe("Veryfront Router",  () => {
 
       router.destroy();
 
-      // Should not throw
       assertExists(router);
     });
 
@@ -684,7 +655,6 @@ describe("Veryfront Router",  () => {
 
       router.destroy();
 
-      // Cache should be cleared
       assertExists(router);
     });
   });
@@ -700,12 +670,10 @@ describe("Veryfront Router",  () => {
 
       await router.navigate("/page");
 
-      // Should not crash
       assertExists(router);
 
       router.destroy();
 
-      // Re-add for cleanup
       rootElement = document.createElement("div");
       rootElement.id = "root";
       document.body.appendChild(rootElement);
@@ -721,7 +689,6 @@ describe("Veryfront Router",  () => {
       const router = new VeryfrontRouter();
       router.init();
 
-      // Should not crash
       assertExists(router);
 
       document.body.removeChild(pageDataScript);
@@ -735,10 +702,8 @@ describe("Veryfront Router",  () => {
       const router = new VeryfrontRouter();
       router.init();
 
-      // Start concurrent navigations
       await Promise.all([router.navigate("/page1"), router.navigate("/page2")]);
 
-      // Should handle gracefully
       assertExists(router);
 
       router.destroy();
@@ -752,7 +717,6 @@ describe("Veryfront Router",  () => {
 
       await router.navigate("/empty");
 
-      // Should handle gracefully
       assertExists(router);
 
       router.destroy();

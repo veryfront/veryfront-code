@@ -1,14 +1,3 @@
-/**
- * Comprehensive tests for router-detection.ts
- *
- * Tests cover:
- * - Router detection (App vs Pages)
- * - Config-forced router selection
- * - File system structure analysis
- * - App route entity resolution
- * - Frontmatter extraction and processing
- * - Edge cases and error handling
- */
 
 import { assert, assertEquals, assertExists } from "std/assert/mod.ts";
 import { describe, it } from "std/testing/bdd.ts";
@@ -19,9 +8,6 @@ import { withTestContext } from "../../_helpers/context.ts";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "@veryfront/config";
 
-/**
- * Creates a mock RuntimeAdapter for testing
- */
 function createMockAdapter(_projectDir: string): RuntimeAdapter {
   return ({
     name: "test-adapter",
@@ -114,9 +100,6 @@ function createMockAdapter(_projectDir: string): RuntimeAdapter {
   }) as any;
 }
 
-/**
- * Creates a failing adapter to test fallback behavior
- */
 function createFailingAdapter(): RuntimeAdapter {
   return ({
     name: "failing-adapter",
@@ -185,7 +168,6 @@ describe("router-detection",  () => {
         const adapter = createMockAdapter(context.projectDir);
         const config: VeryfrontConfig = {};
 
-        // app directory already exists from test context setup
         const result = await detectAppRouter(context.projectDir, config, adapter);
 
         assertEquals(result, true);
@@ -197,7 +179,6 @@ describe("router-detection",  () => {
         const adapter = createMockAdapter(context.projectDir);
         const config: VeryfrontConfig = {};
 
-        // Remove app directory, keep pages
         await Deno.remove(join(context.projectDir, "app"), { recursive: true });
 
         const result = await detectAppRouter(context.projectDir, config, adapter);
@@ -211,7 +192,6 @@ describe("router-detection",  () => {
         const adapter = createMockAdapter(context.projectDir);
         const config: VeryfrontConfig = { router: "app" };
 
-        // Even without app directory, should return true
         await Deno.remove(join(context.projectDir, "app"), { recursive: true });
 
         const result = await detectAppRouter(context.projectDir, config, adapter);
@@ -225,7 +205,6 @@ describe("router-detection",  () => {
         const adapter = createMockAdapter(context.projectDir);
         const config: VeryfrontConfig = { router: "pages" };
 
-        // Even with app directory, should return false
         const result = await detectAppRouter(context.projectDir, config, adapter);
 
         assertEquals(result, false);
@@ -237,7 +216,6 @@ describe("router-detection",  () => {
         const adapter = createFailingAdapter();
         const config: VeryfrontConfig = {};
 
-        // app directory exists via test context
         const result = await detectAppRouter(context.projectDir, config, adapter);
 
         assertEquals(result, true);
@@ -249,7 +227,6 @@ describe("router-detection",  () => {
         const adapter = createFailingAdapter();
         const config: VeryfrontConfig = {};
 
-        // Remove app directory
         await Deno.remove(join(context.projectDir, "app"), { recursive: true });
 
         const result = await detectAppRouter(context.projectDir, config, adapter);
@@ -287,7 +264,6 @@ describe("router-detection",  () => {
         const adapter = createMockAdapter(context.projectDir);
         const slug = "blog/post";
 
-        // Create app/blog/post/page.tsx
         const pagePath = join(context.projectDir, "app", "blog", "post");
         await ensureDir(pagePath);
         await Deno.writeTextFile(
@@ -312,7 +288,6 @@ describe("router-detection",  () => {
         const adapter = createMockAdapter(context.projectDir);
         const slug = "docs/intro";
 
-        // Create app/docs/intro/page.mdx with frontmatter
         const pagePath = join(context.projectDir, "app", "docs", "intro");
         await ensureDir(pagePath);
         await Deno.writeTextFile(
@@ -345,7 +320,6 @@ Welcome to the documentation.
         const adapter = createMockAdapter(context.projectDir);
         const slug = "";
 
-        // Create app/page.tsx
         await Deno.writeTextFile(
           join(context.projectDir, "app", "page.tsx"),
           `export default function Home() {
@@ -366,7 +340,6 @@ Welcome to the documentation.
         const adapter = createMockAdapter(context.projectDir);
         const slug = "test";
 
-        // Create multiple page files
         const testPath = join(context.projectDir, "app", "test");
         await ensureDir(testPath);
         await Deno.writeTextFile(join(testPath, "page.mdx"), "# MDX Page");
@@ -385,7 +358,6 @@ Welcome to the documentation.
         const adapter = createMockAdapter(context.projectDir);
         const slug = "about";
 
-        // Create app/about.mdx (shorthand)
         await Deno.writeTextFile(
           join(context.projectDir, "app", "about.mdx"),
           "# About Page",
@@ -587,7 +559,6 @@ description: This is bad YAML
         const entity = await getAppRouteEntity(context.projectDir, slug, adapter);
 
         assertExists(entity);
-        // Should still return entity with full content
         assert(entity?.entity.content.includes("---"));
       });
     });
@@ -597,7 +568,6 @@ description: This is bad YAML
         const adapter = createMockAdapter(context.projectDir);
         const slug = "docs/api/reference/endpoints";
 
-        // Create deeply nested route
         const nestedPath = join(context.projectDir, "app", "docs", "api", "reference", "endpoints");
         await ensureDir(nestedPath);
         await Deno.writeTextFile(
@@ -643,11 +613,9 @@ description: This is bad YAML
         const adapter = createMockAdapter(context.projectDir);
         const slug = "fake";
 
-        // Create a directory with same name as potential file
         const fakePath = join(context.projectDir, "app", "fake");
         await ensureDir(fakePath);
 
-        // Create directory named 'page.tsx' (unusual but should handle)
         const weirdDirPath = join(fakePath, "page.tsx");
         await ensureDir(weirdDirPath);
 
@@ -663,7 +631,6 @@ description: This is bad YAML
         const adapter = createMockAdapter(context.projectDir);
         const slug = "order";
 
-        // Create only .js file (should be found even though it's last in extension priority)
         const orderPath = join(context.projectDir, "app", "order");
         await ensureDir(orderPath);
         await Deno.writeTextFile(
@@ -732,7 +699,6 @@ description:   Value with spaces
         const entity = await getAppRouteEntity(context.projectDir, slug, adapter);
 
         assertExists(entity);
-        // Should handle whitespace in frontmatter values
         assertEquals(entity?.entity.frontmatter.title, "Whitespace Test");
         assert(entity?.entity.content.includes("# Whitespace Page"));
       });
@@ -768,7 +734,6 @@ description:   Value with spaces
         const adapter = createMockAdapter(context.projectDir);
         const slug = "a/b/c/d/e/f/g/h/i/j/k/l/m/n/o/p/q/r/s/t/u/v/w/x/y/z";
 
-        // Should not crash even if path doesn't exist
         const entity = await getAppRouteEntity(context.projectDir, slug, adapter);
 
         assertEquals(entity, null);
@@ -799,14 +764,12 @@ description:   Value with spaces
         const adapter = createMockAdapter(context.projectDir);
         const config: VeryfrontConfig = {};
 
-        // Make multiple concurrent calls
         const results = await Promise.all([
           detectAppRouter(context.projectDir, config, adapter),
           detectAppRouter(context.projectDir, config, adapter),
           detectAppRouter(context.projectDir, config, adapter),
         ]);
 
-        // All should return the same result
         assertEquals(results[0], results[1]);
         assertEquals(results[1], results[2]);
       });
@@ -816,7 +779,6 @@ description:   Value with spaces
       await withTestContext("router-concurrent-entities", async (context) => {
         const adapter = createMockAdapter(context.projectDir);
 
-        // Create test pages
         const page1Path = join(context.projectDir, "app", "page1");
         const page2Path = join(context.projectDir, "app", "page2");
         await ensureDir(page1Path);
@@ -824,7 +786,6 @@ description:   Value with spaces
         await Deno.writeTextFile(join(page1Path, "page.tsx"), "export default function P1() {}");
         await Deno.writeTextFile(join(page2Path, "page.tsx"), "export default function P2() {}");
 
-        // Resolve multiple entities concurrently
         const results = await Promise.all([
           getAppRouteEntity(context.projectDir, "page1", adapter),
           getAppRouteEntity(context.projectDir, "page2", adapter),
@@ -842,13 +803,11 @@ description:   Value with spaces
         const adapter = createMockAdapter(context.projectDir);
         const config: VeryfrontConfig = {};
 
-        // Create symlink to app directory (if supported)
         try {
           const appPath = join(context.projectDir, "app");
           const symlinkPath = join(context.projectDir, "app-link");
           await Deno.symlink(appPath, symlinkPath);
 
-          // Should still detect app router via original path
           const result = await detectAppRouter(context.projectDir, config, adapter);
           assertEquals(result, true);
         } catch {

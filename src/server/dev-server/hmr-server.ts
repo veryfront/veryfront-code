@@ -27,7 +27,7 @@ export class HMRServer {
   }
 
   start(): Promise<void> {
-    const _handler = (req: Request): Response => {
+    const handler = (req: Request): Response => {
       const url = new URL(req.url);
 
       if (req.headers.get("upgrade") === "websocket") {
@@ -86,7 +86,7 @@ export class HMRServer {
     const signal = this.options.signal || controller.signal;
     this.abortController = this.options.signal ? undefined : controller;
 
-    const startPromise = this.options.adapter.serve(_handler, {
+    const startPromise = this.options.adapter.serve(handler, {
       port: this.options.port,
       signal,
       onListen: ({ port }: { port: number }) => {

@@ -163,6 +163,7 @@ function createImportMapPlugin(
                 found = true;
                 break;
               } catch {
+                // Ignore error, try next extension
               }
             }
 
@@ -226,6 +227,7 @@ async function loadAndTranspileModule(
         resolvedPath = pathWithExt;
         break;
       } catch {
+        // Continue trying other extensions
       }
     }
 
@@ -253,4 +255,280 @@ async function loadAndTranspileModule(
 
   const externalPackages = [
     "ai",
-    "ai
+    "ai/*",
+    "ai/react",
+    "@ai-sdk/*",
+    "zod",
+    "node:*",
+    "veryfront",
+    "veryfront/*",
+    "@opentelemetry/*",
+    "path",
+  ];
+
+  const resolveDir = pathHelper.dirname(resolvedPath);
+
+  const result: BuildResult = await build({
+    bundle: true,
+    write: false,
+    format: "esm",
+    platform: "neutral",
+    target: "es2022",
+    jsx: "automatic",
+    jsxImportSource: "react",
+    resolveExtensions: [".ts", ".tsx", ".js", ".jsx", ".mjs"],
+    external: externalPackages,
+    stdin: {
+      contents: source,
+      loader,
+      resolveDir,
+      sourcefile: resolvedPath,
+    },
+    plugins,
+  });
+
+  if (result.errors && result.errors.length > 0) {
+    const first = result.errors[0]?.text || "unknown error";
+    throw toError(createError({
+      type: "api",
+      message: `[API] handler build failed: ${first}`,
+    }));
+  }
+
+  logger.info(`[API] built handler ${resolvedPath}`);
+  const js = result.outputFiles?.[0]?.text ?? "export {}";
+  logger.debug(`[API] transpiled size ${js.length} bytes`);
+
+  return await loadModuleFromCode(js, adapter, projectDir, fs);
+}
+
+async function loadModuleFromCode(
+  code: string,
+  _adapter: RuntimeAdapter,
+  projectDir: string,
+  fs: FileSystem,
+): Promise<APIRoute> {
+  // Note: _adapter kept for API compatibility
+  const tempDir = await fs.makeTempDir({ prefix: "vf-api-" });
+  const tempFile = pathHelper.join(tempDir, "handler.mjs");
+
+  const transformedCode = await rewriteExternalImports(code, projectDir, fs);
+
+  await fs.writeTextFile(tempFile, transformedCode);
+
+  try {
+    return await import(`file://${tempFile}?v=${Date.now()}`);
+  } catch (e: unknown) {
+    const errorMessage = e instanceof Error && e.stack ? e.stack : String(e);
+    logger.error(`[API] dynamic import failed ${tempFile}: ${errorMessage}`);
+    throw e;
+  } finally {
+    await fs.remove(tempDir, { recursive: true });
+  }
+}
+
+async function rewriteExternalImports(
+  code: string,
+  projectDir: string,
+  fs: FileSystem,
+): Promise<string> {
+  let transformed = code;
+
+  if (isNode) {
+    try {
+      const { pathToFileURL } = await import("node:url");
+
+      logger.debug(`[API] Rewriting external imports for Node.js, projectDir: ${projectDir}`);
+
+      const resolvePackageToFileUrl = async (packageName: string): Promise<string | null> => {
+        const packagePath = pathHelper.join(projectDir, "node_modules", packageName);
+        const packageJsonPath = pathHelper.join(packagePath, "package.json");
+
+        try {
+          const pkgJson = JSON.parse(await fs.readTextFile(packageJsonPath));
+          let entryPoint: string | undefined;
+
+          if (pkgJson.exports) {
+            const dotExport = pkgJson.exports["."];
+            if (typeof dotExport === "string") {
+              entryPoint = dotExport;
+            } else if (dotExport?.import) {
+              entryPoint = dotExport.import;
+            } else if (dotExport?.default) {
+              entryPoint = dotExport.default;
+            }
+          }
+
+          if (!entryPoint) {
+            entryPoint = pkgJson.module || pkgJson.main || "index.js";
+          }
+
+          if (!entryPoint) {
+            return null;
+          }
+
+          const resolvedPath = pathHelper.join(packagePath, entryPoint);
+          return pathToFileURL(resolvedPath).href;
+        } catch {
+          return null;
+        }
+      };
+
+      const externalPackagesToResolve = [
+        "zod",
+        "ai",
+        "@ai-sdk/anthropic",
+        "@ai-sdk/openai",
+        "@ai-sdk/google",
+        "@ai-sdk/mistral",
+        "@ai-sdk/provider",
+        "@ai-sdk/provider-utils",
+      ];
+
+      for (const pkg of externalPackagesToResolve) {
+        const escapedPkg = pkg.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+        const staticImportRegex = new RegExp(`from\\s+["']${escapedPkg}["']`, "g");
+        if (staticImportRegex.test(transformed)) {
+          const resolvedUrl = await resolvePackageToFileUrl(pkg);
+          if (resolvedUrl) {
+            transformed = transformed.replace(staticImportRegex, `from "${resolvedUrl}"`);
+            logger.debug(`[API] Resolved ${pkg} -> ${resolvedUrl}`);
+          }
+        }
+
+        const dynamicImportRegex = new RegExp(`import\\s*\\(\\s*["']${escapedPkg}["']\\s*\\)`, "g");
+        if (dynamicImportRegex.test(transformed)) {
+          const resolvedUrl = await resolvePackageToFileUrl(pkg);
+          if (resolvedUrl) {
+            transformed = transformed.replace(dynamicImportRegex, `import("${resolvedUrl}")`);
+            logger.debug(`[API] Resolved dynamic import ${pkg} -> ${resolvedUrl}`);
+          }
+        }
+      }
+
+      const vfPackagePath = pathHelper.join(projectDir, "node_modules", "veryfront");
+      const vfPackageJsonPath = pathHelper.join(vfPackagePath, "package.json");
+
+      let exportsMap: Record<string, { import?: string }> = {};
+      try {
+        const pkgJson = JSON.parse(await fs.readTextFile(vfPackageJsonPath));
+        exportsMap = pkgJson.exports || {};
+      } catch (err) {
+        logger.debug(`[API] Could not read veryfront package.json: ${err}`);
+      }
+
+      transformed = transformed.replace(
+        /from\s+["'](veryfront\/[^"']+)["']/g,
+        (_match, fullSpecifier: string) => {
+          const subpath = "./" + fullSpecifier.replace("veryfront/", "");
+          const exportEntry = exportsMap[subpath];
+          if (exportEntry?.import) {
+            const resolvedPath = pathHelper.join(vfPackagePath, exportEntry.import);
+            logger.debug(`[API] Resolved ${fullSpecifier} -> ${resolvedPath}`);
+            return `from "${pathToFileURL(resolvedPath).href}"`;
+          }
+          logger.warn(`[API] No export found for ${subpath}`);
+          return _match;
+        },
+      );
+
+      transformed = transformed.replace(
+        /from\s+["']veryfront["']/g,
+        () => {
+          const exportEntry = exportsMap["."];
+          if (exportEntry?.import) {
+            const resolvedPath = pathHelper.join(vfPackagePath, exportEntry.import);
+            logger.debug(`[API] Resolved veryfront -> ${resolvedPath}`);
+            return `from "${pathToFileURL(resolvedPath).href}"`;
+          }
+          return 'from "veryfront"';
+        },
+      );
+    } catch (e) {
+      logger.warn(`[API] Failed to import node:module: ${e}`);
+      // Fall through to Deno handling
+    }
+  }
+
+  const externalPackages = [
+    { pattern: /from\s+["']ai["']/g, replacement: 'from "npm:ai@latest"' },
+    {
+      pattern: /from\s+["']@ai-sdk\/anthropic["']/g,
+      replacement: 'from "npm:@ai-sdk/anthropic@latest"',
+    },
+    { pattern: /from\s+["']@ai-sdk\/openai["']/g, replacement: 'from "npm:@ai-sdk/openai@latest"' },
+    { pattern: /from\s+["']@ai-sdk\/google["']/g, replacement: 'from "npm:@ai-sdk/google@latest"' },
+    {
+      pattern: /from\s+["']@ai-sdk\/mistral["']/g,
+      replacement: 'from "npm:@ai-sdk/mistral@latest"',
+    },
+    {
+      pattern: /from\s+["']@ai-sdk\/provider["']/g,
+      replacement: 'from "npm:@ai-sdk/provider@latest"',
+    },
+    {
+      pattern: /from\s+["']@ai-sdk\/provider-utils["']/g,
+      replacement: 'from "npm:@ai-sdk/provider-utils@latest"',
+    },
+    { pattern: /from\s+["']zod["']/g, replacement: 'from "npm:zod@latest"' },
+    { pattern: /import\s*\(\s*["']ai["']\s*\)/g, replacement: 'import("npm:ai@latest")' },
+    {
+      pattern: /import\s*\(\s*["']@ai-sdk\/anthropic["']\s*\)/g,
+      replacement: 'import("npm:@ai-sdk/anthropic@latest")',
+    },
+    {
+      pattern: /import\s*\(\s*["']@ai-sdk\/openai["']\s*\)/g,
+      replacement: 'import("npm:@ai-sdk/openai@latest")',
+    },
+    {
+      pattern: /import\s*\(\s*["']@ai-sdk\/google["']\s*\)/g,
+      replacement: 'import("npm:@ai-sdk/google@latest")',
+    },
+    {
+      pattern: /import\s*\(\s*["']@ai-sdk\/mistral["']\s*\)/g,
+      replacement: 'import("npm:@ai-sdk/mistral@latest")',
+    },
+    {
+      pattern: /import\s*\(\s*["']@ai-sdk\/provider["']\s*\)/g,
+      replacement: 'import("npm:@ai-sdk/provider@latest")',
+    },
+    {
+      pattern: /import\s*\(\s*["']@ai-sdk\/provider-utils["']\s*\)/g,
+      replacement: 'import("npm:@ai-sdk/provider-utils@latest")',
+    },
+    { pattern: /import\s*\(\s*["']zod["']\s*\)/g, replacement: 'import("npm:zod@latest")' },
+  ];
+
+  if (isDeno) {
+    for (const { pattern, replacement } of externalPackages) {
+      transformed = transformed.replace(pattern, replacement);
+    }
+  }
+
+  return transformed;
+}
+
+function extractAPIRouteHandlers(module: unknown): APIRoute {
+  const handler: APIRoute = {};
+
+  if (!module || typeof module !== "object") {
+    return handler;
+  }
+
+  const mod = module as Record<string, unknown>;
+
+  if (typeof mod.GET === "function") handler.GET = mod.GET as APIRoute["GET"];
+  if (typeof mod.POST === "function") handler.POST = mod.POST as APIRoute["POST"];
+  if (typeof mod.PUT === "function") handler.PUT = mod.PUT as APIRoute["PUT"];
+  if (typeof mod.PATCH === "function") handler.PATCH = mod.PATCH as APIRoute["PATCH"];
+  if (typeof mod.DELETE === "function") handler.DELETE = mod.DELETE as APIRoute["DELETE"];
+  if (typeof mod.HEAD === "function") handler.HEAD = mod.HEAD as APIRoute["HEAD"];
+  if (typeof mod.OPTIONS === "function") handler.OPTIONS = mod.OPTIONS as APIRoute["OPTIONS"];
+
+  if (typeof mod.default === "function") {
+    handler.default = mod.default as APIRoute["default"];
+  }
+
+  return handler;
+}

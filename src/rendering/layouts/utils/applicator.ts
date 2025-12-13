@@ -212,6 +212,9 @@ async function applyProviders(
           providerItem.bundle.compiledCode,
           providerImportMap,
         );
+        // Configure mdxRenderer with adapter for @/ import resolution
+        mdxRenderer.setAdapter(adapter);
+        mdxRenderer.setProjectDir(projectDir);
         const providerModule = await mdxRenderer.loadModuleESM(providerCode);
         const providerMod = providerModule as MDXModule;
         const ProviderFn = providerMod.MDXLayout || providerMod.default;

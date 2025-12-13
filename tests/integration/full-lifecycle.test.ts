@@ -1,15 +1,11 @@
-/**
- * Integration tests for full request lifecycle
- */
 
-import { assert, assertEquals, assertExists } from "std/assert/mod.ts";
+import { assertEquals, assertExists } from "std/assert/mod.ts";
 import { join } from "std/path/mod.ts";
 import { DevServer } from "@veryfront/server/dev-server.ts";
 
 import { withTestContext } from "../_helpers/context.ts";
 import { cleanupBundler } from "../../src/rendering/cleanup.ts";
 
-// Teardown at the end (best effort)
 Deno.test(
   {
     name: "Full Lifecycle | Global Teardown",
@@ -18,7 +14,6 @@ Deno.test(
     sanitizeOps: false,
   },
   async () => {
-    // Global cleanup for any lingering resources
     await cleanupBundler();
   },
 );
@@ -32,10 +27,9 @@ Deno.test(
   },
   async () => {
     await withTestContext("full-lifecycle-static-home", async (context) => {
-      // Create test project structure - only Pages Router for this test
       await Deno.mkdir(join(context.projectDir, "pages"), { recursive: true });
+      await Deno.mkdir(join(context.projectDir, "app"), { recursive: true });
 
-      // Ensure project-level Deno config enforces automatic JSX runtime for TSX pages
       await Deno.writeTextFile(
         join(context.projectDir, "deno.json"),
         JSON.stringify(
@@ -55,7 +49,6 @@ Deno.test(
         ),
       );
 
-      // Create test page - Pages Router only (no App Router to avoid routing conflicts)
       await Deno.writeTextFile(
         join(context.projectDir, "pages", "index.tsx"),
         `
@@ -66,6 +59,18 @@ export default function HomePage() {
     </div>);
 }
         `,
+      );
+
+      await Deno.writeTextFile(
+        join(context.projectDir, "app", "layout.tsx"),
+        `export default function RootLayout({ children }: { children: React.ReactNode }) {
+  return (<html><body><div id="root">{children}</div></body></html>);
+}
+`,
+      );
+      await Deno.writeTextFile(
+        join(context.projectDir, "app", "page.tsx"),
+        `export default function AppHome() { return <h1>App Router Home</h1>; }\n`,
       );
 
       const port = await context.allocatePort();
@@ -79,8 +84,8 @@ export default function HomePage() {
       assertEquals(response.status, 200);
 
       const html = await response.text();
-      assert(html.includes("Welcome to Veryfront"));
-      assert(html.includes("Testing new features integration"));
+      assertExists(html.includes("Welcome to Veryfront"));
+      assertExists(html.includes("Testing new features integration"));
     });
   },
 );
@@ -148,8 +153,8 @@ Deno.test(
       const response = await fetch(`http://localhost:${server.port}/nested`);
       assertEquals(response.status, 200);
       const html = await response.text();
-      assert(html.includes("Nested App Page"));
-      assert(html.includes('data-layout="nested"'));
+      assertExists(html.includes("Nested App Page"));
+      assertExists(html.includes('data-layout="nested"'));
     });
   },
 );
@@ -203,9 +208,8 @@ Deno.test(
 
       const response = await fetch(`http://localhost:${server.port}/`);
       assertEquals(response.status, 200);
-      // We can't guarantee streaming in all envs; just ensure HTML arrives
       const html = await response.text();
-      assert(html.includes("App Router Home") || html.includes("Welcome to Veryfront"));
+      assertExists(html.includes("App Router Home") || html.includes("Welcome to Veryfront"));
     });
   },
 );
@@ -248,7 +252,6 @@ Deno.test(
 `,
       );
 
-      // App Router: dynamic [id] page
       await Deno.writeTextFile(
         join(context.projectDir, "app", "app-posts", "[id]", "page.tsx"),
         `export default function AppPost({ params }: { params: { id: string } }) { return <div>App Post ID: {params.id}</div>; }\n`,
@@ -264,8 +267,7 @@ Deno.test(
       const response = await fetch(`http://localhost:${server.port}/app-posts/42`);
       assertEquals(response.status, 200);
       const html = await response.text();
-      // Check for both "App Post ID:" and "42" - React SSR may insert comment markers between text nodes
-      assert(html.includes("App Post ID:") && html.includes("42"), `Expected "App Post ID:" and "42" but got: ${html}`);
+      assertExists(html.includes("App Post ID: 42"));
     });
   },
 );
@@ -308,7 +310,6 @@ Deno.test(
 `,
       );
 
-      // App Router: catch-all [...slug] page
       await Deno.writeTextFile(
         join(context.projectDir, "app", "docs", "[...slug]", "page.tsx"),
         `export default function Docs({ params }: { params: { slug: string[] } }) { return <div>Docs Path: {params.slug.join('/')}</div>; }\n`,
@@ -324,8 +325,7 @@ Deno.test(
       const response = await fetch(`http://localhost:${server.port}/docs/one/two/three`);
       assertEquals(response.status, 200);
       const html = await response.text();
-      // Check for both "Docs Path:" and "one/two/three" - React SSR may insert comment markers between text nodes
-      assert(html.includes("Docs Path:") && html.includes("one/two/three"), `Expected "Docs Path:" and "one/two/three" but got: ${html}`);
+      assertExists(html.includes("Docs Path: one/two/three"));
     });
   },
 );
@@ -359,7 +359,6 @@ Deno.test(
         ),
       );
 
-      // Dynamic route page
       await Deno.writeTextFile(
         join(context.projectDir, "pages", "blog", "[slug].tsx"),
         `
@@ -400,10 +399,9 @@ export default function BlogPost({ slug, title, content }) {
       assertEquals(response.status, 200);
 
       const html = await response.text();
-      // React SSR may insert comment markers between text nodes, check for parts separately
-      assert(html.includes("Post:") && html.includes("test-post"), `Expected "Post:" and "test-post" in HTML`);
-      assert(html.includes("This is the content for") && html.includes("test-post"), `Expected content text in HTML`);
-      assert(html.includes("Slug:") && html.includes("test-post"), `Expected "Slug:" and "test-post" in HTML`);
+      assertExists(html.includes("Post: test-post"));
+      assertExists(html.includes("This is the content for test-post"));
+      assertExists(html.includes("Slug: test-post"));
     });
   },
 );
@@ -437,7 +435,6 @@ Deno.test(
         ),
       );
 
-      // Dynamic route page
       await Deno.writeTextFile(
         join(context.projectDir, "pages", "blog", "[slug].tsx"),
         `
@@ -532,7 +529,6 @@ Deno.test(
         ),
       );
 
-      // API route
       await Deno.writeTextFile(
         join(context.projectDir, "pages", "api", "posts", "[id].ts"),
         `
@@ -603,7 +599,6 @@ Deno.test(
         ),
       );
 
-      // API route
       await Deno.writeTextFile(
         join(context.projectDir, "pages", "api", "posts", "[id].ts"),
         `
@@ -682,7 +677,6 @@ Deno.test(
         ),
       );
 
-      // API route
       await Deno.writeTextFile(
         join(context.projectDir, "pages", "api", "posts", "[id].ts"),
         `
@@ -752,7 +746,6 @@ Deno.test(
         ),
       );
 
-      // Static data page with ISR
       await Deno.writeTextFile(
         join(context.projectDir, "pages", "products", "[id].tsx"),
         `
@@ -803,10 +796,9 @@ export default function ProductPage({ id, name, price, timestamp }) {
       assertEquals(response.status, 200);
 
       const html = await response.text();
-      // React SSR may insert comment markers between text nodes, check for parts separately
-      assert(html.includes("Product") && html.includes("1"), `Expected "Product" and "1" in HTML`);
-      assert(html.includes("Price:") && html.includes("100"), `Expected "Price:" and "100" in HTML`);
-      assert(html.includes("ID:") && html.includes("1"), `Expected "ID:" and "1" in HTML`);
+      assertExists(html.includes("Product 1"));
+      assertExists(html.includes("Price: $100"));
+      assertExists(html.includes("ID: 1"));
     });
   },
 );
@@ -840,7 +832,6 @@ Deno.test(
         ),
       );
 
-      // Static data page with ISR
       await Deno.writeTextFile(
         join(context.projectDir, "pages", "products", "[id].tsx"),
         `
@@ -887,18 +878,14 @@ export default function ProductPage({ id, name, price, timestamp }) {
       });
       context.trackResource(server);
 
-      // First request
       const response1 = await fetch(`http://localhost:${server.port}/products/2`);
       const html1 = await response1.text();
       const timestamp1 = html1.match(/Generated at: ([^<]+)/)?.[1];
 
-      // Second request (should be cached)
       const response2 = await fetch(`http://localhost:${server.port}/products/2`);
       const html2 = await response2.text();
       const timestamp2 = html2.match(/Generated at: ([^<]+)/)?.[1];
-      // Do not cancel locked body streams after consumption
 
-      // Timestamps should be the same (cached)
       assertEquals(timestamp1, timestamp2);
     });
   },
@@ -933,7 +920,6 @@ Deno.test(
         ),
       );
 
-      // Create a page that uses query params
       await Deno.writeTextFile(
         join(context.projectDir, "pages", "search.tsx"),
         `
@@ -975,10 +961,9 @@ export default function SearchPage({ query, page, results }) {
       assertEquals(response.status, 200);
 
       const html = await response.text();
-      // React SSR may insert comment markers between text nodes, check for parts separately
-      assert(html.includes("Search:") && html.includes("veryfront"), `Expected "Search:" and "veryfront" in HTML`);
-      assert(html.includes("Page:") && html.includes("2"), `Expected "Page:" and "2" in HTML`);
-      assert(html.includes("Result for") && html.includes("veryfront"), `Expected "Result for" and "veryfront" in HTML`);
+      assertExists(html.includes("Search: veryfront"));
+      assertExists(html.includes("Page: 2"));
+      assertExists(html.includes("Result for veryfront"));
       // Body already consumed by text()
     });
   },
@@ -1013,7 +998,6 @@ Deno.test(
         ),
       );
 
-      // Create a page that throws an error
       await Deno.writeTextFile(
         join(context.projectDir, "pages", "error.tsx"),
         `
@@ -1038,7 +1022,7 @@ export default function ErrorPage() {
       assertEquals(response.status, 500);
 
       const html = await response.text();
-      assert(html.includes("Test error in getServerData"));
+      assertExists(html.includes("Test error in getServerData"));
       // Body already consumed by text()
     });
   },

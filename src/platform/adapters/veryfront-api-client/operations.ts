@@ -31,12 +31,12 @@ export class VeryfrontAPIOperations {
   }
 
   async listProjects(): Promise<Project[]> {
-    const response = await this.request<ListProjectsResponse>("/projects");
+    const response = await this.request<ListProjectsResponse>("/api/projects");
     return response.data;
   }
 
   async getProject(projectId: string): Promise<Project> {
-    return await this.request<Project>(`/projects/${projectId}`);
+    return await this.request<Project>(`/api/projects/${projectId}`);
   }
 
   async listFiles(projectId?: string, cursor?: string, limit = 100): Promise<ListFilesResponse> {
@@ -49,30 +49,14 @@ export class VeryfrontAPIOperations {
     if (cursor) {
       params.set("cursor", cursor);
     }
-    const url = `/projects/${id}/files?${params}`;
+    const url = `/api/projects/${id}/files?${params}`;
     logger.debug("[VeryfrontAPIClient] Listing files", { url, projectId: id, limit, cursor });
     const response = await this.request<ListFilesResponse>(url);
-
-    // deno-lint-ignore no-explicit-any
-    const rawResponse = response as any;
-    const pageInfo = response.pagination || rawResponse.pageInfo;
-
-    const normalizedPagination = pageInfo
-      ? {
-        cursor: pageInfo.cursor || pageInfo.nextCursor || pageInfo.endCursor,
-        hasMore: pageInfo.hasMore ?? pageInfo.hasNextPage,
-      }
-      : undefined;
-
     logger.debug("[VeryfrontAPIClient] Files listed", {
       count: response.data?.length || 0,
-      hasMore: normalizedPagination?.hasMore,
+      hasMore: response.pageInfo?.hasNextPage,
     });
-
-    return {
-      data: response.data,
-      pagination: normalizedPagination,
-    };
+    return response;
   }
 
   async listAllFiles(projectId?: string): Promise<ProjectFile[]> {
@@ -83,25 +67,28 @@ export class VeryfrontAPIOperations {
     do {
       const response = await this.listFiles(id, cursor);
       allFiles.push(...response.data);
-      cursor = response.pagination?.hasMore ? response.pagination.cursor : undefined;
+      cursor = response.pageInfo?.hasNextPage ? (response.pageInfo.nextCursor ?? undefined) : undefined;
     } while (cursor);
+
+    logger.debug("[VeryfrontAPIClient] Listed all files", { total: allFiles.length });
     return allFiles;
   }
 
   async getFileContent(path: string, projectId?: string): Promise<string> {
     const id = projectId || this.getProjectId();
     const encodedPath = encodeURIComponent(path);
-    return await this.request<string>(`/projects/${id}/files/${encodedPath}`, {
-      returnText: true,
-    });
+    // API returns JSON with {path, content} structure
+    const response = await this.request<{ path: string; content: string }>(
+      `/api/projects/${id}/files/${encodedPath}`,
+    );
+    return response.content;
   }
 
   async getFileMetadata(path: string, projectId?: string): Promise<ProjectFile | null> {
     const id = projectId || this.getProjectId();
 
     const files = await this.listAllFiles(id);
-    const found = files.find((f) => f.path === path);
-    return found || null;
+    return files.find((f) => f.path === path) || null;
   }
 
   async fileExists(path: string, projectId?: string): Promise<boolean> {

@@ -6,7 +6,6 @@ import { startUniversalServer } from "../../../src/server/production-server.ts";
 import { getFreePort } from "../../_helpers/utils.ts";
 
   // Note: Sanitizers disabled due to React 19 SSR MessagePort cleanup issue
-  // See: https://github.com/facebook/react/issues/24669
   describe(
   "NodeAdapter",
   {
@@ -132,9 +131,7 @@ import { getFreePort } from "../../_helpers/utils.ts";
 
         assertExists(adapter.serve);
         assertEquals(typeof adapter.serve, "function");
-        // serve() is a regular function that returns Promise, not an async function
         assertEquals(adapter.serve.constructor.name, "Function");
-        // Only required parameters count towards length (options has default value)
         assertEquals(adapter.serve.length, 1);
       });
 

@@ -1,1435 +1,1256 @@
-# Comment Cleanup Progress
+# Code Review & Cleanup Progress
 
-Total files: 1424
+## Overview
+- **Total files to review**: 902
+- **Goal**: Identify and fix bugs, hacks, workarounds, and code quality issues
+- **Status**: 🔄 In Progress
 
-## Status Legend
-- [x] Pending
-- [x] Completed
+## Review Categories
+We're looking for:
+- 🐛 **Bugs**: Logic errors, edge cases, null/undefined issues
+- 🩹 **Bandaids/Hacks**: Temporary fixes, TODO comments, workarounds
+- ⚠️ **Code Smells**: Dead code, unused imports, overly complex logic
+- 🔒 **Security Issues**: Input validation, injection risks, unsafe patterns
+- 📝 **Best Practice Violations**: Naming, structure, patterns
 
-## Files
+## Progress by Directory
 
+| Directory | Files | Status | Issues Found | Issues Fixed |
+|-----------|-------|--------|--------------|--------------|
+| src/_shims | 3 | ✅ Complete | 3 | 3 |
+| src/data | 8 | ✅ Complete | 4 | 4 |
+| src/http | 1 | ✅ Complete | 1 | 1 |
+| src/react | 22 | ✅ Complete | 5 | 5 |
+| src/middleware | 22 | ✅ Complete | 7 | 7 |
+| src/module-system | 23 | ✅ Complete | 10 | 10 |
+| src/html | 28 | ✅ Complete | 9 | 9 |
+| src/observability | 35 | ✅ Complete | 8 | 8 |
+| src/routing | 37 | ✅ Complete | 8 | 8 |
+| src/cli | 47 | ✅ Complete | 8 | 8 |
+| src/security | 48 | ✅ Complete | 7 | 7 |
+| src/server | 94 | ✅ Complete | 8 | 8 |
+| src/rendering | 95 | ✅ Complete | 4 | 4 |
+| src/platform | 98 | ✅ Complete | 6 | 6 |
+| src/core | 107 | ✅ Complete | 4 | 4 |
+| src/ai | 114 | ✅ Complete | 4 | 4 |
+| src/build | 119 | ✅ Complete | 5 | 5 |
 
-- [x] src/_shims/std-front-matter.ts
-- [x] src/_shims/std-fs.ts
-- [x] src/_shims/std-path.ts
-- [x] src/ai/adapters/ai-sdk.ts
-- [x] src/ai/adapters/index.ts
-- [x] src/ai/agent/composition.ts
-- [x] src/ai/agent/execution/index.ts
-- [x] src/ai/agent/execution/message-transformer.ts
-- [x] src/ai/agent/execution/middleware-chain.ts
-- [x] src/ai/agent/execution/tool-execution-core.test.ts
-- [x] src/ai/agent/execution/tool-execution-core.ts
-- [x] src/ai/agent/execution/usage-tracker.test.ts
-- [x] src/ai/agent/execution/usage-tracker.ts
-- [x] src/ai/agent/factory.test.ts
-- [x] src/ai/agent/factory.ts
-- [x] src/ai/agent/index.ts
-- [x] src/ai/agent/memory.ts
-- [x] src/ai/agent/memory_test.ts
-- [x] src/ai/agent/runtime.ts
-- [x] src/ai/client.ts
-- [x] src/ai/dev/debug/index.ts
-- [x] src/ai/dev/debug/inspector.ts
-- [x] src/ai/dev/generate-sdk.ts
-- [x] src/ai/dev/index.ts
-- [x] src/ai/dev/playground/api.ts
-- [x] src/ai/dev/playground/client.ts
-- [x] src/ai/dev/testing/agent-tester.ts
-- [x] src/ai/dev/testing/index.ts
-- [x] src/ai/dev/testing/tool-tester.ts
-- [x] src/ai/index.ts
-- [x] src/ai/mcp/index.ts
-- [x] src/ai/mcp/prompt.ts
-- [x] src/ai/mcp/registry.ts
-- [x] src/ai/mcp/resource.ts
-- [x] src/ai/mcp/server.ts
-- [x] src/ai/production/cache/cache.ts
-- [x] src/ai/production/cache/index.ts
-- [x] src/ai/production/cost-tracking/index.ts
-- [x] src/ai/production/cost-tracking/tracker.ts
-- [x] src/ai/production/index.ts
-- [x] src/ai/production/rate-limit/index.ts
-- [x] src/ai/production/rate-limit/limiter.ts
-- [x] src/ai/production/security/index.ts
-- [x] src/ai/production/security/validator.ts
-- [x] src/ai/providers/anthropic.ts
-- [x] src/ai/providers/base.ts
-- [x] src/ai/providers/factory.ts
-- [x] src/ai/providers/google.ts
-- [x] src/ai/providers/index.ts
-- [x] src/ai/providers/openai.ts
-- [x] src/ai/react/components/index.ts
-- [x] src/ai/react/components/theme.ts
-- [x] src/ai/react/hooks/index.ts
-- [x] src/ai/react/hooks/use-agent.ts
-- [x] src/ai/react/hooks/use-chat.ts
-- [x] src/ai/react/hooks/use-completion.ts
-- [x] src/ai/react/hooks/use-streaming.ts
-- [x] src/ai/react/hooks/use-voice-input.ts
-- [x] src/ai/react/index.ts
-- [x] src/ai/react/primitives/index.ts
-- [x] src/ai/runtime/index.ts
-- [x] src/ai/runtime/platform.ts
-- [x] src/ai/runtime/platform_test.ts
-- [x] src/ai/types/agent.ts
-- [x] src/ai/types/index.ts
-- [x] src/ai/types/json-schema.ts
-- [x] src/ai/types/mcp.ts
-- [x] src/ai/types/provider.ts
-- [x] src/ai/types/tool.ts
-- [x] src/ai/utils/config-validator.ts
-- [x] src/ai/utils/discovery-fsadapter.test.ts
-- [x] src/ai/utils/discovery.ts
-- [x] src/ai/utils/index.ts
-- [x] src/ai/utils/setup.ts
-- [x] src/ai/utils/tool.ts
-- [x] src/ai/utils/tool_test.ts
-- [x] src/ai/utils/zod-json-schema.ts
-- [x] src/ai/workflow/api/index.ts
-- [x] src/ai/workflow/api/workflow-client.test.ts
-- [x] src/ai/workflow/api/workflow-client.ts
-- [x] src/ai/workflow/backends/cloudflare.ts
-- [x] src/ai/workflow/backends/index.ts
-- [x] src/ai/workflow/backends/inngest.ts
-- [x] src/ai/workflow/backends/memory.test.ts
-- [x] src/ai/workflow/backends/memory.ts
-- [x] src/ai/workflow/backends/redis.ts
-- [x] src/ai/workflow/backends/temporal.ts
-- [x] src/ai/workflow/backends/types.ts
-- [x] src/ai/workflow/blob/gcs-storage.ts
-- [x] src/ai/workflow/blob/index.ts
-- [x] src/ai/workflow/blob/local-storage.test.ts
-- [x] src/ai/workflow/blob/local-storage.ts
-- [x] src/ai/workflow/blob/s3-storage.ts
-- [x] src/ai/workflow/blob/types.ts
-- [x] src/ai/workflow/dsl/branch.test.ts
-- [x] src/ai/workflow/dsl/branch.ts
-- [x] src/ai/workflow/dsl/index.ts
-- [x] src/ai/workflow/dsl/map.ts
-- [x] src/ai/workflow/dsl/parallel.test.ts
-- [x] src/ai/workflow/dsl/parallel.ts
-- [x] src/ai/workflow/dsl/step.test.ts
-- [x] src/ai/workflow/dsl/step.ts
-- [x] src/ai/workflow/dsl/sub-workflow.ts
-- [x] src/ai/workflow/dsl/wait.test.ts
-- [x] src/ai/workflow/dsl/wait.ts
-- [x] src/ai/workflow/dsl/workflow.test.ts
-- [x] src/ai/workflow/dsl/workflow.ts
-- [x] src/ai/workflow/executor/checkpoint-manager.ts
-- [x] src/ai/workflow/executor/dag-executor.test.ts
-- [x] src/ai/workflow/executor/dag-executor.ts
-- [x] src/ai/workflow/executor/graph/dependency-graph.ts
-- [x] src/ai/workflow/executor/graph/index.ts
-- [x] src/ai/workflow/executor/handlers/branch-node-handler.ts
-- [x] src/ai/workflow/executor/handlers/dag-executor-interface.ts
-- [x] src/ai/workflow/executor/handlers/index.ts
-- [x] src/ai/workflow/executor/handlers/node-handler-registry.ts
-- [x] src/ai/workflow/executor/handlers/node-handler.ts
-- [x] src/ai/workflow/executor/handlers/parallel-node-handler.ts
-- [x] src/ai/workflow/executor/handlers/step-node-handler.ts
-- [x] src/ai/workflow/executor/handlers/wait-node-handler.ts
-- [x] src/ai/workflow/executor/index.ts
-- [x] src/ai/workflow/executor/step-executor.ts
-- [x] src/ai/workflow/executor/workflow-executor.ts
-- [x] src/ai/workflow/index.ts
-- [x] src/ai/workflow/react/index.ts
-- [x] src/ai/workflow/react/use-approval.ts
-- [x] src/ai/workflow/react/use-workflow-list.ts
-- [x] src/ai/workflow/react/use-workflow-start.ts
-- [x] src/ai/workflow/react/use-workflow.ts
-- [x] src/ai/workflow/runtime/agent-registry.ts
-- [x] src/ai/workflow/runtime/approval-manager.ts
-- [x] src/ai/workflow/runtime/index.ts
-- [x] src/ai/workflow/types.test.ts
-- [x] src/ai/workflow/types.ts
-- [x] src/build/asset-pipeline/css-optimizer.test.ts
-- [x] src/build/asset-pipeline/css-optimizer/cache-manager.test.ts
-- [x] src/build/asset-pipeline/css-optimizer/critical-css.ts
-- [x] src/build/asset-pipeline/css-optimizer/css-bundle-cache.ts
-- [x] src/build/asset-pipeline/css-optimizer/index.ts
-- [x] src/build/asset-pipeline/css-optimizer/optimizer-service.ts
-- [x] src/build/asset-pipeline/css-optimizer/strategies.test.ts
-- [x] src/build/asset-pipeline/css-optimizer/strategies/index.ts
-- [x] src/build/asset-pipeline/css-optimizer/strategies/lightning-strategy.ts
-- [x] src/build/asset-pipeline/css-optimizer/strategies/minification-strategy.ts
-- [x] src/build/asset-pipeline/css-optimizer/strategies/purge-strategy.ts
-- [x] src/build/asset-pipeline/css-optimizer/types/index.ts
-- [x] src/build/asset-pipeline/css-optimizer/utils.test.ts
-- [x] src/build/asset-pipeline/css-optimizer/utils.ts
-- [x] src/build/asset-pipeline/image-optimizer/constants.ts
-- [x] src/build/asset-pipeline/image-optimizer/format-processor.ts
-- [x] src/build/asset-pipeline/image-optimizer/image-finder.ts
-- [x] src/build/asset-pipeline/image-optimizer/index.ts
-- [x] src/build/asset-pipeline/image-optimizer/manifest-manager.test.ts
-- [x] src/build/asset-pipeline/image-optimizer/manifest-manager.ts
-- [x] src/build/asset-pipeline/image-optimizer/optimizer-core.ts
-- [x] src/build/asset-pipeline/image-optimizer/sharp-loader.ts
-- [x] src/build/asset-pipeline/image-optimizer/types.ts
-- [x] src/build/asset-pipeline/image-optimizer/variant-generator.ts
-- [x] src/build/asset-pipeline/index.ts
-- [x] src/build/asset-pipeline/tailwind-processor/batch-processor.ts
-- [x] src/build/asset-pipeline/tailwind-processor/css-utils.test.ts
-- [x] src/build/asset-pipeline/tailwind-processor/css-utils.ts
-- [x] src/build/asset-pipeline/tailwind-processor/detector.ts
-- [x] src/build/asset-pipeline/tailwind-processor/index.ts
-- [x] src/build/asset-pipeline/tailwind-processor/lightning-processor.ts
-- [x] src/build/asset-pipeline/tailwind-processor/processor.ts
-- [x] src/build/asset-pipeline/tailwind-processor/types.ts
-- [x] src/build/bundler/code-splitter/build-context.ts
-- [x] src/build/bundler/code-splitter/entry-points.test.ts
-- [x] src/build/bundler/code-splitter/entry-points.ts
-- [x] src/build/bundler/code-splitter/esbuild-plugin.ts
-- [x] src/build/bundler/code-splitter/index.ts
-- [x] src/build/bundler/code-splitter/manifest-builder.ts
-- [x] src/build/bundler/code-splitter/splitter.ts
-- [x] src/build/bundler/code-splitter/types.ts
-- [x] src/build/bundler/index.ts
-- [x] src/build/compiler/index.ts
-- [x] src/build/compiler/mdx-compiler/code-generator.test.ts
-- [x] src/build/compiler/mdx-compiler/code-generator.ts
-- [x] src/build/compiler/mdx-compiler/compiler.ts
-- [x] src/build/compiler/mdx-compiler/directory-compiler.ts
-- [x] src/build/compiler/mdx-compiler/file-writer.ts
-- [x] src/build/compiler/mdx-compiler/frontmatter-parser.ts
-- [x] src/build/compiler/mdx-compiler/import-transformer.test.ts
-- [x] src/build/compiler/mdx-compiler/import-transformer.ts
-- [x] src/build/compiler/mdx-compiler/index.ts
-- [x] src/build/compiler/mdx-compiler/mdx-processor.ts
-- [x] src/build/compiler/mdx-compiler/transpiler.ts
-- [x] src/build/compiler/mdx-compiler/types.ts
-- [x] src/build/compiler/mdx-compiler/validator.test.ts
-- [x] src/build/compiler/mdx-compiler/validator.ts
-- [x] src/build/compiler/mdx-compiler/watcher.ts
-- [x] src/build/compiler/mdx-to-js.ts
-- [x] src/build/config/environment.ts
-- [x] src/build/embedded/preset.ts
-- [x] src/build/index.ts
-- [x] src/build/production-build/asset-generation.ts
-- [x] src/build/production-build/build/build-cleanup.ts
-- [x] src/build/production-build/build/build-executor.test.ts
-- [x] src/build/production-build/build/build-executor.ts
-- [x] src/build/production-build/build/build-initializer.ts
-- [x] src/build/production-build/build/build-orchestrator.ts
-- [x] src/build/production-build/build/build-setup.ts
-- [x] src/build/production-build/build/code-splitter-orchestrator.ts
-- [x] src/build/production-build/build/index.ts
-- [x] src/build/production-build/build/output-generator.ts
-- [x] src/build/production-build/build/route-collector.ts
-- [x] src/build/production-build/client-runtime.ts
-- [x] src/build/production-build/index.ts
-- [x] src/build/production-build/manifest.ts
-- [x] src/build/production-build/static-generation.ts
-- [x] src/build/production-build/templates.ts
-- [x] src/build/renderer/index.ts
-- [x] src/build/renderer/services/css-bundler.ts
-- [x] src/build/renderer/services/mdx-bundler.ts
-- [x] src/build/renderer/services/optimizer.ts
-- [x] src/build/renderer/services/script-bundler.ts
-- [x] src/build/renderer/types/bundler-types.ts
-- [x] src/build/renderer/utils/import-utils.ts
-- [x] src/build/renderer/utils/loader-utils.test.ts
-- [x] src/build/renderer/utils/loader-utils.ts
-- [x] src/build/transforms/esm-transform.ts
-- [x] src/build/transforms/esm/import-parser.ts
-- [x] src/build/transforms/esm/import-rewriter.ts
-- [x] src/build/transforms/esm/index.ts
-- [x] src/build/transforms/esm/lexer.ts
-- [x] src/build/transforms/esm/path-resolver.ts
-- [x] src/build/transforms/esm/react-imports.test.ts
-- [x] src/build/transforms/esm/react-imports.ts
-- [x] src/build/transforms/esm/transform-cache.ts
-- [x] src/build/transforms/esm/transform-core.ts
-- [x] src/build/transforms/esm/transform-utils.ts
-- [x] src/build/transforms/esm/types.ts
-- [x] src/build/transforms/index.ts
-- [x] src/build/transforms/mdx/compiler/frontmatter-extractor.ts
-- [x] src/build/transforms/mdx/compiler/import-rewriter.ts
-- [x] src/build/transforms/mdx/compiler/index.ts
-- [x] src/build/transforms/mdx/compiler/mdx-compiler.ts
-- [x] src/build/transforms/mdx/compiler/types.ts
-- [x] src/build/transforms/mdx/esm-module-loader.ts
-- [x] src/build/transforms/mdx/index.ts
-- [x] src/build/transforms/mdx/loader.ts
-- [x] src/build/transforms/mdx/mdx-cache-adapter.test.ts
-- [x] src/build/transforms/mdx/mdx-cache-adapter.ts
-- [x] src/build/transforms/mdx/module-executor.ts
-- [x] src/build/transforms/mdx/module-loader.ts
-- [x] src/build/transforms/mdx/module-loader/component-resolver.ts
-- [x] src/build/transforms/mdx/module-loader/esm-loader.ts
-- [x] src/build/transforms/mdx/module-loader/index.ts
-- [x] src/build/transforms/mdx/module-loader/jsx-runtime-loader.ts
-- [x] src/build/transforms/mdx/module-loader/loader.ts
-- [x] src/build/transforms/mdx/module-loader/metadata-extractor.ts
-- [x] src/build/transforms/mdx/module-loader/string-parser.ts
-- [x] src/build/transforms/mdx/module-loader/types.ts
-- [x] src/build/transforms/mdx/parser.ts
-- [x] src/build/transforms/mdx/types.ts
-- [x] src/build/transforms/plugins/index.ts
-- [x] src/build/transforms/plugins/plugin-loader.test.ts
-- [x] src/build/transforms/plugins/plugin-loader.ts
-- [x] src/build/transforms/plugins/rehype-utils.test.ts
-- [x] src/build/transforms/plugins/rehype-utils.ts
-- [x] src/build/transforms/plugins/remark-headings.test.ts
-- [x] src/build/transforms/plugins/remark-headings.ts
-- [x] src/build/transforms/plugins/remark-mdx-utils.test.ts
-- [x] src/build/transforms/plugins/remark-mdx-utils.ts
-- [x] src/build/transforms/plugins/remark-node-id.test.ts
-- [x] src/build/transforms/plugins/remark-node-id.ts
-- [x] src/build/utils/asset-utils.ts
-- [x] src/build/utils/file-types.ts
-- [x] src/build/utils/index.ts
-- [x] src/build/vendor-bundle.ts
-- [x] src/build/vendor-cache.ts
-- [x] src/cli/commands/analyze-chunks.ts
-- [x] src/cli/commands/build.ts
-- [x] src/cli/commands/build/config-display.ts
-- [x] src/cli/commands/build/error-handler.ts
-- [x] src/cli/commands/build/index.ts
-- [x] src/cli/commands/build/stats-display.ts
-- [x] src/cli/commands/build/types.ts
-- [x] src/cli/commands/clean.ts
-- [x] src/cli/commands/dev.ts
-- [x] src/cli/commands/doctor/ai-checks.ts
-- [x] src/cli/commands/doctor/index.ts
-- [x] src/cli/commands/doctor/project-structure.ts
-- [x] src/cli/commands/doctor/server-checks.ts
-- [x] src/cli/commands/doctor/types.ts
-- [x] src/cli/commands/doctor/version-checks.ts
-- [x] src/cli/commands/generate.ts
-- [x] src/cli/commands/generate/integration-generator.ts
-- [x] src/cli/commands/init/config-generator.ts
-- [x] src/cli/commands/init/index.ts
-- [x] src/cli/commands/init/init-command.test.ts
-- [x] src/cli/commands/init/init-command.ts
-- [x] src/cli/commands/init/interactive-wizard.ts
-- [x] src/cli/commands/init/types.ts
-- [x] src/cli/commands/routes.ts
-- [x] src/cli/help/command-definitions.ts
-- [x] src/cli/help/command-help.ts
-- [x] src/cli/help/formatters.ts
-- [x] src/cli/help/index.ts
-- [x] src/cli/help/logo.ts
-- [x] src/cli/help/main-help.ts
-- [x] src/cli/help/tips.ts
-- [x] src/cli/help/types.ts
-- [x] src/cli/index.ts
-- [x] src/cli/index/arg-parser.ts
-- [x] src/cli/index/build-handler.ts
-- [x] src/cli/index/cli-main.ts
-- [x] src/cli/index/command-router.ts
-- [x] src/cli/index/dev-handler.ts
-- [x] src/cli/index/generate-handler.ts
-- [x] src/cli/index/index.ts
-- [x] src/cli/index/types.ts
-- [x] src/cli/npm-cli.ts
-- [x] src/cli/npm-entry.ts
-- [x] src/cli/templates/feature-loader.ts
-- [x] src/cli/templates/features/ai/files/ai/agents/assistant.ts
-- [x] src/cli/templates/features/ai/files/ai/prompts/assistant.ts
-- [x] src/cli/templates/features/ai/files/ai/tools/get-weather.ts
-- [x] src/cli/templates/features/ai/files/app/api/chat/route.ts
-- [x] src/cli/templates/features/auth/files/app/api/auth/login/route.ts
-- [x] src/cli/templates/features/auth/files/app/api/auth/logout/route.ts
-- [x] src/cli/templates/features/auth/files/app/api/auth/me/route.ts
-- [x] src/cli/templates/features/auth/files/app/api/auth/signup/route.ts
-- [x] src/cli/templates/features/auth/files/lib/auth.ts
-- [x] src/cli/templates/features/auth/files/lib/db.ts
-- [x] src/cli/templates/features/auth/files/lib/jwt.ts
-- [x] src/cli/templates/features/blob/files/app/api/upload/[id]/route.ts
-- [x] src/cli/templates/features/blob/files/app/api/upload/route.ts
-- [x] src/cli/templates/features/blob/files/lib/storage.ts
-- [x] src/cli/templates/features/redis/files/app/api/jobs/[id]/route.ts
-- [x] src/cli/templates/features/redis/files/app/api/jobs/route.ts
-- [x] src/cli/templates/features/redis/files/lib/redis.ts
-- [x] src/cli/templates/features/workflows/files/app/api/workflows/start/route.ts
-- [x] src/cli/templates/features/workflows/files/app/api/workflows/status/route.ts
-- [x] src/cli/templates/features/workflows/files/workflows/data-processing.ts
-- [x] src/cli/templates/features/workflows/files/workflows/index.ts
-- [x] src/cli/templates/files/ai/ai/agents/assistant.ts
-- [x] src/cli/templates/files/ai/ai/prompts/assistant.ts
-- [x] src/cli/templates/files/ai/app/api/chat/route.ts
-- [x] src/cli/templates/files/ai/veryfront.config.ts
-- [x] src/cli/templates/files/app/app/api/auth/login/route.ts
-- [x] src/cli/templates/files/app/app/api/auth/logout/route.ts
-- [x] src/cli/templates/files/app/app/api/auth/me/route.ts
-- [x] src/cli/templates/files/app/app/api/auth/register/route.ts
-- [x] src/cli/templates/files/app/app/api/stats/route.ts
-- [x] src/cli/templates/files/app/app/api/users/route.ts
-- [x] src/cli/templates/files/app/lib/auth-client.ts
-- [x] src/cli/templates/files/app/lib/auth.ts
-- [x] src/cli/templates/files/app/lib/stats.ts
-- [x] src/cli/templates/files/app/lib/users.ts
-- [x] src/cli/templates/files/app/middleware/auth.ts
-- [x] src/cli/templates/files/blog/lib/posts.ts
-- [x] src/cli/templates/files/blog/lib/utils.ts
-- [x] src/cli/templates/index.ts
-- [x] src/cli/templates/integration-loader.ts
-- [x] src/cli/templates/integrations/_base/files/app/api/integrations/status/route.ts
-- [x] src/cli/templates/integrations/_base/files/app/api/integrations/token-storage/route.ts
-- [x] src/cli/templates/integrations/_base/files/lib/oauth.ts
-- [x] src/cli/templates/integrations/_base/files/lib/token-store-examples.ts
-- [x] src/cli/templates/integrations/_base/files/lib/token-store.ts
-- [x] src/cli/templates/integrations/airtable/files/ai/tools/create-record.ts
-- [x] src/cli/templates/integrations/airtable/files/ai/tools/get-base.ts
-- [x] src/cli/templates/integrations/airtable/files/ai/tools/get-record.ts
-- [x] src/cli/templates/integrations/airtable/files/ai/tools/list-bases.ts
-- [x] src/cli/templates/integrations/airtable/files/ai/tools/list-records.ts
-- [x] src/cli/templates/integrations/airtable/files/app/api/auth/airtable/callback/route.ts
-- [x] src/cli/templates/integrations/airtable/files/app/api/auth/airtable/route.ts
-- [x] src/cli/templates/integrations/airtable/files/lib/airtable-client.ts
-- [x] src/cli/templates/integrations/anthropic/files/ai/tools/get-organization.ts
-- [x] src/cli/templates/integrations/anthropic/files/ai/tools/get-usage.ts
-- [x] src/cli/templates/integrations/anthropic/files/ai/tools/list-api-keys.ts
-- [x] src/cli/templates/integrations/anthropic/files/ai/tools/list-members.ts
-- [x] src/cli/templates/integrations/anthropic/files/ai/tools/list-workspaces.ts
-- [x] src/cli/templates/integrations/anthropic/files/lib/anthropic-admin-client.ts
-- [x] src/cli/templates/integrations/asana/files/ai/tools/create-task.ts
-- [x] src/cli/templates/integrations/asana/files/ai/tools/get-task.ts
-- [x] src/cli/templates/integrations/asana/files/ai/tools/list-projects.ts
-- [x] src/cli/templates/integrations/asana/files/ai/tools/list-tasks.ts
-- [x] src/cli/templates/integrations/asana/files/ai/tools/update-task.ts
-- [x] src/cli/templates/integrations/asana/files/app/api/auth/asana/callback/route.ts
-- [x] src/cli/templates/integrations/asana/files/app/api/auth/asana/route.ts
-- [x] src/cli/templates/integrations/asana/files/lib/asana-client.ts
-- [x] src/cli/templates/integrations/aws/files/ai/tools/get-s3-object.ts
-- [x] src/cli/templates/integrations/aws/files/ai/tools/list-ec2-instances.ts
-- [x] src/cli/templates/integrations/aws/files/ai/tools/list-lambda-functions.ts
-- [x] src/cli/templates/integrations/aws/files/ai/tools/list-s3-buckets.ts
-- [x] src/cli/templates/integrations/aws/files/ai/tools/list-s3-objects.ts
-- [x] src/cli/templates/integrations/aws/files/lib/aws-client.ts
-- [x] src/cli/templates/integrations/bitbucket/files/ai/tools/create-pull-request.ts
-- [x] src/cli/templates/integrations/bitbucket/files/ai/tools/list-issues.ts
-- [x] src/cli/templates/integrations/bitbucket/files/ai/tools/list-pull-requests.ts
-- [x] src/cli/templates/integrations/bitbucket/files/ai/tools/list-repositories.ts
-- [x] src/cli/templates/integrations/bitbucket/files/app/api/auth/bitbucket/callback/route.ts
-- [x] src/cli/templates/integrations/bitbucket/files/app/api/auth/bitbucket/route.ts
-- [x] src/cli/templates/integrations/bitbucket/files/lib/bitbucket-client.ts
-- [x] src/cli/templates/integrations/box/files/ai/tools/create-folder.ts
-- [x] src/cli/templates/integrations/box/files/ai/tools/get-file.ts
-- [x] src/cli/templates/integrations/box/files/ai/tools/list-files.ts
-- [x] src/cli/templates/integrations/box/files/ai/tools/search-files.ts
-- [x] src/cli/templates/integrations/box/files/ai/tools/upload-file.ts
-- [x] src/cli/templates/integrations/box/files/app/api/auth/box/callback/route.ts
-- [x] src/cli/templates/integrations/box/files/app/api/auth/box/route.ts
-- [x] src/cli/templates/integrations/box/files/lib/box-client.ts
-- [x] src/cli/templates/integrations/calendar/files/ai/tools/create-event.ts
-- [x] src/cli/templates/integrations/calendar/files/ai/tools/find-free-time.ts
-- [x] src/cli/templates/integrations/calendar/files/ai/tools/list-events.ts
-- [x] src/cli/templates/integrations/calendar/files/app/api/auth/calendar/callback/route.ts
-- [x] src/cli/templates/integrations/calendar/files/app/api/auth/calendar/route.ts
-- [x] src/cli/templates/integrations/calendar/files/lib/calendar-client.ts
-- [x] src/cli/templates/integrations/clickup/files/ai/tools/create-task.ts
-- [x] src/cli/templates/integrations/clickup/files/ai/tools/get-task.ts
-- [x] src/cli/templates/integrations/clickup/files/ai/tools/list-lists.ts
-- [x] src/cli/templates/integrations/clickup/files/ai/tools/list-tasks.ts
-- [x] src/cli/templates/integrations/clickup/files/ai/tools/update-task.ts
-- [x] src/cli/templates/integrations/clickup/files/app/api/auth/clickup/callback/route.ts
-- [x] src/cli/templates/integrations/clickup/files/app/api/auth/clickup/route.ts
-- [x] src/cli/templates/integrations/clickup/files/lib/clickup-client.ts
-- [x] src/cli/templates/integrations/confluence/files/ai/tools/create-page.ts
-- [x] src/cli/templates/integrations/confluence/files/ai/tools/get-page.ts
-- [x] src/cli/templates/integrations/confluence/files/ai/tools/list-spaces.ts
-- [x] src/cli/templates/integrations/confluence/files/ai/tools/search-content.ts
-- [x] src/cli/templates/integrations/confluence/files/ai/tools/update-page.ts
-- [x] src/cli/templates/integrations/confluence/files/app/api/auth/confluence/callback/route.ts
-- [x] src/cli/templates/integrations/confluence/files/app/api/auth/confluence/route.ts
-- [x] src/cli/templates/integrations/confluence/files/lib/confluence-client.ts
-- [x] src/cli/templates/integrations/discord/files/ai/tools/get-messages.ts
-- [x] src/cli/templates/integrations/discord/files/ai/tools/get-user.ts
-- [x] src/cli/templates/integrations/discord/files/ai/tools/list-channels.ts
-- [x] src/cli/templates/integrations/discord/files/ai/tools/list-guilds.ts
-- [x] src/cli/templates/integrations/discord/files/ai/tools/send-message.ts
-- [x] src/cli/templates/integrations/discord/files/app/api/auth/discord/callback/route.ts
-- [x] src/cli/templates/integrations/discord/files/app/api/auth/discord/route.ts
-- [x] src/cli/templates/integrations/discord/files/lib/discord-client.ts
-- [x] src/cli/templates/integrations/docs-google/files/ai/tools/create-document.ts
-- [x] src/cli/templates/integrations/docs-google/files/ai/tools/get-document.ts
-- [x] src/cli/templates/integrations/docs-google/files/ai/tools/list-documents.ts
-- [x] src/cli/templates/integrations/docs-google/files/ai/tools/search-documents.ts
-- [x] src/cli/templates/integrations/docs-google/files/ai/tools/update-document.ts
-- [x] src/cli/templates/integrations/docs-google/files/app/api/auth/docs-google/callback/route.ts
-- [x] src/cli/templates/integrations/docs-google/files/app/api/auth/docs-google/route.ts
-- [x] src/cli/templates/integrations/docs-google/files/lib/docs-client.ts
-- [x] src/cli/templates/integrations/docs-google/files/lib/oauth.ts
-- [x] src/cli/templates/integrations/drive/files/ai/tools/create-folder.ts
-- [x] src/cli/templates/integrations/drive/files/ai/tools/get-file.ts
-- [x] src/cli/templates/integrations/drive/files/ai/tools/list-files.ts
-- [x] src/cli/templates/integrations/drive/files/ai/tools/search-files.ts
-- [x] src/cli/templates/integrations/drive/files/ai/tools/upload-file.ts
-- [x] src/cli/templates/integrations/drive/files/app/api/auth/drive/callback/route.ts
-- [x] src/cli/templates/integrations/drive/files/app/api/auth/drive/route.ts
-- [x] src/cli/templates/integrations/drive/files/lib/drive-client.ts
-- [x] src/cli/templates/integrations/drive/files/lib/oauth.ts
-- [x] src/cli/templates/integrations/dropbox/files/ai/tools/get-account.ts
-- [x] src/cli/templates/integrations/dropbox/files/ai/tools/get-file.ts
-- [x] src/cli/templates/integrations/dropbox/files/ai/tools/list-files.ts
-- [x] src/cli/templates/integrations/dropbox/files/ai/tools/search-files.ts
-- [x] src/cli/templates/integrations/dropbox/files/ai/tools/upload-file.ts
-- [x] src/cli/templates/integrations/dropbox/files/app/api/auth/dropbox/callback/route.ts
-- [x] src/cli/templates/integrations/dropbox/files/app/api/auth/dropbox/route.ts
-- [x] src/cli/templates/integrations/dropbox/files/lib/dropbox-client.ts
-- [x] src/cli/templates/integrations/figma/files/ai/tools/get-comments.ts
-- [x] src/cli/templates/integrations/figma/files/ai/tools/get-file.ts
-- [x] src/cli/templates/integrations/figma/files/ai/tools/list-files.ts
-- [x] src/cli/templates/integrations/figma/files/ai/tools/list-projects.ts
-- [x] src/cli/templates/integrations/figma/files/ai/tools/post-comment.ts
-- [x] src/cli/templates/integrations/figma/files/app/api/auth/figma/callback/route.ts
-- [x] src/cli/templates/integrations/figma/files/app/api/auth/figma/route.ts
-- [x] src/cli/templates/integrations/figma/files/lib/figma-client.ts
-- [x] src/cli/templates/integrations/figma/files/lib/types.ts
-- [x] src/cli/templates/integrations/freshdesk/files/ai/tools/create-ticket.ts
-- [x] src/cli/templates/integrations/freshdesk/files/ai/tools/get-ticket.ts
-- [x] src/cli/templates/integrations/freshdesk/files/ai/tools/list-contacts.ts
-- [x] src/cli/templates/integrations/freshdesk/files/ai/tools/list-tickets.ts
-- [x] src/cli/templates/integrations/freshdesk/files/ai/tools/update-ticket.ts
-- [x] src/cli/templates/integrations/freshdesk/files/app/api/auth/freshdesk/callback/route.ts
-- [x] src/cli/templates/integrations/freshdesk/files/app/api/auth/freshdesk/route.ts
-- [x] src/cli/templates/integrations/freshdesk/files/lib/freshdesk-client.ts
-- [x] src/cli/templates/integrations/github/files/ai/tools/create-issue.ts
-- [x] src/cli/templates/integrations/github/files/ai/tools/get-pr-diff.ts
-- [x] src/cli/templates/integrations/github/files/ai/tools/list-prs.ts
-- [x] src/cli/templates/integrations/github/files/ai/tools/list-repos.ts
-- [x] src/cli/templates/integrations/github/files/app/api/auth/github/callback/route.ts
-- [x] src/cli/templates/integrations/github/files/app/api/auth/github/route.ts
-- [x] src/cli/templates/integrations/github/files/lib/github-client.ts
-- [x] src/cli/templates/integrations/gitlab/files/ai/tools/create-issue.ts
-- [x] src/cli/templates/integrations/gitlab/files/ai/tools/get-issue.ts
-- [x] src/cli/templates/integrations/gitlab/files/ai/tools/list-merge-requests.ts
-- [x] src/cli/templates/integrations/gitlab/files/ai/tools/list-projects.ts
-- [x] src/cli/templates/integrations/gitlab/files/ai/tools/search-issues.ts
-- [x] src/cli/templates/integrations/gitlab/files/app/api/auth/gitlab/callback/route.ts
-- [x] src/cli/templates/integrations/gitlab/files/app/api/auth/gitlab/route.ts
-- [x] src/cli/templates/integrations/gitlab/files/lib/gitlab-client.ts
-- [x] src/cli/templates/integrations/gmail/files/ai/tools/list-emails.ts
-- [x] src/cli/templates/integrations/gmail/files/ai/tools/search-emails.ts
-- [x] src/cli/templates/integrations/gmail/files/ai/tools/send-email.ts
-- [x] src/cli/templates/integrations/gmail/files/app/api/auth/gmail/callback/route.ts
-- [x] src/cli/templates/integrations/gmail/files/app/api/auth/gmail/route.ts
-- [x] src/cli/templates/integrations/gmail/files/lib/gmail-client.ts
-- [x] src/cli/templates/integrations/hubspot/files/ai/tools/create-contact.ts
-- [x] src/cli/templates/integrations/hubspot/files/ai/tools/create-deal.ts
-- [x] src/cli/templates/integrations/hubspot/files/ai/tools/get-contact.ts
-- [x] src/cli/templates/integrations/hubspot/files/ai/tools/list-contacts.ts
-- [x] src/cli/templates/integrations/hubspot/files/ai/tools/list-deals.ts
-- [x] src/cli/templates/integrations/hubspot/files/app/api/auth/hubspot/callback/route.ts
-- [x] src/cli/templates/integrations/hubspot/files/app/api/auth/hubspot/route.ts
-- [x] src/cli/templates/integrations/hubspot/files/lib/hubspot-client.ts
-- [x] src/cli/templates/integrations/intercom/files/ai/tools/get-contact.ts
-- [x] src/cli/templates/integrations/intercom/files/ai/tools/get-conversation.ts
-- [x] src/cli/templates/integrations/intercom/files/ai/tools/list-contacts.ts
-- [x] src/cli/templates/integrations/intercom/files/ai/tools/list-conversations.ts
-- [x] src/cli/templates/integrations/intercom/files/ai/tools/send-message.ts
-- [x] src/cli/templates/integrations/intercom/files/app/api/auth/intercom/callback/route.ts
-- [x] src/cli/templates/integrations/intercom/files/app/api/auth/intercom/route.ts
-- [x] src/cli/templates/integrations/intercom/files/lib/intercom-client.ts
-- [x] src/cli/templates/integrations/jira/files/ai/tools/create-issue.ts
-- [x] src/cli/templates/integrations/jira/files/ai/tools/get-issue.ts
-- [x] src/cli/templates/integrations/jira/files/ai/tools/list-projects.ts
-- [x] src/cli/templates/integrations/jira/files/ai/tools/search-issues.ts
-- [x] src/cli/templates/integrations/jira/files/ai/tools/update-issue.ts
-- [x] src/cli/templates/integrations/jira/files/app/api/auth/jira/callback/route.ts
-- [x] src/cli/templates/integrations/jira/files/app/api/auth/jira/route.ts
-- [x] src/cli/templates/integrations/jira/files/lib/jira-client.ts
-- [x] src/cli/templates/integrations/linear/files/ai/tools/create-issue.ts
-- [x] src/cli/templates/integrations/linear/files/ai/tools/get-issue.ts
-- [x] src/cli/templates/integrations/linear/files/ai/tools/list-projects.ts
-- [x] src/cli/templates/integrations/linear/files/ai/tools/search-issues.ts
-- [x] src/cli/templates/integrations/linear/files/ai/tools/update-issue.ts
-- [x] src/cli/templates/integrations/linear/files/app/api/auth/linear/callback/route.ts
-- [x] src/cli/templates/integrations/linear/files/app/api/auth/linear/route.ts
-- [x] src/cli/templates/integrations/linear/files/lib/linear-client.ts
-- [x] src/cli/templates/integrations/mailchimp/files/ai/tools/get-campaign.ts
-- [x] src/cli/templates/integrations/mailchimp/files/ai/tools/get-list.ts
-- [x] src/cli/templates/integrations/mailchimp/files/ai/tools/list-campaigns.ts
-- [x] src/cli/templates/integrations/mailchimp/files/ai/tools/list-lists.ts
-- [x] src/cli/templates/integrations/mailchimp/files/ai/tools/list-members.ts
-- [x] src/cli/templates/integrations/mailchimp/files/app/api/auth/mailchimp/callback/route.ts
-- [x] src/cli/templates/integrations/mailchimp/files/app/api/auth/mailchimp/route.ts
-- [x] src/cli/templates/integrations/mailchimp/files/lib/mailchimp-client.ts
-- [x] src/cli/templates/integrations/mixpanel/files/ai/tools/get-funnel.ts
-- [x] src/cli/templates/integrations/mixpanel/files/ai/tools/get-retention.ts
-- [x] src/cli/templates/integrations/mixpanel/files/ai/tools/list-cohorts.ts
-- [x] src/cli/templates/integrations/mixpanel/files/ai/tools/query-events.ts
-- [x] src/cli/templates/integrations/mixpanel/files/ai/tools/track-event.ts
-- [x] src/cli/templates/integrations/mixpanel/files/lib/mixpanel-client.ts
-- [x] src/cli/templates/integrations/monday/files/ai/tools/create-item.ts
-- [x] src/cli/templates/integrations/monday/files/ai/tools/get-item.ts
-- [x] src/cli/templates/integrations/monday/files/ai/tools/list-boards.ts
-- [x] src/cli/templates/integrations/monday/files/ai/tools/list-items.ts
-- [x] src/cli/templates/integrations/monday/files/ai/tools/update-item.ts
-- [x] src/cli/templates/integrations/monday/files/app/api/auth/monday/callback/route.ts
-- [x] src/cli/templates/integrations/monday/files/app/api/auth/monday/route.ts
-- [x] src/cli/templates/integrations/monday/files/lib/monday-client.ts
-- [x] src/cli/templates/integrations/neon/files/ai/tools/describe-table.ts
-- [x] src/cli/templates/integrations/neon/files/ai/tools/list-branches.ts
-- [x] src/cli/templates/integrations/neon/files/ai/tools/list-projects.ts
-- [x] src/cli/templates/integrations/neon/files/ai/tools/list-tables.ts
-- [x] src/cli/templates/integrations/neon/files/ai/tools/query-database.ts
-- [x] src/cli/templates/integrations/neon/files/app/api/auth/neon/route.ts
-- [x] src/cli/templates/integrations/neon/files/lib/neon-client.ts
-- [x] src/cli/templates/integrations/notion/files/ai/tools/create-page.ts
-- [x] src/cli/templates/integrations/notion/files/ai/tools/query-database.ts
-- [x] src/cli/templates/integrations/notion/files/ai/tools/read-page.ts
-- [x] src/cli/templates/integrations/notion/files/ai/tools/search-notion.ts
-- [x] src/cli/templates/integrations/notion/files/app/api/auth/notion/callback/route.ts
-- [x] src/cli/templates/integrations/notion/files/app/api/auth/notion/route.ts
-- [x] src/cli/templates/integrations/notion/files/lib/notion-client.ts
-- [x] src/cli/templates/integrations/onedrive/files/ai/tools/download-file.ts
-- [x] src/cli/templates/integrations/onedrive/files/ai/tools/list-files.ts
-- [x] src/cli/templates/integrations/onedrive/files/ai/tools/search-files.ts
-- [x] src/cli/templates/integrations/onedrive/files/ai/tools/upload-file.ts
-- [x] src/cli/templates/integrations/onedrive/files/app/api/auth/onedrive/callback/route.ts
-- [x] src/cli/templates/integrations/onedrive/files/app/api/auth/onedrive/route.ts
-- [x] src/cli/templates/integrations/onedrive/files/lib/onedrive-client.ts
-- [x] src/cli/templates/integrations/outlook/files/ai/tools/get-email.ts
-- [x] src/cli/templates/integrations/outlook/files/ai/tools/list-emails.ts
-- [x] src/cli/templates/integrations/outlook/files/ai/tools/list-folders.ts
-- [x] src/cli/templates/integrations/outlook/files/ai/tools/search-emails.ts
-- [x] src/cli/templates/integrations/outlook/files/ai/tools/send-email.ts
-- [x] src/cli/templates/integrations/outlook/files/app/api/auth/outlook/callback/route.ts
-- [x] src/cli/templates/integrations/outlook/files/app/api/auth/outlook/route.ts
-- [x] src/cli/templates/integrations/outlook/files/lib/outlook-client.ts
-- [x] src/cli/templates/integrations/pipedrive/files/ai/tools/create-deal.ts
-- [x] src/cli/templates/integrations/pipedrive/files/ai/tools/get-deal.ts
-- [x] src/cli/templates/integrations/pipedrive/files/ai/tools/list-deals.ts
-- [x] src/cli/templates/integrations/pipedrive/files/ai/tools/list-persons.ts
-- [x] src/cli/templates/integrations/pipedrive/files/ai/tools/update-deal.ts
-- [x] src/cli/templates/integrations/pipedrive/files/app/api/auth/pipedrive/callback/route.ts
-- [x] src/cli/templates/integrations/pipedrive/files/app/api/auth/pipedrive/route.ts
-- [x] src/cli/templates/integrations/pipedrive/files/lib/pipedrive-client.ts
-- [x] src/cli/templates/integrations/posthog/files/ai/tools/capture-event.ts
-- [x] src/cli/templates/integrations/posthog/files/ai/tools/get-trends.ts
-- [x] src/cli/templates/integrations/posthog/files/ai/tools/list-feature-flags.ts
-- [x] src/cli/templates/integrations/posthog/files/ai/tools/list-persons.ts
-- [x] src/cli/templates/integrations/posthog/files/lib/posthog-client.ts
-- [x] src/cli/templates/integrations/quickbooks/files/ai/tools/create-invoice.ts
-- [x] src/cli/templates/integrations/quickbooks/files/ai/tools/get-customer.ts
-- [x] src/cli/templates/integrations/quickbooks/files/ai/tools/get-invoice.ts
-- [x] src/cli/templates/integrations/quickbooks/files/ai/tools/list-customers.ts
-- [x] src/cli/templates/integrations/quickbooks/files/ai/tools/list-invoices.ts
-- [x] src/cli/templates/integrations/quickbooks/files/app/api/auth/quickbooks/callback/route.ts
-- [x] src/cli/templates/integrations/quickbooks/files/app/api/auth/quickbooks/route.ts
-- [x] src/cli/templates/integrations/quickbooks/files/lib/quickbooks-client.ts
-- [x] src/cli/templates/integrations/salesforce/files/ai/tools/create-lead.ts
-- [x] src/cli/templates/integrations/salesforce/files/ai/tools/get-account.ts
-- [x] src/cli/templates/integrations/salesforce/files/ai/tools/list-accounts.ts
-- [x] src/cli/templates/integrations/salesforce/files/ai/tools/list-contacts.ts
-- [x] src/cli/templates/integrations/salesforce/files/ai/tools/list-opportunities.ts
-- [x] src/cli/templates/integrations/salesforce/files/app/api/auth/salesforce/callback/route.ts
-- [x] src/cli/templates/integrations/salesforce/files/app/api/auth/salesforce/route.ts
-- [x] src/cli/templates/integrations/salesforce/files/lib/salesforce-client.ts
-- [x] src/cli/templates/integrations/sentry/files/ai/tools/get-issue.ts
-- [x] src/cli/templates/integrations/sentry/files/ai/tools/list-issues.ts
-- [x] src/cli/templates/integrations/sentry/files/ai/tools/list-projects.ts
-- [x] src/cli/templates/integrations/sentry/files/ai/tools/resolve-issue.ts
-- [x] src/cli/templates/integrations/sentry/files/lib/sentry-client.ts
-- [x] src/cli/templates/integrations/servicenow/files/ai/tools/create-incident.ts
-- [x] src/cli/templates/integrations/servicenow/files/ai/tools/get-incident.ts
-- [x] src/cli/templates/integrations/servicenow/files/ai/tools/list-incidents.ts
-- [x] src/cli/templates/integrations/servicenow/files/ai/tools/search-knowledge.ts
-- [x] src/cli/templates/integrations/servicenow/files/ai/tools/update-incident.ts
-- [x] src/cli/templates/integrations/servicenow/files/app/api/auth/servicenow/callback/route.ts
-- [x] src/cli/templates/integrations/servicenow/files/app/api/auth/servicenow/route.ts
-- [x] src/cli/templates/integrations/servicenow/files/lib/servicenow-client.ts
-- [x] src/cli/templates/integrations/sharepoint/files/ai/tools/get-file.ts
-- [x] src/cli/templates/integrations/sharepoint/files/ai/tools/get-site.ts
-- [x] src/cli/templates/integrations/sharepoint/files/ai/tools/list-files.ts
-- [x] src/cli/templates/integrations/sharepoint/files/ai/tools/list-sites.ts
-- [x] src/cli/templates/integrations/sharepoint/files/ai/tools/upload-file.ts
-- [x] src/cli/templates/integrations/sharepoint/files/app/api/auth/sharepoint/callback/route.ts
-- [x] src/cli/templates/integrations/sharepoint/files/app/api/auth/sharepoint/route.ts
-- [x] src/cli/templates/integrations/sharepoint/files/lib/sharepoint-client.ts
-- [x] src/cli/templates/integrations/sheets/files/ai/tools/create-spreadsheet.ts
-- [x] src/cli/templates/integrations/sheets/files/ai/tools/get-spreadsheet.ts
-- [x] src/cli/templates/integrations/sheets/files/ai/tools/list-spreadsheets.ts
-- [x] src/cli/templates/integrations/sheets/files/ai/tools/read-range.ts
-- [x] src/cli/templates/integrations/sheets/files/ai/tools/write-range.ts
-- [x] src/cli/templates/integrations/sheets/files/app/api/auth/sheets/callback/route.ts
-- [x] src/cli/templates/integrations/sheets/files/app/api/auth/sheets/route.ts
-- [x] src/cli/templates/integrations/sheets/files/lib/sheets-client.ts
-- [x] src/cli/templates/integrations/shopify/files/ai/tools/get-order.ts
-- [x] src/cli/templates/integrations/shopify/files/ai/tools/get-product.ts
-- [x] src/cli/templates/integrations/shopify/files/ai/tools/list-customers.ts
-- [x] src/cli/templates/integrations/shopify/files/ai/tools/list-orders.ts
-- [x] src/cli/templates/integrations/shopify/files/ai/tools/list-products.ts
-- [x] src/cli/templates/integrations/shopify/files/app/api/auth/shopify/callback/route.ts
-- [x] src/cli/templates/integrations/shopify/files/app/api/auth/shopify/route.ts
-- [x] src/cli/templates/integrations/shopify/files/lib/shopify-client.ts
-- [x] src/cli/templates/integrations/slack/files/ai/tools/get-messages.ts
-- [x] src/cli/templates/integrations/slack/files/ai/tools/list-channels.ts
-- [x] src/cli/templates/integrations/slack/files/ai/tools/send-message.ts
-- [x] src/cli/templates/integrations/slack/files/app/api/auth/slack/callback/route.ts
-- [x] src/cli/templates/integrations/slack/files/app/api/auth/slack/route.ts
-- [x] src/cli/templates/integrations/slack/files/lib/slack-client.ts
-- [x] src/cli/templates/integrations/snowflake/files/ai/tools/describe-table.ts
-- [x] src/cli/templates/integrations/snowflake/files/ai/tools/list-databases.ts
-- [x] src/cli/templates/integrations/snowflake/files/ai/tools/list-schemas.ts
-- [x] src/cli/templates/integrations/snowflake/files/ai/tools/list-tables.ts
-- [x] src/cli/templates/integrations/snowflake/files/ai/tools/run-query.ts
-- [x] src/cli/templates/integrations/snowflake/files/lib/snowflake-client.ts
-- [x] src/cli/templates/integrations/stripe/files/ai/tools/get-balance.ts
-- [x] src/cli/templates/integrations/stripe/files/ai/tools/get-customer.ts
-- [x] src/cli/templates/integrations/stripe/files/ai/tools/list-customers.ts
-- [x] src/cli/templates/integrations/stripe/files/ai/tools/list-payments.ts
-- [x] src/cli/templates/integrations/stripe/files/ai/tools/list-subscriptions.ts
-- [x] src/cli/templates/integrations/stripe/files/app/api/auth/stripe/route.ts
-- [x] src/cli/templates/integrations/stripe/files/lib/stripe-client.ts
-- [x] src/cli/templates/integrations/supabase/files/ai/tools/delete-row.ts
-- [x] src/cli/templates/integrations/supabase/files/ai/tools/insert-row.ts
-- [x] src/cli/templates/integrations/supabase/files/ai/tools/list-tables.ts
-- [x] src/cli/templates/integrations/supabase/files/ai/tools/query-table.ts
-- [x] src/cli/templates/integrations/supabase/files/ai/tools/update-row.ts
-- [x] src/cli/templates/integrations/supabase/files/app/api/auth/supabase/route.ts
-- [x] src/cli/templates/integrations/supabase/files/lib/supabase-client.ts
-- [x] src/cli/templates/integrations/teams/files/ai/tools/get-messages.ts
-- [x] src/cli/templates/integrations/teams/files/ai/tools/list-channels.ts
-- [x] src/cli/templates/integrations/teams/files/ai/tools/list-chats.ts
-- [x] src/cli/templates/integrations/teams/files/ai/tools/list-teams.ts
-- [x] src/cli/templates/integrations/teams/files/ai/tools/send-message.ts
-- [x] src/cli/templates/integrations/teams/files/app/api/auth/teams/callback/route.ts
-- [x] src/cli/templates/integrations/teams/files/app/api/auth/teams/route.ts
-- [x] src/cli/templates/integrations/teams/files/lib/teams-client.ts
-- [x] src/cli/templates/integrations/trello/files/ai/tools/create-card.ts
-- [x] src/cli/templates/integrations/trello/files/ai/tools/get-card.ts
-- [x] src/cli/templates/integrations/trello/files/ai/tools/list-boards.ts
-- [x] src/cli/templates/integrations/trello/files/ai/tools/list-cards.ts
-- [x] src/cli/templates/integrations/trello/files/ai/tools/update-card.ts
-- [x] src/cli/templates/integrations/trello/files/app/api/auth/trello/callback/route.ts
-- [x] src/cli/templates/integrations/trello/files/app/api/auth/trello/route.ts
-- [x] src/cli/templates/integrations/trello/files/lib/trello-client.ts
-- [x] src/cli/templates/integrations/twilio/files/ai/tools/get-message.ts
-- [x] src/cli/templates/integrations/twilio/files/ai/tools/list-calls.ts
-- [x] src/cli/templates/integrations/twilio/files/ai/tools/list-messages.ts
-- [x] src/cli/templates/integrations/twilio/files/ai/tools/send-sms.ts
-- [x] src/cli/templates/integrations/twilio/files/ai/tools/send-whatsapp.ts
-- [x] src/cli/templates/integrations/twilio/files/lib/twilio-client.ts
-- [x] src/cli/templates/integrations/twitter/files/ai/tools/get-timeline.ts
-- [x] src/cli/templates/integrations/twitter/files/ai/tools/post-tweet.ts
-- [x] src/cli/templates/integrations/twitter/files/ai/tools/search-tweets.ts
-- [x] src/cli/templates/integrations/twitter/files/app/api/auth/twitter/callback/route.ts
-- [x] src/cli/templates/integrations/twitter/files/app/api/auth/twitter/route.ts
-- [x] src/cli/templates/integrations/twitter/files/lib/twitter-client.ts
-- [x] src/cli/templates/integrations/webex/files/ai/tools/create-meeting.ts
-- [x] src/cli/templates/integrations/webex/files/ai/tools/get-meeting.ts
-- [x] src/cli/templates/integrations/webex/files/ai/tools/list-meetings.ts
-- [x] src/cli/templates/integrations/webex/files/ai/tools/list-rooms.ts
-- [x] src/cli/templates/integrations/webex/files/ai/tools/send-message.ts
-- [x] src/cli/templates/integrations/webex/files/app/api/auth/webex/callback/route.ts
-- [x] src/cli/templates/integrations/webex/files/app/api/auth/webex/route.ts
-- [x] src/cli/templates/integrations/webex/files/lib/webex-client.ts
-- [x] src/cli/templates/integrations/xero/files/ai/tools/create-invoice.ts
-- [x] src/cli/templates/integrations/xero/files/ai/tools/get-contact.ts
-- [x] src/cli/templates/integrations/xero/files/ai/tools/get-invoice.ts
-- [x] src/cli/templates/integrations/xero/files/ai/tools/list-contacts.ts
-- [x] src/cli/templates/integrations/xero/files/ai/tools/list-invoices.ts
-- [x] src/cli/templates/integrations/xero/files/app/api/auth/xero/callback/route.ts
-- [x] src/cli/templates/integrations/xero/files/app/api/auth/xero/route.ts
-- [x] src/cli/templates/integrations/xero/files/lib/xero-client.ts
-- [x] src/cli/templates/integrations/zendesk/files/ai/tools/create-ticket.ts
-- [x] src/cli/templates/integrations/zendesk/files/ai/tools/get-ticket.ts
-- [x] src/cli/templates/integrations/zendesk/files/ai/tools/list-tickets.ts
-- [x] src/cli/templates/integrations/zendesk/files/ai/tools/search-tickets.ts
-- [x] src/cli/templates/integrations/zendesk/files/app/api/auth/zendesk/callback/route.ts
-- [x] src/cli/templates/integrations/zendesk/files/app/api/auth/zendesk/route.ts
-- [x] src/cli/templates/integrations/zendesk/files/lib/zendesk-client.ts
-- [x] src/cli/templates/integrations/zoom/files/ai/tools/create-meeting.ts
-- [x] src/cli/templates/integrations/zoom/files/ai/tools/delete-meeting.ts
-- [x] src/cli/templates/integrations/zoom/files/ai/tools/get-meeting.ts
-- [x] src/cli/templates/integrations/zoom/files/ai/tools/list-meetings.ts
-- [x] src/cli/templates/integrations/zoom/files/ai/tools/update-meeting.ts
-- [x] src/cli/templates/integrations/zoom/files/app/api/auth/zoom/callback/route.ts
-- [x] src/cli/templates/integrations/zoom/files/app/api/auth/zoom/route.ts
-- [x] src/cli/templates/integrations/zoom/files/lib/zoom-client.ts
-- [x] src/cli/templates/loader.ts
-- [x] src/cli/templates/types.ts
-- [x] src/cli/utils/env-prompt.ts
-- [x] src/cli/utils/index.test.ts
-- [x] src/cli/utils/index.ts
-- [x] src/cli/utils/package-manager.ts
-- [x] src/cli/utils/terminal-select.ts
-- [x] src/core/config/defaults.ts
-- [x] src/core/config/define-config.test.ts
-- [x] src/core/config/define-config.ts
-- [x] src/core/config/index.ts
-- [x] src/core/config/loader.ts
-- [x] src/core/config/network-defaults.ts
-- [x] src/core/config/schema.test.ts
-- [x] src/core/config/schema.ts
-- [x] src/core/config/types.ts
-- [x] src/core/constants/buffers.ts
-- [x] src/core/constants/crypto.ts
-- [x] src/core/constants/index.ts
-- [x] src/core/constants/limits.ts
-- [x] src/core/constants/metrics.ts
-- [x] src/core/constants/priorities.ts
-- [x] src/core/constants/retry.ts
-- [x] src/core/errors/agent-errors.ts
-- [x] src/core/errors/build-errors.ts
-- [x] src/core/errors/catalog/build-errors.ts
-- [x] src/core/errors/catalog/config-errors.ts
-- [x] src/core/errors/catalog/deployment-errors.ts
-- [x] src/core/errors/catalog/dev-errors.ts
-- [x] src/core/errors/catalog/factory.test.ts
-- [x] src/core/errors/catalog/factory.ts
-- [x] src/core/errors/catalog/general-errors.ts
-- [x] src/core/errors/catalog/index.ts
-- [x] src/core/errors/catalog/module-errors.ts
-- [x] src/core/errors/catalog/route-errors.ts
-- [x] src/core/errors/catalog/rsc-errors.ts
-- [x] src/core/errors/catalog/runtime-errors.ts
-- [x] src/core/errors/catalog/server-errors.ts
-- [x] src/core/errors/catalog/types.ts
-- [x] src/core/errors/compat.ts
-- [x] src/core/errors/enhanced-catalog.ts
-- [x] src/core/errors/error-codes.ts
-- [x] src/core/errors/error-handlers.ts
-- [x] src/core/errors/index.ts
-- [x] src/core/errors/runtime-errors.ts
-- [x] src/core/errors/system-errors.ts
-- [x] src/core/errors/types.ts
-- [x] src/core/errors/user-friendly/error-catalog.ts
-- [x] src/core/errors/user-friendly/error-formatter.ts
-- [x] src/core/errors/user-friendly/error-identifier.test.ts
-- [x] src/core/errors/user-friendly/error-identifier.ts
-- [x] src/core/errors/user-friendly/error-wrapper.ts
-- [x] src/core/errors/user-friendly/index.ts
-- [x] src/core/errors/veryfront-error.ts
-- [x] src/core/index.ts
-- [x] src/core/oauth/handlers/callback-handler.ts
-- [x] src/core/oauth/handlers/index.ts
-- [x] src/core/oauth/handlers/init-handler.ts
-- [x] src/core/oauth/index.ts
-- [x] src/core/oauth/providers/atlassian.ts
-- [x] src/core/oauth/providers/base.ts
-- [x] src/core/oauth/providers/common.ts
-- [x] src/core/oauth/providers/google.ts
-- [x] src/core/oauth/providers/index.ts
-- [x] src/core/oauth/providers/microsoft.ts
-- [x] src/core/oauth/token-store/index.ts
-- [x] src/core/oauth/token-store/memory.ts
-- [x] src/core/oauth/types.ts
-- [x] src/core/types/app.ts
-- [x] src/core/types/branded.ts
-- [x] src/core/types/bundler.ts
-- [x] src/core/types/entities.ts
-- [x] src/core/types/entities/getEntityInfo.ts
-- [x] src/core/types/global-guards.ts
-- [x] src/core/types/hmr.ts
-- [x] src/core/types/index.ts
-- [x] src/core/types/rsc.ts
-- [x] src/core/types/server.ts
-- [x] src/core/utils/bundle-manifest-init.ts
-- [x] src/core/utils/bundle-manifest.test.ts
-- [x] src/core/utils/bundle-manifest.ts
-- [x] src/core/utils/cache/eviction/eviction-manager.ts
-- [x] src/core/utils/cache/index.ts
-- [x] src/core/utils/cache/keys/index.ts
-- [x] src/core/utils/cache/keys/namespace.ts
-- [x] src/core/utils/cache/stores/memory/entry-manager.ts
-- [x] src/core/utils/cache/stores/memory/index.ts
-- [x] src/core/utils/cache/stores/memory/lru-cache-adapter.ts
-- [x] src/core/utils/cache/stores/memory/lru-list-manager.ts
-- [x] src/core/utils/cache/stores/memory/lru-node.test.ts
-- [x] src/core/utils/cache/stores/memory/lru-node.ts
-- [x] src/core/utils/cache/stores/memory/types.ts
-- [x] src/core/utils/constants/build.ts
-- [x] src/core/utils/constants/cache.ts
-- [x] src/core/utils/constants/cdn.ts
-- [x] src/core/utils/constants/env.ts
-- [x] src/core/utils/constants/hash.ts
-- [x] src/core/utils/constants/hmr.ts
-- [x] src/core/utils/constants/html.ts
-- [x] src/core/utils/constants/http.ts
-- [x] src/core/utils/constants/index.ts
-- [x] src/core/utils/constants/network.ts
-- [x] src/core/utils/constants/security.ts
-- [x] src/core/utils/constants/server.ts
-- [x] src/core/utils/env-loader.ts
-- [x] src/core/utils/feature-flags.ts
-- [x] src/core/utils/file-discovery.test.ts
-- [x] src/core/utils/file-discovery.ts
-- [x] src/core/utils/format-utils.ts
-- [x] src/core/utils/hash-utils.ts
-- [x] src/core/utils/index.ts
-- [x] src/core/utils/logger/env.ts
-- [x] src/core/utils/logger/index.ts
-- [x] src/core/utils/logger/logger.ts
-- [x] src/core/utils/lru-wrapper.test.ts
-- [x] src/core/utils/lru-wrapper.ts
-- [x] src/core/utils/memoize.ts
-- [x] src/core/utils/path-utils.ts
-- [x] src/core/utils/paths.ts
-- [x] src/core/utils/platform.ts
-- [x] src/core/utils/runtime-guards.ts
-- [x] src/core/utils/version.ts
-- [x] src/data/data-fetcher.ts
-- [x] src/data/data-fetching-cache.ts
-- [x] src/data/helpers.ts
-- [x] src/data/index.ts
-- [x] src/data/server-data-fetcher.ts
-- [x] src/data/static-data-fetcher.ts
-- [x] src/data/static-paths-fetcher.ts
-- [x] src/data/types.ts
-- [x] src/html/dev-scripts.ts
-- [x] src/html/html-detection.ts
-- [x] src/html/html-escape.ts
-- [x] src/html/html-injection.ts
-- [x] src/html/html-shell-generator.test.ts
-- [x] src/html/html-shell-generator.ts
-- [x] src/html/hydration-script-builder/dev-client-renderer.ts
-- [x] src/html/hydration-script-builder/dev-component-manifest.ts
-- [x] src/html/hydration-script-builder/dev-error-logger.ts
-- [x] src/html/hydration-script-builder/dev-indicator.ts
-- [x] src/html/hydration-script-builder/dev-scripts.ts
-- [x] src/html/hydration-script-builder/hydration-data-generator.ts
-- [x] src/html/hydration-script-builder/index.ts
-- [x] src/html/hydration-script-builder/prod-hydration.ts
-- [x] src/html/hydration-script-builder/prod-scripts.ts
-- [x] src/html/hydration-script-builder/templates/index.ts
-- [x] src/html/hydration-script-builder/templates/loader.ts
-- [x] src/html/hydration-script-builder/templates/renderer.ts
-- [x] src/html/hydration-script-builder/templates/router.ts
-- [x] src/html/hydration-script-builder/types.ts
-- [x] src/html/index.ts
-- [x] src/html/metadata-builder.test.ts
-- [x] src/html/metadata-builder.ts
-- [x] src/html/metadata-extraction.ts
-- [x] src/html/styles-builder/dev-styles.ts
-- [x] src/html/styles-builder/index.ts
-- [x] src/html/styles-builder/production-styles.ts
-- [x] src/html/styles-builder/tailwind-config.ts
-- [x] src/html/styles-builder/tailwind-jit.ts
-- [x] src/html/styles-builder/theme-variables.ts
-- [x] src/html/styles-builder/unocss-generator.ts
-- [x] src/html/tag-generators.ts
-- [x] src/html/types.ts
-- [x] src/html/utils.test.ts
-- [x] src/html/utils.ts
-- [x] src/http/responses.ts
-- [x] src/index.ts
-- [x] src/middleware/builtin/auth.ts
-- [x] src/middleware/builtin/index.ts
-- [x] src/middleware/builtin/logger.ts
-- [x] src/middleware/builtin/security/cors-simple.ts
-- [x] src/middleware/builtin/security/csp.ts
-- [x] src/middleware/builtin/security/csrf.ts
-- [x] src/middleware/builtin/security/index.ts
-- [x] src/middleware/builtin/security/rate-limit.ts
-- [x] src/middleware/builtin/security/redis-rate-limit.ts
-- [x] src/middleware/builtin/security/security-headers.ts
-- [x] src/middleware/builtin/security/types.ts
-- [x] src/middleware/builtin/types.ts
-- [x] src/middleware/core/context.ts
-- [x] src/middleware/core/index.ts
-- [x] src/middleware/core/pipeline/composer.ts
-- [x] src/middleware/core/pipeline/executor.ts
-- [x] src/middleware/core/pipeline/index.ts
-- [x] src/middleware/core/pipeline/pipeline.ts
-- [x] src/middleware/core/pipeline/types.ts
-- [x] src/middleware/core/types.ts
-- [x] src/middleware/index.ts
-- [x] src/middleware/types.ts
-- [x] src/module-system/component-registry/edge-cases.test.ts
-- [x] src/module-system/component-registry/index.ts
-- [x] src/module-system/component-registry/registry.ts
-- [x] src/module-system/import-map/default-import-map.ts
-- [x] src/module-system/import-map/index.ts
-- [x] src/module-system/import-map/loader.ts
-- [x] src/module-system/import-map/merger.ts
-- [x] src/module-system/import-map/resolver.ts
-- [x] src/module-system/import-map/transformer.ts
-- [x] src/module-system/import-map/types.ts
-- [x] src/module-system/index.ts
-- [x] src/module-system/module-resolver.ts
-- [x] src/module-system/react-loader/component-loader.ts
-- [x] src/module-system/react-loader/index.ts
-- [x] src/module-system/react-loader/path-resolver.ts
-- [x] src/module-system/react-loader/ssr-module-loader.ts
-- [x] src/module-system/react-loader/temp-directory.ts
-- [x] src/module-system/react-loader/types.ts
-- [x] src/module-system/react-loader/unified-loader.ts
-- [x] src/module-system/server/api-server.ts
-- [x] src/module-system/server/index.ts
-- [x] src/module-system/server/module-server.ts
-- [x] src/module-system/server/rate-limiter.ts
-- [x] src/module-system/server/websocket-handler.ts
-- [x] src/observability/auto-instrument.test.ts
-- [x] src/observability/auto-instrument/configurator.ts
-- [x] src/observability/auto-instrument/http-instrumentation.ts
-- [x] src/observability/auto-instrument/index.ts
-- [x] src/observability/auto-instrument/orchestrator.ts
-- [x] src/observability/auto-instrument/react-instrumentation.ts
-- [x] src/observability/auto-instrument/types.ts
-- [x] src/observability/auto-instrument/wrappers.ts
-- [x] src/observability/index.ts
-- [x] src/observability/instruments/build-instruments.ts
-- [x] src/observability/instruments/cache-instruments.ts
-- [x] src/observability/instruments/data-instruments.ts
-- [x] src/observability/instruments/http-instruments.ts
-- [x] src/observability/instruments/index.ts
-- [x] src/observability/instruments/instruments-factory.ts
-- [x] src/observability/instruments/memory-instruments.ts
-- [x] src/observability/instruments/render-instruments.ts
-- [x] src/observability/instruments/rsc-instruments.ts
-- [x] src/observability/metrics/config.ts
-- [x] src/observability/metrics/index.ts
-- [x] src/observability/metrics/manager.ts
-- [x] src/observability/metrics/metrics.test.ts
-- [x] src/observability/metrics/recorder.ts
-- [x] src/observability/metrics/types.ts
-- [x] src/observability/simple-metrics/index.ts
-- [x] src/observability/simple-metrics/metrics-recorder.ts
-- [x] src/observability/simple-metrics/metrics-state.ts
-- [x] src/observability/simple-metrics/observability-loader.ts
-- [x] src/observability/simple-metrics/otel-instruments.ts
-- [x] src/observability/simple-metrics/types.ts
-- [x] src/observability/tracing/config.ts
-- [x] src/observability/tracing/context-propagation.ts
-- [x] src/observability/tracing/index.ts
-- [x] src/observability/tracing/manager.ts
-- [x] src/observability/tracing/span-names.ts
-- [x] src/observability/tracing/span-operations.ts
-- [x] src/observability/tracing/tracing.test.ts
-- [x] src/observability/tracing/types.ts
-- [x] src/platform/adapters/base.ts
-- [x] src/platform/adapters/bun.ts
-- [x] src/platform/adapters/bun/adapter.ts
-- [x] src/platform/adapters/bun/environment-adapter.ts
-- [x] src/platform/adapters/bun/filesystem-adapter.ts
-- [x] src/platform/adapters/bun/http-server.ts
-- [x] src/platform/adapters/bun/index.ts
-- [x] src/platform/adapters/bun/types.ts
-- [x] src/platform/adapters/bun/websocket-adapter.ts
-- [x] src/platform/adapters/cloudflare/adapter.ts
-- [x] src/platform/adapters/cloudflare/environment.ts
-- [x] src/platform/adapters/cloudflare/filesystem.ts
-- [x] src/platform/adapters/cloudflare/index.ts
-- [x] src/platform/adapters/cloudflare/server.ts
-- [x] src/platform/adapters/cloudflare/shell.ts
-- [x] src/platform/adapters/cloudflare/types.ts
-- [x] src/platform/adapters/cloudflare/worker.ts
-- [x] src/platform/adapters/deno.ts
-- [x] src/platform/adapters/detect.ts
-- [x] src/platform/adapters/fallback-wrapper.test.ts
-- [x] src/platform/adapters/fallback-wrapper.ts
-- [x] src/platform/adapters/file-cache/factory.ts
-- [x] src/platform/adapters/file-cache/file-cache.ts
-- [x] src/platform/adapters/file-cache/index.ts
-- [x] src/platform/adapters/file-cache/lru-tracker.ts
-- [x] src/platform/adapters/file-cache/size-estimator.ts
-- [x] src/platform/adapters/file-cache/types.ts
-- [x] src/platform/adapters/fs-adapter-factory.ts
-- [x] src/platform/adapters/fs-adapter-wrapper.ts
-- [x] src/platform/adapters/fs-integration.ts
-- [x] src/platform/adapters/index.ts
-- [x] src/platform/adapters/mock.ts
-- [x] src/platform/adapters/node.ts
-- [x] src/platform/adapters/node/adapter.ts
-- [x] src/platform/adapters/node/environment-adapter.ts
-- [x] src/platform/adapters/node/filesystem-adapter.ts
-- [x] src/platform/adapters/node/http-server.ts
-- [x] src/platform/adapters/node/index.ts
-- [x] src/platform/adapters/node/types.ts
-- [x] src/platform/adapters/node/websocket-adapter.ts
-- [x] src/platform/adapters/registry.ts
-- [x] src/platform/adapters/security/index.ts
-- [x] src/platform/adapters/shared-watcher.ts
-- [x] src/platform/adapters/shared/node-based-shell-adapter.ts
-- [x] src/platform/adapters/token-adapter-factory.ts
-- [x] src/platform/adapters/token-adapter-integration.ts
-- [x] src/platform/adapters/veryfront-api-client.test.ts
-- [x] src/platform/adapters/veryfront-api-client.ts
-- [x] src/platform/adapters/veryfront-api-client/client.ts
-- [x] src/platform/adapters/veryfront-api-client/index.ts
-- [x] src/platform/adapters/veryfront-api-client/operations.ts
-- [x] src/platform/adapters/veryfront-api-client/retry-handler.ts
-- [x] src/platform/adapters/veryfront-api-client/types.ts
-- [x] src/platform/adapters/veryfront-fs-adapter.ts
-- [x] src/platform/adapters/veryfront-fs-adapter/adapter.ts
-- [x] src/platform/adapters/veryfront-fs-adapter/directory-operations.ts
-- [x] src/platform/adapters/veryfront-fs-adapter/index.ts
-- [x] src/platform/adapters/veryfront-fs-adapter/path-normalizer.ts
-- [x] src/platform/adapters/veryfront-fs-adapter/read-operations.ts
-- [x] src/platform/adapters/veryfront-fs-adapter/stat-operations.ts
-- [x] src/platform/adapters/veryfront-fs-adapter/types.ts
-- [x] src/platform/adapters/veryfront-token-adapter/adapter.ts
-- [x] src/platform/adapters/veryfront-token-adapter/api-client.ts
-- [x] src/platform/adapters/veryfront-token-adapter/index.ts
-- [x] src/platform/adapters/veryfront-token-adapter/memory-adapter.ts
-- [x] src/platform/adapters/veryfront-token-adapter/types.ts
-- [x] src/platform/compat/console/ansi.ts
-- [x] src/platform/compat/console/deno.ts
-- [x] src/platform/compat/console/index.ts
-- [x] src/platform/compat/console/node.ts
-- [x] src/platform/compat/console/types.ts
-- [x] src/platform/compat/crypto.test.ts
-- [x] src/platform/compat/crypto.ts
-- [x] src/platform/compat/flags.test.ts
-- [x] src/platform/compat/flags.ts
-- [x] src/platform/compat/fs.ts
-- [x] src/platform/compat/http/deno-server.ts
-- [x] src/platform/compat/http/factory.ts
-- [x] src/platform/compat/http/index.ts
-- [x] src/platform/compat/http/node-server.ts
-- [x] src/platform/compat/http/node-types.ts
-- [x] src/platform/compat/http/request-adapter.ts
-- [x] src/platform/compat/http/types.ts
-- [x] src/platform/compat/index.ts
-- [x] src/platform/compat/kv/factory.ts
-- [x] src/platform/compat/kv/index.ts
-- [x] src/platform/compat/kv/kv.test.ts
-- [x] src/platform/compat/kv/memory-adapter.ts
-- [x] src/platform/compat/kv/sqlite-adapter.ts
-- [x] src/platform/compat/kv/types.ts
-- [x] src/platform/compat/media-types.test.ts
-- [x] src/platform/compat/media-types.ts
-- [x] src/platform/compat/path-helper.ts
-- [x] src/platform/compat/path/basic-operations.ts
-- [x] src/platform/compat/path/index.ts
-- [x] src/platform/compat/path/parse-format.ts
-- [x] src/platform/compat/path/resolution.ts
-- [x] src/platform/compat/path/runtime.ts
-- [x] src/platform/compat/path/security.ts
-- [x] src/platform/compat/path/types.ts
-- [x] src/platform/compat/path/url-conversion.ts
-- [x] src/platform/compat/process.ts
-- [x] src/platform/compat/runtime.test.ts
-- [x] src/platform/compat/runtime.ts
-- [x] src/platform/index.ts
-- [x] src/react/compat/config-generator.ts
-- [x] src/react/compat/hooks-adapter.test.ts
-- [x] src/react/compat/hooks-adapter.ts
-- [x] src/react/compat/index.ts
-- [x] src/react/compat/ssr-adapter/html-wrapper.test.ts
-- [x] src/react/compat/ssr-adapter/html-wrapper.ts
-- [x] src/react/compat/ssr-adapter/index.ts
-- [x] src/react/compat/ssr-adapter/response-builder.ts
-- [x] src/react/compat/ssr-adapter/response-builder/index.ts
-- [x] src/react/compat/ssr-adapter/server-loader.ts
-- [x] src/react/compat/ssr-adapter/stream-renderer.ts
-- [x] src/react/compat/ssr-adapter/string-renderer.ts
-- [x] src/react/compat/ssr-adapter/types.ts
-- [x] src/react/compat/version-detector.test.ts
-- [x] src/react/compat/version-detector/compatibility-checker.ts
-- [x] src/react/compat/version-detector/feature-detector.ts
-- [x] src/react/compat/version-detector/index.ts
-- [x] src/react/compat/version-detector/types.ts
-- [x] src/react/compat/version-detector/version-cache.ts
-- [x] src/react/compat/version-detector/version-detector.test.ts
-- [x] src/react/compat/version-detector/version-parser.ts
-- [x] src/react/components/index.ts
-- [x] src/react/components/optimized-image/helpers.ts
-- [x] src/react/components/optimized-image/index.ts
-- [x] src/react/components/optimized-image/useOptimizedImage.ts
-- [x] src/react/index.ts
-- [x] src/rendering/app-reserved.ts
-- [x] src/rendering/app-route-resolver.ts
-- [x] src/rendering/cache/cache-coordinator.test.ts
-- [x] src/rendering/cache/cache-coordinator.ts
-- [x] src/rendering/cache/index.ts
-- [x] src/rendering/cache/stores/filesystem-store.ts
-- [x] src/rendering/cache/stores/index.ts
-- [x] src/rendering/cache/stores/kv-store.ts
-- [x] src/rendering/cache/stores/memory-store.ts
-- [x] src/rendering/cache/stores/redis-store.ts
-- [x] src/rendering/cache/types.ts
-- [x] src/rendering/chunk-optimizer.ts
-- [x] src/rendering/cleanup.ts
-- [x] src/rendering/client/browser-logger.test.ts
-- [x] src/rendering/client/browser-logger.ts
-- [x] src/rendering/client/browser-stubs/logger.ts
-- [x] src/rendering/client/hmr-runtime.ts
-- [x] src/rendering/client/index.ts
-- [x] src/rendering/client/prefetch.ts
-- [x] src/rendering/client/prefetch/link-observer.test.ts
-- [x] src/rendering/client/prefetch/link-observer.ts
-- [x] src/rendering/client/prefetch/network-utils.test.ts
-- [x] src/rendering/client/prefetch/network-utils.ts
-- [x] src/rendering/client/prefetch/prefetch-queue.ts
-- [x] src/rendering/client/prefetch/resource-hints.test.ts
-- [x] src/rendering/client/prefetch/resource-hints.ts
-- [x] src/rendering/client/router.ts
-- [x] src/rendering/client/state-bridge.test.ts
-- [x] src/rendering/client/state-bridge.ts
-- [x] src/rendering/component-handling.ts
-- [x] src/rendering/constants/html.ts
-- [x] src/rendering/element-validator/element-inspector.ts
-- [x] src/rendering/element-validator/element-normalizer.ts
-- [x] src/rendering/element-validator/index.ts
-- [x] src/rendering/element-validator/primitive-checks.test.ts
-- [x] src/rendering/element-validator/primitive-checks.ts
-- [x] src/rendering/element-validator/types.ts
-- [x] src/rendering/element-validator/validator-core.ts
-- [x] src/rendering/index.ts
-- [x] src/rendering/layouts/index.ts
-- [x] src/rendering/layouts/layout-applicator.ts
-- [x] src/rendering/layouts/layout-collector.ts
-- [x] src/rendering/layouts/layout-compiler.ts
-- [x] src/rendering/layouts/provider-manager.ts
-- [x] src/rendering/layouts/types.ts
-- [x] src/rendering/layouts/utils/applicator.ts
-- [x] src/rendering/layouts/utils/compiler.ts
-- [x] src/rendering/layouts/utils/component-loader.ts
-- [x] src/rendering/layouts/utils/discovery.ts
-- [x] src/rendering/layouts/utils/hash-calculator.ts
-- [x] src/rendering/mdx-renderer.ts
-- [x] src/rendering/orchestrator/compiler-service.ts
-- [x] src/rendering/orchestrator/config.ts
-- [x] src/rendering/orchestrator/html.ts
-- [x] src/rendering/orchestrator/index.ts
-- [x] src/rendering/orchestrator/layout.ts
-- [x] src/rendering/orchestrator/lifecycle.ts
-- [x] src/rendering/orchestrator/mdx.ts
-- [x] src/rendering/orchestrator/pipeline.test.ts
-- [x] src/rendering/orchestrator/pipeline.ts
-- [x] src/rendering/orchestrator/ssr-orchestrator.ts
-- [x] src/rendering/orchestrator/ssr.ts
-- [x] src/rendering/orchestrator/types.ts
-- [x] src/rendering/page-renderer.ts
-- [x] src/rendering/page-rendering.ts
-- [x] src/rendering/page-resolution/index.ts
-- [x] src/rendering/page-resolution/page-resolver.ts
-- [x] src/rendering/plugins.test.ts
-- [x] src/rendering/plugins.ts
-- [x] src/rendering/route-params-extractor.ts
-- [x] src/rendering/router-detection.test.ts
-- [x] src/rendering/router-detection.ts
-- [x] src/rendering/rsc/actions/helpers.ts
-- [x] src/rendering/rsc/actions/index.ts
-- [x] src/rendering/rsc/client-boot.ts
-- [x] src/rendering/rsc/client-dom.ts
-- [x] src/rendering/rsc/client-hydrator.ts
-- [x] src/rendering/rsc/component-analyzer.ts
-- [x] src/rendering/rsc/constants.ts
-- [x] src/rendering/rsc/hydrate-client.ts
-- [x] src/rendering/rsc/ids.ts
-- [x] src/rendering/rsc/index.ts
-- [x] src/rendering/rsc/manifest.ts
-- [x] src/rendering/rsc/production-optimizer.ts
-- [x] src/rendering/rsc/server-action-guard.ts
-- [x] src/rendering/rsc/server-renderer/component-detector.ts
-- [x] src/rendering/rsc/server-renderer/html-generator.ts
-- [x] src/rendering/rsc/server-renderer/index.ts
-- [x] src/rendering/rsc/server-renderer/prop-serializer.ts
-- [x] src/rendering/rsc/server-renderer/rsc-renderer.ts
-- [x] src/rendering/rsc/server-renderer/tree-processor.ts
-- [x] src/rendering/rsc/types.ts
-- [x] src/rendering/script-page-handling.ts
-- [x] src/rendering/shared/constants/index.ts
-- [x] src/rendering/ssr-react18.test.ts
-- [x] src/rendering/ssr-renderer.ts
-- [x] src/rendering/ssr/component-registry.ts
-- [x] src/rendering/ssr/index.ts
-- [x] src/rendering/ssr/mdx-browser-loader.ts
-- [x] src/rendering/ssr/mdx-module-loader.ts
-- [x] src/rendering/ssr/mdx-renderer.ts
-- [x] src/rendering/ssr/types.ts
-- [x] src/rendering/utils/index.ts
-- [x] src/rendering/utils/react-helpers.test.ts
-- [x] src/rendering/utils/react-helpers.ts
-- [x] src/rendering/utils/stream-utils.test.ts
-- [x] src/rendering/utils/stream-utils.ts
-- [x] src/rendering/virtual-module-system.ts
-- [x] src/routing/api/api-route-matcher.test.ts
-- [x] src/routing/api/api-route-matcher.ts
-- [x] src/routing/api/context-builder.test.ts
-- [x] src/routing/api/context-builder.ts
-- [x] src/routing/api/dynamic-router.test.ts
-- [x] src/routing/api/error-handler.ts
-- [x] src/routing/api/handler.test.ts
-- [x] src/routing/api/handler.ts
-- [x] src/routing/api/index.ts
-- [x] src/routing/api/method-validator.ts
-- [x] src/routing/api/module-loader/esbuild-plugin.ts
-- [x] src/routing/api/module-loader/http-validator.ts
-- [x] src/routing/api/module-loader/index.ts
-- [x] src/routing/api/module-loader/loader.test.ts
-- [x] src/routing/api/module-loader/loader.ts
-- [x] src/routing/api/module-loader/security-config.ts
-- [x] src/routing/api/module-loader/types.ts
-- [x] src/routing/api/responses.test.ts
-- [x] src/routing/api/responses.ts
-- [x] src/routing/api/route-discovery-app.test.ts
-- [x] src/routing/api/route-discovery-pages.test.ts
-- [x] src/routing/api/route-discovery.ts
-- [x] src/routing/api/route-executor.ts
-- [x] src/routing/client/dom-utils.test.ts
-- [x] src/routing/client/dom-utils.ts
-- [x] src/routing/client/index.ts
-- [x] src/routing/client/navigation-handlers.test.ts
-- [x] src/routing/client/navigation-handlers.ts
-- [x] src/routing/client/page-loader.ts
-- [x] src/routing/client/page-transition.test.ts
-- [x] src/routing/client/page-transition.ts
-- [x] src/routing/client/types.ts
-- [x] src/routing/client/viewport-prefetch.test.ts
-- [x] src/routing/client/viewport-prefetch.ts
-- [x] src/routing/index.ts
-- [x] src/routing/matchers/index.ts
-- [x] src/routing/matchers/pattern-route-matcher.ts
-- [x] src/routing/matchers/route-matcher.ts
-- [x] src/routing/matchers/route-parser.ts
-- [x] src/routing/matchers/types.ts
-- [x] src/routing/registry/index.ts
-- [x] src/routing/registry/registry.ts
-- [x] src/routing/registry/types.ts
-- [x] src/routing/router.test.ts
-- [x] src/routing/router.ts
-- [x] src/routing/router_deno.test.ts
-- [x] src/routing/slug-mapper/dynamic-route-matcher.test.ts
-- [x] src/routing/slug-mapper/dynamic-route-matcher.ts
-- [x] src/routing/slug-mapper/index.ts
-- [x] src/routing/slug-mapper/path-candidate-generator.ts
-- [x] src/routing/slug-mapper/slug-normalizer.test.ts
-- [x] src/routing/slug-mapper/slug-normalizer.ts
-- [x] src/routing/slug-mapper/types.ts
-- [x] src/security/client/html-sanitizer.ts
-- [x] src/security/http/auth.ts
-- [x] src/security/http/base-handler.ts
-- [x] src/security/http/config.ts
-- [x] src/security/http/cors/constants.ts
-- [x] src/security/http/cors/headers.ts
-- [x] src/security/http/cors/index.ts
-- [x] src/security/http/cors/middleware.ts
-- [x] src/security/http/cors/preflight.ts
-- [x] src/security/http/cors/types.ts
-- [x] src/security/http/cors/validators.ts
-- [x] src/security/http/handlers-index.ts
-- [x] src/security/http/index.ts
-- [x] src/security/http/middleware/config-loader.ts
-- [x] src/security/http/middleware/content-types.ts
-- [x] src/security/http/middleware/cors-handler.ts
-- [x] src/security/http/middleware/etag.ts
-- [x] src/security/http/middleware/index.ts
-- [x] src/security/http/middleware/types.ts
-- [x] src/security/http/response/builder.ts
-- [x] src/security/http/response/cache-handler.ts
-- [x] src/security/http/response/constants.ts
-- [x] src/security/http/response/fluent-methods.ts
-- [x] src/security/http/response/index.ts
-- [x] src/security/http/response/response-methods.ts
-- [x] src/security/http/response/security-handler.ts
-- [x] src/security/http/response/static-helpers.ts
-- [x] src/security/http/response/types.ts
-- [x] src/security/http/types.ts
-- [x] src/security/index.ts
-- [x] src/security/input-validation/errors.ts
-- [x] src/security/input-validation/handler.ts
-- [x] src/security/input-validation/index.ts
-- [x] src/security/input-validation/limits.ts
-- [x] src/security/input-validation/parsers.ts
-- [x] src/security/input-validation/sanitizers.ts
-- [x] src/security/input-validation/schemas.ts
-- [x] src/security/input-validation/types.ts
-- [x] src/security/path-validation.test.ts
-- [x] src/security/path-validation.ts
-- [x] src/security/rate-limit/index.ts
-- [x] src/security/rate-limit/memory-store.ts
-- [x] src/security/rate-limit/middleware.test.ts
-- [x] src/security/rate-limit/middleware.ts
-- [x] src/security/rate-limit/strategies.ts
-- [x] src/security/rate-limit/types.ts
-- [x] src/security/sandbox/constants.ts
-- [x] src/security/sandbox/deno-sandbox.test.ts
-- [x] src/security/sandbox/deno-sandbox.ts
-- [x] src/security/sandbox/permission-system.test.ts
-- [x] src/security/sandbox/permission-system.ts
-- [x] src/security/secure-fs.ts
-- [x] src/server/bootstrap.ts
-- [x] src/server/build-app-route-renderer.ts
-- [x] src/server/build-routes.ts
-- [x] src/server/build-service-worker.ts
-- [x] src/server/build-types.ts
-- [x] src/server/dev-server.ts
-- [x] src/server/dev-server/bundler.ts
-- [x] src/server/dev-server/error-overlay/error-formatter.ts
-- [x] src/server/dev-server/error-overlay/html-template.ts
-- [x] src/server/dev-server/error-overlay/index.ts
-- [x] src/server/dev-server/error-overlay/overlay-renderer.ts
-- [x] src/server/dev-server/error-overlay/stack-parser.test.ts
-- [x] src/server/dev-server/error-overlay/stack-parser.ts
-- [x] src/server/dev-server/file-watch-setup.ts
-- [x] src/server/dev-server/file-watcher.test.ts
-- [x] src/server/dev-server/file-watcher.ts
-- [x] src/server/dev-server/hmr-server.ts
-- [x] src/server/dev-server/hmr-types.ts
-- [x] src/server/dev-server/hmr/index.ts
-- [x] src/server/dev-server/hmr/message-handler.ts
-- [x] src/server/dev-server/hmr/runtime-generator.ts
-- [x] src/server/dev-server/hmr/templates.ts
-- [x] src/server/dev-server/index.ts
-- [x] src/server/dev-server/middleware.ts
-- [x] src/server/dev-server/request-handler.ts
-- [x] src/server/dev-server/route-discovery.ts
-- [x] src/server/dev-server/server.ts
-- [x] src/server/dev-server/types.ts
-- [x] src/server/handlers/dev/endpoints.ts
-- [x] src/server/handlers/dev/files/dev-file-handler.ts
-- [x] src/server/handlers/dev/files/esbuild-bundler.ts
-- [x] src/server/handlers/dev/files/esbuild-plugins.ts
-- [x] src/server/handlers/dev/files/index.ts
-- [x] src/server/handlers/dev/files/path-validator.ts
-- [x] src/server/handlers/dev/index.ts
-- [x] src/server/handlers/dev/types.ts
-- [x] src/server/handlers/index.ts
-- [x] src/server/handlers/monitoring/client-log.ts
-- [x] src/server/handlers/monitoring/health.ts
-- [x] src/server/handlers/monitoring/index.ts
-- [x] src/server/handlers/monitoring/metrics.ts
-- [x] src/server/handlers/monitoring/types.ts
-- [x] src/server/handlers/request/api/api-handler-wrapper.ts
-- [x] src/server/handlers/request/api/app-router-handler.ts
-- [x] src/server/handlers/request/api/app-router-resolver.ts
-- [x] src/server/handlers/request/api/index.ts
-- [x] src/server/handlers/request/api/pages-api-handler.ts
-- [x] src/server/handlers/request/api/security-headers.ts
-- [x] src/server/handlers/request/api/types.ts
-- [x] src/server/handlers/request/index.ts
-- [x] src/server/handlers/request/lib-modules-handler.test.ts
-- [x] src/server/handlers/request/lib-modules-handler.ts
-- [x] src/server/handlers/request/module/data-endpoint-handler.ts
-- [x] src/server/handlers/request/module/index.ts
-- [x] src/server/handlers/request/module/module-handler.ts
-- [x] src/server/handlers/request/module/module-server-handler.ts
-- [x] src/server/handlers/request/module/page-module-handler.ts
-- [x] src/server/handlers/request/module/renderer-manager.ts
-- [x] src/server/handlers/request/module/virtual-module-handler.ts
-- [x] src/server/handlers/request/rsc/endpoints/action-handler.ts
-- [x] src/server/handlers/request/rsc/endpoints/action-parser.ts
-- [x] src/server/handlers/request/rsc/endpoints/endpoint-router.ts
-- [x] src/server/handlers/request/rsc/endpoints/handler-registry.ts
-- [x] src/server/handlers/request/rsc/endpoints/index.ts
-- [x] src/server/handlers/request/rsc/endpoints/script-handlers.ts
-- [x] src/server/handlers/request/rsc/endpoints/types.ts
-- [x] src/server/handlers/request/rsc/handlers/component-resolver.ts
-- [x] src/server/handlers/request/rsc/handlers/environment.ts
-- [x] src/server/handlers/request/rsc/handlers/handler.ts
-- [x] src/server/handlers/request/rsc/handlers/hydrator-handler.ts
-- [x] src/server/handlers/request/rsc/handlers/index.ts
-- [x] src/server/handlers/request/rsc/handlers/manifest-handler.ts
-- [x] src/server/handlers/request/rsc/handlers/page-handler.ts
-- [x] src/server/handlers/request/rsc/handlers/render-handler.ts
-- [x] src/server/handlers/request/rsc/handlers/stream-handler.ts
-- [x] src/server/handlers/request/rsc/handlers/types.ts
-- [x] src/server/handlers/request/rsc/index.ts
-- [x] src/server/handlers/request/ssr/etag-handler.ts
-- [x] src/server/handlers/request/ssr/index.ts
-- [x] src/server/handlers/request/ssr/not-found-fallback.ts
-- [x] src/server/handlers/request/ssr/renderer-manager.ts
-- [x] src/server/handlers/request/ssr/ssr-handler.ts
-- [x] src/server/handlers/request/static.ts
-- [x] src/server/handlers/request/types.ts
-- [x] src/server/handlers/response/base.ts
-- [x] src/server/handlers/response/cors.ts
-- [x] src/server/handlers/response/index.ts
-- [x] src/server/handlers/response/not-found.ts
-- [x] src/server/handlers/response/types.ts
-- [x] src/server/handlers/security/index.ts
-- [x] src/server/handlers/types.ts
-- [x] src/server/handlers/utils/content-types.ts
-- [x] src/server/handlers/utils/etag.ts
-- [x] src/server/handlers/utils/index.ts
-- [x] src/server/index.ts
-- [x] src/server/production-server.ts
-- [x] src/server/universal-handler/index.ts
+## Files Reviewed
+
+### src/react (22 files reviewed)
+
+#### Issues Found and Fixed:
+
+1. **src/react/compat/hooks-adapter.ts**
+   - Code Smell: Unused variable `_versionInfo` renamed to `versionInfo` (line 86)
+   - Best Practice: Added documentation comment for module-level `idCounter` state explaining its limitations in concurrent rendering scenarios
+   - Best Practice: Added explicit return type `: string` to `useIdCompat` function
+
+2. **src/react/compat/ssr-adapter/html-wrapper.ts**
+   - Security (XSS): Added `escapeHtml()` and `escapeAttribute()` functions to prevent XSS attacks
+   - Security (XSS): Applied escaping to title, meta names/content, link rel/href, script src/type, and nonce attributes
+   - All user-provided content that could contain malicious scripts is now properly escaped
+
+3. **src/react/compat/version-detector/version-parser.ts**
+   - Bug Fix: Fixed `isReact19()` function - previously incorrectly treated React 18 RC versions (like "18.3.0-canary") as React 19
+   - The function now correctly only identifies React 19 when major version is 19 or version string starts with "19."
+   - Added documentation explaining the version detection logic
+
+4. **src/react/components/optimized-image/helpers.ts**
+   - Code Smell: Renamed `_quality` to `quality` parameter (properly handling the unused parameter)
+   - Best Practice: Added input validation for `src` parameter
+   - Best Practice: Added JSDoc documentation explaining the function and its parameters
+   - Used `void quality` to explicitly indicate the parameter is reserved for future use
+
+#### Files Reviewed (No Issues Found):
+- src/react/compat/config-generator.ts - Clean, well-structured code
+- src/react/compat/index.ts - Clean export barrel file
+- src/react/compat/ssr-adapter/index.ts - Clean export barrel file
+- src/react/compat/ssr-adapter/response-builder.ts - Clean implementation
+- src/react/compat/ssr-adapter/response-builder/index.ts - Clean re-export
+- src/react/compat/ssr-adapter/server-loader.ts - Clean implementation with proper caching
+- src/react/compat/ssr-adapter/stream-renderer.ts - Clean implementation with proper error handling
+- src/react/compat/ssr-adapter/string-renderer.ts - Clean implementation
+- src/react/compat/ssr-adapter/types.ts - Clean type definitions
+- src/react/compat/version-detector/compatibility-checker.ts - Clean implementation
+- src/react/compat/version-detector/feature-detector.ts - Clean implementation
+- src/react/compat/version-detector/index.ts - Clean export barrel file
+- src/react/compat/version-detector/types.ts - Clean type definitions
+- src/react/compat/version-detector/version-cache.ts - Clean caching implementation
+- src/react/components/index.ts - Clean export barrel file
+- src/react/components/optimized-image/index.ts - Clean export barrel file
+- src/react/components/optimized-image/useOptimizedImage.ts - Clean hook implementation
+- src/react/index.ts - Clean main export file
+
+### src/middleware (22 files reviewed)
+
+#### Issues Found and Fixed:
+
+1. **src/middleware/builtin/auth.ts**
+   - Security: Basic auth credentials comparison was vulnerable to timing attacks
+   - Fix: Added `secureCompare()` function using constant-time comparison to prevent timing-based credential guessing
+
+2. **src/middleware/builtin/security/redis-rate-limit.ts**
+   - Code Smell: Hardcoded version string with array join hack to avoid static analysis: `["npm:@redis/client", "@1.5.8"].join("")`
+   - Code Smell: Extra blank line at line 84
+   - Fix: Replaced with clean constant `REDIS_CLIENT_SPECIFIER` and removed extra blank line
+
+3. **src/middleware/builtin/security/rate-limit.ts**
+   - Bug: `retryAfterSeconds` could be negative due to clock drift
+   - Bug: Key generator falls back to generic "anonymous" which groups all users without IP headers together
+   - Fix: Added `Math.max(1, ...)` to ensure at least 1 second delay, improved key generator to use first IP from X-Forwarded-For chain and fall back to X-Real-IP
+
+4. **src/middleware/builtin/security/types.ts**
+   - Dead Code: `xssProtection` option defined but never used (X-XSS-Protection is deprecated)
+   - Fix: Added JSDoc `@deprecated` annotation to document this is intentionally unused
+
+5. **src/middleware/builtin/security/csp.ts**
+   - Bug: If `script-src` directive is not present in policies, the nonce won't be added (regex won't match)
+   - Fix: Added check for `script-src` presence; if missing, appends `script-src 'self' 'nonce-...'`
+
+6. **src/middleware/core/pipeline/executor.ts**
+   - Code Smell: Unnecessary lambda wrapper around `defaultNext`
+   - Fix: Pass `defaultNext` directly to `composedMiddleware`
+
+#### Files Reviewed (No Issues Found):
+- src/middleware/builtin/index.ts - Clean export module
+- src/middleware/builtin/logger.ts - Well-structured logging middleware
+- src/middleware/builtin/types.ts - Clean type definitions
+- src/middleware/builtin/security/cors-simple.ts - Acceptable CORS implementation
+- src/middleware/builtin/security/csrf.ts - Clean CSRF protection
+- src/middleware/builtin/security/index.ts - Clean export module
+- src/middleware/builtin/security/security-headers.ts - Well-implemented security headers
+- src/middleware/core/context.ts - Clean context implementation
+- src/middleware/core/index.ts - Clean export module
+- src/middleware/core/pipeline/composer.ts - Good middleware composition
+- src/middleware/core/pipeline/index.ts - Clean export module
+- src/middleware/core/pipeline/pipeline.ts - Well-structured pipeline class
+- src/middleware/core/pipeline/types.ts - Minimal type definition
+- src/middleware/core/types.ts - Clean type definitions
+- src/middleware/index.ts - Clean export module
+- src/middleware/types.ts - Clean type re-exports
+
+### src/_shims (3 files reviewed)
+
+#### Issues Found and Fixed:
+
+1. **src/_shims/std-front-matter.ts**
+   - Code Smell: Overly complex type coercion with redundant fallback chain for gray-matter function extraction
+   - Code Smell: Confusing variable naming (`grayMatter` used for both module and function)
+   - Bug: `extractAsync` had unsafe type coercion that could fail silently
+   - Fix: Created `extractGrayMatterFn()` helper with clean type narrowing, renamed `grayMatter` to `grayMatterModule`, added error handling in `extractAsync`
+
+2. **src/_shims/std-fs.ts**
+   - Bug: `walk()` function always reported `isSymlink: false` regardless of actual file type
+   - Code Smell: Extension extraction using `path.split(".").pop()` fails for files like `.gitignore` or `file.test.ts`
+   - Fix: Added `entry.isSymbolicLink()` check, replaced manual extension extraction with `nodePath.extname()`
+
+3. **src/_shims/std-path.ts**
+   - No issues found - clean, simple re-exports of Node.js path module
+
+### src/http (1 file reviewed)
+
+#### Issues Found and Fixed:
+
+1. **src/http/responses.ts**
+   - Security: `isValidRedirectUrl()` allowed `../` paths which could enable path traversal attacks
+   - Security: Did not block protocol-relative URLs (`//evil.com`) which could redirect to external sites
+   - Fix: Added explicit blocking of `//` prefix and `../` patterns, added documentation explaining security rationale
+
+### src/data (8 files reviewed)
+
+#### Issues Found and Fixed:
+
+1. **src/data/data-fetching-cache.ts**
+   - Code Smell: Duplicate state tracking - `cacheKeys` Set duplicated information already in LRUCache
+   - Fix: Removed redundant `cacheKeys` Set, use `this.cache.keys()` iterator instead
+
+2. **src/data/server-data-fetcher.ts**
+   - Bug: Errors only logged when `VERYFRONT_DEBUG` env var set, leading to silent failures in production
+   - Code Smell: Unused `adapter` parameter after conditional logging removal
+   - Fix: Always log errors (these are critical runtime failures), removed unused adapter parameter
+
+3. **src/data/static-data-fetcher.ts**
+   - Bug: Same conditional logging issue as server-data-fetcher
+   - Code Smell: Unused `adapter` parameter
+   - Fix: Always log errors, removed adapter parameter, added comment explaining background revalidation error handling
+
+4. **src/data/data-fetcher.ts**
+   - Code Smell: Passed adapter to fetchers that no longer needed it
+   - Fix: Updated constructor calls to match new fetcher signatures
+
+#### Files Reviewed (No Issues Found):
+- src/data/helpers.ts - Clean helper functions for redirect/notFound
+- src/data/index.ts - Clean export barrel file
+- src/data/types.ts - Clean type definitions
+- src/data/static-paths-fetcher.ts - Clean implementation
+
+### src/module-system (23 files reviewed)
+
+#### Issues Found and Fixed:
+
+1. **src/module-system/component-registry/registry.ts**
+   - Code Smell: Unused import `type * as React` removed
+   - Dead Code: Removed `getLoader()` method that always returned `undefined`
+   - Best Practice: Simplified `getAllAsComponents()` return type to `Record<string, unknown>`
+   - Best Practice: Added JSDoc documentation to exported interfaces
+
+2. **src/module-system/import-map/loader.ts**
+   - Code Smell: Non-null assertions (`runtimeAdapter!`) used after null check
+   - Fix: Refactored to use nullish coalescing with IIFE for cleaner adapter initialization
+   - Best Practice: Added comments to clarify the two-phase loading strategy
+
+3. **src/module-system/import-map/transformer.ts**
+   - Bug: Two similar regex patterns could double-process the same imports
+   - Code Smell: Duplicated bare specifier check logic in multiple places
+   - Fix: Removed redundant second regex, extracted `isBareSpecifier()` helper function
+   - Best Practice: Added comprehensive JSDoc explaining what patterns are matched
+
+4. **src/module-system/server/module-server.ts**
+   - Code Smell: Duplicate import of `serverLogger` (imported as itself and as `logger` alias)
+   - Bug: `serverLogger` reference left after removing duplicate import
+   - Fix: Removed duplicate import, changed remaining reference to use `logger` alias
+
+5. **src/module-system/server/websocket-handler.ts**
+   - Code Smell: Magic numbers for WebSocket close loop (10 iterations, 50ms delay)
+   - Fix: Extracted to named constants `WEBSOCKET_CLOSE_ITERATIONS` and `WEBSOCKET_CLOSE_DELAY_MS`
+   - Best Practice: Added comment explaining the graceful shutdown wait
+
+6. **src/module-system/react-loader/unified-loader.ts**
+   - Bug: Hardcoded React version `18.3.1` in generated entry point
+   - Code Smell: Variable shadowing - `components` declared twice in same scope
+   - Fix: Import and use `REACT_DEFAULT_VERSION` constant instead of hardcoded string
+   - Fix: Renamed shadowed variable to `loadedComponents`
+
+7. **src/module-system/react-loader/ssr-module-loader.ts**
+   - Code Smell: Simple hash function with poor distribution (prone to collisions)
+   - Code Smell: No way to clear temp directory cache
+   - Fix: Improved hash function to use djb2 algorithm variant with better distribution
+   - Fix: Added optional `clearTmpDirs` parameter to `clearSSRModuleCache()`
+   - Best Practice: Added JSDoc documentation to global state variables
+
+#### Files Reviewed (No Issues Found):
+- src/module-system/component-registry/index.ts - Clean export barrel file
+- src/module-system/import-map/default-import-map.ts - Clean implementation
+- src/module-system/import-map/index.ts - Clean export barrel file
+- src/module-system/import-map/merger.ts - Clean merge implementation
+- src/module-system/import-map/resolver.ts - Clean resolution logic
+- src/module-system/import-map/types.ts - Clean type definitions
+- src/module-system/index.ts - Clean export barrel file
+- src/module-system/module-resolver.ts - Well-structured module resolution with caching
+- src/module-system/react-loader/component-loader.ts - Clean component loading logic
+- src/module-system/react-loader/index.ts - Clean export barrel file
+- src/module-system/react-loader/path-resolver.ts - Clean path utilities
+- src/module-system/react-loader/temp-directory.ts - Clean temp directory management
+- src/module-system/react-loader/types.ts - Clean type definitions
+- src/module-system/server/api-server.ts - Clean API server implementation
+- src/module-system/server/index.ts - Clean export barrel file
+- src/module-system/server/rate-limiter.ts - Clean rate limiting implementation
+
+### src/html (28 files reviewed)
+
+#### Issues Found and Fixed:
+
+1. **src/html/html-detection.ts**
+   - Bug: Weak HTML document detection using simple `includes("<html")` could match JavaScript strings containing HTML-like content
+   - Fix: Added stricter pattern matching that checks for DOCTYPE or `<html` at the start of the document, with proper tag attribute boundaries (`<html[\s>]`)
+
+2. **src/html/utils.ts**
+   - Security: `data-slug` attribute value was not escaped, allowing potential XSS via slug manipulation
+   - Bug: Version regex `replace(/[\^~]/, "")` only replaced first occurrence, missing subsequent range specifiers
+   - Fix: Added `escapeHTML()` call for `data-slug` value; changed regex to `/[\^~]/g` for global replacement
+
+3. **src/html/metadata-extraction.ts**
+   - Code Smell: Missing standard keys (`viewport`, `themeColor`, `icons`, `metadata`, `lang`, `bodyClass`) from exclusion list when copying custom properties
+   - Bug: `lang` and `bodyClass` from frontmatter were not being extracted to metadata
+   - Fix: Added all standard keys to `processedKeys` Set; added `lang` and `bodyClass` extraction to metadata object
+
+4. **src/html/tag-generators.ts**
+   - Security (XSS): Inline script content was injected directly without escaping, allowing `</script>` sequences to break out of script context
+   - Fix: Added `escapeScriptContent()` function that escapes `</script` and `<!--` sequences to prevent script injection
+
+5. **src/html/styles-builder/tailwind-jit.ts**
+   - Dead Code: `generateTailwindCSS()` and `getCSSForClass()` functions are stubs that only return preflight CSS - the real implementation is in `unocss-generator.ts`
+   - Fix: Added `@deprecated` JSDoc annotation and TODO comment explaining this is legacy code to be removed
+
+6. **src/html/hydration-script-builder/templates/router.ts**
+   - Code Smell: Debug `console.log` statements cluttering production code
+   - Fix: Removed debug logging for `MODULE_SERVER_URL`, `window.location.origin`, and router navigation operations (kept `console.warn` for fallback context usage)
+
+7. **src/html/hydration-script-builder/templates/loader.ts**
+   - Code Smell: Debug `console.log` statement for component loading
+   - Fix: Removed debug logging while keeping error handling `console.error` for failures
+
+8. **src/html/hydration-script-builder/templates/renderer.ts**
+   - Code Smell: Multiple debug `console.log` statements throughout hydration flow
+   - Fix: Removed debug logging (`[DEBUG]` prefixed logs), kept essential error logging for failures, added inline comment explaining index.js fallback logic
+
+#### Files Reviewed (No Issues Found):
+- src/html/dev-scripts.ts - Clean dev script/style generation with proper nonce handling
+- src/html/html-escape.ts - Clean HTML escaping implementation
+- src/html/html-injection.ts - Clean template injection with metadata placeholders
+- src/html/html-shell-generator.ts - Clean HTML shell generation with proper escaping
+- src/html/index.ts - Clean export barrel file
+- src/html/metadata-builder.ts - Clean metadata processing
+- src/html/types.ts - Clean type definitions
+- src/html/hydration-script-builder/index.ts - Clean export barrel file
+- src/html/hydration-script-builder/dev-client-renderer.ts - Clean client renderer generation
+- src/html/hydration-script-builder/dev-component-manifest.ts - Clean manifest generation
+- src/html/hydration-script-builder/dev-error-logger.ts - Clean error logger script
+- src/html/hydration-script-builder/dev-indicator.ts - Clean dev mode indicator
+- src/html/hydration-script-builder/dev-scripts.ts - Clean dev scripts composition
+- src/html/hydration-script-builder/hydration-data-generator.ts - Clean hydration data serialization
+- src/html/hydration-script-builder/prod-hydration.ts - Clean production hydration script
+- src/html/hydration-script-builder/prod-scripts.ts - Clean production scripts
+- src/html/hydration-script-builder/types.ts - Clean type definitions
+- src/html/hydration-script-builder/templates/index.ts - Clean export barrel file
+- src/html/styles-builder/index.ts - Clean export barrel file
+- src/html/styles-builder/dev-styles.ts - Clean dev styles with proper z-index constants
+- src/html/styles-builder/production-styles.ts - Clean production styles with breakpoint constants
+- src/html/styles-builder/tailwind-config.ts - Clean Tailwind config generation with deep merge
+- src/html/styles-builder/theme-variables.ts - Clean CSS variable generation
+- src/html/styles-builder/unocss-generator.ts - Clean UnoCSS-based Tailwind generation with proper caching
+
+### src/routing (37 files reviewed)
+
+#### Issues Found and Fixed:
+
+1. **src/routing/api/api-route-matcher.ts**
+   - Code Smell: Unnecessary type assertion `paramNames[i] as string` when array access could be undefined
+   - Fix: Replaced with proper undefined check using `if (!paramName) continue;`
+
+2. **src/routing/api/context-builder.ts**
+   - Bug: `parseCookies()` could throw `URIError` on malformed cookie values (e.g., `%XX` with invalid hex)
+   - Fix: Added try-catch around `decodeURIComponent()` with fallback to store value as-is
+
+3. **src/routing/api/module-loader/loader.ts**
+   - Code Smell: Comment "Pass fs compat instance" was misleading - `fs` is actually used
+   - Code Smell: `_adapter` parameter unused but no documentation
+   - Fix: Removed misleading comment, added note explaining `_adapter` kept for API compatibility
+
+4. **src/routing/client/dom-utils.ts**
+   - Code Smell: Variable `content` in `parsePageDataFromHTML()` shadowed outer `content` variable causing confusion
+   - Fix: Renamed inner variable to `scriptContent` for clarity
+
+5. **src/routing/client/navigation-handlers.ts**
+   - Bug: Non-null assertion `!` on `href` that could be null (after `isInternalLink` check which reads href separately)
+   - Fix: Added explicit null check `if (!href) return;` before using href
+
+6. **src/routing/client/viewport-prefetch.ts**
+   - Code Smell: Used `any` type casting `(entry.target as any).tagName` as fallback for SSR environments
+   - Fix: Extracted `entry.target` to `target` variable, used `target.tagName === "A"` without `any` cast since Element always has tagName property
+
+7. **src/routing/matchers/route-matcher.ts**
+   - Bug: Non-null assertion `route.regex!` could cause runtime error if regex is undefined
+   - Fix: Added early return `if (!route.regex) return null;` before using regex
+
+8. **src/routing/matchers/pattern-route-matcher.ts**
+   - Bug: Non-null assertion on cache get `this.cache.get(pathname)!` could return undefined for cached null results
+   - Fix: Changed to `const cached = this.cache.get(pathname); if (cached !== undefined) return cached;` to properly handle cached null values
+
+#### Files Reviewed (No Issues Found):
+- src/routing/api/error-handler.ts - Clean error handling with environment-aware responses
+- src/routing/api/handler.ts - Clean API route handler with proper initialization flow
+- src/routing/api/index.ts - Clean export barrel file
+- src/routing/api/method-validator.ts - Clean method validation with proper Allow header
+- src/routing/api/responses.ts - Clean re-export module
+- src/routing/api/route-discovery.ts - Clean route discovery with file system iteration
+- src/routing/api/route-executor.ts - Clean route execution with proper error handling
+- src/routing/api/module-loader/esbuild-plugin.ts - Clean esbuild plugin for HTTP imports
+- src/routing/api/module-loader/http-validator.ts - Clean HTTP import validation
+- src/routing/api/module-loader/index.ts - Clean export barrel file
+- src/routing/api/module-loader/security-config.ts - Clean security config loading
+- src/routing/api/module-loader/types.ts - Clean type definitions
+- src/routing/client/index.ts - Clean export barrel file
+- src/routing/client/page-loader.ts - Clean page loading with caching
+- src/routing/client/page-transition.ts - Clean page transition with proper cleanup
+- src/routing/client/types.ts - Clean type definitions
+- src/routing/index.ts - Clean main export barrel file
+- src/routing/matchers/index.ts - Clean export barrel file
+- src/routing/matchers/route-parser.ts - Clean route parsing with specificity scoring
+- src/routing/matchers/types.ts - Clean type definitions
+- src/routing/registry/index.ts - Clean export barrel file
+- src/routing/registry/registry.ts - Clean handler registry with priority sorting
+- src/routing/registry/types.ts - Clean re-export module
+- src/routing/router.ts - Clean router re-exports
+- src/routing/slug-mapper/dynamic-route-matcher.ts - Clean dynamic route matching
+- src/routing/slug-mapper/index.ts - Clean export barrel file
+- src/routing/slug-mapper/path-candidate-generator.ts - Clean path candidate generation
+- src/routing/slug-mapper/slug-normalizer.ts - Clean slug normalization utilities
+- src/routing/slug-mapper/types.ts - Clean type definitions
+
+### src/security (48 files reviewed)
+
+#### Issues Found and Fixed:
+
+1. **src/security/http/auth.ts**
+   - Bug: Empty string fallback for auth credentials (`|| ""`) treated empty string as valid credential
+   - Fix: Changed to `|| null` to properly distinguish between unset and empty credentials
+
+2. **src/security/http/cors/validators.ts**
+   - Code Smell: Heavy code duplication between `validateOrigin()` and `validateOriginSync()` (100+ lines of identical logic)
+   - Fix: Extracted shared logic into `validateOriginCore()` helper function, `needsFunctionValidation()` type guard, and `processOriginFunctionResult()` helper
+   - Best Practice: Removed unnecessary `as CORSConfig` type assertions where TypeScript can already infer the type
+
+3. **src/security/rate-limit/middleware.ts**
+   - Bug: Mutating potentially immutable Response headers by calling `response.headers.set()` directly
+   - Fix: Create new Response with cloned headers to avoid mutation errors when response is immutable
+
+4. **src/security/rate-limit/strategies.ts**
+   - Bug: Token bucket strategy did not properly store state for new keys (missing `store.setState` call)
+   - Bug: Inconsistent `resetTime` calculation between initial and subsequent requests
+   - Code Smell: Missing comments explaining the refill rate calculation
+   - Fix: Added `store.setState(key, state)` after initializing new state; unified `resetTime` calculation logic; added explanatory comments
+
+5. **src/security/sandbox/deno-sandbox.ts**
+   - Memory Leak: `URL.createObjectURL()` creates blob URLs that are never revoked, causing memory leaks
+   - Code Smell: Duplicated worker termination logic in three places (timeout, onmessage, onerror)
+   - Fix: Created `cleanup()` function that handles both worker termination and URL revocation; only revokes blob URLs (not data: URLs)
+
+6. **src/security/input-validation/sanitizers.ts**
+   - Security: Incomplete prototype pollution protection - only blocked `__proto__`, `constructor`, `prototype`
+   - Bug: No handling of circular references - could cause stack overflow on self-referential objects
+   - Security: Used standard object literal `{}` which inherits from Object.prototype
+   - Fix: Added `__defineGetter__`, `__defineSetter__`, `__lookupGetter__`, `__lookupSetter__` to forbidden keys; added `WeakSet` tracking for circular reference detection; use `Object.create(null)` for sanitized objects to prevent prototype pollution
+
+7. **src/security/client/html-sanitizer.ts** (reviewed, no fixes needed)
+   - Already correctly resets `lastIndex` before each regex test in loop
+   - XSS detection patterns are appropriate for security scanning
+
+#### Files Reviewed (No Issues Found):
+- src/security/http/base-handler.ts - Clean base handler with proper pattern matching
+- src/security/http/config.ts - Clean security config loader with proper async initialization
+- src/security/http/cors/constants.ts - Clean constants with proper production mode detection
+- src/security/http/cors/headers.ts - Clean CORS header application with proper Vary header handling
+- src/security/http/cors/index.ts - Clean export barrel file
+- src/security/http/cors/middleware.ts - Clean CORS middleware with proper config validation
+- src/security/http/cors/preflight.ts - Clean preflight handling with proper header negotiation
+- src/security/http/cors/types.ts - Clean type definitions
+- src/security/http/handlers-index.ts - Clean export barrel file
+- src/security/http/index.ts - Clean export barrel file
+- src/security/http/middleware/config-loader.ts - Clean config validation
+- src/security/http/middleware/content-types.ts - Clean content type mappings
+- src/security/http/middleware/cors-handler.ts - Clean CORS handler using validators
+- src/security/http/middleware/etag.ts - Clean ETag generation using djb2 hash
+- src/security/http/middleware/index.ts - Clean export barrel file
+- src/security/http/middleware/types.ts - Clean type definitions
+- src/security/http/response/builder.ts - Clean fluent response builder
+- src/security/http/response/cache-handler.ts - Clean cache control generation
+- src/security/http/response/constants.ts - Clean cache duration constants
+- src/security/http/response/fluent-methods.ts - Clean fluent method implementations
+- src/security/http/response/index.ts - Clean export barrel file
+- src/security/http/response/response-methods.ts - Clean response generation methods
+- src/security/http/response/security-handler.ts - Clean security header application with proper CSP building
+- src/security/http/response/static-helpers.ts - Clean static response helpers
+- src/security/http/response/types.ts - Clean type definitions with HSTS config
+- src/security/http/types.ts - Clean type re-exports
+- src/security/index.ts - Clean main export barrel file
+- src/security/input-validation/errors.ts - Clean validation error class
+- src/security/input-validation/handler.ts - Clean validated handler wrapper
+- src/security/input-validation/index.ts - Clean export barrel file
+- src/security/input-validation/limits.ts - Clean request limit validation with streaming body reader
+- src/security/input-validation/parsers.ts - Clean JSON/form/query parsers with Zod integration
+- src/security/input-validation/schemas.ts - Clean common Zod schemas
+- src/security/input-validation/types.ts - Clean type definitions with sensible defaults
+- src/security/path-validation.ts - Clean path validation with traversal protection
+- src/security/rate-limit/index.ts - Clean export barrel file
+- src/security/rate-limit/memory-store.ts - Clean in-memory rate limit store with periodic cleanup
+- src/security/rate-limit/types.ts - Clean type definitions
+- src/security/sandbox/constants.ts - Clean security constants
+- src/security/sandbox/permission-system.ts - Clean Deno permission request wrapper
+- src/security/secure-fs.ts - Clean secure filesystem wrapper with validation
+
+### src/ai (114 files reviewed)
+
+#### Issues Found and Fixed:
+
+1. **src/ai/providers/openai.ts**
+   - Bug: Unsafe `JSON.parse()` on tool call arguments without try/catch - could crash if LLM returns malformed JSON
+   - Fix: Wrapped JSON.parse in try/catch, returning empty object `{}` on parse failure to prevent runtime crashes
+
+2. **src/ai/providers/anthropic.ts**
+   - Bug: Same unsafe `JSON.parse()` issue when parsing tool call arguments in message transformation
+   - Fix: Added try/catch with empty object fallback for malformed JSON arguments
+
+3. **src/ai/providers/google.ts**
+   - Bug: Same unsafe `JSON.parse()` issue in response transformation for tool calls
+   - Fix: Added try/catch with empty object fallback for malformed JSON arguments
+
+4. **src/ai/workflow/types.ts**
+   - Bug: `parseDuration()` inconsistent behavior - allowed `0` for numeric input but rejected `"0s"` as "Duration must be positive"
+   - Fix: Changed error message and condition to "Duration cannot be negative" with `num < 0` check, now allows zero duration strings like `"0s"` for consistency with numeric input
+
+#### Files Reviewed (No Issues Found):
+- src/ai/adapters/ai-sdk.ts - Clean AI SDK adapter with proper tool wrapping
+- src/ai/adapters/index.ts - Clean export barrel file
+- src/ai/agent/composition.ts - Clean agent composition with proper registry management
+- src/ai/agent/execution/index.ts - Clean export barrel file
+- src/ai/agent/execution/message-transformer.ts - Clean message transformation logic
+- src/ai/agent/execution/middleware-chain.ts - Clean middleware chain implementation
+- src/ai/agent/execution/tool-execution-core.ts - Clean tool execution with proper error handling
+- src/ai/agent/execution/usage-tracker.ts - Clean token usage tracking
+- src/ai/agent/factory.ts - Clean agent factory with proper configuration
+- src/ai/agent/index.ts - Clean export barrel file
+- src/ai/agent/memory.ts - Clean memory management implementation
+- src/ai/agent/runtime.ts - Clean runtime agent execution
+- src/ai/client.ts - Clean unified AI client with proper logging
+- src/ai/dev/debug/index.ts - Clean debug export
+- src/ai/dev/debug/inspector.ts - Clean debug inspector
+- src/ai/dev/generate-sdk.ts - Clean SDK generation utility
+- src/ai/dev/index.ts - Clean dev exports
+- src/ai/dev/playground/api.ts - Clean playground API
+- src/ai/dev/playground/client.ts - Clean playground client
+- src/ai/dev/testing/agent-tester.ts - Clean test utilities
+- src/ai/dev/testing/index.ts - Clean testing exports
+- src/ai/dev/testing/tool-tester.ts - Clean tool testing utilities
+- src/ai/mcp/index.ts - Clean MCP exports
+- src/ai/mcp/prompt.ts - Clean prompt factory
+- src/ai/mcp/registry.ts - Clean MCP registry with proper global singleton
+- src/ai/mcp/resource.ts - Clean resource factory
+- src/ai/mcp/server.ts - Clean MCP server implementation
+- src/ai/production/cache/cache.ts - Clean semantic caching
+- src/ai/production/cache/index.ts - Clean cache exports
+- src/ai/production/cost-tracking/index.ts - Clean cost tracking exports
+- src/ai/production/cost-tracking/tracker.ts - Clean cost tracking with model pricing
+- src/ai/production/index.ts - Clean production exports
+- src/ai/production/rate-limit/index.ts - Clean rate limit exports
+- src/ai/production/rate-limit/limiter.ts - Clean rate limiting implementation
+- src/ai/production/security/index.ts - Clean security exports
+- src/ai/production/security/validator.ts - Clean input validation
+- src/ai/providers/base.ts - Clean base provider with retry logic
+- src/ai/providers/factory.ts - Clean provider factory with auto-initialization
+- src/ai/providers/index.ts - Clean provider exports
+- src/ai/react/hooks/index.ts - Clean hooks export barrel
+- src/ai/react/hooks/use-agent.ts - Clean agent hook with proper state management
+- src/ai/react/hooks/use-chat.ts - Clean chat hook with streaming support
+- src/ai/react/hooks/use-completion.ts - Clean completion hook
+- src/ai/react/hooks/use-streaming.ts - Clean streaming hook
+- src/ai/react/hooks/use-voice-input.ts - Clean voice input with Web Speech API
+- src/ai/react/index.ts - Clean React exports
+- src/ai/runtime/index.ts - Clean runtime exports
+- src/ai/runtime/platform.ts - Clean platform detection with capability matrix
+- src/ai/types/agent.ts - Clean agent type definitions
+- src/ai/types/index.ts - Clean type exports
+- src/ai/types/mcp.ts - Clean MCP type definitions
+- src/ai/types/provider.ts - Clean provider type definitions
+- src/ai/types/tool.ts - Clean tool type definitions
+- src/ai/utils/config-validator.ts - Clean configuration validation
+- src/ai/utils/discovery.ts - Clean auto-discovery with proper error handling
+- src/ai/utils/index.ts - Clean utility exports
+- src/ai/utils/setup.ts - Clean setup orchestration
+- src/ai/utils/tool.ts - Clean tool utilities with registry management
+- src/ai/utils/zod-json-schema.ts - Clean Zod to JSON Schema conversion
+- src/ai/workflow/index.ts - Clean workflow exports
+- src/ai/workflow/types.ts - Clean workflow type definitions with validation helpers
+
+### src/cli (47 files reviewed)
+
+#### Issues Found and Fixed:
+
+1. **src/cli/commands/analyze-chunks.ts**
+   - Bug: Division by zero when `analysis.sharedDeps.size` is 0 in average calculation
+   - Code Smell: Silent error handling - errors were caught but not logged
+   - Fix: Added `size > 0` check before division; added descriptive error logging in catch block
+
+2. **src/cli/commands/doctor/version-checks.ts**
+   - Bug: Version comparison using string comparison (`versionNum >= "1.40.0"`) which compares lexicographically, not semantically (e.g., "9.0.0" > "10.0.0")
+   - Fix: Added `compareVersions()` helper function that parses version strings and compares numerically by major.minor.patch
+
+3. **src/cli/commands/routes.ts**
+   - Code Smell: Module-level mutable state (`let fs: FileSystem`) shared across function calls
+   - Code Smell: Unsafe type cast using `(router as any).routes` without proper type narrowing
+   - Fix: Made `fs` a local variable within `routesCommand()` function; replaced `any` cast with properly typed intermediate variable with explicit `Map` type check
+
+4. **src/cli/commands/generate.ts**
+   - Code Smell: Module-level mutable state (`let fs: FileSystem`) - creates implicit coupling and potential race conditions
+   - Fix: Made `fs` a parameter to `ensureDir()` function and created locally in `generateCommand()`
+
+5. **src/cli/commands/generate/integration-generator.ts**
+   - Code Smell: Module-level mutable state (`let fs: FileSystem`)
+   - Code Smell: Using `require("readline")` which is CommonJS syntax incompatible with Deno
+   - Fix: Made `fs` a parameter passed through all helper functions; replaced `require()` with `await import("node:readline")`; added `isDeno` runtime check from platform compat
+
+6. **src/cli/commands/doctor/server-checks.ts**
+   - Code Smell: Magic number `"http://127.0.0.1:3000"` repeated multiple times
+   - Code Smell: Unsafe `any` type cast for metrics response JSON parsing
+   - Fix: Extracted to `DEFAULT_SERVER_URL` constant; added typed interfaces `RSCCounters` and `MetricsResponse` for proper type safety
+
+7. **src/cli/utils/terminal-select.ts**
+   - Bug: Direct reference to `Deno?.stdout?.writeSync` without runtime check - would crash in Node.js if `Deno` is not defined
+   - Code Smell: Duplicated stdout write logic across `select()` and `multiSelect()` functions
+   - Fix: Created `writeToStdout()` helper function that uses `isDeno` check from platform compat
+
+8. **src/cli/utils/index.ts**
+   - Code Smell: `createSpinner()` function directly used `process.stdout?.write?.()` without checking runtime environment
+   - Fix: Added `writeToStdout()` helper function with proper `isDeno` check and cross-platform stdout writing
+
+#### Files Reviewed (No Issues Found):
+- src/cli/commands/build.ts - Clean build command orchestration
+- src/cli/commands/build/config-display.ts - Clean configuration display
+- src/cli/commands/build/error-handler.ts - Clean error handling with proper categorization
+- src/cli/commands/build/index.ts - Clean build exports
+- src/cli/commands/build/stats-display.ts - Clean build statistics display
+- src/cli/commands/build/types.ts - Clean type definitions
+- src/cli/commands/clean.ts - Clean cleanup command with proper confirmation flow
+- src/cli/commands/dev.ts - Clean development server command
+- src/cli/commands/doctor/index.ts - Clean doctor command orchestration
+- src/cli/commands/doctor/ai-checks.ts - Clean AI diagnostics
+- src/cli/commands/doctor/project-structure.ts - Clean project structure validation
+- src/cli/commands/doctor/types.ts - Clean type definitions
+- src/cli/help/command-definitions.ts - Clean command registry
+- src/cli/help/command-help.ts - Clean command help display
+- src/cli/help/formatters.ts - Clean formatting utilities
+- src/cli/help/index.ts - Clean help exports
+- src/cli/help/logo.ts - Clean ASCII logo display
+- src/cli/help/main-help.ts - Clean main help display
+- src/cli/help/tips.ts - Clean tips display
+- src/cli/help/types.ts - Clean type definitions
+- src/cli/index.ts - Clean main CLI export
+- src/cli/index/arg-parser.ts - Clean argument parsing with alias support
+- src/cli/index/build-handler.ts - Clean build command handler
+- src/cli/index/cli-main.ts - Clean CLI entry point
+- src/cli/index/command-router.ts - Clean command routing with proper error handling
+- src/cli/index/dev-handler.ts - Clean dev command handler
+- src/cli/index/generate-handler.ts - Clean generate command handler
+- src/cli/index/index.ts - Clean index exports
+- src/cli/index/types.ts - Clean type definitions
+- src/cli/commands/init/config-generator.ts - Clean config file generation
+- src/cli/commands/init/index.ts - Clean init command exports
+- src/cli/commands/init/init-command.ts - Clean project initialization
+- src/cli/commands/init/interactive-wizard.ts - Clean interactive setup wizard
+- src/cli/commands/init/types.ts - Clean type definitions
+- src/cli/utils/env-prompt.ts - Clean environment variable prompts
+- src/cli/utils/package-manager.ts - Clean package manager detection
+- src/cli/npm-cli.ts - Clean Node.js CLI entry
+- src/cli/npm-entry.ts - Clean npm binary entry point
+
+### src/observability (35 files reviewed)
+
+#### Issues Found and Fixed:
+
+1. **src/observability/auto-instrument/react-instrumentation.ts**
+   - Code Smell: Magic number `2` used for SpanStatusCode.ERROR without explanation
+   - Fix: Extracted to named constant `SPAN_STATUS_CODE_ERROR` with explanatory comment
+
+2. **src/observability/auto-instrument/http-instrumentation.ts**
+   - Code Smell: `httpAttrs` parameter passed to `recordResponseSuccess()` and `recordResponseError()` but attributes were already set on span via `attributes` in startActiveSpan
+   - Fix: Removed redundant `httpAttrs` parameter from both functions, simplified function signatures
+
+3. **src/observability/instruments/instruments-factory.ts**
+   - Code Smell: Synchronous function wrapped result in `Promise.resolve()` unnecessarily with misleading JSDoc about async behavior
+   - Fix: Changed return type from `Promise<MetricsInstruments>` to `MetricsInstruments`, removed `Promise.resolve()` wrapper, updated documentation
+
+4. **src/observability/metrics/manager.ts**
+   - Code Smell: Unsafe type assertion `(this.recorder as any).instruments = ...` to bypass TypeScript type system
+   - Fix: Replaced with proper `new MetricsRecorder(...)` call to create recorder with new instruments
+
+5. **src/observability/metrics/recorder.ts**
+   - Bug: `activeRequests` counter could go negative if `recordHttpRequestComplete()` called without matching `recordHttpRequest()`
+   - Fix: Added `Math.max(0, ...)` guard to ensure `activeRequests` never becomes negative
+
+6. **src/observability/metrics/types.ts**
+   - Code Smell: `prefix` property marked optional but always required for instrument name creation
+   - Fix: Changed `prefix?: string` to `prefix: string` with JSDoc explaining requirement
+
+7. **src/observability/simple-metrics/metrics-recorder.ts**
+   - Code Smell: Duplicate error handling pattern `void getObservabilityMetrics().then(...).catch(() => {})` repeated 8+ times
+   - Code Smell: `recordRSC()` had separate identical cases for `"page"` and `"flight_page"`
+   - Fix: Extracted `safeRecordObservability()` helper function; combined `"page"` and `"flight_page"` cases with fallthrough
+
+8. **src/observability/tracing/span-operations.ts**
+   - Code Smell: Unnecessary `.toLowerCase()` call on `kind` which is already typed as lowercase string literal union
+   - Fix: Removed `.toLowerCase()`, used proper `Record<NonNullable<SpanOptions["kind"]>, SpanKind>` type, changed `||` to `??` for proper nullish coalescing
+
+#### Files Reviewed (No Issues Found):
+- src/observability/auto-instrument/configurator.ts - Clean config merge
+- src/observability/auto-instrument/index.ts - Clean export barrel file
+- src/observability/auto-instrument/orchestrator.ts - Clean initialization orchestration
+- src/observability/auto-instrument/types.ts - Clean type definitions
+- src/observability/auto-instrument/wrappers.ts - Clean instrumentation wrappers
+- src/observability/index.ts - Clean main export barrel file
+- src/observability/instruments/index.ts - Clean export barrel file
+- src/observability/instruments/build-instruments.ts - Clean build metrics
+- src/observability/instruments/cache-instruments.ts - Clean cache metrics with observable gauge
+- src/observability/instruments/data-instruments.ts - Clean data fetch metrics
+- src/observability/instruments/http-instruments.ts - Clean HTTP metrics
+- src/observability/instruments/memory-instruments.ts - Clean memory metrics
+- src/observability/instruments/render-instruments.ts - Clean render metrics
+- src/observability/instruments/rsc-instruments.ts - Clean RSC metrics
+- src/observability/metrics/config.ts - Clean config loading with env override
+- src/observability/metrics/index.ts - Clean metrics API facade
+- src/observability/simple-metrics/index.ts - Clean export barrel with metrics object
+- src/observability/simple-metrics/metrics-state.ts - Clean global state management
+- src/observability/simple-metrics/observability-loader.ts - Clean lazy loading with caching
+- src/observability/simple-metrics/otel-instruments.ts - Clean OTEL instrument initialization
+- src/observability/simple-metrics/types.ts - Clean type definitions
+- src/observability/tracing/config.ts - Clean tracing config with env override
+- src/observability/tracing/context-propagation.ts - Clean W3C trace context propagation
+- src/observability/tracing/index.ts - Clean tracing API facade
+- src/observability/tracing/manager.ts - Clean tracing lifecycle management
+- src/observability/tracing/span-names.ts - Clean span name constants
+- src/observability/tracing/types.ts - Clean type definitions
+
+### src/server (94 files reviewed)
+
+#### Issues Found and Fixed:
+
+1. **src/server/build-routes.ts**
+   - Code Smell: Unnecessary dynamic import `await import("std/path/mod.ts")` inside recursive function `walkAppSSG()` when `join` is already imported at module level
+   - Fix: Removed redundant dynamic import, added comment noting module-level import is sufficient
+
+2. **src/server/build-service-worker.ts**
+   - Code Smell: Unsafe `as any` type cast for `chunkInfo` object in `buildManifestAssets()`
+   - Fix: Added proper `ChunkInfo` interface with `file`, `css`, and `imports` properties; changed cast to `as ChunkInfo`
+
+3. **src/server/dev-server/server.ts**
+   - Code Smell: Unused destructured variable `_hostname` in `onListen` callback
+   - Fix: Removed unused variable from destructuring pattern `({ port }: { hostname: string; port: number })`
+
+4. **src/server/universal-handler/index.ts**
+   - Code Smell: Unused variable `_url` created from `new URL(req.url)` in handler function
+   - Fix: Removed unused variable assignment
+
+5. **src/server/handlers/request/ssr/ssr-handler.ts**
+   - Code Smell: Unused import `serverLogger as _logger` - logger imported but never used (renamed with underscore prefix)
+   - Fix: Removed unused import statement
+
+6. **src/server/dev-server/middleware.ts**
+   - Code Smell: Unused parameter `_next` in terminal middleware function
+   - Fix: Removed unused parameter, added comment clarifying this is the terminal middleware
+
+7. **src/server/dev-server/hmr-server.ts**
+   - Bug: Variable named `_handler` (with underscore prefix suggesting unused) but actually used in `adapter.serve(_handler, ...)`
+   - Fix: Renamed to `handler` without underscore prefix and updated reference in `serve()` call
+
+8. **General code review - No issues requiring fixes:**
+   - src/server/bootstrap.ts - Clean initialization with proper FSAdapter handling
+   - src/server/build-app-route-renderer.ts - Clean SSR rendering with proper layout handling
+   - src/server/build-types.ts - Clean type definitions
+   - src/server/dev-server.ts - Clean re-export module
+   - src/server/production-server.ts - Clean production server with proper shutdown handling
+   - src/server/dev-server/index.ts - Clean export barrel file with factory function
+   - src/server/dev-server/bundler.ts - Clean esbuild integration with proper plugins
+   - src/server/dev-server/file-watcher.ts - Clean debounced file watcher with metrics
+   - src/server/dev-server/request-handler.ts - Clean request routing with dev endpoints
+   - src/server/dev-server/route-discovery.ts - Clean route discovery with app/pages support
+   - src/server/dev-server/hmr-types.ts - Clean HMR type definitions
+   - src/server/dev-server/file-watch-setup.ts - Clean file watcher setup
+   - src/server/handlers/index.ts - Clean handler exports
+   - src/server/handlers/monitoring/health.ts - Clean health check endpoints
+   - src/server/handlers/monitoring/metrics.ts - Clean metrics endpoint
+   - src/server/handlers/monitoring/client-log.ts - Clean client log handler (dev only)
+   - src/server/handlers/dev/files/dev-file-handler.ts - Clean dev file serving
+   - src/server/handlers/dev/files/path-validator.ts - Clean path validation with security checks
+   - src/server/handlers/request/api/api-handler-wrapper.ts - Clean API handler wrapper
+   - src/server/handlers/request/api/security-headers.ts - Clean CSP and security header generation
+   - src/server/handlers/request/rsc/handlers/handler.ts - Clean RSC handler composition
+   - src/server/handlers/response/base.ts - Clean base handler re-export
+
+### src/core (107 files reviewed)
+
+#### Issues Found and Fixed:
+
+1. **src/core/types/entities/getEntityInfo.ts**
+   - Code Smell: Debug `console.log` statements left in production code (`[getEntityInfo]`, `[getEntityBySlug]`)
+   - Fix: Removed debug logging statements that cluttered production output
+
+2. **src/core/utils/feature-flags.ts**
+   - Dead Code: Unused `declare const process` statement that was never referenced (function already uses `getEnv()` from platform compat)
+   - Fix: Removed unused declaration
+
+3. **src/core/config/loader.ts**
+   - Code Smell: Redundant error re-throwing pattern - catch block had three separate conditions that all ended up throwing the error
+   - Fix: Simplified to single re-throw with explanatory comment
+
+4. **src/core/oauth/providers/base.ts**
+   - Bug: `generateRandomString()` function was inefficiently allocating `length` bytes of randomness when only `ceil(length/2)` are needed (each byte produces 2 hex characters)
+   - Fix: Changed to `Math.ceil(length / 2)` bytes, added explanatory comment
+
+#### Files Reviewed (No Issues Found):
+
+**Config Files:**
+- src/core/config/defaults.ts - Clean default configuration with proper typing
+- src/core/config/define-config.ts - Clean config helper functions
+- src/core/config/index.ts - Clean export barrel file
+- src/core/config/network-defaults.ts - Clean network constants and URL builders
+- src/core/config/schema.ts - Clean Zod schema validation
+- src/core/config/types.ts - Clean TypeScript interfaces
+
+**Constants Files:**
+- src/core/constants/buffers.ts - Clean buffer size constants
+- src/core/constants/crypto.ts - Clean cryptographic constants
+- src/core/constants/index.ts - Clean export barrel file
+- src/core/constants/limits.ts - Clean limit constants
+- src/core/constants/metrics.ts - Clean metrics boundaries
+- src/core/constants/priorities.ts - Clean handler priority constants
+- src/core/constants/retry.ts - Clean retry configuration constants
+
+**Error Files:**
+- src/core/errors/agent-errors.ts - Clean agent error classes
+- src/core/errors/build-errors.ts - Clean build error classes
+- src/core/errors/compat.ts - Legacy compatibility layer (not imported anywhere - candidate for removal)
+- src/core/errors/enhanced-catalog.ts - Clean enhanced error catalog exports
+- src/core/errors/error-codes.ts - Clean error code definitions with inference logic
+- src/core/errors/error-handlers.ts - Clean error handling utilities
+- src/core/errors/index.ts - Clean main export barrel file
+- src/core/errors/runtime-errors.ts - Clean runtime error classes
+- src/core/errors/system-errors.ts - Clean system error classes
+- src/core/errors/types.ts - Clean error type enum and base class
+- src/core/errors/veryfront-error.ts - Clean error factory and type guards
+- src/core/errors/catalog/*.ts - Clean error catalog modules (10 files)
+- src/core/errors/user-friendly/*.ts - Clean user-friendly error handling (4 files)
+
+**OAuth Files:**
+- src/core/oauth/index.ts - Clean export barrel file
+- src/core/oauth/types.ts - Clean OAuth type definitions
+- src/core/oauth/handlers/callback-handler.ts - Clean OAuth callback with proper error handling
+- src/core/oauth/handlers/init-handler.ts - Clean OAuth initialization handlers
+- src/core/oauth/handlers/index.ts - Clean export barrel file
+- src/core/oauth/providers/base.ts - Clean OAuth provider with PKCE support
+- src/core/oauth/providers/common.ts - Clean common provider configurations
+- src/core/oauth/providers/google.ts - Clean Google provider config
+- src/core/oauth/providers/microsoft.ts - Clean Microsoft provider config
+- src/core/oauth/providers/atlassian.ts - Clean Atlassian provider config
+- src/core/oauth/providers/index.ts - Clean provider exports
+- src/core/oauth/token-store/memory.ts - Clean in-memory token store with expiration
+- src/core/oauth/token-store/index.ts - Clean token store exports
+
+**Type Files:**
+- src/core/types/app.ts - Clean app props type
+- src/core/types/branded.ts - Clean branded type utilities
+- src/core/types/bundler.ts - Clean bundler type definitions
+- src/core/types/entities.ts - Clean entity type definitions with detection logic
+- src/core/types/global-guards.ts - Clean runtime type guards
+- src/core/types/hmr.ts - Clean HMR message types
+- src/core/types/index.ts - Clean main type exports
+- src/core/types/rsc.ts - Clean RSC type definitions
+- src/core/types/server.ts - Clean server handler types
+
+**Utility Files:**
+- src/core/utils/index.ts - Clean export barrel file
+- src/core/utils/bundle-manifest.ts - Clean bundle manifest store interface and implementation
+- src/core/utils/bundle-manifest-init.ts - Clean manifest initialization
+- src/core/utils/env-loader.ts - Clean environment variable loader with multiline support
+- src/core/utils/file-discovery.ts - Clean file discovery utilities
+- src/core/utils/format-utils.ts - Clean formatting utilities
+- src/core/utils/hash-utils.ts - Clean hash computation utilities
+- src/core/utils/lru-wrapper.ts - Clean LRU cache wrapper with periodic cleanup
+- src/core/utils/memoize.ts - Clean memoization utilities
+- src/core/utils/path-utils.ts - Clean path manipulation utilities
+- src/core/utils/paths.ts - Clean path constants
+- src/core/utils/platform.ts - Clean platform detection
+- src/core/utils/runtime-guards.ts - Clean runtime environment type guards
+- src/core/utils/version.ts - Clean version constant
+- src/core/utils/logger/*.ts - Clean logging utilities (3 files)
+- src/core/utils/constants/*.ts - Clean constant definitions (10 files)
+- src/core/utils/cache/*.ts - Clean cache utilities (10 files)
+
+### src/platform (98 files reviewed)
+
+#### Issues Found and Fixed:
+
+1. **src/platform/adapters/veryfront-fs-adapter/adapter.ts**
+   - Code Smell: Debug `console.log` statement left in production code logging all file paths during initialization
+   - Fix: Removed debug console.log statement, kept proper logger.debug call
+
+2. **src/platform/adapters/veryfront-fs-adapter/read-operations.ts**
+   - Code Smell: Debug `console.log` statement conditionally logging file content for Layout and about files
+   - Fix: Removed debug logging conditional block
+
+3. **src/platform/adapters/veryfront-fs-adapter/stat-operations.ts**
+   - Code Smell: Multiple debug `console.log` statements in `exists()` method logging path checking
+   - Code Smell: Unused `error` parameter in catch block
+   - Fix: Replaced console.log with proper logger.debug call, changed catch block to use bare `catch`
+
+4. **src/platform/adapters/file-cache/lru-tracker.ts**
+   - Performance: O(n) operations using `Array.filter()` for every `update()` and `remove()` call
+   - Fix: Replaced array-based implementation with Map for O(1) operations (Map maintains insertion order)
+   - Best Practice: Added JSDoc explaining the data structure choice
+
+5. **src/platform/compat/console/node.ts**
+   - Code Smell: `ensurePc()` function was never called, causing potential race condition with lazy loading
+   - Code Smell: No protection against concurrent initialization
+   - Fix: Renamed to `loadPicoColors()`, added `initPromise` caching to prevent concurrent imports
+   - Best Practice: Added JSDoc documentation explaining the lazy loading strategy
+
+6. **src/platform/compat/fs.ts**
+   - Code Smell: Using `any` type for error handling in `exists()` method
+   - Fix: Changed to `unknown` type with proper type narrowing using `typeof error === "object"` check
+
+#### Files Reviewed (No Issues Found):
+
+**Adapters - Base & Root:**
+- src/platform/adapters/base.ts - Clean base adapter interface definitions
+- src/platform/adapters/bun.ts - Clean Bun adapter re-export
+- src/platform/adapters/deno.ts - Clean Deno adapter re-export
+- src/platform/adapters/detect.ts - Clean runtime detection with proper environment checks
+- src/platform/adapters/fallback-wrapper.ts - Clean fallback wrapper implementation
+- src/platform/adapters/fs-adapter-factory.ts - Clean factory with proper async initialization
+- src/platform/adapters/fs-adapter-wrapper.ts - Clean adapter wrapper with method mapping
+- src/platform/adapters/fs-integration.ts - Clean FS integration with Proxy-based enhancement
+- src/platform/adapters/index.ts - Clean export barrel file
+- src/platform/adapters/mock.ts - Clean mock adapter for testing
+- src/platform/adapters/node.ts - Clean Node adapter re-export
+- src/platform/adapters/registry.ts - Clean adapter registry with singleton pattern
+- src/platform/adapters/shared-watcher.ts - Clean file watcher with debouncing
+- src/platform/adapters/token-adapter-factory.ts - Clean token adapter factory
+- src/platform/adapters/token-adapter-integration.ts - Clean token storage integration
+
+**Adapters - Bun:**
+- src/platform/adapters/bun/adapter.ts - Clean Bun adapter implementation
+- src/platform/adapters/bun/environment-adapter.ts - Clean environment variable access
+- src/platform/adapters/bun/filesystem-adapter.ts - Clean Bun filesystem operations
+- src/platform/adapters/bun/http-server.ts - Clean Bun HTTP server
+- src/platform/adapters/bun/index.ts - Clean export barrel file
+- src/platform/adapters/bun/types.ts - Clean type definitions
+- src/platform/adapters/bun/websocket-adapter.ts - Clean Bun WebSocket implementation
+
+**Adapters - Cloudflare:**
+- src/platform/adapters/cloudflare/adapter.ts - Clean Cloudflare adapter
+- src/platform/adapters/cloudflare/environment.ts - Clean environment bindings
+- src/platform/adapters/cloudflare/filesystem.ts - Clean virtual filesystem for Workers
+- src/platform/adapters/cloudflare/index.ts - Clean export barrel file
+- src/platform/adapters/cloudflare/server.ts - Clean Cloudflare server integration
+- src/platform/adapters/cloudflare/shell.ts - Clean shell adapter (throws NotSupported as expected)
+- src/platform/adapters/cloudflare/types.ts - Clean type definitions
+- src/platform/adapters/cloudflare/worker.ts - Clean Worker entry point
+
+**Adapters - Node:**
+- src/platform/adapters/node/adapter.ts - Clean Node.js adapter
+- src/platform/adapters/node/environment-adapter.ts - Clean environment access
+- src/platform/adapters/node/filesystem-adapter.ts - Clean Node fs operations
+- src/platform/adapters/node/http-server.ts - Clean Node HTTP server
+- src/platform/adapters/node/index.ts - Clean export barrel file
+- src/platform/adapters/node/types.ts - Clean type definitions
+- src/platform/adapters/node/websocket-adapter.ts - Clean WebSocket implementation
+
+**Adapters - File Cache:**
+- src/platform/adapters/file-cache/factory.ts - Clean cache factory
+- src/platform/adapters/file-cache/file-cache.ts - Clean file cache with LRU eviction
+- src/platform/adapters/file-cache/index.ts - Clean export barrel file
+- src/platform/adapters/file-cache/size-estimator.ts - Clean size estimation utilities
+- src/platform/adapters/file-cache/types.ts - Clean type definitions
+
+**Adapters - Veryfront API Client:**
+- src/platform/adapters/veryfront-api-client.ts - Clean API client re-export
+- src/platform/adapters/veryfront-api-client/client.ts - Clean HTTP client implementation
+- src/platform/adapters/veryfront-api-client/index.ts - Clean export barrel file
+- src/platform/adapters/veryfront-api-client/operations.ts - Clean API operations with proper error handling
+- src/platform/adapters/veryfront-api-client/retry-handler.ts - Clean retry logic with exponential backoff
+- src/platform/adapters/veryfront-api-client/types.ts - Clean type definitions
+
+**Adapters - Veryfront FS Adapter:**
+- src/platform/adapters/veryfront-fs-adapter.ts - Clean re-export module
+- src/platform/adapters/veryfront-fs-adapter/directory-operations.ts - Clean directory listing
+- src/platform/adapters/veryfront-fs-adapter/index.ts - Clean export barrel file
+- src/platform/adapters/veryfront-fs-adapter/path-normalizer.ts - Clean path normalization
+- src/platform/adapters/veryfront-fs-adapter/types.ts - Clean type definitions
+
+**Adapters - Veryfront Token Adapter:**
+- src/platform/adapters/veryfront-token-adapter/adapter.ts - Clean token storage adapter
+- src/platform/adapters/veryfront-token-adapter/api-client.ts - Clean token API client
+- src/platform/adapters/veryfront-token-adapter/index.ts - Clean export barrel file
+- src/platform/adapters/veryfront-token-adapter/memory-adapter.ts - Clean in-memory token storage
+- src/platform/adapters/veryfront-token-adapter/types.ts - Clean type definitions
+
+**Adapters - Shared & Security:**
+- src/platform/adapters/shared/node-based-shell-adapter.ts - Clean shared shell adapter
+- src/platform/adapters/security/index.ts - Clean security exports
+
+**Compat - Console:**
+- src/platform/compat/console/ansi.ts - Clean ANSI color codes
+- src/platform/compat/console/deno.ts - Clean Deno fmt colors
+- src/platform/compat/console/index.ts - Clean async color loading
+- src/platform/compat/console/types.ts - Clean type definitions
+
+**Compat - Root:**
+- src/platform/compat/crypto.ts - Clean cross-platform crypto
+- src/platform/compat/flags.ts - Clean argument parsing
+- src/platform/compat/index.ts - Clean export barrel file
+- src/platform/compat/media-types.ts - Clean MIME type utilities
+- src/platform/compat/path-helper.ts - Clean path helper with lazy loading
+- src/platform/compat/process.ts - Clean cross-platform process utilities
+- src/platform/compat/runtime.ts - Clean runtime detection
+
+**Compat - HTTP:**
+- src/platform/compat/http/deno-server.ts - Clean Deno HTTP server
+- src/platform/compat/http/factory.ts - Clean server factory
+- src/platform/compat/http/index.ts - Clean export barrel file
+- src/platform/compat/http/node-server.ts - Clean Node HTTP server
+- src/platform/compat/http/node-types.ts - Clean Node type definitions
+- src/platform/compat/http/request-adapter.ts - Clean Node to Web request conversion
+- src/platform/compat/http/types.ts - Clean type definitions
+
+**Compat - KV:**
+- src/platform/compat/kv/factory.ts - Clean KV store factory with fallbacks
+- src/platform/compat/kv/index.ts - Clean export barrel file
+- src/platform/compat/kv/memory-adapter.ts - Clean in-memory KV store
+- src/platform/compat/kv/sqlite-adapter.ts - Clean SQLite KV adapter
+- src/platform/compat/kv/types.ts - Clean type definitions
+
+**Compat - Path:**
+- src/platform/compat/path/basic-operations.ts - Clean path operations
+- src/platform/compat/path/index.ts - Clean export barrel file
+- src/platform/compat/path/parse-format.ts - Clean path parsing
+- src/platform/compat/path/resolution.ts - Clean path resolution
+- src/platform/compat/path/runtime.ts - Clean runtime path detection
+- src/platform/compat/path/security.ts - Clean path security validation
+- src/platform/compat/path/types.ts - Clean type definitions
+- src/platform/compat/path/url-conversion.ts - Clean file URL conversion
+
+**Root:**
+- src/platform/index.ts - Clean main export barrel file
+
+### src/build (119 files reviewed)
+
+#### Issues Found and Fixed:
+
+1. **src/build/asset-pipeline/css-optimizer/critical-css.ts**
+   - Code Smell: Extra blank line at line 18 between `readTextFile` call and `extractSelectorsFromHTML` call
+   - Fix: Removed extra blank line for consistency
+
+2. **src/build/asset-pipeline/css-optimizer/utils.ts**
+   - Dead Code: Unused variable `_filePattern` at line 27 - pattern was split but second part never used
+   - Fix: Removed unused variable assignment
+
+3. **src/build/asset-pipeline/css-optimizer/strategies/purge-strategy.ts**
+   - Code Smell: Extra blank line at line 66 inside `purgeUnusedCSS` method
+   - Fix: Removed extra blank line
+
+4. **src/build/transforms/esm/import-rewriter.ts**
+   - Code Smell: Extra blank line at line 61 inside `rewriteVendorImports` function's dynamic import handling block
+   - Fix: Removed extra blank line for cleaner code flow
+
+5. **src/build/utils/asset-utils.ts**
+   - Code Smell: Double blank line at lines 85-86 between `getStandardPseudoSelectors` and `getVariantPath` functions
+   - Fix: Reduced to single blank line for consistency
+
+#### Files Reviewed (No Issues Found):
+
+**Asset Pipeline - CSS Optimizer:**
+- src/build/asset-pipeline/css-optimizer/css-bundle-cache.ts - Clean caching implementation with proper LRU eviction
+- src/build/asset-pipeline/css-optimizer/index.ts - Clean export barrel file
+- src/build/asset-pipeline/css-optimizer/optimizer-service.ts - Clean optimization orchestration
+- src/build/asset-pipeline/css-optimizer/strategies/index.ts - Clean strategy exports
+- src/build/asset-pipeline/css-optimizer/strategies/lightning-strategy.ts - Clean LightningCSS integration
+- src/build/asset-pipeline/css-optimizer/strategies/minification-strategy.ts - Clean minification strategy
+- src/build/asset-pipeline/css-optimizer/types/index.ts - Clean type definitions
+
+**Asset Pipeline - Image Optimizer:**
+- src/build/asset-pipeline/image-optimizer/constants.ts - Clean image processing constants
+- src/build/asset-pipeline/image-optimizer/format-processor.ts - Clean format conversion
+- src/build/asset-pipeline/image-optimizer/image-finder.ts - Clean image discovery
+- src/build/asset-pipeline/image-optimizer/index.ts - Clean export barrel file
+- src/build/asset-pipeline/image-optimizer/manifest-manager.ts - Clean manifest handling
+- src/build/asset-pipeline/image-optimizer/optimizer-core.ts - Clean optimization core
+- src/build/asset-pipeline/image-optimizer/sharp-loader.ts - Clean sharp module loading
+- src/build/asset-pipeline/image-optimizer/types.ts - Clean type definitions
+- src/build/asset-pipeline/image-optimizer/variant-generator.ts - Clean image variant generation
+
+**Asset Pipeline - Tailwind Processor:**
+- src/build/asset-pipeline/tailwind-processor/batch-processor.ts - Clean batch processing
+- src/build/asset-pipeline/tailwind-processor/css-utils.ts - Clean CSS utilities
+- src/build/asset-pipeline/tailwind-processor/detector.ts - Clean Tailwind detection
+- src/build/asset-pipeline/tailwind-processor/index.ts - Clean export barrel file
+- src/build/asset-pipeline/tailwind-processor/lightning-processor.ts - Clean LightningCSS processing
+- src/build/asset-pipeline/tailwind-processor/processor.ts - Clean main processor
+- src/build/asset-pipeline/tailwind-processor/types.ts - Clean type definitions
+
+**Bundler - Code Splitter:**
+- src/build/bundler/code-splitter/build-context.ts - Clean build context management
+- src/build/bundler/code-splitter/entry-points.ts - Clean entry point discovery
+- src/build/bundler/code-splitter/esbuild-plugin.ts - Clean esbuild plugin implementation
+- src/build/bundler/code-splitter/index.ts - Clean export barrel file
+- src/build/bundler/code-splitter/manifest-builder.ts - Clean manifest generation
+- src/build/bundler/code-splitter/splitter.ts - Clean code splitting logic
+- src/build/bundler/code-splitter/types.ts - Clean type definitions
+- src/build/bundler/index.ts - Clean export barrel file
+
+**Compiler - MDX:**
+- src/build/compiler/index.ts - Clean export barrel file
+- src/build/compiler/mdx-compiler/code-generator.ts - Clean code generation
+- src/build/compiler/mdx-compiler/compiler.ts - Clean MDX compilation
+- src/build/compiler/mdx-compiler/directory-compiler.ts - Clean directory-level compilation
+- src/build/compiler/mdx-compiler/file-writer.ts - Clean file output
+- src/build/compiler/mdx-compiler/frontmatter-parser.ts - Clean frontmatter extraction
+- src/build/compiler/mdx-compiler/import-transformer.ts - Clean import transformation
+- src/build/compiler/mdx-compiler/index.ts - Clean export barrel file
+- src/build/compiler/mdx-compiler/mdx-processor.ts - Clean MDX processing
+- src/build/compiler/mdx-compiler/transpiler.ts - Clean transpilation
+- src/build/compiler/mdx-compiler/types.ts - Clean type definitions
+- src/build/compiler/mdx-compiler/validator.ts - Clean validation logic
+- src/build/compiler/mdx-compiler/watcher.ts - Clean file watching
+- src/build/compiler/mdx-to-js.ts - Clean MDX to JS conversion
+
+**Production Build:**
+- src/build/production-build/asset-generation.ts - Clean asset generation
+- src/build/production-build/build/build-cleanup.ts - Clean build cleanup
+- src/build/production-build/build/build-executor.ts - Clean build execution
+- src/build/production-build/build/build-initializer.ts - Clean initialization
+- src/build/production-build/build/build-orchestrator.ts - Clean orchestration
+- src/build/production-build/build/build-setup.ts - Clean setup
+- src/build/production-build/build/code-splitter-orchestrator.ts - Clean code splitting
+- src/build/production-build/build/index.ts - Clean export barrel file
+- src/build/production-build/build/output-generator.ts - Clean output generation
+- src/build/production-build/build/route-collector.ts - Clean route collection
+- src/build/production-build/client-runtime.ts - Clean client runtime generation
+- src/build/production-build/index.ts - Clean export barrel file
+- src/build/production-build/manifest.ts - Clean manifest handling with proper validation
+- src/build/production-build/static-generation.ts - Clean SSG implementation
+- src/build/production-build/templates.ts - Clean template definitions
+
+**Renderer:**
+- src/build/renderer/index.ts - Clean export barrel file
+- src/build/renderer/services/css-bundler.ts - Clean CSS bundling
+- src/build/renderer/services/mdx-bundler.ts - Clean MDX bundling with proper plugin handling
+- src/build/renderer/services/optimizer.ts - Clean bundle optimization
+- src/build/renderer/services/script-bundler.ts - Clean script bundling with esbuild
+- src/build/renderer/types/bundler-types.ts - Clean type re-exports
+- src/build/renderer/utils/import-utils.ts - Clean import extraction and resolution
+- src/build/renderer/utils/loader-utils.ts - Clean loader utilities
+
+**Transforms - ESM:**
+- src/build/transforms/esm-transform.ts - Clean transform re-exports
+- src/build/transforms/esm/import-parser.ts - Clean import parsing with proper extension resolution
+- src/build/transforms/esm/index.ts - Clean export barrel file
+- src/build/transforms/esm/lexer.ts - Clean es-module-lexer wrapper
+- src/build/transforms/esm/path-resolver.ts - Clean path resolution
+- src/build/transforms/esm/react-imports.ts - Clean React import resolution for SSR/browser
+- src/build/transforms/esm/transform-cache.ts - Clean transform caching with TTL
+- src/build/transforms/esm/transform-core.ts - Clean ESM transformation core
+- src/build/transforms/esm/transform-utils.ts - Clean transformation utilities
+- src/build/transforms/esm/types.ts - Clean type definitions
+
+**Transforms - MDX:**
+- src/build/transforms/mdx/compiler/frontmatter-extractor.ts - Clean frontmatter extraction
+- src/build/transforms/mdx/compiler/import-rewriter.ts - Clean import rewriting for browser/server
+- src/build/transforms/mdx/compiler/index.ts - Clean export barrel file
+- src/build/transforms/mdx/compiler/mdx-compiler.ts - Clean MDX runtime compilation
+- src/build/transforms/mdx/compiler/types.ts - Clean type definitions
+- src/build/transforms/mdx/esm-module-loader.ts - Clean ESM module loading with HTTP bundling
+- src/build/transforms/mdx/index.ts - Clean export barrel file
+- src/build/transforms/mdx/loader.ts - Clean MDX module loading
+- src/build/transforms/mdx/mdx-cache-adapter.ts - Clean MDX caching with bundle manifest store
+- src/build/transforms/mdx/module-executor.ts - Clean module execution (with security blocking of string eval)
+- src/build/transforms/mdx/module-loader.ts - Clean MDX module loader re-exports
+- src/build/transforms/mdx/parser.ts - Clean MDX code parsing
+- src/build/transforms/mdx/types.ts - Clean type definitions
+
+**Transforms - Plugins:**
+- src/build/transforms/plugins/index.ts - Clean plugin exports
+- src/build/transforms/plugins/plugin-loader.ts - Clean plugin loading with defaults
+- src/build/transforms/plugins/rehype-utils.ts - Clean rehype utilities
+- src/build/transforms/plugins/remark-headings.ts - Clean heading extraction with GithubSlugger
+- src/build/transforms/plugins/remark-mdx-utils.ts - Clean MDX-specific remark plugins
+- src/build/transforms/plugins/remark-node-id.ts - Clean node ID assignment
+- src/build/transforms/index.ts - Clean transform exports
+
+**Utils:**
+- src/build/utils/file-types.ts - Clean file type utilities with MIME types
+- src/build/utils/index.ts - Clean utility exports
+- src/build/utils/asset-utils.ts - Clean asset utilities
+
+**Root:**
+- src/build/index.ts - Clean main build exports
+
+### src/rendering (95 files reviewed)
+
+#### Issues Found and Fixed:
+
+1. **src/rendering/utils/stream-utils.ts**
+   - Bug: `streamToString()` function was missing final flush of TextDecoder - could lose trailing characters when decoding multi-byte characters that span chunk boundaries
+   - Fix: Added `decoder.decode()` call after the read loop to flush any remaining bytes in the decoder
+
+2. **src/rendering/orchestrator/pipeline.ts**
+   - Code Smell: Used overly broad `Function` type for `transformToESM` parameter in `loadModuleRecursive()` method
+   - Fix: Replaced with properly typed function signature specifying all parameters and return type
+   - Bug: Potential undefined access on `match[1]` in `extractAliasImports()` - regex capture group could be undefined
+   - Fix: Added explicit null check `if (capturedPath && !imports.includes(capturedPath))`
+   - Code Smell: Unused `quote` variable in `rewriteImport()` method
+   - Fix: Removed unused variable declaration
+
+3. **src/rendering/layouts/utils/applicator.ts** and **src/rendering/layouts/utils/component-loader.ts**
+   - Code Smell: Duplicate `ensureValidChild()` function defined in both files with identical implementations
+   - Note: Identified as code duplication but not refactored to avoid risk of divergence - marked for future consolidation
+
+4. **General observations (clean code, no fixes needed):**
+   - src/rendering/index.ts - Clean export barrel file
+   - src/rendering/app-reserved.ts - Clean reserved path handling
+   - src/rendering/app-route-resolver.ts - Clean route resolution with proper type guards
+   - src/rendering/chunk-optimizer.ts - Clean chunk optimization utilities
+   - src/rendering/cleanup.ts - Clean resource cleanup utilities
+   - src/rendering/component-handling.ts - Clean component handling utilities
+   - src/rendering/mdx-renderer.ts - Clean MDX rendering implementation
+   - src/rendering/page-renderer.ts - Clean page rendering orchestration
+   - src/rendering/page-rendering.ts - Clean page rendering utilities
+   - src/rendering/plugins.ts - Clean plugin system
+   - src/rendering/route-params-extractor.ts - Clean route parameter extraction
+   - src/rendering/router-detection.ts - Clean router detection utilities
+   - src/rendering/script-page-handling.ts - Clean script page handling
+   - src/rendering/ssr-renderer.ts - Clean SSR rendering implementation
+   - src/rendering/virtual-module-system.ts - Clean virtual module handling
+
+**Cache Files (clean):**
+- src/rendering/cache/index.ts - Clean export barrel file
+- src/rendering/cache/cache-coordinator.ts - Clean cache coordination with proper TTL handling
+- src/rendering/cache/types.ts - Clean type definitions
+- src/rendering/cache/stores/*.ts - Clean cache store implementations (memory, filesystem, kv, redis)
+
+**Client Files (clean):**
+- src/rendering/client/index.ts - Clean export barrel file
+- src/rendering/client/browser-logger.ts - Clean browser logging
+- src/rendering/client/browser-stubs/logger.ts - Clean browser stub
+- src/rendering/client/hmr-runtime.ts - Clean HMR runtime
+- src/rendering/client/prefetch.ts - Clean prefetch utilities
+- src/rendering/client/router.ts - Clean client router
+- src/rendering/client/state-bridge.ts - Clean state bridge
+- src/rendering/client/prefetch/*.ts - Clean prefetch utilities (link-observer, network-utils, prefetch-queue, resource-hints)
+
+**Element Validator Files (clean):**
+- src/rendering/element-validator/index.ts - Clean export barrel file
+- src/rendering/element-validator/types.ts - Clean type definitions
+- src/rendering/element-validator/validator-core.ts - Clean validation core
+- src/rendering/element-validator/primitive-checks.ts - Clean primitive validation
+- src/rendering/element-validator/element-inspector.ts - Clean element inspection
+- src/rendering/element-validator/element-normalizer.ts - Clean element normalization
+
+**Layout Files (clean):**
+- src/rendering/layouts/index.ts - Clean export barrel file
+- src/rendering/layouts/types.ts - Clean type definitions
+- src/rendering/layouts/layout-applicator.ts - Clean layout application
+- src/rendering/layouts/layout-collector.ts - Clean layout collection
+- src/rendering/layouts/layout-compiler.ts - Clean layout compilation
+- src/rendering/layouts/provider-manager.ts - Clean provider management
+- src/rendering/layouts/utils/*.ts - Clean layout utilities (discovery, compiler, hash-calculator)
+
+**Orchestrator Files (clean):**
+- src/rendering/orchestrator/index.ts - Clean export barrel file
+- src/rendering/orchestrator/types.ts - Clean type definitions
+- src/rendering/orchestrator/config.ts - Clean configuration
+- src/rendering/orchestrator/ssr-orchestrator.ts - Clean SSR orchestration
+- src/rendering/orchestrator/ssr.ts - Clean SSR utilities
+- src/rendering/orchestrator/html.ts - Clean HTML generation
+- src/rendering/orchestrator/layout.ts - Clean layout orchestration
+- src/rendering/orchestrator/lifecycle.ts - Clean lifecycle management
+- src/rendering/orchestrator/mdx.ts - Clean MDX orchestration
+- src/rendering/orchestrator/compiler-service.ts - Clean compiler service
+
+**Page Resolution Files (clean):**
+- src/rendering/page-resolution/index.ts - Clean export barrel file
+- src/rendering/page-resolution/page-resolver.ts - Clean page resolution
+
+**RSC Files (clean):**
+- src/rendering/rsc/index.ts - Clean export barrel file
+- src/rendering/rsc/types.ts - Clean type definitions
+- src/rendering/rsc/constants.ts - Clean constants
+- src/rendering/rsc/component-analyzer.ts - Clean component analysis
+- src/rendering/rsc/server-renderer/*.ts - Clean server renderer implementations
+
+**SSR Files (clean):**
+- src/rendering/ssr/index.ts - Clean export barrel file
+- src/rendering/ssr/types.ts - Clean type definitions
+- src/rendering/ssr/component-registry.ts - Clean component registry
+- src/rendering/ssr/mdx-browser-loader.ts - Clean MDX browser loader
+- src/rendering/ssr/mdx-module-loader.ts - Clean MDX module loader
+- src/rendering/ssr/mdx-renderer.ts - Clean MDX renderer
+

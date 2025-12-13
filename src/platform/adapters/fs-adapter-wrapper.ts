@@ -1,6 +1,7 @@
 import type { DirEntry, FileInfo, FileSystemAdapter, FileWatcher, WatchOptions } from "./base.ts";
 import type { DirectoryEntry, FSAdapter } from "./veryfront-fs-adapter/types.ts";
 import { logger } from "@veryfront/utils";
+import { createFileSystem } from "../compat/fs.ts";
 
 export class FSAdapterWrapper implements FileSystemAdapter {
   constructor(private fsAdapter: FSAdapter) {}
@@ -29,10 +30,14 @@ export class FSAdapterWrapper implements FileSystemAdapter {
   }
 
   async writeFile(path: string, content: string): Promise<void> {
-    if (!this.fsAdapter.writeFile) {
-      throw new NotSupportedError("writeFile not supported by this FSAdapter");
+    if (this.fsAdapter.writeFile) {
+      await this.fsAdapter.writeFile(path, content);
+      return;
     }
-    await this.fsAdapter.writeFile(path, content);
+    // Fall back to local filesystem for write operations (e.g., for caching compiled modules)
+    logger.debug("[FSAdapterWrapper] writeFile falling back to local filesystem", { path });
+    const localFs = createFileSystem();
+    await localFs.writeTextFile(path, content);
   }
 
   async exists(path: string): Promise<boolean> {

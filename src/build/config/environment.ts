@@ -59,7 +59,7 @@ export function getBuildConfig(): BuildEnvironmentConfig {
     isProduction: isProd,
     isTest: isTestEnv,
     cacheMaxEntries: isDev ? 10 : 100,
-    cacheTTLMs: isDev ? 0 : 3600000,
+    cacheTTLMs: isDev ? 0 : 3600000, // 0 = no expiration in dev, 1 hour in prod
     minify: isProd,
     sourcemaps: isDev ? "inline" : false,
     treeShaking: isProd,

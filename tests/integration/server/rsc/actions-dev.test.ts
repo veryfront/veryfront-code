@@ -5,7 +5,6 @@ import { join } from "std/path/mod.ts";
 import { withTestContext } from "../../../_helpers/context.ts";
 import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";
 
-// Clean up renderer intervals to prevent resource leaks
 afterAll(async () => {
   await cleanupBundler();
 });
@@ -14,17 +13,14 @@ Deno.test({
   name: "Dev server: RSC action endpoint basic validations (zod or fallback)",
   fn: async () => {
     await withTestContext("rsc-dev-act", async (context) => {
-      // Set environment variables for RSC mode
       context.setEnv({
         VERYFRONT_EXPERIMENTAL_RSC: "1",
         MODE: "development",
       });
 
-      // Minimal project to boot dev server
       await Deno.mkdir(join(context.projectDir, "pages"), { recursive: true });
       await Deno.writeTextFile(join(context.projectDir, "pages", "index.mdx"), "# Home");
 
-      // Add deno.json for JSX configuration
       await Deno.writeTextFile(
         join(context.projectDir, "deno.json"),
         JSON.stringify(
@@ -44,7 +40,6 @@ Deno.test({
         ),
       );
 
-      // Add veryfront.config.js
       await Deno.writeTextFile(
         join(context.projectDir, "veryfront.config.js"),
         `export default { title: "RSC Test Site" };`,
@@ -58,11 +53,9 @@ Deno.test({
         "export default async function echo(x){ return `ok:${x}` }\n",
       );
 
-      // Create dev server - TestContext handles port allocation and cleanup
       const server = await context.createDevServer({ enableHMR: false });
       const port = server.port;
 
-      // Missing id -> 400
       let res = await fetch(`http://localhost:${port}/_veryfront/rsc/action`, {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -71,7 +64,6 @@ Deno.test({
       assertEquals(res.status, 400);
       await res.body?.cancel();
 
-      // Invalid args type -> converts to empty array (current behavior)
       res = await fetch(`http://localhost:${port}/_veryfront/rsc/action`, {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -80,10 +72,8 @@ Deno.test({
       assertEquals(res.status, 200);
       const json2 = await res.json();
       assertEquals(json2.ok, true);
-      // When args is not an array, it's converted to empty array
       assertEquals(json2.result, "ok:undefined");
 
-      // Invalid id traversal -> 400
       res = await fetch(`http://localhost:${port}/_veryfront/rsc/action`, {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -92,7 +82,6 @@ Deno.test({
       assertEquals(res.status, 400);
       await res.body?.cancel();
 
-      // Happy path
       res = await fetch(`http://localhost:${port}/_veryfront/rsc/action`, {
         method: "POST",
         headers: { "content-type": "application/json" },

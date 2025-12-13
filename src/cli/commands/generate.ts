@@ -5,10 +5,7 @@ import { createError, toError } from "../../core/errors/veryfront-error.ts";
 import { createFileSystem, type FileSystem } from "../../platform/compat/fs.ts";
 import { generateIntegration } from "./generate/integration-generator.ts";
 
-let fs: FileSystem;
-
-async function ensureDir(path: string) {
-  if (!fs) fs = createFileSystem();
+async function ensureDir(fs: FileSystem, path: string): Promise<void> {
   try {
     await fs.mkdir(path, { recursive: true });
   } catch (error) {
@@ -29,7 +26,7 @@ function toSlug(name: string) {
 }
 
 export async function generateCommand(projectDir: string, type: string, name: string) {
-  fs = createFileSystem();
+  const fs = createFileSystem();
   let preferred: "pages-router" | "app-router" = "pages-router";
   try {
     const { getAdapter } = await import("@veryfront/platform/adapters/detect.ts");
@@ -45,7 +42,7 @@ export async function generateCommand(projectDir: string, type: string, name: st
   switch (type) {
     case "rsc": {
       const dir = join(projectDir, "app", slug || "");
-      await ensureDir(dir);
+      await ensureDir(fs, dir);
       const file = join(dir, "page.tsx");
       const title = slug.split("/").pop() || "RSC";
       const content = `export default function ${toComponentName(title)}(){
@@ -66,7 +63,7 @@ export async function generateCommand(projectDir: string, type: string, name: st
       const isApp = preferred === "app-router";
       if (isApp) {
         const pageDir = join(projectDir, "app", slug || "");
-        await ensureDir(pageDir);
+        await ensureDir(fs, pageDir);
         const file = join(pageDir, "page.tsx");
         const title = slug.split("/").pop() || "Page";
         const content = `export default function ${
@@ -80,7 +77,7 @@ export async function generateCommand(projectDir: string, type: string, name: st
       }
       const subdir = slug.includes("/") ? slug.split("/").slice(0, -1).join("/") : "";
       const base = join(projectDir, "pages");
-      await ensureDir(base + (subdir ? `/${subdir}` : ""));
+      await ensureDir(fs, base + (subdir ? `/${subdir}` : ""));
       const fname = `${slug.split("/").pop() || "index"}.mdx`;
       const file = join(base, subdir ? `${subdir}/${fname}` : fname);
       const title = slug.split("/").pop() || "Page";
@@ -92,7 +89,7 @@ export async function generateCommand(projectDir: string, type: string, name: st
     case "layout": {
       if (preferred === "app-router") {
         const dir = join(projectDir, "app", slug || "");
-        await ensureDir(dir);
+        await ensureDir(fs, dir);
         const file = join(dir, `layout.tsx`);
         const content =
           `export default function Layout({ children }: { children: React.ReactNode }){ return (<section>${
@@ -102,7 +99,7 @@ export async function generateCommand(projectDir: string, type: string, name: st
         cliLogger.info(`Created ${file}`);
       } else {
         const dir = join(projectDir, "layouts");
-        await ensureDir(dir);
+        await ensureDir(fs, dir);
         const file = join(dir, `${slug}.mdx`);
         const content = `---\nisLayout: true\n---\n\nexport default function ${
           toComponentName(
@@ -116,7 +113,7 @@ export async function generateCommand(projectDir: string, type: string, name: st
     }
     case "provider": {
       const dir = join(projectDir, "providers");
-      await ensureDir(dir);
+      await ensureDir(fs, dir);
       const file = join(dir, `${slug}.mdx`);
       const content = `---\nisProvider: true\npriority: 1\n---\n\nexport default function ${
         toComponentName(
@@ -131,7 +128,7 @@ export async function generateCommand(projectDir: string, type: string, name: st
       const isApp = preferred === "app-router";
       if (isApp) {
         const routeDir = join(projectDir, "app", slug || "");
-        await ensureDir(routeDir);
+        await ensureDir(fs, routeDir);
         const file = join(routeDir, "route.ts");
         const content = `export const GET = (_req: Request) => Response.json({ ok: true });\n`;
         await fs.writeTextFile(file, content);
@@ -140,7 +137,7 @@ export async function generateCommand(projectDir: string, type: string, name: st
       }
       const subdir = slug.includes("/") ? slug.split("/").slice(0, -1).join("/") : "";
       const apiBase = join(projectDir, "pages", "api");
-      await ensureDir(apiBase + (subdir ? `/${subdir}` : ""));
+      await ensureDir(fs, apiBase + (subdir ? `/${subdir}` : ""));
       const fname = `${slug.split("/").pop() || "index"}.ts`;
       const file = join(apiBase, subdir ? `${subdir}/${fname}` : fname);
       const content =

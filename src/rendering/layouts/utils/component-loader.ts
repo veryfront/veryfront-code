@@ -104,6 +104,9 @@ export async function loadMDXLayout(
 ): Promise<BundledReact.ComponentType<{ components?: MDXComponents }> | undefined> {
   const map = await loadImportMap(projectDir, adapter);
   const code = transformImportsWithMap(bundle.compiledCode, map);
+  // Configure mdxRenderer with adapter for @/ import resolution
+  mdxRenderer.setAdapter(adapter);
+  mdxRenderer.setProjectDir(projectDir);
   const mod = (await mdxRenderer.loadModuleESM(code)) as MDXModule;
   return mod.MDXLayout || mod.MainLayout || mod.default;
 }

@@ -670,7 +670,7 @@ export const calculator = defineTool({
 });
 ```
 
-**Full reference:** [AI API Documentation](../ai/specification.md)
+**Full reference:** [AI API Documentation](../reference/ai/README.md)
 
 ---
 

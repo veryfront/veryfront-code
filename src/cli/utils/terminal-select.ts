@@ -2,6 +2,16 @@
 import { cyan, dim, green } from "@veryfront/compat/console";
 import { isDeno } from "../../platform/compat/runtime.ts";
 
+/** Helper to write to stdout in a cross-platform way */
+function writeToStdout(text: string): void {
+  if (isDeno) {
+    // @ts-ignore: Deno global
+    Deno?.stdout?.writeSync?.(new TextEncoder().encode(text));
+  } else {
+    process.stdout?.write?.(text);
+  }
+}
+
 export interface SelectOption {
   value: string;
   label: string;
@@ -38,13 +48,11 @@ export async function select(
 
   const clearOptions = () => {
     for (let i = 0; i < options.length; i++) {
-      process.stdout?.write?.(MOVE_UP + CLEAR_LINE) ??
-        Deno?.stdout?.writeSync?.(new TextEncoder().encode(MOVE_UP + CLEAR_LINE));
+      writeToStdout(MOVE_UP + CLEAR_LINE);
     }
   };
 
-  process.stdout?.write?.(HIDE_CURSOR) ??
-    Deno?.stdout?.writeSync?.(new TextEncoder().encode(HIDE_CURSOR));
+  writeToStdout(HIDE_CURSOR);
   renderOptions();
 
   try {
@@ -73,8 +81,7 @@ export async function select(
 
     return result;
   } finally {
-    process.stdout?.write?.(SHOW_CURSOR) ??
-      Deno?.stdout?.writeSync?.(new TextEncoder().encode(SHOW_CURSOR));
+    writeToStdout(SHOW_CURSOR);
   }
 }
 
@@ -105,13 +112,11 @@ export async function multiSelect(
 
   const clearOptions = () => {
     for (let i = 0; i < options.length; i++) {
-      process.stdout?.write?.(MOVE_UP + CLEAR_LINE) ??
-        Deno?.stdout?.writeSync?.(new TextEncoder().encode(MOVE_UP + CLEAR_LINE));
+      writeToStdout(MOVE_UP + CLEAR_LINE);
     }
   };
 
-  process.stdout?.write?.(HIDE_CURSOR) ??
-    Deno?.stdout?.writeSync?.(new TextEncoder().encode(HIDE_CURSOR));
+  writeToStdout(HIDE_CURSOR);
   renderOptions();
 
   try {
@@ -155,8 +160,7 @@ export async function multiSelect(
 
     return Array.from(selected);
   } finally {
-    process.stdout?.write?.(SHOW_CURSOR) ??
-      Deno?.stdout?.writeSync?.(new TextEncoder().encode(SHOW_CURSOR));
+    writeToStdout(SHOW_CURSOR);
   }
 }
 
@@ -249,7 +253,7 @@ function parseKeySequence(buf: Uint8Array): string {
 
   switch (buf[0]) {
     case 0x0d:
-    case 0x0a:
+    case 0x0a: // Line feed
       return "enter";
     case 0x20:
       return "space";

@@ -74,12 +74,67 @@ export function createVeryfrontHandler(
   const apiHandler = new ApiHandlerWrapper(projectDir, adapter);
 
   registry.registerAll([
-    new AuthHandler(),
-    new CorsHandler(),
-    new HealthHandler(),
-    new MetricsHandler(),
-    new ClientLogHandler(),
-    new DevEndpointsHandler(),
-    new DevFileHandler(),
-    new StaticHandler(),
-    new LibModulesHandler(), // Priority: 550 (MEDIUM_LIB_MODULES, self-hosted veryfront/ai
+    new AuthHandler(), // Priority: 0 (CRITICAL)
+    new CorsHandler(), // Priority: 50
+    new HealthHandler(), // Priority: 100 (HIGH)
+    new MetricsHandler(), // Priority: 100 (HIGH)
+    new ClientLogHandler(), // Priority: 200 (HIGH, dev only)
+    new DevEndpointsHandler(), // Priority: 300 (HIGH, dev only)
+    new DevFileHandler(), // Priority: 400 (dev only)
+    new StaticHandler(), // Priority: 500 (MEDIUM_STATIC)
+    new LibModulesHandler(), // Priority: 550 (MEDIUM_LIB_MODULES, self-hosted veryfront/ai/*)
+    new RSCHandler(), // Priority: 600 (MEDIUM, runs before static to expose RSC endpoints)
+    new ModuleHandler(), // Priority: 600 (MEDIUM)
+    apiHandler, // Priority: 700 (MEDIUM)
+    new SSRHandler(), // Priority: 1000 (LOW)
+    new NotFoundHandler(), // Priority: 10000 (FALLBACK)
+  ]);
+
+  const readyPromise = apiHandler.initialize().catch((err) => {
+    logger.error("[universal] API handler initialization failed", {
+      error: err instanceof Error ? err.message : String(err),
+      stack: err instanceof Error ? err.stack : undefined,
+    });
+    throw err;
+  });
+
+  const handler = async (req: Request): Promise<Response> => {
+    await readyPromise;
+
+    await securityLoader.ensureLoaded();
+
+    await configPromise;
+
+    const ctx: HandlerContext = {
+      projectDir,
+      adapter,
+      mode: opts.mode ?? "production",
+      moduleServerUrl: opts.moduleServerUrl,
+      securityConfig: securityLoader.getSecurityConfig(),
+      cspUserHeader: securityLoader.getCspUserHeader(),
+      debug: opts.debug,
+      config,
+    };
+
+    await metrics.incRequest();
+
+    const response = await registry.execute(req, ctx);
+
+    if (!response) {
+      logDebug("[universal] No handler produced response (unexpected)", {
+        path: new URL(req.url).pathname,
+      });
+      return new Response("Internal Server Error", { status: 500 });
+    }
+
+    return response;
+  };
+
+  handler.ready = readyPromise;
+
+  return handler;
+}
+
+export type { HandlerContext } from "../handlers/types.ts";
+export { RouteRegistry } from "@veryfront/routing/registry/index.ts";
+export { BaseHandler } from "../handlers/response/base.ts";

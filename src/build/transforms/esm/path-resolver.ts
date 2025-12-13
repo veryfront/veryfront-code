@@ -16,6 +16,8 @@ export function resolvePathAliases(
   code: string,
   filePath: string,
   projectDir: string,
+  moduleServerUrl?: string,
+  _ssr = false,
 ): Promise<string> {
   const _normalizedProjectDir = projectDir.replace(/\\/g, "/").replace(/\/$/, "");
 
@@ -39,6 +41,17 @@ export function resolvePathAliases(
   return Promise.resolve(replaceSpecifiers(code, (specifier) => {
     if (specifier.startsWith("@/")) {
       const path = specifier.substring(2);
+      // For SSR, keep @/ as-is - the pipeline.loadModule will handle recursive loading
+      // This is necessary when using remote FSAdapter where files don't exist locally
+      // Check SSR FIRST before moduleServerUrl, since SSR needs recursive loading
+      if (_ssr) {
+        return null; // Keep @/ unchanged for SSR - pipeline handles it
+      }
+      // When moduleServerUrl is available, use absolute module server paths
+      if (moduleServerUrl) {
+        return `${moduleServerUrl}/${path}`;
+      }
+      // For client-side (non-SSR), convert to relative path
       const relativePath = depth === 0 ? `./${path}` : `${relativeToRoot}/${path}`;
       return relativePath;
     }

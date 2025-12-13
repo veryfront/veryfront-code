@@ -1,10 +1,7 @@
 export function getFreePort(start = 8000, end = 20000): number {
-  // Use random port selection to avoid sequential reuse before OS releases ports
-  // This helps when tests run quickly in sequence - previously used ports may still be in TIME_WAIT
   const maxAttempts = 100;
 
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    // Random port in range
     const port = Math.floor(Math.random() * (end - start + 1)) + start;
 
     try {
@@ -33,17 +30,6 @@ export function withEnv(vars: Record<string, string>): () => void {
   };
 }
 
-/**
- * Drain the event loop deterministically.
- *
- * Why stack Promise.resolve() and setTimeout(0)?
- * - Promise.resolve() flushes the microtask queue
- * - setTimeout(0) yields to the macrotask queue (timers, I/O)
- * Repeating this a couple of cycles ensures pending fetch/streams and
- * scheduler MessagePort tasks settle between test teardown and process exit.
- *
- * Increased defaults (5 cycles, 50ms delay) for better cleanup in batch test mode
- */
 export async function drainEventLoop(cycles = 5, extraDelayMs = 50): Promise<void> {
   for (let i = 0; i < cycles; i++) {
     await Promise.resolve();
@@ -54,9 +40,6 @@ export async function drainEventLoop(cycles = 5, extraDelayMs = 50): Promise<voi
   }
 }
 
-/**
- * Assert that no unexpected resources or ops remain. Retries with drains before failing.
- */
 export async function assertDrained({
   retries = 3,
   delayMs = 10,
@@ -78,7 +61,6 @@ export async function assertDrained({
   for (let attempt = 0; attempt <= retries; attempt++) {
     await drainEventLoop(2, delayMs);
     const res = resourcesFn ? resourcesFn() : {};
-    // filter allowed resource names
     const leftoverEntries = Object.entries(res).filter(
       ([, name]) => !allowResources.some((re) => re.test(name)),
     );
@@ -86,7 +68,7 @@ export async function assertDrained({
     const pending = Math.max(0, (m.opsDispatched ?? 0) - (m.opsCompleted ?? 0));
 
     if (leftoverEntries.length === 0 && pending <= allowOpsDelta) {
-      return; // drained
+      return;
     }
     lastResources = res;
     lastPendingOps = pending;

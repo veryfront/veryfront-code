@@ -274,11 +274,11 @@ Visit **http://localhost:3000** and test:
 - API at `/api/posts`
 
 **What you built:**
-- ✅ File-based routing
-- ✅ Dynamic routes with parameters
-- ✅ Type-safe data fetching
-- ✅ API routes
-- ✅ 404 handling
+- File-based routing
+- Dynamic routes with parameters
+- Type-safe data fetching
+- API routes
+- 404 handling
 
 ## Part 2: Add Agent Capabilities
 
@@ -449,10 +449,10 @@ Visit **http://localhost:3000/chat** and try:
 - "Tell me about the hello world post"
 
 **What you added:**
-- ✅ Auto-discovered tools
-- ✅ Conversational agents
-- ✅ Streaming chat interface
-- ✅ Memory management
+- Auto-discovered tools
+- Conversational agents
+- Streaming chat interface
+- Memory management
 
 ## Next Steps
 
@@ -492,7 +492,7 @@ Visit **http://localhost:3000/chat** and try:
 
 - [AI Overview](/ai/README.md) - Complete AI capabilities overview
 - [Getting Started with AI](/ai/getting-started.md) - Build your first agent
-- [AI Specification](/ai/specification.md) - Technical specification
+- [AI Reference](/reference/ai/README.md) - API reference
 
 ### Testing and Performance
 
@@ -505,18 +505,18 @@ Visit **http://localhost:3000/chat** and try:
 ## What You Learned
 
 ### Traditional Features
-- ✅ File-based routing with App Router
-- ✅ Dynamic routes with parameters `[slug]`
-- ✅ Type-safe data fetching with `getServerData`
-- ✅ API routes for backend logic
-- ✅ 404 handling with `notFound()`
-- ✅ SEO with `Head` component
+- File-based routing with App Router
+- Dynamic routes with parameters `[slug]`
+- Type-safe data fetching with `getServerData`
+- API routes for backend logic
+- 404 handling with `notFound()`
+- SEO with `Head` component
 
 ### Agent Features
-- ✅ Tool auto-discovery from `ai/tools/`
-- ✅ Agent definition with tools and memory
-- ✅ Streaming responses
-- ✅ Production-ready chat UI
+- Tool auto-discovery from `ai/tools/`
+- Agent definition with tools and memory
+- Streaming responses
+- Production-ready chat UI
 
 ## Common Patterns
 

@@ -9,7 +9,6 @@ describe("Config validation", () => {
   it("rejects invalid security.cors object", async () => {
     await withTestContext("config-invalid-cors", async (context) => {
       const adapter = await getAdapter();
-      // Remove the default config created by TestContext
       await Deno.remove(join(context.projectDir, "veryfront.config.js"));
 
       await Deno.writeTextFile(
@@ -32,7 +31,6 @@ describe("Config validation", () => {
   it("warns for unknown top-level keys", async () => {
     await withTestContext("config-unknown-keys", async (context) => {
       const adapter = await getAdapter();
-      // Remove the default config created by TestContext
       await Deno.remove(join(context.projectDir, "veryfront.config.js"));
 
       await Deno.writeTextFile(
@@ -43,7 +41,6 @@ describe("Config validation", () => {
       } as const`,
       );
 
-      // Capture console.warn temporarily
       const origWarn = console.warn;
       let warned = false;
       console.warn = (...args: unknown[]) => {

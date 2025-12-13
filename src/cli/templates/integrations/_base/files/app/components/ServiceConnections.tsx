@@ -28,7 +28,6 @@ export function ServiceConnections({ services, className = "" }: ServiceConnecti
         const res = await fetch("/api/integrations/status");
         if (res.ok) {
           const data = await res.json();
-          // Convert array to Record<id, boolean> for status lookup
           const statusMap: Record<string, boolean> = {};
           for (const integration of data.integrations || []) {
             statusMap[integration.id] = integration.connected;
@@ -111,7 +110,6 @@ export function ServiceConnectionsCard({ services, className = "" }: ServiceConn
         const res = await fetch("/api/integrations/status");
         if (res.ok) {
           const data = await res.json();
-          // Convert array to Record<id, boolean> for status lookup
           const statusMap: Record<string, boolean> = {};
           for (const integration of data.integrations || []) {
             statusMap[integration.id] = integration.connected;

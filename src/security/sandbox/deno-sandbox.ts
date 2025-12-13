@@ -59,7 +59,8 @@ export function runInWorker<T = unknown>(code: string, options: SandboxOptions =
     `  self.postMessage({ result });` +
     `};`;
 
-  const workerUrl = isCompiledBinary()
+  const isDataUrl = isCompiledBinary();
+  const workerUrl = isDataUrl
     ? `data:text/javascript;base64,${btoa(workerCode)}`
     : URL.createObjectURL(
       new Blob([workerCode], { type: "application/javascript" }),
@@ -69,35 +70,46 @@ export function runInWorker<T = unknown>(code: string, options: SandboxOptions =
 
   const timeout = options.timeoutMs ?? DEFAULT_SANDBOX_TIMEOUT_MS;
 
+  /**
+   * Cleanup function to properly terminate worker and revoke object URL
+   */
+  function cleanup(): void {
+    try {
+      worker.terminate();
+    } catch (e) {
+      serverLogger.debug("[sandbox] worker terminate failed", { error: e });
+    }
+    // Revoke the object URL to prevent memory leaks (only for blob URLs)
+    if (!isDataUrl) {
+      try {
+        URL.revokeObjectURL(workerUrl);
+      } catch (e) {
+        serverLogger.debug("[sandbox] URL revoke failed", { error: e });
+      }
+    }
+  }
+
   const promise = new Promise<T>((resolve, reject) => {
     const timer = setTimeout(() => {
-      try {
-        worker.terminate();
-      } catch (e) {
-        serverLogger.debug("[sandbox] worker terminate failed", { error: e });
-      }
+      cleanup();
       reject(new Error("Sandbox timeout"));
     }, timeout);
 
     worker.onmessage = (e: MessageEvent) => {
       clearTimeout(timer);
       const { result, error } = e.data || {};
-      if (error) reject(new Error(error));
-      else resolve(result as T);
-      try {
-        worker.terminate();
-      } catch (e) {
-        serverLogger.debug("[sandbox] worker terminate failed", { error: e });
+      cleanup();
+      if (error) {
+        reject(new Error(error));
+      } else {
+        resolve(result as T);
       }
     };
+
     worker.onerror = (e) => {
       clearTimeout(timer);
+      cleanup();
       reject(new Error(String(e.message || e.error || "Worker error")));
-      try {
-        worker.terminate();
-      } catch (e) {
-        serverLogger.debug("[sandbox] worker terminate failed on error", { error: e });
-      }
     };
   });
 

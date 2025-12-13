@@ -15,7 +15,6 @@ describe(
     sanitizeOps: false,
   },
   () => {
-    // Clean up renderer intervals to prevent resource leaks
     afterAll(async () => {
       await cleanupBundler();
     });
@@ -26,17 +25,14 @@ describe(
           debug: true,
         });
 
-        // /healthz
         const r1 = await handler(new Request("http://localhost/healthz"));
         assertEquals(r1.status, 200);
         assertEquals(await r1.text(), "ok");
 
-        // /readyz
         const r2 = await handler(new Request("http://localhost/readyz"));
         assertEquals(r2.status, 200);
         assertEquals(await r2.text(), "ready");
 
-        // Other path -> 404 HTML
         const r3 = await handler(new Request("http://localhost/anything"));
         assertEquals(r3.status, 404);
         const ct = r3.headers.get("content-type") || "";
@@ -48,7 +44,6 @@ describe(
 
     it("App Router route.ts HEAD shim and OPTIONS Allow headers", async () => {
       await withTestContext("universal-head-options", async (context: TestContext) => {
-        // Setup app route with only GET
         await Deno.mkdir(join(context.projectDir, "app", "api", "ping"), {
           recursive: true,
         });
@@ -61,13 +56,11 @@ describe(
           projectDir: context.projectDir,
         });
 
-        // HEAD should be shimmed from GET and return no body
         const headRes = await handler(new Request(`http://localhost/api/ping`, { method: "HEAD" }));
         assertEquals(headRes.status, 200);
         const body = await headRes.text();
         assertEquals(body, "");
 
-        // OPTIONS should include Allow reflecting available methods
         const optRes = await handler(
           new Request(`http://localhost/api/ping`, {
             method: "OPTIONS",
@@ -153,13 +146,11 @@ describe(
 
     it("SSR for dynamic slug and app router fallback", async () => {
       await withTestContext("universal-ssr-dynamic", async (context: TestContext) => {
-        // pages router dynamic
         await Deno.mkdir(join(context.projectDir, "pages", "blog"), {
           recursive: true,
         });
         await Deno.writeTextFile(join(context.projectDir, "pages", "blog", "post.mdx"), "# Post\n");
 
-        // app router not-found reserved component to ensure fallback is safe in Deno path only
         await Deno.mkdir(join(context.projectDir, "app"), { recursive: true });
         await Deno.writeTextFile(join(context.projectDir, "app", "not-found.mdx"), "# Missing\n");
 
@@ -167,12 +158,10 @@ describe(
           projectDir: context.projectDir,
         });
 
-        // pages/blog/post -> SSR 200
         const resp = await handler(new Request("http://localhost/blog/post"));
         assertEquals(resp.status, 200);
         await resp.text();
 
-        // non-existent path triggers 404 (not necessarily the not-found component under non-Deno adapter)
         const nf = await handler(new Request("http://localhost/does-not-exist"));
         assert(nf.status === 404 || nf.status === 200);
         await nf.body?.cancel();
@@ -181,7 +170,6 @@ describe(
 
     it("renders App Router not-found.tsx when pages path missing (handler)", async () => {
       await withTestContext("universal-handler-app-not-found", async (context: TestContext) => {
-        // Place reserved not-found.tsx under a segment
         const segDir = join(context.projectDir, "app", "blog");
         await Deno.mkdir(segDir, { recursive: true });
         await Deno.writeTextFile(

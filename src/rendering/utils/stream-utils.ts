@@ -11,5 +11,11 @@ export async function streamToString(stream: ReadableStream): Promise<string> {
     }
   }
 
+  // Flush any remaining bytes in the decoder
+  const finalChunk = decoder.decode();
+  if (finalChunk) {
+    chunks.push(finalChunk);
+  }
+
   return chunks.join("");
 }

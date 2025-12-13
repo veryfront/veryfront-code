@@ -1,9 +1,3 @@
-/**
- * Tests for API Server Module
- *
- * Test coverage for API routing, page data endpoints, error handling,
- * and renderer integration for client-side navigation.
- */
 
 import { assertEquals, assertExists } from "std/assert/mod.ts";
 import {
@@ -13,7 +7,6 @@ import {
   type PageRenderResult,
 } from "../../../../src/module-system/server/index.ts";
 
-// Mock renderer for testing
 class MockRenderer implements PageRendererLike {
   private pages: Map<string, PageRenderResult> = new Map();
 
@@ -30,7 +23,6 @@ class MockRenderer implements PageRendererLike {
   }
 }
 
-// Test: APIServer class exists and is constructable
 Deno.test({
   name: "APIServer - creates instance with renderer",
   fn: () => {
@@ -41,7 +33,6 @@ Deno.test({
   },
 });
 
-// Test: handleRequest returns null for non-API routes
 Deno.test({
   name: "APIServer - returns null for non-API routes",
   fn: async () => {
@@ -59,7 +50,6 @@ Deno.test({
   },
 });
 
-// Test: handleRequest handles page data API
 Deno.test({
   name: "APIServer - handles page data API for valid pages",
   fn: async () => {
@@ -89,7 +79,6 @@ Deno.test({
   },
 });
 
-// Test: handleRequest handles index page
 Deno.test({
   name: "APIServer - handles index page data API",
   fn: async () => {
@@ -111,7 +100,6 @@ Deno.test({
   },
 });
 
-// Test: handleRequest sets no-cache headers
 Deno.test({
   name: "APIServer - sets no-cache headers for page data",
   fn: async () => {
@@ -132,7 +120,6 @@ Deno.test({
   },
 });
 
-// Test: handleRequest returns 404 for missing pages
 Deno.test({
   name: "APIServer - returns 404 for missing pages",
   fn: async () => {
@@ -159,7 +146,6 @@ Deno.test({
   },
 });
 
-// Test: handleRequest handles renderer errors gracefully
 Deno.test({
   name: "APIServer - handles renderer errors gracefully",
   fn: async () => {
@@ -180,7 +166,6 @@ Deno.test({
   },
 });
 
-// Test: handleRequest returns null for /api/ routes
 Deno.test({
   name: "APIServer - returns null for user-defined API routes",
   fn: async () => {
@@ -195,7 +180,6 @@ Deno.test({
   },
 });
 
-// Test: handleRequest handles complex slugs
 Deno.test({
   name: "APIServer - handles nested page slugs",
   fn: async () => {
@@ -216,7 +200,6 @@ Deno.test({
   },
 });
 
-// Test: handleRequest includes all page data fields
 Deno.test({
   name: "APIServer - includes all page data fields in response",
   fn: async () => {
@@ -251,7 +234,6 @@ Deno.test({
   },
 });
 
-// Test: handleRequest handles pages without headings
 Deno.test({
   name: "APIServer - handles pages without headings",
   fn: async () => {
@@ -269,7 +251,6 @@ Deno.test({
   },
 });
 
-// Test: handleRequest handles empty frontmatter
 Deno.test({
   name: "APIServer - handles empty frontmatter",
   fn: async () => {
@@ -288,7 +269,6 @@ Deno.test({
   },
 });
 
-// Test: handleRequest removes .json extension
 Deno.test({
   name: "APIServer - removes .json extension from slugs",
   fn: async () => {
@@ -306,7 +286,6 @@ Deno.test({
   },
 });
 
-// Test: handleRequest handles non-Error exceptions
 Deno.test({
   name: "APIServer - handles non-Error exceptions",
   fn: async () => {
@@ -328,7 +307,6 @@ Deno.test({
   },
 });
 
-// Test: Multiple sequential requests
 Deno.test({
   name: "APIServer - handles multiple sequential requests",
   fn: async () => {
@@ -354,7 +332,6 @@ Deno.test({
   },
 });
 
-// Test: API server options interface
 Deno.test({
   name: "APIServer - accepts valid options interface",
   fn: () => {
@@ -368,18 +345,15 @@ Deno.test({
   },
 });
 
-// Test: Page data endpoint pattern matching
 Deno.test({
   name: "APIServer - correctly identifies page data endpoints",
   fn: async () => {
     const renderer = new MockRenderer();
     const server = new APIServer({ renderer });
 
-    // Should handle
     const response1 = await server.handleRequest("/_veryfront/data/test.json");
     assertExists(response1, "Should handle /_veryfront/data/ prefix");
 
-    // Should not handle
     const response2 = await server.handleRequest("/veryfront/data/test.json");
     assertEquals(response2, null, "Should not handle without leading underscore");
 
@@ -388,7 +362,6 @@ Deno.test({
   },
 });
 
-// Test: Renderer interface compliance
 Deno.test({
   name: "APIServer - works with any PageRendererLike implementation",
   fn: async () => {
@@ -411,7 +384,6 @@ Deno.test({
   },
 });
 
-// Test: Response headers consistency
 Deno.test({
   name: "APIServer - sets consistent headers for all responses",
   fn: async () => {
@@ -423,17 +395,14 @@ Deno.test({
 
     const server = new APIServer({ renderer });
 
-    // Success response
     const successResponse = await server.handleRequest("/_veryfront/data/test.json");
     assertEquals(successResponse!.headers.get("content-type"), "application/json");
 
-    // Error response
     const errorResponse = await server.handleRequest("/_veryfront/data/missing.json");
     assertEquals(errorResponse!.headers.get("content-type"), "application/json");
   },
 });
 
-// Test: handleRequest with special characters in slugs
 Deno.test({
   name: "APIServer - handles special characters in slugs",
   fn: async () => {
@@ -451,7 +420,6 @@ Deno.test({
   },
 });
 
-// Test: Error logging doesn't crash the handler
 Deno.test({
   name: "APIServer - continues on logging errors",
   fn: async () => {
@@ -464,7 +432,6 @@ Deno.test({
     const server = new APIServer({ renderer });
     const response = await server.handleRequest("/_veryfront/data/test.json");
 
-    // Should still return a valid response even if logging fails internally
     assertExists(response, "Should return response despite potential logging errors");
     assertEquals(response!.status, 404, "Should return 404 for render errors");
   },

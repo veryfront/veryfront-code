@@ -1,8 +1,3 @@
-/**
- * Bundle Manifest Integration Tests
- *
- * Tests bundle manifest integration with the renderer and build process
- */
 
 import { assertEquals, assertExists } from "std/assert/mod.ts";
 import {
@@ -75,14 +70,14 @@ Deno.test("getBundleManifestTTL - defaults for production", () => {
   const config: VeryfrontConfig = {};
 
   const ttl = getBundleManifestTTL(config, "production");
-  assertEquals(ttl, 7 * 24 * 60 * 60 * 1000); // 7 days
+  assertEquals(ttl, 7 * 24 * 60 * 60 * 1000);
 });
 
 Deno.test("getBundleManifestTTL - defaults for development", () => {
   const config: VeryfrontConfig = {};
 
   const ttl = getBundleManifestTTL(config, "development");
-  assertEquals(ttl, 60 * 60 * 1000); // 1 hour
+  assertEquals(ttl, 60 * 60 * 1000);
 });
 
 Deno.test("bundle manifest - cache hit scenario", async () => {
@@ -106,11 +101,9 @@ Deno.test("bundle manifest - cache hit scenario", async () => {
     code: 'export default function MDXContent() { return "Test"; }',
   };
 
-  // Simulate first compilation
   await store.setBundleMetadata("mdx:production:content-hash-123", metadata);
   await store.setBundleCode("compiled-hash-456", code);
 
-  // Simulate second request (cache hit)
   const cachedMetadata = await store.getBundleMetadata("mdx:production:content-hash-123");
   assertExists(cachedMetadata);
   assertEquals(cachedMetadata.codeHash, "compiled-hash-456");
@@ -124,7 +117,6 @@ Deno.test("bundle manifest - source invalidation", async () => {
   const store = new InMemoryBundleManifestStore();
   setBundleManifestStore(store);
 
-  // Add multiple bundles for the same source
   const metadata1: BundleMetadata = {
     hash: "hash-1",
     codeHash: "code-1",
@@ -146,11 +138,9 @@ Deno.test("bundle manifest - source invalidation", async () => {
   await store.setBundleMetadata("key-1", metadata1);
   await store.setBundleMetadata("key-2", metadata2);
 
-  // Invalidate source (e.g., after file change)
   const count = await store.invalidateSource("pages/blog.mdx");
   assertEquals(count, 2);
 
-  // Verify bundles are gone
   const check1 = await store.getBundleMetadata("key-1");
   const check2 = await store.getBundleMetadata("key-2");
   assertEquals(check1, undefined);
@@ -163,7 +153,6 @@ Deno.test("bundle manifest - statistics tracking", async () => {
 
   const now = Date.now();
 
-  // Add multiple bundles
   for (let i = 0; i < 5; i++) {
     const metadata: BundleMetadata = {
       hash: `hash-${i}`,
@@ -207,14 +196,12 @@ Deno.test("bundle manifest - concurrent access", async () => {
     mode: "production",
   };
 
-  // Simulate concurrent writes
   await Promise.all([
     store.setBundleMetadata("key-1", metadata),
     store.setBundleMetadata("key-2", metadata),
     store.setBundleMetadata("key-3", metadata),
   ]);
 
-  // Simulate concurrent reads
   const results = await Promise.all([
     store.getBundleMetadata("key-1"),
     store.getBundleMetadata("key-2"),

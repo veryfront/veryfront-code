@@ -1,4 +1,3 @@
-
 import { serverLogger as logger } from "@veryfront/utils";
 import {
   HMR_CLOSE_MESSAGE_TOO_LARGE,
@@ -6,6 +5,11 @@ import {
   HMR_CLOSE_RATE_LIMIT,
 } from "@veryfront/utils";
 import type { WebSocketContext } from "../../server/dev-server/hmr-types.ts";
+
+/** Number of iterations to wait for WebSocket close during graceful shutdown */
+const WEBSOCKET_CLOSE_ITERATIONS = 10;
+/** Delay between close iterations in milliseconds */
+const WEBSOCKET_CLOSE_DELAY_MS = 50;
 
 export function setupWebSocketHandlers(
   socket: WebSocket,
@@ -113,9 +117,10 @@ export async function closeAllConnections(
     }
   }
 
-  for (let i = 0; i < 10; i++) {
+  // Wait for WebSocket connections to close gracefully
+  for (let i = 0; i < WEBSOCKET_CLOSE_ITERATIONS; i++) {
     await Promise.resolve();
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    await new Promise((resolve) => setTimeout(resolve, WEBSOCKET_CLOSE_DELAY_MS));
   }
 
   for (const client of clients) {

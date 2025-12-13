@@ -1,31 +1,30 @@
-# Veryfront AI Native Framework - Getting Started
+# Veryfront AI - Getting Started
 
-**Version**: 1.0.0
-**Status**: ✅ 100% Complete - Production Ready
-**Date**: 2025-11-11
+Build AI-powered applications with Veryfront's native AI framework.
 
 ---
 
-## 🚀 Quick Start (5 Minutes)
+## Quick Start
 
-### 1. Install
+### 1. Install Dependencies
 
 ```bash
 npm install veryfront ai zod
 ```
 
-### 2. Set your API key
+### 2. Configure API Key
 
 ```bash
 echo "OPENAI_API_KEY=sk-..." > .env
 ```
 
-Providers auto-initialize from environment variables - no config file needed!
+Providers auto-initialize from environment variables:
 
-Supported env vars:
-- `OPENAI_API_KEY` - OpenAI
-- `ANTHROPIC_API_KEY` - Anthropic
-- `GOOGLE_API_KEY` or `GOOGLE_GENERATIVE_AI_API_KEY` - Google
+| Variable | Provider |
+|----------|----------|
+| `OPENAI_API_KEY` | OpenAI |
+| `ANTHROPIC_API_KEY` | Anthropic |
+| `GOOGLE_API_KEY` | Google |
 
 ### 3. Create a Tool
 
@@ -43,7 +42,7 @@ export default tool({
     return await searchAPI(query);
   },
 });
-// ✅ Auto-registered as "search"!
+// Auto-registered as "search"
 ```
 
 ### 4. Create an Agent
@@ -56,19 +55,19 @@ export default agent({
   model: 'openai/gpt-4',
   system: 'You are a helpful assistant',
   tools: {
-    search: true,  // Auto-discovered!
+    search: true,  // Auto-discovered
   },
   memory: {
     type: 'conversation',
     maxTokens: 4000,
   },
 });
-// ✅ Auto-registered as "assistant"!
+// Auto-registered as "assistant"
 ```
 
-### 5. Build the UI (Choose Your Layer)
+### 5. Build the UI
 
-**Option A: Layer 3 (Instant - 1 Line)**
+**Layer 3 - Styled Components (Fastest)**
 ```tsx
 import { Chat } from 'veryfront/ai/components';
 import { useChat } from 'veryfront/ai/react';
@@ -76,7 +75,7 @@ import { useChat } from 'veryfront/ai/react';
 export default () => <Chat {...useChat({ api: '/api/chat' })} />;
 ```
 
-**Option B: Layer 2 (Flexible)**
+**Layer 2 - Unstyled Primitives (Customizable)**
 ```tsx
 import { ChatContainer, MessageList, MessageItem } from 'veryfront/ai/primitives';
 import { useChat } from 'veryfront/ai/react';
@@ -95,7 +94,7 @@ export default function MyChat() {
 }
 ```
 
-**Option C: Layer 1 (Total Control)**
+**Layer 1 - Headless Hooks (Total Control)**
 ```tsx
 import { useChat } from 'veryfront/ai/react';
 
@@ -110,59 +109,22 @@ export default function MyChat() {
 ```typescript
 import { discoverAll } from 'veryfront/ai';
 
-// Discovers all tools, agents, resources, prompts
 await discoverAll({ baseDir: '.' });
 ```
 
-### 7. Start Building!
+### 7. Start Development Server
 
 ```bash
 veryfront dev
-# Your AI app is running!
-```
-
-### Agentic workflows
-
-Combine planners, executors, and MCP resources for multi-step automation:
-
-```typescript
-import { agent, createWorkflow } from 'veryfront/ai';
-import { z } from 'zod';
-
-const planner = agent({
-  model: 'openai/gpt-4o-mini',
-  system: 'Plan the work and delegate to tools',
-  tools: { search: true, browseWeb: true },
-});
-
-const executor = agent({
-  model: 'openai/gpt-4o',
-  system: 'Execute the plan and ship the artifact',
-  tools: { writeMarkdown: true },
-  resources: 'auto', // ai/resources/* + connected MCP servers are injected
-});
-
-const workflow = createWorkflow({
-  inputSchema: z.object({ goal: z.string() }),
-  steps: [
-    { name: 'plan', agent: planner },
-    { name: 'deliver', agent: executor, input: ({ plan }) => plan.tasks },
-  ],
-});
-
-const { result, transcript } = await workflow.run({
-  goal: 'Publish a launch brief',
-  resources: ['mcp://github/issues', 'mcp://notion/notes'], // merged with auto-discovered resources
-});
 ```
 
 ---
 
-## 📚 Core Concepts
+## Core Concepts
 
 ### Convention Over Configuration
 
-**Drop files in the right directory and they auto-register:**
+Drop files in the right directory and they auto-register:
 
 ```
 ai/
@@ -177,50 +139,29 @@ ai/
     └── system.ts       → "system" prompt
 ```
 
-**Zero configuration required!**
-
 ### Three-Layer Architecture
 
-**Layer 1: Headless Hooks**
-Complete control over logic and UI.
+| Layer | Purpose | Use Case |
+|-------|---------|----------|
+| **Layer 1: Hooks** | Logic only | Custom UI frameworks |
+| **Layer 2: Primitives** | Unstyled components | Design system integration |
+| **Layer 3: Components** | Styled, ready-to-use | Quick prototypes, MVPs |
 
-```typescript
-const { messages, input, append } = useChat({ api: '/api/chat' });
-```
-
-**Layer 2: Unstyled Primitives**
-Radix UI-based components. Bring your own styles.
-
-```tsx
-<ChatContainer>
-  <MessageList>
-    <MessageItem>{content}</MessageItem>
-  </MessageList>
-</ChatContainer>
-```
-
-**Layer 3: Styled Components**
-Production-ready with sensible defaults.
-
-```tsx
-<Chat {...chat} />
-```
-
-**Progressive Enhancement**: Start with Layer 3, drop to 2/1 as needed.
+Start with Layer 3, drop to Layer 2 or 1 as customization needs grow.
 
 ### Memory Strategies
 
-**Conversation** - Keeps all messages:
+**Conversation** - Retains all messages up to token limit:
 ```typescript
 memory: { type: 'conversation', maxTokens: 4000 }
 ```
 
-**Buffer** - Keeps last N messages:
+**Buffer** - Retains last N messages:
 ```typescript
 memory: { type: 'buffer', maxMessages: 10 }
 ```
 
-**Summary** - Auto-summarizes:
+**Summary** - Auto-summarizes older messages:
 ```typescript
 memory: { type: 'summary', maxMessages: 20 }
 ```
@@ -255,19 +196,19 @@ const result = await workflow.execute('Topic');
 
 ---
 
-## 🏭 Production Features
+## Production Features
 
 ### Rate Limiting
 
 ```typescript
 import { rateLimitMiddleware } from 'veryfront/ai/production';
 
-const agent = agent({
+const myAgent = agent({
   middleware: [
     rateLimitMiddleware({
       strategy: 'token-bucket',
       maxRequests: 10,
-      windowMs: 60000,  // 10 requests per minute
+      windowMs: 60000,
     }),
   ],
 });
@@ -278,11 +219,11 @@ const agent = agent({
 ```typescript
 import { cacheMiddleware } from 'veryfront/ai/production';
 
-const agent = agent({
+const myAgent = agent({
   middleware: [
     cacheMiddleware({
       strategy: 'ttl',
-      ttl: 300000,  // 5 minute cache
+      ttl: 300000,  // 5 minutes
     }),
   ],
 });
@@ -293,7 +234,7 @@ const agent = agent({
 ```typescript
 import { costTrackingMiddleware } from 'veryfront/ai/production';
 
-const agent = agent({
+const myAgent = agent({
   middleware: [
     costTrackingMiddleware({
       pricing: {
@@ -318,7 +259,7 @@ const agent = agent({
 ```typescript
 import { securityMiddleware, COMMON_BLOCKED_PATTERNS } from 'veryfront/ai/production';
 
-const agent = agent({
+const myAgent = agent({
   middleware: [
     securityMiddleware({
       input: {
@@ -327,7 +268,7 @@ const agent = agent({
         sanitize: true,
       },
       output: {
-        filterPII: true,  // Remove emails, phones, SSN, credit cards
+        filterPII: true,
       },
     }),
   ],
@@ -353,7 +294,7 @@ import { AIErrorBoundary } from 'veryfront/ai/components';
 
 ---
 
-## 🧪 Testing & Debugging
+## Testing & Debugging
 
 ### Test Agents
 
@@ -401,7 +342,7 @@ printInspectionReport(report);
 
 ---
 
-## 🌐 Multi-Runtime Support
+## Multi-Runtime Support
 
 ### Deno (Recommended)
 ```bash
@@ -418,14 +359,13 @@ node main.js
 bun run main.ts
 ```
 
-### Cloudflare Workers (Edge)
+### Cloudflare Workers
 ```typescript
-// Edge-optimized agent
 const edgeAgent = agent({
   model: 'gpt-4',
   edge: {
     enabled: true,
-    maxSteps: 3,  // Stay under 30s CPU limit
+    maxSteps: 3,
     streaming: true,
   },
 });
@@ -433,7 +373,44 @@ const edgeAgent = agent({
 
 ---
 
-## 📖 Complete Example
+## Agentic Workflows
+
+Combine planners, executors, and MCP resources for multi-step automation:
+
+```typescript
+import { agent, createWorkflow } from 'veryfront/ai';
+import { z } from 'zod';
+
+const planner = agent({
+  model: 'openai/gpt-4o-mini',
+  system: 'Plan the work and delegate to tools',
+  tools: { search: true, browseWeb: true },
+});
+
+const executor = agent({
+  model: 'openai/gpt-4o',
+  system: 'Execute the plan and ship the artifact',
+  tools: { writeMarkdown: true },
+  resources: 'auto',
+});
+
+const workflow = createWorkflow({
+  inputSchema: z.object({ goal: z.string() }),
+  steps: [
+    { name: 'plan', agent: planner },
+    { name: 'deliver', agent: executor, input: ({ plan }) => plan.tasks },
+  ],
+});
+
+const { result, transcript } = await workflow.run({
+  goal: 'Publish a launch brief',
+  resources: ['mcp://github/issues', 'mcp://notion/notes'],
+});
+```
+
+---
+
+## Complete Example
 
 ### Backend (API Route)
 
@@ -442,23 +419,22 @@ const edgeAgent = agent({
 import { agents } from '../../../ai/agents';
 
 export async function POST(req: Request) {
-  // Use auto-discovered agent with streaming response
   return agents.assistant.respond(req);
 }
 ```
 
-### Frontend (All 3 Layers)
+### Frontend
 
-**Layer 3 - Quick (1 line):**
 ```tsx
+// Layer 3 (1 line)
 import { Chat } from 'veryfront/ai/components';
 import { useChat } from 'veryfront/ai/react';
 
 export default () => <Chat {...useChat({ api: '/api/chat' })} />;
 ```
 
-**Layer 2 - Custom Styling:**
 ```tsx
+// Layer 2 (Custom styling)
 import { ChatContainer, MessageList, MessageItem } from 'veryfront/ai/primitives';
 import { useChat } from 'veryfront/ai/react';
 
@@ -476,8 +452,8 @@ export default function MyChat() {
 }
 ```
 
-**Layer 1 - Total Control:**
 ```tsx
+// Layer 1 (Total control)
 import { useChat } from 'veryfront/ai/react';
 
 export default function MyChat() {
@@ -498,54 +474,35 @@ export default function MyChat() {
 
 ---
 
-## 🎯 Next Steps
+## Next Steps
 
-### 1. Run the Full Demo
+1. **Run Examples**
+   - `examples/ai-basic/` - Platform detection + basic agent
+   - `examples/ai-autodiscovery/` - Auto-discovery + MCP server
+   - `examples/ai-phase3/` - Memory + composition
+   - `examples/full-demo/` - All features
 
-```bash
-cd examples/full-demo
-deno run --allow-net --allow-env --allow-read demo.ts
-```
+2. **Read Documentation**
+   - [AI Overview](./README.md) - Complete AI capabilities
+   - [Agent Reference](/reference/ai/agent.md) - Agent API
+   - [Tools Reference](/reference/ai/tools.md) - Tool API
+   - [Hooks Reference](/reference/ai/hooks.md) - React hooks
 
-### 2. Explore Examples
-
-- `examples/ai-basic/` - Platform detection + basic agent
-- `examples/ai-autodiscovery/` - Auto-discovery + MCP server
-- `examples/ai-phase3/` - Memory + composition
-- `examples/ai-dev-tools/` - Testing + debugging
-- `examples/full-demo/` - Complete demo (all features)
-
-### 3. Read the Docs
-
-- `SPEC_AI_NATIVE_FRAMEWORK.md` - Complete specification
-- `IMPLEMENTATION_STATUS.md` - Implementation details
-- `AI_FRAMEWORK_SUMMARY.md` - Quick reference
-- `src/ai/README.md` - Core module docs
-- Module-specific READMEs in `src/ai/react/`
-
-### 4. Start Building!
-
-```bash
-# Create your app structure
-mkdir -p my-ai-app/ai/{tools,agents,resources,prompts}
-
-# Add your first tool
-echo "..." > my-ai-app/ai/tools/my-tool.ts
-
-# Run auto-discovery
-# Tools and agents are automatically discovered!
-```
+3. **Start Building**
+   ```bash
+   mkdir -p my-ai-app/ai/{tools,agents,resources,prompts}
+   ```
 
 ---
 
-## 💡 Pro Tips
+## Tips
 
-### 1. Use Middleware Stack
+### Middleware Stack
 
 Combine production features:
 
 ```typescript
-const agent = agent({
+const myAgent = agent({
   middleware: [
     rateLimitMiddleware({...}),
     cacheMiddleware({...}),
@@ -555,17 +512,15 @@ const agent = agent({
 });
 ```
 
-### 2. Test Your Agents
+### Choosing a Layer
 
-```typescript
-import { testAgent } from 'veryfront/ai/dev';
+| Scenario | Recommended Layer |
+|----------|-------------------|
+| MVP / Demo | Layer 3 (styled components) |
+| Design system integration | Layer 2 (primitives) |
+| Specialized UI requirements | Layer 1 (hooks only) |
 
-await testAgent(agent, [
-  { name: 'Test', input: '...', expected: /.../ },
-]);
-```
-
-### 3. Monitor Costs
+### Monitor Costs
 
 ```typescript
 import { createCostTracker } from 'veryfront/ai/production';
@@ -575,34 +530,12 @@ const summary = tracker.getDailySummary();
 console.log(`Daily cost: $${summary.cost.toFixed(2)}`);
 ```
 
-### 4. Use the Right Layer
-
-- **MVP/Demo**: Layer 3 (styled components)
-- **Design System**: Layer 2 (primitives)
-- **Specialized App**: Layer 1 (hooks only)
-
 ---
 
-## 📚 Documentation
+## Related Documentation
 
-- **Specification**: `SPEC_AI_NATIVE_FRAMEWORK.md`
-- **Implementation**: `IMPLEMENTATION_STATUS.md`
-- **Summary**: `AI_FRAMEWORK_SUMMARY.md`
-- **This Guide**: `AI_GETTING_STARTED.md`
-- **Module Docs**: `src/ai/README.md` and subdirectories
-
----
-
-## 🎉 You're Ready!
-
-The Veryfront AI Native Framework is **100% complete** and **production-ready**.
-
-**Start building AI applications with:**
-- ✅ Convention-driven development
-- ✅ Multi-runtime support
-- ✅ Three-layer UI architecture
-- ✅ MCP integration
-- ✅ Production features
-- ✅ Developer tools
-
-**Happy building! 🚀**
+- [AI Overview](./README.md) - Complete AI capabilities overview
+- [Agent Reference](/reference/ai/agent.md) - Agent API reference
+- [Tools Reference](/reference/ai/tools.md) - Tool API reference
+- [Hooks Reference](/reference/ai/hooks.md) - React hooks for AI features
+- [Integrations](/reference/ai/integrations.md) - Service integrations

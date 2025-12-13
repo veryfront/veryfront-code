@@ -105,7 +105,7 @@ async function walkAppSSG(
   segDirs: string[],
   collected: AppRouteInfo[],
 ): Promise<void> {
-  const { join } = await import("std/path/mod.ts");
+  // Note: `join` is already imported at module level - no need for dynamic import
   const baseName = dir.split("/").pop() || "";
 
   if (isDynamicSegment(baseName)) {

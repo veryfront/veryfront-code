@@ -28,9 +28,9 @@ Veryfront is a modern React framework for Deno with multi-runtime support (Deno,
 ### AI System (Priority: High)
 - /docs/ai/README.md: Complete AI documentation index with overview of all AI capabilities and integration patterns
 - /docs/ai/getting-started.md: Build AI-powered applications in 5 minutes with agents, tools, and context management
-- /docs/ai/specification.md: Complete technical specification (2700+ lines) covering architecture, providers, agents, tools, and production features
-- /docs/ai/implementation-status.md: Current implementation status with completed features and roadmap
-- /docs/ai/summary.md: Quick reference for all AI features including agents, tools, providers, MCP integration, and production optimizations
+- /docs/reference/ai/agent.md: Agent API reference with configuration options
+- /docs/reference/ai/tools.md: Tool definition and auto-discovery system
+- /docs/reference/ai/hooks.md: React hooks for AI features (useChat, useAgent)
 
 ### API Reference (Priority: Medium)
 - /docs/api/README.md: Complete API surface documentation with all public APIs, types, and interfaces
@@ -164,7 +164,7 @@ This documentation is structured for both human developers and AI agents:
 
 **Building with AI:**
 1. Start with /docs/ai/getting-started.md
-2. Review /docs/ai/specification.md for complete capabilities
+2. Review /docs/reference/ai/agent.md and /docs/reference/ai/tools.md for API reference
 3. See working examples: /examples/ai-code-assistant/ or /examples/knowledge-base/
 
 **Migrating from Next.js:**

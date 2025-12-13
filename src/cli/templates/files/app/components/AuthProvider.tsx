@@ -27,7 +27,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Check if user is logged in
     fetch("/api/auth/me")
       .then(res => res.ok ? res.json() : null)
       .then(data => {

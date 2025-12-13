@@ -7,7 +7,6 @@ import {
 } from "../../../../src/server/dev-server/hmr-server.ts";
 import { getAdapter } from "@veryfront/platform/adapters/detect.ts";
 
-// Helper to find an available port
 async function getAvailablePort(): Promise<number> {
   const server = Deno.serve({
     port: 0,
@@ -48,10 +47,8 @@ Deno.test({
 
     server.start();
 
-    // Give server time to start
     await delay(100);
 
-    // Verify server is running by making a request
     const response = await fetch(`http://localhost:${port}/test`);
     assertEquals(response.status, 404);
     assertEquals(await response.text(), "Not Found");
@@ -105,7 +102,6 @@ Deno.test({
     server.start();
     await delay(100);
 
-    // Connect WebSocket client
     const ws = new WebSocket(`ws://localhost:${port}`);
 
     const messages: any[] = [];
@@ -113,12 +109,10 @@ Deno.test({
       messages.push(JSON.parse(event.data));
     };
 
-    // Wait for connection to open
     await new Promise((resolve) => {
       ws.onopen = resolve;
     });
 
-    // Wait for initial connection message
     await delay(100);
 
     assertEquals(messages.length, 1);
@@ -152,12 +146,10 @@ Deno.test({
       messages.push(JSON.parse(event.data));
     };
 
-    // Wait for connection
     await new Promise((resolve) => {
       ws.onopen = resolve;
     });
 
-    // Send update
     const update: HMRUpdate = {
       type: "update",
       path: "/src/app.tsx",
@@ -166,10 +158,8 @@ Deno.test({
 
     server.sendUpdate(update);
 
-    // Wait for update message
     await delay(100);
 
-    // Should have connected message and update message
     assertEquals(messages.length, 2);
     assertEquals(messages[1].type, "update");
     assertEquals(messages[1].path, "/src/app.tsx");
@@ -194,7 +184,6 @@ Deno.test({
     server.start();
     await delay(100);
 
-    // Connect multiple clients
     const clients = [];
     const messageArrays = [];
 
@@ -210,7 +199,6 @@ Deno.test({
       messageArrays.push(messages);
     }
 
-    // Wait for all connections
     await Promise.all(
       clients.map(
         (ws) =>
@@ -222,7 +210,6 @@ Deno.test({
 
     await delay(100);
 
-    // Send update to all clients
     const update: HMRUpdate = {
       type: "reload",
     };
@@ -230,13 +217,11 @@ Deno.test({
     server.sendUpdate(update);
     await delay(100);
 
-    // All clients should receive the update
     for (const messages of messageArrays) {
-      assertEquals(messages.length, 2); // connected + reload
+      assertEquals(messages.length, 2);
       assertEquals(messages[1].type, "reload");
     }
 
-    // Close all clients
     for (const ws of clients) {
       ws.close();
     }
@@ -260,7 +245,6 @@ Deno.test({
     server.start();
     await delay(100);
 
-    // Connect two clients
     const ws1 = new WebSocket(`ws://localhost:${port}`);
     const ws2 = new WebSocket(`ws://localhost:${port}`);
 
@@ -275,7 +259,6 @@ Deno.test({
       messages2.push(JSON.parse(event.data));
     };
 
-    // Wait for connections
     await Promise.all([
       new Promise((resolve) => {
         ws1.onopen = resolve;
@@ -287,11 +270,9 @@ Deno.test({
 
     await delay(100);
 
-    // Close one client
     ws1.close();
     await delay(100);
 
-    // Send update
     const update: HMRUpdate = {
       type: "update",
       path: "/test.css",
@@ -300,9 +281,8 @@ Deno.test({
     server.sendUpdate(update);
     await delay(100);
 
-    // Only ws2 should receive the update
-    assertEquals(messages1.length, 1); // Only connected message
-    assertEquals(messages2.length, 2); // Connected + update
+    assertEquals(messages1.length, 1);
+    assertEquals(messages2.length, 2);
     assertEquals(messages2[1].type, "update");
 
     ws2.close();
@@ -325,7 +305,6 @@ Deno.test({
     server.start();
     await delay(100);
 
-    // Make a regular HTTP request (no upgrade)
     const response = await fetch(`http://localhost:${port}/`, {
       headers: {
         connection: "keep-alive",
@@ -333,7 +312,7 @@ Deno.test({
     });
 
     assertEquals(response.status, 404);
-    await response.text(); // Consume the body to avoid leak
+    await response.text();
 
     await server.stop();
   },
@@ -354,7 +333,6 @@ Deno.test({
     server.start();
     await delay(100);
 
-    // Connect two clients
     const ws1 = new WebSocket(`ws://localhost:${port}`);
     const ws2 = new WebSocket(`ws://localhost:${port}`);
 
@@ -363,7 +341,6 @@ Deno.test({
       messages.push(JSON.parse(event.data));
     };
 
-    // Wait for connections
     await Promise.all([
       new Promise((resolve) => {
         ws1.onopen = resolve;
@@ -375,10 +352,8 @@ Deno.test({
 
     await delay(100);
 
-    // Close ws1 but don't wait for close event
     ws1.close();
 
-    // Send update immediately
     const update: HMRUpdate = {
       type: "update",
       path: "/test.js",
@@ -387,8 +362,7 @@ Deno.test({
     server.sendUpdate(update);
     await delay(100);
 
-    // ws2 should still receive the update
-    assertEquals(messages.length >= 2, true); // At least connected + update
+    assertEquals(messages.length >= 2, true);
 
     ws2.close();
     await server.stop();
@@ -406,7 +380,6 @@ Deno.test({
       adapter,
     });
 
-    // Access private method via prototype
     const proto = Object.getPrototypeOf(server);
     const runtime = proto.getHMRRuntime.call(server);
 
@@ -430,7 +403,6 @@ Deno.test({
     const proto = Object.getPrototypeOf(server);
     const runtime = proto.getHMRRuntime.call(server);
 
-    // Check runtime handles different message types
     assertEquals(runtime.includes("case 'connected':"), true);
     assertEquals(runtime.includes("case 'update':"), true);
     assertEquals(runtime.includes("case 'reload':"), true);
@@ -453,7 +425,6 @@ Deno.test({
     server.start();
     await delay(100);
 
-    // Connect multiple clients
     const clients = [];
     const closedPromises = [];
 
@@ -468,7 +439,6 @@ Deno.test({
       closedPromises.push(closedPromise);
     }
 
-    // Wait for all connections
     await Promise.all(
       clients.map(
         (ws) =>
@@ -478,10 +448,8 @@ Deno.test({
       ),
     );
 
-    // Stop server should close all connections
     await server.stop();
 
-    // All clients should be closed
     await Promise.all(closedPromises);
 
     for (const ws of clients) {

@@ -1,4 +1,3 @@
-declare const process: { env: Record<string, string | undefined> } | undefined;
 import { getEnv } from "../../platform/compat/process.ts";
 
 export function isRSCEnabled(config?: { experimental?: { rsc?: boolean } }): boolean {

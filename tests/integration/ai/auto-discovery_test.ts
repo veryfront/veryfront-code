@@ -1,6 +1,3 @@
-/**
- * Auto-Discovery Integration Tests
- */
 
 import { assertEquals, assertExists } from 'https://deno.land/std@0.220.0/assert/mod.ts';
 import { describe, it, beforeEach } from '@std/testing/bdd.ts';
@@ -13,7 +10,6 @@ import {
 
 describe('Auto-Discovery Integration', () => {
   beforeEach(() => {
-    // Clear registries
     toolRegistry.clear();
     resourceRegistry.clear();
     promptRegistry.clear();
@@ -25,7 +21,6 @@ describe('Auto-Discovery Integration', () => {
       verbose: false,
     });
 
-    // Should discover greet and searchWeb tools
     assertEquals(result.tools.size >= 2, true);
     assertExists(result.tools.get('greet') || result.tools.get('searchWeb'));
   });
@@ -36,7 +31,6 @@ describe('Auto-Discovery Integration', () => {
       verbose: false,
     });
 
-    // Should discover user profile resource
     assertEquals(result.resources.size >= 1, true);
   });
 
@@ -46,7 +40,6 @@ describe('Auto-Discovery Integration', () => {
       verbose: false,
     });
 
-    // Should discover support prompt
     assertEquals(result.prompts.size >= 1, true);
   });
 
@@ -56,7 +49,6 @@ describe('Auto-Discovery Integration', () => {
       verbose: false,
     });
 
-    // Tools should be in global registry
     const toolIds = toolRegistry.getAllIds();
     assertEquals(toolIds.length >= 2, true);
   });
@@ -67,7 +59,6 @@ describe('Auto-Discovery Integration', () => {
       verbose: false,
     });
 
-    // Should not crash, just return empty results
     assertExists(result);
     assertExists(result.errors);
   });

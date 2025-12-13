@@ -63,6 +63,7 @@ export function tokenBucketStrategy(
   store: RateLimitStore,
 ): Promise<{ allowed: boolean; remaining: number; resetTime: number }> {
   const now = Date.now();
+  // Refill rate: tokens per millisecond
   const refillRate = config.maxRequests / config.windowMs;
 
   if (!(store instanceof MemoryRateLimitStore)) {
@@ -72,31 +73,43 @@ export function tokenBucketStrategy(
   let state = store.getState(key);
 
   if (!state) {
+    // Start with full bucket minus one token for this request
     state = {
       count: config.maxRequests - 1,
       resetTime: now,
       requestTimestamps: [now],
     };
-  } else {
-    const timeElapsed = now - state.resetTime;
-    const tokensToAdd = timeElapsed * refillRate;
-    state.count = Math.min(config.maxRequests, state.count + tokensToAdd);
-    state.resetTime = now;
+    store.setState(key, state);
 
-    if (state.count < 1) {
-      store.setState(key, state);
-      const remaining = 0;
-      const resetTime = now + (config.maxRequests - state.count) / refillRate;
-      return Promise.resolve({ allowed: false, remaining, resetTime: Math.floor(resetTime) });
-    }
+    const remaining = Math.floor(state.count);
+    // Time to refill one token
+    const resetTime = now + Math.ceil(1 / refillRate);
 
-    state.count = state.count - 1;
+    return Promise.resolve({ allowed: true, remaining, resetTime });
   }
 
+  // Calculate tokens to add based on time elapsed
+  const timeElapsed = now - state.resetTime;
+  const tokensToAdd = timeElapsed * refillRate;
+  state.count = Math.min(config.maxRequests, state.count + tokensToAdd);
+  state.resetTime = now;
+
+  // Check if we have at least one token
+  if (state.count < 1) {
+    store.setState(key, state);
+    const remaining = 0;
+    // Time until we have 1 token
+    const resetTime = now + Math.ceil((1 - state.count) / refillRate);
+    return Promise.resolve({ allowed: false, remaining, resetTime });
+  }
+
+  // Consume one token
+  state.count = state.count - 1;
   store.setState(key, state);
 
   const remaining = Math.floor(state.count);
-  const resetTime = now + (config.maxRequests - remaining) / refillRate;
+  // Time until bucket is full again
+  const resetTime = now + Math.ceil((config.maxRequests - state.count) / refillRate);
 
-  return Promise.resolve({ allowed: true, remaining, resetTime: Math.floor(resetTime) });
+  return Promise.resolve({ allowed: true, remaining, resetTime });
 }

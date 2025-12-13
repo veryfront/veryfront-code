@@ -15,8 +15,11 @@ export class RSCProductionOptimizer {
   private static minifyHTML(html: string): string {
     return (
       html
+        // Remove comments
         .replace(/<!--[\s\S]*?-->/g, "")
+        // Remove unnecessary whitespace between tags
         .replace(/>\s+</g, "><")
+        // Remove leading/trailing whitespace
         .trim()
     );
   }
@@ -62,7 +65,7 @@ export class RSCProductionOptimizer {
   static checkETag(requestETag: string | null, payloadETag: string): boolean {
     if (!requestETag) return false;
 
-    const normalizeETag = (etag: string) => etag.replace(/^W\
+    const normalizeETag = (etag: string) => etag.replace(/^W\//, "").replace(/"/g, "");
 
     return normalizeETag(requestETag) === normalizeETag(payloadETag);
   }

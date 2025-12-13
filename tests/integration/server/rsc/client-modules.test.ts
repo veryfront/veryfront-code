@@ -6,7 +6,6 @@ import { withTestContext } from '../../../_helpers/context.ts'
 import { assertDrained, drainEventLoop } from '../../../_helpers/utils.ts'
 import { cleanupBundler } from '../../../../src/rendering/cleanup.ts'
 
-// Clean up renderer intervals to prevent resource leaks
 afterAll(async () => {
   await cleanupBundler()
 })
@@ -14,7 +13,6 @@ afterAll(async () => {
 describe('RSC client module', {}, () => {
   it('endpoint bundles app client component', async () => {
     await withTestContext('rsc-client-module', async (context) => {
-      // Enable RSC via config instead of env var
       await Deno.writeTextFile(
         join(context.projectDir, 'veryfront.config.js'),
         `export default { experimental: { rsc: true } };`,
@@ -24,7 +22,6 @@ describe('RSC client module', {}, () => {
 
       let h: Awaited<ReturnType<typeof startProductionServer>> | null = null
       try {
-        // Remove default app directory and recreate structure
         await Deno.remove(join(context.projectDir, 'app'), { recursive: true })
         await Deno.remove(join(context.projectDir, 'pages'), {
           recursive: true,
@@ -37,7 +34,6 @@ describe('RSC client module', {}, () => {
           await Deno.mkdir(join(context.projectDir, 'app', 'comp'), {
             recursive: true,
           })
-          // Simple client component
           await Deno.writeTextFile(
             join(context.projectDir, 'app', 'comp', 'Widget.tsx'),
             [
@@ -62,13 +58,11 @@ describe('RSC client module', {}, () => {
           )
           const code = await res.text()
           assert(res.status === 200)
-          // Should be ESM code containing an export
           assert(code.includes('export'))
         } finally {
           if (h?.stop) {
             await h.stop()
           }
-          // Give the server time to clean up
           await new Promise((resolve) => setTimeout(resolve, 500))
           await drainEventLoop(10, 50)
           await assertDrained({

@@ -1106,7 +1106,7 @@ export default tool({
 - Tool name derived from filename
 - Available to all agents
 
-**See Also:** [AI Specification](../../ai/specification.md)
+**See Also:** [AI Reference](../ai/README.md)
 
 ---
 

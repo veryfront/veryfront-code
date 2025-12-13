@@ -27,7 +27,6 @@ describe(
         assert(await exists(join(context.projectDir, "pages", "docs", "intro.mdx")));
         assert(await exists(join(context.projectDir, "layouts", "main.mdx")));
         assert(await exists(join(context.projectDir, "providers", "theme.mdx")));
-        // file might be nested; quick glob check by stat tries both
         assert(
           (await exists(join(context.projectDir, "pages", "api", "users", "[id].ts"))) ||
             (await exists(join(context.projectDir, "pages", "api", "users", "id.ts"))),
@@ -37,7 +36,6 @@ describe(
 
     it("respects preferredRouter: app-router", async () => {
       await withTestContext("generate-app-router", async (context: TestContext) => {
-        // Remove default config and create one with preferred router
         await Deno.remove(join(context.projectDir, "veryfront.config.js"));
         await Deno.writeTextFile(
           join(context.projectDir, "veryfront.config.js"),
@@ -55,9 +53,7 @@ describe(
     });
 
     it("page MyPage creates correct path for both routers", async () => {
-      // App Router
       await withTestContext("generate-mypage-app", async (context: TestContext) => {
-        // Remove default config and create one with app router preference
         await Deno.remove(join(context.projectDir, "veryfront.config.js"));
         await Deno.writeTextFile(
           join(context.projectDir, "veryfront.config.js"),
@@ -67,9 +63,7 @@ describe(
         assert(await exists(join(context.projectDir, "app", "MyPage", "page.tsx")));
       });
 
-      // Pages Router
       await withTestContext("generate-mypage-pages", async (context: TestContext) => {
-        // Remove default config and create one with pages router preference
         await Deno.remove(join(context.projectDir, "veryfront.config.js"));
         await Deno.writeTextFile(
           join(context.projectDir, "veryfront.config.js"),

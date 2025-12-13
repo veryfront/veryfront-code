@@ -14,17 +14,27 @@ export interface SSRModuleLoaderOptions {
   dev: boolean;
 }
 
-export const globalModuleCache = new Map<string, string>();
+/** Cache mapping file paths and content hashes to temp file paths */
+const globalModuleCache = new Map<string, string>();
+/** Set tracking files currently being transformed to prevent circular dependencies */
 const globalInProgress = new Set<string>();
+/** Cache of temp directories by project directory */
 const globalTmpDirs = new Map<string, string>();
 
-export function clearSSRModuleCache(): void {
+/**
+ * Clear the SSR module cache.
+ * Optionally clears temp directories as well.
+ */
+export function clearSSRModuleCache(options?: { clearTmpDirs?: boolean }): void {
   globalModuleCache.clear();
   globalInProgress.clear();
+  if (options?.clearTmpDirs) {
+    globalTmpDirs.clear();
+  }
 }
 
 export class SSRModuleLoader {
-  private fs = createFileSystem();
+  private localFs = createFileSystem();
 
   constructor(private options: SSRModuleLoaderOptions) {}
 
@@ -32,16 +42,7 @@ export class SSRModuleLoader {
     filePath: string,
     source: string,
   ): Promise<React.ComponentType<Record<string, unknown>>> {
-    const mod = await this.loadFullModule(filePath, source);
-    return this.extractComponent(mod, filePath);
-  }
-
-  async loadFullModule(
-    filePath: string,
-    source?: string,
-  ): Promise<Record<string, unknown>> {
-    const fileContent = source ?? await this.options.adapter.fs.readFile(filePath);
-    await this.transformWithDependencies(filePath, fileContent);
+    await this.transformWithDependencies(filePath, source);
 
     const tempPath = globalModuleCache.get(filePath);
     if (!tempPath) {
@@ -53,13 +54,16 @@ export class SSRModuleLoader {
     }
 
     const cacheBuster = Date.now();
-    return await import(`file://${tempPath}?t=${cacheBuster}`);
+    const mod = await import(`file://${tempPath}?t=${cacheBuster}`);
+
+    return this.extractComponent(mod, filePath);
   }
 
   private async transformWithDependencies(
     filePath: string,
     source?: string,
   ): Promise<void> {
+    // Use adapter's fs for reading project files (supports remote FSAdapter)
     const code = source ?? await this.options.adapter.fs.readFile(filePath);
 
     const contentHash = this.hashCode(code);
@@ -82,7 +86,6 @@ export class SSRModuleLoader {
         code,
         filePath,
         this.options.projectDir,
-        { adapter: this.options.adapter },
       );
 
       for (const imp of localImports) {
@@ -103,10 +106,10 @@ export class SSRModuleLoader {
         transformOpts,
       );
 
-      const tempPath = await this.getTempPath(filePath);
+      const tempPath = await this.getTempPath(filePath, contentHash);
       const tempDir = tempPath.substring(0, tempPath.lastIndexOf("/"));
-      await this.fs.mkdir(tempDir, { recursive: true });
-      await this.fs.writeTextFile(tempPath, transformed);
+      await this.localFs.mkdir(tempDir, { recursive: true });
+      await this.localFs.writeTextFile(tempPath, transformed);
 
       globalModuleCache.set(cacheKey, tempPath);
       globalModuleCache.set(filePath, tempPath);
@@ -115,17 +118,20 @@ export class SSRModuleLoader {
     }
   }
 
+  /**
+   * Generate a simple hash code for content-based cache keys.
+   * Uses djb2 algorithm variant for better distribution.
+   */
   private hashCode(str: string): string {
-    let hash = 0;
+    let hash = 5381;
     for (let i = 0; i < str.length; i++) {
       const char = str.charCodeAt(i);
-      hash = ((hash << 5) - hash) + char;
-      hash = hash & hash;
+      hash = ((hash << 5) + hash) ^ char;
     }
-    return Math.abs(hash).toString(16);
+    return Math.abs(hash).toString(16).padStart(8, "0");
   }
 
-  private async getTempPath(filePath: string): Promise<string> {
+  private async getTempPath(filePath: string, contentHash?: string): Promise<string> {
     const tmpDir = await this.ensureTmpDir();
 
     let relativePath = filePath;
@@ -134,7 +140,8 @@ export class SSRModuleLoader {
       relativePath = filePath.substring(projectDir.length);
     }
 
-    const jsPath = relativePath.replace(/\.(tsx?|jsx|mdx)$/, ".js");
+    const hashSuffix = contentHash ? `.${contentHash}` : "";
+    const jsPath = relativePath.replace(/\.(tsx?|jsx|mdx)$/, `${hashSuffix}.js`);
     return join(tmpDir, jsPath);
   }
 
@@ -148,7 +155,7 @@ export class SSRModuleLoader {
 
     const tmpDir = join(projectDir, "node_modules", ".cache", "veryfront-ssr");
 
-    await this.fs.mkdir(tmpDir, { recursive: true });
+    await this.localFs.mkdir(tmpDir, { recursive: true });
     globalTmpDirs.set(projectDir, tmpDir);
     return tmpDir;
   }

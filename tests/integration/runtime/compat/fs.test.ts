@@ -45,11 +45,9 @@ Deno.test("filesystem read/write operations", async () => {
 
   await fs.writeTextFile(testFile, "Hello World");
 
-  // Verify file exists
   const exists = await fs.exists(testFile);
   assert(exists, "File should exist");
 
-  // Clean up
   await fs.remove(testFile);
 });
 
@@ -63,7 +61,6 @@ Deno.test("filesystem read text file", async () => {
   const readContent = await fs.readTextFile(testFile);
   assertEquals(readContent, content);
 
-  // Clean up
   await fs.remove(testFile);
 });
 
@@ -90,7 +87,6 @@ Deno.test("should verify file exists after write operation", async () => {
   const exists = await fs.exists(testFile);
   assert(exists, "File should exist");
 
-  // Clean up
   await fs.remove(testFile);
 });
 
@@ -117,7 +113,6 @@ Deno.test("should provide correct stat information for files", async () => {
   assert(stat.size > 0, "File size should be greater than 0");
   assertExists(stat.mtime);
 
-  // Clean up
   await fs.remove(testFile);
 });
 
@@ -133,7 +128,6 @@ Deno.test("should provide correct stat information for directories", async () =>
   assert(!stat.isFile, "Should not be a file");
   assert(stat.isDirectory, "Should be a directory");
 
-  // Clean up
   await fs.remove(testDir);
 });
 
@@ -149,7 +143,6 @@ Deno.test("should create directory with mkdir operation", async () => {
   const stat = await fs.stat(testDir);
   assert(stat.isDirectory, "Should be a directory");
 
-  // Clean up
   await fs.remove(testDir);
 });
 
@@ -162,7 +155,6 @@ Deno.test("should create nested directories with recursive option", async () => 
   const exists = await fs.exists(nestedDir);
   assert(exists, "Nested directory should exist");
 
-  // Clean up
   await fs.remove(join(TEST_DIR, "parent"), { recursive: true });
 });
 
@@ -172,7 +164,6 @@ Deno.test("should list directory contents with correct file and directory entrie
 
   await fs.mkdir(testDir);
 
-  // Create files and subdirectories
   await fs.writeTextFile(join(testDir, "file1.txt"), "content1");
   await fs.writeTextFile(join(testDir, "file2.txt"), "content2");
   await fs.mkdir(join(testDir, "subdir"));
@@ -194,7 +185,6 @@ Deno.test("should list directory contents with correct file and directory entrie
   assert(!subdir.isFile, "subdir should not be a file");
   assert(subdir.isDirectory, "subdir should be a directory");
 
-  // Clean up
   await fs.remove(testDir, { recursive: true });
 });
 
@@ -208,7 +198,6 @@ Deno.test("should return empty array for empty directory", async () => {
 
   assertEquals(entries.length, 0);
 
-  // Clean up
   await fs.remove(testDir);
 });
 
@@ -269,7 +258,6 @@ Deno.test("should overwrite file content when writing to existing file", async (
   content = await fs.readTextFile(testFile);
   assertEquals(content, "new content");
 
-  // Clean up
   await fs.remove(testFile);
 });
 
@@ -283,7 +271,6 @@ Deno.test("should handle UTF-8 content including emojis and special characters",
   const readContent = await fs.readTextFile(testFile);
   assertEquals(readContent, utf8Content);
 
-  // Clean up
   await fs.remove(testFile);
 });
 
@@ -297,7 +284,6 @@ Deno.test("should preserve multiline content with newline characters", async () 
   const readContent = await fs.readTextFile(testFile);
   assertEquals(readContent, multilineContent);
 
-  // Clean up
   await fs.remove(testFile);
 });
 
@@ -313,7 +299,6 @@ Deno.test("should handle empty files with zero size", async () => {
   const stat = await fs.stat(testFile);
   assertEquals(stat.size, 0);
 
-  // Clean up
   await fs.remove(testFile);
 });
 
@@ -321,7 +306,6 @@ Deno.test("should handle large files with 1MB content", async () => {
   const fs = createFileSystem();
   const testFile = join(TEST_DIR, "large-test.txt");
 
-  // Create a large content (1MB)
   const largeContent = "a".repeat(1024 * 1024);
   await fs.writeTextFile(testFile, largeContent);
 
@@ -332,7 +316,6 @@ Deno.test("should handle large files with 1MB content", async () => {
   const stat = await fs.stat(testFile);
   assert(stat.size >= 1024 * 1024, "File size should be at least 1MB");
 
-  // Clean up
   await fs.remove(testFile);
 });
 
@@ -346,7 +329,6 @@ Deno.test("should report correct file size in stat information", async () => {
   const stat = await fs.stat(testFile);
   assertEquals(stat.size, content.length);
 
-  // Clean up
   await fs.remove(testFile);
 });
 
@@ -357,7 +339,6 @@ Deno.test("should update modification time when file is written", async () => {
   await fs.writeTextFile(testFile, "content1");
   const stat1 = await fs.stat(testFile);
 
-  // Wait a bit to ensure time difference
   await new Promise((resolve) => setTimeout(resolve, 100));
 
   await fs.writeTextFile(testFile, "content2");
@@ -370,7 +351,6 @@ Deno.test("should update modification time when file is written", async () => {
     assert(stat2.mtime >= stat1.mtime, "mtime should be updated");
   }
 
-  // Clean up
   await fs.remove(testFile);
 });
 
@@ -378,34 +358,27 @@ Deno.test("should handle sequential file operations across multiple files", asyn
   const fs = createFileSystem();
   const testDir = join(TEST_DIR, "sequence-test");
 
-  // Create directory
   await fs.mkdir(testDir);
 
-  // Create multiple files
   for (let i = 0; i < 5; i++) {
     await fs.writeTextFile(join(testDir, `file${i}.txt`), `content${i}`);
   }
 
-  // Read directory
   const entries = await collectEntries(fs, testDir);
   assertEquals(entries.length, 5);
 
-  // Read each file
   for (let i = 0; i < 5; i++) {
     const content = await fs.readTextFile(join(testDir, `file${i}.txt`));
     assertEquals(content, `content${i}`);
   }
 
-  // Remove all files
   for (let i = 0; i < 5; i++) {
     await fs.remove(join(testDir, `file${i}.txt`));
   }
 
-  // Directory should be empty
   const emptyEntries = await collectEntries(fs, testDir);
   assertEquals(emptyEntries.length, 0);
 
-  // Clean up
   await fs.remove(testDir);
 });
 
@@ -415,7 +388,6 @@ Deno.test("should handle concurrent file write operations", async () => {
 
   await fs.mkdir(testDir);
 
-  // Write multiple files concurrently
   const promises = [];
   for (let i = 0; i < 10; i++) {
     promises.push(fs.writeTextFile(join(testDir, `file${i}.txt`), `content${i}`));
@@ -423,11 +395,9 @@ Deno.test("should handle concurrent file write operations", async () => {
 
   await Promise.all(promises);
 
-  // Verify all files exist
   const entries = await collectEntries(fs, testDir);
   assertEquals(entries.length, 10);
 
-  // Clean up
   await fs.remove(testDir, { recursive: true });
 });
 
@@ -449,11 +419,9 @@ Deno.test("should handle filenames with special characters", async () => {
   const names = entries.map((e) => e.name).sort();
   assertEquals(names, specialNames.sort());
 
-  // Clean up
   await fs.remove(testDir, { recursive: true });
 });
 
-// Clean up test directory at the end
 Deno.test("should cleanup temporary test directory", async () => {
   await cleanup();
 });

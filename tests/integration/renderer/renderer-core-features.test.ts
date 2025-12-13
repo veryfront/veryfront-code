@@ -1,10 +1,3 @@
-/**
- * VeryfrontRenderer Features Tests (Part 2 of 3)
- * Tests: App Router Specific Features, HTML Generation, getAllPages,
- *        Virtual Module System, Error Handling, Default MDX Components,
- *        RenderResult Validation, Cache Boundary Tests,
- *        Streaming Error Recovery, Layout Compilation Failure Handling
- */
 
 import {
   assert,
@@ -20,7 +13,6 @@ import { withTestContext } from "../../_helpers/context.ts";
 import type { VeryfrontRenderer as _VeryfrontRenderer } from "../../../src/rendering/orchestrator/ssr.ts";
 
   // Note: Sanitizers disabled due to React 19 SSR MessagePort cleanup issue
-  // See: https://github.com/facebook/react/issues/24669
   describe(
   "VeryfrontRenderer Core - Features",
   {
@@ -302,7 +294,6 @@ title: Broken
             mode: "development",
           });
 
-          // Should handle the error during rendering
           await assertRejects(
             async () => await renderer.renderPage("error-page"),
             Error,
@@ -372,7 +363,6 @@ description: Test description
 
           const result = await renderer.renderPage("validation-test-page");
 
-          // Validate required fields
           assertEquals(typeof result.html, "string");
           assertExists(result.frontmatter);
           assertEquals(typeof result.frontmatter, "object");
@@ -460,7 +450,6 @@ layout: true
             mode: "development",
           });
 
-          // Create multiple pages (not hitting full limit to keep test fast)
           const pageCount = 10;
           for (let i = 0; i < pageCount; i++) {
             await Deno.writeTextFile(
@@ -474,13 +463,11 @@ title: Page ${i}
             );
           }
 
-          // Render all pages
           for (let i = 0; i < pageCount; i++) {
             const result = await renderer.renderPage(`page-${i}`);
             assertExists(result);
           }
 
-          // Verify cache is working
           const result = await renderer.renderPage("page-0");
           assertEquals(result.frontmatter.title, "Page 0");
         });
@@ -495,7 +482,6 @@ title: Page ${i}
             mode: "development",
           });
 
-          // Create test pages
           await Deno.writeTextFile(
             join(context.projectDir, "pages", "first.mdx"),
             `# First Page`,
@@ -508,7 +494,6 @@ title: Page ${i}
           await renderer.renderPage("first");
           await renderer.renderPage("second");
 
-          // Both should be renderable
           const result1 = await renderer.renderPage("first");
           const result2 = await renderer.renderPage("second");
           assertExists(result1);
@@ -530,15 +515,12 @@ title: Page ${i}
             mode: "development",
           });
 
-          // Render multiple times
           for (let i = 0; i < 5; i++) {
             await renderer.renderPage("test");
           }
 
-          // Clear cache
           renderer.clearCache();
 
-          // Should still work after clearing
           const result = await renderer.renderPage("test");
           assertExists(result);
         });
@@ -564,7 +546,6 @@ title: Page ${i}
             delivery: "stream",
           });
 
-          // Should still return valid HTML even if stream fails
           assertEquals(typeof result.html, "string");
           assertStringIncludes(result.html, "Stream Test");
         });
@@ -678,16 +659,11 @@ layout: nonexistent
             mode: "development",
           });
 
-          // Should render without layout if not found
           const result = await renderer.renderPage("test");
           assertExists(result);
         });
       });
 
-      // SKIPPED: Test expects error but layout isn't discovered without `isLayout: true` frontmatter
-      // Root cause: Layout files require `isLayout: true` in frontmatter to be discovered (by design)
-      // See: src/types/entities/getEntityInfo.ts:159
-      // Investigation: RENDERER_CORE_TEST_INVESTIGATION.md (Session 36-37)
       it.skip("should handle layout with runtime errors", async () => {
         await withTestContext("renderer-core-layout-runtime", async (context) => {
           await Deno.remove(join(context.projectDir, "app"), { recursive: true });
@@ -717,7 +693,6 @@ layout: runtime-error
             mode: "development",
           });
 
-          // Runtime errors during React rendering should propagate through renderToString
           await assertRejects(
             async () => await renderer.renderPage("test"),
             Error,

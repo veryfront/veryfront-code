@@ -1,78 +1,24 @@
-/**
- * Message Component - Layer 3 (Styled)
- *
- * Production-ready message display with AI SDK v5 parts support.
- */
 
 import * as React from "react";
 import { MessageContent, MessageItem, MessageRole } from "../primitives/index.ts";
-import type { ToolUIPart, UIMessage, UIMessagePart } from "../hooks/index.ts";
+import type { Message as MessageType } from "../../types/agent.ts";
 import { type ChatTheme, cn, defaultChatTheme, mergeThemes } from "./theme.ts";
 
 export interface MessageProps {
-  /** Message to display (v5 UIMessage format) */
-  message: UIMessage;
+  message: MessageType;
 
-  /** Additional class name */
   className?: string;
 
-  /** Theme customization */
   theme?: Partial<ChatTheme>;
 
-  /** Show role label */
   showRole?: boolean;
 
-  /** Show timestamp */
   showTimestamp?: boolean;
-
-  /** Custom renderer for tool calls (matches tool-${toolName} pattern) */
-  renderToolCall?: (part: ToolUIPart) => React.ReactNode;
-
-  /** Custom renderer for dynamic tools */
-  renderDynamicTool?: (
-    part: Extract<UIMessagePart, { type: "dynamic-tool" }>,
-  ) => React.ReactNode;
-
-  /** Custom renderer for reasoning */
-  renderReasoning?: (part: Extract<UIMessagePart, { type: "reasoning" }>) => React.ReactNode;
 }
 
-/**
- * Helper to extract text content from v5 parts array
- */
-function getTextFromParts(parts: UIMessagePart[]): string {
-  return parts
-    .filter((p): p is Extract<UIMessagePart, { type: "text" }> => p.type === "text")
-    .map((p) => p.text)
-    .join("");
-}
-
-/**
- * Message - Styled message component with v5 parts support
- *
- * @example
- * ```tsx
- * import { Message } from 'veryfront/ai/components';
- *
- * <Message
- *   message={msg}
- *   showRole={true}
- *   renderToolCall={(part) => <MyToolUI part={part} />}
- * />
- * ```
- */
 export const Message = React.forwardRef<HTMLDivElement, MessageProps>(
   (
-    {
-      message,
-      className,
-      theme: userTheme,
-      showRole = false,
-      showTimestamp = false,
-      renderToolCall,
-      renderDynamicTool,
-      renderReasoning,
-    },
+    { message, className, theme: userTheme, showRole = false, showTimestamp = false },
     ref,
   ) => {
     const theme = mergeThemes(defaultChatTheme, userTheme);
@@ -94,64 +40,11 @@ export const Message = React.forwardRef<HTMLDivElement, MessageProps>(
             </MessageRole>
           )}
 
-          {/* Render parts array (v5 format) */}
-          {message.parts.map((part, index) => {
-            const key = `${message.id}-part-${index}`;
+          <MessageContent>{message.content}</MessageContent>
 
-            switch (part.type) {
-              case "text":
-                return (
-                  <MessageContent key={key}>
-                    {part.text}
-                  </MessageContent>
-                );
-
-              case "reasoning":
-                if (renderReasoning) {
-                  return <React.Fragment key={key}>{renderReasoning(part)}</React.Fragment>;
-                }
-                return (
-                  <div key={key} className="text-sm italic opacity-70 my-2 pl-2 border-l-2">
-                    {part.text}
-                  </div>
-                );
-
-              case "dynamic-tool":
-                if (renderDynamicTool) {
-                  return <React.Fragment key={key}>{renderDynamicTool(part)}</React.Fragment>;
-                }
-                return (
-                  <div key={key} className="text-xs bg-blue-50 rounded p-2 my-2">
-                    <span className="font-mono">{part.toolName}</span>
-                    <span className="ml-2 text-blue-500">[dynamic: {part.state}]</span>
-                    {part.errorText && <div className="text-red-600 mt-1">{part.errorText}</div>}
-                  </div>
-                );
-
-              default:
-                // Handle tool-${toolName} pattern (AI SDK v5) - type starts with "tool-"
-                if (part.type.startsWith("tool-") && "toolCallId" in part) {
-                  const toolPart = part as ToolUIPart;
-                  if (renderToolCall) {
-                    return <React.Fragment key={key}>{renderToolCall(toolPart)}</React.Fragment>;
-                  }
-                  return (
-                    <div key={key} className="text-xs bg-gray-100 rounded p-2 my-2">
-                      <span className="font-mono">{toolPart.toolName}</span>
-                      <span className="ml-2 text-gray-500">[{toolPart.state}]</span>
-                      {toolPart.errorText && (
-                        <div className="text-red-600 mt-1">{toolPart.errorText}</div>
-                      )}
-                    </div>
-                  );
-                }
-                return null;
-            }
-          })}
-
-          {showTimestamp && message.createdAt && (
+          {showTimestamp && message.timestamp && (
             <div className="text-xs opacity-60 mt-1">
-              {new Date(message.createdAt).toLocaleTimeString()}
+              {new Date(message.timestamp).toLocaleTimeString()}
             </div>
           )}
         </div>
@@ -163,37 +56,20 @@ export const Message = React.forwardRef<HTMLDivElement, MessageProps>(
 Message.displayName = "Message";
 
 export interface StreamingMessageProps {
-  /** Streaming parts (v5 format) */
-  parts: UIMessagePart[];
+  content: string;
 
-  /** Show typing cursor */
   showCursor?: boolean;
 
-  /** Additional class name */
   className?: string;
 
-  /** Theme customization */
   theme?: Partial<ChatTheme>;
 }
 
-/**
- * StreamingMessage - Display streaming message with v5 parts
- *
- * @example
- * ```tsx
- * import { StreamingMessage } from 'veryfront/ai/components';
- *
- * {isStreaming && (
- *   <StreamingMessage parts={streamingParts} showCursor={true} />
- * )}
- * ```
- */
 export const StreamingMessage = React.forwardRef<
   HTMLDivElement,
   StreamingMessageProps
->(({ parts, showCursor = true, className, theme: userTheme }, ref) => {
+>(({ content, showCursor = true, className, theme: userTheme }, ref) => {
   const theme = mergeThemes(defaultChatTheme, userTheme);
-  const textContent = getTextFromParts(parts);
 
   return (
     <MessageItem
@@ -203,7 +79,7 @@ export const StreamingMessage = React.forwardRef<
     >
       <div className={theme.message?.assistant}>
         <MessageContent>
-          {textContent}
+          {content}
           {showCursor && <span className="inline-block w-1 h-4 bg-current ml-1 animate-pulse" />}
         </MessageContent>
       </div>

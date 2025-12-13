@@ -24,7 +24,6 @@ export async function globFiles(pattern: string): Promise<string[]> {
 
   const parts = pattern.split("**");
   const baseDir = parts[0] ? parts[0] : ".";
-  const _filePattern = parts[1] ? parts[1] : "";
 
   const normalizedPattern = pattern.startsWith("./") ? pattern.slice(2) : pattern;
 
@@ -44,7 +43,10 @@ export async function globFiles(pattern: string): Promise<string[]> {
 }
 
 export function matchPattern(path: string, pattern: string): boolean {
-  // Order matters: expand braces first, then escape dots, then handle
+  const regexPattern = pattern
+    .replace(/\{([^}]+)\}/g, (_, group) => `(${group.split(",").join("|")})`)
+    .replace(/\./g, "\\.")
+    .replace(/\/\*\*\//g, "/(.*/)?")
     .replace(/\*/g, "[^/]*");
 
   const regex = new RegExp("^" + regexPattern + "$");

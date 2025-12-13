@@ -9,7 +9,6 @@ import type {
 import { hasMatchingEtag } from "../../utils/etag.ts";
 import { getContentType } from "../../utils/content-types.ts";
 import { createRenderer } from "@veryfront/rendering/index.ts";
-import { serverLogger as _logger } from "@veryfront/utils";
 import { getRenderer } from "./renderer-manager.ts";
 import { computeSSRETag } from "./etag-handler.ts";
 import { tryNotFoundFallback } from "./not-found-fallback.ts";

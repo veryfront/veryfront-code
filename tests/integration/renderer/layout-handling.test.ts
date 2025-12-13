@@ -14,7 +14,6 @@ import {
 } from "@veryfront/rendering/layouts/index.ts";
 import { withTestContext } from "../../_helpers/context.ts";
 
-// Mock adapter for testing
 function _createMockAdapter(
   files: Map<string, { content: string; isFile: boolean; isDirectory: boolean }>,
 ): RuntimeAdapter {
@@ -88,7 +87,6 @@ function _createMockAdapter(
   } as RuntimeAdapter;
 }
 
-// Helper to create a mock compileMDX function
 function createMockCompileMDX() {
   return (_content: string, frontmatter?: any, _filePath?: string): Promise<MdxBundle> => {
     return Promise.resolve({
@@ -115,11 +113,9 @@ describe(
           const pageDir = `${context.projectDir}/pages/blog`;
           await Deno.mkdir(pageDir, { recursive: true });
 
-          // Create a page file
           const pageFile = `${pageDir}/post.mdx`;
           await Deno.writeTextFile(pageFile, "# Hello World");
 
-          // Create a layout file
           const layoutFile = `${pageDir}/layout.mdx`;
           await Deno.writeTextFile(
             layoutFile,
@@ -199,14 +195,12 @@ describe(
         await withTestContext("layout-handling-discover-nested", async (context) => {
           const adapter = await getAdapter();
 
-          // Create nested directory structure: pages/blog/2024/
           const nestedDir = `${context.projectDir}/pages/blog/2024`;
           await Deno.mkdir(nestedDir, { recursive: true });
 
           const pageFile = `${nestedDir}/post.mdx`;
           await Deno.writeTextFile(pageFile, "# Post");
 
-          // Create layouts at different levels
           const rootLayout = `${context.projectDir}/pages/layout.tsx`;
           const blogLayout = `${context.projectDir}/pages/blog/layout.tsx`;
           const yearLayout = `${nestedDir}/layout.tsx`;
@@ -231,7 +225,6 @@ describe(
             adapter,
           );
 
-          // Should discover all three layouts, ordered from root to leaf
           assertEquals(layouts.length, 3);
           assert(layouts[0]?.path?.endsWith("pages/layout.tsx"));
           assert(layouts[1]?.path?.endsWith("pages/blog/layout.tsx"));
@@ -268,7 +261,6 @@ describe(
           const pageFile = `${pageDir}/page.mdx`;
           await Deno.writeTextFile(pageFile, "# Page");
 
-          // Create both MDX and TSX layouts
           const mdxLayout = `${pageDir}/layout.mdx`;
           const tsxLayout = `${pageDir}/layout.tsx`;
           await Deno.writeTextFile(
@@ -287,9 +279,7 @@ describe(
             adapter,
           );
 
-          // Should discover both layouts
           assert(layouts.length >= 1);
-          // Check that at least one layout is present
           const hasMdx = layouts.some((l) => l.kind === "mdx");
           const hasTsx = layouts.some((l) => l.kind === "tsx");
           assert(hasMdx || hasTsx, "Should discover at least one layout");
@@ -342,7 +332,6 @@ describe(
           const pageFile = `${deepPath}/page.mdx`;
           await Deno.writeTextFile(pageFile, "# Deep Page");
 
-          // Create layout at level c
           const layoutC = `${context.projectDir}/pages/a/b/c/layout.tsx`;
           await Deno.writeTextFile(
             layoutC,
@@ -370,7 +359,6 @@ describe(
           const pageFile = `${pageDir}/index.mdx`;
           await Deno.writeTextFile(pageFile, "# Index");
 
-          // Create layout outside pages directory (should not be discovered)
           const outsideLayout = `${context.projectDir}/layout.tsx`;
           await Deno.writeTextFile(
             outsideLayout,
@@ -384,7 +372,6 @@ describe(
             adapter,
           );
 
-          // Should not include the outside layout
           assertEquals(
             layouts.every((l) => !l.path?.includes("layout.tsx") || l.path.includes("/pages/")),
             true,
@@ -434,7 +421,6 @@ describe(
 
           await compileMDXLayouts(layouts, compileMDX, adapter);
 
-          // TSX layouts should not have bundles
           assertEquals(layouts[0]!.bundle, undefined);
         });
       });
@@ -487,11 +473,9 @@ describe(
             },
           ];
 
-          // This should be a no-op since bundle already exists
           const compileMDX = createMockCompileMDX();
           await compileMDXLayouts(layouts, compileMDX, adapter);
 
-          // Bundle should remain unchanged
           assertEquals(layouts[0]!.bundle, existingBundle);
         });
       });
@@ -516,7 +500,6 @@ describe(
 
           await Deno.writeTextFile(layouts[0]!.path!, "broken mdx content");
 
-          // Should throw on compilation error
           await assertRejects(
             async () => await compileMDXLayouts(layouts, failingCompileMDX, adapter),
             Error,
@@ -622,7 +605,6 @@ describe(
           const hash = await computeDepsHash(layoutBundle, nestedLayouts, providerInfos, adapter);
 
           assertExists(hash);
-          // Hash should contain multiple parts joined by ':'
           assert(hash.includes(":"));
         });
       });
@@ -649,10 +631,8 @@ describe(
             },
           ];
 
-          // Should not throw, just skip the missing file
           const hash = await computeDepsHash(undefined, nestedLayouts, [], adapter);
 
-          // Hash might be empty or partial depending on error handling
           assertExists(hash);
         });
       });
@@ -686,7 +666,6 @@ describe(
           const adapter = await getAdapter();
           const cache = new LRUCache<string, any>({ maxEntries: 10 });
 
-          // Create deno.json with import map
           await Deno.writeTextFile(
             `${context.projectDir}/deno.json`,
             JSON.stringify({
@@ -720,7 +699,6 @@ describe(
           );
 
           assertExists(result);
-          // Result should be an object (React element or similar structure)
           assertEquals(typeof result, "object");
         });
       });
@@ -802,7 +780,6 @@ describe(
             adapter,
           );
 
-          // Should return the original element
           assertEquals(result, pageElement);
         });
       });
@@ -1023,7 +1000,6 @@ describe(
             },
           ];
 
-          // Should skip layouts without paths
           await compileMDXLayouts(layouts, compileMDX, adapter);
 
           assertEquals(layouts[0]!.bundle, undefined);
@@ -1037,7 +1013,6 @@ describe(
 
           const pageElement = React.createElement("div", {}, "Page");
 
-          // Create a layout that might cause circular reference
           const layoutBundle: MdxBundle = {
             compiledCode: `
               function Layout(props) {
@@ -1048,7 +1023,6 @@ describe(
             frontmatter: {},
           };
 
-          // Should handle gracefully
           const result = await applyLayoutsFunctionBody(
             pageElement,
             layoutBundle,
@@ -1069,7 +1043,6 @@ describe(
           const adapter = await getAdapter();
           const cache = new LRUCache<string, any>({ maxEntries: 10 });
 
-          // Create a complex page element with multiple children
           const pageElement = React.createElement(
             "div",
             {},
@@ -1163,7 +1136,6 @@ describe(
             },
           ];
 
-          // Should skip providers without code
           const result = await applyLayoutsFunctionBody(
             pageElement,
             undefined,
@@ -1185,11 +1157,9 @@ describe(
         await withTestContext("layout-handling-full-workflow", async (context) => {
           const adapter = await getAdapter();
 
-          // Setup directory structure
           const blogDir = `${context.projectDir}/pages/blog`;
           await Deno.mkdir(blogDir, { recursive: true });
 
-          // Create page and layout files
           const pageFile = `${blogDir}/post.mdx`;
           const rootLayout = `${context.projectDir}/pages/layout.tsx`;
           const blogLayout = `${blogDir}/layout.mdx`;
@@ -1204,7 +1174,6 @@ describe(
             'export const MDXLayout = ({ children }) => <div id="blog">{children}</div>',
           );
 
-          // Step 1: Discover layouts
           const layouts = await discoverNestedLayouts(
             pageFile,
             `${context.projectDir}/pages`,
@@ -1214,21 +1183,17 @@ describe(
 
           assert(layouts.length >= 1);
 
-          // Step 2: Compile MDX layouts
           const compileMDX = createMockCompileMDX();
           await compileMDXLayouts(layouts, compileMDX, adapter);
 
-          // Verify MDX layouts were compiled
           const mdxLayouts = layouts.filter((l) => l.kind === "mdx");
           for (const layout of mdxLayouts) {
             assertExists(layout!.bundle);
           }
 
-          // Step 3: Compute dependencies hash
           const hash = await computeDepsHash(undefined, layouts, [], adapter);
           assertExists(hash);
 
-          // Step 4: Apply layouts
           const pageElement = React.createElement("article", {}, "Post Content");
           const cache = new LRUCache<string, any>({ maxEntries: 10 });
 
@@ -1269,7 +1234,6 @@ describe(
             "export const MDXLayout = ({ children }) => <section>{children}</section>",
           );
 
-          // Discover
           const layouts = await discoverNestedLayouts(
             pageFile,
             `${context.projectDir}/pages`,
@@ -1277,18 +1241,15 @@ describe(
             adapter,
           );
 
-          // Should find both TSX and MDX layouts
           const tsxLayouts = layouts.filter((l: LayoutItem) => l.kind === "tsx");
           const mdxLayouts = layouts.filter((l: LayoutItem) => l.kind === "mdx");
 
           assert(tsxLayouts.length > 0);
           assert(mdxLayouts.length > 0);
 
-          // Compile
           const compileMDX = createMockCompileMDX();
           await compileMDXLayouts(layouts, compileMDX, adapter);
 
-          // Apply
           const pageElement = React.createElement("div", {}, "Guide Content");
           const cache = new LRUCache<string, any>({ maxEntries: 10 });
 

@@ -7,7 +7,6 @@ import { afterAll, describe, it } from "std/testing/bdd.ts";
 import { generateAppModule, generateImportMap } from "../../../../src/build/production-build/index.ts";
 import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";
 
-// Clean up renderer intervals to prevent resource leaks
 afterAll(async () => {
   await cleanupBundler();
 });

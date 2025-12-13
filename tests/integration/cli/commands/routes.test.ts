@@ -10,7 +10,6 @@ describe(
   () => {
     it("prints pages and api routes", async () => {
       await withTestContext("routes-print", async (context: TestContext) => {
-        // Remove app directory to use Pages Router
         await Deno.remove(join(context.projectDir, "app"), { recursive: true });
 
         await Deno.mkdir(join(context.projectDir, "pages", "api"), {
@@ -46,7 +45,6 @@ describe(
 
     it("outputs JSON when requested", async () => {
       await withTestContext("routes-json", async (context: TestContext) => {
-        // Remove app directory to use Pages Router
         await Deno.remove(join(context.projectDir, "app"), { recursive: true });
 
         await Deno.mkdir(join(context.projectDir, "pages", "api"), {

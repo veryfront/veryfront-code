@@ -1,6 +1,3 @@
-/**
- * Integration tests for Asset Pipeline
- */
 
 import { assertEquals, assertExists } from "std/assert/mod.ts";
 import {
@@ -81,7 +78,6 @@ Deno.test("getAssetPipelineStatus", async () => {
 });
 
 Deno.test("Asset Pipeline - graceful degradation", async () => {
-  // Should not throw even if dependencies are missing
   const options: AssetPipelineOptions = {
     images: {
       enabled: true,
@@ -102,12 +98,10 @@ Deno.test("Asset Pipeline - graceful degradation", async () => {
 Deno.test("Asset Pipeline - statistics", async () => {
   const result = await runAssetPipeline();
 
-  // Image stats
   assertEquals(typeof result.images.optimized, "number");
   assertEquals(typeof result.images.variants, "number");
   assertEquals(typeof result.images.totalSize, "number");
 
-  // CSS stats
   assertEquals(typeof result.css.optimized, "number");
   assertEquals(typeof result.css.originalSize, "number");
   assertEquals(typeof result.css.minifiedSize, "number");
@@ -124,13 +118,11 @@ Deno.test("Asset Pipeline - performance tracking", async () => {
 
   const endTime = Date.now();
 
-  // Duration should be reasonable
   assertEquals(result.duration >= 0, true);
   assertEquals(result.duration <= (endTime - startTime) + 100, true);
 });
 
 Deno.test("Asset Pipeline - error handling", async () => {
-  // Invalid configuration should not crash
   const result = await runAssetPipeline({
     images: {
       enabled: true,
@@ -144,7 +136,6 @@ Deno.test("Asset Pipeline - error handling", async () => {
     },
   });
 
-  // Should complete without throwing
   assertExists(result);
   assertEquals(typeof result.duration, "number");
 });
@@ -173,7 +164,6 @@ Deno.test("Asset Pipeline - configuration validation", async () => {
 Deno.test("Asset Pipeline - dependency status messages", async () => {
   const status = await getAssetPipelineStatus();
 
-  // Should provide helpful messages
   if (status.missing.length > 0) {
     assertEquals(status.recommendations.length > 0, true);
 

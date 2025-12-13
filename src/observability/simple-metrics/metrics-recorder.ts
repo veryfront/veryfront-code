@@ -2,7 +2,23 @@
 import { getSSRBoundaries, state } from "./metrics-state.ts";
 import { getObservabilityMetrics } from "./observability-loader.ts";
 import { getOtelInstruments, safeOtelOperation } from "./otel-instruments.ts";
-import type { RSCRequestKind } from "./types.ts";
+import type { ObservabilityMetrics, RSCRequestKind } from "./types.ts";
+
+/**
+ * Safely record observability metrics without blocking or throwing.
+ * Metrics recording failures are non-critical and silently ignored.
+ */
+function safeRecordObservability(
+  fn: (obs: ObservabilityMetrics) => void,
+): void {
+  void getObservabilityMetrics()
+    .then((obs) => {
+      if (obs) fn(obs);
+    })
+    .catch(() => {
+      // metrics recording failure - non-critical
+    });
+}
 
 export async function incRequest(): Promise<void> {
   state.requests++;
@@ -29,8 +45,7 @@ export function recordCacheGet(hit: boolean): void {
   if (hit) state.cacheHits++;
   else state.cacheMisses++;
 
-  void getObservabilityMetrics().then((obs) => obs?.recordCacheGet(hit)).catch(() => {
-  });
+  safeRecordObservability((obs) => obs.recordCacheGet(hit));
   const otel = getOtelInstruments();
   void safeOtelOperation(() => {
     otel.cacheGetCounter?.add(1);
@@ -41,19 +56,18 @@ export function recordCacheGet(hit: boolean): void {
 
 export function recordCacheSet(): void {
   state.cacheSets++;
-  void getObservabilityMetrics().then((obs) => obs?.recordCacheSet()).catch(() => {
-  });
+  safeRecordObservability((obs) => obs.recordCacheSet());
   const otel = getOtelInstruments();
   void safeOtelOperation(() => otel.cacheSetCounter?.add(1), "cache set counter add failed");
 }
 
 export function recordCacheInvalidate(n: number): void {
-  state.cacheInvalidations += n | 0;
-  void getObservabilityMetrics().then((obs) => obs?.recordCacheInvalidate(n | 0)).catch(() => {
-  });
+  const count = n | 0;
+  state.cacheInvalidations += count;
+  safeRecordObservability((obs) => obs.recordCacheInvalidate(count));
   const otel = getOtelInstruments();
   void safeOtelOperation(
-    () => otel.cacheInvalidateCounter?.add(n | 0),
+    () => otel.cacheInvalidateCounter?.add(count),
     "cache invalidate counter add failed",
   );
 }
@@ -65,8 +79,7 @@ export function recordSSR(durationMs: number): void {
   if (idx === -1) idx = state._ssrCounts.length - 1;
   state._ssrCounts[idx]! += 1;
 
-  void getObservabilityMetrics().then((obs) => obs?.recordRender(d)).catch(() => {
-  });
+  safeRecordObservability((obs) => obs.recordRender(d));
   const otel = getOtelInstruments();
   void safeOtelOperation(() => otel.ssrHistogram?.record(d), "ssr histogram record failed");
 }
@@ -84,36 +97,27 @@ export function recordRSCStreamDuration(durationMs: number): void {
   if (idx === -1) idx = state.rscStreamHistogram.counts.length - 1;
   state.rscStreamHistogram.counts[idx]! += 1;
 
-  void getObservabilityMetrics().then((obs) => obs?.recordRSCStream(d)).catch(() => {
-  });
+  safeRecordObservability((obs) => obs.recordRSCStream(d));
 }
 
 export function recordRSC(kind: RSCRequestKind): void {
   switch (kind) {
     case "manifest":
       state.rscManifest++;
-      void getObservabilityMetrics().then((obs) => obs?.recordRSCRequest("manifest")).catch(() => {
-      });
+      safeRecordObservability((obs) => obs.recordRSCRequest("manifest"));
       break;
     case "page":
-      state.rscPage++;
-      void getObservabilityMetrics().then((obs) => obs?.recordRSCRequest("page")).catch(() => {
-      });
-      break;
     case "flight_page":
       state.rscPage++;
-      void getObservabilityMetrics().then((obs) => obs?.recordRSCRequest("page")).catch(() => {
-      });
+      safeRecordObservability((obs) => obs.recordRSCRequest("page"));
       break;
     case "stream":
       state.rscStream++;
-      void getObservabilityMetrics().then((obs) => obs?.recordRSCRequest("stream")).catch(() => {
-      });
+      safeRecordObservability((obs) => obs.recordRSCRequest("stream"));
       break;
     case "action":
       state.rscAction++;
-      void getObservabilityMetrics().then((obs) => obs?.recordRSCRequest("action")).catch(() => {
-      });
+      safeRecordObservability((obs) => obs.recordRSCRequest("action"));
       break;
     case "error":
       state.rscErrors++;

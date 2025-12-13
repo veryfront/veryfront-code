@@ -70,7 +70,7 @@ Build complete applications:
 Deploy your application:
 
 ### Production Deployment
-- **[Deno Deploy](./deployment/deno.md)** ⭐ Recommended - Native Deno deployment
+- **[Deno Deploy](./deployment/deno.md)** (Recommended) - Native Deno deployment
 - **[Node.js Deployment](./deployment/node.md)** - Vercel, Railway, DigitalOcean
 - **[Bun Deployment](./deployment/bun.md)** - High-performance Bun runtime
 - **[Cloudflare Workers](./deployment/cloudflare.md)** - Edge deployment
@@ -87,8 +87,8 @@ Build AI-powered applications:
 
 ### Getting Started with AI
 - **[AI Quick Start](../ai/getting-started.md)** - Build AI apps in 5 minutes
-- **[AI Specification](../ai/specification.md)** - Complete AI system documentation
-- **[AI Summary](../ai/summary.md)** - Quick reference guide
+- **[AI Overview](../ai/README.md)** - Complete AI capabilities overview
+- **[AI Reference](../reference/ai/README.md)** - API reference
 
 ### AI Patterns
 - **[Chat Interfaces](/ai/getting-started.md)** - Build conversational UIs
@@ -283,8 +283,8 @@ Help improve Veryfront:
 ### Advanced (Experienced developer)
 1. [Architecture Overview](/guides/architecture/README.md) - System design
 2. [Performance Guide](/guides/performance/README.md) - Optimize everything
-3. [AI Integration](../ai/specification.md) - Build AI apps
-4. [Microservices](/guides/architecture/README.md) - Distributed systems
+3. [AI Integration](../ai/getting-started.md) - Build AI apps
+4. [Deployment](/guides/deployment/README.md) - Production deployment
 
 ## By Goal
 

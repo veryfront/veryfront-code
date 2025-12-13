@@ -9,14 +9,14 @@ export async function loadImportMap(
   startPath: string,
   adapter?: RuntimeAdapter,
 ): Promise<ImportMapConfig> {
-  let runtimeAdapter = adapter;
-  if (!runtimeAdapter) {
+  const runtimeAdapter = adapter ?? await (async () => {
     const { getAdapter } = await import("@veryfront/platform/adapters/detect.ts");
-    runtimeAdapter = await getAdapter();
-  }
+    return getAdapter();
+  })();
 
+  // Try loading from veryfront config first
   try {
-    const cfg = await getConfig(startPath, runtimeAdapter!);
+    const cfg = await getConfig(startPath, runtimeAdapter);
     if (cfg?.resolve?.importMap && typeof cfg.resolve.importMap === "object") {
       return {
         imports: cfg.resolve.importMap.imports ?? {},
@@ -26,13 +26,14 @@ export async function loadImportMap(
   } catch {
   }
 
+  // Walk up directory tree looking for deno.json with import map
   let currentPath = startPath;
 
   while (currentPath !== "/" && currentPath !== "") {
     const denoJsonPath = join(currentPath, "deno.json");
 
     try {
-      const content = await runtimeAdapter!.fs.readFile(denoJsonPath);
+      const content = await runtimeAdapter.fs.readFile(denoJsonPath);
       const config = JSON.parse(content);
 
       if (config.imports || config.scopes) {

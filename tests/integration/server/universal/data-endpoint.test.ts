@@ -4,12 +4,10 @@ import { afterAll, describe, it } from "std/testing/bdd.ts";
 import { withTestContext } from "../../../_helpers/context.ts";
 import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";
 
-// Clean up renderer intervals to prevent resource leaks
 afterAll(async () => {
   await cleanupBundler();
 });
 
-// Tests the /_veryfront/data/:slug JSON endpoint
 
 describe(
   "Universal data endpoint",
@@ -17,7 +15,6 @@ describe(
   () => {
     it("returns JSON with ETag/304 and no-cache", async () => {
       await withTestContext("universal-data", async (context) => {
-        // Create a simple page
         await Deno.writeTextFile(join(context.projectDir, "pages", "index.mdx"), "# Home\n");
         const server = await context.createProductionServer();
 

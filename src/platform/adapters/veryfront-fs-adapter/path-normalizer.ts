@@ -2,12 +2,11 @@ import { logger } from "@veryfront/utils";
 
 export class PathNormalizer {
   constructor(private readonly projectDir?: string) {
-    logger.debug("[PathNormalizer] Initialized", { projectDir });
+    logger.debug("[PathNormalizer] Initialized", { projectDir: this.projectDir });
   }
 
   normalize(path: string): string {
     let normalized = path;
-    logger.debug("[PathNormalizer] normalize called", { path, projectDir: this.projectDir });
 
     if (this.projectDir && normalized.startsWith(this.projectDir)) {
       normalized = normalized.slice(this.projectDir.length);
@@ -15,14 +14,6 @@ export class PathNormalizer {
 
     normalized = normalized.replace(/^\/+|\/+$/g, "");
     normalized = normalized.replace(/\/+/g, "/");
-
-    if (this.projectDir && path.startsWith(this.projectDir) && normalized !== path) {
-      logger.debug("[PathNormalizer] Converted absolute to relative path", {
-        absolute: path,
-        relative: normalized,
-        projectDir: this.projectDir,
-      });
-    }
 
     return normalized;
   }

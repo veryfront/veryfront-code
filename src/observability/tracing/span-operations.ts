@@ -82,7 +82,7 @@ export class SpanOperations {
   private mapSpanKind(kind?: SpanOptions["kind"]): SpanKind {
     if (!kind) return this.api.SpanKind.INTERNAL;
 
-    const kindMap: Record<string, SpanKind> = {
+    const kindMap: Record<NonNullable<SpanOptions["kind"]>, SpanKind> = {
       "internal": this.api.SpanKind.INTERNAL,
       "server": this.api.SpanKind.SERVER,
       "client": this.api.SpanKind.CLIENT,
@@ -90,6 +90,6 @@ export class SpanOperations {
       "consumer": this.api.SpanKind.CONSUMER,
     };
 
-    return kindMap[kind.toLowerCase()] || this.api.SpanKind.INTERNAL;
+    return kindMap[kind] ?? this.api.SpanKind.INTERNAL;
   }
 }

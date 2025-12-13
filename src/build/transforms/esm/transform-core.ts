@@ -12,6 +12,7 @@ import { rewriteBareImports, rewriteVendorImports } from "./import-rewriter.ts";
 import type { TransformOptions } from "./types.ts";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import { compileMDXRuntime } from "../mdx/compiler/mdx-compiler.ts";
+import { extractFrontmatter } from "../mdx/compiler/frontmatter-extractor.ts";
 import { rendererLogger as logger } from "@veryfront/utils";
 
 export async function transformToESM(
@@ -52,6 +53,14 @@ export async function transformToESM(
     transformSource = mdxResult.compiledCode;
     logger.debug("[MDX-TRANSFORM] Compiled MDX for", filePath);
     logger.debug("[MDX-TRANSFORM] First 500 chars:", transformSource.substring(0, 500));
+  } else if (filePath.endsWith(".tsx") || filePath.endsWith(".ts") || filePath.endsWith(".jsx")) {
+    // Strip frontmatter from TSX/TS/JSX files if present
+    logger.info("[ESM-TRANSFORM] Processing TSX/TS/JSX file:", filePath, "starts with ---:", source.trim().startsWith("---"));
+    if (source.trim().startsWith("---")) {
+      const { body } = await extractFrontmatter(source);
+      transformSource = body;
+      logger.info("[ESM-TRANSFORM] Stripped frontmatter from", filePath);
+    }
   }
 
   const loader = getLoaderFromPath(filePath);
@@ -78,8 +87,23 @@ export async function transformToESM(
 
   code = await resolveReactImports(code, ssr);
   code = await addDepsToEsmShUrls(code);
-  code = await resolvePathAliases(code, filePath, projectDir);
+  // For SSR, use absolute file:// paths to project dir since modules are cached in temp directories
+  code = await resolvePathAliases(code, filePath, projectDir, moduleServerUrl, ssr);
 
   if (ssr) {
     code = await resolveRelativeImportsForSSR(code);
-    // Rewrite @veryfront
+    code = await resolveVeryfrontImports(code);
+  } else {
+    code = await resolveRelativeImports(code, filePath, projectDir, moduleServerUrl);
+
+    if (moduleServerUrl && vendorBundleHash) {
+      code = await rewriteVendorImports(code, moduleServerUrl, vendorBundleHash);
+    } else {
+      code = await rewriteBareImports(code, moduleServerUrl);
+    }
+  }
+
+  setCachedTransform(cacheKey, code, contentHash);
+
+  return code;
+}

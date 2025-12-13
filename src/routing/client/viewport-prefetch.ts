@@ -34,16 +34,17 @@ export class ViewportPrefetch {
       (entries) => {
         for (const entry of entries) {
           if (entry.isIntersecting) {
+            const target = entry.target;
             const isAnchor = typeof HTMLAnchorElement !== "undefined"
-              ? entry.target instanceof HTMLAnchorElement
-              : (entry.target as any).tagName === "A";
+              ? target instanceof HTMLAnchorElement
+              : target.tagName === "A";
 
             if (isAnchor) {
-              const href = (entry.target as HTMLAnchorElement).getAttribute("href");
+              const href = (target as HTMLAnchorElement).getAttribute("href");
               if (href) {
                 this.prefetchCallback(href);
               }
-              this.observer?.unobserve(entry.target);
+              this.observer?.unobserve(target);
             }
           }
         }

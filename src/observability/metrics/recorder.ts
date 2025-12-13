@@ -19,7 +19,8 @@ export class MetricsRecorder {
   ): void {
     this.instruments.httpRequestDuration?.record(durationMs, attributes);
     this.instruments.httpActiveRequests?.add(-1, attributes);
-    this.runtimeState.activeRequests--;
+    // Ensure activeRequests never goes negative
+    this.runtimeState.activeRequests = Math.max(0, this.runtimeState.activeRequests - 1);
   }
 
   recordCacheGet(hit: boolean, attributes?: Record<string, string>): void {

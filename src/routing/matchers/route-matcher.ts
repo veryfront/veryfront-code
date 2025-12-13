@@ -1,7 +1,8 @@
 import type { Route, RouteMatch } from "./types.ts";
 
 export function matchRoute(pathname: string, route: Route): RouteMatch | null {
-  const match = pathname.match(route.regex!);
+  if (!route.regex) return null;
+  const match = pathname.match(route.regex);
   if (!match) return null;
 
   const params: Record<string, string | string[]> = {};

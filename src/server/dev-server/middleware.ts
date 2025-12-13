@@ -71,10 +71,8 @@ export function setupMiddleware(
     }
   }
 
-  pipeline.use((
-    c: { req: Request; var: Record<string, unknown> },
-    _next: () => Promise<Response | undefined> | Response,
-  ) => requestHandler(c.req));
+  // Terminal middleware - requestHandler handles the actual request
+  pipeline.use((c: { req: Request; var: Record<string, unknown> }) => requestHandler(c.req));
 }
 
 function generateRequestId(incomingId: string): string {

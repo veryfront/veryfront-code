@@ -16,8 +16,22 @@ export class ApiHandlerWrapper extends BaseHandler {
 
   metadata: HandlerMetadata = {
     name: "ApiHandlerWrapper",
-    priority: PRIORITY_MEDIUM_API as HandlerPriority,
-    // - Pages API routes (/api
+    priority: PRIORITY_MEDIUM_API as HandlerPriority, // MEDIUM priority
+    // patterns field omitted - handler will be invoked for all requests
+    // and will internally check if it can handle them:
+    // - Pages API routes (/api/*)
+    // - App Router route.ts handlers (discovered dynamically)
+  };
+
+  constructor(
+    projectDir: string,
+    adapter: import("@veryfront/platform/adapters/base.ts").RuntimeAdapter,
+  ) {
+    super();
+    this.projectDir = projectDir;
+    this.adapter = adapter;
+  }
+
   async initialize(): Promise<void> {
     if (!this.initPromise) {
       this.initPromise = (async () => {

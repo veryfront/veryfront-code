@@ -26,7 +26,7 @@ export function buildContentAttributes(
 ): string {
   const attrs = [
     'id="veryfront-content"',
-    `data-slug="${slug || ""}"`,
+    `data-slug="${escapeHTML(slug || "")}"`,
     `data-layout="${noLayout ? "none" : "default"}"`,
     ssrHash ? `data-ssr-hash="${escapeHTML(ssrHash)}"` : "",
   ]
@@ -60,8 +60,8 @@ export async function detectVersions(projectDir: string): Promise<DetectedVersio
     const deps = { ...pkg.dependencies, ...pkg.devDependencies };
 
     return {
-      react: deps?.react?.replace(/[\^~]/, "") || DEFAULT_VERSIONS.react,
-      veryfront: deps?.veryfront?.replace(/[\^~]/, "") || DEFAULT_VERSIONS.veryfront,
+      react: deps?.react?.replace(/[\^~]/g, "") || DEFAULT_VERSIONS.react,
+      veryfront: deps?.veryfront?.replace(/[\^~]/g, "") || DEFAULT_VERSIONS.veryfront,
     };
   } catch {
     return DEFAULT_VERSIONS;

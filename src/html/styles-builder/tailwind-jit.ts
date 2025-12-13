@@ -1,4 +1,10 @@
-
+/**
+ * @deprecated This is a legacy stub implementation. The real Tailwind CSS generation
+ * is handled by unocss-generator.ts which uses UnoCSS under the hood.
+ * This file only extracts class names and returns preflight CSS.
+ *
+ * TODO: Remove this file once all consumers migrate to unocss-generator.ts
+ */
 export function generateTailwindCSS(htmlContent: string): string {
   const classPattern = /class="([^"]*)"/g;
   const classNames = new Set<string>();

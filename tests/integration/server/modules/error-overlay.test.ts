@@ -1,14 +1,7 @@
-/**
- * Tests for Error Overlay Module
- *
- * Test coverage for error formatting, HTML generation, suggestion system,
- * and runtime overlay functionality in development mode.
- */
 
 import { assertEquals, assertExists, assertStringIncludes } from "std/assert/mod.ts";
 import { type ErrorInfo, ErrorOverlay } from "../../../../src/server/dev-server/error-overlay/index.ts";
 
-// Test: ErrorOverlay class exists and is constructable
 Deno.test({
   name: "ErrorOverlay - class exists and provides static methods",
   fn: () => {
@@ -19,7 +12,6 @@ Deno.test({
   },
 });
 
-// Test: getRuntime returns error overlay client-side code
 Deno.test({
   name: "ErrorOverlay - getRuntime returns complete runtime script",
   fn: () => {
@@ -49,7 +41,6 @@ Deno.test({
   },
 });
 
-// Test: getRuntime includes error display logic
 Deno.test({
   name: "ErrorOverlay - runtime includes error display functionality",
   fn: () => {
@@ -65,7 +56,6 @@ Deno.test({
   },
 });
 
-// Test: getRuntime includes dismiss button
 Deno.test({
   name: "ErrorOverlay - runtime includes dismiss functionality",
   fn: () => {
@@ -80,7 +70,6 @@ Deno.test({
   },
 });
 
-// Test: getRuntime creates overlay with correct styling
 Deno.test({
   name: "ErrorOverlay - runtime applies correct overlay styles",
   fn: () => {
@@ -93,7 +82,6 @@ Deno.test({
   },
 });
 
-// Test: getSuggestion for parse errors
 Deno.test({
   name: "ErrorOverlay - getSuggestion detects parse errors",
   fn: () => {
@@ -110,7 +98,6 @@ Deno.test({
   },
 });
 
-// Test: getSuggestion for module not found errors
 Deno.test({
   name: "ErrorOverlay - getSuggestion detects module not found errors",
   fn: () => {
@@ -131,7 +118,6 @@ Deno.test({
   },
 });
 
-// Test: getSuggestion for frontmatter errors
 Deno.test({
   name: "ErrorOverlay - getSuggestion detects frontmatter errors",
   fn: () => {
@@ -145,7 +131,6 @@ Deno.test({
   },
 });
 
-// Test: getSuggestion for component errors
 Deno.test({
   name: "ErrorOverlay - getSuggestion detects component errors",
   fn: () => {
@@ -158,7 +143,6 @@ Deno.test({
   },
 });
 
-// Test: getSuggestion for React hooks errors
 Deno.test({
   name: "ErrorOverlay - getSuggestion detects React hooks errors",
   fn: () => {
@@ -176,7 +160,6 @@ Deno.test({
   },
 });
 
-// Test: getSuggestion for hydration errors
 Deno.test({
   name: "ErrorOverlay - getSuggestion detects hydration errors",
   fn: () => {
@@ -196,7 +179,6 @@ Deno.test({
   },
 });
 
-// Test: getSuggestion returns undefined for unknown errors
 Deno.test({
   name: "ErrorOverlay - getSuggestion returns undefined for unknown errors",
   fn: () => {
@@ -207,7 +189,6 @@ Deno.test({
   },
 });
 
-// Test: getSuggestion is case-insensitive
 Deno.test({
   name: "ErrorOverlay - getSuggestion is case-insensitive",
   fn: () => {
@@ -219,7 +200,6 @@ Deno.test({
   },
 });
 
-// Test: createHTML generates complete HTML document
 Deno.test({
   name: "ErrorOverlay - createHTML generates complete HTML document",
   fn: () => {
@@ -239,7 +219,6 @@ Deno.test({
   },
 });
 
-// Test: createHTML displays error type
 Deno.test({
   name: "ErrorOverlay - createHTML displays error type correctly",
   fn: () => {
@@ -254,7 +233,6 @@ Deno.test({
   },
 });
 
-// Test: createHTML displays error name and message
 Deno.test({
   name: "ErrorOverlay - createHTML displays error name and message",
   fn: () => {
@@ -273,7 +251,6 @@ Deno.test({
   },
 });
 
-// Test: createHTML includes file location when provided
 Deno.test({
   name: "ErrorOverlay - createHTML includes file location when provided",
   fn: () => {
@@ -293,7 +270,6 @@ Deno.test({
   },
 });
 
-// Test: createHTML omits file location when not provided
 Deno.test({
   name: "ErrorOverlay - createHTML omits file location when not provided",
   fn: () => {
@@ -309,7 +285,6 @@ Deno.test({
   },
 });
 
-// Test: createHTML includes suggestion when provided
 Deno.test({
   name: "ErrorOverlay - createHTML includes custom suggestion",
   fn: () => {
@@ -330,7 +305,6 @@ Deno.test({
   },
 });
 
-// Test: createHTML auto-generates suggestion
 Deno.test({
   name: "ErrorOverlay - createHTML auto-generates suggestion from error",
   fn: () => {
@@ -346,12 +320,10 @@ Deno.test({
   },
 });
 
-// Test: createHTML includes stack trace when available
 Deno.test({
   name: "ErrorOverlay - createHTML includes stack trace",
   fn: () => {
     const error = new Error("Error with stack");
-    // Ensure error has a stack trace
     const errorInfo: ErrorInfo = {
       type: "runtime",
       error,
@@ -368,7 +340,6 @@ Deno.test({
   },
 });
 
-// Test: createHTML applies correct CSS styles
 Deno.test({
   name: "ErrorOverlay - createHTML includes all necessary styles",
   fn: () => {
@@ -390,7 +361,6 @@ Deno.test({
   },
 });
 
-// Test: createHTML handles all error types
 Deno.test({
   name: "ErrorOverlay - createHTML handles build error type",
   fn: () => {
@@ -430,7 +400,6 @@ Deno.test({
   },
 });
 
-// Test: createHTML escapes HTML in error messages
 Deno.test({
   name: "ErrorOverlay - createHTML handles error messages with special characters",
   fn: () => {
@@ -441,13 +410,11 @@ Deno.test({
 
     const html = ErrorOverlay.createHTML(errorInfo);
 
-    // The HTML should be generated without throwing errors
     assertExists(html, "Should handle special HTML characters in error messages");
     assertStringIncludes(html, "Expected", "Should include error message content");
   },
 });
 
-// Test: createHTML handles line number without column
 Deno.test({
   name: "ErrorOverlay - createHTML displays line without column",
   fn: () => {
@@ -465,7 +432,6 @@ Deno.test({
   },
 });
 
-// Test: createHTML handles complex error scenarios
 Deno.test({
   name: "ErrorOverlay - createHTML handles all optional fields",
   fn: () => {
@@ -491,7 +457,6 @@ Deno.test({
   },
 });
 
-// Test: runtime error handler captures error events
 Deno.test({
   name: "ErrorOverlay - runtime captures window error events",
   fn: () => {
@@ -508,7 +473,6 @@ Deno.test({
   },
 });
 
-// Test: runtime unhandled rejection handler
 Deno.test({
   name: "ErrorOverlay - runtime captures unhandled promise rejections",
   fn: () => {
@@ -523,7 +487,6 @@ Deno.test({
   },
 });
 
-// Test: runtime removes existing overlay before showing new one
 Deno.test({
   name: "ErrorOverlay - runtime removes existing overlay before creating new one",
   fn: () => {
@@ -542,7 +505,6 @@ Deno.test({
   },
 });
 
-// Test: createHTML handles empty error messages
 Deno.test({
   name: "ErrorOverlay - createHTML handles empty error messages",
   fn: () => {

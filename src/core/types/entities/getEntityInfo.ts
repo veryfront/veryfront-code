@@ -3,6 +3,7 @@ let jsYamlModule: typeof import("js-yaml") | null = null;
 import { createFileSystem } from "../../../platform/compat/fs.ts";
 import * as pathHelper from "../../../platform/compat/path-helper.ts";
 
+// @ts-ignore - Deno global
 if (typeof Deno === "undefined") {
   extractYaml = (content: string) => {
     const frontMatterRegex = /^---\n([\s\S]*?)\n---/;
@@ -176,9 +177,7 @@ export async function getEntityBySlug(
 
       if (dirExists) {
         const entries: { name: string; isFile: boolean; isDirectory: boolean }[] = [];
-        const readDirFn = adapter?.fs?.readDir
-          ? adapter.fs.readDir(pagesDir)
-          : fs.readDir(pagesDir);
+        const readDirFn = adapter ? adapter.fs.readDir(pagesDir) : fs.readDir(pagesDir);
         for await (const entry of readDirFn) {
           entries.push(entry);
         }
@@ -248,10 +247,8 @@ export async function getProviderEntities(
 
     if (dirExists) {
       const entries: { name: string; isFile: boolean; isDirectory: boolean }[] = [];
-      const dirReader = adapter?.fs?.readDir
-        ? adapter.fs.readDir(dir)
-        : fs.readDir(dir);
-      for await (const entry of dirReader) {
+      const readDirFn = adapter ? adapter.fs.readDir(dir) : fs.readDir(dir);
+      for await (const entry of readDirFn) {
         entries.push(entry);
       }
 

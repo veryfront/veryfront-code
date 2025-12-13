@@ -26,7 +26,8 @@ async function detectProjectDir(): Promise<string> {
 export async function handleDevCommand(args: ParsedArgs): Promise<void> {
   showLogo();
 
-  const projectDir = await detectProjectDir();
+  // Use --dir argument if provided, otherwise detect from cwd
+  const projectDir = args.dir ? String(args.dir) : await detectProjectDir();
 
   const port = typeof args.port === "number" ? args.port : DEFAULT_DEV_SERVER_PORT;
   await devCommand({

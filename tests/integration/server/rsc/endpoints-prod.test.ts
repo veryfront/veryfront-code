@@ -6,7 +6,6 @@ import { withTestContext } from "../../../_helpers/context.ts";
 import { assertDrained, drainEventLoop } from "../../../_helpers/utils.ts";
 import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";
 
-// Clean up renderer intervals to prevent resource leaks
 afterAll(async () => {
   await cleanupBundler();
 });
@@ -17,7 +16,6 @@ describe(
   () => {
     it("return 200 (page/stream/payload/manifest)", async () => {
       await withTestContext("rsc-prod-endpoints", async (context) => {
-        // Enable RSC via config instead of env var
         await Deno.writeTextFile(
           join(context.projectDir, "veryfront.config.js"),
           `export default { experimental: { rsc: true } };`,
@@ -28,7 +26,6 @@ describe(
         let h: Awaited<ReturnType<typeof startProductionServer>> | null = null;
         const controller = new AbortController();
         try {
-          // Create proper app directory structure for RSC
           await Deno.remove(`${context.projectDir}/app`, { recursive: true }).catch(() => {});
           await Deno.remove(`${context.projectDir}/pages`, { recursive: true }).catch(() => {});
 
@@ -48,9 +45,7 @@ describe(
           });
           await h.ready;
 
-          // page shell
           const page = await fetch(`http://127.0.0.1:${port}/_veryfront/rsc/page?name=T`);
-          // RSC endpoints return 404 without proper RSC setup - check they exist as routes
           assertEquals(
             page.status === 404 || page.status === 200,
             true,
@@ -62,7 +57,6 @@ describe(
             console.debug?.("[test] page.text() read failed");
           }
 
-          // stream
           const stream = await fetch(`http://127.0.0.1:${port}/_veryfront/rsc/stream?name=T`);
           assertEquals(
             stream.status === 404 || stream.status === 200,
@@ -75,7 +69,6 @@ describe(
             console.debug?.("[test] stream cancel failed");
           }
 
-          // payload
           const payload = await fetch(`http://127.0.0.1:${port}/_veryfront/rsc/payload?name=T`);
           assertEquals(
             payload.status === 404 || payload.status === 200,
@@ -88,7 +81,6 @@ describe(
             console.debug?.("[test] payload.text() read failed");
           }
 
-          // manifest
           const man = await fetch(`http://127.0.0.1:${port}/_veryfront/rsc/manifest`);
           assertEquals(
             man.status === 404 || man.status === 200,
@@ -101,7 +93,6 @@ describe(
             console.debug?.("[test] manifest read failed");
           }
 
-          // flight_page: if Flight not implemented, should be 410
           const fpage = await fetch(`http://127.0.0.1:${port}/_veryfront/rsc/flight_page?name=T`);
           assertEquals(fpage.status, 410);
           try {
@@ -115,7 +106,6 @@ describe(
             await h.stop();
           }
 
-          // Cleanup event loop and verify resources are drained
           await drainEventLoop(4, 20);
           await assertDrained({
             allowResources: [/MessagePort/i, /Timer/i, /^fetch/i],

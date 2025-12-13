@@ -1,9 +1,3 @@
-/**
- * AgentCard Component - Layer 3 (Styled)
- *
- * Production-ready agent status and tool visualization.
- * Built on Layer 2 primitives.
- */
 
 import * as React from "react";
 import {
@@ -18,42 +12,21 @@ import type { AgentStatus, Message, ToolCall } from "../../types/agent.ts";
 import { type AgentTheme, cn, defaultAgentTheme, mergeThemes } from "./theme.ts";
 
 export interface AgentCardProps {
-  /** Agent messages */
   messages?: Message[];
 
-  /** Tool calls */
   toolCalls?: ToolCall[];
 
-  /** Agent status */
   status: AgentStatus;
 
-  /** Thinking/reasoning text */
   thinking?: string;
 
-  /** Additional class name */
   className?: string;
 
-  /** Theme customization */
   theme?: Partial<AgentTheme>;
 
-  /** Custom tool renderer */
   renderTool?: (toolCall: ToolCall) => React.ReactNode;
 }
 
-/**
- * AgentCard - Agent status and tool visualization
- *
- * @example
- * ```tsx
- * import { AgentCard } from 'veryfront/ai/components';
- * import { useAgent } from 'veryfront/ai/react';
- *
- * export default function AgentInterface() {
- *   const agent = useAgent({ agent: 'support' });
- *   return <AgentCard {...agent} />;
- * }
- * ```
- */
 export const AgentCard = React.forwardRef<HTMLDivElement, AgentCardProps>(
   (
     {
@@ -146,9 +119,6 @@ export const AgentCard = React.forwardRef<HTMLDivElement, AgentCardProps>(
 
 AgentCard.displayName = "AgentCard";
 
-/**
- * Get status color classes - Apple-inspired status colors
- */
 function getStatusColor(status: AgentStatus): string {
   switch (status) {
     case "idle":

@@ -172,14 +172,41 @@ function getStatusText(status: HttpStatusCode): string {
   return statusTexts[status] || "Unknown Status";
 }
 
+/**
+ * Validates redirect URLs to prevent open redirect vulnerabilities.
+ * Allows:
+ * - Absolute paths starting with "/" (but not "//" which could be protocol-relative)
+ * - Relative paths starting with "./"
+ * - HTTP and HTTPS URLs
+ * Blocks:
+ * - Protocol-relative URLs (//example.com)
+ * - Parent directory traversal (../)
+ * - JavaScript URLs and other dangerous protocols
+ */
 function isValidRedirectUrl(url: string): boolean {
   try {
-    const parsed = new URL(url, "http://localhost"); // Base URL for relative URLs
+    // Block protocol-relative URLs (//example.com) which could redirect to external sites
+    if (url.startsWith("//")) {
+      return false;
+    }
 
-    if (url.startsWith("/") || url.startsWith("./") || url.startsWith("../")) {
+    // Block parent directory traversal to prevent path manipulation
+    if (url.startsWith("../") || url.includes("/../")) {
+      return false;
+    }
+
+    // Allow absolute paths (starting with single /)
+    if (url.startsWith("/") && !url.startsWith("//")) {
       return true;
     }
 
+    // Allow relative paths starting with ./
+    if (url.startsWith("./")) {
+      return true;
+    }
+
+    // For full URLs, only allow http and https protocols
+    const parsed = new URL(url);
     return parsed.protocol === "http:" || parsed.protocol === "https:";
   } catch {
     return false;

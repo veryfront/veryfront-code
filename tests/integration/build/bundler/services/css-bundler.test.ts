@@ -1,14 +1,3 @@
-/**
- * CSS Bundler Tests
- *
- * Comprehensive tests for CSS bundling service covering:
- * - CSS bundling pipeline
- * - Minification in production mode
- * - Import processing
- * - Variable extraction
- * - Error handling
- * - Cache integration
- */
 
 import { assertEquals, assertExists } from "std/assert/mod.ts";
 import { describe, it } from "std/testing/bdd.ts";
@@ -52,13 +41,11 @@ describe("CSS Bundler", () => {
 
         bundleCss(source, options, result);
 
-        // Should add output
         assertExists(result.outputs.get(source.path));
         const output = result.outputs.get(source.path)!;
         assertEquals(output.type, "css");
         assertEquals(output.path, source.path);
 
-        // In dev mode, CSS should not be minified
         assertEquals(output.content.includes("padding"), true);
         assertEquals(output.content.includes("margin"), true);
 
@@ -101,13 +88,10 @@ describe("CSS Bundler", () => {
         const output = result.outputs.get(source.path)!;
         const minified = output.content;
 
-        // Should remove comments
         assertEquals(minified.includes("/* This is a comment */"), false);
 
-        // Should minify whitespace
         assertEquals(minified.includes("\n"), false);
 
-        // Should preserve selectors and properties
         assertEquals(minified.includes(".container"), true);
         assertEquals(minified.includes("padding"), true);
 
@@ -146,7 +130,6 @@ describe("CSS Bundler", () => {
 
         const output = result.outputs.get(source.path)!;
 
-        // Should remove quotes from URLs
         assertEquals(output.content.includes("url(image.png)"), true);
         assertEquals(output.content.includes("url(icon.svg)"), true);
         assertEquals(output.content.includes('url("'), false);
@@ -185,9 +168,7 @@ describe("CSS Bundler", () => {
 
         const output = result.outputs.get(source.path)!;
 
-        // Should not have ;} pattern
         assertEquals(output.content.includes(";}"), false);
-        // Should have just }
         assertEquals(output.content.includes("}"), true);
 
         return Promise.resolve();
@@ -218,10 +199,8 @@ describe("CSS Bundler", () => {
           dependencies: new Map(),
         };
 
-        // Should not throw - just process as best as possible
         bundleCss(source, options, result);
 
-        // Should have output even for malformed CSS
         assertExists(result.outputs.get(source.path));
 
         return Promise.resolve();
@@ -269,7 +248,6 @@ describe("CSS Bundler", () => {
 
       const processed = processCssImports(css, "/styles/components.css");
 
-      // Should preserve relative imports
       assertEquals(processed.includes('@import "./variables.css"'), true);
       assertEquals(processed.includes('@import "../base/reset.css"'), true);
     });
@@ -284,7 +262,6 @@ describe("CSS Bundler", () => {
 
       const processed = processCssImports(css, "/styles/components.css");
 
-      // Should preserve absolute imports
       assertEquals(processed.includes('@import "normalize.css"'), true);
       assertEquals(processed.includes('url("https://fonts.googleapis.com'), true);
     });
@@ -299,7 +276,6 @@ describe("CSS Bundler", () => {
 
       const processed = processCssImports(css, "/styles/components.css");
 
-      // Should handle both forms
       assertEquals(processed.includes('@import "./variables.css"'), true);
       assertEquals(processed.includes('@import "./theme.css"'), true);
     });
@@ -314,7 +290,6 @@ describe("CSS Bundler", () => {
 
       const processed = processCssImports(css, "/styles/components.css");
 
-      // Should return unchanged
       assertEquals(processed, css);
     });
   });
@@ -389,7 +364,6 @@ describe("CSS Bundler", () => {
 
       const variables = extractCssVariables(css);
 
-      // Last value should win
       assertEquals(variables["color"], "black");
     });
 
@@ -451,18 +425,14 @@ describe("CSS Bundler", () => {
 
         const output = result.outputs.get(source.path)!;
 
-        // Should be minified
         assertEquals(output.content.includes("/* Application styles */"), false);
 
-        // Should preserve functional content
         assertEquals(output.content.includes(".container"), true);
         assertEquals(output.content.includes(".button"), true);
         assertEquals(output.content.includes("--primary"), true);
 
-        // Should optimize URLs
         assertEquals(output.content.includes("url(background.jpg)"), true);
 
-        // Extract variables from original CSS
         const variables = extractCssVariables(source.content);
         assertEquals(variables["primary"], "#007bff");
         assertEquals(variables["spacing"], "1rem");

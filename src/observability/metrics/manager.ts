@@ -80,15 +80,14 @@ class MetricsManager {
 
       this.meter = this.api.metrics.getMeter(finalConfig.prefix, "0.1.0");
 
-      this.instruments = await initializeInstruments(
+      this.instruments = initializeInstruments(
         this.meter,
         finalConfig,
         this.runtimeState,
       );
 
-      if (this.recorder) {
-        (this.recorder as any).instruments = this.instruments;
-      }
+      // Update the recorder's instruments reference
+      this.recorder = new MetricsRecorder(this.instruments, this.runtimeState);
 
       this.initialized = true;
       logger.info("[metrics] OpenTelemetry metrics initialized", {

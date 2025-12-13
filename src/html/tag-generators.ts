@@ -1,6 +1,18 @@
 import type { HTMLMetadata } from "@veryfront/transforms/mdx/types.ts";
 import { buildAttributes, escapeHTML } from "./html-escape.ts";
 
+/**
+ * Escapes content for safe inclusion within a script tag.
+ * Prevents XSS by escaping sequences that could break out of the script context.
+ */
+function escapeScriptContent(content: string): string {
+  // Escape </script> sequences that could close the script tag prematurely
+  // Also escape <!-- which can cause issues in HTML
+  return content
+    .replace(/<\/script/gi, "<\\/script")
+    .replace(/<!--/g, "<\\!--");
+}
+
 export function generateMetaTags(metadata: HTMLMetadata): string {
   const tags: string[] = [];
 
@@ -69,7 +81,7 @@ export function generateScriptTags(metadata: HTMLMetadata, nonce?: string): stri
         tags.push(
           `<script ${
             buildAttributes(attrsWithNonce as Record<string, string>)
-          }>${script.content}</script>`,
+          }>${escapeScriptContent(script.content)}</script>`,
         );
       }
     });

@@ -4,7 +4,6 @@ import * as React from "react";
 import { MDXProvider } from "@mdx-js/react";
 
 const components = {
-  // Add custom components here
   pre: ({ children, ...props }: React.ComponentProps<'pre'>) => (
     <pre {...props} className="bg-gray-100 p-4 rounded-lg overflow-x-auto">
       {children}

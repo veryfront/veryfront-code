@@ -1,14 +1,5 @@
-/**
- * Test Data Factory
- *
- * Centralized factory for creating test data across all tests.
- * This ensures consistency and reduces duplication.
- */
 
 export class TestDataFactory {
-  /**
-   * Creates MDX page content with optional frontmatter
-   */
   static createMDXPage(options: {
     title: string;
     content: string;
@@ -32,9 +23,6 @@ export class TestDataFactory {
     return `${frontmatterStr}# ${options.title}\n\n${options.content}`;
   }
 
-  /**
-   * Creates a React component with TypeScript
-   */
   static createReactComponent(name: string, props: string[] = []): string {
     const propsInterface = props.length > 0
       ? `interface ${name}Props {
@@ -60,9 +48,6 @@ export default function ${name}${propsParam} {
 export { ${name} };`;
   }
 
-  /**
-   * Creates an App Router layout component
-   */
   static createAppLayout(options: { title?: string; includeMetadata?: boolean } = {}): string {
     const title = options.title || "Test App";
     const metadata = options.includeMetadata
@@ -95,9 +80,6 @@ export default function RootLayout({
 }`;
   }
 
-  /**
-   * Creates a Next.js API route handler
-   */
   static createAPIHandler(options: { methods?: string[]; useContext?: boolean } = {}): string {
     const methods = options.methods || ["GET"];
     const handlers = methods
@@ -124,9 +106,6 @@ export default function RootLayout({
     return handlers;
   }
 
-  /**
-   * Creates a custom hook for testing
-   */
   static createCustomHook(name: string, returnValue: any = { value: 0 }): string {
     return `import { useState, useEffect } from 'react';
 
@@ -146,9 +125,6 @@ export function ${name}() {
 }`;
   }
 
-  /**
-   * Creates a CSS module file
-   */
   static createCSSModule(className: string): string {
     return `.${className} {
   display: flex;
@@ -180,9 +156,6 @@ export function ${name}() {
 }`;
   }
 
-  /**
-   * Creates a veryfront.config.js file
-   */
   static createConfig(
     options: {
       title?: string;
@@ -222,9 +195,6 @@ export function ${name}() {
     return `export default ${JSON.stringify(config, null, 2)};`;
   }
 
-  /**
-   * Creates a middleware function for testing
-   */
   static createMiddleware(name: string): string {
     return `export async function ${name}(request: Request, next: () => Promise<Response>) {
   const start = Date.now();
@@ -242,9 +212,6 @@ export function ${name}() {
 }`;
   }
 
-  /**
-   * Creates test user data
-   */
   static createUser(
     overrides: Partial<{
       id: string;
@@ -263,9 +230,6 @@ export function ${name}() {
     };
   }
 
-  /**
-   * Creates a mock Redis response
-   */
   static createRedisResponse<T>(
     value: T,
     ttl?: number,
@@ -281,9 +245,6 @@ export function ${name}() {
     };
   }
 
-  /**
-   * Creates a mock HTTP response
-   */
   static createMockResponse(
     options: { status?: number; body?: any; headers?: Record<string, string> } = {},
   ): Response {

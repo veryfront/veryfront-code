@@ -8,11 +8,10 @@ import { type TestContext, withTestContext } from "../../../_helpers/context.ts"
 import { assertDrained, withEnv } from "../../../_helpers/utils.ts";
 import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";
 
-// Add handler for intentional test errors from boom pages
 globalThis.addEventListener("unhandledrejection", (event) => {
   const reason = event.reason;
   if (reason instanceof Error && (reason.message === "boom" || reason.message === "fail")) {
-    event.preventDefault(); // Prevent test failure for intentional errors
+    event.preventDefault();
   }
 });
 
@@ -23,7 +22,6 @@ describe(
     sanitizeOps: false,
   },
   () => {
-    // Clean up renderer intervals to prevent resource leaks
     afterAll(async () => {
       await cleanupBundler();
     });
@@ -41,17 +39,14 @@ describe(
 
         await server.ready;
 
-        // /healthz
         const h = await fetch(`http://127.0.0.1:${port}/healthz`);
         assertEquals(h.status, 200);
         assertEquals(await h.text(), "ok");
 
-        // /readyz
         const r = await fetch(`http://127.0.0.1:${port}/readyz`);
         assertEquals(r.status, 200);
         assertEquals(await r.text(), "ready");
 
-        // Other -> 404 HTML
         const x = await fetch(`http://127.0.0.1:${port}/foo`);
         assertEquals(x.status, 404);
         const ct = x.headers.get("content-type") || "";
@@ -65,7 +60,6 @@ describe(
 
     it("serves static files from public/ and exposes metrics and CORS", async () => {
       await withTestContext("universal-server-static", async (context: TestContext) => {
-        // create public file
         await Deno.writeTextFile(`${context.projectDir}/public/hello.txt`, "hi");
         const port = await context.allocatePort();
         const controller = new AbortController();
@@ -77,27 +71,23 @@ describe(
         });
         await server.ready;
 
-        // static
         const res = await fetch(`http://127.0.0.1:${port}/hello.txt`, {
           headers: { origin: "http://example.com" },
         });
         assertEquals(res.status, 200);
         assertEquals(await res.text(), "hi");
-        // CORS reflected
         if (res.headers.get("access-control-allow-origin")) {
           assertEquals(res.headers.get("access-control-allow-origin"), "http://example.com");
         }
-        // ETag flow
         const etag = res.headers.get("etag");
         if (etag) {
           const notMod = await fetch(`http://127.0.0.1:${port}/hello.txt`, {
             headers: { "if-none-match": etag },
           });
           assertEquals(notMod.status, 304);
-          await notMod.text(); // Consume body (even for 304)
+          await notMod.text();
         }
 
-        // metrics
         const m = await fetch(`http://127.0.0.1:${port}/_metrics`, {
           headers: { origin: "http://example.com" },
         });
@@ -106,7 +96,6 @@ describe(
         if (!json || !json.counters) {
           throw new Error("missing counters in metrics");
         }
-        // CORS reflected
         if (m.headers.get("access-control-allow-origin")) {
           assertEquals(m.headers.get("access-control-allow-origin"), "http://example.com");
         }
@@ -118,13 +107,11 @@ describe(
 
     it("handles pages/api and app route handlers (GET/POST)", async () => {
       await withTestContext("universal-server-api", async (context: TestContext) => {
-        // Enable RSC via config instead of env var
         await Deno.writeTextFile(
           join(context.projectDir, "veryfront.config.js"),
           `export default { experimental: { rsc: true } };`,
         );
 
-        // pages/api/hello.ts
         const pagesApiDir = join(context.projectDir, "pages", "api");
         await Deno.mkdir(pagesApiDir, { recursive: true });
         await Deno.writeTextFile(
@@ -136,7 +123,6 @@ describe(
       `,
         );
 
-        // app/api/echo/route.ts
         const appApiEchoDir = join(context.projectDir, "app", "api", "echo");
         await Deno.mkdir(appApiEchoDir, { recursive: true });
         await Deno.writeTextFile(
@@ -159,12 +145,10 @@ describe(
           });
           await server.ready;
 
-          // pages/api
           const a = await fetch(`http://127.0.0.1:${port}/api/hello`);
           const aj = await a.json();
           assertEquals(aj.msg, "pages api");
 
-          // app route POST
           const b = await fetch(`http://127.0.0.1:${port}/api/echo`, {
             method: "POST",
             headers: { "content-type": "application/json" },
@@ -174,40 +158,36 @@ describe(
           const bj = await b.json();
           assertEquals(bj.youSent.ok, true);
 
-          // app router SSR root (write file before fetch)
           await Deno.writeTextFile(join(context.projectDir, "app", "page.mdx"), `# Hello World`);
-          // Re-issue readiness (renderer caches on first call); small delay for fs
           await new Promise((r) => setTimeout(r, 50));
           const p = await fetch(`http://127.0.0.1:${port}/`);
           assertEquals(p.status, 200);
           const html = await p.text();
           if (!/Hello World/i.test(html)) throw new Error("SSR content missing");
 
-          // minimal RSC endpoints via universal delegator
           const m = await fetch(`http://127.0.0.1:${port}/_veryfront/rsc/manifest`);
           assertEquals(m.status, 200);
-          await m.text(); // Consume body
+          await m.text();
 
           const hydr = await fetch(`http://127.0.0.1:${port}/_veryfront/rsc/hydrator.js`);
           assertEquals(hydr.status, 200);
-          await hydr.text(); // Consume body
+          await hydr.text();
 
           const dom = await fetch(`http://127.0.0.1:${port}/_veryfront/rsc/dom.js`);
           assertEquals(dom.status, 200);
-          await dom.text(); // Consume body
+          await dom.text();
 
           const stream = await fetch(`http://127.0.0.1:${port}/_veryfront/rsc/stream`);
           assertEquals(stream.status, 200);
-          // stream should be no-cache
           const cc = stream.headers.get("cache-control") || "";
           if (!/no-cache/i.test(cc)) {
             throw new Error(`stream missing no-cache: ${cc}`);
           }
-          await stream.text(); // Consume body
+          await stream.text();
 
           const payload = await fetch(`http://127.0.0.1:${port}/_veryfront/rsc/payload`);
           assertEquals(payload.status, 200);
-          await payload.text(); // Consume body
+          await payload.text();
 
           controller.abort();
           await server.stop();
@@ -216,7 +196,6 @@ describe(
 
     it("serves hydrate.js alias and RSC render ETag/304", async () => {
       await withTestContext("universal-server-rsc-hydrate-etag", async (context: TestContext) => {
-        // Enable RSC via config instead of env var
         await Deno.writeTextFile(
           join(context.projectDir, "veryfront.config.js"),
           `export default { experimental: { rsc: true } };`,
@@ -238,12 +217,10 @@ describe(
           });
           await server.ready;
 
-          // hydrate.js alias
           const hyd = await fetch(`http://127.0.0.1:${port}/_veryfront/rsc/hydrate.js`);
           assertEquals(hyd.status, 200);
           await hyd.body?.cancel();
 
-          // render payload ETag behaviour
           const r1 = await fetch(`http://127.0.0.1:${port}/_veryfront/rsc/render`);
           assertEquals(r1.status, 200);
           const etag = r1.headers.get("etag");
@@ -264,7 +241,6 @@ describe(
       await withTestContext("universal-server-500-fallback", async (context: TestContext) => {
         const dir = join(context.projectDir, "app");
         await Deno.mkdir(dir, { recursive: true });
-        // Create a page that throws to trigger SSR error path
         await Deno.writeTextFile(
           join(dir, "boom.tsx"),
           `export default function Page(){ throw new Error('fail'); }`,
@@ -281,11 +257,9 @@ describe(
         await server.ready;
 
         const res = await fetch(`http://127.0.0.1:${port}/boom`);
-        // Either a rendered error boundary (404) or generic 500; accept either but require HTML and CSP
         const ct = res.headers.get("content-type") || "";
         assertMatch(ct, /text\/html/i);
         const csp = res.headers.get("content-security-policy") || "";
-        // Should include default-src directive
         if (!/default-src/i.test(csp)) throw new Error(`missing csp: ${csp}`);
         await res.text();
 
@@ -296,7 +270,6 @@ describe(
 
     it("renders App Router loading/error via universal server", async () => {
       await withTestContext("universal-server-app-loading-error", async (context: TestContext) => {
-        // Clean and set up app router structure
         try {
           await Deno.remove(join(context.projectDir, "app"), {
             recursive: true,
@@ -308,13 +281,11 @@ describe(
           recursive: true,
         });
 
-        // Root layout with <main>
         await Deno.writeTextFile(
           join(context.projectDir, "app", "layout.tsx"),
           `export default function Root({ children }: any){ return (<html><body><main data-router-focus>{children}</main></body></html>); }`,
         );
 
-        // Segment A loading and error
         await Deno.writeTextFile(
           join(context.projectDir, "app", "a", "loading.tsx"),
           `export default function Loading(){ return <p>Loading A...</p>; }`,
@@ -324,7 +295,6 @@ describe(
           `export default function Error({ error }: any){ return <p>ErrA:{String(error&&error.message||error)}</p>; }`,
         );
 
-        // Segment B page that throws
         await Deno.writeTextFile(
           join(context.projectDir, "app", "a", "b", "page.tsx"),
           `export default async function Page(){ await new Promise(r=>setTimeout(r, 20)); throw new Error('boom'); }`,
@@ -342,7 +312,6 @@ describe(
 
         const res = await fetch(`http://127.0.0.1:${port}/a/b`);
         const html = await res.text();
-        // In production SSR we expect final HTML to include error boundary content
         if (!(html.includes("ErrA:") || html.includes("Loading A..."))) {
           throw new Error("Expected loading or error content in HTML");
         }
@@ -354,7 +323,6 @@ describe(
 
     it("renders not-found.tsx for missing App Router page", async () => {
       await withTestContext("universal-server-app-not-found", async (context: TestContext) => {
-        // Ensure clean app dir and create not-found in segment
         try {
           await Deno.remove(join(context.projectDir, "app"), {
             recursive: true,
@@ -379,7 +347,6 @@ describe(
         });
         await server.ready;
 
-        // Request a non-existent page within the segment
         const res = await fetch(`http://127.0.0.1:${port}/a/b/missing`);
         assertEquals(res.status, 404);
         const html = await res.text();
@@ -392,7 +359,6 @@ describe(
 
     it("includes metadata (title, description) in SSR HTML", async () => {
       await withTestContext("universal-server-metadata", async (context: TestContext) => {
-        // Create App Router root page with frontmatter metadata
         const appDir = join(context.projectDir, "app");
         await Deno.mkdir(appDir, { recursive: true });
         await Deno.writeTextFile(
@@ -457,7 +423,6 @@ describe(
 
     it("streams RSC NDJSON with root and sidebar slots in order", async () => {
       await withTestContext("universal-server-rsc-stream-order", async (context: TestContext) => {
-        // Enable RSC via config instead of env var
         await Deno.writeTextFile(
           join(context.projectDir, "veryfront.config.js"),
           `export default { experimental: { rsc: true } };`,
@@ -505,7 +470,6 @@ describe(
           const ids = events.map((e) => e.id);
           if (!ids.includes("root")) throw new Error("root slot missing");
           if (!ids.includes("sidebar")) throw new Error("sidebar slot missing");
-          // Ensure at least one sidebar event occurs before the final root event
           const lastRoot = events
             .map((e, i) => [e, i] as const)
             .filter(([e]) => e.id === "root")
@@ -524,7 +488,6 @@ describe(
 
     it("serves SSR with ETag and HEAD support", async () => {
       await withTestContext("universal-server-ssr-etag-head", async (context: TestContext) => {
-        // App Router home page
         const appDir = join(context.projectDir, "app");
         await Deno.mkdir(appDir, { recursive: true });
         await Deno.writeTextFile(join(appDir, "page.mdx"), `# Home SSR\n\nContent here.`);
@@ -570,14 +533,12 @@ describe(
 
     it("handles App Router params and method Allow header", async () => {
       await withTestContext("universal-server-app-route-methods", async (context: TestContext) => {
-        // Create dynamic route with GET only
         const postDir = join(context.projectDir, "app", "post", "[slug]");
         await Deno.mkdir(postDir, { recursive: true });
         await Deno.writeTextFile(
           join(postDir, "route.ts"),
           `export async function GET(_req: Request, { params }: any){ return Response.json({ slug: params.slug }); }`,
         );
-        // Create route with POST only
         const adminDir = join(context.projectDir, "app", "admin");
         await Deno.mkdir(adminDir, { recursive: true });
         await Deno.writeTextFile(
@@ -585,7 +546,6 @@ describe(
           `export async function POST(_req: Request){ return new Response('ok'); }`,
         );
 
-        // Catch-all route returns joined parts
         const docsDir = join(context.projectDir, "app", "docs", "[...parts]");
         await Deno.mkdir(docsDir, { recursive: true });
         await Deno.writeTextFile(
@@ -593,7 +553,6 @@ describe(
           `export async function GET(_req: Request, { params }: any){ return Response.json({ parts: params.parts }); }`,
         );
 
-        // Optional catch-all route
         const optDir = join(context.projectDir, "app", "opt", "[[...rest]]");
         await Deno.mkdir(optDir, { recursive: true });
         await Deno.writeTextFile(
@@ -611,28 +570,24 @@ describe(
         });
         await server.ready;
 
-        // Dynamic param resolves
         const g = await fetch(`http://127.0.0.1:${port}/post/hello`);
         const gj = await g.json();
         assertEquals(gj.slug, "hello");
 
-        // HEAD shim for GET
         const h = await fetch(`http://127.0.0.1:${port}/post/hello`, {
           method: "HEAD",
         });
         assertEquals(h.status, 200);
-        await h.text(); // Consume body
+        await h.text();
 
-        // 405 and Allow header for GET on POST-only route
         const x = await fetch(`http://127.0.0.1:${port}/admin`);
         assertEquals(x.status, 405);
         const allow = x.headers.get("allow") || x.headers.get("Allow");
         if (!allow || !/POST/.test(allow)) {
           throw new Error(`Allow header missing POST: ${allow}`);
         }
-        await x.text(); // Consume body
+        await x.text();
 
-        // OPTIONS on POST-only route includes Allow with HEAD,OPTIONS,POST
         const opt = await fetch(`http://127.0.0.1:${port}/admin`, {
           method: "OPTIONS",
         });
@@ -641,14 +596,12 @@ describe(
         if (!a || !/POST/.test(a) || !/OPTIONS/.test(a)) {
           throw new Error(`OPTIONS Allow missing: ${a}`);
         }
-        await opt.text(); // Consume body
+        await opt.text();
 
-        // Catch-all params
         const d = await fetch(`http://127.0.0.1:${port}/docs/a/b/c`);
         const dj = await d.json();
         assertEquals(dj.parts, "a/b/c");
 
-        // Optional catch-all: no rest
         const o = await fetch(`http://127.0.0.1:${port}/opt`);
         const oj = await o.json();
         assertEquals(oj.rest, "");
@@ -661,7 +614,6 @@ describe(
     it("serves RSC render/page endpoints for App Router page", async () => {
       await withTestContext("universal-server-rsc-endpoints", async (context: TestContext) => {
         const restore = withEnv({ VERYFRONT_EXPERIMENTAL_RSC: "1" });
-        // Setup: create an app route that returns simple HTML string (no TSX) and a client component
         const dir = join(context.projectDir, "app", "rsc");
         await Deno.mkdir(dir, { recursive: true });
         await Deno.writeTextFile(
@@ -683,7 +635,6 @@ describe(
         });
         await server.ready;
 
-        // /_veryfront/rsc/render/rsc -> JSON payload
         const renderRes = await fetch(`http://127.0.0.1:${port}/_veryfront/rsc/render/rsc`, {
           headers: { origin: "https://rsc.test" },
         });
@@ -695,12 +646,10 @@ describe(
         if (!payload.html.includes("RSC Hello")) {
           throw new Error("rsc html missing");
         }
-        // Optional: if a client component exists, manifest should include it
         const man = await fetch(`http://127.0.0.1:${port}/_veryfront/rsc/manifest`);
         assertEquals(man.status, 200);
         const manifest = await man.json();
         if (manifest?.components) {
-          // we expect at least one component id present
           const keys = Object.keys(manifest.components);
           if (!(keys.length >= 0)) {
             throw new Error("manifest missing components");
@@ -709,7 +658,6 @@ describe(
         const a1 = renderRes.headers.get("access-control-allow-origin");
         if (a1) assertEquals(a1, "https://rsc.test");
 
-        // /_veryfront/rsc/page/rsc -> HTML page
         const pageRes = await fetch(`http://127.0.0.1:${port}/_veryfront/rsc/page/rsc`, {
           headers: { origin: "https://rsc.test" },
         });
@@ -720,7 +668,6 @@ describe(
         const a2 = pageRes.headers.get("access-control-allow-origin");
         if (a2) assertEquals(a2, "https://rsc.test");
 
-        // /_veryfront/rsc/client.js -> boot script
         const clientRes = await fetch(`http://127.0.0.1:${port}/_veryfront/rsc/client.js`, {
           headers: { origin: "https://rsc.test" },
         });
@@ -729,11 +676,9 @@ describe(
         if (!/tryStream\(/.test(clientJs)) {
           throw new Error("client.js missing tryStream");
         }
-        // CORS/security headers applied by universal wrapper
         const allow = clientRes.headers.get("access-control-allow-origin");
         if (allow) assertEquals(allow, "https://rsc.test");
 
-        // /_veryfront/rsc/stream -> NDJSON stream with at least one line
         const s = await fetch(`http://127.0.0.1:${port}/_veryfront/rsc/stream`, {
           headers: { origin: "https://rsc.test" },
         });

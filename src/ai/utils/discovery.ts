@@ -179,7 +179,53 @@ async function importModule(
     plugins,
     external: [
       "ai",
-      "ai
+      "ai/*",
+      "@ai-sdk/*",
+      "zod",
+      "node:*",
+      "veryfront",
+      "veryfront/*",
+      "@opentelemetry/*",
+      "path",
+      ...relativeImports,
+    ],
+    stdin: {
+      contents: source,
+      loader,
+      resolveDir: fileDir,
+      sourcefile: filePath,
+    },
+  });
+
+  if (result.errors && result.errors.length > 0) {
+    const first = result.errors[0]?.text || "unknown error";
+    throw new Error(`Failed to transpile ${filePath}: ${first}`);
+  }
+
+  const js = result.outputFiles?.[0]?.text ?? "export {}";
+
+  const localFs = createFileSystem();
+  const tempDir = await localFs.makeTempDir({ prefix: "vf-discovery-" });
+  const tempFile = pathHelper.join(tempDir, "module.mjs");
+
+  let transformedCode: string;
+  if (isDeno) {
+    transformedCode = rewriteForDeno(js, fileDir);
+  } else {
+    transformedCode = await rewriteDiscoveryImports(js, context.baseDir || ".", localFs, fileDir);
+  }
+
+  await localFs.writeTextFile(tempFile, transformedCode);
+
+  try {
+    const module = await import(`file://${tempFile}?v=${Date.now()}`);
+    transpileCache.set(cacheKey, module);
+    return module;
+  } finally {
+    await localFs.remove(tempDir, { recursive: true });
+  }
+}
+
 function rewriteForDeno(code: string, fileDir: string): string {
   let transformed = code;
 

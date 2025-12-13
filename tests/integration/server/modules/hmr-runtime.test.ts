@@ -1,11 +1,3 @@
-/**
- * HMR Runtime Tests
- *
- * Tests for the extracted HMR runtime TypeScript module:
- * - generateRuntimeScript()
- * - HMR message types
- * - Runtime behavior
- */
 
 import { assert, assertEquals, assertExists } from "std/assert/mod.ts";
 import { afterAll, describe, it } from "std/testing/bdd.ts";
@@ -15,7 +7,6 @@ import {
 } from "../../../../src/server/dev-server/hmr/index.ts";
 import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";
 
-// Clean up renderer intervals to prevent resource leaks
 afterAll(async () => {
   await cleanupBundler();
 });
@@ -136,7 +127,6 @@ describe("HMR Runtime - React Refresh Support", () => {
     assertExists(scriptWith);
     assertExists(scriptWithout);
 
-    // Both should have basic structure
     assert(scriptWith.includes("reactRefreshEnabled"));
     assert(scriptWithout.includes("reactRefreshEnabled"));
   });
@@ -303,7 +293,6 @@ describe("HMR Runtime - Script Structure", () => {
 
     const script = generateRuntimeScript(options);
 
-    // Should use const/let, not var
     assert(
       script.includes("const ") || script.includes("let "),
       "Should use modern variable declarations",
@@ -344,7 +333,6 @@ describe("HMR Runtime - Connection Resilience", () => {
 
     const script = generateRuntimeScript(options);
 
-    // Should handle multiple cycles by checking and clearing timeouts
     assert(script.includes("clearTimeout"), "Should handle cleanup");
     assert(script.includes("setTimeout"), "Should handle new timeouts");
   });
@@ -359,7 +347,6 @@ describe("HMR Runtime - Production Safety", () => {
 
     const script = generateRuntimeScript(options);
 
-    // Check for common syntax errors
     const openBraces = (script.match(/\{/g) || []).length;
     const closeBraces = (script.match(/\}/g) || []).length;
     const openParens = (script.match(/\(/g) || []).length;
@@ -377,7 +364,6 @@ describe("HMR Runtime - Production Safety", () => {
 
     const script = generateRuntimeScript(options);
 
-    // Should not have console.log for debugging
     assert(!script.includes("console.log"), "Should not have console.log statements");
   });
 
@@ -389,7 +375,6 @@ describe("HMR Runtime - Production Safety", () => {
 
     const script = generateRuntimeScript(options);
 
-    // Should have error handling
     const tryCount = (script.match(/try\s*\{/g) || []).length;
     const catchCount = (script.match(/catch\s*\(/g) || []).length;
 
@@ -433,7 +418,6 @@ describe("HMR Runtime - Performance", () => {
 
     const script = generateRuntimeScript(options);
 
-    // Should be less than 10KB
     assert(script.length < 10 * 1024, `Script should be <10KB, is ${script.length} bytes`);
   });
 });

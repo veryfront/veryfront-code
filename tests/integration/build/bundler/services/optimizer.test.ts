@@ -1,13 +1,3 @@
-/**
- * Bundle Optimizer Tests
- *
- * Comprehensive tests for bundle optimization service covering:
- * - Production optimization
- * - Minification
- * - Target transformation
- * - Error handling
- * - Development mode skip
- */
 
 import { assertEquals, assertExists } from "std/assert/mod.ts";
 import { describe, it } from "std/testing/bdd.ts";
@@ -63,13 +53,10 @@ describe(
           const output = result.outputs.get("/test/app.js")!;
           const optimized = output.content;
 
-          // Should be minified (length reduced)
           assertEquals(optimized.length < originalContent.length, true);
 
-          // Should remove comments
           assertEquals(optimized.includes("// This is a comment"), false);
 
-          // Should preserve functionality (minified code may rename but keep string)
           assertEquals(optimized.includes("Hello, World!"), true);
         });
       });
@@ -110,7 +97,6 @@ describe(
 
           const output = result.outputs.get("/test/app.js")!;
 
-          // Should be unchanged in dev mode
           assertEquals(output.content, originalCode);
         });
       });
@@ -155,10 +141,8 @@ describe(
           const jsOutput = result.outputs.get("/test/app.js")!;
           const cssOutput = result.outputs.get("/test/styles.css")!;
 
-          // JS should be optimized
           assertEquals(jsOutput.content !== jsCode, true);
 
-          // CSS should be unchanged
           assertEquals(cssOutput.content, cssCode);
         });
       });
@@ -211,7 +195,6 @@ describe(
 
           await optimizeBundle(result, options);
 
-          // All should be optimized
           const appSize = result.outputs.get("/test/app.js")!.content.length;
           const utilsSize = result.outputs.get("/test/utils.js")!.content.length;
           const libSize = result.outputs.get("/test/lib.js")!.content.length;
@@ -263,11 +246,9 @@ describe(
 
           const output = result.outputs.get("/test/modern.js")!;
 
-          // Should compile to es2020 target (modern features should work)
           assertExists(output.content);
           assertEquals(output.content.length > 0, true);
 
-          // Should preserve essential features (may be transformed)
           assertEquals(output.content.includes("fetch") || output.content.includes("async"), true);
         });
       });
@@ -302,10 +283,8 @@ describe(
             dependencies: new Map(),
           };
 
-          // Should not throw - errors are logged but optimization continues
           await optimizeBundle(result, options);
 
-          // Content should remain (optimizer failed but doesn't break build)
           assertExists(result.outputs.get("/test/broken.js"));
         });
       });
@@ -343,10 +322,8 @@ describe(
 
           const output = result.outputs.get("/test/arrows.js")!;
 
-          // Should be minified
           assertEquals(output.content.length < 150, true);
 
-          // Should preserve exports (in some form)
           assertExists(output.content);
         });
       });
@@ -366,7 +343,6 @@ describe(
             dependencies: new Map(),
           };
 
-          // Should not throw
           await optimizeBundle(result, options);
 
           assertEquals(result.outputs.size, 0);
@@ -405,12 +381,10 @@ describe(
 
           const output = result.outputs.get("/test/page.js")!;
 
-          // Should preserve metadata
           assertExists(output.meta);
           assertEquals(output.meta.title, "Test Page");
           assertEquals(output.meta.description, "A test page");
 
-          // Should preserve path and type
           assertEquals(output.path, "/test/page.js");
           assertEquals(output.type, "js");
         });
@@ -424,7 +398,6 @@ describe(
             mode: "production",
           };
 
-          // Generate a large file with repetitive code
           const largeCode = Array.from({ length: 100 }, (_, i) => `
             function func${i}() {
               const value = ${i};
@@ -456,7 +429,6 @@ describe(
           const output = result.outputs.get("/test/large.js")!;
           const optimizedSize = output.content.length;
 
-          // Should be significantly smaller
           assertEquals(optimizedSize < originalSize * 0.7, true);
         });
       });

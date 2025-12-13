@@ -1,25 +1,3 @@
-/**
- * TestContext - Comprehensive test environment management
- *
- * Provides a bulletproof testing context that handles:
- * - Server lifecycle (start, ready, stop)
- * - Port allocation without conflicts
- * - Temporary directory management
- * - Resource cleanup guarantees
- * - Environment isolation
- *
- * Usage:
- * ```typescript
- * const context = new TestContext("my-test");
- * await context.setup();
- * try {
- *   const server = await context.createDevServer();
- *   // Run tests...
- * } finally {
- *   await context.cleanup();
- * }
- * ```
- */
 
 import { join } from "std/path/mod.ts";
 import { createDevServer } from "../../src/server/dev-server.ts";
@@ -28,7 +6,6 @@ import { resetApiHandler } from "../../src/server/handlers/request/api/index.ts"
 import type { TestServer } from "./server.ts";
 import { getFreePort } from "./utils.ts";
 
-// Initialize esbuild without worker to prevent hanging tests
 try {
   const { initialize } = await import("esbuild");
   await initialize({
@@ -64,7 +41,6 @@ safeSetEnv("VF_DISABLE_LRU_INTERVAL", "1");
 (globalThis as Record<string, unknown>).__vfDisableLruInterval = true;
 const _activeLruDisableContexts = 0;
 
-// Global port allocator to prevent conflicts
 class PortAllocator {
   private static instance: PortAllocator;
   private usedPorts = new Set<number>();
@@ -79,10 +55,8 @@ class PortAllocator {
   }
 
   allocate(): Promise<number> {
-    // Delegate to shared helper for consistency across tests
     const port = getFreePort(this.MIN_PORT, this.MAX_PORT);
     if (this.usedPorts.has(port)) {
-      // Extremely unlikely, but ensure uniqueness within this process
       for (let p = this.MIN_PORT; p <= this.MAX_PORT; p++) {
         if (this.usedPorts.has(p)) continue;
         this.usedPorts.add(p);
@@ -102,7 +76,6 @@ export class TestContext {
   private readonly testName: string;
   private tempDir?: string;
   private servers: TestServer[] = [];
-  private serverControllers: AbortController[] = [];
   private allocatedPorts: number[] = [];
   private originalEnv: Map<string, string | undefined> = new Map();
   private originalDisableLru?: string;
@@ -122,22 +95,13 @@ export class TestContext {
     (globalThis as Record<string, unknown>).__vfDisableLruInterval = true;
   }
 
-  /**
-   * Sets up the test context
-   * Must be called before any other operations
-   */
   async setup(): Promise<void> {
-    // Create isolated temp directory
     const prefix = `veryfront_test_${this.testName}_`;
     this.tempDir = await Deno.makeTempDir({ prefix });
 
-    // Set up standard project structure
     await this.createProjectStructure();
   }
 
-  /**
-   * Gets the test project directory
-   */
   get projectDir(): string {
     if (!this.tempDir) {
       throw new Error("TestContext not set up. Call setup() first.");
@@ -145,32 +109,20 @@ export class TestContext {
     return this.tempDir;
   }
 
-  /**
-   * Allocates a free port for testing
-   */
   async allocatePort(): Promise<number> {
     const port = await PortAllocator.getInstance().allocate();
     this.allocatedPorts.push(port);
     return port;
   }
 
-  /**
-   * Sets environment variables with automatic cleanup
-   *
-   * WARNING: Environment variables are global across all parallel test workers.
-   * Tests that modify env vars may experience race conditions when run with DENO_JOBS > 1.
-   * Use DENO_JOBS=1 or ensure tests with different env requirements don't run in parallel.
-   */
   setEnv(vars: Record<string, string>): void {
     for (const [key, value] of Object.entries(vars)) {
       if (!this.originalEnv.has(key)) {
-        // Store original value from Deno.env if available, fallback to process.env
         const originalValue = typeof Deno !== "undefined" && Deno.env
           ? Deno.env.get(key)
           : process.env[key];
         this.originalEnv.set(key, originalValue);
       }
-      // Set in both Deno.env and process.env for maximum compatibility
       if (typeof Deno !== "undefined" && Deno.env) {
         Deno.env.set(key, value);
       }
@@ -178,9 +130,6 @@ export class TestContext {
     }
   }
 
-  /**
-   * Creates a development server with automatic cleanup
-   */
   async createDevServer(options: {
     port?: number;
     enableHMR?: boolean;
@@ -197,60 +146,42 @@ export class TestContext {
       signal: options.signal,
     });
 
-    // Add to tracked servers
     const testServer = server as TestServer;
     testServer.port = port;
     testServer.hostname = "localhost";
     this.servers.push(testServer);
 
-    // Wait for server to be ready
     await this.waitForServerReady(testServer);
 
     return testServer;
   }
 
-  /**
-   * Creates a production server with automatic cleanup
-   */
   async createProductionServer(
     options: { port?: number; hostname?: string } = {},
   ): Promise<TestServer> {
     const port = options.port || (await this.allocatePort());
     const hostname = options.hostname || "127.0.0.1";
 
-    // Create AbortController for proper cleanup
-    const controller = new AbortController();
-    this.serverControllers.push(controller);
-
     const server = await startProductionServer({
       projectDir: this.projectDir,
       port,
       hostname,
-      signal: controller.signal,
     });
 
-    // Add to tracked servers
     const testServer = server as TestServer;
     testServer.port = port;
     testServer.hostname = hostname;
     this.servers.push(testServer);
 
-    // Wait for server to be ready
     await this.waitForServerReady(testServer);
 
     return testServer;
   }
 
-  /**
-   * Adds a cleanup handler to be run during cleanup
-   */
   addCleanup(handler: () => Promise<void> | void): void {
     this.cleanupHandlers.push(async () => await handler());
   }
 
-  /**
-   * Tracks a resource with automatic cleanup
-   */
   trackResource<T extends { close?: () => any; stop?: () => any; terminate?: () => any }>(
     resource: T,
     name?: string,
@@ -267,14 +198,9 @@ export class TestContext {
     return resource;
   }
 
-  /**
-   * Cleans up all resources
-   * MUST be called in a finally block
-   */
   async cleanup(): Promise<void> {
     const errors: Error[] = [];
 
-    // Run custom cleanup handlers
     for (const handler of this.cleanupHandlers) {
       try {
         await handler();
@@ -283,30 +209,15 @@ export class TestContext {
       }
     }
 
-    // Abort all server controllers first to signal shutdown
-    for (const controller of this.serverControllers) {
-      try {
-        controller.abort();
-      } catch {
-        // Ignore abort errors - server may already be stopped
-      }
-    }
-
-    // Stop all servers
     for (const server of this.servers) {
       try {
         await server.stop();
         await this.waitForServerStopped(server);
-      } catch {
-        // Ignore stop errors - server may already be stopped
+      } catch (error) {
+        errors.push(error as Error);
       }
     }
 
-    // Clear the arrays to prevent double cleanup
-    this.serverControllers.length = 0;
-    this.servers.length = 0;
-
-    // Clean up renderers and caches to prevent resource leaks
     try {
       const { cleanupBundler } = await import("../../src/rendering/cleanup.ts");
       await cleanupBundler();
@@ -320,23 +231,19 @@ export class TestContext {
       errors.push(error as Error);
     }
 
-    // Release all ports
     const portAllocator = PortAllocator.getInstance();
     for (const port of this.allocatedPorts) {
       portAllocator.release(port);
     }
 
-    // Restore environment variables
     for (const [key, originalValue] of this.originalEnv) {
       if (originalValue === undefined) {
         delete process.env[key];
-        // Also delete from Deno.env if available
         if (typeof Deno !== "undefined" && Deno.env) {
           Deno.env.delete(key);
         }
       } else {
         process.env[key] = originalValue;
-        // Also restore in Deno.env if available
         if (typeof Deno !== "undefined" && Deno.env) {
           Deno.env.set(key, originalValue);
         }
@@ -360,7 +267,6 @@ export class TestContext {
         this.originalDisableLruGlobal;
     }
 
-    // Remove temp directory
     if (this.tempDir) {
       try {
         await Deno.remove(this.tempDir, { recursive: true });
@@ -371,15 +277,11 @@ export class TestContext {
       }
     }
 
-    // Report any cleanup errors
     if (errors.length > 0) {
       console.error(`[TestContext] Cleanup errors for ${this.testName}:`, errors);
     }
   }
 
-  /**
-   * Creates a standard project structure for testing
-   */
   private async createProjectStructure(): Promise<void> {
     const dirs = [
       "pages",
@@ -395,7 +297,6 @@ export class TestContext {
       await Deno.mkdir(join(this.projectDir, dir), { recursive: true });
     }
 
-    // Create default config
     await Deno.writeTextFile(
       join(this.projectDir, "veryfront.config.js"),
       `export default {
@@ -405,15 +306,11 @@ export class TestContext {
     );
   }
 
-  /**
-   * Waits for a server to be ready with exponential backoff
-   */
   private async waitForServerReady(server: TestServer): Promise<void> {
     const maxAttempts = 20;
     const baseDelay = 100;
     const maxDelay = 2000;
 
-    // First, wait for the ready promise if available
     if (server.ready && typeof server.ready.then === "function") {
       let timeoutId: number | undefined;
       const timeout = new Promise((_, reject) => {
@@ -429,7 +326,6 @@ export class TestContext {
       }
     }
 
-    // Then verify with HTTP requests
     const port = server.port || 3000;
     const hostname = server.hostname || "localhost";
     const url = `http://${hostname}:${port}/`;
@@ -442,11 +338,9 @@ export class TestContext {
         });
 
         if (response.status >= 200 && response.status < 600) {
-          // Consume the response body
           await response.body?.cancel();
-          response = null; // Mark as consumed
+          response = null;
 
-          // Verify with one more request
           let verify: Response | null = null;
           try {
             verify = await fetch(url, {
@@ -454,33 +348,26 @@ export class TestContext {
             });
 
             if (verify.status >= 200 && verify.status < 600) {
-              // Consume the verify response body
               await verify.body?.cancel();
               return;
             }
-            // Consume body if verification failed
             await verify.body?.cancel();
             verify = null;
           } catch {
-            // Verification request failed, ensure body is consumed
             await verify?.body?.cancel();
           }
         } else {
-          // Consume body if status check failed
           await response.body?.cancel();
           response = null;
         }
       } catch {
-        // Server not ready yet, ensure body is consumed if fetch succeeded
         await response?.body?.cancel();
       }
 
-      // Exponential backoff with jitter
       const delay = Math.min(baseDelay * 1.5 ** attempt + Math.random() * 100, maxDelay);
 
       await new Promise<void>((resolve) => {
         const timeoutId = setTimeout(resolve, delay);
-        // Clear immediately after resolution
         Promise.resolve().then(() => clearTimeout(timeoutId));
       });
     }
@@ -488,9 +375,6 @@ export class TestContext {
     throw new Error(`Server at ${url} not ready after ${maxAttempts} attempts`);
   }
 
-  /**
-   * Waits for a server to stop
-   */
   private async waitForServerStopped(server: TestServer): Promise<void> {
     const port = server.port || 3000;
     const hostname = server.hostname || "localhost";
@@ -500,12 +384,12 @@ export class TestContext {
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
       try {
         const response = await fetch(url, { signal: AbortSignal.timeout(100) });
-        // Consume the response body
         await response.body?.cancel();
-        // If fetch succeeds, server is still running, wait before next attempt
-        await new Promise<void>((resolve) => setTimeout(resolve, 100));
+        await new Promise<void>((resolve) => {
+          const timeoutId = setTimeout(resolve, 100);
+          Promise.resolve().then(() => clearTimeout(timeoutId));
+        });
       } catch {
-        // Server has stopped
         return;
       }
     }
@@ -514,9 +398,6 @@ export class TestContext {
   }
 }
 
-/**
- * Test helper function that automatically manages context
- */
 export async function withTestContext<T>(
   testName: string,
   fn: (context: TestContext) => Promise<T>,

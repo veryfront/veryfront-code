@@ -1,25 +1,11 @@
-/**
- * Markdown Component - Rich markdown renderer for chat messages
- *
- * Supports:
- * - GitHub Flavored Markdown (tables, strikethrough, etc.)
- * - Syntax highlighted code blocks
- * - Mermaid diagrams (lazy loaded, client-side only)
- *
- * Works in: Deno, Node.js, Bun (client-side React)
- */
 
 import * as React from "react";
 import { cn } from "./theme.ts";
 
 export interface MarkdownProps {
-  /** Markdown content to render */
   children: string;
-  /** Additional class name */
   className?: string;
-  /** Enable mermaid diagram rendering (default: true, client-side only) */
   enableMermaid?: boolean;
-  /** Custom code block renderer */
   renderCodeBlock?: (props: CodeBlockProps) => React.ReactNode;
 }
 
@@ -29,17 +15,13 @@ export interface CodeBlockProps {
   inline?: boolean;
 }
 
-// Check if we're in a browser environment
 const isBrowser = typeof window !== "undefined" && typeof document !== "undefined";
 
-// esm.sh CDN URLs for browser-side dynamic imports
-// These URLs are stored in variables to prevent bundler transforms
 const ESM_REACT_MARKDOWN = "https://esm.sh/react-markdown@9?external=react";
 const ESM_REMARK_GFM = "https://esm.sh/remark-gfm@4";
 const ESM_REHYPE_HIGHLIGHT = "https://esm.sh/rehype-highlight@7";
 const ESM_MERMAID = "https://esm.sh/mermaid@11";
 
-// Lazy load heavy dependencies
 // deno-lint-ignore no-explicit-any
 let ReactMarkdown: any = null;
 // deno-lint-ignore no-explicit-any
@@ -47,7 +29,6 @@ let remarkGfm: any = null;
 // deno-lint-ignore no-explicit-any
 let rehypeHighlight: any = null;
 
-// Mermaid state (browser only)
 // deno-lint-ignore no-explicit-any
 let mermaidPromise: Promise<any> | null = null;
 // deno-lint-ignore no-explicit-any
@@ -57,7 +38,6 @@ async function loadMermaid() {
   if (!isBrowser) return null;
   if (mermaidModule) return mermaidModule;
   if (!mermaidPromise) {
-    // Use Function constructor to prevent bundler from transforming the import
     const dynamicImport = new Function("url", "return import(url)");
     mermaidPromise = dynamicImport(ESM_MERMAID);
   }
@@ -70,15 +50,11 @@ async function loadMermaid() {
   return mermaidModule;
 }
 
-/**
- * Mermaid diagram component with lazy loading (client-side only)
- */
 function MermaidDiagram({ code }: { code: string }) {
   const [svg, setSvg] = React.useState<string>("");
   const [error, setError] = React.useState<string>("");
 
   React.useEffect(() => {
-    // Only render in browser
     if (!isBrowser) return;
 
     let cancelled = false;
@@ -107,7 +83,6 @@ function MermaidDiagram({ code }: { code: string }) {
     };
   }, [code]);
 
-  // Server-side: show code block fallback
   if (!isBrowser) {
     return (
       <pre className="my-4 p-4 bg-neutral-100 dark:bg-neutral-800 rounded-lg overflow-auto">
@@ -144,9 +119,6 @@ function MermaidDiagram({ code }: { code: string }) {
   );
 }
 
-/**
- * Code block component with syntax highlighting and mermaid support
- */
 function CodeBlock({
   language,
   code,
@@ -157,12 +129,10 @@ function CodeBlock({
   enableMermaid: boolean;
   renderCodeBlock?: MarkdownProps["renderCodeBlock"];
 }) {
-  // Custom renderer takes priority
   if (renderCodeBlock) {
     return <>{renderCodeBlock({ language, code, inline })}</>;
   }
 
-  // Inline code
   if (inline) {
     return (
       <code className="bg-neutral-100 dark:bg-neutral-800 px-1.5 py-0.5 rounded text-sm font-mono">
@@ -171,12 +141,10 @@ function CodeBlock({
     );
   }
 
-  // Mermaid diagrams
   if (enableMermaid && language === "mermaid") {
     return <MermaidDiagram code={code} />;
   }
 
-  // Regular code block (syntax highlighting handled by rehype-highlight)
   return (
     <pre className="my-4 p-4 bg-neutral-900 dark:bg-neutral-950 rounded-lg overflow-auto">
       <code className={language ? `language-${language} hljs` : "hljs"}>
@@ -186,9 +154,6 @@ function CodeBlock({
   );
 }
 
-/**
- * Rich Markdown renderer with GFM, syntax highlighting, and mermaid support
- */
 export function Markdown({
   children,
   className,
@@ -198,12 +163,9 @@ export function Markdown({
   const [isLoaded, setIsLoaded] = React.useState(false);
   const [, forceUpdate] = React.useReducer((x) => x + 1, 0);
 
-  // Lazy load react-markdown and plugins
   React.useEffect(() => {
     async function load() {
       if (!ReactMarkdown) {
-        // Always use esm.sh URLs - the bundle runs in browser
-        // Using Function constructor to prevent bundler from transforming the imports
         const dynamicImport = new Function("url", "return import(url)");
         const [rmModule, gfmModule, highlightModule] = await Promise.all([
           dynamicImport(ESM_REACT_MARKDOWN),
@@ -220,7 +182,6 @@ export function Markdown({
     load();
   }, []);
 
-  // Fallback while loading
   if (!isLoaded || !ReactMarkdown) {
     return (
       <div className={cn("prose prose-sm dark:prose-invert max-w-none", className)}>
@@ -235,7 +196,6 @@ export function Markdown({
         remarkPlugins={remarkGfm ? [remarkGfm] : []}
         rehypePlugins={rehypeHighlight ? [rehypeHighlight] : []}
         components={{
-          // Custom code rendering
           // deno-lint-ignore no-explicit-any
           code(props: any) {
             const { className: codeClassName, children: codeChildren, node } = props;
@@ -254,7 +214,6 @@ export function Markdown({
               />
             );
           },
-          // Style tables
           // deno-lint-ignore no-explicit-any
           table(props: any) {
             return (
@@ -265,7 +224,6 @@ export function Markdown({
               </div>
             );
           },
-          // Style links
           // deno-lint-ignore no-explicit-any
           a(props: any) {
             return (
@@ -279,7 +237,6 @@ export function Markdown({
               </a>
             );
           },
-          // Style blockquotes
           // deno-lint-ignore no-explicit-any
           blockquote(props: any) {
             return (

@@ -1,84 +1,38 @@
-/**
- * Tool Primitives - Layer 2 (Unstyled)
- *
- * Primitives for displaying tool invocations and results.
- * Supports both regular tools and dynamic tools (MCP, user-defined).
- * Built on Radix UI patterns (shadcn-compatible).
- */
 
 import * as React from "react";
-import type { DynamicToolUIPart, ToolState, ToolUIPart } from "../hooks/index.ts";
+import type { ToolCall } from "../../types/agent.ts";
 
 export interface ToolInvocationProps extends React.HTMLAttributes<HTMLDivElement> {
-  /** Tool name */
   name: string;
 
-  /** Tool input */
-  input?: unknown;
+  args?: Record<string, unknown>;
 
-  /** Tool output */
-  output?: unknown;
-
-  /** Tool state (v5 format) */
-  state?: ToolState;
-
-  /** Error text if tool failed */
-  errorText?: string;
-
-  /** Whether this is a dynamic tool (MCP, user-defined) */
-  dynamic?: boolean;
+  status?: ToolCall["status"];
 
   children?: React.ReactNode;
 }
 
-/**
- * ToolInvocation - Tool call display (v5 compatible)
- *
- * @example
- * ```tsx
- * <ToolInvocation
- *   name={part.toolName}
- *   input={part.input}
- *   state={part.state}
- *   dynamic={part.type === 'dynamic-tool'}
- *   className="border-l-4 border-blue-500 pl-4"
- * >
- *   <ToolResult output={part.output} />
- * </ToolInvocation>
- * ```
- */
 export const ToolInvocation = React.forwardRef<
   HTMLDivElement,
   ToolInvocationProps
->((
-  { className, name, input, output: _output, state, errorText, dynamic, children, ...props },
-  ref,
-) => {
+>(({ className, name, args, status, children, ...props }, ref) => {
   return (
     <div
       ref={ref}
       className={className}
       data-tool-invocation=""
       data-tool-name={name}
-      data-state={state}
-      data-dynamic={dynamic || undefined}
+      data-status={status}
       {...props}
     >
       <div data-tool-header="">
         <span data-tool-name="">{name}</span>
-        {state && <span data-tool-state="">({state})</span>}
-        {dynamic && <span data-tool-dynamic="">[dynamic]</span>}
+        {status && <span data-tool-status="">({status})</span>}
       </div>
 
-      {input !== undefined && (
-        <div data-tool-input="">
-          <pre>{JSON.stringify(input, null, 2)}</pre>
-        </div>
-      )}
-
-      {errorText && (
-        <div data-tool-error="">
-          {errorText}
+      {args && (
+        <div data-tool-args="">
+          <pre>{JSON.stringify(args, null, 2)}</pre>
         </div>
       )}
 
@@ -90,27 +44,14 @@ export const ToolInvocation = React.forwardRef<
 ToolInvocation.displayName = "ToolInvocation";
 
 export interface ToolResultProps extends React.HTMLAttributes<HTMLDivElement> {
-  /** Tool output data */
-  output: unknown;
+  result: unknown;
 
-  /** Custom renderer */
-  renderOutput?: (output: unknown) => React.ReactNode;
+  renderResult?: (result: unknown) => React.ReactNode;
 }
 
-/**
- * ToolResult - Tool result display (v5 compatible)
- *
- * @example
- * ```tsx
- * <ToolResult
- *   output={part.output}
- *   className="mt-2 p-2 bg-gray-100 rounded"
- * />
- * ```
- */
 export const ToolResult = React.forwardRef<HTMLDivElement, ToolResultProps>(
-  ({ className, output, renderOutput, ...props }, ref) => {
-    const content = renderOutput ? renderOutput(output) : JSON.stringify(output, null, 2);
+  ({ className, result, renderResult, ...props }, ref) => {
+    const content = renderResult ? renderResult(result) : JSON.stringify(result, null, 2);
 
     return (
       <div
@@ -127,51 +68,14 @@ export const ToolResult = React.forwardRef<HTMLDivElement, ToolResultProps>(
 
 ToolResult.displayName = "ToolResult";
 
-/** Union type for both tool types from v5 parts */
-type ToolPart = ToolUIPart | DynamicToolUIPart;
-
 export interface ToolListProps extends React.HTMLAttributes<HTMLDivElement> {
-  /** Tool parts to display (v5 format) */
-  tools: ToolPart[];
+  toolCalls: ToolCall[];
 
-  /** Render each tool */
-  renderTool?: (tool: ToolPart) => React.ReactNode;
+  renderTool?: (toolCall: ToolCall) => React.ReactNode;
 }
 
-/**
- * Check if a part is a dynamic tool
- */
-function isDynamicTool(tool: ToolPart): tool is DynamicToolUIPart {
-  return tool.type === "dynamic-tool";
-}
-
-/**
- * ToolList - Display list of tool calls (v5 compatible)
- *
- * @example
- * ```tsx
- * // Filter tool parts - matches tool-${toolName} pattern (AI SDK v5) and dynamic-tool
- * const toolParts = message.parts.filter(
- *   p => p.type.startsWith('tool-') || p.type === 'dynamic-tool'
- * );
- *
- * <ToolList
- *   tools={toolParts}
- *   className="space-y-2"
- *   renderTool={(tool) => (
- *     <ToolInvocation
- *       name={tool.toolName}
- *       state={tool.state}
- *       dynamic={tool.type === 'dynamic-tool'}
- *     >
- *       {tool.output && <ToolResult output={tool.output} />}
- *     </ToolInvocation>
- *   )}
- * />
- * ```
- */
 export const ToolList = React.forwardRef<HTMLDivElement, ToolListProps>(
-  ({ className, tools, renderTool, ...props }, ref) => {
+  ({ className, toolCalls, renderTool, ...props }, ref) => {
     return (
       <div
         ref={ref}
@@ -179,19 +83,17 @@ export const ToolList = React.forwardRef<HTMLDivElement, ToolListProps>(
         data-tool-list=""
         {...props}
       >
-        {tools.map((tool) =>
+        {toolCalls.map((tool) =>
           renderTool
-            ? <React.Fragment key={tool.toolCallId}>{renderTool(tool)}</React.Fragment>
+            ? <React.Fragment key={tool.id}>{renderTool(tool)}</React.Fragment>
             : (
               <ToolInvocation
-                key={tool.toolCallId}
-                name={tool.toolName}
-                input={tool.input}
-                state={tool.state}
-                errorText={tool.errorText}
-                dynamic={isDynamicTool(tool)}
+                key={tool.id}
+                name={tool.name}
+                args={tool.args}
+                status={tool.status}
               >
-                {tool.output !== undefined && <ToolResult output={tool.output} />}
+                {tool.result !== undefined && <ToolResult result={tool.result} />}
               </ToolInvocation>
             )
         )}

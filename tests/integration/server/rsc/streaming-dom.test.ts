@@ -6,7 +6,6 @@ import { consumeNdjsonStream, getContainer } from "../../../../src/rendering/rsc
 import { withTestContext } from "../../../_helpers/context.ts";
 import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";
 
-// Clean up renderer intervals to prevent resource leaks
 afterAll(async () => {
   await cleanupBundler();
 });
@@ -52,7 +51,6 @@ async function closeResponse(res: Response) {
     // ignore cancellation failures in tests
   }
   try {
-    // Fallback read to satisfy Deno leak detector if cancel is a no-op
     await res.arrayBuffer();
   } catch (_err) {
     // ignoring as body may already be consumed/cancelled
@@ -65,12 +63,10 @@ describe(
   () => {
     it("applies interleaved slots to DOM (prod)", async () => {
       await withTestContext("rsc-stream-dom-prod", async (context) => {
-        // Set RSC environment variable
         context.setEnv({
           VERYFRONT_EXPERIMENTAL_RSC: "1",
         });
 
-        // Remove default app directory and create pages structure
         await Deno.remove(join(context.projectDir, "app"), { recursive: true });
         await Deno.remove(join(context.projectDir, "pages"), { recursive: true });
 
@@ -87,7 +83,6 @@ describe(
           await consumeNdjsonStream(res, doc as any);
           const root = getContainer(doc as any, "root") as any;
           const sidebar = getContainer(doc as any, "sidebar") as any;
-          // Root and sidebar should contain content (implementation can vary)
           assert(root.innerHTML.length > 0);
           assert(sidebar.innerHTML.length > 0);
         } finally {
@@ -98,12 +93,10 @@ describe(
 
     it("ignores malformed NDJSON lines (dev)", async () => {
       await withTestContext("rsc-stream-dom-dev", async (context) => {
-        // Set RSC environment variable
         context.setEnv({
           VERYFRONT_EXPERIMENTAL_RSC: "1",
         });
 
-        // Remove default pages directory
         await Deno.remove(join(context.projectDir, "pages"), { recursive: true });
 
         await Deno.mkdir(join(context.projectDir, "pages"), { recursive: true });
@@ -119,7 +112,6 @@ describe(
           }),
         );
 
-        // Add app router for RSC
         await Deno.writeTextFile(
           join(context.projectDir, "app", "layout.tsx"),
           `export default function RootLayout({ children }: { children: React.ReactNode }) {
@@ -133,7 +125,6 @@ describe(
 
         const server = await context.createDevServer({ enableHMR: false });
 
-        // Verify readiness endpoint reports ready
         const start = Date.now();
         let ok = false;
         while (Date.now() - start < 5000) {

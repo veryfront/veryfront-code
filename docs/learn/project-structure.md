@@ -1,115 +1,310 @@
----
-title: Project Structure
-description: Overview of the Veryfront project structure and file organization
-category: learn
-level: beginner
-keywords:
-  - structure
-  - organization
-  - directories
-  - files
-  - layout
-reading_time: 5 min
-prev_page: /learn/quickstart.md
-next_page: /routing/README.md
----
-
 # Project Structure
 
-This guide provides an overview of the recommended directory structure for a Veryfront application. While flexible, following these conventions ensures optimal compatibility with auto-discovery features.
+This guide covers the recommended directory structure and file conventions for Veryfront applications.
 
-## Complete Project Layout
+## Top-Level Structure
 
-A full-featured Veryfront application typically looks like this:
-
-```text
+```
 my-app/
-├── app/                        # App Router (Recommended)
-│   ├── layout.tsx              # Root layout
-│   ├── page.tsx                # Home page
-│   ├── globals.css             # Global styles
-│   ├── api/                    # API Routes
-│   │   └── hello/
-│   │       └── route.ts        # /api/hello endpoint
-│   └── dashboard/
-│       ├── layout.tsx          # Dashboard layout
-│       ├── page.tsx            # /dashboard page
-│       └── loading.tsx         # Dashboard loading state
-│
-├── ai/                         # AI Engine (Optional)
-│   ├── agents/                 # Agent definitions
-│   │   └── assistant.ts        # Auto-discovered agent
-│   ├── tools/                  # Tool definitions
-│   │   └── search.ts           # Auto-discovered tool
-│   ├── prompts/                # Reusable prompts
-│   │   └── system.ts
-│   └── resources/              # Knowledge base
-│       └── policy.md
-│
-├── components/                 # Shared UI Components
-│   ├── Button.tsx
-│   └── Card.tsx
-│
-├── lib/                        # Shared Utilities
-│   ├── db.ts
-│   └── utils.ts
-│
-├── public/                     # Static Assets
-│   ├── favicon.ico
-│   ├── logo.png
-│   └── robots.txt
-│
-├── veryfront.config.ts         # Framework Configuration
-├── deno.json                   # Deno Configuration
-└── .env                        # Environment Variables
+├── app/                    # App Router pages and layouts
+├── ai/                     # AI agents, tools, and resources
+├── components/             # Shared React components
+├── lib/                    # Utility functions and helpers
+├── public/                 # Static assets
+├── veryfront.config.ts     # Framework configuration
+├── deno.json               # Deno configuration (or package.json)
+└── .env                    # Environment variables
 ```
 
-## Top-Level Directories
+## `app/` Directory
 
-| Directory | Description |
-|-----------|-------------|
-| `app/` | **Core.** Contains your application's routes, pages, and layouts using the App Router. |
-| `ai/` | **AI Engine.** Contains all AI-related logic. Files here are auto-discovered by the framework. |
-| `components/`| **UI.** Reusable React components used across multiple pages. |
-| `lib/` | **Logic.** Helper functions, database connections, and business logic. |
-| `public/` | **Assets.** Static files served from the root URL (e.g., `/logo.png`). |
-| `pages/` | **Legacy.** Alternative routing directory (Pages Router). Do not use with `app/`. |
+The `app/` directory uses file-system based routing where folders define routes.
 
-## `app/` Directory Conventions
+### File Conventions
 
-The `app/` directory uses file-system based routing where folders define routes and special files define UI.
+| File | Purpose |
+|------|---------|
+| `page.tsx` | Page component for the route |
+| `layout.tsx` | Shared layout wrapping child routes |
+| `loading.tsx` | Loading UI while data fetches |
+| `error.tsx` | Error boundary for the segment |
+| `not-found.tsx` | 404 page for the segment |
+| `route.ts` | API endpoint handler |
 
-- `page.tsx`: The UI for a route.
-- `layout.tsx`: Shared UI for a route and its children.
-- `loading.tsx`: Loading UI shown while data fetches.
-- `error.tsx`: Error UI for handling runtime errors.
-- `route.ts`: API endpoint handler (backend logic).
+### Example Structure
 
-**Example:**
-- `app/page.tsx` → `/`
-- `app/blog/page.tsx` → `/blog`
-- `app/blog/[slug]/page.tsx` → `/blog/123`
+```
+app/
+├── layout.tsx              # Root layout (required)
+├── page.tsx                # Home page (/)
+├── globals.css             # Global styles
+├── about/
+│   └── page.tsx            # /about
+├── blog/
+│   ├── layout.tsx          # Blog layout
+│   ├── page.tsx            # /blog
+│   └── [slug]/
+│       ├── page.tsx        # /blog/:slug
+│       └── loading.tsx     # Loading state
+├── dashboard/
+│   ├── layout.tsx          # Dashboard layout (with auth)
+│   ├── page.tsx            # /dashboard
+│   └── settings/
+│       └── page.tsx        # /dashboard/settings
+└── api/
+    ├── hello/
+    │   └── route.ts        # /api/hello
+    └── posts/
+        ├── route.ts        # /api/posts (GET, POST)
+        └── [id]/
+            └── route.ts    # /api/posts/:id (GET, PUT, DELETE)
+```
 
-## `ai/` Directory Conventions
+### Route Segments
 
-The `ai/` directory is special. Veryfront automatically scans this folder to register AI capabilities without manual wiring.
+| Pattern | Example | Matches |
+|---------|---------|---------|
+| `[slug]` | `blog/[slug]` | `/blog/hello-world` |
+| `[...slug]` | `docs/[...slug]` | `/docs/a/b/c` |
+| `[[...slug]]` | `shop/[[...slug]]` | `/shop`, `/shop/a`, `/shop/a/b` |
+| `(group)` | `(marketing)/about` | `/about` (no URL segment) |
 
-- `agents/*.ts`: Files exporting an `agent()` definition are registered as agents.
-- `tools/*.ts`: Files exporting a `tool()` definition are registered as tools.
-- `resources/*`: Files (MD/JSON) are exposed as MCP resources.
+## `ai/` Directory
 
-**Example:**
-- `ai/tools/weather.ts` → Tool named `"weather"` available to all agents.
+The `ai/` directory contains AI-related code. Files are automatically discovered and registered.
+
+```
+ai/
+├── agents/                 # Agent definitions
+│   ├── assistant.ts        # Default agent
+│   └── support.ts          # Support agent
+├── tools/                  # Tool definitions
+│   ├── search.ts           # Search tool
+│   ├── create-ticket.ts    # Ticket creation tool
+│   └── send-email.ts       # Email tool
+├── prompts/                # Reusable prompts
+│   └── system.ts           # System prompt
+└── resources/              # MCP resources
+    └── users/
+        └── [id]/
+            └── resource.ts # /users/:id resource
+```
+
+### Auto-Discovery Rules
+
+- Files in `ai/agents/` exporting `agent()` are registered as agents
+- Files in `ai/tools/` exporting `tool()` are registered as tools
+- Files in `ai/resources/` exporting `resource()` are registered as MCP resources
+- File names become identifiers (e.g., `search.ts` → tool named `search`)
+
+## `pages/` Directory (Alternative)
+
+Use `pages/` instead of `app/` for traditional file-based routing.
+
+```
+pages/
+├── _app.tsx                # Custom App component
+├── _document.tsx           # Custom Document
+├── index.tsx               # Home page (/)
+├── about.tsx               # /about
+├── blog/
+│   ├── index.tsx           # /blog
+│   └── [slug].tsx          # /blog/:slug
+└── api/
+    └── hello.ts            # /api/hello
+```
+
+Do not mix `app/` and `pages/` in the same project.
+
+## `components/` Directory
+
+Shared React components used across multiple pages.
+
+```
+components/
+├── ui/                     # Base UI components
+│   ├── Button.tsx
+│   ├── Card.tsx
+│   └── Input.tsx
+├── layout/                 # Layout components
+│   ├── Header.tsx
+│   ├── Footer.tsx
+│   └── Sidebar.tsx
+└── features/               # Feature-specific components
+    ├── auth/
+    │   └── LoginForm.tsx
+    └── blog/
+        └── PostCard.tsx
+```
+
+## `lib/` Directory
+
+Utility functions, database connections, and business logic.
+
+```
+lib/
+├── db.ts                   # Database connection
+├── auth.ts                 # Authentication utilities
+├── utils.ts                # General utilities
+└── api/                    # API client functions
+    └── posts.ts
+```
+
+## `public/` Directory
+
+Static assets served from the root URL.
+
+```
+public/
+├── favicon.ico             # /favicon.ico
+├── logo.png                # /logo.png
+├── robots.txt              # /robots.txt
+└── images/
+    └── hero.jpg            # /images/hero.jpg
+```
 
 ## Configuration Files
 
-- **`veryfront.config.ts`**: The main configuration file for the framework. Use this to configure AI providers, build settings, and middleware.
-- **`deno.json`**: (Deno projects) Manages dependencies and tasks.
-- **`package.json`**: (Node.js/Bun projects) Manages dependencies and scripts.
-- **`.env`**: Stores secret keys (API keys, database URLs). **Never commit this file.**
+### veryfront.config.ts
 
-## Best Practices
+Main framework configuration.
 
-1.  **Colocation**: Keep tests and specific components next to the pages that use them if they aren't shared.
-2.  **Barrel Exports**: Use `index.ts` files in `components/` or `lib/` to cleaner imports (e.g., `import { Button } from '@/components'`).
-3.  **Type Safety**: Use TypeScript for everything. Veryfront is optimized for it.
+```typescript
+import { defineConfig } from 'veryfront';
+
+export default defineConfig({
+  projectName: 'my-app',
+  runtime: 'deno',
+  rendering: {
+    default: 'ssr',
+  },
+  ai: {
+    enabled: true,
+    providers: {
+      openai: {
+        apiKey: process.env.OPENAI_API_KEY,
+      },
+    },
+  },
+});
+```
+
+### deno.json
+
+Deno-specific configuration.
+
+```json
+{
+  "tasks": {
+    "dev": "veryfront dev",
+    "build": "veryfront build",
+    "start": "veryfront start"
+  },
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "jsxImportSource": "react"
+  },
+  "imports": {
+    "veryfront": "jsr:@veryfront/core",
+    "veryfront/": "jsr:@veryfront/core/",
+    "react": "npm:react@^18",
+    "react-dom": "npm:react-dom@^18"
+  }
+}
+```
+
+### package.json (Node.js/Bun)
+
+For Node.js or Bun projects.
+
+```json
+{
+  "name": "my-app",
+  "scripts": {
+    "dev": "veryfront dev",
+    "build": "veryfront build",
+    "start": "veryfront start"
+  },
+  "dependencies": {
+    "veryfront": "^0.0.6",
+    "react": "^18.3.0",
+    "react-dom": "^18.3.0"
+  }
+}
+```
+
+### .env
+
+Environment variables. Never commit this file.
+
+```
+# API Keys
+OPENAI_API_KEY=sk-...
+ANTHROPIC_API_KEY=sk-ant-...
+
+# Database
+DATABASE_URL=postgres://...
+
+# App
+PUBLIC_APP_URL=https://example.com
+```
+
+## Path Aliases
+
+Configure path aliases for cleaner imports.
+
+### Deno (deno.json)
+
+```json
+{
+  "imports": {
+    "@/": "./",
+    "@/components/": "./components/",
+    "@/lib/": "./lib/"
+  }
+}
+```
+
+### Node.js (tsconfig.json)
+
+```json
+{
+  "compilerOptions": {
+    "paths": {
+      "@/*": ["./*"],
+      "@/components/*": ["./components/*"],
+      "@/lib/*": ["./lib/*"]
+    }
+  }
+}
+```
+
+Usage:
+
+```typescript
+import { Button } from '@/components/ui/Button';
+import { db } from '@/lib/db';
+```
+
+## Colocation
+
+Keep related files together when they're specific to a route.
+
+```
+app/
+└── dashboard/
+    ├── page.tsx
+    ├── dashboard.module.css    # Route-specific styles
+    ├── use-dashboard.ts        # Route-specific hook
+    └── DashboardChart.tsx      # Route-specific component
+```
+
+For shared components, use the `components/` directory.
+
+## Recommended Practices
+
+1. **Use `app/` router for new projects** - More features and better patterns
+2. **Keep components in `components/`** - Unless they're route-specific
+3. **Use path aliases** - Cleaner imports, easier refactoring
+4. **Colocate when appropriate** - Keep related files together
+5. **Never commit `.env`** - Use `.env.example` for documentation

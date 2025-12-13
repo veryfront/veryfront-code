@@ -89,15 +89,15 @@ export default defineConfig({
 deno task dev
 ```
 
-Visit **http://localhost:3000** 🎉
+Visit **http://localhost:3000**
 
 ## Why Deno?
 
-- ⚡ **Fast Setup** - No node_modules, no build step
-- 🔒 **Secure by Default** - Explicit permissions
-- 📦 **Modern Package Management** - JSR + npm
-- 🎯 **TypeScript Native** - No compilation needed
-- 🚀 **Easy Deployment** - Deploy to Deno Deploy
+- **Fast Setup** - No node_modules, no build step
+- **Secure by Default** - Explicit permissions
+- **Modern Package Management** - JSR + npm
+- **TypeScript Native** - No compilation needed
+- **Easy Deployment** - Deploy to Deno Deploy
 
 ## Other Runtimes
 

@@ -1,10 +1,10 @@
+
 import type { RuntimeAdapter, RuntimeId } from "./base.ts";
 
 type AdapterLoader = () => Promise<RuntimeAdapter>;
 
 class AdapterRegistry {
   private instance: RuntimeAdapter | null = null;
-  private localInstance: RuntimeAdapter | null = null;
   private initialized = false;
   private loaders: Map<RuntimeId, AdapterLoader> = new Map();
 
@@ -23,6 +23,8 @@ class AdapterRegistry {
       const { bunAdapter } = await import("./bun.ts");
       return bunAdapter;
     });
+
+    // Note: Cloudflare requires manual initialization with env context
 
     this.loaders.set("memory", async () => {
       const { createMockAdapter } = await import("./mock.ts");
@@ -75,31 +77,11 @@ class AdapterRegistry {
     return this.instance !== null && this.initialized;
   }
 
-  async getLocal(): Promise<RuntimeAdapter> {
-    if (this.localInstance) {
-      return this.localInstance;
-    }
-
-    const runtimeId = this.detectRuntime();
-    const loader = this.loaders.get(runtimeId);
-
-    if (!loader) {
-      throw new Error(
-        `Unsupported runtime: ${runtimeId}. ` +
-          `Supported runtimes: ${[...this.loaders.keys()].join(", ")}.`,
-      );
-    }
-
-    this.localInstance = await loader();
-    return this.localInstance;
-  }
-
   async reset(): Promise<void> {
     if (this.instance && this.initialized) {
       await this.instance.shutdown?.();
     }
     this.instance = null;
-    this.localInstance = null;
     this.initialized = false;
   }
 

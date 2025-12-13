@@ -2,7 +2,6 @@
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import { clearConfigCache, getConfig } from "@veryfront/config";
 import { enhanceAdapterWithFS } from "@veryfront/platform/adapters/fs-integration.ts";
-import { runtime } from "@veryfront/platform/adapters/registry.ts";
 import type { VeryfrontConfig } from "@veryfront/config";
 import { logger } from "@veryfront/utils";
 import { loadEnv, supportsEnvFiles } from "../core/utils/env-loader.ts";
@@ -31,7 +30,7 @@ export async function bootstrap(
     try {
       await loadEnv({
         cwd: projectDir,
-        override: false,
+        override: false, // Don't override existing env vars
         debug: isDebugEnabled(adapter.env),
       });
     } catch (error) {
@@ -41,11 +40,13 @@ export async function bootstrap(
     }
   }
 
-  logger.debug("[Bootstrap] Loading config with base adapter");
+  logger.debug("[Bootstrap] Loading config with base adapter for projectDir:", projectDir);
   let config = await getConfig(projectDir, adapter);
 
   const fsType = config.fs?.type;
   const needsFSAdapter = fsType && fsType !== "local";
+
+  logger.debug("[Bootstrap] Config loaded", { fsType, needsFSAdapter, hasFs: !!config.fs });
 
   if (!needsFSAdapter) {
     logger.debug("[Bootstrap] Using local filesystem (no FSAdapter needed)");
@@ -60,11 +61,6 @@ export async function bootstrap(
   const enhancedAdapter = await enhanceAdapterWithFS(adapter, config, projectDir);
 
   const fsAdapterInitialized = enhancedAdapter !== adapter;
-
-  if (fsAdapterInitialized) {
-    logger.debug("[Bootstrap] Registering enhanced adapter with runtime registry");
-    await runtime.set(enhancedAdapter);
-  }
 
   if (fsAdapterInitialized) {
     logger.debug("[Bootstrap] Reloading config with FSAdapter");

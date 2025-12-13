@@ -264,17 +264,14 @@ describe("fsAdapter integration", () => {
       },
     });
 
-    // Verify the bundle was created
     assertEquals(result.errors.length, 0, "Should have no errors");
     assertEquals(result.outputFiles?.length, 1, "Should have one output file");
 
     const bundledCode = result.outputFiles?.[0]?.text ?? "";
 
-    // The GitHubClient should be bundled inline (not an external import)
     assertStringIncludes(bundledCode, "GitHubClient", "Should contain GitHubClient class");
     assertStringIncludes(bundledCode, "getRepo", "Should contain getRepo method");
 
-    // zod should remain as external import
     assertStringIncludes(bundledCode, 'from "zod"', "Should have external zod import");
   });
 

@@ -1,6 +1,3 @@
-/**
- * Tests for ProviderManager
- */
 
 import { assertEquals } from "jsr:@std/assert@1";
 import { join } from "https://deno.land/std@0.220.0/path/mod.ts";
@@ -14,7 +11,6 @@ Deno.test("ProviderManager - discovers and compiles providers", async () => {
   const projectDir = await createTestProjectDir();
 
   try {
-    // Create provider files
     await Deno.mkdir(join(projectDir, "providers"), { recursive: true });
     await Deno.writeTextFile(
       join(projectDir, "providers/theme.mdx"),
@@ -64,7 +60,6 @@ export default function AuthProvider({ children }) {
     assertEquals(result.providerBundles.length, 2);
     assertEquals(compileCount, 2);
 
-    // Check that providers are marked with isProvider
     for (const bundle of result.providerBundles) {
       assertEquals(bundle.frontmatter?.isProvider, true);
     }
@@ -101,7 +96,6 @@ Deno.test("ProviderManager - maintains provider order", async () => {
   const projectDir = await createTestProjectDir();
 
   try {
-    // Create providers with specific order
     await Deno.mkdir(join(projectDir, "providers"), { recursive: true });
     await Deno.writeTextFile(
       join(projectDir, "providers/01-first.mdx"),
@@ -152,7 +146,6 @@ export default function Third({ children }) { return children; }`,
 
     assertEquals(result.providerBundles.length, 3);
 
-    // Providers should be in order
     const providerPaths = result.providerInfos.map((p: EntityInfo) => p.entity.id);
     assertEquals(providerPaths.some((p: string) => p.includes("01-first")), true);
     assertEquals(providerPaths.some((p: string) => p.includes("02-second")), true);

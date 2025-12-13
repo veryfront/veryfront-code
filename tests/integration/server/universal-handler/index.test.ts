@@ -1,16 +1,4 @@
-/**
- * Universal Handler - Security Integration Tests
- *
- * Comprehensive security tests for the universal handler including:
- * - Path traversal attacks (../../../etc/passwd patterns)
- * - Static file serving security (directory traversal, symlink attacks)
- * - Malformed URL handling
- * - Request validation
- * - Rate limiting bypass attempts
- * - Authentication security
- */
 
-// Disable LRU cache intervals to prevent resource leaks in tests
 Deno.env.set("VF_DISABLE_LRU_INTERVAL", "1");
 
 import {
@@ -27,12 +15,10 @@ import { createVeryfrontHandler } from "../../../../src/server/universal-handler
 import "../../../_helpers/log-guard.ts";
 import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";
 
-// Clean up renderer intervals to prevent resource leaks
 afterAll(async () => {
   await cleanupBundler();
 });
 
-// Mock adapter for testing
 function createMockAdapter(envVars: Record<string, string> = {}): typeof denoAdapter {
   const customEnv = {
     get: (key: string) => envVars[key] ?? Deno.env.get(key),
@@ -140,7 +126,6 @@ describe(
         const adapter = denoAdapter;
         const handler = createVeryfrontHandler(tempDir, adapter);
 
-        // Double URL encoding: . = %2e, then % = %25
         const res = await handler(
           new Request("http://localhost:8000/%252e%252e%252f%252e%252e%252fsecret.txt"),
         );
@@ -213,7 +198,6 @@ describe(
         const res = await handler(new Request("http://localhost:8000/assets/"));
         const body = await res.text();
 
-        // Should not list directory contents
         assert(!body.includes("file1.txt") || !body.includes("file2.txt"), "Should not list files");
       } finally {
         await Deno.remove(tempDir, { recursive: true });
@@ -283,7 +267,6 @@ describe(
         const adapter = denoAdapter;
         const handler = createVeryfrontHandler(tempDir, adapter);
 
-        // Null byte attack to bypass extension check
         const res = await handler(new Request("http://localhost:8000/secret.txt%00.jpg"));
 
         assertEquals(res.status, 404, "Should block null byte injection");
@@ -298,11 +281,9 @@ describe(
         await Deno.mkdir(`${tempDir}/public`, { recursive: true });
         await Deno.writeTextFile(`${tempDir}/secret.txt`, "SECRET");
 
-        // Create symlink from public to parent directory
         try {
           await Deno.symlink(`${tempDir}/secret.txt`, `${tempDir}/public/link.txt`);
         } catch {
-          // Skip test if symlinks not supported
           return;
         }
 
@@ -311,10 +292,8 @@ describe(
 
         const res = await handler(new Request("http://localhost:8000/link.txt"));
 
-        // Should either block or safely resolve
         const body = await res.text();
         if (res.status === 200) {
-          // If it serves the symlink, it should serve the actual content
           assert(body === "SECRET" || !body.includes("SECRET"), "Should handle symlink safely");
         } else {
           assertEquals(res.status, 404, "Should block symlink traversal");
@@ -373,13 +352,11 @@ describe(
         const adapter = denoAdapter;
         const handler = createVeryfrontHandler(tempDir, adapter);
 
-        // Standard methods should work
         const validRes = await handler(
           new Request("http://localhost:8000/healthz", { method: "GET" }),
         );
         assertEquals(validRes.status, 200, "Should handle GET");
 
-        // Invalid methods should be handled
         try {
           const invalidRes = await handler(
             new Request("http://localhost:8000/healthz", { method: "INVALID" as any }),
@@ -399,7 +376,6 @@ describe(
         const adapter = denoAdapter;
         const handler = createVeryfrontHandler(tempDir, adapter);
 
-        // Attempt request smuggling with Transfer-Encoding and Content-Length
         const res = await handler(
           new Request("http://localhost:8000/healthz", {
             method: "POST",
@@ -459,12 +435,10 @@ describe(
 
         const handler = createVeryfrontHandler(tempDir, adapter);
 
-        // Request without auth
         const res1 = await handler(new Request("http://localhost:8000/healthz"));
         assertEquals(res1.status, 401, "Should require auth");
         assertExists(res1.headers.get("www-authenticate"), "Should send WWW-Authenticate header");
 
-        // Request with correct auth
         const authHeader = `Basic ${btoa("admin:secret123")}`;
         const res2 = await handler(
           new Request("http://localhost:8000/healthz", {
@@ -473,7 +447,6 @@ describe(
         );
         assertEquals(res2.status, 200, "Should allow with correct auth");
 
-        // Request with incorrect auth
         const wrongAuth = `Basic ${btoa("admin:wrongpass")}`;
         const res3 = await handler(
           new Request("http://localhost:8000/healthz", {
@@ -497,11 +470,9 @@ describe(
 
         const handler = createVeryfrontHandler(tempDir, adapter);
 
-        // Request without token
         const res1 = await handler(new Request("http://localhost:8000/healthz"));
         assertEquals(res1.status, 401, "Should require token");
 
-        // Request with correct token
         const res2 = await handler(
           new Request("http://localhost:8000/healthz", {
             headers: { Authorization: "Bearer secret-token-123" },
@@ -509,7 +480,6 @@ describe(
         );
         assertEquals(res2.status, 200, "Should allow with correct token");
 
-        // Request with incorrect token
         const res3 = await handler(
           new Request("http://localhost:8000/healthz", {
             headers: { Authorization: "Bearer wrong-token" },
@@ -533,7 +503,6 @@ describe(
 
         const handler = createVeryfrontHandler(tempDir, adapter);
 
-        // OPTIONS should bypass auth for CORS preflight
         const res = await handler(
           new Request("http://localhost:8000/healthz", {
             method: "OPTIONS",
@@ -557,7 +526,6 @@ describe(
 
         const handler = createVeryfrontHandler(tempDir, adapter);
 
-        // Measure timing for correct vs incorrect tokens
         const timings: number[] = [];
 
         for (let i = 0; i < 5; i++) {
@@ -585,7 +553,6 @@ describe(
 
         const incorrectAvg = timings.reduce((a, b) => a + b) / timings.length;
 
-        // Timing difference should be minimal (not a strict test)
         const diff = Math.abs(correctAvg - incorrectAvg);
         assert(diff < 10, "Timing should be similar to prevent timing attacks");
       } finally {
@@ -606,26 +573,22 @@ describe(
         await Deno.mkdir(`${tempDir}/app`, { recursive: true });
         await Deno.writeTextFile(`${tempDir}/app/safe.ts`, 'export const SAFE = "ok"');
 
-        // Ensure no auth pollution - use development mode for /_veryfront/fs/
         const adapter = createMockAdapter({});
         const handler = createVeryfrontHandler(tempDir, adapter, {
           projectDir: tempDir,
           mode: "development",
         });
 
-        // Helper to encode path
         const toBase64Url = (s: string) => {
           return btoa(s).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "");
         };
 
-        // Try to access secret file outside project
         const secretPath = `${tempDir}/secret.ts`;
         const encoded = toBase64Url(secretPath);
         const _res1 = await handler(
           new Request(`http://localhost:8000/_veryfront/fs/${encoded}.js`),
         );
 
-        // Should serve file within project
         const safePath = `${tempDir}/app/safe.ts`;
         const encodedSafe = toBase64Url(safePath);
         const res2 = await handler(
@@ -641,7 +604,6 @@ describe(
     it("prevents metrics endpoint information disclosure", async () => {
       const tempDir = await Deno.makeTempDir({ prefix: "vf_metrics_disclosure_" });
       try {
-        // Ensure no auth pollution
         const adapter = createMockAdapter({});
         const handler = createVeryfrontHandler(tempDir, adapter);
 
@@ -649,7 +611,6 @@ describe(
         const body = await res.text();
         const data = JSON.parse(body);
 
-        // Should not leak sensitive information
         assertExists(data.counters, "Should have counters");
         // Memory and uptime are OK to expose in metrics
       } finally {
@@ -660,7 +621,6 @@ describe(
     it("validates health endpoint security headers", async () => {
       const tempDir = await Deno.makeTempDir({ prefix: "vf_health_security_" });
       try {
-        // Ensure no auth pollution
         const adapter = createMockAdapter({});
         const handler = createVeryfrontHandler(tempDir, adapter);
 
@@ -668,10 +628,8 @@ describe(
         const body = await res.text();
         const data = JSON.parse(body);
 
-        // Should not leak sensitive paths
         assert(!JSON.stringify(data).includes(tempDir), "Should not leak temp directory");
 
-        // Should have security headers
         assertExists(res.headers.get("content-security-policy"), "Should have CSP");
         assertExists(
           res.headers.get("x-content-type-options"),
@@ -691,11 +649,9 @@ describe(
     it("handles rapid concurrent requests", async () => {
       const tempDir = await Deno.makeTempDir({ prefix: "vf_concurrent_" });
       try {
-        // Ensure no auth pollution
         const adapter = createMockAdapter({});
         const handler = createVeryfrontHandler(tempDir, adapter);
 
-        // Send 50 concurrent requests
         const promises = Array.from(
           { length: 50 },
           (_, i) => handler(new Request(`http://localhost:8000/healthz?req=${i}`)),
@@ -703,7 +659,6 @@ describe(
 
         const results = await Promise.all(promises);
 
-        // All should complete successfully
         for (const res of results) {
           assertEquals(res.status, 200, "Should handle concurrent requests");
         }
@@ -718,7 +673,6 @@ describe(
         const adapter = denoAdapter;
         const handler = createVeryfrontHandler(tempDir, adapter);
 
-        // Create a large body (1MB)
         const largeBody = "x".repeat(1024 * 1024);
 
         const res = await handler(
@@ -741,7 +695,6 @@ describe(
         const adapter = denoAdapter;
         const handler = createVeryfrontHandler(tempDir, adapter);
 
-        // Simulate slow request with chunked encoding
         let timerId: number | undefined;
         let streamComplete: (() => void) | undefined;
         const streamCompletePromise = new Promise<void>((resolve) => {
@@ -778,9 +731,7 @@ describe(
         );
 
         assert(res.status >= 200 && res.status < 500, "Should handle streaming");
-        // Consume response body to ensure proper cleanup of request stream
         await res.text();
-        // Wait for request body stream to complete
         await streamCompletePromise;
       } finally {
         await Deno.remove(tempDir, { recursive: true });

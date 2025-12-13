@@ -111,13 +111,24 @@ export class GoogleProvider extends BaseProvider {
 
     return {
       text: message.content || "",
-      toolCalls: message.tool_calls?.map((tc) => ({
-        id: tc.id,
-        name: tc.function.name,
-        arguments: typeof tc.function.arguments === "string"
-          ? JSON.parse(tc.function.arguments)
-          : tc.function.arguments,
-      })),
+      toolCalls: message.tool_calls?.map((tc) => {
+        let parsedArguments: Record<string, unknown>;
+        if (typeof tc.function.arguments === "string") {
+          try {
+            parsedArguments = JSON.parse(tc.function.arguments);
+          } catch {
+            // If arguments are malformed, use empty object to avoid crashing
+            parsedArguments = {};
+          }
+        } else {
+          parsedArguments = tc.function.arguments;
+        }
+        return {
+          id: tc.id,
+          name: tc.function.name,
+          arguments: parsedArguments,
+        };
+      }),
       usage: {
         promptTokens: data.usage?.prompt_tokens || 0,
         completionTokens: data.usage?.completion_tokens || 0,

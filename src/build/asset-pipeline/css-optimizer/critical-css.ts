@@ -15,7 +15,6 @@ export async function extractCriticalCSS(
 
   const css = await fs.readTextFile(cssPath);
 
-
   const criticalSelectors = extractSelectorsFromHTML(htmlContent);
   const critical: string[] = [];
   const remaining: string[] = [];

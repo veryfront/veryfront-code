@@ -8,7 +8,6 @@ import { getFreePort } from "../../_helpers/utils.ts";
 const isBunRuntime = typeof (globalThis as any).Bun !== "undefined";
 
   // Note: Sanitizers disabled due to React 19 SSR MessagePort cleanup issue
-  // See: https://github.com/facebook/react/issues/24669
   describe(
   "BunAdapter",
   {

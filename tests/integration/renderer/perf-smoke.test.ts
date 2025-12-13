@@ -5,18 +5,15 @@ import { createRenderer } from "../../../src/rendering/index.ts";
 import { withTestContext } from "../../_helpers/context.ts";
 
   // Note: Sanitizers disabled due to React 19 SSR MessagePort cleanup issue
-  // See: https://github.com/facebook/react/issues/24669
   describe(
   "Renderer Performance",
   {
-    // Disable sanitizers for renderer resource leaks in performance test
     sanitizeResources: false,
     sanitizeOps: false,
   },
   () => {
     it("should render large MDX page under 3000ms", async () => {
       await withTestContext("perf-smoke", async (context) => {
-        // Prepare a large MDX page using app router structure
         const appLongDir = join(context.projectDir, "app", "long");
         await Deno.mkdir(appLongDir, { recursive: true });
 
@@ -37,12 +34,10 @@ import { withTestContext } from "../../_helpers/context.ts";
         const elapsed = performance.now() - start;
 
         assertEquals(typeof result.html, "string");
-        // Expect content header present
         if (!result.html.includes("Perf Test")) {
           throw new Error("Rendered HTML missing header");
         }
 
-        // Soft ceiling to catch regressions; keep generous to avoid flakiness in CI environments
         if (elapsed > 6000) {
           throw new Error(`Perf smoke exceeded threshold: ${elapsed.toFixed(0)}ms`);
         }

@@ -1,13 +1,32 @@
 import type { DiagnosticResult } from "./types.ts";
 import { getRuntimeVersion } from "../../../platform/compat/process.ts";
 
+/**
+ * Compare semantic version strings.
+ * Returns: negative if a < b, positive if a > b, 0 if equal
+ */
+function compareVersions(a: string, b: string): number {
+  const partsA = a.split(".").map((n) => parseInt(n, 10) || 0);
+  const partsB = b.split(".").map((n) => parseInt(n, 10) || 0);
+
+  const maxLength = Math.max(partsA.length, partsB.length);
+  for (let i = 0; i < maxLength; i++) {
+    const numA = partsA[i] ?? 0;
+    const numB = partsB[i] ?? 0;
+    if (numA !== numB) {
+      return numA - numB;
+    }
+  }
+  return 0;
+}
+
 export function checkDenoVersion(): Promise<DiagnosticResult> {
   try {
     const runtimeVersion = getRuntimeVersion();
 
     if (runtimeVersion.startsWith("Deno")) {
       const versionNum = runtimeVersion.replace("Deno ", "");
-      if (versionNum >= "1.40.0") {
+      if (compareVersions(versionNum, "1.40.0") >= 0) {
         return Promise.resolve({
           name: "Runtime Version",
           status: "pass",

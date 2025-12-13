@@ -3,9 +3,11 @@ import type { PlatformPath } from "node:path";
 
 let pathMod: PlatformPath | null = null;
 
+// @ts-ignore - Deno global
 if (typeof Deno === "undefined") {
   pathMod = nodePath;
 } else {
+  // @ts-ignore - Deno global
   import("std/path/mod.ts").then((mod) => {
     pathMod = mod as unknown as PlatformPath;
   });
@@ -21,7 +23,9 @@ export const basename = (path: string, suffix?: string): string =>
 export const dirname = (path: string): string => getPathMod().dirname(path);
 export const fromFileUrl = (url: string | URL): string => {
   const mod = getPathMod();
+  // @ts-ignore - Deno path module has fromFileUrl
   if (mod && typeof (mod as any).fromFileUrl === "function") {
+    // @ts-ignore - Deno path module has fromFileUrl
     return (mod as any).fromFileUrl(url);
   }
   const urlObj = typeof url === "string" ? new URL(url) : url;

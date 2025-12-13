@@ -6,7 +6,6 @@ import { join } from 'std/path/mod.ts'
 import { withTestContext } from '../../../_helpers/context.ts'
 import { cleanupBundler } from '../../../../src/rendering/cleanup.ts'
 
-// Clean up renderer intervals to prevent resource leaks
 afterAll(async () => {
   await cleanupBundler()
 })
@@ -14,7 +13,6 @@ afterAll(async () => {
 describe('RSC stream nested', {}, () => {
   it('with loading/error returns 200', async () => {
     await withTestContext('rsc-stream-nested', async (context) => {
-      // Enable RSC via config instead of env var
       await Deno.writeTextFile(
         join(context.projectDir, 'veryfront.config.js'),
         `export default { experimental: { rsc: true } };`,
@@ -24,7 +22,6 @@ describe('RSC stream nested', {}, () => {
 
       let h: Awaited<ReturnType<typeof startProductionServer>> | null = null
       try {
-        // Remove default app directory and create pages structure
         await Deno.remove(join(context.projectDir, 'app'), { recursive: true })
         await Deno.remove(join(context.projectDir, 'pages'), {
           recursive: true,
@@ -46,7 +43,6 @@ describe('RSC stream nested', {}, () => {
 
         const res = await fetch(`http://127.0.0.1:${port}/_veryfront/rsc/stream?page=/nested`)
         assertEquals(res.status, 200)
-        // Fully consume stream to ensure clean shutdown of underlying ports
         await res.text()
       } finally {
         try {

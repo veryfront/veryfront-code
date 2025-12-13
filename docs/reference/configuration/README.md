@@ -571,7 +571,7 @@ export default defineConfig({
 });
 ```
 
-**See Also:** [AI Specification](../../ai/specification.md)
+**See Also:** [AI Overview](../../ai/README.md)
 
 ---
 

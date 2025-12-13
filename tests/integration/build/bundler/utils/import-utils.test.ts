@@ -1,13 +1,3 @@
-/**
- * Import Utils Tests
- *
- * Comprehensive tests for import resolution utilities covering:
- * - Import statement extraction (ES6 and dynamic)
- * - Import path resolution (relative, absolute, node_modules)
- * - Component file discovery with various extensions
- * - Import path processing and transformation
- * - Edge cases and error handling
- */
 
 import { assertEquals, assertExists } from "std/assert/mod.ts";
 import { describe, it } from "std/testing/bdd.ts";
@@ -301,7 +291,6 @@ describe("Import Utils", () => {
 
     it("prefers direct file over index file", async () => {
       await withTestContext("find-component-prefer-direct", async (context) => {
-        // Create both a direct file and an index file
         const directPath = join(context.projectDir, "Button.tsx");
         await Deno.writeTextFile(directPath, "export const Button = () => <div />");
 

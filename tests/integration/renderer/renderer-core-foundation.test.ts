@@ -1,9 +1,3 @@
-/**
- * VeryfrontRenderer Foundation Tests (Part 1 of 3)
- * Tests: Initialization, Page Entity Resolution, Layout Collection,
- *        Provider Support, SSR Rendering, MDX Compilation,
- *        Component/TSX Pages, Caching and Manifest
- */
 
 import {
   assert,
@@ -19,7 +13,6 @@ import { withTestContext } from "../../_helpers/context.ts";
 import type { VeryfrontRenderer as _VeryfrontRenderer } from "../../../src/rendering/orchestrator/ssr.ts";
 
   // Note: Sanitizers disabled due to React 19 SSR MessagePort cleanup issue
-  // See: https://github.com/facebook/react/issues/24669
   describe(
   "VeryfrontRenderer Core - Foundation",
   {
@@ -80,7 +73,6 @@ import type { VeryfrontRenderer as _VeryfrontRenderer } from "../../../src/rende
         await withTestContext("renderer-core-components", async (context) => {
           await Deno.remove(join(context.projectDir, "app"), { recursive: true });
 
-          // Create a test component
           await Deno.writeTextFile(
             join(context.projectDir, "components", "Button.tsx"),
             `export default function Button({ children }) {
@@ -780,7 +772,6 @@ version: 2
           await renderer.renderPage("test");
           renderer.clearAllState();
 
-          // Should be able to render again after clearing
           const result = await renderer.renderPage("test");
           assertExists(result);
         });

@@ -24,8 +24,18 @@ export class MDXRenderer {
     maxEntries: MDX_RENDERER_MAX_ENTRIES,
     ttlMs: MDX_RENDERER_TTL_MS,
   });
+  private _adapter?: import("@veryfront/platform/adapters/base.ts").RuntimeAdapter;
+  private _projectDir?: string;
 
   constructor() {
+  }
+
+  setAdapter(adapter: import("@veryfront/platform/adapters/base.ts").RuntimeAdapter) {
+    this._adapter = adapter;
+  }
+
+  setProjectDir(projectDir: string) {
+    this._projectDir = projectDir;
   }
 
   async clearCache() {
@@ -47,6 +57,8 @@ export class MDXRenderer {
     const context: ESMLoaderContext = {
       esmCacheDir: this.esmCacheDir,
       moduleCache: this.moduleCache,
+      adapter: this._adapter,
+      projectDir: this._projectDir,
     };
     const result = await loadModuleESM(compiledProgramCode, context);
     this.esmCacheDir = context.esmCacheDir;

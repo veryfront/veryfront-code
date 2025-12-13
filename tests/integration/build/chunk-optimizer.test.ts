@@ -290,7 +290,6 @@ describe(
       const pages = new Map<string, PageImports>();
       const sharedDeps = new Map<string, number>();
 
-      // Create 20 pages with varying dependencies
       for (let i = 0; i < 20; i++) {
         const pagePath = `/page${i}.mdx`;
         pages.set(pagePath, {
@@ -361,7 +360,6 @@ describe(
       const analysis: ChunkAnalysis = { pages, sharedDeps, suggestedChunks };
       const manifest = generateChunkManifest(analysis);
 
-      // All chunks should be in manifest
       assert(manifest.chunks["low-benefit"]);
       assert(manifest.chunks["high-benefit"]);
       assert(manifest.chunks["medium-benefit"]);
@@ -501,7 +499,6 @@ describe(
         ["unique-lib-2", 1],
       ]);
 
-      // No chunks suggested for single-use deps
       const suggestedChunks: ChunkSuggestion[] = [];
 
       const analysis: ChunkAnalysis = { pages, sharedDeps, suggestedChunks };
@@ -540,7 +537,6 @@ describe(
 
     it("handles pages in nested directory structures", async () => {
       await withTestContext("chunk-optimizer-nested", async (context) => {
-        // Create nested MDX structure
         const pagesDir = `${context.projectDir}/pages`;
         const nestedDir = `${pagesDir}/features/auth`;
 
@@ -556,7 +552,7 @@ describe(
 
         const analysis = await analyzeProjectChunks(context.projectDir);
 
-        assert(analysis.pages.size >= 0); // May find pages or not depending on directory structure
+        assert(analysis.pages.size >= 0);
         assert(analysis.sharedDeps);
         assert(analysis.suggestedChunks);
       });

@@ -7,7 +7,6 @@ import { type TestContext, withTestContext } from "../../../_helpers/context.ts"
 import { assertDrained } from "../../../_helpers/utils.ts";
 import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";
 
-// Clean up renderer intervals to prevent resource leaks
 afterAll(async () => {
   await cleanupBundler();
 });
@@ -18,7 +17,6 @@ describe(
   () => {
     it("serves hydrate.js alias and RSC render ETag/304", async () => {
       await withTestContext("universal-server-rsc-hydrate-etag", async (context: TestContext) => {
-        // Enable RSC via config instead of env var
         await Deno.writeTextFile(
           join(context.projectDir, "veryfront.config.js"),
           `export default { experimental: { rsc: true } };`,
@@ -33,29 +31,25 @@ describe(
 
           const server = await context.createProductionServer();
 
-          // hydrate.js alias
           const hyd = await fetch(`http://127.0.0.1:${server.port}/_veryfront/rsc/hydrate.js`);
           assertEquals(hyd.status, 200);
-          await hyd.text(); // Consume body
+          await hyd.text();
 
-          // render payload ETag behaviour
           const r1 = await fetch(`http://127.0.0.1:${server.port}/_veryfront/rsc/render`);
           assertEquals(r1.status, 200);
           const etag = r1.headers.get("etag");
           if (!etag) throw new Error("missing etag on render payload");
-          await r1.text(); // Consume body
+          await r1.text();
           const r2 = await fetch(`http://127.0.0.1:${server.port}/_veryfront/rsc/render`, {
             headers: { "if-none-match": etag },
           });
           assertEquals(r2.status, 304);
-          // 304 responses typically have no body, but call text() to be safe
           await r2.text();
       });
     });
 
     it("streams RSC NDJSON with root and sidebar slots in order", async () => {
       await withTestContext("universal-server-rsc-stream-order", async (context: TestContext) => {
-        // Enable RSC via config instead of env var
         await Deno.writeTextFile(
           join(context.projectDir, "veryfront.config.js"),
           `export default { experimental: { rsc: true } };`,
@@ -95,7 +89,6 @@ describe(
           const ids = events.map((e) => e.id);
           if (!ids.includes("root")) throw new Error("root slot missing");
           if (!ids.includes("sidebar")) throw new Error("sidebar slot missing");
-          // Ensure at least one sidebar event occurs before the final root event
           const lastRoot = events
             .map((e, i) => [e, i] as const)
             .filter(([e]) => e.id === "root")
@@ -111,13 +104,11 @@ describe(
 
     it("serves RSC render/page endpoints for App Router page", async () => {
       await withTestContext("universal-server-rsc-endpoints", async (context: TestContext) => {
-        // Enable RSC via config instead of env var
         await Deno.writeTextFile(
           join(context.projectDir, "veryfront.config.js"),
           `export default { experimental: { rsc: true } };`,
         );
 
-        // Setup: create an app route that returns simple HTML string (no TSX) and a client component
         const dir = join(context.projectDir, "app", "rsc");
         await Deno.mkdir(dir, { recursive: true });
         await Deno.writeTextFile(
@@ -131,7 +122,6 @@ describe(
 
         const server = await context.createProductionServer();
 
-        // /_veryfront/rsc/render/rsc -> JSON payload
         const renderRes = await fetch(`http://127.0.0.1:${server.port}/_veryfront/rsc/render/rsc`, {
           headers: { origin: "https://rsc.test" },
         });
@@ -143,12 +133,10 @@ describe(
         if (!payload.html.includes("RSC Hello")) {
           throw new Error("rsc html missing");
         }
-        // Optional: if a client component exists, manifest should include it
         const man = await fetch(`http://127.0.0.1:${server.port}/_veryfront/rsc/manifest`);
         assertEquals(man.status, 200);
         const manifest = await man.json();
         if (manifest?.components) {
-          // we expect at least one component id present
           const keys = Object.keys(manifest.components);
           if (!(keys.length >= 0)) {
             throw new Error("manifest missing components");
@@ -157,7 +145,6 @@ describe(
         const a1 = renderRes.headers.get("access-control-allow-origin");
         if (a1) assertEquals(a1, "https://rsc.test");
 
-        // /_veryfront/rsc/page/rsc -> HTML page
         const pageRes = await fetch(`http://127.0.0.1:${server.port}/_veryfront/rsc/page/rsc`, {
           headers: { origin: "https://rsc.test" },
         });
@@ -168,7 +155,6 @@ describe(
         const a2 = pageRes.headers.get("access-control-allow-origin");
         if (a2) assertEquals(a2, "https://rsc.test");
 
-        // /_veryfront/rsc/client.js -> boot script
         const clientRes = await fetch(`http://127.0.0.1:${server.port}/_veryfront/rsc/client.js`, {
           headers: { origin: "https://rsc.test" },
         });
@@ -177,11 +163,9 @@ describe(
         if (!/tryStream\(/.test(clientJs)) {
           throw new Error("client.js missing tryStream");
         }
-        // CORS/security headers applied by universal wrapper
         const allow = clientRes.headers.get("access-control-allow-origin");
         if (allow) assertEquals(allow, "https://rsc.test");
 
-        // /_veryfront/rsc/stream -> NDJSON stream with at least one line
         const s = await fetch(`http://127.0.0.1:${server.port}/_veryfront/rsc/stream`, {
           headers: { origin: "https://rsc.test" },
         });

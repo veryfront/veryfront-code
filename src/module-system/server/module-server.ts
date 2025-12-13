@@ -2,7 +2,7 @@
 import { join } from "std/path/mod.ts";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import { type TransformOptions, transformToESM } from "@veryfront/transforms/esm-transform.ts";
-import { serverLogger, serverLogger as logger } from "@veryfront/utils";
+import { serverLogger as logger } from "@veryfront/utils";
 import { HTTP_NOT_FOUND, HTTP_OK, HTTP_SERVER_ERROR } from "@veryfront/utils";
 import { getContentTypeForPath } from "../../server/handlers/utils/content-types.ts";
 import { createSecureFs } from "@veryfront/security";
@@ -110,11 +110,8 @@ async function findSourceFile(
       if (stat.isFile) {
         return fullPath;
       }
-    } catch (error) {
-      serverLogger.debug("[ModuleServer] File not found, trying next extension", {
-        fullPath,
-        error,
-      });
+    } catch {
+      // File not found with this extension, try next
     }
   }
 
@@ -126,7 +123,7 @@ async function findSourceFile(
       try {
         const stat = await secureFs.stat(fullPath);
         if (stat.isFile) {
-          serverLogger.debug("[ModuleServer] Found file in common directory", {
+          logger.debug("[ModuleServer] Found file in common directory", {
             basePath,
             resolvedPath: fullPath,
           });

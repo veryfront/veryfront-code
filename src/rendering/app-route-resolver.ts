@@ -7,6 +7,7 @@ import { serverLogger as logger } from "@veryfront/utils";
 let extractYaml: ((content: string) => any) | undefined;
 let jsYamlModule: typeof import("js-yaml") | null = null;
 
+// @ts-ignore - Deno global
 if (typeof Deno === "undefined") {
   extractYaml = (content: string) => {
     const frontMatterRegex = /^---\n([\s\S]*?)\n---/;
@@ -28,6 +29,7 @@ if (typeof Deno === "undefined") {
     logger.warn("Could not import js-yaml for Node.js frontmatter parsing.", e);
   });
 } else {
+  // @ts-ignore - Deno global
   const { extract } = await import("std/front_matter/yaml.ts");
   extractYaml = extract;
 }
@@ -93,6 +95,7 @@ async function tryDynamicMatch(
         continue;
       }
     } catch {
+      // Exact match failed, try dynamic segments
     }
 
     let foundDynamic = false;
@@ -110,6 +113,7 @@ async function tryDynamicMatch(
         }
       }
     } catch {
+      // adapter.fs.readDir failed - no fallback to Deno for npm compatibility
     }
 
     if (!foundDynamic) {
@@ -155,6 +159,7 @@ async function tryLoadPageFile(
         fm = (ex.attrs as Record<string, unknown>) || {};
       }
     } catch {
+      /* best-effort frontmatter extraction */
     }
 
     const coercedFm: Record<string, unknown> = { ...fm };

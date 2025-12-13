@@ -35,9 +35,11 @@ export interface ProjectFile {
 
 export interface ListFilesResponse {
   data: ProjectFile[];
-  pagination?: {
-    cursor?: string;
-    hasMore: boolean;
+  pageInfo?: {
+    hasNextPage: boolean;
+    nextCursor?: string | null;
+    hasPreviousPage: boolean;
+    previousCursor?: string | null;
   };
 }
 

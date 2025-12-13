@@ -1,25 +1,19 @@
 export const getRouterScript = () => `
     const MODULE_SERVER_URL = window.location.origin + '/_vf_modules';
-    console.log('[DEBUG] MODULE_SERVER_URL set to:', MODULE_SERVER_URL);
-    console.log('[DEBUG] window.location.origin:', window.location.origin);
 
     const router = {
       push: (path) => {
-        console.log('[Veryfront Router] Navigating to:', path);
         window.history.pushState({}, '', path);
         window.dispatchEvent(new PopStateEvent('popstate'));
       },
       replace: (path) => {
-        console.log('[Veryfront Router] Replacing with:', path);
         window.history.replaceState({}, '', path);
         window.dispatchEvent(new PopStateEvent('popstate'));
       },
       back: () => {
-        console.log('[Veryfront Router] Going back');
         window.history.back();
       },
       forward: () => {
-        console.log('[Veryfront Router] Going forward');
         window.history.forward();
       },
       pathname: window.location.pathname,

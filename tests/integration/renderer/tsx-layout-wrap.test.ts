@@ -5,7 +5,6 @@ import { createRenderer } from "../../../src/rendering/index.ts";
 import { withTestContext } from "../../_helpers/context.ts";
 
   // Note: Sanitizers disabled due to React 19 SSR MessagePort cleanup issue
-  // See: https://github.com/facebook/react/issues/24669
   describe(
   "TSX Layout",
   {
@@ -15,7 +14,6 @@ import { withTestContext } from "../../_helpers/context.ts";
   () => {
     it("nested layout wraps page content", async () => {
       await withTestContext("tsx-layout-wrap", async (context) => {
-        // Remove default app directory to use Pages Router
         await Deno.remove(join(context.projectDir, "app"), { recursive: true });
 
         const pages = join(context.projectDir, "pages", "blog");

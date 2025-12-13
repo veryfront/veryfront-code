@@ -1,16 +1,11 @@
-/**
- * Tests for API Route Handler
- */
 
 import { assert, assertEquals, assertExists } from "std/assert/mod.ts";
-// Import removed - no longer needed after migration to TestContext
 import { join } from "std/path/mod.ts";
 import { afterEach, beforeAll, describe, it } from "std/testing/bdd.ts";
 import { denoAdapter } from "@veryfront/platform/adapters/deno.ts";
 import { APIRouteHandler } from "@veryfront/routing/api/index.ts";
 import { withTestContext } from "../../_helpers/context.ts";
 
-// Track all handlers to clean up after tests
 const handlers: APIRouteHandler[] = [];
 
 function createHandler(projectDir: string, adapter?: typeof denoAdapter): APIRouteHandler {
@@ -19,9 +14,7 @@ function createHandler(projectDir: string, adapter?: typeof denoAdapter): APIRou
   return handler;
 }
 
-// Wrap entire test suite in a describe block with sanitizers disabled
 // This is required because esbuild WASM runtime creates internal timers
-// that cannot be cleaned up from user code
 describe(
   "API Handler Tests",
   {
@@ -29,7 +22,6 @@ describe(
     sanitizeOps: false,
   },
   () => {
-    // Clean up all handlers after each test to prevent interval leaks
     afterEach(() => {
       while (handlers.length > 0) {
         const handler = handlers.pop();
@@ -41,17 +33,14 @@ describe(
   describe("Basic routing", () => {
     it("handles simple GET request", async () => {
       await withTestContext("api-handler-get", async (context) => {
-        // Remove default app directory to use pages router
         await Deno.remove(join(context.projectDir, "app"), { recursive: true });
 
-        // Create pages/api directory
         await Deno.mkdir(join(context.projectDir, "pages", "api"), {
           recursive: true,
         });
 
         const handler = createHandler(context.projectDir, denoAdapter);
 
-        // Create test API route
         const apiFile = `
           export const GET = (ctx) => {
             return new Response("Hello from API");
@@ -59,10 +48,8 @@ describe(
         `;
         await Deno.writeTextFile(join(context.projectDir, "pages", "api", "hello.ts"), apiFile);
 
-        // Initialize routes
         await handler.initialize();
 
-        // Test request
         const req = new Request("http://localhost/api/hello");
         const res = await handler.handle(req);
 
@@ -74,10 +61,8 @@ describe(
 
     it("handles multiple HTTP methods", async () => {
       await withTestContext("api-handler-methods", async (context) => {
-        // Remove default app directory to use pages router
         await Deno.remove(join(context.projectDir, "app"), { recursive: true });
 
-        // Create pages/api directory
         await Deno.mkdir(join(context.projectDir, "pages", "api"), {
           recursive: true,
         });
@@ -105,7 +90,6 @@ describe(
 
         await handler.initialize();
 
-        // Test each method
         for (const method of ["GET", "POST", "PUT", "DELETE"]) {
           const req = new Request("http://localhost/api/resource", { method });
           const res = await handler.handle(req);
@@ -120,10 +104,8 @@ describe(
 
     it("returns 405 for unsupported methods", async () => {
       await withTestContext("api-handler-405", async (context) => {
-        // Remove default app directory to use pages router
         await Deno.remove(join(context.projectDir, "app"), { recursive: true });
 
-        // Create pages/api directory
         await Deno.mkdir(join(context.projectDir, "pages", "api"), {
           recursive: true,
         });
@@ -139,7 +121,6 @@ describe(
 
         await handler.initialize();
 
-        // Try unsupported method
         const req = new Request("http://localhost/api/limited", {
           method: "POST",
         });
@@ -167,10 +148,8 @@ describe(
   describe("Dynamic routes", () => {
     it("handles single dynamic segment", async () => {
       await withTestContext("api-handler-dynamic-single", async (context) => {
-        // Remove default app directory to use pages router
         await Deno.remove(join(context.projectDir, "app"), { recursive: true });
 
-        // Create pages/api directory
         await Deno.mkdir(join(context.projectDir, "pages", "api", "users"), {
           recursive: true,
         });
@@ -201,10 +180,8 @@ describe(
 
     it("handles multiple dynamic segments", async () => {
       await withTestContext("api-handler-dynamic-multiple", async (context) => {
-        // Remove default app directory to use pages router
         await Deno.remove(join(context.projectDir, "app"), { recursive: true });
 
-        // Create pages/api directory
         await Deno.mkdir(join(context.projectDir, "pages", "api", "posts", "[id]", "comments"), {
           recursive: true,
         });
@@ -239,10 +216,8 @@ describe(
 
     it("handles catch-all routes", async () => {
       await withTestContext("api-handler-catch-all", async (context) => {
-        // Remove default app directory to use pages router
         await Deno.remove(join(context.projectDir, "app"), { recursive: true });
 
-        // Create pages/api directory
         await Deno.mkdir(join(context.projectDir, "pages", "api"), {
           recursive: true,
         });
@@ -273,10 +248,8 @@ describe(
   describe("Request context", () => {
     it("provides query parameters", async () => {
       await withTestContext("api-handler-query", async (context) => {
-        // Remove default app directory to use pages router
         await Deno.remove(join(context.projectDir, "app"), { recursive: true });
 
-        // Create pages/api directory
         await Deno.mkdir(join(context.projectDir, "pages", "api"), {
           recursive: true,
         });
@@ -307,10 +280,8 @@ describe(
 
     it("provides request headers", async () => {
       await withTestContext("api-handler-headers", async (context) => {
-        // Remove default app directory to use pages router
         await Deno.remove(join(context.projectDir, "app"), { recursive: true });
 
-        // Create pages/api directory
         await Deno.mkdir(join(context.projectDir, "pages", "api"), {
           recursive: true,
         });
@@ -348,10 +319,8 @@ describe(
   describe("Response helpers", () => {
     it("handles json response helper", async () => {
       await withTestContext("api-handler-json-helper", async (context) => {
-        // Remove default app directory to use pages router
         await Deno.remove(join(context.projectDir, "app"), { recursive: true });
 
-        // Create pages/api directory
         await Deno.mkdir(join(context.projectDir, "pages", "api"), {
           recursive: true,
         });
@@ -384,10 +353,8 @@ describe(
 
     it("handles error response helpers", async () => {
       await withTestContext("api-handler-error-helpers", async (context) => {
-        // Remove default app directory to use pages router
         await Deno.remove(join(context.projectDir, "app"), { recursive: true });
 
-        // Create pages/api directory
         await Deno.mkdir(join(context.projectDir, "pages", "api"), {
           recursive: true,
         });
@@ -412,7 +379,6 @@ describe(
 
         await handler.initialize();
 
-        // Test each error type
         const tests = [
           { type: "bad", status: 400, message: "Invalid input" },
           { type: "unauth", status: 401, message: "Not authenticated" },
@@ -435,10 +401,8 @@ describe(
 
     it("handles redirect helper", async () => {
       await withTestContext("api-handler-redirect", async (context) => {
-        // Remove default app directory to use pages router
         await Deno.remove(join(context.projectDir, "app"), { recursive: true });
 
-        // Create pages/api directory
         await Deno.mkdir(join(context.projectDir, "pages", "api"), {
           recursive: true,
         });
@@ -470,10 +434,8 @@ describe(
   describe("Error handling", () => {
     it("handles route handler errors gracefully", async () => {
       await withTestContext("api-handler-error-handling", async (context) => {
-        // Remove default app directory to use pages router
         await Deno.remove(join(context.projectDir, "app"), { recursive: true });
 
-        // Create pages/api directory
         await Deno.mkdir(join(context.projectDir, "pages", "api"), {
           recursive: true,
         });
@@ -494,7 +456,6 @@ describe(
 
         assertExists(res);
         assertEquals(res.status, 500);
-        // In development mode, returns JSON with error and stack
         const json = await res.json();
         assertEquals(json.error, "Something went wrong");
         assertExists(json.stack);
@@ -503,10 +464,8 @@ describe(
 
     it("handles async errors", async () => {
       await withTestContext("api-handler-async-error", async (context) => {
-        // Remove default app directory to use pages router
         await Deno.remove(join(context.projectDir, "app"), { recursive: true });
 
-        // Create pages/api directory
         await Deno.mkdir(join(context.projectDir, "pages", "api"), {
           recursive: true,
         });

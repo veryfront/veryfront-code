@@ -40,7 +40,52 @@ Deno.test("MinificationStrategy - process removes comments", async () => {
 
   const result = await strategy.process(TEST_CSS, "test.css", options);
 
-  assertEquals(result.code.includes("
+  assertEquals(result.code.includes("/*"), false);
+  assertEquals(result.sourceMap, undefined);
+});
+
+Deno.test("MinificationStrategy - process removes whitespace", async () => {
+  const strategy = new MinificationStrategy();
+  const options: CSSOptimizationOptions = { enabled: true, minify: true };
+
+  const css = ".button   {   color:   red;   }";
+  const result = await strategy.process(css, "test.css", options);
+
+  assertEquals(result.code, ".button{color:red}");
+});
+
+Deno.test("LightningCSSStrategy - canProcess when not initialized", () => {
+  const strategy = new LightningCSSStrategy();
+
+  assertEquals(strategy.canProcess({ enabled: true }), false);
+});
+
+Deno.test("LightningCSSStrategy - init attempts to load", async () => {
+  const strategy = new LightningCSSStrategy();
+  const success = await strategy.init();
+
+  assertEquals(typeof success, "boolean");
+});
+
+Deno.test("PurgeStrategy - canProcess", () => {
+  const strategy = new PurgeStrategy();
+
+  assertEquals(strategy.canProcess({ enabled: true, purge: true }), true);
+  assertEquals(strategy.canProcess({ enabled: true, purge: false }), false);
+  assertEquals(strategy.canProcess({ enabled: false, purge: true }), false);
+});
+
+Deno.test("PurgeStrategy - analyzeContent extracts selectors", async () => {
+  await cleanupTestDir();
+  await ensureDir(join(TEST_DIR, "src"));
+
+  await Deno.writeTextFile(
+    join(TEST_DIR, "src", "component.tsx"),
+    '<div className="button card">Test</div>',
+  );
+
+  const strategy = new PurgeStrategy();
+  await strategy.analyzeContent([`${TEST_DIR}/src/**/*.tsx`]);
 
   const selectors = strategy.getUsedSelectors();
 

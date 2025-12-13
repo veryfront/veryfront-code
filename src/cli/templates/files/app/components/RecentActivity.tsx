@@ -1,6 +1,5 @@
 import { getRecentActivity } from "../lib/stats.ts";
 
-// Activity Icons
 function ClockIcon({ className }: { className?: string }) {
   return (
     <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -18,7 +17,6 @@ function ActivityIcon({ className }: { className?: string }) {
   );
 }
 
-// Activity type badge colors
 function getActivityColor(type: string) {
   const colors: Record<string, string> = {
     login: "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400 border-blue-200 dark:border-blue-800",

@@ -1,22 +1,13 @@
-/**
- * Error Boundary for AI Components
- *
- * React error boundary specifically designed for AI component errors.
- */
 
 import * as React from "react";
 
 export interface AIErrorBoundaryProps {
-  /** Children to wrap */
   children: React.ReactNode;
 
-  /** Fallback UI when error occurs */
   fallback?: React.ReactNode | ((error: Error, reset: () => void) => React.ReactNode);
 
-  /** Callback when error occurs */
   onError?: (error: Error, errorInfo: React.ErrorInfo) => void;
 
-  /** Custom error message */
   errorMessage?: string;
 }
 
@@ -25,25 +16,6 @@ interface AIErrorBoundaryState {
   error: Error | null;
 }
 
-/**
- * AIErrorBoundary - Error boundary for AI components
- *
- * @example
- * ```tsx
- * import { AIErrorBoundary } from 'veryfront/ai/components';
- *
- * <AIErrorBoundary
- *   fallback={(error, reset) => (
- *     <div>
- *       <p>Error: {error.message}</p>
- *       <button onClick={reset}>Try Again</button>
- *     </div>
- *   )}
- * >
- *   <Chat {...chat} />
- * </AIErrorBoundary>
- * ```
- */
 export class AIErrorBoundary extends React.Component<
   AIErrorBoundaryProps,
   AIErrorBoundaryState
@@ -58,10 +30,8 @@ export class AIErrorBoundary extends React.Component<
   }
 
   override componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
-    // Log error
     console.error("[AIErrorBoundary] Caught error:", error, errorInfo);
 
-    // Call error callback
     if (this.props.onError) {
       this.props.onError(error, errorInfo);
     }
@@ -73,7 +43,6 @@ export class AIErrorBoundary extends React.Component<
 
   override render() {
     if (this.state.hasError && this.state.error) {
-      // Custom fallback
       if (this.props.fallback) {
         if (typeof this.props.fallback === "function") {
           return this.props.fallback(this.state.error, this.reset);
@@ -81,7 +50,6 @@ export class AIErrorBoundary extends React.Component<
         return this.props.fallback;
       }
 
-      // Default fallback UI - Apple-inspired design
       return (
         <div
           className="border border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-900/20 rounded-2xl p-6"
@@ -130,9 +98,6 @@ export class AIErrorBoundary extends React.Component<
   }
 }
 
-/**
- * Hook version of error boundary
- */
 export function useAIErrorHandler() {
   const [error, setError] = React.useState<Error | null>(null);
 

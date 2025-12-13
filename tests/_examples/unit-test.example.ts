@@ -1,34 +1,19 @@
-/**
- * EXAMPLE: Unit Test Best Practices
- *
- * This file demonstrates proper unit testing patterns in Veryfront.
- * Copy this structure for new unit tests.
- */
 
 import { assertEquals, assertExists, assertRejects } from "std/assert/mod.ts";
 import { describe, it } from "std/testing/bdd.ts";
 import { TEST_TIMEOUTS } from "../_helpers/constants.ts";
 
-/**
- * Example: Testing a simple utility function
- */
 describe("Example Unit Test - Pure Functions", () => {
-  /**
-   * Example function to test
-   */
   function slugify(text: string): string {
     return text.toLowerCase().replace(/\s+/g, "-");
   }
 
   it("should convert text to lowercase slug", () => {
-    // Arrange
     const input = "Hello World";
     const expected = "hello-world";
 
-    // Act
     const result = slugify(input);
 
-    // Assert
     assertEquals(
       result,
       expected,
@@ -47,9 +32,6 @@ describe("Example Unit Test - Pure Functions", () => {
   });
 });
 
-/**
- * Example: Testing a class with state
- */
 describe("Example Unit Test - Stateful Class", () => {
   class Counter {
     private count = 0;
@@ -72,13 +54,10 @@ describe("Example Unit Test - Stateful Class", () => {
   }
 
   it("should increment counter", () => {
-    // Arrange
     const counter = new Counter();
 
-    // Act
     const result = counter.increment();
 
-    // Assert
     assertEquals(result, 1, "First increment should return 1");
     assertEquals(counter.getValue(), 1, "Counter value should be 1");
   });
@@ -86,9 +65,9 @@ describe("Example Unit Test - Stateful Class", () => {
   it("should handle multiple operations", () => {
     const counter = new Counter();
 
-    counter.increment(); // 1
-    counter.increment(); // 2
-    counter.decrement(); // 1
+    counter.increment();
+    counter.increment();
+    counter.decrement();
     const result = counter.getValue();
 
     assertEquals(result, 1, "Counter should be 1 after increment, increment, decrement");
@@ -105,12 +84,8 @@ describe("Example Unit Test - Stateful Class", () => {
   });
 });
 
-/**
- * Example: Testing async functions
- */
 describe("Example Unit Test - Async Operations", () => {
   async function fetchUserData(id: number): Promise<{ id: number; name: string }> {
-    // Simulate async operation
     await new Promise((resolve) => setTimeout(resolve, 10));
 
     if (id < 1) {
@@ -124,17 +99,14 @@ describe("Example Unit Test - Async Operations", () => {
   }
 
   it("should fetch user data", async () => {
-    // Act
     const user = await fetchUserData(123);
 
-    // Assert
     assertExists(user, "User should exist");
     assertEquals(user.id, 123, "User ID should match requested ID");
     assertEquals(user.name, "User 123", "User name should be generated correctly");
   });
 
   it("should throw error for invalid ID", async () => {
-    // Assert - use assertRejects for async errors
     await assertRejects(
       async () => await fetchUserData(0),
       Error,
@@ -143,7 +115,6 @@ describe("Example Unit Test - Async Operations", () => {
     );
   });
 
-  // With timeout configuration
   it(
     "should complete within time budget",
     { timeout: TEST_TIMEOUTS.UNIT },
@@ -161,9 +132,6 @@ describe("Example Unit Test - Async Operations", () => {
   );
 });
 
-/**
- * Example: Testing error conditions
- */
 describe("Example Unit Test - Error Handling", () => {
   function divide(a: number, b: number): number {
     if (b === 0) {
@@ -180,7 +148,6 @@ describe("Example Unit Test - Error Handling", () => {
   it("should throw error on division by zero", () => {
     const divideByZero = () => divide(10, 0);
 
-    // Use assertThrows for synchronous errors
     let errorThrown = false;
     try {
       divideByZero();
@@ -203,11 +170,7 @@ describe("Example Unit Test - Error Handling", () => {
   });
 });
 
-/**
- * Example: Using test fixtures
- */
 describe("Example Unit Test - Test Fixtures", () => {
-  // Test fixture: Reusable test data
   const TEST_USERS = [
     { id: 1, name: "Alice", role: "admin" },
     { id: 2, name: "Bob", role: "user" },
@@ -234,15 +197,3 @@ describe("Example Unit Test - Test Fixtures", () => {
   });
 });
 
-/**
- * Best Practices Checklist:
- * ✅ Use describe/it BDD style
- * ✅ Follow Arrange-Act-Assert pattern
- * ✅ Include descriptive test names
- * ✅ Add assertion messages explaining what's being tested
- * ✅ Test both happy paths and error cases
- * ✅ Use appropriate timeouts for async tests
- * ✅ Keep tests independent and isolated
- * ✅ Use test fixtures for reusable data
- * ✅ Document complex test scenarios
- */

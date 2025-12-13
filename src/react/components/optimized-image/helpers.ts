@@ -1,11 +1,28 @@
+/**
+ * Generates the path for an optimized image.
+ * @param src - Original image source path
+ * @param format - Target image format (e.g., 'webp', 'avif', 'jpeg')
+ * @param size - Target width in pixels
+ * @param quality - Image quality (currently unused, reserved for future CDN integration)
+ * @returns The path to the optimized image
+ */
 export function getOptimizedPath(
   src: string,
   format: string,
   size: number,
-  _quality: number = 80,
+  quality: number = 80,
 ): string {
+  // Validate inputs
+  if (!src || typeof src !== "string") {
+    return "";
+  }
+
   const basePath = src.replace(/\.[^.]+$/, "");
   const optimizedDir = ".veryfront/optimized-images";
+
+  // Quality parameter reserved for future CDN query string support
+  // e.g., `/${optimizedDir}${basePath}-${size}w.${format}?q=${quality}`
+  void quality;
 
   return `/${optimizedDir}${basePath}-${size}w.${format}`;
 }

@@ -34,8 +34,9 @@ export class RedisRateLimitStore implements RateLimitStore {
 
     let createClient: ((options: { url?: string }) => RedisClient) | undefined;
     try {
-      const redisClientModule = ["npm:@redis/client", "@1.5.8"].join("");
-      const mod = await import(redisClientModule);
+      // Dynamic import of Redis client - version specified separately to allow for updates
+      const REDIS_CLIENT_SPECIFIER = "npm:@redis/client@1.5.8";
+      const mod = await import(REDIS_CLIENT_SPECIFIER);
       createClient = mod.createClient as unknown as (options: { url?: string }) => RedisClient;
     } catch {
       throw toError(createError({
@@ -80,7 +81,6 @@ export class RedisRateLimitStore implements RateLimitStore {
         resetAt: Date.now() + windowMs,
       };
     }
-
 
     const ttl = pttl > 0 ? pttl : windowMs;
 

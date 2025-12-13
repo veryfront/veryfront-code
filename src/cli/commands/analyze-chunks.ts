@@ -52,7 +52,9 @@ export async function analyzeChunksCommand(options: AnalyzeChunksOptions) {
       (sum, count) => sum + count,
       0,
     );
-    const avgUsage = totalSharedUsage / analysis.sharedDeps.size;
+    const avgUsage = analysis.sharedDeps.size > 0
+      ? totalSharedUsage / analysis.sharedDeps.size
+      : 0;
 
     if (avgUsage > 3) {
       cliLogger.info(
@@ -71,7 +73,10 @@ export async function analyzeChunksCommand(options: AnalyzeChunksOptions) {
         "Detected heavy UI libraries shared across pages. Break them into dedicated chunks.",
       );
     }
-  } catch (_error) {
+  } catch (error) {
+    cliLogger.error(
+      `Failed to analyze chunks: ${error instanceof Error ? error.message : String(error)}`,
+    );
     exit(1);
   }
 }

@@ -2,7 +2,7 @@ import { join } from "std/path/mod.ts";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import { transformToESM } from "@veryfront/transforms/esm/transform-core.ts";
 import type { TransformOptions } from "@veryfront/transforms/esm/types.ts";
-import { rendererLogger as logger } from "@veryfront/utils";
+import { rendererLogger as logger, REACT_DEFAULT_VERSION } from "@veryfront/utils";
 import { getGlobalTmpDir } from "./temp-directory.ts";
 import type { ComponentMap, ComponentSource, LoadComponentOptions } from "./types.ts";
 
@@ -35,9 +35,9 @@ export async function loadComponentsUnified(
     const entryCode = generateEntryPoint(transformedComponents);
     await adapter.fs.writeFile(join(tmpDir, "entry.js"), entryCode);
 
-    const components = await importUnifiedComponents(tmpDir, transformedComponents);
+    const loadedComponents = await importUnifiedComponents(tmpDir, transformedComponents);
 
-    return components;
+    return loadedComponents;
   } finally {
     await cleanupTempDirectory(tmpDir, adapter);
   }
@@ -85,8 +85,11 @@ function generateEntryPoint(
 
   const exports = components.map((comp) => comp.name).join(", ");
 
+  // Use globalThis.__VERYFRONT_REACT__ to avoid dynamic remote imports in compiled binaries
+  // (Deno compile cannot fetch remote URLs at runtime)
+  // Fallback to dynamic import for cases where globalThis is not yet set
   return `
-    import * as React from 'https://esm.sh/react@18.3.1'
+    const React = globalThis.__VERYFRONT_REACT__ || (await import('https://esm.sh/react@${REACT_DEFAULT_VERSION}'));
     ${imports}
 
     export { ${exports} }

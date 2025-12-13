@@ -1,9 +1,4 @@
-/**
- * Integration tests for the complete layout system
- * Tests nested layouts, providers, and App Router reserved components
- */
 
-// Disable LRU intervals during testing to prevent resource leaks
 (globalThis as Record<string, unknown>).__vfDisableLruInterval = true;
 
 import {
@@ -18,7 +13,6 @@ import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";
 import { cleanupTestDir, createTestProjectDir } from "../../../_helpers/server.ts";
 import { DenoAdapter } from "@veryfront/platform/adapters/deno.ts";
 
-// Clean up bundler intervals to prevent resource leaks
 afterAll(async () => {
   await cleanupBundler();
 });
@@ -27,10 +21,8 @@ Deno.test("Layout System Integration - nested layouts with App Router", async ()
   const projectDir = await createTestProjectDir();
 
   try {
-    // Create App Router structure with nested layouts
     await Deno.mkdir(join(projectDir, "app/blog"), { recursive: true });
 
-    // Root layout
     await Deno.writeTextFile(
       join(projectDir, "app/layout.tsx"),
       `export default function RootLayout({ children }) {
@@ -38,7 +30,6 @@ Deno.test("Layout System Integration - nested layouts with App Router", async ()
 }`,
     );
 
-    // Blog layout
     await Deno.writeTextFile(
       join(projectDir, "app/blog/layout.tsx"),
       `export default function BlogLayout({ children }) {
@@ -46,7 +37,6 @@ Deno.test("Layout System Integration - nested layouts with App Router", async ()
 }`,
     );
 
-    // Page
     await Deno.writeTextFile(
       join(projectDir, "app/blog/page.mdx"),
       `---
@@ -59,7 +49,6 @@ This is a test post.
 `,
     );
 
-    // Config
     await Deno.writeTextFile(
       join(projectDir, "veryfront.config.ts"),
       `export default {
@@ -81,7 +70,6 @@ This is a test post.
     assertExists(result.html);
     assertStringIncludes(result.html, "My Blog Post");
 
-    // Clean up
     await renderer.destroy();
   } finally {
     await cleanupTestDir(projectDir);
@@ -92,7 +80,6 @@ Deno.test("Layout System Integration - named layout with providers", async () =>
   const projectDir = await createTestProjectDir();
 
   try {
-    // Create named layout
     await Deno.mkdir(join(projectDir, "layouts"), { recursive: true });
     await Deno.writeTextFile(
       join(projectDir, "layouts/main.mdx"),
@@ -101,7 +88,6 @@ Deno.test("Layout System Integration - named layout with providers", async () =>
 <slot />`,
     );
 
-    // Create provider
     await Deno.mkdir(join(projectDir, "providers"), { recursive: true });
     await Deno.writeTextFile(
       join(projectDir, "providers/theme.mdx"),
@@ -110,7 +96,6 @@ Deno.test("Layout System Integration - named layout with providers", async () =>
 }`,
     );
 
-    // Create page with layout
     await Deno.writeTextFile(
       join(projectDir, "pages/test.mdx"),
       `---
@@ -136,7 +121,6 @@ layout: main
     assertExists(result.html);
     assertStringIncludes(result.html, "Test Content");
 
-    // Clean up
     await renderer.destroy();
   } finally {
     await cleanupTestDir(projectDir);
@@ -147,10 +131,8 @@ Deno.test("Layout System Integration - App Router reserved components", async ()
   const projectDir = await createTestProjectDir();
 
   try {
-    // Create App Router structure
     await Deno.mkdir(join(projectDir, "app/products"), { recursive: true });
 
-    // Loading component
     await Deno.writeTextFile(
       join(projectDir, "app/products/loading.tsx"),
       `export default function Loading() {
@@ -158,7 +140,6 @@ Deno.test("Layout System Integration - App Router reserved components", async ()
 }`,
     );
 
-    // Error component
     await Deno.writeTextFile(
       join(projectDir, "app/products/error.tsx"),
       `export default function Error({ error }) {
@@ -166,7 +147,6 @@ Deno.test("Layout System Integration - App Router reserved components", async ()
 }`,
     );
 
-    // Page
     await Deno.writeTextFile(
       join(projectDir, "app/products/page.mdx"),
       `---
@@ -177,7 +157,6 @@ title: Products
 `,
     );
 
-    // Config
     await Deno.writeTextFile(
       join(projectDir, "veryfront.config.ts"),
       `export default {
@@ -199,7 +178,6 @@ title: Products
     assertExists(result.html);
     assertStringIncludes(result.html, "Products Page");
 
-    // Clean up
     await renderer.destroy();
   } finally {
     await cleanupTestDir(projectDir);
@@ -210,7 +188,6 @@ Deno.test("Layout System Integration - Pages Router with App component", async (
   const projectDir = await createTestProjectDir();
 
   try {
-    // Create App component
     await Deno.writeTextFile(
       join(projectDir, "components/app.tsx"),
       `export default function App({ children }) {
@@ -224,7 +201,6 @@ Deno.test("Layout System Integration - Pages Router with App component", async (
 }`,
     );
 
-    // Create page
     await Deno.writeTextFile(
       join(projectDir, "pages/index.mdx"),
       `---
@@ -249,7 +225,6 @@ title: Home
     assertExists(result.html);
     assertStringIncludes(result.html, "Welcome Home");
 
-    // Clean up
     await renderer.destroy();
   } finally {
     await cleanupTestDir(projectDir);

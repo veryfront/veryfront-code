@@ -1,6 +1,3 @@
-/**
- * Tests for OptimizedImage Component
- */
 
 import { assertEquals, assertExists } from "std/assert/mod.ts";
 import React from "react";
@@ -160,19 +157,19 @@ Deno.test("generateBlurDataURL - custom dimensions", () => {
 Deno.test("getAspectRatioPadding - 16:9", () => {
   const padding = getAspectRatioPadding(1920, 1080);
 
-  assertEquals(padding, "56.25%"); // 1080/1920 * 100
+  assertEquals(padding, "56.25%");
 });
 
 Deno.test("getAspectRatioPadding - 4:3", () => {
   const padding = getAspectRatioPadding(800, 600);
 
-  assertEquals(padding, "75%"); // 600/800 * 100
+  assertEquals(padding, "75%");
 });
 
 Deno.test("getAspectRatioPadding - 1:1", () => {
   const padding = getAspectRatioPadding(500, 500);
 
-  assertEquals(padding, "100%"); // 500/500 * 100
+  assertEquals(padding, "100%");
 });
 
 Deno.test("ResponsiveImageContainer - basic props", () => {

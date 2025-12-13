@@ -62,7 +62,9 @@ function handleRenderError(span: Span | null, error: unknown, componentName: str
   recordRenderError({ component: componentName });
   if (span) {
     span.recordException(error as Error);
-    span.setStatus({ code: 2, message: String(error) });
+    // SpanStatusCode.ERROR = 2 (from @opentelemetry/api)
+    const SPAN_STATUS_CODE_ERROR = 2;
+    span.setStatus({ code: SPAN_STATUS_CODE_ERROR, message: String(error) });
   }
 }
 

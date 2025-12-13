@@ -1,4 +1,3 @@
-
 import type { ConsoleStyler } from "./types.ts";
 
 type PicoColors = {
@@ -19,13 +18,24 @@ type PicoColors = {
 };
 
 let pc: PicoColors | null = null;
+let initPromise: Promise<PicoColors> | null = null;
 
-async function ensurePc(): Promise<PicoColors> {
+/**
+ * Lazily loads picocolors module. Uses a cached promise to avoid
+ * multiple concurrent imports.
+ */
+async function loadPicoColors(): Promise<PicoColors> {
   if (pc) return pc;
-  const picocolorsModule = ["npm:", "picocolors"].join("");
-  const mod = await import(picocolorsModule);
-  pc = mod.default as PicoColors;
-  return pc;
+  if (initPromise) return initPromise;
+
+  initPromise = (async () => {
+    const picocolorsModule = ["npm:", "picocolors"].join("");
+    const mod = await import(picocolorsModule);
+    pc = mod.default as PicoColors;
+    return pc;
+  })();
+
+  return initPromise;
 }
 
 const lazyColor = (fn: keyof PicoColors) => (s: string) => pc?.[fn]?.(s) ?? s;
@@ -62,6 +72,10 @@ export const underline = lazyColor("underline");
 export const strikethrough = lazyColor("strikethrough");
 export const reset = lazyColor("reset");
 
+/**
+ * Initialize colors by loading the picocolors module.
+ * Call this early in your application to ensure colors work correctly.
+ */
 export async function initColors(): Promise<void> {
-  await ensurePc();
+  await loadPicoColors();
 }

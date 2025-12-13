@@ -1,13 +1,8 @@
-/**
- * Unit Tests for Prefetch Queue
- * Tests queue management, concurrent prefetching, and resource callback handling
- */
 
 import { assertEquals, assertExists } from "std/assert/mod.ts";
 import { describe, it } from "std/testing/bdd.ts";
 import { PrefetchQueue, PrefetchQueueOptions } from "@veryfront/rendering/client/prefetch/prefetch-queue.ts";
 
-// Mock fetch function
 interface MockFetchOptions {
   status?: number;
   ok?: boolean;
@@ -47,7 +42,6 @@ const createMockFetch = (options: MockFetchOptions = {}) => {
   };
 };
 
-// Setup global mocks
 const setupMocks = () => {
   const originalFetch = globalThis.fetch;
   const originalDocument = globalThis.document;
@@ -272,10 +266,8 @@ describe("PrefetchQueue",  () => {
         href: "http://example.com/page",
       } as HTMLAnchorElement;
 
-      // Start first prefetch (won't await)
       queue.prefetchLink(link);
 
-      // Try to prefetch same URL immediately
       await queue.prefetchLink(link);
 
       assertEquals(fetchCallCount, 1);
@@ -335,7 +327,6 @@ describe("PrefetchQueue",  () => {
         href: "http://example.com/page",
       } as HTMLAnchorElement;
 
-      // Should not throw
       await queue.prefetchLink(link);
 
       assertEquals(prefetchedUrls.has("http://example.com/page"), false);
@@ -360,7 +351,6 @@ describe("PrefetchQueue",  () => {
         href: "http://example.com/page",
       } as HTMLAnchorElement;
 
-      // Should not throw
       await queue.prefetchLink(link);
 
       assertEquals(prefetchedUrls.has("http://example.com/page"), false);
@@ -397,15 +387,12 @@ describe("PrefetchQueue",  () => {
       const link2 = { href: "http://example.com/page2" } as HTMLAnchorElement;
       const link3 = { href: "http://example.com/page3" } as HTMLAnchorElement;
 
-      // Start 3 prefetches
       queue.prefetchLink(link1);
       queue.prefetchLink(link2);
       queue.prefetchLink(link3);
 
-      // Wait a bit for queue to process
       await new Promise((resolve) => setTimeout(resolve, 50));
 
-      // Should have skipped the third one
       assertEquals(queue.getConcurrentCount() <= 2, true);
 
       mocks.cleanup();
@@ -700,12 +687,10 @@ describe("PrefetchQueue",  () => {
       queue.prefetchLink(link1);
       queue.prefetchLink(link2);
 
-      // Wait a bit for queue to start
       await new Promise((resolve) => setTimeout(resolve, 10));
 
       queue.stopAll();
 
-      // Wait for aborts to process
       await new Promise((resolve) => setTimeout(resolve, 50));
 
       assertEquals(abortedCount >= 0, true);
@@ -829,7 +814,6 @@ describe("PrefetchQueue",  () => {
         href: "not-a-valid-url",
       } as HTMLAnchorElement;
 
-      // Should not throw
       await queue.prefetchLink(link);
 
       mocks.cleanup();
@@ -856,7 +840,6 @@ describe("PrefetchQueue",  () => {
         href: "http://example.com/page",
       } as HTMLAnchorElement;
 
-      // Should not throw (error should be caught internally)
       await queue.prefetchLink(link);
 
       mocks.cleanup();

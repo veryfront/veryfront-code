@@ -43,11 +43,11 @@ export class StatOperations {
 
   async exists(path: string): Promise<boolean> {
     const normalizedPath = this.normalizer.normalize(path);
+    logger.debug("[StatOperations] Checking existence", { path, normalizedPath });
     try {
       await this.stat(normalizedPath);
       return true;
-    } catch (error) {
-      logger.debug(`File stat check failed for ${normalizedPath}:`, error);
+    } catch {
       return false;
     }
   }

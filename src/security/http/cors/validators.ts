@@ -3,10 +3,14 @@ import type { CORSConfig, CORSValidationResult } from "./types.ts";
 import { serverLogger } from "@veryfront/utils/logger/logger.ts";
 import { recordCorsRejection } from "@veryfront/observability";
 
-export async function validateOrigin(
+/**
+ * Core origin validation logic shared between sync and async versions.
+ * Returns either a final result or indicates that function validation is needed.
+ */
+function validateOriginCore(
   requestOrigin: string | null,
   config?: boolean | CORSConfig,
-): Promise<CORSValidationResult> {
+): CORSValidationResult | { needsFunctionValidation: true; corsConfig: CORSConfig } {
   if (!config) {
     return { allowedOrigin: null, allowCredentials: false };
   }
@@ -16,7 +20,7 @@ export async function validateOrigin(
     return { allowedOrigin: origin, allowCredentials: false };
   }
 
-  const corsConfig = config as CORSConfig;
+  const corsConfig = config;
 
   if (!corsConfig.origin) {
     return { allowedOrigin: null, allowCredentials: false };
@@ -42,30 +46,7 @@ export async function validateOrigin(
   }
 
   if (typeof corsConfig.origin === "function") {
-    try {
-      const result = await corsConfig.origin(requestOrigin);
-
-      if (typeof result === "string") {
-        return {
-          allowedOrigin: result,
-          allowCredentials: corsConfig.credentials ?? false,
-        };
-      }
-
-      const allowed = result === true;
-      return {
-        allowedOrigin: allowed ? requestOrigin : null,
-        allowCredentials: allowed && (corsConfig.credentials ?? false),
-        error: allowed ? undefined : "Origin rejected by validation function",
-      };
-    } catch (error) {
-      serverLogger.error("[CORS] Origin validation function error", error);
-      return {
-        allowedOrigin: null,
-        allowCredentials: false,
-        error: "Origin validation error",
-      };
-    }
+    return { needsFunctionValidation: true, corsConfig };
   }
 
   if (Array.isArray(corsConfig.origin)) {
@@ -107,116 +88,98 @@ export async function validateOrigin(
   };
 }
 
+/**
+ * Helper to check if the result requires function validation
+ */
+function needsFunctionValidation(
+  result: CORSValidationResult | { needsFunctionValidation: true; corsConfig: CORSConfig },
+): result is { needsFunctionValidation: true; corsConfig: CORSConfig } {
+  return "needsFunctionValidation" in result && result.needsFunctionValidation === true;
+}
+
+/**
+ * Process the result of calling the origin validation function
+ */
+function processOriginFunctionResult(
+  result: boolean | string,
+  requestOrigin: string,
+  credentials: boolean,
+): CORSValidationResult {
+  if (typeof result === "string") {
+    return {
+      allowedOrigin: result,
+      allowCredentials: credentials,
+    };
+  }
+
+  const allowed = result === true;
+  return {
+    allowedOrigin: allowed ? requestOrigin : null,
+    allowCredentials: allowed && credentials,
+    error: allowed ? undefined : "Origin rejected by validation function",
+  };
+}
+
+export async function validateOrigin(
+  requestOrigin: string | null,
+  config?: boolean | CORSConfig,
+): Promise<CORSValidationResult> {
+  const coreResult = validateOriginCore(requestOrigin, config);
+
+  if (!needsFunctionValidation(coreResult)) {
+    return coreResult;
+  }
+
+  const { corsConfig } = coreResult;
+  const originFn = corsConfig.origin as (origin: string) => boolean | string | Promise<boolean | string>;
+
+  try {
+    const result = await originFn(requestOrigin!);
+    return processOriginFunctionResult(result, requestOrigin!, corsConfig.credentials ?? false);
+  } catch (error) {
+    serverLogger.error("[CORS] Origin validation function error", error);
+    return {
+      allowedOrigin: null,
+      allowCredentials: false,
+      error: "Origin validation error",
+    };
+  }
+}
+
 export function validateOriginSync(
   requestOrigin: string | null,
   config?: boolean | CORSConfig,
 ): CORSValidationResult {
-  if (!config) {
-    return { allowedOrigin: null, allowCredentials: false };
+  const coreResult = validateOriginCore(requestOrigin, config);
+
+  if (!needsFunctionValidation(coreResult)) {
+    return coreResult;
   }
 
-  if (config === true) {
-    const origin = requestOrigin || "*";
-    return { allowedOrigin: origin, allowCredentials: false };
-  }
+  const { corsConfig } = coreResult;
+  const originFn = corsConfig.origin as (origin: string) => boolean | string | Promise<boolean | string>;
 
-  const corsConfig = config as CORSConfig;
-
-  if (!corsConfig.origin) {
-    return { allowedOrigin: null, allowCredentials: false };
-  }
-
-  if (!requestOrigin) {
-    if (corsConfig.origin === "*") {
-      return { allowedOrigin: "*", allowCredentials: false };
-    }
-    return { allowedOrigin: null, allowCredentials: false };
-  }
-
-  if (corsConfig.origin === "*") {
-    if (corsConfig.credentials) {
-      serverLogger.warn("[CORS] Cannot use credentials with wildcard origin - denying");
+  try {
+    const result = originFn(requestOrigin!);
+    if (result instanceof Promise) {
+      serverLogger.warn(
+        "[CORS] Async origin validators are not supported in synchronous contexts",
+      );
       return {
         allowedOrigin: null,
         allowCredentials: false,
-        error: "Cannot use credentials with wildcard origin",
+        error: "Async origin validators not supported",
       };
     }
-    return { allowedOrigin: "*", allowCredentials: false };
-  }
-
-  if (typeof corsConfig.origin === "function") {
-    try {
-      const result = corsConfig.origin(requestOrigin);
-      if (result instanceof Promise) {
-        serverLogger.warn(
-          "[CORS] Async origin validators are not supported in synchronous contexts",
-        );
-        return {
-          allowedOrigin: null,
-          allowCredentials: false,
-          error: "Async origin validators not supported",
-        };
-      }
-      if (typeof result === "string") {
-        return {
-          allowedOrigin: result,
-          allowCredentials: corsConfig.credentials ?? false,
-        };
-      }
-      const allowed = result === true;
-      return {
-        allowedOrigin: allowed ? requestOrigin : null,
-        allowCredentials: allowed && (corsConfig.credentials ?? false),
-        error: allowed ? undefined : "Origin rejected by validation function",
-      };
-    } catch (error) {
-      serverLogger.error("[CORS] Origin validation function error", error);
-      return {
-        allowedOrigin: null,
-        allowCredentials: false,
-        error: "Origin validation error",
-      };
-    }
-  }
-
-  if (Array.isArray(corsConfig.origin)) {
-    const allowed = corsConfig.origin.includes(requestOrigin);
-    if (!allowed) {
-      recordCorsRejection();
-      serverLogger.warn("[CORS] Origin not in allowlist (sync)", {
-        requestOrigin,
-        allowedOrigins: corsConfig.origin,
-      });
-    }
+    return processOriginFunctionResult(result, requestOrigin!, corsConfig.credentials ?? false);
+  } catch (error) {
+    serverLogger.error("[CORS] Origin validation function error", error);
     return {
-      allowedOrigin: allowed ? requestOrigin : null,
-      allowCredentials: allowed && (corsConfig.credentials ?? false),
-      error: allowed ? undefined : "Origin not in allowlist",
+      allowedOrigin: null,
+      allowCredentials: false,
+      error: "Origin validation error",
     };
   }
-
-  if (typeof corsConfig.origin === "string") {
-    const allowed = corsConfig.origin === requestOrigin;
-    if (!allowed) {
-      recordCorsRejection();
-      serverLogger.warn("[CORS] Origin does not match (sync)", {
-        requestOrigin,
-        expectedOrigin: corsConfig.origin,
-      });
-    }
-    return {
-      allowedOrigin: allowed ? requestOrigin : null,
-      allowCredentials: allowed && (corsConfig.credentials ?? false),
-      error: allowed ? undefined : "Origin does not match",
-    };
-  }
-
-  return {
-    allowedOrigin: null,
-    allowCredentials: false,
-    error: "Invalid origin configuration",
-  };
 }
 
 export function validateCORSConfig(config?: boolean | CORSConfig): {

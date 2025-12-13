@@ -18,9 +18,7 @@ export async function executeMiddlewarePipeline(
     const defaultNext: Next = () =>
       Promise.resolve(new Response("Not Found", { status: HTTP_NOT_FOUND }));
 
-    response = await composedMiddleware(context, () => {
-      return defaultNext();
-    });
+    response = await composedMiddleware(context, defaultNext);
   } catch (error) {
     const { serverLogger } = await import("../../../core/utils/logger/logger.ts");
     serverLogger.error("Middleware pipeline error:", {

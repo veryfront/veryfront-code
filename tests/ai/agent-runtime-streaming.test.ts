@@ -1,11 +1,5 @@
 import { describe, it } from "std/testing/bdd.ts";
-import {
-  type AgentConfig,
-  getToolArguments,
-  type Message,
-  type MessagePart,
-  type ToolCallPart,
-} from "../../src/ai/types/agent.ts";
+import type { AgentConfig, Message, StreamToolCall } from "../../src/ai/types/agent.ts";
 
 type Provider = {
   name: string;
@@ -28,9 +22,7 @@ function assertEquals<T>(actual: T, expected: T, message?: string): void {
     ? JSON.stringify(actual) === JSON.stringify(expected)
     : actual === expected;
   if (!pass) {
-    throw new Error(
-      message || `Assertion failed: ${JSON.stringify(actual)} !== ${JSON.stringify(expected)}`,
-    );
+    throw new Error(message || `Assertion failed: ${JSON.stringify(actual)} !== ${JSON.stringify(expected)}`);
   }
 }
 
@@ -56,7 +48,6 @@ function createMockProvider(events: Array<Record<string, unknown>>): Provider {
     stream: async () => {
       const payload = events.map((e) => JSON.stringify(e)).join("\n") + "\n";
       const mid = Math.floor(payload.length / 2);
-      // Intentionally split JSON in the middle to simulate chunk boundaries
       return createStreamFromChunks([payload.slice(0, mid), payload.slice(mid)]);
     },
   } as unknown as Provider;
@@ -64,7 +55,6 @@ function createMockProvider(events: Array<Record<string, unknown>>): Provider {
 
 describe("AgentRuntime streaming JSON buffering", () => {
   it("should parse content and tool events even when JSON is split across chunks", async () => {
-    // Stub Deno.env to avoid permission errors from logger initialization inside AgentRuntime
     const originalEnv = (Deno as any).env;
     let restoreEnv: (() => void) | null = null;
     try {
@@ -103,7 +93,7 @@ describe("AgentRuntime streaming JSON buffering", () => {
     ]);
 
     const runtime = new AgentRuntime("test", baseConfig);
-    const messages: Message[] = [{ id: "m1", role: "user", parts: [{ type: "text", text: "hi" }] }];
+    const messages: Message[] = [{ id: "m1", role: "user", content: "hi" }];
     const controller = {
       enqueue: (_chunk: Uint8Array) => {},
       close: () => {},
@@ -120,17 +110,12 @@ describe("AgentRuntime streaming JSON buffering", () => {
     );
 
     assert(response.text.includes("Hello"), "should include streamed content");
-    // No tool execution because finishReason=stop, but assistant message should carry parsed tool-call parts
-    // AI SDK v5 uses tool-${toolName} pattern (e.g., "tool-testTool")
+    // No tool execution because finishReason=stop, but assistant message should carry parsed toolCalls
     const assistant = response.messages.find((m) => m.role === "assistant");
-    const toolCallParts = assistant?.parts.filter(
-      (p): p is ToolCallPart => p.type.startsWith("tool-") && p.type !== "tool-result",
-    );
-    assert(toolCallParts && toolCallParts.length === 1, "assistant tool-call parts captured");
-    const tc = toolCallParts![0]!;
-    assertEquals(tc.toolName, "testTool");
-    assertEquals(getToolArguments(tc), { x: 1 });
-    // Restore env if we modified it
+    assert(assistant?.toolCalls && assistant.toolCalls.length === 1, "assistant toolCalls captured");
+    const tc = assistant!.toolCalls![0]! as StreamToolCall;
+    assertEquals(tc.name, "testTool");
+    assertEquals(tc.arguments, { x: 1 });
     if (restoreEnv) {
       restoreEnv();
     }

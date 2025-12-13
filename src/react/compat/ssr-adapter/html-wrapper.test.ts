@@ -260,7 +260,8 @@ describe("html-wrapper", () => {
       };
       const result = wrapInHTML("<div>Test</div>", options);
 
-      expect(result).toContain("<title>Test & <Title></title>");
+      // HTML special characters are now escaped for XSS prevention
+      expect(result).toContain("<title>Test &amp; &lt;Title&gt;</title>");
     });
 
     it("should preserve content HTML structure", () => {

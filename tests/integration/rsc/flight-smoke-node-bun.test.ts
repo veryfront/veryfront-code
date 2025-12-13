@@ -6,7 +6,6 @@ import { withTestContext } from "../../_helpers/context.ts";
 import { assertDrained, drainEventLoop } from "../../_helpers/utils.ts";
 import { cleanupBundler } from "../../../src/rendering/cleanup.ts";
 
-// Clean up renderer intervals to prevent resource leaks
 afterAll(async () => {
   await cleanupBundler();
 });
@@ -14,7 +13,6 @@ afterAll(async () => {
 describe("RSC Flight endpoint smoke test", {}, () => {
   it("returns 410 (removed endpoint)", async () => {
     await withTestContext("rsc-flight-smoke", async (context) => {
-      // Enable RSC via config instead of env var
       await Deno.writeTextFile(
         join(context.projectDir, "veryfront.config.js"),
         `export default { experimental: { rsc: true } };`,
@@ -43,9 +41,7 @@ describe("RSC Flight endpoint smoke test", {}, () => {
         if (h?.stop) {
           await h.stop();
         }
-        // Give the server time to clean up
         await new Promise((resolve) => setTimeout(resolve, 500));
-        // Deterministically drain and verify
         await drainEventLoop(10, 50);
         await assertDrained({
           allowResources: [/MessagePort/i, /Timer/i, /^fetch/i],

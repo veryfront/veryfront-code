@@ -32,9 +32,13 @@ describe("parseDuration", () => {
     assertEquals(parseDuration(100), 100);
   });
 
-  it("should reject zero and negative durations", () => {
-    assertThrows(() => parseDuration("0s"), Error, "Duration must be positive");
-    assertThrows(() => parseDuration("0m"), Error, "Duration must be positive");
+  it("should allow zero duration", () => {
+    assertEquals(parseDuration("0s"), 0);
+    assertEquals(parseDuration("0m"), 0);
+    assertEquals(parseDuration(0), 0);
+  });
+
+  it("should reject negative durations", () => {
     assertThrows(() => parseDuration(-100), Error, "Duration cannot be negative");
   });
 

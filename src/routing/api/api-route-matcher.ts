@@ -156,7 +156,8 @@ export class DynamicRouter {
     });
 
     for (let i = 0; i < paramNames.length; i++) {
-      const paramName = paramNames[i] as string;
+      const paramName = paramNames[i];
+      if (!paramName) continue;
       const value = match[i + 1];
 
       if (catchAllParamNames.has(paramName)) {

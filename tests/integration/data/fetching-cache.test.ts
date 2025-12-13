@@ -26,19 +26,15 @@ Deno.test(
         query: new URLSearchParams(),
       }) as any;
 
-    // First fetch caches
     const r1 = await fetcher.fetchData(pageModule, makeCtx("1"), "production");
     assertEquals((r1.props as any).id, "1");
 
-    // Immediate second fetch returns cached
     const r2 = await fetcher.fetchData(pageModule, makeCtx("1"), "production");
     assertEquals((r2.props as any).id, "1");
 
-    // Different key stored too
     const r3 = await fetcher.fetchData(pageModule, makeCtx("2"), "production");
     assertEquals((r3.props as any).id, "2");
 
-    // Clear by pattern
     fetcher.clearCache("/products/1");
     const r4 = await fetcher.fetchData(pageModule, makeCtx("1"), "production");
     assertEquals((r4.props as any).id, "1");

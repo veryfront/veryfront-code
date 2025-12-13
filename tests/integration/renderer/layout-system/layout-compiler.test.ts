@@ -1,6 +1,3 @@
-/**
- * Tests for LayoutCompiler
- */
 
 import { assertEquals, assertExists } from "jsr:@std/assert@1";
 import { join } from "https://deno.land/std@0.220.0/path/mod.ts";
@@ -14,7 +11,6 @@ Deno.test("LayoutCompiler - compiles MDX layouts", async () => {
   const projectDir = await createTestProjectDir();
 
   try {
-    // Create layout file
     const layoutPath = join(projectDir, "layouts/test.mdx");
     await Deno.mkdir(join(projectDir, "layouts"), { recursive: true });
     await Deno.writeTextFile(layoutPath, "# Test Layout\n\n<slot />");
@@ -73,7 +69,6 @@ Deno.test("LayoutCompiler - skips TSX layouts", async () => {
       compileMDX: mockCompileMDX,
     });
 
-    // Should not throw
     await compiler.compileLayouts(layouts);
 
     assertEquals(layouts[0]?.bundle, undefined);
@@ -86,7 +81,6 @@ Deno.test("LayoutCompiler - computes dependency hash", async () => {
   const projectDir = await createTestProjectDir();
 
   try {
-    // Create layout file
     const layoutPath = join(projectDir, "layouts/test.mdx");
     await Deno.mkdir(join(projectDir, "layouts"), { recursive: true });
     await Deno.writeTextFile(layoutPath, "# Test Layout");

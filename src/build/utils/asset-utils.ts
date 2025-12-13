@@ -83,7 +83,6 @@ export function getStandardPseudoSelectors(): string[] {
   ];
 }
 
-
 export function getVariantPath(
   outputDir: string,
   relPath: string,

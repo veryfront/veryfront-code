@@ -96,7 +96,7 @@ describe(
 
         try {
           const res = await fetch(`http://localhost:${port}/test`);
-          await res.text(); // Consume response body
+          await res.text();
           assertEquals(res.status, 500);
         } finally {
           ac.abort();

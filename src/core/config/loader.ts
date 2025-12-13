@@ -179,14 +179,7 @@ async function loadAndMergeConfig(
     configCacheByProject.set(projectDir, { revision: cacheRevision, config: merged });
     return merged;
   } catch (error) {
-    if (error instanceof ConfigValidationError) {
-      throw error;
-    }
-
-    if (error instanceof Error && error.message.startsWith("Invalid veryfront.config")) {
-      throw error;
-    }
-
+    // Re-throw all errors - let caller handle them
     throw error;
   }
 }

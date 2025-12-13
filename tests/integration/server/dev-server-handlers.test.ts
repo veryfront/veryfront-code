@@ -1,13 +1,3 @@
-/**
- * DevServer Handler Methods Tests
- *
- * Tests for the refactored DevServer.handleRequest() extracted handlers:
- * - handleHealthCheck()
- * - incrementRequestMetrics()
- * - handleDevEndpoint()
- * - handleApplicationRequest()
- * - handleServerError()
- */
 
 import { assert, assertEquals, assertExists } from "std/assert/mod.ts";
 import { delay as _delay } from "std/async/delay.ts";
@@ -17,12 +7,10 @@ import { withTestContext } from "../../_helpers/context.ts";
 import { drainEventLoop } from "../../_helpers/utils.ts";
 import { cleanupBundler } from "../../../src/rendering/cleanup.ts";
 
-// Clean up renderer intervals to prevent resource leaks
 afterAll(async () => {
   await cleanupBundler();
 });
 
-// Helper to create DevServer instance for testing
 async function createTestDevServer(context: any, options: Partial<any> = {}) {
   const port = await context.allocatePort();
 
@@ -64,7 +52,6 @@ describe(
       await withTestContext("dev-server-readyz", async (context) => {
         const { server, port } = await createTestDevServer(context);
 
-        // Server should be ready after start()
         const response = await fetch(`http://localhost:${port}/readyz`);
 
         assertEquals(response.status, 200);
@@ -80,7 +67,6 @@ describe(
       await withTestContext("dev-server-health-performance", async (context) => {
         const { server, port } = await createTestDevServer(context);
 
-        // Health checks should be very fast (<10ms)
         const start = performance.now();
         const healthResponse = await fetch(`http://localhost:${port}/healthz`);
         await healthResponse.body?.cancel();
@@ -97,10 +83,8 @@ describe(
       await withTestContext("dev-server-health-passthrough", async (context) => {
         const { server, port } = await createTestDevServer(context);
 
-        // Regular routes should not be handled by health check handler
         const response = await fetch(`http://localhost:${port}/`);
 
-        // Should get response (not null), handled by other handlers
         assertExists(response);
         assert(response.status !== 0);
         await response.body?.cancel();
@@ -191,7 +175,6 @@ describe(
           `Expected content-type to start with "application/javascript" but got "${contentType}"`,
         );
 
-        // HEAD requests should not fall through to application router
         assertEquals(await response.text(), "");
 
         await server.stop();
@@ -214,7 +197,6 @@ describe(
           `Expected content-type to start with "application/javascript" but got "${contentType}"`,
         );
 
-        // HEAD requests should not fall through to application router
         assertEquals(await response.text(), "");
 
         await server.stop();
@@ -226,13 +208,10 @@ describe(
       await withTestContext("dev-server-virtual-modules", async (context) => {
         const { server, port } = await createTestDevServer(context);
 
-        // Try to load a virtual module (component or page)
         const response = await fetch(
           `http://localhost:${port}/_veryfront/modules/component:Button`,
         );
 
-        // Should return 200 or 404 (depending on if component exists)
-        // Allow 500 as well since virtual module system might not be fully initialized in dev mode
         assert(
           response.status === 200 || response.status === 404 || response.status === 500,
           `Expected 200, 404, or 500 but got ${response.status}`,
@@ -248,11 +227,9 @@ describe(
       await withTestContext("dev-server-dev-passthrough", async (context) => {
         const { server, port } = await createTestDevServer(context);
 
-        // Regular application routes should not be handled by dev endpoint handler
         const response = await fetch(`http://localhost:${port}/`);
 
         assertExists(response);
-        // Should be handled by application handler
         assert(response.status !== 0);
         await response.body?.cancel();
 
@@ -271,11 +248,9 @@ describe(
       await withTestContext("dev-server-app-handler", async (context) => {
         const { server, port } = await createTestDevServer(context);
 
-        // Regular application route
         const response = await fetch(`http://localhost:${port}/`);
 
         assertExists(response);
-        // Universal handler should return a response
         assert(response.status !== 0);
         await response.body?.cancel();
 
@@ -286,7 +261,6 @@ describe(
 
     it("handles page requests", async () => {
       await withTestContext("dev-server-page-requests", async (context) => {
-        // Create a simple page
         const pagesDir = `${context.projectDir}/pages`;
         await Deno.mkdir(pagesDir, { recursive: true });
         await Deno.writeTextFile(
@@ -299,7 +273,6 @@ describe(
         const response = await fetch(`http://localhost:${port}/test`);
 
         assertExists(response);
-        // Should get a response (200 or error)
         assert(response.status !== 0);
         await response.body?.cancel();
 
@@ -310,7 +283,6 @@ describe(
 
     it("handles API routes", async () => {
       await withTestContext("dev-server-api-routes", async (context) => {
-        // Create an API route
         const apiDir = `${context.projectDir}/pages/api`;
         await Deno.mkdir(apiDir, { recursive: true });
         await Deno.writeTextFile(
@@ -323,7 +295,6 @@ describe(
         const response = await fetch(`http://localhost:${port}/api/test`);
 
         assertExists(response);
-        // Should get API response
         assert(response.status !== 0);
         await response.body?.cancel();
 
@@ -362,11 +333,9 @@ describe(
       await withTestContext("dev-server-error-handler", async (context) => {
         const { server, port } = await createTestDevServer(context);
 
-        // Request a page that doesn't exist (should trigger error)
         const response = await fetch(`http://localhost:${port}/nonexistent-route`);
 
         assertExists(response);
-        // Should return some response (404 or error overlay)
         assert(response.status !== 0);
         await response.body?.cancel();
 
@@ -384,7 +353,6 @@ describe(
         assertExists(response);
         const contentType = response.headers.get("content-type");
 
-        // Should be HTML for error overlay
         if (response.status >= 400) {
           assert(
             contentType?.includes("text/html") || contentType?.includes("application/json"),
@@ -402,13 +370,11 @@ describe(
       await withTestContext("dev-server-error-logging", async (context) => {
         const { server, port } = await createTestDevServer(context);
 
-        // Trigger an error by requesting invalid route
         const errorResponse = await fetch(
           `http://localhost:${port}/definitely-not-a-real-page-12345`,
         );
         await errorResponse.body?.cancel();
 
-        // Server should still be running after error
         const healthResponse = await fetch(`http://localhost:${port}/healthz`);
         assertEquals(healthResponse.status, 200);
         await healthResponse.body?.cancel();
@@ -422,7 +388,6 @@ describe(
       await withTestContext("dev-server-error-resilience", async (context) => {
         const { server, port } = await createTestDevServer(context);
 
-        // Make multiple requests that might error
         const errorResponses = await Promise.all([
           fetch(`http://localhost:${port}/error1`),
           fetch(`http://localhost:${port}/error2`),
@@ -430,7 +395,6 @@ describe(
         ]);
         await Promise.all(errorResponses.map((r) => r.body?.cancel()));
 
-        // Server should still be healthy
         const response = await fetch(`http://localhost:${port}/healthz`);
         assertEquals(response.status, 200);
         await response.body?.cancel();
@@ -450,19 +414,16 @@ describe(
       await withTestContext("dev-server-handler-order", async (context) => {
         const { server, port } = await createTestDevServer(context);
 
-        // Health check should be handled first (fast path)
         const healthStart = performance.now();
         const healthRes = await fetch(`http://localhost:${port}/healthz`);
         await healthRes.body?.cancel();
         const healthDuration = performance.now() - healthStart;
 
-        // Application request should take longer
         const appStart = performance.now();
         const appRes = await fetch(`http://localhost:${port}/`);
         await appRes.body?.cancel();
         const appDuration = performance.now() - appStart;
 
-        // Health check should be significantly faster
         assert(
           healthDuration < appDuration,
           `Health check (${healthDuration}ms) should be faster than app request (${appDuration}ms)`,
@@ -477,7 +438,6 @@ describe(
       await withTestContext("dev-server-concurrent-requests", async (context) => {
         const { server, port } = await createTestDevServer(context);
 
-        // Make multiple concurrent requests
         const requests = await Promise.all([
           fetch(`http://localhost:${port}/healthz`),
           fetch(`http://localhost:${port}/`),
@@ -485,7 +445,6 @@ describe(
           fetch(`http://localhost:${port}/readyz`),
         ]);
 
-        // All requests should succeed
         for (const response of requests) {
           assertExists(response);
           assert(response.status !== 0);
@@ -503,7 +462,6 @@ describe(
 
         const response = await fetch(`http://localhost:${port}/`);
 
-        // Response should have request ID header (from middleware)
         const requestId = response.headers.get("x-request-id");
         assertExists(requestId, "Response should include request ID");
         await response.body?.cancel();
@@ -517,7 +475,6 @@ describe(
       await withTestContext("dev-server-http-methods", async (context) => {
         const { server, port } = await createTestDevServer(context);
 
-        // Test different HTTP methods
         const methods = ["GET", "POST", "PUT", "DELETE", "PATCH"];
 
         for (const method of methods) {
@@ -547,7 +504,6 @@ describe(
 
         const timings: number[] = [];
 
-        // Measure 10 health check requests
         for (let i = 0; i < 10; i++) {
           const start = performance.now();
           const perfRes = await fetch(`http://localhost:${port}/healthz`);
@@ -568,13 +524,11 @@ describe(
       await withTestContext("dev-server-metrics-nonblocking", async (context) => {
         const { server, port } = await createTestDevServer(context);
 
-        // Request should complete quickly even if metrics fail
         const start = performance.now();
         const response = await fetch(`http://localhost:${port}/`);
         const duration = performance.now() - start;
 
         assertExists(response);
-        // Should complete in reasonable time
         assert(duration < 5000, `Request took ${duration}ms, should be <5000ms`);
         await response.body?.cancel();
 
@@ -587,20 +541,16 @@ describe(
       await withTestContext("dev-server-error-perf", async (context) => {
         const { server, port } = await createTestDevServer(context);
 
-        // Measure successful request
         const successStart = performance.now();
         const successRes = await fetch(`http://localhost:${port}/healthz`);
         await successRes.body?.cancel();
         const successDuration = performance.now() - successStart;
 
-        // Measure error request
         const errorStart = performance.now();
         const errorRes = await fetch(`http://localhost:${port}/nonexistent`);
         await errorRes.body?.cancel();
         const errorDuration = performance.now() - errorStart;
 
-        // Error handling should not be dramatically slower
-        // Use 20x threshold for CI environments (vs 10x locally) due to timing variability
         const threshold = Deno.env.get("CI") ? 20 : 10;
         assert(
           errorDuration < successDuration * threshold,

@@ -4,9 +4,8 @@ import { cyan, dim, green } from "@veryfront/compat/console";
 import { cliLogger } from "@veryfront/utils";
 import { createFileSystem, type FileSystem } from "../../../platform/compat/fs.ts";
 import { getEnv, isInteractive as checkIsInteractive } from "../../../platform/compat/process.ts";
+import { isDeno } from "../../../platform/compat/runtime.ts";
 import { select } from "../../utils/terminal-select.ts";
-
-let fs: FileSystem;
 
 export interface IntegrationGeneratorOptions {
   name?: string;
@@ -41,13 +40,15 @@ async function promptText(question: string, defaultValue?: string): Promise<stri
 
   const buf = new Uint8Array(1024);
 
-  if (typeof Deno !== "undefined") {
+  if (isDeno) {
+    // @ts-ignore: Deno global
     const n = await Deno.stdin.read(buf);
     const input = new TextDecoder().decode(buf.subarray(0, n || 0)).trim();
     return input || defaultValue || "";
   } else {
+    // Node.js environment
+    const readline = await import("node:readline");
     return new Promise((resolve) => {
-      const readline = require("readline");
       const rl = readline.createInterface({
         input: process.stdin,
         output: process.stdout,
@@ -64,7 +65,7 @@ export async function generateIntegration(
   projectDir: string,
   options: IntegrationGeneratorOptions = {},
 ): Promise<void> {
-  fs = createFileSystem();
+  const fs = createFileSystem();
 
   let config: IntegrationConfig;
 
@@ -152,7 +153,7 @@ export async function generateIntegration(
     };
   }
 
-  await createIntegrationFiles(projectDir, config);
+  await createIntegrationFiles(fs, projectDir, config);
 
   console.log("");
   console.log(green("Integration created successfully!"));
@@ -171,37 +172,41 @@ export async function generateIntegration(
 }
 
 async function createIntegrationFiles(
+  fs: FileSystem,
   projectDir: string,
   config: IntegrationConfig,
 ): Promise<void> {
   const baseDir = join(projectDir, "ai", "integrations", config.name);
 
-  await ensureDir(baseDir);
-  await ensureDir(join(baseDir, "lib"));
-  await ensureDir(join(baseDir, "tools"));
+  await ensureDir(fs, baseDir);
+  await ensureDir(fs, join(baseDir, "lib"));
+  await ensureDir(fs, join(baseDir, "tools"));
 
   if (config.authType === "oauth2") {
-    await ensureDir(join(projectDir, "app", "api", "auth", config.name));
-    await ensureDir(join(projectDir, "app", "api", "auth", config.name, "callback"));
+    await ensureDir(fs, join(projectDir, "app", "api", "auth", config.name));
+    await ensureDir(fs, join(projectDir, "app", "api", "auth", config.name, "callback"));
   }
 
   if (config.authType === "oauth2") {
-    await createOAuth2Files(projectDir, baseDir, config);
+    await createOAuth2Files(fs, projectDir, baseDir, config);
   } else {
-    await createApiKeyFiles(projectDir, baseDir, config);
+    await createApiKeyFiles(fs, baseDir, config);
   }
 
-  await createClientFile(baseDir, config);
-  await createToolSkeletons(baseDir, config);
-  await createEnvExample(projectDir, config);
+  await createClientFile(fs, baseDir, config);
+  await createToolSkeletons(fs, baseDir, config);
+  await createEnvExample(fs, projectDir, config);
 }
 
 async function createOAuth2Files(
+  fs: FileSystem,
   projectDir: string,
   baseDir: string,
   config: IntegrationConfig,
 ): Promise<void> {
-  const tokenStore = `
+  const tokenStore = `/**
+ * Token storage for ${config.displayName} OAuth
+ */
 
 interface TokenData {
   accessToken: string;
@@ -237,7 +242,9 @@ export function clearTokens(): void {
   await fs.writeTextFile(join(baseDir, "lib", "token-store.ts"), tokenStore);
   cliLogger.debug(`Created ${join(baseDir, "lib", "token-store.ts")}`);
 
-  const oauthRoute = `
+  const oauthRoute = `/**
+ * ${config.displayName} OAuth initialization route
+ */
 
 import { redirect } from "veryfront";
 
@@ -271,7 +278,9 @@ export function GET(): Response {
   );
   cliLogger.debug(`Created OAuth init route`);
 
-  const callbackRoute = `
+  const callbackRoute = `/**
+ * ${config.displayName} OAuth callback route
+ */
 
 import { redirect } from "veryfront";
 import { setTokens } from "../../../../ai/integrations/${config.name}/lib/token-store.ts";
@@ -333,11 +342,13 @@ export async function GET(request: Request): Promise<Response> {
 }
 
 async function createApiKeyFiles(
-  _projectDir: string,
+  fs: FileSystem,
   baseDir: string,
   config: IntegrationConfig,
 ): Promise<void> {
-  const tokenStore = `
+  const tokenStore = `/**
+ * API key accessor for ${config.displayName}
+ */
 
 export function getApiKey(): string | null {
   return process.env.${config.envVarPrefix}_API_KEY || null;
@@ -355,7 +366,11 @@ export function requireApiKey(): string {
   cliLogger.debug(`Created ${join(baseDir, "lib", "token-store.ts")}`);
 }
 
-async function createClientFile(baseDir: string, config: IntegrationConfig): Promise<void> {
+async function createClientFile(
+  fs: FileSystem,
+  baseDir: string,
+  config: IntegrationConfig,
+): Promise<void> {
   const authHeader = config.authType === "oauth2"
     ? `"Authorization": \`Bearer \${token}\``
     : `"Authorization": \`Bearer \${apiKey}\``;
@@ -437,7 +452,11 @@ export async function searchItems(query: string): Promise<unknown[]> {
   cliLogger.debug(`Created API client`);
 }
 
-async function createToolSkeletons(baseDir: string, config: IntegrationConfig): Promise<void> {
+async function createToolSkeletons(
+  fs: FileSystem,
+  baseDir: string,
+  config: IntegrationConfig,
+): Promise<void> {
   const tools = [
     {
       id: `list-${config.name}-items`,
@@ -531,7 +550,11 @@ export default tool({
   }
 }
 
-async function createEnvExample(projectDir: string, config: IntegrationConfig): Promise<void> {
+async function createEnvExample(
+  fs: FileSystem,
+  projectDir: string,
+  config: IntegrationConfig,
+): Promise<void> {
   const envExamplePath = join(projectDir, ".env.example");
 
   let envContent: string;
@@ -560,7 +583,7 @@ ${config.envVarPrefix}_API_KEY=your_api_key
   }
 }
 
-async function ensureDir(path: string): Promise<void> {
+async function ensureDir(fs: FileSystem, path: string): Promise<void> {
   try {
     await fs.mkdir(path, { recursive: true });
   } catch (error) {

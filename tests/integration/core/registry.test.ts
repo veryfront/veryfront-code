@@ -9,9 +9,6 @@ describe(
   "ComponentRegistry",
   
   () => {
-    // ===========================
-    // Component Discovery Tests
-    // ===========================
 
     describe("Component Discovery", () => {
       it("should discover all components in directory", async () => {
@@ -179,7 +176,6 @@ describe(
             adapter: denoAdapter,
           });
 
-          // Should not throw, just warn
           await reg.discover();
           assertEquals(reg.getComponentNames().length, 0);
         });
@@ -234,9 +230,6 @@ describe(
       });
     });
 
-    // ===========================
-    // Component Loading Tests
-    // ===========================
 
     describe("Component Loading", () => {
       it("should load and cache component", async () => {
@@ -369,7 +362,6 @@ describe(
           });
           await reg.discover();
 
-          // Delete the file after discovery
           await Deno.remove(join(componentsDir, "Component.tsx"));
 
           const component = await reg.loadComponent("Component");
@@ -391,10 +383,8 @@ describe(
             adapter: denoAdapter,
           });
 
-          // Start discovery but don't await it
           const discoverPromise = reg.discover();
 
-          // Try to load immediately (should wait for discovery)
           const loadPromise = reg.loadComponent("Component");
 
           await discoverPromise;
@@ -406,9 +396,6 @@ describe(
       });
     });
 
-    // ===========================
-    // Registry Operations Tests
-    // ===========================
 
     describe("Registry Operations", () => {
       it("should add component manually", async () => {
@@ -687,9 +674,6 @@ describe(
       });
     });
 
-    // ===========================
-    // Edge Cases Tests
-    // ===========================
 
     describe("Edge Cases", () => {
       it("should handle race conditions during initialization", async () => {
@@ -706,7 +690,6 @@ describe(
             adapter: denoAdapter,
           });
 
-          // Start multiple discovery operations simultaneously
           const [_result1, _result2, _result3] = await Promise.all([
             reg.discover(),
             reg.discover(),
@@ -722,7 +705,6 @@ describe(
           const componentsDir = join(context.projectDir, "components");
           await Deno.mkdir(componentsDir, { recursive: true });
 
-          // Create 50 components in nested structure
           for (let i = 0; i < 50; i++) {
             const dir = join(componentsDir, `level${Math.floor(i / 10)}`);
             await Deno.mkdir(dir, { recursive: true });
@@ -742,7 +724,6 @@ describe(
           const duration = Date.now() - startTime;
 
           assertEquals(reg.getComponentNames().length, 50);
-          // Should complete in reasonable time (< 5 seconds)
           assert(duration < 5000, `Discovery took ${duration}ms`);
         });
       });
@@ -763,7 +744,6 @@ describe(
           });
           await reg.discover();
 
-          // One component should win (last discovered)
           assertEquals(reg.getComponentNames().length, 1);
           assert(reg.has("Component"));
         });
@@ -779,8 +759,6 @@ describe(
 
           reg.add("Invalid", { path: "/invalid/path/that/does/not/exist.tsx" });
 
-          // loadComponent skips already loaded components and only reads if isLoaded is false
-          // Since add() sets isLoaded to true, it returns the component as-is
           const component = await reg.loadComponent("Invalid");
           assertExists(component);
           assertEquals(component.isLoaded, true);
@@ -795,7 +773,6 @@ describe(
             adapter: denoAdapter,
           });
 
-          // Should not throw
           await reg.discover();
           assertEquals(reg.getComponentNames().length, 0);
         });
@@ -822,7 +799,6 @@ describe(
           });
           await reg.discover();
 
-          // Last one discovered should win
           assertEquals(reg.getComponentNames().filter((n) => n === "Button").length, 1);
         });
       });
@@ -859,7 +835,6 @@ describe(
             adapter: denoAdapter,
           });
 
-          // Call get before discover
           const component = reg.get("Component");
           assertEquals(component, undefined);
         });
@@ -921,25 +896,6 @@ describe(
         });
       });
 
-      it("should expose loader after discovery", async () => {
-        await withTestContext("registry-loader", async (context) => {
-          const reg = new ComponentRegistry({
-            projectDir: context.projectDir,
-            adapter: denoAdapter,
-          });
-
-          // Before discovery, loader should be undefined
-          assertEquals(reg.getLoader(), undefined);
-
-          await reg.discover();
-
-          // After discovery, loader might be available (depends on imports)
-          // Just verify it doesn't throw
-          const _loader = reg.getLoader();
-          // Loader may or may not be available depending on module availability
-        });
-      });
-
       it("should handle component with special characters in name", async () => {
         await withTestContext("registry-special-chars", async (context) => {
           const componentsDir = join(context.projectDir, "components");
@@ -966,7 +922,6 @@ describe(
             adapter: denoAdapter,
           });
 
-          // Add a manual component before discovery
           reg.add("Manual", { content: "manual" });
           assertEquals(reg.has("Manual"), true);
 
@@ -979,62 +934,28 @@ describe(
 
           await reg.discover();
 
-          // Both components should exist (discovery doesn't clear, just adds)
           assertEquals(reg.has("Manual"), true);
           assertEquals(reg.has("Discovered"), true);
         });
       });
     });
 
-    // ===========================
-    // ComponentLoader Integration Tests
-    // ===========================
 
     describe("ComponentLoader Integration", () => {
-      it("should initialize loader during discovery", async () => {
-        await withTestContext("registry-loader-init", async (context) => {
+      it("should handle multiple discoveries gracefully", async () => {
+        await withTestContext("registry-multi-discover", async (context) => {
           const reg = new ComponentRegistry({
             projectDir: context.projectDir,
             adapter: denoAdapter,
           });
 
           await reg.discover();
-
-          // Loader initialization happens in discover
-          // Just verify it doesn't throw
-          const _loader = reg.getLoader();
-          // Loader may be undefined if imports fail, which is okay
-        });
-      });
-
-      it("should handle loader initialization failure gracefully", async () => {
-        await withTestContext("registry-loader-fail", async (context) => {
-          const reg = new ComponentRegistry({
-            projectDir: context.projectDir,
-            adapter: denoAdapter,
-          });
-
-          // Even if loader fails to initialize, discovery should succeed
-          await reg.discover();
-          assertEquals(reg.getComponentNames().length, 0);
-        });
-      });
-
-      it("should preserve loader across multiple discoveries", async () => {
-        await withTestContext("registry-loader-preserve", async (context) => {
-          const reg = new ComponentRegistry({
-            projectDir: context.projectDir,
-            adapter: denoAdapter,
-          });
+          const firstCount = reg.getComponentNames().length;
 
           await reg.discover();
-          const firstLoader = reg.getLoader();
+          const secondCount = reg.getComponentNames().length;
 
-          await reg.discover();
-          const secondLoader = reg.getLoader();
-
-          // Loader should be reused
-          assertEquals(firstLoader, secondLoader);
+          assertEquals(firstCount, secondCount);
         });
       });
     });

@@ -1,18 +1,3 @@
-/**
- * Server Modules Integration Tests
- *
- * Tests cross-module integration between:
- * - HMR Server (WebSocket connections and file updates)
- * - Error Overlay (runtime and build error display)
- * - API Server (data endpoints and caching)
- *
- * Coverage includes:
- * - HMR WebSocket integration with multiple clients
- * - Error overlay triggered by various error types
- * - API server integration with HMR and error handling
- * - Full stack integration scenarios
- * - Concurrent operations and resource management
- */
 
 import { assert, assertEquals, assertExists, assertStringIncludes } from "std/assert/mod.ts";
 import { delay } from "std/async/delay.ts";
@@ -26,12 +11,10 @@ import { withTestContext } from "../../../_helpers/context.ts";
 import { drainEventLoop } from "../../../_helpers/utils.ts";
 import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";
 
-// Clean up renderer intervals to prevent resource leaks
 afterAll(async () => {
   await cleanupBundler();
 });
 
-// Helper to create mock renderer for API server
 function createMockRenderer() {
   return {
     // deno-lint-ignore require-await
@@ -73,7 +56,6 @@ describe(
         hmrServer.start();
         await delay(300);
 
-        // Connect multiple clients
         const client1 = new WebSocket(`ws://localhost:${port}`);
         const client2 = new WebSocket(`ws://localhost:${port}`);
         const client3 = new WebSocket(`ws://localhost:${port}`);
@@ -94,11 +76,9 @@ describe(
 
         await delay(200);
 
-        // Broadcast an update
         hmrServer.sendUpdate({ type: "reload" });
         await delay(200);
 
-        // All clients should receive the update
         const reloadMsg1 = messages1.find((m) => m.type === "reload");
         const reloadMsg2 = messages2.find((m) => m.type === "reload");
         const reloadMsg3 = messages3.find((m) => m.type === "reload");
@@ -134,22 +114,17 @@ describe(
         hmrServer.start();
         await delay(300);
 
-        // Connect client
         const ws = new WebSocket(`ws://localhost:${port}`);
         await new Promise((resolve) => (ws.onopen = resolve));
         await delay(100);
 
-        // Verify initial connection
         assertEquals(hmrServer.getConnectionCount(), 1);
 
-        // Force close connection
         ws.close();
         await delay(200);
 
-        // Server should handle disconnection
         assertEquals(hmrServer.getConnectionCount(), 0);
 
-        // Server should still be responsive
         const response = await fetch(`http://localhost:${port}/hmr-runtime.js`);
         assertEquals(response.status, 200);
         await response.text();
@@ -177,7 +152,6 @@ describe(
         hmrServer.start();
         await delay(300);
 
-        // Connect 3 clients
         const ws1 = new WebSocket(`ws://localhost:${port}`);
         const ws2 = new WebSocket(`ws://localhost:${port}`);
         const ws3 = new WebSocket(`ws://localhost:${port}`);
@@ -191,17 +165,14 @@ describe(
 
         assertEquals(hmrServer.getConnectionCount(), 3);
 
-        // Disconnect one
         ws1.close();
         await delay(100);
         assertEquals(hmrServer.getConnectionCount(), 2);
 
-        // Disconnect another
         ws2.close();
         await delay(100);
         assertEquals(hmrServer.getConnectionCount(), 1);
 
-        // Disconnect last
         ws3.close();
         await delay(100);
         assertEquals(hmrServer.getConnectionCount(), 0);
@@ -244,15 +215,12 @@ describe(
         ]);
         await delay(200);
 
-        // Close first client
         ws1.close();
         await delay(200);
 
-        // Send update
         hmrServer.sendUpdate({ type: "reload" });
         await delay(200);
 
-        // Only ws2 should receive the message
         const reload1 = messages1.filter((m) => m.type === "reload");
         const reload2 = messages2.filter((m) => m.type === "reload");
 
@@ -471,7 +439,6 @@ describe(
         const adapter = await getAdapter();
         const port = await context.allocatePort();
 
-        // Start HMR server
         const controller = new AbortController();
         const hmrServer = new ModuleHMRServer({
           port,
@@ -484,11 +451,9 @@ describe(
         hmrServer.start();
         await delay(300);
 
-        // Create API server
         const renderer = createMockRenderer();
         const apiServer = new APIServer({ renderer });
 
-        // Both should work independently
         const hmrResponse = await fetch(`http://localhost:${port}/hmr-runtime.js`);
         assertEquals(hmrResponse.status, 200);
         await hmrResponse.text();
@@ -523,7 +488,6 @@ describe(
         const renderer = createMockRenderer();
         const apiServer = new APIServer({ renderer });
 
-        // Connect HMR clients
         const ws1 = new WebSocket(`ws://localhost:${port}`);
         const ws2 = new WebSocket(`ws://localhost:${port}`);
 
@@ -539,26 +503,21 @@ describe(
         ]);
         await delay(200);
 
-        // Perform concurrent operations
         const operations = await Promise.all([
-          // HMR update
           (() => {
             hmrServer.sendUpdate({ type: "reload" });
             return "hmr-done";
           })(),
-          // API requests
           apiServer.handleRequest("/_veryfront/data/page1.json"),
           apiServer.handleRequest("/_veryfront/data/page2.json"),
           apiServer.handleRequest("/_veryfront/data/page3.json"),
         ]);
 
-        // All operations should complete
         assertEquals(operations[0], "hmr-done");
         assertExists(operations[1]);
         assertExists(operations[2]);
         assertExists(operations[3]);
 
-        // Clients should receive updates
         await delay(200);
         const reload1 = messages1.filter((m) => m.type === "reload");
         const reload2 = messages2.filter((m) => m.type === "reload");
@@ -579,7 +538,6 @@ describe(
       const renderer = createMockRenderer();
       const apiServer = new APIServer({ renderer });
 
-      // Trigger API error
       const response = await apiServer.handleRequest("/_veryfront/data/error-page.json");
 
       assertExists(response);
@@ -588,7 +546,6 @@ describe(
       const data = await response!.json();
       const error = new Error(data.error);
 
-      // Generate error overlay
       const errorInfo = {
         type: "runtime" as const,
         error,
@@ -605,7 +562,6 @@ describe(
         const adapter = await getAdapter();
         const port = await context.allocatePort();
 
-        // Start first server
         const controller1 = new AbortController();
         const hmrServer1 = new ModuleHMRServer({
           port,
@@ -617,17 +573,14 @@ describe(
         hmrServer1.start();
         await delay(300);
 
-        // Verify server is running
         const response1 = await fetch(`http://localhost:${port}/hmr-runtime.js`);
         assertEquals(response1.status, 200);
         await response1.text();
 
-        // Stop server
         controller1.abort();
         await hmrServer1.stop();
         await delay(300);
 
-        // Start new server on same port
         const controller2 = new AbortController();
         const hmrServer2 = new ModuleHMRServer({
           port,
@@ -640,7 +593,6 @@ describe(
         hmrServer2.start();
         await delay(300);
 
-        // Verify new server is running
         const response2 = await fetch(`http://localhost:${port}/hmr-runtime.js`);
         assertEquals(response2.status, 200);
         await response2.text();
@@ -667,7 +619,6 @@ describe(
         hmrServer.start();
         await delay(300);
 
-        // Connect clients
         const clients: WebSocket[] = [];
         for (let i = 0; i < 5; i++) {
           const ws = new WebSocket(`ws://localhost:${port}`);
@@ -679,12 +630,10 @@ describe(
 
         assertEquals(hmrServer.getConnectionCount(), 5);
 
-        // Stop server
         controller.abort();
         await hmrServer.stop();
         await delay(300);
 
-        // All connections should be closed
         for (const ws of clients) {
           assertEquals(ws.readyState, WebSocket.CLOSED);
         }
@@ -713,24 +662,20 @@ describe(
           hmrServer.start();
           await delay(300);
 
-          // Get HMR runtime
           const hmrResponse = await fetch(`http://localhost:${port}/hmr-runtime.js`);
           const hmrRuntime = await hmrResponse.text();
 
-          // Get error overlay runtime
           const errorRuntime = ErrorOverlay.getRuntime();
 
-          // Both should be valid JavaScript
           assertStringIncludes(hmrRuntime, "WebSocket");
           assertStringIncludes(errorRuntime, "showErrorOverlay");
 
-          // They should work together
           assert(hmrRuntime.length > 0);
           assert(errorRuntime.length > 0);
         } finally {
           controller.abort();
           await hmrServer.stop();
-          await delay(200); // Allow OS to release the port
+          await delay(200);
           await drainEventLoop();
         }
       });
@@ -748,7 +693,6 @@ describe(
     it("recovers from malformed API responses", async () => {
       const badRenderer = {
         renderPage: (_slug: string) => {
-          // Return malformed response
           return {} as any;
         },
       };
@@ -759,7 +703,6 @@ describe(
       assertExists(response);
       assertEquals(response!.status, 200);
 
-      // Should handle malformed data gracefully
       const data = await response!.json();
       assertExists(data);
     });
@@ -780,7 +723,6 @@ describe(
         hmrServer1.start();
         await delay(300);
 
-        // Try to start another server on same port
         const controller2 = new AbortController();
         const hmrServer2 = new ModuleHMRServer({
           port,
@@ -797,8 +739,6 @@ describe(
           errorThrown = true;
         }
 
-        // Should either throw error or handle gracefully
-        // The important part is that the first server still works
         const response = await fetch(`http://localhost:${port}/hmr-runtime.js`);
         assertEquals(response.status, 200);
         await response.text();

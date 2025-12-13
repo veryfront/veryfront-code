@@ -57,7 +57,6 @@ describe(
             },
           };
 
-          // Remove default veryfront.config.js to allow deno.json to take precedence
           try {
             await Deno.remove(join(context.projectDir, "veryfront.config.js"));
           } catch {
@@ -75,11 +74,9 @@ describe(
           assertExists(importMap.imports);
           assertEquals(importMap.imports!["react"], "https://esm.sh/react@18.3.1");
 
-          // Scopes should be loaded
           assertExists(importMap.scopes);
           assertEquals(typeof (importMap as any).scopes, "object");
 
-          // Check if the vendor scope exists
           if (importMap.scopes && importMap.scopes["/vendor/"]) {
             assertEquals(importMap.scopes["/vendor/"]["react"], "https://esm.sh/react@17.0.2");
           }
@@ -88,12 +85,10 @@ describe(
 
       it("should return default import map when deno.json not found", async () => {
         await withTestContext("import-map-load-missing", async (context: TestContext) => {
-          // Don't create deno.json
           const importMap = await loadImportMap(context.projectDir, denoAdapter);
 
           assertExists(importMap);
           assertExists(importMap.imports);
-          // Should have default React imports
           assertExists(importMap.imports!["react"]);
           assertExists(importMap.imports!["react-dom"]);
         });
@@ -116,7 +111,6 @@ describe(
 
           assertExists(importMap);
           assertExists(importMap.imports);
-          // Should fall back to default
           assertExists(importMap.imports!["react"]);
         });
       });
@@ -127,7 +121,6 @@ describe(
 
           const importMap = await loadImportMap(context.projectDir, denoAdapter);
 
-          // Should return default import map
           assertExists(importMap);
           assertExists(importMap.imports);
           assertExists(importMap.imports!["react"]);
@@ -142,17 +135,14 @@ describe(
             },
           };
 
-          // Create deno.json in root
           await Deno.writeTextFile(
             join(context.projectDir, "deno.json"),
             JSON.stringify(denoConfig, null, 2),
           );
 
-          // Create nested directory
           const nestedDir = join(context.projectDir, "src", "components");
           await Deno.mkdir(nestedDir, { recursive: true });
 
-          // Load from nested directory
           const importMap = await loadImportMap(nestedDir, denoAdapter);
 
           assertExists(importMap);
@@ -162,13 +152,11 @@ describe(
 
       it("should stop at root directory when searching", async () => {
         await withTestContext("import-map-load-root", async (context: TestContext) => {
-          // Create deeply nested directory without deno.json
           const deepDir = join(context.projectDir, "a", "b", "c", "d", "e");
           await Deno.mkdir(deepDir, { recursive: true });
 
           const importMap = await loadImportMap(deepDir, denoAdapter);
 
-          // Should eventually return default map
           assertExists(importMap);
           assertExists(importMap.imports);
         });
@@ -176,7 +164,6 @@ describe(
 
       it("should prioritize veryfront.config resolve.importMap over deno.json", async () => {
         await withTestContext("import-map-load-config-priority", async (context: TestContext) => {
-          // Create deno.json
           const denoConfig = {
             imports: {
               react: "https://esm.sh/react@18",
@@ -187,7 +174,6 @@ describe(
             JSON.stringify(denoConfig, null, 2),
           );
 
-          // Create veryfront.config.js with importMap
           const config = `export default {
   resolve: {
     importMap: {
@@ -201,7 +187,6 @@ describe(
 
           const importMap = await loadImportMap(context.projectDir, denoAdapter);
 
-          // Should use config's import map
           assertEquals(importMap.imports!["react"], "https://esm.sh/react@19");
         });
       });
@@ -358,11 +343,9 @@ describe(
           },
         };
 
-        // Exact match should win over prefix
         const exactResolved = resolveImport("react/jsx-runtime", importMap);
         assertEquals(exactResolved, "https://esm.sh/react@18/jsx-runtime");
 
-        // Prefix match for other paths
         const prefixResolved = resolveImport("react/hooks", importMap);
         assertEquals(prefixResolved, "https://esm.sh/react@18/hooks");
       });
@@ -376,7 +359,6 @@ describe(
           },
         };
 
-        // Scope doesn't match, should return unchanged
         const resolved = resolveImport("react", importMap, "/app/");
         assertEquals(resolved, "react");
       });
@@ -512,7 +494,6 @@ import lodash from 'lodash';
         };
 
         const transformed = transformImportsWithMap(code, importMap);
-        // Quotes may change to double quotes, but path should stay relative
         assertEquals(transformed.includes("./component.ts"), true);
       });
 
@@ -525,7 +506,6 @@ import lodash from 'lodash';
         };
 
         const transformed = transformImportsWithMap(code, importMap);
-        // Quotes may change to double quotes, but path should stay absolute
         assertEquals(transformed.includes("/src/component.ts"), true);
       });
 
@@ -538,7 +518,6 @@ import lodash from 'lodash';
         };
 
         const transformed = transformImportsWithMap(code, importMap);
-        // Quotes may change to double quotes, but URL should stay the same
         assertEquals(transformed.includes("https://esm.sh/react@18"), true);
       });
 
@@ -564,15 +543,12 @@ import lodash from 'lodash';
           },
         };
 
-        // Without resolveBare, bare specifiers should not be transformed
         const notTransformed = transformImportsWithMap(code, importMap, undefined, {
           resolveBare: false,
         });
-        // Should still have 'react' as specifier
         assertEquals(notTransformed.includes("react"), true);
         assertEquals(notTransformed.includes("https://esm.sh/react@18"), false);
 
-        // With resolveBare, should transform
         const transformed = transformImportsWithMap(code, importMap, undefined, {
           resolveBare: true,
         });
@@ -594,7 +570,6 @@ import { useState } from 'react';
           resolveBare: true,
         });
 
-        // Both should be transformed to double quotes
         assertEquals(
           transformed.split('from "https://esm.sh/react@18"').length,
           3,
@@ -897,7 +872,6 @@ function hello() { return 'world'; }
 
         const merged = mergeImportMaps(map1, map2);
 
-        // Later map should override react but preserve lodash
         assertEquals(merged.scopes?.["/vendor/"]?.["react"], "https://esm.sh/react@18");
         assertEquals(merged.scopes?.["/vendor/"]?.["lodash"], "https://esm.sh/lodash@3");
       });
@@ -931,7 +905,6 @@ function hello() { return 'world'; }
       it("should include react-dom/client for React 18+", () => {
         const importMap = getDefaultImportMap();
 
-        // Default should be React 18 or 19
         assertExists(importMap.imports!["react-dom/client"]);
       });
 
@@ -967,8 +940,6 @@ function hello() { return 'world'; }
       });
 
       it("should handle version detection failure gracefully", () => {
-        // This test verifies the try-catch behavior
-        // Even if version detection fails, we should get a default map
         const importMap = getDefaultImportMap();
 
         assertExists(importMap);
@@ -977,9 +948,6 @@ function hello() { return 'world'; }
       });
 
       it("should not include react-dom/client for React 17", () => {
-        // This tests the conditional logic
-        // We can't easily mock getReactVersionInfo, but we can verify
-        // the structure is correct based on version detection
         const importMap = getDefaultImportMap();
 
         const reactVersion = importMap.imports!["react"]!.match(/@([\d.]+)/)?.[1];
@@ -1017,9 +985,7 @@ function hello() { return 'world'; }
 
           const importMap = await loadImportMap(context.projectDir, denoAdapter);
 
-          // Verify all imports loaded
           assertEquals(Object.keys(importMap.imports!).length, 6);
-          // Verify scopes loaded (may be empty object if not present)
           assertExists(importMap.scopes);
           if (Object.keys(importMap.scopes).length > 0) {
             assertEquals(Object.keys(importMap.scopes).length, 1);
@@ -1040,16 +1006,13 @@ function hello() { return 'world'; }
             JSON.stringify(denoConfig, null, 2),
           );
 
-          // Load
           const importMap = await loadImportMap(context.projectDir, denoAdapter);
 
-          // Transform
           const code = `import React from 'react';`;
           const transformed = transformImportsWithMap(code, importMap, undefined, {
             resolveBare: true,
           });
 
-          // Verify transformation
           assertEquals(transformed.includes("https://esm.sh/react@18"), true);
         });
       });
@@ -1064,7 +1027,6 @@ function hello() { return 'world'; }
 
         const merged = mergeImportMaps(defaultMap, customMap);
 
-        // Should have both default and custom imports
         assertExists(merged.imports!["react"]);
         assertExists(merged.imports!["lodash"]);
       });

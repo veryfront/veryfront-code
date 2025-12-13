@@ -1,7 +1,3 @@
-/**
- * Edge case tests for core/config/loader.ts
- * Tests invalid configs, missing files, malformed input, and error scenarios
- */
 
 import { assertEquals, assertExists, assertRejects } from "std/assert/mod.ts";
 import { assertStringIncludes } from "std/assert/assert_string_includes.ts";
@@ -10,7 +6,6 @@ import { clearConfigCache, getConfig } from "@veryfront/config";
 import { createMockAdapter } from "@veryfront/platform/adapters/mock.ts";
 import { join } from "std/path/mod.ts";
 
-// Helper to write config files to temp directory for testing
 async function setupConfigTest(
   configs: { content: string; filename?: string }[] | string,
   options?: { useAdapter?: boolean },
@@ -20,7 +15,6 @@ async function setupConfigTest(
 
   const configArray = typeof configs === "string" ? [{ content: configs }] : configs;
 
-  // Write actual files to disk so they can be imported
   for (const { content, filename = "veryfront.config.js" } of configArray) {
     const configPath = join(tempDir, filename);
     await Deno.writeTextFile(configPath, content);
@@ -50,7 +44,6 @@ describe("Config Loader - Edge Cases and Error Handling", () => {
       );
 
       try {
-        // Should throw for invalid config
         await assertRejects(
           () => getConfig(projectDir, adapter),
           Error,
@@ -92,7 +85,6 @@ describe("Config Loader - Edge Cases and Error Handling", () => {
       );
 
       try {
-        // Should fall back to defaults
         const config = await getConfig(projectDir, adapter);
         assertExists(config);
       } finally {
@@ -149,8 +141,6 @@ describe("Config Loader - Edge Cases and Error Handling", () => {
       `);
 
       try {
-        // Arrays are not strings, so validation should throw
-        // origin is defined and is not a string -> error
         await assertRejects(() => getConfig(projectDir, adapter), Error, "security.cors.origin");
       } finally {
         await cleanup();
@@ -170,8 +160,6 @@ describe("Config Loader - Edge Cases and Error Handling", () => {
       `);
 
       try {
-        // Objects are not strings, so validation should throw
-        // origin is defined and is not a string -> error
         await assertRejects(() => getConfig(projectDir, adapter), Error, "security.cors.origin");
       } finally {
         await cleanup();
@@ -191,7 +179,6 @@ describe("Config Loader - Edge Cases and Error Handling", () => {
       `);
 
       try {
-        // Config loads without error - security config is not deeply merged so it won't be preserved
         const config = await getConfig(projectDir, adapter);
         assertExists(config);
         // Note: security is not deeply merged in mergeConfigs, so it will be undefined
@@ -211,7 +198,6 @@ describe("Config Loader - Edge Cases and Error Handling", () => {
       `);
 
       try {
-        // Should throw for invalid cors type (array not allowed)
         await assertRejects(
           () => getConfig(projectDir, adapter),
           Error,
@@ -233,7 +219,6 @@ describe("Config Loader - Edge Cases and Error Handling", () => {
       `);
 
       try {
-        // Should be silently ignored (validation returns early for non-object cors)
         const config = await getConfig(projectDir, adapter);
         assertExists(config);
       } finally {
@@ -255,7 +240,6 @@ describe("Config Loader - Edge Cases and Error Handling", () => {
       `);
 
       try {
-        // Should load but warn about unknown keys
         const config = await getConfig(projectDir, adapter);
         assertExists(config);
         assertEquals(config.title, "My App");
@@ -276,7 +260,6 @@ describe("Config Loader - Edge Cases and Error Handling", () => {
       try {
         const config = await getConfig(projectDir, adapter);
         assertExists(config);
-        // Should have defaults
         assertExists(config.title);
       } finally {
         await cleanup();
@@ -291,7 +274,6 @@ describe("Config Loader - Edge Cases and Error Handling", () => {
       const adapter = createMockAdapter();
 
       try {
-        // No config files exist
         const config = await getConfig(tempDir, adapter);
 
         assertExists(config);
@@ -349,7 +331,7 @@ describe("Config Loader - Edge Cases and Error Handling", () => {
       try {
         const config = await getConfig(projectDir, adapter);
         assertEquals(config.dev?.port, 4000);
-        assertEquals(config.dev?.host, "localhost"); // From defaults
+        assertEquals(config.dev?.host, "localhost");
       } finally {
         await cleanup();
         clearConfigCache();
@@ -375,7 +357,6 @@ describe("Config Loader - Edge Cases and Error Handling", () => {
 
         const imports = (config.resolve?.importMap as any)?.imports;
         assertEquals(imports["custom-lib"], "https://cdn.example.com/custom-lib.js");
-        // Should also have defaults like 'react'
         assertExists(imports["react"]);
       } finally {
         await cleanup();
@@ -396,7 +377,7 @@ describe("Config Loader - Edge Cases and Error Handling", () => {
       try {
         const config = await getConfig(projectDir, adapter);
         assertExists(config);
-        assertExists(config.dev); // Should have defaults
+        assertExists(config.dev);
       } finally {
         await cleanup();
         clearConfigCache();
@@ -411,7 +392,6 @@ describe("Config Loader - Edge Cases and Error Handling", () => {
       `);
 
       try {
-        // Should throw for null theme property (expects object)
         await assertRejects(
           () => getConfig(projectDir, adapter),
           Error,
@@ -454,7 +434,6 @@ describe("Config Loader - Edge Cases and Error Handling", () => {
         assertEquals(config1.title, "Project 1");
         assertEquals(config2.title, "Project 2");
 
-        // Second calls should use cache
         const config1Cached = await getConfig(tempDir1, adapter);
         const config2Cached = await getConfig(tempDir2, adapter);
 
@@ -481,7 +460,6 @@ describe("Config Loader - Edge Cases and Error Handling", () => {
 
         clearConfigCache();
 
-        // Update config file
         await Deno.writeTextFile(configPath, 'export default { title: "Updated" };');
         await adapter.fs.writeFile(configPath, 'export default { title: "Updated" };');
 
@@ -598,7 +576,6 @@ describe("Config Loader - Edge Cases and Error Handling", () => {
       try {
         const config = await getConfig(projectDir, adapter);
         assertExists(config);
-        // Should have all defaults
         assertExists(config.title);
         assertExists(config.build);
       } finally {

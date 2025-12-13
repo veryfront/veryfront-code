@@ -12,7 +12,9 @@ import type {
 import { getEnv } from "../../../platform/compat/process.ts";
 
 function generateRandomString(length: number): string {
-  const array = new Uint8Array(length);
+  // Each byte produces 2 hex characters, so we need ceil(length/2) bytes
+  const byteLength = Math.ceil(length / 2);
+  const array = new Uint8Array(byteLength);
   crypto.getRandomValues(array);
   return Array.from(array, (byte) => byte.toString(16).padStart(2, "0")).join("").slice(0, length);
 }

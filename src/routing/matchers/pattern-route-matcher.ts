@@ -18,8 +18,9 @@ export class DynamicRouter {
   }
 
   match(pathname: string): RouteMatch | null {
-    if (this.cache.has(pathname)) {
-      return this.cache.get(pathname)!;
+    const cached = this.cache.get(pathname);
+    if (cached !== undefined) {
+      return cached;
     }
 
     pathname = normalizePath(pathname);

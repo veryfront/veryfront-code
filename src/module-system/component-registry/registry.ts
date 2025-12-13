@@ -1,13 +1,14 @@
 import { serverLogger as logger } from "@veryfront/utils";
 import { basename, join } from "std/path/mod.ts";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
-import type * as React from "react";
 
+/** Component module exports structure */
 export interface ComponentExports {
   default?: unknown;
   [key: string]: unknown;
 }
 
+/** Metadata and state for a discovered component */
 export interface ComponentInfo {
   name: string;
   path: string;
@@ -16,6 +17,7 @@ export interface ComponentInfo {
   exports?: ComponentExports;
 }
 
+/** Configuration options for ComponentRegistry */
 export interface ComponentRegistryOptions {
   projectDir: string;
   componentDirs?: string[];
@@ -24,6 +26,7 @@ export interface ComponentRegistryOptions {
   vendorBundleHash?: string;
 }
 
+/** Interface for component loading callbacks */
 export type ComponentLoader = {
   loadComponent: (componentName: string, source: string, projectDir: string) => Promise<unknown>;
   clearCache: () => void;
@@ -151,15 +154,15 @@ export class ComponentRegistry {
     return new Map(this.components);
   }
 
-  getLoader(): ComponentLoader | undefined {
-    return undefined;
-  }
-
-  getAllAsComponents(): Record<string, React.ComponentType<unknown>> {
-    const components: Record<string, React.ComponentType<unknown>> = {};
+  /**
+   * Get all components that have been loaded and have a default export.
+   * Returns a record mapping component names to their default exports.
+   */
+  getAllAsComponents(): Record<string, unknown> {
+    const components: Record<string, unknown> = {};
     for (const [name, info] of this.components.entries()) {
       if (info.exports?.default) {
-        components[name] = info.exports.default as React.ComponentType<unknown>;
+        components[name] = info.exports.default;
       }
     }
     return components;

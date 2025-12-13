@@ -1,8 +1,3 @@
-/**
- * Comprehensive Tests for App Reserved Components (app-reserved.ts)
- * Handles loading reserved App Router components (loading, error, not-found)
- * Total: 6 tests
- */
 
 import { assertEquals, assertExists } from "std/assert/mod.ts";
 import { describe, it } from "std/testing/bdd.ts";
@@ -57,11 +52,9 @@ describe(
         assertEquals(typeof ErrorBoundary, "function");
         assertEquals(ErrorBoundary.name, "ErrorBoundary");
 
-        // Verify it's a class component with proper static method
         assertExists(ErrorBoundary.getDerivedStateFromError);
         assertEquals(typeof ErrorBoundary.getDerivedStateFromError, "function");
 
-        // Verify error state handling
         const error = new Error("Test error");
         const errorState = ErrorBoundary.getDerivedStateFromError(error);
         assertEquals(errorState.hasError, true);

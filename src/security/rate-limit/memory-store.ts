@@ -6,7 +6,7 @@ export class MemoryRateLimitStore implements RateLimitStore {
   private cleanupInterval: number | null = null;
 
   constructor(
-    private cleanupIntervalMs = 60000,
+    private cleanupIntervalMs = 60000, // 1 minute
   ) {
     if (typeof setInterval !== "undefined") {
       this.cleanupInterval = setInterval(
@@ -23,7 +23,7 @@ export class MemoryRateLimitStore implements RateLimitStore {
     if (!state || now > state.resetTime) {
       this.store.set(key, {
         count: 1,
-        resetTime: now + 60000,
+        resetTime: now + 60000, // Default 1 minute window
         requestTimestamps: [now],
       });
       return Promise.resolve(1);

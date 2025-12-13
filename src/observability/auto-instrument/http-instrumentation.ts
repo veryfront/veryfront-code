@@ -50,11 +50,11 @@ export function instrumentHttpHandler(
           try {
             const response = await handler(request);
             const duration = performance.now() - startTime;
-            recordResponseSuccess(span, response, duration, httpAttrs);
+            recordResponseSuccess(span, response, duration);
             return response;
           } catch (error) {
             const duration = performance.now() - startTime;
-            recordResponseError(span, error, duration, httpAttrs);
+            recordResponseError(span, error, duration);
             throw error;
           } finally {
             span.end();
@@ -96,6 +96,7 @@ export function createInstrumentedFetch(
       fetchAttrs["http.host"] = parsed.host;
       fetchAttrs["http.scheme"] = parsed.protocol.replace(":", "");
     } catch {
+      // Relative URLs are fine; leave defaults
     }
 
     try {
@@ -115,11 +116,11 @@ export function createInstrumentedFetch(
             const updatedInit = { ...init, headers };
             const response = await baseFetch(input, updatedInit);
             const duration = performance.now() - startTime;
-            recordResponseSuccess(span, response, duration, fetchAttrs);
+            recordResponseSuccess(span, response, duration);
             return response;
           } catch (error) {
             const duration = performance.now() - startTime;
-            recordResponseError(span, error, duration, fetchAttrs);
+            recordResponseError(span, error, duration);
             throw error;
           } finally {
             span.end();
@@ -148,7 +149,6 @@ function recordResponseSuccess(
   span: Span | null,
   response: Response,
   duration: number,
-  httpAttrs: HttpAttributes,
 ): void {
   if (!span) return;
 
@@ -167,18 +167,12 @@ function recordResponseSuccess(
   } else {
     span.setStatus({ code: SpanStatusCode.OK });
   }
-
-  span.setAttributes({
-    "http.method": httpAttrs["http.method"],
-    "http.target": httpAttrs["http.target"],
-  });
 }
 
 function recordResponseError(
   span: Span | null,
   error: unknown,
   duration: number,
-  httpAttrs: HttpAttributes,
 ): void {
   if (!span) return;
 
@@ -186,8 +180,6 @@ function recordResponseError(
   span.setAttributes({
     ...buildErrorAttributes(error),
     "http.duration_ms": Math.round(duration),
-    "http.method": httpAttrs["http.method"],
-    "http.target": httpAttrs["http.target"],
   });
   span.setStatus({
     code: SpanStatusCode.ERROR,

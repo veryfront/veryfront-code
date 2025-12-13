@@ -50,7 +50,8 @@ export interface MetricsConfig {
   enabled: boolean;
   exporter: "prometheus" | "otlp" | "console";
   endpoint?: string;
-  prefix?: string;
+  /** Prefix for all metric names. Required for instrument creation. */
+  prefix: string;
   collectInterval?: number;
   debug?: boolean;
 }

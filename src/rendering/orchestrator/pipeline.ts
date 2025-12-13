@@ -10,7 +10,6 @@ import type { SSROrchestrator } from "./ssr-orchestrator.ts";
 import type { RenderOptions, RenderResult } from "./types.ts";
 import { DataFetcher } from "@veryfront/data/index.ts";
 import type { DataContext } from "@veryfront/data/types.ts";
-import { SSRModuleLoader } from "@veryfront/modules/react-loader/ssr-module-loader.ts";
 
 export interface RenderPipelineConfig {
   pageResolver: PageResolver;
@@ -26,21 +25,153 @@ export interface RenderPipelineConfig {
 export class RenderPipeline {
   private config: RenderPipelineConfig;
   private dataFetcher: DataFetcher;
-  private ssrModuleLoader: SSRModuleLoader;
 
   constructor(config: RenderPipelineConfig) {
     this.config = config;
-    this.dataFetcher = new DataFetcher(config.adapter);
-    this.ssrModuleLoader = new SSRModuleLoader({
-      projectDir: config.projectDir,
-      projectId: config.projectDir,
-      adapter: config.adapter,
-      dev: config.mode === "development",
-    });
+    this.dataFetcher = new DataFetcher();
   }
 
+  private async generateHash(str: string): Promise<string> {
+    const encoder = new TextEncoder();
+    const data = encoder.encode(str);
+    const hashBuffer = await crypto.subtle.digest("SHA-256", data);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("").slice(0, 16);
+  }
+
+  private loadedModules = new Map<string, string>(); // Tracks filePath -> tempFilePath
+
   private async loadModule(filePath: string): Promise<any> {
-    return this.ssrModuleLoader.loadFullModule(filePath);
+    const { transformToESM } = await import("@veryfront/transforms/esm-transform.ts");
+    const { getGlobalTmpDir } = await import(
+      "@veryfront/modules/react-loader/index.ts"
+    );
+    const tmpDir = await getGlobalTmpDir();
+
+    // Recursively load this module and all its dependencies
+    const mainTempPath = await this.loadModuleRecursive(filePath, tmpDir, transformToESM);
+
+    const moduleUrl = `file://${mainTempPath}?t=${Date.now()}`;
+    return await import(moduleUrl);
+  }
+
+  private async loadModuleRecursive(
+    filePath: string,
+    tmpDir: string,
+    transformToESM: (
+      source: string,
+      filePath: string,
+      projectDir: string,
+      adapter: RuntimeAdapter,
+      options: { projectId: string; dev: boolean; ssr: boolean },
+    ) => Promise<string>,
+  ): Promise<string> {
+    // Check if already loaded
+    const cached = this.loadedModules.get(filePath);
+    if (cached) return cached;
+
+    // Mark as loading (to prevent infinite recursion)
+    const hash = await this.generateHash(filePath);
+    const tempFilePath = `${tmpDir}/mod-${hash}.js`;
+    this.loadedModules.set(filePath, tempFilePath);
+
+    logger.debug("[loadModule] Loading module", { filePath });
+
+    const fileContent = await this.config.adapter.fs.readFile(filePath);
+
+    let transformedCode = await transformToESM(
+      fileContent,
+      filePath,
+      this.config.projectDir,
+      this.config.adapter,
+      {
+        projectId: this.config.projectDir,
+        dev: this.config.mode === "development",
+        ssr: true,
+      },
+    );
+
+    // Extract @/ imports and preload them from FSAdapter
+    const aliasImports = this.extractAliasImports(transformedCode);
+    if (aliasImports.length > 0) {
+      logger.debug("[loadModule] Found @/ imports", { filePath, count: aliasImports.length });
+    }
+
+    for (const aliasPath of aliasImports) {
+      const fullPath = `${this.config.projectDir}/${aliasPath}`;
+      const resolvedPath = await this.resolveImportPath(fullPath);
+
+      if (resolvedPath) {
+        const depTempPath = await this.loadModuleRecursive(resolvedPath, tmpDir, transformToESM);
+        // Rewrite the import to use the cached temp file
+        transformedCode = this.rewriteImport(transformedCode, aliasPath, depTempPath);
+      } else {
+        logger.warn("[loadModule] Could not resolve @/ import", { aliasPath });
+      }
+    }
+
+    await this.config.adapter.fs.writeFile(tempFilePath, transformedCode);
+    return tempFilePath;
+  }
+
+  private extractAliasImports(code: string): string[] {
+    const imports: string[] = [];
+    // Match: from "@/path" or from '@/path' or import "@/path"
+    const importRegex = /(?:from|import)\s+["']@\/([^"']+)["']/g;
+    let match;
+    while ((match = importRegex.exec(code)) !== null) {
+      const capturedPath = match[1];
+      if (capturedPath && !imports.includes(capturedPath)) {
+        imports.push(capturedPath);
+      }
+    }
+    return imports;
+  }
+
+  private async resolveImportPath(basePath: string): Promise<string | null> {
+    const extensions = [".tsx", ".ts", ".jsx", ".js", ".mdx", ""];
+    for (const ext of extensions) {
+      const fullPath = basePath + ext;
+      try {
+        const exists = await this.config.adapter.fs.exists(fullPath);
+        if (exists) {
+          const stat = await this.config.adapter.fs.stat(fullPath);
+          if (stat.isFile) return fullPath;
+        }
+      } catch {
+        // Continue to next extension
+      }
+    }
+    // Try index file
+    for (const ext of [".tsx", ".ts", ".jsx", ".js"]) {
+      const indexPath = `${basePath}/index${ext}`;
+      try {
+        const exists = await this.config.adapter.fs.exists(indexPath);
+        if (exists) return indexPath;
+      } catch {
+        // Continue
+      }
+    }
+    logger.warn("[loadModule] Could not resolve import", { basePath });
+    return null;
+  }
+
+  private rewriteImport(code: string, aliasPath: string, tempFilePath: string): string {
+    // Rewrite "@/aliasPath" to "file://tempFilePath"
+    const patterns = [
+      new RegExp(`from\\s+["']@/${this.escapeRegex(aliasPath)}["']`, "g"),
+      new RegExp(`import\\s+["']@/${this.escapeRegex(aliasPath)}["']`, "g"),
+    ];
+    for (const pattern of patterns) {
+      code = code.replace(pattern, (match) => {
+        return match.replace(`@/${aliasPath}`, `file://${tempFilePath}`);
+      });
+    }
+    return code;
+  }
+
+  private escapeRegex(str: string): string {
+    return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   }
 
   async renderPage(slug: string, options?: RenderOptions): Promise<RenderResult> {
@@ -130,9 +261,18 @@ export class RenderPipeline {
             type: "page",
             id: pageInfo.entity.id,
             run: async () => {
-              const mod = await this.loadModule(pageInfo.entity.id);
-              if (mod && (mod.getServerData || mod.getStaticData)) {
-                return this.dataFetcher.fetchData(mod, dataContext, this.config.mode);
+              try {
+                const mod = await this.loadModule(pageInfo.entity.id);
+                if (mod && (mod.getServerData || mod.getStaticData)) {
+                  return this.dataFetcher.fetchData(mod, dataContext, this.config.mode);
+                }
+              } catch (error) {
+                // Module couldn't be loaded (missing dependencies, etc.)
+                // Skip data fetching - page might still render if deps aren't needed
+                logger.warn("[renderPage] Failed to load page module for data fetching", {
+                  id: pageInfo.entity.id,
+                  error: error instanceof Error ? error.message : String(error),
+                });
               }
               return null;
             },
@@ -145,9 +285,18 @@ export class RenderPipeline {
               type: "layout",
               id: layout.componentPath,
               run: async () => {
-                const mod = await this.loadModule(layout.componentPath!);
-                if (mod && (mod.getServerData || mod.getStaticData)) {
-                  return this.dataFetcher.fetchData(mod, dataContext, this.config.mode);
+                try {
+                  const mod = await this.loadModule(layout.componentPath!);
+                  if (mod && (mod.getServerData || mod.getStaticData)) {
+                    return this.dataFetcher.fetchData(mod, dataContext, this.config.mode);
+                  }
+                } catch (error) {
+                  // Module couldn't be loaded (missing dependencies, etc.)
+                  // Skip data fetching for this layout
+                  logger.warn("[renderPage] Failed to load layout module for data fetching", {
+                    id: layout.componentPath,
+                    error: error instanceof Error ? error.message : String(error),
+                  });
                 }
                 return null;
               },
@@ -295,7 +444,6 @@ export class RenderPipeline {
       hasHtml: !!result.html,
       hasStream: !!result.stream,
       htmlLength: result.html?.length || 0,
-      htmlPreview: result.html?.substring(0, 500) || "empty",
     });
 
     return result;

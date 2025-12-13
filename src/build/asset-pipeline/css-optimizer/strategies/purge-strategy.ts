@@ -63,7 +63,6 @@ export class PurgeStrategy implements CSSOptimizationStrategy {
   }
 
   private purgeUnusedCSS(css: string): string {
-
     const lines = css.split("\n");
     const kept: string[] = [];
     let currentRule = "";

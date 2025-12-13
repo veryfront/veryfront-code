@@ -25,28 +25,22 @@ describe(
             adapter: denoAdapter,
           });
 
-          // virtual
           const v = await r.resolve("virtual:mod");
           assert(v && v.type === "virtual" && v.content?.includes("v=1"));
 
-          // mapped to absolute
           const m = await r.resolve("@alias");
           assert(m && m.type === "file" && m.path.endsWith("util.ts"));
 
-          // relative from referrer
           const rel = await r.resolve("../lib/util", "src/app/main.ts");
           assert(rel?.path.endsWith("util.ts"));
 
-          // absolute
           const abs = await r.resolve("/src/lib/util.ts");
           assert(abs?.path.endsWith("util.ts"));
 
-          // npm default to esm.sh
           const npm = await r.resolve("react");
           assertEquals(npm?.type, "npm");
           assert(String(npm?.path).startsWith("https://esm.sh/react"));
 
-          // cache clears on virtual module change
           const before = await r.resolve("virtual:mod");
           r.addVirtualModule("virtual:mod", "export const v=2");
           const after = await r.resolve("virtual:mod");
@@ -79,7 +73,6 @@ describe(
             adapter: denoAdapter,
           });
 
-          // Virtual modules that don't exist get treated as npm packages
           const resolved = await r.resolve("virtual:nonexistent");
           assertExists(resolved);
           assertEquals(resolved.type, "npm");
@@ -93,14 +86,11 @@ describe(
             adapter: denoAdapter,
           });
 
-          // Initially not present - resolves as npm package
           let resolved = await r.resolve("virtual:new");
           assertEquals(resolved?.type, "npm");
 
-          // Add module
           r.addVirtualModule("virtual:new", "export const x = 1");
 
-          // Should now resolve as virtual module
           resolved = await r.resolve("virtual:new");
           assertExists(resolved);
           assertEquals(resolved.type, "virtual");
@@ -119,7 +109,6 @@ describe(
           const first = await r.resolve("virtual:data");
           assertEquals(first?.content, "export const v = 1");
 
-          // Update module
           r.addVirtualModule("virtual:data", "export const v = 2");
 
           const updated = await r.resolve("virtual:data");
@@ -135,15 +124,12 @@ describe(
             adapter: denoAdapter,
           });
 
-          // Initially exists
           let resolved = await r.resolve("virtual:temp");
           assertExists(resolved);
           assertEquals(resolved.type, "virtual");
 
-          // Remove module
           r.removeVirtualModule("virtual:temp");
 
-          // Should now resolve as npm package (fallback)
           resolved = await r.resolve("virtual:temp");
           assertEquals(resolved?.type, "npm");
         });
@@ -613,9 +599,7 @@ describe(
             adapter: denoAdapter,
           });
 
-          // First resolution
           const first = await r.resolve("/src/cached.ts");
-          // Second resolution (should be cached)
           const second = await r.resolve("/src/cached.ts");
 
           assertEquals(first, second);
@@ -632,7 +616,6 @@ describe(
           const npm1 = await r.resolve("react", "src/app.ts");
           const npm2 = await r.resolve("react", "src/main.ts");
 
-          // Both should resolve but have different cache keys
           assertExists(npm1);
           assertExists(npm2);
           assertEquals(npm1.path, npm2.path);
@@ -647,14 +630,11 @@ describe(
             adapter: denoAdapter,
           });
 
-          // Populate cache
           await r.resolve("virtual:a");
           await r.resolve("virtual:b");
 
-          // Clear cache
           r.clearCache();
 
-          // Should re-resolve (can't directly verify cache clear, but ensures no error)
           const a = await r.resolve("virtual:a");
           const b = await r.resolve("virtual:b");
           assertExists(a);
@@ -673,14 +653,11 @@ describe(
             adapter: denoAdapter,
           });
 
-          // Populate cache
           await r.resolve("virtual:config");
           await r.resolve("virtual:data");
 
-          // Clear cache for 'config' pattern
           r.clearCache("config");
 
-          // Both should still resolve
           const config = await r.resolve("virtual:config");
           const data = await r.resolve("virtual:data");
           assertExists(config);
@@ -695,14 +672,11 @@ describe(
             adapter: denoAdapter,
           });
 
-          // First, resolves as npm package
           let resolved = await r.resolve("virtual:dynamic");
           assertEquals(resolved?.type, "npm");
 
-          // Add the module
           r.addVirtualModule("virtual:dynamic", "export const x = 1");
 
-          // Should now resolve as virtual without cache interference
           resolved = await r.resolve("virtual:dynamic");
           assertExists(resolved);
           assertEquals(resolved.type, "virtual");
@@ -718,15 +692,12 @@ describe(
             adapter: denoAdapter,
           });
 
-          // Initially resolves as virtual
           let resolved = await r.resolve("virtual:temp");
           assertExists(resolved);
           assertEquals(resolved.type, "virtual");
 
-          // Remove module
           r.removeVirtualModule("virtual:temp");
 
-          // Should now resolve as npm package without cache interference
           resolved = await r.resolve("virtual:temp");
           assertEquals(resolved?.type, "npm");
         });
@@ -739,7 +710,6 @@ describe(
             adapter: denoAdapter,
           });
 
-          // Resolve multiple packages concurrently
           const results = await Promise.all([
             r.resolve("react"),
             r.resolve("react-dom"),
@@ -747,7 +717,6 @@ describe(
             r.resolve("axios"),
           ]);
 
-          // All should resolve successfully
           results.forEach((result) => {
             assertExists(result);
             assertEquals(result.type, "npm");
@@ -764,7 +733,6 @@ describe(
             adapter: denoAdapter,
           });
 
-          // Empty specifier gets treated as npm package
           const resolved = await r.resolve("");
           assertExists(resolved);
           assertEquals(resolved.type, "npm");
@@ -778,9 +746,7 @@ describe(
             adapter: denoAdapter,
           });
 
-          // Malformed path './' may resolve to directory if it exists
           const resolved = await r.resolve("./", "src/main.ts");
-          // Can be file (if directory exists) or null
           assert(resolved === null || resolved.type === "file");
         });
       });
@@ -819,7 +785,6 @@ describe(
 
       it("should prioritize exact file match over extension guessing", async () => {
         await withTestContext("edge-exact-match", async (context) => {
-          // Create both 'file' (no ext) and 'file.ts'
           const noExtPath = join(context.projectDir, "file");
           const tsPath = join(context.projectDir, "file.ts");
           await Deno.writeTextFile(noExtPath, "no extension");
@@ -832,7 +797,6 @@ describe(
 
           const resolved = await r.resolve("/file");
           assertExists(resolved);
-          // Should match 'file' with no extension first
           assert(resolved.path.endsWith("/file"));
         });
       });
@@ -905,7 +869,6 @@ describe(
             adapter: denoAdapter,
           });
 
-          // Should be treated as npm package (not URL)
           const resolved = await r.resolve("http-proxy");
           assertExists(resolved);
           assertEquals(resolved.type, "npm");
@@ -934,7 +897,6 @@ describe(
             adapter: denoAdapter,
           });
 
-          // Should not throw, just return null
           const resolved = await r.resolve("/some/file.ts");
           assertEquals(resolved, null);
         });
@@ -947,9 +909,7 @@ describe(
             adapter: denoAdapter,
           });
 
-          // Relative import without referrer should resolve from project root
           const resolved = await r.resolve("../outside");
-          // May or may not exist, but should not throw
           assert(resolved === null || resolved !== null);
         });
       });
@@ -966,7 +926,6 @@ describe(
             adapter: denoAdapter,
           });
 
-          // Should resolve both without error (circular detection is not resolver's job)
           const a = await r.resolve("/a.ts");
           const b = await r.resolve("/b.ts");
           assertExists(a);
@@ -1022,7 +981,6 @@ describe(
           });
 
           // Note: This tests that the resolver doesn't break with backslashes
-          // Actual path resolution depends on OS
           const resolved = await r.resolve("/src/win.ts");
           assertExists(resolved);
         });
@@ -1063,16 +1021,13 @@ describe(
             adapter: denoAdapter,
           });
 
-          // Initial state
           let resolved = await r.resolve("virtual:state");
           assertEquals(resolved?.content, "export const v = 1");
 
-          // Update
           r.addVirtualModule("virtual:state", "export const v = 2");
           resolved = await r.resolve("virtual:state");
           assertEquals(resolved?.content, "export const v = 2");
 
-          // Update again
           r.addVirtualModule("virtual:state", "export const v = 3");
           resolved = await r.resolve("virtual:state");
           assertEquals(resolved?.content, "export const v = 3");
@@ -1086,7 +1041,6 @@ describe(
             adapter: denoAdapter,
           });
 
-          // Create 50 concurrent resolutions
           const promises = [];
           for (let i = 0; i < 50; i++) {
             promises.push(r.resolve(`package-${i}`));
@@ -1094,7 +1048,6 @@ describe(
 
           const results = await Promise.all(promises);
 
-          // All should resolve successfully
           assertEquals(results.length, 50);
           results.forEach((result, i) => {
             assertExists(result, `Package ${i} should resolve`);
@@ -1240,7 +1193,6 @@ describe(
             adapter: denoAdapter,
           });
 
-          // Exact match needed
           const resolved = await r.resolve("@lib/");
           assertExists(resolved);
           assertEquals(resolved.type, "external");
@@ -1274,8 +1226,6 @@ describe(
           });
 
           const resolved = await r.resolve("empty");
-          // Empty string doesn't start with http/https and doesn't match filesystem
-          // So it falls through to npm resolution
           assertExists(resolved);
           assertEquals(resolved.type, "npm");
         });
@@ -1421,15 +1371,10 @@ describe(
             adapter: denoAdapter,
           });
 
-          // Try to escape project directory with excessive traversal
-          // path.join normalizes paths and can traverse outside project directory
-          // This reveals that the resolver doesn't prevent path traversal - it just uses path.join
-          // which can resolve to filesystem paths outside the project
           const resolved = await r.resolve(
             "../../../../../../../../nonexistent-file-xyz.ts",
             "src/main.ts",
           );
-          // File doesn't exist so returns null
           assertEquals(resolved, null);
         });
       });
@@ -1503,7 +1448,6 @@ describe(
             adapter: denoAdapter,
           });
 
-          // Absolute path still joins with projectDir, preventing escape
           const resolved = await r.resolve("/../../../etc/passwd");
           assertEquals(resolved, null);
         });
@@ -1594,7 +1538,6 @@ describe(
           await r.resolve("react", "lib/util.ts");
           await r.resolve("react", "components/Button.tsx");
 
-          // All should be cached separately
           const result = await r.resolve("react", "app/main.ts");
           assertExists(result);
         });
@@ -1612,8 +1555,6 @@ describe(
           const first = await r.resolve("lib");
           assertEquals(first?.path, "https://cdn.com/v1.js");
 
-          // Simulate import map update (requires new resolver instance in real scenario)
-          // This test verifies behavior with current state
           r.clearCache();
           const second = await r.resolve("lib");
           assertEquals(second?.path, "https://cdn.com/v1.js");
@@ -1633,7 +1574,6 @@ describe(
           await r.resolve("@");
           await r.resolve("/");
 
-          // All should be handled without cache collision
           const result = await r.resolve("react");
           assertExists(result);
         });
@@ -1646,12 +1586,10 @@ describe(
             adapter: denoAdapter,
           });
 
-          // Resolve 100 unique packages
           for (let i = 0; i < 100; i++) {
             await r.resolve(`package-${i}`);
           }
 
-          // Resolve again - should hit cache
           const resolved = await r.resolve("package-50");
           assertExists(resolved);
           assertEquals(resolved.type, "npm");
@@ -1662,7 +1600,6 @@ describe(
     describe("Advanced Edge Cases", () => {
       it("should prioritize .ts over .tsx over .js over .jsx over .mjs", async () => {
         await withTestContext("edge-extension-priority", async (context) => {
-          // Create files with same name but different extensions
           await Deno.writeTextFile(join(context.projectDir, "module.mjs"), "mjs");
           await Deno.writeTextFile(join(context.projectDir, "module.jsx"), "jsx");
           await Deno.writeTextFile(join(context.projectDir, "module.js"), "js");
@@ -1674,11 +1611,8 @@ describe(
             adapter: denoAdapter,
           });
 
-          // Resolver checks extensions in order: '', '.ts', '.tsx', '.js', '.jsx', '.mjs'
-          // First it checks for exact match (no extension), then .ts
           const resolved = await r.resolve("./module", "index.ts");
           assertExists(resolved);
-          // Should match .ts first (second in extensions array)
           assert(resolved.path.endsWith("module.ts"));
         });
       });

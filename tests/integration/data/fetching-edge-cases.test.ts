@@ -1,7 +1,3 @@
-/**
- * Edge case tests for data/fetching.ts
- * Tests network failures, timeout scenarios, invalid responses, and error handling
- */
 
 import { assertEquals, assertExists, assertRejects } from "std/assert/mod.ts";
 import { describe } from "std/testing/bdd.ts";
@@ -19,8 +15,6 @@ function makeContext(url: string, params: Record<string, string> = {}): DataCont
   };
 }
 
-// Each test creates DataFetcher which has internal cleanup intervals
-// Disable resource sanitization for all tests in this suite
 Deno.test({
   name: "DataFetcher - Edge Cases and Error Handling",
   sanitizeResources: false,
@@ -316,7 +310,6 @@ Deno.test({
 
           const result = await fetcher.fetchData(page, makeContext("http://localhost/test"));
 
-          // Redirect takes precedence
           assertEquals(result.redirect?.destination, "/redirect");
           assertEquals(result.props, undefined);
         });
@@ -351,7 +344,6 @@ Deno.test({
 
           const result = await fetcher.fetchData(page, makeContext("http://localhost/test"));
 
-          // Redirect takes precedence
           assertExists(result.redirect);
           assertEquals(result.notFound, undefined);
         });
@@ -430,7 +422,6 @@ Deno.test({
 
           assertEquals((result1.props as any)?.count, 1);
 
-          // Wait for revalidation
           await new Promise((r) => setTimeout(r, 600));
 
           const result2 = await fetcher.fetchData(page, context, "production");
@@ -455,7 +446,6 @@ Deno.test({
           const result1 = await fetcher.fetchData(page, context1, "production");
           const result2 = await fetcher.fetchData(page, context2, "production");
 
-          // Should be cached
           assertEquals((result1.props as any)?.params, (result2.props as any)?.params);
         });
 
@@ -474,7 +464,7 @@ Deno.test({
           await fetcher.fetchData(page, makeContext("http://localhost/path1"), "production");
           await fetcher.fetchData(page, makeContext("http://localhost/path2"), "production");
 
-          assertEquals(callCount, 2); // Different paths = different cache entries
+          assertEquals(callCount, 2);
         });
 
         Deno.test("should handle cache clear with pattern", async () => {
@@ -491,7 +481,6 @@ Deno.test({
 
           fetcher.clearCache("blog");
 
-          // Blog should be cleared, docs should remain
           const blogResult = await fetcher.fetchData(
             page,
             makeContext("http://localhost/blog/post1"),
@@ -515,14 +504,12 @@ Deno.test({
 
           const context = makeContext("http://localhost/test");
 
-          // Multiple concurrent fetches
           const [r1, r2, r3] = await Promise.all([
             fetcher.fetchData(page, context, "production"),
             fetcher.fetchData(page, context, "production"),
             fetcher.fetchData(page, context, "production"),
           ]);
 
-          // May have race condition, but should not crash
           assertExists(r1.props);
           assertExists(r2.props);
           assertExists(r3.props);
@@ -585,7 +572,6 @@ Deno.test({
 
           const paths = await fetcher.getStaticPaths(page);
 
-          // Should handle gracefully
           assertExists(paths !== undefined ? paths : null);
         });
 
@@ -682,7 +668,6 @@ Deno.test({
             }),
           };
 
-          // URL with special characters
           const result = await fetcher.fetchData(
             page,
             makeContext("http://localhost/path%20with%20spaces"),
@@ -693,4 +678,4 @@ Deno.test({
       });
     });
   }, // End of Deno.test fn
-}); // End of Deno.test
+});

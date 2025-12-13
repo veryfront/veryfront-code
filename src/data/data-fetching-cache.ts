@@ -22,7 +22,6 @@ export class CacheManager {
     maxEntries: DATA_FETCHING_MAX_ENTRIES,
     ttlMs: isLruIntervalDisabled() ? undefined : DATA_FETCHING_TTL_MS,
   });
-  private cacheKeys = new Set<string>();
 
   get(key: string): CacheEntry | null {
     const entry = this.cache.get(key);
@@ -31,21 +30,19 @@ export class CacheManager {
 
   set(key: string, entry: CacheEntry): void {
     this.cache.set(key, entry);
-    this.cacheKeys.add(key);
   }
 
   delete(key: string): void {
     this.cache.delete(key);
-    this.cacheKeys.delete(key);
   }
 
   clear(): void {
     this.cache.clear();
-    this.cacheKeys.clear();
   }
 
   clearPattern(pattern: string): void {
-    for (const key of this.cacheKeys) {
+    const keys = this.cache.keys();
+    for (const key of keys) {
       if (key.includes(pattern)) {
         this.delete(key);
       }

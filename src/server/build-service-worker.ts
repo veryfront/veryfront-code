@@ -1,6 +1,13 @@
 
 import type { BuildManifest } from "../build/production-build/manifest.ts";
 
+/** Chunk info structure from build manifest */
+interface ChunkInfo {
+  file?: string;
+  css?: string;
+  imports?: string[];
+}
+
 function sanitizeCacheKey(value: string): string {
   return value.replace(/[^a-zA-Z0-9._-]/g, "");
 }
@@ -49,7 +56,7 @@ function buildManifestAssets(manifest: BuildManifest): string[] {
 
   if (manifest.chunks) {
     for (const chunkInfo of Object.values(manifest.chunks.chunks || {})) {
-      const chunk = chunkInfo as any;
+      const chunk = chunkInfo as ChunkInfo;
       addAsset(normalizeChunkPath(chunk.file, "/_veryfront"));
       if (chunk.css) {
         addAsset(normalizeChunkPath(chunk.css, "/_veryfront"));

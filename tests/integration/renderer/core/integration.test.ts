@@ -1,9 +1,4 @@
-/**
- * Integration Tests for Refactored Core Renderer
- * Tests the complete rendering pipeline with the new modular architecture
- */
 
-// Disable LRU intervals during testing to prevent resource leaks
 (globalThis as Record<string, unknown>).__vfDisableLruInterval = true;
 
 import { assertEquals, assertExists } from "https://deno.land/std@0.220.0/assert/mod.ts";
@@ -14,7 +9,6 @@ import { cleanupTestDir, createTestProjectDir } from "../../../_helpers/server.t
 import { DenoAdapter } from "@veryfront/platform/adapters/deno.ts";
 import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";
 
-// Clean up bundler intervals to prevent resource leaks
 afterAll(async () => {
   await cleanupBundler();
 });
@@ -89,7 +83,6 @@ Deno.test("Core Integration - Configuration manager properly initialized", async
 
     await renderer.initialize();
 
-    // Render to ensure all services are working
     const result = await renderer.renderPage("test");
     assertExists(result);
     assertExists(result.html);
@@ -123,11 +116,9 @@ Deno.test("Core Integration - Lifecycle initialization of all services", async (
 
     await renderer.initialize();
 
-    // Check virtual module system is accessible
     const vms = renderer.getVirtualModuleSystem();
     assertExists(vms);
 
-    // Render a page to ensure all services work together
     const result = await renderer.renderPage("simple");
     assertExists(result);
     assertExists(result.html);
@@ -161,19 +152,15 @@ title: Cached Page
 
     await renderer.initialize();
 
-    // First render
     const result1 = await renderer.renderPage("cached");
     assertExists(result1);
 
-    // Clear cache
     renderer.clearCache("cached");
 
-    // Second render (after cache clear)
     const result2 = await renderer.renderPage("cached");
     assertExists(result2);
     assertEquals(result2.frontmatter.title, "Cached Page");
 
-    // Clear all state
     renderer.clearAllState();
 
     await renderer.destroy();
@@ -220,8 +207,6 @@ More content.`,
     assertExists(result.html);
     assertEquals(result.frontmatter.title, "MDX Test");
     assertEquals(result.frontmatter.description, "Testing MDX compilation");
-    // Headings may or may not be present depending on MDX compilation
-    // Just check that result is valid
     assertExists(result.headings);
 
     await renderer.destroy();
@@ -280,10 +265,8 @@ Deno.test("Core Integration - Proper cleanup with destroy()", async () => {
     await renderer.initialize();
     await renderer.renderPage("cleanup");
 
-    // Destroy should clean up all resources
     await renderer.destroy();
 
-    // Should not throw after destroy
     await renderer.destroy();
   } finally {
     await cleanupTestDir(projectDir);

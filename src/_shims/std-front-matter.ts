@@ -8,30 +8,44 @@ export interface FrontMatterResult<T = Record<string, unknown>> {
 
 import { createRequire } from "node:module";
 
-let grayMatter: typeof import("gray-matter") | null = null;
+type GrayMatterFn = typeof import("gray-matter")["default"];
+type GrayMatterModule = typeof import("gray-matter");
+
+let grayMatterModule: GrayMatterModule | null = null;
 const require = createRequire(import.meta.url);
 
-async function getGrayMatter(): Promise<typeof import("gray-matter")> {
-  if (!grayMatter) {
-    grayMatter = await import("gray-matter");
+async function getGrayMatter(): Promise<GrayMatterModule> {
+  if (!grayMatterModule) {
+    grayMatterModule = await import("gray-matter");
   }
-  return grayMatter;
+  return grayMatterModule;
 }
 
-function getGrayMatterSync(): typeof import("gray-matter")["default"] | null {
-  if (grayMatter) {
-    return (grayMatter as { default?: typeof import("gray-matter")["default"] }).default ??
-      (grayMatter as unknown as { default: typeof import("gray-matter")["default"] }).default ??
-      (grayMatter as unknown as typeof import("gray-matter")["default"]);
+/**
+ * Extracts the gray-matter function from a module that may have
+ * different export shapes (ESM default vs CJS module.exports)
+ */
+function extractGrayMatterFn(mod: unknown): GrayMatterFn | null {
+  if (typeof mod === "function") {
+    return mod as GrayMatterFn;
+  }
+  const modObj = mod as { default?: unknown };
+  if (typeof modObj.default === "function") {
+    return modObj.default as GrayMatterFn;
+  }
+  return null;
+}
+
+function getGrayMatterSync(): GrayMatterFn | null {
+  if (grayMatterModule) {
+    return extractGrayMatterFn(grayMatterModule);
   }
 
   try {
-    const mod = require("gray-matter") as {
-      default?: typeof import("gray-matter")["default"];
-    };
-    grayMatter = mod as typeof import("gray-matter");
-    return mod.default ?? (mod as unknown as typeof import("gray-matter")["default"]);
-  } catch (_error) {
+    const mod = require("gray-matter");
+    grayMatterModule = mod as GrayMatterModule;
+    return extractGrayMatterFn(mod);
+  } catch {
     return null;
   }
 }
@@ -66,14 +80,15 @@ export function test(content: string): boolean {
 export async function extractAsync<T = Record<string, unknown>>(
   content: string,
 ): Promise<FrontMatterResult<T>> {
-  const gm = await getGrayMatter();
-  const result =
-    (gm as { default: (content: string) => { data: T; content: string; matter: string } }).default(
-      content,
-    );
+  const mod = await getGrayMatter();
+  const gm = extractGrayMatterFn(mod);
+  if (!gm) {
+    throw new Error("Failed to load gray-matter module");
+  }
+  const result = gm(content);
   return {
-    attrs: result.data,
+    attrs: result.data as T,
     body: result.content,
-    frontMatter: result.matter,
+    frontMatter: result.matter ?? "",
   };
 }

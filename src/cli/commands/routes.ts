@@ -5,10 +5,8 @@ import { getConfig } from "@veryfront/config";
 import { cliLogger } from "@veryfront/utils";
 import { createFileSystem, type FileSystem } from "../../platform/compat/fs.ts";
 
-let fs: FileSystem;
-
 export async function routesCommand(projectDir: string, options: { json?: boolean } = {}) {
-  fs = createFileSystem();
+  const fs = createFileSystem();
   const adapter = await getAdapter();
   await getConfig(projectDir, adapter);
   const pagesDir = join(projectDir, "pages");
@@ -31,14 +29,20 @@ export async function routesCommand(projectDir: string, options: { json?: boolea
   }
 
   const pages: Array<{ pattern: string; file: string }> = [];
-  for (const [pattern, { route }] of (router as any).routes) {
-    pages.push({ pattern, file: route.page });
+  // Access the internal routes map - this is a workaround for the router API
+  const routerWithRoutes = router as unknown as {
+    routes: Map<string, { route: { page: string } }>;
+  };
+  if (routerWithRoutes.routes instanceof Map) {
+    for (const [pattern, { route }] of routerWithRoutes.routes) {
+      pages.push({ pattern, file: route.page });
+    }
   }
 
   const apis: string[] = [];
   const apiDir = join(projectDir, "pages", "api");
   if (await fs.exists(apiDir)) {
-    await collectApiPatterns(apiDir, "/api", apis);
+    await collectApiPatterns(fs, apiDir, "/api", apis);
   }
 
   if (options.json) {
@@ -55,13 +59,18 @@ export async function routesCommand(projectDir: string, options: { json?: boolea
   }
 }
 
-async function collectApiPatterns(dir: string, prefix: string, out: string[]) {
+async function collectApiPatterns(
+  fs: FileSystem,
+  dir: string,
+  prefix: string,
+  out: string[],
+): Promise<void> {
   const entries = fs.readDir(dir);
   for await (const entry of entries) {
     const fullPath = join(dir, entry.name);
     const routePath = `${prefix}/${entry.name.replace(/\.(ts|js|tsx|jsx)$/i, "")}`;
     if (entry.isDirectory) {
-      await collectApiPatterns(fullPath, routePath, out);
+      await collectApiPatterns(fs, fullPath, routePath, out);
     } else if (entry.isFile && /\.(ts|js|tsx|jsx)$/i.test(entry.name)) {
       let pattern = routePath.replace(/\/index$/, "");
       if (pattern === prefix && entry.name.replace(/\.(ts|js|tsx|jsx)$/i, "") === "index") {

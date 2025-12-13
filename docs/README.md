@@ -1,108 +1,104 @@
 # Veryfront Documentation
 
-Modern React framework for Deno with multi-runtime support, flexible rendering modes, and native agent capabilities.
+Modern React framework with multi-runtime support, flexible rendering modes, and native AI agent capabilities.
 
-## Documentation Structure
+## Getting Started
 
-This directory contains the complete Veryfront documentation organized for easy navigation and publishing.
+- [Introduction](./learn/introduction.md) - What is Veryfront and why use it
+- [Installation](./learn/installation.md) - Install on Deno, Node.js, or Bun
+- [Quick Start](./learn/quickstart.md) - Build your first app
+- [Project Structure](./learn/project-structure.md) - File organization and conventions
 
-###  Documentation Sections
+## Core Concepts
 
-#### **Getting Started**
-- [Introduction](./learn/introduction.md) - What is Veryfront?
-- [Quick Start](./learn/quickstart.md) - Get up and running in 5 minutes
-- [Project Structure](./learn/project-structure.md) - File layout and organization
-- [Installation](./learn/installation.md) - Different ways to install Veryfront
+### Routing
 
-#### **Core Concepts**
-- [Convention over Configuration](./learn/concepts/convention-over-configuration.md) - The framework philosophy
-- [Routing](/guides/routing/README.md) - File-based routing (App Router & Pages Router)
-- [Rendering](/guides/rendering/README.md) - SSR, SSG, ISR, JIT, and RSC
-- [Data Fetching](/reference/functions/README.md) - Server data, static props, and caching
-- [Styling](/guides/components/README.md) - CSS, Tailwind, CSS-in-JS
-- [MDX](https://github.com/veryfrontjs/veryfront/tree/main/examples/basic-mdx) - Zero-config MDX support
+- [Overview](./guides/routing/README.md) - File-based routing system
+- [App Router](./guides/routing/app-router.md) - Modern routing with nested layouts
+- [Pages Router](./guides/routing/pages-router.md) - Traditional file-based routing
+- [Dynamic Routes](./guides/routing/dynamic-routes.md) - URL parameters and catch-all routes
+- [API Routes](./guides/routing/api-routes.md) - Server-side API endpoints
 
-#### **Agent System**
+### Rendering
 
-**Start Here:**
-- [AI Capabilities Overview](./ai/README.md) - Complete guide to AI features
-- [Getting Started](./ai/getting-started.md) - Build with agents in 5 minutes
+- [Overview](./guides/rendering/README.md) - Available rendering strategies
+- [SSR](./guides/rendering/ssr.md) - Server-Side Rendering
+- [SSG](./guides/rendering/ssg.md) - Static Site Generation
+- [ISR](./guides/rendering/isr.md) - Incremental Static Regeneration
+- [JIT](./guides/rendering/jit.md) - Just-In-Time Rendering
+- [RSC](./guides/rendering/rsc.md) - React Server Components (experimental)
 
-**Reference:**
-- [AI API Reference](./reference/ai/README.md) - Agents, Tools, and Hooks API
-- [Specification](./ai/specification.md) - Technical spec
-- [Implementation Status](./ai/implementation-status.md) - Feature matrix
+### Data Fetching
 
-**Module Documentation:**
-- [Core Module](../src/ai/README.md) - Agent runtime, tools, MCP, memory
-- [React Hooks](../src/ai/react/README.md) - useChat, useAgent, useCompletion
-- [UI Primitives](../src/ai/react/primitives/README.md) - Unstyled components
-- [Styled Components](../src/ai/react/components/README.md) - Production UI
+- [getServerData](./reference/functions/get-server-data.md) - Fetch data on the server
+- [getStaticPaths](./reference/functions/get-static-paths.md) - Define static paths for SSG
+- [redirect](./reference/functions/redirect.md) - Redirect responses
+- [notFound](./reference/functions/not-found.md) - Return 404 responses
 
-**Examples:**
-- [Complete Demo](../examples/full-demo/README.md) - Full-featured example
-- [Auto-Discovery](../examples/ai-autodiscovery/) - Convention-driven setup
-- [Memory & Composition](https://github.com/veryfrontjs/veryfront/tree/main/examples) - Advanced features
+## AI Agent System
 
-#### **Platform Adapters**
-- [Overview](/guides/adapters/platform/overview.md) - Multi-runtime support
-- [Deno](/guides/deployment/deno.md) - Deploy on Deno & Deno Deploy
-- [Node.js](/guides/deployment/node.md) - Deploy on Node.js
-- [Bun](/guides/deployment/bun.md) - Deploy on Bun
-- [Cloudflare Workers](/guides/deployment/cloudflare.md) - Deploy on Cloudflare
+- [Overview](./ai/README.md) - Built-in AI capabilities
+- [Getting Started](./ai/getting-started.md) - Create your first agent
 
-#### **Filesystem Adapters**
-- [Overview](/guides/adapters/filesystem/overview.md) - Filesystem abstraction
-- [Local Disk](/guides/adapters/filesystem/overview.md) - Standard filesystem (default)
-- [Veryfront API](/guides/adapters/filesystem/veryfront-api.md) - Remote project rendering
-- [Custom Adapters](/guides/adapters/filesystem/overview.md) - Build your own
+### Reference
 
-#### **API Reference**
-- [Configuration](/reference/configuration/README.md) - veryfront.config.ts reference
-- [Components](/reference/components/README.md) - Link, Head, OptimizedImage, etc.
-- [Data Fetching](/reference/functions/get-server-data.md) - getServerData, getStaticPaths
-- [API Routes](/guides/routing/api-routes.md) - Building API endpoints
-- [Middleware](/guides/middleware/README.md) - Request/response middleware
-- [CLI](/reference/cli/README.md) - Command-line interface
+- [Agents](./reference/ai/agent.md) - Agent configuration and API
+- [Tools](./reference/ai/tools.md) - Tool definition and discovery
+- [Hooks](./reference/ai/hooks.md) - React hooks for AI features
+- [Integrations](./reference/ai/integrations.md) - Third-party service integrations
 
-#### **Guides**
-- [Building a Blog](https://github.com/veryfrontjs/veryfront/tree/main/examples/basic-mdx) - Step-by-step tutorial
-- [Image Optimization](/guides/components/image.md) - OptimizedImage best practices
-- [Performance](/guides/performance/README.md) - Optimization techniques
-- [Deployment](/guides/deployment/README.md) - Deploy to production
-- [Migration](/migration/) - Migrate from Next.js/Remix
+## Components
 
-#### **Cookbooks**
-- [RAG Chatbot](./cookbooks/rag-chatbot.md) - Build a knowledge-base bot
-- [Cookbook Index](./cookbooks/README.md) - Browse all recipes
+- [Link](./reference/components/link.md) - Client-side navigation
+- [Head](./reference/components/head.md) - Document head management
+- [OptimizedImage](./reference/components/optimized-image.md) - Image optimization
 
-#### **Advanced**
-- [Architecture](/guides/architecture/README.md) - Framework internals
-- [Security](/guides/middleware/README.md) - CORS, CSP, input validation
-- [Observability](/guides/performance/README.md) - Metrics and tracing
-- [Custom Builds](/reference/configuration/README.md) - Advanced build configuration
+## Hooks
 
-#### **Community**
-- [Contributing](./community/contributing.md) - How to contribute
+- [useRouter](./reference/hooks/use-router.md) - Programmatic navigation
+- [useParams](./reference/hooks/use-params.md) - URL parameters
+- [usePathname](./reference/hooks/use-pathname.md) - Current pathname
+- [useSearchParams](./reference/hooks/use-search-params.md) - Query string parameters
+
+## Platform Support
+
+- [Platform Adapters](./guides/adapters/platform/overview.md) - Multi-runtime architecture
+- [Filesystem Adapters](./guides/adapters/filesystem/overview.md) - Filesystem abstraction
+
+### Deployment
+
+- [Deno](./guides/deployment/deno.md) - Deploy to Deno Deploy
+- [Node.js](./guides/deployment/node.md) - Deploy with Node.js
+- [Bun](./guides/deployment/bun.md) - Deploy with Bun
+- [Cloudflare Workers](./guides/deployment/cloudflare.md) - Deploy to Cloudflare
+
+## Reference
+
+- [Configuration](./reference/configuration/README.md) - `veryfront.config.ts` options
+- [CLI](./reference/cli/README.md) - Command-line interface
+- [File Conventions](./reference/file-conventions/README.md) - Special files and naming
+
+## Guides
+
+- [Components](./guides/components/README.md) - Built-in components
+- [Middleware](./guides/middleware/README.md) - Request/response middleware
+- [Performance](./guides/performance/README.md) - Optimization techniques
+- [Testing](./guides/testing/README.md) - Unit and E2E testing
+- [Architecture](./guides/architecture/README.md) - Framework internals
+- [Troubleshooting](./guides/troubleshooting/README.md) - Common issues
+
+## Cookbooks
+
+- [RAG Chatbot](./cookbooks/rag-chatbot.md) - Build a knowledge-base chatbot
+- [All Recipes](./cookbooks/README.md) - Browse cookbook recipes
+
+## Community
+
+- [Contributing](./community/contributing.md) - Contribution guidelines
 - [Changelog](./community/changelog.md) - Version history
+
+## Additional Resources
+
 - [Examples](https://github.com/veryfrontjs/veryfront/tree/main/examples) - Example projects
-- [FAQ](/community/contributing.md) - Frequently asked questions
-
-## Publishing
-
-This documentation is designed to be published with:
-- [VitePress](https://vitepress.dev/) (recommended)
-- [Docusaurus](https://docusaurus.io/)
-- [MkDocs](https://www.mkdocs.org/)
-- Or any Markdown-based documentation generator
-
-## Navigation
-
-For code navigation within the framework source, see:
-- [Code Navigation Guide](/guides/routing/README.md)
-- [Module READMEs](../src/) - All 16 modules documented (including AI module)
-- [AI Documentation Index](./ai/README.md) - Complete AI documentation guide
-
-## Contributing to Docs
-
-See [Contributing Guide](./community/contributing.md) for guidelines on improving documentation.
+- [Source Code READMEs](../src/) - Module documentation
+- [llms.txt](./llms.txt) - LLM-optimized project summary

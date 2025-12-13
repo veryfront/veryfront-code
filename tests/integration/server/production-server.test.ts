@@ -1,14 +1,3 @@
-/**
- * Production Server Tests
- *
- * Tests production server functionality:
- * - Static asset serving with caching headers
- * - App Router and Pages Router rendering
- * - API routes
- * - Security headers (CSP, CORS, etc.)
- * - Error handling
- * - Performance and concurrency
- */
 
 import { assert, assertEquals, assertExists } from "std/assert/mod.ts";
 import { ensureDir } from "std/fs/mod.ts";
@@ -22,7 +11,6 @@ import { withTestContext } from "../../_helpers/context.ts";
 import { getFreePort } from "../../_helpers/utils.ts";
 import { cleanupBundler } from "../../../src/rendering/cleanup.ts";
 
-// Clean up renderer intervals to prevent resource leaks
 afterAll(async () => {
   await cleanupBundler();
 });
@@ -33,10 +21,8 @@ describe(
   () => {
     it("serves static files with correct headers", async () => {
       await withTestContext("prod-static-assets", async (context) => {
-        // Enable cache closing for tests
         context.setEnv({ VF_CACHE_ALLOW_CLOSE: "1" });
 
-        // Arrange
         await Deno.writeTextFile(
           join(context.projectDir, "public", "test.txt"),
           "This is a test static file",
@@ -46,7 +32,6 @@ describe(
           "body { margin: 0; }",
         );
 
-        // Build first for production
         await buildProduction({
           projectDir: context.projectDir,
           outputDir: join(context.projectDir, "dist"),
@@ -55,14 +40,11 @@ describe(
           enablePrefetch: false,
         });
 
-        // Act
         const server = await context.createProductionServer();
 
-        // Test text file
         const txtResponse = await fetch(`http://localhost:${server.port}/test.txt`);
         const txtContent = await txtResponse.text();
 
-        // Assert text file
         assertEquals(txtResponse.status, 200, "Should serve text files");
         assertEquals(txtContent, "This is a test static file", "Should serve correct content");
         assertEquals(
@@ -71,11 +53,9 @@ describe(
           "Should include cache control header",
         );
 
-        // Test CSS file
         const cssResponse = await fetch(`http://localhost:${server.port}/styles.css`);
         const cssContent = await cssResponse.text();
 
-        // Assert CSS file
         assertEquals(cssResponse.status, 200, "Should serve CSS files");
         assertEquals(cssContent, "body { margin: 0; }", "Should serve correct CSS");
         assertEquals(
@@ -113,7 +93,6 @@ describe(
 
     it("handles concurrent requests efficiently", async () => {
       await withTestContext("prod-concurrent", async (context) => {
-        // Create multiple assets
         for (let i = 0; i < 5; i++) {
           await Deno.writeTextFile(
             join(context.projectDir, "public", `file${i}.txt`),
@@ -123,7 +102,6 @@ describe(
 
         const server = await context.createProductionServer();
 
-        // Make concurrent requests
         const start = performance.now();
         const requests = Array.from(
           { length: 5 },
@@ -133,7 +111,6 @@ describe(
         const responses = await Promise.all(requests);
         const duration = performance.now() - start;
 
-        // Verify all succeeded
         for (const [i, response] of responses.entries()) {
           assertEquals(response.status, 200, `Request ${i} should succeed`);
           const content = await response.text();
@@ -155,7 +132,6 @@ describe(
   () => {
     it("serves App Router pages", async () => {
       await withTestContext("production-basic-app-router", async (context) => {
-        // Create a simple App Router page
         await Deno.writeTextFile(
           join(context.projectDir, "app", "page.tsx"),
           `export default function HomePage() {
@@ -163,7 +139,6 @@ describe(
         }`,
         );
 
-        // Add layout
         await Deno.writeTextFile(
           join(context.projectDir, "app", "layout.tsx"),
           `export default function RootLayout({ children }: { children: React.ReactNode }) {
@@ -204,7 +179,6 @@ describe(
 
     it("serves App Router pages with layouts", async () => {
       await withTestContext("prod-app-router", async (context) => {
-        // Create App Router structure
         await Deno.mkdir(join(context.projectDir, "app"), { recursive: true });
         await Deno.writeTextFile(
           join(context.projectDir, "app", "layout.tsx"),
@@ -235,7 +209,6 @@ describe(
   () => {
     it("handles API routes", async () => {
       await withTestContext("production-basic-api", async (context) => {
-        // Create an App Router API route
         await ensureDir(join(context.projectDir, "app", "api", "hello"));
         await Deno.writeTextFile(
           join(context.projectDir, "app", "api", "hello", "route.ts"),
@@ -297,7 +270,6 @@ describe(
 
     it("sets security headers", async () => {
       await withTestContext("production-basic-security", async (context) => {
-        // Create a simple App Router page
         await Deno.writeTextFile(
           join(context.projectDir, "app", "page.tsx"),
           `export default function Page() { return <div>Security Test</div>; }`,
@@ -319,7 +291,6 @@ describe(
           const res = await fetch(`http://127.0.0.1:${port}/`);
           assertEquals(res.status, 200);
 
-          // Check security headers
           assertEquals(res.headers.get("x-content-type-options"), "nosniff");
 
           await res.text();
@@ -335,7 +306,6 @@ describe(
         const server = await context.createProductionServer();
         const response = await fetch(`http://localhost:${server.port}/`);
 
-        // Check security headers
         const csp = response.headers.get("content-security-policy");
         assertExists(csp, "Should include CSP header");
         assert(csp.includes("default-src 'self'"), "CSP should restrict sources");
@@ -363,7 +333,6 @@ describe(
 
     it("handles CORS preflight requests", async () => {
       await withTestContext("prod-cors-preflight", async (context) => {
-        // Create an API route
         await Deno.mkdir(join(context.projectDir, "pages", "api"), {
           recursive: true,
         });
@@ -394,14 +363,7 @@ describe(
   {},
   () => {
     it("renders MDX pages with frontmatter", async () => {
-      /**
-       * Tests MDX processing including:
-       * - Frontmatter extraction
-       * - Markdown rendering
-       * - Component integration
-       */
       await withTestContext("prod-mdx-rendering", async (context) => {
-        // Arrange
         const mdxContent = TestDataFactory.createMDXPage({
           title: "Test Page",
           content: "This is a **test** page with *emphasis*.",
@@ -415,11 +377,9 @@ describe(
 
         const server = await context.createProductionServer();
 
-        // Act
         const response = await fetch(`http://localhost:${server.port}/pages/test`);
         const html = await response.text();
 
-        // Assert
         assertEquals(response.status, 200, "Should render MDX page");
         assert(html.includes("Test Page") || html.includes("<h1>"), "Should render page title");
       });
@@ -432,10 +392,7 @@ describe(
   {},
   () => {
     it("returns 404 page for non-existent routes", async () => {
-      // Production servers need at least one page to initialize properly
-      // This test creates a simple index page and then tests 404 handling for other routes
       await withTestContext("prod-404-page", async (context) => {
-        // Create a minimal index page
         await Deno.writeTextFile(
           join(context.projectDir, "pages", "index.tsx"),
           `export default function Home() { return <h1>Home</h1>; }`,
@@ -443,7 +400,6 @@ describe(
 
         const server = await context.createProductionServer();
 
-        // Test that a non-existent page returns 404
         const response = await fetch(`http://localhost:${server.port}/non-existent-page`);
         const html = await response.text();
 
@@ -458,7 +414,6 @@ describe(
 
     it("handles errors securely in production mode", async () => {
       await withTestContext("prod-error-security", async (context) => {
-        // Create a page that throws during render
         await Deno.writeTextFile(
           join(context.projectDir, "pages", "error.mdx"),
           `# Error Page\n\n<UndefinedComponent />`,
@@ -466,7 +421,6 @@ describe(
 
         context.setEnv({ NODE_ENV: "production" });
 
-        // Build production assets first
         await buildProduction({
           projectDir: context.projectDir,
           outputDir: join(context.projectDir, "dist"),

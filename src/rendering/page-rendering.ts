@@ -47,6 +47,10 @@ export async function handleMDXPage(
       (pageBundle as PageBundle).clientModuleCode = moduleCode;
     }
 
+    // Configure mdxRenderer with adapter for @/ import resolution
+    mdxRenderer.setAdapter(adapter);
+    mdxRenderer.setProjectDir(projectDir);
+
     const mod = (await mdxRenderer.loadModuleESM(
       (pageBundle as PageBundle).clientModuleCode!,
     )) as MDXModule;

@@ -1,16 +1,3 @@
-/**
- * Script Bundler Tests
- *
- * Comprehensive tests for JavaScript/TypeScript bundling service covering:
- * - JS/TS bundling pipeline
- * - Code transformation
- * - Minification
- * - Source maps
- * - Import resolution
- * - Plugin system
- * - Error handling
- * - Cache integration
- */
 
 import { assertEquals, assertExists } from "std/assert/mod.ts";
 import * as esbuild from "esbuild";
@@ -33,7 +20,6 @@ describe(
   () => {
     describe("bundleScript", () => {
       it("bundles all file types (JS/TS/JSX/TSX)", async () => {
-        // Batched test for all file type bundling - reduces esbuild invocation overhead
         await withTestContext("script-all-types", async (context) => {
           const testCases = [
             {
@@ -47,7 +33,6 @@ describe(
               `,
               external: [],
               checks: (content: string) => {
-                // JS should be bundled
                 assertExists(content);
               },
             },
@@ -65,7 +50,6 @@ describe(
               `,
               external: [],
               checks: (content: string) => {
-                // Should remove type annotations
                 assertEquals(content.includes("interface User"), false);
               },
             },
@@ -80,7 +64,6 @@ describe(
               `,
               external: ["react"],
               checks: (content: string) => {
-                // Should transform JSX
                 assertEquals(content.includes("<button"), false);
               },
             },
@@ -99,7 +82,6 @@ describe(
               `,
               external: ["react"],
               checks: (content: string) => {
-                // Should remove TypeScript types
                 assertEquals(content.includes("interface ButtonProps"), false);
                 assertEquals(content.includes("React.FC"), false);
               },
@@ -131,7 +113,6 @@ describe(
 
             await bundleScript(source, options, result, esbuild, fileCache);
 
-            // Check for build errors
             assertEquals(
               result.errors.length,
               0,
@@ -140,16 +121,13 @@ describe(
               }`,
             );
 
-            // Should create output
             const outputPath = source.path.replace(/\.(tsx?|jsx?)$/, ".js");
             const output = result.outputs.get(outputPath);
             assertExists(output, `No output generated for ${testCase.type}`);
             assertEquals(output.type, "js");
 
-            // Run type-specific checks
             testCase.checks(output.content);
 
-            // Should track dependencies
             assertExists(result.dependencies.get(source.path));
           }
         });
@@ -189,11 +167,9 @@ describe(
           const outputPath = source.path.replace(/\.(tsx?|jsx?)$/, ".js");
           const output = result.outputs.get(outputPath)!;
 
-          // Should be minified
           assertEquals(output.content.includes("// This is a comment"), false);
           assertEquals(output.content.includes("\n\n"), false);
 
-          // Should be compact
           assertEquals(output.content.length < 100, true);
         });
       });
@@ -228,7 +204,6 @@ describe(
           const outputPath = source.path.replace(/\.(tsx?|jsx?)$/, ".js");
           const output = result.outputs.get(outputPath)!;
 
-          // Should include inline source map
           assertEquals(output.content.includes("sourceMappingURL=data:"), true);
         });
       });
@@ -263,7 +238,6 @@ describe(
           const outputPath = source.path.replace(/\.(tsx?|jsx?)$/, ".js");
           const output = result.outputs.get(outputPath)!;
 
-          // Should not include source map
           assertEquals(output.content.includes("sourceMappingURL"), false);
         });
       });
@@ -304,7 +278,6 @@ describe(
           const outputPath = source.path.replace(/\.(tsx?|jsx?)$/, ".js");
           const output = result.outputs.get(outputPath)!;
 
-          // Should preserve external imports
           assertEquals(output.content.includes("react") || output.content.includes("React"), true);
         });
       });
@@ -335,7 +308,6 @@ describe(
 
           const fileCache = new Map<string, string>();
 
-          // Add dependency to cache
           fileCache.set(
             join(context.projectDir, "utils.js"),
             'export const helper = () => "help";',
@@ -343,20 +315,15 @@ describe(
 
           await bundleScript(source, options, result, esbuild, fileCache);
 
-          // Should add source to cache
           assertEquals(fileCache.has(source.path), true);
 
-          // Should create output or have dependency errors
           const _outputPath = source.path.replace(/\.(tsx?|jsx?)$/, ".js");
-          // Since utils.js is in cache but may not resolve properly, output may not exist
-          // The important thing is the cache was used
           assertEquals(fileCache.size > 0, true);
         });
       });
 
       it("handles CSS imports via plugin", async () => {
         await withTestContext("script-css-import", async (context) => {
-          // Create CSS file
           await Deno.writeTextFile(
             join(context.projectDir, "styles.css"),
             ".button { color: blue; }",
@@ -388,16 +355,12 @@ describe(
 
           await bundleScript(source, options, result, esbuild, fileCache);
 
-          // The bundler processes CSS files through the CSS plugin
-          // This test verifies the plugin system works
           const cssPath = join(context.projectDir, "styles.css");
 
-          // Check if CSS was added to outputs or if bundling succeeded/failed gracefully
           const hasCssOutput = result.outputs.has(cssPath);
           const hasAnyOutput = result.outputs.size > 0;
           const hasError = result.errors.length > 0;
 
-          // At least one of these should be true (output created OR error captured)
           assertEquals(hasCssOutput || hasAnyOutput || hasError, true);
         });
       });
@@ -435,7 +398,6 @@ describe(
           const outputPath = source.path.replace(/\.(tsx?|jsx?)$/, ".js");
           const output = result.outputs.get(outputPath)!;
 
-          // Should preserve dynamic import
           assertEquals(output.content.includes("import("), true);
         });
       });
@@ -471,8 +433,6 @@ describe(
           const outputPath = source.path.replace(/\.(tsx?|jsx?)$/, ".js");
           const output = result.outputs.get(outputPath)!;
 
-          // Should replace process.env.NODE_ENV with 'production'
-          // Minified output may optimize the entire expression
           assertEquals(output.content.length > 0, true);
         });
       });
@@ -506,10 +466,8 @@ describe(
 
           await bundleScript(source, options, result, esbuild, fileCache);
 
-          // Should have errors
           assertEquals(result.errors.length > 0, true);
 
-          // Should not create output
           const outputPath = source.path.replace(/\.(tsx?|jsx?)$/, ".js");
           assertEquals(result.outputs.has(outputPath), false);
         });
@@ -543,7 +501,6 @@ describe(
 
           await bundleScript(source, options, result, esbuild, fileCache);
 
-          // Should collect warnings (if any)
           assertEquals(Array.isArray(result.warnings), true);
         });
       });
@@ -598,7 +555,6 @@ describe(
             type: "js",
           };
 
-          // Test browser platform (ESM)
           const browserOptions: BundlerOptions = {
             sources: [],
             projectDir: context.projectDir,
@@ -620,7 +576,6 @@ describe(
           )!;
           assertExists(browserOutput);
 
-          // Test node platform (CJS)
           const nodeOptions: BundlerOptions = {
             sources: [],
             projectDir: context.projectDir,
@@ -640,7 +595,6 @@ describe(
           const nodeOutput = nodeResult.outputs.get(source.path.replace(/\.(tsx?|jsx?)$/, ".js"))!;
           assertExists(nodeOutput);
 
-          // Node output should use CommonJS
           assertEquals(
             nodeOutput.content.includes("exports") || nodeOutput.content.includes("module.exports"),
             true,
@@ -687,7 +641,6 @@ describe(
           const outputPath = source.path.replace(/\.(tsx?|jsx?)$/, ".js");
           const output = result.outputs.get(outputPath)!;
 
-          // With tree shaking, output should be very small
           assertEquals(output.content.length < 200, true);
         });
       });
@@ -724,7 +677,6 @@ describe(
           const outputPath = source.path.replace(/\.(tsx?|jsx?)$/, ".js");
           const output = result.outputs.get(outputPath)!;
 
-          // Should target es2020 (modern features supported)
           assertExists(output.content);
         });
       });

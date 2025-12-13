@@ -4,7 +4,6 @@ import { VirtualModuleSystem } from "../../../src/rendering/virtual-module-syste
 import { withTestContext } from "../../_helpers/context.ts";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 
-// Mock adapter for testing
 function createMockAdapter(): RuntimeAdapter {
   return {
     name: "test",
@@ -95,26 +94,20 @@ describe(
       export default function X(){ return <div>Hello</div>; }
     `;
       const url = await vms.registerModule("component:X", src, Deno.cwd());
-      // url should start with base
       assertEquals(url.startsWith("/_vf/modules"), true);
       const req = new Request(`http://localhost${url}`);
       const res = vms.handleRequest(req);
       assertEquals(res instanceof Response, true);
       const txt = await res?.text();
-      // Esbuild + import map transform should keep as ESM text
       assertEquals(typeof txt, "string");
-      // Existing module can be retrieved
       const mod = vms.getModule("component:X");
       assertEquals(!!mod, true);
-      // Not found path returns 404
       const notFound = vms.handleRequest(
         new Request("http://localhost/_vf/modules/does-not-exist"),
       );
       assertEquals(notFound?.status, 404);
-      // base path mismatch returns null
       const nullRes = vms.handleRequest(new Request("http://localhost/not-base"));
       assertEquals(nullRes, null);
-      // clear removes modules
       vms.clear();
       assertEquals(vms.getModule("component:X"), undefined);
     });
@@ -127,10 +120,8 @@ describe(
       assertEquals(res?.status, 200);
       assertExists(res);
       const ok = await res.text();
-      // Check for transformed code
       assertEquals(ok.includes("export const x") || ok.includes("const x"), true);
 
-      // non-virtual path
       const miss = vms.handleRequest(new Request("http://x/not-virtual"));
       assertEquals(miss, null);
 
@@ -193,7 +184,6 @@ describe(
 
         assert(mod);
         assert(mod?.transformed);
-        // After transformation, JSX should be converted
         const transformed = mod?.transformed!;
         assert(transformed.length > 0);
       });
@@ -241,7 +231,6 @@ describe(
 
         assert(mod);
         assert(mod?.transformed);
-        // Transformed code should preserve import statements or have them resolved
         const transformed = mod?.transformed!;
         assert(transformed.includes("react") || transformed.includes("React"));
       });
@@ -254,14 +243,11 @@ describe(
       await vms.registerModule("keep:this", "export const keep = 1;", "/tmp");
       await vms.registerModule("clear:this", "export const clear = 2;", "/tmp");
 
-      // Verify both modules exist
       assert(vms.getModule("keep:this"));
       assert(vms.getModule("clear:this"));
 
-      // Clear all
       vms.clear();
 
-      // Verify all modules are gone
       assertEquals(vms.getModule("keep:this"), undefined);
       assertEquals(vms.getModule("clear:this"), undefined);
     });

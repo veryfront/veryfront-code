@@ -1,13 +1,3 @@
-/**
- * Comprehensive tests for core/bootstrap.ts
- *
- * Tests the critical framework initialization module including:
- * - Basic bootstrap flow with config loading
- * - FSAdapter initialization and integration
- * - Config reloading and cache invalidation
- * - Error handling and graceful degradation
- * - Edge cases and concurrent operations
- */
 
 import { assert, assertEquals, assertExists, assertRejects } from "std/assert/mod.ts";
 import { afterEach, describe, it } from "std/testing/bdd.ts";
@@ -16,9 +6,6 @@ import { clearConfigCache } from "@veryfront/config";
 import { join } from "std/path/mod.ts";
 import { denoAdapter } from "@veryfront/platform/adapters/deno.ts";
 
-// ============================================================================
-// Test Helpers
-// ============================================================================
 
 async function createTempDir(prefix: string): Promise<string> {
   return await Deno.makeTempDir({ prefix: `bootstrap_test_${prefix}_` });
@@ -63,7 +50,6 @@ function createBasicConfig(options: {
     };
   }
 
-  // Remove helper keys
   delete config.fsType;
   delete config.projectSlug;
   delete config.apiKey;
@@ -71,9 +57,6 @@ function createBasicConfig(options: {
   return `export default ${JSON.stringify(config, null, 2)};`;
 }
 
-// ============================================================================
-// 1. Basic Bootstrap Flow (10 tests)
-// ============================================================================
 
 describe("bootstrap - Basic Flow", () => {
   afterEach(() => {
@@ -266,9 +249,7 @@ describe("bootstrap - Basic Flow", () => {
 
       assertEquals(result.config.title, "Merged");
       assertEquals(result.config.dev?.port, 5000);
-      // Should have default host
       assertEquals(result.config.dev?.host, "localhost");
-      // Should have default build settings
       assertExists(result.config.build);
     } finally {
       await cleanupTempDir(projectDir);
@@ -276,9 +257,6 @@ describe("bootstrap - Basic Flow", () => {
   });
 });
 
-// ============================================================================
-// 2. FSAdapter Initialization (10 tests)
-// ============================================================================
 
 describe("bootstrap - FSAdapter Initialization", () => {
   afterEach(() => {
@@ -360,7 +338,6 @@ describe("bootstrap - FSAdapter Initialization", () => {
         };`,
       );
 
-      // Should fall back to local adapter when FSAdapter fails
       const result = await bootstrap(projectDir, adapter);
 
       assertExists(result);
@@ -380,17 +357,10 @@ describe("bootstrap - FSAdapter Initialization", () => {
         createBasicConfig({ fsType: "memory" }),
       );
 
-      // With fail-fast approach, unsupported adapter types should fall back to local
-      // (memory type logs error but continues with local filesystem)
-      // This test covers all FSAdapter types that fail initialization:
-      // - "memory": not implemented
-      // - "veryfront-api": would fail due to API client initialization
-      // - Any other unsupported type
       const result = await bootstrap(projectDir, adapter);
 
       assertExists(result);
       assertExists(result.config);
-      // Should use local filesystem as fallback
       assertEquals(result.usingFSAdapter, false);
     } finally {
       await cleanupTempDir(projectDir);
@@ -411,7 +381,6 @@ describe("bootstrap - FSAdapter Initialization", () => {
         };`,
       );
 
-      // Should reject invalid fs.type
       await assertRejects(
         () => bootstrap(projectDir, adapter),
         Error,
@@ -454,9 +423,6 @@ describe("bootstrap - FSAdapter Initialization", () => {
   });
 });
 
-// ============================================================================
-// 3. Config Reloading (10 tests)
-// ============================================================================
 
 describe("bootstrap - Config Reloading", () => {
   afterEach(() => {
@@ -477,9 +443,7 @@ describe("bootstrap - Config Reloading", () => {
       const result1 = await bootstrap(projectDir, adapter);
       assertEquals(result1.config.title, "Original");
 
-      // Clear cache and update config
       clearConfigCache();
-      // Add a small delay to ensure file system updates
       await new Promise((resolve) => setTimeout(resolve, 50));
       await writeConfigFile(
         projectDir,
@@ -507,7 +471,6 @@ describe("bootstrap - Config Reloading", () => {
 
       const result1 = await bootstrap(projectDir, adapter);
 
-      // Update file but don't clear cache
       await writeConfigFile(
         projectDir,
         "veryfront.config.js",
@@ -516,7 +479,6 @@ describe("bootstrap - Config Reloading", () => {
 
       const result2 = await bootstrap(projectDir, adapter);
 
-      // Should still see cached value
       assertEquals(result1.config.title, "Cached");
       assertEquals(result2.config.title, "Cached");
     } finally {
@@ -535,13 +497,10 @@ describe("bootstrap - Config Reloading", () => {
         `export default { title: 'Pre-Cache', dev: { port: 3000 } };`,
       );
 
-      // Load once to cache
       const result1 = await bootstrap(projectDir, adapter);
       assertEquals(result1.config.dev?.port, 3000);
 
-      // Clear and reload
       clearConfigCache();
-      // Add a small delay to ensure file system updates
       await new Promise((resolve) => setTimeout(resolve, 50));
 
       await writeConfigFile(
@@ -574,15 +533,12 @@ describe("bootstrap - Config Reloading", () => {
 
       clearConfigCache();
 
-      // Set invalid config - should now THROW instead of silently falling back
       await writeConfigFile(projectDir, "veryfront.config.js", `export default { invalid syntax`);
 
-      // With fail-fast approach, should throw error
       try {
         await bootstrap(projectDir, adapter);
         assert(false, "Should have thrown error for invalid syntax");
       } catch (error) {
-        // Expected - config with syntax errors should throw
         assertExists(error);
       }
     } finally {
@@ -658,7 +614,6 @@ describe("bootstrap - Config Reloading", () => {
 
       const result2 = await bootstrap(projectDir, adapter);
 
-      // Both should not use FSAdapter (local filesystem)
       assertEquals(result1.usingFSAdapter, false);
       assertEquals(result2.usingFSAdapter, false);
     } finally {
@@ -680,7 +635,6 @@ describe("bootstrap - Config Reloading", () => {
       const result1 = await bootstrap(projectDir, adapter);
       assertEquals(result1.config.description, "First config");
 
-      // Clear cache and wait a bit to ensure timestamp changes
       clearConfigCache();
       await new Promise((resolve) => setTimeout(resolve, 10));
 
@@ -702,7 +656,6 @@ describe("bootstrap - Config Reloading", () => {
     const projectDir = await createTempDir("empty_cache");
 
     try {
-      // Clear cache before anything
       clearConfigCache();
       await new Promise((resolve) => setTimeout(resolve, 50));
 
@@ -733,7 +686,6 @@ describe("bootstrap - Config Reloading", () => {
       const result1 = await bootstrap(projectDir, adapter);
       assertEquals(result1.config.description, "Version 1");
 
-      // Invalidate and reload
       clearConfigCache();
       await new Promise((resolve) => setTimeout(resolve, 50));
 
@@ -751,9 +703,6 @@ describe("bootstrap - Config Reloading", () => {
   });
 });
 
-// ============================================================================
-// 4. Error Handling (10 tests)
-// ============================================================================
 
 describe("bootstrap - Error Handling", () => {
   afterEach(() => {
@@ -769,7 +718,7 @@ describe("bootstrap - Error Handling", () => {
 
       assertExists(result);
       assertExists(result.config);
-      assertEquals(result.config.title, "Veryfront App"); // Default
+      assertEquals(result.config.title, "Veryfront App");
     } finally {
       await cleanupTempDir(projectDir);
     }
@@ -786,12 +735,10 @@ describe("bootstrap - Error Handling", () => {
         `export default { invalid syntax here`,
       );
 
-      // With fail-fast approach, should throw on invalid syntax
       try {
         await bootstrap(projectDir, adapter);
         assert(false, "Should have thrown error for invalid syntax");
       } catch (error) {
-        // Expected - invalid syntax should throw
         assertExists(error);
       }
     } finally {
@@ -810,12 +757,10 @@ describe("bootstrap - Error Handling", () => {
         `throw new Error('Runtime error'); export default {};`,
       );
 
-      // With fail-fast approach, should throw on runtime errors
       try {
         await bootstrap(projectDir, adapter);
         assert(false, "Should have thrown error for runtime error");
       } catch (error) {
-        // Expected - runtime errors should propagate
         assertExists(error);
       }
     } finally {
@@ -863,7 +808,6 @@ describe("bootstrap - Error Handling", () => {
         };`,
       );
 
-      // Should reject invalid fs type during validation
       await assertRejects(
         () => bootstrap(projectDir, adapter),
         Error,
@@ -888,7 +832,6 @@ describe("bootstrap - Error Handling", () => {
         };`,
       );
 
-      // Config validation should reject null for object fields
       await assertRejects(
         () => bootstrap(projectDir, adapter),
         Error,
@@ -933,12 +876,10 @@ describe("bootstrap - Error Handling", () => {
         `const x = undefined; x.property; export default {};`,
       );
 
-      // With fail-fast approach, should throw on evaluation errors
       try {
         await bootstrap(projectDir, adapter);
         assert(false, "Should have thrown error for evaluation error");
       } catch (error) {
-        // Expected - evaluation errors should propagate
         assertExists(error);
       }
     } finally {
@@ -992,9 +933,6 @@ describe("bootstrap - Error Handling", () => {
   });
 });
 
-// ============================================================================
-// 5. Dev/Prod Mode (5 tests)
-// ============================================================================
 
 describe("bootstrap - Dev and Prod Modes", () => {
   afterEach(() => {
@@ -1076,7 +1014,6 @@ describe("bootstrap - Dev and Prod Modes", () => {
     const projectDir = await createTempDir("default_modes");
 
     try {
-      // No config file
 
       const devResult = await bootstrapDev(projectDir, adapter);
       clearConfigCache();
@@ -1091,9 +1028,6 @@ describe("bootstrap - Dev and Prod Modes", () => {
   });
 });
 
-// ============================================================================
-// 6. Edge Cases (10 tests)
-// ============================================================================
 
 describe("bootstrap - Edge Cases", () => {
   afterEach(() => {
@@ -1248,7 +1182,6 @@ describe("bootstrap - Edge Cases", () => {
 
       assertExists(result);
       assertExists(result.config);
-      // Should have all defaults
       assertExists(result.config.title);
       assertExists(result.config.build);
     } finally {
@@ -1261,14 +1194,12 @@ describe("bootstrap - Edge Cases", () => {
     const projectDir = await createTempDir("priority");
 
     try {
-      // Create all three config files
       await writeConfigFile(projectDir, "veryfront.config.js", `export default { title: 'JS' };`);
       await writeConfigFile(projectDir, "veryfront.config.ts", `export default { title: 'TS' };`);
       await writeConfigFile(projectDir, "veryfront.config.mjs", `export default { title: 'MJS' };`);
 
       const result = await bootstrap(projectDir, adapter);
 
-      // Should use .js first
       assertEquals(result.config.title, "JS");
     } finally {
       await cleanupTempDir(projectDir);
@@ -1323,7 +1254,6 @@ describe("bootstrap - Edge Cases", () => {
     const projectDir2 = await createTempDir("success_config");
 
     try {
-      // First bootstrap with invalid config in separate directory
       await writeConfigFile(
         projectDir1,
         "veryfront.config.js",
@@ -1336,7 +1266,6 @@ describe("bootstrap - Edge Cases", () => {
         // Expected to fail
       }
 
-      // Try with valid config in different directory
       await writeConfigFile(projectDir2, "veryfront.config.js", createBasicConfig());
 
       const result = await bootstrap(projectDir2, adapter);

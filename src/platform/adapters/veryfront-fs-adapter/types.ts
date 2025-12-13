@@ -35,7 +35,9 @@ export interface FSAdapterConfig {
     apiKey?: string;
     apiToken?: string;
     projectSlug?: string;
+    /** @deprecated Use apiBaseUrl instead */
     baseUrl?: string;
+    apiBaseUrl?: string;
     cache?: {
       enabled?: boolean;
       ttl?: number;
@@ -89,7 +91,7 @@ export function createVeryfrontConfig(config: FSAdapterConfig): VeryfrontConfig 
   }
 
   return {
-    apiBaseUrl: config.veryfront.baseUrl || "",
+    apiBaseUrl: config.veryfront.apiBaseUrl || config.veryfront.baseUrl || "",
     apiToken: config.veryfront.apiToken || config.veryfront.apiKey || "",
     projectSlug: config.veryfront.projectSlug || "",
     cache: {

@@ -49,7 +49,6 @@ async function closeResponse(res: Response | undefined | null) {
     // ignore cancellation errors in tests
   }
   try {
-    // fallback read in case cancel is a no-op
     await res.arrayBuffer();
   } catch (_err) {
     // body may already be consumed
@@ -71,9 +70,6 @@ export interface TestServer {
   } | null;
 }
 
-/**
- * Wait for a server to be ready by checking if it responds to requests
- */
 export async function waitForServerReady(
   server: TestServer,
   options: { timeout?: number; checkPath?: string; retryDelay?: number } = {},
@@ -83,12 +79,10 @@ export async function waitForServerReady(
   const hostname = server.hostname || server.addr?.hostname || "localhost";
   const url = `http://${hostname}:${port}${checkPath}`;
 
-  // If server has a ready promise, wait for it first
   if (server.ready && typeof server.ready.then === "function") {
     await withTimeout(server.ready, timeout, "Server ready");
   }
 
-  // Then verify the server is actually responding
   const startTime = Date.now();
   let lastError: Error | null = null;
   let attempts = 0;
@@ -98,17 +92,10 @@ export async function waitForServerReady(
     try {
       const response = await fetchWithTimeout(url, 2000);
       try {
-        // For pages (checkPath="/"), require successful response (200-399)
-        // For other endpoints, any response means server is ready
-        const isPageRequest = checkPath === "/";
-        const minAcceptableStatus = isPageRequest ? 200 : 200;
-        const maxAcceptableStatus = isPageRequest ? 400 : 600;
-
-        if (response.status >= minAcceptableStatus && response.status < maxAcceptableStatus) {
-          // Make one more request to ensure stability
+        if (response.status >= 200 && response.status < 600) {
           const verifyResponse = await fetchWithTimeout(url, 2000);
           try {
-            if (verifyResponse.status >= minAcceptableStatus && verifyResponse.status < maxAcceptableStatus) {
+            if (verifyResponse.status >= 200 && verifyResponse.status < 600) {
               return;
             }
           } finally {
@@ -120,7 +107,6 @@ export async function waitForServerReady(
       }
     } catch (error) {
       lastError = error as Error;
-      // Only wait if we haven't exceeded timeout
       if (Date.now() - startTime < timeout) {
         await sleep(retryDelay);
       }
@@ -132,9 +118,6 @@ export async function waitForServerReady(
   );
 }
 
-/**
- * Wait for a server to stop responding
- */
 export async function waitForServerStopped(
   server: TestServer,
   options: { timeout?: number; checkPath?: string } = {},
@@ -150,13 +133,11 @@ export async function waitForServerStopped(
     try {
       const res = await fetchWithTimeout(url, 100);
       try {
-        // If fetch succeeds, server is still running
         await sleep(50);
       } finally {
         await closeResponse(res);
       }
     } catch {
-      // Fetch failed, server is stopped
       return;
     }
   }
@@ -164,9 +145,6 @@ export async function waitForServerStopped(
   throw new Error(`Server still running after ${timeout}ms`);
 }
 
-/**
- * Run a test with a server, ensuring proper setup and cleanup
- */
 export async function withTestServer<T extends TestServer>(
   createServer: () => Promise<T>,
   testFn: (server: T) => Promise<void>,
@@ -195,9 +173,6 @@ export async function withTestServer<T extends TestServer>(
   }
 }
 
-/**
- * Create a dev server with proper lifecycle management
- */
 export async function createTestDevServer(options: {
   projectDir: string;
   port?: number;
@@ -213,7 +188,6 @@ export async function createTestDevServer(options: {
     fileWatcherDebounceMs: options.fileWatcherDebounceMs,
   });
 
-  // Add port and hostname to the server object for consistency
   const testServer = server as TestServer;
   testServer.port = port;
   testServer.hostname = options.hostname || "localhost";
@@ -221,9 +195,6 @@ export async function createTestDevServer(options: {
   return testServer;
 }
 
-/**
- * Assert response status with better error message
- */
 export function assertResponseOk(response: Response, message?: string): void {
   if (!response.ok) {
     throw new Error(
@@ -232,9 +203,6 @@ export function assertResponseOk(response: Response, message?: string): void {
   }
 }
 
-/**
- * Assert response status is in expected range
- */
 export function assertResponseStatus(
   response: Response,
   expectedStatus: number | number[],
@@ -249,28 +217,20 @@ export function assertResponseStatus(
   }
 }
 
-/**
- * Clean up test directory with error handling
- */
 export async function cleanupTestDir(dir: string): Promise<void> {
   try {
     await Deno.remove(dir, { recursive: true });
   } catch (error) {
     if (error instanceof Deno.errors.NotFound) {
-      // Already removed, ignore
       return;
     }
     console.debug?.(`[test-helper] Failed to remove test dir ${dir}:`, error);
   }
 }
 
-/**
- * Create a test project directory with standard structure
- */
 export async function createTestProjectDir(): Promise<string> {
   const dir = await Deno.makeTempDir({ prefix: "veryfront_test_" });
 
-  // Create standard directories
   await Deno.mkdir(join(dir, "pages"), { recursive: true });
   await Deno.mkdir(join(dir, "components"), { recursive: true });
   await Deno.mkdir(join(dir, "public"), { recursive: true });
@@ -278,9 +238,6 @@ export async function createTestProjectDir(): Promise<string> {
   return dir;
 }
 
-/**
- * Create a production server with proper lifecycle management
- */
 export async function createTestProductionServer(options: {
   projectDir: string;
   port?: number;
@@ -293,7 +250,6 @@ export async function createTestProductionServer(options: {
     hostname: options.hostname || "127.0.0.1",
   });
 
-  // Add port and hostname to the server object for test consistency
   const testServer = server as TestServer;
   testServer.port = port;
   testServer.hostname = options.hostname || "127.0.0.1";

@@ -17,7 +17,7 @@ describe(
     `;
       const mod = await mdxRenderer.loadModuleESM(compiled);
       const Component = mod.MDXContent as () => React.ReactElement;
-      const el = Component(); // Call the component function directly
+      const el = Component();
       assert(React.isValidElement(el));
       assertEquals((el as any).type, "div");
       assertEquals((el as any).props.children, "hi");
@@ -36,7 +36,7 @@ describe(
         props: { children: React.ReactNode },
       ) => React.ReactElement;
       const child = React.createElement("span", null, "X");
-      const el = Layout({ children: child }); // Call the layout function
+      const el = Layout({ children: child });
       assert(React.isValidElement(el));
       assertEquals((el as any).type, "section");
       assertEquals(((el as any).props.children as any).type, "span");
@@ -51,7 +51,7 @@ describe(
     `;
       const mod = await mdxRenderer.loadModuleESM(compiled);
       const Component = mod.MDXContent as () => React.ReactElement;
-      const el = Component(); // Call the component function
+      const el = Component();
       assert(React.isValidElement(el));
       assertEquals((el as any).type, "p");
       assertEquals((el as any).props.children, "foo");
@@ -65,7 +65,7 @@ describe(
       const mod = await mdxRenderer.loadModuleESM(compiled);
       const Component = mod.MDXContent as () => React.ReactElement;
       try {
-        Component(); // Call the component - should throw
+        Component();
         assert(false, "Should have thrown");
       } catch (err) {
         assertEquals((err as Error).message, "boom");
@@ -104,12 +104,10 @@ describe(
         props: { components?: Record<string, any> },
       ) => React.ReactElement;
       const customH1 = (props: any) => React.createElement("header", null, props.children);
-      const el = Component({ components: { h1: customH1 } }); // Call with props
+      const el = Component({ components: { h1: customH1 } });
       assert(React.isValidElement(el));
-      // Check that custom component was used
-      assertEquals(typeof (el as any).type, "function"); // Type is the custom component
-      assertEquals((el as any).props.children, "Heading"); // Props passed correctly
-      // Call the custom component to verify it renders 'header'
+      assertEquals(typeof (el as any).type, "function");
+      assertEquals((el as any).props.children, "Heading");
       const rendered = (el as any).type((el as any).props);
       assertEquals((rendered as any).type, "header");
     });
@@ -128,7 +126,7 @@ describe(
     `;
       const mod = await mdxRenderer.loadModuleESM(compiled);
       const Component = mod.MDXContent as () => React.ReactElement;
-      const el = Component(); // Call the component
+      const el = Component();
       assert(React.isValidElement(el));
       assertEquals((el as any).type, "div");
     });
@@ -153,7 +151,7 @@ describe(
     `;
       const mod = await mdxRenderer.loadModuleESM(compiled);
       const Component = mod.MDXContent as () => React.ReactElement;
-      const el = Component(); // Call the component
+      const el = Component();
       assert(React.isValidElement(el));
       assertEquals((el as any).type, "article");
     });
@@ -168,7 +166,7 @@ describe(
     `;
       const mod = await mdxRenderer.loadModuleESM(compiled);
       const Component = mod.MDXContent as () => React.ReactElement;
-      const el = Component(); // Call the component
+      const el = Component();
       assert(React.isValidElement(el));
       assertEquals((el as any).props.children, "The answer is 42");
     });
@@ -189,7 +187,6 @@ describe(
       assertEquals(typeof mod1.title, "string");
       assert(mod1.MDXLayout || (mod1 as any).__vfLayout !== undefined);
       const mod2 = await mdxRenderer.loadModuleESM(code);
-      // Cached instance equality by object identity
       assert(mod1 === mod2);
     });
 
@@ -223,9 +220,7 @@ describe(
       const mod2 = await mdxRenderer.loadModuleESM(code2);
       const mod1Again = await mdxRenderer.loadModuleESM(code1);
 
-      // Same code should return cached module
       assert(mod1 === mod1Again);
-      // Different code should return different module
       assert(mod1 !== mod2);
     });
 

@@ -1,4 +1,3 @@
-import type { RuntimeAdapter } from "@veryfront/platform/adapters/index.ts";
 import { CacheManager } from "./data-fetching-cache.ts";
 import { ServerDataFetcher } from "./server-data-fetcher.ts";
 import { StaticDataFetcher } from "./static-data-fetcher.ts";
@@ -11,10 +10,10 @@ export class DataFetcher {
   private staticFetcher: StaticDataFetcher;
   private pathsFetcher: StaticPathsFetcher;
 
-  constructor(adapter?: RuntimeAdapter) {
+  constructor() {
     this.cacheManager = new CacheManager();
-    this.serverFetcher = new ServerDataFetcher(adapter);
-    this.staticFetcher = new StaticDataFetcher(this.cacheManager, adapter);
+    this.serverFetcher = new ServerDataFetcher();
+    this.staticFetcher = new StaticDataFetcher(this.cacheManager);
     this.pathsFetcher = new StaticPathsFetcher();
   }
 

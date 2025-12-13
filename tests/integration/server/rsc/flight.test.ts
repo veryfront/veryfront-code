@@ -5,7 +5,6 @@ import { withTestContext } from '../../../_helpers/context.ts'
 import { assertDrained, drainEventLoop } from '../../../_helpers/utils.ts'
 import { cleanupBundler } from '../../../../src/rendering/cleanup.ts'
 
-// Clean up renderer intervals to prevent resource leaks
 afterAll(async () => {
   await cleanupBundler()
 })
@@ -13,7 +12,6 @@ afterAll(async () => {
 describe('Flight endpoint', {}, () => {
   it('removed: returns 410', async () => {
     await withTestContext('rsc-flight-501', async (context) => {
-      // Set RSC environment variable
       context.setEnv({
         VERYFRONT_EXPERIMENTAL_RSC: '1',
       })
@@ -22,7 +20,6 @@ describe('Flight endpoint', {}, () => {
 
       let h: Awaited<ReturnType<typeof startProductionServer>> | null = null
       try {
-        // Remove default app directory
         await Deno.remove(`${context.projectDir}/app`, { recursive: true })
 
         await Deno.writeTextFile(`${context.projectDir}/pages/index.mdx`, '# Home')
@@ -43,9 +40,7 @@ describe('Flight endpoint', {}, () => {
         if (h?.stop) {
           await h.stop()
         }
-        // Give the server time to clean up
         await new Promise((resolve) => setTimeout(resolve, 500))
-        // Deterministically drain and verify; give more attempts for Flight
         await drainEventLoop(10, 50)
         await assertDrained({
           allowResources: [/MessagePort/i, /Timer/i, /^fetch/i],

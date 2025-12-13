@@ -156,11 +156,11 @@ export function parsePageDataFromHTML(html: string): {
 
   if (pageDataScript) {
     try {
-      const content = pageDataScript.textContent;
-      if (!content) {
+      const scriptContent = pageDataScript.textContent;
+      if (!scriptContent) {
         logger.warn("[dom-utils] Page data script in HTML has no content");
       } else {
-        pageData = JSON.parse(content) as PageData;
+        pageData = JSON.parse(scriptContent) as PageData;
       }
     } catch (error) {
       logger.error("[dom-utils] Failed to parse page data from HTML:", error);

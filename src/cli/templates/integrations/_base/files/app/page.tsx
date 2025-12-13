@@ -4,8 +4,6 @@ import { Chat } from 'veryfront/ai/components'
 import { useChat } from 'veryfront/ai/react'
 import { ServiceConnections } from './components/ServiceConnections'
 
-// Define services for this project - automatically populated by scaffolding
-// Each integration adds its service here when installed
 const SERVICES = [
   // Services will be dynamically populated based on installed integrations
   // For now, we fetch from the status API instead
@@ -38,10 +36,8 @@ export default function ChatPage() {
   )
 }
 
-// Component to show integration status from the API
 function IntegrationStatus() {
   // Note: ServiceConnections fetches from /api/auth/status
-  // We'll use the integrations/status API which has the full list
   return <ServiceStatusFromAPI />
 }
 

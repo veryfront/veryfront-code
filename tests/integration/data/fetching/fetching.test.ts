@@ -1,17 +1,3 @@
-/**
- * Comprehensive Tests for Data Fetching System (fetching.ts)
- *
- * Coverage areas:
- * - Basic data fetching (development vs production mode)
- * - Cache hit/miss scenarios
- * - ISR revalidation (stale-while-revalidate pattern)
- * - Error handling in getServerData/getStaticData
- * - Cache key generation and clearing
- * - Static paths generation and errors
- * - Edge cases: null results, redirects, notFound responses
- * - Background revalidation logic
- * - RuntimeAdapter integration
- */
 
 import { assertEquals, assertExists, assertRejects } from "std/assert/mod.ts";
 import { beforeEach, describe, it } from "std/testing/bdd.ts";
@@ -23,11 +9,9 @@ import {
   type PageWithData,
   redirect,
 } from "@veryfront/data/index.ts";
-import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 
 type StaticDataContext = Omit<DataContext, "request" | "query">;
 
-// Test utilities
 function makeContext(
   url: string,
   params: Record<string, string | string[]> = {},
@@ -41,40 +25,19 @@ function makeContext(
   };
 }
 
-function makeMockAdapter(envVars: Record<string, string> = {}): Partial<RuntimeAdapter> {
-  return {
-    env: {
-      get: (key: string) => envVars[key],
-      set: () => {},
-      has: (key: string) => key in envVars,
-      delete: () => {},
-      toObject: () => envVars,
-    },
-  } as Partial<RuntimeAdapter>;
-}
-
-// Type-safe helper for accessing dynamic props
 // deno-lint-ignore no-explicit-any
 function getProp<T>(obj: any, key: string): T {
   return obj?.[key];
 }
 
-// All DataFetcher tests create instances with internal cleanup intervals
-// Wrap all test suites to disable resource sanitization
 Deno.test({
   name: "DataFetcher - Comprehensive Tests",
   sanitizeResources: false,
   sanitizeOps: false,
   fn: () => {
     describe("DataFetcher - Basic Initialization", () => {
-      it("should create a DataFetcher without adapter", () => {
+      it("should create a DataFetcher", () => {
         const fetcher = new DataFetcher();
-        assertExists(fetcher);
-      });
-
-      it("should create a DataFetcher with adapter", () => {
-        const adapter = makeMockAdapter();
-        const fetcher = new DataFetcher(adapter as RuntimeAdapter);
         assertExists(fetcher);
       });
     });
@@ -372,39 +335,18 @@ Deno.test({
         );
       });
 
-      it("should not log errors when VERYFRONT_DEBUG is not set", async () => {
-        const adapter = makeMockAdapter({});
-        const fetcher = new DataFetcher(adapter as RuntimeAdapter);
-
+      it("should propagate errors from getServerData", async () => {
         const pageModule: PageWithData = {
           default: () => null,
           getServerData: () => {
-            throw new Error("Silent error");
+            throw new Error("Server data error");
           },
         };
 
         await assertRejects(
           () => fetcher.fetchData(pageModule, context),
           Error,
-          "Silent error",
-        );
-      });
-
-      it("should handle errors when VERYFRONT_DEBUG is enabled", async () => {
-        const adapter = makeMockAdapter({ VERYFRONT_DEBUG: "true" });
-        const fetcher = new DataFetcher(adapter as RuntimeAdapter);
-
-        const pageModule: PageWithData = {
-          default: () => null,
-          getServerData: () => {
-            throw new Error("Debug error");
-          },
-        };
-
-        await assertRejects(
-          () => fetcher.fetchData(pageModule, context),
-          Error,
-          "Debug error",
+          "Server data error",
         );
       });
     });
@@ -500,9 +442,8 @@ Deno.test({
         );
       });
 
-      it("should handle errors when VERYFRONT_DEBUG is enabled for static data", async () => {
-        const adapter = makeMockAdapter({ VERYFRONT_DEBUG: "true" });
-        const fetcher = new DataFetcher(adapter as RuntimeAdapter);
+      it("should propagate errors from getStaticData with context", async () => {
+        // DataFetcher no longer takes adapter - errors propagate directly
 
         const pageModule: PageWithData = {
           default: () => null,
@@ -766,21 +707,16 @@ Deno.test({
         const result1 = await fetcher.fetchData(pageModule, context, "production");
         assertEquals(getProp<number>(result1.props, "count"), 1);
 
-        // Within revalidation window - should return cached
         const result2 = await fetcher.fetchData(pageModule, context, "production");
         assertEquals(getProp<number>(result2.props, "count"), 1);
 
-        // Wait for revalidation window to pass
         await new Promise((resolve) => setTimeout(resolve, 60));
 
-        // Should trigger background revalidation but return stale
         const result3 = await fetcher.fetchData(pageModule, context, "production");
         assertEquals(getProp<number>(result3.props, "count"), 1);
 
-        // Wait for background revalidation to complete
         await new Promise((resolve) => setTimeout(resolve, 50));
 
-        // Should now have fresh data
         const result4 = await fetcher.fetchData(pageModule, context, "production");
         assertEquals(getProp<number>(result4.props, "count"), 2);
       });
@@ -805,15 +741,12 @@ Deno.test({
 
         await new Promise((resolve) => setTimeout(resolve, 60));
 
-        // Should return stale data immediately
         const result2 = await fetcher.fetchData(pageModule, context, "production");
         assertEquals(getProp<number>(result2.props, "timestamp"), timestamp1);
         assertEquals(getProp<number>(result2.props, "count"), 1);
 
-        // Wait for background revalidation
         await new Promise((resolve) => setTimeout(resolve, 50));
 
-        // Should have new data
         const result3 = await fetcher.fetchData(pageModule, context, "production");
         assertEquals(getProp<number>(result3.props, "count"), 2);
       });
@@ -836,17 +769,14 @@ Deno.test({
         await fetcher.fetchData(pageModule, context, "production");
         await new Promise((resolve) => setTimeout(resolve, 20));
 
-        // Make multiple requests during revalidation
         await Promise.all([
           fetcher.fetchData(pageModule, context, "production"),
           fetcher.fetchData(pageModule, context, "production"),
           fetcher.fetchData(pageModule, context, "production"),
         ]);
 
-        // Wait for revalidation to complete
         await new Promise((resolve) => setTimeout(resolve, 100));
 
-        // Should only have been called twice (initial + one revalidation)
         assertEquals(callCount, 2);
       });
 
@@ -892,14 +822,11 @@ Deno.test({
 
         await new Promise((resolve) => setTimeout(resolve, 60));
 
-        // Should return stale data
         const result2 = await fetcher.fetchData(pageModule, context, "production");
         assertEquals(getProp<number>(result2.props, "count"), 1);
 
-        // Wait for failed revalidation
         await new Promise((resolve) => setTimeout(resolve, 50));
 
-        // Should still have old data
         const result3 = await fetcher.fetchData(pageModule, context, "production");
         assertEquals(getProp<number>(result3.props, "count"), 1);
       });
@@ -1344,7 +1271,6 @@ Deno.test({
         const result1 = await fetcher.fetchData(pageModule, context1, "production");
         const result2 = await fetcher.fetchData(pageModule, context2, "production");
 
-        // Cache key is based on pathname and params, not protocol, so they share cache
         assertEquals(callCount, 1);
         assertEquals(getProp<number>(result1.props, "count"), 1);
         assertEquals(getProp<number>(result2.props, "count"), 1);
@@ -1367,7 +1293,6 @@ Deno.test({
         const result1 = await fetcher.fetchData(pageModule, context1, "production");
         const result2 = await fetcher.fetchData(pageModule, context2, "production");
 
-        // Cache key is based on pathname and params, not host, so they share cache
         assertEquals(callCount, 1);
         assertEquals(getProp<number>(result1.props, "count"), 1);
         assertEquals(getProp<number>(result2.props, "count"), 1);
@@ -1391,10 +1316,7 @@ Deno.test({
           fetcher.fetchData(pageModule, context, "production"),
         ]);
 
-        // All concurrent requests race - they don't wait for each other, so all execute
-        // First one to finish sets cache, but others may have already started
         assertEquals(callCount >= 1, true);
-        // All results should have values (whether from concurrent executions or cache)
         assertExists(getProp<number>(results[0]?.props, "count"));
         assertExists(getProp<number>(results[1]?.props, "count"));
         assertExists(getProp<number>(results[2]?.props, "count"));
@@ -1473,4 +1395,4 @@ Deno.test({
       });
     });
   }, // End of Deno.test fn
-}); // End of Deno.test
+});

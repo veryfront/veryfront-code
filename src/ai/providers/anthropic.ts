@@ -97,13 +97,22 @@ export class AnthropicProvider extends BaseProvider {
         }
 
         for (const toolCall of msg.tool_calls) {
+          let parsedInput: Record<string, unknown>;
+          if (typeof toolCall.function.arguments === "string") {
+            try {
+              parsedInput = JSON.parse(toolCall.function.arguments);
+            } catch {
+              // If arguments are malformed, use empty object to avoid crashing
+              parsedInput = {};
+            }
+          } else {
+            parsedInput = toolCall.function.arguments;
+          }
           content.push({
             type: "tool_use",
             id: toolCall.id,
             name: toolCall.function.name,
-            input: typeof toolCall.function.arguments === "string"
-              ? JSON.parse(toolCall.function.arguments)
-              : toolCall.function.arguments,
+            input: parsedInput,
           });
         }
 

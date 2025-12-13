@@ -1,15 +1,9 @@
-/**
- * Tests for Static Site Generation (SSG) - Pages Router
- *
- * Tests getStaticPaths generation, dynamic route handling, and build output
- */
 
 import { assertEquals, assertExists } from "std/assert/mod.ts";
 import { afterAll, beforeEach, describe, it } from "std/testing/bdd.ts";
 import { DataFetcher, type PageWithData } from "@veryfront/data";
 import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";
 
-// Clean up renderer intervals to prevent resource leaks
 afterAll(async () => {
   await cleanupBundler();
 });
@@ -222,7 +216,6 @@ describe("SSG - Pages Router", () => {
       const pageModule: PageWithData = {
         default: () => null,
         getStaticPaths: async () => {
-          // Simulate fetching from API
           await new Promise((r) => setTimeout(r, 10));
           return {
             paths: [
@@ -242,7 +235,6 @@ describe("SSG - Pages Router", () => {
     });
 
     it("should handle paths from external API", async () => {
-      // Simulate fetching blog posts from CMS
       const fetchPosts = async () => {
         await new Promise((r) => setTimeout(r, 5));
         return [
@@ -383,7 +375,6 @@ describe("SSG - Pages Router", () => {
         },
       };
 
-      // Should throw the error (after logging it)
       let thrown = false;
       try {
         await fetcher.getStaticPaths(pageModule);
@@ -414,12 +405,10 @@ describe("SSG - Pages Router", () => {
         }),
       };
 
-      // Get paths
       const paths = await fetcher.getStaticPaths(pageModule);
       assertExists(paths);
       assertEquals(paths.paths.length, 2);
 
-      // Get data for each path
       const data1 = await fetcher.fetchData(
         pageModule,
         {

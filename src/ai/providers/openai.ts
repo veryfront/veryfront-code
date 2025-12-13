@@ -123,11 +123,20 @@ export class OpenAIProvider extends BaseProvider {
 
     const message = choice.message;
 
-    const toolCalls = message.tool_calls?.map((tc) => ({
-      id: tc.id,
-      name: tc.function.name,
-      arguments: JSON.parse(tc.function.arguments),
-    }));
+    const toolCalls = message.tool_calls?.map((tc) => {
+      let parsedArguments: Record<string, unknown> = {};
+      try {
+        parsedArguments = JSON.parse(tc.function.arguments);
+      } catch {
+        // If arguments are malformed, use empty object to avoid crashing
+        parsedArguments = {};
+      }
+      return {
+        id: tc.id,
+        name: tc.function.name,
+        arguments: parsedArguments,
+      };
+    });
 
     return {
       text: message.content || "",

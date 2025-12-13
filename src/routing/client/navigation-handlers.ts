@@ -30,7 +30,8 @@ export class NavigationHandlers {
       const anchor = findAnchorElement(event.target as HTMLElement);
       if (!anchor || !isInternalLink(anchor)) return;
 
-      const href = anchor.getAttribute("href")!;
+      const href = anchor.getAttribute("href");
+      if (!href) return;
       event.preventDefault();
       callbacks.onNavigate(href);
     };

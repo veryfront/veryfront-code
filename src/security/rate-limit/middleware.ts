@@ -96,11 +96,17 @@ export function createRateLimiter(config: RateLimitConfig) {
 
       const response = await next(request);
 
+      // Create a new response with rate limit headers to avoid mutating potentially immutable responses
+      const newHeaders = new Headers(response.headers);
       for (const [name, value] of headers.entries()) {
-        response.headers.set(name, value);
+        newHeaders.set(name, value);
       }
 
-      return response;
+      return new Response(response.body, {
+        status: response.status,
+        statusText: response.statusText,
+        headers: newHeaders,
+      });
     } catch (error) {
       logger.error("Rate limiting error", {
         error: error instanceof Error ? error.message : String(error),

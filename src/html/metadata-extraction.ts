@@ -21,6 +21,8 @@ export function extractHTMLMetadata(
     icons: merged.icons || [],
     scripts: [],
     styles: [],
+    lang: merged.lang,
+    bodyClass: merged.bodyClass,
   };
 
   if (merged.meta && Array.isArray(merged.meta)) {
@@ -57,10 +59,26 @@ export function extractHTMLMetadata(
     metadata.styles = merged.styles;
   }
 
+  // Copy remaining custom properties (excluding already-processed standard keys)
+  const processedKeys = new Set([
+    "title",
+    "description",
+    "meta",
+    "links",
+    "scripts",
+    "styles",
+    "og",
+    "twitter",
+    "viewport",
+    "themeColor",
+    "icons",
+    "metadata",
+    "lang",
+    "bodyClass",
+  ]);
+
   Object.keys(merged).forEach((key) => {
-    if (
-      !["title", "description", "meta", "links", "scripts", "styles", "og", "twitter"].includes(key)
-    ) {
+    if (!processedKeys.has(key)) {
       metadata[key] = merged[key];
     }
   });

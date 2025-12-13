@@ -66,9 +66,9 @@ export class AuthHandler extends BaseHandler {
   }
 
   private loadAuthConfig(ctx: HandlerContext): void {
-    this.basicUser = ctx.adapter.env.get("VERYFRONT_BASIC_USER") || "";
-    this.basicPass = ctx.adapter.env.get("VERYFRONT_BASIC_PASS") || "";
-    this.bearerToken = ctx.adapter.env.get("VERYFRONT_BEARER_TOKEN") || "";
+    this.basicUser = ctx.adapter.env.get("VERYFRONT_BASIC_USER") || null;
+    this.basicPass = ctx.adapter.env.get("VERYFRONT_BASIC_PASS") || null;
+    this.bearerToken = ctx.adapter.env.get("VERYFRONT_BEARER_TOKEN") || null;
   }
 
   private shouldUseBasic(): boolean {

@@ -60,32 +60,35 @@ export async function* walk(
 
     const entries = await fs.readdir(dir, { withFileTypes: true });
     for (const entry of entries) {
-      const path = nodePath.join(dir, entry.name);
+      const fullPath = nodePath.join(dir, entry.name);
 
-      if (skip && skip.some((pattern: RegExp) => pattern.test(path))) continue;
+      if (skip && skip.some((pattern: RegExp) => pattern.test(fullPath))) continue;
+
+      const isSymlink = entry.isSymbolicLink();
 
       if (entry.isDirectory()) {
         if (includeDirs) {
           yield {
-            path,
+            path: fullPath,
             name: entry.name,
             isFile: false,
             isDirectory: true,
-            isSymlink: false,
+            isSymlink,
           };
         }
-        yield* walkDir(path, depth + 1);
+        yield* walkDir(fullPath, depth + 1);
       } else if (entry.isFile() && includeFiles) {
         if (exts) {
-          const ext = path.split(".").pop();
+          // Use nodePath.extname for proper extension extraction
+          const ext = nodePath.extname(entry.name).slice(1); // Remove leading dot
           if (!ext || !exts.includes(ext)) continue;
         }
         yield {
-          path,
+          path: fullPath,
           name: entry.name,
           isFile: true,
           isDirectory: false,
-          isSymlink: false,
+          isSymlink,
         };
       }
     }

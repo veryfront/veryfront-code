@@ -256,8 +256,8 @@ export function parseDuration(duration: string | number): number {
 
   const num = parseFloat(value);
 
-  if (num <= 0) {
-    throw new Error(`Duration must be positive: ${duration}`);
+  if (num < 0) {
+    throw new Error(`Duration cannot be negative: ${duration}`);
   }
 
   switch (unit) {

@@ -10,11 +10,34 @@ import { createMemoryInstruments } from "./memory-instruments.ts";
 import { createRenderInstruments } from "./render-instruments.ts";
 import { createRscInstruments } from "./rsc-instruments.ts";
 
+/**
+ * Initialize all metric instruments
+ *
+ * This function creates all OpenTelemetry metric instruments organized by category:
+ * - HTTP metrics (requests, duration, active requests)
+ * - Cache metrics (hits, misses, size)
+ * - Render metrics (duration, count, errors)
+ * - RSC metrics (render, stream, actions)
+ * - Build metrics (duration, bundle size)
+ * - Data fetching metrics (duration, count, errors)
+ * - Memory metrics (usage, heap)
+ *
+ * @param meter - OpenTelemetry meter instance
+ * @param config - Metrics configuration
+ * @param runtimeState - Runtime state for observable metrics
+ * @returns All metric instruments
+ *
+ * @example
+ * ```ts
+ * const instruments = initializeInstruments(meter, config, runtimeState);
+ * instruments.httpRequestCounter?.add(1, { method: "GET", status: 200 });
+ * ```
+ */
 export function initializeInstruments(
   meter: Meter,
   config: MetricsConfig,
   runtimeState: RuntimeState,
-): Promise<MetricsInstruments> {
+): MetricsInstruments {
   const instruments: MetricsInstruments = {
     httpRequestCounter: null,
     httpRequestDuration: null,
@@ -72,5 +95,5 @@ export function initializeInstruments(
     logger.warn("[metrics] Failed to initialize metric instruments", error);
   }
 
-  return Promise.resolve(instruments);
+  return instruments;
 }
