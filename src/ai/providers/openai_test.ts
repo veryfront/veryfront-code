@@ -9,60 +9,6 @@
 import { assertEquals, assertExists } from "https://deno.land/std@0.220.0/assert/mod.ts";
 import { describe, it } from "@std/testing/bdd.ts";
 
-/**
- * Parse internal stream events from newline-delimited JSON
- */
-function parseInternalEvents(
-  text: string,
-): Array<{ type: string; [key: string]: unknown }> {
-  const events: Array<{ type: string; [key: string]: unknown }> = [];
-  const lines = text.split("\n").filter((line) => line.trim());
-
-  for (const line of lines) {
-    try {
-      const event = JSON.parse(line);
-      events.push(event);
-    } catch {
-      // Skip invalid JSON
-    }
-  }
-
-  return events;
-}
-
-/**
- * Simulate OpenAI Responses API SSE stream
- */
-function createMockResponsesAPIStream(events: string[]): ReadableStream {
-  const encoder = new TextEncoder();
-
-  return new ReadableStream({
-    start(controller) {
-      for (const event of events) {
-        controller.enqueue(encoder.encode(event + "\n"));
-      }
-      controller.close();
-    },
-  });
-}
-
-/**
- * Helper to collect stream into string
- */
-async function collectStreamToString(stream: ReadableStream): Promise<string> {
-  const reader = stream.getReader();
-  const decoder = new TextDecoder();
-  let result = "";
-
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    result += decoder.decode(value);
-  }
-
-  return result;
-}
-
 describe("OpenAI Responses API - Event Types", () => {
   describe("Text Content Events", () => {
     it("should transform response.output_text.delta to content event", () => {
@@ -336,7 +282,7 @@ describe("OpenAI Responses API - Full Stream Simulation", () => {
 
   it("should handle a reasoning response stream", () => {
     // Simulate OpenAI Responses API events with reasoning
-    const events = [
+    const _openAIEvents = [
       { type: "response.reasoning_summary_text.delta", delta: "Let me think" },
       { type: "response.reasoning_summary_text.delta", delta: " about this" },
       { type: "response.output_text.delta", delta: "The answer is 4" },
@@ -366,7 +312,7 @@ describe("OpenAI Responses API - Full Stream Simulation", () => {
 
   it("should handle a tool call response stream", () => {
     // Simulate OpenAI Responses API events with tool call
-    const events = [
+    const _openAIEvents = [
       {
         type: "response.output_item.added",
         item: { type: "function_call", call_id: "call_1", name: "get_weather" },
