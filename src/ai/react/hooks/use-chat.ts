@@ -479,36 +479,47 @@ async function handleStreamingResponse(
   const decoder = new TextDecoder();
 
   // Track text blocks by ID (v5 uses IDs to group text-start/delta/end)
-  const textBlocks = new Map<string, { text: string; state: "streaming" | "done" }>();
+  // Order is assigned when first content arrives (at text-delta), not at text-start
+  const textBlocks = new Map<string, { text: string; state: "streaming" | "done"; order: number | null }>();
   let currentTextId = "";
   let messageId = "";
 
-  // Track tool calls by ID
-  const toolCalls = new Map<string, StreamingToolCall>();
+  // Track tool calls by ID (with order for proper sequencing)
+  const toolCalls = new Map<string, StreamingToolCall & { order: number }>();
 
   // Track reasoning blocks by ID
-  const reasoningBlocks = new Map<string, StreamingReasoning>();
+  const reasoningBlocks = new Map<string, StreamingReasoning & { order: number }>();
 
   // Message parts for v5 structured messages
   const messageParts: UIMessagePart[] = [];
 
-  // Helper to build current parts for onUpdate
-  const buildCurrentParts = (): UIMessagePart[] => {
-    const parts: UIMessagePart[] = [];
+  // Global order counter to track sequence of parts
+  let partOrderCounter = 0;
 
-    // Add text parts
+  // Helper to build current parts for onUpdate - preserves stream order
+  const buildCurrentParts = (): UIMessagePart[] => {
+    // Collect all parts with their order
+    const orderedParts: Array<{ order: number; part: UIMessagePart }> = [];
+
+    // Add text parts (only if they have content and an order)
     for (const [, block] of textBlocks) {
-      if (block.text) {
-        parts.push({ type: "text", text: block.text, state: block.state });
+      if (block.text && block.order !== null) {
+        orderedParts.push({
+          order: block.order,
+          part: { type: "text", text: block.text, state: block.state },
+        });
       }
     }
 
     // Add reasoning parts
     for (const [, reasoning] of reasoningBlocks) {
-      parts.push({
-        type: "reasoning",
-        text: reasoning.text,
-        state: reasoning.isComplete ? "done" : "streaming",
+      orderedParts.push({
+        order: reasoning.order,
+        part: {
+          type: "reasoning",
+          text: reasoning.text,
+          state: reasoning.isComplete ? "done" : "streaming",
+        },
       });
     }
 
@@ -516,30 +527,37 @@ async function handleStreamingResponse(
     for (const [, tool] of toolCalls) {
       if (tool.dynamic) {
         // Dynamic tools use "dynamic-tool" part type (AI SDK v5)
-        parts.push({
-          type: "dynamic-tool",
-          toolCallId: tool.toolCallId,
-          toolName: tool.toolName,
-          state: tool.state,
-          input: tool.input,
-          output: tool.output,
-          errorText: tool.error,
+        orderedParts.push({
+          order: tool.order,
+          part: {
+            type: "dynamic-tool",
+            toolCallId: tool.toolCallId,
+            toolName: tool.toolName,
+            state: tool.state,
+            input: tool.input,
+            output: tool.output,
+            errorText: tool.error,
+          },
         });
       } else {
         // Static tools use "tool-${toolName}" part type (AI SDK v5)
-        parts.push({
-          type: `tool-${tool.toolName}` as const,
-          toolCallId: tool.toolCallId,
-          toolName: tool.toolName,
-          state: tool.state,
-          input: tool.input,
-          output: tool.output,
-          errorText: tool.error,
-        } as ToolUIPart);
+        orderedParts.push({
+          order: tool.order,
+          part: {
+            type: `tool-${tool.toolName}` as const,
+            toolCallId: tool.toolCallId,
+            toolName: tool.toolName,
+            state: tool.state,
+            input: tool.input,
+            output: tool.output,
+            errorText: tool.error,
+          } as ToolUIPart,
+        });
       }
     }
 
-    return parts;
+    // Sort by order and extract parts
+    return orderedParts.sort((a, b) => a.order - b.order).map((p) => p.part);
   };
 
   while (true) {
@@ -580,7 +598,8 @@ async function handleStreamingResponse(
             // v5: Text block start
             case "text-start":
               currentTextId = parsed.id || generateClientId("text");
-              textBlocks.set(currentTextId, { text: "", state: "streaming" });
+              // Don't assign order yet - assign when first content arrives (text-delta)
+              textBlocks.set(currentTextId, { text: "", state: "streaming", order: null });
               break;
 
             // v5: Text delta
@@ -590,13 +609,18 @@ async function handleStreamingResponse(
 
               // Initialize text block if needed
               if (!textBlocks.has(textId)) {
-                textBlocks.set(textId, { text: "", state: "streaming" });
+                textBlocks.set(textId, { text: "", state: "streaming", order: null });
                 currentTextId = textId;
               }
 
               // Append delta to text block
               const block = textBlocks.get(textId)!;
               block.text += delta;
+
+              // Assign order on first content (when text actually starts arriving)
+              if (block.order === null) {
+                block.order = partOrderCounter++;
+              }
 
               // Update UI with current parts
               onUpdate?.(buildCurrentParts(), messageId);
@@ -620,12 +644,13 @@ async function handleStreamingResponse(
             // v5: Tool input start
             case "tool-input-start": {
               const toolCallId = parsed.toolCallId || generateClientId("tool");
-              const toolCall: StreamingToolCall = {
+              const toolCall: StreamingToolCall & { order: number } = {
                 toolCallId,
                 toolName: parsed.toolName || "unknown",
                 inputText: "",
                 state: "input-streaming",
                 dynamic: parsed.dynamic === true,
+                order: partOrderCounter++,
               };
               toolCalls.set(toolCallId, toolCall);
               onUpdate?.(buildCurrentParts(), messageId);
@@ -744,10 +769,11 @@ async function handleStreamingResponse(
             // v5: Reasoning start
             case "reasoning-start": {
               const reasoningId = parsed.id || generateClientId("reasoning");
-              const reasoning: StreamingReasoning = {
+              const reasoning: StreamingReasoning & { order: number } = {
                 id: reasoningId,
                 text: "",
                 isComplete: false,
+                order: partOrderCounter++,
               };
               reasoningBlocks.set(reasoningId, reasoning);
               onUpdate?.(buildCurrentParts(), messageId);
@@ -784,8 +810,11 @@ async function handleStreamingResponse(
 
             // v5: Stream finish
             case "finish": {
-              if (messageParts.length > 0 || textBlocks.size > 0) {
-                onMessage(createAssistantMessage(messageId, messageParts));
+              // Use buildCurrentParts() to get the latest state from toolCalls Map
+              // instead of messageParts which may have stale tool states
+              const finalParts = buildCurrentParts();
+              if (finalParts.length > 0) {
+                onMessage(createAssistantMessage(messageId, finalParts));
               }
               break;
             }

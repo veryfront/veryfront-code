@@ -155,14 +155,13 @@ export { createMCPServer, MCPServer } from "./mcp/server.ts";
 // - Embeddings: embed, embedMany
 // - Utilities: createIdGenerator, smoothStream, cosineSimilarity
 // - Tool helper: aiTool (renamed from 'tool' to avoid conflict with veryfront's tool)
-// - Experimental: experimental_generateImage, experimental_generateSpeech, experimental_transcribe, experimental_createMCPClient
+// - Experimental: experimental_generateImage, experimental_generateSpeech, experimental_transcribe
 export {
   convertToModelMessages,
   cosineSimilarity,
   createIdGenerator,
   embed,
   embedMany,
-  experimental_createMCPClient,
   experimental_generateImage,
   experimental_generateSpeech,
   experimental_transcribe,
