@@ -34,3 +34,4 @@ bin/
 
 # NPM config
 .npmrc
+deno.lock
