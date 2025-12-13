@@ -576,6 +576,7 @@ export class AgentRuntime {
       // Track reasoning part ID for streaming
       const reasoningPartId = generateId("reasoning");
       let accumulatedReasoning = "";
+      let reasoningStarted = false;
 
       // Vercel AI SDK Data Stream Protocol event handler
       const handleEvent = (event: AgentStreamEvent) => {
@@ -598,6 +599,16 @@ export class AgentRuntime {
           }
 
           case "reasoning": {
+            // Emit reasoning-start on first reasoning event
+            if (!reasoningStarted) {
+              reasoningStarted = true;
+              const reasoningStartEvent = JSON.stringify({
+                type: "reasoning-start",
+                id: reasoningPartId,
+              });
+              controller.enqueue(encoder.encode(`data: ${reasoningStartEvent}\n\n`));
+            }
+
             // Emit reasoning-delta event for reasoning models
             // This allows the UI to display the reasoning process
             accumulatedReasoning += event.content;
@@ -674,6 +685,15 @@ export class AgentRuntime {
 
           case "finish":
             finishReason = event.finishReason;
+
+            // Emit reasoning-end if we had reasoning content
+            if (reasoningStarted && accumulatedReasoning) {
+              const reasoningEndEvent = JSON.stringify({
+                type: "reasoning-end",
+                id: reasoningPartId,
+              });
+              controller.enqueue(encoder.encode(`data: ${reasoningEndEvent}\n\n`));
+            }
             break;
 
           case "usage":
