@@ -28,7 +28,7 @@ export async function compileMDXRuntime(
     const { frontmatter: extractedFrontmatter } = extracted;
 
     if (filePath && (target === "browser" || target === "server")) {
-      body = rewriteBodyImports(body, { filePath, target, baseUrl });
+      body = rewriteBodyImports(body, { filePath, target, baseUrl, projectDir });
     }
 
     const compiled = await compile(body, {
@@ -46,7 +46,7 @@ export async function compileMDXRuntime(
     let compiledCode = String(compiled);
 
     if (filePath && (target === "browser" || target === "server")) {
-      compiledCode = rewriteCompiledImports(compiledCode, { filePath, target, baseUrl });
+      compiledCode = rewriteCompiledImports(compiledCode, { filePath, target, baseUrl, projectDir });
     }
 
     return {
@@ -57,6 +57,11 @@ export async function compileMDXRuntime(
       nodeMap: new Map(),
     };
   } catch (error) {
+    logger.error("[MDX Compiler] Compilation failed:", {
+      filePath,
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
     throw toError(createError({
       type: "build",
       message: `MDX compilation error: ${

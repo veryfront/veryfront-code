@@ -39,15 +39,17 @@ export function buildCSP(
   // Development CSP - relaxed for HMR and dev tools
   // Note: unsafe-eval allowed in dev only for source maps and dev tools
   // Note: 'self' covers /_vf_modules/ (same-origin module server)
-  // Note: Nonces REQUIRED for inline module scripts - 'unsafe-inline' doesn't work for modules
+  // Note: In dev, we allow 'unsafe-inline' for flexibility with external scripts/styles
   const defaultCsp = isDev
     ? [
-      "default-src 'self'",
-      `style-src 'self' 'unsafe-inline' https://esm.sh https://cdnjs.cloudflare.com https://cdn.veryfront.com https://cdn.jsdelivr.net https://cdn.tailwindcss.com`,
-      "img-src 'self' data: https://cdn.veryfront.com https://cdnjs.cloudflare.com",
-      `script-src 'self' 'nonce-${nonce}' 'unsafe-eval' https://esm.sh https://cdn.tailwindcss.com`,
-      "connect-src 'self' https://esm.sh ws://localhost:* wss://localhost:*",
-      "font-src 'self' data: https://cdnjs.cloudflare.com",
+      "default-src 'self' https: data: blob:",
+      `style-src 'self' 'unsafe-inline' https: data:`,
+      "img-src 'self' data: blob: https: http:",
+      `script-src 'self' 'unsafe-inline' 'unsafe-eval' https:`,
+      "connect-src 'self' https: wss: ws: http:",
+      "font-src 'self' data: https:",
+      "worker-src 'self' blob:",
+      "object-src 'none'",
     ].join("; ")
     : [
       "default-src 'self'",

@@ -104,7 +104,14 @@ export async function loadMDXLayout(
 ): Promise<BundledReact.ComponentType<{ components?: MDXComponents }> | undefined> {
   const map = await loadImportMap(projectDir, adapter);
   const code = transformImportsWithMap(bundle.compiledCode, map);
+  logger.info("[loadMDXLayout] Loading module, code length:", code.length);
   const mod = (await mdxRenderer.loadModuleESM(code)) as MDXModule;
+  logger.info("[loadMDXLayout] Module exports:", {
+    hasMDXLayout: !!mod.MDXLayout,
+    hasMainLayout: !!mod.MainLayout,
+    hasDefault: !!mod.default,
+    exportKeys: Object.keys(mod),
+  });
   return mod.MDXLayout || mod.MainLayout || mod.default;
 }
 
@@ -139,16 +146,22 @@ export async function applyMDXLayout(
   mergedComponents: MDXComponents,
   adapter: RuntimeAdapter,
 ): Promise<BundledReact.ReactElement> {
+  logger.info("[applyMDXLayout] Starting...");
   const React = await getProjectReact();
   const LayoutFn = await loadMDXLayout(bundle, projectDir, adapter);
+  logger.info("[applyMDXLayout] LayoutFn found:", !!LayoutFn, "LayoutFn.name:", (LayoutFn as any)?.name);
   if (LayoutFn) {
     const child = ensureValidChild(element, React);
-    return React.createElement(
+    logger.info("[applyMDXLayout] Creating element with layout, childType:", (child as any)?.type?.name || typeof (child as any)?.type);
+    const wrappedElement = React.createElement(
       LayoutFn,
       { components: mergedComponents },
       child,
     ) as BundledReact.ReactElement;
+    logger.info("[applyMDXLayout] Created element, wrappedType:", (wrappedElement as any)?.type?.name || typeof (wrappedElement as any)?.type);
+    return wrappedElement;
   }
+  logger.warn("[applyMDXLayout] No LayoutFn found, returning element unchanged");
   return element;
 }
 

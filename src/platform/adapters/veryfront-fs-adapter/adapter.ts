@@ -12,6 +12,7 @@ import { DirectoryOperations } from "./directory-operations.ts";
 import { StatOperations } from "./stat-operations.ts";
 import { clearSSRModuleCache } from "@veryfront/modules/react-loader/index.ts";
 import { clearRouterDetectionCache } from "../../../rendering/router-detection.ts";
+import { clearModulePathCache, invalidateModulePaths } from "../../../build/transforms/mdx/esm-module-loader.ts";
 import { ReloadNotifier } from "../../../server/reload-notifier.ts";
 
 const INVALIDATION_DEBOUNCE_MS = 100;
@@ -33,6 +34,8 @@ export class VeryfrontFSAdapter implements FSAdapter {
   private wsHeartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private wsLastPong: number = Date.now();
   private invalidationTimer: ReturnType<typeof setTimeout> | null = null;
+  private selectiveInvalidationTimer: ReturnType<typeof setTimeout> | null = null;
+  private pendingChangedPaths: Set<string> = new Set();
   private apiBaseUrl: string;
   private apiToken: string;
 
@@ -122,10 +125,20 @@ export class VeryfrontFSAdapter implements FSAdapter {
         logger.debug("[VeryfrontFSAdapter] WebSocket message received:", { data: event.data });
         try {
           const data = JSON.parse(event.data as string);
-          logger.info("[VeryfrontFSAdapter] Parsed message:", { type: data.type, source: data.data?.source });
+          const changedPaths = data.data?.changedPaths as string[] | undefined;
+          logger.info("[VeryfrontFSAdapter] Parsed message:", {
+            type: data.type,
+            source: data.data?.source,
+            changedPaths: changedPaths?.length || 0,
+          });
           if (data.type === "poke") {
-            // Debounce invalidation to batch multiple pokes and wait for API to complete
-            this.scheduleInvalidation();
+            // Use selective invalidation if we know which files changed
+            if (changedPaths && changedPaths.length > 0) {
+              this.scheduleSelectiveInvalidation(changedPaths);
+            } else {
+              // Fallback to full invalidation
+              this.scheduleInvalidation();
+            }
           }
         } catch (err) {
           logger.debug("[VeryfrontFSAdapter] WebSocket message parse error", { error: err });
@@ -196,6 +209,65 @@ export class VeryfrontFSAdapter implements FSAdapter {
     }, INVALIDATION_DEBOUNCE_MS);
   }
 
+  private scheduleSelectiveInvalidation(changedPaths: string[]): void {
+    // Accumulate changed paths for batching
+    for (const path of changedPaths) {
+      this.pendingChangedPaths.add(path);
+    }
+
+    // Debounce: reset timer on each poke to batch rapid changes
+    if (this.selectiveInvalidationTimer) {
+      clearTimeout(this.selectiveInvalidationTimer);
+    }
+    logger.info("[VeryfrontFSAdapter] Scheduling selective invalidation", {
+      newPaths: changedPaths.length,
+      totalPending: this.pendingChangedPaths.size,
+      debounceMs: INVALIDATION_DEBOUNCE_MS,
+    });
+    this.selectiveInvalidationTimer = setTimeout(() => {
+      this.selectiveInvalidationTimer = null;
+      this.performSelectiveInvalidation();
+    }, INVALIDATION_DEBOUNCE_MS);
+  }
+
+  private async performSelectiveInvalidation(): Promise<void> {
+    const startTime = Date.now();
+    const changedPaths = Array.from(this.pendingChangedPaths);
+    this.pendingChangedPaths.clear();
+
+    logger.info("[VeryfrontFSAdapter] Performing selective invalidation", {
+      changedPaths,
+      count: changedPaths.length,
+    });
+
+    // Only invalidate file content cache for changed files
+    for (const path of changedPaths) {
+      this.cache.delete(`file:content:${path}`);
+      this.cache.delete(`file:text:${path}`);
+      this.cache.delete(`file:stat:${path}`);
+    }
+
+    // Invalidate only the changed module paths (not all modules)
+    invalidateModulePaths(changedPaths);
+
+    // Fetch fresh file list from API
+    try {
+      const files = await this.client.listAllFiles();
+      this.cache.set("files:all", files);
+    } catch (error) {
+      logger.warn("[VeryfrontFSAdapter] Failed to fetch files during selective invalidation", { error });
+    }
+
+    // Notify browser to reload
+    ReloadNotifier.notify();
+
+    const durationMs = Date.now() - startTime;
+    logger.info("[VeryfrontFSAdapter] Selective invalidation complete", {
+      changedPaths: changedPaths.length,
+      durationMs,
+    });
+  }
+
   private async performInvalidation(): Promise<void> {
     const startTime = Date.now();
 
@@ -208,6 +280,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
     this.dirOps.clearTree();
     clearSSRModuleCache();
     clearRouterDetectionCache();
+    clearModulePathCache(); // Clear in-memory path cache, disk cache uses content-based hashing
 
     // Step 2: Fetch fresh file list from API - this blocks until API has committed changes
     // This guarantees content is ready before we trigger reload

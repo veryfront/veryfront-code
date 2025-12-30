@@ -44,5 +44,34 @@ export function getDevStyles(nonce?: string): string {
         animation-timing-function: cubic-bezier(0, 0, 0.2, 1);
       }
     }
+
+    /* View Transitions for smooth page navigation */
+    @view-transition {
+      navigation: auto;
+    }
+
+    ::view-transition-old(root),
+    ::view-transition-new(root) {
+      animation-duration: 0.2s;
+      animation-timing-function: ease-out;
+    }
+
+    ::view-transition-old(root) {
+      animation-name: vf-fade-out;
+    }
+
+    ::view-transition-new(root) {
+      animation-name: vf-fade-in;
+    }
+
+    @keyframes vf-fade-out {
+      from { opacity: 1; }
+      to { opacity: 0; }
+    }
+
+    @keyframes vf-fade-in {
+      from { opacity: 0; }
+      to { opacity: 1; }
+    }
   </style>`;
 }

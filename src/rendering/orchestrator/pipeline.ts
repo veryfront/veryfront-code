@@ -13,6 +13,7 @@ import type { RenderOptions, RenderResult } from "./types.ts";
 import { DataFetcher } from "@veryfront/data/index.ts";
 import type { DataContext } from "@veryfront/data/types.ts";
 import { clearSSRModuleCache } from "@veryfront/modules/react-loader/index.ts";
+import { setupSSRGlobals } from "../ssr-globals.ts";
 
 export interface RenderPipelineConfig {
   pageResolver: PageResolver;
@@ -42,14 +43,155 @@ export class RenderPipeline {
     return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("").slice(0, 16);
   }
 
+  // Cache of transformed modules to avoid reprocessing
+  private moduleCache = new Map<string, string>();
+  // Cache of fetched esm.sh modules
+  private esmCache = new Map<string, string>();
+
+  // Fetch and cache an esm.sh module
+  private async fetchEsmModule(url: string, tmpDir: string, localAdapter: RuntimeAdapter): Promise<string> {
+    if (this.esmCache.has(url)) {
+      return this.esmCache.get(url)!;
+    }
+
+    logger.debug("[RenderPipeline] Fetching esm.sh module:", url);
+
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error(`Failed to fetch ${url}: ${response.status}`);
+    }
+
+    let code = await response.text();
+
+    // Transform relative esm.sh paths to absolute URLs
+    // esm.sh code is often minified with no spaces (e.g., from"/@pkg/...")
+    // Also handle relative paths like "./dist/..." by resolving against the original URL
+
+    // Get the base URL for resolving relative paths
+    const urlBase = url.substring(0, url.lastIndexOf("/") + 1);
+
+    // Handle absolute paths (like "/@radix-ui/..." or "/react@...")
+    code = code.replace(
+      /import\s*(["'])(\/[^"']+)\1/g,
+      (match, quote, path) => `import${quote}https://esm.sh${path}${quote}`,
+    );
+    code = code.replace(
+      /from\s*(["'])(\/[^"']+)\1/g,
+      (match, quote, path) => `from${quote}https://esm.sh${path}${quote}`,
+    );
+    code = code.replace(
+      /export\s*\*\s*from\s*(["'])(\/[^"']+)\1/g,
+      (match, quote, path) => `export*from${quote}https://esm.sh${path}${quote}`,
+    );
+    code = code.replace(
+      /export\s*\{([^}]+)\}\s*from\s*(["'])(\/[^"']+)\2/g,
+      (match, exports, quote, path) => `export{${exports}}from${quote}https://esm.sh${path}${quote}`,
+    );
+
+    // Handle relative paths (like "./dist/..." or "../utils/...")
+    code = code.replace(
+      /import\s*(["'])(\.\.?\/[^"']+)\1/g,
+      (match, quote, path) => `import${quote}${new URL(path, urlBase).href}${quote}`,
+    );
+    code = code.replace(
+      /from\s*(["'])(\.\.?\/[^"']+)\1/g,
+      (match, quote, path) => `from${quote}${new URL(path, urlBase).href}${quote}`,
+    );
+    code = code.replace(
+      /export\s*\*\s*from\s*(["'])(\.\.?\/[^"']+)\1/g,
+      (match, quote, path) => `export*from${quote}${new URL(path, urlBase).href}${quote}`,
+    );
+    code = code.replace(
+      /export\s*\{([^}]+)\}\s*from\s*(["'])(\.\.?\/[^"']+)\2/g,
+      (match, exports, quote, path) => `export{${exports}}from${quote}${new URL(path, urlBase).href}${quote}`,
+    );
+
+    // Find ALL esm.sh URLs in the code and fetch/replace them
+    // Use a simple pattern to find all https://esm.sh URLs
+    const allEsmUrls = new Set<string>();
+    const urlPattern = /["'](https:\/\/esm\.sh\/[^"']+)["']/g;
+    let match;
+    while ((match = urlPattern.exec(code)) !== null) {
+      allEsmUrls.add(match[1]!);
+    }
+
+    // Fetch and cache each unique URL
+    for (const esmUrl of allEsmUrls) {
+      const cachedPath = await this.fetchEsmModule(esmUrl, tmpDir, localAdapter);
+      // Replace all occurrences of this URL
+      code = code.split(esmUrl).join(`file://${cachedPath}`);
+    }
+
+    // Generate hash for the URL to create unique filename
+    const hash = await this.generateHash(url);
+    const tempFilePath = `${tmpDir}/esm-${hash}.js`;
+    await localAdapter.fs.writeFile(tempFilePath, code);
+
+    this.esmCache.set(url, tempFilePath);
+    return tempFilePath;
+  }
+
   private async loadModule(filePath: string): Promise<any> {
-    const fileContent = await this.config.adapter.fs.readFile(filePath);
-    const { transformToESM } = await import("@veryfront/transforms/esm-transform.ts");
     const { getGlobalTmpDir } = await import(
       "@veryfront/modules/react-loader/index.ts"
     );
+    const tmpDir = await getGlobalTmpDir();
+    const localAdapter = await getLocalAdapter();
 
-    const transformedCode = await transformToESM(
+    // Transform the module and all its @/ dependencies
+    const tempFilePath = await this.transformModuleWithDeps(filePath, tmpDir, localAdapter);
+
+    // Read the transformed code and use it directly
+    // This avoids issues with import map not being applied to file:// URLs
+    const transformedCode = await localAdapter.fs.readFile(tempFilePath);
+
+    // Import using the original temp file path
+    // Use dynamic import with proper base URL resolution
+    const moduleUrl = `file://${tempFilePath}?t=${Date.now()}`;
+
+    try {
+      return await import(moduleUrl);
+    } catch (importError) {
+      // If file:// import fails, log the error for debugging
+      logger.error("[RenderPipeline] Failed to import module:", {
+        filePath,
+        tempFilePath,
+        error: importError instanceof Error ? importError.message : String(importError),
+      });
+      throw importError;
+    }
+  }
+
+  // Get the local lib directory path (veryfront-private/lib)
+  private getLocalLibDir(): string {
+    // This file is at src/rendering/orchestrator/pipeline.ts
+    // lib/ is at the root of veryfront-private
+    const currentFile = new URL(import.meta.url).pathname;
+    const srcIndex = currentFile.indexOf("/src/");
+    if (srcIndex !== -1) {
+      return currentFile.substring(0, srcIndex) + "/lib";
+    }
+    // Fallback: navigate up from current file location
+    return currentFile.replace(/\/src\/rendering\/orchestrator\/pipeline\.ts$/, "/lib");
+  }
+
+  private async transformModuleWithDeps(
+    filePath: string,
+    tmpDir: string,
+    localAdapter: RuntimeAdapter,
+    useLocalAdapter = false,
+  ): Promise<string> {
+    // Check if already transformed
+    if (this.moduleCache.has(filePath)) {
+      return this.moduleCache.get(filePath)!;
+    }
+
+    // Use local adapter for local lib files, project adapter for user project files
+    const adapter = useLocalAdapter ? localAdapter : this.config.adapter;
+    const fileContent = await adapter.fs.readFile(filePath);
+    const { transformToESM } = await import("@veryfront/transforms/esm-transform.ts");
+
+    let transformedCode = await transformToESM(
       fileContent,
       filePath,
       this.config.projectDir,
@@ -57,22 +199,166 @@ export class RenderPipeline {
       {
         projectId: this.config.projectDir,
         dev: this.config.mode === "development",
-        ssr: true, // Required for Node.js SSR - prevents esm.sh URL transformation
+        ssr: true,
       },
     );
 
-    const tmpDir = await getGlobalTmpDir();
+    // Find all @/ imports and transform them recursively
+    const aliasImportPattern = /from\s+["'](@\/[^"']+)["']/g;
+    const aliasImports: Array<{ full: string; path: string }> = [];
+    let match;
+    while ((match = aliasImportPattern.exec(transformedCode)) !== null) {
+      aliasImports.push({ full: match[0], path: match[1]! });
+    }
+
+    // Find and transform esm.sh URLs - fetch them and cache locally
+    // Dynamic import from file:// URLs doesn't support https:// imports
+    const esmImportPattern = /from\s+(["'])(https:\/\/esm\.sh\/[^"']+)\1/g;
+    const esmImports: Array<{ full: string; url: string }> = [];
+    let esmMatch;
+    while ((esmMatch = esmImportPattern.exec(transformedCode)) !== null) {
+      esmImports.push({ full: esmMatch[0], url: esmMatch[2]! });
+    }
+
+    // Fetch and cache each esm.sh dependency
+    for (const { full, url } of esmImports) {
+      const cachedPath = await this.fetchEsmModule(url, tmpDir, localAdapter);
+      transformedCode = transformedCode.replace(full, `from "file://${cachedPath}"`);
+    }
+
+    // Transform each @/ dependency
+    for (const { full, path } of aliasImports) {
+      const relativePath = path.substring(2); // Remove @/ prefix
+
+      let depFilePath: string | null = null;
+
+      // Check if this is a @/lib/... import (framework utilities)
+      // These are LOCAL to veryfront-private, not in the user's project
+      let isLocalLib = false;
+      if (relativePath.startsWith("lib/")) {
+        depFilePath = await this.findLocalLibFile(relativePath, localAdapter);
+        isLocalLib = true;
+      } else {
+        // For other @/ imports (shared/, etc.), look in user's project
+        depFilePath = await this.findSourceFile(`components/${relativePath}`);
+      }
+
+      if (depFilePath) {
+        const depTempPath = await this.transformModuleWithDeps(depFilePath, tmpDir, localAdapter, isLocalLib);
+        transformedCode = transformedCode.replace(full, `from "file://${depTempPath}"`);
+      } else {
+        logger.warn("[RenderPipeline] Could not find dependency:", path);
+      }
+    }
+
+    // Write transformed code to temp file
     const hash = await this.generateHash(filePath);
     const tempFilePath = `${tmpDir}/mod-${hash}.js`;
-    // Use local adapter for temp files - always local regardless of FSAdapter
-    const localAdapter = await getLocalAdapter();
     await localAdapter.fs.writeFile(tempFilePath, transformedCode);
 
-    const moduleUrl = `file://${tempFilePath}?t=${Date.now()}`;
-    return await import(moduleUrl);
+    this.moduleCache.set(filePath, tempFilePath);
+    return tempFilePath;
+  }
+
+  // Find local lib files (framework utilities in veryfront-private/lib)
+  private async findLocalLibFile(relativePath: string, localAdapter: RuntimeAdapter): Promise<string | null> {
+    const extensions = [".tsx", ".ts", ".jsx", ".js"];
+    const libDir = this.getLocalLibDir();
+    // relativePath is "lib/Router" or "lib/usePageContext" - strip "lib/" since we already have libDir
+    const fileName = relativePath.replace(/^lib\//, "");
+
+    // Try direct file match
+    for (const ext of extensions) {
+      const fullPath = `${libDir}/${fileName}${ext}`;
+      try {
+        await localAdapter.fs.stat(fullPath);
+        logger.debug("[RenderPipeline] Found local lib file:", fullPath);
+        return fullPath;
+      } catch {
+        // Try next extension
+      }
+    }
+
+    // Try index file
+    for (const ext of extensions) {
+      const fullPath = `${libDir}/${fileName}/index${ext}`;
+      try {
+        await localAdapter.fs.stat(fullPath);
+        logger.debug("[RenderPipeline] Found local lib index file:", fullPath);
+        return fullPath;
+      } catch {
+        // Try next extension
+      }
+    }
+
+    logger.debug("[RenderPipeline] Local lib file not found:", relativePath);
+    return null;
+  }
+
+  private async findSourceFile(basePath: string): Promise<string | null> {
+    const extensions = [".tsx", ".ts", ".jsx", ".js", ".mdx"];
+    const projectDir = this.config.projectDir;
+
+    // Try with components/ prefix first (for @/ aliased imports)
+    for (const ext of extensions) {
+      const fullPath = `${projectDir}/${basePath}${ext}`;
+      try {
+        await this.config.adapter.fs.stat(fullPath);
+        logger.debug("[RenderPipeline] Found file:", fullPath);
+        return fullPath;
+      } catch {
+        // Try next extension
+      }
+    }
+
+    // Try index file
+    for (const ext of extensions) {
+      const fullPath = `${projectDir}/${basePath}/index${ext}`;
+      try {
+        await this.config.adapter.fs.stat(fullPath);
+        logger.debug("[RenderPipeline] Found index file:", fullPath);
+        return fullPath;
+      } catch {
+        // Try next extension
+      }
+    }
+
+    // Try without components/ prefix (in case files are stored without it)
+    const withoutComponents = basePath.replace(/^components\//, "");
+    if (withoutComponents !== basePath) {
+      for (const ext of extensions) {
+        const fullPath = `${projectDir}/${withoutComponents}${ext}`;
+        try {
+          await this.config.adapter.fs.stat(fullPath);
+          logger.debug("[RenderPipeline] Found file (without components):", fullPath);
+          return fullPath;
+        } catch {
+          // Try next extension
+        }
+      }
+
+      // Also try index files for the path without components/
+      for (const ext of extensions) {
+        const fullPath = `${projectDir}/${withoutComponents}/index${ext}`;
+        try {
+          await this.config.adapter.fs.stat(fullPath);
+          logger.debug("[RenderPipeline] Found index file (without components):", fullPath);
+          return fullPath;
+        } catch {
+          // Try next extension
+        }
+      }
+    }
+
+    logger.debug("[RenderPipeline] File not found:", basePath);
+    return null;
   }
 
   async renderPage(slug: string, options?: RenderOptions): Promise<RenderResult> {
+    // Set up browser globals before any module loading to prevent crashes
+    // when third-party libraries check for browser features during SSR
+    setupSSRGlobals();
+
     // In development mode, clear SSR module cache to pick up file changes
     if (this.config.mode === "development") {
       clearSSRModuleCache();

@@ -22,9 +22,16 @@ export function resolvePathAliases(
   code: string,
   filePath: string,
   projectDir: string,
+  ssr = false,
 ): Promise<string> {
   const _normalizedProjectDir = projectDir.replace(/\\/g, "/").replace(/\/$/, "");
 
+  // For SSR, leave @/ imports unchanged - they'll be handled by the pipeline's recursive transformer
+  if (ssr) {
+    return Promise.resolve(code);
+  }
+
+  // For browser, use relative paths
   let relativeFilePath = filePath;
   if (filePath.startsWith(_normalizedProjectDir)) {
     relativeFilePath = filePath.substring(_normalizedProjectDir.length + 1);
@@ -45,7 +52,13 @@ export function resolvePathAliases(
   return Promise.resolve(replaceSpecifiers(code, (specifier) => {
     if (specifier.startsWith("@/")) {
       const path = specifier.substring(2);
+      // @/ maps to project root in veryfront projects
       const relativePath = depth === 0 ? `./${path}` : `${relativeToRoot}/${path}`;
+      // Add .js extension if path doesn't already have a valid JS/TS extension
+      // This ensures Deno can properly identify the module type when loading via HTTP
+      if (!/\.(tsx?|jsx?|mjs|cjs|mdx)$/.test(relativePath)) {
+        return relativePath + ".js";
+      }
       return relativePath;
     }
     return null;

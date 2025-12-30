@@ -8,6 +8,7 @@ import { createDefaultMDXComponents } from "../utils/index.ts";
 import type { LayoutCollector, LayoutCompiler, ProviderManager } from "../layouts/index.ts";
 import type { LayoutComponentCache } from "../layouts/utils/component-loader.ts";
 import { clearSSRModuleCache } from "@veryfront/modules/react-loader/index.ts";
+import { rendererLogger as logger } from "@veryfront/utils";
 
 export interface LayoutOrchestratorConfig {
   projectDir: string;
@@ -76,7 +77,10 @@ export class LayoutOrchestrator {
       moduleServerUrl: this.config.moduleServerUrl,
     });
 
-    return await layoutApplicator.applyLayouts(
+    logger.info("[LayoutOrchestrator] Before applyLayouts", {
+      pageElementType: (pageElement as any)?.type?.name || typeof (pageElement as any)?.type,
+    });
+    const result = await layoutApplicator.applyLayouts(
       pageElement,
       pageInfo,
       layoutBundle,
@@ -84,5 +88,10 @@ export class LayoutOrchestrator {
       providerItems,
       layoutDataMap,
     );
+    logger.info("[LayoutOrchestrator] After applyLayouts", {
+      resultType: (result as any)?.type?.name || typeof (result as any)?.type,
+      isSameElement: result === pageElement,
+    });
+    return result;
   }
 }

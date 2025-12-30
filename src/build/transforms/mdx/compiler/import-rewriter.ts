@@ -5,6 +5,7 @@ export interface ImportRewriterConfig {
   filePath: string;
   target: CompilationTarget;
   baseUrl?: string;
+  projectDir?: string;
 }
 
 function toAbsPath(spec: string, basedir: string): string {
@@ -35,7 +36,24 @@ function mapSpec(
   basedir: string,
   target: CompilationTarget,
   baseUrl?: string,
+  projectDir?: string,
 ): string {
+  // Handle @/ project-relative aliases
+  // @/ maps to components/ directory in veryfront projects
+  if (spec.startsWith("@/")) {
+    const relativePath = spec.slice(2); // Remove @/ prefix
+    if (target === "browser") {
+      // For browser, use module server endpoint
+      const path = `/_vf_modules/${relativePath}.js`;
+      return baseUrl ? `${baseUrl}${path}` : path;
+    } else {
+      // For server (SSR), leave @/ imports as-is
+      // The SSRModuleLoader's transformProjectAliasImports will handle these,
+      // properly resolving file extensions and transforming dependencies
+      return spec;
+    }
+  }
+
   const abs = toAbsPath(spec, basedir);
   if (typeof abs !== "string") return spec;
 
@@ -58,8 +76,9 @@ function rewriteLine(
   basedir: string,
   target: CompilationTarget,
   baseUrl?: string,
+  projectDir?: string,
 ): string {
-  const mapper = (spec: string) => mapSpec(spec, basedir, target, baseUrl);
+  const mapper = (spec: string) => mapSpec(spec, basedir, target, baseUrl, projectDir);
 
   line = line.replace(
     /^(\s*import\s+[^'";]+?from\s+)(["'])([^"']+)(\2)/,
@@ -87,7 +106,7 @@ export function rewriteBodyImports(body: string, config: ImportRewriterConfig): 
     .map((ln) => {
       const trimmed = ln.trimStart();
       if (trimmed.startsWith("import") || trimmed.startsWith("export")) {
-        return rewriteLine(ln, basedir, config.target, config.baseUrl);
+        return rewriteLine(ln, basedir, config.target, config.baseUrl, config.projectDir);
       }
       return ln;
     })
@@ -96,9 +115,20 @@ export function rewriteBodyImports(body: string, config: ImportRewriterConfig): 
 
 export function rewriteCompiledImports(compiledCode: string, config: ImportRewriterConfig): string {
   const basedir = dirname(config.filePath);
-  const mapper = (spec: string) => mapSpec(spec, basedir, config.target, config.baseUrl);
+  const mapper = (spec: string) => mapSpec(spec, basedir, config.target, config.baseUrl, config.projectDir);
 
   let code = compiledCode;
+
+  // Handle @/ aliased imports
+  code = code.replace(
+    /(from\s+["'])(@\/[^"']+)(["'])/g,
+    (_m, p1, p2, p3) => `${p1}${mapper(p2)}${p3}`,
+  );
+
+  code = code.replace(
+    /(import\(\s*["'])(@\/[^"']+)(["']\s*\))/g,
+    (_m, p1, p2, p3) => `${p1}${mapper(p2)}${p3}`,
+  );
 
   code = code.replace(
     /(from\s+["'])(\.{1,2}\/[^"']+)(["'])/g,
