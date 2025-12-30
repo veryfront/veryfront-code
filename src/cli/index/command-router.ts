@@ -12,6 +12,7 @@ import { analyzeChunksCommand } from "../commands/analyze-chunks.ts";
 import { cleanCommand } from "../commands/clean.ts";
 import { doctorCommand } from "../commands/doctor/index.ts";
 import { initCommand } from "../commands/init/index.ts";
+import { lockCommand } from "../commands/lock.ts";
 import { routesCommand } from "../commands/routes.ts";
 import {
   exitProcess,
@@ -95,6 +96,7 @@ Available commands:
   doctor        Run diagnostic checks
   clean         Clean build and cache directories
   routes        List application routes
+  lock          Manage remote import lockfile
   generate      Generate new pages/components
 
 Use 'veryfront <command> --help' for command-specific help.`);
@@ -294,6 +296,18 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
         showLogo();
         await routesCommand(cwd(), {
           json: Boolean(args.json) || Boolean(args.j),
+        });
+        break;
+
+      case "lock":
+        showLogo();
+        await lockCommand({
+          projectDir: cwd(),
+          update: Boolean(args.update) || Boolean(args.u),
+          verify: Boolean(args.verify),
+          clear: Boolean(args.clear),
+          list: Boolean(args.list) || Boolean(args.l),
+          force: Boolean(args.force) || Boolean(args.f),
         });
         break;
 

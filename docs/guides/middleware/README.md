@@ -115,6 +115,49 @@ export const middleware = [
 ];
 ```
 
+### Logger
+
+Log request/response information with customizable formatting.
+
+**Basic Usage:**
+
+```typescript
+import { logger } from 'veryfront/middleware';
+
+export const middleware = [
+  logger(), // Default logging
+];
+```
+
+**Environment-Specific Loggers:**
+
+```typescript
+import { devLogger, prodLogger } from 'veryfront/middleware';
+
+// Development: verbose, colorized output
+export const middleware = [
+  devLogger(),
+];
+
+// Production: JSON format for log aggregation
+export const middleware = [
+  prodLogger(),
+];
+```
+
+**Custom Configuration:**
+
+```typescript
+import { logger } from 'veryfront/middleware';
+
+export const middleware = [
+  logger({
+    format: 'combined', // 'dev', 'combined', 'short', 'tiny'
+    skip: (ctx) => ctx.request.url.includes('/health'),
+  }),
+];
+```
+
 ## Creating Custom Middleware
 
 You can create your own middleware functions. A middleware is a function that takes a `context` and a `next` function.

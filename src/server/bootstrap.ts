@@ -94,7 +94,20 @@ export async function bootstrap(
   if (fsAdapterInitialized) {
     logger.debug("[Bootstrap] Reloading config with FSAdapter");
     clearConfigCache();
-    config = await getConfig(projectDir, enhancedAdapter);
+    const originalConfig = config;
+    const reloadedConfig = await getConfig(projectDir, enhancedAdapter);
+    // If FSAdapter config returns defaults (no config file in remote project),
+    // keep the original local config. This happens when using veryfront-api
+    // FSAdapter where the project is remote but config is local.
+    const usesDefaultDevConfig = reloadedConfig.dev?.port === 3000 &&
+      reloadedConfig.dev?.host === "localhost" &&
+      !reloadedConfig.dev?.hmr;
+    if (usesDefaultDevConfig && originalConfig.dev) {
+      logger.debug("[Bootstrap] Keeping original config (FSAdapter returned defaults)");
+      config = originalConfig;
+    } else {
+      config = reloadedConfig;
+    }
   }
 
   logger.debug("[Bootstrap] Framework initialized successfully", {

@@ -134,8 +134,12 @@ export function applySecurityHeaders(
   const contentTypeOptions = getHeaderOverride("x-content-type-options") ?? "nosniff";
   headers.set("X-Content-Type-Options", contentTypeOptions);
 
-  const frameOptions = getHeaderOverride("x-frame-options") ?? "DENY";
-  headers.set("X-Frame-Options", frameOptions);
+  // In development mode, skip X-Frame-Options to allow Studio iframe embedding
+  // In production, default to DENY for security
+  if (!isDev) {
+    const frameOptions = getHeaderOverride("x-frame-options") ?? "DENY";
+    headers.set("X-Frame-Options", frameOptions);
+  }
 
   const xssProtection = getHeaderOverride("x-xss-protection") ?? "1; mode=block";
   headers.set("X-XSS-Protection", xssProtection);

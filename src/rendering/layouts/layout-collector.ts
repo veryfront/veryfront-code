@@ -113,6 +113,46 @@ export class LayoutCollector {
 
   private async collectAPILayoutConfiguration(wrappedAdapter: unknown): Promise<LayoutItem[]> {
     const nestedLayouts: LayoutItem[] = [];
+
+    // Check if layout value is a valid file path (not a UUID)
+    // Valid paths end with .tsx, .jsx, .ts, or .js
+    const isValidLayoutPath = (layout: string): boolean => {
+      return /\.(tsx|jsx|ts|js)$/.test(layout);
+    };
+
+    // Priority 1: Check config.layout from veryfront.config.ts
+    const configLayout = this.config?.layout;
+    if (configLayout && isValidLayoutPath(configLayout)) {
+      // Config layout can be absolute or relative to project
+      const layoutPath = configLayout.startsWith("/") || configLayout.startsWith(this.projectDir)
+        ? configLayout
+        : join(this.projectDir, configLayout);
+
+      const layoutExists = await (wrappedAdapter as { exists: (path: string) => Promise<boolean> })
+        .exists(layoutPath);
+
+      logger.debug("[LayoutCollector] Checking config layout", {
+        configLayout,
+        layoutPath,
+        exists: layoutExists,
+      });
+
+      if (layoutExists) {
+        nestedLayouts.push({
+          kind: "tsx",
+          component: undefined,
+          componentPath: layoutPath,
+          path: layoutPath,
+        });
+
+        logger.debug("[LayoutCollector] Added config layout to nestedLayouts", {
+          layoutPath,
+        });
+        return nestedLayouts;
+      }
+    }
+
+    // Priority 2: Check project data (legacy, from API project settings)
     const projectData = (wrappedAdapter as {
       getProjectData: () => { provider?: string; layout?: string } | undefined;
     }).getProjectData();
@@ -122,7 +162,7 @@ export class LayoutCollector {
       layout: projectData?.layout,
     });
 
-    if (projectData?.layout) {
+    if (projectData?.layout && isValidLayoutPath(projectData.layout)) {
       const layoutPath = join(this.projectDir, "components", projectData.layout);
       const layoutExists = await (wrappedAdapter as { exists: (path: string) => Promise<boolean> })
         .exists(layoutPath);
@@ -142,6 +182,31 @@ export class LayoutCollector {
 
         logger.debug("[LayoutCollector] Added API layout to nestedLayouts", {
           layoutPath,
+        });
+      }
+    } else if (projectData?.layout) {
+      logger.debug("[LayoutCollector] Skipping invalid layout value (not a file path)", {
+        layout: projectData.layout,
+      });
+    }
+
+    // Also try to auto-discover layout.tsx in components folder
+    // This provides a fallback when layout is not explicitly configured
+    if (nestedLayouts.length === 0) {
+      const defaultLayoutPath = join(this.projectDir, "components", "layout.tsx");
+      const defaultLayoutExists = await (wrappedAdapter as { exists: (path: string) => Promise<boolean> })
+        .exists(defaultLayoutPath);
+
+      if (defaultLayoutExists) {
+        nestedLayouts.push({
+          kind: "tsx",
+          component: undefined,
+          componentPath: defaultLayoutPath,
+          path: defaultLayoutPath,
+        });
+
+        logger.debug("[LayoutCollector] Added default components/layout.tsx", {
+          layoutPath: defaultLayoutPath,
         });
       }
     }

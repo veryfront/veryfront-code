@@ -860,9 +860,9 @@ import { Link } from 'veryfront';
 
 ## Examples
 
-- [Blog Example](https://github.com/veryfrontjs/veryfront/tree/main/examples/basic-mdx) - Markdown blog with SSG
-- [Documentation](https://github.com/veryfrontjs/veryfront/tree/main/examples/basic-mdx) - Multi-level docs
-- [Portfolio](https://github.com/veryfrontjs/veryfront/tree/main/examples/minimal-app-router) - Static portfolio site
+- [Blog Example](https://github.com/veryfront/veryfront/tree/main/examples/basic-mdx) - Markdown blog with SSG
+- [Documentation](https://github.com/veryfront/veryfront/tree/main/examples/basic-mdx) - Multi-level docs
+- [Portfolio](https://github.com/veryfront/veryfront/tree/main/examples/minimal-app-router) - Static portfolio site
 
 ---
 

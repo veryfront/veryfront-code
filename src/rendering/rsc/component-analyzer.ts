@@ -4,6 +4,7 @@ import { toBase64Url } from "@veryfront/utils/path-utils.ts";
 import { getAdapter } from "@veryfront/platform/adapters/detect.ts";
 import type { ComponentAnalysis, ComponentType } from "./types.ts";
 import type { FileSystemAdapter } from "../../platform/adapters/base.ts";
+import { createError, toError } from "../../core/errors/veryfront-error.ts";
 
 export async function analyzeComponent(
   filePath: string,
@@ -155,7 +156,10 @@ async function walkDirectory(
 ): Promise<void> {
   try {
     if (!fs) {
-      throw new Error("FileSystemAdapter is required for walkDirectory");
+      throw toError(createError({
+        type: "config",
+        message: "FileSystemAdapter is required for walkDirectory",
+      }));
     }
     const entries = fs.readDir(dir);
     for await (const entry of entries) {

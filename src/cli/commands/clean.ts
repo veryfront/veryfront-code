@@ -139,7 +139,6 @@ function createRenderCacheStore(
     case "filesystem":
       return new FilesystemCacheStore({
         baseDir: join(projectDir, cacheDir, "render"),
-        adapter,
       });
     case "kv":
       return new KVCacheStore({

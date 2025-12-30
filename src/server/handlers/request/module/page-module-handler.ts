@@ -10,7 +10,7 @@
 import type { HandlerContext, HandlerResult } from "../../types.ts";
 import { computeEtag, hasMatchingEtag } from "../../utils/etag.ts";
 import { ResponseBuilder } from "@veryfront/security/index.ts";
-import { getRenderer } from "./renderer-manager.ts";
+import { getRenderer } from "../../../shared/renderer-factory.ts";
 import type { createRenderer } from "@veryfront/rendering/index.ts";
 
 /**

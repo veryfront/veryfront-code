@@ -528,7 +528,7 @@ export const getServerData = async (ctx) => {
 
 ## Examples
 
-- [Data Fetching Demo](https://github.com/veryfrontjs/veryfront/tree/main/examples/data-fetching-demo)
-- [Static Blog](https://github.com/veryfrontjs/veryfront/tree/main/examples/basic-mdx)
-- [E-commerce with ISR](https://github.com/veryfrontjs/veryfront/tree/main/examples/full-demo)
-- [Authentication Flow](https://github.com/veryfrontjs/veryfront/tree/main/examples/auth-app)
+- [Data Fetching Demo](https://github.com/veryfront/veryfront/tree/main/examples/data-fetching-demo)
+- [Static Blog](https://github.com/veryfront/veryfront/tree/main/examples/basic-mdx)
+- [E-commerce with ISR](https://github.com/veryfront/veryfront/tree/main/examples/full-demo)
+- [Authentication Flow](https://github.com/veryfront/veryfront/tree/main/examples/auth-app)

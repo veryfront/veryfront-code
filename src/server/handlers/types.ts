@@ -13,6 +13,7 @@ export type {
   HandlerPriority,
   HandlerResult,
   MiddlewareFunction,
+  ParsedDomain,
   RouteHandlerModule,
   RoutePattern,
   RouteRegistryConfig,

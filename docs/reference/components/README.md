@@ -344,7 +344,7 @@ Automatic polyfills and fallbacks are provided for older browsers where needed.
 
 ## Examples
 
-- [Navigation Menu Example](https://github.com/veryfrontjs/veryfront/tree/main/examples/minimal-app-router)
-- [SEO Optimization Example](https://github.com/veryfrontjs/veryfront/tree/main/examples/basic-mdx)
-- [Image Gallery Example](https://github.com/veryfrontjs/veryfront/tree/main/examples/full-demo)
-- [Blog with Images Example](https://github.com/veryfrontjs/veryfront/tree/main/examples/basic-mdx)
+- [Navigation Menu Example](https://github.com/veryfront/veryfront/tree/main/examples/minimal-app-router)
+- [SEO Optimization Example](https://github.com/veryfront/veryfront/tree/main/examples/basic-mdx)
+- [Image Gallery Example](https://github.com/veryfront/veryfront/tree/main/examples/full-demo)
+- [Blog with Images Example](https://github.com/veryfront/veryfront/tree/main/examples/basic-mdx)

@@ -6,24 +6,27 @@ Veryfront is a modern React framework for Deno with multi-runtime support (Deno,
 ## Core Documentation
 
 ### Getting Started (Priority: High)
-- /docs/introduction.md: What is Veryfront and why use it - comprehensive introduction to the framework, its philosophy, and key differentiators
-- /docs/quick-start.md: 5-minute quickstart guide for both traditional React apps and AI-native applications with complete working examples
-- /docs/getting-started/installation.md: Installation instructions for Deno, Node.js, Bun, and Cloudflare Workers with runtime-specific configuration
+- /docs/learn/introduction.md: What is Veryfront and why use it - comprehensive introduction to the framework, its philosophy, and key differentiators
+- /docs/learn/quickstart.md: 30-minute quickstart guide for both traditional React apps and AI-native applications with complete working examples
+- /docs/learn/installation.md: Installation instructions for Deno, Node.js, Bun, and Cloudflare Workers with runtime-specific configuration
+- /docs/learn/project-structure.md: File layout, conventions, and organization patterns
+- /docs/learn/concepts/convention-over-configuration.md: The framework philosophy and design principles
 
 ### Routing (Priority: High)
-- /docs/routing/README.md: Complete overview of Veryfront's file-based routing system supporting both App Router and Pages Router patterns
-- /docs/routing/app-router.md: App Router guide (Next.js 13+ style) with nested layouts, route groups, and parallel routes
-- /docs/routing/pages-router.md: Pages Router guide (Next.js 12 style) with file-based routing conventions
-- /docs/routing/dynamic-routes.md: Dynamic route segments including [slug], [...slug] catch-all, and [[...slug]] optional catch-all patterns
-- /docs/routing/api-routes.md: Creating API endpoints with route.ts (App Router) and pages/api/ (Pages Router) patterns
+- /docs/guides/routing/README.md: Complete overview of Veryfront's file-based routing system supporting both App Router and Pages Router patterns
+- /docs/guides/routing/app-router.md: App Router guide (Next.js 13+ style) with nested layouts, route groups, and parallel routes
+- /docs/guides/routing/pages-router.md: Pages Router guide (Next.js 12 style) with file-based routing conventions
+- /docs/guides/routing/dynamic-routes.md: Dynamic route segments including [slug], [...slug] catch-all, and [[...slug]] optional catch-all patterns
+- /docs/guides/routing/api-routes.md: Creating API endpoints with route.ts (App Router) and pages/api/ (Pages Router) patterns
 
 ### Rendering (Priority: High)
-- /docs/rendering/README.md: Complete overview of all rendering modes - SSR, SSG, ISR, JIT, and RSC with use cases for each
-- /docs/rendering/comparison.md: Decision matrix and comparison table for choosing the right rendering mode for your application
-- /docs/rendering/ssr.md: Server-Side Rendering implementation with data fetching and caching strategies
-- /docs/rendering/ssg.md: Static Site Generation with getStaticPaths for pre-rendering at build time
-- /docs/rendering/isr.md: Incremental Static Regeneration for updating static pages without full rebuilds
-- /docs/rendering/jit.md: Just-In-Time rendering - Veryfront's unique rendering mode for large-scale sites with on-demand generation
+- /docs/guides/rendering/README.md: Complete overview of all rendering modes - SSR, SSG, ISR, JIT, and RSC with use cases for each
+- /docs/guides/rendering/comparison.md: Decision matrix and comparison table for choosing the right rendering mode for your application
+- /docs/guides/rendering/ssr.md: Server-Side Rendering implementation with data fetching and caching strategies
+- /docs/guides/rendering/ssg.md: Static Site Generation with getStaticPaths for pre-rendering at build time
+- /docs/guides/rendering/isr.md: Incremental Static Regeneration for updating static pages without full rebuilds
+- /docs/guides/rendering/jit.md: Just-In-Time rendering - Veryfront's unique rendering mode for large-scale sites with on-demand generation
+- /docs/guides/rendering/rsc.md: React Server Components (experimental) for zero-JS server rendering
 
 ### AI System (Priority: High)
 - /docs/ai/README.md: Complete AI documentation index with overview of all AI capabilities and integration patterns
@@ -33,11 +36,11 @@ Veryfront is a modern React framework for Deno with multi-runtime support (Deno,
 - /docs/ai/summary.md: Quick reference for all AI features including agents, tools, providers, MCP integration, and production optimizations
 
 ### API Reference (Priority: Medium)
-- /docs/api/README.md: Complete API surface documentation with all public APIs, types, and interfaces
-- /docs/api/configuration.md: veryfront.config.ts complete reference with all configuration options, defaults, and runtime-specific settings
-- /docs/api/components.md: Built-in components including Link, Head, OptimizedImage with props and usage examples
-- /docs/api/data-fetching.md: Data fetching APIs including getServerData, getStaticPaths, notFound, and redirect functions
-- /docs/api/routes.md: API route handlers with HTTP method support (GET, POST, PUT, DELETE, PATCH) and request/response handling
+- /docs/reference/README.md: Complete API reference index with all public APIs, types, and interfaces
+- /docs/reference/configuration/README.md: veryfront.config.ts complete reference with all configuration options, defaults, and runtime-specific settings
+- /docs/reference/components/README.md: Built-in components including Link, Head, OptimizedImage with props and usage examples
+- /docs/reference/functions/README.md: Data fetching APIs including getServerData, getStaticPaths, notFound, and redirect functions
+- /docs/reference/hooks/README.md: React hooks including useRouter, useParams, usePathname, useSearchParams
 
 ### Deployment (Priority: Medium)
 - /docs/guides/deployment/deno.md: Complete deployment guide for Deno Deploy with configuration, environment variables, and best practices
@@ -47,22 +50,23 @@ Veryfront is a modern React framework for Deno with multi-runtime support (Deno,
 
 ### Guides (Priority: Medium)
 - /docs/guides/README.md: Guides index with categorized tutorials and how-to articles
-- /docs/guides/building-blog.md: Step-by-step tutorial for building a complete blog with dynamic routes, MDX, and styling
-- /docs/guides/data-fetching-patterns.md: Common data fetching patterns for different scenarios (real-time, cached, static, client-side)
-- /docs/guides/image-optimization.md: Image optimization best practices using OptimizedImage component with format conversion and lazy loading
-- /docs/guides/performance.md: Performance optimization techniques including code splitting, lazy loading, and caching strategies
-- /docs/guides/styling.md: Styling approaches including CSS modules, Tailwind CSS, CSS-in-JS, and global styles
+- /docs/guides/components/image.md: Image optimization best practices using OptimizedImage component with format conversion and lazy loading
+- /docs/guides/performance/README.md: Performance optimization techniques including code splitting, lazy loading, and caching strategies
+- /docs/guides/middleware/README.md: Middleware system with built-in middleware (cors, logger, securityHeaders, rateLimiter, compression, errorHandler)
+- /docs/guides/testing/README.md: Testing guide with unit and end-to-end testing patterns
+- /docs/cookbooks/rag-chatbot.md: Step-by-step tutorial for building a RAG-powered chatbot
 
 ### Platform Adapters (Priority: Low)
-- /docs/platform-adapters/overview.md: Overview of multi-runtime architecture and adapter system
-- /docs/platform-adapters/deno.md: Deno adapter with native Deno APIs and deploy integration
-- /docs/platform-adapters/nodejs.md: Node.js adapter with compatibility layer and npm package support
-- /docs/platform-adapters/bun.md: Bun adapter with performance optimizations and native APIs
-- /docs/platform-adapters/cloudflare.md: Cloudflare Workers adapter with edge runtime specifics
+- /docs/guides/adapters/README.md: Overview of adapter architecture (platform and filesystem adapters)
+- /docs/guides/adapters/platform/overview.md: Platform adapter system for multi-runtime support
+- /docs/guides/adapters/platform/deno.md: Deno adapter with native Deno APIs and deploy integration
+- /docs/guides/adapters/filesystem/overview.md: Filesystem adapter for different storage backends
+- /docs/guides/adapters/filesystem/veryfront-api.md: Veryfront API filesystem adapter for cloud deployments
 
 ### Advanced Topics (Priority: Low)
-- /docs/architecture.md: Detailed architecture overview covering rendering pipeline, routing system, and build process
-- /docs/debugging.md: Comprehensive debugging guide with common issues, error messages, and troubleshooting steps
+- /docs/guides/architecture/architecture.md: Detailed architecture overview covering rendering pipeline, routing system, and build process
+- /docs/guides/troubleshooting/debugging.md: Comprehensive debugging guide with common issues, error messages, and troubleshooting steps
+- /docs/reference/file-conventions/README.md: File conventions reference for pages, layouts, API routes, and special files
 
 ### Examples (Priority: Medium)
 19 working example applications available in /examples/ directory:
@@ -151,15 +155,15 @@ This documentation is structured for both human developers and AI agents:
 ## Getting Help
 - GitHub Issues: Report bugs and request features
 - Examples: 19 working examples covering all use cases
-- Quick Start: Get running in 5 minutes with /docs/quick-start.md
+- Quick Start: Get running in 5 minutes with /docs/learn/quickstart.md
 - AI Documentation: Comprehensive AI capabilities in /docs/ai/
 
 ## Quick Links for Common Tasks
 
 **Starting a new project:**
-1. Read /docs/quick-start.md
-2. Choose router style: /docs/routing/app-router.md or /docs/routing/pages-router.md
-3. Choose rendering mode: /docs/rendering/comparison.md
+1. Read /docs/learn/quickstart.md
+2. Choose router style: /docs/guides/routing/app-router.md or /docs/guides/routing/pages-router.md
+3. Choose rendering mode: /docs/guides/rendering/comparison.md
 4. Deploy: /docs/guides/deployment/deno.md
 
 **Building with AI:**
@@ -173,11 +177,11 @@ This documentation is structured for both human developers and AI agents:
 3. See /examples/minimal-app-router/ for familiar patterns
 
 **Adding dynamic routes:**
-1. Read /docs/routing/dynamic-routes.md
+1. Read /docs/guides/routing/dynamic-routes.md
 2. Use [slug] for single params, [...slug] for catch-all
 3. Implement getServerData for data fetching
 
 **Optimizing performance:**
-1. Review /docs/guides/performance.md
-2. Choose appropriate rendering mode from /docs/rendering/comparison.md
-3. Use OptimizedImage component: /docs/api/components.md
+1. Review /docs/guides/performance/README.md
+2. Choose appropriate rendering mode from /docs/guides/rendering/comparison.md
+3. Use OptimizedImage component: /docs/reference/components/optimized-image.md

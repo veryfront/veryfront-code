@@ -58,21 +58,17 @@ export class SSRModuleLoader {
     filePath: string,
     source?: string,
   ): Promise<void> {
-    const code = source ?? await this.fs.readTextFile(filePath);
+    const code = source ?? await this.options.adapter.fs.readFile(filePath);
 
-    // Use content hash in cache key to invalidate when file changes
     const contentHash = this.hashCode(code);
     const cacheKey = `${filePath}:${contentHash}`;
 
-    // Check global cache first (shared across requests)
-    if (globalModuleCache.has(cacheKey)) {
-      // Update the filePath -> tempPath mapping for the loadModule lookup
-      const tempPath = globalModuleCache.get(cacheKey)!;
-      globalModuleCache.set(filePath, tempPath);
+    const cachedTempPath = globalModuleCache.get(cacheKey);
+    if (cachedTempPath) {
+      globalModuleCache.set(filePath, cachedTempPath);
       return;
     }
 
-    // Prevent circular imports
     if (globalInProgress.has(filePath)) {
       return;
     }
@@ -84,10 +80,12 @@ export class SSRModuleLoader {
         code,
         filePath,
         this.options.projectDir,
+        this.options.adapter,
       );
 
       for (const imp of localImports) {
-        await this.transformWithDependencies(imp.absolutePath);
+        const depSource = await this.options.adapter.fs.readFile(imp.absolutePath);
+        await this.transformWithDependencies(imp.absolutePath, depSource);
       }
 
       const transformOpts: TransformOptions = {

@@ -10,7 +10,7 @@
 export { ModuleHandler } from "./module-handler.ts";
 
 // Export utilities (for testing/advanced usage)
-export { getRenderer } from "./renderer-manager.ts";
+export { getRenderer } from "../../../shared/renderer-factory.ts";
 export { handleModuleServer } from "./module-server-handler.ts";
 export { handleVirtualModule } from "./virtual-module-handler.ts";
 export { handlePageModule } from "./page-module-handler.ts";

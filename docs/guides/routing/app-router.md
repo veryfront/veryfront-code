@@ -599,9 +599,9 @@ Before using App Router, ensure you have:
 
 ## Examples
 
-- [Minimal App Router](https://github.com/veryfrontjs/veryfront/tree/main/examples/minimal-app-router) - Simple setup
-- [Blog Example](https://github.com/veryfrontjs/veryfront/tree/main/examples/basic-mdx) - Complete blog with layouts
-- [Auth App](https://github.com/veryfrontjs/veryfront/tree/main/examples/auth-app) - Authentication patterns
+- [Minimal App Router](https://github.com/veryfront/veryfront/tree/main/examples/minimal-app-router) - Simple setup
+- [Blog Example](https://github.com/veryfront/veryfront/tree/main/examples/basic-mdx) - Complete blog with layouts
+- [Auth App](https://github.com/veryfront/veryfront/tree/main/examples/auth-app) - Authentication patterns
 
 ## Troubleshooting
 

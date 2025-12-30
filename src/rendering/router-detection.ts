@@ -18,6 +18,16 @@ export { getAppRouteEntity } from "./app-route-resolver.ts";
 // Re-export from route-params-extractor for backward compatibility
 export { extractAppRouteParams, extractPagesRouteParams } from "./route-params-extractor.ts";
 
+// Cache for router detection results - avoids repeated filesystem calls
+const routerDetectionCache = new Map<string, boolean>();
+
+/**
+ * Clear the router detection cache. Call when filesystem changes.
+ */
+export function clearRouterDetectionCache(): void {
+  routerDetectionCache.clear();
+}
+
 /**
  * Detect if app router should be used based on config and directory structure
  */
@@ -30,6 +40,24 @@ export async function detectAppRouter(
   if (forced === "app") return true;
   if (forced === "pages") return false;
 
+  // Check cache first
+  if (routerDetectionCache.has(projectDir)) {
+    return routerDetectionCache.get(projectDir)!;
+  }
+
+  const result = await detectAppRouterImpl(projectDir, config, adapter);
+  routerDetectionCache.set(projectDir, result);
+  return result;
+}
+
+/**
+ * Internal implementation of router detection
+ */
+async function detectAppRouterImpl(
+  projectDir: string,
+  config: VeryfrontConfig,
+  adapter: RuntimeAdapter,
+): Promise<boolean> {
   // Check if app directory exists AND contains route files
   const appDirName = config?.directories?.app || "app";
   const pagesDirName = config?.directories?.pages || "pages";

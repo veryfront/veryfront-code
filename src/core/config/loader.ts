@@ -1,11 +1,12 @@
 import type { VeryfrontConfig } from "./types.ts";
 import { findUnknownTopLevelKeys, validateVeryfrontConfig } from "./schema.ts";
-import { join } from "std/path/mod.ts";
+import { join, dirname } from "std/path/mod.ts";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import { serverLogger } from "@veryfront/utils/logger/logger.ts";
 import { getReactImportMap, REACT_DEFAULT_VERSION } from "@veryfront/utils/constants/cdn.ts";
 import { DEFAULT_CACHE_DIR } from "@veryfront/utils/constants/server.ts";
 import { DEFAULT_PORT } from "./defaults.ts";
+import { createFileSystem } from "../../platform/compat/fs.ts";
 
 export type { VeryfrontConfig } from "./types.ts";
 
@@ -157,10 +158,96 @@ class ConfigValidationError extends Error {
   }
 }
 
+/**
+ * Check if the adapter is using a virtual filesystem (e.g., Veryfront API)
+ */
+function isVirtualFilesystem(adapter: RuntimeAdapter): boolean {
+  const wrappedAdapter = (adapter?.fs as { fsAdapter?: unknown })?.fsAdapter;
+  const adapterName = (wrappedAdapter as { constructor?: { name?: string } })?.constructor?.name;
+  return adapterName === "VeryfrontFSAdapter";
+}
+
+/**
+ * Load config from virtual filesystem by transpiling TypeScript content
+ */
+async function loadConfigFromVirtualFS(
+  configPath: string,
+  projectDir: string,
+  adapter: RuntimeAdapter,
+): Promise<VeryfrontConfig | null> {
+  const fs = createFileSystem();
+
+  // Read config content via adapter
+  const content = await adapter.fs.readFile(configPath);
+  const source = typeof content === "string" ? content : new TextDecoder().decode(content);
+
+  serverLogger.debug(`[CONFIG] Loading config from virtual FS: ${configPath}`);
+
+  // Determine loader based on extension
+  const isTsx = configPath.endsWith(".tsx");
+  const loader = isTsx ? "tsx" : configPath.endsWith(".ts") ? "ts" : "js";
+
+  // Transpile TypeScript to JavaScript using esbuild
+  const { build } = await import("esbuild");
+
+  const result = await build({
+    bundle: false, // Config files shouldn't need bundling
+    write: false,
+    format: "esm",
+    platform: "neutral",
+    target: "es2022",
+    stdin: {
+      contents: source,
+      loader,
+      resolveDir: dirname(configPath),
+      sourcefile: configPath,
+    },
+  });
+
+  if (result.errors && result.errors.length > 0) {
+    const first = result.errors[0]?.text || "unknown error";
+    throw new ConfigValidationError(`Failed to transpile config: ${first}`);
+  }
+
+  const js = result.outputFiles?.[0]?.text ?? "export default {}";
+
+  // Write to temp file and import
+  const tempDir = await fs.makeTempDir({ prefix: "vf-config-" });
+  const tempFile = join(tempDir, "config.mjs");
+
+  try {
+    await fs.writeTextFile(tempFile, js);
+    const configModule = await import(`file://${tempFile}?v=${Date.now()}`);
+    const userConfig = configModule.default || configModule;
+
+    if (userConfig === null || typeof userConfig !== "object" || Array.isArray(userConfig)) {
+      throw new ConfigValidationError(
+        `Expected object, received ${userConfig === null ? "null" : typeof userConfig}`,
+      );
+    }
+
+    validateCorsConfig(userConfig);
+    validateConfigShape(userConfig);
+
+    const merged = mergeConfigs(userConfig);
+    configCacheByProject.set(projectDir, { revision: cacheRevision, config: merged });
+    return merged;
+  } finally {
+    await fs.remove(tempDir, { recursive: true });
+  }
+}
+
 async function loadAndMergeConfig(
   configPath: string,
   projectDir: string,
+  adapter: RuntimeAdapter,
 ): Promise<VeryfrontConfig | null> {
+  // Check if using virtual filesystem
+  if (isVirtualFilesystem(adapter)) {
+    return loadConfigFromVirtualFS(configPath, projectDir, adapter);
+  }
+
+  // Local filesystem - use direct import
   try {
     const configUrl = `file://${configPath}?t=${Date.now()}-${crypto.randomUUID()}`;
     const configModule = await import(configUrl);
@@ -207,7 +294,7 @@ export async function getConfig(
     if (!exists) continue;
 
     try {
-      const merged = await loadAndMergeConfig(configPath, projectDir);
+      const merged = await loadAndMergeConfig(configPath, projectDir, adapter);
       if (merged) return merged;
     } catch (error) {
       if (error instanceof ConfigValidationError) {

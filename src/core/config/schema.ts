@@ -14,6 +14,9 @@ export const veryfrontConfigSchema = z
     }).partial().optional(),
     router: z.enum(["app", "pages"]).optional(),
     defaultLayout: z.string().optional(),
+    layout: z.string().optional(),
+    provider: z.string().optional(),
+    app: z.string().optional(),
     theme: z
       .object({ colors: z.record(z.string()).optional() })
       .partial()
@@ -254,6 +257,9 @@ export function findUnknownTopLevelKeys(input: Record<string, unknown>): string[
     "experimental",
     "router",
     "defaultLayout",
+    "layout",
+    "provider",
+    "app",
     "theme",
     "build",
     "cache",

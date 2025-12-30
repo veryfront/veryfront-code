@@ -17,7 +17,10 @@ import type { ActionRequestParams } from "./types.ts";
 export async function handleActionRequest(
   { req, projectDir, adapter }: ActionRequestParams,
 ): Promise<Response> {
-  const body = await req.json().catch(() => ({}) as Record<string, unknown>);
+  const body = await req.json().catch((err) => {
+    serverLogger.warn("[RSC] Failed to parse action request body", { error: err });
+    return {} as Record<string, unknown>;
+  });
   const parseResult = await parseActionBody(body);
 
   if (parseResult instanceof Response) {

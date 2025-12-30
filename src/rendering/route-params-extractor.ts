@@ -1,12 +1,20 @@
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import { extractParams } from "@veryfront/routing/slug-mapper/dynamic-route-matcher.ts";
 import { join } from "../platform/compat/path-helper.ts";
+import { logger, startTimer } from "@veryfront/utils";
+
+let fsStatCount = 0;
+let fsReadDirCount = 0;
 
 export async function extractAppRouteParams(
   projectDir: string,
   slug: string,
   adapter: RuntimeAdapter,
 ): Promise<Record<string, string | string[]> | null> {
+  fsStatCount = 0;
+  fsReadDirCount = 0;
+  const stopTotal = startTimer("extractAppRouteParams-total");
+
   const segments = slug ? slug.split("/").filter(Boolean) : [];
   let currentDir = join(projectDir, "app");
   const patternParts: string[] = [];
@@ -17,6 +25,7 @@ export async function extractAppRouteParams(
     const exactPath = join(currentDir, segment);
 
     try {
+      fsStatCount++;
       const stat = await adapter.fs.stat(exactPath);
       if (stat.isDirectory) {
         currentDir = exactPath;
@@ -30,6 +39,7 @@ export async function extractAppRouteParams(
     let foundDynamic = false;
     let isCatchAll = false;
     try {
+      fsReadDirCount++;
       const entries = await adapter.fs.readDir(currentDir);
       for await (const entry of entries) {
         if (entry.isDirectory && isDynamicSegment(entry.name)) {
@@ -47,6 +57,8 @@ export async function extractAppRouteParams(
     }
 
     if (!foundDynamic) {
+      stopTotal();
+      logger.debug("[RouteParams] extractAppRouteParams", { stat: fsStatCount, readDir: fsReadDirCount });
       return null;
     }
 
@@ -55,6 +67,8 @@ export async function extractAppRouteParams(
     }
   }
 
+  stopTotal();
+  logger.debug("[RouteParams] extractAppRouteParams", { stat: fsStatCount, readDir: fsReadDirCount });
   const pattern = patternParts.join("/");
   return extractParams(pattern, slug);
 }
@@ -64,6 +78,10 @@ export async function extractPagesRouteParams(
   slug: string,
   adapter: RuntimeAdapter,
 ): Promise<Record<string, string | string[]> | null> {
+  let pagesStatCount = 0;
+  let pagesReadDirCount = 0;
+  const stopTotal = startTimer("extractPagesRouteParams-total");
+
   const segments = slug ? slug.split("/").filter(Boolean) : [];
   const pagesDir = join(projectDir, "pages");
   const routeExtensions = [".tsx", ".jsx", ".ts", ".js", ".mdx"];
@@ -78,6 +96,7 @@ export async function extractPagesRouteParams(
 
     // Try exact match first
     try {
+      pagesStatCount++;
       const stat = await adapter.fs.stat(exactPath);
       if (stat.isDirectory) {
         currentDir = exactPath;
@@ -91,8 +110,13 @@ export async function extractPagesRouteParams(
     // Try to find a dynamic segment file or directory
     let foundDynamic = false;
     try {
-      const entries = await adapter.fs.readDir(currentDir);
-      for await (const entry of entries) {
+      pagesReadDirCount++;
+      const entries: Array<{ name: string; isDirectory: boolean; isFile: boolean }> = [];
+      for await (const entry of adapter.fs.readDir(currentDir)) {
+        entries.push({ name: entry.name, isDirectory: entry.isDirectory, isFile: entry.isFile });
+      }
+
+      for (const entry of entries) {
         const entryName = entry.name;
 
         if (isDynamicSegment(entryName)) {
@@ -122,14 +146,24 @@ export async function extractPagesRouteParams(
     }
 
     if (!foundDynamic) {
+      stopTotal();
+      logger.debug("[RouteParams] extractPagesRouteParams", { stat: pagesStatCount, readDir: pagesReadDirCount });
       return null;
     }
   }
 
+  stopTotal();
+  logger.debug("[RouteParams] extractPagesRouteParams", { stat: pagesStatCount, readDir: pagesReadDirCount });
   const pattern = patternParts.join("/");
   return extractParams(pattern, slug);
 }
 
 function isDynamicSegment(name: string): boolean {
-  return name.startsWith("[") && name.endsWith("]");
+  // Handle both directory names like "[id]" and file names like "[id].tsx"
+  if (!name.startsWith("[")) return false;
+  // Check if it ends with ] or has ] before the file extension
+  if (name.endsWith("]")) return true;
+  // Check for pattern like "[id].tsx" or "[...slug].ts"
+  const match = name.match(/^\[\.{0,3}\w+\]\.\w+$/);
+  return match !== null;
 }

@@ -2,6 +2,14 @@ import { serverLogger as logger } from "@veryfront/utils";
 import { MiddlewarePipeline } from "@veryfront/middleware/core/pipeline/index.ts";
 import { cors } from "@veryfront/security";
 import type { VeryfrontConfig } from "@veryfront/config";
+import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
+import { join, dirname } from "std/path/mod.ts";
+import { createFileSystem } from "../../platform/compat/fs.ts";
+
+type MiddlewareFunction = (
+  c: { req: Request; var: Record<string, unknown> },
+  next: () => Promise<Response | undefined> | Response,
+) => Promise<Response | undefined> | Response | undefined;
 
 export function createRequestLoggerMiddleware() {
   return async (
@@ -52,11 +60,111 @@ export function createRequestLoggerMiddleware() {
   };
 }
 
-export function setupMiddleware(
+function isVirtualFilesystem(adapter: RuntimeAdapter): boolean {
+  const wrappedAdapter = (adapter?.fs as { fsAdapter?: unknown })?.fsAdapter;
+  const adapterName = (wrappedAdapter as { constructor?: { name?: string } })?.constructor?.name;
+  return adapterName === "VeryfrontFSAdapter";
+}
+
+async function loadMiddlewareFile(
+  projectDir: string,
+  adapter: RuntimeAdapter,
+): Promise<MiddlewareFunction[]> {
+  const middlewareFiles = ["middleware.ts", "middleware.js", "middleware.mjs"];
+
+  for (const middlewareFile of middlewareFiles) {
+    const middlewarePath = join(projectDir, middlewareFile);
+    const exists = await adapter.fs.exists(middlewarePath);
+    if (!exists) continue;
+
+    try {
+      logger.debug(`[MIDDLEWARE] Loading ${middlewareFile}`);
+
+      if (isVirtualFilesystem(adapter)) {
+        return await loadMiddlewareFromVirtualFS(middlewarePath, adapter);
+      } else {
+        const middlewareUrl = `file://${middlewarePath}?t=${Date.now()}-${crypto.randomUUID()}`;
+        const middlewareModule = await import(middlewareUrl);
+        return normalizeMiddlewareExport(middlewareModule);
+      }
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logger.warn(`[MIDDLEWARE] Failed to load ${middlewareFile}: ${errorMessage}`);
+      continue;
+    }
+  }
+
+  return [];
+}
+
+async function loadMiddlewareFromVirtualFS(
+  middlewarePath: string,
+  adapter: RuntimeAdapter,
+): Promise<MiddlewareFunction[]> {
+  const fs = createFileSystem();
+
+  const content = await adapter.fs.readFile(middlewarePath);
+  const source = typeof content === "string" ? content : new TextDecoder().decode(content);
+
+  const isTsx = middlewarePath.endsWith(".tsx");
+  const loader = isTsx ? "tsx" : middlewarePath.endsWith(".ts") ? "ts" : "js";
+
+  const { build } = await import("esbuild");
+
+  const result = await build({
+    bundle: false,
+    write: false,
+    format: "esm",
+    platform: "neutral",
+    target: "es2022",
+    stdin: {
+      contents: source,
+      loader,
+      resolveDir: dirname(middlewarePath),
+      sourcefile: middlewarePath,
+    },
+  });
+
+  if (result.errors && result.errors.length > 0) {
+    const first = result.errors[0]?.text || "unknown error";
+    throw new Error(`Failed to transpile middleware: ${first}`);
+  }
+
+  const js = result.outputFiles?.[0]?.text ?? "export default []";
+
+  const tempDir = await fs.makeTempDir({ prefix: "vf-middleware-" });
+  const tempFile = join(tempDir, "middleware.mjs");
+
+  try {
+    await fs.writeTextFile(tempFile, js);
+    const middlewareModule = await import(`file://${tempFile}?v=${Date.now()}`);
+    return normalizeMiddlewareExport(middlewareModule);
+  } finally {
+    await fs.remove(tempDir, { recursive: true });
+  }
+}
+
+function normalizeMiddlewareExport(middlewareModule: unknown): MiddlewareFunction[] {
+  const exported = (middlewareModule as { default?: unknown })?.default || middlewareModule;
+
+  if (Array.isArray(exported)) {
+    return exported.filter((m) => typeof m === "function") as MiddlewareFunction[];
+  }
+
+  if (typeof exported === "function") {
+    return [exported as MiddlewareFunction];
+  }
+
+  return [];
+}
+
+export async function setupMiddleware(
   pipeline: MiddlewarePipeline,
   config: VeryfrontConfig,
   requestHandler: (req: Request) => Promise<Response>,
-): void {
+  projectDir?: string,
+  adapter?: RuntimeAdapter,
+): Promise<void> {
   pipeline.use(createRequestLoggerMiddleware());
 
   if (config.security?.cors) {
@@ -65,6 +173,14 @@ export function setupMiddleware(
         config.security.cors === true ? {} : config.security.cors,
       ),
     );
+  }
+
+  if (projectDir && adapter) {
+    const fileMiddlewares = await loadMiddlewareFile(projectDir, adapter);
+    for (const middleware of fileMiddlewares) {
+      logger.debug("[MIDDLEWARE] Registered middleware from file");
+      pipeline.use(middleware);
+    }
   }
 
   if (config.middleware?.custom) {

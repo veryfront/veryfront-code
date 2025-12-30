@@ -117,10 +117,10 @@ export async function applyLayoutsFunctionBody(
           extractLayout: true,
           children: element,
         });
-      } else if (item.kind === "tsx") {
+      } else if (item.kind === "tsx" && item.componentPath) {
         try {
           const LayoutComponent = await loadTSXComponent(
-            item.componentPath!,
+            item.componentPath,
             projectDir,
             tsxLayoutModuleCache,
             adapter,
@@ -163,10 +163,10 @@ export async function applyLayoutsFunctionBody(
           extractLayout: true,
           children: element,
         });
-      } else if (providerItem.kind === "tsx") {
+      } else if (providerItem.kind === "tsx" && providerItem.componentPath) {
         try {
           const ProviderComponent = await loadTSXComponent(
-            providerItem.componentPath!,
+            providerItem.componentPath,
             projectDir,
             tsxLayoutModuleCache,
             adapter,

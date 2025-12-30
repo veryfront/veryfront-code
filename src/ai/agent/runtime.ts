@@ -15,12 +15,9 @@ import {
   type AgentResponse,
   type AgentStatus,
   getTextFromParts,
-  getToolArguments,
   type Message,
   type MessagePart,
   type ToolCall,
-  type ToolCallPart,
-  type ToolResultPart,
 } from "../types/agent.ts";
 import type { ToolDefinition } from "../types/tool.ts";
 import type { Provider } from "../types/provider.ts";
@@ -30,110 +27,14 @@ import { detectPlatform, getPlatformCapabilities } from "../runtime/platform.ts"
 import { createMemory, type Memory } from "./memory.ts";
 import { serverLogger as logger } from "@veryfront/utils";
 import { addSpanEvent, setSpanAttributes, withSpan } from "../../observability/tracing/index.ts";
-import { z } from "zod";
+import { AGENT_DEFAULTS, STREAMING_DEFAULTS } from "../config/defaults.ts";
+import { AgentStreamEventSchema, type AgentStreamEvent } from "./streaming/index.ts";
+import { convertMessageToProvider } from "./message-converter.ts";
 
-const AgentStreamEventSchema = z.discriminatedUnion("type", [
-  z.object({
-    type: z.literal("content"),
-    content: z.string(),
-  }),
-  z.object({
-    type: z.literal("tool_call_start"),
-    toolCall: z.object({
-      id: z.string(),
-      name: z.string(),
-    }),
-  }),
-  z.object({
-    type: z.literal("tool_call_delta"),
-    id: z.string(),
-    arguments: z.string(),
-  }),
-  z.object({
-    type: z.literal("tool_call_complete"),
-    toolCall: z.object({
-      id: z.string(),
-      name: z.string(),
-      arguments: z.string(),
-    }),
-  }),
-  z.object({
-    type: z.literal("finish"),
-    finishReason: z.string().nullable(),
-  }),
-  z.object({
-    type: z.literal("usage"),
-    usage: z.object({
-      promptTokens: z.number().optional(),
-      completionTokens: z.number().optional(),
-      totalTokens: z.number().optional(),
-    }),
-  }),
-]);
-
-type AgentStreamEvent = z.infer<typeof AgentStreamEventSchema>;
-
-const DEFAULT_MAX_TOKENS = 4096;
-const DEFAULT_TEMPERATURE = 0.7;
-
-/**
- * Provider message format
- */
-interface ProviderMessage {
-  role: string;
-  content: string;
-  tool_calls?: Array<{
-    id: string;
-    type: string;
-    function: { name: string; arguments: string };
-  }>;
-  tool_call_id?: string;
-}
-
-/**
- * Convert v5 Message to provider format.
- * Empty parts array results in empty content string, which is valid for
- * providers (e.g., assistant message with only tool calls, no text).
- */
-function convertMessageToProvider(msg: Message): ProviderMessage {
-  const content = getTextFromParts(msg.parts);
-
-  const providerMsg: ProviderMessage = {
-    role: msg.role,
-    content,
-  };
-
-  // Extract tool calls from parts
-  // AI SDK v5 uses tool-${toolName} pattern (e.g., "tool-weather")
-  // Also support legacy "tool-call" for backwards compatibility
-  // Exclude "tool-result" which also starts with "tool-"
-  const toolCallParts = msg.parts.filter(
-    (p): p is ToolCallPart | (MessagePart & { type: "tool-call" }) =>
-      p.type === "tool-call" || (p.type.startsWith("tool-") && p.type !== "tool-result"),
-  );
-  if (toolCallParts.length > 0) {
-    providerMsg.tool_calls = toolCallParts.map((tc) => ({
-      id: tc.toolCallId,
-      type: "function",
-      function: {
-        name: tc.toolName,
-        // Use type-safe helper to extract args/input (throws if missing)
-        arguments: JSON.stringify(getToolArguments(tc as ToolCallPart)),
-      },
-    }));
-  }
-
-  // Extract tool result info from parts
-  const toolResultPart = msg.parts.find(
-    (p): p is ToolResultPart => p.type === "tool-result",
-  );
-  if (toolResultPart && msg.role === "tool") {
-    providerMsg.tool_call_id = toolResultPart.toolCallId;
-    providerMsg.content = JSON.stringify(toolResultPart.result);
-  }
-
-  return providerMsg;
-}
+// Use centralized defaults from config
+const DEFAULT_MAX_TOKENS = AGENT_DEFAULTS.maxTokens;
+const DEFAULT_TEMPERATURE = AGENT_DEFAULTS.temperature;
+const MAX_STREAM_BUFFER_SIZE = STREAMING_DEFAULTS.maxBufferSize;
 
 export class AgentRuntime {
   private id: string;
@@ -670,6 +571,13 @@ export class AgentRuntime {
         if (done) break;
 
         partial += decoder.decode(value, { stream: true });
+
+        // Prevent unbounded buffer growth
+        if (partial.length > MAX_STREAM_BUFFER_SIZE) {
+          logger.warn("[AGENT] Stream buffer exceeded max size, truncating");
+          partial = partial.slice(-MAX_STREAM_BUFFER_SIZE / 2);
+        }
+
         const segments = partial.split("\n");
         partial = segments.pop() ?? "";
         const lines = segments.filter((line) => line.trim());

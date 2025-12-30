@@ -933,10 +933,10 @@ const HeavyComponent = dynamic(() => import('../components/Heavy'), {
 
 ## Examples
 
-- [Minimal Pages](https://github.com/veryfrontjs/veryfront/tree/main/examples/minimal-pages) - Simple Pages Router setup
-- [Data Fetching Demo](https://github.com/veryfrontjs/veryfront/tree/main/examples/data-fetching-demo) - All patterns
-- [Blog Example](https://github.com/veryfrontjs/veryfront/tree/main/examples/basic-mdx) - Complete blog
-- [Auth App](https://github.com/veryfrontjs/veryfront/tree/main/examples/auth-app) - Protected routes
+- [Minimal Pages](https://github.com/veryfront/veryfront/tree/main/examples/minimal-pages) - Simple Pages Router setup
+- [Data Fetching Demo](https://github.com/veryfront/veryfront/tree/main/examples/data-fetching-demo) - All patterns
+- [Blog Example](https://github.com/veryfront/veryfront/tree/main/examples/basic-mdx) - Complete blog
+- [Auth App](https://github.com/veryfront/veryfront/tree/main/examples/auth-app) - Protected routes
 
 ---
 

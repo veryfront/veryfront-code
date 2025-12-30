@@ -1,6 +1,15 @@
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "@veryfront/config";
 
+export interface ParsedDomain {
+  /** Project slug extracted from host (e.g., "my-project" from "my-project.preview.lvh.me") */
+  slug: string | null;
+  /** Environment inferred from domain pattern */
+  environment: "preview" | "development" | "staging" | "production" | null;
+  /** Whether this is a recognized veryfront domain */
+  isVeryfrontDomain: boolean;
+}
+
 export interface SecurityConfig {
   cors?: boolean | {
     origin?: string | string[] | ((origin: string) => boolean);
@@ -24,6 +33,10 @@ export interface HandlerContext {
   cspUserHeader: string | null;
   debug?: boolean;
   config?: VeryfrontConfig;
+  /** Parsed domain info from request host header */
+  parsedDomain?: ParsedDomain;
+  /** Project slug (from URL or config) */
+  projectSlug?: string;
 }
 
 export interface HandlerResult {

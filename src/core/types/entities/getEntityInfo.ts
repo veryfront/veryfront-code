@@ -191,7 +191,11 @@ export async function getEntityBySlug(
 
       if (dirExists) {
         const entries: { name: string; isFile: boolean; isDirectory: boolean }[] = [];
-        for await (const entry of fs.readDir(pagesDir)) {
+        // Use adapter's readDir if available, otherwise fall back to local fs
+        const dirIterator = adapter?.fs.readDir
+          ? adapter.fs.readDir(pagesDir)
+          : fs.readDir(pagesDir);
+        for await (const entry of dirIterator) {
           entries.push(entry);
         }
 
@@ -263,7 +267,11 @@ export async function getProviderEntities(
 
     if (dirExists) {
       const entries: { name: string; isFile: boolean; isDirectory: boolean }[] = [];
-      for await (const entry of fs.readDir(dir)) {
+      // Use adapter's readDir if available, otherwise fall back to local fs
+      const dirIterator = adapter?.fs.readDir
+        ? adapter.fs.readDir(dir)
+        : fs.readDir(dir);
+      for await (const entry of dirIterator) {
         entries.push(entry);
       }
 

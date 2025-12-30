@@ -429,10 +429,10 @@ Switching from Pages Router to App Router (or vice versa) requires restructuring
 ## Examples
 
 See working examples:
-- [Minimal App Router](https://github.com/veryfrontjs/veryfront/tree/main/examples/minimal-app-router) - Simplest App Router setup
-- [Minimal Pages](https://github.com/veryfrontjs/veryfront/tree/main/examples/minimal-pages) - Simplest Pages Router setup
-- [Blog Example](https://github.com/veryfrontjs/veryfront/tree/main/examples/basic-mdx) - Full blog with dynamic routes
-- [Auth App](https://github.com/veryfrontjs/veryfront/tree/main/examples/auth-app) - Authentication with protected routes
+- [Minimal App Router](https://github.com/veryfront/veryfront/tree/main/examples/minimal-app-router) - Simplest App Router setup
+- [Minimal Pages](https://github.com/veryfront/veryfront/tree/main/examples/minimal-pages) - Simplest Pages Router setup
+- [Blog Example](https://github.com/veryfront/veryfront/tree/main/examples/basic-mdx) - Full blog with dynamic routes
+- [Auth App](https://github.com/veryfront/veryfront/tree/main/examples/auth-app) - Authentication with protected routes
 
 ## Prerequisites
 

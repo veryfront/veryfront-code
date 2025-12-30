@@ -10,6 +10,9 @@ const DEFAULT_MAX_MEMORY_BYTES = 100 * 1024 * 1024;
 /** Default TTL for cache entries (1 minute) */
 const DEFAULT_CACHE_TTL_MS = 60_000;
 
+/** Default maximum number of cache entries */
+const DEFAULT_MAX_ENTRIES = 1000;
+
 export class FileCache {
   private cache: Map<string, CacheEntry<unknown>>;
   private lruTracker: LRUTracker;
@@ -22,7 +25,7 @@ export class FileCache {
     this.options = {
       enabled: true,
       ttl: DEFAULT_CACHE_TTL_MS,
-      maxSize: 1000,
+      maxSize: DEFAULT_MAX_ENTRIES,
       maxMemory: DEFAULT_MAX_MEMORY_BYTES,
       ...options,
     };
@@ -124,6 +127,21 @@ export class FileCache {
       this.lruTracker.remove(key);
     }
     return deleted;
+  }
+
+  deleteByPrefix(prefix: string): number {
+    let count = 0;
+    for (const key of this.cache.keys()) {
+      if (key.startsWith(prefix)) {
+        this.cache.delete(key);
+        this.lruTracker.remove(key);
+        count++;
+      }
+    }
+    if (count > 0) {
+      logger.debug("[FileCache] Deleted by prefix", { prefix, count });
+    }
+    return count;
   }
 
   clear(): void {

@@ -7,9 +7,11 @@ import {
   serverLogger as logger,
 } from "@veryfront/utils";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
+import type { VeryfrontConfig } from "@veryfront/config";
 import { ErrorOverlay } from "./error-overlay/index.ts";
 import type { HMRServer } from "./hmr-server.ts";
 import { createResponseBuilder } from "@veryfront/security/index.ts";
+import { resetApiHandler } from "../handlers/request/api/pages-api-handler.ts";
 
 export class RequestHandler {
   private universalHandler?: (req: Request) => Promise<Response>;
@@ -20,6 +22,7 @@ export class RequestHandler {
     private isReady: () => boolean,
     private isDebug: () => boolean,
     private hmrServer?: HMRServer,
+    private config?: VeryfrontConfig,
   ) {}
 
   async handleRequest(req: Request): Promise<Response> {
@@ -147,6 +150,7 @@ export class RequestHandler {
         // Module server is integrated into main server at /_vf_modules/
         // Use relative path since modules are served on the same server
         moduleServerUrl: "/_vf_modules",
+        config: this.config,
       });
     }
 
@@ -155,6 +159,10 @@ export class RequestHandler {
 
   invalidateUniversalHandler(): void {
     this.universalHandler = undefined;
+    // Also reset the API handler cache to pick up new/modified handlers
+    resetApiHandler(this.projectDir).catch((error) => {
+      logger.debug("[dev] resetApiHandler failed", error);
+    });
   }
 
   private handleServerError(error: unknown): Response {

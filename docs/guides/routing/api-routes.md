@@ -1088,9 +1088,9 @@ Deno.test('POST /api/users creates user', async () => {
 
 ## Examples
 
-- [Form Handling](https://github.com/veryfrontjs/veryfront/tree/main/examples/form-handling) - API routes with forms
-- [Auth App](https://github.com/veryfrontjs/veryfront/tree/main/examples/auth-app) - Authentication API
-- [Full Demo](https://github.com/veryfrontjs/veryfront/tree/main/examples/full-demo) - Complete API examples
+- [Form Handling](https://github.com/veryfront/veryfront/tree/main/examples/form-handling) - API routes with forms
+- [Auth App](https://github.com/veryfront/veryfront/tree/main/examples/auth-app) - Authentication API
+- [Full Demo](https://github.com/veryfront/veryfront/tree/main/examples/full-demo) - Complete API examples
 
 ---
 

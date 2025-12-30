@@ -149,7 +149,7 @@ This documentation covers Veryfront v0.1.0. For migration guides and version-spe
 
 - **Quick Start**: [5-minute quickstart guide](/learn/quickstart.md)
 - **Guides**: [Step-by-step guides](/guides/)
-- **Examples**: [Example projects](https://github.com/veryfrontjs/veryfront/tree/main/examples)
+- **Examples**: [Example projects](https://github.com/veryfront/veryfront/tree/main/examples)
 - **Community**: [GitHub Discussions](https://github.com/veryfront/veryfront/discussions)
 
 ## Related Documentation

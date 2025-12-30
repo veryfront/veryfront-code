@@ -49,19 +49,19 @@ Understand the fundamentals:
 Build complete applications:
 
 ### Beginner
-- **[Building a Blog](https://github.com/veryfrontjs/veryfront/tree/main/examples/basic-mdx)** - Create a full-featured blog
+- **[Building a Blog](https://github.com/veryfront/veryfront/tree/main/examples/basic-mdx)** - Create a full-featured blog
 - **[Static Site](/guides/rendering/ssg.md)** - Build a fast static website
 - **[Simple API](/guides/routing/api-routes.md)** - Create REST API endpoints
 
 ### Intermediate
-- **[Authentication](https://github.com/veryfrontjs/veryfront/tree/main/examples/auth-app)** - Add user authentication
+- **[Authentication](https://github.com/veryfront/veryfront/tree/main/examples/auth-app)** - Add user authentication
 - **[Database Integration](/reference/functions/get-server-data.md)** - Connect to databases
-- **[Form Handling](https://github.com/veryfrontjs/veryfront/tree/main/examples/form-handling)** - Handle forms and validation
+- **[Form Handling](https://github.com/veryfront/veryfront/tree/main/examples/form-handling)** - Handle forms and validation
 - **[File Uploads](/guides/routing/api-routes.md)** - Upload and process files
 
 ### Advanced
 - **[Real-Time Features](/guides/routing/api-routes.md)** - WebSockets and Server-Sent Events
-- **[Background Jobs](https://github.com/veryfrontjs/veryfront/tree/main/examples/async-worker-redis)** - Async workers and queues
+- **[Background Jobs](https://github.com/veryfront/veryfront/tree/main/examples/async-worker-redis)** - Async workers and queues
 - **[Multi-Tenant Apps](/guides/architecture/README.md)** - Build SaaS applications
 - **[Microservices](/guides/architecture/README.md)** - Service-oriented architecture
 
@@ -120,8 +120,8 @@ Style your application:
 
 Work with content:
 
-- **[MDX Integration](https://github.com/veryfrontjs/veryfront/tree/main/examples/basic-mdx)** - Markdown with React components
-- **[Content Collections](https://github.com/veryfrontjs/veryfront/tree/main/examples/basic-mdx)** - Organize content
+- **[MDX Integration](https://github.com/veryfront/veryfront/tree/main/examples/basic-mdx)** - Markdown with React components
+- **[Content Collections](https://github.com/veryfront/veryfront/tree/main/examples/basic-mdx)** - Organize content
 - **[Image Handling](/guides/components/image.md)** - Upload, optimize, serve images
 - **[Video Streaming](/guides/components/README.md)** - Serve video content
 - **[SEO Optimization](/guides/components/head.md)** - Search engine optimization
@@ -141,8 +141,8 @@ Design patterns and best practices:
 Secure your application:
 
 - **[Security Best Practices](/guides/middleware/README.md)** - Comprehensive security guide
-- **[Authentication](https://github.com/veryfrontjs/veryfront/tree/main/examples/auth-app)** - User authentication
-- **[Authorization](https://github.com/veryfrontjs/veryfront/tree/main/examples/auth-app)** - Role-based access control
+- **[Authentication](https://github.com/veryfront/veryfront/tree/main/examples/auth-app)** - User authentication
+- **[Authorization](https://github.com/veryfront/veryfront/tree/main/examples/auth-app)** - Role-based access control
 - **[CORS](/guides/middleware/README.md)** - Cross-Origin Resource Sharing
 - **[Rate Limiting](/guides/middleware/README.md)** - Protect your APIs
 
@@ -160,28 +160,28 @@ Move to Veryfront:
 Learn by example - see the `/examples/` directory:
 
 ### Core Examples (9 examples)
-- **[Minimal App Router](https://github.com/veryfrontjs/veryfront/tree/main/examples/minimal-app-router)** - Simplest App Router setup
-- **[Minimal Pages](https://github.com/veryfrontjs/veryfront/tree/main/examples/minimal-pages)** - Simplest Pages Router setup
-- **[Auth App](https://github.com/veryfrontjs/veryfront/tree/main/examples/auth-app)** - Authentication with protected routes
-- **[Data Fetching Demo](https://github.com/veryfrontjs/veryfront/tree/main/examples/data-fetching-demo)** - All data fetching patterns
-- **[Basic MDX](https://github.com/veryfrontjs/veryfront/tree/main/examples/basic-mdx)** - MDX integration
-- **[Form Handling](https://github.com/veryfrontjs/veryfront/tree/main/examples/form-handling)** - Forms with validation
-- **[Middleware Demo](https://github.com/veryfrontjs/veryfront/tree/main/examples/middleware-demo)** - Request/response middleware
-- **[RSC Demo](https://github.com/veryfrontjs/veryfront/tree/main/examples/rsc-demo)** - React Server Components
+- **[Minimal App Router](https://github.com/veryfront/veryfront/tree/main/examples/minimal-app-router)** - Simplest App Router setup
+- **[Minimal Pages](https://github.com/veryfront/veryfront/tree/main/examples/minimal-pages)** - Simplest Pages Router setup
+- **[Auth App](https://github.com/veryfront/veryfront/tree/main/examples/auth-app)** - Authentication with protected routes
+- **[Data Fetching Demo](https://github.com/veryfront/veryfront/tree/main/examples/data-fetching-demo)** - All data fetching patterns
+- **[Basic MDX](https://github.com/veryfront/veryfront/tree/main/examples/basic-mdx)** - MDX integration
+- **[Form Handling](https://github.com/veryfront/veryfront/tree/main/examples/form-handling)** - Forms with validation
+- **[Middleware Demo](https://github.com/veryfront/veryfront/tree/main/examples/middleware-demo)** - Request/response middleware
+- **[RSC Demo](https://github.com/veryfront/veryfront/tree/main/examples/rsc-demo)** - React Server Components
 
 ### AI Examples (8 examples)
-- **[AI Basic](https://github.com/veryfrontjs/veryfront/tree/main/examples/ai-basic)** - Simple AI agent integration
-- **[AI Code Assistant](https://github.com/veryfrontjs/veryfront/tree/main/examples/ai-code-assistant)** - Complete code assistant
-- **[Full Demo](https://github.com/veryfrontjs/veryfront/tree/main/examples/full-demo)** - All features including AI
-- **[Knowledge Base](https://github.com/veryfrontjs/veryfront/tree/main/examples/knowledge-base)** - AI-powered search
-- **[AI Autodiscovery](https://github.com/veryfrontjs/veryfront/tree/main/examples/ai-autodiscovery)** - Dynamic tool registration
-- **[AI Phase 3](https://github.com/veryfrontjs/veryfront/tree/main/examples/ai-phase3)** - Advanced AI features
-- **[AI Dev Tools](https://github.com/veryfrontjs/veryfront/tree/main/examples/ai-dev-tools)** - Developer tools
-- **[AI SDK Integration](https://github.com/veryfrontjs/veryfront/tree/main/examples/ai-sdk-integration)** - External AI SDKs
+- **[AI Basic](https://github.com/veryfront/veryfront/tree/main/examples/ai-basic)** - Simple AI agent integration
+- **[AI Code Assistant](https://github.com/veryfront/veryfront/tree/main/examples/ai-code-assistant)** - Complete code assistant
+- **[Full Demo](https://github.com/veryfront/veryfront/tree/main/examples/full-demo)** - All features including AI
+- **[Knowledge Base](https://github.com/veryfront/veryfront/tree/main/examples/knowledge-base)** - AI-powered search
+- **[AI Autodiscovery](https://github.com/veryfront/veryfront/tree/main/examples/ai-autodiscovery)** - Dynamic tool registration
+- **[AI Phase 3](https://github.com/veryfront/veryfront/tree/main/examples/ai-phase3)** - Advanced AI features
+- **[AI Dev Tools](https://github.com/veryfront/veryfront/tree/main/examples/ai-dev-tools)** - Developer tools
+- **[AI SDK Integration](https://github.com/veryfront/veryfront/tree/main/examples/ai-sdk-integration)** - External AI SDKs
 
 ### Infrastructure Examples (2 examples)
-- **[Async Worker + Redis](https://github.com/veryfrontjs/veryfront/tree/main/examples/async-worker-redis)** - Background jobs
-- **[Coding Agent](https://github.com/veryfrontjs/veryfront/tree/main/examples/coding-agent)** - Autonomous agent
+- **[Async Worker + Redis](https://github.com/veryfront/veryfront/tree/main/examples/async-worker-redis)** - Background jobs
+- **[Coding Agent](https://github.com/veryfront/veryfront/tree/main/examples/coding-agent)** - Autonomous agent
 
 ## Common Use Cases
 
@@ -272,11 +272,11 @@ Help improve Veryfront:
 1. [Quick Start](/learn/quickstart.md) - Get started in 5 minutes
 2. [Routing Overview](/guides/routing/README.md) - Understand routing
 3. [Rendering Comparison](/guides/rendering/comparison.md) - Choose rendering mode
-4. [Building a Blog](https://github.com/veryfrontjs/veryfront/tree/main/examples/basic-mdx) - First complete project
+4. [Building a Blog](https://github.com/veryfront/veryfront/tree/main/examples/basic-mdx) - First complete project
 
 ### Intermediate (Comfortable with basics)
 1. [Data Fetching Patterns](/reference/functions/get-server-data.md) - Advanced patterns
-2. [Authentication](https://github.com/veryfrontjs/veryfront/tree/main/examples/auth-app) - Add user auth
+2. [Authentication](https://github.com/veryfront/veryfront/tree/main/examples/auth-app) - Add user auth
 3. [Database Integration](/reference/functions/get-server-data.md) - Connect databases
 4. [Deployment Guide](./deployment/deno.md) - Deploy to production
 
@@ -292,25 +292,25 @@ Help improve Veryfront:
 - Start: [Quick Start](/learn/quickstart.md)
 - Routing: [Routing Overview](/guides/routing/README.md)
 - Rendering: [Rendering Comparison](/guides/rendering/comparison.md)
-- Complete: [Building a Blog](https://github.com/veryfrontjs/veryfront/tree/main/examples/basic-mdx)
+- Complete: [Building a Blog](https://github.com/veryfront/veryfront/tree/main/examples/basic-mdx)
 
 ### Build a Website
-- Blog: [Building a Blog](https://github.com/veryfrontjs/veryfront/tree/main/examples/basic-mdx)
-- Docs: [Documentation Site](https://github.com/veryfrontjs/veryfront/tree/main/examples)
+- Blog: [Building a Blog](https://github.com/veryfront/veryfront/tree/main/examples/basic-mdx)
+- Docs: [Documentation Site](https://github.com/veryfront/veryfront/tree/main/examples)
 - Marketing: [Static Site](/guides/rendering/ssg.md)
-- Portfolio: [Portfolio Site](https://github.com/veryfrontjs/veryfront/tree/main/examples)
+- Portfolio: [Portfolio Site](https://github.com/veryfront/veryfront/tree/main/examples)
 
 ### Build an App
 - SaaS: [Multi-Tenant Apps](/guides/architecture/README.md)
-- Dashboard: [User Dashboard](https://github.com/veryfrontjs/veryfront/tree/main/examples)
-- E-commerce: [Online Store](https://github.com/veryfrontjs/veryfront/tree/main/examples)
-- Social: [Social Platform](https://github.com/veryfrontjs/veryfront/tree/main/examples)
+- Dashboard: [User Dashboard](https://github.com/veryfront/veryfront/tree/main/examples)
+- E-commerce: [Online Store](https://github.com/veryfront/veryfront/tree/main/examples)
+- Social: [Social Platform](https://github.com/veryfront/veryfront/tree/main/examples)
 
 ### Add Features
-- Auth: [Authentication](https://github.com/veryfrontjs/veryfront/tree/main/examples/auth-app)
+- Auth: [Authentication](https://github.com/veryfront/veryfront/tree/main/examples/auth-app)
 - Search: [Full-Text Search](/reference/functions/get-server-data.md)
 - Real-Time: [WebSockets & SSE](/guides/routing/api-routes.md)
-- Payments: [Payment Integration](https://github.com/veryfrontjs/veryfront/tree/main/examples)
+- Payments: [Payment Integration](https://github.com/veryfront/veryfront/tree/main/examples)
 
 ### Optimize
 - Speed: [Performance Guide](/guides/performance/README.md)
@@ -341,7 +341,7 @@ Help improve Veryfront:
 1. [Quick Start](/learn/quickstart.md) - 5-minute setup
 2. [Rendering Comparison](/guides/rendering/comparison.md) - Choose rendering mode
 3. [Deno Deployment](./deployment/deno.md) - Deploy to production
-4. [Authentication](https://github.com/veryfrontjs/veryfront/tree/main/examples/auth-app) - Add user auth
+4. [Authentication](https://github.com/veryfront/veryfront/tree/main/examples/auth-app) - Add user auth
 5. [Performance Guide](/guides/performance/README.md) - Optimize everything
 
 ### Most Useful Patterns
@@ -375,8 +375,8 @@ Help improve Veryfront:
 Choose your path:
 
 1. **New to Veryfront?** → [Quick Start](/learn/quickstart.md)
-2. **Building a site?** → [Building a Blog](https://github.com/veryfrontjs/veryfront/tree/main/examples/basic-mdx)
-3. **Building an app?** → [Authentication](https://github.com/veryfrontjs/veryfront/tree/main/examples/auth-app)
+2. **Building a site?** → [Building a Blog](https://github.com/veryfront/veryfront/tree/main/examples/basic-mdx)
+3. **Building an app?** → [Authentication](https://github.com/veryfront/veryfront/tree/main/examples/auth-app)
 4. **Adding AI?** → [AI Getting Started](../ai/getting-started.md)
 5. **Deploying?** → [Deno Deployment](./deployment/deno.md)
 6. **Optimizing?** → [Performance Guide](/guides/performance/README.md)

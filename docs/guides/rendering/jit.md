@@ -1396,6 +1396,93 @@ tags: [
 ]
 ```
 
+## Remote URL Imports
+
+JIT rendering supports importing dependencies directly from URLs - no `node_modules` required:
+
+```typescript
+// pages/api/generate.ts
+import { nanoid } from 'https://esm.sh/nanoid';
+import { format } from 'https://esm.sh/date-fns';
+
+export function GET() {
+  return Response.json({
+    id: nanoid(),
+    date: format(new Date(), 'yyyy-MM-dd')
+  });
+}
+```
+
+**How it works:**
+- Dependencies are fetched at transpile time (first request)
+- Cached and bundled for subsequent requests
+- Works on **Deno**, **Bun** (native), and **Node.js** (via esbuild)
+- No experimental flags needed
+
+This enables true JIT for production - add a new dependency, and it's fetched on next request. Mix freely with npm packages.
+
+### Lockfile
+
+Remote imports are automatically locked for reproducible builds. When you use a remote import, Veryfront creates a `veryfront.lock` file:
+
+```json
+{
+  "version": 1,
+  "imports": {
+    "https://esm.sh/nanoid": {
+      "resolved": "https://esm.sh/v135/nanoid@5.0.4/es2020/nanoid.mjs",
+      "integrity": "sha256-abc123...",
+      "fetchedAt": "2025-01-15T10:30:00.000Z"
+    }
+  }
+}
+```
+
+**CLI commands:**
+
+```bash
+# List locked imports
+veryfront lock
+
+# Verify integrity of all locked imports
+veryfront lock --verify
+
+# Update all imports to latest versions
+veryfront lock --update
+
+# Clear the lockfile
+veryfront lock --clear
+```
+
+**Best practices:**
+- Commit `veryfront.lock` to version control
+- Run `veryfront lock --verify` in CI to detect supply chain changes
+- Use `veryfront lock --update` to refresh dependencies
+
+### Security
+
+Remote imports are validated against a whitelist. Only approved CDNs are allowed:
+
+```typescript
+// veryfront.config.ts
+export default {
+  security: {
+    remoteHosts: [
+      'https://esm.sh',         // Default
+      'https://cdn.skypack.dev' // Add others as needed
+    ]
+  }
+}
+```
+
+**Best practices:**
+- Always pin versions: `https://esm.sh/lodash@4.17.21`
+- Use trusted CDNs only (esm.sh, skypack, unpkg)
+- For production-critical deps, consider npm instead
+- Enable strict mode for integrity checks: `--strict`
+
+Unauthorized hosts are blocked at transpile time with a clear error message.
+
 ## Related Documentation
 
 - [ISR (Incremental Static Regeneration)](./isr.md) - Time-based revalidation

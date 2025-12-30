@@ -8,6 +8,7 @@
 import type { Message, ToolCall } from "../../types/agent.ts";
 import { executeTool } from "../../utils/tool.ts";
 import type { Memory } from "../memory.ts";
+import { createError, toError } from "../../../core/errors/veryfront-error.ts";
 
 /**
  * Provider tool call format
@@ -149,14 +150,20 @@ export class ToolExecutionCore {
       if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
         return parsed as Record<string, unknown>;
       }
-      throw new Error("Tool call arguments must be a JSON object");
+      throw toError(createError({
+        type: "agent",
+        message: "Tool call arguments must be a JSON object",
+      }));
     }
 
     if (raw && typeof raw === "object" && !Array.isArray(raw)) {
       return raw as Record<string, unknown>;
     }
 
-    throw new Error("Tool call arguments must be a JSON object");
+    throw toError(createError({
+      type: "agent",
+      message: "Tool call arguments must be a JSON object",
+    }));
   }
 
   /**

@@ -141,16 +141,80 @@ export class LayoutApplicator {
     );
   }
 
+  private isValidComponentPath(path: string): boolean {
+    return /\.(tsx|jsx|ts|js)$/.test(path);
+  }
+
+  private async resolveAppComponentPath(): Promise<string | null> {
+    // Priority 1: Check config.app from veryfront.config.ts
+    const configApp = this.config?.app;
+    if (configApp && this.isValidComponentPath(configApp)) {
+      const appPath = configApp.startsWith("/") || configApp.startsWith(this.projectDir)
+        ? configApp
+        : join(this.projectDir, configApp);
+
+      const exists = await this.adapter.fs.exists(appPath);
+      if (exists) {
+        logger.debug("[LayoutApplicator] Using config.app", { path: appPath });
+        return appPath;
+      }
+      logger.debug("[LayoutApplicator] config.app path not found", { configApp, appPath });
+    }
+
+    // Priority 2: Check API project data (for Veryfront Studio)
+    const wrappedAdapter = (this.adapter?.fs as { fsAdapter?: unknown })?.fsAdapter;
+    const isVeryfrontAPI =
+      (wrappedAdapter as { constructor?: { name?: string } })?.constructor?.name === "VeryfrontFSAdapter";
+
+    if (isVeryfrontAPI) {
+      const projectData = (wrappedAdapter as {
+        getProjectData: () => { app?: string } | undefined;
+      }).getProjectData?.();
+
+      if (projectData?.app && this.isValidComponentPath(projectData.app)) {
+        const appPath = join(this.projectDir, "components", projectData.app);
+        const exists = await (wrappedAdapter as { exists: (path: string) => Promise<boolean> }).exists(appPath);
+
+        if (exists) {
+          logger.debug("[LayoutApplicator] Using API project app", { path: appPath });
+          return appPath;
+        }
+      }
+    }
+
+    // Priority 3: Default discovery - check components/app.tsx
+    const defaultAppPath = join(this.projectDir, "components/app.tsx");
+    const defaultExists = await this.adapter.fs.exists(defaultAppPath);
+    if (defaultExists) {
+      return defaultAppPath;
+    }
+
+    // Try other extensions
+    const extensions = ["jsx", "ts", "js"];
+    for (const ext of extensions) {
+      const altPath = join(this.projectDir, `components/app.${ext}`);
+      const exists = await this.adapter.fs.exists(altPath);
+      if (exists) {
+        return altPath;
+      }
+    }
+
+    return null;
+  }
+
   private async wrapWithAppComponent(
     pageElement: BundledReact.ReactElement,
   ): Promise<BundledReact.ReactElement> {
     const React = await getProjectReact();
     try {
-      const appPath = join(this.projectDir, "components/app.tsx");
+      const appPath = await this.resolveAppComponentPath();
+      if (!appPath) {
+        return pageElement;
+      }
       const appExists = await this.adapter.fs.exists(appPath);
 
       if (appExists) {
-        logger.info("Loading App component from components/app.tsx");
+        logger.info("Loading App component from", appPath);
         const { loadComponentFromSource } = await import(
           "@veryfront/modules/react-loader/index.ts"
         );

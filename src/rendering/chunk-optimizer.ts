@@ -5,6 +5,7 @@ import { createFileSystem } from "../platform/compat/fs.ts";
 const SIZE_LIMITS = {
   DEP_SIZE_ESTIMATE: 25_000,
   UI_LIB_SIZE_ESTIMATE: 150_000,
+  REACT_SIZE_ESTIMATE: 200_000,
 };
 
 function analyzeImports(content: string) {
@@ -158,7 +159,8 @@ function generateChunkSuggestions(
 
   if (reactDeps.length > 0) {
     const pagesUsingReact = Array.from(pages.keys()).filter((path) => {
-      const imports = pages.get(path)!;
+      const imports = pages.get(path);
+      if (!imports) return false;
       return [...imports.remote, ...imports.shared].some((dep) => reactDeps.includes(dep));
     });
 
@@ -166,7 +168,7 @@ function generateChunkSuggestions(
       name: "react-vendor",
       deps: reactDeps,
       pages: pagesUsingReact,
-      benefit: 200000, // React is ~200KB
+      benefit: SIZE_LIMITS.REACT_SIZE_ESTIMATE,
     });
   }
 
@@ -176,7 +178,8 @@ function generateChunkSuggestions(
 
   if (uiDeps.length > 0) {
     const pagesUsingUI = Array.from(pages.keys()).filter((path) => {
-      const imports = pages.get(path)!;
+      const imports = pages.get(path);
+      if (!imports) return false;
       return [...imports.remote, ...imports.shared].some((dep) => uiDeps.includes(dep));
     });
 

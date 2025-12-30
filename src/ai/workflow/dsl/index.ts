@@ -31,3 +31,7 @@ export type { BranchOptions } from "./branch.ts";
 // Wait/approval nodes
 export { delay, waitForApproval, waitForEvent } from "./wait.ts";
 export type { WaitForApprovalOptions, WaitForEventOptions } from "./wait.ts";
+
+// Loop/iteration nodes
+export { doWhile, loop, times } from "./loop.ts";
+export type { LoopContext, LoopNodeConfig, LoopOptions } from "./loop.ts";

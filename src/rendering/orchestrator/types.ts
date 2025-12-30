@@ -1,5 +1,6 @@
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import type { MDXFrontmatter } from "@veryfront/types";
+import type { VeryfrontConfig } from "@veryfront/config";
 
 export interface RendererOptions {
   projectDir: string;
@@ -7,6 +8,8 @@ export interface RendererOptions {
   port?: number;
   adapter?: RuntimeAdapter;
   moduleServerUrl?: string;
+  /** Pre-loaded config (avoids re-loading via FSAdapter) */
+  config?: VeryfrontConfig;
   directories?: {
     app?: string;
     pages?: string;

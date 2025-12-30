@@ -1,15 +1,14 @@
 import { join } from "std/path/mod.ts";
+import { cwd } from "../../platform/compat/process.ts";
 
 let globalTmpDir: string | null = null;
 
 export async function getGlobalTmpDir(): Promise<string> {
   if (!globalTmpDir) {
-    // Always use Node.js compatible API for npm package
-    const os = await import("node:os");
     const fs = await import("node:fs/promises");
-    const tmpBase = os.tmpdir();
-    const tmpName = `vf-modules-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
-    globalTmpDir = join(tmpBase, tmpName);
+    // Use node_modules/.cache so bare imports can resolve to parent node_modules
+    const projectDir = cwd();
+    globalTmpDir = join(projectDir, "node_modules", ".cache", "veryfront-modules");
     await fs.mkdir(globalTmpDir, { recursive: true });
   }
   return globalTmpDir;

@@ -31,16 +31,27 @@ function parse(
   }
 
   /**
+   * Convert a string value to number if it looks like a number
+   */
+  const maybeNumber = (val: unknown): unknown => {
+    if (typeof val === "string" && /^\d+$/.test(val)) {
+      return parseInt(val, 10);
+    }
+    return val;
+  };
+
+  /**
    * Set a value, handling array flags that accumulate
    */
   const setValue = (key: string, value: unknown) => {
+    const converted = maybeNumber(value);
     if (ARRAY_FLAGS.has(key)) {
       if (!result[key]) {
         result[key] = [];
       }
-      (result[key] as unknown[]).push(value);
+      (result[key] as unknown[]).push(converted);
     } else {
-      result[key] = value;
+      result[key] = converted;
     }
   };
 

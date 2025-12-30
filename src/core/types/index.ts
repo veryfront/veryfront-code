@@ -17,6 +17,7 @@ export type {
   HandlerPriority,
   HandlerResult,
   MiddlewareFunction as ServerMiddlewareFunction,
+  ParsedDomain,
   RouteHandlerModule,
   RoutePattern,
   RouteRegistryConfig,
@@ -185,7 +186,7 @@ export interface ProviderItem {
   component?: React.ComponentType | unknown;
   componentPath?: string;
   path?: string;
-  entityInfo: EntityInfo;
+  entityInfo?: EntityInfo;
 }
 
 export interface PageBundle extends MdxBundle {

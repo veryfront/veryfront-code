@@ -18,9 +18,10 @@ import { hasMatchingEtag } from "../../utils/etag.ts";
 import { getContentType } from "../../utils/content-types.ts";
 import { createRenderer } from "@veryfront/rendering/index.ts";
 import { serverLogger as _logger } from "@veryfront/utils";
-import { getRenderer } from "./renderer-manager.ts";
+import { startRequest, endRequest, timeAsync } from "@veryfront/utils";
 import { computeSSRETag } from "./etag-handler.ts";
 import { tryNotFoundFallback } from "./not-found-fallback.ts";
+import { tryErrorPageFallback } from "./error-page-fallback.ts";
 import { ErrorCode, VeryfrontError } from "@veryfront/errors/index.ts";
 import {
   HTTP_INTERNAL_SERVER_ERROR,
@@ -74,10 +75,24 @@ export class SSRHandler extends BaseHandler {
     }
 
     const slug = pathname === "/" ? "" : pathname.replace(/^\//, "").replace(/\/$/, "");
+    const requestId = `${slug || "index"}-${Date.now()}`;
+    startRequest(requestId);
+
     this.logDebug("SSR attempt", { pathname, slug }, ctx);
 
     try {
-      const renderer = await getRenderer(this.rendererInit, ctx);
+      const renderer = await timeAsync("renderer-init", async () => {
+        if (!this.rendererInit) {
+          this.rendererInit = createRenderer({
+            projectDir: ctx.projectDir,
+            mode: ctx.mode,
+            adapter: ctx.adapter,
+            moduleServerUrl: ctx.moduleServerUrl,
+            config: ctx.config,
+          });
+        }
+        return this.rendererInit;
+      });
       this.logDebug("renderer obtained", { mode: ctx.mode }, ctx);
 
       // Extract route parameters for both App Router and Pages Router
@@ -88,18 +103,16 @@ export class SSRHandler extends BaseHandler {
         );
 
         // Try App Router params first
-        let extractedParams: Record<string, string | string[]> | null = await extractAppRouteParams(
-          ctx.projectDir,
-          slug,
-          ctx.adapter,
+        let extractedParams: Record<string, string | string[]> | null = await timeAsync(
+          "extract-app-route-params",
+          () => extractAppRouteParams(ctx.projectDir, slug, ctx.adapter),
         );
 
         // If no App Router params, try Pages Router
         if (!extractedParams && typeof extractPagesRouteParams === "function") {
-          extractedParams = await extractPagesRouteParams(
-            ctx.projectDir,
-            slug,
-            ctx.adapter,
+          extractedParams = await timeAsync(
+            "extract-pages-route-params",
+            () => extractPagesRouteParams(ctx.projectDir, slug, ctx.adapter),
           );
         }
 
@@ -119,14 +132,15 @@ export class SSRHandler extends BaseHandler {
       const nonce = generateNonce();
       this.logDebug(`[NONCE-TRACE] Generated nonce for SSR: ${nonce}`, { slug }, ctx);
 
-      const result = await renderer.renderPage(slug, {
+      const result = await timeAsync("render-page", () => renderer.renderPage(slug, {
         delivery: "stream",
         params: params ?? undefined,
         request: req,
         url,
         nonce,
-      });
+      }));
       this.logDebug("SSR successful", { slug, params }, ctx);
+      endRequest(requestId);
 
       const etag = computeSSRETag(result.ssrHash, result.html);
       // Disable caching in development to prevent nonce mismatches
@@ -186,9 +200,20 @@ export class SSRHandler extends BaseHandler {
         // Generate nonce for 404 response HTML
         const notFoundNonce = generateNonce();
         const builder = this.createResponseBuilder(ctx, notFoundNonce);
+
+        // Try App Router not-found.tsx first
         const notFoundResponse = await tryNotFoundFallback(req, slug, ctx, builder);
         if (notFoundResponse) {
           return this.respond(notFoundResponse);
+        }
+
+        // Try Pages Router custom 404 page
+        const customNotFoundResponse = await tryErrorPageFallback(req, ctx, builder, {
+          statusCode: HTTP_NOT_FOUND,
+          pathname: slug || "/",
+        });
+        if (customNotFoundResponse) {
+          return this.respond(customNotFoundResponse);
         }
 
         const isHeadRequest = req.method.toUpperCase() === "HEAD";
@@ -216,26 +241,39 @@ export class SSRHandler extends BaseHandler {
       const errorNonce = generateNonce();
       const builder = this.createResponseBuilder(ctx, errorNonce);
       const isHead = req.method.toUpperCase() === "HEAD";
+      const errorObj = error instanceof Error ? error : new Error(String(error));
 
       // In development mode, show error overlay with full stack trace
-      let body: string | null;
-      if (isHead) {
-        body = null;
-      } else if (ctx.mode === "development") {
-        // Use error overlay in development
+      if (!isHead && ctx.mode === "development") {
         const { ErrorOverlay } = await import(
           "../../../dev-server/error-overlay/index.ts"
         );
-        const errorObj = error instanceof Error ? error : new Error(String(error));
-        body = ErrorOverlay.createHTML({
+        const body = ErrorOverlay.createHTML({
           error: errorObj,
           type: "runtime",
         });
-      } else {
-        // Generic error in production
-        body =
-          `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>Internal Server Error</title></head><body><h1>500 Internal Server Error</h1><p>Unexpected error rendering this page.</p></body></html>`;
+        const response = builder
+          .withCORS(req, ctx.securityConfig?.cors)
+          .withSecurity(ctx.securityConfig ?? undefined)
+          .withCache("no-cache")
+          .withContentType(getContentType(".html"), body, HTTP_INTERNAL_SERVER_ERROR);
+        return this.respond(response);
       }
+
+      // In production, try custom error pages first
+      const customErrorResponse = await tryErrorPageFallback(req, ctx, builder, {
+        statusCode: HTTP_INTERNAL_SERVER_ERROR,
+        error: errorObj,
+        pathname: slug || "/",
+      });
+      if (customErrorResponse) {
+        return this.respond(customErrorResponse);
+      }
+
+      // Generic error fallback
+      const body = isHead
+        ? null
+        : `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>Internal Server Error</title></head><body><h1>500 Internal Server Error</h1><p>Unexpected error rendering this page.</p></body></html>`;
 
       const response = builder
         .withCORS(req, ctx.securityConfig?.cors)

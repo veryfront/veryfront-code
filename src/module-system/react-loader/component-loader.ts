@@ -20,8 +20,9 @@ export async function loadComponentFromSource(
 ): Promise<React.ComponentType<Record<string, unknown>>> {
   const projectId = options?.projectId || projectDir;
   const dev = options?.dev ?? true;
-  const isNode = isNodeRuntime();
-  const ssr = isNode ? true : (options?.ssr ?? false);
+  // Default to SSR mode for server-side execution (both Node and Deno)
+  // Browser mode (ssr=false) is only for client-side module transforms
+  const ssr = options?.ssr ?? true;
 
   // SSR mode: Use SSRModuleLoader for proper recursive dependency transformation
   if (ssr) {

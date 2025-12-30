@@ -2,8 +2,27 @@ import { serverLogger as logger } from "@veryfront/utils";
 import type { Message, Plugin } from "esbuild";
 import { getDenoStdNodeBase } from "@veryfront/utils";
 import { HTTP_MODULE_FETCH_TIMEOUT_MS, HTTP_NETWORK_CONNECT_TIMEOUT } from "@veryfront/utils";
+import {
+  type LockfileManager,
+  computeIntegrity,
+  createLockfileManager,
+} from "@veryfront/utils";
 
-export function createHTTPPlugin(allowedHosts: string[]): Plugin {
+export interface HTTPPluginOptions {
+  allowedHosts: string[];
+  lockfile?: LockfileManager;
+  projectDir?: string;
+  strict?: boolean;
+}
+
+export function createHTTPPlugin(options: HTTPPluginOptions | string[]): Plugin {
+  const opts: HTTPPluginOptions = Array.isArray(options)
+    ? { allowedHosts: options }
+    : options;
+  const { allowedHosts, strict = false } = opts;
+  const lockfile = opts.lockfile ?? (opts.projectDir
+    ? createLockfileManager(opts.projectDir)
+    : null);
   return {
     name: "vf-api-http-fetch",
     setup(build: Parameters<Plugin["setup"]>[0]) {
@@ -88,11 +107,46 @@ export function createHTTPPlugin(allowedHosts: string[]): Plugin {
           logger.warn("API URL parse failed", e);
         }
 
+        if (lockfile) {
+          const cached = await lockfile.get(args.path);
+          if (cached) {
+            logger.debug(`[API][http] lockfile hit: ${args.path}`);
+            const controller = new AbortController();
+            const timeout = setTimeout(() => controller.abort(), HTTP_MODULE_FETCH_TIMEOUT_MS);
+            try {
+              const res = await fetch(cached.resolved, {
+                headers: { "user-agent": "Mozilla/5.0 Veryfront/1.0" },
+                signal: controller.signal,
+              });
+              clearTimeout(timeout);
+              if (res.ok) {
+                const text = await res.text();
+                const integrity = await computeIntegrity(text);
+                if (integrity === cached.integrity) {
+                  return { contents: text, loader: "js" } as const;
+                }
+                if (strict) {
+                  return {
+                    errors: [{
+                      text: `Integrity mismatch for ${args.path}: expected ${cached.integrity}, got ${integrity}`,
+                    } as Message],
+                  };
+                }
+                logger.warn(`[API][http] integrity mismatch, refetching: ${args.path}`);
+              }
+            } catch {
+              clearTimeout(timeout);
+              logger.warn(`[API][http] cached URL failed, refetching: ${args.path}`);
+            }
+          }
+        }
+
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), HTTP_MODULE_FETCH_TIMEOUT_MS);
         const res = await fetch(requestUrl, {
           headers: { "user-agent": "Mozilla/5.0 Veryfront/1.0" },
           signal: controller.signal,
+          redirect: "follow",
         })
           .catch((e) => {
             return new Response(String(e?.message || e), { status: HTTP_NETWORK_CONNECT_TIMEOUT });
@@ -111,6 +165,19 @@ export function createHTTPPlugin(allowedHosts: string[]): Plugin {
         }
 
         const text = await res.text();
+        const resolvedUrl = res.url || requestUrl;
+
+        if (lockfile) {
+          const integrity = await computeIntegrity(text);
+          await lockfile.set(args.path, {
+            resolved: resolvedUrl,
+            integrity,
+            fetchedAt: new Date().toISOString(),
+          });
+          await lockfile.flush();
+          logger.debug(`[API][http] lockfile updated: ${args.path} -> ${resolvedUrl}`);
+        }
+
         return { contents: text, loader: "js" } as const;
       });
 

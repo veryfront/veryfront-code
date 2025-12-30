@@ -10,6 +10,7 @@ import { metrics } from "@veryfront/observability/simple-metrics/index.ts";
 
 // Import handler system (from new location)
 import type { HandlerContext } from "../handlers/types.ts";
+import { parseProjectDomain } from "../utils/domain-parser.ts";
 import { RouteRegistry } from "@veryfront/routing/registry/index.ts";
 import { SecurityConfigLoader } from "@veryfront/security/http/config.ts";
 import { getConfig } from "@veryfront/config/loader.ts";
@@ -39,6 +40,8 @@ export interface UniversalHandlerOptions {
   mode?: "development" | "production";
   /** Module server URL for ESM imports (e.g., 'http://localhost:8765') */
   moduleServerUrl?: string;
+  /** Pre-loaded config (avoids re-loading via FSAdapter) */
+  config?: VeryfrontConfig;
 }
 
 /**
@@ -76,17 +79,19 @@ export function createVeryfrontHandler(
   // Initialize security config loader
   const securityLoader = new SecurityConfigLoader(projectDir, adapter);
 
-  // Load config eagerly
-  let config: VeryfrontConfig | undefined;
-  const configPromise = getConfig(projectDir, adapter).then((c) => {
-    config = c;
-    return c;
-  }).catch((err) => {
-    logger.warn("[universal] Failed to load config, using defaults", {
-      error: err instanceof Error ? err.message : String(err),
-    });
-    return undefined;
-  });
+  // Use pre-loaded config if provided, otherwise load eagerly
+  let config: VeryfrontConfig | undefined = opts.config;
+  const configPromise = opts.config
+    ? Promise.resolve(opts.config)
+    : getConfig(projectDir, adapter).then((c) => {
+        config = c;
+        return c;
+      }).catch((err) => {
+        logger.warn("[universal] Failed to load config, using defaults", {
+          error: err instanceof Error ? err.message : String(err),
+        });
+        return undefined;
+      });
 
   // Initialize route registry
   const registry = new RouteRegistry({
@@ -137,6 +142,23 @@ export function createVeryfrontHandler(
 
     const _url = new URL(req.url);
 
+    // Parse domain from host header
+    const host = req.headers.get("host") || _url.host;
+    const parsedDomain = parseProjectDomain(host);
+
+    // Get project slug from URL or config
+    const configuredSlug = config?.fs?.veryfront?.projectSlug;
+    const projectSlug = parsedDomain.slug || configuredSlug;
+
+    // Log if slug from URL differs from config (for debugging)
+    if (parsedDomain.slug && configuredSlug && parsedDomain.slug !== configuredSlug) {
+      logDebug("[universal] Project slug mismatch", {
+        fromUrl: parsedDomain.slug,
+        fromConfig: configuredSlug,
+        usingSlug: projectSlug,
+      });
+    }
+
     // Create handler context
     const ctx: HandlerContext = {
       projectDir,
@@ -147,6 +169,8 @@ export function createVeryfrontHandler(
       cspUserHeader: securityLoader.getCspUserHeader(),
       debug: opts.debug,
       config,
+      parsedDomain,
+      projectSlug,
     };
 
     // Track metrics

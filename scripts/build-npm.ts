@@ -689,7 +689,7 @@ const cliBundlePlugin: esbuild.Plugin = {
 		build.onResolve(
 			{
 				filter:
-					/^(react|react-dom|zod|ai|@ai-sdk|picocolors|mri|yaml|gray-matter|ws|@opentelemetry)/,
+					/^(react|react-dom|zod|ai|@ai-sdk|picocolors|mri|yaml|gray-matter|ws|@opentelemetry|es-module-lexer)/,
 			},
 			(args) => {
 				return { path: args.path, external: true };
@@ -1389,6 +1389,7 @@ const packageJson = {
 		"@unocss/core": "^0.59.0",
 		"@unocss/preset-wind": "^0.59.0",
 		glob: "^11.0.0",
+		"es-module-lexer": "^1.5.0",
 	},
 	devDependencies: {
 		"@types/react": "^18.2.0",

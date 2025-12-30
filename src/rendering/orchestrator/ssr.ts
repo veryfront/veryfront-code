@@ -1,6 +1,7 @@
 import { rendererLogger as logger } from "@veryfront/utils";
 import { DEFAULT_DASHBOARD_PORT } from "@veryfront/utils";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
+import type { VeryfrontConfig } from "@veryfront/config";
 import { ConfigurationManager } from "./config.ts";
 import { RendererLifecycle, type RendererServices } from "./lifecycle.ts";
 import { MDXCompiler } from "./mdx.ts";
@@ -23,6 +24,7 @@ export class VeryfrontRenderer {
   private moduleServerUrl?: string;
   private projectDir: string;
   private mode: "development" | "production";
+  private preloadedConfig?: VeryfrontConfig;
   private mdxCompiler!: MDXCompiler;
   private layoutOrchestrator!: LayoutOrchestrator;
   private htmlGenerator!: HTMLGenerator;
@@ -35,6 +37,7 @@ export class VeryfrontRenderer {
     this.adapter = options.adapter;
     this.port = options.port || DEFAULT_DASHBOARD_PORT;
     this.moduleServerUrl = options.moduleServerUrl;
+    this.preloadedConfig = options.config;
   }
 
   async initialize(): Promise<void> {
@@ -49,6 +52,7 @@ export class VeryfrontRenderer {
       projectDir: this.projectDir,
       mode: this.mode,
       adapter: this.adapter,
+      config: this.preloadedConfig,
     });
     await this.configManager.initialize();
 

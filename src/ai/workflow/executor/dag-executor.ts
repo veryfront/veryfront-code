@@ -7,6 +7,8 @@
 import type {
   BranchNodeConfig,
   Checkpoint,
+  LoopExecutionContext,
+  LoopNodeConfig,
   MapNodeConfig,
   NodeState,
   ParallelNodeConfig,
@@ -283,10 +285,18 @@ export class DAGExecutor {
           nodeStates,
         );
 
+      case "loop":
+        return await this.executeLoopNode(
+          node,
+          config as LoopNodeConfig,
+          context,
+          nodeStates,
+        );
+
       default:
         throw new Error(
           `Unknown node type "${(config as WorkflowNodeConfig).type}" for node "${node.id}". ` +
-            `Valid types are: step, parallel, map, branch, wait, subWorkflow`,
+            `Valid types are: step, parallel, map, branch, wait, subWorkflow, loop`,
         );
     }
   }
@@ -517,6 +527,200 @@ export class DAGExecutor {
       contextUpdates: result.completed ? { [node.id]: finalOutput } : {},
       waiting: result.waiting,
     };
+  }
+
+  /**
+   * Execute a loop node
+   */
+  private async executeLoopNode(
+    node: WorkflowNode,
+    config: LoopNodeConfig,
+    context: WorkflowContext,
+    nodeStates: Record<string, NodeState>,
+  ): Promise<{
+    state: NodeState;
+    contextUpdates: Record<string, unknown>;
+    waiting: boolean;
+  }> {
+    const startTime = Date.now();
+    const previousResults: unknown[] = [];
+    let iteration = 0;
+    let exitReason: "condition" | "maxIterations" | "error" = "condition";
+    let lastError: string | undefined;
+
+    // Check for resumed loop state
+    const existingLoopState = context[`${node.id}_loop_state`] as {
+      iteration: number;
+      previousResults: unknown[];
+    } | undefined;
+
+    if (existingLoopState) {
+      iteration = existingLoopState.iteration;
+      previousResults.push(...existingLoopState.previousResults);
+    }
+
+    while (iteration < config.maxIterations) {
+      const loopContext: LoopExecutionContext = {
+        iteration,
+        totalIterations: iteration,
+        previousResults: [...previousResults],
+        isFirstIteration: iteration === 0,
+        isLastAllowedIteration: iteration === config.maxIterations - 1,
+      };
+
+      // Check while condition
+      const shouldContinue = await config.while(context, loopContext);
+      if (!shouldContinue) {
+        exitReason = "condition";
+        break;
+      }
+
+      // Get steps for this iteration
+      const steps = typeof config.steps === "function"
+        ? config.steps(context, loopContext)
+        : config.steps;
+
+      // Execute iteration steps
+      const result = await this.execute(steps, {
+        id: `${node.id}_iter_${iteration}`,
+        workflowId: "",
+        status: "running",
+        input: context.input,
+        nodeStates: {},
+        currentNodes: [],
+        context: { ...context, _loop: loopContext },
+        checkpoints: [],
+        pendingApprovals: [],
+        createdAt: new Date(),
+      });
+
+      // Handle waiting state (e.g., waitForApproval within loop)
+      if (result.waiting) {
+        Object.assign(nodeStates, result.nodeStates);
+
+        const state: NodeState = {
+          nodeId: node.id,
+          status: "running",
+          output: {
+            iteration,
+            waiting: true,
+            previousResults,
+          },
+          attempt: 1,
+          startedAt: new Date(startTime),
+        };
+
+        return {
+          state,
+          contextUpdates: {
+            ...result.context,
+            [`${node.id}_loop_state`]: { iteration, previousResults },
+          },
+          waiting: true,
+        };
+      }
+
+      // Handle error
+      if (result.error) {
+        lastError = result.error;
+        exitReason = "error";
+        break;
+      }
+
+      // Store iteration result and merge context
+      previousResults.push(result.context);
+      Object.assign(context, result.context);
+      Object.assign(nodeStates, result.nodeStates);
+
+      // Apply delay between iterations
+      if (config.delay && iteration < config.maxIterations - 1) {
+        const delayMs = typeof config.delay === "number"
+          ? config.delay
+          : this.parseDuration(config.delay);
+        await this.sleep(delayMs);
+      }
+
+      iteration++;
+    }
+
+    // Check if we hit max iterations
+    if (iteration >= config.maxIterations && exitReason !== "condition") {
+      exitReason = "maxIterations";
+    }
+
+    // Build final loop context
+    const finalLoopContext: LoopExecutionContext = {
+      iteration,
+      totalIterations: iteration,
+      previousResults,
+      isFirstIteration: false,
+      isLastAllowedIteration: true,
+    };
+
+    // Call appropriate completion handler
+    let completionUpdates: Record<string, unknown> = {};
+    if (exitReason === "maxIterations" && config.onMaxIterations) {
+      completionUpdates = await config.onMaxIterations(context, finalLoopContext);
+    } else if (exitReason === "condition" && config.onComplete) {
+      completionUpdates = await config.onComplete(context, finalLoopContext);
+    }
+
+    const output = {
+      exitReason,
+      iterations: iteration,
+      previousResults,
+      ...completionUpdates,
+    };
+
+    const state: NodeState = {
+      nodeId: node.id,
+      status: exitReason === "error" ? "failed" : "completed",
+      output,
+      error: lastError,
+      attempt: 1,
+      startedAt: new Date(startTime),
+      completedAt: new Date(),
+    };
+
+    this.config.onNodeComplete?.(node.id, state);
+
+    return {
+      state,
+      contextUpdates: {
+        [node.id]: output,
+        ...completionUpdates,
+      },
+      waiting: false,
+    };
+  }
+
+  /**
+   * Parse duration string to milliseconds
+   */
+  private parseDuration(duration: string | number): number {
+    if (typeof duration === "number") return duration;
+
+    const match = duration.match(/^(\d+)(ms|s|m|h|d)$/);
+    if (!match) return 0;
+
+    const value = parseInt(match[1]!, 10);
+    const unit = match[2];
+
+    switch (unit) {
+      case "ms": return value;
+      case "s": return value * 1000;
+      case "m": return value * 60 * 1000;
+      case "h": return value * 60 * 60 * 1000;
+      case "d": return value * 24 * 60 * 60 * 1000;
+      default: return 0;
+    }
+  }
+
+  /**
+   * Sleep for specified milliseconds
+   */
+  private sleep(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
   /**

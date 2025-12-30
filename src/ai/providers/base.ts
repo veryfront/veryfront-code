@@ -14,6 +14,9 @@ import type {
 import { agentLogger } from "../../core/utils/logger/logger.ts";
 import { z } from "zod";
 
+/**
+ * Schema for OpenAI streaming response chunks
+ */
 const OpenAIStreamChunkSchema = z.object({
   choices: z.array(z.object({
     delta: z.object({
@@ -29,6 +32,33 @@ const OpenAIStreamChunkSchema = z.object({
     }),
     finish_reason: z.string().nullable(),
   })).min(1),
+});
+
+/**
+ * Schema for OpenAI non-streaming completion response
+ */
+const OpenAICompletionResponseSchema = z.object({
+  id: z.string(),
+  choices: z.array(z.object({
+    message: z.object({
+      role: z.string(),
+      content: z.string().nullable().optional(),
+      tool_calls: z.array(z.object({
+        id: z.string(),
+        type: z.literal("function"),
+        function: z.object({
+          name: z.string(),
+          arguments: z.string(),
+        }),
+      })).optional(),
+    }),
+    finish_reason: z.string().nullable(),
+  })).min(1),
+  usage: z.object({
+    prompt_tokens: z.number(),
+    completion_tokens: z.number(),
+    total_tokens: z.number(),
+  }).optional(),
 });
 
 export abstract class BaseProvider implements Provider {
@@ -102,7 +132,20 @@ export abstract class BaseProvider implements Provider {
     }
 
     const data = await response.json();
-    return this.transformResponse(data);
+
+    // Validate response structure
+    const parseResult = OpenAICompletionResponseSchema.safeParse(data);
+    if (!parseResult.success) {
+      agentLogger.warn(`${this.name}: Invalid response structure`, {
+        errors: parseResult.error.flatten(),
+      });
+      throw toError(createError({
+        type: "agent",
+        message: `${this.name}: Invalid response structure from provider`,
+      }));
+    }
+
+    return this.transformResponse(parseResult.data);
   }
 
   /**

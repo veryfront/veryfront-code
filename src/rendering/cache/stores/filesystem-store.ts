@@ -1,19 +1,29 @@
 import { dirname, join } from "../../../platform/compat/path-helper.ts";
+import { getLocalAdapter } from "@veryfront/platform/adapters/registry.ts";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import type { CachePayload, CacheStore } from "../types.ts";
 
 export interface FilesystemCacheStoreOptions {
   baseDir: string;
-  adapter: RuntimeAdapter;
 }
 
+/**
+ * Filesystem cache store - always uses local filesystem regardless of FSAdapter
+ * Cache files should be local for performance and to avoid remote write operations
+ */
 export class FilesystemCacheStore implements CacheStore {
   private baseDir: string;
-  private adapter: RuntimeAdapter;
+  private localAdapterPromise: Promise<RuntimeAdapter>;
 
   constructor(options: FilesystemCacheStoreOptions) {
     this.baseDir = options.baseDir;
-    this.adapter = options.adapter;
+    // Pre-fetch local adapter to avoid repeated calls
+    this.localAdapterPromise = getLocalAdapter();
+  }
+
+  private async getLocalFS() {
+    const adapter = await this.localAdapterPromise;
+    return adapter.fs;
   }
 
   async get(key: string): Promise<CachePayload | undefined> {
@@ -29,13 +39,15 @@ export class FilesystemCacheStore implements CacheStore {
   async set(key: string, value: CachePayload): Promise<void> {
     const filePath = this.filePathForKey(key);
     await this.ensureDir(dirname(filePath));
-    await this.adapter.fs.writeFile(filePath, JSON.stringify(value));
+    const fs = await this.getLocalFS();
+    await fs.writeFile(filePath, JSON.stringify(value));
   }
 
   async delete(key: string): Promise<void> {
     const filePath = this.filePathForKey(key);
     try {
-      await this.adapter.fs.remove(filePath);
+      const fs = await this.getLocalFS();
+      await fs.remove(filePath);
     } catch {
       // ignore missing files
     }
@@ -43,7 +55,8 @@ export class FilesystemCacheStore implements CacheStore {
 
   async clear(): Promise<void> {
     try {
-      await this.adapter.fs.remove(this.baseDir, { recursive: true });
+      const fs = await this.getLocalFS();
+      await fs.remove(this.baseDir, { recursive: true });
     } catch {
       /* ignore */
     }
@@ -60,7 +73,8 @@ export class FilesystemCacheStore implements CacheStore {
 
   private async ensureDir(path: string): Promise<void> {
     try {
-      await this.adapter.fs.mkdir(path, { recursive: true });
+      const fs = await this.getLocalFS();
+      await fs.mkdir(path, { recursive: true });
     } catch (error) {
       if ((error as Error).message?.includes("exists")) return;
     }
@@ -69,7 +83,8 @@ export class FilesystemCacheStore implements CacheStore {
   private async readFileForKey(key: string): Promise<string | null> {
     const filePath = this.filePathForKey(key);
     try {
-      return await this.adapter.fs.readFile(filePath);
+      const fs = await this.getLocalFS();
+      return await fs.readFile(filePath);
     } catch {
       return null;
     }

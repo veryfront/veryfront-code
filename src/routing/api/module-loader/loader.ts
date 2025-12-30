@@ -22,9 +22,17 @@ export async function loadHandlerModule(options: LoadModuleOptions): Promise<API
       // JS files can be loaded directly
       module = await loadJSModule(modulePath);
     } else if (isDeno) {
-      // In Deno, directly import TypeScript files without bundling
+      // In Deno, try to directly import TypeScript files without bundling
       // This allows modules to share the same runtime context (including singletons like agentRegistry)
-      module = await loadTSModuleDirect(modulePath);
+      // However, if the file doesn't exist locally (e.g., remote FSAdapter), fall back to transpile
+      const fileExistsLocally = await fs.exists(modulePath);
+      if (fileExistsLocally) {
+        module = await loadTSModuleDirect(modulePath);
+      } else {
+        // File is remote (e.g., VeryfrontFSAdapter) - use adapter to read and transpile
+        logger.debug(`[API] File not local, using adapter-based loading: ${modulePath}`);
+        module = await loadAndTranspileModule(modulePath, projectDir, adapter, fs, config);
+      }
     } else {
       // In Node.js, use esbuild to transpile TypeScript
       // Singletons are shared via globalThis pattern (see src/ai/agent/composition.ts etc.)

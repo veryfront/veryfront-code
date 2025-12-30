@@ -6,6 +6,7 @@
 import { serverLogger as logger } from "@veryfront/utils";
 import { HTTP_NOT_FOUND, HTTP_NOT_IMPLEMENTED, HTTP_SERVER_ERROR } from "@veryfront/utils";
 import { HMR_MAX_MESSAGE_SIZE_BYTES, HMR_MAX_MESSAGES_PER_MINUTE } from "@veryfront/utils";
+import { createError, toError } from "../../core/errors/veryfront-error.ts";
 import type { HMRServerOptions, HMRUpdate } from "./hmr-types.ts";
 import type { Server } from "../../platform/adapters/base.ts";
 import {
@@ -98,7 +99,10 @@ export class HMRServer {
 
     // Ensure we have an adapter
     if (!this.options.adapter) {
-      throw new Error("HMR server requires a runtime adapter");
+      throw toError(createError({
+        type: "config",
+        message: "HMR server requires a runtime adapter",
+      }));
     }
 
     // Create AbortController if no signal provided for fast shutdown

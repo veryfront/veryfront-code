@@ -61,8 +61,10 @@ export async function devCommand(options: DevOptions) {
     throw error;
   }
 
-  // Use config port if specified
-  const finalPort = config?.dev?.port || port;
+  // CLI port takes precedence over config port
+  // Only use config port if CLI didn't specify one (port equals default)
+  const DEFAULT_DEV_PORT = 3000;
+  const finalPort = port !== DEFAULT_DEV_PORT ? port : (config?.dev?.port || port);
   const enableHMR = config?.dev?.hmr !== false && hmr;
 
   // Validate AI configuration
