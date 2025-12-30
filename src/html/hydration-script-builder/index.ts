@@ -4,7 +4,6 @@ export { generateHydrationData } from "./hydration-data-generator.ts";
 
 export { getDevScripts } from "./dev-scripts.ts";
 export { generateDevErrorLoggerScript } from "./dev-error-logger.ts";
-export { generateDevIndicatorScript } from "./dev-indicator.ts";
 export { generateDevComponentManifestScript } from "./dev-component-manifest.ts";
 export { generateDevClientRendererScript } from "./dev-client-renderer.ts";
 

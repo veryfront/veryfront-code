@@ -11,6 +11,9 @@ server.log
 .env
 .env.*
 
+# Local veryfront-api development config
+veryfront.config.ts
+
 # Build artifacts
 .veryfront/
 dist/

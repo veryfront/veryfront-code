@@ -6,8 +6,16 @@
 
 import type { Agent, AgentResponse } from "../../types/agent.ts";
 import type { Tool } from "../../types/tool.ts";
-import type { NodeState, StepNodeConfig, WorkflowContext, WorkflowNode } from "../types.ts";
+import type { NodeState, RetryConfig, StepNodeConfig, WorkflowContext, WorkflowNode } from "../types.ts";
 import { parseDuration } from "../types.ts";
+
+/** Default retry configuration */
+const DEFAULT_RETRY: RetryConfig = {
+  maxAttempts: 1,
+  backoff: "exponential",
+  initialDelay: 1000,
+  maxDelay: 30000,
+};
 import type { BlobStorage } from "../blob/types.ts";
 
 /** Default timeout for workflow steps (5 minutes) */
@@ -82,7 +90,7 @@ export class StepExecutor {
   }
 
   /**
-   * Execute a step node
+   * Execute a step node with retry support
    */
   async execute(
     node: WorkflowNode,
@@ -98,40 +106,126 @@ export class StepExecutor {
       );
     }
 
-    try {
-      // Notify start
-      const resolvedInput = await this.resolveInput(config.input, context);
-      this.config.onStepStart?.(node.id, resolvedInput);
+    const retryConfig = { ...DEFAULT_RETRY, ...config.retry };
+    const maxAttempts = retryConfig.maxAttempts ?? 1;
 
-      // Execute with timeout
-      const timeout = config.timeout ? parseDuration(config.timeout) : this.config.defaultTimeout!;
+    let lastError: Error | undefined;
+    let attempt = 0;
 
-      const output = await this.executeWithTimeout(
-        () => this.executeStep(config, resolvedInput, context),
-        timeout,
-        node.id,
-      );
+    while (attempt < maxAttempts) {
+      attempt++;
 
-      // Notify completion
-      this.config.onStepComplete?.(node.id, output);
+      try {
+        // Notify start
+        const resolvedInput = await this.resolveInput(config.input, context);
+        this.config.onStepStart?.(node.id, resolvedInput);
 
-      return {
-        success: true,
-        output,
-        executionTime: Date.now() - startTime,
-      };
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
+        // Execute with timeout
+        const timeout = config.timeout ? parseDuration(config.timeout) : this.config.defaultTimeout!;
 
-      // Notify error
-      this.config.onStepError?.(node.id, error as Error);
+        const output = await this.executeWithTimeout(
+          () => this.executeStep(config, resolvedInput, context),
+          timeout,
+          node.id,
+        );
 
-      return {
-        success: false,
-        error: errorMessage,
-        executionTime: Date.now() - startTime,
-      };
+        // Notify completion
+        this.config.onStepComplete?.(node.id, output);
+
+        return {
+          success: true,
+          output,
+          executionTime: Date.now() - startTime,
+        };
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+
+        // Check if we should retry
+        const shouldRetry = attempt < maxAttempts && this.isRetryableError(lastError, retryConfig);
+
+        if (shouldRetry) {
+          const delay = this.calculateRetryDelay(attempt, retryConfig);
+          await this.sleep(delay);
+          continue;
+        }
+
+        // Notify error (only on final failure)
+        this.config.onStepError?.(node.id, lastError);
+
+        return {
+          success: false,
+          error: lastError.message,
+          executionTime: Date.now() - startTime,
+        };
+      }
     }
+
+    // Should not reach here, but just in case
+    return {
+      success: false,
+      error: lastError?.message ?? "Unknown error",
+      executionTime: Date.now() - startTime,
+    };
+  }
+
+  /**
+   * Check if error is retryable
+   */
+  private isRetryableError(error: Error, config: RetryConfig): boolean {
+    // Check custom retryable condition
+    if (config.retryIf) {
+      return config.retryIf(error);
+    }
+
+    // Default: retry on timeout and network-like errors
+    const retryablePatterns = [
+      /timeout/i,
+      /ECONNRESET/i,
+      /ECONNREFUSED/i,
+      /ETIMEDOUT/i,
+      /rate limit/i,
+      /429/,
+      /503/,
+      /502/,
+    ];
+
+    return retryablePatterns.some((pattern) => pattern.test(error.message));
+  }
+
+  /**
+   * Calculate retry delay based on backoff strategy
+   */
+  private calculateRetryDelay(attempt: number, config: RetryConfig): number {
+    const initialDelay = config.initialDelay ?? 1000;
+    const maxDelay = config.maxDelay ?? 30000;
+
+    let delay: number;
+
+    switch (config.backoff) {
+      case "exponential":
+        delay = initialDelay * Math.pow(2, attempt - 1);
+        break;
+      case "linear":
+        delay = initialDelay * attempt;
+        break;
+      case "fixed":
+      default:
+        delay = initialDelay;
+        break;
+    }
+
+    // Add jitter (±10%)
+    const jitter = delay * 0.1 * (Math.random() * 2 - 1);
+    delay = Math.min(delay + jitter, maxDelay);
+
+    return Math.floor(delay);
+  }
+
+  /**
+   * Sleep for specified milliseconds
+   */
+  private sleep(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
   /**

@@ -22,7 +22,7 @@ export type ModelString = string;
  */
 export interface MemoryConfig {
   /** Memory type */
-  type: "conversation" | "buffer" | "summary";
+  type: "conversation" | "buffer" | "summary" | "redis";
 
   /** Maximum tokens to store in memory */
   maxTokens?: number;

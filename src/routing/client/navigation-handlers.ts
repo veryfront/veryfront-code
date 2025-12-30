@@ -9,6 +9,7 @@ export interface NavigationCallbacks {
 
 export class NavigationHandlers {
   private prefetchQueue = new Set<string>();
+  private pendingTimeouts = new Map<string, ReturnType<typeof setTimeout>>();
   private scrollPositions = new Map<string, number>();
   private isPopStateNav = false;
   private prefetchDelay: number;
@@ -30,7 +31,9 @@ export class NavigationHandlers {
       const anchor = findAnchorElement(event.target as HTMLElement);
       if (!anchor || !isInternalLink(anchor)) return;
 
-      const href = anchor.getAttribute("href")!;
+      const href = anchor.getAttribute("href");
+      if (!href) return;
+
       event.preventDefault();
       callbacks.onNavigate(href);
     };
@@ -56,10 +59,12 @@ export class NavigationHandlers {
 
       if (!this.prefetchQueue.has(href)) {
         this.prefetchQueue.add(href);
-        setTimeout(() => {
+        const timeoutId = setTimeout(() => {
           callbacks.onPrefetch(href);
           this.prefetchQueue.delete(href);
+          this.pendingTimeouts.delete(href);
         }, this.prefetchDelay);
+        this.pendingTimeouts.set(href, timeoutId);
       }
     };
   }
@@ -105,6 +110,10 @@ export class NavigationHandlers {
   }
 
   clear(): void {
+    for (const timeoutId of this.pendingTimeouts.values()) {
+      clearTimeout(timeoutId);
+    }
+    this.pendingTimeouts.clear();
     this.prefetchQueue.clear();
     this.scrollPositions.clear();
     this.isPopStateNav = false;

@@ -111,13 +111,13 @@ All documentation has been created and updated to reflect the **100% complete** 
 
 ### 📝 Example Documentation
 
-9. **[Basic Example](https://github.com/veryfrontjs/veryfront/tree/main/examples/ai-basic)**
+9. **[Basic Example](https://github.com/veryfront/veryfront/tree/main/examples/ai-basic)**
    - Basic example documentation
    - Platform detection demo
    - Tool and agent creation
    - **Status**: ✅ Complete
 
-10. **[Full Demo](https://github.com/veryfrontjs/veryfront/tree/main/examples/full-demo)**
+10. **[Full Demo](https://github.com/veryfront/veryfront/tree/main/examples/full-demo)**
     - Complete demo documentation
     - All 8 phases demonstrated
     - Expected output
@@ -160,7 +160,7 @@ All documentation has been created and updated to reflect the **100% complete** 
 → **[Styled Components](/reference/ai/README.md)** - Layer 3 (Styled)
 
 ### For Examples
-→ **[Full Demo](https://github.com/veryfrontjs/veryfront/tree/main/examples/full-demo)** - Complete demo showing all features
+→ **[Full Demo](https://github.com/veryfront/veryfront/tree/main/examples/full-demo)** - Complete demo showing all features
 
 ---
 

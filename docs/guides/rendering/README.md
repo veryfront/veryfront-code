@@ -489,11 +489,11 @@ Before diving into rendering modes, ensure you have:
 ## Examples
 
 See working examples:
-- [SSR Example](https://github.com/veryfrontjs/veryfront/tree/main/examples/full-demo) - User dashboard with SSR
-- [SSG Example](https://github.com/veryfrontjs/veryfront/tree/main/examples/basic-mdx) - Static blog with SSG
-- [ISR Example](https://github.com/veryfrontjs/veryfront/tree/main/examples/full-demo) - Product catalog with ISR
-- [JIT Example](https://github.com/veryfrontjs/veryfront/tree/main/examples/basic-mdx) - Large documentation site with JIT
-- [RSC Example](https://github.com/veryfrontjs/veryfront/tree/main/examples/rsc-demo) - React Server Components demo
+- [SSR Example](https://github.com/veryfront/veryfront/tree/main/examples/full-demo) - User dashboard with SSR
+- [SSG Example](https://github.com/veryfront/veryfront/tree/main/examples/basic-mdx) - Static blog with SSG
+- [ISR Example](https://github.com/veryfront/veryfront/tree/main/examples/full-demo) - Product catalog with ISR
+- [JIT Example](https://github.com/veryfront/veryfront/tree/main/examples/basic-mdx) - Large documentation site with JIT
+- [RSC Example](https://github.com/veryfront/veryfront/tree/main/examples/rsc-demo) - React Server Components demo
 
 ## Troubleshooting
 

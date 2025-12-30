@@ -2,11 +2,36 @@ import { rendererLogger as logger } from "@veryfront/utils";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import type { MdxBundle, ProviderItem } from "@veryfront/types";
 import type { EntityInfo } from "@veryfront/types";
+import type { VeryfrontConfig } from "@veryfront/config";
 import { getProviderEntities } from "../../core/types/entities/getEntityInfo.ts";
+import { join } from "../../platform/compat/path-helper.ts";
+
+interface VeryfrontFSAdapterLike {
+  getProjectData: () => { provider?: string; layout?: string } | undefined;
+  exists: (path: string) => Promise<boolean>;
+}
+
+function getVeryfrontFSAdapter(adapter: RuntimeAdapter): VeryfrontFSAdapterLike | null {
+  const fs = adapter?.fs;
+  if (!fs || typeof fs !== "object") return null;
+
+  const wrapped = (fs as { fsAdapter?: unknown }).fsAdapter;
+  if (!wrapped || typeof wrapped !== "object") return null;
+
+  const constructor = (wrapped as { constructor?: { name?: string } }).constructor;
+  if (constructor?.name !== "VeryfrontFSAdapter") return null;
+
+  const typedAdapter = wrapped as Partial<VeryfrontFSAdapterLike>;
+  if (typeof typedAdapter.getProjectData !== "function") return null;
+  if (typeof typedAdapter.exists !== "function") return null;
+
+  return typedAdapter as VeryfrontFSAdapterLike;
+}
 
 export interface ProviderManagerOptions {
   projectDir: string;
   adapter: RuntimeAdapter;
+  config?: VeryfrontConfig;
   compileMDX: (
     content: string,
     frontmatter?: Record<string, unknown>,
@@ -23,28 +48,142 @@ export interface ProviderCollectionResult {
 export class ProviderManager {
   private projectDir: string;
   private adapter: RuntimeAdapter;
+  private config?: VeryfrontConfig;
   private compileMDX: (
     content: string,
     frontmatter?: Record<string, unknown>,
     filePath?: string,
   ) => Promise<MdxBundle>;
+  private cachedResult: ProviderCollectionResult | null = null;
 
   constructor(options: ProviderManagerOptions) {
     this.projectDir = options.projectDir;
     this.adapter = options.adapter;
+    this.config = options.config;
     this.compileMDX = options.compileMDX;
   }
 
+  clearCache(): void {
+    this.cachedResult = null;
+  }
+
   async collectProviders(): Promise<ProviderCollectionResult> {
-    const providerInfos = await this.discoverProviders();
-    const { providerBundles, providerItems } = await this.compileProviders(providerInfos);
+    if (this.cachedResult) {
+      logger.debug("[ProviderManager] Using cached providers");
+      return this.cachedResult;
+    }
+    const providerItems: ProviderItem[] = [];
+    const providerBundles: MdxBundle[] = [];
+    const providerInfos: EntityInfo[] = [];
+
+    // Priority 1: Check config.provider from veryfront.config.ts
+    const configProviderItem = await this.collectConfigProvider();
+    if (configProviderItem) {
+      providerItems.push(configProviderItem);
+      logger.debug("[ProviderManager] Using config.provider", {
+        path: configProviderItem.componentPath,
+      });
+      const result = { providerBundles, providerItems, providerInfos };
+      this.cachedResult = result;
+      return result;
+    }
+
+    // Priority 2: Check project data provider (legacy API)
+    const apiProviderItem = await this.collectAPIProvider();
+    if (apiProviderItem) {
+      providerItems.push(apiProviderItem);
+      logger.debug("[ProviderManager] Using API project provider", {
+        path: apiProviderItem.componentPath,
+      });
+      const result = { providerBundles, providerItems, providerInfos };
+      this.cachedResult = result;
+      return result;
+    }
+
+    // Priority 3: Default discovery from providers/ and components/ directories
+    const discoveredInfos = await this.discoverProviders();
+    const compiled = await this.compileProviders(discoveredInfos);
 
     logger.debug("[ProviderManager] Collected providers", {
-      count: providerInfos.length,
-      providers: providerInfos.map((p) => p.entity.id),
+      count: discoveredInfos.length,
+      providers: discoveredInfos.map((p) => p.entity.id),
     });
 
-    return { providerBundles, providerItems, providerInfos };
+    const result = {
+      providerBundles: compiled.providerBundles,
+      providerItems: compiled.providerItems,
+      providerInfos: discoveredInfos,
+    };
+    this.cachedResult = result;
+    return result;
+  }
+
+  private isValidProviderPath(provider: string): boolean {
+    return /\.(tsx|jsx|ts|js)$/.test(provider);
+  }
+
+  private async collectConfigProvider(): Promise<ProviderItem | null> {
+    const configProvider = this.config?.provider;
+    if (!configProvider || !this.isValidProviderPath(configProvider)) {
+      return null;
+    }
+
+    const providerPath = configProvider.startsWith("/") || configProvider.startsWith(this.projectDir)
+      ? configProvider
+      : join(this.projectDir, configProvider);
+
+    const exists = await this.adapter.fs.exists(providerPath);
+
+    logger.debug("[ProviderManager] Checking config.provider", {
+      configProvider,
+      providerPath,
+      exists,
+    });
+
+    if (!exists) {
+      return null;
+    }
+
+    return {
+      kind: "tsx",
+      componentPath: providerPath,
+      path: providerPath,
+    };
+  }
+
+  private async collectAPIProvider(): Promise<ProviderItem | null> {
+    const vfAdapter = getVeryfrontFSAdapter(this.adapter);
+    if (!vfAdapter) {
+      return null;
+    }
+
+    const projectData = vfAdapter.getProjectData();
+
+    if (!projectData?.provider || !this.isValidProviderPath(projectData.provider)) {
+      logger.debug("[ProviderManager] Skipping invalid API provider value", {
+        provider: projectData?.provider,
+      });
+      return null;
+    }
+
+    const providerPath = join(this.projectDir, "components", projectData.provider);
+    const exists = await vfAdapter.exists(providerPath);
+
+    logger.debug("[ProviderManager] Checking API project provider", {
+      provider: projectData.provider,
+      providerPath,
+      exists,
+    });
+
+    if (!exists) {
+      return null;
+    }
+
+    return {
+      kind: "tsx",
+      componentPath: providerPath,
+      path: providerPath,
+    };
   }
 
   private async discoverProviders(): Promise<EntityInfo[]> {

@@ -571,7 +571,7 @@ export default function Breadcrumbs() {
 
 ## Examples
 
-- [Navigation Example](https://github.com/veryfrontjs/veryfront/tree/main/examples/minimal-app-router)
-- [Search with Filters](https://github.com/veryfrontjs/veryfront/tree/main/examples/form-handling)
-- [Multi-Step Form](https://github.com/veryfrontjs/veryfront/tree/main/examples/form-handling)
-- [Pagination Example](https://github.com/veryfrontjs/veryfront/tree/main/examples/data-fetching-demo)
+- [Navigation Example](https://github.com/veryfront/veryfront/tree/main/examples/minimal-app-router)
+- [Search with Filters](https://github.com/veryfront/veryfront/tree/main/examples/form-handling)
+- [Multi-Step Form](https://github.com/veryfront/veryfront/tree/main/examples/form-handling)
+- [Pagination Example](https://github.com/veryfront/veryfront/tree/main/examples/data-fetching-demo)

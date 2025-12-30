@@ -91,7 +91,6 @@ export class RendererLifecycle {
       case "filesystem":
         cacheStore = new FilesystemCacheStore({
           baseDir: join(this.configManager.getProjectDir(), cacheBaseDir, "render"),
-          adapter: this.adapter,
         });
         break;
       case "kv":
@@ -145,6 +144,7 @@ export class RendererLifecycle {
     const providerManager = new ProviderManager({
       projectDir: this.configManager.getProjectDir(),
       adapter: this.adapter,
+      config,
       compileMDX: compileMDXProxy,
     });
 

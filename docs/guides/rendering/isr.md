@@ -688,9 +688,9 @@ const BlogPost: PageWithData<{ post: Post }> = ({ post }) => {
 
 ## Examples
 
-- [News Site](https://github.com/veryfrontjs/veryfront/tree/main/examples/basic-mdx) - ISR for articles
-- [E-commerce](https://github.com/veryfrontjs/veryfront/tree/main/examples/full-demo) - ISR for products
-- [Blog](https://github.com/veryfrontjs/veryfront/tree/main/examples/basic-mdx) - ISR for posts
+- [News Site](https://github.com/veryfront/veryfront/tree/main/examples/basic-mdx) - ISR for articles
+- [E-commerce](https://github.com/veryfront/veryfront/tree/main/examples/full-demo) - ISR for products
+- [Blog](https://github.com/veryfront/veryfront/tree/main/examples/basic-mdx) - ISR for posts
 
 ---
 

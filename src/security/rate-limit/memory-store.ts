@@ -10,7 +10,7 @@ import type { RateLimitState, RateLimitStore } from "./types.ts";
 
 export class MemoryRateLimitStore implements RateLimitStore {
   private store: Map<string, RateLimitState> = new Map();
-  private cleanupInterval: number | null = null;
+  private cleanupInterval: ReturnType<typeof setInterval> | null = null;
 
   constructor(
     /** How often to clean up expired entries (ms) */
@@ -21,7 +21,7 @@ export class MemoryRateLimitStore implements RateLimitStore {
       this.cleanupInterval = setInterval(
         () => this.cleanup(),
         cleanupIntervalMs,
-      ) as unknown as number;
+      );
     }
   }
 

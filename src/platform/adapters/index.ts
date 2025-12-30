@@ -3,6 +3,7 @@ export * from "./bun.ts";
 export * from "./deno.ts";
 export * from "./detect.ts";
 export * from "./mock.ts";
+export { getLocalAdapter, runtime } from "./registry.ts";
 export * as security from "./security/index.ts";
 
 export type { DirectoryEntry, FSAdapter, FSAdapterConfig } from "./veryfront-fs-adapter/types.ts";

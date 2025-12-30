@@ -1,6 +1,5 @@
 import type { DirEntry, FileInfo, FileSystemAdapter, FileWatcher, WatchOptions } from "./base.ts";
 import type { DirectoryEntry, FSAdapter } from "./veryfront-fs-adapter/types.ts";
-import { logger } from "@veryfront/utils";
 
 export class FSAdapterWrapper implements FileSystemAdapter {
   constructor(private fsAdapter: FSAdapter) {}
@@ -94,8 +93,7 @@ export class FSAdapterWrapper implements FileSystemAdapter {
 
   async mkdir(path: string, options?: { recursive?: boolean }): Promise<void> {
     if (!this.fsAdapter.mkdir) {
-      logger.debug("[FSAdapterWrapper] mkdir not supported, skipping");
-      return;
+      throw new NotSupportedError("mkdir not supported by this FSAdapter");
     }
     await this.fsAdapter.mkdir(path, options);
   }

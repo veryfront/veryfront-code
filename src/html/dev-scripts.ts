@@ -34,11 +34,12 @@ export function getDevStyles(nonce?: string): string {
 
 export function getDevScripts(port: number = DEFAULT_DASHBOARD_PORT, nonce?: string): string {
   const nonceAttr = nonce ? ` nonce="${nonce}"` : "";
+  const hmrPort = port + 1; // HMR server runs on port + 1
   // Use external script src for hydration to work with CSP
   // The HMR websocket is handled in the external hmr.js script
   return `
   <script type="module" src="/_veryfront/rsc/client.js"${nonceAttr}></script>
-  <script type="module" src="/_veryfront/hmr.js?port=${port}"${nonceAttr}></script>`;
+  <script type="module" src="/_veryfront/hmr.js?port=${hmrPort}"${nonceAttr}></script>`;
 }
 
 export function getProdScripts(slug: string, nonce?: string): string {

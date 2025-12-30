@@ -274,3 +274,6 @@ export interface MemoryPersistence {
   load(agentId: string): Promise<Message[]>;
   clear(agentId: string): Promise<void>;
 }
+
+// Re-export Redis memory for convenience
+export { RedisMemory, createRedisMemory, type RedisMemoryConfig, type RedisClient } from "./memory-redis.ts";

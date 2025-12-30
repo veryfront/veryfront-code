@@ -810,9 +810,9 @@ export const getServerData = async (ctx: DataContext) => {
 
 ## Examples
 
-- [Auth App](https://github.com/veryfrontjs/veryfront/tree/main/examples/auth-app) - Protected SSR routes
-- [Data Fetching Demo](https://github.com/veryfrontjs/veryfront/tree/main/examples/data-fetching-demo) - All patterns
-- [Full Demo](https://github.com/veryfrontjs/veryfront/tree/main/examples/full-demo) - Real-world SSR usage
+- [Auth App](https://github.com/veryfront/veryfront/tree/main/examples/auth-app) - Protected SSR routes
+- [Data Fetching Demo](https://github.com/veryfront/veryfront/tree/main/examples/data-fetching-demo) - All patterns
+- [Full Demo](https://github.com/veryfront/veryfront/tree/main/examples/full-demo) - Real-world SSR usage
 
 ---
 

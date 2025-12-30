@@ -194,5 +194,16 @@ class AdapterRegistry {
  */
 export const runtime = new AdapterRegistry();
 
+/**
+ * Get the local runtime adapter (deno, node, bun).
+ * Unlike runtime.get(), this always returns the base adapter without FSAdapter enhancement.
+ * Use this for local-only operations like writing temp files or caching.
+ */
+export async function getLocalAdapter(): Promise<RuntimeAdapter> {
+  // Create a fresh registry instance to avoid getting the enhanced adapter
+  const localRegistry = new AdapterRegistry();
+  return await localRegistry.get();
+}
+
 // Re-export for convenience
 export type { RuntimeAdapter, RuntimeId } from "./base.ts";

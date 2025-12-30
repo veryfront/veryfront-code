@@ -1,7 +1,9 @@
 import { rendererLogger as logger } from "@veryfront/utils";
+import { timeAsync } from "@veryfront/utils";
 import { ErrorCode, VeryfrontError } from "@veryfront/errors/index.ts";
 import type { MdxBundle } from "@veryfront/types";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
+import { getLocalAdapter } from "@veryfront/platform/adapters/registry.ts";
 import type { CacheCoordinator } from "../cache/cache-coordinator.ts";
 import type { PageRenderer } from "../page-renderer.ts";
 import type { PageResolver } from "../page-resolution/index.ts";
@@ -10,6 +12,7 @@ import type { SSROrchestrator } from "./ssr-orchestrator.ts";
 import type { RenderOptions, RenderResult } from "./types.ts";
 import { DataFetcher } from "@veryfront/data/index.ts";
 import type { DataContext } from "@veryfront/data/types.ts";
+import { clearSSRModuleCache } from "@veryfront/modules/react-loader/index.ts";
 
 export interface RenderPipelineConfig {
   pageResolver: PageResolver;
@@ -61,18 +64,28 @@ export class RenderPipeline {
     const tmpDir = await getGlobalTmpDir();
     const hash = await this.generateHash(filePath);
     const tempFilePath = `${tmpDir}/mod-${hash}.js`;
-    await this.config.adapter.fs.writeFile(tempFilePath, transformedCode);
+    // Use local adapter for temp files - always local regardless of FSAdapter
+    const localAdapter = await getLocalAdapter();
+    await localAdapter.fs.writeFile(tempFilePath, transformedCode);
 
     const moduleUrl = `file://${tempFilePath}?t=${Date.now()}`;
     return await import(moduleUrl);
   }
 
   async renderPage(slug: string, options?: RenderOptions): Promise<RenderResult> {
-    const pageInfo = await this.config.pageResolver.resolvePage(slug);
+    // In development mode, clear SSR module cache to pick up file changes
+    if (this.config.mode === "development") {
+      clearSSRModuleCache();
+    }
+
+    const pageInfo = await timeAsync("resolve-page", () =>
+      this.config.pageResolver.resolvePage(slug), "render-page");
 
     // 1. Collect layouts first to enable parallel data fetching
-    const layoutResult = await this.config.layoutOrchestrator.collectLayouts(pageInfo);
-    const providerResult = await this.config.layoutOrchestrator.collectProviders();
+    const layoutResult = await timeAsync("collect-layouts", () =>
+      this.config.layoutOrchestrator.collectLayouts(pageInfo), "render-page");
+    const providerResult = await timeAsync("collect-providers", () =>
+      this.config.layoutOrchestrator.collectProviders(), "render-page");
 
     let dataFetchingProps: Record<string, unknown> | undefined;
     const layoutDataMap = new Map<string, Record<string, unknown>>();
@@ -193,7 +206,8 @@ export class RenderPipeline {
         }
 
         logger.info("[renderPage] Executing parallel data fetching jobs", { count: jobs.length });
-        const results = await Promise.all(jobs.map((j) => j.run()));
+        const results = await timeAsync("data-fetching-jobs", () =>
+          Promise.all(jobs.map((j) => j.run())), "render-page");
 
         for (let i = 0; i < jobs.length; i++) {
           const job = jobs[i];
@@ -241,13 +255,14 @@ export class RenderPipeline {
       }
     }
 
-    const cacheResult = await this.config.cacheCoordinator.checkCache(
-      slug,
-      pageInfo,
-      layoutResult.layoutBundle,
-      layoutResult.nestedLayouts,
-      providerResult.providerInfos,
-    );
+    const cacheResult = await timeAsync("check-cache", () =>
+      this.config.cacheCoordinator.checkCache(
+        slug,
+        pageInfo,
+        layoutResult.layoutBundle,
+        layoutResult.nestedLayouts,
+        providerResult.providerInfos,
+      ), "render-page");
 
     if (cacheResult?.cachedResult) {
       return cacheResult.cachedResult;
@@ -257,12 +272,13 @@ export class RenderPipeline {
       ? { ...options, props: { ...options?.props, ...dataFetchingProps } }
       : options;
 
-    const pageBundleResult = await this.config.pageRenderer.preparePageBundles(
-      pageInfo,
-      slug,
-      cacheResult?.cachedModule,
-      mergedOptions,
-    );
+    const pageBundleResult = await timeAsync("prepare-page-bundles", () =>
+      this.config.pageRenderer.preparePageBundles(
+        pageInfo,
+        slug,
+        cacheResult?.cachedModule,
+        mergedOptions,
+      ), "render-page");
 
     if (pageBundleResult.scriptResult) {
       return pageBundleResult.scriptResult;
@@ -272,28 +288,33 @@ export class RenderPipeline {
       throw new VeryfrontError("Failed to prepare page bundle", ErrorCode.RENDER_ERROR, { slug });
     }
 
-    const wrappedElement = await this.config.layoutOrchestrator.applyLayoutsAndWrappers(
-      pageBundleResult.pageElement,
-      pageInfo,
-      layoutResult.layoutBundle,
-      layoutResult.nestedLayouts,
-      providerResult.providerItems,
-      layoutDataMap,
-    );
+    const pageElement = pageBundleResult.pageElement;
+    const pageBundle = pageBundleResult.pageBundle;
 
-    const ssrResult = await this.config.ssrOrchestrator.performSSRRendering(
-      wrappedElement,
-      {
+    const wrappedElement = await timeAsync("apply-layouts", () =>
+      this.config.layoutOrchestrator.applyLayoutsAndWrappers(
+        pageElement,
         pageInfo,
-        pageBundle: pageBundleResult.pageBundle,
-        layoutBundle: layoutResult.layoutBundle,
-        nestedLayouts: layoutResult.nestedLayouts,
-        providerInfos: providerResult.providerInfos,
-        collectedMetadata: pageBundleResult.collectedMetadata,
-        slug,
-      },
-      mergedOptions,
-    );
+        layoutResult.layoutBundle,
+        layoutResult.nestedLayouts,
+        providerResult.providerItems,
+        layoutDataMap,
+      ), "render-page");
+
+    const ssrResult = await timeAsync("ssr-rendering", () =>
+      this.config.ssrOrchestrator.performSSRRendering(
+        wrappedElement,
+        {
+          pageInfo,
+          pageBundle,
+          layoutBundle: layoutResult.layoutBundle,
+          nestedLayouts: layoutResult.nestedLayouts,
+          providerInfos: providerResult.providerInfos,
+          collectedMetadata: pageBundleResult.collectedMetadata,
+          slug,
+        },
+        mergedOptions,
+      ), "render-page");
 
     const pageModule = pageBundleResult.clientModuleCode && pageBundleResult.pageModuleType
       ? {

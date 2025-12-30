@@ -1,6 +1,7 @@
 import { getCacheNamespace } from "@veryfront/utils/cache/keys/namespace.ts";
 import { CompilationError, wrapError } from "@veryfront/errors/index.ts";
 import { getAdapter } from "@veryfront/platform/adapters/index.ts";
+import { getLocalAdapter } from "@veryfront/platform/adapters/registry.ts";
 import { rendererLogger as logger } from "@veryfront/utils";
 import type { MDXModule } from "./types.ts";
 
@@ -125,7 +126,6 @@ async function writeTempMDXModule(
   compiledCode: string,
   cacheKey: string,
 ): Promise<string> {
-  const adapter = await getAdapter();
   const tempDir = await ensureTempDir();
 
   const safeKey = cacheKey.replace(/[^a-zA-Z0-9-_]/g, "_").substring(0, 50);
@@ -134,7 +134,9 @@ async function writeTempMDXModule(
   const modulePath = `${tempDir}/${filename}`;
   const moduleCode = wrapAsESMModule(compiledCode);
 
-  await adapter.fs.writeFile(modulePath, moduleCode);
+  // Use local adapter for temp files - always local regardless of FSAdapter
+  const localAdapter = await getLocalAdapter();
+  await localAdapter.fs.writeFile(modulePath, moduleCode);
 
   return modulePath;
 }

@@ -1,25 +1,23 @@
 import type { ImportMapConfig } from "./types.ts";
 
 export function mergeImportMaps(...maps: ImportMapConfig[]): ImportMapConfig {
-  const merged: ImportMapConfig = {
-    imports: {},
-    scopes: {},
-  };
+  const imports: Record<string, string> = {};
+  const scopes: Record<string, Record<string, string>> = {};
 
   for (const map of maps) {
     if (map.imports) {
-      Object.assign(merged.imports!, map.imports);
+      Object.assign(imports, map.imports);
     }
 
     if (map.scopes) {
-      for (const [scope, imports] of Object.entries(map.scopes)) {
-        if (!merged.scopes![scope]) {
-          merged.scopes![scope] = {};
+      for (const [scope, scopeImports] of Object.entries(map.scopes)) {
+        if (!scopes[scope]) {
+          scopes[scope] = {};
         }
-        Object.assign(merged.scopes![scope], imports);
+        Object.assign(scopes[scope], scopeImports);
       }
     }
   }
 
-  return merged;
+  return { imports, scopes };
 }

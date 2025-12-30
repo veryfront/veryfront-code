@@ -47,7 +47,8 @@ export type WorkflowNodeType =
   | "map" // Dynamic fan-out/map-reduce
   | "branch" // Conditional branching
   | "wait" // Wait for approval or event
-  | "subWorkflow"; // Nested workflow execution
+  | "subWorkflow" // Nested workflow execution
+  | "loop"; // Iterative execution until condition is met
 
 /**
  * Retry configuration for a step
@@ -61,6 +62,8 @@ export interface RetryConfig {
   initialDelay?: number;
   /** Maximum delay between retries */
   maxDelay?: number;
+  /** Custom function to determine if error is retryable */
+  retryIf?: (error: Error) => boolean;
 }
 
 /**
@@ -169,7 +172,40 @@ export type WorkflowNodeConfig =
   | MapNodeConfig
   | BranchNodeConfig
   | WaitNodeConfig
-  | SubWorkflowNodeConfig;
+  | SubWorkflowNodeConfig
+  | LoopNodeConfig;
+
+/**
+ * Loop node configuration (imported from DSL)
+ * Re-exported here for the union type
+ */
+export interface LoopNodeConfig extends BaseNodeConfig {
+  type: "loop";
+  while: (context: WorkflowContext, loop: LoopExecutionContext) => boolean | Promise<boolean>;
+  steps: WorkflowNode[] | ((context: WorkflowContext, loop: LoopExecutionContext) => WorkflowNode[]);
+  maxIterations: number;
+  onMaxIterations?: (
+    context: WorkflowContext,
+    loop: LoopExecutionContext,
+  ) => Record<string, unknown> | Promise<Record<string, unknown>>;
+  onComplete?: (
+    context: WorkflowContext,
+    loop: LoopExecutionContext,
+  ) => Record<string, unknown> | Promise<Record<string, unknown>>;
+  iterationTimeout?: string | number;
+  delay?: number | string;
+}
+
+/**
+ * Loop execution context passed to loop callbacks
+ */
+export interface LoopExecutionContext {
+  iteration: number;
+  totalIterations: number;
+  previousResults: unknown[];
+  isFirstIteration: boolean;
+  isLastAllowedIteration: boolean;
+}
 
 /**
  * A node in the workflow DAG

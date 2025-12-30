@@ -610,14 +610,15 @@ async function handleStreamingResponse(
               const textId = parsed.id || currentTextId || "default";
               const delta = parsed.textDelta || parsed.delta || "";
 
-              // Initialize text block if needed
-              if (!textBlocks.has(textId)) {
-                textBlocks.set(textId, { text: "", state: "streaming", order: null });
+              // Get or initialize text block
+              let block = textBlocks.get(textId);
+              if (!block) {
+                block = { text: "", state: "streaming", order: null };
+                textBlocks.set(textId, block);
                 currentTextId = textId;
               }
 
               // Append delta to text block
-              const block = textBlocks.get(textId)!;
               block.text += delta;
 
               // Assign order on first content (when text actually starts arriving)

@@ -26,6 +26,17 @@ export function generateHMRClientTemplate(
 
   window.__veryfrontHMRWebSocket = ws;
 
+  // Notify Studio that the app is ready (clears loading indicator)
+  if (window.parent !== window) {
+    try {
+      window.parent.postMessage({
+        action: 'appUpdated',
+        isInitialLoad: true,
+        url: window.location.href
+      }, '*');
+    } catch (e) {}
+  }
+
   ws.onopen = () => {
     if (reconnectTimeoutId !== null) {
       clearTimeout(reconnectTimeoutId);

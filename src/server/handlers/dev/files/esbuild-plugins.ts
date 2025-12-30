@@ -18,6 +18,12 @@ import {
   getReactJSXRuntimeCDNUrl,
   REACT_DEFAULT_VERSION,
 } from "@veryfront/utils/constants/cdn.ts";
+import {
+  type LockfileManager,
+  computeIntegrity,
+  createLockfileManager,
+} from "@veryfront/utils/import-lockfile.ts";
+import { serverLogger as logger } from "@veryfront/utils/logger/index.ts";
 
 /**
  * Create relative file system plugin
@@ -109,6 +115,13 @@ const ESM_PACKAGE_MAP: Record<string, string> = {
   "react/jsx-dev-runtime": getReactJSXDevRuntimeCDNUrl(REACT_DEFAULT_VERSION),
 };
 
+export interface BareExternalPluginOptions {
+  bundle?: boolean;
+  lockfile?: LockfileManager;
+  projectDir?: string;
+  strict?: boolean;
+}
+
 /**
  * Create bare module external plugin
  *
@@ -122,8 +135,7 @@ const ESM_PACKAGE_MAP: Record<string, string> = {
  * - '/absolute' ✗ (not handled)
  * - 'https://...' ✗ (not handled)
  *
- * @param bundle - If true, fetches esm.sh content at build time (for Node.js SSR).
- *                 If false, marks as external for runtime loading (for browser).
+ * @param options - Plugin options or boolean for backwards compatibility
  * @returns ESBuild plugin
  *
  * @example
@@ -133,7 +145,15 @@ const ESM_PACKAGE_MAP: Record<string, string> = {
  * // import './Button' -> bundled normally
  * ```
  */
-export function createBareExternalPlugin(bundle = false): Plugin {
+export function createBareExternalPlugin(options: BareExternalPluginOptions | boolean = false): Plugin {
+  const opts: BareExternalPluginOptions = typeof options === "boolean"
+    ? { bundle: options }
+    : options;
+  const { bundle = false, strict = false } = opts;
+  const lockfile = opts.lockfile ?? (opts.projectDir && bundle
+    ? createLockfileManager(opts.projectDir)
+    : null);
+
   return {
     name: "veryfront-bare-ext",
     setup(build: PluginBuild) {
@@ -144,17 +164,13 @@ export function createBareExternalPlugin(bundle = false): Plugin {
           !args.path.startsWith("https://");
         if (!isBare) return undefined;
         if (args.kind === "import-statement" || args.kind === "dynamic-import") {
-          // Check if we have a known mapping for this package
           const esmUrl = ESM_PACKAGE_MAP[args.path];
           if (esmUrl) {
             if (bundle) {
-              // Fetch and bundle at build time - use namespace to trigger onLoad
               return { path: esmUrl, namespace: "https" };
             }
-            // Rewrite to esm.sh URL for browser runtime loading
             return { path: esmUrl, external: true };
           }
-          // For unknown packages, try esm.sh with the package name
           const fallbackUrl = `https://esm.sh/${args.path}`;
           if (bundle) {
             return { path: fallbackUrl, namespace: "https" };
@@ -164,15 +180,55 @@ export function createBareExternalPlugin(bundle = false): Plugin {
         return undefined;
       });
 
-      // When bundle=true, fetch https:// URLs at build time
       if (bundle) {
         build.onLoad({ filter: /.*/, namespace: "https" }, async (args: OnLoadArgs) => {
+          if (lockfile) {
+            const cached = await lockfile.get(args.path);
+            if (cached) {
+              logger.debug(`[bare-ext] lockfile hit: ${args.path}`);
+              try {
+                const response = await fetch(cached.resolved);
+                if (response.ok) {
+                  const contents = await response.text();
+                  const integrity = await computeIntegrity(contents);
+                  if (integrity === cached.integrity) {
+                    return { contents, loader: "js" };
+                  }
+                  if (strict) {
+                    return {
+                      errors: [{
+                        text: `Integrity mismatch for ${args.path}: expected ${cached.integrity}, got ${integrity}`,
+                        location: null,
+                      }],
+                    };
+                  }
+                  logger.warn(`[bare-ext] integrity mismatch, refetching: ${args.path}`);
+                }
+              } catch {
+                logger.warn(`[bare-ext] cached URL failed, refetching: ${args.path}`);
+              }
+            }
+          }
+
           try {
-            const response = await fetch(args.path);
+            const response = await fetch(args.path, { redirect: "follow" });
             if (!response.ok) {
               throw new Error(`HTTP ${response.status}: ${response.statusText}`);
             }
             const contents = await response.text();
+            const resolvedUrl = response.url || args.path;
+
+            if (lockfile) {
+              const integrity = await computeIntegrity(contents);
+              await lockfile.set(args.path, {
+                resolved: resolvedUrl,
+                integrity,
+                fetchedAt: new Date().toISOString(),
+              });
+              await lockfile.flush();
+              logger.debug(`[bare-ext] lockfile updated: ${args.path} -> ${resolvedUrl}`);
+            }
+
             return { contents, loader: "js" };
           } catch (error) {
             return {

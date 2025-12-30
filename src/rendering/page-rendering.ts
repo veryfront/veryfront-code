@@ -3,9 +3,9 @@ import { ErrorCode, VeryfrontError } from "@veryfront/errors/index.ts";
 import * as BundledReact from "react";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import type { EntityInfo, MdxBundle, MDXComponents, MDXModule, PageBundle } from "@veryfront/types";
-import { loadImportMap, transformImportsWithMap } from "@veryfront/modules/import-map/index.ts";
 import { mdxRenderer } from "@veryfront/transforms/mdx/index.ts";
 import { getProjectReact } from "@veryfront/react";
+import { compileMDXRuntime } from "@veryfront/transforms/mdx/compiler/index.ts";
 
 export interface MDXPageResult {
   pageElement: BundledReact.ReactElement;
@@ -42,8 +42,17 @@ export async function handleMDXPage(
       moduleCode = options.precompiledModule;
       (pageBundle as PageBundle).clientModuleCode = moduleCode;
     } else {
-      const pageImportMap = await loadImportMap(projectDir, adapter);
-      moduleCode = transformImportsWithMap((pageBundle as MdxBundle).compiledCode, pageImportMap);
+      // Recompile MDX with browser target for client-side hydration
+      // The original compilation uses server target with file:// URLs that browsers can't resolve
+      const browserBundle = await compileMDXRuntime(
+        "development",
+        projectDir,
+        pageInfo.entity.content,
+        fmArg,
+        pageInfo.entity.id,
+        "browser", // Use browser target for client module
+      );
+      moduleCode = browserBundle.compiledCode;
       (pageBundle as PageBundle).clientModuleCode = moduleCode;
     }
 

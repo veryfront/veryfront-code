@@ -86,10 +86,17 @@ export class DevEndpointsHandler extends BaseHandler {
     const reloadDelay = HMR_CLIENT_RELOAD_DELAY_MS;
     return `
 // Veryfront HMR WebSocket Client
-const indicator = document.createElement('div');
-indicator.className = 'dev-indicator';
-indicator.textContent = 'Development Mode';
-document.body.appendChild(indicator);
+
+// Notify Studio that the app is ready (clears loading indicator)
+if (window.parent !== window) {
+  try {
+    window.parent.postMessage({
+      action: 'appUpdated',
+      isInitialLoad: true,
+      url: window.location.href
+    }, '*');
+  } catch (e) {}
+}
 
 const ws = new WebSocket('ws://localhost:${port}/_ws');
 ws.onmessage = (event) => {

@@ -51,12 +51,26 @@ export class VeryfrontAPIOperations {
     }
     const url = `/projects/${id}/files?${params}`;
     logger.debug("[VeryfrontAPIClient] Listing files", { url, projectId: id, limit, cursor });
-    const response = await this.request<ListFilesResponse>(url);
+
+    // veryfront-api returns pageInfo, we need to map it to pagination
+    const response = await this.request<{
+      data: ProjectFile[];
+      pageInfo?: { hasNextPage: boolean; nextCursor: string | null };
+      pagination?: { cursor?: string; hasMore: boolean };
+    }>(url);
+
+    // Map pageInfo to pagination format if needed
+    const pagination = response.pagination || (response.pageInfo ? {
+      cursor: response.pageInfo.nextCursor || undefined,
+      hasMore: response.pageInfo.hasNextPage,
+    } : undefined);
+
     logger.debug("[VeryfrontAPIClient] Files listed", {
       count: response.data?.length || 0,
-      hasMore: response.pagination?.hasMore,
+      hasMore: pagination?.hasMore,
     });
-    return response;
+
+    return { data: response.data, pagination };
   }
 
   async listAllFiles(projectId?: string): Promise<ProjectFile[]> {
@@ -76,9 +90,18 @@ export class VeryfrontAPIOperations {
   async getFileContent(path: string, projectId?: string): Promise<string> {
     const id = projectId || this.getProjectId();
     const encodedPath = encodeURIComponent(path);
-    return await this.request<string>(`/projects/${id}/files/${encodedPath}`, {
-      returnText: true,
-    });
+
+    // veryfront-api returns { path, content, size } as JSON
+    // We need to extract the content field
+    const response = await this.request<{ path: string; content: string; size: number } | string>(
+      `/projects/${id}/files/${encodedPath}`
+    );
+
+    // Handle both JSON response and raw text response
+    if (typeof response === "string") {
+      return response;
+    }
+    return response.content;
   }
 
   async getFileMetadata(path: string, projectId?: string): Promise<ProjectFile | null> {

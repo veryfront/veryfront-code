@@ -1,13 +1,16 @@
-import { basename } from "std/path/mod.ts";
 import { logger } from "@veryfront/utils";
 import type { FileInfo } from "../base.ts";
-import type { DirectoryEntry } from "./types.ts";
+import type { ProjectFile } from "../veryfront-api-client.ts";
 import type { VeryfrontAPIClient } from "../veryfront-api-client.ts";
 import { FileCache } from "../file-cache/file-cache.ts";
 import { PathNormalizer } from "./path-normalizer.ts";
 import { createError, toError } from "../../../core/errors/veryfront-error.ts";
 
 export class StatOperations {
+  private fileIndex: Map<string, ProjectFile> | null = null;
+  private directoryIndex: Set<string> | null = null;
+  private buildingIndex: Promise<void> | null = null;
+
   constructor(
     private readonly client: VeryfrontAPIClient,
     private readonly cache: FileCache,
@@ -24,22 +27,106 @@ export class StatOperations {
       return cached;
     }
 
-    const metadata = await this.client.getFileMetadata(normalizedPath);
+    await this.ensureIndexBuilt();
 
-    if (!metadata) {
-      return this.statDirectory(normalizedPath, cacheKey);
+    const fileIdx = this.fileIndex;
+    const dirIdx = this.directoryIndex;
+
+    if (!fileIdx || !dirIdx) {
+      throw toError(createError({
+        type: "file",
+        message: `Index not available for: ${normalizedPath}`,
+      }));
     }
 
-    const info: FileInfo = {
-      size: metadata.size,
-      mtime: new Date(metadata.updatedAt),
-      isDirectory: false,
-      isFile: true,
-      isSymlink: false,
-    };
+    const file = fileIdx.get(normalizedPath);
+    if (file) {
+      const info: FileInfo = {
+        size: file.size,
+        mtime: new Date(file.updatedAt),
+        isDirectory: false,
+        isFile: true,
+        isSymlink: false,
+      };
+      this.cache.set(cacheKey, info);
+      return info;
+    }
 
-    this.cache.set(cacheKey, info);
-    return info;
+    if (dirIdx.has(normalizedPath)) {
+      const info: FileInfo = {
+        size: 0,
+        mtime: new Date(),
+        isDirectory: true,
+        isFile: false,
+        isSymlink: false,
+      };
+      this.cache.set(cacheKey, info);
+      return info;
+    }
+
+    throw toError(createError({
+      type: "file",
+      message: `File not found: ${normalizedPath}`,
+    }));
+  }
+
+  private async ensureIndexBuilt(): Promise<void> {
+    if (this.fileIndex && this.directoryIndex) return;
+
+    if (this.buildingIndex) {
+      await this.buildingIndex;
+      return;
+    }
+
+    this.buildingIndex = this.buildIndex();
+    await this.buildingIndex;
+    this.buildingIndex = null;
+  }
+
+  private async buildIndex(): Promise<void> {
+    const allFiles = await this.getAllFilesRaw();
+    const fileIdx = new Map<string, ProjectFile>();
+    const dirIdx = new Set<string>();
+
+    for (const file of allFiles) {
+      fileIdx.set(file.path, file);
+
+      const parts = file.path.split("/");
+      let current = "";
+      for (let i = 0; i < parts.length - 1; i++) {
+        const part = parts[i];
+        if (part) {
+          current = current ? `${current}/${part}` : part;
+          dirIdx.add(current);
+        }
+      }
+    }
+
+    this.fileIndex = fileIdx;
+    this.directoryIndex = dirIdx;
+
+    logger.debug("[StatOperations] Index built", {
+      files: fileIdx.size,
+      directories: dirIdx.size,
+    });
+  }
+
+  clearIndex(): void {
+    this.fileIndex = null;
+    this.directoryIndex = null;
+  }
+
+  private async getAllFilesRaw(): Promise<ProjectFile[]> {
+    const cacheKey = "files:all";
+    const cached = this.cache.get<ProjectFile[]>(cacheKey);
+    if (cached) {
+      return cached;
+    }
+
+    logger.debug("[StatOperations] Fetching all files from API");
+    const files = await this.client.listAllFiles();
+    this.cache.set(cacheKey, files);
+    return files;
   }
 
   async exists(path: string): Promise<boolean> {
@@ -47,55 +134,8 @@ export class StatOperations {
     try {
       await this.stat(normalizedPath);
       return true;
-    } catch (error) {
-      logger.debug(`File stat check failed for ${normalizedPath}:`, error);
+    } catch {
       return false;
     }
-  }
-
-  private async statDirectory(normalizedPath: string, cacheKey: string): Promise<FileInfo> {
-    const allFiles = await this.getAllFiles();
-    const isDirectory = allFiles.some((f) => f.path.startsWith(normalizedPath + "/"));
-
-    if (!isDirectory) {
-      throw toError(createError({
-        type: "file",
-        message: `File not found: ${normalizedPath}`,
-      }));
-    }
-
-    const info: FileInfo = {
-      size: 0,
-      mtime: new Date(),
-      isDirectory: true,
-      isFile: false,
-      isSymlink: false,
-    };
-
-    this.cache.set(cacheKey, info);
-    return info;
-  }
-
-  private async getAllFiles(): Promise<DirectoryEntry[]> {
-    const cacheKey = "files:all";
-
-    const cached = this.cache.get<DirectoryEntry[]>(cacheKey);
-    if (cached) {
-      return cached;
-    }
-
-    logger.debug("[StatOperations] Fetching all files from API");
-    const files = await this.client.listAllFiles();
-
-    const entries: DirectoryEntry[] = files.map((file) => ({
-      name: basename(file.path),
-      path: file.path,
-      isDirectory: false,
-      isFile: true,
-      isSymlink: false,
-    }));
-
-    this.cache.set(cacheKey, entries);
-    return entries;
   }
 }

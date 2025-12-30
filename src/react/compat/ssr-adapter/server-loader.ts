@@ -93,6 +93,25 @@ export async function getProjectReact(): Promise<typeof React> {
     }
   }
 
+  // Fall back to bundled React via file URL to match transform behavior
+  // Using dynamic import with file URL ensures we get the same module instance
+  // as user code that was transformed by react-imports.ts
+  if (IS_TRUE_NODE) {
+    try {
+      const { createRequire } = await import("node:module");
+      const { pathToFileURL } = await import("node:url");
+      const cliRequire = createRequire(import.meta.url);
+      const bundledReactPath = cliRequire.resolve("react");
+      logger.debug("Resolved bundled react", { path: bundledReactPath });
+      const bundledReact = await import(pathToFileURL(bundledReactPath).href);
+      projectReactCache = bundledReact.default || bundledReact;
+      return projectReactCache as typeof React;
+    } catch (error) {
+      logger.warn("Failed to resolve bundled react via file URL", error);
+    }
+  }
+
+  // Last resort: use static import (Deno or if file URL failed)
   projectReactCache = React;
   return React;
 }
@@ -115,6 +134,36 @@ async function importReactDOMServerFromProject(): Promise<
     }
   }
 
+  // Fall back to bundled react-dom via file URL to match React resolution
+  // This ensures react-dom uses the same React instance as components
+  if (IS_TRUE_NODE) {
+    try {
+      const { createRequire } = await import("node:module");
+      const { pathToFileURL } = await import("node:url");
+      const cliRequire = createRequire(import.meta.url);
+      const bundledPath = cliRequire.resolve("react-dom/server");
+      logger.debug("Resolved bundled react-dom/server", { path: bundledPath });
+      return await import(pathToFileURL(bundledPath).href);
+    } catch (error) {
+      logger.warn("Failed to resolve bundled react-dom/server via file URL", error);
+    }
+  }
+
+  // Deno: Try to use node_modules react-dom to match component's React instance
+  // Components are transformed to use file:// URLs from node_modules/.deno/
+  // but deno.json maps react-dom/server to esm.sh which causes React mismatch
+  if (!IS_TRUE_NODE) {
+    try {
+      const projectDir = cwd();
+      const reactDomServerPath = `${projectDir}/node_modules/.deno/react-dom@18.3.1/node_modules/react-dom/server.js`;
+      logger.debug("Trying Deno node_modules react-dom/server", { path: reactDomServerPath });
+      return await import(`file://${reactDomServerPath}`);
+    } catch (error) {
+      logger.warn("Failed to resolve react-dom/server from Deno node_modules", error);
+    }
+  }
+
+  // Last resort: use static import (will use deno.json mapping)
   return await import("react-dom/server");
 }
 

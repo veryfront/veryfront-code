@@ -140,6 +140,7 @@ deno task dev --mcp  # Port 3001 by default
 - **Zero config** - Auto-discovery from file structure
 - **Multi-runtime** - Deno, Node.js, Bun, Cloudflare Workers
 - **Full-stack React** - SSR, SSG, ISR, JIT rendering
+- **Remote imports** - Use `https://esm.sh/pkg` directly, no node_modules needed
 - **MCP built-in** - Model Context Protocol server
 - **Production-ready** - Rate limiting, caching, cost tracking, security
 

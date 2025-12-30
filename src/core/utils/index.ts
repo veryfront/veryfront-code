@@ -35,3 +35,7 @@ export * from "./bundle-manifest-init.ts";
 export * from "./feature-flags.ts";
 
 export { isCompiledBinary } from "./platform.ts";
+
+export * from "./import-lockfile.ts";
+
+export * from "./perf-timer.ts";

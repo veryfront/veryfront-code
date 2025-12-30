@@ -48,6 +48,11 @@ export class LinkObserver {
         }
 
         const link = target as HTMLAnchorElement;
+
+        // Reset counter if it gets too high (prevents unbounded growth in long-running sessions)
+        if (this.timeoutCounter > 1_000_000) {
+          this.timeoutCounter = 0;
+        }
         const timeoutKey = this.timeoutCounter++;
 
         const timeoutId = setTimeout(() => {
@@ -169,6 +174,7 @@ export class LinkObserver {
       clearTimeout(timeoutId);
     }
     this.pendingTimeouts.clear();
+    this.timeoutCounter = 0;
 
     if (this.intersectionObserver) {
       this.intersectionObserver.disconnect();

@@ -13,6 +13,8 @@ export interface ConfigurationOptions {
   projectDir: string;
   mode: "development" | "production";
   adapter: RuntimeAdapter;
+  /** Pre-loaded config (avoids re-loading via FSAdapter) */
+  config?: VeryfrontConfig;
 }
 
 export class ConfigurationManager {
@@ -20,6 +22,7 @@ export class ConfigurationManager {
   private mode: "development" | "production";
   private adapter: RuntimeAdapter;
   private config!: VeryfrontConfig;
+  private preloadedConfig?: VeryfrontConfig;
   private projectCacheKey: string | null = null;
   private cacheBaseDir: string | undefined;
   private lastEnvCacheValue: string | undefined;
@@ -29,6 +32,7 @@ export class ConfigurationManager {
     this.projectDir = options.projectDir;
     this.mode = options.mode;
     this.adapter = options.adapter;
+    this.preloadedConfig = options.config;
   }
 
   async initialize(): Promise<void> {
@@ -37,8 +41,8 @@ export class ConfigurationManager {
       mode: this.mode,
     });
 
-    // Load config
-    this.config = await getConfig(this.projectDir, this.adapter);
+    // Use pre-loaded config if provided (avoids FSAdapter re-loading issues)
+    this.config = this.preloadedConfig ?? await getConfig(this.projectDir, this.adapter);
 
     // Initialize bundle manifest store
     await initializeBundleManifest(this.config, this.mode, this.adapter);

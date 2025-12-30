@@ -1,11 +1,19 @@
-import { basename, join } from "std/path/mod.ts";
 import { logger } from "@veryfront/utils";
 import type { DirectoryEntry } from "./types.ts";
+import type { ProjectFile } from "../veryfront-api-client.ts";
 import type { VeryfrontAPIClient } from "../veryfront-api-client.ts";
 import { FileCache } from "../file-cache/file-cache.ts";
 import { PathNormalizer } from "./path-normalizer.ts";
 
+interface DirNode {
+  files: Map<string, ProjectFile>;
+  dirs: Set<string>;
+}
+
 export class DirectoryOperations {
+  private dirTree: Map<string, DirNode> | null = null;
+  private buildingTree: Promise<void> | null = null;
+
   constructor(
     private readonly client: VeryfrontAPIClient,
     private readonly cache: FileCache,
@@ -22,8 +30,39 @@ export class DirectoryOperations {
       return cached;
     }
 
-    const allFiles = await this.getAllFiles();
-    const entries = this.buildDirectoryEntries(normalizedPath, allFiles);
+    await this.ensureTreeBuilt();
+
+    const tree = this.dirTree;
+    if (!tree) {
+      return [];
+    }
+
+    const node = tree.get(normalizedPath);
+    if (!node) {
+      return [];
+    }
+
+    const entries: DirectoryEntry[] = [];
+
+    for (const dirName of node.dirs) {
+      entries.push({
+        name: dirName,
+        path: normalizedPath ? `${normalizedPath}/${dirName}` : dirName,
+        isDirectory: true,
+        isFile: false,
+        isSymlink: false,
+      });
+    }
+
+    for (const [fileName, file] of node.files) {
+      entries.push({
+        name: fileName,
+        path: file.path,
+        isDirectory: false,
+        isFile: true,
+        isSymlink: false,
+      });
+    }
 
     this.cache.set(cacheKey, entries);
 
@@ -35,87 +74,75 @@ export class DirectoryOperations {
     return entries;
   }
 
-  private async getAllFiles(): Promise<DirectoryEntry[]> {
-    const cacheKey = "files:all";
+  private async ensureTreeBuilt(): Promise<void> {
+    if (this.dirTree) return;
 
-    const cached = this.cache.get<DirectoryEntry[]>(cacheKey);
+    if (this.buildingTree) {
+      await this.buildingTree;
+      return;
+    }
+
+    this.buildingTree = this.buildTree();
+    await this.buildingTree;
+    this.buildingTree = null;
+  }
+
+  private async buildTree(): Promise<void> {
+    const allFiles = await this.getAllFilesRaw();
+    const tree = new Map<string, DirNode>();
+    tree.set("", { files: new Map(), dirs: new Set() });
+
+    for (const file of allFiles) {
+      const parts = file.path.split("/");
+      const fileName = parts.pop();
+      if (!fileName) continue;
+
+      let currentPath = "";
+      for (const part of parts) {
+        const parentPath = currentPath;
+        currentPath = currentPath ? `${currentPath}/${part}` : part;
+
+        let parentNode = tree.get(parentPath);
+        if (!parentNode) {
+          parentNode = { files: new Map(), dirs: new Set() };
+          tree.set(parentPath, parentNode);
+        }
+        parentNode.dirs.add(part);
+
+        if (!tree.has(currentPath)) {
+          tree.set(currentPath, { files: new Map(), dirs: new Set() });
+        }
+      }
+
+      const dirPath = parts.join("/");
+      let dirNode = tree.get(dirPath);
+      if (!dirNode) {
+        dirNode = { files: new Map(), dirs: new Set() };
+        tree.set(dirPath, dirNode);
+      }
+      dirNode.files.set(fileName, file);
+    }
+
+    this.dirTree = tree;
+    logger.debug("[DirectoryOperations] Tree built", {
+      directories: tree.size,
+    });
+  }
+
+  clearTree(): void {
+    this.dirTree = null;
+  }
+
+  private async getAllFilesRaw(): Promise<ProjectFile[]> {
+    const cacheKey = "files:all";
+    const cached = this.cache.get<ProjectFile[]>(cacheKey);
     if (cached) {
       return cached;
     }
 
     logger.debug("[DirectoryOperations] Fetching all files from API");
     const files = await this.client.listAllFiles();
-
-    const entries: DirectoryEntry[] = files.map((file) => ({
-      name: basename(file.path),
-      path: file.path,
-      isDirectory: false,
-      isFile: true,
-      isSymlink: false,
-    }));
-
-    this.cache.set(cacheKey, entries);
-    return entries;
-  }
-
-  private buildDirectoryEntries(
-    normalizedPath: string,
-    allFiles: DirectoryEntry[],
-  ): DirectoryEntry[] {
-    const entries: DirectoryEntry[] = [];
-    const seenNames = new Set<string>();
-    const isRoot = normalizedPath === "" || normalizedPath === "/";
-    const prefix = isRoot ? "" : normalizedPath + "/";
-
-    for (const file of allFiles) {
-      if (!isRoot && !file.path.startsWith(prefix)) continue;
-
-      const relativePath = isRoot ? file.path : file.path.slice(prefix.length);
-
-      if (relativePath.includes("/")) {
-        this.addDirectoryEntry(entries, seenNames, normalizedPath, relativePath);
-      } else {
-        this.addFileEntry(entries, seenNames, file, relativePath);
-      }
-    }
-
-    return entries;
-  }
-
-  private addDirectoryEntry(
-    entries: DirectoryEntry[],
-    seenNames: Set<string>,
-    normalizedPath: string,
-    relativePath: string,
-  ): void {
-    const dirName = relativePath.split("/")[0];
-    if (dirName && !seenNames.has(dirName)) {
-      seenNames.add(dirName);
-      entries.push({
-        name: dirName,
-        path: join(normalizedPath, dirName),
-        isDirectory: true,
-        isFile: false,
-        isSymlink: false,
-      });
-    }
-  }
-
-  private addFileEntry(
-    entries: DirectoryEntry[],
-    seenNames: Set<string>,
-    file: DirectoryEntry,
-    relativePath: string,
-  ): void {
-    if (!seenNames.has(relativePath)) {
-      seenNames.add(relativePath);
-      entries.push({
-        name: relativePath,
-        path: file.path,
-        isDirectory: false,
-        isFile: true,
-        isSymlink: false,
-      });
-    }
+    this.cache.set(cacheKey, files);
+    return files;
   }
 }

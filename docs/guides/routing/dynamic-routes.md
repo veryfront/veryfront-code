@@ -345,6 +345,6 @@ export const getServerData = async (ctx: DataContext) => {
 ## Examples
 
 See working examples:
-- [Blog Example](https://github.com/veryfrontjs/veryfront/tree/main/examples/basic-mdx) - Dynamic blog with categories
-- [Documentation Site](https://github.com/veryfrontjs/veryfront/tree/main/examples/basic-mdx) - Catch-all routes
-- [E-commerce](https://github.com/veryfrontjs/veryfront/tree/main/examples/full-demo) - Products with dynamic routes
+- [Blog Example](https://github.com/veryfront/veryfront/tree/main/examples/basic-mdx) - Dynamic blog with categories
+- [Documentation Site](https://github.com/veryfront/veryfront/tree/main/examples/basic-mdx) - Catch-all routes
+- [E-commerce](https://github.com/veryfront/veryfront/tree/main/examples/full-demo) - Products with dynamic routes

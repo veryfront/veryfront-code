@@ -30,8 +30,9 @@ export class ModuleResolver {
 
   async resolve(specifier: string, referrer?: string): Promise<ResolvedModule | null> {
     const cacheKey = `${specifier}::${referrer || "root"}`;
-    if (this.cache.has(cacheKey)) {
-      return this.cache.get(cacheKey)!;
+    const cached = this.cache.get(cacheKey);
+    if (cached) {
+      return cached;
     }
 
     logger.debug(`Resolving module: ${specifier} from ${referrer || "root"}`);

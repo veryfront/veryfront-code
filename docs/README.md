@@ -20,7 +20,7 @@ This directory contains the complete Veryfront documentation organized for easy 
 - [Rendering](/guides/rendering/README.md) - SSR, SSG, ISR, JIT, and RSC
 - [Data Fetching](/reference/functions/README.md) - Server data, static props, and caching
 - [Styling](/guides/components/README.md) - CSS, Tailwind, CSS-in-JS
-- [MDX](https://github.com/veryfrontjs/veryfront/tree/main/examples/basic-mdx) - Zero-config MDX support
+- [MDX](https://github.com/veryfront/veryfront/tree/main/examples/basic-mdx) - Zero-config MDX support
 
 #### **Agent System**
 
@@ -42,7 +42,7 @@ This directory contains the complete Veryfront documentation organized for easy 
 **Examples:**
 - [Complete Demo](../examples/full-demo/README.md) - Full-featured example
 - [Auto-Discovery](../examples/ai-autodiscovery/) - Convention-driven setup
-- [Memory & Composition](https://github.com/veryfrontjs/veryfront/tree/main/examples) - Advanced features
+- [Memory & Composition](https://github.com/veryfront/veryfront/tree/main/examples) - Advanced features
 
 #### **Platform Adapters**
 - [Overview](/guides/adapters/platform/overview.md) - Multi-runtime support
@@ -66,7 +66,7 @@ This directory contains the complete Veryfront documentation organized for easy 
 - [CLI](/reference/cli/README.md) - Command-line interface
 
 #### **Guides**
-- [Building a Blog](https://github.com/veryfrontjs/veryfront/tree/main/examples/basic-mdx) - Step-by-step tutorial
+- [Building a Blog](https://github.com/veryfront/veryfront/tree/main/examples/basic-mdx) - Step-by-step tutorial
 - [Image Optimization](/guides/components/image.md) - OptimizedImage best practices
 - [Performance](/guides/performance/README.md) - Optimization techniques
 - [Deployment](/guides/deployment/README.md) - Deploy to production
@@ -85,7 +85,7 @@ This directory contains the complete Veryfront documentation organized for easy 
 #### **Community**
 - [Contributing](./community/contributing.md) - How to contribute
 - [Changelog](./community/changelog.md) - Version history
-- [Examples](https://github.com/veryfrontjs/veryfront/tree/main/examples) - Example projects
+- [Examples](https://github.com/veryfront/veryfront/tree/main/examples) - Example projects
 - [FAQ](/community/contributing.md) - Frequently asked questions
 
 ## Publishing

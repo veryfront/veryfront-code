@@ -896,19 +896,19 @@ Veryfront is designed to be largely compatible with Next.js. Most code works wit
 See working examples in the repository:
 
 **API Examples:**
-- [Minimal App Router](https://github.com/veryfrontjs/veryfront/tree/main/examples/minimal-app-router) - Basic App Router setup
-- [Minimal Pages](https://github.com/veryfrontjs/veryfront/tree/main/examples/minimal-pages) - Basic Pages Router setup
-- [Data Fetching Demo](https://github.com/veryfrontjs/veryfront/tree/main/examples/data-fetching-demo) - All data fetching patterns
-- [API Routes](https://github.com/veryfrontjs/veryfront/tree/main/examples/auth-app) - API endpoints with authentication
-- [Form Handling](https://github.com/veryfrontjs/veryfront/tree/main/examples/form-handling) - Forms with server actions
+- [Minimal App Router](https://github.com/veryfront/veryfront/tree/main/examples/minimal-app-router) - Basic App Router setup
+- [Minimal Pages](https://github.com/veryfront/veryfront/tree/main/examples/minimal-pages) - Basic Pages Router setup
+- [Data Fetching Demo](https://github.com/veryfront/veryfront/tree/main/examples/data-fetching-demo) - All data fetching patterns
+- [API Routes](https://github.com/veryfront/veryfront/tree/main/examples/auth-app) - API endpoints with authentication
+- [Form Handling](https://github.com/veryfront/veryfront/tree/main/examples/form-handling) - Forms with server actions
 
 **Component Examples:**
-- [Image Optimization](https://github.com/veryfrontjs/veryfront/tree/main/examples/basic-mdx) - OptimizedImage usage
-- [Dynamic Imports](https://github.com/veryfrontjs/veryfront/tree/main/examples/minimal-app-router) - Code splitting
+- [Image Optimization](https://github.com/veryfront/veryfront/tree/main/examples/basic-mdx) - OptimizedImage usage
+- [Dynamic Imports](https://github.com/veryfront/veryfront/tree/main/examples/minimal-app-router) - Code splitting
 
 **AI Examples:**
-- [AI Basic](https://github.com/veryfrontjs/veryfront/tree/main/examples/ai-basic) - Simple agent integration
-- [Code Assistant](https://github.com/veryfrontjs/veryfront/tree/main/examples/ai-code-assistant) - AI-powered tools
+- [AI Basic](https://github.com/veryfront/veryfront/tree/main/examples/ai-basic) - Simple agent integration
+- [Code Assistant](https://github.com/veryfront/veryfront/tree/main/examples/ai-code-assistant) - AI-powered tools
 
 ---
 

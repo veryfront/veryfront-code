@@ -20,6 +20,80 @@ function getVeryfrontAIReactPath(subpath: string = ""): string {
 // Cache whether project has both react and react-dom
 let projectHasReactDom: boolean | null = null;
 
+// Cache for resolved Deno npm paths
+let denoNpmCacheDir: string | null = null;
+
+async function getDenoNpmCacheDir(): Promise<string | null> {
+  if (denoNpmCacheDir !== null) {
+    return denoNpmCacheDir;
+  }
+
+  try {
+    const command = new Deno.Command("deno", {
+      args: ["info", "--json"],
+      stdout: "piped",
+    });
+    const { stdout } = await command.output();
+    const info = JSON.parse(new TextDecoder().decode(stdout));
+    denoNpmCacheDir = info.npmCache || null;
+    return denoNpmCacheDir;
+  } catch {
+    denoNpmCacheDir = null;
+    return null;
+  }
+}
+
+async function resolveDenoNpmPackage(
+  packageName: string,
+  version: string,
+  subpath: string = "",
+): Promise<string | null> {
+  const cacheDir = await getDenoNpmCacheDir();
+  if (!cacheDir) return null;
+
+  const packagePath = `${cacheDir}/registry.npmjs.org/${packageName}/${version}`;
+  const filePath = subpath ? `${packagePath}${subpath}.js` : `${packagePath}/index.js`;
+
+  try {
+    await Deno.stat(filePath);
+    return `file://${filePath}`;
+  } catch {
+    return null;
+  }
+}
+
+// Cache for local React resolution
+let localReactCache: Record<string, string> | null | undefined = undefined;
+
+async function resolveLocalReact(): Promise<Record<string, string> | null> {
+  if (localReactCache !== undefined) {
+    return localReactCache;
+  }
+
+  const projectDir = cwd();
+  const nodeModulesReact = `${projectDir}/node_modules/react`;
+
+  try {
+    await Deno.stat(nodeModulesReact);
+
+    // React is installed in node_modules, resolve paths
+    const imports: Record<string, string> = {
+      "react": `file://${nodeModulesReact}/index.js`,
+      "react/jsx-runtime": `file://${nodeModulesReact}/jsx-runtime.js`,
+      "react/jsx-dev-runtime": `file://${nodeModulesReact}/jsx-dev-runtime.js`,
+      "react-dom": `file://${projectDir}/node_modules/react-dom/index.js`,
+      "react-dom/server": `file://${projectDir}/node_modules/react-dom/server.js`,
+      "react-dom/client": `file://${projectDir}/node_modules/react-dom/client.js`,
+    };
+
+    localReactCache = imports;
+    return imports;
+  } catch {
+    localReactCache = null;
+    return null;
+  }
+}
+
 /**
  * Check if the project has both react and react-dom installed.
  * This is used to determine whether to use project's React or bundled React
@@ -126,18 +200,11 @@ export async function resolveReactImports(code: string, forSSR: boolean = false)
     return code;
   }
 
-  // For Deno SSR, resolve veryfront imports to local source files (not esm.sh)
-  // and React imports to esm.sh
+  // For Deno SSR, keep bare imports (react, react/jsx-runtime) since temp files
+  // are now in node_modules/.cache which can resolve to parent node_modules.
+  // Only transform veryfront-specific imports to file:// URLs.
   if (forSSR) {
     const denoSSRImports: Record<string, string> = {
-      "react/jsx-runtime": `https://esm.sh/react@${REACT_DEFAULT_VERSION}/jsx-runtime`,
-      "react/jsx-dev-runtime": `https://esm.sh/react@${REACT_DEFAULT_VERSION}/jsx-dev-runtime`,
-      "react-dom/server": `https://esm.sh/react-dom@${REACT_DEFAULT_VERSION}/server`,
-      "react-dom/client": `https://esm.sh/react-dom@${REACT_DEFAULT_VERSION}/client`,
-      "react-dom": `https://esm.sh/react-dom@${REACT_DEFAULT_VERSION}`,
-      "react": `https://esm.sh/react@${REACT_DEFAULT_VERSION}`,
-      // For Deno SSR, resolve veryfront imports to absolute file:// URLs
-      // This prevents "react not in import map" errors when esm.sh module tries to import react
       "veryfront/ai/react": getVeryfrontAIReactPath(),
       "veryfront/ai/components": getVeryfrontAIReactPath("components/index.ts"),
       "veryfront/ai/primitives": getVeryfrontAIReactPath("primitives/index.ts"),

@@ -46,7 +46,11 @@ export function LiveApp({
 
       globalThis.addEventListener("message", handleMessage);
 
-      globalThis.parent.postMessage({ type: "app:ready" }, studioOrigin);
+      globalThis.parent.postMessage({
+        action: "appUpdated",
+        isInitialLoad: true,
+        url: globalThis.location.href,
+      }, studioOrigin);
 
       return () => {
         globalThis.removeEventListener("message", handleMessage);

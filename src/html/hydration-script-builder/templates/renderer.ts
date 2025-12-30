@@ -54,7 +54,9 @@ export const getRendererScript = () => `
           return;
         }
 
-        let tree = React.createElement(PageComponent, data.props || {});
+        // Merge props with params for Next.js-style pages that expect { params }
+        const pageProps = { ...(data.props || {}), params: data.params || {} };
+        let tree = React.createElement(PageComponent, pageProps);
 
         if (data.layouts && data.layouts.length > 0) {
           for (let i = data.layouts.length - 1; i >= 0; i--) {

@@ -8,6 +8,7 @@ import type { VeryfrontConfig } from "@veryfront/config";
 import { MiddlewarePipeline } from "@veryfront/middleware/core/pipeline/index.ts";
 import { bootstrapDev } from "../bootstrap.ts";
 import { HMRServer } from "./hmr-server.ts";
+import { ReloadNotifier } from "../reload-notifier.ts";
 import type { DevServerOptions } from "./types.ts";
 import { RequestHandler } from "./request-handler.ts";
 import { setupMiddleware } from "./middleware.ts";
@@ -27,6 +28,8 @@ export class DevServer {
   public readonly ready: Promise<void>;
   private _resolveReady!: () => void;
   private _isReady = false;
+  private reloadUnsubscribe?: () => void;
+  private invalidateUnsubscribe?: () => void;
 
   constructor(private options: DevServerOptions) {
     this.ready = new Promise<void>((resolve) => {
@@ -83,6 +86,19 @@ export class DevServer {
       });
       await this.hmrServer.start();
       await this.setupFileWatchers();
+
+      // Subscribe to immediate invalidation for cache clearing (fires immediately)
+      this.invalidateUnsubscribe = ReloadNotifier.subscribeInvalidate(() => {
+        logger.debug("[DevServer] Immediate cache invalidation triggered");
+        // Invalidate universal handler immediately to clear cached API handlers
+        this.requestHandler?.invalidateUniversalHandler();
+      });
+
+      // Subscribe to debounced reload for browser refresh (batches rapid changes)
+      this.reloadUnsubscribe = ReloadNotifier.subscribe(() => {
+        logger.info("[DevServer] Reload triggered by cache invalidation");
+        this.hmrServer?.sendUpdate({ type: "reload", timestamp: Date.now() });
+      });
     }
 
     // Module server is integrated into main server now
@@ -114,13 +130,16 @@ export class DevServer {
       () => this._isReady,
       () => this.isDebug(),
       this.hmrServer,
+      this.appConfig,
     );
     this.requestHandler = requestHandler;
 
-    setupMiddleware(
+    await setupMiddleware(
       this.pipeline,
       this.appConfig!,
       (req) => requestHandler.handleRequest(req),
+      this.options.projectDir,
+      this.adapter,
     );
 
     this.server = await this.adapter.serve(
@@ -174,6 +193,10 @@ export class DevServer {
 
   async stop(): Promise<void> {
     logger.info("Shutting down dev server...");
+
+    // Unsubscribe from reload and invalidation notifications
+    this.reloadUnsubscribe?.();
+    this.invalidateUnsubscribe?.();
 
     if (this.fileWatchSetup) {
       const metrics = this.fileWatchSetup.getMetrics();
