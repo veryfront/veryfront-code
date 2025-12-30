@@ -12,6 +12,7 @@ import {
   getDevStyles,
   getProductionStyles,
   getTailwindCDNUrl,
+  convertTailwindConfigForBrowser,
 } from "./styles-builder/index.ts";
 import { generateTailwindCSS } from "./styles-builder/unocss-generator.ts";
 import type { HTMLGenerationOptions } from "./types.ts";
@@ -94,9 +95,18 @@ export async function generateHTMLShellParts(
   // In development, use Tailwind CDN for runtime CSS compilation (works with 'use client' pages)
   // In production, use UnoCSS-generated CSS from pre-rendered HTML
   const tailwindCDNUrl = getTailwindCDNUrl(tailwindConfig);
+
+  // Use project's tailwind.config.js if available, otherwise fall back to generated config
+  const tailwindConfigScript = options.tailwindConfigJs
+    ? convertTailwindConfigForBrowser(options.tailwindConfigJs)
+    : generateTailwindConfig(tailwindConfig);
+
+  // Project's tailwind.config.js may use ESM imports, so use type="module"
+  const configScriptType = options.tailwindConfigJs ? ' type="module"' : "";
+
   const tailwindCDN = options.mode === "development"
     ? `<script src="${tailwindCDNUrl}"${nonce ? ` nonce="${nonce}"` : ""}></script>
-  <script${nonce ? ` nonce="${nonce}"` : ""}>${generateTailwindConfig(tailwindConfig)}</script>${
+  <script${configScriptType}${nonce ? ` nonce="${nonce}"` : ""}>${tailwindConfigScript}</script>${
       tailwindConfig?.customCSS
         ? `
   <style type="text/tailwindcss"${nonce ? ` nonce="${nonce}"` : ""}>
@@ -127,7 +137,7 @@ ${tailwindConfig.customCSS}
 
   <!-- CSS Variables for Theming (veryfront-renderer compatible) -->
   <style${nonce ? ` nonce="${nonce}"` : ""}>
-${generateThemeVariables()}
+${options.globalCSS || generateThemeVariables()}
   </style>
 
   <!-- Syntax highlighting for code blocks -->

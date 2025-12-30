@@ -1,4 +1,4 @@
-import * as esbuild from "esbuild";
+import * as esbuild from "esbuild/mod.js"; // Use native esbuild, not WASM
 import { generateCacheKey, getCachedTransform, setCachedTransform } from "./transform-cache.ts";
 import { computeContentHash, getLoaderFromPath } from "./transform-utils.ts";
 import { addDepsToEsmShUrls, resolveReactImports } from "./react-imports.ts";
@@ -21,6 +21,9 @@ export async function transformToESM(
   _adapter: RuntimeAdapter,
   options: TransformOptions,
 ): Promise<string> {
+  const transformStart = performance.now();
+  const timings: Record<string, number> = {};
+
   const {
     dev = true,
     projectId,
@@ -30,7 +33,10 @@ export async function transformToESM(
     ssr = false,
   } = options;
 
+  const hashStart = performance.now();
   const contentHash = await computeContentHash(source);
+  timings.hash = performance.now() - hashStart;
+
   const cacheKey = generateCacheKey(projectId, filePath, contentHash, ssr);
 
   const cached = getCachedTransform(cacheKey);
@@ -41,20 +47,25 @@ export async function transformToESM(
   // If this is an MDX file, compile it to JSX first
   let transformSource = source;
   if (filePath.endsWith(".mdx")) {
+    const mdxStart = performance.now();
+    // Use appropriate target based on SSR mode
+    // SSR needs "server" target to use file:// paths, browser needs module server URLs
+    const mdxTarget = ssr ? "server" : "browser";
+    const mdxBaseUrl = ssr ? undefined : moduleServerUrl;
     const mdxResult = await compileMDXRuntime(
       dev ? "development" : "production",
       projectDir,
       source,
       undefined,
       filePath,
-      "browser",
-      moduleServerUrl,
+      mdxTarget,
+      mdxBaseUrl,
     );
     transformSource = mdxResult.compiledCode;
-    logger.debug("[MDX-TRANSFORM] Compiled MDX for", filePath);
-    logger.debug("[MDX-TRANSFORM] First 500 chars:", transformSource.substring(0, 500));
+    timings.mdx = performance.now() - mdxStart;
   }
 
+  const esbuildStart = performance.now();
   const result = await esbuild.transform(transformSource, {
     loader: getLoaderFromPath(filePath),
     format: "esm",
@@ -66,12 +77,14 @@ export async function transformToESM(
     treeShaking: !dev, // Disable in dev mode to preserve import errors
     keepNames: true,
   });
+  timings.esbuild = performance.now() - esbuildStart;
 
+  const rewriteStart = performance.now();
   let code = result.code;
 
   code = await resolveReactImports(code, ssr);
-  code = await addDepsToEsmShUrls(code);
-  code = await resolvePathAliases(code, filePath, projectDir);
+  code = await addDepsToEsmShUrls(code, ssr);
+  code = await resolvePathAliases(code, filePath, projectDir, ssr);
 
   // Different import resolution strategies for SSR vs browser
   if (ssr) {
@@ -90,8 +103,19 @@ export async function transformToESM(
       code = await rewriteBareImports(code, moduleServerUrl);
     }
   }
+  timings.rewrite = performance.now() - rewriteStart;
 
   setCachedTransform(cacheKey, code, contentHash);
+
+  const totalMs = performance.now() - transformStart;
+  logger.info("[ESM-TRANSFORM] Timing breakdown", {
+    file: filePath.slice(-40),
+    totalMs: totalMs.toFixed(1),
+    hashMs: timings.hash?.toFixed(1),
+    mdxMs: timings.mdx?.toFixed(1),
+    esbuildMs: timings.esbuild?.toFixed(1),
+    rewriteMs: timings.rewrite?.toFixed(1),
+  });
 
   return code;
 }

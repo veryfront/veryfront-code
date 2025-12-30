@@ -112,6 +112,8 @@ function getContextValidationOptions(
           "client",
           "shared",
           "islands",
+          "features",
+          "src",
         ],
         followSymlinks: false,
         allowAbsolute: true, // Allow node_modules, etc.

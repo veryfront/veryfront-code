@@ -47,9 +47,12 @@ export async function requestWithRetry<T>(
     } catch (error) {
       lastError = error instanceof Error ? error : new Error(String(error));
 
+      // Don't retry most 4xx errors (client errors), but DO retry:
+      // - 401: Can be transient rate limiting from concurrent requests
+      // - 429: Explicit rate limiting
       if (
         error instanceof VeryfrontAPIError && error.status && error.status >= 400 &&
-        error.status < 500
+        error.status < 500 && error.status !== 401 && error.status !== 429
       ) {
         throw error;
       }

@@ -17,9 +17,14 @@ export const getRendererScript = () => `
 
         if (data.pagePath) {
           // Use the server-provided page path
-          // Convert: /project/app/page.tsx -> /app/page.js
-          // Convert: /project/pages/index.tsx -> /pages/index.js
-          const match = data.pagePath.match(/\\/(pages|app|components|lib)\\/(.+)\\.(tsx|ts|jsx|js)$/);
+          // Try absolute path format first (legacy): /project/pages/index.tsx
+          let match = data.pagePath.match(/\\/(pages|app|components|lib|layouts|shared|features)\\/(.+)\\.(tsx|ts|jsx|js|mdx)$/);
+
+          // Try project-relative path format: pages/index.mdx
+          if (!match) {
+            match = data.pagePath.match(/^(pages|app|components|lib|layouts|shared|features)\\/(.+)\\.(tsx|ts|jsx|js|mdx)$/);
+          }
+
           if (match) {
             pagePath = \`\${MODULE_SERVER_URL}/\${match[1]}/\${match[2]}.js\`;
             console.log('[Veryfront] Loading page from hydration data:', pagePath);
@@ -76,6 +81,7 @@ export const getRendererScript = () => `
         }
 
         tree = React.createElement(RouterProvider, { children: tree });
+        tree = React.createElement(QueryClientProviderWrapper, { children: tree });
 
         const container = document.getElementById('veryfront-content');
         if (container) {

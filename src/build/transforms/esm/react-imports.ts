@@ -230,18 +230,33 @@ export async function resolveReactImports(code: string, forSSR: boolean = false)
   });
 }
 
-export function addDepsToEsmShUrls(code: string): Promise<string> {
+export function addDepsToEsmShUrls(code: string, forSSR: boolean = false): Promise<string> {
   // Skip for Node.js - no esm.sh URLs needed
   if (isNodeRuntime()) {
     return Promise.resolve(code);
   }
 
   return Promise.resolve(replaceSpecifiers(code, (specifier) => {
-    if (
-      specifier.startsWith("https://esm.sh/") && !specifier.includes("?") &&
-      !specifier.includes(`react@${REACT_DEFAULT_VERSION}`)
-    ) {
-      return `${specifier}?deps=react@${REACT_DEFAULT_VERSION},react-dom@${REACT_DEFAULT_VERSION}`;
+    if (specifier.startsWith("https://esm.sh/") && !specifier.includes(`react@${REACT_DEFAULT_VERSION}`)) {
+      // Parse existing query params if any
+      const hasQuery = specifier.includes("?");
+      const hasExternal = specifier.includes("external=");
+
+      if (forSSR) {
+        // For SSR: Use ?external to prevent bundling React
+        // This ensures esm.sh packages use our npm:react instance
+        if (hasExternal) {
+          return null; // Already has external param
+        }
+        const separator = hasQuery ? "&" : "?";
+        return `${specifier}${separator}external=react,react-dom`;
+      } else {
+        // For browser: Use ?deps to ensure consistent React version
+        if (hasQuery) {
+          return null; // Already has query params
+        }
+        return `${specifier}?deps=react@${REACT_DEFAULT_VERSION},react-dom@${REACT_DEFAULT_VERSION}`;
+      }
     }
     return null;
   }));

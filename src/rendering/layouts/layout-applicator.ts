@@ -80,6 +80,10 @@ export class LayoutApplicator {
     layoutDataMap?: Map<string, Record<string, unknown>>,
   ): Promise<BundledReact.ReactElement> {
     logger.info("Number of nested layouts found:", nestedLayouts.length);
+    logger.info("Has layoutBundle (named layout from frontmatter):", !!layoutBundle);
+    if (layoutBundle) {
+      logger.info("layoutBundle compiledCode length:", layoutBundle.compiledCode?.length);
+    }
     const useESMWrap = Boolean(this.config?.experimental?.esmLayouts);
 
     if (useESMWrap) {

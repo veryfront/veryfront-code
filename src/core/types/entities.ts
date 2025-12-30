@@ -72,7 +72,7 @@ export function detectEntityType(
     : undefined;
 
   const isLayout = lowerBase === "layout" || baseName.endsWith("Layout") ||
-    frontmatter.isLayout === true;
+    lowerBase.includes("layout") || frontmatter.isLayout === true;
 
   const isProvider = lowerBase === "provider" || baseName.endsWith("Provider") ||
     frontmatter.isProvider === true;

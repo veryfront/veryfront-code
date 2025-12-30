@@ -221,11 +221,29 @@ export async function getLayoutEntity(
   layoutName: string,
   adapter?: RuntimeAdapter,
 ): Promise<EntityInfo | null> {
+  // Handle path aliases like @components/ and @/
+  let resolvedLayoutName = layoutName;
+  if (layoutName.startsWith("@components/")) {
+    // @components/ maps to components/ directory
+    resolvedLayoutName = layoutName.replace("@components/", "components/");
+  } else if (layoutName.startsWith("@/")) {
+    // @/ maps to project root
+    resolvedLayoutName = layoutName.substring(2);
+  }
+
+  // If it's a full path with extension, try it directly
+  if (/\.(mdx|tsx|jsx|ts|js)$/.test(resolvedLayoutName)) {
+    const directPath = pathHelper.join(projectDir, resolvedLayoutName);
+    const info = await getEntityInfo(directPath, adapter);
+    if (info?.entity.isLayout) return info;
+  }
+
+  // Otherwise, try standard layout name resolution
   const possiblePaths = [
-    pathHelper.join(projectDir, "layouts", `${layoutName}.mdx`),
-    pathHelper.join(projectDir, "layouts", `${layoutName}.tsx`),
-    pathHelper.join(projectDir, "components", `${layoutName}Layout.mdx`),
-    pathHelper.join(projectDir, "components", `${layoutName}Layout.tsx`),
+    pathHelper.join(projectDir, "layouts", `${resolvedLayoutName}.mdx`),
+    pathHelper.join(projectDir, "layouts", `${resolvedLayoutName}.tsx`),
+    pathHelper.join(projectDir, "components", `${resolvedLayoutName}Layout.mdx`),
+    pathHelper.join(projectDir, "components", `${resolvedLayoutName}Layout.tsx`),
     pathHelper.join(projectDir, "components", "Layout.mdx"),
     pathHelper.join(projectDir, "components", "Layout.tsx"),
   ];

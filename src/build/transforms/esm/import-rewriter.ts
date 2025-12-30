@@ -12,12 +12,34 @@ export function rewriteBareImports(code: string, _moduleServerUrl?: string): Pro
     "react-dom/server": `https://esm.sh/react-dom@${REACT_DEFAULT_VERSION}/server`,
     "react/jsx-runtime": `https://esm.sh/react@${REACT_DEFAULT_VERSION}/jsx-runtime`,
     "react/jsx-dev-runtime": `https://esm.sh/react@${REACT_DEFAULT_VERSION}/jsx-dev-runtime`,
+    // React Query must use same URL as HTML import map to avoid multiple module instances
+    "@tanstack/react-query": `https://esm.sh/@tanstack/react-query@5?external=react`,
     // NOTE: veryfront/ai/react is NOT rewritten here - it's handled by the HTML import map
     // which points to /_veryfront/lib/ai/react.js served from the local package
   };
 
   return Promise.resolve(replaceSpecifiers(code, (specifier) => {
-    return importMap[specifier] || null;
+    // Check known import map first
+    if (importMap[specifier]) {
+      return importMap[specifier]!;
+    }
+
+    // Skip if already absolute URL, relative path, or local module path
+    if (
+      specifier.startsWith("http://") ||
+      specifier.startsWith("https://") ||
+      specifier.startsWith("./") ||
+      specifier.startsWith("../") ||
+      specifier.startsWith("/") ||
+      specifier.startsWith("@/") || // Project alias
+      specifier.startsWith("veryfront") // Veryfront packages
+    ) {
+      return null;
+    }
+
+    // Convert remaining bare imports (npm packages) to esm.sh URLs
+    // Include react deps for proper bundling
+    return `https://esm.sh/${specifier}?deps=react@${REACT_DEFAULT_VERSION},react-dom@${REACT_DEFAULT_VERSION}`;
   }));
 }
 

@@ -111,7 +111,15 @@ export async function getProjectReact(): Promise<typeof React> {
     }
   }
 
-  // Last resort: use static import (Deno or if file URL failed)
+  // For Deno: use the deno.json import map which maps to npm:react@18.3.1
+  // This ensures consistency with third-party packages like @tanstack/react-query
+  if (!IS_TRUE_NODE) {
+    const npmReact = await import("react");
+    projectReactCache = npmReact.default || npmReact;
+    return projectReactCache as typeof React;
+  }
+
+  // Last resort: use static import (if file URL failed on Node.js)
   projectReactCache = React;
   return React;
 }
@@ -149,21 +157,10 @@ async function importReactDOMServerFromProject(): Promise<
     }
   }
 
-  // Deno: Try to use node_modules react-dom to match component's React instance
-  // Components are transformed to use file:// URLs from node_modules/.deno/
-  // but deno.json maps react-dom/server to esm.sh which causes React mismatch
-  if (!IS_TRUE_NODE) {
-    try {
-      const projectDir = cwd();
-      const reactDomServerPath = `${projectDir}/node_modules/.deno/react-dom@18.3.1/node_modules/react-dom/server.js`;
-      logger.debug("Trying Deno node_modules react-dom/server", { path: reactDomServerPath });
-      return await import(`file://${reactDomServerPath}`);
-    } catch (error) {
-      logger.warn("Failed to resolve react-dom/server from Deno node_modules", error);
-    }
-  }
-
-  // Last resort: use static import (will use deno.json mapping)
+  // For Deno: use npm: specifiers to match React used by third-party packages
+  // Third-party packages like @tanstack/react-query always use npm:react,
+  // so we must use npm:react-dom/server for consistent React instances.
+  // Use deno.json import map which explicitly maps to server.node build
   return await import("react-dom/server");
 }
 

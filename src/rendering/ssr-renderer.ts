@@ -15,6 +15,7 @@ import {
 import { isCompiledBinary, rendererLogger as logger } from "@veryfront/utils";
 import type * as React from "react";
 import { streamToString } from "./utils/index.ts";
+import { setupSSRGlobals } from "./ssr-globals.ts";
 
 /**
  * Convert Node.js pipeable stream to string
@@ -101,6 +102,10 @@ export class SSRRenderer {
     pageElement: React.ReactElement,
     options: SSRRenderOptions,
   ): Promise<SSRRenderResult> {
+    // Set up browser globals before rendering to prevent crashes when
+    // libraries check for browser features during SSR
+    setupSSRGlobals();
+
     let html = "";
     let stream: ReadableStream | null = null;
     const versionInfo = getReactVersionInfo();

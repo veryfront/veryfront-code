@@ -33,10 +33,17 @@ export class SSROrchestrator {
     generationContext: Omit<HTMLGenerationContext, "html" | "ssrHash">,
     options?: RenderOptions,
   ): Promise<SSRRenderingResult> {
+    logger.info("[SSROrchestrator] performSSRRendering called", {
+      elementType: pageElement?.type?.name || pageElement?.type?.displayName || typeof pageElement?.type,
+      hasChildren: !!pageElement?.props?.children,
+    });
     const validatedElement = this.config.elementValidator.ensureValidReactElement(
       pageElement,
       this.config.debugMode,
     );
+    logger.info("[SSROrchestrator] Element validated", {
+      validatedType: validatedElement?.type?.name || validatedElement?.type?.displayName || typeof validatedElement?.type,
+    });
 
     const wantsStream = options?.delivery === "stream";
     const { html, stream } = await this.config.ssrRenderer.renderToHTML(

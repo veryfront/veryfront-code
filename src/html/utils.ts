@@ -85,6 +85,7 @@ function getEsmShImportMap(versions: DetectedVersions): Record<string, string> {
     "react-dom/client": `https://esm.sh/react-dom@${react}/client`,
     "react/jsx-runtime": `https://esm.sh/react@${react}/jsx-runtime`,
     "react/jsx-dev-runtime": `https://esm.sh/react@${react}/jsx-dev-runtime`,
+    "@tanstack/react-query": `https://esm.sh/@tanstack/react-query@5?external=react`,
     "veryfront/ai/react": `https://esm.sh/veryfront@${veryfront}/ai/react?external=react`,
     "veryfront/ai/components": `https://esm.sh/veryfront@${veryfront}/ai/components?external=react`,
     "veryfront/ai/primitives": `https://esm.sh/veryfront@${veryfront}/ai/primitives?external=react`,
@@ -141,6 +142,7 @@ function getSelfHostedImportMap(versions: DetectedVersions): Record<string, stri
     "react-dom/client": `https://esm.sh/react-dom@${react}/client`,
     "react/jsx-runtime": `https://esm.sh/react@${react}/jsx-runtime`,
     "react/jsx-dev-runtime": `https://esm.sh/react@${react}/jsx-dev-runtime`,
+    "@tanstack/react-query": `https://esm.sh/@tanstack/react-query@5?external=react`,
     // Veryfront modules served from local endpoint
     "veryfront/ai/react": "/_veryfront/lib/ai/react.js",
     "veryfront/ai/components": "/_veryfront/lib/ai/components.js",
@@ -236,6 +238,7 @@ export async function buildImportMapJson(
       "react-dom/client": `https://esm.sh/react-dom@${versions.react}/client`,
       "react/jsx-runtime": `https://esm.sh/react@${versions.react}/jsx-runtime`,
       "react/jsx-dev-runtime": `https://esm.sh/react@${versions.react}/jsx-dev-runtime`,
+      "@tanstack/react-query": `https://esm.sh/@tanstack/react-query@5?external=react`,
       ...customImports,
     };
 
@@ -255,6 +258,9 @@ export async function buildImportMapJson(
     const provider = config?.client?.cdn?.provider ?? "esm.sh";
     imports = getCdnImportMap(versions, provider);
   }
+
+  // Add @/ alias for project-relative imports (maps to module server)
+  imports["@/"] = "/_vf_modules/";
 
   // Merge with custom imports
   if (customImports) {

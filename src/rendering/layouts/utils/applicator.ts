@@ -18,6 +18,82 @@ import {
 } from "../../element-validator/primitive-checks.ts";
 import { getProjectReact } from "@veryfront/react";
 
+// Check if running in Deno (not Node.js)
+const IS_DENO = typeof (globalThis as { Deno?: unknown }).Deno !== "undefined";
+
+/**
+ * Transform bare npm imports to npm: specifiers for Deno SSR.
+ * Bare imports are those that don't start with: . / http:// https:// npm: file:// node://
+ */
+function transformBareImportsToNpm(code: string): string {
+  if (!IS_DENO) return code;
+
+  return code.replace(
+    /from\s+["']([^"'./][^"']*)["']/g,
+    (_match, specifier) => {
+      // Skip if already has protocol prefix
+      if (
+        specifier.startsWith("npm:") ||
+        specifier.startsWith("http://") ||
+        specifier.startsWith("https://") ||
+        specifier.startsWith("file://") ||
+        specifier.startsWith("node:")
+      ) {
+        return `from "${specifier}"`;
+      }
+      // Skip @/ path aliases - these are project-relative paths, not npm packages
+      if (specifier.startsWith("@/")) {
+        return `from "${specifier}"`;
+      }
+      // Convert bare import to npm: specifier
+      logger.debug("[applicator] Transforming bare import to npm:", { specifier });
+      return `from "npm:${specifier}"`;
+    },
+  );
+}
+
+/**
+ * Transform file:// local imports to module server URLs for Deno SSR.
+ * These file:// paths don't have extensions and point to the wrong directory.
+ * Convert them to module server URLs which can properly resolve and transform the files.
+ */
+function transformLocalFileImportsToModuleServer(code: string): string {
+  if (!IS_DENO) return code;
+
+  const port = (globalThis as { Deno?: { env: { get(key: string): string | undefined } } })
+    .Deno?.env?.get("PORT") || "3001";
+  const cacheBuster = Date.now();
+
+  // Match file:// imports that look like local project files (without extension)
+  // Pattern: file:///path/to/project/relative/path (no .js/.ts extension at end)
+  return code.replace(
+    /from\s+["'](file:\/\/[^"']+)["']/g,
+    (_match, fileUrl) => {
+      // Skip if already has an extension
+      if (/\.(js|ts|tsx|jsx|mjs|cjs)$/.test(fileUrl)) {
+        return `from "${fileUrl}"`;
+      }
+
+      // Extract the relative path from the file:// URL
+      // Look for common project path patterns like /shared/, /lib/, /components/, /features/, /app/
+      const relativePath = fileUrl.replace(/file:\/\/.*?\/(?=shared\/|lib\/|components\/|features\/|app\/)/, "");
+
+      if (relativePath !== fileUrl) {
+        // Found a recognizable project path - use module server
+        const moduleUrl = `http://localhost:${port}/_vf_modules/${relativePath}.js?ssr=true&v=${cacheBuster}`;
+        logger.debug("[applicator] Transforming file:// to module server:", {
+          original: fileUrl,
+          moduleUrl,
+        });
+        return `from "${moduleUrl}"`;
+      }
+
+      // If no recognizable pattern, leave as-is
+      return `from "${fileUrl}"`;
+    },
+  );
+}
+
 export async function applyLayoutsESM(
   pageElement: BundledReact.ReactElement,
   layoutBundle: MdxBundle | undefined,
@@ -63,7 +139,11 @@ export async function applyLayoutsESM(
   }
 
   if (layoutBundle) {
+    logger.info("[applyLayoutsESM] Applying named layoutBundle (frontmatter layout)");
     element = await applyMDXLayout(element, layoutBundle, projectDir, mergedComponents, adapter);
+    logger.info("[applyLayoutsESM] Named layoutBundle applied successfully");
+  } else {
+    logger.info("[applyLayoutsESM] No layoutBundle to apply");
   }
 
   if (providerItems.length > 0) {
@@ -208,10 +288,14 @@ async function applyProviders(
     try {
       if (providerItem.kind === "mdx" && providerItem.bundle?.compiledCode) {
         const providerImportMap = await loadImportMap(projectDir, adapter);
-        const providerCode = transformImportsWithMap(
+        let providerCode = transformImportsWithMap(
           providerItem.bundle.compiledCode,
           providerImportMap,
         );
+        // Transform any remaining bare imports to npm: specifiers for Deno SSR
+        providerCode = transformBareImportsToNpm(providerCode);
+        // Transform file:// local imports to module server URLs for Deno SSR
+        providerCode = transformLocalFileImportsToModuleServer(providerCode);
         const providerModule = await mdxRenderer.loadModuleESM(providerCode);
         const providerMod = providerModule as MDXModule;
         const ProviderFn = providerMod.MDXLayout || providerMod.default;

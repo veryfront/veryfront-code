@@ -42,14 +42,57 @@ export class LayoutCollector {
   }
 
   async collectLayouts(pageInfo: EntityInfo): Promise<LayoutCollectionResult> {
-    const layoutBundle = await this.collectNamedLayout(pageInfo);
-    const nestedLayouts = await this.collectNestedLayouts(pageInfo);
+    const layoutValue = pageInfo.entity.frontmatter.layout;
+    const hasExplicitFrontmatterLayout = typeof layoutValue === "string" && layoutValue.length > 0;
+
+    // Collect the named layout (from frontmatter or config.defaultLayout)
+    const { layoutBundle, layoutPath } = await this.collectNamedLayoutWithPath(pageInfo);
+
+    let nestedLayouts: LayoutItem[];
+
+    if (hasExplicitFrontmatterLayout && layoutPath) {
+      // Page has explicit frontmatter layout - use it INSTEAD of project-level layouts
+      // This prevents double-wrapping (e.g., page's DocsLayoutV2 + project's DefaultLayout)
+      // Include the frontmatter layout as a nestedLayout for client-side hydration
+      const kind = layoutPath.endsWith(".mdx") ? "mdx" : "tsx";
+      nestedLayouts = [{
+        kind: kind as "mdx" | "tsx",
+        bundle: kind === "mdx" ? layoutBundle : undefined,
+        componentPath: kind === "tsx" ? layoutPath : undefined,
+        path: layoutPath,
+      }];
+      // Return undefined layoutBundle since we're using nestedLayouts for this layout
+      // This ensures SSR and client hydration apply the same layout
+      logger.info("[LayoutCollector] Using frontmatter layout as nestedLayout", {
+        layoutPath,
+        kind,
+      });
+      return { layoutBundle: undefined, nestedLayouts };
+    } else {
+      // No explicit frontmatter layout - use project-level nested layouts
+      nestedLayouts = await this.collectNestedLayouts(pageInfo);
+    }
+
+    logger.debug("[LayoutCollector] collectLayouts result", {
+      hasLayoutBundle: !!layoutBundle,
+      hasExplicitFrontmatterLayout,
+      nestedLayoutsCount: nestedLayouts.length,
+    });
 
     return { layoutBundle, nestedLayouts };
   }
 
-  private async collectNamedLayout(pageInfo: EntityInfo): Promise<MdxBundle | undefined> {
+  private async collectNamedLayoutWithPath(
+    pageInfo: EntityInfo,
+  ): Promise<{ layoutBundle: MdxBundle | undefined; layoutPath: string | undefined }> {
     const layoutValue = pageInfo.entity.frontmatter.layout;
+
+    logger.info("[LayoutCollector] collectNamedLayoutWithPath called", {
+      pageId: pageInfo.entity.id,
+      layoutValue,
+      frontmatterKeys: Object.keys(pageInfo.entity.frontmatter),
+      defaultLayout: this.config?.defaultLayout,
+    });
 
     const layoutName = (typeof layoutValue === "boolean" && !layoutValue) || layoutValue === "false"
       ? null
@@ -57,15 +100,17 @@ export class LayoutCollector {
         this.config?.defaultLayout ||
         null;
 
+    logger.info("[LayoutCollector] Resolved layoutName:", { layoutName });
+
     if (!layoutName) {
-      return undefined;
+      return { layoutBundle: undefined, layoutPath: undefined };
     }
 
     const layoutInfo = await getLayoutEntity(this.projectDir, layoutName, this.adapter);
-    logger.debug("Layout entity found:", !!layoutInfo);
+    logger.info("[LayoutCollector] Layout entity found:", { found: !!layoutInfo, layoutName });
 
     if (!layoutInfo) {
-      return undefined;
+      return { layoutBundle: undefined, layoutPath: undefined };
     }
 
     logger.debug("Compiling named layout", {
@@ -83,7 +128,7 @@ export class LayoutCollector {
       codeLength: layoutBundle.compiledCode?.length,
     });
 
-    return layoutBundle;
+    return { layoutBundle, layoutPath: layoutInfo.entity.id };
   }
 
   private async collectNestedLayouts(pageInfo: EntityInfo): Promise<LayoutItem[]> {
@@ -115,9 +160,14 @@ export class LayoutCollector {
     const nestedLayouts: LayoutItem[] = [];
 
     // Check if layout value is a valid file path (not a UUID)
-    // Valid paths end with .tsx, .jsx, .ts, or .js
+    // Valid paths end with .tsx, .jsx, .ts, .js, or .mdx
     const isValidLayoutPath = (layout: string): boolean => {
-      return /\.(tsx|jsx|ts|js)$/.test(layout);
+      return /\.(tsx|jsx|ts|js|mdx)$/.test(layout);
+    };
+
+    // Determine layout kind based on file extension
+    const getLayoutKind = (layout: string): "tsx" | "mdx" => {
+      return layout.endsWith(".mdx") ? "mdx" : "tsx";
     };
 
     // Priority 1: Check config.layout from veryfront.config.ts
@@ -138,15 +188,28 @@ export class LayoutCollector {
       });
 
       if (layoutExists) {
-        nestedLayouts.push({
-          kind: "tsx",
-          component: undefined,
-          componentPath: layoutPath,
-          path: layoutPath,
-        });
+        const kind = getLayoutKind(configLayout);
+        if (kind === "mdx") {
+          // For MDX layouts, we need to compile them first
+          const content = await this.adapter.fs.readFile(layoutPath);
+          const bundle = await this.compileMDX(content, { isLayout: true }, layoutPath);
+          nestedLayouts.push({
+            kind: "mdx",
+            bundle,
+            path: layoutPath,
+          });
+        } else {
+          nestedLayouts.push({
+            kind: "tsx",
+            component: undefined,
+            componentPath: layoutPath,
+            path: layoutPath,
+          });
+        }
 
         logger.debug("[LayoutCollector] Added config layout to nestedLayouts", {
           layoutPath,
+          kind,
         });
         return nestedLayouts;
       }
@@ -173,15 +236,28 @@ export class LayoutCollector {
       });
 
       if (layoutExists) {
-        nestedLayouts.push({
-          kind: "tsx",
-          component: undefined,
-          componentPath: layoutPath,
-          path: layoutPath,
-        });
+        const kind = getLayoutKind(projectData.layout);
+        if (kind === "mdx") {
+          // For MDX layouts, we need to compile them first
+          const content = await this.adapter.fs.readFile(layoutPath);
+          const bundle = await this.compileMDX(content, { isLayout: true }, layoutPath);
+          nestedLayouts.push({
+            kind: "mdx",
+            bundle,
+            path: layoutPath,
+          });
+        } else {
+          nestedLayouts.push({
+            kind: "tsx",
+            component: undefined,
+            componentPath: layoutPath,
+            path: layoutPath,
+          });
+        }
 
         logger.debug("[LayoutCollector] Added API layout to nestedLayouts", {
           layoutPath,
+          kind,
         });
       }
     } else if (projectData?.layout) {

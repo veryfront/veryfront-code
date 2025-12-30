@@ -100,6 +100,19 @@ const defaultThemeExtend = {
   },
 };
 
+/**
+ * Convert project's tailwind.config.js (export default or module.exports)
+ * to browser-compatible format (tailwind.config = {...})
+ * This matches how veryfront-frontend handles tailwind configs
+ */
+export function convertTailwindConfigForBrowser(code: string): string {
+  if (!code) return "";
+
+  return code
+    .replace(/export\s+default\s*{/g, "tailwind.config = {")
+    .replace(/module\.exports\s*=\s*{/g, "tailwind.config = {");
+}
+
 export function generateTailwindConfig(userConfig?: TailwindConfig): string {
   // Merge user theme extensions with defaults
   const userExtend = userConfig?.theme?.extend || {};
@@ -112,6 +125,10 @@ export function generateTailwindConfig(userConfig?: TailwindConfig): string {
   const configObject = {
     darkMode: ["class", '[data-theme="dark"]'],
     theme: {
+      container: {
+        center: true,
+        padding: "1rem",
+      },
       extend: mergedExtend,
     },
   };

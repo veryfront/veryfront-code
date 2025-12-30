@@ -13,6 +13,10 @@ export interface HTMLGenerationOptions {
   nonce?: string;
   /** Project directory for resolving package versions */
   projectDir?: string;
+  /** Project's globals.css content (overrides default theme variables) */
+  globalCSS?: string;
+  /** Project's tailwind.config.js content (raw JS, will be converted to browser format) */
+  tailwindConfigJs?: string;
 }
 
 export type { ImportMapConfig } from "../module-system/import-map/types.ts";

@@ -68,8 +68,9 @@ export class ProviderManager {
   }
 
   async collectProviders(): Promise<ProviderCollectionResult> {
+    logger.info("[ProviderManager] collectProviders called");
     if (this.cachedResult) {
-      logger.debug("[ProviderManager] Using cached providers");
+      logger.info("[ProviderManager] Using cached providers");
       return this.cachedResult;
     }
     const providerItems: ProviderItem[] = [];
@@ -119,7 +120,7 @@ export class ProviderManager {
   }
 
   private isValidProviderPath(provider: string): boolean {
-    return /\.(tsx|jsx|ts|js)$/.test(provider);
+    return /\.(tsx|jsx|ts|js|mdx)$/.test(provider);
   }
 
   private async collectConfigProvider(): Promise<ProviderItem | null> {
@@ -152,35 +153,81 @@ export class ProviderManager {
   }
 
   private async collectAPIProvider(): Promise<ProviderItem | null> {
+    logger.info("[ProviderManager] collectAPIProvider called");
     const vfAdapter = getVeryfrontFSAdapter(this.adapter);
     if (!vfAdapter) {
+      logger.info("[ProviderManager] No VeryfrontFSAdapter found");
       return null;
     }
 
     const projectData = vfAdapter.getProjectData();
+    logger.info("[ProviderManager] Project data", { projectData });
 
     if (!projectData?.provider || !this.isValidProviderPath(projectData.provider)) {
-      logger.debug("[ProviderManager] Skipping invalid API provider value", {
+      logger.info("[ProviderManager] Skipping invalid API provider value", {
         provider: projectData?.provider,
       });
       return null;
     }
 
-    const providerPath = join(this.projectDir, "components", projectData.provider);
-    const exists = await vfAdapter.exists(providerPath);
+    // First try components/ directory (legacy convention)
+    let providerPath = join(this.projectDir, "components", projectData.provider);
+    let exists = await vfAdapter.exists(providerPath);
 
-    logger.debug("[ProviderManager] Checking API project provider", {
+    logger.info("[ProviderManager] Checking API project provider (components/)", {
       provider: projectData.provider,
       providerPath,
       exists,
     });
 
+    // If not in components/, try project root (app.mdx convention)
+    if (!exists) {
+      providerPath = join(this.projectDir, projectData.provider);
+      exists = await vfAdapter.exists(providerPath);
+      logger.info("[ProviderManager] Checking API project provider (root)", {
+        provider: projectData.provider,
+        providerPath,
+        exists,
+      });
+    }
+
     if (!exists) {
       return null;
     }
 
+    // Determine kind based on file extension
+    const kind = providerPath.endsWith(".mdx") ? "mdx" : "tsx";
+
+    // For MDX providers, we need to compile them
+    if (kind === "mdx") {
+      try {
+        const content = await this.adapter.fs.readFile(providerPath);
+        const bundle = await this.compileMDX(
+          content as string,
+          { isProvider: true },
+          providerPath,
+        );
+        logger.info("[ProviderManager] Compiled API MDX provider", {
+          path: providerPath,
+          hasCompiledCode: !!bundle?.compiledCode,
+        });
+        return {
+          kind,
+          componentPath: providerPath,
+          path: providerPath,
+          bundle,
+        };
+      } catch (error) {
+        logger.error("[ProviderManager] Failed to compile API MDX provider", {
+          path: providerPath,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        return null;
+      }
+    }
+
     return {
-      kind: "tsx",
+      kind,
       componentPath: providerPath,
       path: providerPath,
     };

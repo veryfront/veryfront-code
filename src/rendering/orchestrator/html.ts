@@ -73,9 +73,30 @@ export class HTMLGenerator {
     );
     const appComponentPath = await this.resolveAppComponentPath(useAppRouter);
 
+    // Load project's globals.css for custom theme variables
+    let globalCSS: string | undefined;
+    try {
+      const globalsCSSPath = join(this.config.projectDir, "globals.css");
+      globalCSS = await this.config.adapter.fs.readFile(globalsCSSPath);
+      logger.debug("[HTMLGenerator] Loaded globals.css", { length: globalCSS.length });
+    } catch {
+      logger.debug("[HTMLGenerator] No globals.css found, using default theme");
+    }
+
+    // Load project's tailwind.config.js for runtime config
+    let tailwindConfigJs: string | undefined;
+    try {
+      const tailwindConfigPath = join(this.config.projectDir, "tailwind.config.js");
+      tailwindConfigJs = await this.config.adapter.fs.readFile(tailwindConfigPath);
+      logger.debug("[HTMLGenerator] Loaded tailwind.config.js", { length: tailwindConfigJs.length });
+    } catch {
+      logger.debug("[HTMLGenerator] No tailwind.config.js found, using default config");
+    }
+
     const htmlOptions: HTMLGenerationOptions = {
       mode: this.config.mode,
       config: this.config.config,
+      projectDir: this.config.projectDir,
       nestedLayouts: context.nestedLayouts.map((l) => ({
         kind: l.kind,
         path: l.path,
@@ -85,6 +106,8 @@ export class HTMLGenerator {
       appPath: appComponentPath,
       pagePath: context.pageInfo.entity.id,
       nonce: context.options?.nonce,
+      globalCSS,
+      tailwindConfigJs,
     };
 
     const { start, end } = await generateHTMLShellParts(
@@ -181,9 +204,30 @@ export class HTMLGenerator {
 
     const appComponentPath = await this.resolveAppComponentPath(useAppRouter);
 
+    // Load project's globals.css for custom theme variables
+    let globalCSS: string | undefined;
+    try {
+      const globalsCSSPath = join(this.config.projectDir, "globals.css");
+      globalCSS = await this.config.adapter.fs.readFile(globalsCSSPath);
+      logger.debug("[HTMLGenerator] Loaded globals.css", { length: globalCSS.length });
+    } catch {
+      logger.debug("[HTMLGenerator] No globals.css found, using default theme");
+    }
+
+    // Load project's tailwind.config.js for runtime config
+    let tailwindConfigJs: string | undefined;
+    try {
+      const tailwindConfigPath = join(this.config.projectDir, "tailwind.config.js");
+      tailwindConfigJs = await this.config.adapter.fs.readFile(tailwindConfigPath);
+      logger.debug("[HTMLGenerator] Loaded tailwind.config.js", { length: tailwindConfigJs.length });
+    } catch {
+      logger.debug("[HTMLGenerator] No tailwind.config.js found, using default config");
+    }
+
     const htmlOptions: HTMLGenerationOptions = {
       mode: this.config.mode,
       config: this.config.config,
+      projectDir: this.config.projectDir,
       nestedLayouts: context.nestedLayouts.map((l) => ({
         kind: l.kind,
         path: l.path,
@@ -193,6 +237,8 @@ export class HTMLGenerator {
       appPath: appComponentPath,
       pagePath: context.pageInfo.entity.id,
       nonce: context.options?.nonce,
+      globalCSS,
+      tailwindConfigJs,
     };
 
     return await wrapInHTMLShell(
