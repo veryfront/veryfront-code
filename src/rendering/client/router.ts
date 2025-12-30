@@ -3,24 +3,29 @@ import ReactDOM from "react-dom/client";
 import type { GlobalWithReactDOM } from "@veryfront/types/global-guards.ts";
 import { extractPageDataFromScript } from "@veryfront/routing";
 import { NavigationHandlers } from "@veryfront/routing";
-import type { RouteData } from "@veryfront/routing";
+import type { RouteData, SpaPageData } from "@veryfront/routing";
 import { PageLoader } from "@veryfront/routing";
 import { PageTransition } from "@veryfront/routing";
 import { ViewportPrefetch } from "@veryfront/routing";
 
+export type SpaNavigationHandler = (data: SpaPageData) => Promise<void>;
+
 declare global {
   interface Window {
     __VERYFRONT_ROUTER_OPTS__?: Partial<RouterOptions>;
+    __VERYFRONT_SPA_MODE__?: boolean;
     veryFrontRouter?: VeryfrontRouter;
   }
 
   var __VERYFRONT_ROUTER_OPTS__: Partial<RouterOptions> | undefined;
+  var __VERYFRONT_SPA_MODE__: boolean | undefined;
 }
 
-export type { RouteData };
+export type { RouteData, SpaPageData };
 
 export interface RouterOptions {
   baseUrl?: string;
+  spaMode?: boolean;
   onNavigate?: (url: string) => void;
   onStart?: (url: string) => void;
   onComplete?: (url: string) => void;
@@ -37,6 +42,8 @@ export class VeryfrontRouter {
   private currentPath: string;
   private root: ReactDOM.Root | null = null;
   private options: RouterOptions;
+  private spaMode: boolean;
+  private spaNavigationHandler: SpaNavigationHandler | null = null;
 
   private pageLoader: PageLoader;
   private navigationHandlers: NavigationHandlers;
@@ -52,6 +59,7 @@ export class VeryfrontRouter {
     this.options = { ...globalOptions, ...options };
     this.baseUrl = options.baseUrl || globalThis.location.origin;
     this.currentPath = globalThis.location.pathname;
+    this.spaMode = options.spaMode ?? globalThis.__VERYFRONT_SPA_MODE__ ?? false;
 
     this.pageLoader = new PageLoader();
     this.navigationHandlers = new NavigationHandlers(
@@ -76,6 +84,12 @@ export class VeryfrontRouter {
       onNavigate: (url) => this.navigate(url),
       onPrefetch: (url) => this.prefetch(url),
     });
+  }
+
+  registerNavigationHandler(handler: SpaNavigationHandler): void {
+    logger.debug("[router] Registering SPA navigation handler");
+    this.spaNavigationHandler = handler;
+    this.spaMode = true;
   }
 
   private loadGlobalOptions(): Partial<RouterOptions> {
@@ -120,7 +134,7 @@ export class VeryfrontRouter {
   }
 
   async navigate(url: string, pushState = true): Promise<void> {
-    logger.info(`Navigating to ${url}`);
+    logger.info(`Navigating to ${url} (SPA mode: ${this.spaMode})`);
 
     this.navigationHandlers.saveScrollPosition(this.currentPath);
     this.options.onStart?.(url);
@@ -129,8 +143,46 @@ export class VeryfrontRouter {
       globalThis.history.pushState({}, "", url);
     }
 
-    await this.loadPage(url);
+    if (this.spaMode && this.spaNavigationHandler) {
+      await this.loadSpaPage(url);
+    } else {
+      await this.loadPage(url);
+    }
+
     this.options.onNavigate?.(url);
+  }
+
+  private async loadSpaPage(path: string): Promise<void> {
+    logger.debug(`[router] Loading SPA page: ${path}`);
+
+    try {
+      const spaData = await this.pageLoader.loadSpaPageData(path);
+
+      if (this.spaNavigationHandler) {
+        await this.spaNavigationHandler(spaData);
+      }
+
+      this.currentPath = path;
+      this.handleScrollAfterNavigation();
+      this.options.onComplete?.(path);
+    } catch (error) {
+      logger.error(`[router] Failed to load SPA page ${path}`, error as Error);
+      this.options.onError?.(error as Error);
+      this.pageTransition.showError(error as Error);
+    }
+  }
+
+  private handleScrollAfterNavigation(): void {
+    const isPopState = this.navigationHandlers.isPopState();
+    const scrollY = this.navigationHandlers.getScrollPosition(this.currentPath);
+
+    try {
+      globalThis.scrollTo(0, isPopState ? scrollY : 0);
+    } catch (error) {
+      logger.warn("[router] scroll handling failed", error);
+    }
+
+    this.navigationHandlers.clearPopStateFlag();
   }
 
   private async loadPage(path: string, updateUI = true): Promise<void> {
@@ -169,7 +221,11 @@ export class VeryfrontRouter {
   }
 
   async prefetch(path: string): Promise<void> {
-    await this.pageLoader.prefetch(path);
+    if (this.spaMode) {
+      await this.pageLoader.prefetchSpaPageData(path);
+    } else {
+      await this.pageLoader.prefetch(path);
+    }
   }
 
   private updatePage(data: RouteData): void {

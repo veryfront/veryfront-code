@@ -45,3 +45,32 @@ export interface RenderContext {
   slug: string;
   options?: RenderOptions;
 }
+
+/**
+ * Page data response for SPA client-side navigation.
+ * Contains all information needed to render a page client-side
+ * without fetching pre-rendered HTML.
+ */
+export interface PageDataResponse {
+  /** URL slug for the page */
+  slug: string;
+  /** Relative path to the page component (e.g., "pages/about.tsx") */
+  pagePath: string;
+  /** Page component type */
+  pageType: "mdx" | "tsx" | "jsx" | "ts" | "js";
+  /** Nested layouts to wrap the page, from outermost to innermost */
+  layouts: Array<{
+    kind: "mdx" | "tsx";
+    path: string;
+  }>;
+  /** Provider component paths */
+  providers: string[];
+  /** Page frontmatter/metadata */
+  frontmatter: Record<string, unknown>;
+  /** Props from getServerData/getStaticData */
+  props: Record<string, unknown>;
+  /** Route parameters */
+  params: Record<string, string | string[]>;
+  /** Layout-specific props keyed by layout path */
+  layoutProps: Record<string, Record<string, unknown>>;
+}

@@ -6,6 +6,8 @@ export interface AppRouteContext {
   params: Record<string, string>;
 }
 
+export type HTTPMethod = "GET" | "POST" | "PUT" | "DELETE" | "PATCH" | "HEAD" | "OPTIONS";
+
 export type PagesRouteHandler = (ctx: APIContext) => Promise<Response> | Response;
 export type AppRouteHandler = (
   request: Request,

@@ -9,7 +9,7 @@ import type { PageRenderer } from "../page-renderer.ts";
 import type { PageResolver } from "../page-resolution/index.ts";
 import type { LayoutOrchestrator } from "./layout.ts";
 import type { SSROrchestrator } from "./ssr-orchestrator.ts";
-import type { RenderOptions, RenderResult } from "./types.ts";
+import type { PageDataResponse, RenderOptions, RenderResult } from "./types.ts";
 import { DataFetcher } from "@veryfront/data/index.ts";
 import type { DataContext } from "@veryfront/data/types.ts";
 import { clearSSRModuleCache } from "@veryfront/modules/react-loader/index.ts";
@@ -642,5 +642,190 @@ export class RenderPipeline {
     });
 
     return result;
+  }
+
+  /**
+   * Resolve page data for SPA client-side navigation.
+   * Returns structured data without rendering HTML, allowing the client
+   * to dynamically import and render the page component.
+   *
+   * @param slug - Page slug to resolve
+   * @param options - Render options (request, url, params)
+   * @returns Page data response for client-side rendering
+   */
+  async resolvePageData(slug: string, options?: RenderOptions): Promise<PageDataResponse> {
+    // Set up browser globals for any SSR-related checks
+    setupSSRGlobals();
+
+    // In development mode, clear SSR module cache
+    if (this.config.mode === "development") {
+      clearSSRModuleCache();
+    }
+
+    // 1. Resolve page info
+    const pageInfo = await timeAsync("resolve-page-data", () =>
+      this.config.pageResolver.resolvePage(slug), "resolve-page-data");
+
+    // 2. Collect layouts and providers
+    const layoutResult = await timeAsync("collect-layouts-data", () =>
+      this.config.layoutOrchestrator.collectLayouts(pageInfo), "resolve-page-data");
+    const providerResult = await timeAsync("collect-providers-data", () =>
+      this.config.layoutOrchestrator.collectProviders(), "resolve-page-data");
+
+    // 3. Extract page path and type
+    const pagePath = this.extractRelativePath(pageInfo.entity.id);
+    const fileExtension = pageInfo.entity.id.split(".").pop()?.toLowerCase() || "tsx";
+    const pageType = fileExtension as PageDataResponse["pageType"];
+    const isComponentPage = ["tsx", "jsx", "ts", "js"].includes(fileExtension);
+    const isInPagesDir = pageInfo.entity.id.includes("/pages/");
+
+    // 4. Initialize data structures
+    let pageProps: Record<string, unknown> = {};
+    const layoutProps: Record<string, Record<string, unknown>> = {};
+    let params: Record<string, string | string[]> = options?.params || {};
+
+    // 5. Extract route params if not provided
+    if (options?.request && options?.url && Object.keys(params).length === 0) {
+      params = this.extractRouteParams(slug, pageInfo.entity.id);
+    }
+
+    // 6. Fetch data if request context is available
+    if (options?.request && options?.url) {
+      const dataContext: DataContext = {
+        params,
+        query: options.url.searchParams,
+        request: options.request,
+        url: options.url,
+      };
+
+      // Fetch page data
+      if (isComponentPage && isInPagesDir) {
+        const mod = await this.loadModule(pageInfo.entity.id);
+        if (mod && (mod.getServerData || mod.getStaticData)) {
+          const result = await this.dataFetcher.fetchData(mod, dataContext, this.config.mode);
+          if (result?.props) {
+            pageProps = result.props as Record<string, unknown>;
+          }
+        }
+      }
+
+      // Fetch layout data
+      for (const layout of layoutResult.nestedLayouts) {
+        if (layout.kind === "tsx" && layout.componentPath) {
+          const mod = await this.loadModule(layout.componentPath);
+          if (mod && (mod.getServerData || mod.getStaticData)) {
+            const result = await this.dataFetcher.fetchData(mod, dataContext, this.config.mode);
+            if (result?.props) {
+              layoutProps[layout.componentPath] = result.props as Record<string, unknown>;
+            }
+          }
+        }
+      }
+    }
+
+    // 7. Extract frontmatter
+    let frontmatter: Record<string, unknown> = {};
+    if (pageType === "mdx" && pageInfo.entity) {
+      // For MDX pages, try to get frontmatter from the bundle
+      try {
+        const bundleResult = await this.config.pageRenderer.preparePageBundles(
+          pageInfo, slug, undefined, options
+        );
+        if (bundleResult.pageBundle && "frontmatter" in bundleResult.pageBundle) {
+          frontmatter = (bundleResult.pageBundle as { frontmatter?: Record<string, unknown> }).frontmatter || {};
+        }
+      } catch {
+        // Frontmatter extraction failed, use empty object
+      }
+    }
+
+    // 8. Build layout info array
+    const layouts = layoutResult.nestedLayouts
+      .filter(l => l.componentPath || l.path)
+      .map(l => ({
+        kind: l.kind,
+        path: this.extractRelativePath(l.componentPath || l.path || ""),
+      }));
+
+    // 9. Build provider paths array
+    const providers = providerResult.providerInfos
+      .filter(p => p.path)
+      .map(p => this.extractRelativePath(p.path || ""));
+
+    logger.info("[resolvePageData] Resolved page data", {
+      slug,
+      pagePath,
+      pageType,
+      layoutCount: layouts.length,
+      providerCount: providers.length,
+    });
+
+    return {
+      slug,
+      pagePath,
+      pageType,
+      layouts,
+      providers,
+      frontmatter,
+      props: pageProps,
+      params,
+      layoutProps,
+    };
+  }
+
+  /**
+   * Extract relative path from absolute path.
+   * Removes project directory prefix to get component-relative path.
+   */
+  private extractRelativePath(absolutePath: string): string {
+    const projectDir = this.config.projectDir;
+    if (absolutePath.startsWith(projectDir)) {
+      return absolutePath.slice(projectDir.length).replace(/^\//, "");
+    }
+    // Handle paths that might already be relative
+    return absolutePath.replace(/^\//, "");
+  }
+
+  /**
+   * Extract route parameters from URL slug based on file path pattern.
+   */
+  private extractRouteParams(slug: string, pageId: string): Record<string, string | string[]> {
+    const params: Record<string, string | string[]> = {};
+    const pagesIndex = pageId.indexOf("/pages/");
+    const appIndex = pageId.indexOf("/app/");
+
+    let relativePath: string | null = null;
+    if (pagesIndex !== -1) {
+      relativePath = pageId.substring(pagesIndex + 7);
+    } else if (appIndex !== -1) {
+      relativePath = pageId.substring(appIndex + 5);
+    }
+
+    if (!relativePath) return params;
+
+    const pathSegments = relativePath
+      .split("/")
+      .map(s => s.replace(/\.(tsx|jsx|ts|js|mdx)$/, ""))
+      .filter(s => s !== "page" && s !== "route");
+    const slugSegments = slug.split("/").filter(Boolean);
+
+    for (let i = 0; i < pathSegments.length && i < slugSegments.length; i++) {
+      const pathSeg = pathSegments[i];
+      const slugSeg = slugSegments[i];
+
+      if (pathSeg?.startsWith("[") && pathSeg.endsWith("]")) {
+        const isCatchAll = pathSeg.startsWith("[...");
+        const paramName = pathSeg.replace(/\[\.\.\.|\[|\]/g, "");
+
+        if (isCatchAll) {
+          params[paramName] = slugSegments.slice(i);
+          break;
+        } else if (slugSeg !== undefined) {
+          params[paramName] = slugSeg;
+        }
+      }
+    }
+
+    return params;
   }
 }

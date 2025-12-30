@@ -95,7 +95,8 @@ export async function getEntityInfo(
         frontmatter = extracted.attrs as Frontmatter;
         body = extracted.body;
       } catch {
-        // Malformed frontmatter - use empty
+        // Malformed YAML frontmatter - continue with empty frontmatter
+        // This is expected for files with invalid/incomplete frontmatter syntax
       }
     }
 

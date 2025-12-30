@@ -36,7 +36,7 @@ function mapSpec(
   basedir: string,
   target: CompilationTarget,
   baseUrl?: string,
-  projectDir?: string,
+  _projectDir?: string,
 ): string {
   // Handle @/ project-relative aliases
   // @/ maps to components/ directory in veryfront projects

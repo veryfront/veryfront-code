@@ -29,9 +29,19 @@ export async function parseActionBody(
     id = parsed.id;
     args = parsed.args;
   } catch (schemaError) {
-    serverLogger.debug("[ActionParser] Zod validation failed, using manual parsing", schemaError);
-    const bodyObj = body && typeof body === "object" ? (body as Record<string, unknown>) : {};
-    id = String(bodyObj.id ?? "");
+    // Zod failed - use manual parsing with strict validation
+    serverLogger.warn(
+      "[ActionParser] Zod validation failed, falling back to manual parsing",
+      { error: schemaError instanceof Error ? schemaError.message : String(schemaError) },
+    );
+    if (!body || typeof body !== "object") {
+      return new Response(JSON.stringify({ ok: false, error: "invalid request body" }), {
+        status: HTTP_BAD_REQUEST,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    const bodyObj = body as Record<string, unknown>;
+    id = typeof bodyObj.id === "string" ? bodyObj.id : "";
     args = Array.isArray(bodyObj.args) ? bodyObj.args : [];
   }
 

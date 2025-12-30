@@ -284,53 +284,65 @@ export const PLAYGROUND_HTML = `<!DOCTYPE html>
 
         function renderRegistry(data) {
             const agentList = document.getElementById('agent-list');
-            agentList.innerHTML = data.agents.length ? '' : '<div class="nav-item">No agents found</div>';
-            
-            data.agents.forEach(agent => {
-                const el = document.createElement('div');
-                el.className = 'nav-item';
-                el.textContent = agent.id || 'Unnamed Agent';
-                el.onclick = () => selectAgent(agent.id);
-                agentList.appendChild(el);
-            });
+            if (agentList) {
+                agentList.innerHTML = data.agents.length ? '' : '<div class="nav-item">No agents found</div>';
+
+                data.agents.forEach(agent => {
+                    const el = document.createElement('div');
+                    el.className = 'nav-item';
+                    el.textContent = agent.id || 'Unnamed Agent';
+                    el.onclick = () => selectAgent(agent.id);
+                    agentList.appendChild(el);
+                });
+            }
 
             const toolList = document.getElementById('tool-list');
-            toolList.innerHTML = data.tools.length ? '' : '<div class="nav-item">No tools found</div>';
-            
-            data.tools.forEach(tool => {
-                const el = document.createElement('div');
-                el.className = 'nav-item';
-                el.textContent = tool.name;
-                el.onclick = () => selectTool(tool);
-                toolList.appendChild(el);
-            });
+            if (toolList) {
+                toolList.innerHTML = data.tools.length ? '' : '<div class="nav-item">No tools found</div>';
+
+                data.tools.forEach(tool => {
+                    const el = document.createElement('div');
+                    el.className = 'nav-item';
+                    el.textContent = tool.name;
+                    el.onclick = () => selectTool(tool);
+                    toolList.appendChild(el);
+                });
+            }
         }
 
         function selectAgent(id) {
             currentView = 'chat';
             activeAgent = id;
-            document.getElementById('chat-view').style.display = 'flex';
-            document.getElementById('tool-view').style.display = 'none';
-            
+            const chatView = document.getElementById('chat-view');
+            const toolView = document.getElementById('tool-view');
+            const messages = document.getElementById('messages');
+            if (chatView) chatView.style.display = 'flex';
+            if (toolView) toolView.style.display = 'none';
+
             // Clear messages
-            document.getElementById('messages').innerHTML = \`
-                <div class="message assistant">
-                    Chatting with agent: <strong>\${id}</strong>
-                </div>
-            \`;
-            
+            if (messages) {
+                messages.innerHTML = \`
+                    <div class="message assistant">
+                        Chatting with agent: <strong>\${id}</strong>
+                    </div>
+                \`;
+            }
+
             updateActiveNav();
         }
 
         function selectTool(tool) {
             currentView = 'tool';
             activeTool = tool;
-            document.getElementById('chat-view').style.display = 'none';
-            document.getElementById('tool-view').style.display = 'block';
-            
-            document.getElementById('tool-name').textContent = tool.name;
-            document.getElementById('tool-description').textContent = tool.description;
-            
+            const chatView = document.getElementById('chat-view');
+            const toolView = document.getElementById('tool-view');
+            const toolName = document.getElementById('tool-name');
+            const toolDesc = document.getElementById('tool-description');
+            if (chatView) chatView.style.display = 'none';
+            if (toolView) toolView.style.display = 'block';
+            if (toolName) toolName.textContent = tool.name;
+            if (toolDesc) toolDesc.textContent = tool.description;
+
             updateActiveNav();
         }
 

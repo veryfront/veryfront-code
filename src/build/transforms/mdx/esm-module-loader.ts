@@ -428,7 +428,7 @@ async function transformProjectAliasImports(
   const pattern = new RegExp(PROJECT_ALIAS_IMPORT_PATTERN.source, "g");
   while ((match = pattern.exec(code)) !== null) {
     const [original, importClause, relativePath] = match;
-    if (relativePath) {
+    if (relativePath && importClause) {
       imports.push({ original, importClause, relativePath });
     }
   }
@@ -704,17 +704,20 @@ export async function loadModuleESM(
     let vfMatch;
     while ((vfMatch = vfModulePattern.exec(rewritten)) !== null) {
       const [original, , path] = vfMatch;
-      vfModuleImports.push({ original, path });
+      if (path) {
+        vfModuleImports.push({ original, path });
+      }
     }
 
-    // Get projectDir from adapter config
-    const projectDir = adapter.config?.projectDir || cwd();
-    const projectId = adapter.config?.projectId || "default";
+    // Get projectDir from cwd
+    const projectDir = cwd();
+    const projectId = "default";
 
     // In-flight tracking to prevent duplicate parallel fetches
     const inFlight = new Map<string, Promise<string | null>>();
 
     // Recursive function to fetch and cache a module
+    // deno-lint-ignore no-inner-declarations
     async function fetchAndCacheModule(modulePath: string, parentModulePath?: string): Promise<string | null> {
       // Normalize the module path (remove leading slash, resolve relative paths)
       let normalizedPath = modulePath.replace(/^\//, "");
@@ -872,7 +875,9 @@ export async function loadModuleESM(
           const nestedImports: Array<{ original: string; path: string }> = [];
           let match;
           while ((match = vfModuleImportPattern.exec(moduleCode)) !== null) {
-            nestedImports.push({ original: match[0], path: match[1].replace(/^\//, "") });
+            if (match[1]) {
+              nestedImports.push({ original: match[0], path: match[1].replace(/^\//, "") });
+            }
           }
 
           // Also handle relative imports
@@ -880,7 +885,9 @@ export async function loadModuleESM(
           const relativeImports: Array<{ original: string; path: string }> = [];
           let relMatch;
           while ((relMatch = relativeImportPattern.exec(moduleCode)) !== null) {
-            relativeImports.push({ original: relMatch[0], path: relMatch[1] });
+            if (relMatch[1]) {
+              relativeImports.push({ original: relMatch[0], path: relMatch[1] });
+            }
           }
 
           // Process nested imports IN PARALLEL
@@ -930,7 +937,7 @@ export async function loadModuleESM(
           try {
             const stat = await adapter.fs.stat(cachePath);
             if (stat?.isFile) {
-              moduleFileCache.set(normalizedPath, cachePath);
+              pathCache.set(normalizedPath, cachePath);
               logger.debug(`${LOG_PREFIX_MDX_LOADER} Content cache hit: ${normalizedPath}`);
               return cachePath;
             }
@@ -966,7 +973,9 @@ export async function loadModuleESM(
         const nestedImports: Array<{ original: string; path: string }> = [];
         let match;
         while ((match = vfModuleImportPattern.exec(moduleCode)) !== null) {
-          nestedImports.push({ original: match[0], path: match[1].replace(/^\//, "") });
+          if (match[1]) {
+            nestedImports.push({ original: match[0], path: match[1].replace(/^\//, "") });
+          }
         }
 
         // Also handle relative imports with ?ssr=true query params
@@ -975,7 +984,9 @@ export async function loadModuleESM(
         const relativeImports: Array<{ original: string; path: string }> = [];
         let relMatch;
         while ((relMatch = relativeImportPattern.exec(moduleCode)) !== null) {
-          relativeImports.push({ original: relMatch[0], path: relMatch[1] });
+          if (relMatch[1]) {
+            relativeImports.push({ original: relMatch[0], path: relMatch[1] });
+          }
         }
 
         // Process nested /_vf_modules/ imports recursively IN PARALLEL
@@ -1025,7 +1036,7 @@ export async function loadModuleESM(
         try {
           const stat = await adapter.fs.stat(cachePath);
           if (stat?.isFile) {
-            moduleFileCache.set(normalizedPath, cachePath);
+            pathCache.set(normalizedPath, cachePath);
             logger.debug(`${LOG_PREFIX_MDX_LOADER} Content cache hit: ${normalizedPath}`);
             return cachePath;
           }

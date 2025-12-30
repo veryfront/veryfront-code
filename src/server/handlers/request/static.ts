@@ -24,6 +24,7 @@ import {
   HTTP_OK,
   PRIORITY_MEDIUM_STATIC,
 } from "@veryfront/core/constants/index.ts";
+import { normalizeChunkPath } from "@veryfront/utils/chunk-utils.ts";
 
 export class StaticHandler extends BaseHandler {
   private static manifestCache = new Map<
@@ -284,36 +285,20 @@ export class StaticHandler extends BaseHandler {
       assets.set(normalized, abs);
     };
 
-    const normalizeChunkPath = (value: string | null | undefined, base: string): string | null => {
-      if (!value) return null;
-      if (value.startsWith("http://") || value.startsWith("https://")) return null;
-
-      const candidate = value.replace(/^\.\//, "");
-
-      if (candidate.startsWith("/")) {
-        return candidate;
-      }
-
-      if (candidate.startsWith("_veryfront/")) {
-        return `/${candidate}`;
-      }
-
-      if (candidate.startsWith("chunks/")) {
-        return `/_veryfront/${candidate}`;
-      }
-
-      return `${base}/${candidate}`;
-    };
-
     if (manifest.chunks) {
       for (const chunkInfo of Object.values(manifest.chunks.chunks || {})) {
-        const chunk = chunkInfo as any;
-        addAsset(normalizeChunkPath(chunk.file, "/_veryfront"));
+        if (!chunkInfo || typeof chunkInfo !== "object") continue;
+        const chunk = chunkInfo as { file?: string; css?: string; imports?: string[] };
+        if (chunk.file) {
+          addAsset(normalizeChunkPath(chunk.file, "/_veryfront"));
+        }
         if (chunk.css) {
           addAsset(normalizeChunkPath(chunk.css, "/_veryfront"));
         }
-        for (const dependency of chunk.imports || []) {
-          addAsset(normalizeChunkPath(dependency, "/_veryfront/chunks"));
+        if (Array.isArray(chunk.imports)) {
+          for (const dependency of chunk.imports) {
+            addAsset(normalizeChunkPath(dependency, "/_veryfront/chunks"));
+          }
         }
       }
 

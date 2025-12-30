@@ -14,6 +14,7 @@ import type { RSCEndpointParams } from "./types.ts";
 import type { RSCDevServerHandler } from "../handlers/index.ts";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import { isWithinDirectory, joinPath } from "@veryfront/utils/path-utils.ts";
+import { escapeHtml } from "../../../../../html/html-escape.ts";
 
 /**
  * Handle RSC endpoints
@@ -326,21 +327,3 @@ function handleStreamEndpoint(searchParams: URLSearchParams): Response {
   });
 }
 
-function escapeHtml(value: string): string {
-  return value.replace(/[&<>"]+/g, (char) => {
-    switch (char) {
-      case "&":
-        return "&amp;";
-      case "<":
-        return "&lt;";
-      case ">":
-        return "&gt;";
-      case '"':
-        return "&quot;";
-      case "'":
-        return "&#39;";
-      default:
-        return char;
-    }
-  });
-}

@@ -1,4 +1,7 @@
 import type { RouteMatch } from "./api-route-matcher.ts";
+import { parseCookies } from "@veryfront/utils/cookie-utils.ts";
+
+export { parseCookies };
 
 export interface APIContext {
   /** The original Request object (alias: req) */
@@ -19,25 +22,6 @@ export interface APIContext {
   json: (data: unknown, init?: ResponseInit) => Response;
   /** Helper to return a text response */
   text: (data: string, init?: ResponseInit) => Response;
-}
-
-export function parseCookies(cookieHeader: string): Record<string, string> {
-  const cookies: Record<string, string> = {};
-
-  if (!cookieHeader) return cookies;
-
-  cookieHeader.split(";").forEach((cookie) => {
-    const trimmed = cookie.trim();
-    if (!trimmed) return;
-    const separatorIndex = trimmed.indexOf("=");
-    if (separatorIndex <= 0) return;
-    const name = trimmed.slice(0, separatorIndex).trim();
-    const value = trimmed.slice(separatorIndex + 1);
-    if (!name) return;
-    cookies[name] = decodeURIComponent(value);
-  });
-
-  return cookies;
 }
 
 export function createContext(request: Request, match: RouteMatch): APIContext {

@@ -3,6 +3,7 @@
  */
 
 import type { BuildManifest } from "../build/production-build/manifest.ts";
+import { normalizeChunkPath } from "../core/utils/chunk-utils.ts";
 
 function sanitizeCacheKey(value: string): string {
   return value.replace(/[^a-zA-Z0-9._-]/g, "");
@@ -12,27 +13,6 @@ function buildCacheVersion(manifest: BuildManifest): string {
   const manifestVersion = sanitizeCacheKey(manifest.version || "dev");
   const buildStamp = sanitizeCacheKey(manifest.buildTime || new Date().toISOString());
   return `veryfront-${manifestVersion}-${buildStamp}`;
-}
-
-function normalizeChunkPath(value: string | null | undefined, base: string): string | null {
-  if (!value) return null;
-  if (value.startsWith("http://") || value.startsWith("https://")) return null;
-
-  const candidate = value.replace(/^\.\//, "");
-
-  if (candidate.startsWith("/")) {
-    return candidate;
-  }
-
-  if (candidate.startsWith("_veryfront/")) {
-    return `/${candidate}`;
-  }
-
-  if (candidate.startsWith("chunks/")) {
-    return `/_veryfront/${candidate}`;
-  }
-
-  return `${base}/${candidate}`;
 }
 
 function buildManifestAssets(manifest: BuildManifest): string[] {

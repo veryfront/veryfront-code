@@ -32,9 +32,18 @@ export class ClientLogHandler extends BaseHandler {
       body = await req.text();
       const logData = JSON.parse(body);
 
+      // Validate log data structure
+      const level = typeof logData?.level === "string" ? logData.level : "info";
+      const message = typeof logData?.message === "string"
+        ? logData.message.slice(0, 5000) // Limit message length
+        : "[invalid message]";
+      const details = logData?.details && typeof logData.details === "object"
+        ? logData.details
+        : undefined;
+
       // Format and log
-      const prefix = this.getLogPrefix(logData.level);
-      serverLogger.info(`${prefix} ${logData.message}`, logData.details || undefined);
+      const prefix = this.getLogPrefix(level);
+      serverLogger.info(`${prefix} ${message}`, details);
 
       // Return success response
       return this.respond(

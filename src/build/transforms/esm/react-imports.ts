@@ -43,7 +43,7 @@ async function getDenoNpmCacheDir(): Promise<string | null> {
   }
 }
 
-async function resolveDenoNpmPackage(
+async function _resolveDenoNpmPackage(
   packageName: string,
   version: string,
   subpath: string = "",
@@ -65,7 +65,7 @@ async function resolveDenoNpmPackage(
 // Cache for local React resolution
 let localReactCache: Record<string, string> | null | undefined = undefined;
 
-async function resolveLocalReact(): Promise<Record<string, string> | null> {
+async function _resolveLocalReact(): Promise<Record<string, string> | null> {
   if (localReactCache !== undefined) {
     return localReactCache;
   }

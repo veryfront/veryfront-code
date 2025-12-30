@@ -34,7 +34,7 @@ export function generateHMRClientTemplate(
         isInitialLoad: true,
         url: window.location.href
       }, '*');
-    } catch (e) {}
+    } catch (e) { /* postMessage may fail in cross-origin iframes - expected */ }
   }
 
   ws.onopen = () => {

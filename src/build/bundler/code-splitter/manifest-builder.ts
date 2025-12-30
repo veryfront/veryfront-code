@@ -127,7 +127,10 @@ export function addRouteToManifest(
   routeMap: Map<string, string>,
   outDir: string,
 ): void {
-  const entryName = extractEntryName(output.entryPoint!);
+  if (!output.entryPoint) {
+    return;
+  }
+  const entryName = extractEntryName(output.entryPoint);
   const routePath = routeMap.get(entryName) || `/${entryName}`;
 
   manifest.routes[routePath] = {

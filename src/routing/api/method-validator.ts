@@ -1,6 +1,5 @@
 import { HTTP_METHOD_NOT_ALLOWED } from "@veryfront/utils";
-
-type HTTPMethod = "GET" | "POST" | "PUT" | "DELETE" | "PATCH" | "HEAD" | "OPTIONS";
+import type { HTTPMethod } from "./module-loader/types.ts";
 
 export function createAppRouteMethodNotAllowed(
   handlerModule: Record<string, unknown>,

@@ -81,7 +81,7 @@ export class SSRHandler extends BaseHandler {
     this.logDebug("SSR attempt", { pathname, slug }, ctx);
 
     try {
-      const renderer = await timeAsync("renderer-init", async () => {
+      const renderer = await timeAsync("renderer-init", () => {
         if (!this.rendererInit) {
           this.rendererInit = createRenderer({
             projectDir: ctx.projectDir,

@@ -86,12 +86,18 @@ export class ImageOptimizer {
     logger.debug(`Optimizing: ${relPath}`);
 
     try {
+      if (!this.sharp) {
+        throw toError(createError({
+          type: "build",
+          message: "Sharp not initialized - call init() first",
+        }));
+      }
       const imageBuffer = await this.fs.readFile(imagePath);
-      const image = this.sharp!(imageBuffer);
+      const image = this.sharp(imageBuffer);
       const metadata = await image.metadata();
 
       const variants = await generateImageVariants(
-        this.sharp!,
+        this.sharp,
         image,
         relPath,
         metadata,

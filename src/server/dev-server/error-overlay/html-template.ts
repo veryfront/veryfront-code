@@ -4,19 +4,7 @@
  */
 
 import { type ErrorInfo, formatErrorType } from "./error-formatter.ts";
-
-/**
- * Escape HTML entities to prevent XSS (server-side).
- * Used for error messages, stack traces, and file paths.
- */
-function escapeHtml(str: string): string {
-  return str
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
+import { escapeHtml } from "../../../html/html-escape.ts";
 
 /**
  * Generates runtime script for browser error overlay

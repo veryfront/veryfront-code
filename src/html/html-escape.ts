@@ -10,6 +10,8 @@ export function escapeHTML(str: string): string {
     .replace(/'/g, "&#39;");
 }
 
+export const escapeHtml = escapeHTML;
+
 export function buildAttributes(attrs: Record<string, string>): string {
   return Object.entries(attrs)
     .map(([key, value]) => `${key}="${escapeHTML(String(value))}"`)

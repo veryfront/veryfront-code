@@ -8,21 +8,9 @@
  */
 
 import type { RSCNode } from "../types.ts";
+import { escapeHtml } from "../../../html/html-escape.ts";
 
-/**
- * Escape HTML for safe attribute injection
- *
- * @param str - String to escape
- * @returns Escaped string
- */
-export function escapeHtml(str: string): string {
-  return str
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
+export { escapeHtml };
 
 /**
  * Render HTML attributes from props

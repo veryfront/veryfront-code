@@ -14,10 +14,9 @@
  * @module platform/compat/node-http-loader
  */
 
-import { fileURLToPath, pathToFileURL } from "node:url";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 // Cache directory for fetched modules
@@ -136,11 +135,11 @@ async function fetchModule(url: string): Promise<string> {
  * - http:// URLs -> pass through
  * - Relative imports from HTTP modules -> resolve to absolute HTTP URL
  */
-export async function resolve(
+export function resolve(
   specifier: string,
   context: ResolveContext,
   nextResolve: NextResolve
-): Promise<{ url: string; format?: string; shortCircuit?: boolean }> {
+): Promise<{ url: string; format?: string; shortCircuit?: boolean }> | { url: string; format?: string; shortCircuit?: boolean } {
   // Handle absolute HTTP(S) URLs
   if (specifier.startsWith("https://") || specifier.startsWith("http://")) {
     return {
