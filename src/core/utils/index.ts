@@ -39,3 +39,10 @@ export { isCompiledBinary } from "./platform.ts";
 export * from "./import-lockfile.ts";
 
 export * from "./perf-timer.ts";
+
+// Note: chunk-utils.ts exported separately due to naming conflict with constants/server.ts
+// Use direct import: import { normalizeChunkPath } from "@veryfront/utils/chunk-utils.ts"
+
+export * from "./cookie-utils.ts";
+
+export * from "./base64url.ts";

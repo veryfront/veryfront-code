@@ -10,6 +10,7 @@ export interface HTMLGenerationOptions {
   providerPaths?: string[];
   appPath?: string;
   pagePath?: string;
+  pageType?: "mdx" | "tsx" | "jsx" | "ts" | "js";
   nonce?: string;
   /** Project directory for resolving package versions */
   projectDir?: string;
@@ -17,6 +18,10 @@ export interface HTMLGenerationOptions {
   globalCSS?: string;
   /** Project's tailwind.config.js content (raw JS, will be converted to browser format) */
   tailwindConfigJs?: string;
+  /** Frontmatter for SPA client navigation */
+  frontmatter?: Record<string, unknown>;
+  /** Props for each layout keyed by layout path */
+  layoutProps?: Record<string, Record<string, unknown>>;
 }
 
 export type { ImportMapConfig } from "../module-system/import-map/types.ts";

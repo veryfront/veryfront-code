@@ -6,6 +6,7 @@ import type {
   APIRoute,
   AppRouteContext,
   AppRouteHandler,
+  HTTPMethod,
   PagesRouteHandler,
 } from "./module-loader/types.ts";
 import {
@@ -13,8 +14,6 @@ import {
   createPagesRouteMethodNotAllowed,
 } from "./method-validator.ts";
 import { handleAPIError } from "./error-handler.ts";
-
-type HTTPMethod = "GET" | "POST" | "PUT" | "DELETE" | "PATCH" | "HEAD" | "OPTIONS";
 
 export async function executeAppRoute(
   handler: APIRoute,

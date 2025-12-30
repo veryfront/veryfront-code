@@ -8,7 +8,6 @@ import { normalizeModulePath, resolveRelativePath } from "./path-resolver.ts";
 import type { LoadComponentOptions } from "./types.ts";
 import { createError, toError } from "../../core/errors/veryfront-error.ts";
 import { createFileSystem } from "../../platform/compat/fs.ts";
-import { isNodeRuntime } from "../../platform/compat/runtime.ts";
 import { SSRModuleLoader } from "./ssr-module-loader.ts";
 
 export async function loadComponentFromSource(

@@ -104,12 +104,12 @@ export function useAgent(options: UseAgentOptions): UseAgentResult {
         setThinking(data.thinking);
 
         // Call callbacks for tool calls
-        if (data.toolCalls && options.onToolCall) {
+        if (data.toolCalls) {
           data.toolCalls.forEach((tc: ToolCall) => {
-            options.onToolCall!(tc);
+            options.onToolCall?.(tc);
 
-            if (tc.result && options.onToolResult) {
-              options.onToolResult(tc, tc.result);
+            if (tc.result) {
+              options.onToolResult?.(tc, tc.result);
             }
           });
         }

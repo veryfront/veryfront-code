@@ -95,7 +95,7 @@ if (window.parent !== window) {
       isInitialLoad: true,
       url: window.location.href
     }, '*');
-  } catch (e) {}
+  } catch (e) { /* postMessage may fail in cross-origin iframes - expected */ }
 }
 
 const ws = new WebSocket('ws://localhost:${port}/_ws');

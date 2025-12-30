@@ -1,20 +1,11 @@
 // RSC Server Actions helpers: CSRF and session parsing
 
-export function base64url(bytes: Uint8Array): string {
-  const b64 = btoa(String.fromCharCode(...bytes));
-  return b64.replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "");
-}
+import { parseCookiesFromHeaders } from "@veryfront/utils/cookie-utils.ts";
+import { base64urlEncodeBytes } from "@veryfront/utils/base64url.ts";
 
-export function parseCookies(headers: Headers): Record<string, string> {
-  const raw = headers.get("cookie") || "";
-  const out: Record<string, string> = {};
-  for (const part of raw.split(";")) {
-    const [k, ...r] = part.trim().split("=");
-    if (!k) continue;
-    out[k] = decodeURIComponent(r.join("="));
-  }
-  return out;
-}
+export const base64url = base64urlEncodeBytes;
+
+export const parseCookies = parseCookiesFromHeaders;
 
 /** Generate a CSRF token and return value + Set-Cookie header string */
 import { SERVER_ACTION_DEFAULT_TTL_SEC } from "@veryfront/utils/constants/cache.ts";

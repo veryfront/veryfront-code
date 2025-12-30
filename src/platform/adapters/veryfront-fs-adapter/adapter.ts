@@ -259,7 +259,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
     }
 
     // Notify browser to reload
-    ReloadNotifier.notify();
+    ReloadNotifier.triggerReload();
 
     const durationMs = Date.now() - startTime;
     logger.info("[VeryfrontFSAdapter] Selective invalidation complete", {

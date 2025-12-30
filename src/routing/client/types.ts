@@ -19,3 +19,20 @@ export interface RouteData {
   components?: ComponentMap;
   pageData?: PageData;
 }
+
+export interface LayoutInfo {
+  kind: "mdx" | "tsx";
+  path: string;
+}
+
+export interface SpaPageData {
+  slug: string;
+  pagePath: string;
+  pageType: "mdx" | "tsx" | "jsx" | "ts" | "js";
+  layouts: LayoutInfo[];
+  providers: string[];
+  frontmatter: Record<string, unknown>;
+  props: Record<string, unknown>;
+  params: Record<string, string | string[]>;
+  layoutProps: Record<string, Record<string, unknown>>;
+}

@@ -23,7 +23,7 @@ let httpLoaderAvailable = false;
  *
  * @returns true if loader was registered, false otherwise
  */
-export async function registerHttpLoader(): Promise<boolean> {
+export function registerHttpLoader(): boolean {
   // Skip if already registered
   if (registered) {
     return httpLoaderAvailable;

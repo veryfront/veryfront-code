@@ -18,6 +18,7 @@ import { createRenderer } from "@veryfront/rendering/index.ts";
 import { handleModuleServer } from "./module-server-handler.ts";
 import { handlePageModule } from "./page-module-handler.ts";
 import { handleDataEndpoint } from "./data-endpoint-handler.ts";
+import { handlePageDataEndpoint } from "./page-data-endpoint-handler.ts";
 import { handleVirtualModule } from "./virtual-module-handler.ts";
 import { PRIORITY_MEDIUM } from "@veryfront/core/constants/index.ts";
 
@@ -28,6 +29,7 @@ import { PRIORITY_MEDIUM } from "@veryfront/core/constants/index.ts";
  * - Virtual modules (/_veryfront/modules/)
  * - Generated page modules (/_veryfront/pages/)
  * - Data JSON endpoints (/_veryfront/data/)
+ * - Page data for SPA routing (/_veryfront/page-data/)
  *
  * @example
  * ```ts
@@ -44,6 +46,7 @@ export class ModuleHandler extends BaseHandler {
       { pattern: "/_veryfront/modules/", prefix: true },
       { pattern: "/_veryfront/pages/", prefix: true },
       { pattern: "/_veryfront/data/", prefix: true },
+      { pattern: "/_veryfront/page-data/", prefix: true },
     ],
   };
 
@@ -113,10 +116,24 @@ export class ModuleHandler extends BaseHandler {
       );
     }
 
-    // Data JSON endpoint for client router prefetch
+    // Data JSON endpoint for client router prefetch (legacy HTML-based)
     if (pathname.startsWith("/_veryfront/data/")) {
       const rendererInit = this.ensureRenderer(ctx);
       return await handleDataEndpoint(
+        req,
+        pathname,
+        ctx,
+        rendererInit,
+        this.createResponseBuilder.bind(this),
+        this.respond.bind(this),
+        this.getErrorMessage.bind(this),
+      );
+    }
+
+    // Page data endpoint for SPA client-side routing
+    if (pathname.startsWith("/_veryfront/page-data/")) {
+      const rendererInit = this.ensureRenderer(ctx);
+      return await handlePageDataEndpoint(
         req,
         pathname,
         ctx,

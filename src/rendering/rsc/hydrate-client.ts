@@ -3,6 +3,7 @@
 
 import { rscLogger } from "../client/browser-logger.ts";
 import { getReactCDNUrl, getReactDOMClientCDNUrl } from "../../core/utils/constants/cdn.ts";
+import { base64urlEncode } from "../../core/utils/base64url.ts";
 // Note: Using centralized version from cdn.ts
 import type { Root } from "https://esm.sh/react-dom@18.3.1/client";
 
@@ -48,10 +49,7 @@ export function parseClientRef(ref: string): { rel: string; exportName: string }
   return { rel: `/${m[1] || ""}`, exportName: m[2] || "default" };
 }
 
-export function base64url(input: string): string {
-  const b64 = btoa(input);
-  return b64.replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "");
-}
+export const base64url = base64urlEncode;
 
 async function fetchManifest(): Promise<Manifest | null> {
   try {

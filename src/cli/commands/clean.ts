@@ -134,7 +134,7 @@ function createRenderCacheStore(
     renderConfig: RenderCacheConfig;
   },
 ): CacheStore | null {
-  const { projectDir, cacheDir, adapter, renderConfig } = context;
+  const { projectDir, cacheDir, renderConfig } = context;
   switch (type) {
     case "filesystem":
       return new FilesystemCacheStore({

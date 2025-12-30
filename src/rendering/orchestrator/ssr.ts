@@ -10,10 +10,10 @@ import { createLayoutComponentCache } from "../layouts/utils/component-loader.ts
 import { HTMLGenerator } from "./html.ts";
 import { RenderPipeline } from "./pipeline.ts";
 import { SSROrchestrator } from "./ssr-orchestrator.ts";
-import type { RendererOptions, RenderOptions, RenderResult } from "./types.ts";
+import type { PageDataResponse, RendererOptions, RenderOptions, RenderResult } from "./types.ts";
 
 // Re-export types for backward compatibility
-export type { RendererOptions, RenderOptions, RenderResult } from "./types.ts";
+export type { PageDataResponse, RendererOptions, RenderOptions, RenderResult } from "./types.ts";
 
 export class VeryfrontRenderer {
   private configManager!: ConfigurationManager;
@@ -118,6 +118,14 @@ export class VeryfrontRenderer {
 
   async renderPage(slug: string, options?: RenderOptions): Promise<RenderResult> {
     return await this.renderPipeline.renderPage(slug, options);
+  }
+
+  /**
+   * Resolve page data for SPA client-side navigation.
+   * Returns structured data without rendering HTML.
+   */
+  async resolvePageData(slug: string, options?: RenderOptions): Promise<PageDataResponse> {
+    return await this.renderPipeline.resolvePageData(slug, options);
   }
 
   async getAllPages(): Promise<string[]> {

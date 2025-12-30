@@ -108,6 +108,7 @@ export class HTMLGenerator {
       nonce: context.options?.nonce,
       globalCSS,
       tailwindConfigJs,
+      frontmatter: mergedFrontmatter,
     };
 
     const { start, end } = await generateHTMLShellParts(
@@ -239,6 +240,7 @@ export class HTMLGenerator {
       nonce: context.options?.nonce,
       globalCSS,
       tailwindConfigJs,
+      frontmatter: mergedFrontmatter,
     };
 
     return await wrapInHTMLShell(
