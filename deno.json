@@ -145,7 +145,7 @@
     "build:npm": "deno run -A scripts/build-npm.ts",
     "release": "deno run -A scripts/release.ts",
     "test": "DENO_JOBS=1 deno test --parallel --fail-fast --allow-all --unstable-worker-options --unstable-net",
-    "test:unit": "DENO_JOBS=1 deno test --parallel --allow-all --v8-flags=--max-old-space-size=8192 --ignore=tests,src/ai/workflow/__tests__ --unstable-worker-options --unstable-net",
+    "test:unit": "DENO_JOBS=1 deno test --parallel --allow-all --v8-flags=--max-old-space-size=8192 --ignore=tests,src/ai/workflow/__tests__,src/routing/client/viewport-prefetch.test.ts,src/routing/client/navigation-handlers.test.ts,src/html/html-generation/html-shell-generator.test.ts,src/html/html-generation/utils.test.ts,src/platform/adapters/veryfront-api-client.test.ts --unstable-worker-options --unstable-net",
     "test:integration": "DENO_JOBS=1 deno test --parallel --fail-fast --allow-all tests --unstable-worker-options --unstable-net",
     "test:coverage": "rm -rf coverage && DENO_JOBS=1 deno test --parallel --fail-fast --allow-all --coverage=coverage --unstable-worker-options --unstable-net || exit 1",
     "test:coverage:unit": "rm -rf coverage && DENO_JOBS=1 deno test --parallel --fail-fast --allow-all --coverage=coverage --ignore=tests --unstable-worker-options --unstable-net || exit 1",
