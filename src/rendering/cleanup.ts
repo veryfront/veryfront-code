@@ -5,7 +5,7 @@ export async function cleanupBundler() {
   const { clearMDXModuleCache } = await import("./ssr/index.ts");
   clearMDXModuleCache();
 
-  const { cleanupRenderers } = await import("../server/handlers/request/ssr/renderer-manager.ts");
+  const { cleanupRenderers } = await import("../server/shared/index.ts");
   await cleanupRenderers();
 }
 

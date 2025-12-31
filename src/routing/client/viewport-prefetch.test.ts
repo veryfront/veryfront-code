@@ -14,6 +14,23 @@ type IntersectionObserverCallback = (
 
 const setupMockIntersectionObserver = () => {
   const originalIntersectionObserver = (globalThis as any).IntersectionObserver;
+  const originalHTMLAnchorElement = (globalThis as any).HTMLAnchorElement;
+
+  // Mock HTMLAnchorElement class for instanceof checks
+  class MockHTMLAnchorElement {
+    tagName = "A";
+    private _attributes = new Map<string, string>();
+
+    getAttribute(name: string): string | null {
+      return this._attributes.get(name) || null;
+    }
+
+    setAttribute(name: string, value: string): void {
+      this._attributes.set(name, value);
+    }
+  }
+
+  (globalThis as any).HTMLAnchorElement = MockHTMLAnchorElement;
 
   let observerCallback: IntersectionObserverCallback | null = null;
   let observerOptions: any = null;
@@ -65,6 +82,7 @@ const setupMockIntersectionObserver = () => {
     },
     cleanup: () => {
       (globalThis as any).IntersectionObserver = originalIntersectionObserver;
+      (globalThis as any).HTMLAnchorElement = originalHTMLAnchorElement;
     },
   };
 };
@@ -73,13 +91,13 @@ const createMockAnchor = (
   href: string,
   attributes: Record<string, string> = {},
 ): HTMLAnchorElement => {
-  const attrs = new Map<string, string>([["href", href], ...Object.entries(attributes)]);
-
-  return {
-    tagName: "A",
-    getAttribute: (name: string) => attrs.get(name) || null,
-    setAttribute: (name: string, value: string) => attrs.set(name, value),
-  } as unknown as HTMLAnchorElement;
+  const MockHTMLAnchorElement = (globalThis as any).HTMLAnchorElement;
+  const anchor = new MockHTMLAnchorElement();
+  anchor.setAttribute("href", href);
+  for (const [key, value] of Object.entries(attributes)) {
+    anchor.setAttribute(key, value);
+  }
+  return anchor as unknown as HTMLAnchorElement;
 };
 
 const createMockDocument = (anchors: HTMLAnchorElement[]): Document => {

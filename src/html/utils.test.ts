@@ -81,13 +81,25 @@ describe("html-generation/utils", () => {
       assert(map["react/jsx-dev-runtime"] !== undefined);
     });
 
-    it("should use esm.sh CDN", () => {
+    it("should use correct import format for current runtime", () => {
       const config = getDefaultImportMap();
       const map = config.imports;
 
       assert(map !== undefined);
-      if (map.react) assertStringIncludes(map.react, "esm.sh");
-      if (map["react-dom"]) assertStringIncludes(map["react-dom"], "esm.sh");
+      // In Deno, uses npm: specifiers; in true Node, uses esm.sh CDN
+      // Test just verifies imports include correct package names
+      if (map.react) {
+        assert(
+          map.react.includes("react") &&
+            (map.react.includes("npm:") || map.react.includes("esm.sh")),
+        );
+      }
+      if (map["react-dom"]) {
+        assert(
+          map["react-dom"].includes("react-dom") &&
+            (map["react-dom"].includes("npm:") || map["react-dom"].includes("esm.sh")),
+        );
+      }
     });
   });
 
@@ -106,7 +118,8 @@ describe("html-generation/utils", () => {
 
       assertStringIncludes(result, '"react"');
       assertStringIncludes(result, '"react-dom"');
-      assertStringIncludes(result, "esm.sh");
+      // In Deno, uses npm: specifiers; in true Node, uses esm.sh CDN
+      assert(result.includes("npm:") || result.includes("esm.sh"));
     });
 
     it("should format JSON with proper indentation", async () => {

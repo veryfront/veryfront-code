@@ -17,18 +17,37 @@ const setupMocks = () => {
   const originalLocation = (globalThis as any).location;
   const originalScrollY = (globalThis as any).scrollY;
   const originalHTMLAnchorElement = (globalThis as any).HTMLAnchorElement;
+  const originalHTMLElement = (globalThis as any).HTMLElement;
 
   const mockLocation: MockLocation = {
     pathname: "/current-page",
   };
 
-  class MockHTMLAnchorElement {
-    tagName = "A";
-    constructor() {}
+  // Mock HTMLElement base class for instanceof checks
+  class MockHTMLElement {
+    tagName = "";
+    private _attributes = new Map<string, string>();
+
+    getAttribute(name: string): string | null {
+      return this._attributes.get(name) || null;
+    }
+
+    setAttribute(name: string, value: string): void {
+      this._attributes.set(name, value);
+    }
+  }
+
+  // Mock HTMLAnchorElement extending HTMLElement
+  class MockHTMLAnchorElement extends MockHTMLElement {
+    constructor() {
+      super();
+      this.tagName = "A";
+    }
   }
 
   (globalThis as any).location = mockLocation;
   (globalThis as any).scrollY = 0;
+  (globalThis as any).HTMLElement = MockHTMLElement;
   (globalThis as any).HTMLAnchorElement = MockHTMLAnchorElement;
 
   return {
@@ -40,21 +59,22 @@ const setupMocks = () => {
       (globalThis as any).location = originalLocation;
       (globalThis as any).scrollY = originalScrollY;
       (globalThis as any).HTMLAnchorElement = originalHTMLAnchorElement;
+      (globalThis as any).HTMLElement = originalHTMLElement;
     },
   };
 };
 
 const createMockAnchor = (href: string, attributes: Record<string, string> = {}): any => {
-  const attrs = new Map<string, string>([["href", href], ...Object.entries(attributes)]);
-
-  const MockHTMLAnchorElement = (globalThis as any).HTMLAnchorElement || class {};
-  const anchor = Object.create(MockHTMLAnchorElement.prototype);
-
-  anchor.tagName = "A";
-  anchor.getAttribute = (name: string) => attrs.get(name) || null;
-  anchor.parentElement = null;
-  anchor._attributes = attrs;
-
+  const MockHTMLAnchorElement = (globalThis as any).HTMLAnchorElement;
+  if (!MockHTMLAnchorElement) {
+    throw new Error("MockHTMLAnchorElement not set up. Call setupMocks() first.");
+  }
+  const anchor = new MockHTMLAnchorElement();
+  anchor.setAttribute("href", href);
+  for (const [key, value] of Object.entries(attributes)) {
+    anchor.setAttribute(key, value);
+  }
+  (anchor as any).parentElement = null;
   return anchor;
 };
 
@@ -62,14 +82,24 @@ const createMockElement = (
   tagName: string,
   attributes: Record<string, string> = {},
 ): MockElement => {
-  const attrs = new Map<string, string>(Object.entries(attributes));
-
-  return {
-    tagName: tagName.toUpperCase(),
-    getAttribute: (name: string) => attrs.get(name) || null,
-    parentElement: null,
-    _attributes: attrs,
-  } as MockElement;
+  const MockHTMLElement = (globalThis as any).HTMLElement;
+  if (!MockHTMLElement) {
+    // Fallback for tests that don't call setupMocks()
+    const attrs = new Map<string, string>(Object.entries(attributes));
+    return {
+      tagName: tagName.toUpperCase(),
+      getAttribute: (name: string) => attrs.get(name) || null,
+      parentElement: null,
+      _attributes: attrs,
+    } as MockElement;
+  }
+  const element = new MockHTMLElement();
+  element.tagName = tagName.toUpperCase();
+  for (const [key, value] of Object.entries(attributes)) {
+    element.setAttribute(key, value);
+  }
+  (element as any).parentElement = null;
+  return element as MockElement;
 };
 
 describe("NavigationHandlers", () => {
@@ -265,6 +295,8 @@ describe("NavigationHandlers", () => {
     });
 
     it("should ignore click on non-anchor element", () => {
+      const mocks = setupMocks();
+
       const handlers = new NavigationHandlers();
 
       let navigationCalled = false;
@@ -287,6 +319,8 @@ describe("NavigationHandlers", () => {
       clickHandler(event);
 
       assertEquals(navigationCalled, false, "Should not navigate for non-anchor elements");
+
+      mocks.cleanup();
     });
   });
 
@@ -345,6 +379,7 @@ describe("NavigationHandlers", () => {
 
   describe("createMouseOverHandler", () => {
     it("should prefetch link on mouseover when hover is enabled", async () => {
+      const mocks = setupMocks();
       const handlers = new NavigationHandlers(50, { hover: true });
 
       let prefetchedUrl = "";
@@ -367,9 +402,11 @@ describe("NavigationHandlers", () => {
       await new Promise((resolve) => setTimeout(resolve, 100));
 
       assertEquals(prefetchedUrl, "/page", "Should prefetch link after delay");
+      mocks.cleanup();
     });
 
     it("should ignore mouseover on non-anchor element", async () => {
+      const mocks = setupMocks();
       const handlers = new NavigationHandlers(50, { hover: true });
 
       let prefetchCalled = false;
@@ -392,9 +429,11 @@ describe("NavigationHandlers", () => {
       await new Promise((resolve) => setTimeout(resolve, 100));
 
       assertEquals(prefetchCalled, false, "Should not prefetch for non-anchor elements");
+      mocks.cleanup();
     });
 
     it("should ignore mouseover on external link", async () => {
+      const mocks = setupMocks();
       const handlers = new NavigationHandlers(50, { hover: true });
 
       let prefetchCalled = false;
@@ -417,9 +456,11 @@ describe("NavigationHandlers", () => {
       await new Promise((resolve) => setTimeout(resolve, 100));
 
       assertEquals(prefetchCalled, false, "Should not prefetch external links");
+      mocks.cleanup();
     });
 
     it("should ignore mouseover on hash link", async () => {
+      const mocks = setupMocks();
       const handlers = new NavigationHandlers(50, { hover: true });
 
       let prefetchCalled = false;
@@ -442,9 +483,11 @@ describe("NavigationHandlers", () => {
       await new Promise((resolve) => setTimeout(resolve, 100));
 
       assertEquals(prefetchCalled, false, "Should not prefetch hash links");
+      mocks.cleanup();
     });
 
     it("should respect data-prefetch=false attribute", async () => {
+      const mocks = setupMocks();
       const handlers = new NavigationHandlers(50, { hover: true });
 
       let prefetchCalled = false;
@@ -467,9 +510,11 @@ describe("NavigationHandlers", () => {
       await new Promise((resolve) => setTimeout(resolve, 100));
 
       assertEquals(prefetchCalled, false, "Should not prefetch when data-prefetch=false");
+      mocks.cleanup();
     });
 
     it("should prefetch when data-prefetch=true even if hover is disabled", async () => {
+      const mocks = setupMocks();
       const handlers = new NavigationHandlers(50, { hover: false });
 
       let prefetchedUrl = "";
@@ -492,9 +537,11 @@ describe("NavigationHandlers", () => {
       await new Promise((resolve) => setTimeout(resolve, 100));
 
       assertEquals(prefetchedUrl, "/page", "Should prefetch when data-prefetch=true");
+      mocks.cleanup();
     });
 
     it("should not prefetch same URL multiple times concurrently", async () => {
+      const mocks = setupMocks();
       const handlers = new NavigationHandlers(100, { hover: true });
 
       let prefetchCount = 0;
@@ -519,9 +566,11 @@ describe("NavigationHandlers", () => {
       await new Promise((resolve) => setTimeout(resolve, 150));
 
       assertEquals(prefetchCount, 1, "Should only prefetch once for concurrent hovers");
+      mocks.cleanup();
     });
 
     it("should remove URL from queue after prefetch", async () => {
+      const mocks = setupMocks();
       const handlers = new NavigationHandlers(50, { hover: true });
 
       let prefetchCount = 0;
@@ -548,6 +597,7 @@ describe("NavigationHandlers", () => {
       await new Promise((resolve) => setTimeout(resolve, 100));
 
       assertEquals(prefetchCount, 2, "Should allow prefetch again after removal from queue");
+      mocks.cleanup();
     });
   });
 
@@ -701,6 +751,7 @@ describe("NavigationHandlers", () => {
     });
 
     it("should clear prefetch queue", async () => {
+      const mocks = setupMocks();
       const handlers = new NavigationHandlers(100, { hover: true });
 
       let prefetchCount = 0;
@@ -726,6 +777,7 @@ describe("NavigationHandlers", () => {
       await new Promise((resolve) => setTimeout(resolve, 100));
 
       assertEquals(handlers.isPopState(), false, "Should reset state after clear");
+      mocks.cleanup();
     });
   });
 });

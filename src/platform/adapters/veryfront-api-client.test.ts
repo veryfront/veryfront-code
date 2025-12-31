@@ -253,7 +253,17 @@ describe("VeryfrontAPIClient", () => {
         }
 
         if (urlStr.includes("/files/")) {
-          return Promise.resolve(new Response('console.log("Hello")', { status: 200 }));
+          // API returns JSON with { path, content, size } format
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                path: "test.ts",
+                content: 'console.log("Hello")',
+                size: 21,
+              }),
+              { status: 200, headers: { "Content-Type": "application/json" } },
+            ),
+          );
         }
 
         if (urlStr.includes("/files")) {
