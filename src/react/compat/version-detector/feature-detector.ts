@@ -2,7 +2,6 @@ import { rendererLogger as logger } from "@veryfront/utils";
 import * as React from "react";
 import type { ReactFeatures, ReactVersionInfo } from "./types.ts";
 import { isReact17, isReact18, isReact19, parseVersion } from "./version-parser.ts";
-import { isDeno, isNode } from "../../../platform/compat/runtime.ts";
 
 export function detectFeatures(
   major: number,
