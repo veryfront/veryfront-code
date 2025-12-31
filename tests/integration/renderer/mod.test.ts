@@ -143,8 +143,9 @@ export default function MainLayout({ children }) {
           );
 
           // Create a page that uses the layout
+          // Note: filename must not contain "layout" as it triggers layout detection
           await Deno.writeTextFile(
-            join(context.projectDir, "pages", "with-layout.mdx"),
+            join(context.projectDir, "pages", "styled-page.mdx"),
             `---
 title: Page with Layout
 layout: main
@@ -163,7 +164,7 @@ Here is a paragraph with more text to make sure it renders.
             mode: "development",
           });
 
-          const result = await renderer.renderPage("with-layout");
+          const result = await renderer.renderPage("styled-page");
           // New renderer wraps content inside default shell; ensure content rendered
           assertStringIncludes(result.html, "Content with Layout");
         });
@@ -204,8 +205,9 @@ export default function MainLayout({ children }) {
           );
 
           // Create a page that uses the layout
+          // Note: filename must not contain "layout" as it triggers layout detection
           await Deno.writeTextFile(
-            join(context.projectDir, "pages", "with-layout.mdx"),
+            join(context.projectDir, "pages", "styled-page.mdx"),
             `---
 title: Page with Layout
 layout: main
@@ -222,7 +224,7 @@ This content should be wrapped by the layout.
             mode: "development",
           });
 
-          const result = await esmRenderer.renderPage("with-layout");
+          const result = await esmRenderer.renderPage("styled-page");
           assertStringIncludes(result.html, "Content with Layout");
         });
       });
