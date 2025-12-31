@@ -37,6 +37,10 @@ export interface HandlerContext {
   parsedDomain?: ParsedDomain;
   /** Project slug (from URL or config) */
   projectSlug?: string;
+  /** OAuth token from proxy (via x-token header) */
+  proxyToken?: string;
+  /** Environment scope from proxy (via x-environment header) */
+  proxyEnvironment?: "preview" | "production";
 }
 
 export interface HandlerResult {

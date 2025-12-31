@@ -1,10 +1,11 @@
 import { logger } from "@veryfront/utils";
-import { VeryfrontAPIOperations } from "./operations.ts";
+import { VeryfrontAPIOperations, type TokenProvider } from "./operations.ts";
 import { type VeryfrontAPIConfig, VeryfrontAPIError } from "./types.ts";
 
 export class VeryfrontAPIClient {
   private config: Required<VeryfrontAPIConfig>;
   private operations: VeryfrontAPIOperations;
+  private requestToken?: string;
 
   constructor(config: VeryfrontAPIConfig) {
     const retryConfig = {
@@ -18,11 +19,45 @@ export class VeryfrontAPIClient {
       retry: retryConfig,
     };
 
+    // Create token provider that supports both static config token and per-request token
+    const tokenProvider: TokenProvider = () => {
+      // Priority: per-request token > config token
+      if (this.requestToken) {
+        return this.requestToken;
+      }
+      if (this.config.apiToken) {
+        return this.config.apiToken;
+      }
+      throw new VeryfrontAPIError("No API token available", 401);
+    };
+
     this.operations = new VeryfrontAPIOperations(
       this.config.apiBaseUrl,
-      this.config.apiToken,
+      tokenProvider,
       retryConfig,
     );
+  }
+
+  /**
+   * Set a per-request token from proxy headers.
+   * This token takes priority over the config token.
+   */
+  setRequestToken(token: string): void {
+    this.requestToken = token;
+  }
+
+  /**
+   * Clear the per-request token, reverting to config token.
+   */
+  clearRequestToken(): void {
+    this.requestToken = undefined;
+  }
+
+  /**
+   * Get the current token being used.
+   */
+  getToken(): string {
+    return this.operations.getToken();
   }
 
   async initialize(): Promise<void> {

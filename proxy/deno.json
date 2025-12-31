@@ -1,0 +1,13 @@
+{
+  "name": "@veryfront/proxy",
+  "version": "0.1.0",
+  "exports": "./main.ts",
+  "tasks": {
+    "start": "deno run --allow-net --allow-env --env main.ts",
+    "dev": "deno run --watch --allow-net --allow-env --env main.ts"
+  },
+  "compilerOptions": {
+    "strict": true,
+    "noImplicitAny": true
+  }
+}

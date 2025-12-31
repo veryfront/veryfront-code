@@ -1,5 +1,6 @@
 import { rendererLogger as logger } from "@veryfront/utils";
 import { timeAsync } from "@veryfront/utils";
+import { createBuildVersion } from "@veryfront/utils/version.ts";
 import { ErrorCode, VeryfrontError } from "@veryfront/errors/index.ts";
 import {
   extractRouteParams as extractRouteParamsShared,
@@ -708,6 +709,14 @@ export class RenderPipeline {
       .filter(p => p.bundle?.path)
       .map(p => extractRelativePathShared(p.bundle?.path || "", this.config.projectDir));
 
+    // 10. Get project updatedAt if available from Veryfront API adapter
+    let projectUpdatedAt: string | undefined;
+    const wrappedAdapter = (this.config.adapter?.fs as { fsAdapter?: unknown })?.fsAdapter;
+    if ((wrappedAdapter as { constructor?: { name?: string } })?.constructor?.name === "VeryfrontFSAdapter") {
+      const projectData = (wrappedAdapter as { getProjectData?: () => { updatedAt?: string } | undefined })?.getProjectData?.();
+      projectUpdatedAt = projectData?.updatedAt;
+    }
+
     logger.info("[resolvePageData] Resolved page data", {
       slug,
       pagePath,
@@ -726,6 +735,7 @@ export class RenderPipeline {
       props: pageProps,
       params,
       layoutProps,
+      buildVersion: createBuildVersion(projectUpdatedAt),
     };
   }
 }

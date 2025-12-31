@@ -146,9 +146,14 @@ export function createVeryfrontHandler(
     const host = req.headers.get("host") || _url.host;
     const parsedDomain = parseProjectDomain(host);
 
-    // Get project slug from URL or config
+    // Check for proxy-provided headers (from Deno proxy)
+    const proxyToken = req.headers.get("x-token") || undefined;
+    const proxySlug = req.headers.get("x-project-slug") || undefined;
+    const proxyEnv = req.headers.get("x-environment") as "preview" | "production" | undefined;
+
+    // Get project slug: proxy header > URL parsing > config
     const configuredSlug = config?.fs?.veryfront?.projectSlug;
-    const projectSlug = parsedDomain.slug || configuredSlug;
+    const projectSlug = proxySlug || parsedDomain.slug || configuredSlug;
 
     // Log if slug from URL differs from config (for debugging)
     if (parsedDomain.slug && configuredSlug && parsedDomain.slug !== configuredSlug) {
@@ -156,6 +161,14 @@ export function createVeryfrontHandler(
         fromUrl: parsedDomain.slug,
         fromConfig: configuredSlug,
         usingSlug: projectSlug,
+      });
+    }
+
+    // Log proxy mode for debugging
+    if (proxyToken) {
+      logDebug("[universal] Using proxy-provided token", {
+        projectSlug,
+        environment: proxyEnv,
       });
     }
 
@@ -171,6 +184,8 @@ export function createVeryfrontHandler(
       config,
       parsedDomain,
       projectSlug,
+      proxyToken,
+      proxyEnvironment: proxyEnv,
     };
 
     // Track metrics
