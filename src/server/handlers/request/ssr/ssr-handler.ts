@@ -81,6 +81,16 @@ export class SSRHandler extends BaseHandler {
     this.logDebug("SSR attempt", { pathname, slug }, ctx);
 
     try {
+      // Inject proxy token into FSAdapter before rendering
+      // This ensures API calls use the per-request OAuth token from the proxy
+      if (ctx.proxyToken) {
+        const fsWrapper = ctx.adapter.fs as { setRequestToken?: (t: string) => void };
+        if (typeof fsWrapper.setRequestToken === "function") {
+          fsWrapper.setRequestToken(ctx.proxyToken);
+          this.logDebug("Injected proxy token into FSAdapter", {}, ctx);
+        }
+      }
+
       const renderer = await timeAsync("renderer-init", () => {
         if (!this.rendererInit) {
           this.rendererInit = createRenderer({

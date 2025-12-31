@@ -1,6 +1,7 @@
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import type { MDXFrontmatter } from "@veryfront/types";
 import type { VeryfrontConfig } from "@veryfront/config";
+import type { BuildVersion } from "@veryfront/utils/version.ts";
 
 export interface RendererOptions {
   projectDir: string;
@@ -73,4 +74,6 @@ export interface PageDataResponse {
   params: Record<string, string | string[]>;
   /** Layout-specific props keyed by layout path */
   layoutProps: Record<string, Record<string, unknown>>;
+  /** Build version for cache invalidation during SPA navigation */
+  buildVersion: BuildVersion;
 }

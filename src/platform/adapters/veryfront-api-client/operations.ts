@@ -8,13 +8,40 @@ import {
   VeryfrontAPIError,
 } from "./types.ts";
 
+/**
+ * Token provider function - can return static token or dynamic per-request token.
+ */
+export type TokenProvider = () => string;
+
 export class VeryfrontAPIOperations {
+  private tokenProvider: TokenProvider;
+
   constructor(
     private apiBaseUrl: string,
-    private apiToken: string,
+    tokenOrProvider: string | TokenProvider,
     private retryConfig: RetryConfig,
     private projectId?: string,
-  ) {}
+  ) {
+    // Support both static token string and dynamic token provider
+    this.tokenProvider = typeof tokenOrProvider === "string"
+      ? () => tokenOrProvider
+      : tokenOrProvider;
+  }
+
+  /**
+   * Update the token provider for dynamic token resolution.
+   * Used when proxy provides per-request tokens via headers.
+   */
+  setTokenProvider(provider: TokenProvider): void {
+    this.tokenProvider = provider;
+  }
+
+  /**
+   * Get the current token.
+   */
+  getToken(): string {
+    return this.tokenProvider();
+  }
 
   setProjectId(projectId: string): void {
     this.projectId = projectId;
@@ -121,6 +148,7 @@ export class VeryfrontAPIOperations {
     options: { returnText?: boolean } = {},
   ): Promise<T> {
     const url = `${this.apiBaseUrl}${endpoint}`;
-    return await requestWithRetry<T>(url, this.apiToken, this.retryConfig, options);
+    const token = this.tokenProvider();
+    return await requestWithRetry<T>(url, token, this.retryConfig, options);
   }
 }

@@ -2,7 +2,28 @@ import type { DirEntry, FileInfo, FileSystemAdapter, FileWatcher, WatchOptions }
 import type { DirectoryEntry, FSAdapter } from "./veryfront-fs-adapter/types.ts";
 
 export class FSAdapterWrapper implements FileSystemAdapter {
-  constructor(private fsAdapter: FSAdapter) {}
+  constructor(public readonly fsAdapter: FSAdapter) {}
+
+  /**
+   * Set a per-request token for API calls.
+   * Only applies if the underlying FSAdapter supports it (e.g., VeryfrontFSAdapter).
+   */
+  setRequestToken(token: string): void {
+    const adapter = this.fsAdapter as unknown as { setRequestToken?: (t: string) => void };
+    if (typeof adapter.setRequestToken === "function") {
+      adapter.setRequestToken(token);
+    }
+  }
+
+  /**
+   * Clear the per-request token.
+   */
+  clearRequestToken(): void {
+    const adapter = this.fsAdapter as unknown as { clearRequestToken?: () => void };
+    if (typeof adapter.clearRequestToken === "function") {
+      adapter.clearRequestToken();
+    }
+  }
 
   async readFile(path: string): Promise<string> {
     if (this.fsAdapter.readTextFile) {

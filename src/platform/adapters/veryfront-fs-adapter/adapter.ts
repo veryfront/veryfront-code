@@ -359,6 +359,31 @@ export class VeryfrontFSAdapter implements FSAdapter {
     return this.projectData;
   }
 
+  /**
+   * Set a per-request token from proxy headers.
+   * This token takes priority over the config token for API calls.
+   * Used when running behind the Deno proxy with OAuth tokens.
+   */
+  setRequestToken(token: string): void {
+    this.client.setRequestToken(token);
+    // Update stored token for WebSocket reconnection
+    this.apiToken = token;
+  }
+
+  /**
+   * Clear the per-request token, reverting to config token.
+   */
+  clearRequestToken(): void {
+    this.client.clearRequestToken();
+  }
+
+  /**
+   * Get the underlying API client (for advanced use cases).
+   */
+  getClient(): VeryfrontAPIClient {
+    return this.client;
+  }
+
   private async ensureInitialized(): Promise<void> {
     if (!this.initialized) {
       await this.initialize();

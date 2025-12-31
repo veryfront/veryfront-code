@@ -20,6 +20,50 @@ export const getRouterScript = () => `
     const logError = console.error.bind(console, '[Veryfront]');
 
     // ============================================
+    // Version tracking for cache invalidation
+    // ============================================
+    let clientBuildVersion = null; // Set on first page data fetch
+
+    function checkVersionMismatch(newVersion) {
+      if (!clientBuildVersion) {
+        // First load - store the version
+        clientBuildVersion = newVersion;
+        log('Build version initialized:', newVersion);
+        return false;
+      }
+
+      // Check for server restart (serverStart changed)
+      if (newVersion.serverStart !== clientBuildVersion.serverStart) {
+        log('Server restarted, reloading...', {
+          old: clientBuildVersion.serverStart,
+          new: newVersion.serverStart
+        });
+        return true;
+      }
+
+      // Check for framework update
+      if (newVersion.framework !== clientBuildVersion.framework) {
+        log('Framework version changed, reloading...', {
+          old: clientBuildVersion.framework,
+          new: newVersion.framework
+        });
+        return true;
+      }
+
+      // Check for project content update (if available)
+      if (newVersion.projectUpdated && clientBuildVersion.projectUpdated &&
+          newVersion.projectUpdated !== clientBuildVersion.projectUpdated) {
+        log('Project content updated, reloading...', {
+          old: clientBuildVersion.projectUpdated,
+          new: newVersion.projectUpdated
+        });
+        return true;
+      }
+
+      return false;
+    }
+
+    // ============================================
     // Performance timing (DEBUG only)
     // ============================================
     const perfTimers = new Map();
@@ -210,6 +254,14 @@ export const getRouterScript = () => `
       const data = await response.json();
       perfEnd('parse:' + path);
       perfEnd('fetch:' + path);
+
+      // Check for version mismatch - triggers full page reload if detected
+      if (data.buildVersion && checkVersionMismatch(data.buildVersion)) {
+        log('Version mismatch detected, performing full page reload to:', path);
+        window.location.href = path;
+        // Return a promise that never resolves since we're reloading
+        return new Promise(() => {});
+      }
 
       setCachedPageData(path, data);
       return data;

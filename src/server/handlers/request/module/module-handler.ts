@@ -55,6 +55,15 @@ export class ModuleHandler extends BaseHandler {
   private ensureRenderer(
     ctx: HandlerContext,
   ): Promise<Awaited<ReturnType<typeof createRenderer>>> {
+    // Inject proxy token into FSAdapter before any renderer operations
+    // This ensures API calls use the per-request OAuth token from the proxy
+    if (ctx.proxyToken) {
+      const fsWrapper = ctx.adapter.fs as { setRequestToken?: (t: string) => void };
+      if (typeof fsWrapper.setRequestToken === "function") {
+        fsWrapper.setRequestToken(ctx.proxyToken);
+      }
+    }
+
     if (!this.rendererInit) {
       this.rendererInit = createRenderer({
         projectDir: ctx.projectDir,
