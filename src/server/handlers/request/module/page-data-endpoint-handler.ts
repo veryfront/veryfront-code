@@ -41,8 +41,8 @@ export async function handlePageDataEndpoint(
     // Extract slug from pathname: /_veryfront/page-data/about.json -> about
     const slug = pathname
       .replace("/_veryfront/page-data/", "")
-      .replace(/\.json$/, "")
-      || "";
+      .replace(/\.json$/, "") ||
+      "";
 
     const url = new URL(req.url);
     const renderer = await getRenderer(ctx, rendererInit);
@@ -79,8 +79,8 @@ export async function handlePageDataEndpoint(
     // Determine appropriate status code based on error type
     const errorMessage = getErrorMessage(e);
     const isNotFound = errorMessage.toLowerCase().includes("not found") ||
-                       errorMessage.toLowerCase().includes("404") ||
-                       (e instanceof Error && e.message.toLowerCase().includes("no page"));
+      errorMessage.toLowerCase().includes("404") ||
+      (e instanceof Error && e.message.toLowerCase().includes("no page"));
     const status = isNotFound ? 404 : 500;
 
     return respond(

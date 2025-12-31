@@ -18,7 +18,7 @@ import { hasMatchingEtag } from "../../utils/etag.ts";
 import { getContentType } from "../../utils/content-types.ts";
 import { createRenderer } from "@veryfront/rendering/index.ts";
 import { serverLogger as _logger } from "@veryfront/utils";
-import { startRequest, endRequest, timeAsync } from "@veryfront/utils";
+import { endRequest, startRequest, timeAsync } from "@veryfront/utils";
 import { computeSSRETag } from "./etag-handler.ts";
 import { tryNotFoundFallback } from "./not-found-fallback.ts";
 import { tryErrorPageFallback } from "./error-page-fallback.ts";
@@ -142,13 +142,14 @@ export class SSRHandler extends BaseHandler {
       const nonce = generateNonce();
       this.logDebug(`[NONCE-TRACE] Generated nonce for SSR: ${nonce}`, { slug }, ctx);
 
-      const result = await timeAsync("render-page", () => renderer.renderPage(slug, {
-        delivery: "stream",
-        params: params ?? undefined,
-        request: req,
-        url,
-        nonce,
-      }));
+      const result = await timeAsync("render-page", () =>
+        renderer.renderPage(slug, {
+          delivery: "stream",
+          params: params ?? undefined,
+          request: req,
+          url,
+          nonce,
+        }));
       this.logDebug("SSR successful", { slug, params }, ctx);
       endRequest(requestId);
 
@@ -177,7 +178,7 @@ export class SSRHandler extends BaseHandler {
           );
 
         if (isHeadRequest) {
-          await response.body?.cancel().catch(() => { /* ignore */ });
+          await response.body?.cancel().catch(() => {/* ignore */});
           return this.respond(
             new Response(null, { status: response.status, headers: response.headers }),
           );

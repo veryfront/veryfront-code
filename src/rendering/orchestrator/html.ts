@@ -88,7 +88,9 @@ export class HTMLGenerator {
     try {
       const tailwindConfigPath = join(this.config.projectDir, "tailwind.config.js");
       tailwindConfigJs = await this.config.adapter.fs.readFile(tailwindConfigPath);
-      logger.debug("[HTMLGenerator] Loaded tailwind.config.js", { length: tailwindConfigJs.length });
+      logger.debug("[HTMLGenerator] Loaded tailwind.config.js", {
+        length: tailwindConfigJs.length,
+      });
     } catch {
       logger.debug("[HTMLGenerator] No tailwind.config.js found, using default config");
     }
@@ -220,7 +222,9 @@ export class HTMLGenerator {
     try {
       const tailwindConfigPath = join(this.config.projectDir, "tailwind.config.js");
       tailwindConfigJs = await this.config.adapter.fs.readFile(tailwindConfigPath);
-      logger.debug("[HTMLGenerator] Loaded tailwind.config.js", { length: tailwindConfigJs.length });
+      logger.debug("[HTMLGenerator] Loaded tailwind.config.js", {
+        length: tailwindConfigJs.length,
+      });
     } catch {
       logger.debug("[HTMLGenerator] No tailwind.config.js found, using default config");
     }

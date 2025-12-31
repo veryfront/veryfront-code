@@ -2,11 +2,7 @@ import { serverLogger as logger } from "@veryfront/utils";
 import type { Message, Plugin } from "esbuild";
 import { getDenoStdNodeBase } from "@veryfront/utils";
 import { HTTP_MODULE_FETCH_TIMEOUT_MS, HTTP_NETWORK_CONNECT_TIMEOUT } from "@veryfront/utils";
-import {
-  type LockfileManager,
-  computeIntegrity,
-  createLockfileManager,
-} from "@veryfront/utils";
+import { computeIntegrity, createLockfileManager, type LockfileManager } from "@veryfront/utils";
 
 export interface HTTPPluginOptions {
   allowedHosts: string[];
@@ -16,13 +12,10 @@ export interface HTTPPluginOptions {
 }
 
 export function createHTTPPlugin(options: HTTPPluginOptions | string[]): Plugin {
-  const opts: HTTPPluginOptions = Array.isArray(options)
-    ? { allowedHosts: options }
-    : options;
+  const opts: HTTPPluginOptions = Array.isArray(options) ? { allowedHosts: options } : options;
   const { allowedHosts, strict = false } = opts;
-  const lockfile = opts.lockfile ?? (opts.projectDir
-    ? createLockfileManager(opts.projectDir)
-    : null);
+  const lockfile = opts.lockfile ??
+    (opts.projectDir ? createLockfileManager(opts.projectDir) : null);
   return {
     name: "vf-api-http-fetch",
     setup(build: Parameters<Plugin["setup"]>[0]) {
@@ -128,7 +121,8 @@ export function createHTTPPlugin(options: HTTPPluginOptions | string[]): Plugin 
                 if (strict) {
                   return {
                     errors: [{
-                      text: `Integrity mismatch for ${args.path}: expected ${cached.integrity}, got ${integrity}`,
+                      text:
+                        `Integrity mismatch for ${args.path}: expected ${cached.integrity}, got ${integrity}`,
                     } as Message],
                   };
                 }

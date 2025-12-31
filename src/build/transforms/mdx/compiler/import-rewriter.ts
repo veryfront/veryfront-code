@@ -115,7 +115,8 @@ export function rewriteBodyImports(body: string, config: ImportRewriterConfig): 
 
 export function rewriteCompiledImports(compiledCode: string, config: ImportRewriterConfig): string {
   const basedir = dirname(config.filePath);
-  const mapper = (spec: string) => mapSpec(spec, basedir, config.target, config.baseUrl, config.projectDir);
+  const mapper = (spec: string) =>
+    mapSpec(spec, basedir, config.target, config.baseUrl, config.projectDir);
 
   let code = compiledCode;
 

@@ -1,7 +1,7 @@
 export { getDevStyles } from "./dev-scripts.ts";
 export { isFullHTMLDocument } from "./html-detection.ts";
 
-export { buildAttributes, escapeHtml, escapeHTML } from "./html-escape.ts";
+export { buildAttributes, escapeHTML, escapeHtml } from "./html-escape.ts";
 export type { InjectHTMLContentOptions } from "./html-injection.ts";
 export { injectHTMLContent } from "./html-injection.ts";
 export { generateHTMLShellParts, wrapInHTMLShell } from "./html-shell-generator.ts";

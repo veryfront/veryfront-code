@@ -276,4 +276,9 @@ export interface MemoryPersistence {
 }
 
 // Re-export Redis memory for convenience
-export { RedisMemory, createRedisMemory, type RedisMemoryConfig, type RedisClient } from "./memory-redis.ts";
+export {
+  createRedisMemory,
+  type RedisClient,
+  RedisMemory,
+  type RedisMemoryConfig,
+} from "./memory-redis.ts";

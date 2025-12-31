@@ -1,6 +1,10 @@
 export { generateThemeVariables } from "./theme-variables.ts";
 
-export { generateTailwindConfig, getTailwindCDNUrl, convertTailwindConfigForBrowser } from "./tailwind-config.ts";
+export {
+  convertTailwindConfigForBrowser,
+  generateTailwindConfig,
+  getTailwindCDNUrl,
+} from "./tailwind-config.ts";
 
 export { getDevStyles } from "./dev-styles.ts";
 

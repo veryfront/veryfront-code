@@ -83,8 +83,8 @@ export async function handleDataEndpoint(
     // Determine appropriate status code based on error type
     const errorMessage = getErrorMessage(e);
     const isNotFound = errorMessage.toLowerCase().includes("not found") ||
-                       errorMessage.toLowerCase().includes("404") ||
-                       (e instanceof Error && e.message.toLowerCase().includes("no page"));
+      errorMessage.toLowerCase().includes("404") ||
+      (e instanceof Error && e.message.toLowerCase().includes("no page"));
     const status = isNotFound ? 404 : 500;
 
     return respond(

@@ -182,7 +182,9 @@ export type WorkflowNodeConfig =
 export interface LoopNodeConfig extends BaseNodeConfig {
   type: "loop";
   while: (context: WorkflowContext, loop: LoopExecutionContext) => boolean | Promise<boolean>;
-  steps: WorkflowNode[] | ((context: WorkflowContext, loop: LoopExecutionContext) => WorkflowNode[]);
+  steps:
+    | WorkflowNode[]
+    | ((context: WorkflowContext, loop: LoopExecutionContext) => WorkflowNode[]);
   maxIterations: number;
   onMaxIterations?: (
     context: WorkflowContext,

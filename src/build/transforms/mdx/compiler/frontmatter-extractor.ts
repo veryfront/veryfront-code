@@ -21,7 +21,8 @@ async function extractYamlFrontmatter(content: string): Promise<FrontmatterExtra
 function extractExportConstants(body: string): { body: string; exports: Record<string, unknown> } {
   // Only match simple single-line exports with string, number, or boolean values
   // Avoid matching complex exports like arrays, objects, or functions
-  const exportRegex = /^export\s+const\s+(\w+)\s*=\s*(['"`][^'"`\n]*['"`]|\d+(?:\.\d+)?|true|false|null)\s*;?\s*$/gm;
+  const exportRegex =
+    /^export\s+const\s+(\w+)\s*=\s*(['"`][^'"`\n]*['"`]|\d+(?:\.\d+)?|true|false|null)\s*;?\s*$/gm;
   const exports: Record<string, unknown> = {};
   const linesToRemove: string[] = [];
   let match: RegExpExecArray | null;

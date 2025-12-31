@@ -76,7 +76,10 @@ export async function serveModule(
 
   // Log User-Agent for debugging SSR detection
   const debugUserAgent = req.headers.get("user-agent") || "";
-  console.log("[ModuleServer] Request", { pathname: url.pathname, userAgent: debugUserAgent.slice(0, 50) });
+  console.log("[ModuleServer] Request", {
+    pathname: url.pathname,
+    userAgent: debugUserAgent.slice(0, 50),
+  });
 
   if (!DEV_MODULE_PREFIX.test(url.pathname)) {
     return createModuleResponse(method, "Module not found", HTTP_NOT_FOUND, {
@@ -111,7 +114,8 @@ export async function serveModule(
       // For framework lib files, read directly from filesystem instead of through adapter
       // Only files specifically under FRAMEWORK_ROOT/lib/ are framework files
       const frameworkLibDir = join(FRAMEWORK_ROOT, "lib");
-      const isFrameworkFile = sourceFile.startsWith(frameworkLibDir + "/") || sourceFile.startsWith(frameworkLibDir + "\\");
+      const isFrameworkFile = sourceFile.startsWith(frameworkLibDir + "/") ||
+        sourceFile.startsWith(frameworkLibDir + "\\");
       const readStart = performance.now();
       const source = isFrameworkFile
         ? await Deno.readTextFile(sourceFile)
@@ -125,7 +129,12 @@ export async function serveModule(
       const isDenoRequest = userAgent.startsWith("Deno/");
       const hasSSRParam = url.searchParams.get("ssr") === "true";
       const isSSR = hasSSRParam || isDenoRequest;
-      logger.info("[ModuleServer] SSR mode check", { isSSR, isDenoRequest, hasSSRParam, userAgent: userAgent.slice(0, 30) });
+      logger.info("[ModuleServer] SSR mode check", {
+        isSSR,
+        isDenoRequest,
+        hasSSRParam,
+        userAgent: userAgent.slice(0, 30),
+      });
 
       // Transform to ESM
       const transformStart = performance.now();
@@ -158,7 +167,9 @@ export async function serveModule(
               return `from "npm:${path}"`;
             }
             if (normalized === "react-dom") {
-              const path = subpath ? `react-dom@${REACT_VERSION}${subpath}` : `react-dom@${REACT_VERSION}`;
+              const path = subpath
+                ? `react-dom@${REACT_VERSION}${subpath}`
+                : `react-dom@${REACT_VERSION}`;
               return `from "npm:${path}"`;
             }
             // Keep other packages as esm.sh - it handles CJS properly

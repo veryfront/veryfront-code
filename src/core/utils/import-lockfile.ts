@@ -121,7 +121,9 @@ export function createLockfileManager(projectDir: string, fsAdapter?: FSAdapter)
         const content = await fs.readFile(lockfilePath);
         cache = JSON.parse(content) as LockfileData;
         if (cache.version !== LOCKFILE_VERSION) {
-          logger.warn(`[lockfile] Version mismatch, expected ${LOCKFILE_VERSION}, got ${cache.version}`);
+          logger.warn(
+            `[lockfile] Version mismatch, expected ${LOCKFILE_VERSION}, got ${cache.version}`,
+          );
           cache = createEmptyLockfile();
         }
         return cache;
@@ -137,7 +139,7 @@ export function createLockfileManager(projectDir: string, fsAdapter?: FSAdapter)
     const sorted = {
       version: data.version,
       imports: Object.fromEntries(
-        Object.entries(data.imports).sort(([a], [b]) => a.localeCompare(b))
+        Object.entries(data.imports).sort(([a], [b]) => a.localeCompare(b)),
       ),
     };
     await fs.writeFile(lockfilePath, JSON.stringify(sorted, null, 2) + "\n");
@@ -216,7 +218,9 @@ export async function fetchWithLock(options: FetchWithLockOptions): Promise<Fetc
 
     if (!res.ok) {
       if (strict) {
-        throw new Error(`Lockfile entry stale: ${url} resolved to ${entry.resolved} returned ${res.status}`);
+        throw new Error(
+          `Lockfile entry stale: ${url} resolved to ${entry.resolved} returned ${res.status}`,
+        );
       }
       logger.warn(`[lockfile] Cached URL ${entry.resolved} returned ${res.status}, refetching`);
     } else {
@@ -226,7 +230,7 @@ export async function fetchWithLock(options: FetchWithLockOptions): Promise<Fetc
       if (currentIntegrity !== entry.integrity) {
         if (strict) {
           throw new Error(
-            `Integrity mismatch for ${url}: expected ${entry.integrity}, got ${currentIntegrity}`
+            `Integrity mismatch for ${url}: expected ${entry.integrity}, got ${currentIntegrity}`,
           );
         }
         logger.warn(`[lockfile] Integrity mismatch for ${url}, updating lockfile`);

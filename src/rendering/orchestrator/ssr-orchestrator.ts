@@ -37,8 +37,8 @@ export class SSROrchestrator {
       if (!el?.type) return "unknown";
       if (typeof el.type === "string") return el.type;
       return (el.type as { name?: string; displayName?: string }).name ||
-             (el.type as { displayName?: string }).displayName ||
-             "Component";
+        (el.type as { displayName?: string }).displayName ||
+        "Component";
     };
     logger.info("[SSROrchestrator] performSSRRendering called", {
       elementType: getElementTypeName(pageElement),
@@ -53,15 +53,19 @@ export class SSROrchestrator {
     });
 
     const wantsStream = options?.delivery === "stream";
-    const { html, stream } = await timeAsync("ssr-react-render", () =>
-      this.config.ssrRenderer.renderToHTML(
-        validatedElement,
-        {
-          mode: this.config.mode,
-          wantsStream,
-          debugMode: this.config.debugMode,
-        },
-      ), "ssr-rendering");
+    const { html, stream } = await timeAsync(
+      "ssr-react-render",
+      () =>
+        this.config.ssrRenderer.renderToHTML(
+          validatedElement,
+          {
+            mode: this.config.mode,
+            wantsStream,
+            debugMode: this.config.debugMode,
+          },
+        ),
+      "ssr-rendering",
+    );
 
     // Merge options from generationContext with the passed options parameter
     // to avoid losing props that were set in generationContext.options
@@ -104,16 +108,23 @@ export class SSROrchestrator {
     }
 
     // Otherwise, use buffered HTML generation
-    const ssrHash = await timeAsync("ssr-content-hash", () =>
-      getContentHash(html), "ssr-rendering");
+    const ssrHash = await timeAsync(
+      "ssr-content-hash",
+      () => getContentHash(html),
+      "ssr-rendering",
+    );
 
-    const fullHtml = await timeAsync("ssr-html-generation", () =>
-      this.config.htmlGenerator.generateFullHTML({
-        ...generationContext,
-        html,
-        ssrHash,
-        options: mergedOptions,
-      }), "ssr-rendering");
+    const fullHtml = await timeAsync(
+      "ssr-html-generation",
+      () =>
+        this.config.htmlGenerator.generateFullHTML({
+          ...generationContext,
+          html,
+          ssrHash,
+          options: mergedOptions,
+        }),
+      "ssr-rendering",
+    );
 
     const finalStream = wantsStream ? this.createStream(fullHtml) : null;
 

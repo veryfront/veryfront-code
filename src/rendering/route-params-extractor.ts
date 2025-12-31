@@ -1,6 +1,6 @@
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import { extractParams } from "@veryfront/routing/slug-mapper/dynamic-route-matcher.ts";
-import { isDynamicSegment, EXTENSION_REGEX } from "@veryfront/core/utils/route-path-utils.ts";
+import { EXTENSION_REGEX, isDynamicSegment } from "@veryfront/core/utils/route-path-utils.ts";
 import { join } from "../platform/compat/path-helper.ts";
 import { logger, startTimer } from "@veryfront/utils";
 
@@ -59,7 +59,10 @@ export async function extractAppRouteParams(
 
     if (!foundDynamic) {
       stopTotal();
-      logger.debug("[RouteParams] extractAppRouteParams", { stat: fsStatCount, readDir: fsReadDirCount });
+      logger.debug("[RouteParams] extractAppRouteParams", {
+        stat: fsStatCount,
+        readDir: fsReadDirCount,
+      });
       return null;
     }
 
@@ -69,7 +72,10 @@ export async function extractAppRouteParams(
   }
 
   stopTotal();
-  logger.debug("[RouteParams] extractAppRouteParams", { stat: fsStatCount, readDir: fsReadDirCount });
+  logger.debug("[RouteParams] extractAppRouteParams", {
+    stat: fsStatCount,
+    readDir: fsReadDirCount,
+  });
   const pattern = patternParts.join("/");
   return extractParams(pattern, slug);
 }
@@ -148,13 +154,19 @@ export async function extractPagesRouteParams(
 
     if (!foundDynamic) {
       stopTotal();
-      logger.debug("[RouteParams] extractPagesRouteParams", { stat: pagesStatCount, readDir: pagesReadDirCount });
+      logger.debug("[RouteParams] extractPagesRouteParams", {
+        stat: pagesStatCount,
+        readDir: pagesReadDirCount,
+      });
       return null;
     }
   }
 
   stopTotal();
-  logger.debug("[RouteParams] extractPagesRouteParams", { stat: pagesStatCount, readDir: pagesReadDirCount });
+  logger.debug("[RouteParams] extractPagesRouteParams", {
+    stat: pagesStatCount,
+    readDir: pagesReadDirCount,
+  });
   const pattern = patternParts.join("/");
   return extractParams(pattern, slug);
 }

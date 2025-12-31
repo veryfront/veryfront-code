@@ -46,8 +46,11 @@ export class LayoutCollector {
     const hasExplicitFrontmatterLayout = typeof layoutValue === "string" && layoutValue.length > 0;
 
     // Collect the named layout (from frontmatter or config.defaultLayout)
-    const { layoutBundle, layoutPath } = await timeAsync("layout-named", () =>
-      this.collectNamedLayoutWithPath(pageInfo), "collect-layouts");
+    const { layoutBundle, layoutPath } = await timeAsync(
+      "layout-named",
+      () => this.collectNamedLayoutWithPath(pageInfo),
+      "collect-layouts",
+    );
 
     let nestedLayouts: LayoutItem[];
 
@@ -71,8 +74,11 @@ export class LayoutCollector {
       return { layoutBundle: undefined, nestedLayouts };
     } else {
       // No explicit frontmatter layout - use project-level nested layouts
-      nestedLayouts = await timeAsync("layout-nested", () =>
-        this.collectNestedLayouts(pageInfo), "collect-layouts");
+      nestedLayouts = await timeAsync(
+        "layout-nested",
+        () => this.collectNestedLayouts(pageInfo),
+        "collect-layouts",
+      );
     }
 
     logger.debug("[LayoutCollector] collectLayouts result", {
@@ -272,8 +278,9 @@ export class LayoutCollector {
     // This provides a fallback when layout is not explicitly configured
     if (nestedLayouts.length === 0) {
       const defaultLayoutPath = join(this.projectDir, "components", "layout.tsx");
-      const defaultLayoutExists = await (wrappedAdapter as { exists: (path: string) => Promise<boolean> })
-        .exists(defaultLayoutPath);
+      const defaultLayoutExists =
+        await (wrappedAdapter as { exists: (path: string) => Promise<boolean> })
+          .exists(defaultLayoutPath);
 
       if (defaultLayoutExists) {
         nestedLayouts.push({

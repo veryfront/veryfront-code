@@ -1,0 +1,46 @@
+{{- if .Values.proxy.enabled }}
+{{- if .Values.proxy.middleware.compress.enabled }}
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: {{ include "veryfront-renderer.proxy.fullname" . }}-compress
+  labels:
+    {{- include "veryfront-renderer.labels" . | nindent 4 }}
+spec:
+  compress: {}
+{{- end }}
+{{- if .Values.proxy.middleware.cors.enabled }}
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: {{ include "veryfront-renderer.proxy.fullname" . }}-cors
+  labels:
+    {{- include "veryfront-renderer.labels" . | nindent 4 }}
+spec:
+  headers:
+    accessControlAllowMethods:
+      {{- toYaml .Values.proxy.middleware.cors.allowMethods | nindent 6 }}
+    accessControlAllowOriginListRegex:
+      {{- toYaml .Values.proxy.middleware.cors.allowOriginRegex | nindent 6 }}
+    accessControlAllowHeaders:
+      {{- toYaml .Values.proxy.middleware.cors.allowHeaders | nindent 6 }}
+    accessControlAllowCredentials: {{ .Values.proxy.middleware.cors.allowCredentials }}
+    accessControlMaxAge: {{ .Values.proxy.middleware.cors.maxAge }}
+    addVaryHeader: true
+{{- end }}
+{{- if .Values.proxy.middleware.httpsRedirect.enabled }}
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: {{ include "veryfront-renderer.proxy.fullname" . }}-https-redirect
+  labels:
+    {{- include "veryfront-renderer.labels" . | nindent 4 }}
+spec:
+  redirectScheme:
+    scheme: https
+    permanent: true
+{{- end }}
+{{- end }}

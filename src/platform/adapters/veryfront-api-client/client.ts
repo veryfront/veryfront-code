@@ -1,5 +1,5 @@
 import { logger } from "@veryfront/utils";
-import { VeryfrontAPIOperations, type TokenProvider } from "./operations.ts";
+import { type TokenProvider, VeryfrontAPIOperations } from "./operations.ts";
 import { type VeryfrontAPIConfig, VeryfrontAPIError } from "./types.ts";
 
 export class VeryfrontAPIClient {

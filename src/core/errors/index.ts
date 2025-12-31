@@ -31,8 +31,8 @@ export {
 
 export {
   createErrorScope,
-  safeFileStat,
   safeFileRead,
+  safeFileStat,
   safeReadDir,
   withErrorContext,
   withErrorContextSync,

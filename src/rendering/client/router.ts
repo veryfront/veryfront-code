@@ -166,7 +166,10 @@ export class VeryfrontRouter {
       this.handleScrollAfterNavigation();
       this.options.onComplete?.(path);
     } catch (error) {
-      logger.error(`[Veryfront] Failed to load SPA page ${path}`, error instanceof Error ? error : new Error(String(error)));
+      logger.error(
+        `[Veryfront] Failed to load SPA page ${path}`,
+        error instanceof Error ? error : new Error(String(error)),
+      );
       this.options.onError?.(error as Error);
       this.pageTransition.showError(error as Error);
     }
@@ -190,7 +193,9 @@ export class VeryfrontRouter {
       logger.debug(`Loading ${path} from cache`);
       const data = this.pageLoader.getCached(path);
       if (!data) {
-        logger.warn(`[Veryfront] Cache entry for ${path} was unexpectedly null, fetching fresh data`);
+        logger.warn(
+          `[Veryfront] Cache entry for ${path} was unexpectedly null, fetching fresh data`,
+        );
         // Fall through to fetch fresh data
       } else {
         if (updateUI) {

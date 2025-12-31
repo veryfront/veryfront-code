@@ -87,10 +87,12 @@ export class VeryfrontAPIOperations {
     }>(url);
 
     // Map pageInfo to pagination format if needed
-    const pagination = response.pagination || (response.pageInfo ? {
-      cursor: response.pageInfo.nextCursor || undefined,
-      hasMore: response.pageInfo.hasNextPage,
-    } : undefined);
+    const pagination = response.pagination || (response.pageInfo
+      ? {
+        cursor: response.pageInfo.nextCursor || undefined,
+        hasMore: response.pageInfo.hasNextPage,
+      }
+      : undefined);
 
     logger.debug("[VeryfrontAPIClient] Files listed", {
       count: response.data?.length || 0,
@@ -121,7 +123,7 @@ export class VeryfrontAPIOperations {
     // veryfront-api returns { path, content, size } as JSON
     // We need to extract the content field
     const response = await this.request<{ path: string; content: string; size: number } | string>(
-      `/projects/${id}/files/${encodedPath}`
+      `/projects/${id}/files/${encodedPath}`,
     );
 
     // Handle both JSON response and raw text response

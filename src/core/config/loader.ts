@@ -1,6 +1,6 @@
 import type { VeryfrontConfig } from "./types.ts";
 import { findUnknownTopLevelKeys, validateVeryfrontConfig } from "./schema.ts";
-import { join, dirname } from "std/path/mod.ts";
+import { dirname, join } from "std/path/mod.ts";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import { serverLogger } from "@veryfront/utils/logger/logger.ts";
 import { getReactImportMap, REACT_DEFAULT_VERSION } from "@veryfront/utils/constants/cdn.ts";

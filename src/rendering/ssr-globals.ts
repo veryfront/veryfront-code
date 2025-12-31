@@ -42,8 +42,15 @@ const createDocumentStub = () => ({
   getElementsByName: () => [],
 
   // Document properties
-  documentElement: { style: {}, classList: { add: () => {}, remove: () => {}, contains: () => false } },
-  body: { style: {}, classList: { add: () => {}, remove: () => {}, contains: () => false }, appendChild: () => {} },
+  documentElement: {
+    style: {},
+    classList: { add: () => {}, remove: () => {}, contains: () => false },
+  },
+  body: {
+    style: {},
+    classList: { add: () => {}, remove: () => {}, contains: () => false },
+    appendChild: () => {},
+  },
   head: { appendChild: () => {}, removeChild: () => {} },
   readyState: "complete",
   cookie: "",

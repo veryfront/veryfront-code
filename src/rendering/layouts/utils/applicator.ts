@@ -76,11 +76,15 @@ function transformLocalFileImportsToModuleServer(code: string): string {
 
       // Extract the relative path from the file:// URL
       // Look for common project path patterns like /shared/, /lib/, /components/, /features/, /app/
-      const relativePath = fileUrl.replace(/file:\/\/.*?\/(?=shared\/|lib\/|components\/|features\/|app\/)/, "");
+      const relativePath = fileUrl.replace(
+        /file:\/\/.*?\/(?=shared\/|lib\/|components\/|features\/|app\/)/,
+        "",
+      );
 
       if (relativePath !== fileUrl) {
         // Found a recognizable project path - use module server
-        const moduleUrl = `http://localhost:${port}/_vf_modules/${relativePath}.js?ssr=true&v=${cacheBuster}`;
+        const moduleUrl =
+          `http://localhost:${port}/_vf_modules/${relativePath}.js?ssr=true&v=${cacheBuster}`;
         logger.debug("[applicator] Transforming file:// to module server:", {
           original: fileUrl,
           moduleUrl,

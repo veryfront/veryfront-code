@@ -3,7 +3,7 @@ import { MiddlewarePipeline } from "@veryfront/middleware/core/pipeline/index.ts
 import { cors } from "@veryfront/security";
 import type { VeryfrontConfig } from "@veryfront/config";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
-import { join, dirname } from "std/path/mod.ts";
+import { dirname, join } from "std/path/mod.ts";
 import { createFileSystem } from "../../platform/compat/fs.ts";
 
 type MiddlewareFunction = (

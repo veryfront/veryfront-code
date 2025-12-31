@@ -38,7 +38,8 @@ export function createErrorBoundary(
   ErrorComponent: ReservedComponent,
   ReactLib: typeof BundledReact = BundledReact,
 ) {
-  return class ErrorBoundary extends BundledReact.Component<ErrorBoundaryProps, ErrorBoundaryState> {
+  return class ErrorBoundary
+    extends BundledReact.Component<ErrorBoundaryProps, ErrorBoundaryState> {
     constructor(props: ErrorBoundaryProps) {
       super(props);
       this.state = { hasError: false };

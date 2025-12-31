@@ -7,12 +7,12 @@ import {
 } from "./hydration-script-builder/index.ts";
 import { processMetadata } from "./metadata-builder.ts";
 import {
+  convertTailwindConfigForBrowser,
   generateTailwindConfig,
   generateThemeVariables,
   getDevStyles,
   getProductionStyles,
   getTailwindCDNUrl,
-  convertTailwindConfigForBrowser,
 } from "./styles-builder/index.ts";
 import { generateTailwindCSS } from "./styles-builder/unocss-generator.ts";
 import type { HTMLGenerationOptions } from "./types.ts";

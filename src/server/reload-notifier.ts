@@ -57,7 +57,7 @@ class ReloadNotifierImpl {
       try {
         listener();
       } catch (error) {
-        console.error('[ReloadNotifier] Invalidate listener error:', error);
+        console.error("[ReloadNotifier] Invalidate listener error:", error);
       }
     }
   }
@@ -67,7 +67,7 @@ class ReloadNotifierImpl {
       try {
         listener();
       } catch (error) {
-        console.error('[ReloadNotifier] Listener error:', error);
+        console.error("[ReloadNotifier] Listener error:", error);
       }
     }
   }

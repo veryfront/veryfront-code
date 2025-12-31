@@ -13,7 +13,14 @@ export { NavigationHandlers } from "./navigation-handlers.ts";
 export type { NavigationCallbacks } from "./navigation-handlers.ts";
 
 export { PageLoader } from "./page-loader.ts";
-export type { ComponentMap, FrontmatterData, PageData, RouteData, SpaPageData, LayoutInfo } from "./page-loader.ts";
+export type {
+  ComponentMap,
+  FrontmatterData,
+  LayoutInfo,
+  PageData,
+  RouteData,
+  SpaPageData,
+} from "./page-loader.ts";
 
 export { PageTransition } from "./page-transition.ts";
 

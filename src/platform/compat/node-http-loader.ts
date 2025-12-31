@@ -36,12 +36,12 @@ interface LoadContext {
 
 type NextResolve = (
   specifier: string,
-  context?: ResolveContext
+  context?: ResolveContext,
 ) => Promise<{ url: string; format?: string; shortCircuit?: boolean }>;
 
 type NextLoad = (
   url: string,
-  context?: LoadContext
+  context?: LoadContext,
 ) => Promise<{ format: string; source: string | ArrayBuffer; shortCircuit?: boolean }>;
 
 /**
@@ -138,8 +138,12 @@ async function fetchModule(url: string): Promise<string> {
 export function resolve(
   specifier: string,
   context: ResolveContext,
-  nextResolve: NextResolve
-): Promise<{ url: string; format?: string; shortCircuit?: boolean }> | { url: string; format?: string; shortCircuit?: boolean } {
+  nextResolve: NextResolve,
+): Promise<{ url: string; format?: string; shortCircuit?: boolean }> | {
+  url: string;
+  format?: string;
+  shortCircuit?: boolean;
+} {
   // Handle absolute HTTP(S) URLs
   if (specifier.startsWith("https://") || specifier.startsWith("http://")) {
     return {
@@ -183,7 +187,7 @@ export function resolve(
 export async function load(
   url: string,
   context: LoadContext,
-  nextLoad: NextLoad
+  nextLoad: NextLoad,
 ): Promise<{ format: string; source: string | ArrayBuffer; shortCircuit?: boolean }> {
   // Handle HTTP(S) URLs
   if (url.startsWith("https://") || url.startsWith("http://")) {

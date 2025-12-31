@@ -2,7 +2,14 @@ import { rendererLogger as logger } from "@veryfront/utils";
 import { NetworkError } from "@veryfront/errors/index.ts";
 import { parsePageDataFromHTML } from "./dom-utils.ts";
 
-export type { ComponentMap, FrontmatterData, PageData, RouteData, SpaPageData, LayoutInfo } from "./types.ts";
+export type {
+  ComponentMap,
+  FrontmatterData,
+  LayoutInfo,
+  PageData,
+  RouteData,
+  SpaPageData,
+} from "./types.ts";
 import type { RouteData, SpaPageData } from "./types.ts";
 
 const MAX_CACHE_SIZE = 50;
@@ -134,7 +141,10 @@ export class PageLoader {
       const data = await this.fetchPageData(path);
       this.setCache(path, data);
     } catch (error) {
-      logger.warn(`[Veryfront] Failed to prefetch ${path}`, error instanceof Error ? error : new Error(String(error)));
+      logger.warn(
+        `[Veryfront] Failed to prefetch ${path}`,
+        error instanceof Error ? error : new Error(String(error)),
+      );
     }
   }
 
@@ -195,7 +205,10 @@ export class PageLoader {
       const data = await this.fetchSpaPageData(path);
       this.setSpaCache(path, data);
     } catch (error) {
-      logger.warn(`[Veryfront] Failed to prefetch SPA data for ${path}`, error instanceof Error ? error : new Error(String(error)));
+      logger.warn(
+        `[Veryfront] Failed to prefetch SPA data for ${path}`,
+        error instanceof Error ? error : new Error(String(error)),
+      );
     }
   }
 }

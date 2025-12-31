@@ -12,7 +12,10 @@ import { DirectoryOperations } from "./directory-operations.ts";
 import { StatOperations } from "./stat-operations.ts";
 import { clearSSRModuleCache } from "@veryfront/modules/react-loader/index.ts";
 import { clearRouterDetectionCache } from "../../../rendering/router-detection.ts";
-import { clearModulePathCache, invalidateModulePaths } from "../../../build/transforms/mdx/esm-module-loader.ts";
+import {
+  clearModulePathCache,
+  invalidateModulePaths,
+} from "../../../build/transforms/mdx/esm-module-loader.ts";
 import { ReloadNotifier } from "../../../server/reload-notifier.ts";
 
 const INVALIDATION_DEBOUNCE_MS = 100;
@@ -108,7 +111,9 @@ export class VeryfrontFSAdapter implements FSAdapter {
       .replace(/\/api$/, "");
     const url = `${wsUrl}/ws/${projectId}/events?token=${this.apiToken}`;
 
-    logger.info("[VeryfrontFSAdapter] Connecting to WebSocket", { url: url.replace(this.apiToken, "***") });
+    logger.info("[VeryfrontFSAdapter] Connecting to WebSocket", {
+      url: url.replace(this.apiToken, "***"),
+    });
 
     try {
       this.ws = new WebSocket(url);
@@ -146,7 +151,9 @@ export class VeryfrontFSAdapter implements FSAdapter {
       };
 
       this.ws.onclose = () => {
-        logger.info("[VeryfrontFSAdapter] WebSocket closed, reconnecting", { delayMs: WS_RECONNECT_DELAY_MS });
+        logger.info("[VeryfrontFSAdapter] WebSocket closed, reconnecting", {
+          delayMs: WS_RECONNECT_DELAY_MS,
+        });
         this.cleanupWebSocketTimers();
         this.wsReconnectTimer = setTimeout(() => {
           this.connectWebSocket(projectId);
@@ -202,7 +209,9 @@ export class VeryfrontFSAdapter implements FSAdapter {
     if (this.invalidationTimer) {
       clearTimeout(this.invalidationTimer);
     }
-    logger.info("[VeryfrontFSAdapter] Scheduling invalidation", { debounceMs: INVALIDATION_DEBOUNCE_MS });
+    logger.info("[VeryfrontFSAdapter] Scheduling invalidation", {
+      debounceMs: INVALIDATION_DEBOUNCE_MS,
+    });
     this.invalidationTimer = setTimeout(() => {
       this.invalidationTimer = null;
       this.performInvalidation();
@@ -255,7 +264,9 @@ export class VeryfrontFSAdapter implements FSAdapter {
       const files = await this.client.listAllFiles();
       this.cache.set("files:all", files);
     } catch (error) {
-      logger.warn("[VeryfrontFSAdapter] Failed to fetch files during selective invalidation", { error });
+      logger.warn("[VeryfrontFSAdapter] Failed to fetch files during selective invalidation", {
+        error,
+      });
     }
 
     // Notify browser to reload

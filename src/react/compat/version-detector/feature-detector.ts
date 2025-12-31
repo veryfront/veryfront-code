@@ -69,8 +69,8 @@ export async function detectReactVersionFromProject(projectDir: string): Promise
     const packageJsonPath = `${projectDir}/package.json`;
     const packageJson = JSON.parse(await Deno.readTextFile(packageJsonPath));
     const reactDep = packageJson.dependencies?.react ||
-                     packageJson.devDependencies?.react ||
-                     packageJson.peerDependencies?.react;
+      packageJson.devDependencies?.react ||
+      packageJson.peerDependencies?.react;
 
     if (reactDep) {
       // Strip version prefixes like ^, ~, >= etc
@@ -84,7 +84,10 @@ export async function detectReactVersionFromProject(projectDir: string): Promise
   } catch {
     // If package.json doesn't exist or can't be read, use bundled React
     version = React.version;
-    logger.debug("Could not read package.json, using bundled React version", { projectDir, version });
+    logger.debug("Could not read package.json, using bundled React version", {
+      projectDir,
+      version,
+    });
   }
 
   const { major, minor, patch } = parseVersion(version);

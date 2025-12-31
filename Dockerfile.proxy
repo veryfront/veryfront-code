@@ -1,0 +1,21 @@
+# Veryfront Proxy - Lightweight OAuth token proxy
+FROM denoland/deno:2.1.4
+
+WORKDIR /app
+
+# Copy only proxy files and shared dependencies
+COPY deno.json deno.lock* ./
+COPY proxy/ ./proxy/
+COPY src/server/utils/ ./src/server/utils/
+
+# Cache dependencies
+RUN deno cache proxy/main.ts
+
+EXPOSE 20000
+
+ENV PORT=20000
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD deno eval "const res = await fetch('http://localhost:' + Deno.env.get('PORT') + '/_proxy/health'); if (!res.ok) Deno.exit(1);"
+
+CMD ["run", "--allow-all", "--no-lock", "proxy/main.ts"]
