@@ -1,5 +1,6 @@
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import { extractParams } from "@veryfront/routing/slug-mapper/dynamic-route-matcher.ts";
+import { isDynamicSegment, EXTENSION_REGEX } from "@veryfront/core/utils/route-path-utils.ts";
 import { join } from "../platform/compat/path-helper.ts";
 import { logger, startTimer } from "@veryfront/utils";
 
@@ -125,7 +126,7 @@ export async function extractPagesRouteParams(
 
           if (isFile && i === segments.length - 1) {
             // This is the page file
-            patternParts.push(entryName.replace(/\.(tsx|jsx|ts|js|mdx)$/, ""));
+            patternParts.push(entryName.replace(EXTENSION_REGEX, ""));
             foundDynamic = true;
             break;
           } else if (entry.isDirectory) {
@@ -156,14 +157,4 @@ export async function extractPagesRouteParams(
   logger.debug("[RouteParams] extractPagesRouteParams", { stat: pagesStatCount, readDir: pagesReadDirCount });
   const pattern = patternParts.join("/");
   return extractParams(pattern, slug);
-}
-
-function isDynamicSegment(name: string): boolean {
-  // Handle both directory names like "[id]" and file names like "[id].tsx"
-  if (!name.startsWith("[")) return false;
-  // Check if it ends with ] or has ] before the file extension
-  if (name.endsWith("]")) return true;
-  // Check for pattern like "[id].tsx" or "[...slug].ts"
-  const match = name.match(/^\[\.{0,3}\w+\]\.\w+$/);
-  return match !== null;
 }

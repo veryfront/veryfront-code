@@ -9,7 +9,7 @@
  * - Approval flow
  */
 
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createWorkflowClient, WorkflowClient } from "../api/workflow-client.ts";
 import { workflow, step, loop, parallel, branch, waitForApproval } from "../dsl/index.ts";
 import { MemoryBackend } from "../backends/memory.ts";
@@ -21,7 +21,7 @@ const createMockTool = (name: string, handler: (input: any) => any): Tool => ({
   id: name,
   description: `Mock tool: ${name}`,
   parameters: z.object({}).passthrough(),
-  execute: async (input) => handler(input),
+  execute: (input) => Promise.resolve(handler(input)),
 });
 
 describe("Workflow Integration", () => {
@@ -184,7 +184,7 @@ describe("Workflow Integration", () => {
             steps: [
               step("run", { tool: infiniteTool }),
             ],
-            onMaxIterations: (ctx, loop) => ({
+            onMaxIterations: (_ctx, loop) => ({
               hitMax: true,
               iterations: loop.totalIterations,
             }),
@@ -212,8 +212,8 @@ describe("Workflow Integration", () => {
         steps: [
           loop("track-loop", {
             maxIterations: 3,
-            while: (ctx, loop) => loop.iteration < 3,
-            steps: (ctx, loop) => [
+            while: (_ctx, loop) => loop.iteration < 3,
+            steps: (_ctx, loop) => [
               step("track", {
                 tool: trackTool,
                 input: { iteration: loop.iteration },

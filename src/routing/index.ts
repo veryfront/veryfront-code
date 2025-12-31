@@ -20,7 +20,7 @@ export {
   slugToPath,
 } from "./slug-mapper/index.ts";
 
-export type { RouteData } from "./client/index.ts";
+export type { RouteData, SpaPageData } from "./client/index.ts";
 export {
   extractPageDataFromScript,
   NavigationHandlers,

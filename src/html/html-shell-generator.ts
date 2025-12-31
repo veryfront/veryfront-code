@@ -24,6 +24,68 @@ import {
 } from "./utils.ts";
 
 /**
+ * Convert a source path to a module URL for preloading.
+ * E.g., pages/index.mdx -> /_vf_modules/pages/index.js
+ */
+function pathToModuleUrl(path: string): string {
+  if (!path) return "";
+  return "/_vf_modules/" + path.replace(/\.(tsx|ts|jsx|mdx)$/, ".js");
+}
+
+/**
+ * Generate modulepreload hints for page and layout modules.
+ * These tell the browser to start loading modules immediately, in parallel.
+ */
+function generateModulePreloadHints(options: HTMLGenerationOptions): string {
+  const hints: string[] = [];
+
+  // Preload page module
+  if (options.pagePath) {
+    const projectDir = options.projectDir || "";
+    let relativePath = options.pagePath.replace(/\\/g, "/");
+    if (projectDir) {
+      const normalizedDir = projectDir.replace(/\\/g, "/").replace(/\/$/, "");
+      if (relativePath.startsWith(normalizedDir + "/")) {
+        relativePath = relativePath.substring(normalizedDir.length + 1);
+      }
+    }
+    relativePath = relativePath.replace(/^\//, "");
+    if (relativePath.startsWith("components/")) {
+      relativePath = relativePath.substring("components/".length);
+    }
+    const moduleUrl = pathToModuleUrl(relativePath);
+    if (moduleUrl) {
+      hints.push(`<link rel="modulepreload" href="${moduleUrl}">`);
+    }
+  }
+
+  // Preload layout modules
+  for (const layout of options.nestedLayouts || []) {
+    const layoutPath = layout.path || layout.componentPath || "";
+    if (!layoutPath) continue;
+
+    const projectDir = options.projectDir || "";
+    let relativePath = layoutPath.replace(/\\/g, "/");
+    if (projectDir) {
+      const normalizedDir = projectDir.replace(/\\/g, "/").replace(/\/$/, "");
+      if (relativePath.startsWith(normalizedDir + "/")) {
+        relativePath = relativePath.substring(normalizedDir.length + 1);
+      }
+    }
+    relativePath = relativePath.replace(/^\//, "");
+    if (relativePath.startsWith("components/")) {
+      relativePath = relativePath.substring("components/".length);
+    }
+    const moduleUrl = pathToModuleUrl(relativePath);
+    if (moduleUrl) {
+      hints.push(`<link rel="modulepreload" href="${moduleUrl}">`);
+    }
+  }
+
+  return hints.join("\n  ");
+}
+
+/**
  * Generate HTML shell parts for streaming
  * Returns the start (before content) and end (after content) parts of the HTML document
  */
@@ -116,6 +178,9 @@ ${tailwindConfig.customCSS}
     }`
     : "";
 
+  // Generate modulepreload hints for page and layout modules (faster cold start)
+  const modulePreloadHints = generateModulePreloadHints(options);
+
   const start = `<!DOCTYPE html>
 <html lang="${escapeHTML(lang)}">
 <head>
@@ -126,6 +191,9 @@ ${tailwindConfig.customCSS}
   <script type="importmap"${nonce ? ` nonce="${nonce}"` : ""}>
   ${importMapJson}
   </script>
+
+  <!-- Modulepreload hints for faster cold start -->
+  ${modulePreloadHints}
 
   <!-- Tailwind CSS: CDN in dev (runtime compilation), UnoCSS in prod (pre-generated) -->
   ${tailwindCDN}

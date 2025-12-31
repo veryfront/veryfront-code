@@ -57,6 +57,43 @@ async function pipeToString(
   });
 }
 
+/**
+ * Convert Node.js pipeable stream to Web ReadableStream for true streaming SSR
+ *
+ * This enables immediate TTFB by returning a ReadableStream that can be
+ * piped to the HTTP response before React finishes rendering.
+ */
+function pipeToReadableStream(
+  pipeFn: (writable: NodeJS.WritableStream) => void,
+): ReadableStream<Uint8Array> {
+  // Use ReadableStream.from with an async generator for clean stream conversion
+  return new ReadableStream<Uint8Array>({
+    async start(controller) {
+      const { PassThrough } = await import("node:stream");
+      const passThrough = new PassThrough();
+
+      passThrough.on("data", (chunk: Uint8Array) => {
+        controller.enqueue(new Uint8Array(chunk));
+      });
+
+      passThrough.on("end", () => {
+        controller.close();
+      });
+
+      passThrough.on("error", (err: Error) => {
+        controller.error(err);
+      });
+
+      // Start piping React output
+      try {
+        pipeFn(passThrough);
+      } catch (err) {
+        controller.error(err);
+      }
+    },
+  });
+}
+
 export interface SSRRenderOptions {
   mode: string;
   wantsStream: boolean;
@@ -74,16 +111,37 @@ export interface SSRRenderResult {
  * This class manages the React SSR process, supporting:
  * - React 18/19 streaming SSR (renderToReadableStream)
  * - React 17 string SSR (renderToString)
- * - Automatic version detection and method selection
+ * - Per-project version detection for multi-tenant rendering
  * - Stream/string delivery modes
  */
 export class SSRRenderer {
   private readonly mode: string;
   private readonly adapter?: RuntimeAdapter;
+  private readonly projectDir?: string;
+  private versionInfo: ReturnType<typeof getReactVersionInfo> | null = null;
 
-  constructor(mode: string, adapter?: RuntimeAdapter) {
+  constructor(mode: string, adapter?: RuntimeAdapter, projectDir?: string) {
     this.mode = mode;
     this.adapter = adapter;
+    this.projectDir = projectDir;
+  }
+
+  /**
+   * Get React version info, using per-project detection for multi-tenant support.
+   */
+  private async getVersionInfo(): Promise<ReturnType<typeof getReactVersionInfo>> {
+    if (this.versionInfo) {
+      return this.versionInfo;
+    }
+
+    if (this.projectDir) {
+      const { getReactVersionInfoForProject } = await import("@veryfront/react");
+      this.versionInfo = await getReactVersionInfoForProject(this.projectDir);
+    } else {
+      this.versionInfo = getReactVersionInfo();
+    }
+
+    return this.versionInfo;
   }
 
   /**
@@ -108,7 +166,8 @@ export class SSRRenderer {
 
     let html = "";
     let stream: ReadableStream | null = null;
-    const versionInfo = getReactVersionInfo();
+    // Use per-project version detection for multi-tenant support
+    const versionInfo = await this.getVersionInfo();
 
     // Determine if we should use streaming
     // IMPORTANT: Disable streaming in compiled binaries because React's streaming SSR
@@ -140,21 +199,15 @@ export class SSRRenderer {
       const renderResult = await renderToStreamAdapter(pageElement);
 
       if (renderResult.stream) {
-        // If client wants stream, return it directly without buffering
-        if (
-          options.wantsStream && typeof (renderResult.stream as ReadableStream).tee === "function"
-        ) {
-          const [clientStream, bufferStream] = (renderResult.stream as ReadableStream).tee();
-          stream = clientStream;
-          html = await streamToString(bufferStream);
-
-          if (options.debugMode) {
-            logger.debug("Streaming SSR - teeing stream and buffering copy", {
-              htmlLength: html.length,
-            });
-          }
+        // TRUE STREAMING: If client wants stream, return it directly WITHOUT buffering
+        // This enables immediate TTFB - the HTML shell is sent before React finishes rendering
+        if (options.wantsStream) {
+          stream = renderResult.stream as ReadableStream;
+          // Don't buffer! HTML stays empty, ETag will be skipped for streaming responses
+          // This is the key optimization for fast TTFB
+          logger.debug("True streaming SSR - returning stream without buffering");
         } else {
-          // Client doesn't want stream or can't tee - buffer it
+          // Client doesn't want stream - buffer it for HTML string response
           html = await streamToString(renderResult.stream);
 
           if (options.debugMode) {
@@ -165,14 +218,17 @@ export class SSRRenderer {
         }
       } else if (renderResult.pipe) {
         // Handle Node.js renderToPipeableStream result
-        // This is the case when running in Node.js - the result has { pipe, abort }
-        logger.debug(
-          "Converting pipeable stream to string (Node.js renderToPipeableStream)",
-        );
-        html = await pipeToString(renderResult.pipe);
+        if (options.wantsStream) {
+          // TRUE STREAMING: Convert Node.js pipe to Web ReadableStream
+          logger.debug("Converting pipeable stream to ReadableStream for true streaming");
+          stream = pipeToReadableStream(renderResult.pipe);
+        } else {
+          logger.debug("Converting pipeable stream to string (Node.js renderToPipeableStream)");
+          html = await pipeToString(renderResult.pipe);
 
-        if (options.debugMode) {
-          logger.debug("Pipeable SSR completed", { htmlLength: html.length });
+          if (options.debugMode) {
+            logger.debug("Pipeable SSR completed", { htmlLength: html.length });
+          }
         }
       } else if (renderResult.html) {
         html = renderResult.html;
@@ -182,10 +238,6 @@ export class SSRRenderer {
           ErrorCode.RENDER_ERROR,
         );
       }
-
-      // Note: We don't do a second render pass if stream is unavailable
-      // The client will receive the HTML string, which is sufficient
-      // A second render would double the SSR time (300ms -> 600ms) with no benefit
     } else {
       // Use string rendering for React 17 or development mode
       logger.debug("Using string SSR", {

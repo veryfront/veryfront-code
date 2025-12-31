@@ -7,6 +7,7 @@
  * @module server/handlers/request/ssr/error-page-fallback
  */
 
+import type * as React from "react";
 import type { HandlerContext } from "../../types.ts";
 import type { ResponseBuilder } from "@veryfront/security/index.ts";
 import { join as joinPath } from "std/path/mod.ts";

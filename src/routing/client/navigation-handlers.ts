@@ -7,6 +7,9 @@ export interface NavigationCallbacks {
   onPrefetch: (url: string) => void;
 }
 
+// Maximum scroll positions to store (LRU eviction)
+const MAX_SCROLL_POSITIONS = 100;
+
 export class NavigationHandlers {
   private prefetchQueue = new Set<string>();
   private pendingTimeouts = new Map<string, ReturnType<typeof setTimeout>>();
@@ -28,7 +31,9 @@ export class NavigationHandlers {
 
   createClickHandler(callbacks: NavigationCallbacks) {
     return (event: MouseEvent) => {
-      const anchor = findAnchorElement(event.target as HTMLElement);
+      if (!(event.target instanceof HTMLElement)) return;
+
+      const anchor = findAnchorElement(event.target);
       if (!anchor || !isInternalLink(anchor)) return;
 
       const href = anchor.getAttribute("href");
@@ -49,7 +54,9 @@ export class NavigationHandlers {
 
   createMouseOverHandler(callbacks: NavigationCallbacks) {
     return (event: MouseEvent) => {
-      const target = event.target as HTMLElement;
+      if (!(event.target instanceof HTMLElement)) return;
+
+      const target = event.target;
       if (target.tagName !== "A") return;
 
       const href = target.getAttribute("href");
@@ -80,22 +87,28 @@ export class NavigationHandlers {
 
   saveScrollPosition(path: string): void {
     try {
+      // LRU eviction if at capacity
+      if (this.scrollPositions.size >= MAX_SCROLL_POSITIONS) {
+        const oldest = this.scrollPositions.keys().next().value;
+        if (oldest) this.scrollPositions.delete(oldest);
+      }
+
       const scrollY = globalThis.scrollY;
       if (typeof scrollY === "number") {
         this.scrollPositions.set(path, scrollY);
       } else {
-        logger.debug("[router] No valid scrollY value available");
+        logger.debug("[Veryfront] No valid scrollY value available");
         this.scrollPositions.set(path, 0);
       }
     } catch (error) {
-      logger.warn("[router] failed to record scroll position", error);
+      logger.warn("[Veryfront] failed to record scroll position", error);
     }
   }
 
   getScrollPosition(path: string): number {
     const position = this.scrollPositions.get(path);
     if (position === undefined) {
-      logger.debug(`[router] No scroll position stored for ${path}`);
+      logger.debug(`[Veryfront] No scroll position stored for ${path}`);
       return 0;
     }
     return position;

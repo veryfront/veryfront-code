@@ -127,11 +127,11 @@ class StateBridge implements StateStore {
       }
       throw new Error("Persisted state is not an object");
     } catch (error) {
-      rendererLogger.error("[StateBridge] Failed to parse state from sessionStorage:", error);
+      rendererLogger.error("[Veryfront] Failed to parse state from sessionStorage:", error);
       try {
         sessionStorage.removeItem("veryfront-state");
       } catch (clearError) {
-        rendererLogger.error("[StateBridge] Failed to clear corrupted state:", clearError);
+        rendererLogger.error("[Veryfront] Failed to clear corrupted state:", clearError);
       }
       return null;
     }

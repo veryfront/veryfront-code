@@ -114,7 +114,7 @@ export function manageFocus(container: HTMLElement): void {
       focusElement.focus({ preventScroll: true });
     }
   } catch (error) {
-    logger.warn("[router] focus management failed", error);
+    logger.warn("[Veryfront] focus management failed", error);
   }
 }
 
@@ -125,12 +125,12 @@ export function extractPageDataFromScript(): PageData | null {
   try {
     const content = pageDataScript.textContent;
     if (!content) {
-      logger.warn("[dom-utils] Page data script has no content");
+      logger.warn("[Veryfront] Page data script has no content");
       return {};
     }
     return JSON.parse(content) as PageData;
   } catch (error) {
-    logger.error("[dom-utils] Failed to parse page data:", error);
+    logger.error("[Veryfront] Failed to parse page data:", error);
     return null;
   }
 }
@@ -148,7 +148,7 @@ export function parsePageDataFromHTML(html: string): {
   if (root) {
     content = root.innerHTML || "";
   } else {
-    logger.warn("[dom-utils] No root element found in HTML");
+    logger.warn("[Veryfront] No root element found in HTML");
   }
 
   const pageDataScript = doc.querySelector("script[data-veryfront-page]");
@@ -158,12 +158,12 @@ export function parsePageDataFromHTML(html: string): {
     try {
       const content = pageDataScript.textContent;
       if (!content) {
-        logger.warn("[dom-utils] Page data script in HTML has no content");
+        logger.warn("[Veryfront] Page data script in HTML has no content");
       } else {
         pageData = JSON.parse(content) as PageData;
       }
     } catch (error) {
-      logger.error("[dom-utils] Failed to parse page data from HTML:", error);
+      logger.error("[Veryfront] Failed to parse page data from HTML:", error);
     }
   }
 

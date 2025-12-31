@@ -8,11 +8,13 @@ export type {
 
 export { parseVersion } from "./version-parser.ts";
 
-export { detectReactVersion } from "./feature-detector.ts";
+export { detectReactVersion, detectReactVersionFromProject } from "./feature-detector.ts";
 
 export {
   __resetReactVersionCacheForTests,
+  clearProjectVersionCache,
   getReactVersionInfo,
+  getReactVersionInfoForProject,
   hasFeature,
 } from "./version-cache.ts";
 

@@ -1,7 +1,8 @@
 import { join } from "../../platform/compat/path-helper.ts";
-import { rendererLogger as logger } from "@veryfront/utils";
+import { rendererLogger as logger, timeAsync } from "@veryfront/utils";
 import { MDXCacheAdapter } from "@veryfront/transforms/mdx/index.ts";
 import { isCompiledBinary } from "@veryfront/utils";
+import { preloadModules } from "./preload-modules.ts";
 import { DEFAULT_CACHE_DIR } from "@veryfront/utils/constants/server.ts";
 import { ComponentRegistry } from "../ssr/component-registry.ts";
 import { VirtualModuleSystem } from "../virtual-module-system.ts";
@@ -63,6 +64,9 @@ export class RendererLifecycle {
       projectDir: this.configManager.getProjectDir(),
       mode: this.configManager.getMode(),
     });
+
+    // Preload heavy modules eagerly to reduce first-request latency
+    await timeAsync("preload-modules", preloadModules, "renderer-init");
 
     // Get or detect adapter
     this.adapter = this.configManager.getAdapter();
@@ -159,6 +163,7 @@ export class RendererLifecycle {
     const ssrRenderer = new SSRRenderer(
       this.configManager.getMode(),
       this.adapter,
+      this.configManager.getProjectDir(),
     );
 
     const pageRenderer = new PageRenderer({

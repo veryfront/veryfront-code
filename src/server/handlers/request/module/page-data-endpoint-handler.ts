@@ -71,19 +71,26 @@ export async function handlePageDataEndpoint(
       builder
         .withCORS(req, ctx.securityConfig?.cors)
         .withSecurity(ctx.securityConfig ?? undefined)
-        .withCache("no-cache")
+        .withCache({ maxAge: 60, public: true })
         .withETag(etag)
         .json(JSON.parse(body), 200),
     );
   } catch (e) {
+    // Determine appropriate status code based on error type
+    const errorMessage = getErrorMessage(e);
+    const isNotFound = errorMessage.toLowerCase().includes("not found") ||
+                       errorMessage.toLowerCase().includes("404") ||
+                       (e instanceof Error && e.message.toLowerCase().includes("no page"));
+    const status = isNotFound ? 404 : 500;
+
     return respond(
       ResponseBuilder.json(
-        { error: getErrorMessage(e) },
+        { error: errorMessage, status },
         req,
         {
           securityConfig: ctx.securityConfig,
           corsConfig: ctx.securityConfig?.cors,
-          status: 404,
+          status,
         },
       ),
     );

@@ -7,6 +7,7 @@ import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import { join, relative } from "std/path/mod.ts";
 import type { AppRouteInfo, RouteInfo } from "./build-types.ts";
 import { discoverFiles } from "@veryfront/core/utils/file-discovery.ts";
+import { isDynamicSegment } from "@veryfront/core/utils/route-path-utils.ts";
 
 const PAGE_EXTENSIONS = [".mdx", ".tsx", ".jsx", ".ts"];
 
@@ -93,12 +94,7 @@ export async function collectAppRoutes(
   }
 }
 
-const DYNAMIC_SEGMENT_PATTERNS = [/^\[.*\]$/, /^\[\.\.\..*\]$/, /^\[\[\.\.\..*\]\]$/];
 const PAGE_CANDIDATES = ["page.tsx", "page.jsx", "page.ts", "page.js"];
-
-function isDynamicSegment(dirName: string): boolean {
-  return DYNAMIC_SEGMENT_PATTERNS.some((pattern) => pattern.test(dirName));
-}
 
 function isForceDynamic(source: string): boolean {
   return /export\s+const\s+dynamic\s*=\s*["']force-dynamic["']/.test(source);

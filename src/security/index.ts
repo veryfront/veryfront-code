@@ -13,6 +13,7 @@
 
 // Base Handler
 export { BaseHandler } from "./http/base-handler.ts";
+export type { HandlerHelpers } from "./http/base-handler.ts";
 
 // Input Validation (from input-validation/)
 export type {

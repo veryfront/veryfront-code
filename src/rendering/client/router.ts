@@ -87,7 +87,7 @@ export class VeryfrontRouter {
   }
 
   registerNavigationHandler(handler: SpaNavigationHandler): void {
-    logger.debug("[router] Registering SPA navigation handler");
+    logger.debug("[Veryfront] Registering SPA navigation handler");
     this.spaNavigationHandler = handler;
     this.spaMode = true;
   }
@@ -96,12 +96,12 @@ export class VeryfrontRouter {
     try {
       const options = globalThis.__VERYFRONT_ROUTER_OPTS__;
       if (!options) {
-        logger.debug("[router] No global options configured");
+        logger.debug("[Veryfront] No global options configured");
         return {};
       }
       return options;
     } catch (error) {
-      logger.error("[router] Failed to read global options:", error);
+      logger.error("[Veryfront] Failed to read global options:", error);
       return {};
     }
   }
@@ -153,7 +153,7 @@ export class VeryfrontRouter {
   }
 
   private async loadSpaPage(path: string): Promise<void> {
-    logger.debug(`[router] Loading SPA page: ${path}`);
+    logger.debug(`[Veryfront] Loading SPA page: ${path}`);
 
     try {
       const spaData = await this.pageLoader.loadSpaPageData(path);
@@ -166,7 +166,7 @@ export class VeryfrontRouter {
       this.handleScrollAfterNavigation();
       this.options.onComplete?.(path);
     } catch (error) {
-      logger.error(`[router] Failed to load SPA page ${path}`, error as Error);
+      logger.error(`[Veryfront] Failed to load SPA page ${path}`, error instanceof Error ? error : new Error(String(error)));
       this.options.onError?.(error as Error);
       this.pageTransition.showError(error as Error);
     }
@@ -179,7 +179,7 @@ export class VeryfrontRouter {
     try {
       globalThis.scrollTo(0, isPopState ? scrollY : 0);
     } catch (error) {
-      logger.warn("[router] scroll handling failed", error);
+      logger.warn("[Veryfront] scroll handling failed", error);
     }
 
     this.navigationHandlers.clearPopStateFlag();
@@ -190,7 +190,7 @@ export class VeryfrontRouter {
       logger.debug(`Loading ${path} from cache`);
       const data = this.pageLoader.getCached(path);
       if (!data) {
-        logger.warn(`[router] Cache entry for ${path} was unexpectedly null, fetching fresh data`);
+        logger.warn(`[Veryfront] Cache entry for ${path} was unexpectedly null, fetching fresh data`);
         // Fall through to fetch fresh data
       } else {
         if (updateUI) {

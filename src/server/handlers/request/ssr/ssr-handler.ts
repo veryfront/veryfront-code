@@ -142,19 +142,48 @@ export class SSRHandler extends BaseHandler {
       this.logDebug("SSR successful", { slug, params }, ctx);
       endRequest(requestId);
 
-      const etag = computeSSRETag(result.ssrHash, result.html);
+      // TRUE STREAMING: If we have a stream but no buffered HTML, this is true streaming mode
+      // Skip ETag/304 checks since we don't have the content to hash
+      const isTrueStreaming = result.stream && !result.html;
+
       // Disable caching in development to prevent nonce mismatches
       // (cached HTML has old nonces, but each request generates a fresh nonce for CSP)
       const cacheStrategy = ctx.mode === "development" ? "no-cache" : "short";
       const isHeadRequest = req.method.toUpperCase() === "HEAD";
+      const builder = this.createResponseBuilder(ctx, nonce);
+
+      // For true streaming, skip ETag and return stream immediately for fast TTFB
+      if (isTrueStreaming) {
+        this.logDebug("True streaming SSR - returning stream immediately", { slug }, ctx);
+
+        const response = builder
+          .withCORS(req, ctx.securityConfig?.cors)
+          .withSecurity(ctx.securityConfig ?? undefined)
+          .withCache("no-cache") // Don't cache streaming responses
+          .withContentType(
+            getContentType(".html"),
+            result.stream!, // Non-null: isTrueStreaming already verified stream exists
+            HTTP_OK,
+          );
+
+        if (isHeadRequest) {
+          await response.body?.cancel().catch(() => { /* ignore */ });
+          return this.respond(
+            new Response(null, { status: response.status, headers: response.headers }),
+          );
+        }
+
+        return this.respond(response);
+      }
+
+      // Buffered mode: compute ETag and support 304 responses
+      const etag = computeSSRETag(result.ssrHash, result.html);
 
       // Check if-none-match for 304 response
       // IMPORTANT: Skip 304 in dev mode to prevent CSP nonce mismatch
       // (304 returns new nonce in CSP but browser uses cached HTML with old nonce)
       const isDev = ctx.mode === "development";
       if (!isDev && hasMatchingEtag(req, etag)) {
-        // Pass nonce to builder to ensure CSP header matches HTML nonce
-        const builder = this.createResponseBuilder(ctx, nonce);
         return this.respond(
           builder
             .withCORS(req, ctx.securityConfig?.cors)
@@ -164,8 +193,6 @@ export class SSRHandler extends BaseHandler {
         );
       }
 
-      // Pass nonce to builder to ensure CSP header matches HTML nonce
-      const builder = this.createResponseBuilder(ctx, nonce);
       const response = builder
         .withCORS(req, ctx.securityConfig?.cors)
         .withSecurity(ctx.securityConfig ?? undefined)
