@@ -210,8 +210,9 @@ export default function MainLayout({ children }) {
 }`,
           );
 
+          // Note: filename must not contain "layout" as it triggers layout detection
           await Deno.writeTextFile(
-            join(context.projectDir, "pages", "with-layout.mdx"),
+            join(context.projectDir, "pages", "styled-page.mdx"),
             `---
 title: With Layout
 layout: main
@@ -226,7 +227,7 @@ layout: main
             mode: "development",
           });
 
-          const result = await renderer.renderPage("with-layout");
+          const result = await renderer.renderPage("styled-page");
           assertStringIncludes(result.html, "main-layout");
           assertStringIncludes(result.html, "Page Content");
         });
@@ -253,8 +254,9 @@ export default function MainLayout({ children }) {
 }`,
           );
 
+          // Note: filename must not contain "layout" as it triggers layout detection
           await Deno.writeTextFile(
-            join(context.projectDir, "pages", "no-layout.mdx"),
+            join(context.projectDir, "pages", "raw-page.mdx"),
             `---
 title: No Layout
 layout: false
@@ -269,7 +271,7 @@ layout: false
             mode: "development",
           });
 
-          const result = await renderer.renderPage("no-layout");
+          const result = await renderer.renderPage("raw-page");
           assertStringIncludes(result.html, "Content Without Layout");
         });
       });
@@ -495,9 +497,25 @@ title: Stream Test
             delivery: "stream",
           });
 
-          assertEquals(typeof result.html, "string");
-          assertStringIncludes(result.html, "Streaming Content");
-          // Stream might be null in development mode
+          // When streaming delivery is requested, content may go to stream or html
+          // depending on mode and configuration
+          if (result.stream) {
+            // Consume the stream to verify content
+            const reader = result.stream.getReader();
+            const decoder = new TextDecoder();
+            let fullContent = "";
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) break;
+              fullContent += decoder.decode(value, { stream: true });
+            }
+            fullContent += decoder.decode();
+            assertStringIncludes(fullContent, "Streaming Content");
+          } else {
+            // Fallback to html if stream is null
+            assertEquals(typeof result.html, "string");
+            assertStringIncludes(result.html, "Streaming Content");
+          }
         });
       });
 
