@@ -17,26 +17,6 @@ jobs:
       - name: Clone repository
         uses: actions/checkout@v4
 
-      - name: Setup Node.js (for esbuild binary)
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-
-      - name: Install esbuild binary for Deno
-        run: |
-          # Install the platform-specific esbuild binary package
-          npm install @esbuild/linux-x64@0.20.1 esbuild@0.20.1
-          # Create the cache directory structure Deno esbuild expects
-          CACHE_DIR="$HOME/.cache/esbuild/bin"
-          mkdir -p "$CACHE_DIR"
-          # The Deno esbuild module looks for the binary with this exact name
-          BINARY_NAME="@esbuild-linux-x64@0.20.1"
-          # Copy the native binary to the expected cache location
-          cp ./node_modules/@esbuild/linux-x64/bin/esbuild "$CACHE_DIR/$BINARY_NAME"
-          chmod +x "$CACHE_DIR/$BINARY_NAME"
-          # Verify the binary works
-          "$CACHE_DIR/$BINARY_NAME" --version
-
       - name: Setup Deno
         uses: denoland/setup-deno@v2
         with:
