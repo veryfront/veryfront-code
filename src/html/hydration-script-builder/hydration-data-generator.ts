@@ -37,12 +37,18 @@ function inferPageType(pagePath?: string): "mdx" | "tsx" | "jsx" | "ts" | "js" |
   if (!pagePath) return undefined;
   const ext = pagePath.split(".").pop()?.toLowerCase();
   switch (ext) {
-    case "mdx": return "mdx";
-    case "tsx": return "tsx";
-    case "jsx": return "jsx";
-    case "ts": return "ts";
-    case "js": return "js";
-    default: return undefined;
+    case "mdx":
+      return "mdx";
+    case "tsx":
+      return "tsx";
+    case "jsx":
+      return "jsx";
+    case "ts":
+      return "ts";
+    case "js":
+      return "js";
+    default:
+      return undefined;
   }
 }
 
@@ -64,9 +70,15 @@ export function generateHydrationData(
     props: props || {},
     params: params || {},
     layouts,
-    providers: (options.providerPaths || []).map((p) => toProjectRelativePath(p, options.projectDir)),
-    appPath: options.appPath ? toProjectRelativePath(options.appPath, options.projectDir) : undefined,
-    pagePath: options.pagePath ? toProjectRelativePath(options.pagePath, options.projectDir) : undefined,
+    providers: (options.providerPaths || []).map((p) =>
+      toProjectRelativePath(p, options.projectDir)
+    ),
+    appPath: options.appPath
+      ? toProjectRelativePath(options.appPath, options.projectDir)
+      : undefined,
+    pagePath: options.pagePath
+      ? toProjectRelativePath(options.pagePath, options.projectDir)
+      : undefined,
     pageType: options.pageType || inferPageType(options.pagePath),
     frontmatter: options.frontmatter,
     layoutProps: options.layoutProps,

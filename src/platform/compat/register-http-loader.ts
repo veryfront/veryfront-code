@@ -10,7 +10,7 @@
  * @module platform/compat/register-http-loader
  */
 
-import { isNode, isDeno } from "./runtime.ts";
+import { isDeno, isNode } from "./runtime.ts";
 
 let registered = false;
 let httpLoaderAvailable = false;

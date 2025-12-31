@@ -108,9 +108,11 @@ export function invalidateModulePaths(changedPaths: string[]): void {
         .replace(/\.js$/, "");
 
       // Check if the cached module matches the changed file
-      if (normalizedCached === normalizedChanged ||
-          normalizedCached.endsWith(`/${normalizedChanged}`) ||
-          normalizedChanged.endsWith(`/${normalizedCached}`)) {
+      if (
+        normalizedCached === normalizedChanged ||
+        normalizedCached.endsWith(`/${normalizedChanged}`) ||
+        normalizedChanged.endsWith(`/${normalizedCached}`)
+      ) {
         _modulePathCache.delete(cachedPath);
         invalidatedCount++;
         logger.debug(`${LOG_PREFIX_MDX_LOADER} Invalidated module: ${cachedPath}`);
@@ -118,7 +120,9 @@ export function invalidateModulePaths(changedPaths: string[]): void {
     }
   }
 
-  logger.info(`${LOG_PREFIX_MDX_LOADER} Selective invalidation: ${invalidatedCount} modules for ${changedPaths.length} files`);
+  logger.info(
+    `${LOG_PREFIX_MDX_LOADER} Selective invalidation: ${invalidatedCount} modules for ${changedPaths.length} files`,
+  );
 }
 
 /**
@@ -551,7 +555,9 @@ async function _transformModuleServerImports(
     return code;
   }
 
-  logger.info(`${LOG_PREFIX_MDX_LOADER} Found ${imports.length} /_vf_modules/ imports to transform`);
+  logger.info(
+    `${LOG_PREFIX_MDX_LOADER} Found ${imports.length} /_vf_modules/ imports to transform`,
+  );
 
   const { transform } = await import("esbuild/mod.js");
   let result = code;
@@ -629,7 +635,9 @@ async function _transformModuleServerImports(
       const newFrom = `from "file://${transformedPath}"`;
       result = result.replace(original, newFrom);
 
-      logger.info(`${LOG_PREFIX_MDX_LOADER} Transformed /_vf_modules/${modulePath} -> ${transformedPath}`);
+      logger.info(
+        `${LOG_PREFIX_MDX_LOADER} Transformed /_vf_modules/${modulePath} -> ${transformedPath}`,
+      );
     } catch (error) {
       logger.warn(`${LOG_PREFIX_MDX_LOADER} Failed to transform /_vf_modules/${modulePath}`, error);
     }
@@ -718,7 +726,10 @@ export async function loadModuleESM(
 
     // Recursive function to fetch and cache a module
     // deno-lint-ignore no-inner-declarations
-    async function fetchAndCacheModule(modulePath: string, parentModulePath?: string): Promise<string | null> {
+    async function fetchAndCacheModule(
+      modulePath: string,
+      parentModulePath?: string,
+    ): Promise<string | null> {
       // Normalize the module path (remove leading slash, resolve relative paths)
       let normalizedPath = modulePath.replace(/^\//, "");
 
@@ -761,110 +772,219 @@ export async function loadModuleESM(
       const result = await (async (): Promise<string | null> => {
         // Check persistent module path cache first
         const pathCache = await getModulePathCache(context.esmCacheDir!);
-      const cachedPath = pathCache.get(normalizedPath);
-      if (cachedPath) {
-        // Verify the file still exists
+        const cachedPath = pathCache.get(normalizedPath);
+        if (cachedPath) {
+          // Verify the file still exists
+          try {
+            const stat = await adapter.fs.stat(cachedPath);
+            if (stat?.isFile) {
+              return cachedPath;
+            }
+          } catch {
+            // Cache entry is stale, remove it
+            pathCache.delete(normalizedPath);
+          }
+        }
+
+        // DIRECT TRANSFORM: Skip HTTP round-trip by calling transformToESM directly
+        // This saves ~50-100ms per module
         try {
-          const stat = await adapter.fs.stat(cachedPath);
-          if (stat?.isFile) {
-            return cachedPath;
+          // Extract file path from module path (remove _vf_modules/ prefix)
+          const filePathWithoutJs = normalizedPath
+            .replace(/^_vf_modules\//, "")
+            .replace(/\.js$/, "");
+
+          // Try to find and read the source file
+          const extensions = [".tsx", ".ts", ".jsx", ".js", ".mdx"];
+          // Also try common directory prefixes
+          const prefixes = ["", "src/"];
+          let sourceCode: string | null = null;
+          let actualFilePath: string | null = null;
+
+          // Check if path already has a known extension (e.g., DocsLayout.mdx from DocsLayout.mdx.js)
+          const hasKnownExt = extensions.some((ext) => filePathWithoutJs.endsWith(ext));
+
+          // If path already has extension, try it directly first
+          if (hasKnownExt) {
+            for (const prefix of prefixes) {
+              const tryPath = prefix + filePathWithoutJs;
+              try {
+                const content = await adapter.fs.readFile(tryPath);
+                sourceCode = typeof content === "string"
+                  ? content
+                  : new TextDecoder().decode(content as Uint8Array);
+                actualFilePath = tryPath;
+                break;
+              } catch {
+                // Try next prefix
+              }
+            }
           }
-        } catch {
-          // Cache entry is stale, remove it
-          pathCache.delete(normalizedPath);
-        }
-      }
 
-      // DIRECT TRANSFORM: Skip HTTP round-trip by calling transformToESM directly
-      // This saves ~50-100ms per module
-      try {
-        // Extract file path from module path (remove _vf_modules/ prefix)
-        const filePathWithoutJs = normalizedPath
-          .replace(/^_vf_modules\//, "")
-          .replace(/\.js$/, "");
+          // If not found yet, try adding extensions
+          if (!sourceCode) {
+            // Strip any existing extension before adding new ones
+            const filePathWithoutExt = hasKnownExt
+              ? filePathWithoutJs.replace(/\.(tsx|ts|jsx|js|mdx)$/, "")
+              : filePathWithoutJs;
 
-        // Try to find and read the source file
-        const extensions = [".tsx", ".ts", ".jsx", ".js", ".mdx"];
-        // Also try common directory prefixes
-        const prefixes = ["", "src/"];
-        let sourceCode: string | null = null;
-        let actualFilePath: string | null = null;
+            outer: for (const prefix of prefixes) {
+              for (const ext of extensions) {
+                const tryPath = prefix + filePathWithoutExt + ext;
+                try {
+                  const content = await adapter.fs.readFile(tryPath);
+                  sourceCode = typeof content === "string"
+                    ? content
+                    : new TextDecoder().decode(content as Uint8Array);
+                  actualFilePath = tryPath;
+                  break outer;
+                } catch {
+                  // Try next extension
+                }
+              }
+            }
+          }
 
-        // Check if path already has a known extension (e.g., DocsLayout.mdx from DocsLayout.mdx.js)
-        const hasKnownExt = extensions.some((ext) => filePathWithoutJs.endsWith(ext));
+          // If not found, try index files
+          if (!sourceCode) {
+            // Use base path without extension for index lookup
+            const basePath = hasKnownExt
+              ? filePathWithoutJs.replace(/\.(tsx|ts|jsx|js|mdx)$/, "")
+              : filePathWithoutJs;
 
-        // If path already has extension, try it directly first
-        if (hasKnownExt) {
-          for (const prefix of prefixes) {
-            const tryPath = prefix + filePathWithoutJs;
+            outer: for (const prefix of prefixes) {
+              for (const ext of extensions) {
+                const tryPath = `${prefix}${basePath}/index${ext}`;
+                try {
+                  const content = await adapter.fs.readFile(tryPath);
+                  sourceCode = typeof content === "string"
+                    ? content
+                    : new TextDecoder().decode(content as Uint8Array);
+                  actualFilePath = tryPath;
+                  break outer;
+                } catch {
+                  // Try next extension
+                }
+              }
+            }
+          }
+
+          if (!sourceCode || !actualFilePath) {
+            // Fallback to HTTP fetch if direct file read fails
+            // This handles cases where files are in remote storage (Veryfront API)
+            logger.debug(
+              `${LOG_PREFIX_MDX_LOADER} Direct read failed, falling back to HTTP: ${filePathWithoutJs}`,
+            );
+            const port =
+              (globalThis as { Deno?: { env: { get(key: string): string | undefined } } })
+                .Deno?.env?.get("PORT") || "3001";
+            const moduleUrl = `http://localhost:${port}/${normalizedPath}?ssr=true`;
+            const response = await fetch(moduleUrl);
+            if (!response.ok) {
+              logger.warn(
+                `${LOG_PREFIX_MDX_LOADER} HTTP fetch also failed: ${moduleUrl} (${response.status})`,
+              );
+              return null;
+            }
+            let moduleCode = await response.text();
+            // Add external param to esm.sh URLs to prevent React bundling
+            moduleCode = addExternalToEsmShUrls(moduleCode);
+            // Normalize React imports to npm:
+            moduleCode = normalizeReactToNpm(moduleCode);
+
+            // Find and recursively process any /_vf_modules/ imports
+            const vfModuleImportPattern = /from\s+["'](\/?_vf_modules\/[^"'?]+)(?:\?[^"']*)?["']/g;
+            const nestedImports: Array<{ original: string; path: string }> = [];
+            let match;
+            while ((match = vfModuleImportPattern.exec(moduleCode)) !== null) {
+              if (match[1]) {
+                nestedImports.push({ original: match[0], path: match[1].replace(/^\//, "") });
+              }
+            }
+
+            // Also handle relative imports
+            const relativeImportPattern = /from\s+["'](\.\.?\/[^"'?]+)(?:\?[^"']*)?["']/g;
+            const relativeImports: Array<{ original: string; path: string }> = [];
+            let relMatch;
+            while ((relMatch = relativeImportPattern.exec(moduleCode)) !== null) {
+              if (relMatch[1]) {
+                relativeImports.push({ original: relMatch[0], path: relMatch[1] });
+              }
+            }
+
+            // Process nested imports IN PARALLEL
+            const nestedResults = await Promise.all(
+              nestedImports.map(async ({ original, path: nestedPath }) => {
+                const nestedFilePath = await fetchAndCacheModule(nestedPath, normalizedPath);
+                return { original, nestedFilePath };
+              }),
+            );
+            for (const { original, nestedFilePath } of nestedResults) {
+              if (nestedFilePath) {
+                moduleCode = moduleCode.replace(original, `from "file://${nestedFilePath}"`);
+              }
+            }
+
+            // Process relative imports IN PARALLEL
+            const relativeResults = await Promise.all(
+              relativeImports.map(async ({ original, path: relativePath }) => {
+                const nestedFilePath = await fetchAndCacheModule(relativePath, normalizedPath);
+                return { original, nestedFilePath };
+              }),
+            );
+            for (const { original, nestedFilePath } of relativeResults) {
+              if (nestedFilePath) {
+                moduleCode = moduleCode.replace(original, `from "file://${nestedFilePath}"`);
+              }
+            }
+
+            // Check for any unresolved /_vf_modules/ imports - don't cache broken modules
+            const unresolvedPattern = /from\s+["'](\/?_vf_modules\/[^"']+)["']/g;
+            const unresolvedMatches = [...moduleCode.matchAll(unresolvedPattern)];
+            if (unresolvedMatches.length > 0) {
+              const unresolvedPaths = unresolvedMatches.map((m) => m[1]).slice(0, 3);
+              logger.warn(
+                `${LOG_PREFIX_MDX_LOADER} Module has ${unresolvedMatches.length} unresolved imports, skipping cache`,
+                { path: normalizedPath, unresolved: unresolvedPaths },
+              );
+              // Return null so caller retries or uses different strategy
+              return null;
+            }
+
+            // Use content-based cache key so unchanged files stay cached
+            const contentHash = hashString(normalizedPath + moduleCode);
+            const cachePath = join(context.esmCacheDir!, `vfmod-${contentHash}.mjs`);
+
+            // Check if this exact content is already cached
             try {
-              const content = await adapter.fs.readFile(tryPath);
-              sourceCode = typeof content === "string" ? content : new TextDecoder().decode(content as Uint8Array);
-              actualFilePath = tryPath;
-              break;
+              const stat = await adapter.fs.stat(cachePath);
+              if (stat?.isFile) {
+                pathCache.set(normalizedPath, cachePath);
+                logger.debug(`${LOG_PREFIX_MDX_LOADER} Content cache hit: ${normalizedPath}`);
+                return cachePath;
+              }
             } catch {
-              // Try next prefix
+              // Not cached, write it
             }
+
+            // Ensure cache directory exists before writing
+            await Deno.mkdir(context.esmCacheDir!, { recursive: true });
+            await adapter.fs.writeFile(cachePath, moduleCode);
+            pathCache.set(normalizedPath, cachePath);
+            await saveModulePathCache(context.esmCacheDir!);
+            logger.debug(`${LOG_PREFIX_MDX_LOADER} Cached: ${normalizedPath} -> ${cachePath}`);
+            return cachePath;
           }
-        }
 
-        // If not found yet, try adding extensions
-        if (!sourceCode) {
-          // Strip any existing extension before adding new ones
-          const filePathWithoutExt = hasKnownExt
-            ? filePathWithoutJs.replace(/\.(tsx|ts|jsx|js|mdx)$/, "")
-            : filePathWithoutJs;
+          // Transform the source code directly (SSR mode)
+          let moduleCode = await transformToESM(
+            sourceCode,
+            actualFilePath,
+            projectDir,
+            adapter as RuntimeAdapter,
+            { projectId, dev: true, ssr: true },
+          );
 
-          outer: for (const prefix of prefixes) {
-            for (const ext of extensions) {
-              const tryPath = prefix + filePathWithoutExt + ext;
-              try {
-                const content = await adapter.fs.readFile(tryPath);
-                sourceCode = typeof content === "string" ? content : new TextDecoder().decode(content as Uint8Array);
-                actualFilePath = tryPath;
-                break outer;
-              } catch {
-                // Try next extension
-              }
-            }
-          }
-        }
-
-        // If not found, try index files
-        if (!sourceCode) {
-          // Use base path without extension for index lookup
-          const basePath = hasKnownExt
-            ? filePathWithoutJs.replace(/\.(tsx|ts|jsx|js|mdx)$/, "")
-            : filePathWithoutJs;
-
-          outer: for (const prefix of prefixes) {
-            for (const ext of extensions) {
-              const tryPath = `${prefix}${basePath}/index${ext}`;
-              try {
-                const content = await adapter.fs.readFile(tryPath);
-                sourceCode = typeof content === "string" ? content : new TextDecoder().decode(content as Uint8Array);
-                actualFilePath = tryPath;
-                break outer;
-              } catch {
-                // Try next extension
-              }
-            }
-          }
-        }
-
-        if (!sourceCode || !actualFilePath) {
-          // Fallback to HTTP fetch if direct file read fails
-          // This handles cases where files are in remote storage (Veryfront API)
-          logger.debug(`${LOG_PREFIX_MDX_LOADER} Direct read failed, falling back to HTTP: ${filePathWithoutJs}`);
-          const port = (globalThis as { Deno?: { env: { get(key: string): string | undefined } } })
-            .Deno?.env?.get("PORT") || "3001";
-          const moduleUrl = `http://localhost:${port}/${normalizedPath}?ssr=true`;
-          const response = await fetch(moduleUrl);
-          if (!response.ok) {
-            logger.warn(`${LOG_PREFIX_MDX_LOADER} HTTP fetch also failed: ${moduleUrl} (${response.status})`);
-            return null;
-          }
-          let moduleCode = await response.text();
           // Add external param to esm.sh URLs to prevent React bundling
           moduleCode = addExternalToEsmShUrls(moduleCode);
           // Normalize React imports to npm:
@@ -880,7 +1000,8 @@ export async function loadModuleESM(
             }
           }
 
-          // Also handle relative imports
+          // Also handle relative imports with ?ssr=true query params
+          // These are created by the module server and need to be resolved
           const relativeImportPattern = /from\s+["'](\.\.?\/[^"'?]+)(?:\?[^"']*)?["']/g;
           const relativeImports: Array<{ original: string; path: string }> = [];
           let relMatch;
@@ -890,7 +1011,7 @@ export async function loadModuleESM(
             }
           }
 
-          // Process nested imports IN PARALLEL
+          // Process nested /_vf_modules/ imports recursively IN PARALLEL
           const nestedResults = await Promise.all(
             nestedImports.map(async ({ original, path: nestedPath }) => {
               const nestedFilePath = await fetchAndCacheModule(nestedPath, normalizedPath);
@@ -903,7 +1024,7 @@ export async function loadModuleESM(
             }
           }
 
-          // Process relative imports IN PARALLEL
+          // Process relative imports by resolving them IN PARALLEL
           const relativeResults = await Promise.all(
             relativeImports.map(async ({ original, path: relativePath }) => {
               const nestedFilePath = await fetchAndCacheModule(relativePath, normalizedPath);
@@ -950,111 +1071,14 @@ export async function loadModuleESM(
           await adapter.fs.writeFile(cachePath, moduleCode);
           pathCache.set(normalizedPath, cachePath);
           await saveModulePathCache(context.esmCacheDir!);
-          logger.debug(`${LOG_PREFIX_MDX_LOADER} Cached: ${normalizedPath} -> ${cachePath}`);
-          return cachePath;
-        }
-
-        // Transform the source code directly (SSR mode)
-        let moduleCode = await transformToESM(
-          sourceCode,
-          actualFilePath,
-          projectDir,
-          adapter as RuntimeAdapter,
-          { projectId, dev: true, ssr: true },
-        );
-
-        // Add external param to esm.sh URLs to prevent React bundling
-        moduleCode = addExternalToEsmShUrls(moduleCode);
-        // Normalize React imports to npm:
-        moduleCode = normalizeReactToNpm(moduleCode);
-
-        // Find and recursively process any /_vf_modules/ imports
-        const vfModuleImportPattern = /from\s+["'](\/?_vf_modules\/[^"'?]+)(?:\?[^"']*)?["']/g;
-        const nestedImports: Array<{ original: string; path: string }> = [];
-        let match;
-        while ((match = vfModuleImportPattern.exec(moduleCode)) !== null) {
-          if (match[1]) {
-            nestedImports.push({ original: match[0], path: match[1].replace(/^\//, "") });
-          }
-        }
-
-        // Also handle relative imports with ?ssr=true query params
-        // These are created by the module server and need to be resolved
-        const relativeImportPattern = /from\s+["'](\.\.?\/[^"'?]+)(?:\?[^"']*)?["']/g;
-        const relativeImports: Array<{ original: string; path: string }> = [];
-        let relMatch;
-        while ((relMatch = relativeImportPattern.exec(moduleCode)) !== null) {
-          if (relMatch[1]) {
-            relativeImports.push({ original: relMatch[0], path: relMatch[1] });
-          }
-        }
-
-        // Process nested /_vf_modules/ imports recursively IN PARALLEL
-        const nestedResults = await Promise.all(
-          nestedImports.map(async ({ original, path: nestedPath }) => {
-            const nestedFilePath = await fetchAndCacheModule(nestedPath, normalizedPath);
-            return { original, nestedFilePath };
-          }),
-        );
-        for (const { original, nestedFilePath } of nestedResults) {
-          if (nestedFilePath) {
-            moduleCode = moduleCode.replace(original, `from "file://${nestedFilePath}"`);
-          }
-        }
-
-        // Process relative imports by resolving them IN PARALLEL
-        const relativeResults = await Promise.all(
-          relativeImports.map(async ({ original, path: relativePath }) => {
-            const nestedFilePath = await fetchAndCacheModule(relativePath, normalizedPath);
-            return { original, nestedFilePath };
-          }),
-        );
-        for (const { original, nestedFilePath } of relativeResults) {
-          if (nestedFilePath) {
-            moduleCode = moduleCode.replace(original, `from "file://${nestedFilePath}"`);
-          }
-        }
-
-        // Check for any unresolved /_vf_modules/ imports - don't cache broken modules
-        const unresolvedPattern = /from\s+["'](\/?_vf_modules\/[^"']+)["']/g;
-        const unresolvedMatches = [...moduleCode.matchAll(unresolvedPattern)];
-        if (unresolvedMatches.length > 0) {
-          const unresolvedPaths = unresolvedMatches.map((m) => m[1]).slice(0, 3);
-          logger.warn(
-            `${LOG_PREFIX_MDX_LOADER} Module has ${unresolvedMatches.length} unresolved imports, skipping cache`,
-            { path: normalizedPath, unresolved: unresolvedPaths },
+          logger.debug(
+            `${LOG_PREFIX_MDX_LOADER} Cached vf_module: ${normalizedPath} -> ${cachePath}`,
           );
-          // Return null so caller retries or uses different strategy
+          return cachePath;
+        } catch (error) {
+          logger.warn(`${LOG_PREFIX_MDX_LOADER} Failed to process ${normalizedPath}`, error);
           return null;
         }
-
-        // Use content-based cache key so unchanged files stay cached
-        const contentHash = hashString(normalizedPath + moduleCode);
-        const cachePath = join(context.esmCacheDir!, `vfmod-${contentHash}.mjs`);
-
-        // Check if this exact content is already cached
-        try {
-          const stat = await adapter.fs.stat(cachePath);
-          if (stat?.isFile) {
-            pathCache.set(normalizedPath, cachePath);
-            logger.debug(`${LOG_PREFIX_MDX_LOADER} Content cache hit: ${normalizedPath}`);
-            return cachePath;
-          }
-        } catch {
-          // Not cached, write it
-        }
-
-        // Ensure cache directory exists before writing
-        await Deno.mkdir(context.esmCacheDir!, { recursive: true });
-        await adapter.fs.writeFile(cachePath, moduleCode);
-        pathCache.set(normalizedPath, cachePath);
-        await saveModulePathCache(context.esmCacheDir!);
-        logger.debug(`${LOG_PREFIX_MDX_LOADER} Cached vf_module: ${normalizedPath} -> ${cachePath}`);
-        return cachePath;
-      } catch (error) {
-        logger.warn(`${LOG_PREFIX_MDX_LOADER} Failed to process ${normalizedPath}`, error);
-        return null;
-      }
       })();
 
       // Resolve the deferred promise and clean up
@@ -1216,7 +1240,9 @@ export async function loadModuleESM(
     const unresolvedMatches = [...rewritten.matchAll(unresolvedPattern)];
     if (unresolvedMatches.length > 0) {
       const unresolvedPaths = unresolvedMatches.map((m) => m[1]).slice(0, 5);
-      const errorMsg = `MDX has ${unresolvedMatches.length} unresolved module imports: ${unresolvedPaths.join(", ")}`;
+      const errorMsg = `MDX has ${unresolvedMatches.length} unresolved module imports: ${
+        unresolvedPaths.join(", ")
+      }`;
       logger.error(`${LOG_PREFIX_MDX_RENDERER} ${errorMsg}`);
       throw new Error(errorMsg);
     }

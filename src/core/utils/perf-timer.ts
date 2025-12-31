@@ -8,8 +8,8 @@
 const enabled = typeof process !== "undefined"
   ? process.env?.VERYFRONT_PERF === "1"
   : typeof Deno !== "undefined"
-    ? Deno.env.get("VERYFRONT_PERF") === "1"
-    : false;
+  ? Deno.env.get("VERYFRONT_PERF") === "1"
+  : false;
 
 interface TimingEntry {
   label: string;
@@ -48,7 +48,11 @@ export function startTimer(label: string, parent?: string): () => void {
   };
 }
 
-export async function timeAsync<T>(label: string, fn: () => Promise<T>, parent?: string): Promise<T> {
+export async function timeAsync<T>(
+  label: string,
+  fn: () => Promise<T>,
+  parent?: string,
+): Promise<T> {
   if (!enabled) return fn();
 
   const stop = startTimer(label, parent);
@@ -70,17 +74,17 @@ export function endRequest(requestId: string): void {
 
   // Calculate total and sort by duration
   const sorted = entries
-    .filter(e => e.durationMs !== undefined)
+    .filter((e) => e.durationMs !== undefined)
     .sort((a, b) => (b.durationMs || 0) - (a.durationMs || 0));
 
-  const total = entries.find(e => e.label === "total")?.durationMs ||
+  const total = entries.find((e) => e.label === "total")?.durationMs ||
     sorted.reduce((sum, e) => sum + (e.durationMs || 0), 0);
 
   console.log(`\n[PERF] Request ${requestId} - Total: ${total.toFixed(1)}ms`);
   console.log("─".repeat(60));
 
   // Group by parent
-  const roots = sorted.filter(e => !e.parent);
+  const roots = sorted.filter((e) => !e.parent);
   const children = new Map<string, TimingEntry[]>();
 
   for (const entry of sorted) {

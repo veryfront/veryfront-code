@@ -6,7 +6,7 @@
 
 import { cliLogger } from "@veryfront/utils";
 import { createLockfileManager } from "@veryfront/utils/import-lockfile.ts";
-import { createSpinner, logSuccess, logWarning, confirmPrompt } from "../utils/index.ts";
+import { confirmPrompt, createSpinner, logSuccess, logWarning } from "../utils/index.ts";
 
 interface LockOptions {
   projectDir: string;
@@ -18,7 +18,8 @@ interface LockOptions {
 }
 
 export async function lockCommand(options: LockOptions): Promise<void> {
-  const { projectDir, update = false, verify = false, clear = false, list = false, force = false } = options;
+  const { projectDir, update = false, verify = false, clear = false, list = false, force = false } =
+    options;
 
   const lockfile = createLockfileManager(projectDir);
 
@@ -31,7 +32,7 @@ export async function lockCommand(options: LockOptions): Promise<void> {
     if (!force) {
       const confirmed = await confirmPrompt(
         "Are you sure you want to clear the lockfile?",
-        false
+        false,
       );
       if (!confirmed) {
         cliLogger.info("Clear operation cancelled.");
@@ -152,7 +153,7 @@ async function verifyLockfile(lockfile: ReturnType<typeof createLockfileManager>
 
 async function updateLockfile(
   lockfile: ReturnType<typeof createLockfileManager>,
-  _projectDir: string
+  _projectDir: string,
 ): Promise<void> {
   const data = await lockfile.read();
 

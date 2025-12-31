@@ -58,7 +58,10 @@ export async function handleMDXPage(
 
     const clientModuleCode = (pageBundle as PageBundle).clientModuleCode;
     if (!clientModuleCode) {
-      throw new VeryfrontError("MDX compilation produced no client module code", ErrorCode.RENDER_ERROR);
+      throw new VeryfrontError(
+        "MDX compilation produced no client module code",
+        ErrorCode.RENDER_ERROR,
+      );
     }
     const mod = (await mdxRenderer.loadModuleESM(clientModuleCode)) as MDXModule;
     const MDXComp = mod.MDXContent || mod.default;

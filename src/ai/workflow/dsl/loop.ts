@@ -5,12 +5,7 @@
  * Supports max iterations, timeout, and escape conditions.
  */
 
-import type {
-  BaseNodeConfig,
-  RetryConfig,
-  WorkflowContext,
-  WorkflowNode,
-} from "../types.ts";
+import type { BaseNodeConfig, RetryConfig, WorkflowContext, WorkflowNode } from "../types.ts";
 
 /**
  * Loop state passed to steps within the loop

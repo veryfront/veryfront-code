@@ -149,16 +149,27 @@ export async function applyMDXLayout(
   logger.info("[applyMDXLayout] Starting...");
   const React = await getProjectReact();
   const LayoutFn = await loadMDXLayout(bundle, projectDir, adapter);
-  logger.info("[applyMDXLayout] LayoutFn found:", !!LayoutFn, "LayoutFn.name:", (LayoutFn as any)?.name);
+  logger.info(
+    "[applyMDXLayout] LayoutFn found:",
+    !!LayoutFn,
+    "LayoutFn.name:",
+    (LayoutFn as any)?.name,
+  );
   if (LayoutFn) {
     const child = ensureValidChild(element, React);
-    logger.info("[applyMDXLayout] Creating element with layout, childType:", (child as any)?.type?.name || typeof (child as any)?.type);
+    logger.info(
+      "[applyMDXLayout] Creating element with layout, childType:",
+      (child as any)?.type?.name || typeof (child as any)?.type,
+    );
     const wrappedElement = React.createElement(
       LayoutFn,
       { components: mergedComponents },
       child,
     ) as BundledReact.ReactElement;
-    logger.info("[applyMDXLayout] Created element, wrappedType:", (wrappedElement as any)?.type?.name || typeof (wrappedElement as any)?.type);
+    logger.info(
+      "[applyMDXLayout] Created element, wrappedType:",
+      (wrappedElement as any)?.type?.name || typeof (wrappedElement as any)?.type,
+    );
     return wrappedElement;
   }
   logger.warn("[applyMDXLayout] No LayoutFn found, returning element unchanged");

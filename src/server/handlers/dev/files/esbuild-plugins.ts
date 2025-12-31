@@ -19,9 +19,9 @@ import {
   REACT_DEFAULT_VERSION,
 } from "@veryfront/utils/constants/cdn.ts";
 import {
-  type LockfileManager,
   computeIntegrity,
   createLockfileManager,
+  type LockfileManager,
 } from "@veryfront/utils/import-lockfile.ts";
 import { serverLogger as logger } from "@veryfront/utils/logger/index.ts";
 
@@ -145,14 +145,15 @@ export interface BareExternalPluginOptions {
  * // import './Button' -> bundled normally
  * ```
  */
-export function createBareExternalPlugin(options: BareExternalPluginOptions | boolean = false): Plugin {
+export function createBareExternalPlugin(
+  options: BareExternalPluginOptions | boolean = false,
+): Plugin {
   const opts: BareExternalPluginOptions = typeof options === "boolean"
     ? { bundle: options }
     : options;
   const { bundle = false, strict = false } = opts;
-  const lockfile = opts.lockfile ?? (opts.projectDir && bundle
-    ? createLockfileManager(opts.projectDir)
-    : null);
+  const lockfile = opts.lockfile ??
+    (opts.projectDir && bundle ? createLockfileManager(opts.projectDir) : null);
 
   return {
     name: "veryfront-bare-ext",
@@ -197,7 +198,8 @@ export function createBareExternalPlugin(options: BareExternalPluginOptions | bo
                   if (strict) {
                     return {
                       errors: [{
-                        text: `Integrity mismatch for ${args.path}: expected ${cached.integrity}, got ${integrity}`,
+                        text:
+                          `Integrity mismatch for ${args.path}: expected ${cached.integrity}, got ${integrity}`,
                         location: null,
                       }],
                     };

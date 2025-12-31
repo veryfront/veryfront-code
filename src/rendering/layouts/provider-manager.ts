@@ -129,9 +129,10 @@ export class ProviderManager {
       return null;
     }
 
-    const providerPath = configProvider.startsWith("/") || configProvider.startsWith(this.projectDir)
-      ? configProvider
-      : join(this.projectDir, configProvider);
+    const providerPath =
+      configProvider.startsWith("/") || configProvider.startsWith(this.projectDir)
+        ? configProvider
+        : join(this.projectDir, configProvider);
 
     const exists = await this.adapter.fs.exists(providerPath);
 

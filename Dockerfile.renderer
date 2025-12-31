@@ -1,0 +1,20 @@
+# Veryfront Renderer - SSR production server
+FROM denoland/deno:2.1.4
+
+WORKDIR /app
+
+# Copy application files
+COPY deno.json deno.lock* ./
+COPY src/ ./src/
+
+# Cache dependencies
+RUN deno cache src/server/production-server.ts
+
+EXPOSE 20000
+
+ENV PORT=20000
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD deno eval "const res = await fetch('http://localhost:' + Deno.env.get('PORT') + '/'); Deno.exit(res.ok ? 0 : 1);" || exit 0
+
+CMD ["run", "--allow-all", "--no-lock", "--unstable-net", "--unstable-worker-options", "src/server/production-server.ts"]

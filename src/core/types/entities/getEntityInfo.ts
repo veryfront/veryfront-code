@@ -75,7 +75,9 @@ export async function getEntityInfo(
         if (!stat.isFile) return null;
       } catch (error) {
         entityInfoScope.runSync(
-          () => { throw error; },
+          () => {
+            throw error;
+          },
           { path: filePath, details: { reason: "stat-failed" } },
           undefined,
         );
@@ -130,7 +132,9 @@ export async function getEntityInfo(
     return { entity };
   } catch (error) {
     entityInfoScope.runSync(
-      () => { throw error; },
+      () => {
+        throw error;
+      },
       { path: filePath, details: { reason: "entity-info-failed" } },
       undefined,
     );
@@ -300,9 +304,7 @@ export async function getProviderEntities(
     if (dirExists) {
       const entries: { name: string; isFile: boolean; isDirectory: boolean }[] = [];
       // Use adapter's readDir if available, otherwise fall back to local fs
-      const dirIterator = adapter?.fs.readDir
-        ? adapter.fs.readDir(dir)
-        : fs.readDir(dir);
+      const dirIterator = adapter?.fs.readDir ? adapter.fs.readDir(dir) : fs.readDir(dir);
       for await (const entry of dirIterator) {
         entries.push(entry);
       }

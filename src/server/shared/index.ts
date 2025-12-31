@@ -7,8 +7,8 @@
  */
 
 export {
-  getRenderer,
-  createRendererPromise,
   cleanupRenderers,
+  createRendererPromise,
+  getRenderer,
   getRendererCount,
 } from "./renderer-factory.ts";

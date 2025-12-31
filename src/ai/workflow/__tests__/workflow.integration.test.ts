@@ -11,7 +11,7 @@
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createWorkflowClient, WorkflowClient } from "../api/workflow-client.ts";
-import { workflow, step, loop, parallel, branch, waitForApproval } from "../dsl/index.ts";
+import { branch, loop, parallel, step, waitForApproval, workflow } from "../dsl/index.ts";
 import { MemoryBackend } from "../backends/memory.ts";
 import type { Tool } from "../../types/tool.ts";
 import { z } from "zod";

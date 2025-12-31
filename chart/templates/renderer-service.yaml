@@ -1,0 +1,18 @@
+{{- if .Values.renderer.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "veryfront-renderer.renderer.fullname" . }}
+  labels:
+    {{- include "veryfront-renderer.labels" . | nindent 4 }}
+    {{- include "veryfront-renderer.renderer.selectorLabels" . | nindent 4 }}
+spec:
+  type: {{ .Values.renderer.service.type }}
+  ports:
+    - port: {{ .Values.renderer.service.port }}
+      targetPort: {{ .Values.renderer.service.targetPort }}
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "veryfront-renderer.renderer.selectorLabels" . | nindent 4 }}
+{{- end }}

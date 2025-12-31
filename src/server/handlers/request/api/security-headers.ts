@@ -11,8 +11,8 @@ import type { HandlerContext } from "../../types.ts";
 import {
   applySecurityHeaders as coreApplySecurityHeaders,
   buildCSP as coreBuildCSP,
-  getSecurityHeader as coreGetSecurityHeader,
   generateNonce,
+  getSecurityHeader as coreGetSecurityHeader,
 } from "@veryfront/security/http/response/security-handler.ts";
 
 /**

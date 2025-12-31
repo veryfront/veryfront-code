@@ -237,7 +237,10 @@ export function addDepsToEsmShUrls(code: string, forSSR: boolean = false): Promi
   }
 
   return Promise.resolve(replaceSpecifiers(code, (specifier) => {
-    if (specifier.startsWith("https://esm.sh/") && !specifier.includes(`react@${REACT_DEFAULT_VERSION}`)) {
+    if (
+      specifier.startsWith("https://esm.sh/") &&
+      !specifier.includes(`react@${REACT_DEFAULT_VERSION}`)
+    ) {
       // Parse existing query params if any
       const hasQuery = specifier.includes("?");
       const hasExternal = specifier.includes("external=");

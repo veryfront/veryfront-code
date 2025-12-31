@@ -3,8 +3,8 @@ import { timeAsync } from "@veryfront/utils";
 import { createBuildVersion } from "@veryfront/utils/version.ts";
 import { ErrorCode, VeryfrontError } from "@veryfront/errors/index.ts";
 import {
-  extractRouteParams as extractRouteParamsShared,
   extractRelativePath as extractRelativePathShared,
+  extractRouteParams as extractRouteParamsShared,
 } from "@veryfront/core/utils/route-path-utils.ts";
 import type { MdxBundle } from "@veryfront/types";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
@@ -54,7 +54,11 @@ export class RenderPipeline {
   private esmCache = new Map<string, string>();
 
   // Fetch and cache an esm.sh module
-  private async fetchEsmModule(url: string, tmpDir: string, localAdapter: RuntimeAdapter): Promise<string> {
+  private async fetchEsmModule(
+    url: string,
+    tmpDir: string,
+    localAdapter: RuntimeAdapter,
+  ): Promise<string> {
     if (this.esmCache.has(url)) {
       return this.esmCache.get(url)!;
     }
@@ -90,7 +94,8 @@ export class RenderPipeline {
     );
     code = code.replace(
       /export\s*\{([^}]+)\}\s*from\s*(["'])(\/[^"']+)\2/g,
-      (_match, exports, quote, path) => `export{${exports}}from${quote}https://esm.sh${path}${quote}`,
+      (_match, exports, quote, path) =>
+        `export{${exports}}from${quote}https://esm.sh${path}${quote}`,
     );
 
     // Handle relative paths (like "./dist/..." or "../utils/...")
@@ -108,7 +113,8 @@ export class RenderPipeline {
     );
     code = code.replace(
       /export\s*\{([^}]+)\}\s*from\s*(["'])(\.\.?\/[^"']+)\2/g,
-      (_match, exports, quote, path) => `export{${exports}}from${quote}${new URL(path, urlBase).href}${quote}`,
+      (_match, exports, quote, path) =>
+        `export{${exports}}from${quote}${new URL(path, urlBase).href}${quote}`,
     );
 
     // Find ALL esm.sh URLs in the code and fetch/replace them
@@ -245,7 +251,12 @@ export class RenderPipeline {
       }
 
       if (depFilePath) {
-        const depTempPath = await this.transformModuleWithDeps(depFilePath, tmpDir, localAdapter, isLocalLib);
+        const depTempPath = await this.transformModuleWithDeps(
+          depFilePath,
+          tmpDir,
+          localAdapter,
+          isLocalLib,
+        );
         transformedCode = transformedCode.replace(full, `from "file://${depTempPath}"`);
       } else {
         logger.warn("[RenderPipeline] Could not find dependency:", path);
@@ -262,7 +273,10 @@ export class RenderPipeline {
   }
 
   // Find local lib files (framework utilities in veryfront-private/lib)
-  private async findLocalLibFile(relativePath: string, localAdapter: RuntimeAdapter): Promise<string | null> {
+  private async findLocalLibFile(
+    relativePath: string,
+    localAdapter: RuntimeAdapter,
+  ): Promise<string | null> {
     const extensions = [".tsx", ".ts", ".jsx", ".js"];
     const libDir = this.getLocalLibDir();
     // relativePath is "lib/Router" or "lib/usePageContext" - strip "lib/" since we already have libDir
@@ -365,15 +379,24 @@ export class RenderPipeline {
       clearSSRModuleCache();
     }
 
-    const pageInfo = await timeAsync("resolve-page", () =>
-      this.config.pageResolver.resolvePage(slug), "render-page");
+    const pageInfo = await timeAsync(
+      "resolve-page",
+      () => this.config.pageResolver.resolvePage(slug),
+      "render-page",
+    );
 
     // 1. Collect layouts and providers in parallel for better cold start perf
     const [layoutResult, providerResult] = await Promise.all([
-      timeAsync("collect-layouts", () =>
-        this.config.layoutOrchestrator.collectLayouts(pageInfo), "render-page"),
-      timeAsync("collect-providers", () =>
-        this.config.layoutOrchestrator.collectProviders(), "render-page"),
+      timeAsync(
+        "collect-layouts",
+        () => this.config.layoutOrchestrator.collectLayouts(pageInfo),
+        "render-page",
+      ),
+      timeAsync(
+        "collect-providers",
+        () => this.config.layoutOrchestrator.collectProviders(),
+        "render-page",
+      ),
     ]);
 
     let dataFetchingProps: Record<string, unknown> | undefined;
@@ -444,8 +467,11 @@ export class RenderPipeline {
         }
 
         logger.info("[renderPage] Executing parallel data fetching jobs", { count: jobs.length });
-        const results = await timeAsync("data-fetching-jobs", () =>
-          Promise.all(jobs.map((j) => j.run())), "render-page");
+        const results = await timeAsync(
+          "data-fetching-jobs",
+          () => Promise.all(jobs.map((j) => j.run())),
+          "render-page",
+        );
 
         for (let i = 0; i < jobs.length; i++) {
           const job = jobs[i];
@@ -493,14 +519,18 @@ export class RenderPipeline {
       }
     }
 
-    const cacheResult = await timeAsync("check-cache", () =>
-      this.config.cacheCoordinator.checkCache(
-        slug,
-        pageInfo,
-        layoutResult.layoutBundle,
-        layoutResult.nestedLayouts,
-        providerResult.providerInfos,
-      ), "render-page");
+    const cacheResult = await timeAsync(
+      "check-cache",
+      () =>
+        this.config.cacheCoordinator.checkCache(
+          slug,
+          pageInfo,
+          layoutResult.layoutBundle,
+          layoutResult.nestedLayouts,
+          providerResult.providerInfos,
+        ),
+      "render-page",
+    );
 
     if (cacheResult?.cachedResult) {
       return cacheResult.cachedResult;
@@ -510,13 +540,17 @@ export class RenderPipeline {
       ? { ...options, props: { ...options?.props, ...dataFetchingProps } }
       : options;
 
-    const pageBundleResult = await timeAsync("prepare-page-bundles", () =>
-      this.config.pageRenderer.preparePageBundles(
-        pageInfo,
-        slug,
-        cacheResult?.cachedModule,
-        mergedOptions,
-      ), "render-page");
+    const pageBundleResult = await timeAsync(
+      "prepare-page-bundles",
+      () =>
+        this.config.pageRenderer.preparePageBundles(
+          pageInfo,
+          slug,
+          cacheResult?.cachedModule,
+          mergedOptions,
+        ),
+      "render-page",
+    );
 
     if (pageBundleResult.scriptResult) {
       return pageBundleResult.scriptResult;
@@ -529,30 +563,38 @@ export class RenderPipeline {
     const pageElement = pageBundleResult.pageElement;
     const pageBundle = pageBundleResult.pageBundle;
 
-    const wrappedElement = await timeAsync("apply-layouts", () =>
-      this.config.layoutOrchestrator.applyLayoutsAndWrappers(
-        pageElement,
-        pageInfo,
-        layoutResult.layoutBundle,
-        layoutResult.nestedLayouts,
-        providerResult.providerItems,
-        layoutDataMap,
-      ), "render-page");
-
-    const ssrResult = await timeAsync("ssr-rendering", () =>
-      this.config.ssrOrchestrator.performSSRRendering(
-        wrappedElement,
-        {
+    const wrappedElement = await timeAsync(
+      "apply-layouts",
+      () =>
+        this.config.layoutOrchestrator.applyLayoutsAndWrappers(
+          pageElement,
           pageInfo,
-          pageBundle,
-          layoutBundle: layoutResult.layoutBundle,
-          nestedLayouts: layoutResult.nestedLayouts,
-          providerInfos: providerResult.providerInfos,
-          collectedMetadata: pageBundleResult.collectedMetadata,
-          slug,
-        },
-        mergedOptions,
-      ), "render-page");
+          layoutResult.layoutBundle,
+          layoutResult.nestedLayouts,
+          providerResult.providerItems,
+          layoutDataMap,
+        ),
+      "render-page",
+    );
+
+    const ssrResult = await timeAsync(
+      "ssr-rendering",
+      () =>
+        this.config.ssrOrchestrator.performSSRRendering(
+          wrappedElement,
+          {
+            pageInfo,
+            pageBundle,
+            layoutBundle: layoutResult.layoutBundle,
+            nestedLayouts: layoutResult.nestedLayouts,
+            providerInfos: providerResult.providerInfos,
+            collectedMetadata: pageBundleResult.collectedMetadata,
+            slug,
+          },
+          mergedOptions,
+        ),
+      "render-page",
+    );
 
     const pageModule = pageBundleResult.clientModuleCode && pageBundleResult.pageModuleType
       ? {
@@ -615,15 +657,24 @@ export class RenderPipeline {
     }
 
     // 1. Resolve page info
-    const pageInfo = await timeAsync("resolve-page-data", () =>
-      this.config.pageResolver.resolvePage(slug), "resolve-page-data");
+    const pageInfo = await timeAsync(
+      "resolve-page-data",
+      () => this.config.pageResolver.resolvePage(slug),
+      "resolve-page-data",
+    );
 
     // 2. Collect layouts and providers in parallel
     const [layoutResult, providerResult] = await Promise.all([
-      timeAsync("collect-layouts-data", () =>
-        this.config.layoutOrchestrator.collectLayouts(pageInfo), "resolve-page-data"),
-      timeAsync("collect-providers-data", () =>
-        this.config.layoutOrchestrator.collectProviders(), "resolve-page-data"),
+      timeAsync(
+        "collect-layouts-data",
+        () => this.config.layoutOrchestrator.collectLayouts(pageInfo),
+        "resolve-page-data",
+      ),
+      timeAsync(
+        "collect-providers-data",
+        () => this.config.layoutOrchestrator.collectProviders(),
+        "resolve-page-data",
+      ),
     ]);
 
     // 3. Extract page path and type
@@ -686,10 +737,15 @@ export class RenderPipeline {
       // For MDX pages, try to get frontmatter from the bundle
       try {
         const bundleResult = await this.config.pageRenderer.preparePageBundles(
-          pageInfo, slug, undefined, options
+          pageInfo,
+          slug,
+          undefined,
+          options,
         );
         if (bundleResult.pageBundle && "frontmatter" in bundleResult.pageBundle) {
-          frontmatter = (bundleResult.pageBundle as { frontmatter?: Record<string, unknown> }).frontmatter || {};
+          frontmatter =
+            (bundleResult.pageBundle as { frontmatter?: Record<string, unknown> }).frontmatter ||
+            {};
         }
       } catch {
         // Frontmatter extraction failed, use empty object
@@ -698,22 +754,27 @@ export class RenderPipeline {
 
     // 8. Build layout info array
     const layouts = layoutResult.nestedLayouts
-      .filter(l => l.componentPath || l.path)
-      .map(l => ({
+      .filter((l) => l.componentPath || l.path)
+      .map((l) => ({
         kind: l.kind,
         path: extractRelativePathShared(l.componentPath || l.path || "", this.config.projectDir),
       }));
 
     // 9. Build provider paths array
     const providers = providerResult.providerInfos
-      .filter(p => p.bundle?.path)
-      .map(p => extractRelativePathShared(p.bundle?.path || "", this.config.projectDir));
+      .filter((p) => p.bundle?.path)
+      .map((p) => extractRelativePathShared(p.bundle?.path || "", this.config.projectDir));
 
     // 10. Get project updatedAt if available from Veryfront API adapter
     let projectUpdatedAt: string | undefined;
     const wrappedAdapter = (this.config.adapter?.fs as { fsAdapter?: unknown })?.fsAdapter;
-    if ((wrappedAdapter as { constructor?: { name?: string } })?.constructor?.name === "VeryfrontFSAdapter") {
-      const projectData = (wrappedAdapter as { getProjectData?: () => { updatedAt?: string } | undefined })?.getProjectData?.();
+    if (
+      (wrappedAdapter as { constructor?: { name?: string } })?.constructor?.name ===
+        "VeryfrontFSAdapter"
+    ) {
+      const projectData =
+        (wrappedAdapter as { getProjectData?: () => { updatedAt?: string } | undefined })
+          ?.getProjectData?.();
       projectUpdatedAt = projectData?.updatedAt;
     }
 

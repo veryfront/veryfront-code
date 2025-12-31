@@ -151,7 +151,10 @@ async function renderErrorPage(
     pathname,
   };
 
-  const element = React.createElement(ErrorComponent as React.ComponentType<typeof errorProps>, errorProps);
+  const element = React.createElement(
+    ErrorComponent as React.ComponentType<typeof errorProps>,
+    errorProps,
+  );
   let inner = "";
 
   try {

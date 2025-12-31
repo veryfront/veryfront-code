@@ -6,7 +6,13 @@
 
 import type { Agent, AgentResponse } from "../../types/agent.ts";
 import type { Tool } from "../../types/tool.ts";
-import type { NodeState, RetryConfig, StepNodeConfig, WorkflowContext, WorkflowNode } from "../types.ts";
+import type {
+  NodeState,
+  RetryConfig,
+  StepNodeConfig,
+  WorkflowContext,
+  WorkflowNode,
+} from "../types.ts";
 import { parseDuration } from "../types.ts";
 
 /** Default retry configuration */
@@ -121,7 +127,9 @@ export class StepExecutor {
         this.config.onStepStart?.(node.id, resolvedInput);
 
         // Execute with timeout
-        const timeout = config.timeout ? parseDuration(config.timeout) : this.config.defaultTimeout!;
+        const timeout = config.timeout
+          ? parseDuration(config.timeout)
+          : this.config.defaultTimeout!;
 
         const output = await this.executeWithTimeout(
           () => this.executeStep(config, resolvedInput, context),

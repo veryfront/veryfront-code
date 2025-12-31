@@ -1,0 +1,150 @@
+# Default values for veryfront-renderer
+# This chart deploys two components: proxy and renderer
+
+# Shared configuration
+imagePullSecrets:
+  - name: ghcr-registry
+
+# veryfront-proxy (formerly app-server)
+# Handles incoming requests and proxies to renderer or serves cached content
+proxy:
+  enabled: true
+  replicaCount: 2
+
+  image:
+    repository: ghcr.io/veryfront/veryfront-proxy
+    pullPolicy: IfNotPresent
+    tag: ""
+
+  service:
+    type: ClusterIP
+    port: 80
+    targetPort: 20000
+
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "256Mi"
+      ephemeral-storage: "50Mi"
+    limits:
+      cpu: "500m"
+      memory: "512Mi"
+      ephemeral-storage: "100Mi"
+
+  env:
+    PORT: "20000"
+    RENDERER_URL: "http://veryfront-renderer:80"
+
+  envFrom:
+    - secretRef:
+        name: veryfront-proxy-secret
+
+  readinessProbe:
+    httpGet:
+      path: /_proxy/health
+      port: 20000
+    periodSeconds: 10
+    timeoutSeconds: 5
+
+  startupProbe:
+    httpGet:
+      path: /_proxy/health
+      port: 20000
+    failureThreshold: 30
+    periodSeconds: 10
+
+  podAntiAffinity:
+    enabled: true
+    topologyKey: kubernetes.io/hostname
+
+  # Middleware configuration (Traefik Middleware)
+  middleware:
+    compress:
+      enabled: false
+    httpsRedirect:
+      enabled: false
+    cors:
+      enabled: false
+      allowMethods:
+        - "GET"
+        - "POST"
+        - "PUT"
+        - "DELETE"
+        - "PATCH"
+        - "OPTIONS"
+      allowOriginRegex:
+        - ".*"
+      allowHeaders:
+        - "Authorization"
+        - "Content-Type"
+        - "Accept"
+        - "Origin"
+        - "X-Requested-With"
+      allowCredentials: true
+      maxAge: 86400
+
+  # Ingress configuration (Traefik IngressRoute)
+  ingress:
+    enabled: false
+    entryPoints:
+      - websecure
+    hosts: []
+    # - veryfront.com
+    # - "*.veryfront.com"
+    # Middlewares reference the local middleware created by this chart
+    # Use format: veryfront-proxy-compress, veryfront-proxy-cors, etc.
+    middlewares: []
+    tls:
+      enabled: true
+      secretName: veryfront-com-wildcard-cert
+
+# veryfront-renderer (formerly renderer-server)
+# Handles SSR rendering requests
+renderer:
+  enabled: true
+  replicaCount: 6
+
+  image:
+    repository: ghcr.io/veryfront/veryfront-renderer
+    pullPolicy: IfNotPresent
+    tag: ""
+
+  # Renderer-specific: no MODE needed, it's the default entrypoint
+
+  service:
+    type: ClusterIP
+    port: 80
+    targetPort: 20000
+
+  resources:
+    requests:
+      cpu: "200m"
+      memory: "512Mi"
+      ephemeral-storage: "1Gi"
+    limits:
+      cpu: "1000m"
+      memory: "1Gi"
+      ephemeral-storage: "2Gi"
+
+  env:
+    PORT: "20000"
+
+  envFrom:
+    - secretRef:
+        name: veryfront-renderer-secret
+
+  readinessProbe:
+    tcpSocket:
+      port: 20000
+    periodSeconds: 10
+    timeoutSeconds: 5
+
+  startupProbe:
+    tcpSocket:
+      port: 20000
+    failureThreshold: 30
+    periodSeconds: 10
+
+  podAntiAffinity:
+    enabled: true
+    topologyKey: kubernetes.io/hostname

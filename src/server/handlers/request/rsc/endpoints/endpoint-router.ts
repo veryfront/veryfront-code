@@ -326,4 +326,3 @@ function handleStreamEndpoint(searchParams: URLSearchParams): Response {
     },
   });
 }
-

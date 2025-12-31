@@ -84,14 +84,14 @@ export function createVeryfrontHandler(
   const configPromise = opts.config
     ? Promise.resolve(opts.config)
     : getConfig(projectDir, adapter).then((c) => {
-        config = c;
-        return c;
-      }).catch((err) => {
-        logger.warn("[universal] Failed to load config, using defaults", {
-          error: err instanceof Error ? err.message : String(err),
-        });
-        return undefined;
+      config = c;
+      return c;
+    }).catch((err) => {
+      logger.warn("[universal] Failed to load config, using defaults", {
+        error: err instanceof Error ? err.message : String(err),
       });
+      return undefined;
+    });
 
   // Initialize route registry
   const registry = new RouteRegistry({

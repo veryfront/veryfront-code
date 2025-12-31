@@ -1,4 +1,9 @@
-import { getLoaderScript, getQueryClientScript, getRendererScript, getRouterScript } from "./templates/index.ts";
+import {
+  getLoaderScript,
+  getQueryClientScript,
+  getRendererScript,
+  getRouterScript,
+} from "./templates/index.ts";
 
 export function generateDevClientRendererScript(nonce?: string): string {
   const nonceAttr = nonce ? ` nonce="${nonce}"` : "";

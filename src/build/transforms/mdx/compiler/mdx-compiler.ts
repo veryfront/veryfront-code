@@ -46,7 +46,12 @@ export async function compileMDXRuntime(
     let compiledCode = String(compiled);
 
     if (filePath && (target === "browser" || target === "server")) {
-      compiledCode = rewriteCompiledImports(compiledCode, { filePath, target, baseUrl, projectDir });
+      compiledCode = rewriteCompiledImports(compiledCode, {
+        filePath,
+        target,
+        baseUrl,
+        projectDir,
+      });
     }
 
     return {
