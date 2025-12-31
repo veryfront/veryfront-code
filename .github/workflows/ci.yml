@@ -92,7 +92,7 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ matrix.image }}
           tags: |
-            type=sha
+            type=raw,value=${{ github.sha }}
             type=raw,value=latest
 
       - name: Build and push ${{ matrix.component }}
