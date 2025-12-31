@@ -66,6 +66,11 @@ const allowedWarnings: string[] = [
   // RSC component errors
   "[SERVER] ERROR: [RSC] Render error:",
   "[RENDERER] ERROR: Failed to load MDX module",
+  // RSC action parsing warnings (expected during validation tests)
+  "[ActionParser] Zod validation failed",
+  "[RSC] Failed to parse action request body",
+  // RSC hydrator bundling errors (fallback to source is provided)
+  "[RSC] Hydrator bundling failed:",
   // Test pages that intentionally throw
   "Error: boom",
   "Error: fail",

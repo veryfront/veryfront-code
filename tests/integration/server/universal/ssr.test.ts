@@ -1,4 +1,4 @@
-import { assertEquals, assertMatch, assertStringIncludes } from "std/assert/mod.ts";
+import { assert, assertEquals, assertMatch, assertStringIncludes } from "std/assert/mod.ts";
 import { afterAll, describe, it } from "std/testing/bdd.ts";
 import "../../../_helpers/log-guard.ts";
 
@@ -221,8 +221,8 @@ describe(
       });
     });
 
-    it("serves SSR with ETag and HEAD support", async () => {
-      await withTestContext("universal-server-ssr-etag-head", async (context: TestContext) => {
+    it("serves SSR with caching headers and HEAD support", async () => {
+      await withTestContext("universal-server-ssr-caching-head", async (context: TestContext) => {
         // App Router home page
         const appDir = join(context.projectDir, "app");
         await Deno.mkdir(appDir, { recursive: true });
@@ -239,29 +239,19 @@ describe(
 
         try {
           const res1 = await fetch(`http://127.0.0.1:${port}/`);
-          const etag = res1.headers.get("etag");
-          if (!etag) throw new Error("missing etag on GET");
+          assertEquals(res1.status, 200);
+          // Streaming mode uses no-cache since ETag isn't supported for fast TTFB
+          const cacheControl = res1.headers.get("cache-control") || "";
+          assert(cacheControl.includes("no-cache") || cacheControl.includes("no-store"));
           const html1 = await res1.text();
           if (!/Home SSR/.test(html1)) throw new Error("SSR missing content");
 
+          // HEAD should return 200 with appropriate headers
           const resHead = await fetch(`http://127.0.0.1:${port}/`, {
             method: "HEAD",
           });
-          if (resHead.status !== 200) {
-            throw new Error(`HEAD bad status ${resHead.status}`);
-          }
-          if (resHead.headers.get("etag") !== etag) {
-            throw new Error("HEAD etag mismatch");
-          }
-          // HEAD has no body to cancel
-
-          const res304 = await fetch(`http://127.0.0.1:${port}/`, {
-            headers: { "if-none-match": etag },
-          });
-          if (res304.status !== 304) {
-            throw new Error(`expected 304 got ${res304.status}`);
-          }
-          await res304.body?.cancel();
+          assertEquals(resHead.status, 200);
+          await resHead.body?.cancel();
         } finally {
           await server.stop();
         }

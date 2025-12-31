@@ -124,8 +124,8 @@ describe(
       });
     });
 
-    it("SSR ETag/304 on page HTML via universal handler", async () => {
-      await withTestContext("universal-ssr-etag", async (context: TestContext) => {
+    it("SSR caching headers on page HTML via universal handler", async () => {
+      await withTestContext("universal-ssr-caching", async (context: TestContext) => {
         await Deno.mkdir(join(context.projectDir, "pages"), {
           recursive: true,
         });
@@ -137,17 +137,16 @@ describe(
 
         const r1 = await handler(new Request("http://localhost/"));
         assertEquals(r1.status, 200);
-        const etag = r1.headers.get("etag") || r1.headers.get("ETag");
-        assert(!!etag);
-        await r1.text();
+        // Streaming mode uses no-cache since ETag isn't supported for fast TTFB
+        const cacheControl = r1.headers.get("cache-control") || "";
+        assert(cacheControl.includes("no-cache") || cacheControl.includes("no-store"));
+        const html = await r1.text();
+        assert(html.includes("Hello World"));
 
-        const r2 = await handler(
-          new Request("http://localhost/", {
-            headers: { "if-none-match": etag! },
-          }),
-        );
-        assertEquals(r2.status, 304);
-        await r2.body?.cancel();
+        // HEAD should return 200 with appropriate headers
+        const headRes = await handler(new Request("http://localhost/", { method: "HEAD" }));
+        assertEquals(headRes.status, 200);
+        await headRes.body?.cancel();
       });
     });
 
@@ -200,14 +199,14 @@ describe(
       });
     });
 
-    it("SSR ETag/304 on nested page slug via universal handler", async () => {
-      await withTestContext("universal-ssr-etag-nested", async (context: TestContext) => {
+    it("SSR caching headers on nested page slug via universal handler", async () => {
+      await withTestContext("universal-ssr-caching-nested", async (context: TestContext) => {
         await Deno.mkdir(join(context.projectDir, "pages", "blog"), {
           recursive: true,
         });
         await Deno.writeTextFile(
           join(context.projectDir, "pages", "blog", "post2.mdx"),
-          "# Nested ETag\n",
+          "# Nested Page\n",
         );
 
         const handler = createVeryfrontHandler(context.projectDir, denoAdapter, {
@@ -216,17 +215,18 @@ describe(
 
         const r1 = await handler(new Request("http://localhost/blog/post2"));
         assertEquals(r1.status, 200);
-        const etag = r1.headers.get("etag") || r1.headers.get("ETag");
-        assert(!!etag);
-        await r1.text();
+        // Streaming mode uses no-cache since ETag isn't supported for fast TTFB
+        const cacheControl = r1.headers.get("cache-control") || "";
+        assert(cacheControl.includes("no-cache") || cacheControl.includes("no-store"));
+        const html = await r1.text();
+        assert(html.includes("Nested Page"));
 
-        const r2 = await handler(
-          new Request("http://localhost/blog/post2", {
-            headers: { "if-none-match": etag! },
-          }),
+        // HEAD should return 200 with appropriate headers
+        const headRes = await handler(
+          new Request("http://localhost/blog/post2", { method: "HEAD" }),
         );
-        assertEquals(r2.status, 304);
-        await r2.body?.cancel();
+        assertEquals(headRes.status, 200);
+        await headRes.body?.cancel();
       });
     });
   },
