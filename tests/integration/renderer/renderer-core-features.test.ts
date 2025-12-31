@@ -546,7 +546,7 @@ title: Page ${i}
     });
 
     describe("Streaming Error Recovery", () => {
-      it("should fallback to string rendering if streaming fails", async () => {
+      it("should return stream when streaming delivery is requested", async () => {
         await withTestContext("renderer-core-stream-fallback", async (context) => {
           await Deno.remove(join(context.projectDir, "app"), { recursive: true });
 
@@ -564,9 +564,21 @@ title: Page ${i}
             delivery: "stream",
           });
 
-          // Should still return valid HTML even if stream fails
-          assertEquals(typeof result.html, "string");
-          assertStringIncludes(result.html, "Stream Test");
+          // When streaming succeeds, content goes to result.stream, not result.html
+          assertExists(result.stream, "Stream should exist when streaming delivery is requested");
+
+          // Consume the stream to verify content
+          const reader = result.stream.getReader();
+          const decoder = new TextDecoder();
+          let fullContent = "";
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            fullContent += decoder.decode(value, { stream: true });
+          }
+          fullContent += decoder.decode();
+
+          assertStringIncludes(fullContent, "Stream Test");
         });
       });
 
