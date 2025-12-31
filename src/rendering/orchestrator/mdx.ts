@@ -1,6 +1,7 @@
 import { wrapError } from "@veryfront/errors/index.ts";
 import type { MdxBundle } from "@veryfront/types";
 import type { MDXCacheAdapter } from "@veryfront/transforms/mdx/index.ts";
+import { injectNodePositions } from "../../build/transforms/plugins/babel-node-positions.ts";
 
 export interface MDXCompilerConfig {
   projectDir: string;
@@ -51,10 +52,16 @@ export class MDXCompiler {
     const { compileMDXRuntime } = await import("@veryfront/transforms/mdx/compiler/index.ts");
 
     try {
+      // Inject source position data attributes for Studio Navigator
+      // This adds data-node-line, data-node-column, etc. to JSX elements
+      const contentWithPositions = filePath
+        ? injectNodePositions(content, { filePath })
+        : content;
+
       const bundle = await compileMDXRuntime(
         this.config.mode,
         this.config.projectDir,
-        content,
+        contentWithPositions,
         frontmatter,
         filePath,
       );

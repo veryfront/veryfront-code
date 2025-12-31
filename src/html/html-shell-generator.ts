@@ -5,6 +5,7 @@ import {
   getDevScripts,
   getProdScripts,
 } from "./hydration-script-builder/index.ts";
+import { getStudioScripts } from "./dev-scripts.ts";
 import { processMetadata } from "./metadata-builder.ts";
 import {
   convertTailwindConfigForBrowser,
@@ -33,6 +34,22 @@ function pathToModuleUrl(path: string): string {
 }
 
 /**
+ * Convert a full file path to a relative path from project root.
+ * E.g., /Users/.../project/pages/index.tsx -> pages/index.tsx
+ */
+function getRelativePagePath(fullPath: string | undefined, projectDir: string | undefined): string {
+  if (!fullPath) return "";
+  let relativePath = fullPath.replace(/\\/g, "/");
+  if (projectDir) {
+    const normalizedDir = projectDir.replace(/\\/g, "/").replace(/\/$/, "");
+    if (relativePath.startsWith(normalizedDir + "/")) {
+      relativePath = relativePath.substring(normalizedDir.length + 1);
+    }
+  }
+  return relativePath.replace(/^\//, "");
+}
+
+/**
  * Generate modulepreload hints for page and layout modules.
  * These tell the browser to start loading modules immediately, in parallel.
  */
@@ -50,9 +67,7 @@ function generateModulePreloadHints(options: HTMLGenerationOptions): string {
       }
     }
     relativePath = relativePath.replace(/^\//, "");
-    if (relativePath.startsWith("components/")) {
-      relativePath = relativePath.substring("components/".length);
-    }
+    // Keep components/ prefix - required for module server security validation
     const moduleUrl = pathToModuleUrl(relativePath);
     if (moduleUrl) {
       hints.push(`<link rel="modulepreload" href="${moduleUrl}">`);
@@ -73,9 +88,7 @@ function generateModulePreloadHints(options: HTMLGenerationOptions): string {
       }
     }
     relativePath = relativePath.replace(/^\//, "");
-    if (relativePath.startsWith("components/")) {
-      relativePath = relativePath.substring("components/".length);
-    }
+    // Keep components/ prefix - required for module server security validation
     const moduleUrl = pathToModuleUrl(relativePath);
     if (moduleUrl) {
       hints.push(`<link rel="modulepreload" href="${moduleUrl}">`);
@@ -219,6 +232,20 @@ ${options.globalCSS || generateThemeVariables()}
     <div ${contentAttributes}>
 `;
 
+  // Studio bridge scripts for iframe communication with Studio
+  // pageId should be the entity UUID from the API (preferred) or relative path as fallback
+  // pagePath is the relative file path (e.g., pages/index.mdx) for Navigator node resolution
+  const relativePagePath = getRelativePagePath(options.pagePath, options.projectDir);
+  const studioScripts = options.studioEmbed
+    ? getStudioScripts({
+        projectId: options.projectId || meta.slug || "",
+        pageId: options.pageId || relativePagePath || meta.slug || "",
+        pagePath: relativePagePath || undefined,
+        nonce,
+        sourceHash: options.sourceHash,
+      })
+    : "";
+
   const end = `
     </div>
   </div>
@@ -231,6 +258,7 @@ ${options.globalCSS || generateThemeVariables()}
 
   ${scriptTags}
   ${modeScripts}
+  ${studioScripts}
 </body>
 </html>`;
 

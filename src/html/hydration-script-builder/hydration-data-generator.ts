@@ -25,10 +25,8 @@ function toProjectRelativePath(absolutePath: string, projectDir?: string): strin
   // Remove leading slash (after project dir stripping)
   relativePath = relativePath.replace(/^\//, "");
 
-  // Remove components/ prefix if present (veryfront projects store layouts in components/)
-  if (relativePath.startsWith("components/")) {
-    relativePath = relativePath.substring("components/".length);
-  }
+  // Keep components/ prefix - required for module server security validation
+  // The module server validates that paths are within allowed directories
 
   return relativePath;
 }

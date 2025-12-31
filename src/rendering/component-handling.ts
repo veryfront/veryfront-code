@@ -9,6 +9,7 @@ import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import type { EntityInfo, PageBundle } from "@veryfront/types";
 import { createError, toError } from "../core/errors/veryfront-error.ts";
 import { getProjectReact } from "@veryfront/react";
+import { injectNodePositions } from "../build/transforms/plugins/babel-node-positions.ts";
 
 export interface ComponentPageResult {
   pageElement: BundledReact.ReactElement;
@@ -35,7 +36,13 @@ export async function handleComponentPage(
   try {
     logger.debug(`Loading TSX/JSX file: ${pageInfo.entity.id}`);
 
-    const fileContent = await adapter.fs.readFile(pageInfo.entity.id);
+    const rawFileContent = await adapter.fs.readFile(pageInfo.entity.id);
+
+    // Inject source position data attributes for Studio Navigator
+    // This adds data-node-line, data-node-column, etc. to JSX elements
+    const fileContent = injectNodePositions(rawFileContent, {
+      filePath: pageInfo.entity.id,
+    });
 
     // Bundle for client if not cached
     let clientModuleCode = options?.cachedClientModule;

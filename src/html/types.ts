@@ -22,6 +22,14 @@ export interface HTMLGenerationOptions {
   frontmatter?: Record<string, unknown>;
   /** Props for each layout keyed by layout path */
   layoutProps?: Record<string, Record<string, unknown>>;
+  /** Whether page is embedded in Studio iframe */
+  studioEmbed?: boolean;
+  /** Project ID for Studio communication */
+  projectId?: string;
+  /** Page ID for Studio communication */
+  pageId?: string;
+  /** Hash of source code for Navigator tree sync detection */
+  sourceHash?: string;
 }
 
 export type { ImportMapConfig } from "../module-system/import-map/types.ts";

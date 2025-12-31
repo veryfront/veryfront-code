@@ -1,0 +1,115 @@
+/**
+ * Rehype plugin to inject node position data attributes
+ *
+ * This adds data-node-line, data-node-column, data-node-end-line, data-node-end-column
+ * attributes to JSX/HTML elements during MDX compilation.
+ * These attributes are used by Studio Navigator to map DOM nodes back to source positions.
+ */
+
+import type { Root, Element } from "hast";
+import { visit } from "unist-util-visit";
+
+export interface RehypeNodePositionsOptions {
+  filePath?: string;
+}
+
+// Node types that can have attributes
+type JsxNode = Element | {
+  type: string;
+  name?: string;
+  attributes?: Array<{ type: string; name: string; value: unknown }>;
+  position?: { start: { line: number; column: number }; end: { line: number; column: number } };
+};
+
+export function rehypeNodePositions(options: RehypeNodePositionsOptions = {}) {
+  console.log("[rehypeNodePositions] Plugin called with options:", options);
+
+  return (tree: Root) => {
+    console.log("[rehypeNodePositions] Processing tree, root type:", tree.type, "children:", tree.children?.length);
+
+    // Log first few child types to understand structure
+    tree.children?.slice(0, 5).forEach((child, i) => {
+      console.log(`[rehypeNodePositions] Child ${i}: type=${(child as any).type}, name=${(child as any).name || (child as any).tagName || 'N/A'}`);
+    });
+
+    let elementCount = 0;
+    let positionCount = 0;
+
+    // Visit all node types and filter for JSX elements
+    visit(tree, (node: any) => {
+      // Handle standard hast elements
+      if (node.type === "element") {
+        elementCount++;
+        if (node.position) {
+          positionCount++;
+          addPositionAttributes(node, node.properties || (node.properties = {}), options.filePath);
+        }
+        return;
+      }
+
+      // Handle MDX JSX elements
+      if (node.type === "mdxJsxFlowElement" || node.type === "mdxJsxTextElement") {
+        elementCount++;
+        console.log("[rehypeNodePositions] Found MDX JSX element:", node.name, "position:", node.position ? "yes" : "no");
+
+        if (node.position) {
+          positionCount++;
+
+          // MDX JSX elements use attributes array instead of properties
+          if (!node.attributes) {
+            node.attributes = [];
+          }
+
+          const { start, end } = node.position;
+
+          // Add position as JSX attributes
+          if (start) {
+            node.attributes.push(
+              { type: "mdxJsxAttribute", name: "data-node-line", value: String(start.line) },
+              { type: "mdxJsxAttribute", name: "data-node-column", value: String(start.column - 1) }
+            );
+          }
+          if (end) {
+            node.attributes.push(
+              { type: "mdxJsxAttribute", name: "data-node-end-line", value: String(end.line) },
+              { type: "mdxJsxAttribute", name: "data-node-end-column", value: String(end.column - 1) }
+            );
+          }
+          if (options.filePath) {
+            node.attributes.push(
+              { type: "mdxJsxAttribute", name: "data-node-file", value: options.filePath }
+            );
+          }
+        }
+      }
+    });
+
+    console.log("[rehypeNodePositions] Processed", { elementCount, positionCount });
+  };
+}
+
+function addPositionAttributes(
+  node: Element,
+  properties: Record<string, unknown>,
+  filePath?: string
+): void {
+  if (!node.position) return;
+
+  const { start, end } = node.position;
+
+  if (start) {
+    properties["data-node-line"] = start.line;
+    properties["data-node-column"] = start.column - 1; // Convert to 0-based
+  }
+
+  if (end) {
+    properties["data-node-end-line"] = end.line;
+    properties["data-node-end-column"] = end.column - 1; // Convert to 0-based
+  }
+
+  if (filePath) {
+    properties["data-node-file"] = filePath;
+  }
+}
+
+export default rehypeNodePositions;

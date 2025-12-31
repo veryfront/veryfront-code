@@ -1,9 +1,14 @@
 export interface VeryfrontAPIConfig {
   apiBaseUrl: string;
 
-  apiToken: string;
+  /** API token - optional in proxy mode where token comes per-request */
+  apiToken?: string;
 
-  projectSlug: string;
+  /** Project slug - optional in proxy mode where slug comes per-request */
+  projectSlug?: string;
+
+  /** Enable proxy mode for multi-project per-request handling */
+  proxyMode?: boolean;
 
   retry?: {
     maxRetries?: number;
@@ -25,6 +30,7 @@ export interface Project {
 }
 
 export interface ProjectFile {
+  id?: string; // Entity UUID - available when fetched from veryfront-api
   path: string;
   size: number;
   type: string;

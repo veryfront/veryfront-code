@@ -40,6 +40,12 @@ export interface RenderOptions {
   request?: Request;
   url?: URL;
   nonce?: string;
+  /** Whether page is embedded in Studio iframe (detected from studio_embed query param) */
+  studioEmbed?: boolean;
+  /** Project ID for Studio communication */
+  projectId?: string;
+  /** Page ID for Studio communication */
+  pageId?: string;
 }
 
 export interface RenderContext {

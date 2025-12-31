@@ -83,14 +83,43 @@ export class SSRHandler extends BaseHandler {
     try {
       // Inject proxy token into FSAdapter before rendering
       // This ensures API calls use the per-request OAuth token from the proxy
-      if (ctx.proxyToken) {
-        const fsWrapper = ctx.adapter.fs as { setRequestToken?: (t: string) => void };
+      if (ctx.proxyToken && ctx.projectSlug) {
+        const fsWrapper = ctx.adapter.fs as {
+          setRequestToken?: (t: string) => void;
+          runWithContext?: <T>(slug: string, token: string, fn: () => Promise<T>) => Promise<T>;
+        };
+        // For multi-project mode, use runWithContext
+        if (typeof fsWrapper.runWithContext === "function") {
+          this.logDebug("Using multi-project context", { projectSlug: ctx.projectSlug }, ctx);
+          return fsWrapper.runWithContext(ctx.projectSlug, ctx.proxyToken, async () => {
+            return this.handleWithContext(req, ctx, slug, requestId, url);
+          });
+        }
+        // For single-project mode, use setRequestToken
         if (typeof fsWrapper.setRequestToken === "function") {
           fsWrapper.setRequestToken(ctx.proxyToken);
           this.logDebug("Injected proxy token into FSAdapter", {}, ctx);
         }
       }
 
+      return this.handleWithContext(req, ctx, slug, requestId, url);
+    } catch (error) {
+      // Unexpected error in context setup - log and continue to 404
+      this.logDebug("Unexpected error in context setup", {
+        error: this.getErrorMessage(error),
+      }, ctx);
+      return this.continue();
+    }
+  }
+
+  private async handleWithContext(
+    req: Request,
+    ctx: HandlerContext,
+    slug: string,
+    requestId: string,
+    url: URL,
+  ): Promise<HandlerResult> {
+    try {
       const renderer = await timeAsync("renderer-init", () => {
         if (!this.rendererInit) {
           this.rendererInit = createRenderer({
@@ -142,6 +171,10 @@ export class SSRHandler extends BaseHandler {
       const nonce = generateNonce();
       this.logDebug(`[NONCE-TRACE] Generated nonce for SSR: ${nonce}`, { slug }, ctx);
 
+      const studioEmbed = url.searchParams.get("studio_embed") === "true";
+      const projectId = ctx.projectSlug || url.searchParams.get("project_id") || undefined;
+      const pageId = url.searchParams.get("page_id") || undefined;
+
       const result = await timeAsync("render-page", () =>
         renderer.renderPage(slug, {
           delivery: "stream",
@@ -149,6 +182,9 @@ export class SSRHandler extends BaseHandler {
           request: req,
           url,
           nonce,
+          studioEmbed,
+          projectId,
+          pageId,
         }));
       this.logDebug("SSR successful", { slug, params }, ctx);
       endRequest(requestId);

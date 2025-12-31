@@ -14,6 +14,7 @@ import { serverLogger, serverLogger as logger } from "@veryfront/utils";
 import { HTTP_NOT_FOUND, HTTP_OK, HTTP_SERVER_ERROR } from "@veryfront/utils";
 import { getContentTypeForPath } from "../../server/handlers/utils/content-types.ts";
 import { createSecureFs } from "@veryfront/security";
+import { injectNodePositions } from "../../build/transforms/plugins/babel-node-positions.ts";
 
 const DEV_MODULE_PREFIX = /^\/(?:_vf_modules|_veryfront\/modules)\//;
 
@@ -117,10 +118,20 @@ export async function serveModule(
       const isFrameworkFile = sourceFile.startsWith(frameworkLibDir + "/") ||
         sourceFile.startsWith(frameworkLibDir + "\\");
       const readStart = performance.now();
-      const source = isFrameworkFile
+      let source = isFrameworkFile
         ? await Deno.readTextFile(sourceFile)
         : await secureFs.readFile(sourceFile);
       timings.readFile = performance.now() - readStart;
+
+      // Inject source position data attributes for Studio Navigator
+      // This adds data-node-line, data-node-column, etc. to JSX elements
+      // Only apply to project TSX/JSX files (not framework files)
+      const isJsxFile = /\.(tsx|jsx)$/i.test(sourceFile);
+      if (!isFrameworkFile && isJsxFile) {
+        const injectStart = performance.now();
+        source = injectNodePositions(source, { filePath: sourceFile });
+        timings.injectPositions = performance.now() - injectStart;
+      }
 
       // Check for SSR mode via query parameter or Deno User-Agent
       // Deno's fetch uses "Deno/x.x.x" as User-Agent, while browsers use different UAs
@@ -259,6 +270,7 @@ export async function serveModule(
       durationMs: (endTime - startTime).toFixed(1),
       findFileMs: timings.findFile?.toFixed(1),
       readFileMs: timings.readFile?.toFixed(1),
+      injectPositionsMs: timings.injectPositions?.toFixed(1),
       transformMs: timings.transform?.toFixed(1),
     });
     return createModuleResponse(method, code ?? "", HTTP_OK, headers);

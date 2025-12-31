@@ -41,8 +41,8 @@ export function remarkAddNodeId(options: { prefix?: string; includePosition?: bo
 
       if (includePosition && node.position) {
         const pos = node.position as {
-          start: { offset: number; line: number };
-          end: { offset: number };
+          start: { offset: number; line: number; column: number };
+          end: { offset: number; line: number; column: number };
         };
         ((node.data as Record<string, unknown>).hProperties as Record<string, unknown>)[
           "data-node-start"
@@ -53,6 +53,15 @@ export function remarkAddNodeId(options: { prefix?: string; includePosition?: bo
         ((node.data as Record<string, unknown>).hProperties as Record<string, unknown>)[
           "data-node-line"
         ] = pos.start.line;
+        ((node.data as Record<string, unknown>).hProperties as Record<string, unknown>)[
+          "data-node-column"
+        ] = pos.start.column;
+        ((node.data as Record<string, unknown>).hProperties as Record<string, unknown>)[
+          "data-node-end-line"
+        ] = pos.end.line;
+        ((node.data as Record<string, unknown>).hProperties as Record<string, unknown>)[
+          "data-node-end-column"
+        ] = pos.end.column;
       }
 
       nodeMap.set(nodeId, {

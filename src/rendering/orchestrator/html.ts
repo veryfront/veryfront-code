@@ -19,6 +19,8 @@ import type {
 import { DEFAULT_DASHBOARD_PORT, rendererLogger as logger } from "@veryfront/utils";
 import { detectAppRouter } from "../router-detection.ts";
 import type { RenderOptions } from "./types.ts";
+import { injectElementSelectors } from "../../studio/element-selector-injector.ts";
+import { computeSourceHash } from "../../studio/hash-utils.ts";
 
 export interface HTMLGeneratorConfig {
   projectDir: string;
@@ -48,11 +50,21 @@ export class HTMLGenerator {
   }
 
   async generateFullHTML(context: HTMLGenerationContext): Promise<string> {
+    let html: string;
+
     if (isFullHTMLDocument(context.html)) {
-      return await this.handleFullHTMLDocument(context);
+      html = await this.handleFullHTMLDocument(context);
+    } else {
+      html = await this.wrapHTMLFragment(context);
     }
 
-    return await this.wrapHTMLFragment(context);
+    // Inject element selectors for Studio Navigator when in studio embed mode
+    if (context.options?.studioEmbed) {
+      html = injectElementSelectors(html);
+      logger.debug("[HTMLGenerator] Injected element selectors for Studio");
+    }
+
+    return html;
   }
 
   /**
@@ -63,6 +75,12 @@ export class HTMLGenerator {
     reactStream: ReadableStream,
     context: Omit<HTMLGenerationContext, "html">,
   ): Promise<ReadableStream> {
+    logger.info("[HTMLGenerator] generateHTMLStream context.options", {
+      studioEmbed: context.options?.studioEmbed,
+      projectId: context.options?.projectId,
+      pageId: context.options?.pageId,
+      hasOptions: !!context.options,
+    });
     const mergedFrontmatter = this.mergeFrontmatter(
       context as HTMLGenerationContext,
     );
@@ -95,6 +113,27 @@ export class HTMLGenerator {
       logger.debug("[HTMLGenerator] No tailwind.config.js found, using default config");
     }
 
+    // Construct page path from entity slug for Studio Navigator integration
+    // Entity slug is like "index.tsx" or "about.tsx", prepend "pages/" to get file path
+    // Handle "/" slug (home page) by converting to "pages/index.tsx"
+    const pageSlug = context.pageInfo.entity.slug;
+    let pagePath: string;
+    if (pageSlug === "/" || pageSlug === "") {
+      // Home page - determine extension from entity id or default to tsx
+      const entityId = context.pageInfo.entity.id;
+      const ext = entityId.match(/\.(tsx|jsx|mdx|ts|js)$/)?.[0] || ".tsx";
+      pagePath = `pages/index${ext}`;
+    } else if (pageSlug.startsWith("pages/")) {
+      pagePath = pageSlug;
+    } else {
+      pagePath = `pages/${pageSlug}`;
+    }
+
+    // Compute source hash for Navigator tree sync detection (only in studio embed mode)
+    const sourceHash = context.options?.studioEmbed && context.pageInfo.entity.content
+      ? computeSourceHash(context.pageInfo.entity.content)
+      : undefined;
+
     const htmlOptions: HTMLGenerationOptions = {
       mode: this.config.mode,
       config: this.config.config,
@@ -106,11 +145,15 @@ export class HTMLGenerator {
       })),
       providerPaths: context.providerInfos.map((p) => p.entity.id),
       appPath: appComponentPath,
-      pagePath: context.pageInfo.entity.id,
+      pagePath: pagePath,
       nonce: context.options?.nonce,
       globalCSS,
       tailwindConfigJs,
       frontmatter: mergedFrontmatter,
+      studioEmbed: context.options?.studioEmbed,
+      projectId: context.options?.projectId,
+      pageId: context.options?.pageId,
+      sourceHash,
     };
 
     const { start, end } = await generateHTMLShellParts(
@@ -229,6 +272,27 @@ export class HTMLGenerator {
       logger.debug("[HTMLGenerator] No tailwind.config.js found, using default config");
     }
 
+    // Construct page path from entity slug for Studio Navigator integration
+    // Entity slug is like "index.tsx" or "about.tsx", prepend "pages/" to get file path
+    // Handle "/" slug (home page) by converting to "pages/index.tsx"
+    const pageSlug = context.pageInfo.entity.slug;
+    let pagePath: string;
+    if (pageSlug === "/" || pageSlug === "") {
+      // Home page - determine extension from entity id or default to tsx
+      const entityId = context.pageInfo.entity.id;
+      const ext = entityId.match(/\.(tsx|jsx|mdx|ts|js)$/)?.[0] || ".tsx";
+      pagePath = `pages/index${ext}`;
+    } else if (pageSlug.startsWith("pages/")) {
+      pagePath = pageSlug;
+    } else {
+      pagePath = `pages/${pageSlug}`;
+    }
+
+    // Compute source hash for Navigator tree sync detection (only in studio embed mode)
+    const sourceHash = context.options?.studioEmbed && context.pageInfo.entity.content
+      ? computeSourceHash(context.pageInfo.entity.content)
+      : undefined;
+
     const htmlOptions: HTMLGenerationOptions = {
       mode: this.config.mode,
       config: this.config.config,
@@ -240,11 +304,15 @@ export class HTMLGenerator {
       })),
       providerPaths: context.providerInfos.map((p) => p.entity.id),
       appPath: appComponentPath,
-      pagePath: context.pageInfo.entity.id,
+      pagePath: pagePath,
       nonce: context.options?.nonce,
       globalCSS,
       tailwindConfigJs,
       frontmatter: mergedFrontmatter,
+      studioEmbed: context.options?.studioEmbed,
+      projectId: context.options?.projectId,
+      pageId: context.options?.pageId,
+      sourceHash,
     };
 
     return await wrapInHTMLShell(

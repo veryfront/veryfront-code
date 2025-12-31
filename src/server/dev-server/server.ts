@@ -119,10 +119,16 @@ export class DevServer {
       this.appConfig,
     );
 
-    await Promise.all([
-      this.componentRegistry.discover(),
-      routeDiscovery.discoverRoutes(),
-    ]);
+    // Skip component/route discovery in proxy mode - each request handles a different project
+    const isProxyMode = this.appConfig?.fs?.veryfront?.proxyMode === true;
+    if (!isProxyMode) {
+      await Promise.all([
+        this.componentRegistry.discover(),
+        routeDiscovery.discoverRoutes(),
+      ]);
+    } else {
+      logger.info("[DevServer] Skipping component/route discovery in proxy mode");
+    }
 
     const requestHandler = new RequestHandler(
       this.options.projectDir,
@@ -166,6 +172,14 @@ export class DevServer {
 
   private async setupFileWatchers(): Promise<void> {
     if (!this.hmrServer) return;
+
+    // Skip file watching in proxy mode - each request is for a different project
+    // and file watching doesn't work with the veryfront-api remote adapter
+    const isProxyMode = this.appConfig?.fs?.veryfront?.proxyMode === true;
+    if (isProxyMode) {
+      logger.info("[DevServer] Skipping file watchers in proxy mode");
+      return;
+    }
 
     const routeDiscovery = new RouteDiscovery(
       this.options.projectDir,

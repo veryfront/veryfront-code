@@ -55,15 +55,6 @@ export class ModuleHandler extends BaseHandler {
   private ensureRenderer(
     ctx: HandlerContext,
   ): Promise<Awaited<ReturnType<typeof createRenderer>>> {
-    // Inject proxy token into FSAdapter before any renderer operations
-    // This ensures API calls use the per-request OAuth token from the proxy
-    if (ctx.proxyToken) {
-      const fsWrapper = ctx.adapter.fs as { setRequestToken?: (t: string) => void };
-      if (typeof fsWrapper.setRequestToken === "function") {
-        fsWrapper.setRequestToken(ctx.proxyToken);
-      }
-    }
-
     if (!this.rendererInit) {
       this.rendererInit = createRenderer({
         projectDir: ctx.projectDir,
@@ -73,6 +64,32 @@ export class ModuleHandler extends BaseHandler {
       });
     }
     return this.rendererInit;
+  }
+
+  private async withProxyContext<T>(
+    ctx: HandlerContext,
+    fn: () => Promise<T>,
+  ): Promise<T> {
+    if (!ctx.proxyToken || !ctx.projectSlug) {
+      return fn();
+    }
+
+    const fsWrapper = ctx.adapter.fs as {
+      setRequestToken?: (t: string) => void;
+      runWithContext?: <T>(slug: string, token: string, fn: () => Promise<T>) => Promise<T>;
+    };
+
+    // Multi-project mode: use runWithContext
+    if (typeof fsWrapper.runWithContext === "function") {
+      return fsWrapper.runWithContext(ctx.projectSlug, ctx.proxyToken, fn);
+    }
+
+    // Single-project mode: use setRequestToken
+    if (typeof fsWrapper.setRequestToken === "function") {
+      fsWrapper.setRequestToken(ctx.proxyToken);
+    }
+
+    return fn();
   }
 
   /**
@@ -91,69 +108,79 @@ export class ModuleHandler extends BaseHandler {
 
     // Module server endpoint
     if (pathname.startsWith("/_vf_modules/")) {
-      return await handleModuleServer(
-        req,
-        ctx,
-        createResponseBuilder,
-        respond,
-        logDebug,
-        getErrorMessage,
+      return this.withProxyContext(ctx, () =>
+        handleModuleServer(
+          req,
+          ctx,
+          createResponseBuilder,
+          respond,
+          logDebug,
+          getErrorMessage,
+        ),
       );
     }
 
     // Virtual modules endpoint
     if (pathname.startsWith("/_veryfront/modules/")) {
-      const rendererInit = this.ensureRenderer(ctx);
-      return await handleVirtualModule(
-        req,
-        ctx,
-        rendererInit,
-        createResponseBuilder,
-        respond,
-        getErrorMessage,
-      );
+      return this.withProxyContext(ctx, async () => {
+        const rendererInit = this.ensureRenderer(ctx);
+        return handleVirtualModule(
+          req,
+          ctx,
+          rendererInit,
+          createResponseBuilder,
+          respond,
+          getErrorMessage,
+        );
+      });
     }
 
     // Generated page modules for client hydration
     if (pathname.startsWith("/_veryfront/pages/")) {
-      const rendererInit = this.ensureRenderer(ctx);
-      return await handlePageModule(
-        req,
-        pathname,
-        ctx,
-        rendererInit,
-        createResponseBuilder,
-        respond,
-        getErrorMessage,
-      );
+      return this.withProxyContext(ctx, async () => {
+        const rendererInit = this.ensureRenderer(ctx);
+        return handlePageModule(
+          req,
+          pathname,
+          ctx,
+          rendererInit,
+          createResponseBuilder,
+          respond,
+          getErrorMessage,
+        );
+      });
     }
 
     // Data JSON endpoint for client router prefetch (legacy HTML-based)
     if (pathname.startsWith("/_veryfront/data/")) {
-      const rendererInit = this.ensureRenderer(ctx);
-      return await handleDataEndpoint(
-        req,
-        pathname,
-        ctx,
-        rendererInit,
-        createResponseBuilder,
-        respond,
-        getErrorMessage,
-      );
+      return this.withProxyContext(ctx, async () => {
+        const rendererInit = this.ensureRenderer(ctx);
+        return handleDataEndpoint(
+          req,
+          pathname,
+          ctx,
+          rendererInit,
+          createResponseBuilder,
+          respond,
+          getErrorMessage,
+        );
+      });
     }
 
     // Page data endpoint for SPA client-side routing
     if (pathname.startsWith("/_veryfront/page-data/")) {
-      const rendererInit = this.ensureRenderer(ctx);
-      return await handlePageDataEndpoint(
-        req,
-        pathname,
-        ctx,
-        rendererInit,
-        createResponseBuilder,
-        respond,
-        getErrorMessage,
-      );
+      return this.withProxyContext(ctx, async () => {
+        const rendererInit = this.ensureRenderer(ctx);
+        return handlePageDataEndpoint(
+          req,
+          pathname,
+          ctx,
+          rendererInit,
+          createResponseBuilder,
+          respond,
+          getErrorMessage,
+        );
+      });
     }
 
     return this.continue();

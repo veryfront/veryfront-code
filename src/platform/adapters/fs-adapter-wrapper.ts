@@ -25,6 +25,34 @@ export class FSAdapterWrapper implements FileSystemAdapter {
     }
   }
 
+  /**
+   * Run a function with the specified project context.
+   * Only applies if the underlying FSAdapter supports it (e.g., MultiProjectFSAdapter).
+   * For adapters that don't support this, the function runs directly.
+   */
+  async runWithContext<T>(
+    projectSlug: string,
+    token: string,
+    fn: () => Promise<T>,
+  ): Promise<T> {
+    const adapter = this.fsAdapter as unknown as {
+      runWithContext?: <T>(slug: string, token: string, fn: () => Promise<T>) => Promise<T>;
+    };
+    if (typeof adapter.runWithContext === "function") {
+      return adapter.runWithContext(projectSlug, token, fn);
+    }
+    // Fallback: just run the function directly
+    return fn();
+  }
+
+  /**
+   * Check if the adapter supports multi-project mode.
+   */
+  isMultiProjectMode(): boolean {
+    const adapter = this.fsAdapter as unknown as { runWithContext?: unknown };
+    return typeof adapter.runWithContext === "function";
+  }
+
   async readFile(path: string): Promise<string> {
     if (this.fsAdapter.readTextFile) {
       return await this.fsAdapter.readTextFile(path);

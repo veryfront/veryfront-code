@@ -264,6 +264,9 @@ export class RendererLifecycle {
 
     // Clear component registry state
     this.services.componentRegistry.clear();
+
+    // Clear provider cache to pick up provider changes
+    this.services.providerManager.clearCache();
   }
 
   clearSlugCache(slug: string): void {
