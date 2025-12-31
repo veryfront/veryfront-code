@@ -107,7 +107,6 @@ jobs:
   deploy:
     needs: build
     runs-on: ubuntu-latest
-    environment: production
     steps:
       - name: Clone repository
         uses: actions/checkout@v4
