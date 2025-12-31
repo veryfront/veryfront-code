@@ -1,6 +1,7 @@
 name: CI/CD
 
 on:
+  workflow_dispatch:
   push:
     branches: [main]
   pull_request:
@@ -15,6 +16,16 @@ jobs:
     steps:
       - name: Clone repository
         uses: actions/checkout@v4
+
+      - name: Setup Node.js (for esbuild binary)
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install esbuild binary
+        run: |
+          npm install esbuild@0.20.1
+          echo "ESBUILD_BINARY_PATH=$(pwd)/node_modules/esbuild/bin/esbuild" >> $GITHUB_ENV
 
       - name: Setup Deno
         uses: denoland/setup-deno@v2
@@ -45,7 +56,7 @@ jobs:
           DENO_JOBS: 1
         run: deno task test:integration --no-lock
 
-  docker:
+  build:
     needs: test
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
@@ -93,7 +104,7 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
 
   deploy:
-    needs: docker
+    needs: build
     runs-on: ubuntu-latest
     environment: production
     steps:
@@ -160,6 +171,6 @@ jobs:
           helm upgrade --install veryfront-renderer ./chart \
             --namespace veryfront-production \
             --set proxy.image.repository=${{ env.REGISTRY }}/veryfront/veryfront-proxy \
-            --set proxy.image.tag=${{ needs.docker.outputs.image_tag }} \
+            --set proxy.image.tag=${{ needs.build.outputs.image_tag }} \
             --set renderer.image.repository=${{ env.REGISTRY }}/veryfront/veryfront-renderer \
-            --set renderer.image.tag=${{ needs.docker.outputs.image_tag }}
+            --set renderer.image.tag=${{ needs.build.outputs.image_tag }}
