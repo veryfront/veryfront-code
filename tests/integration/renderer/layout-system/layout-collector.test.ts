@@ -59,8 +59,13 @@ isLayout: true
 
     const result = await collector.collectLayouts(pageInfo);
 
-    assertExists(result.layoutBundle);
-    assertEquals(result.layoutBundle.frontmatter?.isLayout, true);
+    // When using explicit frontmatter layout, the layout is returned in nestedLayouts
+    // (not layoutBundle) to prevent double-wrapping during SSR and client hydration
+    assertEquals(result.layoutBundle, undefined);
+    assertEquals(result.nestedLayouts.length, 1);
+    assertEquals(result.nestedLayouts[0]?.kind, "mdx");
+    assertExists(result.nestedLayouts[0]?.bundle);
+    assertEquals(result.nestedLayouts[0]?.bundle?.frontmatter?.isLayout, true);
   } finally {
     await cleanupTestDir(projectDir);
   }
