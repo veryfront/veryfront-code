@@ -69,6 +69,11 @@ const allowedWarnings: string[] = [
   // Test pages that intentionally throw
   "Error: boom",
   "Error: fail",
+  // React key prop warnings (common in MDX rendering, harmless)
+  "Each child in a list should have a unique",
+  "Warning: Each child in a list",
+  // React pipeable stream errors that wrap other allowed errors
+  "[RENDERER] ERROR: React pipeable stream error",
 ];
 
 function isAllowed(args: unknown[]): boolean {
