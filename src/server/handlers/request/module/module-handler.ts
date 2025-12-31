@@ -77,15 +77,18 @@ export class ModuleHandler extends BaseHandler {
     const url = new URL(req.url);
     const pathname = url.pathname;
 
+    // Use pre-bound helpers to avoid repeated binding on each request
+    const { createResponseBuilder, respond, logDebug, getErrorMessage } = this.helpers;
+
     // Module server endpoint
     if (pathname.startsWith("/_vf_modules/")) {
       return await handleModuleServer(
         req,
         ctx,
-        this.createResponseBuilder.bind(this),
-        this.respond.bind(this),
-        this.logDebug.bind(this),
-        this.getErrorMessage.bind(this),
+        createResponseBuilder,
+        respond,
+        logDebug,
+        getErrorMessage,
       );
     }
 
@@ -96,9 +99,9 @@ export class ModuleHandler extends BaseHandler {
         req,
         ctx,
         rendererInit,
-        this.createResponseBuilder.bind(this),
-        this.respond.bind(this),
-        this.getErrorMessage.bind(this),
+        createResponseBuilder,
+        respond,
+        getErrorMessage,
       );
     }
 
@@ -110,9 +113,9 @@ export class ModuleHandler extends BaseHandler {
         pathname,
         ctx,
         rendererInit,
-        this.createResponseBuilder.bind(this),
-        this.respond.bind(this),
-        this.getErrorMessage.bind(this),
+        createResponseBuilder,
+        respond,
+        getErrorMessage,
       );
     }
 
@@ -124,9 +127,9 @@ export class ModuleHandler extends BaseHandler {
         pathname,
         ctx,
         rendererInit,
-        this.createResponseBuilder.bind(this),
-        this.respond.bind(this),
-        this.getErrorMessage.bind(this),
+        createResponseBuilder,
+        respond,
+        getErrorMessage,
       );
     }
 
@@ -138,9 +141,9 @@ export class ModuleHandler extends BaseHandler {
         pathname,
         ctx,
         rendererInit,
-        this.createResponseBuilder.bind(this),
-        this.respond.bind(this),
-        this.getErrorMessage.bind(this),
+        createResponseBuilder,
+        respond,
+        getErrorMessage,
       );
     }
 

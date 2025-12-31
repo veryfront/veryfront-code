@@ -65,7 +65,7 @@ export function useOptimisticCompat<State, OptimisticState = State>(
     (action: OptimisticStateAction<OptimisticState>) => {
       if (typeof action === "function") {
         const actionFn = action as (currentState: State) => State;
-        setOptimisticState((current) => {
+        setOptimisticState((current: State) => {
           const newState = actionFn(current);
           return updateFn ? updateFn(current, newState as State & OptimisticState) : newState;
         });

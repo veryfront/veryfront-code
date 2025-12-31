@@ -13,8 +13,36 @@ import type {
 import { ResponseBuilder } from "./response/index.ts";
 import { serverLogger } from "@veryfront/utils";
 
+/**
+ * Pre-bound handler helper methods.
+ * Created once per handler instance to avoid repeated binding on each request.
+ */
+export interface HandlerHelpers {
+  createResponseBuilder: (ctx: HandlerContext, nonce?: string) => ResponseBuilder;
+  respond: (response: Response, metadata?: Record<string, unknown>) => HandlerResult;
+  logDebug: (message: string, extra?: Record<string, unknown>, ctx?: HandlerContext) => void;
+  getErrorMessage: (error: unknown) => string;
+  continue: () => HandlerResult;
+}
+
 export abstract class BaseHandler implements Handler {
   abstract metadata: HandlerMetadata;
+
+  /**
+   * Pre-bound helper methods for passing to handler functions.
+   * Bind methods once in constructor to avoid creating new functions on each request.
+   */
+  protected readonly helpers: HandlerHelpers;
+
+  constructor() {
+    this.helpers = {
+      createResponseBuilder: this.createResponseBuilder.bind(this),
+      respond: this.respond.bind(this),
+      logDebug: this.logDebug.bind(this),
+      getErrorMessage: this.getErrorMessage.bind(this),
+      continue: this.continue.bind(this),
+    };
+  }
 
   /**
    * Main handler method to be implemented by subclasses

@@ -30,6 +30,17 @@ export {
 } from "./error-handlers.ts";
 
 export {
+  createErrorScope,
+  safeFileStat,
+  safeFileRead,
+  safeReadDir,
+  withErrorContext,
+  withErrorContextSync,
+} from "./error-context.ts";
+
+export type { ErrorContext, ErrorHandlingOptions, LogLevel } from "./error-context.ts";
+
+export {
   BUILD_ERROR_CATALOG,
   CONFIG_ERROR_CATALOG,
   createErrorSolution,

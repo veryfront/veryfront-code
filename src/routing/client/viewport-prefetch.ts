@@ -25,7 +25,7 @@ export class ViewportPrefetch {
       this.createObserver();
       this.observeLinks(root);
     } catch (error) {
-      logger.debug("[router] setupViewportPrefetch failed", error);
+      logger.debug("[Veryfront] setupViewportPrefetch failed", error);
     }
   }
 
@@ -34,12 +34,9 @@ export class ViewportPrefetch {
       (entries) => {
         for (const entry of entries) {
           if (entry.isIntersecting) {
-            const isAnchor = typeof HTMLAnchorElement !== "undefined"
-              ? entry.target instanceof HTMLAnchorElement
-              : (entry.target as any).tagName === "A";
-
-            if (isAnchor) {
-              const href = (entry.target as HTMLAnchorElement).getAttribute("href");
+            // Check if target is an anchor element
+            if (entry.target instanceof HTMLAnchorElement) {
+              const href = entry.target.getAttribute("href");
               if (href) {
                 this.prefetchCallback(href);
               }
@@ -84,7 +81,7 @@ export class ViewportPrefetch {
       try {
         this.observer.disconnect();
       } catch (error) {
-        logger.warn("[router] prefetchObserver.disconnect failed", error);
+        logger.warn("[Veryfront] prefetchObserver.disconnect failed", error);
       }
       this.observer = null;
     }

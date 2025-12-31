@@ -412,7 +412,7 @@ interface FSAdapter {
  * Transform @/ aliased imports to file:// paths
  * @/ is a project-relative alias that maps to the project root
  */
-async function transformProjectAliasImports(
+async function _transformProjectAliasImports(
   code: string,
   fs: FSAdapter,
   esmCacheDir: string,
@@ -527,7 +527,7 @@ async function transformProjectAliasImports(
  * Transform /_vf_modules/ imports to file:// paths
  * These are browser-style module URLs that need to be resolved for server-side execution
  */
-async function transformModuleServerImports(
+async function _transformModuleServerImports(
   code: string,
   fs: FSAdapter,
   esmCacheDir: string,

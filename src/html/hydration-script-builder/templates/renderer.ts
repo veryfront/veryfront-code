@@ -1,53 +1,47 @@
 export const getRendererScript = () => `
+    // Note: DEBUG, log, logError are defined in router.ts which loads first
+
     async function renderPage(pathname) {
       const dataScript = document.getElementById('veryfront-hydration-data');
       if (!dataScript) {
-        console.error('[Veryfront] Hydration data not found');
+        logError('Hydration data not found');
         return;
       }
 
+      let data = {};
       try {
-        const data = JSON.parse(dataScript.textContent || '{}');
+        data = JSON.parse(dataScript.textContent || '{}');
+      } catch (parseError) {
+        logError('Failed to parse hydration data:', parseError);
+        return;
+      }
 
-        console.log('[Veryfront] Hydration data:', data);
+      log('Hydration data:', data);
 
-        // Try using pagePath from hydration data first (supports App Router)
+      try {
         let pagePath;
         let pageModule;
 
         if (data.pagePath) {
           // Use the server-provided page path
-          // Try absolute path format first (legacy): /project/pages/index.tsx
-          let match = data.pagePath.match(/\\/(pages|app|components|lib|layouts|shared|features)\\/(.+)\\.(tsx|ts|jsx|js|mdx)$/);
-
-          // Try project-relative path format: pages/index.mdx
-          if (!match) {
-            match = data.pagePath.match(/^(pages|app|components|lib|layouts|shared|features)\\/(.+)\\.(tsx|ts|jsx|js|mdx)$/);
-          }
-
-          if (match) {
-            pagePath = \`\${MODULE_SERVER_URL}/\${match[1]}/\${match[2]}.js\`;
-            console.log('[Veryfront] Loading page from hydration data:', pagePath);
-            try {
-              pageModule = await import(pagePath);
-            } catch (error) {
-              console.error('[Veryfront] Failed to load page from hydration data:', error);
-            }
+          const moduleUrl = pathToModuleUrl(data.pagePath);
+          log('Loading page from hydration data:', moduleUrl);
+          try {
+            pageModule = await import(moduleUrl);
+          } catch (error) {
+            logError('Failed to load page from hydration data:', error);
           }
         }
 
         // Fallback to old Pages Router behavior if pagePath not available
         if (!pageModule) {
           const pageSlug = pathname === '/' ? 'index' : pathname.slice(1);
-          console.log('[Veryfront] Falling back to Pages Router pattern:', pageSlug);
-          console.log('[DEBUG] MODULE_SERVER_URL before import:', MODULE_SERVER_URL);
-          pagePath = \`\${MODULE_SERVER_URL}/pages/\${pageSlug}.js\`;
-          console.log('[DEBUG] Constructed pagePath:', pagePath);
+          log('Falling back to Pages Router pattern:', pageSlug);
+          pagePath = MODULE_SERVER_URL + '/pages/' + pageSlug + '.js';
           try {
             pageModule = await import(pagePath);
           } catch (err) {
-            pagePath = \`\${MODULE_SERVER_URL}/pages/\${pageSlug}/index.js\`;
-            console.log('[DEBUG] Fallback pagePath:', pagePath);
+            pagePath = MODULE_SERVER_URL + '/pages/' + pageSlug + '/index.js';
             pageModule = await import(pagePath);
           }
         }
@@ -55,7 +49,7 @@ export const getRendererScript = () => `
         const PageComponent = pageModule.default || pageModule;
 
         if (!PageComponent) {
-          console.error('[Veryfront] Page component not found');
+          logError('Page component not found');
           return;
         }
 
@@ -90,20 +84,31 @@ export const getRendererScript = () => `
             const root = createRoot(container);
             root.render(tree);
             container.__reactRoot = root;
-            console.log('[Veryfront] Client-side React app mounted successfully');
+            log('Client-side React app mounted successfully');
           } else {
             container.__reactRoot.render(tree);
-            console.log('[Veryfront] Page re-rendered');
+            log('Page re-rendered');
           }
         }
       } catch (error) {
-        console.error('[Veryfront] Client initialization error:', error);
+        logError('Client initialization error:', error);
       }
     }
 
     renderPage(window.location.pathname);
 
-    window.addEventListener('popstate', () => {
-      renderPage(window.location.pathname);
-    });
+    // Store initial page data in history state for instant back navigation
+    const initialDataScript = document.getElementById('veryfront-hydration-data');
+    if (initialDataScript) {
+      try {
+        const pageData = JSON.parse(initialDataScript.textContent || '{}');
+        if (pageData.pagePath) {
+          window.history.replaceState({ pageData, scrollY: 0 }, '', window.location.href);
+          log('Stored initial page data in history state');
+        }
+      } catch (e) { /* ignore parse errors */ }
+    }
+
+    // Note: popstate is handled by router.ts for SPA navigation
+    // This file only handles initial page render
 `;

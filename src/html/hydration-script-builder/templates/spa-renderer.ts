@@ -2,18 +2,25 @@ export const getSpaRendererScript = () => `
     async function initSpaApp() {
       const dataScript = document.getElementById('veryfront-hydration-data');
       if (!dataScript) {
-        console.error('[Veryfront SPA] Hydration data not found');
+        logError('Hydration data not found');
         return;
       }
 
+      let initialData = {};
       try {
-        const initialData = JSON.parse(dataScript.textContent || '{}');
-        console.log('[Veryfront SPA] Initial page data:', initialData);
+        initialData = JSON.parse(dataScript.textContent || '{}');
+      } catch (parseError) {
+        logError('Failed to parse hydration data:', parseError);
+        return;
+      }
 
+      log('Initial page data:', initialData);
+
+      try {
         // Preload the initial page component
         const pageComponent = await loadComponent(initialData.pagePath);
         if (!pageComponent) {
-          console.error('[Veryfront SPA] Failed to load initial page component');
+          logError('Failed to load initial page component');
           return;
         }
 
@@ -23,11 +30,11 @@ export const getSpaRendererScript = () => `
         }
 
         // Import ClientApp dynamically
-        const { ClientApp } = await import(\`\${MODULE_SERVER_URL}/lib/spa/ClientApp.js\`);
+        const { ClientApp } = await import(MODULE_SERVER_URL + '/lib/spa/ClientApp.js');
 
         const container = document.getElementById('veryfront-content');
         if (!container) {
-          console.error('[Veryfront SPA] Content container not found');
+          logError('Content container not found');
           return;
         }
 
@@ -43,19 +50,19 @@ export const getSpaRendererScript = () => `
           // SSR content exists, hydrate
           const { hydrateRoot } = await import('react-dom/client');
           hydrateRoot(container, tree);
-          console.log('[Veryfront SPA] Hydrated successfully');
+          log('Hydrated successfully');
         } else {
           // No SSR content, render fresh
           const root = createRoot(container);
           root.render(tree);
-          console.log('[Veryfront SPA] Rendered successfully');
+          log('Rendered successfully');
         }
 
         // Enable SPA mode in router
         window.__VERYFRONT_SPA_MODE__ = true;
 
       } catch (error) {
-        console.error('[Veryfront SPA] Initialization error:', error);
+        logError('Initialization error:', error);
         // Fallback to legacy rendering
         renderPage(window.location.pathname);
       }
@@ -84,23 +91,10 @@ export const getSpaLoaderScript = () => `
 
       const loadPromise = (async () => {
         try {
-          // Try absolute path format first (legacy): /project/dir/pages/foo.tsx
-          let match = path.match(/\\/(pages|components|app|lib|layouts|shared|features)\\/(.+)\\.(tsx|ts|jsx|mdx)$/);
+          const moduleUrl = pathToModuleUrl(path);
+          log('Loading component:', moduleUrl);
 
-          // Try project-relative path format: pages/foo.mdx or layouts/DefaultLayout.mdx
-          if (!match) {
-            match = path.match(/^(pages|components|app|lib|layouts|shared|features)\\/(.+)\\.(tsx|ts|jsx|mdx)$/);
-          }
-
-          if (!match) {
-            console.error('[Veryfront SPA] Invalid component path:', path);
-            return null;
-          }
-
-          const relativePath = \`\${MODULE_SERVER_URL}/\${match[1]}/\${match[2]}.js\`;
-          console.log('[Veryfront SPA] Loading component:', relativePath);
-
-          const module = await import(relativePath);
+          const module = await import(moduleUrl);
           const Component = module.default || module;
 
           componentCache.set(path, Component);
@@ -108,7 +102,7 @@ export const getSpaLoaderScript = () => `
 
           return Component;
         } catch (error) {
-          console.error('[Veryfront SPA] Failed to load component:', path, error);
+          logError('Failed to load component:', path, error);
           loadingPromises.delete(path);
           return null;
         }

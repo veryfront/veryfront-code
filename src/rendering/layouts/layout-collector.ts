@@ -1,5 +1,5 @@
 import { join } from "../../platform/compat/path-helper.ts";
-import { rendererLogger as logger } from "@veryfront/utils";
+import { rendererLogger as logger, timeAsync } from "@veryfront/utils";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import type { EntityInfo } from "@veryfront/types";
 import type { LayoutItem, MdxBundle } from "@veryfront/types";
@@ -46,7 +46,8 @@ export class LayoutCollector {
     const hasExplicitFrontmatterLayout = typeof layoutValue === "string" && layoutValue.length > 0;
 
     // Collect the named layout (from frontmatter or config.defaultLayout)
-    const { layoutBundle, layoutPath } = await this.collectNamedLayoutWithPath(pageInfo);
+    const { layoutBundle, layoutPath } = await timeAsync("layout-named", () =>
+      this.collectNamedLayoutWithPath(pageInfo), "collect-layouts");
 
     let nestedLayouts: LayoutItem[];
 
@@ -70,7 +71,8 @@ export class LayoutCollector {
       return { layoutBundle: undefined, nestedLayouts };
     } else {
       // No explicit frontmatter layout - use project-level nested layouts
-      nestedLayouts = await this.collectNestedLayouts(pageInfo);
+      nestedLayouts = await timeAsync("layout-nested", () =>
+        this.collectNestedLayouts(pageInfo), "collect-layouts");
     }
 
     logger.debug("[LayoutCollector] collectLayouts result", {

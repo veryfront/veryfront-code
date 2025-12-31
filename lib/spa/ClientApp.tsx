@@ -1,10 +1,9 @@
-import React, {
+import {
   useState,
   useEffect,
   useCallback,
   Suspense,
   type ComponentType,
-  type ReactNode,
 } from "react";
 import { RouterProvider, type Router } from "../Router.tsx";
 import { PageContextProvider, type PageContext } from "../usePageContext.tsx";
@@ -172,52 +171,52 @@ export function ClientApp({ initialData }: ClientAppProps): JSX.Element {
   // Register navigation handler globally and with router
   useEffect(() => {
     // Global handler for direct access
-    window.__VERYFRONT_SPA_NAVIGATE__ = handleNavigate;
+    globalThis.__VERYFRONT_SPA_NAVIGATE__ = handleNavigate;
 
     // Register with router if available
-    if (window.veryFrontRouter?.registerNavigationHandler) {
-      window.veryFrontRouter.registerNavigationHandler(handleNavigate);
+    if (globalThis.veryFrontRouter?.registerNavigationHandler) {
+      globalThis.veryFrontRouter.registerNavigationHandler(handleNavigate);
     }
 
     return () => {
-      delete window.__VERYFRONT_SPA_NAVIGATE__;
+      delete globalThis.__VERYFRONT_SPA_NAVIGATE__;
     };
   }, [handleNavigate]);
 
   // Create router value
   const routerValue: Router = {
-    domain: typeof window !== "undefined" ? window.location.hostname : "",
+    domain: typeof globalThis !== "undefined" && globalThis.location ? globalThis.location.hostname : "",
     path: state.currentPath,
     pathname: state.currentPath,
     params: Object.fromEntries(
       Object.entries(state.params).map(([k, v]) => [k, Array.isArray(v) ? v.join("/") : v])
     ),
     query:
-      typeof window !== "undefined"
-        ? Object.fromEntries(new URLSearchParams(window.location.search))
+      typeof globalThis !== "undefined" && globalThis.location
+        ? Object.fromEntries(new URLSearchParams(globalThis.location.search))
         : {},
     isPreview: false,
     isMounted,
-    navigate: async (path, options) => {
+    navigate: async (path, _options) => {
       const url = typeof path === "string" ? path : path.pathname;
-      if (window.veryFrontRouter && "navigate" in window.veryFrontRouter) {
-        await (window.veryFrontRouter as { navigate: (url: string) => Promise<void> }).navigate(url);
+      if (globalThis.veryFrontRouter && "navigate" in globalThis.veryFrontRouter) {
+        await (globalThis.veryFrontRouter as { navigate: (url: string) => Promise<void> }).navigate(url);
       }
     },
-    push: async (path, options) => {
+    push: async (path, _options) => {
       const url = typeof path === "string" ? path : path.pathname;
-      if (window.veryFrontRouter && "navigate" in window.veryFrontRouter) {
-        await (window.veryFrontRouter as { navigate: (url: string) => Promise<void> }).navigate(url);
+      if (globalThis.veryFrontRouter && "navigate" in globalThis.veryFrontRouter) {
+        await (globalThis.veryFrontRouter as { navigate: (url: string) => Promise<void> }).navigate(url);
       }
     },
-    replace: async (path, options) => {
+    replace: async (path, _options) => {
       const url = typeof path === "string" ? path : path.pathname;
-      if (window.veryFrontRouter && "navigate" in window.veryFrontRouter) {
-        await (window.veryFrontRouter as { navigate: (url: string, push?: boolean) => Promise<void> }).navigate(url, false);
+      if (globalThis.veryFrontRouter && "navigate" in globalThis.veryFrontRouter) {
+        await (globalThis.veryFrontRouter as { navigate: (url: string, push?: boolean) => Promise<void> }).navigate(url, false);
       }
     },
-    reload: async () => {
-      window.location.reload();
+    reload: () => {
+      globalThis.location.reload();
     },
   };
 
@@ -229,15 +228,15 @@ export function ClientApp({ initialData }: ClientAppProps): JSX.Element {
       Object.entries(state.params).map(([k, v]) => [k, Array.isArray(v) ? v.join("/") : v])
     ),
     query:
-      typeof window !== "undefined"
-        ? Object.fromEntries(new URLSearchParams(window.location.search))
+      typeof globalThis !== "undefined" && globalThis.location
+        ? Object.fromEntries(new URLSearchParams(globalThis.location.search))
         : {},
     frontmatter: state.frontmatter,
   };
 
   // Handle retry after error
   const handleRetry = useCallback(() => {
-    window.location.reload();
+    globalThis.location.reload();
   }, []);
 
   // Render loading state during navigation

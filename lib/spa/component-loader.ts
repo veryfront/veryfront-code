@@ -1,40 +1,15 @@
 import type { ComponentType } from "react";
+import { pathToModuleUrl } from "./path-utils.ts";
 
 const componentCache = new Map<string, ComponentType<unknown>>();
 const loadingPromises = new Map<string, Promise<ComponentType<unknown>>>();
 
-function getModuleServerUrl(): string {
-  if (typeof window !== "undefined" && (window as { MODULE_SERVER_URL?: string }).MODULE_SERVER_URL) {
-    return (window as { MODULE_SERVER_URL?: string }).MODULE_SERVER_URL!;
-  }
-  return "/_vf_modules";
-}
-
-function pathToModuleUrl(path: string): string {
-  const baseUrl = getModuleServerUrl();
-
-  // Try absolute path format (legacy): /project/dir/pages/foo.tsx
-  let match = path.match(/\/(pages|components|app|lib|layouts|shared|features)\/(.+)\.(tsx|ts|jsx|mdx)$/);
-
-  // Try project-relative path format: pages/foo.mdx or layouts/DefaultLayout.mdx
-  if (!match) {
-    match = path.match(/^(pages|components|app|lib|layouts|shared|features)\/(.+)\.(tsx|ts|jsx|mdx)$/);
-  }
-
-  if (!match) {
-    // Direct path fallback
-    return `${baseUrl}/${path.replace(/\.(tsx|ts|jsx|mdx)$/, ".js")}`;
-  }
-
-  return `${baseUrl}/${match[1]}/${match[2]}.js`;
-}
-
-export async function loadComponent(path: string): Promise<ComponentType<unknown> | null> {
-  if (!path) return null;
+export function loadComponent(path: string): Promise<ComponentType<unknown> | null> {
+  if (!path) return Promise.resolve(null);
 
   // Check cache
   if (componentCache.has(path)) {
-    return componentCache.get(path)!;
+    return Promise.resolve(componentCache.get(path)!);
   }
 
   // Check if already loading
@@ -54,7 +29,7 @@ export async function loadComponent(path: string): Promise<ComponentType<unknown
 
       return Component;
     } catch (error) {
-      console.error("[Veryfront SPA] Failed to load component:", path, error);
+      console.error("[Veryfront] Failed to load component:", path, error);
       loadingPromises.delete(path);
       return null;
     }

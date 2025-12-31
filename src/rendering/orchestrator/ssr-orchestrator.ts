@@ -1,4 +1,4 @@
-import { rendererLogger as logger } from "@veryfront/utils";
+import { rendererLogger as logger, timeAsync } from "@veryfront/utils";
 import type * as React from "react";
 import { createError, toError } from "../../core/errors/veryfront-error.ts";
 import type { ElementValidator } from "../element-validator/index.ts";
@@ -33,8 +33,15 @@ export class SSROrchestrator {
     generationContext: Omit<HTMLGenerationContext, "html" | "ssrHash">,
     options?: RenderOptions,
   ): Promise<SSRRenderingResult> {
+    const getElementTypeName = (el: React.ReactElement | null | undefined): string => {
+      if (!el?.type) return "unknown";
+      if (typeof el.type === "string") return el.type;
+      return (el.type as { name?: string; displayName?: string }).name ||
+             (el.type as { displayName?: string }).displayName ||
+             "Component";
+    };
     logger.info("[SSROrchestrator] performSSRRendering called", {
-      elementType: pageElement?.type?.name || pageElement?.type?.displayName || typeof pageElement?.type,
+      elementType: getElementTypeName(pageElement),
       hasChildren: !!pageElement?.props?.children,
     });
     const validatedElement = this.config.elementValidator.ensureValidReactElement(
@@ -42,18 +49,19 @@ export class SSROrchestrator {
       this.config.debugMode,
     );
     logger.info("[SSROrchestrator] Element validated", {
-      validatedType: validatedElement?.type?.name || validatedElement?.type?.displayName || typeof validatedElement?.type,
+      validatedType: getElementTypeName(validatedElement),
     });
 
     const wantsStream = options?.delivery === "stream";
-    const { html, stream } = await this.config.ssrRenderer.renderToHTML(
-      validatedElement,
-      {
-        mode: this.config.mode,
-        wantsStream,
-        debugMode: this.config.debugMode,
-      },
-    );
+    const { html, stream } = await timeAsync("ssr-react-render", () =>
+      this.config.ssrRenderer.renderToHTML(
+        validatedElement,
+        {
+          mode: this.config.mode,
+          wantsStream,
+          debugMode: this.config.debugMode,
+        },
+      ), "ssr-rendering");
 
     // Merge options from generationContext with the passed options parameter
     // to avoid losing props that were set in generationContext.options
@@ -66,10 +74,18 @@ export class SSROrchestrator {
       },
     };
 
-    // If we have a stream, use streaming HTML generation
+    // If we have a stream, use TRUE STREAMING HTML generation
+    // This sends HTML shell immediately without waiting for React to finish rendering
     if (stream && wantsStream) {
-      // Compute hash from buffered HTML (if available) for better cache consistency
-      const ssrHash = await getContentHash(html);
+      // TRUE STREAMING: html is empty (not buffered), so skip content-based hash
+      // Use a timestamp-based hash since we can't compute ETag from unbuffered stream
+      // ETag will be skipped for streaming responses in the handler
+      const ssrHash = html ? await getContentHash(html) : `stream-${Date.now()}`;
+
+      logger.debug("[SSROrchestrator] True streaming mode - sending HTML shell immediately", {
+        hasBufferedHtml: !!html,
+        ssrHash,
+      });
 
       const contextWithHash = {
         ...generationContext,
@@ -82,19 +98,22 @@ export class SSROrchestrator {
         contextWithHash,
       );
 
-      // Return buffered HTML alongside stream for fallback scenarios
+      // fullHtml is empty for true streaming (this is intentional!)
+      // The handler will skip ETag for streaming responses
       return { fullHtml: html, finalStream, ssrHash };
     }
 
     // Otherwise, use buffered HTML generation
-    const ssrHash = await getContentHash(html);
+    const ssrHash = await timeAsync("ssr-content-hash", () =>
+      getContentHash(html), "ssr-rendering");
 
-    const fullHtml = await this.config.htmlGenerator.generateFullHTML({
-      ...generationContext,
-      html,
-      ssrHash,
-      options: mergedOptions,
-    });
+    const fullHtml = await timeAsync("ssr-html-generation", () =>
+      this.config.htmlGenerator.generateFullHTML({
+        ...generationContext,
+        html,
+        ssrHash,
+        options: mergedOptions,
+      }), "ssr-rendering");
 
     const finalStream = wantsStream ? this.createStream(fullHtml) : null;
 

@@ -6,3 +6,8 @@ export {
   getCachedComponent,
   clearComponentCache,
 } from "./component-loader.ts";
+export {
+  pathToModuleUrl,
+  getModuleServerUrl,
+  getPathToModuleUrlScript,
+} from "./path-utils.ts";

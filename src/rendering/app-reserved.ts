@@ -25,15 +25,21 @@ export function collectAncestorDirs(segmentDir: string, appRootDir: string): str
   return dirs;
 }
 
+interface ErrorBoundaryState {
+  hasError: boolean;
+  error?: Error;
+}
+
+interface ErrorBoundaryProps {
+  children?: BundledReact.ReactNode;
+}
+
 export function createErrorBoundary(
   ErrorComponent: ReservedComponent,
-  React: typeof BundledReact = BundledReact,
+  ReactLib: typeof BundledReact = BundledReact,
 ) {
-  return class ErrorBoundary extends React.Component<
-    { children?: BundledReact.ReactNode },
-    { hasError: boolean; error?: Error }
-  > {
-    constructor(props: { children?: BundledReact.ReactNode }) {
+  return class ErrorBoundary extends BundledReact.Component<ErrorBoundaryProps, ErrorBoundaryState> {
+    constructor(props: ErrorBoundaryProps) {
       super(props);
       this.state = { hasError: false };
     }
@@ -49,7 +55,7 @@ export function createErrorBoundary(
     override render() {
       if (this.state.hasError && ErrorComponent) {
         const Reserved = ErrorComponent as BundledReact.ComponentType<Record<string, unknown>>;
-        return React.createElement(Reserved, {
+        return ReactLib.createElement(Reserved, {
           error: this.state.error,
           reset: () => this.setState({ hasError: false }),
         });

@@ -129,7 +129,7 @@
     "strict": true,
     "noImplicitAny": true,
     "noUncheckedIndexedAccess": true,
-    "types": [],
+    "types": ["npm:@types/react@18"],
     "lib": [
       "deno.window",
       "dom",

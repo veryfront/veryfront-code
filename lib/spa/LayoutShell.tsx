@@ -1,4 +1,4 @@
-import React, { Suspense, useState, useEffect, type ComponentType, type ReactNode } from "react";
+import { Suspense, useState, useEffect, type ComponentType, type ReactNode } from "react";
 import { loadComponent, getCachedComponent } from "./component-loader.ts";
 
 export interface LayoutInfo {

@@ -38,9 +38,12 @@ if (typeof Deno === "undefined") {
 
 import { detectEntityType } from "../entities.ts";
 import { createError, toError } from "../../../core/errors/veryfront-error.ts";
+import { createErrorScope } from "../../../core/errors/error-context.ts";
 import type { Entity, EntityInfo, Frontmatter } from "../entities.ts";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import { withFallback } from "@veryfront/platform/adapters/index.ts";
+
+const entityInfoScope = createErrorScope("getEntityInfo");
 
 const fs = createFileSystem();
 
@@ -70,7 +73,12 @@ export async function getEntityInfo(
           { operationName: "stat:getEntityInfo", logError: false },
         );
         if (!stat.isFile) return null;
-      } catch {
+      } catch (error) {
+        entityInfoScope.runSync(
+          () => { throw error; },
+          { path: filePath, details: { reason: "stat-failed" } },
+          undefined,
+        );
         return null;
       }
     } else {
@@ -120,7 +128,12 @@ export async function getEntityInfo(
     };
 
     return { entity };
-  } catch {
+  } catch (error) {
+    entityInfoScope.runSync(
+      () => { throw error; },
+      { path: filePath, details: { reason: "entity-info-failed" } },
+      undefined,
+    );
     return null;
   }
 }

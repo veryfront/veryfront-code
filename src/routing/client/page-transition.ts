@@ -62,7 +62,7 @@ export class PageTransition {
     try {
       globalThis.scrollTo(0, isPopState ? scrollY : 0);
     } catch (error) {
-      logger.warn("[router] scroll handling failed", error);
+      logger.warn("[Veryfront] scroll handling failed", error);
     }
   }
 

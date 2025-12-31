@@ -1,6 +1,10 @@
 import { rendererLogger as logger } from "@veryfront/utils";
 import { timeAsync } from "@veryfront/utils";
 import { ErrorCode, VeryfrontError } from "@veryfront/errors/index.ts";
+import {
+  extractRouteParams as extractRouteParamsShared,
+  extractRelativePath as extractRelativePathShared,
+} from "@veryfront/core/utils/route-path-utils.ts";
 import type { MdxBundle } from "@veryfront/types";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import { getLocalAdapter } from "@veryfront/platform/adapters/registry.ts";
@@ -73,37 +77,37 @@ export class RenderPipeline {
     // Handle absolute paths (like "/@radix-ui/..." or "/react@...")
     code = code.replace(
       /import\s*(["'])(\/[^"']+)\1/g,
-      (match, quote, path) => `import${quote}https://esm.sh${path}${quote}`,
+      (_match, quote, path) => `import${quote}https://esm.sh${path}${quote}`,
     );
     code = code.replace(
       /from\s*(["'])(\/[^"']+)\1/g,
-      (match, quote, path) => `from${quote}https://esm.sh${path}${quote}`,
+      (_match, quote, path) => `from${quote}https://esm.sh${path}${quote}`,
     );
     code = code.replace(
       /export\s*\*\s*from\s*(["'])(\/[^"']+)\1/g,
-      (match, quote, path) => `export*from${quote}https://esm.sh${path}${quote}`,
+      (_match, quote, path) => `export*from${quote}https://esm.sh${path}${quote}`,
     );
     code = code.replace(
       /export\s*\{([^}]+)\}\s*from\s*(["'])(\/[^"']+)\2/g,
-      (match, exports, quote, path) => `export{${exports}}from${quote}https://esm.sh${path}${quote}`,
+      (_match, exports, quote, path) => `export{${exports}}from${quote}https://esm.sh${path}${quote}`,
     );
 
     // Handle relative paths (like "./dist/..." or "../utils/...")
     code = code.replace(
       /import\s*(["'])(\.\.?\/[^"']+)\1/g,
-      (match, quote, path) => `import${quote}${new URL(path, urlBase).href}${quote}`,
+      (_match, quote, path) => `import${quote}${new URL(path, urlBase).href}${quote}`,
     );
     code = code.replace(
       /from\s*(["'])(\.\.?\/[^"']+)\1/g,
-      (match, quote, path) => `from${quote}${new URL(path, urlBase).href}${quote}`,
+      (_match, quote, path) => `from${quote}${new URL(path, urlBase).href}${quote}`,
     );
     code = code.replace(
       /export\s*\*\s*from\s*(["'])(\.\.?\/[^"']+)\1/g,
-      (match, quote, path) => `export*from${quote}${new URL(path, urlBase).href}${quote}`,
+      (_match, quote, path) => `export*from${quote}${new URL(path, urlBase).href}${quote}`,
     );
     code = code.replace(
       /export\s*\{([^}]+)\}\s*from\s*(["'])(\.\.?\/[^"']+)\2/g,
-      (match, exports, quote, path) => `export{${exports}}from${quote}${new URL(path, urlBase).href}${quote}`,
+      (_match, exports, quote, path) => `export{${exports}}from${quote}${new URL(path, urlBase).href}${quote}`,
     );
 
     // Find ALL esm.sh URLs in the code and fetch/replace them
@@ -140,10 +144,6 @@ export class RenderPipeline {
 
     // Transform the module and all its @/ dependencies
     const tempFilePath = await this.transformModuleWithDeps(filePath, tmpDir, localAdapter);
-
-    // Read the transformed code and use it directly
-    // This avoids issues with import map not being applied to file:// URLs
-    const transformedCode = await localAdapter.fs.readFile(tempFilePath);
 
     // Import using the original temp file path
     // Use dynamic import with proper base URL resolution
@@ -367,11 +367,13 @@ export class RenderPipeline {
     const pageInfo = await timeAsync("resolve-page", () =>
       this.config.pageResolver.resolvePage(slug), "render-page");
 
-    // 1. Collect layouts first to enable parallel data fetching
-    const layoutResult = await timeAsync("collect-layouts", () =>
-      this.config.layoutOrchestrator.collectLayouts(pageInfo), "render-page");
-    const providerResult = await timeAsync("collect-providers", () =>
-      this.config.layoutOrchestrator.collectProviders(), "render-page");
+    // 1. Collect layouts and providers in parallel for better cold start perf
+    const [layoutResult, providerResult] = await Promise.all([
+      timeAsync("collect-layouts", () =>
+        this.config.layoutOrchestrator.collectLayouts(pageInfo), "render-page"),
+      timeAsync("collect-providers", () =>
+        this.config.layoutOrchestrator.collectProviders(), "render-page"),
+    ]);
 
     let dataFetchingProps: Record<string, unknown> | undefined;
     const layoutDataMap = new Map<string, Record<string, unknown>>();
@@ -388,63 +390,12 @@ export class RenderPipeline {
             pageId: pageInfo.entity.id,
           });
 
-          try {
-            const params: Record<string, string | string[]> = {};
-            const pagesIndex = pageInfo.entity.id.indexOf("/pages/");
-            const appIndex = pageInfo.entity.id.indexOf("/app/");
-
-            // Determine the base path for param extraction
-            let relativePath: string | null = null;
-            if (pagesIndex !== -1) {
-              relativePath = pageInfo.entity.id.substring(pagesIndex + 7); // Skip "/pages/"
-            } else if (appIndex !== -1) {
-              relativePath = pageInfo.entity.id.substring(appIndex + 5); // Skip "/app/"
-            }
-
-            if (relativePath) {
-              const pathSegments = relativePath.split("/").map((s) =>
-                s.replace(/\.(tsx|jsx|ts|js|mdx)$/, "")
-              ).filter((s) => s !== "page" && s !== "route"); // Exclude App Router file names
-              const slugSegments = slug.split("/").filter(Boolean);
-
-              for (let i = 0; i < pathSegments.length && i < slugSegments.length; i++) {
-                const pathSeg = pathSegments[i];
-                const slugSeg = slugSegments[i];
-
-                if (pathSeg && pathSeg.startsWith("[") && pathSeg.endsWith("]")) {
-                  const isCatchAll = pathSeg.startsWith("[...");
-                  const paramName = pathSeg.replace(/\[\.\.\.|\[|\]/g, "");
-
-                  if (isCatchAll) {
-                    params[paramName] = slugSegments.slice(i);
-                    break;
-                  } else {
-                    if (slugSeg !== undefined) {
-                      params[paramName] = slugSeg;
-                    }
-                  }
-                }
-              }
-            }
-
-            logger.info("[renderPage] Extraction result", {
+          const extracted = extractRouteParamsShared(pageInfo.entity.id, slug);
+          if (extracted.matched) {
+            options.params = extracted.params;
+            logger.info("[renderPage] Extracted route params", {
               slug,
-              params,
-              hasParams: Object.keys(params).length > 0,
-            });
-
-            if (Object.keys(params).length > 0) {
-              options.params = params;
-              logger.info("[renderPage] Extracted route params", {
-                slug,
-                params,
-              });
-            }
-          } catch (paramError) {
-            logger.error("[renderPage] Failed to extract route params", {
-              slug,
-              error: paramError instanceof Error ? paramError.message : String(paramError),
-              stack: paramError instanceof Error ? paramError.stack : undefined,
+              params: extracted.params,
             });
           }
         }
@@ -666,14 +617,16 @@ export class RenderPipeline {
     const pageInfo = await timeAsync("resolve-page-data", () =>
       this.config.pageResolver.resolvePage(slug), "resolve-page-data");
 
-    // 2. Collect layouts and providers
-    const layoutResult = await timeAsync("collect-layouts-data", () =>
-      this.config.layoutOrchestrator.collectLayouts(pageInfo), "resolve-page-data");
-    const providerResult = await timeAsync("collect-providers-data", () =>
-      this.config.layoutOrchestrator.collectProviders(), "resolve-page-data");
+    // 2. Collect layouts and providers in parallel
+    const [layoutResult, providerResult] = await Promise.all([
+      timeAsync("collect-layouts-data", () =>
+        this.config.layoutOrchestrator.collectLayouts(pageInfo), "resolve-page-data"),
+      timeAsync("collect-providers-data", () =>
+        this.config.layoutOrchestrator.collectProviders(), "resolve-page-data"),
+    ]);
 
     // 3. Extract page path and type
-    const pagePath = this.extractRelativePath(pageInfo.entity.id);
+    const pagePath = extractRelativePathShared(pageInfo.entity.id, this.config.projectDir);
     const fileExtension = pageInfo.entity.id.split(".").pop()?.toLowerCase() || "tsx";
     const pageType = fileExtension as PageDataResponse["pageType"];
     const isComponentPage = ["tsx", "jsx", "ts", "js"].includes(fileExtension);
@@ -686,7 +639,10 @@ export class RenderPipeline {
 
     // 5. Extract route params if not provided
     if (options?.request && options?.url && Object.keys(params).length === 0) {
-      params = this.extractRouteParams(slug, pageInfo.entity.id);
+      const extracted = extractRouteParamsShared(pageInfo.entity.id, slug);
+      if (extracted.matched) {
+        params = extracted.params;
+      }
     }
 
     // 6. Fetch data if request context is available
@@ -744,13 +700,13 @@ export class RenderPipeline {
       .filter(l => l.componentPath || l.path)
       .map(l => ({
         kind: l.kind,
-        path: this.extractRelativePath(l.componentPath || l.path || ""),
+        path: extractRelativePathShared(l.componentPath || l.path || "", this.config.projectDir),
       }));
 
     // 9. Build provider paths array
     const providers = providerResult.providerInfos
-      .filter(p => p.path)
-      .map(p => this.extractRelativePath(p.path || ""));
+      .filter(p => p.bundle?.path)
+      .map(p => extractRelativePathShared(p.bundle?.path || "", this.config.projectDir));
 
     logger.info("[resolvePageData] Resolved page data", {
       slug,
@@ -771,61 +727,5 @@ export class RenderPipeline {
       params,
       layoutProps,
     };
-  }
-
-  /**
-   * Extract relative path from absolute path.
-   * Removes project directory prefix to get component-relative path.
-   */
-  private extractRelativePath(absolutePath: string): string {
-    const projectDir = this.config.projectDir;
-    if (absolutePath.startsWith(projectDir)) {
-      return absolutePath.slice(projectDir.length).replace(/^\//, "");
-    }
-    // Handle paths that might already be relative
-    return absolutePath.replace(/^\//, "");
-  }
-
-  /**
-   * Extract route parameters from URL slug based on file path pattern.
-   */
-  private extractRouteParams(slug: string, pageId: string): Record<string, string | string[]> {
-    const params: Record<string, string | string[]> = {};
-    const pagesIndex = pageId.indexOf("/pages/");
-    const appIndex = pageId.indexOf("/app/");
-
-    let relativePath: string | null = null;
-    if (pagesIndex !== -1) {
-      relativePath = pageId.substring(pagesIndex + 7);
-    } else if (appIndex !== -1) {
-      relativePath = pageId.substring(appIndex + 5);
-    }
-
-    if (!relativePath) return params;
-
-    const pathSegments = relativePath
-      .split("/")
-      .map(s => s.replace(/\.(tsx|jsx|ts|js|mdx)$/, ""))
-      .filter(s => s !== "page" && s !== "route");
-    const slugSegments = slug.split("/").filter(Boolean);
-
-    for (let i = 0; i < pathSegments.length && i < slugSegments.length; i++) {
-      const pathSeg = pathSegments[i];
-      const slugSeg = slugSegments[i];
-
-      if (pathSeg?.startsWith("[") && pathSeg.endsWith("]")) {
-        const isCatchAll = pathSeg.startsWith("[...");
-        const paramName = pathSeg.replace(/\[\.\.\.|\[|\]/g, "");
-
-        if (isCatchAll) {
-          params[paramName] = slugSegments.slice(i);
-          break;
-        } else if (slugSeg !== undefined) {
-          params[paramName] = slugSeg;
-        }
-      }
-    }
-
-    return params;
   }
 }

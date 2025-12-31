@@ -115,7 +115,9 @@ export async function getProjectReact(): Promise<typeof React> {
   // This ensures consistency with third-party packages like @tanstack/react-query
   if (!IS_TRUE_NODE) {
     const npmReact = await import("react");
-    projectReactCache = npmReact.default || npmReact;
+    // Handle both ESM default export and CJS module.exports
+    const reactModule = npmReact as unknown as { default?: typeof React };
+    projectReactCache = reactModule.default ?? (npmReact as typeof React);
     return projectReactCache as typeof React;
   }
 
