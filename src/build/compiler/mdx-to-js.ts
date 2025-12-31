@@ -22,28 +22,10 @@ export interface CompileToJSOptions {
   adapter: RuntimeAdapter; // Required for secure filesystem access
 }
 
-let esbuildInitialized = false;
 const fs = createFileSystem();
 
-async function initializeEsbuild() {
-  if (!esbuildInitialized) {
-    try {
-      await esbuild.initialize({
-        wasmURL: "https://deno.land/x/esbuild@v0.20.1/esbuild.wasm",
-        worker: false,
-      });
-      esbuildInitialized = true;
-    } catch (error) {
-      if (
-        error instanceof Error &&
-        !error.message?.includes('Cannot call "initialize" more than once')
-      ) {
-        throw error;
-      }
-      esbuildInitialized = true;
-    }
-  }
-}
+// Note: Native esbuild (esbuild/mod.js) doesn't need initialization - it auto-spawns a child process.
+// Only WASM esbuild requires initialize() with wasmURL, which only works in browsers.
 
 /**
  * Compile MDX to a standalone JS module
@@ -53,7 +35,6 @@ export async function compileMDXToJS(
   mdxContent: string,
   options: CompileToJSOptions,
 ): Promise<{ code: string; frontmatter: MDXFrontmatter }> {
-  await initializeEsbuild();
   let frontmatter: MDXFrontmatter = {};
   let content = mdxContent;
 
