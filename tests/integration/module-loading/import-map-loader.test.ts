@@ -935,15 +935,18 @@ function hello() { return 'world'; }
         assertExists(importMap.imports!["react-dom/client"]);
       });
 
-      it("should use valid esm.sh URLs", () => {
+      it("should use valid module specifiers", () => {
         const importMap = getDefaultImportMap();
 
         for (const [key, value] of Object.entries(importMap.imports!)) {
           if (typeof value !== "string") continue;
+          // In Deno, we use npm: specifiers; in true Node, we use esm.sh URLs
+          const isValidSpecifier = value.startsWith("https://esm.sh/") ||
+            value.startsWith("npm:");
           assertEquals(
-            value.startsWith("https://esm.sh/"),
+            isValidSpecifier,
             true,
-            `Import ${key} should use esm.sh URL`,
+            `Import ${key} should use valid module specifier (esm.sh URL or npm: specifier)`,
           );
         }
       });
