@@ -267,9 +267,9 @@ describe("html-generation/html-shell-generator", () => {
 
       const result = await wrapInHTMLShell("<div>Content</div>", meta, options);
 
+      // Dev mode includes client-side error logger and error overlay styling
       assertStringIncludes(result, "Client-side error logger");
-      assertStringIncludes(result, "dev-indicator");
-      assertStringIncludes(result, "Development Mode");
+      assertStringIncludes(result, "veryfront-error-overlay");
     });
 
     it("should include production scripts in prod mode", async () => {
@@ -288,7 +288,6 @@ describe("html-generation/html-shell-generator", () => {
 
       assertStringIncludes(result, "hydrateRoot");
       assert(!result.includes("Client-side error logger"));
-      assert(!result.includes("dev-indicator"));
     });
 
     it("should handle layout disabled", async () => {
