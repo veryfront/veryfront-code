@@ -175,12 +175,16 @@ export async function setupMiddleware(
     );
   }
 
-  if (projectDir && adapter) {
+  // Skip loading middleware file in proxy mode - no request context at startup
+  const isProxyMode = config.fs?.veryfront?.proxyMode === true;
+  if (projectDir && adapter && !isProxyMode) {
     const fileMiddlewares = await loadMiddlewareFile(projectDir, adapter);
     for (const middleware of fileMiddlewares) {
       logger.debug("[MIDDLEWARE] Registered middleware from file");
       pipeline.use(middleware);
     }
+  } else if (isProxyMode) {
+    logger.debug("[MIDDLEWARE] Skipping file middleware in proxy mode");
   }
 
   if (config.middleware?.custom) {

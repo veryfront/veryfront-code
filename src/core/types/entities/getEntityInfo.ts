@@ -116,8 +116,27 @@ export async function getEntityInfo(
       frontmatter,
     );
 
+    // Try to get entity UUID from the FS adapter if available
+    // This is used when rendering in Studio iframe to send correct page ID
+    let entityId = filePath; // Default to file path
+    if (adapter) {
+      try {
+        const fsAdapter = (adapter.fs as { fsAdapter?: { getEntityIdForPath?: (path: string) => string | undefined } }).fsAdapter;
+        if (fsAdapter?.getEntityIdForPath) {
+          // Get relative path for lookup - convert absolute path to project-relative path
+          const relativePath = filePath.replace(/^.*?\/pages\//, "pages/").replace(/^.*?\/components\//, "components/");
+          const apiEntityId = fsAdapter.getEntityIdForPath(relativePath);
+          if (apiEntityId) {
+            entityId = apiEntityId;
+          }
+        }
+      } catch {
+        // Ignore errors, fall back to file path
+      }
+    }
+
     const entity: Entity = {
-      id: filePath,
+      id: entityId,
       slug: getSlugFromPath(filePath),
       type,
       content: body,

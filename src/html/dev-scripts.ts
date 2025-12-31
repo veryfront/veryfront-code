@@ -51,3 +51,32 @@ export function getProdScripts(slug: string, nonce?: string): string {
     encodeURIComponent(slug)
   }"${nonceAttr}></script>`;
 }
+
+export interface StudioScriptOptions {
+  projectId: string;
+  pageId: string;
+  pagePath?: string;
+  nonce?: string;
+  /** Hash of source code for sync detection with Navigator tree */
+  sourceHash?: string;
+}
+
+export function getStudioScripts(options: StudioScriptOptions): string {
+  const nonceAttr = options.nonce ? ` nonce="${options.nonce}"` : "";
+  const paramObj: Record<string, string> = {
+    projectId: options.projectId,
+    pageId: options.pageId,
+  };
+  if (options.pagePath) {
+    paramObj.pagePath = options.pagePath;
+  }
+  const params = new URLSearchParams(paramObj).toString();
+
+  // Inject sourceHash as global for Navigator tree sync detection
+  const sourceHashScript = options.sourceHash
+    ? `<script${nonceAttr}>window.__VERYFRONT_SOURCE_HASH__="${options.sourceHash}";</script>\n  `
+    : "";
+
+  return `
+  ${sourceHashScript}<script type="module" src="/_veryfront/studio-bridge.js?${params}"${nonceAttr}></script>`;
+}

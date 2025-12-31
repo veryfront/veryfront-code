@@ -5,7 +5,7 @@ import {
   generateScriptTags,
   generateStyleTags,
 } from "./tag-generators.ts";
-import { getDevScripts, getDevStyles, getProdScripts } from "./dev-scripts.ts";
+import { getDevScripts, getDevStyles, getProdScripts, getStudioScripts } from "./dev-scripts.ts";
 import { DEFAULT_DASHBOARD_PORT } from "@veryfront/utils/constants/server.ts";
 
 export interface InjectHTMLContentOptions {
@@ -16,6 +16,14 @@ export interface InjectHTMLContentOptions {
   pagePath?: string;
   /** Whether the page has 'use client' directive */
   isClientPage?: boolean;
+  /** Whether page is embedded in Studio iframe */
+  studioEmbed?: boolean;
+  /** Project ID for Studio communication */
+  projectId?: string;
+  /** Page ID for Studio communication */
+  pageId?: string;
+  /** CSP nonce */
+  nonce?: string;
 }
 
 export function injectHTMLContent(
@@ -100,6 +108,16 @@ export function injectHTMLContent(
       const prodScripts = getProdScripts(options.slug);
       html = html.replace(/<\/body>/i, `${prodScripts}</body>`);
     }
+  }
+
+  // Inject Studio bridge script when embedded in Studio iframe
+  if (options.studioEmbed && /<\/body>/i.test(html)) {
+    const studioScripts = getStudioScripts({
+      projectId: options.projectId || options.slug,
+      pageId: options.pageId || options.slug,
+      nonce: options.nonce,
+    });
+    html = html.replace(/<\/body>/i, `${studioScripts}</body>`);
   }
 
   return html;

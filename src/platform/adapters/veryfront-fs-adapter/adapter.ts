@@ -52,6 +52,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
       apiBaseUrl: veryfrontConfig.apiBaseUrl,
       apiToken: veryfrontConfig.apiToken,
       projectSlug: veryfrontConfig.projectSlug,
+      proxyMode: veryfrontConfig.proxyMode,
       retry: veryfrontConfig.retry,
     });
 
@@ -368,6 +369,20 @@ export class VeryfrontFSAdapter implements FSAdapter {
 
   getProjectData(): Project | undefined {
     return this.projectData;
+  }
+
+  /**
+   * Get the entity ID (UUID) for a given file path.
+   * This is used by the Studio bridge to send the correct page ID.
+   * Returns undefined if the entity ID is not available.
+   */
+  getEntityIdForPath(path: string): string | undefined {
+    const normalizedPath = this.normalizer.normalize(path);
+    const cachedFiles = this.cache.get("files:all") as Array<{ id?: string; path: string }> | undefined;
+    if (!cachedFiles) return undefined;
+
+    const file = cachedFiles.find((f) => f.path === normalizedPath);
+    return file?.id;
   }
 
   /**

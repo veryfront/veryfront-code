@@ -3,9 +3,12 @@ import { type TokenProvider, VeryfrontAPIOperations } from "./operations.ts";
 import { type VeryfrontAPIConfig, VeryfrontAPIError } from "./types.ts";
 
 export class VeryfrontAPIClient {
-  private config: Required<VeryfrontAPIConfig>;
+  private config: VeryfrontAPIConfig & { retry: Required<NonNullable<VeryfrontAPIConfig["retry"]>> };
   private operations: VeryfrontAPIOperations;
   private requestToken?: string;
+  private requestProjectSlug?: string;
+  private initialized = false;
+  private initializingPromise?: Promise<void>;
 
   constructor(config: VeryfrontAPIConfig) {
     const retryConfig = {
@@ -39,6 +42,13 @@ export class VeryfrontAPIClient {
   }
 
   /**
+   * Check if running in proxy mode (per-request tokens/slugs).
+   */
+  isProxyMode(): boolean {
+    return this.config.proxyMode === true;
+  }
+
+  /**
    * Set a per-request token from proxy headers.
    * This token takes priority over the config token.
    */
@@ -54,31 +64,93 @@ export class VeryfrontAPIClient {
   }
 
   /**
+   * Set a per-request project slug from proxy headers.
+   * Used in proxy mode for multi-project handling.
+   */
+  setProjectSlug(slug: string): void {
+    this.requestProjectSlug = slug;
+  }
+
+  /**
+   * Get the current project slug (per-request or config).
+   */
+  getProjectSlug(): string | undefined {
+    return this.requestProjectSlug || this.config.projectSlug;
+  }
+
+  /**
+   * Clear the per-request project slug.
+   */
+  clearProjectSlug(): void {
+    this.requestProjectSlug = undefined;
+  }
+
+  /**
    * Get the current token being used.
    */
   getToken(): string {
     return this.operations.getToken();
   }
 
+  /**
+   * Check if the client is initialized.
+   */
+  isInitialized(): boolean {
+    return this.initialized;
+  }
+
   async initialize(): Promise<void> {
-    logger.info("[VeryfrontAPIClient] Initializing...", { slug: this.config.projectSlug });
+    // Handle concurrent initialization requests
+    if (this.initializingPromise) {
+      return this.initializingPromise;
+    }
+
+    if (this.initialized) {
+      return;
+    }
+
+    this.initializingPromise = this.doInitialize();
+    try {
+      await this.initializingPromise;
+    } finally {
+      this.initializingPromise = undefined;
+    }
+  }
+
+  private async doInitialize(): Promise<void> {
+    const slug = this.getProjectSlug();
+    if (!slug) {
+      throw new VeryfrontAPIError("No project slug available for initialization", 400);
+    }
+
+    logger.info("[VeryfrontAPIClient] Initializing...", { slug });
 
     const projects = await this.operations.listProjects();
-    const project = projects.find((p) => p.slug === this.config.projectSlug);
+    const project = projects.find((p) => p.slug === slug);
 
     if (!project) {
       throw new VeryfrontAPIError(
-        `Project not found with slug: ${this.config.projectSlug}`,
+        `Project not found with slug: ${slug}`,
         404,
-        { slug: this.config.projectSlug, availableProjects: projects.map((p) => p.slug) },
+        { slug, availableProjects: projects.map((p) => p.slug) },
       );
     }
 
     this.operations.setProjectId(project.id);
+    this.initialized = true;
     logger.info("[VeryfrontAPIClient] Initialized", {
       projectId: project.id,
       projectName: project.name,
     });
+  }
+
+  /**
+   * Reset initialization state (for proxy mode project switching).
+   */
+  reset(): void {
+    this.initialized = false;
+    this.initializingPromise = undefined;
+    this.operations.setProjectId("");
   }
 
   getProjectId(): string {

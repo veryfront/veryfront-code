@@ -6,6 +6,7 @@ import type { EntityInfo, MdxBundle, MDXComponents, MDXModule, PageBundle } from
 import { mdxRenderer } from "@veryfront/transforms/mdx/index.ts";
 import { getProjectReact } from "@veryfront/react";
 import { compileMDXRuntime } from "@veryfront/transforms/mdx/compiler/index.ts";
+import { injectNodePositions } from "../build/transforms/plugins/babel-node-positions.ts";
 
 export interface MDXPageResult {
   pageElement: BundledReact.ReactElement;
@@ -44,10 +45,15 @@ export async function handleMDXPage(
     } else {
       // Recompile MDX with browser target for client-side hydration
       // The original compilation uses server target with file:// URLs that browsers can't resolve
+      // Inject source position data attributes for Studio Navigator
+      const contentWithPositions = pageInfo.entity.id
+        ? injectNodePositions(pageInfo.entity.content, { filePath: pageInfo.entity.id })
+        : pageInfo.entity.content;
+
       const browserBundle = await compileMDXRuntime(
         "development",
         projectDir,
-        pageInfo.entity.content,
+        contentWithPositions,
         fmArg,
         pageInfo.entity.id,
         "browser", // Use browser target for client module

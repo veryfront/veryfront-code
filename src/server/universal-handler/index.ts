@@ -24,6 +24,7 @@ import { MetricsHandler } from "../handlers/monitoring/metrics.ts";
 import { ClientLogHandler } from "../handlers/monitoring/client-log.ts";
 import { DevEndpointsHandler } from "../handlers/dev/endpoints.ts";
 import { DevFileHandler } from "../handlers/dev/files/index.ts";
+import { StudioEndpointsHandler } from "../handlers/studio/endpoints.ts";
 import { StaticHandler } from "../handlers/request/static.ts";
 import { LibModulesHandler } from "../handlers/request/lib-modules-handler.ts";
 import { RSCHandler } from "../handlers/request/rsc/index.ts";
@@ -80,6 +81,7 @@ export function createVeryfrontHandler(
   const securityLoader = new SecurityConfigLoader(projectDir, adapter);
 
   // Use pre-loaded config if provided, otherwise load eagerly
+  // In proxy mode, config must be pre-loaded since we can't read files at startup
   let config: VeryfrontConfig | undefined = opts.config;
   const configPromise = opts.config
     ? Promise.resolve(opts.config)
@@ -110,6 +112,7 @@ export function createVeryfrontHandler(
     new MetricsHandler(), // Priority: 100 (HIGH)
     new ClientLogHandler(), // Priority: 200 (HIGH, dev only)
     new DevEndpointsHandler(), // Priority: 300 (HIGH, dev only)
+    new StudioEndpointsHandler(), // Priority: 300 (HIGH, Studio iframe scripts)
     new DevFileHandler(), // Priority: 400 (dev only)
     new StaticHandler(), // Priority: 500 (MEDIUM_STATIC)
     new LibModulesHandler(), // Priority: 550 (MEDIUM_LIB_MODULES, self-hosted veryfront/ai/*)
@@ -120,22 +123,34 @@ export function createVeryfrontHandler(
     new NotFoundHandler(), // Priority: 10000 (FALLBACK)
   ]);
 
+  // Check if running in proxy mode (multi-project per-request handling)
+  const isProxyMode = opts.config?.fs?.veryfront?.proxyMode === true;
+
   // Pre-initialize API handler to discover routes before any requests
-  const readyPromise = apiHandler.initialize().catch((err) => {
-    logger.error("[universal] API handler initialization failed", {
-      error: err instanceof Error ? err.message : String(err),
-      stack: err instanceof Error ? err.stack : undefined,
-    });
-    // Re-throw to prevent server from starting with broken API routing
-    throw err;
-  });
+  // In proxy mode, skip eager initialization since there's no request context at startup
+  const readyPromise = isProxyMode
+    ? Promise.resolve()
+    : apiHandler.initialize().catch((err) => {
+        logger.error("[universal] API handler initialization failed", {
+          error: err instanceof Error ? err.message : String(err),
+          stack: err instanceof Error ? err.stack : undefined,
+        });
+        // Re-throw to prevent server from starting with broken API routing
+        throw err;
+      });
+
+  if (isProxyMode) {
+    logger.info("[universal] Running in proxy mode - lazy initialization enabled");
+  }
 
   const handler = async (req: Request): Promise<Response> => {
     // Ensure API handler is ready before processing requests
     await readyPromise;
 
-    // Ensure security config is loaded
-    await securityLoader.ensureLoaded();
+    // Ensure security config is loaded (skip in proxy mode - loaded per-request)
+    if (!isProxyMode) {
+      await securityLoader.ensureLoaded();
+    }
 
     // Ensure config is loaded
     await configPromise;

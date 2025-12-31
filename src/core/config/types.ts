@@ -129,8 +129,12 @@ export interface VeryfrontConfig {
     };
     veryfront?: {
       apiBaseUrl: string;
-      apiToken: string;
-      projectSlug: string;
+      /** API token - optional in proxy mode (token provided per-request via headers) */
+      apiToken?: string;
+      /** Project slug - optional in proxy mode (slug provided per-request via headers) */
+      projectSlug?: string;
+      /** Enable proxy mode for multi-project handling (tokens/slugs from headers) */
+      proxyMode?: boolean;
       cache?: {
         enabled?: boolean;
         ttl?: number;
