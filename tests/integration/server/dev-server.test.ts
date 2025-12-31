@@ -300,7 +300,7 @@ describe("Dev Server Integration", { sanitizeOps: false, sanitizeResources: fals
     "Dev Server - SSR Caching",
     {},
     () => {
-      it("SSR ETag/304 and HEAD support", async () => {
+      it("SSR caching headers and HEAD support", async () => {
         await withTestContext("dev-ssr-etag-head", async (context) => {
           await Deno.writeTextFile(join(context.projectDir, "app", "page.mdx"), "# Home");
 
@@ -312,31 +312,23 @@ describe("Dev Server Integration", { sanitizeOps: false, sanitizeResources: fals
 
           const res = await fetch(`http://localhost:${server.port}/`);
           assertEquals(res.status, 200);
-          const etag = res.headers.get("etag");
-          assert(etag && etag.length > 0);
           // cache-control for SSR HTML in dev mode should be no-cache
+          // (streaming mode also uses no-cache since ETag isn't supported)
           assertEquals(
             res.headers.get("cache-control"),
             "no-cache, no-store, must-revalidate",
           );
-          await res.text();
+          const body = await res.text();
+          assert(body.includes("Home"), "Response should contain page content");
 
-          // HEAD should return same ETag
+          // HEAD should return 200 with appropriate headers
           const head = await fetch(`http://localhost:${server.port}/`, {
             method: "HEAD",
           });
           assertEquals(head.status, 200);
-          assertEquals(head.headers.get("etag"), etag);
-          await head.body?.cancel();
-
-          // In dev mode, 304 is disabled to prevent CSP nonce mismatches
-          // (cached HTML has old nonces, but each request generates fresh nonces)
-          // Should return 200 instead of 304 even with matching ETag
-          const r304 = await fetch(`http://localhost:${server.port}/`, {
-            headers: { "if-none-match": etag! },
-          });
-          assertEquals(r304.status, 200, "Dev mode should return 200 (not 304) to prevent CSP nonce mismatch");
-          await r304.text(); // Consume body
+          // HEAD response should have no body
+          const headBody = await head.text();
+          assertEquals(headBody, "", "HEAD response should have empty body");
 
           controller.abort();
         });
