@@ -71,10 +71,6 @@ export function resolveRelativeImports(
   projectDir: string,
   moduleServerUrl?: string,
 ): Promise<string> {
-  if (!moduleServerUrl) {
-    return Promise.resolve(code);
-  }
-
   const _normalizedProjectDir = projectDir.replace(/\\/g, "/").replace(/\/$/, "");
 
   let relativeFilePath = filePath;
@@ -94,8 +90,19 @@ export function resolveRelativeImports(
 
   return Promise.resolve(replaceSpecifiers(code, (specifier) => {
     if (specifier.startsWith("./") || specifier.startsWith("../")) {
-      const resolvedPath = resolveRelativePath(fileDir, specifier);
-      return `${moduleServerUrl}/${resolvedPath}`;
+      // Rewrite TypeScript extensions to .js for browser compatibility
+      let rewrittenSpecifier = specifier;
+      if (/\.(tsx?|jsx)$/.test(specifier)) {
+        rewrittenSpecifier = specifier.replace(/\.(tsx?|jsx)$/, ".js");
+      }
+
+      // If moduleServerUrl provided, convert to absolute URL
+      if (moduleServerUrl) {
+        const resolvedPath = resolveRelativePath(fileDir, rewrittenSpecifier);
+        return `${moduleServerUrl}/${resolvedPath}`;
+      }
+
+      return rewrittenSpecifier;
     }
     return null;
   }));

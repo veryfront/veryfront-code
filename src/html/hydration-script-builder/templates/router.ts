@@ -250,7 +250,7 @@ export const getRouterScript = () => `
     // Infer likely page module URL from path
     function inferPageModuleUrl(path) {
       const normalizedPath = path === '/' ? '/index' : path;
-      const slug = normalizedPath.replace(/^\//, '');
+      const slug = normalizedPath.replace(/^\\//, '');
       // Try direct path first, then index
       return MODULE_SERVER_URL + '/pages/' + slug + '.js';
     }
@@ -288,7 +288,7 @@ export const getRouterScript = () => `
         speculativePreload(likelyPageUrl);
         // Also try index variant for directory paths
         if (!targetPath.includes('.')) {
-          speculativePreload(MODULE_SERVER_URL + '/pages/' + targetPath.replace(/^\//, '') + '/index.js');
+          speculativePreload(MODULE_SERVER_URL + '/pages/' + targetPath.replace(/^\\//, '') + '/index.js');
         }
 
         // Fetch page data (runs in parallel with speculative preloads)
@@ -444,7 +444,7 @@ export const getRouterScript = () => `
       const likelyPageUrl = inferPageModuleUrl(href);
       speculativePreload(likelyPageUrl);
       if (!href.includes('.')) {
-        speculativePreload(MODULE_SERVER_URL + '/pages/' + href.replace(/^\//, '') + '/index.js');
+        speculativePreload(MODULE_SERVER_URL + '/pages/' + href.replace(/^\\//, '') + '/index.js');
       }
 
       // Prefetch page data (runs in parallel with speculative preloads)
