@@ -223,6 +223,11 @@ function addExternalToEsmShUrls(code: string): string {
  * Normalize React imports to use consistent npm: specifiers for Deno SSR.
  * Third-party packages like @tanstack/react-query always use npm:react,
  * so we must use npm: everywhere to ensure consistent React instances.
+ *
+ * CRITICAL: For SSR, we convert jsx-dev-runtime to jsx-runtime because:
+ * - jsx-dev-runtime's jsxDEV export becomes undefined when NODE_ENV=production
+ * - This can happen when production tests run before development tests
+ * - Using jsx-runtime ensures consistent behavior regardless of NODE_ENV
  */
 function normalizeReactToNpm(code: string): string {
   if (IS_TRUE_NODE) return code; // Only for Deno
@@ -231,13 +236,36 @@ function normalizeReactToNpm(code: string): string {
   const REACT_VERSION = "18.3.1";
   let result = code;
 
+  // CRITICAL FIX: Convert jsx-dev-runtime imports to jsx-runtime for SSR
+  // This prevents "_jsxDEV is not a function" errors when NODE_ENV=production
+  // because React's jsx-dev-runtime exports jsxDEV as undefined in production mode.
+  //
+  // Transform: import {jsxDEV as _jsxDEV, Fragment as _Fragment} from "react/jsx-dev-runtime"
+  // To:        import {jsx as _jsxDEV, Fragment as _Fragment} from "react/jsx-runtime"
+  result = result.replace(
+    /import\s*\{([^}]*)\bjsxDEV\s+as\s+(\w+)([^}]*)\}\s*from\s*["']([^"']*\/?)jsx-dev-runtime["']/g,
+    (_match, before, alias, after, prefix) => {
+      // Preserve any other imports in the same statement, just change jsxDEV to jsx
+      return `import {${before}jsx as ${alias}${after}} from "${prefix}jsx-runtime"`;
+    },
+  );
+
+  // Also handle simple jsxDEV imports without "as" alias
+  result = result.replace(
+    /import\s*\{([^}]*)\bjsxDEV\b([^}]*)\}\s*from\s*["']([^"']*\/?)jsx-dev-runtime["']/g,
+    (_match, before, after, prefix) => {
+      return `import {${before}jsx${after}} from "${prefix}jsx-runtime"`;
+    },
+  );
+
   // IMPORTANT: Process subpath imports FIRST (jsx-runtime, jsx-dev-runtime, server)
   // before processing base imports.
 
   // 1. Normalize esm.sh URLs WITH subpaths to npm: specifiers
+  // Note: jsx-dev-runtime -> jsx-runtime conversion (for SSR stability)
   result = result.replace(
     /from\s+['"]https:\/\/esm\.sh\/react@[^'"\/]+\/jsx-dev-runtime[^'"]*['"]/g,
-    `from "npm:react@${REACT_VERSION}/jsx-dev-runtime"`,
+    `from "npm:react@${REACT_VERSION}/jsx-runtime"`,
   );
   result = result.replace(
     /from\s+['"]https:\/\/esm\.sh\/react@[^'"\/]+\/jsx-runtime[^'"]*['"]/g,
@@ -249,9 +277,10 @@ function normalizeReactToNpm(code: string): string {
   );
 
   // 2. Normalize unversioned npm: specifiers WITH subpaths
+  // Note: jsx-dev-runtime -> jsx-runtime conversion (for SSR stability)
   result = result.replace(
     /from\s+['"]npm:react\/jsx-dev-runtime['"]/g,
-    `from "npm:react@${REACT_VERSION}/jsx-dev-runtime"`,
+    `from "npm:react@${REACT_VERSION}/jsx-runtime"`,
   );
   result = result.replace(
     /from\s+['"]npm:react\/jsx-runtime['"]/g,
@@ -262,7 +291,18 @@ function normalizeReactToNpm(code: string): string {
     `from "npm:react-dom@${REACT_VERSION}/server"`,
   );
 
-  // 3. Normalize esm.sh base URLs to npm:
+  // 3. Normalize bare react/jsx-dev-runtime imports (before esm.sh transformation)
+  // Note: jsx-dev-runtime -> jsx-runtime conversion (for SSR stability)
+  result = result.replace(
+    /from\s+['"]react\/jsx-dev-runtime['"]/g,
+    `from "npm:react@${REACT_VERSION}/jsx-runtime"`,
+  );
+  result = result.replace(
+    /from\s+['"]react\/jsx-runtime['"]/g,
+    `from "npm:react@${REACT_VERSION}/jsx-runtime"`,
+  );
+
+  // 4. Normalize esm.sh base URLs to npm:
   result = result.replace(
     /from\s+['"]https:\/\/esm\.sh\/react@[^'"\/]+['"]/g,
     `from "npm:react@${REACT_VERSION}"`,
@@ -272,7 +312,7 @@ function normalizeReactToNpm(code: string): string {
     `from "npm:react-dom@${REACT_VERSION}"`,
   );
 
-  // 4. Normalize unversioned npm: base specifiers
+  // 5. Normalize unversioned npm: base specifiers
   result = result.replace(
     /from\s+['"]npm:react['"]/g,
     `from "npm:react@${REACT_VERSION}"`,
@@ -282,7 +322,7 @@ function normalizeReactToNpm(code: string): string {
     `from "npm:react-dom@${REACT_VERSION}"`,
   );
 
-  // 5. Normalize @tanstack/react-query to esm.sh for consistent context sharing
+  // 6. Normalize @tanstack/react-query to esm.sh for consistent context sharing
   // All react-query imports must use the same source to share QueryClient context
   result = result.replace(
     /from\s+['"]npm:@tanstack\/react-query(?:@[^'"\/]+)?['"]/g,
