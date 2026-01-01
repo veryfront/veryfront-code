@@ -147,6 +147,7 @@ jobs:
             --from-literal=VERYFRONT_API_URL="${{ secrets.VERYFRONT_API_URL_PRODUCTION }}" \
             --from-literal=VERYFRONT_API_URL_PUBLIC="${{ secrets.VERYFRONT_API_URL_PUBLIC_PRODUCTION }}" \
             --from-literal=WS_URL="${{ secrets.WS_URL_PRODUCTION }}" \
+            --from-literal=OTEL_EXPORTER_OTLP_HEADERS="${{ secrets.OTEL_EXPORTER_OTLP_HEADERS }}" \
             --dry-run=client -o yaml | kubectl apply -f -
 
           # Create renderer secret
@@ -161,6 +162,7 @@ jobs:
             --from-literal=VERYFRONT_API_URL="${{ secrets.VERYFRONT_API_URL_PRODUCTION }}" \
             --from-literal=VERYFRONT_API_URL_PUBLIC="${{ secrets.VERYFRONT_API_URL_PUBLIC_PRODUCTION }}" \
             --from-literal=WS_URL="${{ secrets.WS_URL_PRODUCTION }}" \
+            --from-literal=OTEL_EXPORTER_OTLP_HEADERS="${{ secrets.OTEL_EXPORTER_OTLP_HEADERS }}" \
             --dry-run=client -o yaml | kubectl apply -f -
 
       - name: Deploy via Helm

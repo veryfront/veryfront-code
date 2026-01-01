@@ -34,6 +34,11 @@ proxy:
   env:
     PORT: "20000"
     RENDERER_URL: "http://veryfront-renderer:80"
+    # OpenTelemetry tracing
+    OTEL_TRACES_ENABLED: "true"
+    OTEL_TRACES_EXPORTER: "otlp"
+    OTEL_SERVICE_NAME: "veryfront-proxy"
+    OTEL_EXPORTER_OTLP_ENDPOINT: "https://otlp-gateway-prod-eu-west-2.grafana.net/otlp"
 
   envFrom:
     - secretRef:
@@ -128,6 +133,11 @@ renderer:
 
   env:
     PORT: "20000"
+    # OpenTelemetry tracing
+    OTEL_TRACES_ENABLED: "true"
+    OTEL_TRACES_EXPORTER: "otlp"
+    OTEL_SERVICE_NAME: "veryfront-renderer"
+    OTEL_EXPORTER_OTLP_ENDPOINT: "https://otlp-gateway-prod-eu-west-2.grafana.net/otlp"
 
   envFrom:
     - secretRef:
