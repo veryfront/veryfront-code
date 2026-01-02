@@ -82,10 +82,9 @@ export class DevEndpointsHandler extends BaseHandler {
     return Promise.resolve(this.continue());
   }
 
-  private getHMRScript(_port: number): string {
+  private getHMRScript(port: number): string {
     const reloadDelay = HMR_CLIENT_RELOAD_DELAY_MS;
-    // Use window.location.port to dynamically determine HMR port (server port + 1)
-    // This handles cases where the server runs on a different port than configured
+    // Use the port parameter passed from the HTML (same port as server - no offset)
     return `
 // Veryfront HMR WebSocket Client
 
@@ -100,9 +99,8 @@ if (window.parent !== window) {
   } catch (e) { /* postMessage may fail in cross-origin iframes - expected */ }
 }
 
-// Calculate HMR port from actual server port (+ 1)
-const serverPort = parseInt(window.location.port, 10) || 3000;
-const hmrPort = serverPort + 1;
+// HMR WebSocket runs on same port as server
+const hmrPort = ${port};
 const host = window.location.hostname || 'localhost';
 const ws = new WebSocket('ws://' + host + ':' + hmrPort + '/_ws');
 
@@ -134,11 +132,10 @@ hydrate('${slug}', {
     return `
 // Veryfront HMR Runtime
 (function() {
-  // Calculate HMR port from actual server port (+ 1)
-  const serverPort = parseInt(window.location.port, 10) || 3000;
-  const hmrPort = serverPort + 1;
+  // HMR WebSocket runs on same port as server
+  const hmrPort = parseInt(window.location.port, 10) || 3000;
   const host = window.location.hostname || 'localhost';
-  const ws = new WebSocket('ws://' + host + ':' + hmrPort);
+  const ws = new WebSocket('ws://' + host + ':' + hmrPort + '/_ws');
 
   ws.onopen = () => {
     console.log('[HMR] Connected to port ' + hmrPort);

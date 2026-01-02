@@ -21,6 +21,8 @@ export interface SnippetRenderOptions {
   projectSlug?: string;
   /** Project config for styling, theme, and HMR settings */
   config?: VeryfrontConfig;
+  /** Entity UUID from Studio to use for page_id (for postMessage communication) */
+  pageId?: string;
 }
 
 export interface SnippetRenderResult {
@@ -89,40 +91,19 @@ export async function renderSnippet(
       hasFrontmatter: !!bundle.frontmatter,
     });
 
-    // 2. Rewrite @/ imports to /_vf_modules/ URLs
-    // Include project slug as query param for proxy mode
-    let browserCode = bundle.compiledCode;
-    const projectQueryParam = options.projectSlug ? `&project=${options.projectSlug}` : "";
-
-    // Rewrite @/ imports to module server URLs with project context
-    browserCode = browserCode.replace(
-      /from\s+["']@\/([^"']+)["']/g,
-      (_match, path) => {
-        const jsPath = path.endsWith(".js") ? path : `${path}.js`;
-        return `from "/_vf_modules/${jsPath}?ssr=true${projectQueryParam}"`;
-      },
-    );
-
-    // Also handle dynamic imports
-    browserCode = browserCode.replace(
-      /import\(\s*["']@\/([^"']+)["']\s*\)/g,
-      (_match, path) => {
-        const jsPath = path.endsWith(".js") ? path : `${path}.js`;
-        return `import("/_vf_modules/${jsPath}?ssr=true${projectQueryParam}")`;
-      },
-    );
-
-    // 3. Store in cache with content hash (include projectSlug for uniqueness)
+    // 2. Store RAW compiled code in cache - no import transformations
+    // module-server.ts will apply transformToESM to handle imports properly
+    // for both SSR (npm: specifiers) and browser (esm.sh URLs) contexts
     const hash = await hashContent(mdxContent + (options.projectSlug || ""));
     snippetCache.set(hash, {
-      code: browserCode,
+      code: bundle.compiledCode,
       frontmatter: bundle.frontmatter || {},
     });
 
     logger.info("[SnippetRenderer] Snippet cached", {
       hash,
       projectSlug: options.projectSlug,
-      codePreview: browserCode.substring(0, 300),
+      codePreview: bundle.compiledCode.substring(0, 300),
     });
 
     // 4. Import the snippet module via HTTP for SSR
@@ -131,7 +112,9 @@ export async function renderSnippet(
     if (!moduleServerBase.startsWith("http://") && !moduleServerBase.startsWith("https://")) {
       moduleServerBase = "http://localhost:3002";
     }
-    const snippetUrl = `${moduleServerBase}/_vf_modules/_snippets/${hash}.js?ssr=true`;
+    // Add cache buster to ensure Deno fetches fresh module each time
+    const cacheBuster = Date.now();
+    const snippetUrl = `${moduleServerBase}/_vf_modules/_snippets/${hash}.js?ssr=true&v=${cacheBuster}`;
 
     logger.info("[SnippetRenderer] Loading snippet module", {
       snippetUrl,
@@ -166,13 +149,36 @@ export async function renderSnippet(
       frontmatter: bundle.frontmatter || {},
     };
 
+    // Merge config with HMR enabled for live reload
+    // Extract port from moduleServerUrl for HMR WebSocket connection
+    let serverPort: number | undefined;
+    if (options.moduleServerUrl) {
+      try {
+        const url = new URL(options.moduleServerUrl);
+        serverPort = url.port ? parseInt(url.port, 10) : undefined;
+      } catch {
+        // Ignore invalid URL
+      }
+    }
+
+    const snippetConfig = {
+      ...options.config,
+      dev: {
+        ...options.config?.dev,
+        hmr: true,
+        port: serverPort ?? options.config?.dev?.port,
+        // Don't set hmrPort explicitly - let dev-scripts.ts use the default port + 1 logic
+      },
+    };
+
     const html = await wrapInHTMLShell(bodyHtml, meta, {
       mode: options.mode,
-      config: options.config || {},
+      config: snippetConfig,
       projectDir: options.projectDir,
       nonce: options.nonce,
       studioEmbed: true, // Enable studio bridge for preview panel
-      skipClientHydration: true, // SSR output is sufficient for snippet preview
+      pagePath: `_snippets/${hash}`, // Point to cached snippet module for hydration
+      pageId: options.pageId, // Pass entity UUID for Studio postMessage communication
     });
 
     return {

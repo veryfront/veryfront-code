@@ -303,6 +303,10 @@ export const getRouterScript = () => `
     function inferPageModuleUrl(path) {
       const normalizedPath = path === '/' ? '/index' : path;
       const slug = normalizedPath.replace(/^\\//, '');
+      // Don't add pages/ prefix for @/ paths (alias paths like @/components/)
+      if (slug.startsWith('@/')) {
+        return MODULE_SERVER_URL + '/' + slug + '.js';
+      }
       // Try direct path first, then index
       return MODULE_SERVER_URL + '/pages/' + slug + '.js';
     }
@@ -340,7 +344,9 @@ export const getRouterScript = () => `
         speculativePreload(likelyPageUrl);
         // Also try index variant for directory paths
         if (!targetPath.includes('.')) {
-          speculativePreload(MODULE_SERVER_URL + '/pages/' + targetPath.replace(/^\\//, '') + '/index.js');
+          const targetSlug = targetPath.replace(/^\\//, '');
+          const prefix = targetSlug.startsWith('@/') ? '' : '/pages';
+          speculativePreload(MODULE_SERVER_URL + prefix + '/' + targetSlug + '/index.js');
         }
 
         // Fetch page data (runs in parallel with speculative preloads)
@@ -496,7 +502,9 @@ export const getRouterScript = () => `
       const likelyPageUrl = inferPageModuleUrl(href);
       speculativePreload(likelyPageUrl);
       if (!href.includes('.')) {
-        speculativePreload(MODULE_SERVER_URL + '/pages/' + href.replace(/^\\//, '') + '/index.js');
+        const hrefSlug = href.replace(/^\\//, '');
+        const prefix = hrefSlug.startsWith('@/') ? '' : '/pages';
+        speculativePreload(MODULE_SERVER_URL + prefix + '/' + hrefSlug + '/index.js');
       }
 
       // Prefetch page data (runs in parallel with speculative preloads)

@@ -51,8 +51,13 @@ export function pathToModuleUrl(path: string, baseUrl?: string): string {
   }
 
   if (!match) {
-    // Direct path fallback - just replace extension
-    return `${base}/${path.replace(/\.(tsx|ts|jsx|mdx)$/, ".js")}`;
+    // Direct path fallback - replace extension or add .js if no known extension
+    const hasKnownExt = /\.(tsx|ts|jsx|mdx|js|mjs)$/.test(path);
+    if (hasKnownExt) {
+      return `${base}/${path.replace(/\.(tsx|ts|jsx|mdx)$/, ".js")}`;
+    }
+    // No extension - add .js (e.g., _snippets/abc123 -> _snippets/abc123.js)
+    return `${base}/${path}.js`;
   }
 
   // match[1] = directory (pages, components, etc.)
@@ -79,7 +84,12 @@ export function getPathToModuleUrlScript(): string {
       }
 
       if (!match) {
-        return base + '/' + path.replace(/\\.(tsx|ts|jsx|mdx)$/, '.js');
+        // Replace extension or add .js if no known extension
+        const hasKnownExt = /\\.(tsx|ts|jsx|mdx|js|mjs)$/.test(path);
+        if (hasKnownExt) {
+          return base + '/' + path.replace(/\\.(tsx|ts|jsx|mdx)$/, '.js');
+        }
+        return base + '/' + path + '.js';
       }
 
       return base + '/' + match[1] + '/' + match[2] + '.js';

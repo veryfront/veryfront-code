@@ -30,8 +30,6 @@ export interface HTMLGenerationOptions {
   pageId?: string;
   /** Hash of source code for Navigator tree sync detection */
   sourceHash?: string;
-  /** Skip client-side hydration (for static previews like snippets) */
-  skipClientHydration?: boolean;
 }
 
 export type { ImportMapConfig } from "../module-system/import-map/types.ts";

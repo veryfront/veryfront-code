@@ -81,6 +81,9 @@ export class SnippetHandler extends BaseHandler {
           ? ctx.moduleServerUrl
           : `${url.protocol}//${url.host}`;
 
+        // Get page_id from URL params (passed by Studio for postMessage communication)
+        const pageId = url.searchParams.get("page_id") || undefined;
+
         // Render the MDX snippet to HTML
         const result = await renderSnippet(content, {
           mode: ctx.mode || "development",
@@ -89,6 +92,7 @@ export class SnippetHandler extends BaseHandler {
           moduleServerUrl,
           projectSlug: ctx.projectSlug,
           config: ctx.config,
+          pageId,
         });
 
         logger.info("[SnippetHandler] Snippet rendered", {
@@ -98,10 +102,16 @@ export class SnippetHandler extends BaseHandler {
 
         // Return rendered HTML
         const builder = this.createResponseBuilder(ctx);
+        // In development mode, relax COOP/CORP headers to allow Studio iframe embedding
+        const isDev = ctx.mode === "development";
         return this.respond(
           builder
             .withCORS(req, ctx.securityConfig?.cors)
             .withSecurity(ctx.securityConfig ?? undefined)
+            .withHeaders(isDev ? {
+              "Cross-Origin-Opener-Policy": "unsafe-none",
+              "Cross-Origin-Resource-Policy": "cross-origin",
+            } : {})
             .withCache("no-cache")
             .withContentType("text/html; charset=utf-8", result.html, 200),
         );

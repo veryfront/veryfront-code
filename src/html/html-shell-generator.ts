@@ -27,10 +27,17 @@ import {
 /**
  * Convert a source path to a module URL for preloading.
  * E.g., pages/index.mdx -> /_vf_modules/pages/index.js
+ * E.g., _snippets/abc123 -> /_vf_modules/_snippets/abc123.js
  */
 function pathToModuleUrl(path: string): string {
   if (!path) return "";
-  return "/_vf_modules/" + path.replace(/\.(tsx|ts|jsx|mdx)$/, ".js");
+  // Replace known source extensions with .js
+  const withExtReplaced = path.replace(/\.(tsx|ts|jsx|mdx)$/, ".js");
+  // If no extension was replaced and path doesn't end with .js, add .js
+  if (withExtReplaced === path && !path.endsWith(".js")) {
+    return "/_vf_modules/" + path + ".js";
+  }
+  return "/_vf_modules/" + withExtReplaced;
 }
 
 /**
@@ -158,9 +165,7 @@ export async function generateHTMLShellParts(
   const nonce = options.nonce || "";
 
   const modeScripts = options.mode === "development"
-    ? getDevScripts(meta.slug || "", options.config, params, props, nonce, {
-        skipClientHydration: options.skipClientHydration,
-      })
+    ? getDevScripts(meta.slug || "", options.config, params, props, nonce)
     : getProdScripts(meta.slug || "", params, props, nonce);
 
   const modeStyles = options.mode === "development"

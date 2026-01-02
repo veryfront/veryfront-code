@@ -106,7 +106,7 @@ export class ModuleHandler extends BaseHandler {
     // Use pre-bound helpers to avoid repeated binding on each request
     const { createResponseBuilder, respond, logDebug, getErrorMessage } = this.helpers;
 
-    // Module server endpoint
+    // Module server endpoint (including snippet modules - they need transformation)
     if (pathname.startsWith("/_vf_modules/")) {
       return this.withProxyContext(ctx, () =>
         handleModuleServer(

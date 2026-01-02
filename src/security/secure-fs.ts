@@ -114,6 +114,7 @@ function getContextValidationOptions(
           "islands",
           "features",
           "src",
+          "_snippets", // Virtual snippet modules (cached in memory)
         ],
         followSymlinks: false,
         allowAbsolute: true, // Allow node_modules, etc.

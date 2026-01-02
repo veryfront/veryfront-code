@@ -111,8 +111,11 @@ export class HMRServer {
     this.abortController = this.options.signal ? undefined : controller;
 
     // Use the adapter's serve method - works on any runtime (Deno, Node, Bun)
+    // Bind to 0.0.0.0 to accept connections from all interfaces (IPv4 and IPv6)
+    // This is needed because lvh.me resolves to 127.0.0.1 (IPv4), not ::1 (IPv6)
     const startPromise = this.options.adapter.serve(_handler, {
       port: this.options.port,
+      hostname: "0.0.0.0",
       signal,
       onListen: ({ port }: { port: number }) => {
         logger.debug(`HMR server running on port ${port}`);
