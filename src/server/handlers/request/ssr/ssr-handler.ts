@@ -86,6 +86,7 @@ export class SSRHandler extends BaseHandler {
       if (ctx.proxyToken && ctx.projectSlug) {
         const fsWrapper = ctx.adapter.fs as {
           setRequestToken?: (t: string) => void;
+          setRequestBranch?: (b: string | null) => void;
           runWithContext?: <T>(slug: string, token: string, fn: () => Promise<T>) => Promise<T>;
         };
         // For multi-project mode, use runWithContext
@@ -100,6 +101,17 @@ export class SSRHandler extends BaseHandler {
           fsWrapper.setRequestToken(ctx.proxyToken);
           this.logDebug("Injected proxy token into FSAdapter", {}, ctx);
         }
+      }
+
+      // Always set branch from URL - either the parsed branch or null for main
+      // This ensures each request uses the correct branch and clears any previously set branch
+      const fsWrapper = ctx.adapter.fs as {
+        setRequestBranch?: (b: string | null) => void;
+      };
+      if (typeof fsWrapper.setRequestBranch === "function") {
+        const branch = ctx.parsedDomain?.branch ?? null;
+        fsWrapper.setRequestBranch(branch);
+        this.logDebug("Set FSAdapter branch", { branch: branch ?? "main" }, ctx);
       }
 
       return this.handleWithContext(req, ctx, slug, requestId, url);
