@@ -69,7 +69,7 @@ export class ProxyFSAdapterManager {
     return this.createAdapter(projectSlug, token);
   }
 
-  private async createAdapter(projectSlug: string, token: string): Promise<VeryfrontFSAdapter> {
+  private createAdapter(projectSlug: string, token: string): Promise<VeryfrontFSAdapter> {
     logger.info("[ProxyFSAdapterManager] Creating adapter for project", { projectSlug });
 
     const config: FSAdapterConfig = {

@@ -30,7 +30,7 @@ export class FSAdapterWrapper implements FileSystemAdapter {
    * Only applies if the underlying FSAdapter supports it (e.g., MultiProjectFSAdapter).
    * For adapters that don't support this, the function runs directly.
    */
-  async runWithContext<T>(
+  runWithContext<T>(
     projectSlug: string,
     token: string,
     fn: () => Promise<T>,

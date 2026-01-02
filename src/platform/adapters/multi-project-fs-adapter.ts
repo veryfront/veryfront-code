@@ -29,7 +29,7 @@ export class MultiProjectFSAdapter implements FSAdapter {
     });
   }
 
-  async runWithContext<T>(
+  runWithContext<T>(
     projectSlug: string,
     token: string,
     fn: () => Promise<T>,
@@ -58,15 +58,16 @@ export class MultiProjectFSAdapter implements FSAdapter {
       );
     }
 
-    return this.manager.getAdapter(context.projectSlug, context.token);
+    return await this.manager.getAdapter(context.projectSlug, context.token);
   }
 
   setDefaultAdapter(adapter: VeryfrontFSAdapter): void {
     this.defaultAdapter = adapter;
   }
 
-  async initialize(): Promise<void> {
+  initialize(): Promise<void> {
     logger.info("[MultiProjectFSAdapter] Initialized (lazy per-project initialization)");
+    return Promise.resolve();
   }
 
   async readFile(path: string): Promise<Uint8Array> {
