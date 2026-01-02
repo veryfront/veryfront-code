@@ -43,6 +43,8 @@ export class VeryfrontFSAdapter implements FSAdapter {
   private apiBaseUrl: string;
   private apiToken: string;
   private requestBranch: string | null = null;
+  private productionMode = false;
+  private releaseId: string | null = null;
 
   constructor(config: FSAdapterConfig) {
     const veryfrontConfig = createVeryfrontConfig(config);
@@ -60,7 +62,10 @@ export class VeryfrontFSAdapter implements FSAdapter {
 
     this.cache = new FileCache(veryfrontConfig.cache as FileCacheOptions);
     this.normalizer = new PathNormalizer(config.projectDir);
-    this.readOps = new ReadOperations(this.client, this.cache, this.normalizer);
+    this.readOps = new ReadOperations(this.client, this.cache, this.normalizer, {
+      isProductionMode: () => this.productionMode,
+      getReleaseId: () => this.releaseId,
+    });
     this.dirOps = new DirectoryOperations(this.client, this.cache, this.normalizer);
     this.statOps = new StatOperations(this.client, this.cache, this.normalizer);
 
@@ -86,6 +91,28 @@ export class VeryfrontFSAdapter implements FSAdapter {
       layout: this.projectData.layout,
     });
 
+    // In production mode, skip draft file fetching and WebSocket connection
+    // Published content is immutable and doesn't need real-time updates
+    if (this.productionMode) {
+      logger.info("[VeryfrontFSAdapter] Production mode - skipping WebSocket and draft files");
+      const cacheKey = `files:published:${this.releaseId ?? "latest"}`;
+      const files = await this.client.listPublishedFiles(undefined, this.releaseId ?? undefined);
+      this.cache.set(cacheKey, files);
+      logger.debug("[VeryfrontFSAdapter] Fetched published files", {
+        count: files.length,
+        releaseId: this.releaseId ?? "latest",
+      });
+
+      this.initialized = true;
+      logger.info("[VeryfrontFSAdapter] Initialized (production mode)", {
+        projectId: this.client.getProjectId(),
+        files: files.length,
+        releaseId: this.releaseId ?? "latest",
+      });
+      return;
+    }
+
+    // Preview/development mode: fetch draft files and connect WebSocket
     const branch = this.requestBranch || "main";
     const cacheKey = `files:all:${branch}`;
     logger.debug("[VeryfrontFSAdapter] Fetching all files from API", { branch });
@@ -102,7 +129,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
       files: files.length,
     });
 
-    // Connect to WebSocket for real-time cache invalidation
+    // Connect to WebSocket for real-time cache invalidation (preview mode only)
     this.connectWebSocket(projectId);
   }
 
@@ -467,6 +494,41 @@ export class VeryfrontFSAdapter implements FSAdapter {
   clearRequestBranch(): void {
     this.requestBranch = null;
     this.client.clearRequestBranch();
+  }
+
+  /**
+   * Enable production mode for JIT rendering.
+   * In production mode, files are fetched from published releases instead of drafts.
+   */
+  setProductionMode(enabled: boolean, releaseId?: string | null): void {
+    this.productionMode = enabled;
+    this.releaseId = releaseId ?? null;
+    logger.info("[VeryfrontFSAdapter] Production mode", {
+      enabled,
+      releaseId: releaseId ?? "latest",
+    });
+  }
+
+  /**
+   * Check if production mode is enabled.
+   */
+  isProductionMode(): boolean {
+    return this.productionMode;
+  }
+
+  /**
+   * Get the release ID used in production mode.
+   */
+  getReleaseId(): string | null {
+    return this.releaseId;
+  }
+
+  /**
+   * Clear production mode, reverting to draft content.
+   */
+  clearProductionMode(): void {
+    this.productionMode = false;
+    this.releaseId = null;
   }
 
   /**

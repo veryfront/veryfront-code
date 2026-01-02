@@ -11,6 +11,7 @@ import { metrics } from "@veryfront/observability/simple-metrics/index.ts";
 // Import handler system (from new location)
 import type { HandlerContext } from "../handlers/types.ts";
 import { parseProjectDomain } from "../utils/domain-parser.ts";
+import { lookupProjectByDomain, getEnvironmentType } from "../utils/domain-lookup.ts";
 import { RouteRegistry } from "@veryfront/routing/registry/index.ts";
 import { SecurityConfigLoader } from "@veryfront/security/http/config.ts";
 import { getConfig } from "@veryfront/config/loader.ts";
@@ -165,12 +166,39 @@ export function createVeryfrontHandler(
 
     // Check for proxy-provided headers (from Deno proxy)
     const proxyToken = req.headers.get("x-token") || undefined;
-    const proxySlug = req.headers.get("x-project-slug") || undefined;
-    const proxyEnv = req.headers.get("x-environment") as "preview" | "production" | undefined;
+    let proxySlug = req.headers.get("x-project-slug") || undefined;
+    let proxyEnv = req.headers.get("x-environment") as "preview" | "production" | undefined;
 
     // Get project slug: proxy header > URL parsing > config
     const configuredSlug = config?.fs?.veryfront?.projectSlug;
-    const projectSlug = proxySlug || parsedDomain.slug || configuredSlug;
+    let projectSlug = proxySlug || parsedDomain.slug || configuredSlug;
+
+    // For custom domains without a slug, look up the project via API
+    // This enables JIT rendering for production sites with custom domains
+    if (!projectSlug && !parsedDomain.isVeryfrontDomain && config?.fs?.veryfront) {
+      const apiConfig = {
+        apiBaseUrl: config.fs.veryfront.apiBaseUrl || "https://api.veryfront.com/api",
+        apiToken: config.fs.veryfront.apiToken || "",
+      };
+
+      if (apiConfig.apiToken) {
+        logDebug("[universal] Custom domain detected, looking up project", { host });
+        const lookupResult = await lookupProjectByDomain(host, apiConfig);
+
+        if (lookupResult) {
+          projectSlug = lookupResult.projectSlug;
+          proxyEnv = getEnvironmentType(lookupResult);
+          logDebug("[universal] Domain lookup successful", {
+            domain: host,
+            projectSlug: lookupResult.projectSlug,
+            environment: proxyEnv,
+            releaseId: lookupResult.releaseId,
+          });
+        } else {
+          logDebug("[universal] No project found for domain", { host });
+        }
+      }
+    }
 
     // Log if slug from URL differs from config (for debugging)
     if (parsedDomain.slug && configuredSlug && parsedDomain.slug !== configuredSlug) {

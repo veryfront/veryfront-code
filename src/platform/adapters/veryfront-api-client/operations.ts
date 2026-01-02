@@ -186,6 +186,103 @@ export class VeryfrontAPIOperations {
     return metadata !== null;
   }
 
+  /**
+   * List all published files from a release.
+   * Used for production rendering (JIT mode).
+   */
+  async listPublishedFiles(
+    projectId?: string,
+    releaseId?: string,
+  ): Promise<ProjectFile[]> {
+    const id = projectId || this.getProjectId();
+
+    let url = `/projects/${id}/published/files`;
+    if (releaseId) {
+      url += `?releaseId=${encodeURIComponent(releaseId)}`;
+    }
+
+    logger.debug("[VeryfrontAPIClient] Listing published files", { url, projectId: id, releaseId });
+
+    const response = await this.request<{
+      data: ProjectFile[];
+      releaseId: string;
+    }>(url);
+
+    return response.data || [];
+  }
+
+  /**
+   * Get published file content from a release.
+   * Used for production rendering (JIT mode).
+   */
+  async getPublishedFileContent(
+    path: string,
+    projectId?: string,
+    releaseId?: string,
+  ): Promise<string> {
+    const id = projectId || this.getProjectId();
+    const encodedPath = encodeURIComponent(path);
+
+    let url = `/projects/${id}/published/files/${encodedPath}`;
+    if (releaseId) {
+      url += `?releaseId=${encodeURIComponent(releaseId)}`;
+    }
+
+    logger.debug("[VeryfrontAPIClient] Getting published file content", { url, path, releaseId });
+
+    const response = await this.request<{
+      path: string;
+      content: string;
+      size: number;
+      versionId: string;
+      releaseId: string;
+    }>(url);
+
+    return response.content;
+  }
+
+  /**
+   * Look up project info by custom domain.
+   * Used for JIT rendering of custom domain production sites.
+   */
+  async lookupProjectByDomain(domain: string): Promise<{
+    projectId: string;
+    projectSlug: string;
+    projectName: string;
+    environment: { id: string; name: string } | null;
+    releaseId: string | null;
+  } | null> {
+    const encodedDomain = encodeURIComponent(domain);
+    const url = `/lookup/domain/${encodedDomain}`;
+
+    logger.debug("[VeryfrontAPIClient] Looking up project by domain", { domain });
+
+    try {
+      const response = await this.request<{
+        projectId: string;
+        projectSlug: string;
+        projectName: string;
+        environment: { id: string; name: string } | null;
+        releaseId: string | null;
+      }>(url);
+
+      logger.debug("[VeryfrontAPIClient] Domain lookup result", {
+        domain,
+        projectSlug: response.projectSlug,
+        environment: response.environment?.name,
+      });
+
+      return response;
+    } catch (error) {
+      // 404 means no project found for domain
+      if (error instanceof Error && error.message.includes("404")) {
+        logger.debug("[VeryfrontAPIClient] No project found for domain", { domain });
+        return null;
+      }
+      throw error;
+    }
+  }
+
   private async request<T>(
     endpoint: string,
     options: { returnText?: boolean } = {},

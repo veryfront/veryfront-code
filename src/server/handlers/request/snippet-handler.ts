@@ -47,7 +47,11 @@ export class SnippetHandler extends BaseHandler {
     let filePath: string;
     if (pathname.startsWith("/@components/")) {
       // @components/Button -> components/Button.snippet.mdx
-      filePath = pathname.replace("/@components/", "components/") + ".snippet.mdx";
+      // But if path already ends with .snippet.mdx, don't add it again
+      filePath = pathname.replace("/@components/", "components/");
+      if (!filePath.endsWith(".snippet.mdx")) {
+        filePath += ".snippet.mdx";
+      }
     } else {
       // @/components/Button.snippet.mdx -> components/Button.snippet.mdx
       filePath = pathname.replace("/@/", "");
@@ -130,17 +134,24 @@ export class SnippetHandler extends BaseHandler {
     ctx: HandlerContext,
     fn: () => Promise<T>,
   ): Promise<T> {
-    if (!ctx.projectSlug) {
-      return fn();
-    }
-
     const fsWrapper = ctx.adapter.fs as {
       runWithContext?: <T>(
         slug: string,
         token: string,
         fn: () => Promise<T>,
       ) => Promise<T>;
+      setRequestBranch?: (b: string | null) => void;
     };
+
+    // Set branch context from parsed domain (for branch-aware file resolution)
+    if (typeof fsWrapper.setRequestBranch === "function") {
+      const branch = ctx.parsedDomain?.branch ?? null;
+      fsWrapper.setRequestBranch(branch);
+    }
+
+    if (!ctx.projectSlug) {
+      return fn();
+    }
 
     if (typeof fsWrapper.runWithContext === "function") {
       this.logDebug("Using multi-project context", { projectSlug: ctx.projectSlug }, ctx);
