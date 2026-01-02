@@ -65,13 +65,13 @@ export class SSRHandler extends BaseHandler {
 
   private rendererInit: Promise<Awaited<ReturnType<typeof createRenderer>>> | null = null;
 
-  handle(req: Request, ctx: HandlerContext): HandlerResult | Promise<HandlerResult> {
+  handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
     const url = new URL(req.url);
     const pathname = url.pathname;
 
     // Skip internal paths and file extensions (likely static files)
     if (pathname.startsWith("/_veryfront/") || pathname.includes(".")) {
-      return this.continue();
+      return Promise.resolve(this.continue());
     }
 
     const slug = pathname === "/" ? "" : pathname.replace(/^\//, "").replace(/\/$/, "");
@@ -168,7 +168,7 @@ export class SSRHandler extends BaseHandler {
       this.logDebug("Unexpected error in context setup", {
         error: this.getErrorMessage(error),
       }, ctx);
-      return this.continue();
+      return Promise.resolve(this.continue());
     }
   }
 

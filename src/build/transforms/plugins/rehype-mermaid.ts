@@ -22,11 +22,13 @@ export function rehypeMermaid() {
   return (tree: Root) => {
     visit(tree, "element", (node: Element, index, parent) => {
       // Look for <pre><code class="language-mermaid">
+      const firstChild = node.children[0];
       if (
         node.tagName === "pre" &&
         node.children.length === 1 &&
-        node.children[0].type === "element" &&
-        node.children[0].tagName === "code"
+        firstChild &&
+        firstChild.type === "element" &&
+        firstChild.tagName === "code"
       ) {
         const codeNode = node.children[0] as Element;
         const className = codeNode.properties?.className;
