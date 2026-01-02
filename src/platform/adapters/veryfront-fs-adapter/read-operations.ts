@@ -22,12 +22,12 @@ export class ReadOperations {
     return new TextEncoder().encode(content);
   }
 
-  async readTextFile(path: string): Promise<string> {
+  readTextFile(path: string): Promise<string> {
     const normalizedPath = this.normalizer.normalize(path);
     return this.fetchContent(normalizedPath);
   }
 
-  private async fetchContent(normalizedPath: string): Promise<string> {
+  private fetchContent(normalizedPath: string): Promise<string> {
     const isProduction = this.productionContext?.isProductionMode() ?? false;
     const releaseId = this.productionContext?.getReleaseId() ?? null;
 

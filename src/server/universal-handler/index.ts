@@ -164,7 +164,7 @@ export function createVeryfrontHandler(
 
     // Check for proxy-provided headers (from Deno proxy)
     const proxyToken = req.headers.get("x-token") || undefined;
-    let proxySlug = req.headers.get("x-project-slug") || undefined;
+    const proxySlug = req.headers.get("x-project-slug") || undefined;
     let proxyEnv = req.headers.get("x-environment") as "preview" | "production" | undefined;
 
     // Get project slug: proxy header > URL parsing > config

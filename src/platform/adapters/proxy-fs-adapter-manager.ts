@@ -71,7 +71,7 @@ export class ProxyFSAdapterManager {
     return this.createAdapter(projectSlug, token);
   }
 
-  private async createAdapter(projectSlug: string, token: string): Promise<VeryfrontFSAdapter> {
+  private createAdapter(projectSlug: string, token: string): Promise<VeryfrontFSAdapter> {
     // Use provided token or fall back to base config token (from VERYFRONT_API_TOKEN)
     const effectiveToken = token || this.baseConfig.veryfront?.apiToken;
 

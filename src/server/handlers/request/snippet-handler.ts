@@ -23,13 +23,13 @@ export class SnippetHandler extends BaseHandler {
     patterns: [{ pattern: /^\/(@\/|@components\/)/, method: "GET" }],
   };
 
-  async handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
+  handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
     const url = new URL(req.url);
-    let pathname = url.pathname;
+    const pathname = url.pathname;
 
     // Only handle @/ and @components/ paths
     if (!pathname.startsWith("/@/") && !pathname.startsWith("/@components/")) {
-      return this.continue();
+      return Promise.resolve(this.continue());
     }
 
     logger.info("[SnippetHandler] Handling snippet request", {
@@ -128,7 +128,7 @@ export class SnippetHandler extends BaseHandler {
     });
   }
 
-  private async withProxyContext<T>(
+  private withProxyContext<T>(
     ctx: HandlerContext,
     fn: () => Promise<T>,
   ): Promise<T> {
