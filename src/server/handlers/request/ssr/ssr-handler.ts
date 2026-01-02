@@ -83,31 +83,29 @@ export class SSRHandler extends BaseHandler {
     try {
       // Inject proxy token into FSAdapter before rendering
       // This ensures API calls use the per-request OAuth token from the proxy
-      if (ctx.proxyToken && ctx.projectSlug) {
-        const fsWrapper = ctx.adapter.fs as {
-          setRequestToken?: (t: string) => void;
-          setRequestBranch?: (b: string | null) => void;
-          runWithContext?: <T>(slug: string, token: string, fn: () => Promise<T>) => Promise<T>;
-        };
-        // For multi-project mode, use runWithContext
-        if (typeof fsWrapper.runWithContext === "function") {
-          this.logDebug("Using multi-project context", { projectSlug: ctx.projectSlug }, ctx);
-          return fsWrapper.runWithContext(ctx.projectSlug, ctx.proxyToken, async () => {
-            return this.handleWithContext(req, ctx, slug, requestId, url);
-          });
-        }
-        // For single-project mode, use setRequestToken
-        if (typeof fsWrapper.setRequestToken === "function") {
-          fsWrapper.setRequestToken(ctx.proxyToken);
-          this.logDebug("Injected proxy token into FSAdapter", {}, ctx);
-        }
+      const fsWrapper = ctx.adapter.fs as {
+        setRequestToken?: (t: string) => void;
+        setRequestBranch?: (b: string | null) => void;
+        runWithContext?: <T>(slug: string, token: string, fn: () => Promise<T>) => Promise<T>;
+      };
+
+      // For multi-project mode, use runWithContext (required for MultiProjectFSAdapter)
+      // The token can be empty - ProxyFSAdapterManager will fall back to config token
+      if (ctx.projectSlug && typeof fsWrapper.runWithContext === "function") {
+        this.logDebug("Using multi-project context", { projectSlug: ctx.projectSlug, hasProxyToken: !!ctx.proxyToken }, ctx);
+        return fsWrapper.runWithContext(ctx.projectSlug, ctx.proxyToken || "", async () => {
+          return this.handleWithContext(req, ctx, slug, requestId, url);
+        });
+      }
+
+      // For single-project mode with proxy token, use setRequestToken
+      if (ctx.proxyToken && typeof fsWrapper.setRequestToken === "function") {
+        fsWrapper.setRequestToken(ctx.proxyToken);
+        this.logDebug("Injected proxy token into FSAdapter", {}, ctx);
       }
 
       // Always set branch from URL - either the parsed branch or null for main
       // This ensures each request uses the correct branch and clears any previously set branch
-      const fsWrapper = ctx.adapter.fs as {
-        setRequestBranch?: (b: string | null) => void;
-      };
       if (typeof fsWrapper.setRequestBranch === "function") {
         const branch = ctx.parsedDomain?.branch ?? null;
         fsWrapper.setRequestBranch(branch);
