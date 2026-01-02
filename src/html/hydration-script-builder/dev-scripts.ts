@@ -13,17 +13,29 @@ function generateHMRScript(config: VeryfrontConfig, nonce?: string): string {
   return `<script type="module" src="/_veryfront/hmr.js?port=${hmrPort}"${nonceAttr}></script>`;
 }
 
+export interface DevScriptsOptions {
+  skipClientHydration?: boolean;
+}
+
 export function getDevScripts(
   _slug: string,
   config: VeryfrontConfig,
   _params?: Record<string, string | string[]>,
   _props?: ComponentProps,
   nonce?: string,
+  options?: DevScriptsOptions,
 ): string {
-  return [
+  const scripts = [
     generateDevErrorLoggerScript(nonce),
     generateDevComponentManifestScript(config, nonce),
-    generateDevClientRendererScript(nonce),
-    generateHMRScript(config, nonce),
-  ].join("\n");
+  ];
+
+  // Skip client renderer for static previews (snippets)
+  if (!options?.skipClientHydration) {
+    scripts.push(generateDevClientRendererScript(nonce));
+  }
+
+  scripts.push(generateHMRScript(config, nonce));
+
+  return scripts.join("\n");
 }

@@ -24,7 +24,6 @@ export class StatOperations {
 
     const cached = this.cache.get<FileInfo>(cacheKey);
     if (cached) {
-      logger.debug("[StatOperations] Cache hit (stat)", { path: normalizedPath });
       return cached;
     }
 

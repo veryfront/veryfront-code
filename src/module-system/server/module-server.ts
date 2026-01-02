@@ -17,6 +17,7 @@ import { createSecureFs } from "@veryfront/security";
 import { injectNodePositions } from "../../build/transforms/plugins/babel-node-positions.ts";
 
 const DEV_MODULE_PREFIX = /^\/(?:_vf_modules|_veryfront\/modules)\//;
+const SNIPPET_MODULE_PREFIX = /^\/_vf_modules\/_snippets\/([a-f0-9]+)\.js/;
 
 export interface ModuleServerOptions {
   /** Project identifier */
@@ -89,19 +90,66 @@ export async function serveModule(
     });
   }
 
+  // Handle snippet module requests (/_vf_modules/_snippets/<hash>.js)
+  const snippetMatch = url.pathname.match(SNIPPET_MODULE_PREFIX);
+  if (snippetMatch) {
+    const hash = snippetMatch[1];
+    const { getCompiledSnippet } = await import("@veryfront/rendering/snippet-renderer.ts");
+    const snippetCode = getCompiledSnippet(hash);
+
+    if (!snippetCode) {
+      logger.warn("[ModuleServer] Snippet not found in cache", { hash });
+      return createModuleResponse(method, "Snippet not found", HTTP_NOT_FOUND, {
+        "Content-Type": "text/plain; charset=utf-8",
+        "Cache-Control": "no-cache",
+      });
+    }
+
+    logger.info("[ModuleServer] Serving cached snippet", { hash, codeLength: snippetCode.length });
+    return createModuleResponse(method, snippetCode, HTTP_OK, {
+      "Content-Type": "application/javascript; charset=utf-8",
+      "Cache-Control": "no-cache",
+    });
+  }
+
   // Extract file path from URL
   // /_vf_modules/components/app.js → components/app
   const modulePath = url.pathname.replace(DEV_MODULE_PREFIX, "");
   const filePathWithoutExt = modulePath.replace(/\.(?:mjs|js)$/i, "");
 
+  // Check for project context in query params (for SSR imports in proxy mode)
+  const projectSlug = url.searchParams.get("project");
+
+  // Helper function to run with optional proxy context
+  const runWithOptionalContext = async <T>(fn: () => Promise<T>): Promise<T> => {
+    if (!projectSlug) {
+      return fn();
+    }
+
+    // Try to use multi-project context if available
+    const fsWrapper = adapter.fs as {
+      runWithContext?: <T>(slug: string, token: string, fn: () => Promise<T>) => Promise<T>;
+    };
+
+    if (typeof fsWrapper.runWithContext === "function") {
+      logger.info("[ModuleServer] Using project context", { projectSlug });
+      return fsWrapper.runWithContext(projectSlug, "", fn);
+    }
+
+    return fn();
+  };
+
   try {
     // Find source file (try .tsx, .ts, .jsx, .js, .mdx)
     const findStart = performance.now();
-    const sourceFile = await findSourceFile(secureFs, projectDir, filePathWithoutExt);
+
+    const sourceFile = await runWithOptionalContext(() =>
+      findSourceFile(secureFs, projectDir, filePathWithoutExt)
+    );
     timings.findFile = performance.now() - findStart;
 
     if (!sourceFile) {
-      logger.warn("Module not found", { modulePath, filePathWithoutExt });
+      logger.warn("Module not found", { modulePath, filePathWithoutExt, projectSlug, projectDir });
       return new Response("Module not found", {
         status: HTTP_NOT_FOUND,
         headers: { "Content-Type": "text/plain" },
@@ -120,7 +168,7 @@ export async function serveModule(
       const readStart = performance.now();
       let source = isFrameworkFile
         ? await Deno.readTextFile(sourceFile)
-        : await secureFs.readFile(sourceFile);
+        : await runWithOptionalContext(() => secureFs.readFile(sourceFile));
       timings.readFile = performance.now() - readStart;
 
       // Inject source position data attributes for Studio Navigator

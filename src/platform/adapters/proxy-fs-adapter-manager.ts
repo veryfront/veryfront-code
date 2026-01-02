@@ -41,11 +41,13 @@ export class ProxyFSAdapterManager {
   }
 
   async getAdapter(projectSlug: string, token: string): Promise<VeryfrontFSAdapter> {
+    // Use provided token or fall back to base config token
+    const effectiveToken = token || this.baseConfig.veryfront?.apiToken || "";
     const existing = this.adapters.get(projectSlug);
 
     if (existing) {
       existing.lastAccessed = Date.now();
-      existing.adapter.setRequestToken(token);
+      existing.adapter.setRequestToken(effectiveToken);
 
       if (existing.initializing) {
         await existing.initializing;
@@ -58,7 +60,7 @@ export class ProxyFSAdapterManager {
     const pending = this.pendingAdapters.get(projectSlug);
     if (pending) {
       const adapter = await pending;
-      adapter.setRequestToken(token);
+      adapter.setRequestToken(effectiveToken);
       return adapter;
     }
 
@@ -70,14 +72,21 @@ export class ProxyFSAdapterManager {
   }
 
   private async createAdapter(projectSlug: string, token: string): Promise<VeryfrontFSAdapter> {
-    logger.info("[ProxyFSAdapterManager] Creating adapter for project", { projectSlug });
+    // Use provided token or fall back to base config token (from VERYFRONT_API_TOKEN)
+    const effectiveToken = token || this.baseConfig.veryfront?.apiToken;
+
+    logger.info("[ProxyFSAdapterManager] Creating adapter for project", {
+      projectSlug,
+      hasProxyToken: !!token,
+      hasConfigToken: !!this.baseConfig.veryfront?.apiToken,
+    });
 
     const config: FSAdapterConfig = {
       ...this.baseConfig,
       veryfront: {
         ...this.baseConfig.veryfront,
         projectSlug,
-        apiToken: token,
+        apiToken: effectiveToken,
       },
     };
 

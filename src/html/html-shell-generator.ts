@@ -158,7 +158,9 @@ export async function generateHTMLShellParts(
   const nonce = options.nonce || "";
 
   const modeScripts = options.mode === "development"
-    ? getDevScripts(meta.slug || "", options.config, params, props, nonce)
+    ? getDevScripts(meta.slug || "", options.config, params, props, nonce, {
+        skipClientHydration: options.skipClientHydration,
+      })
     : getProdScripts(meta.slug || "", params, props, nonce);
 
   const modeStyles = options.mode === "development"
