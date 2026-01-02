@@ -378,7 +378,9 @@ export class VeryfrontFSAdapter implements FSAdapter {
    */
   getEntityIdForPath(path: string): string | undefined {
     const normalizedPath = this.normalizer.normalize(path);
-    const cachedFiles = this.cache.get("files:all") as Array<{ id?: string; path: string }> | undefined;
+    const cachedFiles = this.cache.get("files:all") as
+      | Array<{ id?: string; path: string }>
+      | undefined;
     if (!cachedFiles) return undefined;
 
     const file = cachedFiles.find((f) => f.path === normalizedPath);

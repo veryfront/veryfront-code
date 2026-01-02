@@ -56,146 +56,146 @@ export interface BundlerMessage {
 // Messages FROM Renderer → Studio
 export type MessageFromRenderer =
   | {
-      action: "appLoaded";
-      url: string;
-    }
+    action: "appLoaded";
+    url: string;
+  }
   | {
-      action: "appUnloaded";
-      url: string;
-    }
+    action: "appUnloaded";
+    url: string;
+  }
   | {
-      action: "appUpdated";
-      url: string;
-      id: string;
-      isInitialLoad?: boolean;
-      nodesStore?: Record<string, unknown>;
-      errors?: BundlerMessage[];
-      warnings?: BundlerMessage[];
-    }
+    action: "appUpdated";
+    url: string;
+    id: string;
+    isInitialLoad?: boolean;
+    nodesStore?: Record<string, unknown>;
+    errors?: BundlerMessage[];
+    warnings?: BundlerMessage[];
+  }
   | {
-      action: "runtimeError";
-      url: string;
-      errors?: BundlerMessage[];
-    }
+    action: "runtimeError";
+    url: string;
+    errors?: BundlerMessage[];
+  }
   | {
-      action: "treeUpdated";
-      id: string;
-      url: string;
-      tree: NavigatorNode;
-    }
+    action: "treeUpdated";
+    id: string;
+    url: string;
+    tree: NavigatorNode;
+  }
   | {
-      action: "setSelectedNode";
-      id: string;
-    }
+    action: "setSelectedNode";
+    id: string;
+  }
   | {
-      action: "errorPageLoaded";
-      url: string;
-    }
+    action: "errorPageLoaded";
+    url: string;
+  }
   | {
-      action: "onPageTransitionStart";
-      url: string;
-      projectId: string;
-    }
+    action: "onPageTransitionStart";
+    url: string;
+    projectId: string;
+  }
   | {
-      action: "onPageTransitionEnd";
-      url: string;
-      projectId: string;
-      id: string;
-      params: Record<string, string>;
-    }
+    action: "onPageTransitionEnd";
+    url: string;
+    projectId: string;
+    id: string;
+    params: Record<string, string>;
+  }
   | {
-      action: "colorMode";
-      value: string;
-    }
+    action: "colorMode";
+    value: string;
+  }
   | {
-      action: "openFile";
-      filePath: string;
-      lineNumber: number | string;
-      columnNumber?: number | string;
-    }
+    action: "openFile";
+    filePath: string;
+    lineNumber: number | string;
+    columnNumber?: number | string;
+  }
   | {
-      action: "logEvent";
-      value: LogMessage;
-    }
+    action: "logEvent";
+    value: LogMessage;
+  }
   | {
-      action: "focusEditor";
-    }
+    action: "focusEditor";
+  }
   | {
-      action: "duplicateNode";
-      id: string;
-    }
+    action: "duplicateNode";
+    id: string;
+  }
   | {
-      action: "deleteNode";
-      id: string;
-    }
+    action: "deleteNode";
+    id: string;
+  }
   | {
-      action: "wrapNode";
-      id: string;
-      element: string;
-    }
+    action: "wrapNode";
+    id: string;
+    element: string;
+  }
   | {
-      action: "changeNodeElement";
-      id: string;
-      element: string;
-    }
+    action: "changeNodeElement";
+    id: string;
+    element: string;
+  }
   | {
-      action: "openNodeFile";
-      id: string;
-    }
+    action: "openNodeFile";
+    id: string;
+  }
   | {
-      action: "forkNode";
-      id: string;
-    }
+    action: "forkNode";
+    id: string;
+  }
   | {
-      action: "editNodeProps";
-      id: string;
-    };
+    action: "editNodeProps";
+    id: string;
+  };
 
 // Messages FROM Studio → Renderer
 export type MessageFromStudio =
   | {
-      action: "routeChange";
-      url: string;
-    }
+    action: "routeChange";
+    url: string;
+  }
   | {
-      action: "colorMode";
-      value: string;
-    }
+    action: "colorMode";
+    value: string;
+  }
   | {
-      action: "toggleLayout";
-      value: boolean;
-    }
+    action: "toggleLayout";
+    value: boolean;
+  }
   | {
-      action: "toggleInspectMode";
-      value: boolean;
-      deselectElements?: boolean;
-    }
+    action: "toggleInspectMode";
+    value: boolean;
+    deselectElements?: boolean;
+  }
   | {
-      action: "goBack";
-    }
+    action: "goBack";
+  }
   | {
-      action: "goForward";
-    }
+    action: "goForward";
+  }
   | {
-      action: "reload";
-    }
+    action: "reload";
+  }
   | {
-      action: "providerId";
-      id: string;
-    }
+    action: "providerId";
+    id: string;
+  }
   | {
-      action: "layoutId";
-      id: string;
-    }
+    action: "layoutId";
+    id: string;
+  }
   | {
-      action: "setSelectedNode";
-      id: string;
-      scroll?: boolean;
-    }
+    action: "setSelectedNode";
+    id: string;
+    scroll?: boolean;
+  }
   | {
-      action: "setHoveredNode";
-      id: string;
-    };
+    action: "setHoveredNode";
+    id: string;
+  };
 
 // Data attributes used for element identification
 export const DATA_VF_ID = "data-vf-id";
