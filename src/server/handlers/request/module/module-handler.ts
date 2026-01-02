@@ -182,6 +182,6 @@ export class ModuleHandler extends BaseHandler {
       });
     }
 
-    return this.continue();
+    return Promise.resolve(this.continue());
   }
 }
