@@ -124,6 +124,8 @@ export interface FileSystemAdapter {
   remove(path: string, options?: { recursive?: boolean }): Promise<void>;
   makeTempDir(prefix: string): Promise<string>;
   watch(paths: string | string[], options?: WatchOptions): FileWatcher;
+  /** Resolve a file path with extension fallback (e.g., pages/test → pages/test.mdx) */
+  resolveFile?(basePath: string): Promise<string | null>;
 }
 
 export interface DirEntry {
