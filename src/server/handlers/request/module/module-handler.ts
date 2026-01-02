@@ -66,7 +66,7 @@ export class ModuleHandler extends BaseHandler {
     return this.rendererInit;
   }
 
-  private async withProxyContext<T>(
+  private withProxyContext<T>(
     ctx: HandlerContext,
     fn: () => Promise<T>,
   ): Promise<T> {
@@ -99,7 +99,7 @@ export class ModuleHandler extends BaseHandler {
    * @param ctx - Handler context with project configuration
    * @returns Handler result (response or continuation)
    */
-  async handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
+  handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
     const url = new URL(req.url);
     const pathname = url.pathname;
 
@@ -121,7 +121,7 @@ export class ModuleHandler extends BaseHandler {
 
     // Virtual modules endpoint
     if (pathname.startsWith("/_veryfront/modules/")) {
-      return this.withProxyContext(ctx, async () => {
+      return this.withProxyContext(ctx, () => {
         const rendererInit = this.ensureRenderer(ctx);
         return handleVirtualModule(
           req,
@@ -136,7 +136,7 @@ export class ModuleHandler extends BaseHandler {
 
     // Generated page modules for client hydration
     if (pathname.startsWith("/_veryfront/pages/")) {
-      return this.withProxyContext(ctx, async () => {
+      return this.withProxyContext(ctx, () => {
         const rendererInit = this.ensureRenderer(ctx);
         return handlePageModule(
           req,
@@ -152,7 +152,7 @@ export class ModuleHandler extends BaseHandler {
 
     // Data JSON endpoint for client router prefetch (legacy HTML-based)
     if (pathname.startsWith("/_veryfront/data/")) {
-      return this.withProxyContext(ctx, async () => {
+      return this.withProxyContext(ctx, () => {
         const rendererInit = this.ensureRenderer(ctx);
         return handleDataEndpoint(
           req,
@@ -168,7 +168,7 @@ export class ModuleHandler extends BaseHandler {
 
     // Page data endpoint for SPA client-side routing
     if (pathname.startsWith("/_veryfront/page-data/")) {
-      return this.withProxyContext(ctx, async () => {
+      return this.withProxyContext(ctx, () => {
         const rendererInit = this.ensureRenderer(ctx);
         return handlePageDataEndpoint(
           req,

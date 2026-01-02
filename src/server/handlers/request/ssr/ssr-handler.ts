@@ -65,13 +65,13 @@ export class SSRHandler extends BaseHandler {
 
   private rendererInit: Promise<Awaited<ReturnType<typeof createRenderer>>> | null = null;
 
-  async handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
+  handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
     const url = new URL(req.url);
     const pathname = url.pathname;
 
     // Skip internal paths and file extensions (likely static files)
     if (pathname.startsWith("/_veryfront/") || pathname.includes(".")) {
-      return this.continue();
+      return Promise.resolve(this.continue());
     }
 
     const slug = pathname === "/" ? "" : pathname.replace(/^\//, "").replace(/\/$/, "");
@@ -91,7 +91,7 @@ export class SSRHandler extends BaseHandler {
         // For multi-project mode, use runWithContext
         if (typeof fsWrapper.runWithContext === "function") {
           this.logDebug("Using multi-project context", { projectSlug: ctx.projectSlug }, ctx);
-          return fsWrapper.runWithContext(ctx.projectSlug, ctx.proxyToken, async () => {
+          return fsWrapper.runWithContext(ctx.projectSlug, ctx.proxyToken, () => {
             return this.handleWithContext(req, ctx, slug, requestId, url);
           });
         }
@@ -108,7 +108,7 @@ export class SSRHandler extends BaseHandler {
       this.logDebug("Unexpected error in context setup", {
         error: this.getErrorMessage(error),
       }, ctx);
-      return this.continue();
+      return Promise.resolve(this.continue());
     }
   }
 

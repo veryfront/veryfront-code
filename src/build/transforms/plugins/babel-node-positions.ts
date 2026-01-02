@@ -24,7 +24,7 @@ const generate = typeof (generateModule as any).default === "function"
 
 type NodePath<T> = traverseModule.NodePath<T>;
 
-const VOID_ELEMENTS = new Set([
+const _VOID_ELEMENTS = new Set([
   "area",
   "base",
   "br",
