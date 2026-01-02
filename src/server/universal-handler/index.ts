@@ -128,16 +128,14 @@ export function createVeryfrontHandler(
 
   // Pre-initialize API handler to discover routes before any requests
   // In proxy mode, skip eager initialization since there's no request context at startup
-  const readyPromise = isProxyMode
-    ? Promise.resolve()
-    : apiHandler.initialize().catch((err) => {
-        logger.error("[universal] API handler initialization failed", {
-          error: err instanceof Error ? err.message : String(err),
-          stack: err instanceof Error ? err.stack : undefined,
-        });
-        // Re-throw to prevent server from starting with broken API routing
-        throw err;
-      });
+  const readyPromise = isProxyMode ? Promise.resolve() : apiHandler.initialize().catch((err) => {
+    logger.error("[universal] API handler initialization failed", {
+      error: err instanceof Error ? err.message : String(err),
+      stack: err instanceof Error ? err.stack : undefined,
+    });
+    // Re-throw to prevent server from starting with broken API routing
+    throw err;
+  });
 
   if (isProxyMode) {
     logger.info("[universal] Running in proxy mode - lazy initialization enabled");

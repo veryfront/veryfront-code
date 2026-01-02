@@ -116,8 +116,7 @@ export class ModuleHandler extends BaseHandler {
           respond,
           logDebug,
           getErrorMessage,
-        ),
-      );
+        ));
     }
 
     // Virtual modules endpoint

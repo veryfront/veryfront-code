@@ -54,9 +54,7 @@ export class MDXCompiler {
     try {
       // Inject source position data attributes for Studio Navigator
       // This adds data-node-line, data-node-column, etc. to JSX elements
-      const contentWithPositions = filePath
-        ? injectNodePositions(content, { filePath })
-        : content;
+      const contentWithPositions = filePath ? injectNodePositions(content, { filePath }) : content;
 
       const bundle = await compileMDXRuntime(
         this.config.mode,

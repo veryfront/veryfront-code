@@ -6,7 +6,7 @@
  * These attributes are used by Studio Navigator to map DOM nodes back to source positions.
  */
 
-import type { Root, Element } from "hast";
+import type { Element, Root } from "hast";
 import { visit } from "unist-util-visit";
 
 export interface RehypeNodePositionsOptions {
@@ -25,11 +25,20 @@ export function rehypeNodePositions(options: RehypeNodePositionsOptions = {}) {
   console.log("[rehypeNodePositions] Plugin called with options:", options);
 
   return (tree: Root) => {
-    console.log("[rehypeNodePositions] Processing tree, root type:", tree.type, "children:", tree.children?.length);
+    console.log(
+      "[rehypeNodePositions] Processing tree, root type:",
+      tree.type,
+      "children:",
+      tree.children?.length,
+    );
 
     // Log first few child types to understand structure
     tree.children?.slice(0, 5).forEach((child, i) => {
-      console.log(`[rehypeNodePositions] Child ${i}: type=${(child as any).type}, name=${(child as any).name || (child as any).tagName || 'N/A'}`);
+      console.log(
+        `[rehypeNodePositions] Child ${i}: type=${(child as any).type}, name=${
+          (child as any).name || (child as any).tagName || "N/A"
+        }`,
+      );
     });
 
     let elementCount = 0;
@@ -50,7 +59,12 @@ export function rehypeNodePositions(options: RehypeNodePositionsOptions = {}) {
       // Handle MDX JSX elements
       if (node.type === "mdxJsxFlowElement" || node.type === "mdxJsxTextElement") {
         elementCount++;
-        console.log("[rehypeNodePositions] Found MDX JSX element:", node.name, "position:", node.position ? "yes" : "no");
+        console.log(
+          "[rehypeNodePositions] Found MDX JSX element:",
+          node.name,
+          "position:",
+          node.position ? "yes" : "no",
+        );
 
         if (node.position) {
           positionCount++;
@@ -66,18 +80,26 @@ export function rehypeNodePositions(options: RehypeNodePositionsOptions = {}) {
           if (start) {
             node.attributes.push(
               { type: "mdxJsxAttribute", name: "data-node-line", value: String(start.line) },
-              { type: "mdxJsxAttribute", name: "data-node-column", value: String(start.column - 1) }
+              {
+                type: "mdxJsxAttribute",
+                name: "data-node-column",
+                value: String(start.column - 1),
+              },
             );
           }
           if (end) {
             node.attributes.push(
               { type: "mdxJsxAttribute", name: "data-node-end-line", value: String(end.line) },
-              { type: "mdxJsxAttribute", name: "data-node-end-column", value: String(end.column - 1) }
+              {
+                type: "mdxJsxAttribute",
+                name: "data-node-end-column",
+                value: String(end.column - 1),
+              },
             );
           }
           if (options.filePath) {
             node.attributes.push(
-              { type: "mdxJsxAttribute", name: "data-node-file", value: options.filePath }
+              { type: "mdxJsxAttribute", name: "data-node-file", value: options.filePath },
             );
           }
         }
@@ -91,7 +113,7 @@ export function rehypeNodePositions(options: RehypeNodePositionsOptions = {}) {
 function addPositionAttributes(
   node: Element,
   properties: Record<string, unknown>,
-  filePath?: string
+  filePath?: string,
 ): void {
   if (!node.position) return;
 
