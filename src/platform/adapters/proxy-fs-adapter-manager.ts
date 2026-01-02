@@ -1,6 +1,6 @@
 import { logger } from "@veryfront/utils";
 import { VeryfrontFSAdapter } from "./veryfront-fs-adapter.ts";
-import type { FSAdapterConfig, CacheStats } from "./veryfront-fs-adapter/types.ts";
+import type { CacheStats, FSAdapterConfig } from "./veryfront-fs-adapter/types.ts";
 
 interface ProjectAdapter {
   adapter: VeryfrontFSAdapter;

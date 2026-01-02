@@ -245,12 +245,12 @@ ${options.globalCSS || generateThemeVariables()}
   const relativePagePath = getRelativePagePath(options.pagePath, options.projectDir);
   const studioScripts = options.studioEmbed
     ? getStudioScripts({
-        projectId: options.projectId || meta.slug || "",
-        pageId: options.pageId || relativePagePath || meta.slug || "",
-        pagePath: relativePagePath || undefined,
-        nonce,
-        sourceHash: options.sourceHash,
-      })
+      projectId: options.projectId || meta.slug || "",
+      pageId: options.pageId || relativePagePath || meta.slug || "",
+      pagePath: relativePagePath || undefined,
+      nonce,
+      sourceHash: options.sourceHash,
+    })
     : "";
 
   // Mermaid initialization script for diagram rendering

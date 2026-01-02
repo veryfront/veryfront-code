@@ -11,7 +11,7 @@ import { metrics } from "@veryfront/observability/simple-metrics/index.ts";
 // Import handler system (from new location)
 import type { HandlerContext } from "../handlers/types.ts";
 import { parseProjectDomain } from "../utils/domain-parser.ts";
-import { lookupProjectByDomain, getEnvironmentType } from "../utils/domain-lookup.ts";
+import { getEnvironmentType, lookupProjectByDomain } from "../utils/domain-lookup.ts";
 import { RouteRegistry } from "@veryfront/routing/registry/index.ts";
 import { SecurityConfigLoader } from "@veryfront/security/http/config.ts";
 import { getConfig } from "@veryfront/config/loader.ts";
@@ -131,16 +131,14 @@ export function createVeryfrontHandler(
 
   // Pre-initialize API handler to discover routes before any requests
   // In proxy mode, skip eager initialization since there's no request context at startup
-  const readyPromise = isProxyMode
-    ? Promise.resolve()
-    : apiHandler.initialize().catch((err) => {
-        logger.error("[universal] API handler initialization failed", {
-          error: err instanceof Error ? err.message : String(err),
-          stack: err instanceof Error ? err.stack : undefined,
-        });
-        // Re-throw to prevent server from starting with broken API routing
-        throw err;
-      });
+  const readyPromise = isProxyMode ? Promise.resolve() : apiHandler.initialize().catch((err) => {
+    logger.error("[universal] API handler initialization failed", {
+      error: err instanceof Error ? err.message : String(err),
+      stack: err instanceof Error ? err.stack : undefined,
+    });
+    // Re-throw to prevent server from starting with broken API routing
+    throw err;
+  });
 
   if (isProxyMode) {
     logger.info("[universal] Running in proxy mode - lazy initialization enabled");

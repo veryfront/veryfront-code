@@ -1,4 +1,4 @@
-import type { Root, Element } from "hast";
+import type { Element, Root } from "hast";
 import { visit } from "unist-util-visit";
 
 /**
@@ -33,7 +33,9 @@ export function rehypeMermaid() {
 
         // Check if it's a mermaid code block
         const isMermaid = Array.isArray(className)
-          ? className.some((c) => String(c).includes("mermaid") || String(c).includes("language-mermaid"))
+          ? className.some((c) =>
+            String(c).includes("mermaid") || String(c).includes("language-mermaid")
+          )
           : String(className || "").includes("mermaid");
 
         if (isMermaid && parent && typeof index === "number") {

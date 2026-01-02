@@ -85,7 +85,13 @@ export class VeryfrontAPIOperations {
       params.set("branch", branch);
     }
     const url = `/projects/${id}/files?${params}`;
-    logger.debug("[VeryfrontAPIClient] Listing files", { url, projectId: id, limit, cursor, branch });
+    logger.debug("[VeryfrontAPIClient] Listing files", {
+      url,
+      projectId: id,
+      limit,
+      cursor,
+      branch,
+    });
 
     // veryfront-api returns pageInfo, we need to map it to pagination
     const response = await this.request<{
@@ -165,7 +171,9 @@ export class VeryfrontAPIOperations {
 
     // veryfront-api returns { path, content, size } as JSON
     // We need to extract the content field
-    const response = await this.request<{ path: string; content: string; size: number } | string>(url);
+    const response = await this.request<{ path: string; content: string; size: number } | string>(
+      url,
+    );
 
     // Handle both JSON response and raw text response
     if (typeof response === "string") {
@@ -245,13 +253,15 @@ export class VeryfrontAPIOperations {
    * Look up project info by custom domain.
    * Used for JIT rendering of custom domain production sites.
    */
-  async lookupProjectByDomain(domain: string): Promise<{
-    projectId: string;
-    projectSlug: string;
-    projectName: string;
-    environment: { id: string; name: string } | null;
-    releaseId: string | null;
-  } | null> {
+  async lookupProjectByDomain(domain: string): Promise<
+    {
+      projectId: string;
+      projectSlug: string;
+      projectName: string;
+      environment: { id: string; name: string } | null;
+      releaseId: string | null;
+    } | null
+  > {
     const encodedDomain = encodeURIComponent(domain);
     const url = `/lookup/domain/${encodedDomain}`;
 

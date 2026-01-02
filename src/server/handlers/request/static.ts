@@ -88,7 +88,9 @@ export class StaticHandler extends BaseHandler {
 
     // Multi-project mode: use runWithContext
     if (typeof fsWrapper.runWithContext === "function") {
-      this.logDebug("Using multi-project context for static files", { projectSlug: ctx.projectSlug }, ctx);
+      this.logDebug("Using multi-project context for static files", {
+        projectSlug: ctx.projectSlug,
+      }, ctx);
       // Token can be empty - the adapter will use fallback token from config
       return fsWrapper.runWithContext(ctx.projectSlug, ctx.proxyToken || "", fn);
     }

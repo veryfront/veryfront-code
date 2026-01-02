@@ -14,13 +14,13 @@ import * as t from "@babel/types";
 const traverse = typeof (traverseModule as any).default === "function"
   ? (traverseModule as any).default
   : typeof (traverseModule as any).default?.default === "function"
-    ? (traverseModule as any).default.default
-    : traverseModule;
+  ? (traverseModule as any).default.default
+  : traverseModule;
 const generate = typeof (generateModule as any).default === "function"
   ? (generateModule as any).default
   : typeof (generateModule as any).default?.default === "function"
-    ? (generateModule as any).default.default
-    : generateModule;
+  ? (generateModule as any).default.default
+  : generateModule;
 
 type NodePath<T> = traverseModule.NodePath<T>;
 

@@ -6,12 +6,7 @@
  */
 
 import { BaseHandler } from "../response/base.ts";
-import type {
-  HandlerContext,
-  HandlerMetadata,
-  HandlerPriority,
-  HandlerResult,
-} from "../types.ts";
+import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } from "../types.ts";
 // Priority 450 - before static (500) to handle @/ component previews first
 const PRIORITY_SNIPPET = 450;
 import { serverLogger as logger } from "@veryfront/utils";
@@ -80,10 +75,9 @@ export class SnippetHandler extends BaseHandler {
 
         // Get module server URL from context or request
         // ctx.moduleServerUrl may be just a path like "/_vf_modules", we need a full URL for SSR
-        const isFullUrl = ctx.moduleServerUrl?.startsWith("http://") || ctx.moduleServerUrl?.startsWith("https://");
-        const moduleServerUrl = isFullUrl
-          ? ctx.moduleServerUrl
-          : `${url.protocol}//${url.host}`;
+        const isFullUrl = ctx.moduleServerUrl?.startsWith("http://") ||
+          ctx.moduleServerUrl?.startsWith("https://");
+        const moduleServerUrl = isFullUrl ? ctx.moduleServerUrl : `${url.protocol}//${url.host}`;
 
         // Get page_id from URL params (passed by Studio for postMessage communication)
         const pageId = url.searchParams.get("page_id") || undefined;
@@ -112,10 +106,14 @@ export class SnippetHandler extends BaseHandler {
           builder
             .withCORS(req, ctx.securityConfig?.cors)
             .withSecurity(ctx.securityConfig ?? undefined)
-            .withHeaders(isDev ? {
-              "Cross-Origin-Opener-Policy": "unsafe-none",
-              "Cross-Origin-Resource-Policy": "cross-origin",
-            } : {})
+            .withHeaders(
+              isDev
+                ? {
+                  "Cross-Origin-Opener-Policy": "unsafe-none",
+                  "Cross-Origin-Resource-Policy": "cross-origin",
+                }
+                : {},
+            )
             .withCache("no-cache")
             .withContentType("text/html; charset=utf-8", result.html, 200),
         );

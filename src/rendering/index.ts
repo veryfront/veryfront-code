@@ -2,7 +2,12 @@ export type { PageDataResponse, RendererOptions, RenderResult } from "./orchestr
 export { VeryfrontRenderer } from "./orchestrator/ssr.ts";
 export * from "./client/index.ts";
 export * from "./layouts/index.ts";
-export { renderSnippet, getCompiledSnippet, type SnippetRenderOptions, type SnippetRenderResult } from "./snippet-renderer.ts";
+export {
+  getCompiledSnippet,
+  renderSnippet,
+  type SnippetRenderOptions,
+  type SnippetRenderResult,
+} from "./snippet-renderer.ts";
 
 import { type RendererOptions, VeryfrontRenderer } from "./orchestrator/ssr.ts";
 
