@@ -17,8 +17,13 @@ export const getLoaderScript = () => `
       }
 
       if (!match) {
-        // Direct path fallback
-        return MODULE_SERVER_URL + '/' + path.replace(/\\.(tsx|ts|jsx|mdx)$/, '.js');
+        // Direct path fallback - replace extension or add .js if no known extension
+        const hasKnownExt = /\\.(tsx|ts|jsx|mdx|js|mjs)$/.test(path);
+        if (hasKnownExt) {
+          return MODULE_SERVER_URL + '/' + path.replace(/\\.(tsx|ts|jsx|mdx)$/, '.js');
+        }
+        // No extension - add .js (e.g., _snippets/abc123 -> _snippets/abc123.js)
+        return MODULE_SERVER_URL + '/' + path + '.js';
       }
 
       return MODULE_SERVER_URL + '/' + match[1] + '/' + match[2] + '.js';

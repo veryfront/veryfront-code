@@ -8,13 +8,11 @@ import { generateDevClientRendererScript } from "./dev-client-renderer.ts";
 function generateHMRScript(config: VeryfrontConfig, nonce?: string): string {
   if (!config.dev?.hmr) return "";
   const port = config.dev?.port ?? DEFAULT_DASHBOARD_PORT;
-  const hmrPort = port + 1;
+  // HMR WebSocket server runs on port + 1 by default (see dev-server/server.ts)
+  // Use hmrPort from config if explicitly set, otherwise use port + 1
+  const hmrPort = config.dev?.hmrPort ?? port + 1;
   const nonceAttr = nonce ? ` nonce="${nonce}"` : "";
   return `<script type="module" src="/_veryfront/hmr.js?port=${hmrPort}"${nonceAttr}></script>`;
-}
-
-export interface DevScriptsOptions {
-  skipClientHydration?: boolean;
 }
 
 export function getDevScripts(
@@ -23,19 +21,11 @@ export function getDevScripts(
   _params?: Record<string, string | string[]>,
   _props?: ComponentProps,
   nonce?: string,
-  options?: DevScriptsOptions,
 ): string {
-  const scripts = [
+  return [
     generateDevErrorLoggerScript(nonce),
     generateDevComponentManifestScript(config, nonce),
-  ];
-
-  // Skip client renderer for static previews (snippets)
-  if (!options?.skipClientHydration) {
-    scripts.push(generateDevClientRendererScript(nonce));
-  }
-
-  scripts.push(generateHMRScript(config, nonce));
-
-  return scripts.join("\n");
+    generateDevClientRendererScript(nonce),
+    generateHMRScript(config, nonce),
+  ].join("\n");
 }

@@ -105,20 +105,175 @@ export async function serveModule(
       });
     }
 
-    logger.info("[ModuleServer] Serving cached snippet", { hash, codeLength: snippetCode.length });
-    return createModuleResponse(method, snippetCode, HTTP_OK, {
-      "Content-Type": "application/javascript; charset=utf-8",
-      "Cache-Control": "no-cache",
+    // Extract project slug from hostname (e.g., "shadcn-uizz.preview.lvh.me" → "shadcn-uizz")
+    const host = url.hostname;
+    const hostParts = host.split(".");
+    const snippetProjectSlug = hostParts.length > 1 && hostParts[0] !== "localhost" ? hostParts[0] : null;
+
+    // Apply same transformations as regular modules
+    // Snippet code is already compiled JS, so use .tsx extension to skip MDX compilation
+    // but still apply import rewrites (React, @/ paths, etc.)
+    const userAgent = req.headers.get("user-agent") || "";
+    const isDenoRequest = userAgent.startsWith("Deno/");
+    const hasSSRParam = url.searchParams.get("ssr") === "true";
+    const isSSR = hasSSRParam || isDenoRequest;
+
+    logger.info("[ModuleServer] Transforming snippet", {
+      hash,
+      isSSR,
+      snippetProjectSlug,
+      codeLength: snippetCode.length,
     });
+
+    try {
+      let transformedCode = await transformToESM(
+        snippetCode,
+        `_snippets/${hash}.tsx`, // Use .tsx to apply import rewrites without MDX compilation
+        projectDir,
+        adapter,
+        { projectId, dev, ssr: isSSR },
+      );
+
+      // Apply SSR-specific rewrites (same as regular modules)
+      if (isSSR && transformedCode) {
+        const REACT_VERSION = "18.3.1";
+        const cacheBuster = Date.now();
+
+        // Transform esm.sh React URLs to npm: specifiers for consistency
+        transformedCode = transformedCode.replace(
+          /from\s+["']https:\/\/esm\.sh\/((?:@[^@/?]+\/[^@/?]+|[^@/?]+))(?:@[^/?]+)?(\/[^?"']+)?(?:\?[^"']*)?["']/g,
+          (match, packageName, subpath) => {
+            const normalized = packageName.replace(/\/$/, "");
+            if (normalized === "react") {
+              const path = subpath ? `react@${REACT_VERSION}${subpath}` : `react@${REACT_VERSION}`;
+              return `from "npm:${path}"`;
+            }
+            if (normalized === "react-dom") {
+              const path = subpath
+                ? `react-dom@${REACT_VERSION}${subpath}`
+                : `react-dom@${REACT_VERSION}`;
+              return `from "npm:${path}"`;
+            }
+            return match;
+          },
+        );
+
+        // Transform bare imports to npm: specifiers
+        transformedCode = transformedCode.replace(
+          /from\s+["']([^"'./][^"']*)["']/g,
+          (_match, specifier) => {
+            if (
+              specifier.startsWith("npm:") ||
+              specifier.startsWith("http://") ||
+              specifier.startsWith("https://") ||
+              specifier.startsWith("file://") ||
+              specifier.startsWith("node:")
+            ) {
+              return `from "${specifier}"`;
+            }
+            if (specifier.startsWith("@/")) {
+              return `from "${specifier}"`;
+            }
+            if (specifier === "react") {
+              return `from "npm:react@${REACT_VERSION}"`;
+            }
+            if (specifier.startsWith("react/")) {
+              const subpath = specifier.slice(6);
+              return `from "npm:react@${REACT_VERSION}/${subpath}"`;
+            }
+            if (specifier === "react-dom") {
+              return `from "npm:react-dom@${REACT_VERSION}"`;
+            }
+            if (specifier.startsWith("react-dom/")) {
+              const subpath = specifier.slice(10);
+              return `from "npm:react-dom@${REACT_VERSION}/${subpath}"`;
+            }
+            return `from "https://esm.sh/${specifier}?external=react,react-dom"`;
+          },
+        );
+
+        // Normalize any unversioned npm:react specifiers
+        transformedCode = transformedCode.replace(
+          /from\s+["']npm:react\/([^"'@]+)["']/g,
+          `from "npm:react@${REACT_VERSION}/$1"`,
+        );
+        transformedCode = transformedCode.replace(
+          /from\s+["']npm:react["']/g,
+          `from "npm:react@${REACT_VERSION}"`,
+        );
+        transformedCode = transformedCode.replace(
+          /from\s+["']npm:react-dom\/([^"'@]+)["']/g,
+          `from "npm:react-dom@${REACT_VERSION}/$1"`,
+        );
+        transformedCode = transformedCode.replace(
+          /from\s+["']npm:react-dom["']/g,
+          `from "npm:react-dom@${REACT_VERSION}"`,
+        );
+
+        // Transform @/ path aliases to absolute /_vf_modules/ URLs for SSR
+        // Include project slug so module server can resolve files in the correct project
+        const projectParam = snippetProjectSlug ? `&project=${snippetProjectSlug}` : "";
+        transformedCode = transformedCode.replace(
+          /from\s+["']@\/([^"']+)["']/g,
+          (_match, path) => {
+            const jsPath = path.endsWith(".js") ? path : `${path}.js`;
+            return `from "/_vf_modules/${jsPath}?ssr=true${projectParam}&v=${cacheBuster}"`;
+          },
+        );
+
+        // Add ?ssr=true, project param, and cache buster to relative imports
+        transformedCode = transformedCode.replace(
+          /from\s+["']((?:\.\.?\/|\/)[^"']+\.js)["']/g,
+          (_match, path) => `from "${path}?ssr=true${projectParam}&v=${cacheBuster}"`,
+        );
+      }
+
+      logger.info("[ModuleServer] Snippet transformed", {
+        hash,
+        isSSR,
+        transformedLength: transformedCode.length,
+      });
+
+      return createModuleResponse(method, transformedCode, HTTP_OK, {
+        "Content-Type": "application/javascript; charset=utf-8",
+        "Cache-Control": "no-cache",
+      });
+    } catch (error) {
+      logger.error("[ModuleServer] Snippet transform error", {
+        hash,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return createModuleResponse(
+        method,
+        `// Transform Error\nthrow new Error(${JSON.stringify(error instanceof Error ? error.message : String(error))});`,
+        HTTP_SERVER_ERROR,
+        { "Content-Type": "application/javascript; charset=utf-8", "Cache-Control": "no-cache" },
+      );
+    }
   }
 
   // Extract file path from URL
   // /_vf_modules/components/app.js → components/app
-  const modulePath = url.pathname.replace(DEV_MODULE_PREFIX, "");
+  let modulePath = url.pathname.replace(DEV_MODULE_PREFIX, "");
+
+  // Handle @/ path alias - maps to project root
+  // /_vf_modules/@/components/Button.js → components/Button
+  if (modulePath.startsWith("@/")) {
+    modulePath = modulePath.slice(2); // Remove @/ prefix
+  }
+
   const filePathWithoutExt = modulePath.replace(/\.(?:mjs|js)$/i, "");
 
   // Check for project context in query params (for SSR imports in proxy mode)
-  const projectSlug = url.searchParams.get("project");
+  // Also extract from hostname as fallback (e.g., "shadcn-uizz.preview.lvh.me" → "shadcn-uizz")
+  let projectSlug = url.searchParams.get("project");
+  if (!projectSlug) {
+    const host = url.hostname;
+    const hostParts = host.split(".");
+    if (hostParts.length > 1 && hostParts[0] !== "localhost") {
+      projectSlug = hostParts[0];
+    }
+  }
 
   // Helper function to run with optional proxy context
   const runWithOptionalContext = async <T>(fn: () => Promise<T>): Promise<T> => {
@@ -294,19 +449,21 @@ export async function serveModule(
         );
 
         // Transform @/ path aliases to absolute /_vf_modules/ URLs for SSR
-        // @/shared/ui/Button → /_vf_modules/shared/ui/Button.js?ssr=true&v=...
+        // @/shared/ui/Button → /_vf_modules/shared/ui/Button.js?ssr=true&project=...&v=...
+        // Include project slug so module server can resolve files in the correct project
+        const projectParam = projectSlug ? `&project=${projectSlug}` : "";
         code = code.replace(
           /from\s+["']@\/([^"']+)["']/g,
           (_match, path) => {
             const jsPath = path.endsWith(".js") ? path : `${path}.js`;
-            return `from "/_vf_modules/${jsPath}?ssr=true&v=${cacheBuster}"`;
+            return `from "/_vf_modules/${jsPath}?ssr=true${projectParam}&v=${cacheBuster}"`;
           },
         );
 
-        // Add ?ssr=true and cache buster to relative and absolute module imports
+        // Add ?ssr=true, project param, and cache buster to relative and absolute module imports
         code = code.replace(
           /from\s+["']((?:\.\.?\/|\/)[^"']+\.js)["']/g,
-          (_match, path) => `from "${path}?ssr=true&v=${cacheBuster}"`,
+          (_match, path) => `from "${path}?ssr=true${projectParam}&v=${cacheBuster}"`,
         );
       }
     }
