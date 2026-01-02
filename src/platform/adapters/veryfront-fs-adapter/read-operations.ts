@@ -12,7 +12,8 @@ export class ReadOperations {
 
   async readFile(path: string): Promise<Uint8Array> {
     const normalizedPath = this.normalizer.normalize(path);
-    const cacheKey = `file:content:${normalizedPath}`;
+    const branch = this.client.getRequestBranch() || "main";
+    const cacheKey = `file:content:${branch}:${normalizedPath}`;
 
     const cached = this.cache.get<Uint8Array>(cacheKey);
     if (cached) {
@@ -30,7 +31,8 @@ export class ReadOperations {
 
   async readTextFile(path: string): Promise<string> {
     const normalizedPath = this.normalizer.normalize(path);
-    const cacheKey = `file:text:${normalizedPath}`;
+    const branch = this.client.getRequestBranch() || "main";
+    const cacheKey = `file:text:${branch}:${normalizedPath}`;
 
     const cached = this.cache.get<string>(cacheKey);
     if (cached) {

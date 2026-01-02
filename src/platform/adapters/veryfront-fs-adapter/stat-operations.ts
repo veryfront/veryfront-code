@@ -19,7 +19,8 @@ export class StatOperations {
 
   async stat(path: string): Promise<FileInfo> {
     const normalizedPath = this.normalizer.normalize(path);
-    const cacheKey = `file:stat:${normalizedPath}`;
+    const branch = this.client.getRequestBranch() || "main";
+    const cacheKey = `file:stat:${branch}:${normalizedPath}`;
 
     const cached = this.cache.get<FileInfo>(cacheKey);
     if (cached) {
@@ -117,13 +118,14 @@ export class StatOperations {
   }
 
   private async getAllFilesRaw(): Promise<ProjectFile[]> {
-    const cacheKey = "files:all";
+    const branch = this.client.getRequestBranch() || "main";
+    const cacheKey = `files:all:${branch}`;
     const cached = this.cache.get<ProjectFile[]>(cacheKey);
     if (cached) {
       return cached;
     }
 
-    logger.debug("[StatOperations] Fetching all files from API");
+    logger.debug("[StatOperations] Fetching all files from API", { branch });
     const files = await this.client.listAllFiles();
     this.cache.set(cacheKey, files);
     return files;

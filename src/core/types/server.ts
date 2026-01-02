@@ -4,10 +4,14 @@ import type { VeryfrontConfig } from "@veryfront/config";
 export interface ParsedDomain {
   /** Project slug extracted from host (e.g., "my-project" from "my-project.preview.lvh.me") */
   slug: string | null;
+  /** Branch name extracted from host (e.g., "feature" from "my-project--feature.preview.lvh.me") */
+  branch: string | null;
   /** Environment inferred from domain pattern */
   environment: "preview" | "development" | "staging" | "production" | null;
   /** Whether this is a recognized veryfront domain */
   isVeryfrontDomain: boolean;
+  /** Whether this is a draft (preview) environment */
+  isDraft: boolean;
 }
 
 export interface SecurityConfig {

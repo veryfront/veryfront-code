@@ -66,7 +66,12 @@ export class VeryfrontAPIOperations {
     return await this.request<Project>(`/projects/${projectId}`);
   }
 
-  async listFiles(projectId?: string, cursor?: string, limit = 100): Promise<ListFilesResponse> {
+  async listFiles(
+    projectId?: string,
+    cursor?: string,
+    limit = 100,
+    branch?: string | null,
+  ): Promise<ListFilesResponse> {
     const id = projectId || this.getProjectId();
     const params = new URLSearchParams({
       limit: String(limit),
@@ -76,8 +81,11 @@ export class VeryfrontAPIOperations {
     if (cursor) {
       params.set("cursor", cursor);
     }
+    if (branch) {
+      params.set("branch", branch);
+    }
     const url = `/projects/${id}/files?${params}`;
-    logger.debug("[VeryfrontAPIClient] Listing files", { url, projectId: id, limit, cursor });
+    logger.debug("[VeryfrontAPIClient] Listing files", { url, projectId: id, limit, cursor, branch });
 
     // veryfront-api returns pageInfo, we need to map it to pagination
     const response = await this.request<{
@@ -102,13 +110,13 @@ export class VeryfrontAPIOperations {
     return { data: response.data, pagination };
   }
 
-  async listAllFiles(projectId?: string): Promise<ProjectFile[]> {
+  async listAllFiles(projectId?: string, branch?: string | null): Promise<ProjectFile[]> {
     const id = projectId || this.getProjectId();
     const allFiles: ProjectFile[] = [];
     let cursor: string | undefined;
 
     do {
-      const response = await this.listFiles(id, cursor);
+      const response = await this.listFiles(id, cursor, 100, branch);
       allFiles.push(...response.data);
       cursor = response.pagination?.hasMore ? response.pagination.cursor : undefined;
     } while (cursor);
@@ -116,15 +124,19 @@ export class VeryfrontAPIOperations {
     return allFiles;
   }
 
-  async getFileContent(path: string, projectId?: string): Promise<string> {
+  async getFileContent(path: string, projectId?: string, branch?: string | null): Promise<string> {
     const id = projectId || this.getProjectId();
     const encodedPath = encodeURIComponent(path);
 
+    // Build URL with optional branch query param
+    let url = `/projects/${id}/files/${encodedPath}`;
+    if (branch) {
+      url += `?branch=${encodeURIComponent(branch)}`;
+    }
+
     // veryfront-api returns { path, content, size } as JSON
     // We need to extract the content field
-    const response = await this.request<{ path: string; content: string; size: number } | string>(
-      `/projects/${id}/files/${encodedPath}`,
-    );
+    const response = await this.request<{ path: string; content: string; size: number } | string>(url);
 
     // Handle both JSON response and raw text response
     if (typeof response === "string") {

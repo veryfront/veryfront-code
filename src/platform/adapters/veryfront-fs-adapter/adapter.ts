@@ -41,6 +41,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
   private pendingChangedPaths: Set<string> = new Set();
   private apiBaseUrl: string;
   private apiToken: string;
+  private requestBranch: string | null = null;
 
   constructor(config: FSAdapterConfig) {
     const veryfrontConfig = createVeryfrontConfig(config);
@@ -84,12 +85,14 @@ export class VeryfrontFSAdapter implements FSAdapter {
       layout: this.projectData.layout,
     });
 
-    const cacheKey = "files:all";
-    logger.debug("[VeryfrontFSAdapter] Fetching all files from API");
+    const branch = this.requestBranch || "main";
+    const cacheKey = `files:all:${branch}`;
+    logger.debug("[VeryfrontFSAdapter] Fetching all files from API", { branch });
     const files = await this.client.listAllFiles();
     this.cache.set(cacheKey, files);
     logger.debug("[VeryfrontFSAdapter] Fetched files during initialization", {
       count: files.length,
+      branch,
     });
 
     this.initialized = true;
@@ -250,20 +253,25 @@ export class VeryfrontFSAdapter implements FSAdapter {
       count: changedPaths.length,
     });
 
-    // Only invalidate file content cache for changed files
+    // Only invalidate file content cache for changed files (all branch variants)
     for (const path of changedPaths) {
-      this.cache.delete(`file:content:${path}`);
-      this.cache.delete(`file:text:${path}`);
-      this.cache.delete(`file:stat:${path}`);
+      // Delete all branch variants by matching prefix and path suffix
+      this.cache.deleteByPrefixAndSuffix("file:content:", path);
+      this.cache.deleteByPrefixAndSuffix("file:text:", path);
+      this.cache.deleteByPrefixAndSuffix("file:stat:", path);
     }
 
     // Invalidate only the changed module paths (not all modules)
     invalidateModulePaths(changedPaths);
 
-    // Fetch fresh file list from API
+    // Clear all files:all caches since file list may have changed
+    this.cache.deleteByPrefix("files:all:");
+
+    // Fetch fresh file list from API for current branch
+    const branch = this.requestBranch || "main";
     try {
       const files = await this.client.listAllFiles();
-      this.cache.set("files:all", files);
+      this.cache.set(`files:all:${branch}`, files);
     } catch (error) {
       logger.warn("[VeryfrontFSAdapter] Failed to fetch files during selective invalidation", {
         error,
@@ -288,6 +296,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
     const contentCount = this.cache.deleteByPrefix("file:content:");
     this.cache.deleteByPrefix("file:stat:");
     this.cache.deleteByPrefix("dir:entries:");
+    this.cache.deleteByPrefix("files:all:");
     this.statOps.clearIndex();
     this.dirOps.clearTree();
     clearSSRModuleCache();
@@ -296,9 +305,10 @@ export class VeryfrontFSAdapter implements FSAdapter {
 
     // Step 2: Fetch fresh file list from API - this blocks until API has committed changes
     // This guarantees content is ready before we trigger reload
+    const branch = this.requestBranch || "main";
     try {
       const files = await this.client.listAllFiles();
-      this.cache.set("files:all", files);
+      this.cache.set(`files:all:${branch}`, files);
     } catch (error) {
       logger.warn("[VeryfrontFSAdapter] Failed to fetch files during invalidation", { error });
       // Still trigger reload - browser will fetch fresh content
@@ -378,7 +388,8 @@ export class VeryfrontFSAdapter implements FSAdapter {
    */
   getEntityIdForPath(path: string): string | undefined {
     const normalizedPath = this.normalizer.normalize(path);
-    const cachedFiles = this.cache.get("files:all") as Array<{ id?: string; path: string }> | undefined;
+    const branch = this.requestBranch || "main";
+    const cachedFiles = this.cache.get(`files:all:${branch}`) as Array<{ id?: string; path: string }> | undefined;
     if (!cachedFiles) return undefined;
 
     const file = cachedFiles.find((f) => f.path === normalizedPath);
@@ -401,6 +412,31 @@ export class VeryfrontFSAdapter implements FSAdapter {
    */
   clearRequestToken(): void {
     this.client.clearRequestToken();
+  }
+
+  /**
+   * Set a per-request branch from URL parsing.
+   * When set, file content will be fetched from this branch instead of main.
+   * Used for branch preview URLs like slug--branch.preview.lvh.me
+   */
+  setRequestBranch(branch: string | null): void {
+    this.requestBranch = branch;
+    this.client.setRequestBranch(branch);
+  }
+
+  /**
+   * Get the current per-request branch.
+   */
+  getRequestBranch(): string | null {
+    return this.requestBranch;
+  }
+
+  /**
+   * Clear the per-request branch, reverting to main branch.
+   */
+  clearRequestBranch(): void {
+    this.requestBranch = null;
+    this.client.clearRequestBranch();
   }
 
   /**

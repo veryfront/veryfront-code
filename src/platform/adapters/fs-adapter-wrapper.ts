@@ -26,6 +26,38 @@ export class FSAdapterWrapper implements FileSystemAdapter {
   }
 
   /**
+   * Set a per-request branch for file fetching.
+   * Only applies if the underlying FSAdapter supports it (e.g., VeryfrontFSAdapter).
+   */
+  setRequestBranch(branch: string | null): void {
+    const adapter = this.fsAdapter as unknown as { setRequestBranch?: (b: string | null) => void };
+    if (typeof adapter.setRequestBranch === "function") {
+      adapter.setRequestBranch(branch);
+    }
+  }
+
+  /**
+   * Get the current per-request branch.
+   */
+  getRequestBranch(): string | null {
+    const adapter = this.fsAdapter as unknown as { getRequestBranch?: () => string | null };
+    if (typeof adapter.getRequestBranch === "function") {
+      return adapter.getRequestBranch();
+    }
+    return null;
+  }
+
+  /**
+   * Clear the per-request branch.
+   */
+  clearRequestBranch(): void {
+    const adapter = this.fsAdapter as unknown as { clearRequestBranch?: () => void };
+    if (typeof adapter.clearRequestBranch === "function") {
+      adapter.clearRequestBranch();
+    }
+  }
+
+  /**
    * Run a function with the specified project context.
    * Only applies if the underlying FSAdapter supports it (e.g., MultiProjectFSAdapter).
    * For adapters that don't support this, the function runs directly.
