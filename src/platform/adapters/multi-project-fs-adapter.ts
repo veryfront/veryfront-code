@@ -29,7 +29,7 @@ export class MultiProjectFSAdapter implements FSAdapter {
     });
   }
 
-  async runWithContext<T>(
+  runWithContext<T>(
     projectSlug: string,
     token: string,
     fn: () => Promise<T>,
@@ -45,16 +45,18 @@ export class MultiProjectFSAdapter implements FSAdapter {
     }
   }
 
-  private async getAdapter(): Promise<VeryfrontFSAdapter> {
+  private getAdapter(): Promise<VeryfrontFSAdapter> {
     const context = asyncLocalStorage.getStore();
 
     if (!context) {
       if (this.defaultAdapter) {
-        return this.defaultAdapter;
+        return Promise.resolve(this.defaultAdapter);
       }
-      throw new Error(
-        "[MultiProjectFSAdapter] No request context available. " +
-          "Use runWithContext() to set project context before accessing files.",
+      return Promise.reject(
+        new Error(
+          "[MultiProjectFSAdapter] No request context available. " +
+            "Use runWithContext() to set project context before accessing files.",
+        ),
       );
     }
 
@@ -65,8 +67,9 @@ export class MultiProjectFSAdapter implements FSAdapter {
     this.defaultAdapter = adapter;
   }
 
-  async initialize(): Promise<void> {
+  initialize(): Promise<void> {
     logger.info("[MultiProjectFSAdapter] Initialized (lazy per-project initialization)");
+    return Promise.resolve();
   }
 
   async readFile(path: string): Promise<Uint8Array> {
