@@ -39,6 +39,11 @@ class ReloadNotifierImpl {
    * Trigger a reload notification to all subscribers (debounced)
    */
   triggerReload(): void {
+    console.log("[ReloadNotifier] ✅ triggerReload called", {
+      invalidateListeners: this.invalidateListeners.size,
+      reloadListeners: this.listeners.size,
+    });
+
     // First, trigger immediate invalidation for cache clearing
     this.notifyInvalidateListeners();
 
@@ -48,11 +53,17 @@ class ReloadNotifierImpl {
     }
     this.debounceTimer = setTimeout(() => {
       this.debounceTimer = null;
+      console.log("[ReloadNotifier] ✅ Debounce complete, notifying reload listeners", {
+        listenerCount: this.listeners.size,
+      });
       this.notifyListeners();
     }, DEBOUNCE_MS);
   }
 
   private notifyInvalidateListeners(): void {
+    console.log("[ReloadNotifier] ✅ Notifying invalidate listeners", {
+      count: this.invalidateListeners.size,
+    });
     for (const listener of this.invalidateListeners) {
       try {
         listener();
@@ -60,9 +71,13 @@ class ReloadNotifierImpl {
         console.error("[ReloadNotifier] Invalidate listener error:", error);
       }
     }
+    console.log("[ReloadNotifier] ✅ Invalidate listeners notified");
   }
 
   private notifyListeners(): void {
+    console.log("[ReloadNotifier] ✅ Notifying reload listeners", {
+      count: this.listeners.size,
+    });
     for (const listener of this.listeners) {
       try {
         listener();
@@ -70,6 +85,7 @@ class ReloadNotifierImpl {
         console.error("[ReloadNotifier] Listener error:", error);
       }
     }
+    console.log("[ReloadNotifier] ✅ Reload listeners notified - browser should refresh now");
   }
 
   /**
