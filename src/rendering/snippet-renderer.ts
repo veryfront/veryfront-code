@@ -154,7 +154,7 @@ export async function renderSnippet(
     const meta: RenderMetadata = {
       title: (bundle.frontmatter?.name as string) || "Component Preview",
       slug: options.filePath || "snippet",
-      frontmatter: bundle.frontmatter || {},
+      frontmatter: bundle.frontmatter as RenderMetadata["frontmatter"],
     };
 
     // Merge config with HMR enabled for live reload

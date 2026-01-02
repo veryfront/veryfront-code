@@ -106,7 +106,7 @@ export class ModuleHandler extends BaseHandler {
    * @param ctx - Handler context with project configuration
    * @returns Handler result (response or continuation)
    */
-  handle(req: Request, ctx: HandlerContext): HandlerResult | Promise<HandlerResult> {
+  handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
     const url = new URL(req.url);
     const pathname = url.pathname;
 
@@ -189,6 +189,6 @@ export class ModuleHandler extends BaseHandler {
       });
     }
 
-    return this.continue();
+    return Promise.resolve(this.continue());
   }
 }

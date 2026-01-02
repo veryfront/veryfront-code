@@ -95,6 +95,12 @@ export async function serveModule(
   const snippetMatch = url.pathname.match(SNIPPET_MODULE_PREFIX);
   if (snippetMatch) {
     const hash = snippetMatch[1];
+    if (!hash) {
+      return createModuleResponse(method, "Missing snippet hash", HTTP_NOT_FOUND, {
+        "Content-Type": "text/plain; charset=utf-8",
+        "Cache-Control": "no-cache",
+      });
+    }
     const { getCompiledSnippet } = await import("@veryfront/rendering/snippet-renderer.ts");
     const snippetCode = getCompiledSnippet(hash);
 
