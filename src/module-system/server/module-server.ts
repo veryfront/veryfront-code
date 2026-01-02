@@ -283,7 +283,7 @@ export async function serveModule(
   }
 
   // Helper function to run with optional proxy context
-  const runWithOptionalContext = async <T>(fn: () => Promise<T>): Promise<T> => {
+  const runWithOptionalContext = <T>(fn: () => Promise<T>): Promise<T> => {
     // Set branch context on FSAdapter if available (for branch-aware file resolution)
     const fsWrapper = adapter.fs as {
       runWithContext?: <T>(slug: string, token: string, fn: () => Promise<T>) => Promise<T>;
