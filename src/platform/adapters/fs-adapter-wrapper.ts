@@ -62,7 +62,7 @@ export class FSAdapterWrapper implements FileSystemAdapter {
    * Only applies if the underlying FSAdapter supports it (e.g., MultiProjectFSAdapter).
    * For adapters that don't support this, the function runs directly.
    */
-  async runWithContext<T>(
+  runWithContext<T>(
     projectSlug: string,
     token: string,
     fn: () => Promise<T>,
@@ -172,14 +172,14 @@ export class FSAdapterWrapper implements FileSystemAdapter {
     };
   }
 
-  async resolveFile(basePath: string): Promise<string | null> {
+  resolveFile(basePath: string): Promise<string | null> {
     const adapter = this.fsAdapter as unknown as {
       resolveFile?: (path: string) => Promise<string | null>;
     };
     if (typeof adapter.resolveFile === "function") {
       return adapter.resolveFile(basePath);
     }
-    return null;
+    return Promise.resolve(null);
   }
 
   async mkdir(path: string, options?: { recursive?: boolean }): Promise<void> {
