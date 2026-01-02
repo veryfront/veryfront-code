@@ -253,6 +253,14 @@ ${options.globalCSS || generateThemeVariables()}
       })
     : "";
 
+  // Mermaid initialization script for diagram rendering
+  const mermaidScript = `
+  <!-- Mermaid diagram rendering -->
+  <script type="module"${nonce ? ` nonce="${nonce}"` : ""}>
+    import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+    mermaid.initialize({ startOnLoad: true, theme: 'default' });
+  </script>`;
+
   const end = `
     </div>
   </div>
@@ -266,6 +274,7 @@ ${options.globalCSS || generateThemeVariables()}
   ${scriptTags}
   ${modeScripts}
   ${studioScripts}
+  ${mermaidScript}
 </body>
 </html>`;
 

@@ -57,6 +57,19 @@ export function parseProjectDomain(host: string): ParsedDomain {
     };
   }
 
+  // Local production testing: {domain}.prod.lvh.me
+  // This pattern is treated as a custom domain for JIT production rendering
+  const lvhProdMatch = domain.match(/^([A-Za-z0-9.-]+)\.prod\.lvh\.me$/);
+  if (lvhProdMatch?.[1]) {
+    return {
+      slug: null, // No slug - will trigger domain lookup
+      branch: null,
+      environment: "production",
+      isVeryfrontDomain: false, // Custom domain
+      isDraft: false,
+    };
+  }
+
   const lvhMatch = domain.match(/^([A-Za-z0-9-]+)\.lvh\.me$/);
   if (lvhMatch?.[1]) {
     const { slug, branch } = parseSlugAndBranch(lvhMatch[1]);

@@ -6,7 +6,7 @@ import { FileCache } from "../file-cache/file-cache.ts";
 import { PathNormalizer } from "./path-normalizer.ts";
 import { createError, toError } from "../../../core/errors/veryfront-error.ts";
 
-const EXTENSION_PRIORITY = [".mdx", ".tsx", ".jsx", ".ts", ".js"] as const;
+const EXTENSION_PRIORITY = [".mdx", ".md", ".tsx", ".jsx", ".ts", ".js"] as const;
 
 export class StatOperations {
   private fileIndex: Map<string, ProjectFile> | null = null;
@@ -168,7 +168,7 @@ export class StatOperations {
     // 2. Check if path already has an extension
     const hasExtension = EXTENSION_PRIORITY.some((ext) => normalizedPath.endsWith(ext));
     const pathWithoutExt = hasExtension
-      ? normalizedPath.replace(/\.(mdx|tsx|jsx|ts|js)$/, "")
+      ? normalizedPath.replace(/\.(mdx|md|tsx|jsx|ts|js)$/, "")
       : normalizedPath;
 
     // 3. Try each extension in priority order from cached index

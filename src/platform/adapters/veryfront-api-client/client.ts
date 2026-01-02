@@ -219,4 +219,16 @@ export class VeryfrontAPIClient {
   async fileExists(path: string, projectId?: string) {
     return await this.operations.fileExists(path, projectId);
   }
+
+  async listPublishedFiles(projectId?: string, releaseId?: string) {
+    return await this.operations.listPublishedFiles(projectId, releaseId);
+  }
+
+  async getPublishedFileContent(path: string, projectId?: string, releaseId?: string) {
+    return await this.operations.getPublishedFileContent(path, projectId, releaseId);
+  }
+
+  async lookupProjectByDomain(domain: string) {
+    return await this.operations.lookupProjectByDomain(domain);
+  }
 }

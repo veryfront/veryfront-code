@@ -15,6 +15,7 @@ import { HTTP_NOT_FOUND, HTTP_OK, HTTP_SERVER_ERROR } from "@veryfront/utils";
 import { getContentTypeForPath } from "../../server/handlers/utils/content-types.ts";
 import { createSecureFs } from "@veryfront/security";
 import { injectNodePositions } from "../../build/transforms/plugins/babel-node-positions.ts";
+import { parseProjectDomain } from "../../server/utils/domain-parser.ts";
 
 const DEV_MODULE_PREFIX = /^\/(?:_vf_modules|_veryfront\/modules)\//;
 const SNIPPET_MODULE_PREFIX = /^\/_vf_modules\/_snippets\/([a-f0-9]+)\.js/;
@@ -105,10 +106,11 @@ export async function serveModule(
       });
     }
 
-    // Extract project slug from hostname (e.g., "shadcn-uizz.preview.lvh.me" → "shadcn-uizz")
-    const host = url.hostname;
-    const hostParts = host.split(".");
-    const snippetProjectSlug = hostParts.length > 1 && hostParts[0] !== "localhost" ? hostParts[0] : null;
+    // Extract project slug and branch from hostname using domain parser
+    // e.g., "shadcn-uizz--ffff.preview.lvh.me" → { slug: "shadcn-uizz", branch: "ffff" }
+    const parsedDomain = parseProjectDomain(url.host);
+    const snippetProjectSlug = parsedDomain.slug;
+    const snippetBranch = parsedDomain.branch;
 
     // Apply same transformations as regular modules
     // Snippet code is already compiled JS, so use .tsx extension to skip MDX compilation
@@ -211,20 +213,21 @@ export async function serveModule(
         );
 
         // Transform @/ path aliases to absolute /_vf_modules/ URLs for SSR
-        // Include project slug so module server can resolve files in the correct project
+        // Include project slug and branch so module server can resolve files in the correct project/branch
         const projectParam = snippetProjectSlug ? `&project=${snippetProjectSlug}` : "";
+        const branchParam = snippetBranch ? `&branch=${snippetBranch}` : "";
         transformedCode = transformedCode.replace(
           /from\s+["']@\/([^"']+)["']/g,
           (_match, path) => {
             const jsPath = path.endsWith(".js") ? path : `${path}.js`;
-            return `from "/_vf_modules/${jsPath}?ssr=true${projectParam}&v=${cacheBuster}"`;
+            return `from "/_vf_modules/${jsPath}?ssr=true${projectParam}${branchParam}&v=${cacheBuster}"`;
           },
         );
 
-        // Add ?ssr=true, project param, and cache buster to relative imports
+        // Add ?ssr=true, project param, branch param, and cache buster to relative imports
         transformedCode = transformedCode.replace(
           /from\s+["']((?:\.\.?\/|\/)[^"']+\.js)["']/g,
-          (_match, path) => `from "${path}?ssr=true${projectParam}&v=${cacheBuster}"`,
+          (_match, path) => `from "${path}?ssr=true${projectParam}${branchParam}&v=${cacheBuster}"`,
         );
       }
 
@@ -265,29 +268,37 @@ export async function serveModule(
   const filePathWithoutExt = modulePath.replace(/\.(?:mjs|js)$/i, "");
 
   // Check for project context in query params (for SSR imports in proxy mode)
-  // Also extract from hostname as fallback (e.g., "shadcn-uizz.preview.lvh.me" → "shadcn-uizz")
+  // Also extract from hostname as fallback using domain parser
+  // e.g., "shadcn-uizz--ffff.preview.lvh.me" → { slug: "shadcn-uizz", branch: "ffff" }
   let projectSlug = url.searchParams.get("project");
+  let branch = url.searchParams.get("branch");
   if (!projectSlug) {
-    const host = url.hostname;
-    const hostParts = host.split(".");
-    if (hostParts.length > 1 && hostParts[0] !== "localhost") {
-      projectSlug = hostParts[0];
+    const parsedHost = parseProjectDomain(url.host);
+    projectSlug = parsedHost.slug;
+    if (!branch) {
+      branch = parsedHost.branch;
     }
   }
 
   // Helper function to run with optional proxy context
   const runWithOptionalContext = async <T>(fn: () => Promise<T>): Promise<T> => {
+    // Set branch context on FSAdapter if available (for branch-aware file resolution)
+    const fsWrapper = adapter.fs as {
+      runWithContext?: <T>(slug: string, token: string, fn: () => Promise<T>) => Promise<T>;
+      setRequestBranch?: (b: string | null) => void;
+    };
+
+    if (typeof fsWrapper.setRequestBranch === "function") {
+      fsWrapper.setRequestBranch(branch);
+    }
+
     if (!projectSlug) {
       return fn();
     }
 
     // Try to use multi-project context if available
-    const fsWrapper = adapter.fs as {
-      runWithContext?: <T>(slug: string, token: string, fn: () => Promise<T>) => Promise<T>;
-    };
-
     if (typeof fsWrapper.runWithContext === "function") {
-      logger.info("[ModuleServer] Using project context", { projectSlug });
+      logger.info("[ModuleServer] Using project context", { projectSlug, branch });
       return fsWrapper.runWithContext(projectSlug, "", fn);
     }
 
@@ -449,21 +460,22 @@ export async function serveModule(
         );
 
         // Transform @/ path aliases to absolute /_vf_modules/ URLs for SSR
-        // @/shared/ui/Button → /_vf_modules/shared/ui/Button.js?ssr=true&project=...&v=...
-        // Include project slug so module server can resolve files in the correct project
+        // @/shared/ui/Button → /_vf_modules/shared/ui/Button.js?ssr=true&project=...&branch=...&v=...
+        // Include project slug and branch so module server can resolve files in the correct project/branch
         const projectParam = projectSlug ? `&project=${projectSlug}` : "";
+        const branchParam = branch ? `&branch=${branch}` : "";
         code = code.replace(
           /from\s+["']@\/([^"']+)["']/g,
           (_match, path) => {
             const jsPath = path.endsWith(".js") ? path : `${path}.js`;
-            return `from "/_vf_modules/${jsPath}?ssr=true${projectParam}&v=${cacheBuster}"`;
+            return `from "/_vf_modules/${jsPath}?ssr=true${projectParam}${branchParam}&v=${cacheBuster}"`;
           },
         );
 
-        // Add ?ssr=true, project param, and cache buster to relative and absolute module imports
+        // Add ?ssr=true, project param, branch param, and cache buster to relative and absolute module imports
         code = code.replace(
           /from\s+["']((?:\.\.?\/|\/)[^"']+\.js)["']/g,
-          (_match, path) => `from "${path}?ssr=true${projectParam}&v=${cacheBuster}"`,
+          (_match, path) => `from "${path}?ssr=true${projectParam}${branchParam}&v=${cacheBuster}"`,
         );
       }
     }
@@ -516,7 +528,7 @@ async function findSourceFile(
   projectDir: string,
   basePath: string,
 ): Promise<string | null> {
-  const extensions = [".tsx", ".ts", ".jsx", ".js", ".mdx"];
+  const extensions = [".tsx", ".ts", ".jsx", ".js", ".mdx", ".md"];
 
   // Check if basePath already has a known extension (e.g., DocsLayout.mdx from DocsLayout.mdx.js)
   const hasKnownExt = extensions.some((ext) => basePath.endsWith(ext));
@@ -540,7 +552,7 @@ async function findSourceFile(
 
   // Strip existing extension if present before adding new ones
   const basePathWithoutExt = hasKnownExt
-    ? basePath.replace(/\.(tsx|ts|jsx|js|mdx)$/, "")
+    ? basePath.replace(/\.(tsx|ts|jsx|js|mdx|md)$/, "")
     : basePath;
 
   // For lib/* imports, first check the framework lib directory
