@@ -60,6 +60,9 @@ Before deploying, ensure you have:
 - [Bun Deployment](/guides/deployment/bun.md) - Deploy using Bun runtime
 - [Cloudflare Workers](/guides/deployment/cloudflare.md) - Deploy to edge network
 
+### Kubernetes
+- [Add Local K3s Node](./local-k3s-node.md) - Add local node with OrbStack + Tailscale
+
 ## Related Guides
 
 ### Platform Configuration
