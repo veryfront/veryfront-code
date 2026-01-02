@@ -45,11 +45,11 @@ export class StaticHandler extends BaseHandler {
     ],
   };
 
-  async handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
+  handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
     // Only handle GET and HEAD requests
     const method = req.method.toUpperCase();
     if (method !== "GET" && method !== "HEAD") {
-      return this.continue();
+      return Promise.resolve(this.continue());
     }
 
     const url = new URL(req.url);
@@ -57,7 +57,7 @@ export class StaticHandler extends BaseHandler {
 
     // Skip internal paths
     if (pathname.startsWith("/_")) {
-      return this.continue();
+      return Promise.resolve(this.continue());
     }
 
     // For proxy mode, wrap file access in project context
@@ -73,7 +73,7 @@ export class StaticHandler extends BaseHandler {
     });
   }
 
-  private async withProxyContext<T>(
+  private withProxyContext<T>(
     ctx: HandlerContext,
     fn: () => Promise<T>,
   ): Promise<T> {
