@@ -60,14 +60,40 @@ export class StaticHandler extends BaseHandler {
       return this.continue();
     }
 
-    // Try to serve static file
-    const response = await this.tryServeStatic(req, pathname, ctx);
-    if (response) {
-      return this.respond(response);
+    // For proxy mode, wrap file access in project context
+    return this.withProxyContext(ctx, async () => {
+      // Try to serve static file
+      const response = await this.tryServeStatic(req, pathname, ctx);
+      if (response) {
+        return this.respond(response);
+      }
+
+      // Not a static file, continue to next handler
+      return this.continue();
+    });
+  }
+
+  private async withProxyContext<T>(
+    ctx: HandlerContext,
+    fn: () => Promise<T>,
+  ): Promise<T> {
+    // Only use proxy context if we have both token/slug and the adapter supports it
+    if (!ctx.projectSlug) {
+      return fn();
     }
 
-    // Not a static file, continue to next handler
-    return this.continue();
+    const fsWrapper = ctx.adapter.fs as {
+      runWithContext?: <T>(slug: string, token: string, fn: () => Promise<T>) => Promise<T>;
+    };
+
+    // Multi-project mode: use runWithContext
+    if (typeof fsWrapper.runWithContext === "function") {
+      this.logDebug("Using multi-project context for static files", { projectSlug: ctx.projectSlug }, ctx);
+      // Token can be empty - the adapter will use fallback token from config
+      return fsWrapper.runWithContext(ctx.projectSlug, ctx.proxyToken || "", fn);
+    }
+
+    return fn();
   }
 
   private async tryServeStatic(

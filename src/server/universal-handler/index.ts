@@ -26,6 +26,7 @@ import { DevEndpointsHandler } from "../handlers/dev/endpoints.ts";
 import { DevFileHandler } from "../handlers/dev/files/index.ts";
 import { StudioEndpointsHandler } from "../handlers/studio/endpoints.ts";
 import { StaticHandler } from "../handlers/request/static.ts";
+import { SnippetHandler } from "../handlers/request/snippet-handler.ts";
 import { LibModulesHandler } from "../handlers/request/lib-modules-handler.ts";
 import { RSCHandler } from "../handlers/request/rsc/index.ts";
 import { ModuleHandler } from "../handlers/request/module/index.ts";
@@ -114,6 +115,7 @@ export function createVeryfrontHandler(
     new DevEndpointsHandler(), // Priority: 300 (HIGH, dev only)
     new StudioEndpointsHandler(), // Priority: 300 (HIGH, Studio iframe scripts)
     new DevFileHandler(), // Priority: 400 (dev only)
+    new SnippetHandler(), // Priority: 450 (before static, handles @/ component previews)
     new StaticHandler(), // Priority: 500 (MEDIUM_STATIC)
     new LibModulesHandler(), // Priority: 550 (MEDIUM_LIB_MODULES, self-hosted veryfront/ai/*)
     new RSCHandler(), // Priority: 600 (MEDIUM, runs before static to expose RSC endpoints)
