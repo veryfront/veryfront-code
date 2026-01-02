@@ -17,6 +17,7 @@ import {
   invalidateModulePaths,
 } from "../../../build/transforms/mdx/esm-module-loader.ts";
 import { ReloadNotifier } from "../../../server/reload-notifier.ts";
+import { clearSnippetCache } from "../../../rendering/snippet-renderer.ts";
 
 const INVALIDATION_DEBOUNCE_MS = 100;
 const WS_RECONNECT_DELAY_MS = 5000;
@@ -141,11 +142,19 @@ export class VeryfrontFSAdapter implements FSAdapter {
             changedPaths: changedPaths?.length || 0,
           });
           if (data.type === "poke") {
+            logger.info("[VeryfrontFSAdapter] 🔄 POKE RECEIVED - triggering cache invalidation", {
+              source: data.data?.source,
+              entityId: data.data?.entityId,
+              entityType: data.data?.entityType,
+              changedPathsCount: changedPaths?.length || 0,
+              changedPaths: changedPaths || [],
+            });
             // Use selective invalidation if we know which files changed
             if (changedPaths && changedPaths.length > 0) {
               this.scheduleSelectiveInvalidation(changedPaths);
             } else {
               // Fallback to full invalidation
+              logger.info("[VeryfrontFSAdapter] 🔄 No changedPaths provided - using full invalidation");
               this.scheduleInvalidation();
             }
           }
@@ -291,17 +300,28 @@ export class VeryfrontFSAdapter implements FSAdapter {
   private async performInvalidation(): Promise<void> {
     const startTime = Date.now();
 
+    logger.info("[VeryfrontFSAdapter] ✅ CACHE INVALIDATION STARTED - clearing all caches");
+
     // Step 1: Clear all caches and indexes
     const textCount = this.cache.deleteByPrefix("file:text:");
     const contentCount = this.cache.deleteByPrefix("file:content:");
-    this.cache.deleteByPrefix("file:stat:");
-    this.cache.deleteByPrefix("dir:entries:");
-    this.cache.deleteByPrefix("files:all:");
+    const statCount = this.cache.deleteByPrefix("file:stat:");
+    const dirCount = this.cache.deleteByPrefix("dir:entries:");
+    const filesAllCount = this.cache.deleteByPrefix("files:all:");
     this.statOps.clearIndex();
     this.dirOps.clearTree();
     clearSSRModuleCache();
     clearRouterDetectionCache();
-    clearModulePathCache(); // Clear in-memory path cache, disk cache uses content-based hashing
+    clearModulePathCache();
+    clearSnippetCache();
+
+    logger.info("[VeryfrontFSAdapter] ✅ CACHES CLEARED", {
+      textCacheCleared: textCount,
+      contentCacheCleared: contentCount,
+      statCacheCleared: statCount,
+      dirCacheCleared: dirCount,
+      filesAllCacheCleared: filesAllCount,
+    });
 
     // Step 2: Fetch fresh file list from API - this blocks until API has committed changes
     // This guarantees content is ready before we trigger reload
@@ -309,15 +329,20 @@ export class VeryfrontFSAdapter implements FSAdapter {
     try {
       const files = await this.client.listAllFiles();
       this.cache.set(`files:all:${branch}`, files);
+      logger.info("[VeryfrontFSAdapter] ✅ FRESH FILES FETCHED", {
+        branch,
+        fileCount: files.length,
+      });
     } catch (error) {
       logger.warn("[VeryfrontFSAdapter] Failed to fetch files during invalidation", { error });
       // Still trigger reload - browser will fetch fresh content
     }
 
     // Step 3: Trigger reload - content is now guaranteed to be available
+    logger.info("[VeryfrontFSAdapter] ✅ TRIGGERING BROWSER RELOAD via ReloadNotifier");
     ReloadNotifier.triggerReload();
 
-    logger.info("[VeryfrontFSAdapter] Invalidation complete", {
+    logger.info("[VeryfrontFSAdapter] ✅ CACHE INVALIDATION COMPLETE", {
       textCacheCleared: textCount,
       contentCacheCleared: contentCount,
       durationMs: Date.now() - startTime,

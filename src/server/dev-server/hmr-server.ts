@@ -166,11 +166,21 @@ export class HMRServer {
    */
   sendUpdate(update: HMRUpdate): void {
     const message = JSON.stringify(update);
+    logger.info("[HMRServer] ✅ sendUpdate called", {
+      type: update.type,
+      connectedClients: this.clients.size,
+    });
+    let sentCount = 0;
     for (const client of this.clients) {
       if (client.readyState === WebSocket.OPEN) {
         client.send(message);
+        sentCount++;
       }
     }
+    logger.info("[HMRServer] ✅ Update sent to clients", {
+      sentCount,
+      totalClients: this.clients.size,
+    });
   }
 
   /**

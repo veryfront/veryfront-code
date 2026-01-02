@@ -44,6 +44,13 @@ export function getCompiledSnippet(hash: string): string | undefined {
 }
 
 /**
+ * Clear all cached snippets - used during cache invalidation
+ */
+export function clearSnippetCache(): void {
+  snippetCache.clear();
+}
+
+/**
  * Generate a hash for snippet content
  */
 async function hashContent(content: string): Promise<string> {
