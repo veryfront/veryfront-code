@@ -65,7 +65,7 @@ export class SSRHandler extends BaseHandler {
 
   private rendererInit: Promise<Awaited<ReturnType<typeof createRenderer>>> | null = null;
 
-  async handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
+  handle(req: Request, ctx: HandlerContext): HandlerResult | Promise<HandlerResult> {
     const url = new URL(req.url);
     const pathname = url.pathname;
 
@@ -96,7 +96,7 @@ export class SSRHandler extends BaseHandler {
           projectSlug: ctx.projectSlug,
           hasProxyToken: !!ctx.proxyToken,
         }, ctx);
-        return fsWrapper.runWithContext(ctx.projectSlug, ctx.proxyToken || "", async () => {
+        return fsWrapper.runWithContext(ctx.projectSlug, ctx.proxyToken || "", () => {
           // Set production mode for non-draft environments
           const setProductionModeFn = fsWrapper as {
             setProductionMode?: (enabled: boolean, releaseId?: string | null) => void;
