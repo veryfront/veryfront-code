@@ -4,7 +4,12 @@
  */
 
 import { BaseHandler } from "@veryfront/security";
-import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } from "../../handlers/types.ts";
+import type {
+  HandlerContext,
+  HandlerMetadata,
+  HandlerPriority,
+  HandlerResult,
+} from "../../handlers/types.ts";
 import { HTTP_OK, PRIORITY_HIGH_DEV } from "@veryfront/core/constants/index.ts";
 import { generateStudioBridgeScript } from "../../../studio/bridge-template.ts";
 

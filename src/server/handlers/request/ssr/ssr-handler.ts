@@ -92,10 +92,15 @@ export class SSRHandler extends BaseHandler {
       // For multi-project mode, use runWithContext (required for MultiProjectFSAdapter)
       // The token can be empty - ProxyFSAdapterManager will fall back to config token
       if (ctx.projectSlug && typeof fsWrapper.runWithContext === "function") {
-        this.logDebug("Using multi-project context", { projectSlug: ctx.projectSlug, hasProxyToken: !!ctx.proxyToken }, ctx);
+        this.logDebug("Using multi-project context", {
+          projectSlug: ctx.projectSlug,
+          hasProxyToken: !!ctx.proxyToken,
+        }, ctx);
         return fsWrapper.runWithContext(ctx.projectSlug, ctx.proxyToken || "", async () => {
           // Set production mode for non-draft environments
-          const setProductionModeFn = fsWrapper as { setProductionMode?: (enabled: boolean, releaseId?: string | null) => void };
+          const setProductionModeFn = fsWrapper as {
+            setProductionMode?: (enabled: boolean, releaseId?: string | null) => void;
+          };
           if (typeof setProductionModeFn.setProductionMode === "function") {
             // Determine production mode based on domain type
             let isProduction = false;
@@ -133,7 +138,9 @@ export class SSRHandler extends BaseHandler {
 
       // Set production mode for non-draft environments (staging, production)
       // When production mode is enabled, content is served from releases (JIT rendering)
-      const setProductionMode = fsWrapper as { setProductionMode?: (enabled: boolean, releaseId?: string | null) => void };
+      const setProductionMode = fsWrapper as {
+        setProductionMode?: (enabled: boolean, releaseId?: string | null) => void;
+      };
       if (typeof setProductionMode.setProductionMode === "function") {
         // Determine production mode based on domain type:
         // - Veryfront domains: use isDraft flag (false = production)

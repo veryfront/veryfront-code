@@ -181,7 +181,9 @@ export class VeryfrontFSAdapter implements FSAdapter {
               this.scheduleSelectiveInvalidation(changedPaths);
             } else {
               // Fallback to full invalidation
-              logger.info("[VeryfrontFSAdapter] 🔄 No changedPaths provided - using full invalidation");
+              logger.info(
+                "[VeryfrontFSAdapter] 🔄 No changedPaths provided - using full invalidation",
+              );
               this.scheduleInvalidation();
             }
           }
@@ -446,7 +448,9 @@ export class VeryfrontFSAdapter implements FSAdapter {
   getEntityIdForPath(path: string): string | undefined {
     const normalizedPath = this.normalizer.normalize(path);
     const branch = this.requestBranch || "main";
-    const cachedFiles = this.cache.get(`files:all:${branch}`) as Array<{ id?: string; path: string }> | undefined;
+    const cachedFiles = this.cache.get(`files:all:${branch}`) as
+      | Array<{ id?: string; path: string }>
+      | undefined;
     if (!cachedFiles) return undefined;
 
     const file = cachedFiles.find((f) => f.path === normalizedPath);

@@ -58,7 +58,7 @@ async function hashContent(content: string): Promise<string> {
   const data = encoder.encode(content);
   const hashBuffer = await crypto.subtle.digest("SHA-256", data);
   const hashArray = Array.from(new Uint8Array(hashBuffer));
-  return hashArray.map(b => b.toString(16).padStart(2, "0")).join("").slice(0, 16);
+  return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("").slice(0, 16);
 }
 
 /**
@@ -121,7 +121,8 @@ export async function renderSnippet(
     }
     // Add cache buster to ensure Deno fetches fresh module each time
     const cacheBuster = Date.now();
-    const snippetUrl = `${moduleServerBase}/_vf_modules/_snippets/${hash}.js?ssr=true&v=${cacheBuster}`;
+    const snippetUrl =
+      `${moduleServerBase}/_vf_modules/_snippets/${hash}.js?ssr=true&v=${cacheBuster}`;
 
     logger.info("[SnippetRenderer] Loading snippet module", {
       snippetUrl,
@@ -258,10 +259,10 @@ function generateErrorHTML(error: unknown, options: SnippetRenderOptions): strin
     <div class="error-title">Snippet Render Error</div>
     <div class="error-message">${escapeHtml(message)}</div>
     ${
-      options.mode === "development" && stack
-        ? `<div class="error-stack">${escapeHtml(stack)}</div>`
-        : ""
-    }
+    options.mode === "development" && stack
+      ? `<div class="error-stack">${escapeHtml(stack)}</div>`
+      : ""
+  }
   </div>
 </body>
 </html>`;

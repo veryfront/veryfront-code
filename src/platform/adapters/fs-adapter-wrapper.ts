@@ -173,7 +173,9 @@ export class FSAdapterWrapper implements FileSystemAdapter {
   }
 
   async resolveFile(basePath: string): Promise<string | null> {
-    const adapter = this.fsAdapter as unknown as { resolveFile?: (path: string) => Promise<string | null> };
+    const adapter = this.fsAdapter as unknown as {
+      resolveFile?: (path: string) => Promise<string | null>;
+    };
     if (typeof adapter.resolveFile === "function") {
       return adapter.resolveFile(basePath);
     }

@@ -121,10 +121,15 @@ export async function getEntityInfo(
     let entityId = filePath; // Default to file path
     if (adapter) {
       try {
-        const fsAdapter = (adapter.fs as { fsAdapter?: { getEntityIdForPath?: (path: string) => string | undefined } }).fsAdapter;
+        const fsAdapter = (adapter.fs as {
+          fsAdapter?: { getEntityIdForPath?: (path: string) => string | undefined };
+        }).fsAdapter;
         if (fsAdapter?.getEntityIdForPath) {
           // Get relative path for lookup - convert absolute path to project-relative path
-          const relativePath = filePath.replace(/^.*?\/pages\//, "pages/").replace(/^.*?\/components\//, "components/");
+          const relativePath = filePath.replace(/^.*?\/pages\//, "pages/").replace(
+            /^.*?\/components\//,
+            "components/",
+          );
           const apiEntityId = fsAdapter.getEntityIdForPath(relativePath);
           if (apiEntityId) {
             entityId = apiEntityId;

@@ -3,7 +3,9 @@ import { type TokenProvider, VeryfrontAPIOperations } from "./operations.ts";
 import { type VeryfrontAPIConfig, VeryfrontAPIError } from "./types.ts";
 
 export class VeryfrontAPIClient {
-  private config: VeryfrontAPIConfig & { retry: Required<NonNullable<VeryfrontAPIConfig["retry"]>> };
+  private config: VeryfrontAPIConfig & {
+    retry: Required<NonNullable<VeryfrontAPIConfig["retry"]>>;
+  };
   private operations: VeryfrontAPIOperations;
   private requestToken?: string;
   private requestProjectSlug?: string;

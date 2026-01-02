@@ -248,7 +248,9 @@ export async function serveModule(
       });
       return createModuleResponse(
         method,
-        `// Transform Error\nthrow new Error(${JSON.stringify(error instanceof Error ? error.message : String(error))});`,
+        `// Transform Error\nthrow new Error(${
+          JSON.stringify(error instanceof Error ? error.message : String(error))
+        });`,
         HTTP_SERVER_ERROR,
         { "Content-Type": "application/javascript; charset=utf-8", "Cache-Control": "no-cache" },
       );

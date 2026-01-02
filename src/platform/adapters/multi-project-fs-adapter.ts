@@ -54,7 +54,7 @@ export class MultiProjectFSAdapter implements FSAdapter {
       }
       throw new Error(
         "[MultiProjectFSAdapter] No request context available. " +
-        "Use runWithContext() to set project context before accessing files.",
+          "Use runWithContext() to set project context before accessing files.",
       );
     }
 

@@ -93,7 +93,9 @@ export function getEnvironmentType(
   }
 
   // Preview/staging environments
-  if (envName.includes("preview") || envName.includes("staging") || envName.includes("development")) {
+  if (
+    envName.includes("preview") || envName.includes("staging") || envName.includes("development")
+  ) {
     return "preview";
   }
 
