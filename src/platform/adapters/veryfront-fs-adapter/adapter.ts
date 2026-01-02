@@ -374,6 +374,11 @@ export class VeryfrontFSAdapter implements FSAdapter {
     return this.statOps.exists(path);
   }
 
+  async resolveFile(basePath: string): Promise<string | null> {
+    await this.ensureInitialized();
+    return this.statOps.resolveFile(basePath);
+  }
+
   dispose(): void {
     // Clean up WebSocket and timers
     this.cleanupWebSocketTimers();

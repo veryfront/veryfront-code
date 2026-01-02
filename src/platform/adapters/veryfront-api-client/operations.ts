@@ -124,6 +124,35 @@ export class VeryfrontAPIOperations {
     return allFiles;
   }
 
+  async searchFiles(
+    pattern: string,
+    projectId?: string,
+    branch?: string | null,
+  ): Promise<ProjectFile[]> {
+    const id = projectId || this.getProjectId();
+    const params = new URLSearchParams({
+      pattern,
+      limit: "100",
+    });
+    if (branch) {
+      params.set("branch", branch);
+    }
+    const url = `/projects/${id}/files?${params}`;
+    logger.debug("[VeryfrontAPIClient] Searching files", { url, pattern, projectId: id, branch });
+
+    const response = await this.request<{
+      data: ProjectFile[];
+      pageInfo?: { hasNextPage: boolean; nextCursor: string | null };
+    }>(url);
+
+    logger.debug("[VeryfrontAPIClient] Files search complete", {
+      pattern,
+      count: response.data?.length || 0,
+    });
+
+    return response.data || [];
+  }
+
   async getFileContent(path: string, projectId?: string, branch?: string | null): Promise<string> {
     const id = projectId || this.getProjectId();
     const encodedPath = encodeURIComponent(path);

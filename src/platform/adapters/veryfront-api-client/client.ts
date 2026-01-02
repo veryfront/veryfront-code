@@ -200,6 +200,12 @@ export class VeryfrontAPIClient {
     return await this.operations.listAllFiles(projectId, effectiveBranch);
   }
 
+  async searchFiles(pattern: string, projectId?: string, branch?: string | null) {
+    // Use request branch if not explicitly provided
+    const effectiveBranch = branch !== undefined ? branch : this.requestBranch;
+    return await this.operations.searchFiles(pattern, projectId, effectiveBranch);
+  }
+
   async getFileContent(path: string, projectId?: string, branch?: string | null) {
     // Use request branch if not explicitly provided
     const effectiveBranch = branch !== undefined ? branch : this.requestBranch;

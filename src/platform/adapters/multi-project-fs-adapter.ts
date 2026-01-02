@@ -94,6 +94,11 @@ export class MultiProjectFSAdapter implements FSAdapter {
     return adapter.readdir(path);
   }
 
+  async resolveFile(basePath: string): Promise<string | null> {
+    const adapter = await this.getAdapter();
+    return adapter.resolveFile(basePath);
+  }
+
   dispose(): void {
     this.manager.dispose();
     logger.info("[MultiProjectFSAdapter] Disposed");

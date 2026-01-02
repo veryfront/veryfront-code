@@ -166,6 +166,73 @@ export async function getEntityBySlug(
   slug: string,
   adapter?: RuntimeAdapter,
 ): Promise<EntityInfo | null> {
+  // If adapter has resolveFile, use pattern-based resolution
+  if (adapter?.fs.resolveFile) {
+    const basePaths = [
+      pathHelper.join(projectDir, "pages", slug),
+      pathHelper.join(projectDir, slug),
+    ];
+
+    if (slug === "index" || slug === "") {
+      basePaths.unshift(
+        pathHelper.join(projectDir, "pages", "index"),
+        pathHelper.join(projectDir, "index"),
+      );
+    }
+
+    for (const basePath of basePaths) {
+      const resolvedPath = await adapter.fs.resolveFile(basePath);
+      if (resolvedPath) {
+        const info = await getEntityInfo(resolvedPath, adapter);
+        if (info?.entity.isPage) return info;
+      }
+    }
+
+    // Try dynamic routes
+    const slugParts = slug.split("/");
+    for (let depth = slugParts.length - 1; depth >= 0; depth--) {
+      const parentPath = slugParts.slice(0, depth).join("/");
+      const pagesDir = parentPath
+        ? pathHelper.join(projectDir, "pages", parentPath)
+        : pathHelper.join(projectDir, "pages");
+
+      try {
+        let dirExists = false;
+        try {
+          const stat = await withFallback(
+            () => adapter.fs.stat(pagesDir),
+            () => fs.stat(pagesDir),
+            { operationName: "stat:getEntityBySlug", logError: false },
+          );
+          dirExists = stat.isDirectory;
+        } catch {
+          dirExists = false;
+        }
+
+        if (dirExists) {
+          const entries: { name: string; isFile: boolean; isDirectory: boolean }[] = [];
+          const dirIterator = adapter.fs.readDir(pagesDir);
+          for await (const entry of dirIterator) {
+            entries.push(entry);
+          }
+
+          for (const entry of entries) {
+            if (entry.isFile && /\[.+\]\.(mdx|tsx|jsx|ts|js)$/.test(entry.name)) {
+              const dynamicPath = pathHelper.join(pagesDir, entry.name);
+              const info = await getEntityInfo(dynamicPath, adapter);
+              if (info?.entity.isPage) return info;
+            }
+          }
+        }
+      } catch {
+        // Directory doesn't exist or error reading it, continue to next depth
+      }
+    }
+
+    return null;
+  }
+
+  // Fallback for adapters without resolveFile
   const possiblePaths = [
     pathHelper.join(projectDir, "pages", `${slug}.mdx`),
     pathHelper.join(projectDir, "pages", `${slug}.tsx`),
