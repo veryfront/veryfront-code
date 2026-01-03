@@ -11,7 +11,7 @@ import {
   promptRegistry,
 } from '../../../src/ai/index.ts';
 
-describe('Auto-Discovery Integration', () => {
+describe('Auto-Discovery Integration', { sanitizeOps: false, sanitizeResources: false }, () => {
   beforeEach(() => {
     // Clear registries
     toolRegistry.clear();
