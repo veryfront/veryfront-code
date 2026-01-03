@@ -24,6 +24,7 @@ export class ReadOperations {
 
   readTextFile(path: string): Promise<string> {
     const normalizedPath = this.normalizer.normalize(path);
+    logger.debug("[ReadOperations] readTextFile called", { path, normalizedPath });
     return this.fetchContent(normalizedPath);
   }
 
@@ -53,15 +54,24 @@ export class ReadOperations {
       path: normalizedPath,
       releaseId: releaseId ?? "latest",
     });
-    const content = await this.client.getPublishedFileContent(
-      normalizedPath,
-      undefined,
-      releaseId ?? undefined,
-    );
-
-    // Published content is immutable, cache for long time
-    this.cache.set(cacheKey, content);
-    return content;
+    try {
+      const content = await this.client.getPublishedFileContent(
+        normalizedPath,
+        undefined,
+        releaseId ?? undefined,
+      );
+      logger.debug("[ReadOperations] Fetched published content", { path: normalizedPath, contentLength: content.length });
+      // Published content is immutable, cache for long time
+      this.cache.set(cacheKey, content);
+      return content;
+    } catch (error) {
+      logger.error("[ReadOperations] Failed to fetch published content", {
+        path: normalizedPath,
+        releaseId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
+    }
   }
 
   private async fetchDraftContent(normalizedPath: string): Promise<string> {

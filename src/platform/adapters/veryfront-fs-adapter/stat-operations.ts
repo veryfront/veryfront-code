@@ -5,6 +5,7 @@ import type { VeryfrontAPIClient } from "../veryfront-api-client.ts";
 import { FileCache } from "../file-cache/file-cache.ts";
 import { PathNormalizer } from "./path-normalizer.ts";
 import { createError, toError } from "../../../core/errors/veryfront-error.ts";
+import type { ProductionModeContext } from "./read-operations.ts";
 
 const EXTENSION_PRIORITY = [".mdx", ".md", ".tsx", ".jsx", ".ts", ".js"] as const;
 
@@ -17,15 +18,23 @@ export class StatOperations {
     private readonly client: VeryfrontAPIClient,
     private readonly cache: FileCache,
     private readonly normalizer: PathNormalizer,
+    private readonly productionContext?: ProductionModeContext,
   ) {}
 
   async stat(path: string): Promise<FileInfo> {
     const normalizedPath = this.normalizer.normalize(path);
-    const branch = this.client.getRequestBranch() || "main";
-    const cacheKey = `file:stat:${branch}:${normalizedPath}`;
+    const isProduction = this.productionContext?.isProductionMode() ?? false;
+    const releaseId = this.productionContext?.getReleaseId() ?? null;
+    // Use production-aware cache key
+    const cacheKey = isProduction
+      ? `file:stat:published:${releaseId ?? "latest"}:${normalizedPath}`
+      : `file:stat:${this.client.getRequestBranch() || "main"}:${normalizedPath}`;
+
+    logger.debug("[StatOperations] stat called", { path, normalizedPath, isProduction, releaseId });
 
     const cached = this.cache.get<FileInfo>(cacheKey);
     if (cached) {
+      logger.debug("[StatOperations] stat cache hit", { normalizedPath });
       return cached;
     }
 
@@ -35,6 +44,7 @@ export class StatOperations {
     const dirIdx = this.directoryIndex;
 
     if (!fileIdx || !dirIdx) {
+      logger.debug("[StatOperations] stat - no index available", { normalizedPath });
       throw toError(createError({
         type: "file",
         message: `Index not available for: ${normalizedPath}`,
@@ -43,6 +53,7 @@ export class StatOperations {
 
     const file = fileIdx.get(normalizedPath);
     if (file) {
+      logger.debug("[StatOperations] stat found file", { normalizedPath });
       const info: FileInfo = {
         size: file.size,
         mtime: new Date(file.updatedAt),
@@ -55,6 +66,7 @@ export class StatOperations {
     }
 
     if (dirIdx.has(normalizedPath)) {
+      logger.debug("[StatOperations] stat found directory", { normalizedPath });
       const info: FileInfo = {
         size: 0,
         mtime: new Date(),
@@ -66,6 +78,7 @@ export class StatOperations {
       return info;
     }
 
+    logger.debug("[StatOperations] stat file not found", { normalizedPath });
     throw toError(createError({
       type: "file",
       message: `File not found: ${normalizedPath}`,
@@ -119,6 +132,24 @@ export class StatOperations {
   }
 
   private async getAllFilesRaw(): Promise<ProjectFile[]> {
+    const isProduction = this.productionContext?.isProductionMode() ?? false;
+    const releaseId = this.productionContext?.getReleaseId() ?? null;
+
+    // In production mode, use the published files cache
+    if (isProduction) {
+      const cacheKey = `files:published:${releaseId ?? "latest"}`;
+      const cached = this.cache.get<ProjectFile[]>(cacheKey);
+      if (cached) {
+        return cached;
+      }
+      // If not cached, fetch published files
+      logger.debug("[StatOperations] Fetching published files from API", { releaseId });
+      const files = await this.client.listPublishedFiles(undefined, releaseId ?? undefined);
+      this.cache.set(cacheKey, files);
+      return files;
+    }
+
+    // In development mode, use draft files
     const branch = this.client.getRequestBranch() || "main";
     const cacheKey = `files:all:${branch}`;
     const cached = this.cache.get<ProjectFile[]>(cacheKey);
@@ -144,11 +175,24 @@ export class StatOperations {
 
   async resolveFile(basePath: string): Promise<string | null> {
     const normalizedPath = this.normalizer.normalize(basePath);
-    const branch = this.client.getRequestBranch() || "main";
-    const cacheKey = `file:resolve:${branch}:${normalizedPath}`;
+    const isProduction = this.productionContext?.isProductionMode() ?? false;
+    const releaseId = this.productionContext?.getReleaseId() ?? null;
+    // Use production-aware cache key
+    const cacheKey = isProduction
+      ? `file:resolve:published:${releaseId ?? "latest"}:${normalizedPath}`
+      : `file:resolve:${this.client.getRequestBranch() || "main"}:${normalizedPath}`;
+
+    logger.debug("[StatOperations] resolveFile called", {
+      basePath,
+      normalizedPath,
+      isProduction,
+      releaseId,
+      cacheKey,
+    });
 
     const cached = this.cache.get<string | null>(cacheKey);
     if (cached !== undefined) {
+      logger.debug("[StatOperations] resolveFile cache hit", { normalizedPath, cached });
       return cached;
     }
 
@@ -156,11 +200,18 @@ export class StatOperations {
 
     const fileIdx = this.fileIndex;
     if (!fileIdx) {
+      logger.debug("[StatOperations] resolveFile - no file index");
       return null;
     }
 
+    logger.debug("[StatOperations] resolveFile index size", {
+      fileCount: fileIdx.size,
+      sampleKeys: Array.from(fileIdx.keys()).slice(0, 10),
+    });
+
     // 1. Try exact match first
     if (fileIdx.has(normalizedPath)) {
+      logger.debug("[StatOperations] resolveFile exact match found", { normalizedPath });
       this.cache.set(cacheKey, normalizedPath);
       return normalizedPath;
     }
@@ -171,48 +222,73 @@ export class StatOperations {
       ? normalizedPath.replace(/\.(mdx|md|tsx|jsx|ts|js)$/, "")
       : normalizedPath;
 
+    logger.debug("[StatOperations] resolveFile trying extensions", {
+      pathWithoutExt,
+      hasExtension,
+    });
+
     // 3. Try each extension in priority order from cached index
     for (const ext of EXTENSION_PRIORITY) {
       const pathWithExt = pathWithoutExt + ext;
       if (fileIdx.has(pathWithExt)) {
+        logger.debug("[StatOperations] resolveFile found with extension", { pathWithExt });
         this.cache.set(cacheKey, pathWithExt);
         return pathWithExt;
       }
     }
 
-    // 4. Try index file variants
+    // 4. Try with pages/ prefix if not already present
+    if (!pathWithoutExt.startsWith("pages/")) {
+      const pagesPath = `pages/${pathWithoutExt}`;
+      for (const ext of EXTENSION_PRIORITY) {
+        const pathWithExt = pagesPath + ext;
+        if (fileIdx.has(pathWithExt)) {
+          logger.debug("[StatOperations] resolveFile found with pages prefix", { pathWithExt });
+          this.cache.set(cacheKey, pathWithExt);
+          return pathWithExt;
+        }
+      }
+    }
+
+    // 5. Try index file variants
     for (const ext of EXTENSION_PRIORITY) {
       const indexPath = `${pathWithoutExt}/index${ext}`;
       if (fileIdx.has(indexPath)) {
+        logger.debug("[StatOperations] resolveFile found index file", { indexPath });
         this.cache.set(cacheKey, indexPath);
         return indexPath;
       }
     }
 
-    // 5. If not in cache, search via API pattern
-    const searchPattern = `${pathWithoutExt}.*`;
-    logger.debug("[StatOperations] Searching for file pattern", { pattern: searchPattern });
+    // 5. If not in cache, search via API pattern (only in development mode)
+    // In production mode, we only have published files, so skip the search
+    if (!isProduction) {
+      const searchPattern = `${pathWithoutExt}.*`;
+      logger.debug("[StatOperations] Searching for file pattern (dev mode)", { pattern: searchPattern });
 
-    try {
-      const matches = await this.client.searchFiles(searchPattern);
-      if (matches.length > 0) {
-        // Sort by extension priority
-        const sorted = matches.sort((a, b) => {
-          const extA = EXTENSION_PRIORITY.findIndex((ext) => a.path.endsWith(ext));
-          const extB = EXTENSION_PRIORITY.findIndex((ext) => b.path.endsWith(ext));
-          return (extA === -1 ? 99 : extA) - (extB === -1 ? 99 : extB);
-        });
-        const first = sorted[0];
-        if (first) {
-          this.cache.set(cacheKey, first.path);
-          return first.path;
+      try {
+        const matches = await this.client.searchFiles(searchPattern);
+        if (matches.length > 0) {
+          // Sort by extension priority
+          const sorted = matches.sort((a, b) => {
+            const extA = EXTENSION_PRIORITY.findIndex((ext) => a.path.endsWith(ext));
+            const extB = EXTENSION_PRIORITY.findIndex((ext) => b.path.endsWith(ext));
+            return (extA === -1 ? 99 : extA) - (extB === -1 ? 99 : extB);
+          });
+          const first = sorted[0];
+          if (first) {
+            logger.debug("[StatOperations] resolveFile found via search", { path: first.path });
+            this.cache.set(cacheKey, first.path);
+            return first.path;
+          }
         }
+      } catch (error) {
+        logger.debug("[StatOperations] Pattern search failed", { pattern: searchPattern, error });
       }
-    } catch (error) {
-      logger.debug("[StatOperations] Pattern search failed", { pattern: searchPattern, error });
     }
 
-    this.cache.set(cacheKey, null);
+    logger.debug("[StatOperations] resolveFile not found", { normalizedPath, pathWithoutExt });
+    // Don't cache null/not-found results - files may be published later
     return null;
   }
 }

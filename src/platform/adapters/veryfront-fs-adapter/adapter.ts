@@ -51,6 +51,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
 
     this.apiBaseUrl = veryfrontConfig.apiBaseUrl;
     this.apiToken = veryfrontConfig.apiToken;
+    this.productionMode = veryfrontConfig.productionMode ?? false;
 
     this.client = new VeryfrontAPIClient({
       apiBaseUrl: veryfrontConfig.apiBaseUrl,
@@ -63,12 +64,13 @@ export class VeryfrontFSAdapter implements FSAdapter {
 
     this.cache = new FileCache(veryfrontConfig.cache as FileCacheOptions);
     this.normalizer = new PathNormalizer(config.projectDir);
-    this.readOps = new ReadOperations(this.client, this.cache, this.normalizer, {
+    const productionContext = {
       isProductionMode: () => this.productionMode,
       getReleaseId: () => this.releaseId,
-    });
-    this.dirOps = new DirectoryOperations(this.client, this.cache, this.normalizer);
-    this.statOps = new StatOperations(this.client, this.cache, this.normalizer);
+    };
+    this.readOps = new ReadOperations(this.client, this.cache, this.normalizer, productionContext);
+    this.dirOps = new DirectoryOperations(this.client, this.cache, this.normalizer, productionContext);
+    this.statOps = new StatOperations(this.client, this.cache, this.normalizer, productionContext);
 
     logger.info("[VeryfrontFSAdapter] Created", {
       apiBaseUrl: veryfrontConfig.apiBaseUrl,
