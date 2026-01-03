@@ -7,7 +7,10 @@ import type { VeryfrontFSAdapter } from "./veryfront-fs-adapter.ts";
 
 interface RequestContext {
   projectSlug: string;
+  projectId?: string;
   token: string;
+  productionMode?: boolean;
+  releaseId?: string | null;
 }
 
 const asyncLocalStorage = new AsyncLocalStorage<RequestContext>();
@@ -15,6 +18,8 @@ const asyncLocalStorage = new AsyncLocalStorage<RequestContext>();
 export class MultiProjectFSAdapter implements FSAdapter {
   private manager: ProxyFSAdapterManager;
   private defaultAdapter?: VeryfrontFSAdapter;
+  private productionMode = false;
+  private releaseId: string | null = null;
 
   constructor(config: FSAdapterConfig) {
     this.manager = new ProxyFSAdapterManager({
@@ -33,8 +38,14 @@ export class MultiProjectFSAdapter implements FSAdapter {
     projectSlug: string,
     token: string,
     fn: () => Promise<T>,
+    projectId?: string,
   ): Promise<T> {
-    return asyncLocalStorage.run({ projectSlug, token }, fn);
+    logger.info("[MultiProjectFSAdapter] runWithContext called", {
+      projectSlug,
+      projectId: projectId || "(none)",
+      hasToken: !!token,
+    });
+    return asyncLocalStorage.run({ projectSlug, projectId, token }, fn);
   }
 
   setRequestContext(projectSlug: string, token: string): void {
@@ -43,6 +54,19 @@ export class MultiProjectFSAdapter implements FSAdapter {
       store.projectSlug = projectSlug;
       store.token = token;
     }
+  }
+
+  setProductionMode(enabled: boolean, releaseId?: string | null): void {
+    this.productionMode = enabled;
+    this.releaseId = releaseId ?? null;
+
+    // Apply to all existing cached adapters
+    this.manager.setProductionModeAll(enabled, releaseId);
+
+    logger.info("[MultiProjectFSAdapter] Production mode set", {
+      enabled,
+      releaseId: releaseId ?? "(none)",
+    });
   }
 
   private getAdapter(): Promise<VeryfrontFSAdapter> {
@@ -60,7 +84,20 @@ export class MultiProjectFSAdapter implements FSAdapter {
       );
     }
 
-    return this.manager.getAdapter(context.projectSlug, context.token);
+    logger.info("[MultiProjectFSAdapter] getAdapter context", {
+      projectSlug: context.projectSlug,
+      projectId: context.projectId || "(none)",
+      hasToken: !!context.token,
+      productionMode: this.productionMode,
+    });
+
+    return this.manager.getAdapter(
+      context.projectSlug,
+      context.token,
+      context.projectId,
+      this.productionMode,
+      this.releaseId,
+    );
   }
 
   setDefaultAdapter(adapter: VeryfrontFSAdapter): void {

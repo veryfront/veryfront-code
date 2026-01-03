@@ -58,6 +58,20 @@ export class FSAdapterWrapper implements FileSystemAdapter {
   }
 
   /**
+   * Set production mode for the adapter.
+   * In production mode, adapters skip WebSocket connections and serve published content.
+   * Only applies if the underlying FSAdapter supports it.
+   */
+  setProductionMode(enabled: boolean, releaseId?: string | null): void {
+    const adapter = this.fsAdapter as unknown as {
+      setProductionMode?: (enabled: boolean, releaseId?: string | null) => void;
+    };
+    if (typeof adapter.setProductionMode === "function") {
+      adapter.setProductionMode(enabled, releaseId);
+    }
+  }
+
+  /**
    * Run a function with the specified project context.
    * Only applies if the underlying FSAdapter supports it (e.g., MultiProjectFSAdapter).
    * For adapters that don't support this, the function runs directly.
@@ -66,12 +80,18 @@ export class FSAdapterWrapper implements FileSystemAdapter {
     projectSlug: string,
     token: string,
     fn: () => Promise<T>,
+    projectId?: string,
   ): Promise<T> {
+    console.log("[FSAdapterWrapper] runWithContext called with:", {
+      projectSlug,
+      projectId: projectId || "(none)",
+      hasToken: !!token,
+    });
     const adapter = this.fsAdapter as unknown as {
-      runWithContext?: <T>(slug: string, token: string, fn: () => Promise<T>) => Promise<T>;
+      runWithContext?: <T>(slug: string, token: string, fn: () => Promise<T>, projectId?: string) => Promise<T>;
     };
     if (typeof adapter.runWithContext === "function") {
-      return adapter.runWithContext(projectSlug, token, fn);
+      return adapter.runWithContext(projectSlug, token, fn, projectId);
     }
     // Fallback: just run the function directly
     return fn();

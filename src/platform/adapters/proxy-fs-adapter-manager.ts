@@ -22,6 +22,8 @@ export class ProxyFSAdapterManager {
   private maxAdapters: number;
   private maxIdleMs: number;
   private cleanupTimer?: ReturnType<typeof setInterval>;
+  private productionMode = false;
+  private releaseId: string | null = null;
 
   constructor(config: ProxyFSAdapterManagerConfig) {
     this.baseConfig = config.baseConfig;
@@ -40,7 +42,13 @@ export class ProxyFSAdapterManager {
     });
   }
 
-  async getAdapter(projectSlug: string, token: string): Promise<VeryfrontFSAdapter> {
+  async getAdapter(
+    projectSlug: string,
+    token: string,
+    projectId?: string,
+    productionMode?: boolean,
+    releaseId?: string | null,
+  ): Promise<VeryfrontFSAdapter> {
     // Use provided token or fall back to base config token
     const effectiveToken = token || this.baseConfig.veryfront?.apiToken || "";
     const existing = this.adapters.get(projectSlug);
@@ -68,17 +76,25 @@ export class ProxyFSAdapterManager {
       this.evictLeastRecentlyUsed();
     }
 
-    return this.createAdapter(projectSlug, token);
+    return this.createAdapter(projectSlug, token, projectId, productionMode, releaseId);
   }
 
-  private createAdapter(projectSlug: string, token: string): Promise<VeryfrontFSAdapter> {
+  private createAdapter(
+    projectSlug: string,
+    token: string,
+    projectId?: string,
+    productionMode?: boolean,
+    releaseId?: string | null,
+  ): Promise<VeryfrontFSAdapter> {
     // Use provided token or fall back to base config token (from VERYFRONT_API_TOKEN)
     const effectiveToken = token || this.baseConfig.veryfront?.apiToken;
 
     logger.info("[ProxyFSAdapterManager] Creating adapter for project", {
       projectSlug,
+      projectId: projectId || "(none)",
       hasProxyToken: !!token,
       hasConfigToken: !!this.baseConfig.veryfront?.apiToken,
+      productionMode: productionMode ?? this.productionMode,
     });
 
     const config: FSAdapterConfig = {
@@ -86,11 +102,19 @@ export class ProxyFSAdapterManager {
       veryfront: {
         ...this.baseConfig.veryfront,
         projectSlug,
+        projectId,
         apiToken: effectiveToken,
       },
     };
 
     const adapter = new VeryfrontFSAdapter(config);
+
+    // Apply production mode before initialization
+    const effectiveProductionMode = productionMode ?? this.productionMode;
+    const effectiveReleaseId = releaseId ?? this.releaseId;
+    if (effectiveProductionMode) {
+      adapter.setProductionMode(effectiveProductionMode, effectiveReleaseId ?? undefined);
+    }
 
     const projectAdapter: ProjectAdapter = {
       adapter,
@@ -166,6 +190,24 @@ export class ProxyFSAdapterManager {
 
   hasAdapter(projectSlug: string): boolean {
     return this.adapters.has(projectSlug);
+  }
+
+  setProductionModeAll(enabled: boolean, releaseId?: string | null): void {
+    this.productionMode = enabled;
+    this.releaseId = releaseId ?? null;
+
+    for (const [slug, entry] of this.adapters.entries()) {
+      entry.adapter.setProductionMode(enabled, releaseId ?? undefined);
+      logger.debug("[ProxyFSAdapterManager] Set production mode on adapter", {
+        slug,
+        enabled,
+      });
+    }
+
+    logger.info("[ProxyFSAdapterManager] Production mode set on all adapters", {
+      enabled,
+      adapterCount: this.adapters.size,
+    });
   }
 
   getStats(): { adapters: number; stats: Record<string, CacheStats> } {
