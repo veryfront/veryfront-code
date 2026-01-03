@@ -122,8 +122,11 @@ export class SSRModuleLoader {
         transformOpts,
       );
 
-      // Include content hash in temp path to avoid Deno module cache issues
-      const tempPath = await this.getTempPath(filePath, contentHash);
+      // Write to temp path without content hash in filename
+      // The imports are resolved to plain .js paths (e.g., ../components/Welcome.js)
+      // so the file must be written with matching name (no hash suffix)
+      // Cache busting is handled by the ?t=<timestamp> query string on import
+      const tempPath = await this.getTempPath(filePath);
       const tempDir = tempPath.substring(0, tempPath.lastIndexOf("/"));
       console.log("[SSRModuleLoader] Writing file to cache:", { filePath, tempPath });
       await this.fs.mkdir(tempDir, { recursive: true });
