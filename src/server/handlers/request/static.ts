@@ -45,11 +45,11 @@ export class StaticHandler extends BaseHandler {
     ],
   };
 
-  async handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
+  handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
     // Only handle GET and HEAD requests
     const method = req.method.toUpperCase();
     if (method !== "GET" && method !== "HEAD") {
-      return this.continue();
+      return Promise.resolve(this.continue());
     }
 
     const url = new URL(req.url);
@@ -57,17 +57,45 @@ export class StaticHandler extends BaseHandler {
 
     // Skip internal paths
     if (pathname.startsWith("/_")) {
+      return Promise.resolve(this.continue());
+    }
+
+    // For proxy mode, wrap file access in project context
+    return this.withProxyContext(ctx, async () => {
+      // Try to serve static file
+      const response = await this.tryServeStatic(req, pathname, ctx);
+      if (response) {
+        return this.respond(response);
+      }
+
+      // Not a static file, continue to next handler
       return this.continue();
+    });
+  }
+
+  private withProxyContext<T>(
+    ctx: HandlerContext,
+    fn: () => Promise<T>,
+  ): Promise<T> {
+    // Only use proxy context if we have both token/slug and the adapter supports it
+    if (!ctx.projectSlug) {
+      return fn();
     }
 
-    // Try to serve static file
-    const response = await this.tryServeStatic(req, pathname, ctx);
-    if (response) {
-      return this.respond(response);
+    const fsWrapper = ctx.adapter.fs as {
+      runWithContext?: <T>(slug: string, token: string, fn: () => Promise<T>) => Promise<T>;
+    };
+
+    // Multi-project mode: use runWithContext
+    if (typeof fsWrapper.runWithContext === "function") {
+      this.logDebug("Using multi-project context for static files", {
+        projectSlug: ctx.projectSlug,
+      }, ctx);
+      // Token can be empty - the adapter will use fallback token from config
+      return fsWrapper.runWithContext(ctx.projectSlug, ctx.proxyToken || "", fn);
     }
 
-    // Not a static file, continue to next handler
-    return this.continue();
+    return fn();
   }
 
   private async tryServeStatic(

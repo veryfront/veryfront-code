@@ -37,11 +37,13 @@ export const getRendererScript = () => `
         if (!pageModule) {
           const pageSlug = pathname === '/' ? 'index' : pathname.slice(1);
           log('Falling back to Pages Router pattern:', pageSlug);
-          pagePath = MODULE_SERVER_URL + '/pages/' + pageSlug + '.js';
+          // Don't add pages/ prefix for @/ paths (alias paths like @/components/)
+          const prefix = pageSlug.startsWith('@/') ? '' : '/pages';
+          pagePath = MODULE_SERVER_URL + prefix + '/' + pageSlug + '.js';
           try {
             pageModule = await import(pagePath);
           } catch (err) {
-            pagePath = MODULE_SERVER_URL + '/pages/' + pageSlug + '/index.js';
+            pagePath = MODULE_SERVER_URL + prefix + '/' + pageSlug + '/index.js';
             pageModule = await import(pagePath);
           }
         }

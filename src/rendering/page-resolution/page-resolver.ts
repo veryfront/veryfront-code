@@ -119,12 +119,13 @@ export class PageResolver {
         if (
           entry.isFile &&
           (entry.name.endsWith(".mdx") ||
+            entry.name.endsWith(".md") ||
             entry.name.endsWith(".tsx") ||
             entry.name.endsWith(".jsx") ||
             entry.name.endsWith(".ts") ||
             entry.name.endsWith(".js"))
         ) {
-          const slug = entry.name.replace(/\.(mdx|tsx|jsx|ts|js)$/, "");
+          const slug = entry.name.replace(/\.(mdx|md|tsx|jsx|ts|js)$/, "");
           pages.push(slug === "index" ? "/" : slug);
         }
       }
@@ -135,6 +136,7 @@ export class PageResolver {
       if (
         entry.isFile &&
         (entry.name.endsWith(".mdx") ||
+          entry.name.endsWith(".md") ||
           entry.name.endsWith(".tsx") ||
           entry.name.endsWith(".jsx") ||
           entry.name.endsWith(".ts") ||
@@ -142,7 +144,7 @@ export class PageResolver {
         // Exclude config files
         !entry.name.includes("config")
       ) {
-        const slug = entry.name.replace(/\.(mdx|tsx|jsx|ts|js)$/, "");
+        const slug = entry.name.replace(/\.(mdx|md|tsx|jsx|ts|js)$/, "");
         // Deduplicate - don't add if already found in pages/
         if (!pages.includes(slug === "index" ? "/" : slug)) {
           pages.push(slug === "index" ? "/" : slug);

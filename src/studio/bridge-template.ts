@@ -33,6 +33,7 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
   const DATA_VF_SELECTION = 'data-vf-selection';
 
   // Position data attributes (from remark-node-id plugin)
+  const DATA_NODE_ID = 'data-node-id';
   const DATA_NODE_LINE = 'data-node-line';
   const DATA_NODE_COLUMN = 'data-node-column';
   const DATA_NODE_END_LINE = 'data-node-end-line';
@@ -47,6 +48,16 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
   // Overlay elements
   let hoverOverlay = null;
   let selectionOverlay = null;
+
+  // ============ Utilities ============
+
+  function debounce(fn, ms) {
+    let timer;
+    return function(...args) {
+      clearTimeout(timer);
+      timer = setTimeout(function() { fn.apply(this, args); }, ms);
+    };
+  }
 
   // ============ Visual Overlay System ============
 
@@ -144,13 +155,20 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
     if (vfId) {
       return vfId.split('_')[0];
     }
+    // For MDX elements with data-node-id, use the tag name (Button, Card, etc.)
+    const nodeId = element.getAttribute(DATA_NODE_ID);
+    if (nodeId) {
+      // Check for custom component by looking at surrounding context or just use tag
+      return element.tagName.toLowerCase();
+    }
     return element.tagName.toLowerCase();
   }
 
   function findElementById(nodeId) {
     if (!nodeId) return null;
     return document.querySelector('[' + DATA_VF_ID + '="' + nodeId + '"]') ||
-           document.querySelector('[' + DATA_VF_SELECTOR + '="' + nodeId + '"]');
+           document.querySelector('[' + DATA_VF_SELECTOR + '="' + nodeId + '"]') ||
+           document.querySelector('[' + DATA_NODE_ID + '="' + nodeId + '"]');
   }
 
   // ============ PostMessage Utilities ============
@@ -248,6 +266,10 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
 
   function setupErrorHandling() {
     window.addEventListener('error', function(event) {
+      // Hide overlays on error - prevents confusing UX with overlay over error screen
+      hideOverlay(hoverOverlay);
+      hideOverlay(selectionOverlay);
+
       postToStudio({
         action: 'runtimeError',
         url: window.location.href,
@@ -262,6 +284,10 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
     });
 
     window.addEventListener('unhandledrejection', function(event) {
+      // Hide overlays on error
+      hideOverlay(hoverOverlay);
+      hideOverlay(selectionOverlay);
+
       const reason = event.reason;
       postToStudio({
         action: 'runtimeError',
@@ -326,7 +352,8 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
       }
 
       // Get existing ID or generate and inject one
-      let id = el.getAttribute(DATA_VF_ID) || el.getAttribute(DATA_VF_SELECTOR);
+      // Priority: data-vf-id > data-node-id > data-vf-selector > generate new
+      let id = el.getAttribute(DATA_VF_ID) || el.getAttribute(DATA_NODE_ID) || el.getAttribute(DATA_VF_SELECTOR);
       if (!id) {
         // Generate a selector ID and inject it into the DOM for later selection/highlighting
         id = 'vf-' + el.tagName.toLowerCase() + '-' + (++nodeIndex);
@@ -484,7 +511,7 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
       return;
     }
 
-    // Find and highlight element with data attribute
+    // Find and highlight element with data attribute (uses findElementById which checks all ID types)
     const el = findElementById(nodeId);
     if (el) {
       el.setAttribute(DATA_VF_SELECTION, 'true');
@@ -497,6 +524,7 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
 
   function scrollToElement(nodeId) {
     const el = document.querySelector('[' + DATA_VF_ID + '="' + nodeId + '"]') ||
+               document.querySelector('[' + DATA_NODE_ID + '="' + nodeId + '"]') ||
                document.querySelector('[' + DATA_VF_SELECTOR + '*="' + nodeId + '"]');
     if (el) {
       el.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -504,27 +532,43 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
   }
 
   function setupInspectMode() {
+    // Selector for any element that can be inspected
+    const INSPECTABLE_SELECTOR = '[' + DATA_VF_ID + '], [' + DATA_VF_SELECTOR + '], [' + DATA_NODE_ID + ']';
+
+    function getElementId(el) {
+      return el.getAttribute(DATA_VF_ID) || el.getAttribute(DATA_NODE_ID) || el.getAttribute(DATA_VF_SELECTOR);
+    }
+
     document.addEventListener('click', function(event) {
       if (!inspectMode) return;
 
       event.preventDefault();
       event.stopPropagation();
 
-      const target = event.target.closest('[' + DATA_VF_ID + '], [' + DATA_VF_SELECTOR + ']');
+      const target = event.target.closest(INSPECTABLE_SELECTOR);
       if (target) {
-        const id = target.getAttribute(DATA_VF_ID) || target.getAttribute(DATA_VF_SELECTOR);
+        // Select clicked element
+        const id = getElementId(target);
         selectedNodeId = id;
         showSelectionOverlay(id);
         postToStudio({ action: 'setSelectedNode', id: id });
+      } else {
+        // Clicked empty space - deselect
+        selectedNodeId = null;
+        hideOverlay(selectionOverlay);
+        postToStudio({ action: 'setSelectedNode', id: null });
       }
     }, true);
 
-    document.addEventListener('mouseover', function(event) {
+    document.addEventListener('pointerover', function(event) {
       if (!inspectMode) return;
 
-      const target = event.target.closest('[' + DATA_VF_ID + '], [' + DATA_VF_SELECTOR + ']');
+      // Skip hover for touch devices - only mouse/pen should trigger hover
+      if (event.pointerType === 'touch') return;
+
+      const target = event.target.closest(INSPECTABLE_SELECTOR);
       if (target) {
-        const id = target.getAttribute(DATA_VF_ID) || target.getAttribute(DATA_VF_SELECTOR);
+        const id = getElementId(target);
         if (id !== hoveredNodeId) {
           hoveredNodeId = id;
           showHoverOverlay(id);
@@ -532,10 +576,13 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
       }
     });
 
-    document.addEventListener('mouseout', function(event) {
+    document.addEventListener('pointerout', function(event) {
       if (!inspectMode) return;
 
-      const target = event.target.closest('[' + DATA_VF_ID + '], [' + DATA_VF_SELECTOR + ']');
+      // Skip for touch devices
+      if (event.pointerType === 'touch') return;
+
+      const target = event.target.closest(INSPECTABLE_SELECTOR);
       if (target) {
         // Check if we're moving to a child element (still within the same target)
         const relatedTarget = event.relatedTarget;
@@ -547,24 +594,18 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
       }
     });
 
-    // Update overlays on scroll/resize
-    window.addEventListener('scroll', function() {
+    // Update overlays on scroll/resize (debounced for performance)
+    var updateOverlays = debounce(function() {
       if (inspectMode && hoveredNodeId) {
         showHoverOverlay(hoveredNodeId);
       }
       if (selectedNodeId) {
         showSelectionOverlay(selectedNodeId);
       }
-    }, true);
+    }, 16); // ~60fps
 
-    window.addEventListener('resize', function() {
-      if (inspectMode && hoveredNodeId) {
-        showHoverOverlay(hoveredNodeId);
-      }
-      if (selectedNodeId) {
-        showSelectionOverlay(selectedNodeId);
-      }
-    });
+    window.addEventListener('scroll', updateOverlays, true);
+    window.addEventListener('resize', updateOverlays);
   }
 
   // ============ Color Mode ============

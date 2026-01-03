@@ -89,15 +89,19 @@ export class DevServer {
 
       // Subscribe to immediate invalidation for cache clearing (fires immediately)
       this.invalidateUnsubscribe = ReloadNotifier.subscribeInvalidate(() => {
-        logger.debug("[DevServer] Immediate cache invalidation triggered");
+        logger.info("[DevServer] ✅ INVALIDATE callback triggered - clearing universal handler");
         // Invalidate universal handler immediately to clear cached API handlers
         this.requestHandler?.invalidateUniversalHandler();
       });
 
       // Subscribe to debounced reload for browser refresh (batches rapid changes)
       this.reloadUnsubscribe = ReloadNotifier.subscribe(() => {
-        logger.info("[DevServer] Reload triggered by cache invalidation");
+        logger.info("[DevServer] ✅ RELOAD callback triggered - sending HMR reload to browser");
         this.hmrServer?.sendUpdate({ type: "reload", timestamp: Date.now() });
+      });
+
+      logger.info("[DevServer] ✅ ReloadNotifier subscriptions registered", {
+        hasHmrServer: !!this.hmrServer,
       });
     }
 

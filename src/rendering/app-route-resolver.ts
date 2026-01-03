@@ -68,6 +68,21 @@ async function tryExactMatch(
   appDirName: string,
 ): Promise<EntityInfo | null> {
   const base = slug ? join(projectDir, appDirName, slug) : join(projectDir, appDirName);
+
+  // If adapter has resolveFile, use pattern-based resolution
+  if (adapter.fs.resolveFile) {
+    const basePaths = [`${base}/page`, base];
+    for (const basePath of basePaths) {
+      const resolvedPath = await adapter.fs.resolveFile(basePath);
+      if (resolvedPath) {
+        const entity = await tryLoadPageFile(resolvedPath, slug, adapter);
+        if (entity) return entity;
+      }
+    }
+    return null;
+  }
+
+  // Fallback for adapters without resolveFile
   const candidates = [
     `${base}/page.mdx`,
     `${base}/page.tsx`,

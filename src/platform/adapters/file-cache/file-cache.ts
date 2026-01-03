@@ -144,6 +144,21 @@ export class FileCache {
     return count;
   }
 
+  deleteByPrefixAndSuffix(prefix: string, suffix: string): number {
+    let count = 0;
+    for (const key of this.cache.keys()) {
+      if (key.startsWith(prefix) && key.endsWith(`:${suffix}`)) {
+        this.cache.delete(key);
+        this.lruTracker.remove(key);
+        count++;
+      }
+    }
+    if (count > 0) {
+      logger.debug("[FileCache] Deleted by prefix+suffix", { prefix, suffix, count });
+    }
+    return count;
+  }
+
   clear(): void {
     this.cache.clear();
     this.lruTracker.clear();

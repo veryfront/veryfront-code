@@ -8,7 +8,9 @@ import { generateDevClientRendererScript } from "./dev-client-renderer.ts";
 function generateHMRScript(config: VeryfrontConfig, nonce?: string): string {
   if (!config.dev?.hmr) return "";
   const port = config.dev?.port ?? DEFAULT_DASHBOARD_PORT;
-  const hmrPort = port + 1;
+  // HMR WebSocket server runs on port + 1 by default (see dev-server/server.ts)
+  // Use hmrPort from config if explicitly set, otherwise use port + 1
+  const hmrPort = config.dev?.hmrPort ?? port + 1;
   const nonceAttr = nonce ? ` nonce="${nonce}"` : "";
   return `<script type="module" src="/_veryfront/hmr.js?port=${hmrPort}"${nonceAttr}></script>`;
 }

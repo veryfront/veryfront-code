@@ -70,14 +70,21 @@ export class ModuleHandler extends BaseHandler {
     ctx: HandlerContext,
     fn: () => Promise<T>,
   ): Promise<T> {
+    const fsWrapper = ctx.adapter.fs as {
+      setRequestToken?: (t: string) => void;
+      setRequestBranch?: (b: string | null) => void;
+      runWithContext?: <T>(slug: string, token: string, fn: () => Promise<T>) => Promise<T>;
+    };
+
+    // Always set branch from parsed domain (for module resolution)
+    if (typeof fsWrapper.setRequestBranch === "function") {
+      const branch = ctx.parsedDomain?.branch ?? null;
+      fsWrapper.setRequestBranch(branch);
+    }
+
     if (!ctx.proxyToken || !ctx.projectSlug) {
       return fn();
     }
-
-    const fsWrapper = ctx.adapter.fs as {
-      setRequestToken?: (t: string) => void;
-      runWithContext?: <T>(slug: string, token: string, fn: () => Promise<T>) => Promise<T>;
-    };
 
     // Multi-project mode: use runWithContext
     if (typeof fsWrapper.runWithContext === "function") {
@@ -106,7 +113,7 @@ export class ModuleHandler extends BaseHandler {
     // Use pre-bound helpers to avoid repeated binding on each request
     const { createResponseBuilder, respond, logDebug, getErrorMessage } = this.helpers;
 
-    // Module server endpoint
+    // Module server endpoint (including snippet modules - they need transformation)
     if (pathname.startsWith("/_vf_modules/")) {
       return this.withProxyContext(ctx, () =>
         handleModuleServer(
