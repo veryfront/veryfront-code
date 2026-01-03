@@ -5,7 +5,7 @@ WORKDIR /app
 
 # Copy application files
 COPY deno.json deno.lock* ./
-COPY veryfront.config.production.ts ./veryfront.config.ts
+COPY veryfront.config.ts ./
 COPY src/ ./src/
 
 # Cache dependencies
