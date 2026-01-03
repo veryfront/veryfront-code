@@ -51,9 +51,11 @@ Formula: `--max-old-space-size` = container_memory_limit × 0.70
 
 | Tier | Memory Limit | V8 Heap | CPU Request | CPU Limit |
 |------|--------------|---------|-------------|-----------|
-| Minimal | 1Gi | 700MB | 250m | 1000m |
-| Standard | 1536Mi | 1024MB | 500m | 2000m |
-| Heavy Load | 2Gi | 1400MB | 1000m | 4000m |
+| Minimal | 2Gi | 1400MB | 250m | 1000m |
+| Standard | 3Gi | 2100MB | 500m | 2000m |
+| Heavy Load | 4Gi | 2800MB | 1000m | 4000m |
+
+**Note**: Memory requirements are high due to per-module processing in VirtualModuleSystem. Code optimization is planned.
 
 ---
 
@@ -202,6 +204,30 @@ groups:
 1. Implement LRU eviction in caches
 2. Set max cache sizes
 3. Schedule periodic pod restarts if leak is unfixable
+
+---
+
+## Known Memory Issues
+
+### VirtualModuleSystem Inefficiencies
+
+Location: `src/rendering/virtual-module-system.ts`
+
+**Issues**:
+1. `loadImportMap()` called for every module registration (no caching)
+2. `esbuild.initialize()` called per module (should be once)
+3. Double transformation: components processed by both VirtualModuleSystem and SSRModuleLoader
+
+**Impact**: Memory usage can exceed 1.5Gi under load
+
+**Workaround**: Increase memory limits to 3Gi+ until code optimization is implemented
+
+### Planned Optimizations
+
+- Cache import map at VirtualModuleSystem level
+- Initialize esbuild once at startup
+- Deduplicate component transformation pipeline
+- Add memory pressure monitoring
 
 ---
 
