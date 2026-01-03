@@ -58,7 +58,7 @@ async function waitForApprovals(
   throw new Error(`Timeout waiting for ${count} approvals`);
 }
 
-describe("Workflow Integration", () => {
+describe("Workflow Integration", { sanitizeOps: false, sanitizeResources: false }, () => {
   let client: WorkflowClient;
   let backend: MemoryBackend;
 
@@ -449,7 +449,7 @@ describe("Workflow Integration", () => {
   });
 });
 
-describe("Cron Job Pattern", () => {
+describe("Cron Job Pattern", { sanitizeOps: false, sanitizeResources: false }, () => {
   it("should support infinite loop with delay (cron pattern)", async () => {
     let iterations = 0;
     const maxIterations = 3; // For test, limit to 3

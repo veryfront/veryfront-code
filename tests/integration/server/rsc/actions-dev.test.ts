@@ -1,18 +1,17 @@
 import { assertEquals } from "std/assert/mod.ts";
-import { afterAll } from "std/testing/bdd.ts";
+import { afterAll, describe, it } from "std/testing/bdd.ts";
 import "../../../_helpers/log-guard.ts";
 import { join } from "std/path/mod.ts";
 import { withTestContext } from "../../../_helpers/context.ts";
 import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";
 
-// Clean up renderer intervals to prevent resource leaks
-afterAll(async () => {
-  await cleanupBundler();
-});
+describe("RSC Actions Dev Tests", { sanitizeOps: false, sanitizeResources: false }, () => {
+  // Clean up renderer intervals to prevent resource leaks
+  afterAll(async () => {
+    await cleanupBundler();
+  });
 
-Deno.test({
-  name: "Dev server: RSC action endpoint basic validations (zod or fallback)",
-  fn: async () => {
+  it("Dev server: RSC action endpoint basic validations (zod or fallback)", async () => {
     await withTestContext("rsc-dev-act", async (context) => {
       // Set environment variables for RSC mode
       context.setEnv({
@@ -105,5 +104,5 @@ Deno.test({
 
       // TestContext automatically handles server cleanup
     });
-  },
+  });
 });

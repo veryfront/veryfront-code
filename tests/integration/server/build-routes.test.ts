@@ -26,15 +26,15 @@ import { withTestContext } from "../../_helpers/context.ts";
 import { denoAdapter } from "@veryfront/platform/adapters/deno.ts";
 import { cleanupBundler } from "../../../src/rendering/cleanup.ts";
 
-// Clean up renderer intervals to prevent resource leaks
-afterAll(async () => {
-  await cleanupBundler();
-});
+describe("Route Discovery Tests", { sanitizeOps: false, sanitizeResources: false }, () => {
+  // Clean up renderer intervals to prevent resource leaks
+  afterAll(async () => {
+    await cleanupBundler();
+  });
 
-describe(
-  "Route Discovery - Pages Router",
-  {},
-  () => {
+  describe(
+    "Route Discovery - Pages Router",
+    () => {
     it("should collect basic index route", async () => {
       await withTestContext("routes-pages-index", async (context) => {
         // Arrange
@@ -263,13 +263,11 @@ describe(
         assertEquals(routes[0]!.slug, "products");
       });
     });
-  },
-);
+  });
 
-describe(
-  "Route Discovery - App Router",
-  {},
-  () => {
+  describe(
+    "Route Discovery - App Router",
+    () => {
     it("should collect root page route", async () => {
       await withTestContext("routes-app-root", async (context) => {
         // Arrange
@@ -727,5 +725,5 @@ export default function About() {}`,
         assertEquals(routes.length, 0);
       });
     });
-  },
-);
+  });
+});

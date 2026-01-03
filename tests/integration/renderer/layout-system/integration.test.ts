@@ -12,22 +12,19 @@ import {
   assertStringIncludes,
 } from "jsr:@std/assert@1";
 import { join } from "https://deno.land/std@0.220.0/path/mod.ts";
-import { afterAll } from "std/testing/bdd.ts";
+import { afterAll, describe, it } from "std/testing/bdd.ts";
 import { VeryfrontRenderer } from "../../../../src/rendering/orchestrator/ssr.ts";
 import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";
 import { cleanupTestDir, createTestProjectDir } from "../../../_helpers/server.ts";
 import { DenoAdapter } from "@veryfront/platform/adapters/deno.ts";
 
-// Clean up bundler intervals to prevent resource leaks
-afterAll(async () => {
-  await cleanupBundler();
-});
+describe("Layout System Integration", { sanitizeOps: false, sanitizeResources: false }, () => {
+  // Clean up bundler intervals to prevent resource leaks
+  afterAll(async () => {
+    await cleanupBundler();
+  });
 
-Deno.test({
-  name: "Layout System Integration - nested layouts with App Router",
-  sanitizeOps: false,
-  sanitizeResources: false,
-  async fn() {
+  it("nested layouts with App Router", async () => {
   const projectDir = await createTestProjectDir();
 
   try {
@@ -90,13 +87,9 @@ This is a test post.
   } finally {
     await cleanupTestDir(projectDir);
   }
-}});
+  });
 
-Deno.test({
-  name: "Layout System Integration - named layout with providers",
-  sanitizeOps: false,
-  sanitizeResources: false,
-  async fn() {
+  it("named layout with providers", async () => {
   const projectDir = await createTestProjectDir();
 
   try {
@@ -149,13 +142,9 @@ layout: main
   } finally {
     await cleanupTestDir(projectDir);
   }
-}});
+  });
 
-Deno.test({
-  name: "Layout System Integration - App Router reserved components",
-  sanitizeOps: false,
-  sanitizeResources: false,
-  async fn() {
+  it("App Router reserved components", async () => {
   const projectDir = await createTestProjectDir();
 
   try {
@@ -216,13 +205,9 @@ title: Products
   } finally {
     await cleanupTestDir(projectDir);
   }
-}});
+  });
 
-Deno.test({
-  name: "Layout System Integration - Pages Router with App component",
-  sanitizeOps: false,
-  sanitizeResources: false,
-  async fn() {
+  it("Pages Router with App component", async () => {
   const projectDir = await createTestProjectDir();
 
   try {
@@ -270,4 +255,5 @@ title: Home
   } finally {
     await cleanupTestDir(projectDir);
   }
-}});
+  });
+});

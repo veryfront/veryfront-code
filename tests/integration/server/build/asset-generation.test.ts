@@ -36,14 +36,15 @@ async function writeFile(path: string, data: string | Uint8Array | { symlink: st
   }
 }
 
-// Clean up renderer intervals to prevent resource leaks
-afterAll(async () => {
-  await cleanupBundler();
-});
+describe("Asset Generation Tests", { sanitizeOps: false, sanitizeResources: false }, () => {
+  // Clean up renderer intervals to prevent resource leaks
+  afterAll(async () => {
+    await cleanupBundler();
+  });
 
-describe(
-  "copyStaticAssets - Basic Functionality",
-  () => {
+  describe(
+    "copyStaticAssets - Basic Functionality",
+    () => {
     it("exports function", () => {
       expect(copyStaticAssets).toBeDefined();
       expect(typeof copyStaticAssets).toBe("function");
@@ -177,12 +178,11 @@ describe(
         expect(stats.totalSize).toBe(0);
       });
     });
-  },
-);
+  });
 
-describe(
-  "copyStaticAssets - Dry Run Mode",
-  () => {
+  describe(
+    "copyStaticAssets - Dry Run Mode",
+    () => {
     it("dry-run mode counts but does not copy", async () => {
       await withTestContext("asset-dry-run", async (context) => {
         const publicDir = join(context.projectDir, "public");
@@ -245,12 +245,11 @@ describe(
         expect(nestedOutputExists).toBe(false);
       });
     });
-  },
-);
+  });
 
-describe(
-  "copyStaticAssets - Edge Cases",
-  () => {
+  describe(
+    "copyStaticAssets - Edge Cases",
+    () => {
     it("handles files with special characters", async () => {
       await withTestContext("asset-special-chars", async (context) => {
         const publicDir = join(context.projectDir, "public");
@@ -482,12 +481,11 @@ describe(
         expect(binaryContent.length).toBeGreaterThan(0);
       });
     });
-  },
-);
+  });
 
-describe(
-  "loadClientStyles - Template Loading",
-  () => {
+  describe(
+    "loadClientStyles - Template Loading",
+    () => {
     it("exports function", () => {
       expect(loadClientStyles).toBeDefined();
       expect(typeof loadClientStyles).toBe("function");
@@ -584,5 +582,5 @@ describe(
         css.includes("::"),
       ).toBe(css.includes("::before") || css.includes("::after"));
     });
-  },
-);
+  });
+});

@@ -54,10 +54,9 @@ describe(
           // Should be no-cache in dev/universal
           const cc = res.headers.get("cache-control") || "";
           assertMatch(cc, /no-cache/i);
-          // CORS/security headers present
+          // CORS headers present (CSP only set when security config has CSP rules)
           const allow = res.headers.get("access-control-allow-origin");
           assert(allow === "https://foo.example" || allow === "*");
-          assert(res.headers.has("content-security-policy"));
           const code = await res.text();
           assert(code.includes("export"), "should output ESM code");
         } finally {

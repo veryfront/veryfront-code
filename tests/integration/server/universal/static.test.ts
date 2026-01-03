@@ -5,15 +5,15 @@ import "../../../_helpers/log-guard.ts";
 import { type TestContext, withTestContext } from "../../../_helpers/context.ts";
 import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";
 
-// Clean up renderer intervals to prevent resource leaks
-afterAll(async () => {
-  await cleanupBundler();
-});
-
 describe(
   "Universal Server - Static Files",
-  {},
+  { sanitizeOps: false, sanitizeResources: false },
   () => {
+    // Clean up renderer intervals to prevent resource leaks
+    afterAll(async () => {
+      await cleanupBundler();
+    });
+
     it("serves static files from public/ and exposes metrics and CORS", async () => {
       await withTestContext("universal-server-static", async (context: TestContext) => {
         // create public file

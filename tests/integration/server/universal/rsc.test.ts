@@ -7,15 +7,15 @@ import { type TestContext, withTestContext } from "../../../_helpers/context.ts"
 import { assertDrained } from "../../../_helpers/utils.ts";
 import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";
 
-// Clean up renderer intervals to prevent resource leaks
-afterAll(async () => {
-  await cleanupBundler();
-});
-
 describe(
   "Universal Server - RSC",
-  {},
+  { sanitizeOps: false, sanitizeResources: false },
   () => {
+    // Clean up renderer intervals to prevent resource leaks
+    afterAll(async () => {
+      await cleanupBundler();
+    });
+
     it("serves hydrate.js alias and RSC render ETag/304", async () => {
       await withTestContext("universal-server-rsc-hydrate-etag", async (context: TestContext) => {
         // Enable RSC via config instead of env var

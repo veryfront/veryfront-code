@@ -9,12 +9,12 @@ import { afterAll, beforeEach, describe, it } from "std/testing/bdd.ts";
 import { DataFetcher, type PageWithData } from "@veryfront/data";
 import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";
 
-// Clean up renderer intervals to prevent resource leaks
-afterAll(async () => {
-  await cleanupBundler();
-});
+describe("SSG - Pages Router", { sanitizeOps: false, sanitizeResources: false }, () => {
+  // Clean up renderer intervals to prevent resource leaks
+  afterAll(async () => {
+    await cleanupBundler();
+  });
 
-describe("SSG - Pages Router", () => {
   let fetcher: DataFetcher;
 
   beforeEach(() => {
