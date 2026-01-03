@@ -1,7 +1,4 @@
-/**
- * Lightweight proxy logger with JSON output for Grafana compatibility.
- * Self-contained to avoid import chain issues in Docker build.
- */
+import { getTraceContext } from "./tracing.ts";
 
 export type LogLevel = "debug" | "info" | "warn" | "error";
 
@@ -10,6 +7,8 @@ interface LogEntry {
   level: LogLevel;
   service: string;
   message: string;
+  traceId?: string;
+  spanId?: string;
   context?: Record<string, unknown>;
   error?: {
     name: string;
@@ -48,11 +47,13 @@ class ProxyLogger {
     error?: unknown,
   ): void {
     if (this.format === "json") {
+      const traceCtx = getTraceContext();
       const entry: LogEntry = {
         timestamp: new Date().toISOString(),
         level,
         service: "proxy",
         message,
+        ...(traceCtx.traceId && { traceId: traceCtx.traceId, spanId: traceCtx.spanId }),
       };
       if (context && Object.keys(context).length > 0) {
         entry.context = context;
