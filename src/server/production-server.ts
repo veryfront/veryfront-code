@@ -15,6 +15,7 @@ import {
   startMemoryMonitoring,
   stopMemoryMonitoring,
 } from "../core/memory/index.ts";
+import { initializeRedisCaches } from "../core/cache/redis-init.ts";
 
 interface ServerOptions {
   projectDir: string;
@@ -96,6 +97,10 @@ if (import.meta.main) {
   try {
     // Initialize OpenTelemetry tracing before starting server
     await initializeOTLPWithApis();
+
+    // Initialize Redis caches for cross-pod cache sharing (optional)
+    // This reduces memory pressure by offloading cache to Redis
+    await initializeRedisCaches();
 
     const adapter = await getAdapter();
 

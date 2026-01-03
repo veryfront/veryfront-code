@@ -1,3 +1,10 @@
+/**
+ * SSR Module Loader with Redis Support
+ *
+ * Loads and transforms React components for server-side rendering.
+ * Supports Redis caching to share transformed modules across pods.
+ */
+
 import { join } from "std/path/mod.ts";
 import type * as React from "react";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
@@ -9,6 +16,11 @@ import { createError, toError } from "../../core/errors/veryfront-error.ts";
 import { rendererLogger as logger } from "@veryfront/utils";
 import { LRUCache } from "../../core/utils/lru-wrapper.ts";
 import { registerCache } from "../../core/memory/index.ts";
+import {
+  getRedisClient,
+  isRedisConfigured,
+  type RedisClient,
+} from "../../core/utils/redis-client.ts";
 
 export interface SSRModuleLoaderOptions {
   projectDir: string;
@@ -21,6 +33,8 @@ export interface SSRModuleLoaderOptions {
 const SSR_MODULE_CACHE_MAX_ENTRIES = 2000;
 const SSR_MODULE_CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutes
 const SSR_TMP_DIRS_MAX_ENTRIES = 100;
+const REDIS_KEY_PREFIX = "veryfront:ssr-module:";
+const REDIS_TTL_SECONDS = 1800; // 30 minutes
 
 // Shared cache across all SSRModuleLoader instances (persists across requests)
 // Keys include projectId to isolate caches between different projects
@@ -30,17 +44,25 @@ const globalModuleCache = new LRUCache<string, string>({
   ttlMs: SSR_MODULE_CACHE_TTL_MS,
   cleanupIntervalMs: 60000,
 }); // projectId:absolutePath -> tempPath
+
 const globalInProgress = new Set<string>(); // projectId:absolutePath (bounded by concurrent requests)
 const globalTmpDirs = new LRUCache<string, string>({
   maxEntries: SSR_TMP_DIRS_MAX_ENTRIES,
   ttlMs: 60 * 60 * 1000, // 1 hour
 }); // projectDir:projectId -> tmpDir
 
+// Redis state
+let redisEnabled = false;
+let redisClient: RedisClient | null = null;
+let redisInitialized = false;
+let redisInitPromise: Promise<void> | null = null;
+
 // Register caches with memory profiler
 registerCache("ssr-module-cache", () => ({
   name: "ssr-module-cache",
   entries: globalModuleCache.size,
   maxEntries: SSR_MODULE_CACHE_MAX_ENTRIES,
+  redisEnabled,
 }));
 
 registerCache("ssr-tmp-dirs", () => ({
@@ -55,6 +77,51 @@ const CIRCUIT_BREAKER_THRESHOLD = 3; // Failures before circuit opens
 const CIRCUIT_BREAKER_RESET_MS = 60 * 1000; // 1 minute reset window
 
 /**
+ * Initialize Redis for SSR module cache.
+ * Call this at startup if you want to enable Redis caching.
+ */
+export async function initializeSSRRedisCache(): Promise<boolean> {
+  if (redisInitialized) {
+    return redisEnabled;
+  }
+
+  if (redisInitPromise) {
+    await redisInitPromise;
+    return redisEnabled;
+  }
+
+  redisInitPromise = (async () => {
+    if (!isRedisConfigured()) {
+      logger.debug("[SSR-MODULE-LOADER] Redis not configured, using memory cache");
+      redisInitialized = true;
+      return;
+    }
+
+    try {
+      redisClient = await getRedisClient();
+      redisEnabled = true;
+      redisInitialized = true;
+      logger.info("[SSR-MODULE-LOADER] Redis cache enabled");
+    } catch (error) {
+      logger.warn("[SSR-MODULE-LOADER] Redis unavailable, falling back to memory cache", { error });
+      redisEnabled = false;
+      redisInitialized = true;
+    }
+  })();
+
+  await redisInitPromise;
+  redisInitPromise = null;
+  return redisEnabled;
+}
+
+/**
+ * Check if Redis caching is enabled for SSR modules.
+ */
+export function isSSRRedisCacheEnabled(): boolean {
+  return redisEnabled && redisClient !== null;
+}
+
+/**
  * Clear the global SSR module cache.
  * This should be called when file contents change and modules need to be re-transformed.
  */
@@ -63,6 +130,37 @@ export function clearSSRModuleCache(): void {
   globalInProgress.clear();
   failedComponents.clear();
   logger.info("[SSR-MODULE-LOADER] Cache cleared");
+}
+
+function redisKey(key: string): string {
+  return `${REDIS_KEY_PREFIX}${key}`;
+}
+
+/**
+ * Get transformed code from Redis.
+ */
+async function getFromRedis(cacheKey: string): Promise<string | null> {
+  if (!redisEnabled || !redisClient) return null;
+
+  try {
+    return await redisClient.get(redisKey(cacheKey));
+  } catch (error) {
+    logger.debug("[SSR-MODULE-LOADER] Redis get failed", { key: cacheKey, error });
+    return null;
+  }
+}
+
+/**
+ * Store transformed code in Redis.
+ */
+async function setInRedis(cacheKey: string, code: string): Promise<void> {
+  if (!redisEnabled || !redisClient) return;
+
+  try {
+    await redisClient.set(redisKey(cacheKey), code, { EX: REDIS_TTL_SECONDS });
+  } catch (error) {
+    logger.debug("[SSR-MODULE-LOADER] Redis set failed", { key: cacheKey, error });
+  }
 }
 
 // Note: LRU cache handles cleanup automatically via TTL and max entries
@@ -177,12 +275,30 @@ export class SSRModuleLoader {
     const filePathCacheKey = this.getCacheKey(filePath);
     const inProgressKey = this.getCacheKey(filePath);
 
+    // Check memory cache first
     const cachedEntry = globalModuleCache.get(contentCacheKey);
     if (cachedEntry) {
       // LRU cache handles TTL refresh on access
       // Also store under filePathCacheKey for lookup by filePath
       globalModuleCache.set(filePathCacheKey, cachedEntry);
       return;
+    }
+
+    // Check Redis cache (if enabled)
+    if (redisEnabled && redisClient) {
+      const redisCode = await getFromRedis(contentCacheKey);
+      if (redisCode) {
+        // Write to local temp and update memory cache
+        const tempPath = await this.getTempPath(filePath);
+        const tempDir = tempPath.substring(0, tempPath.lastIndexOf("/"));
+        await this.fs.mkdir(tempDir, { recursive: true });
+        await this.fs.writeTextFile(tempPath, redisCode);
+
+        globalModuleCache.set(contentCacheKey, tempPath);
+        globalModuleCache.set(filePathCacheKey, tempPath);
+        logger.debug("[SSR-MODULE-LOADER] Redis cache hit", { file: filePath.slice(-40) });
+        return;
+      }
     }
 
     if (globalInProgress.has(inProgressKey)) {
@@ -246,6 +362,12 @@ export class SSRModuleLoader {
       const tempDir = tempPath.substring(0, tempPath.lastIndexOf("/"));
       await this.fs.mkdir(tempDir, { recursive: true });
       await this.fs.writeTextFile(tempPath, transformed);
+
+      // Store in Redis for cross-pod sharing
+      if (redisEnabled && redisClient) {
+        // Fire and forget - don't block on Redis write
+        setInRedis(contentCacheKey, transformed).catch(() => {});
+      }
 
       // Store both the content-keyed and filePath-keyed entries
       // LRU cache stores tempPath directly and handles TTL internally
@@ -338,4 +460,21 @@ export class SSRModuleLoader {
 
     return component as React.ComponentType<Record<string, unknown>>;
   }
+}
+
+/**
+ * Get SSR module cache statistics.
+ */
+export function getSSRModuleCacheStats(): {
+  memoryEntries: number;
+  maxEntries: number;
+  tmpDirs: number;
+  redisEnabled: boolean;
+} {
+  return {
+    memoryEntries: globalModuleCache.size,
+    maxEntries: SSR_MODULE_CACHE_MAX_ENTRIES,
+    tmpDirs: globalTmpDirs.size,
+    redisEnabled,
+  };
 }
