@@ -34,7 +34,7 @@ export class MemoryDebugHandler extends BaseHandler {
     ],
   };
 
-  async handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
+  handle(req: Request, ctx: HandlerContext): HandlerResult {
     const url = new URL(req.url);
     const pathname = url.pathname;
 
