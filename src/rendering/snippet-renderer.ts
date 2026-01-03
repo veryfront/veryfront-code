@@ -9,6 +9,12 @@ import { rendererLogger as logger } from "@veryfront/utils";
 import type { RenderMetadata } from "@veryfront/types";
 import type { VeryfrontConfig } from "../core/config/types.ts";
 import { wrapInHTMLShell } from "../html/html-shell-generator.ts";
+import { LRUCache } from "../core/utils/lru-wrapper.ts";
+import { registerCache } from "../core/memory/index.ts";
+
+// Cache limits to prevent unbounded memory growth
+const SNIPPET_CACHE_MAX_ENTRIES = 500;
+const SNIPPET_CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
 
 export interface SnippetRenderOptions {
   mode: "development" | "production";
@@ -30,11 +36,28 @@ export interface SnippetRenderResult {
   frontmatter: Record<string, unknown>;
 }
 
+interface SnippetCacheEntry {
+  code: string;
+  frontmatter: Record<string, unknown>;
+}
+
 /**
  * Cache for compiled snippets
  * Key: content hash, Value: compiled JavaScript code
+ * Using LRU cache with limits to prevent unbounded memory growth
  */
-const snippetCache = new Map<string, { code: string; frontmatter: Record<string, unknown> }>();
+const snippetCache = new LRUCache<string, SnippetCacheEntry>({
+  maxEntries: SNIPPET_CACHE_MAX_ENTRIES,
+  ttlMs: SNIPPET_CACHE_TTL_MS,
+  cleanupIntervalMs: 60000,
+});
+
+// Register with memory profiler
+registerCache("snippet-cache", () => ({
+  name: "snippet-cache",
+  entries: snippetCache.size,
+  maxEntries: SNIPPET_CACHE_MAX_ENTRIES,
+}));
 
 /**
  * Get a snippet from cache by hash

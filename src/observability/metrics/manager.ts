@@ -64,6 +64,8 @@ class MetricsManager {
       securityHeadersCounter: null,
       memoryUsageGauge: null,
       heapUsageGauge: null,
+      heapTotalGauge: null,
+      heapPercentGauge: null,
     };
   }
 

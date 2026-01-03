@@ -4,8 +4,23 @@ import { getAdapter } from "@veryfront/platform/adapters/index.ts";
 import { getLocalAdapter } from "@veryfront/platform/adapters/registry.ts";
 import { rendererLogger as logger } from "@veryfront/utils";
 import type { MDXModule } from "./types.ts";
+import { LRUCache } from "../../core/utils/lru-wrapper.ts";
+import { registerCache } from "../../core/memory/index.ts";
+import { MDX_RENDERER_MAX_ENTRIES, MDX_RENDERER_TTL_MS } from "../../core/utils/constants/cache.ts";
 
-const mdxModuleCache = new Map<string, MDXModule>();
+// Use LRU cache with proper limits to prevent unbounded memory growth
+const mdxModuleCache = new LRUCache<string, MDXModule>({
+  maxEntries: MDX_RENDERER_MAX_ENTRIES,
+  ttlMs: MDX_RENDERER_TTL_MS,
+  cleanupIntervalMs: 60000,
+});
+
+// Register with memory profiler
+registerCache("mdx-module-cache", () => ({
+  name: "mdx-module-cache",
+  entries: mdxModuleCache.size,
+  maxEntries: MDX_RENDERER_MAX_ENTRIES,
+}));
 
 export function clearMDXModuleCache(): void {
   mdxModuleCache.clear();

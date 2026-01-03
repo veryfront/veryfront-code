@@ -7,6 +7,8 @@ import { parseLocalImports, type MissingImport } from "@veryfront/transforms/esm
 import { createFileSystem } from "../../platform/compat/fs.ts";
 import { createError, toError } from "../../core/errors/veryfront-error.ts";
 import { rendererLogger as logger } from "@veryfront/utils";
+import { LRUCache } from "../../core/utils/lru-wrapper.ts";
+import { registerCache } from "../../core/memory/index.ts";
 
 export interface SSRModuleLoaderOptions {
   projectDir: string;
@@ -15,20 +17,37 @@ export interface SSRModuleLoaderOptions {
   dev: boolean;
 }
 
-// Cache configuration
-const CACHE_MAX_SIZE = 500; // Maximum number of entries per project
-const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes TTL for cache entries
-
-interface CacheEntry {
-  tempPath: string;
-  timestamp: number;
-}
+// Cache limits to prevent unbounded memory growth
+const SSR_MODULE_CACHE_MAX_ENTRIES = 2000;
+const SSR_MODULE_CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutes
+const SSR_TMP_DIRS_MAX_ENTRIES = 100;
 
 // Shared cache across all SSRModuleLoader instances (persists across requests)
 // Keys include projectId to isolate caches between different projects
-const globalModuleCache = new Map<string, CacheEntry>(); // projectId:absolutePath -> { tempPath, timestamp }
-const globalInProgress = new Set<string>(); // projectId:absolutePath
-const globalTmpDirs = new Map<string, string>(); // projectDir:projectId -> tmpDir
+// Using LRU cache to prevent unbounded memory growth
+const globalModuleCache = new LRUCache<string, string>({
+  maxEntries: SSR_MODULE_CACHE_MAX_ENTRIES,
+  ttlMs: SSR_MODULE_CACHE_TTL_MS,
+  cleanupIntervalMs: 60000,
+}); // projectId:absolutePath -> tempPath
+const globalInProgress = new Set<string>(); // projectId:absolutePath (bounded by concurrent requests)
+const globalTmpDirs = new LRUCache<string, string>({
+  maxEntries: SSR_TMP_DIRS_MAX_ENTRIES,
+  ttlMs: 60 * 60 * 1000, // 1 hour
+}); // projectDir:projectId -> tmpDir
+
+// Register caches with memory profiler
+registerCache("ssr-module-cache", () => ({
+  name: "ssr-module-cache",
+  entries: globalModuleCache.size,
+  maxEntries: SSR_MODULE_CACHE_MAX_ENTRIES,
+}));
+
+registerCache("ssr-tmp-dirs", () => ({
+  name: "ssr-tmp-dirs",
+  entries: globalTmpDirs.size,
+  maxEntries: SSR_TMP_DIRS_MAX_ENTRIES,
+}));
 
 // Track failed components to implement circuit breaker
 const failedComponents = new Map<string, { count: number; lastFailure: number }>();
@@ -46,58 +65,7 @@ export function clearSSRModuleCache(): void {
   logger.info("[SSR-MODULE-LOADER] Cache cleared");
 }
 
-/**
- * Clean up expired cache entries and enforce max size.
- * Called periodically to prevent memory leaks.
- */
-function cleanupCache(projectId: string): void {
-  const now = Date.now();
-  const keysToDelete: string[] = [];
-  let projectEntries = 0;
-
-  for (const [key, entry] of globalModuleCache) {
-    if (key.startsWith(`${projectId}:`)) {
-      projectEntries++;
-      // Remove expired entries
-      if (now - entry.timestamp > CACHE_TTL_MS) {
-        keysToDelete.push(key);
-      }
-    }
-  }
-
-  // Delete expired entries
-  for (const key of keysToDelete) {
-    globalModuleCache.delete(key);
-    projectEntries--;
-  }
-
-  // If still over limit, remove oldest entries
-  if (projectEntries > CACHE_MAX_SIZE) {
-    const projectKeys: [string, number][] = [];
-    for (const [key, entry] of globalModuleCache) {
-      if (key.startsWith(`${projectId}:`)) {
-        projectKeys.push([key, entry.timestamp]);
-      }
-    }
-    // Sort by timestamp, oldest first
-    projectKeys.sort((a, b) => a[1] - b[1]);
-
-    // Remove oldest entries until under limit
-    const toRemove = projectEntries - CACHE_MAX_SIZE;
-    for (let i = 0; i < toRemove && i < projectKeys.length; i++) {
-      const keyToDelete = projectKeys[i]?.[0];
-      if (keyToDelete) {
-        globalModuleCache.delete(keyToDelete);
-      }
-    }
-
-    logger.debug("[SSR-MODULE-LOADER] Cache cleanup", {
-      projectId,
-      removed: toRemove,
-      remaining: CACHE_MAX_SIZE,
-    });
-  }
-}
+// Note: LRU cache handles cleanup automatically via TTL and max entries
 
 export class SSRModuleLoader {
   private fs = createFileSystem();
@@ -130,9 +98,6 @@ export class SSRModuleLoader {
     // Reset missing dependencies for this load
     this.missingDependencies = [];
 
-    // Run periodic cache cleanup
-    cleanupCache(this.options.projectId);
-
     try {
       await this.transformWithDependencies(filePath, source);
 
@@ -160,8 +125,8 @@ export class SSRModuleLoader {
       }
 
       const cacheKey = this.getCacheKey(filePath);
-      const cacheEntry = globalModuleCache.get(cacheKey);
-      if (!cacheEntry) {
+      const tempPath = globalModuleCache.get(cacheKey);
+      if (!tempPath) {
         throw toError(createError({
           type: "build",
           message: `Failed to transform module: ${filePath}`,
@@ -170,7 +135,7 @@ export class SSRModuleLoader {
       }
 
       const cacheBuster = Date.now();
-      const mod = await import(`file://${cacheEntry.tempPath}?t=${cacheBuster}`);
+      const mod = await import(`file://${tempPath}?t=${cacheBuster}`);
 
       // Success - reset failure count
       failedComponents.delete(circuitKey);
@@ -208,8 +173,8 @@ export class SSRModuleLoader {
 
     const cachedEntry = globalModuleCache.get(contentCacheKey);
     if (cachedEntry) {
-      // Update timestamp on cache hit
-      cachedEntry.timestamp = Date.now();
+      // LRU cache handles TTL refresh on access
+      // Also store under filePathCacheKey for lookup by filePath
       globalModuleCache.set(filePathCacheKey, cachedEntry);
       return;
     }
@@ -274,11 +239,10 @@ export class SSRModuleLoader {
       await this.fs.mkdir(tempDir, { recursive: true });
       await this.fs.writeTextFile(tempPath, transformed);
 
-      const now = Date.now();
       // Store both the content-keyed and filePath-keyed entries
-      const cacheEntry: CacheEntry = { tempPath, timestamp: now };
-      globalModuleCache.set(contentCacheKey, cacheEntry);
-      globalModuleCache.set(filePathCacheKey, cacheEntry);
+      // LRU cache stores tempPath directly and handles TTL internally
+      globalModuleCache.set(contentCacheKey, tempPath);
+      globalModuleCache.set(filePathCacheKey, tempPath);
     } finally {
       globalInProgress.delete(inProgressKey);
     }

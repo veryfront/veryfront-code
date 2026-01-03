@@ -1,5 +1,8 @@
+import { registerCache } from "../../../core/memory/index.ts";
+
 const DEFAULT_TTL = 5 * 60 * 1000; // 5 minutes
 const MAX_ENTRIES = 2_000;
+const CLEANUP_INTERVAL_MS = 60000; // 1 minute
 
 export interface TransformCacheEntry {
   code: string;
@@ -9,6 +12,32 @@ export interface TransformCacheEntry {
 }
 
 const transformCache = new Map<string, TransformCacheEntry>();
+
+// Register with memory profiler
+registerCache("transform-cache", () => ({
+  name: "transform-cache",
+  entries: transformCache.size,
+  maxEntries: MAX_ENTRIES,
+}));
+
+// Periodic cleanup of expired entries to prevent memory bloat
+let cleanupInterval: ReturnType<typeof setInterval> | undefined;
+
+function startPeriodicCleanup(): void {
+  if (cleanupInterval) return;
+
+  cleanupInterval = setInterval(() => {
+    const now = Date.now();
+    for (const [key, entry] of transformCache) {
+      if (entry.expiresAt <= now) {
+        transformCache.delete(key);
+      }
+    }
+  }, CLEANUP_INTERVAL_MS);
+}
+
+// Start cleanup on module load
+startPeriodicCleanup();
 
 export function generateCacheKey(
   projectId: string | undefined,

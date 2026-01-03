@@ -10,6 +10,11 @@ import {
   initializeOTLPWithApis,
   shutdownOTLP,
 } from "@veryfront/observability/tracing/otlp-setup.ts";
+import {
+  startMemoryMonitoring,
+  stopMemoryMonitoring,
+  getMemorySnapshot,
+} from "../core/memory/index.ts";
 
 interface ServerOptions {
   projectDir: string;
@@ -94,6 +99,26 @@ if (import.meta.main) {
 
     const adapter = await getAdapter();
 
+    // Start memory monitoring if enabled
+    const enableMemoryMonitoring = adapter.env.get("ENABLE_MEMORY_MONITORING") === "true";
+    const monitoringIntervalMs = parseInt(
+      adapter.env.get("MEMORY_MONITORING_INTERVAL_MS") ?? "30000",
+      10,
+    );
+
+    if (enableMemoryMonitoring) {
+      startMemoryMonitoring(monitoringIntervalMs);
+      logger.info("Memory monitoring enabled", { intervalMs: monitoringIntervalMs });
+
+      // Log initial memory state
+      const initialSnapshot = getMemorySnapshot();
+      logger.info("Initial memory state", {
+        heapUsedMB: initialSnapshot.heap.usedHeapSizeMB,
+        heapLimitMB: initialSnapshot.heap.heapSizeLimitMB,
+        cacheCount: initialSnapshot.caches.length,
+      });
+    }
+
     const shutdownController = new AbortController();
     const projectDir = cwd();
     const port = Number(
@@ -117,6 +142,9 @@ if (import.meta.main) {
       shuttingDown = true;
       logger.info(`Received ${signal}, shutting down production server...`);
       try {
+        // Stop memory monitoring
+        stopMemoryMonitoring();
+
         shutdownController.abort();
         await server.stop();
         await shutdownOTLP();

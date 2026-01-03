@@ -62,6 +62,8 @@ export interface MetricsInstruments {
   // Memory metrics
   memoryUsageGauge: ObservableGauge | null;
   heapUsageGauge: ObservableGauge | null;
+  heapTotalGauge: ObservableGauge | null;
+  heapPercentGauge: ObservableGauge | null;
 }
 
 /**
