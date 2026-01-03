@@ -16,7 +16,12 @@ import type {
 } from "../../types.ts";
 import { hasMatchingEtag } from "../../utils/etag.ts";
 import { getContentType } from "../../utils/content-types.ts";
-import { getRendererForProject } from "../../../shared/renderer-factory.ts";
+import {
+  clearProjectCachesAfterRender,
+  getRendererForProject,
+  shouldRejectDueToMemory,
+} from "../../../shared/renderer-factory.ts";
+import { getHeapStats } from "../../../../core/memory/index.ts";
 import { serverLogger as _logger } from "@veryfront/utils";
 import { endRequest, startRequest, timeAsync } from "@veryfront/utils";
 import { computeSSRETag } from "./etag-handler.ts";
@@ -190,6 +195,24 @@ export class SSRHandler extends BaseHandler {
     const studioEmbed = url.searchParams.get("studio_embed") === "true";
     const builderOptions = { studioEmbed };
 
+    // Pre-render memory check - reject if memory is critically high to prevent OOM
+    if (shouldRejectDueToMemory()) {
+      const nonce = generateNonce();
+      const builder = this.createResponseBuilder(ctx, nonce, builderOptions);
+      this.logDebug("Rejecting request due to memory pressure", { slug }, ctx);
+
+      return this.respond(
+        builder
+          .withCORS(req, ctx.securityConfig?.cors)
+          .withCache("no-cache")
+          .withContentType(
+            getContentType(".html"),
+            "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><title>Service Temporarily Unavailable</title></head><body><h1>503 Service Temporarily Unavailable</h1><p>The server is under heavy load. Please try again.</p></body></html>",
+            503,
+          ),
+      );
+    }
+
     try {
       // Use centralized renderer factory with per-project LRU caching
       // This prevents memory growth in multi-project mode
@@ -240,6 +263,18 @@ export class SSRHandler extends BaseHandler {
       const projectId = ctx.projectSlug || url.searchParams.get("project_id") || undefined;
       const pageId = url.searchParams.get("page_id") || undefined;
 
+      // Memory profiling: log heap before render for debugging large projects
+      const preRenderHeap = getHeapStats();
+      if (preRenderHeap.heapUsedPercent > 30) {
+        _logger.info("[SSR] Pre-render memory", {
+          projectSlug: ctx.projectSlug,
+          slug,
+          heapUsedMB: preRenderHeap.usedHeapSizeMB,
+          heapLimitMB: preRenderHeap.heapSizeLimitMB,
+          heapUsedPercent: preRenderHeap.heapUsedPercent,
+        });
+      }
+
       const result = await timeAsync("render-page", () =>
         renderer.renderPage(slug, {
           delivery: "stream",
@@ -253,6 +288,26 @@ export class SSRHandler extends BaseHandler {
         }));
       this.logDebug("SSR successful", { slug, params }, ctx);
       endRequest(requestId);
+
+      // Memory profiling: log heap after render for debugging large projects
+      const postRenderHeap = getHeapStats();
+      const heapGrowthMB = postRenderHeap.usedHeapSizeMB - preRenderHeap.usedHeapSizeMB;
+      if (heapGrowthMB > 50 || postRenderHeap.heapUsedPercent > 50) {
+        _logger.info("[SSR] Post-render memory", {
+          projectSlug: ctx.projectSlug,
+          slug,
+          heapUsedMB: postRenderHeap.usedHeapSizeMB,
+          heapLimitMB: postRenderHeap.heapSizeLimitMB,
+          heapUsedPercent: postRenderHeap.heapUsedPercent,
+          heapGrowthMB: Math.round(heapGrowthMB * 100) / 100,
+        });
+      }
+
+      // Aggressive post-render cache eviction to prevent memory buildup
+      // This runs async and doesn't block the response
+      clearProjectCachesAfterRender(ctx.projectSlug || "", projectId).catch((err) => {
+        this.logDebug("Post-render cache eviction failed", { error: String(err) }, ctx);
+      });
 
       // TRUE STREAMING: If we have a stream but no buffered HTML, this is true streaming mode
       // Skip ETag/304 checks since we don't have the content to hash

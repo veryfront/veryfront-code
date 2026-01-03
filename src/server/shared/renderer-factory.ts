@@ -572,3 +572,63 @@ export function stopPeriodicMemoryCheck(): void {
 export async function triggerMemoryCheck(): Promise<boolean> {
   return await checkAndEvictUnderMemoryPressure("manual");
 }
+
+/**
+ * Check if memory is too high to safely process a request.
+ * Returns true if the request should be rejected to prevent OOM.
+ *
+ * This is a fast, synchronous check that should be called before starting
+ * expensive SSR operations.
+ */
+export function shouldRejectDueToMemory(): boolean {
+  const heap = getHeapStats();
+  // Reject if we're above 90% of heap limit - OOM is imminent
+  if (heap.heapUsedPercent >= 90) {
+    rendererLogger.warn("[RendererFactory] Rejecting request - memory critical", {
+      heapUsedMB: heap.usedHeapSizeMB,
+      heapLimitMB: heap.heapSizeLimitMB,
+      heapUsedPercent: heap.heapUsedPercent,
+    });
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Aggressively clear caches for a specific project after SSR render.
+ * This should be called after every SSR render to prevent memory buildup
+ * from large projects like codersociety.
+ *
+ * @param projectSlug - Project slug to clear caches for
+ * @param projectId - Project ID for SSR module cache
+ */
+export async function clearProjectCachesAfterRender(
+  projectSlug: string,
+  projectId?: string,
+): Promise<void> {
+  const heap = getHeapStats();
+
+  // Only do aggressive eviction if memory is elevated (>50% of heap)
+  if (heap.heapUsedPercent < 50) {
+    return;
+  }
+
+  rendererLogger.info("[RendererFactory] Post-render cache eviction", {
+    projectSlug,
+    projectId,
+    heapUsedMB: heap.usedHeapSizeMB,
+    heapUsedPercent: heap.heapUsedPercent,
+  });
+
+  // Clear SSR module cache for this project
+  if (projectId) {
+    clearSSRModuleCacheForProject(projectId);
+  } else if (projectSlug) {
+    clearSSRModuleCacheForProject(projectSlug);
+  }
+
+  // If memory is very high, also trigger broader eviction
+  if (heap.heapUsedPercent >= 70) {
+    await checkAndEvictUnderMemoryPressure("manual");
+  }
+}
