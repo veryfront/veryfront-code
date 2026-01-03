@@ -7,11 +7,6 @@ import { generateServiceWorker } from "../../../src/server/build-service-worker.
 import type { BuildManifest } from "../../../src/build/production-build/index.ts";
 import { cleanupBundler } from "../../../src/rendering/cleanup.ts";
 
-// Clean up renderer intervals to prevent resource leaks
-afterAll(async () => {
-  await cleanupBundler();
-});
-
 // Helper to create minimal valid BuildManifest for testing
 function createTestManifest(overrides?: Partial<BuildManifest>): BuildManifest {
   return {
@@ -42,6 +37,11 @@ describe("Service Worker Generation", {
   sanitizeOps: false,
   sanitizeResources: false,
 }, () => {
+  // Clean up renderer intervals to prevent resource leaks
+  afterAll(async () => {
+    await cleanupBundler();
+  });
+
   describe("generateServiceWorker()", () => {
     it("should generate valid service worker code", () => {
       const manifest = createTestManifest({

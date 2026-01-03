@@ -19,15 +19,15 @@ import type { BuildStats } from "../../../../src/server/build-types.ts";
 import { withTestContext } from "../../../_helpers/context.ts";
 import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";
 
-// Clean up renderer intervals to prevent resource leaks
-afterAll(async () => {
-  await cleanupBundler();
-});
+describe("Build Production Tests", { sanitizeOps: false, sanitizeResources: false }, () => {
+  // Clean up renderer intervals to prevent resource leaks
+  afterAll(async () => {
+    await cleanupBundler();
+  });
 
-describe(
-  "buildProduction - Core Functionality",
-  {},
-  () => {
+  describe(
+    "buildProduction - Core Functionality",
+    () => {
     it("exports function", () => {
       assertExists(buildProduction);
       assertEquals(typeof buildProduction, "function");
@@ -248,13 +248,11 @@ describe(
         assert(stats.pages >= 1);
       });
     });
-  },
-);
+  });
 
-describe(
-  "buildProduction - SSG Performance",
-  {},
-  () => {
+  describe(
+    "buildProduction - SSG Performance",
+    () => {
     it("smoke: >= 3 pages/sec throughput", async () => {
       await withTestContext("ssg-throughput", async (context) => {
         // Remove default app directory to use Pages Router
@@ -297,13 +295,11 @@ describe(
         );
       });
     });
-  },
-);
+  });
 
-describe(
-  "buildProduction - SSG Filters and Router Detection",
-  {},
-  () => {
+  describe(
+    "buildProduction - SSG Filters and Router Detection",
+    () => {
     it("dry-run SSG includes/excludes and app router detection", async () => {
       await withTestContext("build-ssg-dryrun", async (context) => {
         // Remove default app and pages directories
@@ -373,13 +369,11 @@ describe(
         assertEquals(exc.includes("/blog"), false);
       });
     });
-  },
-);
+  });
 
-describe(
-  "buildProduction - Edge Cases",
-  {},
-  () => {
+  describe(
+    "buildProduction - Edge Cases",
+    () => {
     it("handles invalid project directory", async () => {
       let thrown = false;
       try {
@@ -626,5 +620,5 @@ describe(
         assert(stats.pages >= 1);
       });
     });
-  },
-);
+  });
+});

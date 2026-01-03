@@ -9,20 +9,18 @@
  */
 
 import { assertEquals } from "std/assert/mod.ts";
-import { afterAll } from "std/testing/bdd.ts";
+import { afterAll, describe, it } from "std/testing/bdd.ts";
 import { join } from "std/path/mod.ts";
 import { withTestContext } from "../../../_helpers/context.ts";
 import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";
 
-// Clean up renderer intervals to prevent resource leaks
-afterAll(async () => {
-  await cleanupBundler();
-});
+describe("RSC Actions Tests", { sanitizeOps: false, sanitizeResources: false }, () => {
+  // Clean up renderer intervals to prevent resource leaks
+  afterAll(async () => {
+    await cleanupBundler();
+  });
 
-Deno.test(
-  "RSC - action endpoint handles server actions correctly",
-  {},
-  async () => {
+  it("RSC - action endpoint handles server actions correctly", async () => {
     /**
      * Tests the RSC action endpoint (_veryfront/rsc/action):
      * - Successful action invocation
@@ -77,138 +75,138 @@ Deno.test(
         Deno.env.set("VF_CACHE_ALLOW_CLOSE", originalAllowClose);
       }
     }
-  },
-);
+  });
 
-Deno.test("RSC - action endpoint validates request format", async () => {
-  /**
-   * Tests request validation:
-   * - Missing action ID returns 400
-   * - Invalid JSON returns 400
-   * - Proper error messages
-   */
-  const originalAllowClose = Deno.env.get("VF_CACHE_ALLOW_CLOSE");
-  Deno.env.set("VF_CACHE_ALLOW_CLOSE", "1");
+  it("RSC - action endpoint validates request format", async () => {
+    /**
+     * Tests request validation:
+     * - Missing action ID returns 400
+     * - Invalid JSON returns 400
+     * - Proper error messages
+     */
+    const originalAllowClose = Deno.env.get("VF_CACHE_ALLOW_CLOSE");
+    Deno.env.set("VF_CACHE_ALLOW_CLOSE", "1");
 
-  try {
-    await withTestContext("rsc-validation", async (context) => {
-      // Enable RSC via config instead of env var
-      await Deno.writeTextFile(
-        join(context.projectDir, "veryfront.config.js"),
-        `export default { experimental: { rsc: true } };`,
-      );
+    try {
+      await withTestContext("rsc-validation", async (context) => {
+        // Enable RSC via config instead of env var
+        await Deno.writeTextFile(
+          join(context.projectDir, "veryfront.config.js"),
+          `export default { experimental: { rsc: true } };`,
+        );
 
-      await Deno.writeTextFile(join(context.projectDir, "pages", "index.mdx"), "# Home");
+        await Deno.writeTextFile(join(context.projectDir, "pages", "index.mdx"), "# Home");
 
-      const server = await context.createProductionServer();
+        const server = await context.createProductionServer();
 
-      // Test missing action ID
-      const missingIdResponse = await fetch(
-        `http://localhost:${server.port}/_veryfront/rsc/action`,
-        {
+        // Test missing action ID
+        const missingIdResponse = await fetch(
+          `http://localhost:${server.port}/_veryfront/rsc/action`,
+          {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ args: [] }), // Missing 'id' field
+          },
+        );
+
+        assertEquals(missingIdResponse.status, 400, "Should return 400 for missing action ID");
+        const errorText = await missingIdResponse.text();
+        assertEquals(typeof errorText, "string", "Should return error message");
+      });
+    } finally {
+      if (originalAllowClose === undefined) {
+        Deno.env.delete("VF_CACHE_ALLOW_CLOSE");
+      } else {
+        Deno.env.set("VF_CACHE_ALLOW_CLOSE", originalAllowClose);
+      }
+    }
+  });
+
+  it("RSC - action endpoint returns 404 for non-existent actions", async () => {
+    /**
+     * Tests handling of non-existent actions:
+     * - Returns 404 status
+     * - Doesn't expose internal errors
+     */
+    const originalAllowClose = Deno.env.get("VF_CACHE_ALLOW_CLOSE");
+    Deno.env.set("VF_CACHE_ALLOW_CLOSE", "1");
+
+    try {
+      await withTestContext("rsc-not-found", async (context) => {
+        // Enable RSC via config instead of env var
+        await Deno.writeTextFile(
+          join(context.projectDir, "veryfront.config.js"),
+          `export default { experimental: { rsc: true } };`,
+        );
+
+        await Deno.writeTextFile(join(context.projectDir, "pages", "index.mdx"), "# Home");
+
+        const server = await context.createProductionServer();
+
+        // Test non-existent action
+        const response = await fetch(`http://localhost:${server.port}/_veryfront/rsc/action`, {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ args: [] }), // Missing 'id' field
-        },
-      );
+          body: JSON.stringify({ id: "nonExistentAction", args: [] }),
+        });
 
-      assertEquals(missingIdResponse.status, 400, "Should return 400 for missing action ID");
-      const errorText = await missingIdResponse.text();
-      assertEquals(typeof errorText, "string", "Should return error message");
-    });
-  } finally {
-    if (originalAllowClose === undefined) {
-      Deno.env.delete("VF_CACHE_ALLOW_CLOSE");
-    } else {
-      Deno.env.set("VF_CACHE_ALLOW_CLOSE", originalAllowClose);
-    }
-  }
-});
-
-Deno.test("RSC - action endpoint returns 404 for non-existent actions", async () => {
-  /**
-   * Tests handling of non-existent actions:
-   * - Returns 404 status
-   * - Doesn't expose internal errors
-   */
-  const originalAllowClose = Deno.env.get("VF_CACHE_ALLOW_CLOSE");
-  Deno.env.set("VF_CACHE_ALLOW_CLOSE", "1");
-
-  try {
-    await withTestContext("rsc-not-found", async (context) => {
-      // Enable RSC via config instead of env var
-      await Deno.writeTextFile(
-        join(context.projectDir, "veryfront.config.js"),
-        `export default { experimental: { rsc: true } };`,
-      );
-
-      await Deno.writeTextFile(join(context.projectDir, "pages", "index.mdx"), "# Home");
-
-      const server = await context.createProductionServer();
-
-      // Test non-existent action
-      const response = await fetch(`http://localhost:${server.port}/_veryfront/rsc/action`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ id: "nonExistentAction", args: [] }),
+        assertEquals(response.status, 404, "Should return 404 for non-existent action");
+        const errorText = await response.text();
+        assertEquals(typeof errorText, "string", "Should return error message");
       });
-
-      assertEquals(response.status, 404, "Should return 404 for non-existent action");
-      const errorText = await response.text();
-      assertEquals(typeof errorText, "string", "Should return error message");
-    });
-  } finally {
-    if (originalAllowClose === undefined) {
-      Deno.env.delete("VF_CACHE_ALLOW_CLOSE");
-    } else {
-      Deno.env.set("VF_CACHE_ALLOW_CLOSE", originalAllowClose);
+    } finally {
+      if (originalAllowClose === undefined) {
+        Deno.env.delete("VF_CACHE_ALLOW_CLOSE");
+      } else {
+        Deno.env.set("VF_CACHE_ALLOW_CLOSE", originalAllowClose);
+      }
     }
-  }
-});
+  });
 
-Deno.test("RSC - action endpoint enforces POST method", async () => {
-  /**
-   * Tests HTTP method restrictions:
-   * - Only POST is allowed
-   * - GET, PUT, DELETE return 405
-   * - Proper Allow header in response
-   */
-  const originalAllowClose = Deno.env.get("VF_CACHE_ALLOW_CLOSE");
-  Deno.env.set("VF_CACHE_ALLOW_CLOSE", "1");
+  it("RSC - action endpoint enforces POST method", async () => {
+    /**
+     * Tests HTTP method restrictions:
+     * - Only POST is allowed
+     * - GET, PUT, DELETE return 405
+     * - Proper Allow header in response
+     */
+    const originalAllowClose = Deno.env.get("VF_CACHE_ALLOW_CLOSE");
+    Deno.env.set("VF_CACHE_ALLOW_CLOSE", "1");
 
-  try {
-    await withTestContext("rsc-method-restriction", async (context) => {
-      // Enable RSC via config instead of env var
-      await Deno.writeTextFile(
-        join(context.projectDir, "veryfront.config.js"),
-        `export default { experimental: { rsc: true } };`,
-      );
+    try {
+      await withTestContext("rsc-method-restriction", async (context) => {
+        // Enable RSC via config instead of env var
+        await Deno.writeTextFile(
+          join(context.projectDir, "veryfront.config.js"),
+          `export default { experimental: { rsc: true } };`,
+        );
 
-      await Deno.writeTextFile(join(context.projectDir, "pages", "index.mdx"), "# Home");
+        await Deno.writeTextFile(join(context.projectDir, "pages", "index.mdx"), "# Home");
 
-      const server = await context.createProductionServer();
+        const server = await context.createProductionServer();
 
-      // Test GET request (should fail)
-      const getResponse = await fetch(`http://localhost:${server.port}/_veryfront/rsc/action`);
-      assertEquals(getResponse.status, 405, "Should return 405 for GET request");
+        // Test GET request (should fail)
+        const getResponse = await fetch(`http://localhost:${server.port}/_veryfront/rsc/action`);
+        assertEquals(getResponse.status, 405, "Should return 405 for GET request");
 
-      // Consume response body to prevent resource leak
-      await getResponse.text();
+        // Consume response body to prevent resource leak
+        await getResponse.text();
 
-      // Test PUT request (should fail)
-      const putResponse = await fetch(`http://localhost:${server.port}/_veryfront/rsc/action`, {
-        method: "PUT",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ id: "test", args: [] }),
+        // Test PUT request (should fail)
+        const putResponse = await fetch(`http://localhost:${server.port}/_veryfront/rsc/action`, {
+          method: "PUT",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ id: "test", args: [] }),
+        });
+        assertEquals(putResponse.status, 405, "Should return 405 for PUT request");
+        await putResponse.text();
       });
-      assertEquals(putResponse.status, 405, "Should return 405 for PUT request");
-      await putResponse.text();
-    });
-  } finally {
-    if (originalAllowClose === undefined) {
-      Deno.env.delete("VF_CACHE_ALLOW_CLOSE");
-    } else {
-      Deno.env.set("VF_CACHE_ALLOW_CLOSE", originalAllowClose);
+    } finally {
+      if (originalAllowClose === undefined) {
+        Deno.env.delete("VF_CACHE_ALLOW_CLOSE");
+      } else {
+        Deno.env.set("VF_CACHE_ALLOW_CLOSE", originalAllowClose);
+      }
     }
-  }
+  });
 });

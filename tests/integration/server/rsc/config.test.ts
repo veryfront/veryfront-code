@@ -8,52 +8,43 @@
  */
 
 import { assert, assertEquals } from "std/assert/mod.ts";
-import { afterAll } from "std/testing/bdd.ts";
+import { afterAll, describe, it } from "std/testing/bdd.ts";
 import { join } from "std/path/mod.ts";
 import { withTestContext } from "../../../_helpers/context.ts";
 import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";
 
-// Clean up renderer intervals to prevent resource leaks
-afterAll(async () => {
-  await cleanupBundler();
-});
-
-Deno.test({
-  name: "RSC - endpoints are disabled by default",
-  // Run serially to avoid env var interference with parallel tests
-  sanitizeResources: false,
-  sanitizeOps: false,
-}, async () => {
-  /**
-   * Verifies RSC endpoints return 404 when feature flag is not set
-   * This ensures RSC is opt-in only
-   */
-  await withTestContext("rsc-disabled", async (context) => {
-    // Enable cache closing for tests
-    // NOTE: We explicitly DO NOT set VERYFRONT_EXPERIMENTAL_RSC here
-    // to test the "disabled by default" behavior
-    context.setEnv({ VF_CACHE_ALLOW_CLOSE: "1" });
-
-    // Create minimal project structure
-    await Deno.writeTextFile(join(context.projectDir, "pages", "index.mdx"), "# Home Page");
-
-    const server = await context.createProductionServer();
-
-    // Test RSC probe endpoint
-    const response = await fetch(`http://localhost:${server.port}/_veryfront/rsc/probe`);
-    assertEquals(response.status, 404, "RSC probe should return 404 when disabled");
-
-    // Consume response body
-    await response.text();
+describe("RSC Config Tests", { sanitizeOps: false, sanitizeResources: false }, () => {
+  // Clean up renderer intervals to prevent resource leaks
+  afterAll(async () => {
+    await cleanupBundler();
   });
-});
 
-Deno.test({
-  name: "RSC - endpoints are enabled with feature flag",
-  // Run serially to avoid env var interference with parallel tests
-  sanitizeResources: false,
-  sanitizeOps: false,
-}, async () => {
+  it("RSC - endpoints are disabled by default", async () => {
+    /**
+     * Verifies RSC endpoints return 404 when feature flag is not set
+     * This ensures RSC is opt-in only
+     */
+    await withTestContext("rsc-disabled", async (context) => {
+      // Enable cache closing for tests
+      // NOTE: We explicitly DO NOT set VERYFRONT_EXPERIMENTAL_RSC here
+      // to test the "disabled by default" behavior
+      context.setEnv({ VF_CACHE_ALLOW_CLOSE: "1" });
+
+      // Create minimal project structure
+      await Deno.writeTextFile(join(context.projectDir, "pages", "index.mdx"), "# Home Page");
+
+      const server = await context.createProductionServer();
+
+      // Test RSC probe endpoint
+      const response = await fetch(`http://localhost:${server.port}/_veryfront/rsc/probe`);
+      assertEquals(response.status, 404, "RSC probe should return 404 when disabled");
+
+      // Consume response body
+      await response.text();
+    });
+  });
+
+  it("RSC - endpoints are enabled with feature flag", async () => {
     /**
      * Verifies all RSC endpoints work when VERYFRONT_EXPERIMENTAL_RSC is set:
      * - /probe - health check
@@ -177,5 +168,6 @@ Deno.test({
         const pageResponse = await fetch(`http://localhost:${server.port}/_veryfront/rsc/page`);
         assertEquals(pageResponse.status, 200, "Page shell endpoint should return 200");
         await pageResponse.text();
+    });
   });
 });

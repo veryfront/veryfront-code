@@ -8,21 +8,19 @@
 
 import { assertEquals, assertExists } from "https://deno.land/std@0.220.0/assert/mod.ts";
 import { join } from "https://deno.land/std@0.220.0/path/mod.ts";
-import { afterAll } from "std/testing/bdd.ts";
+import { afterAll, describe, it } from "std/testing/bdd.ts";
 import { VeryfrontRenderer } from "../../../../src/rendering/orchestrator/ssr.ts";
 import { cleanupTestDir, createTestProjectDir } from "../../../_helpers/server.ts";
 import { DenoAdapter } from "@veryfront/platform/adapters/deno.ts";
 import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";
 
-// Clean up bundler intervals to prevent resource leaks
-afterAll(async () => {
-  await cleanupBundler();
-});
+describe("Core Integration Tests", { sanitizeOps: false, sanitizeResources: false }, () => {
+  // Clean up bundler intervals to prevent resource leaks
+  afterAll(async () => {
+    await cleanupBundler();
+  });
 
-Deno.test({
-  name: "Core Integration - Full rendering pipeline with new architecture",
-  sanitizeResources: false, // Temporary: Known KV resource leak issue
-  async fn() {
+  it("Full rendering pipeline with new architecture", async () => {
     const projectDir = await createTestProjectDir();
 
     try {
@@ -63,14 +61,9 @@ This is a test.`,
     } finally {
       await cleanupTestDir(projectDir);
     }
-  },
-});
+  });
 
-Deno.test({
-  name: "Core Integration - Configuration manager properly initialized",
-  sanitizeOps: false,
-  sanitizeResources: false,
-  async fn() {
+  it("Configuration manager properly initialized", async () => {
   const projectDir = await createTestProjectDir();
 
   try {
@@ -102,13 +95,9 @@ Deno.test({
   } finally {
     await cleanupTestDir(projectDir);
   }
-}});
+  });
 
-Deno.test({
-  name: "Core Integration - Lifecycle initialization of all services",
-  sanitizeOps: false,
-  sanitizeResources: false,
-  async fn() {
+  it("Lifecycle initialization of all services", async () => {
   const projectDir = await createTestProjectDir();
 
   try {
@@ -144,13 +133,9 @@ Deno.test({
   } finally {
     await cleanupTestDir(projectDir);
   }
-}});
+  });
 
-Deno.test({
-  name: "Core Integration - Cache management through lifecycle",
-  sanitizeOps: false,
-  sanitizeResources: false,
-  async fn() {
+  it("Cache management through lifecycle", async () => {
   const projectDir = await createTestProjectDir();
 
   try {
@@ -192,13 +177,9 @@ title: Cached Page
   } finally {
     await cleanupTestDir(projectDir);
   }
-}});
+  });
 
-Deno.test({
-  name: "Core Integration - MDX compilation through new architecture",
-  sanitizeOps: false,
-  sanitizeResources: false,
-  async fn() {
+  it("MDX compilation through new architecture", async () => {
   const projectDir = await createTestProjectDir();
 
   try {
@@ -244,13 +225,9 @@ More content.`,
   } finally {
     await cleanupTestDir(projectDir);
   }
-}});
+  });
 
-Deno.test({
-  name: "Core Integration - Component initialization",
-  sanitizeOps: false,
-  sanitizeResources: false,
-  async fn() {
+  it("Component initialization", async () => {
   const projectDir = await createTestProjectDir();
 
   try {
@@ -281,13 +258,9 @@ Deno.test({
   } finally {
     await cleanupTestDir(projectDir);
   }
-}});
+  });
 
-Deno.test({
-  name: "Core Integration - Proper cleanup with destroy()",
-  sanitizeOps: false,
-  sanitizeResources: false,
-  async fn() {
+  it("Proper cleanup with destroy()", async () => {
   const projectDir = await createTestProjectDir();
 
   try {
@@ -312,4 +285,5 @@ Deno.test({
   } finally {
     await cleanupTestDir(projectDir);
   }
-}});
+  });
+});
