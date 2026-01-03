@@ -44,6 +44,7 @@ export async function startUniversalServer(
     projectDir,
     debug,
     mode,
+    config: bootstrap.config,
   });
 
   let onListenResolve: (() => void) | null = null;
