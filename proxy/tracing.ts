@@ -64,14 +64,14 @@ export async function initializeOTLP(): Promise<void> {
   }
 
   try {
-    // Dynamic imports for tree-shaking when disabled
-    const { trace } = await import("@opentelemetry/api");
+    // Dynamic imports using explicit npm: specifiers for proxy container
+    const { trace } = await import("npm:@opentelemetry/api@1");
     const { BasicTracerProvider, BatchSpanProcessor } = await import(
-      "@opentelemetry/sdk-trace-base"
+      "npm:@opentelemetry/sdk-trace-base@1"
     );
-    const { OTLPTraceExporter } = await import("@opentelemetry/exporter-trace-otlp-http");
-    const { Resource } = await import("@opentelemetry/resources");
-    const { ATTR_SERVICE_NAME } = await import("@opentelemetry/semantic-conventions");
+    const { OTLPTraceExporter } = await import("npm:@opentelemetry/exporter-trace-otlp-http@0.57");
+    const { Resource } = await import("npm:@opentelemetry/resources@1");
+    const { ATTR_SERVICE_NAME } = await import("npm:@opentelemetry/semantic-conventions@1");
 
     // Create resource with service name
     const resource = new Resource({
