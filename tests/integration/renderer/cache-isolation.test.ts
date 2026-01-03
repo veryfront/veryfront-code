@@ -9,9 +9,9 @@ import { describe, it } from "std/testing/bdd.ts";
 import { createRenderer } from "../../../src/rendering/index.ts";
 import { withTestContext } from "../../_helpers/context.ts";
 
-  // Note: Sanitizers disabled due to React 19 SSR MessagePort cleanup issue
-  // See: https://github.com/facebook/react/issues/24669
-  describe(
+// Note: Sanitizers disabled due to React 19 SSR MessagePort cleanup issue
+// See: https://github.com/facebook/react/issues/24669
+describe(
   "Renderer Cache Isolation",
   {
     // Disable sanitizers for renderer cache and MessagePort resource leaks
@@ -143,10 +143,14 @@ import { withTestContext } from "../../_helpers/context.ts";
           );
 
           // Ensure filesystem mtime changes across platforms
-          await new Promise((r) => setTimeout(r, 1100));
+          // Use longer delay for CI environments where filesystem can be slower
+          await new Promise((r) => setTimeout(r, 2000));
 
-          // Clear cache
+          // Clear cache and force module invalidation
           renderer.clearCache();
+
+          // Additional delay to ensure cache clearing propagates
+          await new Promise((r) => setTimeout(r, 100));
 
           // Re-render - should see updated layout
           const result2 = await renderer.renderPage("test");
