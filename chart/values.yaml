@@ -120,7 +120,7 @@ proxy:
 # Handles SSR rendering requests
 renderer:
   enabled: true
-  replicaCount: 6
+  replicaCount: 2
 
   image:
     repository: ghcr.io/veryfront/veryfront-renderer
