@@ -53,4 +53,5 @@ export interface ResponseBuilderConfig {
   cspUserHeader?: string | null;
   adapter?: import("@veryfront/platform/adapters/base.ts").RuntimeAdapter;
   nonce?: string; // Optional pre-generated nonce for CSP consistency
+  studioEmbed?: boolean; // When true, skips X-Frame-Options for Studio iframe embedding
 }
