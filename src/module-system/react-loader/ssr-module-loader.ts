@@ -95,9 +95,14 @@ export class SSRModuleLoader {
         this.options.adapter,
       );
 
+      console.log("[SSRModuleLoader] Processing local imports for:", filePath, "imports:", localImports.map(i => i.absolutePath));
+
       for (const imp of localImports) {
+        console.log("[SSRModuleLoader] Reading dependency:", imp.absolutePath);
         const depSource = await this.options.adapter.fs.readFile(imp.absolutePath);
+        console.log("[SSRModuleLoader] Got dependency source, length:", depSource.length);
         await this.transformWithDependencies(imp.absolutePath, depSource);
+        console.log("[SSRModuleLoader] Finished transforming dependency:", imp.absolutePath);
       }
 
       const transformOpts: TransformOptions = {
@@ -117,8 +122,10 @@ export class SSRModuleLoader {
       // Include content hash in temp path to avoid Deno module cache issues
       const tempPath = await this.getTempPath(filePath, contentHash);
       const tempDir = tempPath.substring(0, tempPath.lastIndexOf("/"));
+      console.log("[SSRModuleLoader] Writing file to cache:", { filePath, tempPath });
       await this.fs.mkdir(tempDir, { recursive: true });
       await this.fs.writeTextFile(tempPath, transformed);
+      console.log("[SSRModuleLoader] Successfully wrote file:", tempPath);
 
       // Store both the content-keyed and filePath-keyed entries
       globalModuleCache.set(contentCacheKey, tempPath);
