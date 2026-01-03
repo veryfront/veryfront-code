@@ -570,5 +570,5 @@ export function stopPeriodicMemoryCheck(): void {
  * Useful for testing or when you know memory pressure is high.
  */
 export async function triggerMemoryCheck(): Promise<boolean> {
-  return checkAndEvictUnderMemoryPressure("manual");
+  return await checkAndEvictUnderMemoryPressure("manual");
 }
