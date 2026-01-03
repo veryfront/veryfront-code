@@ -98,7 +98,12 @@ export class SSRModuleLoader {
         this.options.adapter,
       );
 
-      console.log("[SSRModuleLoader] Processing local imports for:", filePath, "imports:", localImports.map(i => i.absolutePath));
+      console.log(
+        "[SSRModuleLoader] Processing local imports for:",
+        filePath,
+        "imports:",
+        localImports.map((i) => i.absolutePath),
+      );
 
       for (const imp of localImports) {
         console.log("[SSRModuleLoader] Reading dependency:", imp.absolutePath);
@@ -151,7 +156,7 @@ export class SSRModuleLoader {
     return Math.abs(hash).toString(16);
   }
 
-  private async getTempPath(filePath: string, contentHash?: string): Promise<string> {
+  private async getTempPath(filePath: string, _contentHash?: string): Promise<string> {
     const tmpDir = await this.ensureTmpDir();
 
     let relativePath = filePath;
@@ -160,10 +165,11 @@ export class SSRModuleLoader {
       relativePath = filePath.substring(projectDir.length);
     }
 
-    // Include content hash in filename to avoid Deno module cache issues
-    // Different file versions get different temp paths
-    const hashSuffix = contentHash ? `.${contentHash}` : "";
-    const jsPath = relativePath.replace(/\.(tsx?|jsx|mdx)$/, `${hashSuffix}.js`);
+    // Don't include content hash in filename - it breaks import resolution
+    // between transformed modules. The content-based cache keys in
+    // globalModuleCache handle correctness, and the query param cache buster
+    // on loadModule handles Deno's module cache.
+    const jsPath = relativePath.replace(/\.(tsx?|jsx|mdx)$/, ".js");
     return join(tmpDir, jsPath);
   }
 
