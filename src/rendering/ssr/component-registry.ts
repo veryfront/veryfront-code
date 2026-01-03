@@ -311,7 +311,9 @@ export class ComponentRegistry {
     this.initialized = true;
 
     if (failCount > 0) {
-      logger.warn(`Component initialization complete: ${successCount} succeeded, ${failCount} failed (using fallbacks)`);
+      logger.warn(
+        `Component initialization complete: ${successCount} succeeded, ${failCount} failed (using fallbacks)`,
+      );
     } else {
       logger.info(`Component initialization complete: ${successCount} components loaded`);
     }

@@ -3,7 +3,7 @@ import type * as React from "react";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import { transformToESM } from "@veryfront/transforms/esm/transform-core.ts";
 import type { TransformOptions } from "@veryfront/transforms/esm/types.ts";
-import { parseLocalImports, type MissingImport } from "@veryfront/transforms/esm/import-parser.ts";
+import { type MissingImport, parseLocalImports } from "@veryfront/transforms/esm/import-parser.ts";
 import { createFileSystem } from "../../platform/compat/fs.ts";
 import { createError, toError } from "../../core/errors/veryfront-error.ts";
 import { rendererLogger as logger } from "@veryfront/utils";
@@ -82,10 +82,16 @@ export class SSRModuleLoader {
     const failureRecord = failedComponents.get(circuitKey);
     if (failureRecord) {
       const timeSinceFailure = Date.now() - failureRecord.lastFailure;
-      if (failureRecord.count >= CIRCUIT_BREAKER_THRESHOLD && timeSinceFailure < CIRCUIT_BREAKER_RESET_MS) {
+      if (
+        failureRecord.count >= CIRCUIT_BREAKER_THRESHOLD &&
+        timeSinceFailure < CIRCUIT_BREAKER_RESET_MS
+      ) {
         throw toError(createError({
           type: "build",
-          message: `Component ${filePath} is temporarily blocked due to repeated failures. Will retry in ${Math.ceil((CIRCUIT_BREAKER_RESET_MS - timeSinceFailure) / 1000)}s.`,
+          message:
+            `Component ${filePath} is temporarily blocked due to repeated failures. Will retry in ${
+              Math.ceil((CIRCUIT_BREAKER_RESET_MS - timeSinceFailure) / 1000)
+            }s.`,
           context: { file: filePath, phase: "circuit-breaker", failures: failureRecord.count },
         }));
       }
@@ -104,7 +110,7 @@ export class SSRModuleLoader {
       // Check if any dependencies were missing
       if (this.missingDependencies.length > 0) {
         const missingList = this.missingDependencies
-          .map(m => `  - ${m.specifier} (from ${m.fromFile.slice(-40)}): ${m.reason}`)
+          .map((m) => `  - ${m.specifier} (from ${m.fromFile.slice(-40)}): ${m.reason}`)
           .join("\n");
 
         logger.error("[SSR-MODULE-LOADER] Missing dependencies detected", {
@@ -210,7 +216,9 @@ export class SSRModuleLoader {
             this.missingDependencies.push({
               specifier: imp.specifier,
               fromFile: filePath,
-              reason: `Failed to read file: ${error instanceof Error ? error.message : String(error)}`,
+              reason: `Failed to read file: ${
+                error instanceof Error ? error.message : String(error)
+              }`,
             });
           }
         }),
