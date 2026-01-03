@@ -61,7 +61,7 @@ export class PageResolver {
       this.adapter,
     );
 
-    logger.info("Router mode:", {
+    logger.debug("[PageResolver] Router mode", {
       useAppRouter,
       projectDir: this.projectDir,
       slug,

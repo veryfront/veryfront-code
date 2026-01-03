@@ -77,7 +77,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
     );
     this.statOps = new StatOperations(this.client, this.cache, this.normalizer, productionContext);
 
-    logger.info("[VeryfrontFSAdapter] Created", {
+    logger.debug("[VeryfrontFSAdapter] Created", {
       apiBaseUrl: veryfrontConfig.apiBaseUrl,
       projectSlug: veryfrontConfig.projectSlug,
       cacheEnabled: veryfrontConfig.cache.enabled,
@@ -87,7 +87,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
   async initialize(): Promise<void> {
     if (this.initialized) return;
 
-    logger.info("[VeryfrontFSAdapter] Initializing...");
+    logger.debug("[VeryfrontFSAdapter] Initializing...");
 
     await this.client.initialize();
 
@@ -102,7 +102,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
     // In production mode, skip draft file fetching and WebSocket connection
     // Published content is immutable and doesn't need real-time updates
     if (this.productionMode) {
-      logger.info("[VeryfrontFSAdapter] Production mode - skipping WebSocket and draft files");
+      logger.debug("[VeryfrontFSAdapter] Production mode - skipping WebSocket and draft files");
       const cacheKey = `files:published:${this.releaseId ?? "latest"}`;
       const files = await this.client.listPublishedFiles(undefined, this.releaseId ?? undefined);
       this.cache.set(cacheKey, files);
@@ -171,11 +171,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
         try {
           const data = JSON.parse(event.data as string);
           const changedPaths = data.data?.changedPaths as string[] | undefined;
-          logger.info("[VeryfrontFSAdapter] Parsed message:", {
-            type: data.type,
-            source: data.data?.source,
-            changedPaths: changedPaths?.length || 0,
-          });
+          // Only log poke messages at info level, ping/pong are debug
           if (data.type === "poke") {
             logger.info("[VeryfrontFSAdapter] 🔄 POKE RECEIVED - triggering cache invalidation", {
               source: data.data?.source,
@@ -515,7 +511,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
   setProductionMode(enabled: boolean, releaseId?: string | null): void {
     this.productionMode = enabled;
     this.releaseId = releaseId ?? null;
-    logger.info("[VeryfrontFSAdapter] Production mode", {
+    logger.debug("[VeryfrontFSAdapter] Production mode set", {
       enabled,
       releaseId: releaseId ?? "latest",
     });
