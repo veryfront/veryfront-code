@@ -138,17 +138,19 @@ renderer:
 
   resources:
     requests:
-      cpu: "200m"
-      memory: "512Mi"
+      cpu: "500m"
+      memory: "1Gi"
       ephemeral-storage: "1Gi"
     limits:
-      cpu: "1000m"
-      memory: "1Gi"
+      cpu: "2000m"
+      memory: "1536Mi"
       ephemeral-storage: "2Gi"
 
   env:
     PORT: "20000"
     PROXY_MODE: "1"
+    # V8 heap size: 70% of 1536Mi = ~1Gi
+    DENO_V8_FLAGS: "--max-old-space-size=1024"
     # Structured JSON logging for Grafana
     LOG_FORMAT: "json"
     # OpenTelemetry tracing
