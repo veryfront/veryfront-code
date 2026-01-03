@@ -18,6 +18,7 @@
 import { TokenManager, type TokenScope } from "./token-manager.ts";
 import { parseProjectDomain } from "../src/server/utils/domain-parser.ts";
 import { createCacheFromEnv } from "./cache/index.ts";
+import { initializeOTLP, shutdownOTLP } from "./tracing.ts";
 
 // Configuration from environment variables
 const config = {
@@ -169,6 +170,7 @@ async function router(req: Request): Promise<Response> {
 async function shutdown(): Promise<void> {
   console.log("[Proxy] Shutting down...");
   await tokenManager.close();
+  await shutdownOTLP();
   console.log("[Proxy] Closed cache connections");
   Deno.exit(0);
 }
@@ -176,7 +178,8 @@ async function shutdown(): Promise<void> {
 Deno.addSignalListener("SIGINT", shutdown);
 Deno.addSignalListener("SIGTERM", shutdown);
 
-// Start server
+// Initialize tracing and start server
+await initializeOTLP();
 validateConfig();
 
 const cacheType = Deno.env.get("CACHE_TYPE") || "memory";
