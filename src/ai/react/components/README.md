@@ -143,7 +143,7 @@ Standalone message component for v5 UIMessage format.
 import { Message } from "veryfront/ai/components";
 
 <Message
-  message={msg}  // UIMessage with parts array
+  message={msg} // UIMessage with parts array
   showRole={true}
   showTimestamp={true}
   theme={{
@@ -380,9 +380,9 @@ export default function AdvancedChat() {
 
 ```tsx
 // Before (v4 - deprecated)
-{messages.map((msg) => (
-  <div key={msg.id}>{msg.content}</div>
-))}
+{
+  messages.map((msg) => <div key={msg.id}>{msg.content}</div>);
+}
 
 // After (v5)
 import type { UIMessage } from "veryfront/ai/react";
@@ -394,12 +394,12 @@ function getTextContent(message: UIMessage): string {
     .join("");
 }
 
-{messages.map((msg) => (
-  <div key={msg.id}>{getTextContent(msg)}</div>
-))}
+{
+  messages.map((msg) => <div key={msg.id}>{getTextContent(msg)}</div>);
+}
 
 // Or just use the Chat component which handles this automatically
-<Chat {...chat} />
+<Chat {...chat} />;
 ```
 
 ### From Custom UI → Styled Components

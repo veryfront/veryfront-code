@@ -193,9 +193,8 @@ export function logger(options?: LoggerOptions): Middleware {
   const skip = options?.skip;
   // For JSON format, output directly to console to preserve structure
   const isJson = format === "json";
-  const log = options?.log ?? (isJson
-    ? (msg: string) => console.log(msg)
-    : (msg: string) => serverLogger.info(msg));
+  const log = options?.log ??
+    (isJson ? (msg: string) => console.log(msg) : (msg: string) => serverLogger.info(msg));
 
   return async (ctx, next) => {
     const req = getRequest(ctx);

@@ -5,7 +5,14 @@
  * Supports in-memory (single instance) and Redis (distributed) backends.
  */
 
-export type { CacheOptions, CacheStats, MemoryCacheOptions, RedisCacheOptions, TokenCache, TokenCacheEntry } from "./types.ts";
+export type {
+  CacheOptions,
+  CacheStats,
+  MemoryCacheOptions,
+  RedisCacheOptions,
+  TokenCache,
+  TokenCacheEntry,
+} from "./types.ts";
 export { MemoryCache } from "./memory-cache.ts";
 export { RedisCache } from "./redis-cache.ts";
 
