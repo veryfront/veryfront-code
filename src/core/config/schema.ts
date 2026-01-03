@@ -168,6 +168,8 @@ export const veryfrontConfigSchema = z
             apiBaseUrl: z.string().url(),
             apiToken: z.string(),
             projectSlug: z.string(),
+            proxyMode: z.boolean().optional(),
+            productionMode: z.boolean().optional(),
             cache: z
               .object({
                 enabled: z.boolean().optional(),

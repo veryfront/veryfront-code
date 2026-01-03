@@ -126,11 +126,15 @@ export class RenderPipeline {
       allEsmUrls.add(match[1]!);
     }
 
-    // Fetch and cache each unique URL
-    for (const esmUrl of allEsmUrls) {
-      const cachedPath = await this.fetchEsmModule(esmUrl, tmpDir, localAdapter);
-      // Replace all occurrences of this URL
-      code = code.split(esmUrl).join(`file://${cachedPath}`);
+    // Fetch and cache all URLs in parallel for better performance
+    const urlArray = Array.from(allEsmUrls);
+    const cachedPaths = await Promise.all(
+      urlArray.map((esmUrl) => this.fetchEsmModule(esmUrl, tmpDir, localAdapter)),
+    );
+
+    // Replace all occurrences with cached paths
+    for (let i = 0; i < urlArray.length; i++) {
+      code = code.split(urlArray[i]!).join(`file://${cachedPaths[i]}`);
     }
 
     // Generate hash for the URL to create unique filename
@@ -227,10 +231,17 @@ export class RenderPipeline {
       esmImports.push({ full: esmMatch[0], url: esmMatch[2]! });
     }
 
-    // Fetch and cache each esm.sh dependency
-    for (const { full, url } of esmImports) {
-      const cachedPath = await this.fetchEsmModule(url, tmpDir, localAdapter);
-      transformedCode = transformedCode.replace(full, `from "file://${cachedPath}"`);
+    // Fetch and cache all esm.sh dependencies in parallel
+    if (esmImports.length > 0) {
+      const cachedPaths = await Promise.all(
+        esmImports.map(({ url }) => this.fetchEsmModule(url, tmpDir, localAdapter)),
+      );
+      for (let i = 0; i < esmImports.length; i++) {
+        transformedCode = transformedCode.replace(
+          esmImports[i]!.full,
+          `from "file://${cachedPaths[i]}"`,
+        );
+      }
     }
 
     // Transform each @/ dependency
@@ -282,27 +293,32 @@ export class RenderPipeline {
     // relativePath is "lib/Router" or "lib/usePageContext" - strip "lib/" since we already have libDir
     const fileName = relativePath.replace(/^lib\//, "");
 
-    // Try direct file match
+    // Build all candidate paths to check in parallel
+    const candidates: string[] = [];
     for (const ext of extensions) {
-      const fullPath = `${libDir}/${fileName}${ext}`;
-      try {
-        await localAdapter.fs.stat(fullPath);
-        logger.debug("[RenderPipeline] Found local lib file:", fullPath);
-        return fullPath;
-      } catch {
-        // Try next extension
-      }
+      candidates.push(`${libDir}/${fileName}${ext}`);
+    }
+    for (const ext of extensions) {
+      candidates.push(`${libDir}/${fileName}/index${ext}`);
     }
 
-    // Try index file
-    for (const ext of extensions) {
-      const fullPath = `${libDir}/${fileName}/index${ext}`;
-      try {
-        await localAdapter.fs.stat(fullPath);
-        logger.debug("[RenderPipeline] Found local lib index file:", fullPath);
-        return fullPath;
-      } catch {
-        // Try next extension
+    // Check all paths in parallel
+    const results = await Promise.all(
+      candidates.map(async (fullPath) => {
+        try {
+          await localAdapter.fs.stat(fullPath);
+          return fullPath;
+        } catch {
+          return null;
+        }
+      }),
+    );
+
+    // Return the first existing path (maintains priority order)
+    for (const result of results) {
+      if (result) {
+        logger.debug("[RenderPipeline] Found local lib file:", result);
+        return result;
       }
     }
 
@@ -314,54 +330,47 @@ export class RenderPipeline {
     const extensions = [".tsx", ".ts", ".jsx", ".js", ".mdx"];
     const projectDir = this.config.projectDir;
 
-    // Try with components/ prefix first (for @/ aliased imports)
+    // Build all candidate paths to check in parallel
+    // Priority order: direct with ext > direct index > without components prefix > without components index
+    const candidates: string[] = [];
+
+    // Priority 1: With components/ prefix (for @/ aliased imports)
     for (const ext of extensions) {
-      const fullPath = `${projectDir}/${basePath}${ext}`;
-      try {
-        await this.config.adapter.fs.stat(fullPath);
-        logger.debug("[RenderPipeline] Found file:", fullPath);
-        return fullPath;
-      } catch {
-        // Try next extension
-      }
+      candidates.push(`${projectDir}/${basePath}${ext}`);
+    }
+    // Priority 2: Index file with components/ prefix
+    for (const ext of extensions) {
+      candidates.push(`${projectDir}/${basePath}/index${ext}`);
     }
 
-    // Try index file
-    for (const ext of extensions) {
-      const fullPath = `${projectDir}/${basePath}/index${ext}`;
-      try {
-        await this.config.adapter.fs.stat(fullPath);
-        logger.debug("[RenderPipeline] Found index file:", fullPath);
-        return fullPath;
-      } catch {
-        // Try next extension
-      }
-    }
-
-    // Try without components/ prefix (in case files are stored without it)
+    // Priority 3 & 4: Without components/ prefix
     const withoutComponents = basePath.replace(/^components\//, "");
     if (withoutComponents !== basePath) {
       for (const ext of extensions) {
-        const fullPath = `${projectDir}/${withoutComponents}${ext}`;
-        try {
-          await this.config.adapter.fs.stat(fullPath);
-          logger.debug("[RenderPipeline] Found file (without components):", fullPath);
-          return fullPath;
-        } catch {
-          // Try next extension
-        }
+        candidates.push(`${projectDir}/${withoutComponents}${ext}`);
       }
-
-      // Also try index files for the path without components/
       for (const ext of extensions) {
-        const fullPath = `${projectDir}/${withoutComponents}/index${ext}`;
+        candidates.push(`${projectDir}/${withoutComponents}/index${ext}`);
+      }
+    }
+
+    // Check all paths in parallel
+    const results = await Promise.all(
+      candidates.map(async (fullPath) => {
         try {
           await this.config.adapter.fs.stat(fullPath);
-          logger.debug("[RenderPipeline] Found index file (without components):", fullPath);
           return fullPath;
         } catch {
-          // Try next extension
+          return null;
         }
+      }),
+    );
+
+    // Return the first existing path (maintains priority order)
+    for (const result of results) {
+      if (result) {
+        logger.debug("[RenderPipeline] Found file:", result);
+        return result;
       }
     }
 
