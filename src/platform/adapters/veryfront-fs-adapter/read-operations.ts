@@ -68,11 +68,21 @@ export class ReadOperations {
       this.cache.set(cacheKey, content);
       return content;
     } catch (error) {
-      logger.error("[ReadOperations] Failed to fetch published content", {
-        path: normalizedPath,
-        releaseId,
-        error: error instanceof Error ? error.message : String(error),
-      });
+      // Use debug level for 404 errors (expected when probing for optional files like 404.tsx, _error.tsx)
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      const is404Error = errorMessage.includes("404") || errorMessage.includes("Not Found");
+      if (is404Error) {
+        logger.debug("[ReadOperations] File not found (expected for optional files)", {
+          path: normalizedPath,
+          releaseId,
+        });
+      } else {
+        logger.error("[ReadOperations] Failed to fetch published content", {
+          path: normalizedPath,
+          releaseId,
+          error: errorMessage,
+        });
+      }
       throw error;
     }
   }
