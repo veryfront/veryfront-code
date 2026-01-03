@@ -17,6 +17,77 @@ interface DeferredComponentSource {
   projectRoot: string;
 }
 
+interface FailedComponent {
+  name: string;
+  error: string;
+  filePath: string;
+  timestamp: number;
+}
+
+/**
+ * Creates an error boundary component that renders a fallback for failed components.
+ * This prevents one broken component from crashing the entire page.
+ */
+function createErrorFallbackComponent(
+  componentName: string,
+  error: string,
+): React.ComponentType<Record<string, unknown>> {
+  // Create a functional component that renders an error placeholder
+  const ErrorFallback: React.FC<Record<string, unknown>> = () => {
+    // In production, render nothing (or a minimal placeholder)
+    // In development, show error details
+    const isDev = typeof process !== "undefined" &&
+      process.env?.NODE_ENV === "development";
+
+    if (!isDev) {
+      // Production: render an empty fragment to avoid breaking layout
+      return React.createElement(React.Fragment);
+    }
+
+    // Development: show error details
+    return React.createElement(
+      "div",
+      {
+        style: {
+          padding: "16px",
+          margin: "8px 0",
+          backgroundColor: "#fef2f2",
+          border: "1px solid #fecaca",
+          borderRadius: "8px",
+          fontFamily: "system-ui, sans-serif",
+        },
+      },
+      React.createElement(
+        "div",
+        {
+          style: {
+            fontWeight: "600",
+            color: "#991b1b",
+            marginBottom: "8px",
+          },
+        },
+        `⚠️ Component "${componentName}" failed to load`,
+      ),
+      React.createElement(
+        "pre",
+        {
+          style: {
+            fontSize: "12px",
+            color: "#7f1d1d",
+            whiteSpace: "pre-wrap",
+            wordBreak: "break-word",
+            margin: 0,
+          },
+        },
+        error,
+      ),
+    );
+  };
+
+  ErrorFallback.displayName = `ErrorFallback(${componentName})`;
+  return ErrorFallback as React.ComponentType<Record<string, unknown>>;
+}
+
 /**
  * Registry for managing React components with virtual module system integration.
  * Supports deferred loading, caching, and component initialization.
@@ -32,6 +103,7 @@ export class ComponentRegistry {
   private components: Map<string, React.ComponentType<Record<string, unknown>>> = new Map();
   private virtualModules: VirtualModuleSystem;
   private componentSources: Map<string, DeferredComponentSource> = new Map();
+  private failedComponents: Map<string, FailedComponent> = new Map();
   private initialized = false;
   private projectDir = "";
   private serverPort: number;
@@ -166,6 +238,7 @@ export class ComponentRegistry {
   clear(): void {
     this.components.clear();
     this.componentSources.clear();
+    this.failedComponents.clear();
     this.initialized = false;
   }
 
@@ -174,8 +247,10 @@ export class ComponentRegistry {
    * Should be called after loadFromDirectory with deferLoading=true.
    *
    * @remarks
-   * Loads all stored component sources and marks registry as initialized
-   * Only runs once - subsequent calls return immediately
+   * Loads all stored component sources and marks registry as initialized.
+   * Failed components are replaced with error fallback components to prevent
+   * one broken component from crashing the entire page.
+   * Only runs once - subsequent calls return immediately.
    */
   async initializeComponents(): Promise<void> {
     if (this.initialized) return;
@@ -185,6 +260,9 @@ export class ComponentRegistry {
     }
 
     logger.info(`Initializing ${this.componentSources.size} deferred components`);
+
+    let successCount = 0;
+    let failCount = 0;
 
     for (const [componentName, info] of this.componentSources) {
       try {
@@ -202,15 +280,58 @@ export class ComponentRegistry {
         );
 
         this.components.set(componentName, Component);
+        // Clear any previous failure record
+        this.failedComponents.delete(componentName);
+        successCount++;
         logger.debug(`Successfully loaded component: ${componentName}`);
       } catch (error) {
-        logger.error(`Failed to load deferred component ${componentName}:`, error);
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        failCount++;
+
+        // Track the failure
+        this.failedComponents.set(componentName, {
+          name: componentName,
+          error: errorMessage,
+          filePath: info.filePath,
+          timestamp: Date.now(),
+        });
+
+        // Create and register a fallback component
+        const fallbackComponent = createErrorFallbackComponent(componentName, errorMessage);
+        this.components.set(componentName, fallbackComponent);
+
+        logger.error(`Failed to load component ${componentName}, using fallback:`, {
+          error: errorMessage,
+          filePath: info.filePath,
+        });
       }
     }
 
     this.componentSources.clear();
     this.initialized = true;
-    logger.info("Component initialization complete");
+
+    if (failCount > 0) {
+      logger.warn(`Component initialization complete: ${successCount} succeeded, ${failCount} failed (using fallbacks)`);
+    } else {
+      logger.info(`Component initialization complete: ${successCount} components loaded`);
+    }
+  }
+
+  /**
+   * Gets information about failed components.
+   * @returns Array of failed component records
+   */
+  getFailedComponents(): FailedComponent[] {
+    return Array.from(this.failedComponents.values());
+  }
+
+  /**
+   * Checks if a component failed to load.
+   * @param name - Component name to check
+   * @returns True if the component failed to load
+   */
+  hasFailed(name: string): boolean {
+    return this.failedComponents.has(name);
   }
 
   private async collectComponents(

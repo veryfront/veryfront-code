@@ -12,6 +12,7 @@ export const getRouterScript = () => `
     const MAX_CACHE_SIZE = 50;
     const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
     const PREFETCH_DELAY_MS = 100;
+    const MAX_PREFETCH_PATHS = 100; // Limit prefetched paths to prevent memory leaks
 
     // ============================================
     // Debug logging (production-safe)
@@ -493,6 +494,12 @@ export const getRouterScript = () => `
     function prefetchPage(href) {
       if (prefetchedPaths.has(href) || getCachedPageData(href)) {
         return;
+      }
+
+      // LRU eviction if at capacity - clear oldest entries
+      if (prefetchedPaths.size >= MAX_PREFETCH_PATHS) {
+        const oldest = prefetchedPaths.values().next().value;
+        if (oldest) prefetchedPaths.delete(oldest);
       }
 
       prefetchedPaths.add(href);

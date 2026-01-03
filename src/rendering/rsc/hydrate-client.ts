@@ -36,12 +36,28 @@ interface GlobalHydrationState {
   VeryfrontHydrate?: VeryfrontHydrate;
 }
 
+// Maximum cache size to prevent memory leaks
+const MAX_CLIENT_MOD_CACHE_SIZE = 100;
+
 // VeryfrontHydrate exposes the public hydration API
 interface VeryfrontHydrate {
   run: () => Promise<void>;
 }
 
 declare const globalThis: typeof window & GlobalHydrationState;
+
+// Helper function to set cache with LRU eviction
+function setClientModCache(key: string, mod: ClientModule): void {
+  globalThis.__VF_CLIENT_MOD_CACHE = globalThis.__VF_CLIENT_MOD_CACHE || new Map();
+
+  // LRU eviction if at capacity
+  if (globalThis.__VF_CLIENT_MOD_CACHE.size >= MAX_CLIENT_MOD_CACHE_SIZE) {
+    const oldest = globalThis.__VF_CLIENT_MOD_CACHE.keys().next().value;
+    if (oldest) globalThis.__VF_CLIENT_MOD_CACHE.delete(oldest);
+  }
+
+  globalThis.__VF_CLIENT_MOD_CACHE.set(key, mod);
+}
 
 export function parseClientRef(ref: string): { rel: string; exportName: string } | null {
   const m = ref.match(/^\/app\/(.+)#([A-Za-z0-9_]+)$/);
@@ -79,8 +95,7 @@ async function importClientModule(manifest: Manifest, rel: string): Promise<Clie
   try {
     const mod = await import(devUrl) as ClientModule;
     try {
-      globalThis.__VF_CLIENT_MOD_CACHE = globalThis.__VF_CLIENT_MOD_CACHE || new Map();
-      globalThis.__VF_CLIENT_MOD_CACHE.set(cacheKey, mod);
+      setClientModCache(cacheKey, mod);
     } catch (e) {
       rscLogger.debug("hydrate: cache set failed", e);
     }
@@ -93,8 +108,7 @@ async function importClientModule(manifest: Manifest, rel: string): Promise<Clie
       const url = `/_veryfront/rsc/module?rel=${encodeURIComponent(rel)}${v}`;
       const mod = await import(url) as ClientModule;
       try {
-        globalThis.__VF_CLIENT_MOD_CACHE = globalThis.__VF_CLIENT_MOD_CACHE || new Map();
-        globalThis.__VF_CLIENT_MOD_CACHE.set(cacheKey, mod);
+        setClientModCache(cacheKey, mod);
       } catch (e) {
         rscLogger.debug("hydrate: cache set failed (prod)", e);
       }

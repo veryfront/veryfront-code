@@ -9,14 +9,29 @@ export interface LocalImport {
   absolutePath: string;
 }
 
+export interface MissingImport {
+  specifier: string;
+  fromFile: string;
+  reason: string;
+}
+
+export interface ParseLocalImportsResult {
+  imports: LocalImport[];
+  missing: MissingImport[];
+}
+
 const EXTENSIONS = [".tsx", ".ts", ".jsx", ".js", ".mdx"];
 
+/**
+ * Parse local imports from source code and track missing dependencies.
+ * Returns both resolved imports and missing imports for error reporting.
+ */
 export async function parseLocalImports(
   code: string,
   filePath: string,
   _projectDir: string,
   adapter?: RuntimeAdapter,
-): Promise<LocalImport[]> {
+): Promise<ParseLocalImportsResult> {
   // es-module-lexer can't parse TypeScript/JSX, so use esbuild to strip types first
   // This is a minimal transform just for import extraction
   const result = await esbuild.transform(code, {
@@ -33,12 +48,19 @@ export async function parseLocalImports(
 
   const imports = await parseImports(result.code);
   const localImports: LocalImport[] = [];
+  const missingImports: MissingImport[] = [];
 
   for (const imp of imports) {
     if (imp.n?.startsWith("./") || imp.n?.startsWith("../")) {
       const resolved = await resolveLocalImportPath(filePath, imp.n, adapter);
       if (resolved) {
         localImports.push({ specifier: imp.n, absolutePath: resolved });
+      } else {
+        missingImports.push({
+          specifier: imp.n,
+          fromFile: filePath,
+          reason: `File not found: tried extensions ${EXTENSIONS.join(", ")}`,
+        });
       }
     } else if (imp.n?.startsWith("@/")) {
       // Handle @/ path aliases - resolve relative to project root
@@ -48,11 +70,31 @@ export async function parseLocalImports(
       const resolved = await resolveAliasImportPath(aliasPath, adapter);
       if (resolved) {
         localImports.push({ specifier: imp.n, absolutePath: resolved });
+      } else {
+        missingImports.push({
+          specifier: imp.n,
+          fromFile: filePath,
+          reason: `Alias path not found: @/${aliasPath}`,
+        });
       }
     }
   }
 
-  return localImports;
+  return { imports: localImports, missing: missingImports };
+}
+
+/**
+ * Legacy function for backwards compatibility - returns only resolved imports.
+ * @deprecated Use parseLocalImports which returns both resolved and missing imports.
+ */
+export async function parseLocalImportsLegacy(
+  code: string,
+  filePath: string,
+  projectDir: string,
+  adapter?: RuntimeAdapter,
+): Promise<LocalImport[]> {
+  const result = await parseLocalImports(code, filePath, projectDir, adapter);
+  return result.imports;
 }
 
 async function checkFileExists(
