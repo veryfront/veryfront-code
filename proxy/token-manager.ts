@@ -107,9 +107,7 @@ export class TokenManager {
     scope: TokenScope,
     projectId?: string,
   ): Promise<string> {
-    const clientId = scope === "preview"
-      ? this.config.previewClientId
-      : this.config.clientId;
+    const clientId = scope === "preview" ? this.config.previewClientId : this.config.clientId;
     const clientSecret = scope === "preview"
       ? this.config.previewClientSecret
       : this.config.clientSecret;

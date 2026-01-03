@@ -109,34 +109,34 @@ ai/
 
 These functions are re-exported from the `ai` package for convenience:
 
-| Export | Description |
-|--------|-------------|
-| `generateText` | Generate text from a model |
-| `streamText` | Stream text generation |
-| `generateObject` | Generate structured objects |
-| `streamObject` | Stream structured object generation |
-| `convertToModelMessages` | Convert UI messages to model-compatible format |
-| `embed` | Generate single embeddings |
-| `embedMany` | Batch embedding generation |
-| `aiTool` | AI SDK's type-safe tool helper (renamed from `tool` to avoid conflict with veryfront's `tool`) |
-| `createIdGenerator` | Generate consistent message IDs |
-| `smoothStream` | Smooth streaming output |
-| `cosineSimilarity` | Vector similarity calculations |
+| Export                   | Description                                                                                    |
+| ------------------------ | ---------------------------------------------------------------------------------------------- |
+| `generateText`           | Generate text from a model                                                                     |
+| `streamText`             | Stream text generation                                                                         |
+| `generateObject`         | Generate structured objects                                                                    |
+| `streamObject`           | Stream structured object generation                                                            |
+| `convertToModelMessages` | Convert UI messages to model-compatible format                                                 |
+| `embed`                  | Generate single embeddings                                                                     |
+| `embedMany`              | Batch embedding generation                                                                     |
+| `aiTool`                 | AI SDK's type-safe tool helper (renamed from `tool` to avoid conflict with veryfront's `tool`) |
+| `createIdGenerator`      | Generate consistent message IDs                                                                |
+| `smoothStream`           | Smooth streaming output                                                                        |
+| `cosineSimilarity`       | Vector similarity calculations                                                                 |
 
 #### Experimental Functions
 
-| Export | Description |
-|--------|-------------|
-| `experimental_generateImage` | Image generation |
-| `experimental_transcribe` | Audio to text transcription |
-| `experimental_generateSpeech` | Text to speech generation |
+| Export                         | Description                  |
+| ------------------------------ | ---------------------------- |
+| `experimental_generateImage`   | Image generation             |
+| `experimental_transcribe`      | Audio to text transcription  |
+| `experimental_generateSpeech`  | Text to speech generation    |
 | `experimental_createMCPClient` | MCP server connection client |
 
 #### Provider Re-exports
 
-| Export | Description |
-|--------|-------------|
-| `openai` | OpenAI provider from `@ai-sdk/openai` |
+| Export      | Description                                 |
+| ----------- | ------------------------------------------- |
+| `openai`    | OpenAI provider from `@ai-sdk/openai`       |
 | `anthropic` | Anthropic provider from `@ai-sdk/anthropic` |
 
 #### Adapter Utilities
@@ -325,13 +325,7 @@ await server.listen({ port: 3100 });
 ### Using AI SDK Re-exports
 
 ```typescript
-import {
-  streamText,
-  convertToModelMessages,
-  openai,
-  aiTool,
-  cosineSimilarity,
-} from "veryfront/ai";
+import { aiTool, convertToModelMessages, cosineSimilarity, openai, streamText } from "veryfront/ai";
 import { z } from "zod";
 
 // Use AI SDK's streamText directly

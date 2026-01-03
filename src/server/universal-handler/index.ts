@@ -188,9 +188,9 @@ export function createVeryfrontHandler(
       // Use proxy token (from x-token header) or fall back to config token
       const effectiveToken = proxyToken || config.fs.veryfront.apiToken || "";
       // Support both baseUrl (FSAdapterConfig) and apiBaseUrl (VeryfrontConfig) for compatibility
-      const baseUrl = (config.fs.veryfront as { baseUrl?: string; apiBaseUrl?: string }).baseUrl
-        || config.fs.veryfront.apiBaseUrl
-        || "https://api.veryfront.com/api";
+      const baseUrl = (config.fs.veryfront as { baseUrl?: string; apiBaseUrl?: string }).baseUrl ||
+        config.fs.veryfront.apiBaseUrl ||
+        "https://api.veryfront.com/api";
       const apiConfig = {
         apiBaseUrl: baseUrl,
         apiToken: effectiveToken,
