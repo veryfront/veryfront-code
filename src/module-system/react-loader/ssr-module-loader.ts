@@ -39,11 +39,16 @@ const REDIS_TTL_SECONDS = 1800; // 30 minutes
 // Shared cache across all SSRModuleLoader instances (persists across requests)
 // Keys include projectId to isolate caches between different projects
 // Using LRU cache to prevent unbounded memory growth
-const globalModuleCache = new LRUCache<string, string>({
+interface ModuleCacheEntry {
+  tempPath: string;
+  contentHash: string;
+}
+
+const globalModuleCache = new LRUCache<string, ModuleCacheEntry>({
   maxEntries: SSR_MODULE_CACHE_MAX_ENTRIES,
   ttlMs: SSR_MODULE_CACHE_TTL_MS,
   cleanupIntervalMs: 60000,
-}); // projectId:absolutePath -> tempPath
+}); // projectId:absolutePath -> { tempPath, contentHash }
 
 // Map of in-progress transforms to their completion promises
 // This allows concurrent requests for the same file to wait for the first transform
@@ -196,6 +201,50 @@ export function clearSSRModuleCache(): void {
   logger.info("[SSR-MODULE-LOADER] Cache cleared");
 }
 
+/**
+ * Clear SSR module cache entries for a specific project.
+ * This should be called when a project's renderer is evicted to free memory.
+ *
+ * @param projectId - The project ID to clear cache entries for
+ */
+export function clearSSRModuleCacheForProject(projectId: string): void {
+  const prefix = `${projectId}:`;
+  let cleared = 0;
+
+  // Clear module cache entries for this project
+  for (const key of globalModuleCache.keys()) {
+    if (typeof key === "string" && key.startsWith(prefix)) {
+      globalModuleCache.delete(key);
+      cleared++;
+    }
+  }
+
+  // Clear in-progress entries for this project
+  for (const key of globalInProgress.keys()) {
+    if (key.startsWith(prefix)) {
+      globalInProgress.delete(key);
+    }
+  }
+
+  // Clear failed components for this project
+  for (const key of failedComponents.keys()) {
+    if (key.startsWith(prefix)) {
+      failedComponents.delete(key);
+    }
+  }
+
+  // Clear tmp dir cache for this project
+  for (const key of globalTmpDirs.keys()) {
+    if (typeof key === "string" && key.includes(`:${projectId}`)) {
+      globalTmpDirs.delete(key);
+    }
+  }
+
+  if (cleared > 0) {
+    logger.info("[SSR-MODULE-LOADER] Project cache cleared", { projectId, entriesCleared: cleared });
+  }
+}
+
 function redisKey(key: string): string {
   return `${REDIS_KEY_PREFIX}${key}`;
 }
@@ -293,8 +342,8 @@ export class SSRModuleLoader {
       }
 
       const cacheKey = this.getCacheKey(filePath);
-      const tempPath = globalModuleCache.get(cacheKey);
-      if (!tempPath) {
+      const cacheEntry = globalModuleCache.get(cacheKey);
+      if (!cacheEntry) {
         throw toError(createError({
           type: "build",
           message: `Failed to transform module: ${filePath}`,
@@ -302,8 +351,10 @@ export class SSRModuleLoader {
         }));
       }
 
-      const cacheBuster = Date.now();
-      const mod = await import(`file://${tempPath}?t=${cacheBuster}`);
+      // Use content hash as cache buster instead of Date.now()
+      // This prevents Deno's ESM cache from growing unbounded
+      // Same content = same URL = cache hit, different content = new URL
+      const mod = await import(`file://${cacheEntry.tempPath}?v=${cacheEntry.contentHash}`);
 
       // Success - reset failure count
       failedComponents.delete(circuitKey);
@@ -358,8 +409,9 @@ export class SSRModuleLoader {
         await this.fs.mkdir(tempDir, { recursive: true });
         await this.fs.writeTextFile(tempPath, redisCode);
 
-        globalModuleCache.set(contentCacheKey, tempPath);
-        globalModuleCache.set(filePathCacheKey, tempPath);
+        const entry: ModuleCacheEntry = { tempPath, contentHash };
+        globalModuleCache.set(contentCacheKey, entry);
+        globalModuleCache.set(filePathCacheKey, entry);
         logger.debug("[SSR-MODULE-LOADER] Redis cache hit", { file: filePath.slice(-40) });
         return;
       }
@@ -451,9 +503,10 @@ export class SSRModuleLoader {
         }
 
         // Store both the content-keyed and filePath-keyed entries
-        // LRU cache stores tempPath directly and handles TTL internally
-        globalModuleCache.set(contentCacheKey, tempPath);
-        globalModuleCache.set(filePathCacheKey, tempPath);
+        // LRU cache stores entry with tempPath and contentHash for stable cache busting
+        const entry: ModuleCacheEntry = { tempPath, contentHash };
+        globalModuleCache.set(contentCacheKey, entry);
+        globalModuleCache.set(filePathCacheKey, entry);
       } finally {
         transformSemaphore.release();
       }
