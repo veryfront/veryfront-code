@@ -3,7 +3,11 @@ export interface BuildContext {
   line?: number;
   column?: number;
   moduleId?: string;
-  phase?: "parse" | "transform" | "bundle" | "optimize";
+  phase?: "parse" | "transform" | "bundle" | "optimize" | "dependency-resolution" | "circuit-breaker";
+  /** Number of failures (for circuit breaker) */
+  failures?: number;
+  /** Missing dependencies list */
+  missing?: Array<{ specifier: string; fromFile: string; reason: string }>;
 }
 
 export interface APIContext {

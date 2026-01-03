@@ -7,6 +7,7 @@ import {
   resolveRelativeImports,
   resolveRelativeImportsForSSR,
   resolveVeryfrontImports,
+  blockExternalUrlImports,
 } from "./path-resolver.ts";
 import { rewriteBareImports, rewriteVendorImports } from "./import-rewriter.ts";
 import type { TransformOptions } from "./types.ts";
@@ -88,6 +89,16 @@ export async function transformToESM(
 
   // Different import resolution strategies for SSR vs browser
   if (ssr) {
+    // SSR: Block external URL imports (https://) that can't be loaded via file://
+    // This prevents user code with CDN imports from crashing the renderer
+    const urlBlockResult = await blockExternalUrlImports(code, filePath);
+    code = urlBlockResult.code;
+    if (urlBlockResult.blockedUrls.length > 0) {
+      logger.warn("[ESM-TRANSFORM] Blocked external URL imports in SSR mode", {
+        file: filePath.slice(-60),
+        blockedUrls: urlBlockResult.blockedUrls,
+      });
+    }
     // SSR: Keep relative imports but normalize extensions to .js
     // SSRModuleLoader ensures all dependencies are transformed to temp directory
     code = await resolveRelativeImportsForSSR(code);

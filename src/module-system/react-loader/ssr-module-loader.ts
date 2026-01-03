@@ -3,9 +3,10 @@ import type * as React from "react";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import { transformToESM } from "@veryfront/transforms/esm/transform-core.ts";
 import type { TransformOptions } from "@veryfront/transforms/esm/types.ts";
-import { parseLocalImports } from "@veryfront/transforms/esm/import-parser.ts";
+import { parseLocalImports, type MissingImport } from "@veryfront/transforms/esm/import-parser.ts";
 import { createFileSystem } from "../../platform/compat/fs.ts";
 import { createError, toError } from "../../core/errors/veryfront-error.ts";
+import { rendererLogger as logger } from "@veryfront/utils";
 
 export interface SSRModuleLoaderOptions {
   projectDir: string;
@@ -14,11 +15,25 @@ export interface SSRModuleLoaderOptions {
   dev: boolean;
 }
 
+// Cache configuration
+const CACHE_MAX_SIZE = 500; // Maximum number of entries per project
+const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes TTL for cache entries
+
+interface CacheEntry {
+  tempPath: string;
+  timestamp: number;
+}
+
 // Shared cache across all SSRModuleLoader instances (persists across requests)
 // Keys include projectId to isolate caches between different projects
-const globalModuleCache = new Map<string, string>(); // projectId:absolutePath -> tempPath
+const globalModuleCache = new Map<string, CacheEntry>(); // projectId:absolutePath -> { tempPath, timestamp }
 const globalInProgress = new Set<string>(); // projectId:absolutePath
 const globalTmpDirs = new Map<string, string>(); // projectDir:projectId -> tmpDir
+
+// Track failed components to implement circuit breaker
+const failedComponents = new Map<string, { count: number; lastFailure: number }>();
+const CIRCUIT_BREAKER_THRESHOLD = 3; // Failures before circuit opens
+const CIRCUIT_BREAKER_RESET_MS = 60 * 1000; // 1 minute reset window
 
 /**
  * Clear the global SSR module cache.
@@ -27,10 +42,66 @@ const globalTmpDirs = new Map<string, string>(); // projectDir:projectId -> tmpD
 export function clearSSRModuleCache(): void {
   globalModuleCache.clear();
   globalInProgress.clear();
+  failedComponents.clear();
+  logger.info("[SSR-MODULE-LOADER] Cache cleared");
+}
+
+/**
+ * Clean up expired cache entries and enforce max size.
+ * Called periodically to prevent memory leaks.
+ */
+function cleanupCache(projectId: string): void {
+  const now = Date.now();
+  const keysToDelete: string[] = [];
+  let projectEntries = 0;
+
+  for (const [key, entry] of globalModuleCache) {
+    if (key.startsWith(`${projectId}:`)) {
+      projectEntries++;
+      // Remove expired entries
+      if (now - entry.timestamp > CACHE_TTL_MS) {
+        keysToDelete.push(key);
+      }
+    }
+  }
+
+  // Delete expired entries
+  for (const key of keysToDelete) {
+    globalModuleCache.delete(key);
+    projectEntries--;
+  }
+
+  // If still over limit, remove oldest entries
+  if (projectEntries > CACHE_MAX_SIZE) {
+    const projectKeys: [string, number][] = [];
+    for (const [key, entry] of globalModuleCache) {
+      if (key.startsWith(`${projectId}:`)) {
+        projectKeys.push([key, entry.timestamp]);
+      }
+    }
+    // Sort by timestamp, oldest first
+    projectKeys.sort((a, b) => a[1] - b[1]);
+
+    // Remove oldest entries until under limit
+    const toRemove = projectEntries - CACHE_MAX_SIZE;
+    for (let i = 0; i < toRemove && i < projectKeys.length; i++) {
+      const keyToDelete = projectKeys[i]?.[0];
+      if (keyToDelete) {
+        globalModuleCache.delete(keyToDelete);
+      }
+    }
+
+    logger.debug("[SSR-MODULE-LOADER] Cache cleanup", {
+      projectId,
+      removed: toRemove,
+      remaining: CACHE_MAX_SIZE,
+    });
+  }
 }
 
 export class SSRModuleLoader {
   private fs = createFileSystem();
+  private missingDependencies: MissingImport[] = [];
 
   constructor(private options: SSRModuleLoaderOptions) {}
 
@@ -38,22 +109,82 @@ export class SSRModuleLoader {
     filePath: string,
     source: string,
   ): Promise<React.ComponentType<Record<string, unknown>>> {
-    await this.transformWithDependencies(filePath, source);
-
-    const cacheKey = this.getCacheKey(filePath);
-    const tempPath = globalModuleCache.get(cacheKey);
-    if (!tempPath) {
-      throw toError(createError({
-        type: "build",
-        message: `Failed to transform module: ${filePath}`,
-        context: { file: filePath, phase: "transform" },
-      }));
+    // Check circuit breaker before attempting load
+    const circuitKey = this.getCacheKey(filePath);
+    const failureRecord = failedComponents.get(circuitKey);
+    if (failureRecord) {
+      const timeSinceFailure = Date.now() - failureRecord.lastFailure;
+      if (failureRecord.count >= CIRCUIT_BREAKER_THRESHOLD && timeSinceFailure < CIRCUIT_BREAKER_RESET_MS) {
+        throw toError(createError({
+          type: "build",
+          message: `Component ${filePath} is temporarily blocked due to repeated failures. Will retry in ${Math.ceil((CIRCUIT_BREAKER_RESET_MS - timeSinceFailure) / 1000)}s.`,
+          context: { file: filePath, phase: "circuit-breaker", failures: failureRecord.count },
+        }));
+      }
+      // Reset circuit breaker if enough time has passed
+      if (timeSinceFailure >= CIRCUIT_BREAKER_RESET_MS) {
+        failedComponents.delete(circuitKey);
+      }
     }
 
-    const cacheBuster = Date.now();
-    const mod = await import(`file://${tempPath}?t=${cacheBuster}`);
+    // Reset missing dependencies for this load
+    this.missingDependencies = [];
 
-    return this.extractComponent(mod, filePath);
+    // Run periodic cache cleanup
+    cleanupCache(this.options.projectId);
+
+    try {
+      await this.transformWithDependencies(filePath, source);
+
+      // Check if any dependencies were missing
+      if (this.missingDependencies.length > 0) {
+        const missingList = this.missingDependencies
+          .map(m => `  - ${m.specifier} (from ${m.fromFile.slice(-40)}): ${m.reason}`)
+          .join("\n");
+
+        logger.error("[SSR-MODULE-LOADER] Missing dependencies detected", {
+          file: filePath.slice(-60),
+          missing: this.missingDependencies.length,
+          details: this.missingDependencies,
+        });
+
+        throw toError(createError({
+          type: "build",
+          message: `Component has missing dependencies:\n${missingList}`,
+          context: {
+            file: filePath,
+            phase: "dependency-resolution",
+            missing: this.missingDependencies,
+          },
+        }));
+      }
+
+      const cacheKey = this.getCacheKey(filePath);
+      const cacheEntry = globalModuleCache.get(cacheKey);
+      if (!cacheEntry) {
+        throw toError(createError({
+          type: "build",
+          message: `Failed to transform module: ${filePath}`,
+          context: { file: filePath, phase: "transform" },
+        }));
+      }
+
+      const cacheBuster = Date.now();
+      const mod = await import(`file://${cacheEntry.tempPath}?t=${cacheBuster}`);
+
+      // Success - reset failure count
+      failedComponents.delete(circuitKey);
+
+      return this.extractComponent(mod, filePath);
+    } catch (error) {
+      // Track failure for circuit breaker
+      const existing = failedComponents.get(circuitKey);
+      failedComponents.set(circuitKey, {
+        count: (existing?.count ?? 0) + 1,
+        lastFailure: Date.now(),
+      });
+      throw error;
+    }
   }
 
   /**
@@ -75,9 +206,11 @@ export class SSRModuleLoader {
     const filePathCacheKey = this.getCacheKey(filePath);
     const inProgressKey = this.getCacheKey(filePath);
 
-    const cachedTempPath = globalModuleCache.get(contentCacheKey);
-    if (cachedTempPath) {
-      globalModuleCache.set(filePathCacheKey, cachedTempPath);
+    const cachedEntry = globalModuleCache.get(contentCacheKey);
+    if (cachedEntry) {
+      // Update timestamp on cache hit
+      cachedEntry.timestamp = Date.now();
+      globalModuleCache.set(filePathCacheKey, cachedEntry);
       return;
     }
 
@@ -88,19 +221,33 @@ export class SSRModuleLoader {
     globalInProgress.add(inProgressKey);
 
     try {
-      const localImports = await parseLocalImports(
+      const parseResult = await parseLocalImports(
         code,
         filePath,
         this.options.projectDir,
         this.options.adapter,
       );
 
-      // Transform all dependencies in parallel for better performance
+      // Track missing dependencies
+      if (parseResult.missing.length > 0) {
+        this.missingDependencies.push(...parseResult.missing);
+      }
+
+      // Transform all resolved dependencies in parallel
       // The globalInProgress set prevents duplicate work
       await Promise.all(
-        localImports.map(async (imp) => {
-          const depSource = await this.options.adapter.fs.readFile(imp.absolutePath);
-          await this.transformWithDependencies(imp.absolutePath, depSource);
+        parseResult.imports.map(async (imp) => {
+          try {
+            const depSource = await this.options.adapter.fs.readFile(imp.absolutePath);
+            await this.transformWithDependencies(imp.absolutePath, depSource);
+          } catch (error) {
+            // Track failed dependency reads
+            this.missingDependencies.push({
+              specifier: imp.specifier,
+              fromFile: filePath,
+              reason: `Failed to read file: ${error instanceof Error ? error.message : String(error)}`,
+            });
+          }
         }),
       );
 
@@ -127,9 +274,11 @@ export class SSRModuleLoader {
       await this.fs.mkdir(tempDir, { recursive: true });
       await this.fs.writeTextFile(tempPath, transformed);
 
+      const now = Date.now();
       // Store both the content-keyed and filePath-keyed entries
-      globalModuleCache.set(contentCacheKey, tempPath);
-      globalModuleCache.set(filePathCacheKey, tempPath);
+      const cacheEntry: CacheEntry = { tempPath, timestamp: now };
+      globalModuleCache.set(contentCacheKey, cacheEntry);
+      globalModuleCache.set(filePathCacheKey, cacheEntry);
     } finally {
       globalInProgress.delete(inProgressKey);
     }

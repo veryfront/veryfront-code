@@ -1,4 +1,64 @@
-import { replaceSpecifiers } from "./lexer.ts";
+import { replaceSpecifiers, parseImports } from "./lexer.ts";
+
+export interface BlockExternalUrlResult {
+  code: string;
+  blockedUrls: string[];
+}
+
+/**
+ * Block external URL imports (https://, http://) in SSR mode.
+ * These can't be loaded when the transformed module is imported via file:// protocol.
+ * Instead of crashing, we replace them with a stub that throws a clear error at runtime.
+ */
+export async function blockExternalUrlImports(
+  code: string,
+  filePath: string,
+): Promise<BlockExternalUrlResult> {
+  const blockedUrls: string[] = [];
+
+  // First, collect all external URL imports
+  const imports = await parseImports(code);
+  for (const imp of imports) {
+    if (imp.n && (imp.n.startsWith("https://") || imp.n.startsWith("http://"))) {
+      blockedUrls.push(imp.n);
+    }
+  }
+
+  if (blockedUrls.length === 0) {
+    return { code, blockedUrls };
+  }
+
+  // Replace external URL imports with a stub module that provides a helpful error
+  const transformedCode = await replaceSpecifiers(code, (specifier) => {
+    if (specifier.startsWith("https://") || specifier.startsWith("http://")) {
+      // Create a data: URL module that exports a proxy throwing helpful errors
+      const errorMessage = `External URL imports are not supported in SSR mode. ` +
+        `The import "${specifier}" in "${filePath}" cannot be loaded server-side. ` +
+        `Consider using a local module or dynamic import with typeof window check.`;
+
+      // Return a data URL with a module that throws when accessed
+      const stubModule = `
+        const handler = {
+          get(_, prop) {
+            if (prop === 'default' || prop === '__esModule') {
+              return new Proxy({}, handler);
+            }
+            throw new Error(${JSON.stringify(errorMessage)});
+          },
+          apply() {
+            throw new Error(${JSON.stringify(errorMessage)});
+          }
+        };
+        export default new Proxy(function(){}, handler);
+        export const __blocked_url__ = ${JSON.stringify(specifier)};
+      `;
+      return `data:text/javascript;base64,${btoa(stubModule)}`;
+    }
+    return null;
+  });
+
+  return { code: transformedCode, blockedUrls };
+}
 
 /**
  * Rewrite @veryfront/* imports to veryfront/* for npm compatibility
