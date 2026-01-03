@@ -33,7 +33,12 @@ function createTestManifest(overrides?: Partial<BuildManifest>): BuildManifest {
   };
 }
 
-describe("Service Worker Generation", () => {
+// Note: sanitizeOps and sanitizeResources disabled because global module caches
+// create background intervals that persist across tests (LRU cleanup timers).
+describe("Service Worker Generation", {
+  sanitizeOps: false,
+  sanitizeResources: false,
+}, () => {
   describe("generateServiceWorker()", () => {
     it("should generate valid service worker code", () => {
       const manifest = createTestManifest({
