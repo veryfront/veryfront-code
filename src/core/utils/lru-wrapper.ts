@@ -42,6 +42,11 @@ export class LRUCache<K, V> {
       this.adapter.cleanupExpired();
     }, this.cleanupIntervalMs);
     this.cleanupTimer = timer;
+
+    // Unref the timer so it doesn't prevent process exit or cause test leaks
+    if (typeof Deno !== "undefined" && "unrefTimer" in Deno) {
+      Deno.unrefTimer(timer);
+    }
   }
 
   private toStringKey(key: K): string {

@@ -34,10 +34,22 @@ function startPeriodicCleanup(): void {
       }
     }
   }, CLEANUP_INTERVAL_MS);
+
+  // Unref the timer so it doesn't prevent process exit or cause test leaks
+  if (typeof Deno !== "undefined" && "unrefTimer" in Deno) {
+    Deno.unrefTimer(cleanupInterval);
+  }
 }
 
 // Start cleanup on module load
 startPeriodicCleanup();
+
+export function stopPeriodicCleanup(): void {
+  if (cleanupInterval) {
+    clearInterval(cleanupInterval);
+    cleanupInterval = undefined;
+  }
+}
 
 export function generateCacheKey(
   projectId: string | undefined,
