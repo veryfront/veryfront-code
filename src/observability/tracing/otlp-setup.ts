@@ -124,3 +124,125 @@ export async function shutdownOTLP(): Promise<void> {
 export function isOTLPEnabled(): boolean {
   return initialized && tracerProvider !== null;
 }
+
+// Lazy-loaded OpenTelemetry API references
+let traceApi: typeof import("@opentelemetry/api") | null = null;
+let propagationApi: typeof import("@opentelemetry/core") | null = null;
+
+async function ensureApis(): Promise<void> {
+  if (!traceApi) {
+    traceApi = await import("@opentelemetry/api");
+    propagationApi = await import("@opentelemetry/core");
+  }
+}
+
+/**
+ * Extract trace context from incoming request headers
+ */
+export function extractContext(headers: Headers): unknown {
+  if (!traceApi || !propagationApi) return traceApi?.context?.active();
+  const carrier: Record<string, string> = {};
+  headers.forEach((v, k) => (carrier[k.toLowerCase()] = v));
+  return propagationApi.W3CTraceContextPropagator
+    ? new propagationApi.W3CTraceContextPropagator().extract(
+      traceApi.context.active(),
+      carrier,
+      traceApi.defaultTextMapGetter,
+    )
+    : traceApi.context.active();
+}
+
+/**
+ * Inject trace context into outgoing request headers
+ */
+export function injectContext(headers: Headers): void {
+  if (!traceApi || !propagationApi) return;
+  const carrier: Record<string, string> = {};
+  new propagationApi.W3CTraceContextPropagator().inject(
+    traceApi.context.active(),
+    carrier,
+    traceApi.defaultTextMapSetter,
+  );
+  Object.entries(carrier).forEach(([k, v]) => headers.set(k, v));
+}
+
+/**
+ * Start a server span for an incoming HTTP request
+ */
+export function startServerSpan(
+  method: string,
+  path: string,
+  parentContext?: unknown,
+): { span: unknown; context: unknown } | null {
+  if (!traceApi || !isOTLPEnabled()) return null;
+  const serviceName = Deno.env.get("OTEL_SERVICE_NAME") || "veryfront-renderer";
+  const tracer = traceApi.trace.getTracer(serviceName);
+  const ctx = (parentContext || traceApi.context.active()) as import("@opentelemetry/api").Context;
+  const span = tracer.startSpan(`${method} ${path}`, { kind: traceApi.SpanKind.SERVER }, ctx);
+  // Set initial HTTP attributes
+  span.setAttribute("http.method", method);
+  span.setAttribute("http.target", path);
+  return { span, context: traceApi.trace.setSpan(ctx, span) };
+}
+
+/**
+ * End a span with status code and optional error
+ */
+export function endServerSpan(span: unknown, statusCode: number, error?: Error): void {
+  if (!span || !traceApi) return;
+  const s = span as import("@opentelemetry/api").Span;
+  s.setAttribute("http.status_code", statusCode);
+  if (error) {
+    s.setStatus({ code: traceApi.SpanStatusCode.ERROR, message: error.message });
+    s.recordException(error);
+  } else if (statusCode >= 400) {
+    s.setStatus({ code: traceApi.SpanStatusCode.ERROR });
+  } else {
+    s.setStatus({ code: traceApi.SpanStatusCode.OK });
+  }
+  s.end();
+}
+
+/**
+ * Set attributes on a span
+ */
+export function setSpanAttributes(
+  span: unknown,
+  attributes: Record<string, string | number | boolean>,
+): void {
+  if (!span || !traceApi) return;
+  const s = span as import("@opentelemetry/api").Span;
+  for (const [key, value] of Object.entries(attributes)) {
+    s.setAttribute(key, value);
+  }
+}
+
+/**
+ * Execute a function within a span context
+ */
+export async function withContext<T>(spanContext: unknown, fn: () => Promise<T>): Promise<T> {
+  if (!traceApi) return fn();
+  return traceApi.context.with(spanContext as import("@opentelemetry/api").Context, fn);
+}
+
+/**
+ * Get current trace context info (for logging correlation)
+ */
+export function getTraceContext(): { traceId?: string; spanId?: string } {
+  if (!traceApi) return {};
+  const span = traceApi.trace.getSpan(traceApi.context.active());
+  if (!span) return {};
+  const ctx = span.spanContext();
+  return { traceId: ctx.traceId, spanId: ctx.spanId };
+}
+
+// Initialize APIs when OTLP initializes
+const originalInit = initializeOTLP;
+
+/**
+ * Initialize OTLP with API loading for span creation
+ */
+export async function initializeOTLPWithApis(): Promise<void> {
+  await originalInit();
+  if (isOTLPEnabled()) await ensureApis();
+}
