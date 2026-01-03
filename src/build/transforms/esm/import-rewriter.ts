@@ -1,5 +1,20 @@
 import { parseImports, replaceSpecifiers, rewriteImports } from "./lexer.ts";
-import { REACT_DEFAULT_VERSION } from "@veryfront/utils/constants/cdn.ts";
+import { REACT_DEFAULT_VERSION, TAILWIND_VERSION } from "@veryfront/utils/constants/cdn.ts";
+
+/**
+ * Normalize package specifier by stripping inline version specifiers.
+ * This ensures all imports of a package use the same version from the import map.
+ *
+ * Examples:
+ *   "tailwindcss@3.4.17/plugin" -> "tailwindcss/plugin"
+ *   "tailwindcss@^4.1.17/colors" -> "tailwindcss/colors"
+ *   "@tailwindcss/typography@0.5.16" -> "@tailwindcss/typography"
+ */
+function normalizeVersionedSpecifier(specifier: string): string {
+  // Match package@version patterns and strip the version
+  // Handles: pkg@1.2.3, pkg@^1.2.3, pkg@~1.2.3, pkg@1.x, @scope/pkg@1.2.3
+  return specifier.replace(/@[\d^~x][\d.x^~-]*(?=\/|$)/, "");
+}
 
 export function rewriteBareImports(code: string, _moduleServerUrl?: string): Promise<string> {
   // Always use esm.sh URLs for React packages in browser mode
@@ -37,9 +52,19 @@ export function rewriteBareImports(code: string, _moduleServerUrl?: string): Pro
       return null;
     }
 
+    // Normalize: strip inline version specifiers (e.g., tailwindcss@3.4.17 -> tailwindcss)
+    // This allows the import map in HTML to control the actual version
+    const normalized = normalizeVersionedSpecifier(specifier);
+
+    // Pin tailwindcss to unified version to prevent multiple versions loading
+    let finalSpecifier = normalized;
+    if (normalized === "tailwindcss" || normalized.startsWith("tailwindcss/")) {
+      finalSpecifier = normalized.replace(/^tailwindcss/, `tailwindcss@${TAILWIND_VERSION}`);
+    }
+
     // Convert remaining bare imports (npm packages) to esm.sh URLs
     // Include react deps for proper bundling
-    return `https://esm.sh/${specifier}?deps=react@${REACT_DEFAULT_VERSION},react-dom@${REACT_DEFAULT_VERSION}`;
+    return `https://esm.sh/${finalSpecifier}?deps=react@${REACT_DEFAULT_VERSION},react-dom@${REACT_DEFAULT_VERSION}`;
   }));
 }
 
