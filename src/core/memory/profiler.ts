@@ -93,6 +93,7 @@ function getConfiguredHeapLimit(): number {
   // Check for --max-old-space-size in Deno.args or environment
   const args = Deno.args.join(" ");
   const envHeapSize = Deno.env.get("V8_MAX_OLD_SPACE_SIZE");
+  const denoV8Flags = Deno.env.get("DENO_V8_FLAGS");
 
   // Parse from args: --v8-flags=--max-old-space-size=2800
   const v8FlagsMatch = args.match(/--max-old-space-size=(\d+)/);
@@ -100,14 +101,22 @@ function getConfiguredHeapLimit(): number {
     return parseInt(v8FlagsMatch[1], 10);
   }
 
-  // Parse from environment
+  // Parse from DENO_V8_FLAGS environment variable
+  if (denoV8Flags) {
+    const denoV8Match = denoV8Flags.match(/--max-old-space-size=(\d+)/);
+    if (denoV8Match && denoV8Match[1]) {
+      return parseInt(denoV8Match[1], 10);
+    }
+  }
+
+  // Parse from V8_MAX_OLD_SPACE_SIZE environment
   if (envHeapSize) {
     return parseInt(envHeapSize, 10);
   }
 
   // Default V8 heap limit (approximately 4GB on 64-bit systems)
   // But in containers it's often lower based on cgroup limits
-  return 2800; // Match values.yaml configuration
+  return 3072; // Match values.yaml configuration
 }
 
 /**
