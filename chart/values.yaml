@@ -149,8 +149,13 @@ renderer:
   env:
     PORT: "20000"
     PROXY_MODE: "1"
-    # V8 heap size: 70% of 6Gi = ~4200MB
-    DENO_V8_FLAGS: "--max-old-space-size=4200"
+    # V8 heap size: ~2GB to leave headroom for Deno overhead and prevent OOM
+    # Container limit is 6Gi, but V8 GC needs breathing room
+    DENO_V8_FLAGS: "--max-old-space-size=2048"
+    # Limit concurrent ESM transforms to prevent memory spikes during cold start
+    # Each transform can use 100-500MB; with 2GB heap, 3 is conservative
+    # Tune based on observed memory usage in /_metrics or logs
+    SSR_MAX_CONCURRENT_TRANSFORMS: "3"
     # Enable memory monitoring (logs heap usage periodically)
     ENABLE_MEMORY_MONITORING: "true"
     MEMORY_MONITORING_INTERVAL_MS: "30000"
@@ -195,8 +200,10 @@ renderer:
     httpGet:
       path: /healthz
       port: 20000
-    failureThreshold: 30
-    periodSeconds: 10
+    initialDelaySeconds: 15
+    failureThreshold: 60
+    periodSeconds: 5
+    timeoutSeconds: 3
 
   podAntiAffinity:
     enabled: true

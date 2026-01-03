@@ -45,7 +45,10 @@ const globalModuleCache = new LRUCache<string, string>({
   cleanupIntervalMs: 60000,
 }); // projectId:absolutePath -> tempPath
 
-const globalInProgress = new Set<string>(); // projectId:absolutePath (bounded by concurrent requests)
+// Map of in-progress transforms to their completion promises
+// This allows concurrent requests for the same file to wait for the first transform
+// instead of returning early and failing on import
+const globalInProgress = new Map<string, Promise<void>>(); // projectId:absolutePath -> completion promise
 const globalTmpDirs = new LRUCache<string, string>({
   maxEntries: SSR_TMP_DIRS_MAX_ENTRIES,
   ttlMs: 60 * 60 * 1000, // 1 hour
@@ -75,6 +78,66 @@ registerCache("ssr-tmp-dirs", () => ({
 const failedComponents = new Map<string, { count: number; lastFailure: number }>();
 const CIRCUIT_BREAKER_THRESHOLD = 3; // Failures before circuit opens
 const CIRCUIT_BREAKER_RESET_MS = 60 * 1000; // 1 minute reset window
+
+// Concurrency limiter to prevent OOM from too many parallel compilations
+// Configurable via SSR_MAX_CONCURRENT_TRANSFORMS env var
+// Default: 3 (conservative, ~500MB per transform, fits in 2GB heap)
+// Increase if transforms are fast/small, decrease if seeing memory pressure
+const MAX_CONCURRENT_TRANSFORMS = parseInt(
+  Deno.env.get("SSR_MAX_CONCURRENT_TRANSFORMS") ?? "3",
+  10,
+);
+
+/**
+ * Simple semaphore for limiting concurrent operations.
+ * Prevents memory spikes from too many parallel ESM transformations.
+ */
+class Semaphore {
+  private permits: number;
+  private waitQueue: Array<() => void> = [];
+
+  constructor(permits: number) {
+    this.permits = permits;
+  }
+
+  async acquire(): Promise<void> {
+    if (this.permits > 0) {
+      this.permits--;
+      return;
+    }
+    return new Promise<void>((resolve) => {
+      this.waitQueue.push(resolve);
+    });
+  }
+
+  release(): void {
+    const next = this.waitQueue.shift();
+    if (next) {
+      next();
+    } else {
+      this.permits++;
+    }
+  }
+
+  get available(): number {
+    return this.permits;
+  }
+
+  get waiting(): number {
+    return this.waitQueue.length;
+  }
+}
+
+// Global semaphore shared across all SSRModuleLoader instances
+const transformSemaphore = new Semaphore(MAX_CONCURRENT_TRANSFORMS);
+
+// Register semaphore stats with memory profiler
+registerCache("ssr-transform-semaphore", () => ({
+  name: "ssr-transform-semaphore",
+  entries: MAX_CONCURRENT_TRANSFORMS - transformSemaphore.available,
+  maxEntries: MAX_CONCURRENT_TRANSFORMS,
+  waiting: transformSemaphore.waiting,
+}));
 
 /**
  * Initialize Redis for SSR module cache.
@@ -127,7 +190,8 @@ export function isSSRRedisCacheEnabled(): boolean {
  */
 export function clearSSRModuleCache(): void {
   globalModuleCache.clear();
-  globalInProgress.clear();
+  // Note: Don't clear globalInProgress - let in-flight transforms complete
+  // Clearing would cause waiting requests to hang forever
   failedComponents.clear();
   logger.info("[SSR-MODULE-LOADER] Cache cleared");
 }
@@ -301,13 +365,24 @@ export class SSRModuleLoader {
       }
     }
 
-    if (globalInProgress.has(inProgressKey)) {
+    // If another request is already transforming this file, wait for it
+    const existingTransform = globalInProgress.get(inProgressKey);
+    if (existingTransform) {
+      await existingTransform;
       return;
     }
 
-    globalInProgress.add(inProgressKey);
+    // Create a promise that other requests can wait on
+    let resolveTransform: () => void;
+    let rejectTransform: (err: Error) => void;
+    const transformPromise = new Promise<void>((resolve, reject) => {
+      resolveTransform = resolve;
+      rejectTransform = reject;
+    });
+    globalInProgress.set(inProgressKey, transformPromise);
 
     try {
+      // Parse imports (lightweight, no semaphore needed)
       const parseResult = await parseLocalImports(
         code,
         filePath,
@@ -320,8 +395,9 @@ export class SSRModuleLoader {
         this.missingDependencies.push(...parseResult.missing);
       }
 
-      // Transform all resolved dependencies in parallel
-      // The globalInProgress set prevents duplicate work
+      // Transform all resolved dependencies in parallel BEFORE acquiring semaphore
+      // This prevents deadlock: if we held the semaphore while waiting for children,
+      // and children need the semaphore, we'd deadlock on deep dependency trees
       await Promise.all(
         parseResult.imports.map(async (imp) => {
           try {
@@ -340,39 +416,54 @@ export class SSRModuleLoader {
         }),
       );
 
-      const transformOpts: TransformOptions = {
-        projectId: this.options.projectId,
-        dev: this.options.dev,
-        ssr: true,
-      };
+      // NOW acquire semaphore for the CPU-intensive transform
+      // This limits concurrent ESM transforms to prevent OOM
+      await transformSemaphore.acquire();
 
-      const transformed = await transformToESM(
-        code,
-        filePath,
-        this.options.projectDir,
-        this.options.adapter,
-        transformOpts,
-      );
+      try {
+        const transformOpts: TransformOptions = {
+          projectId: this.options.projectId,
+          dev: this.options.dev,
+          ssr: true,
+        };
 
-      // Write to temp path without content hash in filename
-      // The imports are resolved to plain .js paths (e.g., ../components/Welcome.js)
-      // so the file must be written with matching name (no hash suffix)
-      // Cache busting is handled by the ?t=<timestamp> query string on import
-      const tempPath = await this.getTempPath(filePath);
-      const tempDir = tempPath.substring(0, tempPath.lastIndexOf("/"));
-      await this.fs.mkdir(tempDir, { recursive: true });
-      await this.fs.writeTextFile(tempPath, transformed);
+        const transformed = await transformToESM(
+          code,
+          filePath,
+          this.options.projectDir,
+          this.options.adapter,
+          transformOpts,
+        );
 
-      // Store in Redis for cross-pod sharing
-      if (redisEnabled && redisClient) {
-        // Fire and forget - don't block on Redis write
-        setInRedis(contentCacheKey, transformed).catch(() => {});
+        // Write to temp path without content hash in filename
+        // The imports are resolved to plain .js paths (e.g., ../components/Welcome.js)
+        // so the file must be written with matching name (no hash suffix)
+        // Cache busting is handled by the ?t=<timestamp> query string on import
+        const tempPath = await this.getTempPath(filePath);
+        const tempDir = tempPath.substring(0, tempPath.lastIndexOf("/"));
+        await this.fs.mkdir(tempDir, { recursive: true });
+        await this.fs.writeTextFile(tempPath, transformed);
+
+        // Store in Redis for cross-pod sharing
+        if (redisEnabled && redisClient) {
+          // Fire and forget - don't block on Redis write
+          setInRedis(contentCacheKey, transformed).catch(() => {});
+        }
+
+        // Store both the content-keyed and filePath-keyed entries
+        // LRU cache stores tempPath directly and handles TTL internally
+        globalModuleCache.set(contentCacheKey, tempPath);
+        globalModuleCache.set(filePathCacheKey, tempPath);
+      } finally {
+        transformSemaphore.release();
       }
 
-      // Store both the content-keyed and filePath-keyed entries
-      // LRU cache stores tempPath directly and handles TTL internally
-      globalModuleCache.set(contentCacheKey, tempPath);
-      globalModuleCache.set(filePathCacheKey, tempPath);
+      // Signal completion to any waiting requests
+      resolveTransform!();
+    } catch (err) {
+      // Signal failure to any waiting requests
+      rejectTransform!(err instanceof Error ? err : new Error(String(err)));
+      throw err;
     } finally {
       globalInProgress.delete(inProgressKey);
     }
