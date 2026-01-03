@@ -7,6 +7,7 @@ import { denoAdapter } from "@veryfront/platform/adapters/deno.ts";
 import { createVeryfrontHandler } from "../../../../src/server/universal-handler/index.ts";
 import { type TestContext, withTestContext } from "../../../_helpers/context.ts";
 import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";
+import { setServerInitialized } from "../../../../src/server/handlers/monitoring/health.ts";
 
 describe(
   "Universal Handler (scaffold)",
@@ -25,6 +26,9 @@ describe(
           projectDir: context.projectDir,
           debug: true,
         });
+
+        // Mark server as initialized for readyz check
+        setServerInitialized(true);
 
         // /healthz
         const r1 = await handler(new Request("http://localhost/healthz"));
