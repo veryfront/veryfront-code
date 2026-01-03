@@ -82,11 +82,12 @@ export const getRendererScript = () => `
         const container = document.getElementById('veryfront-content');
         if (container) {
           if (!container.__reactRoot) {
-            container.innerHTML = '';
-            const root = createRoot(container);
-            root.render(tree);
+            // Use hydrateRoot for initial render to preserve SSR content
+            // This prevents flash/flicker when hydrating
+            const { hydrateRoot } = await import('react-dom/client');
+            const root = hydrateRoot(container, tree);
             container.__reactRoot = root;
-            log('Client-side React app mounted successfully');
+            log('Client-side React app hydrated successfully');
           } else {
             container.__reactRoot.render(tree);
             log('Page re-rendered');
