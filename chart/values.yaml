@@ -34,6 +34,8 @@ proxy:
   env:
     PORT: "20000"
     RENDERER_URL: "http://veryfront-renderer:80"
+    # Structured JSON logging for Grafana
+    LOG_FORMAT: "json"
     # OpenTelemetry tracing
     OTEL_TRACES_ENABLED: "true"
     OTEL_TRACES_EXPORTER: "otlp"
@@ -147,6 +149,8 @@ renderer:
   env:
     PORT: "20000"
     PROXY_MODE: "1"
+    # Structured JSON logging for Grafana
+    LOG_FORMAT: "json"
     # OpenTelemetry tracing
     OTEL_TRACES_ENABLED: "true"
     OTEL_TRACES_EXPORTER: "otlp"
