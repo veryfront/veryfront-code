@@ -171,16 +171,86 @@ export async function getEntityBySlug(
   slug: string,
   adapter?: RuntimeAdapter,
 ): Promise<EntityInfo | null> {
+  // If adapter has resolveFile, use pattern-based resolution
+  if (adapter?.fs.resolveFile) {
+    const basePaths = [
+      pathHelper.join(projectDir, "pages", slug),
+      pathHelper.join(projectDir, slug),
+    ];
+
+    if (slug === "index" || slug === "") {
+      basePaths.unshift(
+        pathHelper.join(projectDir, "pages", "index"),
+        pathHelper.join(projectDir, "index"),
+      );
+    }
+
+    for (const basePath of basePaths) {
+      const resolvedPath = await adapter.fs.resolveFile(basePath);
+      if (resolvedPath) {
+        const info = await getEntityInfo(resolvedPath, adapter);
+        if (info?.entity.isPage) return info;
+      }
+    }
+
+    // Try dynamic routes
+    const slugParts = slug.split("/");
+    for (let depth = slugParts.length - 1; depth >= 0; depth--) {
+      const parentPath = slugParts.slice(0, depth).join("/");
+      const pagesDir = parentPath
+        ? pathHelper.join(projectDir, "pages", parentPath)
+        : pathHelper.join(projectDir, "pages");
+
+      try {
+        let dirExists = false;
+        try {
+          const stat = await withFallback(
+            () => adapter.fs.stat(pagesDir),
+            () => fs.stat(pagesDir),
+            { operationName: "stat:getEntityBySlug", logError: false },
+          );
+          dirExists = stat.isDirectory;
+        } catch {
+          dirExists = false;
+        }
+
+        if (dirExists) {
+          const entries: { name: string; isFile: boolean; isDirectory: boolean }[] = [];
+          const dirIterator = adapter.fs.readDir(pagesDir);
+          for await (const entry of dirIterator) {
+            entries.push(entry);
+          }
+
+          for (const entry of entries) {
+            if (entry.isFile && /\[.+\]\.(mdx|md|tsx|jsx|ts|js)$/.test(entry.name)) {
+              const dynamicPath = pathHelper.join(pagesDir, entry.name);
+              const info = await getEntityInfo(dynamicPath, adapter);
+              if (info?.entity.isPage) return info;
+            }
+          }
+        }
+      } catch {
+        // Directory doesn't exist or error reading it, continue to next depth
+      }
+    }
+
+    return null;
+  }
+
+  // Fallback for adapters without resolveFile
   const possiblePaths = [
     pathHelper.join(projectDir, "pages", `${slug}.mdx`),
+    pathHelper.join(projectDir, "pages", `${slug}.md`),
     pathHelper.join(projectDir, "pages", `${slug}.tsx`),
     pathHelper.join(projectDir, "pages", `${slug}.jsx`),
     pathHelper.join(projectDir, "pages", `${slug}.ts`),
     pathHelper.join(projectDir, "pages", `${slug}/index.mdx`),
+    pathHelper.join(projectDir, "pages", `${slug}/index.md`),
     pathHelper.join(projectDir, "pages", `${slug}/index.tsx`),
     pathHelper.join(projectDir, "pages", `${slug}/index.jsx`),
     pathHelper.join(projectDir, "pages", `${slug}/index.ts`),
     pathHelper.join(projectDir, `${slug}.mdx`),
+    pathHelper.join(projectDir, `${slug}.md`),
     pathHelper.join(projectDir, `${slug}.tsx`),
     pathHelper.join(projectDir, `${slug}.ts`),
   ];
@@ -188,9 +258,11 @@ export async function getEntityBySlug(
   if (slug === "index" || slug === "") {
     possiblePaths.unshift(
       pathHelper.join(projectDir, "pages", "index.mdx"),
+      pathHelper.join(projectDir, "pages", "index.md"),
       pathHelper.join(projectDir, "pages", "index.tsx"),
       pathHelper.join(projectDir, "pages", "index.ts"),
       pathHelper.join(projectDir, "index.mdx"),
+      pathHelper.join(projectDir, "index.md"),
       pathHelper.join(projectDir, "index.tsx"),
       pathHelper.join(projectDir, "index.ts"),
     );
@@ -242,7 +314,7 @@ export async function getEntityBySlug(
         }
 
         for (const entry of entries) {
-          if (entry.isFile && /\[.+\]\.(mdx|tsx|jsx|ts|js)$/.test(entry.name)) {
+          if (entry.isFile && /\[.+\]\.(mdx|md|tsx|jsx|ts|js)$/.test(entry.name)) {
             // Found a dynamic route file like [slug].tsx
             const dynamicPath = pathHelper.join(pagesDir, entry.name);
             const info = await getEntityInfo(dynamicPath, adapter);
@@ -274,7 +346,7 @@ export async function getLayoutEntity(
   }
 
   // If it's a full path with extension, try it directly
-  if (/\.(mdx|tsx|jsx|ts|js)$/.test(resolvedLayoutName)) {
+  if (/\.(mdx|md|tsx|jsx|ts|js)$/.test(resolvedLayoutName)) {
     const directPath = pathHelper.join(projectDir, resolvedLayoutName);
     const info = await getEntityInfo(directPath, adapter);
     if (info?.entity.isLayout) return info;
@@ -283,10 +355,13 @@ export async function getLayoutEntity(
   // Otherwise, try standard layout name resolution
   const possiblePaths = [
     pathHelper.join(projectDir, "layouts", `${resolvedLayoutName}.mdx`),
+    pathHelper.join(projectDir, "layouts", `${resolvedLayoutName}.md`),
     pathHelper.join(projectDir, "layouts", `${resolvedLayoutName}.tsx`),
     pathHelper.join(projectDir, "components", `${resolvedLayoutName}Layout.mdx`),
+    pathHelper.join(projectDir, "components", `${resolvedLayoutName}Layout.md`),
     pathHelper.join(projectDir, "components", `${resolvedLayoutName}Layout.tsx`),
     pathHelper.join(projectDir, "components", "Layout.mdx"),
+    pathHelper.join(projectDir, "components", "Layout.md"),
     pathHelper.join(projectDir, "components", "Layout.tsx"),
   ];
 

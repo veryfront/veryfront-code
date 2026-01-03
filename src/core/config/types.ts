@@ -54,6 +54,7 @@ export interface VeryfrontConfig {
     host?: string;
     open?: boolean;
     hmr?: boolean;
+    hmrPort?: number;
     components?: string[];
     moduleServerUrl?: string;
   };

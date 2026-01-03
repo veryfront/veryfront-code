@@ -26,6 +26,7 @@ export interface FSAdapter {
   mkdir?(path: string, options?: { recursive?: boolean }): Promise<void>;
   remove?(path: string, options?: { recursive?: boolean }): Promise<void>;
   initialize?(): Promise<void>;
+  resolveFile?(basePath: string): Promise<string | null>;
 }
 
 export interface FSAdapterConfig {

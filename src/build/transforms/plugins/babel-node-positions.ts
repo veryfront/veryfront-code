@@ -24,23 +24,6 @@ const generate = typeof (generateModule as any).default === "function"
 
 type NodePath<T> = traverseModule.NodePath<T>;
 
-const _VOID_ELEMENTS = new Set([
-  "area",
-  "base",
-  "br",
-  "col",
-  "embed",
-  "hr",
-  "img",
-  "input",
-  "link",
-  "meta",
-  "param",
-  "source",
-  "track",
-  "wbr",
-]);
-
 const SKIPPED_ELEMENTS = new Set([
   "html",
   "head",

@@ -45,20 +45,22 @@ export class MultiProjectFSAdapter implements FSAdapter {
     }
   }
 
-  private async getAdapter(): Promise<VeryfrontFSAdapter> {
+  private getAdapter(): Promise<VeryfrontFSAdapter> {
     const context = asyncLocalStorage.getStore();
 
     if (!context) {
       if (this.defaultAdapter) {
-        return this.defaultAdapter;
+        return Promise.resolve(this.defaultAdapter);
       }
-      throw new Error(
-        "[MultiProjectFSAdapter] No request context available. " +
-          "Use runWithContext() to set project context before accessing files.",
+      return Promise.reject(
+        new Error(
+          "[MultiProjectFSAdapter] No request context available. " +
+            "Use runWithContext() to set project context before accessing files.",
+        ),
       );
     }
 
-    return await this.manager.getAdapter(context.projectSlug, context.token);
+    return this.manager.getAdapter(context.projectSlug, context.token);
   }
 
   setDefaultAdapter(adapter: VeryfrontFSAdapter): void {
@@ -93,6 +95,11 @@ export class MultiProjectFSAdapter implements FSAdapter {
   async readdir(path: string): Promise<DirectoryEntry[]> {
     const adapter = await this.getAdapter();
     return adapter.readdir(path);
+  }
+
+  async resolveFile(basePath: string): Promise<string | null> {
+    const adapter = await this.getAdapter();
+    return adapter.resolveFile(basePath);
   }
 
   dispose(): void {

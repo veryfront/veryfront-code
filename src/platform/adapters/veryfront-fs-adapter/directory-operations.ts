@@ -22,7 +22,8 @@ export class DirectoryOperations {
 
   async readdir(path: string): Promise<DirectoryEntry[]> {
     const normalizedPath = this.normalizer.normalize(path);
-    const cacheKey = `dir:entries:${normalizedPath}`;
+    const branch = this.client.getRequestBranch() || "main";
+    const cacheKey = `dir:entries:${branch}:${normalizedPath}`;
 
     const cached = this.cache.get<DirectoryEntry[]>(cacheKey);
     if (cached) {
@@ -134,13 +135,14 @@ export class DirectoryOperations {
   }
 
   private async getAllFilesRaw(): Promise<ProjectFile[]> {
-    const cacheKey = "files:all";
+    const branch = this.client.getRequestBranch() || "main";
+    const cacheKey = `files:all:${branch}`;
     const cached = this.cache.get<ProjectFile[]>(cacheKey);
     if (cached) {
       return cached;
     }
 
-    logger.debug("[DirectoryOperations] Fetching all files from API");
+    logger.debug("[DirectoryOperations] Fetching all files from API", { branch });
     const files = await this.client.listAllFiles();
     this.cache.set(cacheKey, files);
     return files;

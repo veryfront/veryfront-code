@@ -9,6 +9,7 @@ export class VeryfrontAPIClient {
   private operations: VeryfrontAPIOperations;
   private requestToken?: string;
   private requestProjectSlug?: string;
+  private requestBranch?: string | null;
   private initialized = false;
   private initializingPromise?: Promise<void>;
 
@@ -85,6 +86,28 @@ export class VeryfrontAPIClient {
    */
   clearProjectSlug(): void {
     this.requestProjectSlug = undefined;
+  }
+
+  /**
+   * Set a per-request branch from URL parsing.
+   * When set, file content will be fetched from this branch instead of main.
+   */
+  setRequestBranch(branch: string | null): void {
+    this.requestBranch = branch;
+  }
+
+  /**
+   * Get the current per-request branch.
+   */
+  getRequestBranch(): string | null | undefined {
+    return this.requestBranch;
+  }
+
+  /**
+   * Clear the per-request branch, reverting to main branch.
+   */
+  clearRequestBranch(): void {
+    this.requestBranch = undefined;
   }
 
   /**
@@ -167,16 +190,28 @@ export class VeryfrontAPIClient {
     return await this.operations.getProject(projectId);
   }
 
-  async listFiles(projectId?: string, cursor?: string, limit = 100) {
-    return await this.operations.listFiles(projectId, cursor, limit);
+  async listFiles(projectId?: string, cursor?: string, limit = 100, branch?: string | null) {
+    // Use request branch if not explicitly provided
+    const effectiveBranch = branch !== undefined ? branch : this.requestBranch;
+    return await this.operations.listFiles(projectId, cursor, limit, effectiveBranch);
   }
 
-  async listAllFiles(projectId?: string) {
-    return await this.operations.listAllFiles(projectId);
+  async listAllFiles(projectId?: string, branch?: string | null) {
+    // Use request branch if not explicitly provided
+    const effectiveBranch = branch !== undefined ? branch : this.requestBranch;
+    return await this.operations.listAllFiles(projectId, effectiveBranch);
   }
 
-  async getFileContent(path: string, projectId?: string) {
-    return await this.operations.getFileContent(path, projectId);
+  async searchFiles(pattern: string, projectId?: string, branch?: string | null) {
+    // Use request branch if not explicitly provided
+    const effectiveBranch = branch !== undefined ? branch : this.requestBranch;
+    return await this.operations.searchFiles(pattern, projectId, effectiveBranch);
+  }
+
+  async getFileContent(path: string, projectId?: string, branch?: string | null) {
+    // Use request branch if not explicitly provided
+    const effectiveBranch = branch !== undefined ? branch : this.requestBranch;
+    return await this.operations.getFileContent(path, projectId, effectiveBranch);
   }
 
   async getFileMetadata(path: string, projectId?: string) {
@@ -185,5 +220,17 @@ export class VeryfrontAPIClient {
 
   async fileExists(path: string, projectId?: string) {
     return await this.operations.fileExists(path, projectId);
+  }
+
+  async listPublishedFiles(projectId?: string, releaseId?: string) {
+    return await this.operations.listPublishedFiles(projectId, releaseId);
+  }
+
+  async getPublishedFileContent(path: string, projectId?: string, releaseId?: string) {
+    return await this.operations.getPublishedFileContent(path, projectId, releaseId);
+  }
+
+  async lookupProjectByDomain(domain: string) {
+    return await this.operations.lookupProjectByDomain(domain);
   }
 }

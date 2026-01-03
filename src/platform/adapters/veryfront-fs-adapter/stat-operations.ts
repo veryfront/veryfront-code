@@ -6,6 +6,8 @@ import { FileCache } from "../file-cache/file-cache.ts";
 import { PathNormalizer } from "./path-normalizer.ts";
 import { createError, toError } from "../../../core/errors/veryfront-error.ts";
 
+const EXTENSION_PRIORITY = [".mdx", ".md", ".tsx", ".jsx", ".ts", ".js"] as const;
+
 export class StatOperations {
   private fileIndex: Map<string, ProjectFile> | null = null;
   private directoryIndex: Set<string> | null = null;
@@ -19,11 +21,11 @@ export class StatOperations {
 
   async stat(path: string): Promise<FileInfo> {
     const normalizedPath = this.normalizer.normalize(path);
-    const cacheKey = `file:stat:${normalizedPath}`;
+    const branch = this.client.getRequestBranch() || "main";
+    const cacheKey = `file:stat:${branch}:${normalizedPath}`;
 
     const cached = this.cache.get<FileInfo>(cacheKey);
     if (cached) {
-      logger.debug("[StatOperations] Cache hit (stat)", { path: normalizedPath });
       return cached;
     }
 
@@ -117,13 +119,14 @@ export class StatOperations {
   }
 
   private async getAllFilesRaw(): Promise<ProjectFile[]> {
-    const cacheKey = "files:all";
+    const branch = this.client.getRequestBranch() || "main";
+    const cacheKey = `files:all:${branch}`;
     const cached = this.cache.get<ProjectFile[]>(cacheKey);
     if (cached) {
       return cached;
     }
 
-    logger.debug("[StatOperations] Fetching all files from API");
+    logger.debug("[StatOperations] Fetching all files from API", { branch });
     const files = await this.client.listAllFiles();
     this.cache.set(cacheKey, files);
     return files;
@@ -137,5 +140,79 @@ export class StatOperations {
     } catch {
       return false;
     }
+  }
+
+  async resolveFile(basePath: string): Promise<string | null> {
+    const normalizedPath = this.normalizer.normalize(basePath);
+    const branch = this.client.getRequestBranch() || "main";
+    const cacheKey = `file:resolve:${branch}:${normalizedPath}`;
+
+    const cached = this.cache.get<string | null>(cacheKey);
+    if (cached !== undefined) {
+      return cached;
+    }
+
+    await this.ensureIndexBuilt();
+
+    const fileIdx = this.fileIndex;
+    if (!fileIdx) {
+      return null;
+    }
+
+    // 1. Try exact match first
+    if (fileIdx.has(normalizedPath)) {
+      this.cache.set(cacheKey, normalizedPath);
+      return normalizedPath;
+    }
+
+    // 2. Check if path already has an extension
+    const hasExtension = EXTENSION_PRIORITY.some((ext) => normalizedPath.endsWith(ext));
+    const pathWithoutExt = hasExtension
+      ? normalizedPath.replace(/\.(mdx|md|tsx|jsx|ts|js)$/, "")
+      : normalizedPath;
+
+    // 3. Try each extension in priority order from cached index
+    for (const ext of EXTENSION_PRIORITY) {
+      const pathWithExt = pathWithoutExt + ext;
+      if (fileIdx.has(pathWithExt)) {
+        this.cache.set(cacheKey, pathWithExt);
+        return pathWithExt;
+      }
+    }
+
+    // 4. Try index file variants
+    for (const ext of EXTENSION_PRIORITY) {
+      const indexPath = `${pathWithoutExt}/index${ext}`;
+      if (fileIdx.has(indexPath)) {
+        this.cache.set(cacheKey, indexPath);
+        return indexPath;
+      }
+    }
+
+    // 5. If not in cache, search via API pattern
+    const searchPattern = `${pathWithoutExt}.*`;
+    logger.debug("[StatOperations] Searching for file pattern", { pattern: searchPattern });
+
+    try {
+      const matches = await this.client.searchFiles(searchPattern);
+      if (matches.length > 0) {
+        // Sort by extension priority
+        const sorted = matches.sort((a, b) => {
+          const extA = EXTENSION_PRIORITY.findIndex((ext) => a.path.endsWith(ext));
+          const extB = EXTENSION_PRIORITY.findIndex((ext) => b.path.endsWith(ext));
+          return (extA === -1 ? 99 : extA) - (extB === -1 ? 99 : extB);
+        });
+        const first = sorted[0];
+        if (first) {
+          this.cache.set(cacheKey, first.path);
+          return first.path;
+        }
+      }
+    } catch (error) {
+      logger.debug("[StatOperations] Pattern search failed", { pattern: searchPattern, error });
+    }
+
+    this.cache.set(cacheKey, null);
+    return null;
   }
 }

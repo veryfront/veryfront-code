@@ -12,6 +12,7 @@ import {
   remarkMdxRemoveParagraphs,
 } from "./remark-mdx-utils.ts";
 import { remarkAddNodeId } from "./remark-node-id.ts";
+import { rehypeMermaid } from "./rehype-mermaid.ts";
 import remarkGfm from "remark-gfm";
 import remarkFrontmatter from "remark-frontmatter";
 import rehypeHighlight from "rehype-highlight";
@@ -109,6 +110,7 @@ export async function getRehypePlugins(
   adapter?: RuntimeAdapter,
 ): Promise<PluginEntry[]> {
   const defaultPlugins: PluginEntry[] = [
+    rehypeMermaid as PluginEntry, // Must run before rehypeHighlight
     rehypeHighlight as PluginEntry,
     rehypeSlug as PluginEntry,
     rehypePreserveNodeIds as PluginEntry,

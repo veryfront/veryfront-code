@@ -27,10 +27,17 @@ import {
 /**
  * Convert a source path to a module URL for preloading.
  * E.g., pages/index.mdx -> /_vf_modules/pages/index.js
+ * E.g., _snippets/abc123 -> /_vf_modules/_snippets/abc123.js
  */
 function pathToModuleUrl(path: string): string {
   if (!path) return "";
-  return "/_vf_modules/" + path.replace(/\.(tsx|ts|jsx|mdx)$/, ".js");
+  // Replace known source extensions with .js
+  const withExtReplaced = path.replace(/\.(tsx|ts|jsx|mdx)$/, ".js");
+  // If no extension was replaced and path doesn't end with .js, add .js
+  if (withExtReplaced === path && !path.endsWith(".js")) {
+    return "/_vf_modules/" + path + ".js";
+  }
+  return "/_vf_modules/" + withExtReplaced;
 }
 
 /**
@@ -246,6 +253,14 @@ ${options.globalCSS || generateThemeVariables()}
     })
     : "";
 
+  // Mermaid initialization script for diagram rendering
+  const mermaidScript = `
+  <!-- Mermaid diagram rendering -->
+  <script type="module"${nonce ? ` nonce="${nonce}"` : ""}>
+    import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+    mermaid.initialize({ startOnLoad: true, theme: 'default' });
+  </script>`;
+
   const end = `
     </div>
   </div>
@@ -259,6 +274,7 @@ ${options.globalCSS || generateThemeVariables()}
   ${scriptTags}
   ${modeScripts}
   ${studioScripts}
+  ${mermaidScript}
 </body>
 </html>`;
 
