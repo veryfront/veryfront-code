@@ -143,7 +143,9 @@ export class DirectoryOperations {
     // In production mode, use the published files cache
     if (isProduction) {
       const cacheKey = `files:published:${releaseId ?? "latest"}`;
-      logger.debug("[DirectoryOperations] Production mode - checking published files cache", { cacheKey });
+      logger.debug("[DirectoryOperations] Production mode - checking published files cache", {
+        cacheKey,
+      });
       const cached = this.cache.get<ProjectFile[]>(cacheKey);
       if (cached) {
         return cached;

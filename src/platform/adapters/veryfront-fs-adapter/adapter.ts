@@ -69,7 +69,12 @@ export class VeryfrontFSAdapter implements FSAdapter {
       getReleaseId: () => this.releaseId,
     };
     this.readOps = new ReadOperations(this.client, this.cache, this.normalizer, productionContext);
-    this.dirOps = new DirectoryOperations(this.client, this.cache, this.normalizer, productionContext);
+    this.dirOps = new DirectoryOperations(
+      this.client,
+      this.cache,
+      this.normalizer,
+      productionContext,
+    );
     this.statOps = new StatOperations(this.client, this.cache, this.normalizer, productionContext);
 
     logger.info("[VeryfrontFSAdapter] Created", {

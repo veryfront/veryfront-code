@@ -264,7 +264,9 @@ export class StatOperations {
     // In production mode, we only have published files, so skip the search
     if (!isProduction) {
       const searchPattern = `${pathWithoutExt}.*`;
-      logger.debug("[StatOperations] Searching for file pattern (dev mode)", { pattern: searchPattern });
+      logger.debug("[StatOperations] Searching for file pattern (dev mode)", {
+        pattern: searchPattern,
+      });
 
       try {
         const matches = await this.client.searchFiles(searchPattern);
