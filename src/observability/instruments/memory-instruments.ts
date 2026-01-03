@@ -18,7 +18,7 @@ const V8_HEAP_LIMIT_MB = (() => {
   } catch {
     // Ignore
   }
-  return 3072; // Default from values.yaml
+  return 4096; // Default from values.yaml
 })();
 
 /**

@@ -149,14 +149,14 @@ renderer:
   env:
     PORT: "20000"
     PROXY_MODE: "1"
-    # V8 heap size: 3GB to leave headroom for Deno overhead and prevent OOM
-    # Container limit is 6Gi; V8 heap (3GB) + Deno overhead (~400MB) ≈ 3.4GB = ~57%
+    # V8 heap size: 4GB to leave headroom for Deno overhead and prevent OOM
+    # Container limit is 6Gi; V8 heap (4GB) + Deno overhead (~400MB) ≈ 4.4GB = ~73%
     # This gives headroom for per-request component loading in proxy mode
-    DENO_V8_FLAGS: "--max-old-space-size=3072"
+    DENO_V8_FLAGS: "--max-old-space-size=4096"
     # Limit concurrent ESM transforms to prevent memory spikes during cold start
-    # Each transform can use 100-500MB; with 3GB heap, 3 concurrent is safe
-    # Tune based on observed memory usage in /_metrics or logs
-    SSR_MAX_CONCURRENT_TRANSFORMS: "3"
+    # Each transform can use 100-500MB; with 4GB heap, 2 concurrent is conservative
+    # Reduced from 3 to 2 to lower peak memory during concurrent requests
+    SSR_MAX_CONCURRENT_TRANSFORMS: "2"
     # Enable memory monitoring (logs heap usage periodically)
     ENABLE_MEMORY_MONITORING: "true"
     MEMORY_MONITORING_INTERVAL_MS: "30000"
@@ -213,15 +213,15 @@ renderer:
   # Horizontal Pod Autoscaler - scales based on memory/CPU usage
   # Memory-based scaling is critical for the renderer to avoid OOM crashes
   #
-  # IMPORTANT: V8 heap (3GB) + Deno overhead (~400MB) ≈ 3.4GB
-  # At 3.4GB container RSS = 57% of 6Gi limit
-  # We scale at 70% (~4.2GB) to give HPA reaction time before V8 OOM
+  # IMPORTANT: V8 heap (4GB) + Deno overhead (~400MB) ≈ 4.4GB
+  # At 4.4GB container RSS = 73% of 6Gi limit
+  # We scale at 80% (~4.8GB) to give HPA reaction time before V8 OOM
   autoscaling:
     enabled: true
     minReplicas: 2
     maxReplicas: 6
-    # Scale at 70% (~4.2GB) - well before V8 heap limit (3GB)
-    targetMemoryUtilizationPercentage: 70
+    # Scale at 80% (~4.8GB) - before V8 heap limit (4GB)
+    targetMemoryUtilizationPercentage: 80
     # Also scale on CPU for request-heavy loads
     targetCPUUtilizationPercentage: 80
     # Wait 5 minutes before scaling down to avoid flapping
