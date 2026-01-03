@@ -9,6 +9,9 @@
  * - Edge cases and concurrent operations
  */
 
+// Disable LRU intervals during testing to prevent resource leaks
+(globalThis as Record<string, unknown>).__vfDisableLruInterval = true;
+
 import { assert, assertEquals, assertExists, assertRejects } from "std/assert/mod.ts";
 import { afterEach, describe, it } from "std/testing/bdd.ts";
 import { bootstrap, bootstrapDev, bootstrapProd } from "../../../src/server/bootstrap.ts";
