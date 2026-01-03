@@ -1,3 +1,6 @@
+// Disable LRU intervals during testing to prevent resource leaks
+(globalThis as Record<string, unknown>).__vfDisableLruInterval = true;
+
 /**
  * HMR Runtime Tests
  *
