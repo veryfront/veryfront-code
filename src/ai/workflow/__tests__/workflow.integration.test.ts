@@ -370,9 +370,9 @@ describe("Workflow Integration", () => {
     });
   });
 
-  // TODO: Approval flow tests are skipped due to timing issues with MemoryBackend
-  // The savePendingApproval is not being called by the DAG executor when reaching waitForApproval nodes
-  // This needs investigation in the workflow executor implementation
+  // NOTE: Approval flow tests are skipped due to timing issues with MemoryBackend.
+  // The savePendingApproval is not being called by the DAG executor when reaching waitForApproval nodes.
+  // This needs investigation in the workflow executor implementation.
   describe.skip("Approval Flow", () => {
     it("should pause at waitForApproval", async () => {
       const mockTool = createMockTool("before", () => ({ before: true }));
