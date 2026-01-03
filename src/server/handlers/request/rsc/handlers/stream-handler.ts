@@ -78,13 +78,15 @@ export class StreamHandler {
           });
         } catch (error) {
           logger.warn("[RSC][dev] stream handler error", error);
-          throw error;
-        } finally {
-          try {
-            controller.close();
-          } catch (closeError) {
-            logger.debug("[RSC][dev] controller.close failed", closeError);
-          }
+          // Use controller.error() to properly signal stream failure instead of throwing
+          controller.error(error instanceof Error ? error : new Error(String(error)));
+          return;
+        }
+
+        try {
+          controller.close();
+        } catch (closeError) {
+          logger.debug("[RSC][dev] controller.close failed", closeError);
         }
       },
     });

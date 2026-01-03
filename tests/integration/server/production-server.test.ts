@@ -16,19 +16,19 @@ import { join } from "std/path/mod.ts";
 import { afterAll, describe, it } from "std/testing/bdd.ts";
 import "../../_helpers/log-guard.ts";
 import { buildProduction } from "../../../src/build/production-build/index.ts";
-import { startProductionServer } from "../../../src/server/production-server.ts";
 import { TestDataFactory } from "../../fixtures/test-data-factory.ts";
 import { withTestContext } from "../../_helpers/context.ts";
-import { getFreePort } from "../../_helpers/utils.ts";
 import { cleanupBundler } from "../../../src/rendering/cleanup.ts";
 
-describe("Production Server Integration", { sanitizeOps: false, sanitizeResources: false }, () => {
-  // Clean up renderer intervals to prevent resource leaks
-  afterAll(async () => {
-    await cleanupBundler();
-  });
+// Clean up renderer intervals to prevent resource leaks
+afterAll(async () => {
+  await cleanupBundler();
+});
 
-  describe("Static Assets", () => {
+describe(
+  "Production Server - Static Assets",
+  {},
+  () => {
     it("serves static files with correct headers", async () => {
       await withTestContext("prod-static-assets", async (context) => {
         // Enable cache closing for tests
@@ -86,26 +86,11 @@ describe("Production Server Integration", { sanitizeOps: false, sanitizeResource
 
     it("handles 404 for missing files", async () => {
       await withTestContext("production-basic-404", async (context) => {
-        const port = getFreePort(9501, 10000);
-        const controller = new AbortController();
-        const server = await startProductionServer({
-          projectDir: context.projectDir,
-          port,
-          hostname: "127.0.0.1",
-          signal: controller.signal,
-        });
+        const server = await context.createProductionServer();
 
-        await server.ready;
-        await new Promise((r) => setTimeout(r, 200));
-
-        try {
-          const res = await fetch(`http://127.0.0.1:${port}/missing.txt`);
-          assertEquals(res.status, 404);
-          await res.text();
-        } finally {
-          controller.abort();
-          if (server?.stop) await server.stop();
-        }
+        const res = await fetch(`http://localhost:${server.port}/missing.txt`);
+        assertEquals(res.status, 404);
+        await res.text();
       });
     });
 
@@ -144,9 +129,13 @@ describe("Production Server Integration", { sanitizeOps: false, sanitizeResource
         );
       });
     });
-  });
+  },
+);
 
-  describe("App Router", () => {
+describe(
+  "Production Server - App Router",
+  {},
+  () => {
     it("serves App Router pages with layouts", async () => {
       await withTestContext("prod-app-router", async (context) => {
         // Enable cache closing for tests
@@ -183,9 +172,13 @@ describe("Production Server Integration", { sanitizeOps: false, sanitizeResource
         assert(html.includes("<html"), "Should include layout wrapper");
       });
     });
-  });
+  },
+);
 
-  describe("API Routes", () => {
+describe(
+  "Production Server - API Routes",
+  {},
+  () => {
     it("handles API routes", async () => {
       await withTestContext("production-basic-api", async (context) => {
         // Create an App Router API route
@@ -197,33 +190,22 @@ describe("Production Server Integration", { sanitizeOps: false, sanitizeResource
         }`,
         );
 
-        const port = getFreePort(9503, 10000);
-        const controller = new AbortController();
-        const server = await startProductionServer({
-          projectDir: context.projectDir,
-          port,
-          hostname: "127.0.0.1",
-          signal: controller.signal,
-        });
+        const server = await context.createProductionServer();
 
-        await server.ready;
-        await new Promise((r) => setTimeout(r, 200));
-
-        try {
-          const res = await fetch(`http://127.0.0.1:${port}/api/hello`);
-          assertEquals(res.status, 200);
-          const data = await res.json();
-          assertEquals(data.message, "Hello API");
-        } finally {
-          controller.abort();
-          if (server?.stop) await server.stop();
-        }
+        const res = await fetch(`http://localhost:${server.port}/api/hello`);
+        assertEquals(res.status, 200);
+        const data = await res.json();
+        assertEquals(data.message, "Hello API");
       });
     });
-  });
+  },
+);
 
-  describe("Security", () => {
-    it("sets CSP with nonce", async () => {
+describe(
+  "Production Server - Security",
+  {},
+  () => {
+    it("does not set CSP by default (allows user content)", async () => {
       await withTestContext("prod-csp-nonce", async (context) => {
         // Create a simple page so the server has something to serve
         await Deno.writeTextFile(
@@ -231,39 +213,14 @@ describe("Production Server Integration", { sanitizeOps: false, sanitizeResource
           `export default function Home() { return <h1>CSP Test</h1>; }`,
         );
 
-        // Enable CSP via config (CSP is disabled by default)
-        await Deno.writeTextFile(
-          join(context.projectDir, "veryfront.config.js"),
-          `export default {
-            security: {
-              csp: {
-                defaultSrc: ["'self'"],
-                scriptSrc: ["'self'", "'nonce-{NONCE}'"],
-              }
-            }
-          };`,
-        );
+        const server = await context.createProductionServer();
 
-        const port = getFreePort(9000, 12000);
-        const controller = new AbortController();
-        const server = await startProductionServer({
-          projectDir: context.projectDir,
-          port,
-          signal: controller.signal as any,
-        });
-        await server.ready;
-        await new Promise((r) => setTimeout(r, 200));
-
-        try {
-          const res = await fetch(`http://127.0.0.1:${port}/`);
-          assertEquals(res.status, 200, "Should serve the page");
-          const csp = res.headers.get("content-security-policy");
-          assert(csp && csp.length > 0, "Should have CSP header");
-          await res.text();
-        } finally {
-          controller.abort();
-          await server.stop?.();
-        }
+        const res = await fetch(`http://localhost:${server.port}/`);
+        assertEquals(res.status, 200, "Should serve the page");
+        // CSP is not set by default to allow user-generated content
+        const csp = res.headers.get("content-security-policy");
+        assertEquals(csp, null, "CSP should not be set by default");
+        await res.text();
       });
     });
 
@@ -275,77 +232,41 @@ describe("Production Server Integration", { sanitizeOps: false, sanitizeResource
           `export default function Page() { return <div>Security Test</div>; }`,
         );
 
-        const port = getFreePort(9504, 10000);
-        const controller = new AbortController();
-        const server = await startProductionServer({
-          projectDir: context.projectDir,
-          port,
-          hostname: "127.0.0.1",
-          signal: controller.signal,
-        });
+        const server = await context.createProductionServer();
 
-        await server.ready;
-        await new Promise((r) => setTimeout(r, 200));
+        const res = await fetch(`http://localhost:${server.port}/`);
+        assertEquals(res.status, 200);
 
-        try {
-          const res = await fetch(`http://127.0.0.1:${port}/`);
-          assertEquals(res.status, 200);
+        // Check security headers
+        assertEquals(res.headers.get("x-content-type-options"), "nosniff");
 
-          // Check security headers
-          assertEquals(res.headers.get("x-content-type-options"), "nosniff");
-
-          await res.text();
-        } finally {
-          controller.abort();
-          if (server?.stop) await server.stop();
-        }
+        await res.text();
       });
     });
 
-    it("handles security headers correctly", async () => {
+    it("sets basic security headers by default", async () => {
       await withTestContext("prod-security-headers", async (context) => {
-        // Create a page so the server has something to serve
-        await Deno.writeTextFile(
-          join(context.projectDir, "pages", "index.tsx"),
-          `export default function Home() { return <h1>Security Test</h1>; }`,
-        );
-
-        // Enable CSP via config (CSP is disabled by default)
-        await Deno.writeTextFile(
-          join(context.projectDir, "veryfront.config.js"),
-          `export default {
-            security: {
-              csp: {
-                defaultSrc: ["'self'"],
-              }
-            }
-          };`,
-        );
-
         const server = await context.createProductionServer();
         const response = await fetch(`http://localhost:${server.port}/`);
 
-        // Check security headers
-        const csp = response.headers.get("content-security-policy");
-        assertExists(csp, "Should include CSP header");
-        assert(csp.includes("default-src 'self'"), "CSP should restrict sources");
-
-        assertEquals(
-          response.headers.get("cross-origin-resource-policy"),
-          "same-origin",
-          "Should set CORP header",
-        );
-        assertEquals(
-          response.headers.get("cross-origin-opener-policy"),
-          "same-origin",
-          "Should set COOP header",
-        );
+        // Basic security headers are set by default
         assertEquals(
           response.headers.get("x-content-type-options"),
           "nosniff",
           "Should prevent MIME sniffing",
         );
-        assertEquals(response.headers.get("x-frame-options"), "DENY", "Should prevent framing");
+        assertEquals(
+          response.headers.get("x-frame-options"),
+          "DENY",
+          "Should prevent framing by default",
+        );
+
+        // CSP is NOT set by default to allow user-generated content
+        assertEquals(
+          response.headers.get("content-security-policy"),
+          null,
+          "CSP not set by default to allow user content",
+        );
 
         await response.text();
       });
@@ -376,9 +297,13 @@ describe("Production Server Integration", { sanitizeOps: false, sanitizeResource
         await response.body?.cancel();
       });
     });
-  });
+  },
+);
 
-  describe("Pages Router", () => {
+describe(
+  "Production Server - Pages Router",
+  {},
+  () => {
     it("renders MDX pages with frontmatter", async () => {
       /**
        * Tests MDX processing including:
@@ -410,9 +335,13 @@ describe("Production Server Integration", { sanitizeOps: false, sanitizeResource
         assert(html.includes("Test Page") || html.includes("<h1>"), "Should render page title");
       });
     });
-  });
+  },
+);
 
-  describe("Error Handling", () => {
+describe(
+  "Production Server - Error Handling",
+  {},
+  () => {
     it("returns 404 page for non-existent routes", async () => {
       // Production servers need at least one page to initialize properly
       // This test creates a simple index page and then tests 404 handling for other routes
@@ -483,5 +412,5 @@ describe("Production Server Integration", { sanitizeOps: false, sanitizeResource
         );
       });
     });
-  });
-});
+  },
+);

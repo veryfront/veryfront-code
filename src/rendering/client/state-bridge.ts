@@ -19,13 +19,23 @@ class StateBridge implements StateStore {
   private state: Map<string, unknown> = new Map();
   private listeners: Map<string, Set<(value: unknown) => void>> = new Map();
   private persistKeys: Set<string> = new Set();
+  private boundSaveState: (() => void) | null = null;
 
   constructor() {
     this.restoreState();
 
     if (typeof window !== "undefined") {
-      globalThis.addEventListener("beforeunload", () => this.saveState());
+      this.boundSaveState = () => this.saveState();
+      globalThis.addEventListener("beforeunload", this.boundSaveState);
     }
+  }
+
+  destroy(): void {
+    if (this.boundSaveState && typeof window !== "undefined") {
+      globalThis.removeEventListener("beforeunload", this.boundSaveState);
+      this.boundSaveState = null;
+    }
+    this.clear();
   }
 
   get<T = unknown>(key: string): T | undefined {
@@ -148,6 +158,9 @@ export function getStateBridge(): StateBridge {
 }
 
 export function __resetBridgeForTesting(): void {
+  if (bridgeInstance) {
+    bridgeInstance.destroy();
+  }
   bridgeInstance = null;
 }
 

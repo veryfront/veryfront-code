@@ -1,6 +1,7 @@
 import type { CachePayload, CacheStore } from "../types.ts";
 import { rendererLogger as logger } from "@veryfront/utils";
 import { createError, toError } from "../../../core/errors/veryfront-error.ts";
+import { MemoryCacheStore } from "./memory-store.ts";
 
 interface RedisClient {
   connect(): Promise<void>;
@@ -15,16 +16,30 @@ interface RedisClient {
 export interface RedisCacheStoreOptions {
   url?: string;
   keyPrefix?: string;
+  /** Enable fallback to memory cache when Redis is unavailable */
+  enableFallback?: boolean;
 }
 
 export class RedisCacheStore implements CacheStore {
   private client: RedisClient | null = null;
   private readonly url?: string;
   private readonly keyPrefix: string;
+  private readonly enableFallback: boolean;
+  private fallbackStore: MemoryCacheStore | null = null;
+  private redisUnavailable = false;
 
   constructor(options: RedisCacheStoreOptions = {}) {
     this.url = options.url;
     this.keyPrefix = options.keyPrefix ?? "veryfront:render:";
+    this.enableFallback = options.enableFallback ?? true;
+  }
+
+  private getFallbackStore(): MemoryCacheStore {
+    if (!this.fallbackStore) {
+      this.fallbackStore = new MemoryCacheStore({ maxEntries: 500 });
+      logger.warn("[redis] Redis unavailable, using memory cache fallback");
+    }
+    return this.fallbackStore;
   }
 
   private async ensureClient(): Promise<RedisClient> {
@@ -40,22 +55,26 @@ export class RedisCacheStore implements CacheStore {
       const mod = await import(redisClientModule);
       createClient = mod.createClient as unknown as (options: { url?: string }) => RedisClient;
     } catch {
-      throw toError(createError({
-        type: "render",
-        message:
-          "Redis cache store requires npm:@redis/client. Install dependencies or switch cache.render.type to 'memory' or 'filesystem'.",
-      }));
+      throw toError(
+        createError({
+          type: "render",
+          message:
+            "Redis cache store requires npm:@redis/client. Install dependencies or switch cache.render.type to 'memory' or 'filesystem'.",
+        })
+      );
     }
 
     const client = createClient({ url: this.url });
     if (typeof client?.on === "function") {
       client.on("error", (err: unknown) => {
         logger.error("[redis] client error", err);
+        this.redisUnavailable = true;
       });
     }
 
     await client.connect();
     this.client = client;
+    this.redisUnavailable = false;
     return client;
   }
 
@@ -64,44 +83,105 @@ export class RedisCacheStore implements CacheStore {
   }
 
   async get(key: string): Promise<CachePayload | undefined> {
-    const client = await this.ensureClient();
-    const raw = await client.get(this.storageKey(key));
-    if (!raw) return undefined;
+    if (this.redisUnavailable && this.enableFallback) {
+      return this.getFallbackStore().get(key);
+    }
+
     try {
-      return JSON.parse(raw) as CachePayload;
-    } catch {
-      return undefined;
+      const client = await this.ensureClient();
+      const raw = await client.get(this.storageKey(key));
+      if (!raw) return undefined;
+      try {
+        return JSON.parse(raw) as CachePayload;
+      } catch {
+        return undefined;
+      }
+    } catch (error) {
+      if (this.enableFallback) {
+        logger.warn("[redis] get failed, using fallback", { key, error });
+        this.redisUnavailable = true;
+        return this.getFallbackStore().get(key);
+      }
+      throw error;
     }
   }
 
   async set(key: string, value: CachePayload): Promise<void> {
-    const client = await this.ensureClient();
-    await client.set(this.storageKey(key), JSON.stringify(value));
+    if (this.redisUnavailable && this.enableFallback) {
+      return this.getFallbackStore().set(key, value);
+    }
+
+    try {
+      const client = await this.ensureClient();
+      await client.set(this.storageKey(key), JSON.stringify(value));
+    } catch (error) {
+      if (this.enableFallback) {
+        logger.warn("[redis] set failed, using fallback", { key, error });
+        this.redisUnavailable = true;
+        return this.getFallbackStore().set(key, value);
+      }
+      throw error;
+    }
   }
 
   async delete(key: string): Promise<void> {
-    const client = await this.ensureClient();
-    await client.del(this.storageKey(key));
+    if (this.redisUnavailable && this.enableFallback) {
+      return this.getFallbackStore().delete(key);
+    }
+
+    try {
+      const client = await this.ensureClient();
+      await client.del(this.storageKey(key));
+    } catch (error) {
+      if (this.enableFallback) {
+        logger.warn("[redis] delete failed, using fallback", { key, error });
+        this.redisUnavailable = true;
+        return this.getFallbackStore().delete(key);
+      }
+      throw error;
+    }
   }
 
   async clear(): Promise<void> {
-    const client = await this.ensureClient();
-    let cursor = 0;
-    do {
-      const [nextCursor, keys] = await client.scan(cursor, {
-        MATCH: `${this.keyPrefix}*`,
-        COUNT: 50,
-      });
-      cursor = nextCursor;
-      if (keys.length > 0) {
-        for (const key of keys) {
-          await client.del(key);
+    if (this.fallbackStore) {
+      await this.fallbackStore.clear();
+    }
+
+    if (this.redisUnavailable && this.enableFallback) {
+      return;
+    }
+
+    try {
+      const client = await this.ensureClient();
+      let cursor = 0;
+      do {
+        const [nextCursor, keys] = await client.scan(cursor, {
+          MATCH: `${this.keyPrefix}*`,
+          COUNT: 50,
+        });
+        cursor = nextCursor;
+        if (keys.length > 0) {
+          for (const key of keys) {
+            await client.del(key);
+          }
         }
+      } while (cursor !== 0);
+    } catch (error) {
+      if (this.enableFallback) {
+        logger.warn("[redis] clear failed", { error });
+        this.redisUnavailable = true;
+        return;
       }
-    } while (cursor !== 0);
+      throw error;
+    }
   }
 
   async destroy(): Promise<void> {
+    if (this.fallbackStore) {
+      await this.fallbackStore.destroy();
+      this.fallbackStore = null;
+    }
+
     if (!this.client) return;
     await this.client.disconnect();
     this.client = null;
