@@ -138,19 +138,22 @@ renderer:
 
   resources:
     requests:
-      cpu: "500m"
-      memory: "3Gi"
+      cpu: "1000m"
+      memory: "4Gi"
       ephemeral-storage: "1Gi"
     limits:
-      cpu: "2000m"
-      memory: "4Gi"
+      cpu: "3000m"
+      memory: "6Gi"
       ephemeral-storage: "2Gi"
 
   env:
     PORT: "20000"
     PROXY_MODE: "1"
-    # V8 heap size: 70% of 4Gi = ~2800MB
-    DENO_V8_FLAGS: "--max-old-space-size=2800"
+    # V8 heap size: 70% of 6Gi = ~4200MB
+    DENO_V8_FLAGS: "--max-old-space-size=4200"
+    # Enable memory monitoring (logs heap usage periodically)
+    ENABLE_MEMORY_MONITORING: "true"
+    MEMORY_MONITORING_INTERVAL_MS: "30000"
     # Structured JSON logging for Grafana
     LOG_FORMAT: "json"
     # OpenTelemetry tracing
@@ -158,19 +161,39 @@ renderer:
     OTEL_TRACES_EXPORTER: "otlp"
     OTEL_SERVICE_NAME: "veryfront-renderer"
     OTEL_EXPORTER_OTLP_ENDPOINT: "https://otlp-gateway-prod-eu-west-2.grafana.net/otlp"
+    # OpenTelemetry metrics (V8 heap, memory, cache sizes, request counts)
+    OTEL_METRICS_ENABLED: "true"
+    OTEL_METRICS_EXPORTER: "otlp"
+    # Uses same endpoint as traces (Grafana OTLP gateway accepts both)
 
   envFrom:
     - secretRef:
         name: veryfront-renderer-secret
 
+  # Pod annotations for monitoring
+  podAnnotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "20000"
+    prometheus.io/path: "/_metrics"
+
   readinessProbe:
-    tcpSocket:
+    httpGet:
+      path: /readyz
       port: 20000
     periodSeconds: 10
     timeoutSeconds: 5
 
+  livenessProbe:
+    httpGet:
+      path: /healthz
+      port: 20000
+    periodSeconds: 30
+    timeoutSeconds: 5
+    failureThreshold: 3
+
   startupProbe:
-    tcpSocket:
+    httpGet:
+      path: /healthz
       port: 20000
     failureThreshold: 30
     periodSeconds: 10
@@ -178,3 +201,22 @@ renderer:
   podAntiAffinity:
     enabled: true
     topologyKey: kubernetes.io/hostname
+
+  # Horizontal Pod Autoscaler - scales based on memory/CPU usage
+  # Memory-based scaling is critical for the renderer to avoid OOM crashes
+  #
+  # IMPORTANT: V8 heap (2800MB) + Deno overhead (~400MB) ≈ 3200MB
+  # At 3200MB container RSS = 78% of 4Gi limit
+  # We scale at 60% to give HPA 15-60s reaction time before V8 OOM
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 6
+    # Scale at 60% (~2450MB) - well before V8 heap limit (2800MB)
+    targetMemoryUtilizationPercentage: 60
+    # Also scale on CPU for request-heavy loads
+    targetCPUUtilizationPercentage: 80
+    # Wait 5 minutes before scaling down to avoid flapping
+    scaleDownStabilizationWindowSeconds: 300
+    # Scale up immediately when needed
+    scaleUpStabilizationWindowSeconds: 0
