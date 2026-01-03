@@ -148,7 +148,19 @@ export class VeryfrontAPIClient {
       throw new VeryfrontAPIError("No project slug available for initialization", 400);
     }
 
-    logger.info("[VeryfrontAPIClient] Initializing...", { slug });
+    // If projectId is already known (e.g., from domain lookup), use it directly
+    if (this.config.projectId) {
+      logger.info("[VeryfrontAPIClient] Initializing with known projectId", {
+        slug,
+        projectId: this.config.projectId,
+      });
+      this.operations.setProjectId(this.config.projectId);
+      this.initialized = true;
+      return;
+    }
+
+    // Otherwise, look up project by slug via listProjects
+    logger.info("[VeryfrontAPIClient] Initializing via listProjects...", { slug });
 
     const projects = await this.operations.listProjects();
     const project = projects.find((p) => p.slug === slug);

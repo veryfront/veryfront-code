@@ -49,6 +49,7 @@ export async function handleModuleServer(
       projectDir: ctx.projectDir,
       adapter: ctx.adapter,
       dev: ctx.mode === "development",
+      projectUUID: ctx.projectId,
     });
 
     const builder = createResponseBuilder(ctx);

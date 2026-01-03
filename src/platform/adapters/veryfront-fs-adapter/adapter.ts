@@ -56,6 +56,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
       apiBaseUrl: veryfrontConfig.apiBaseUrl,
       apiToken: veryfrontConfig.apiToken,
       projectSlug: veryfrontConfig.projectSlug,
+      projectId: veryfrontConfig.projectId,
       proxyMode: veryfrontConfig.proxyMode,
       retry: veryfrontConfig.retry,
     });

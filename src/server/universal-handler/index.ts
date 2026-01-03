@@ -180,6 +180,7 @@ export function createVeryfrontHandler(
     // Get project slug: proxy header > URL parsing > config
     const configuredSlug = config?.fs?.veryfront?.projectSlug;
     let projectSlug = proxySlug || parsedDomain.slug || configuredSlug;
+    let projectId: string | undefined;
 
     // For custom domains without a slug, look up the project via API
     // This enables JIT rendering for production sites with custom domains
@@ -210,10 +211,12 @@ export function createVeryfrontHandler(
 
         if (lookupResult) {
           projectSlug = lookupResult.projectSlug;
+          projectId = lookupResult.projectId;
           proxyEnv = getEnvironmentType(lookupResult);
           logger.info("[universal] Domain lookup successful", {
             domain: host,
             projectSlug: lookupResult.projectSlug,
+            projectId: lookupResult.projectId,
             environment: proxyEnv,
             releaseId: lookupResult.releaseId,
           });
@@ -258,6 +261,7 @@ export function createVeryfrontHandler(
       config,
       parsedDomain,
       projectSlug,
+      projectId,
       proxyToken,
       proxyEnvironment: proxyEnv,
     };
@@ -265,6 +269,7 @@ export function createVeryfrontHandler(
     // Debug: Log resolved context
     logger.info("[RENDERER] Resolved context:", {
       projectSlug: projectSlug || "(none)",
+      projectId: projectId || "(none)",
       proxyEnvironment: proxyEnv || "(none)",
       hasProxyToken: !!proxyToken,
       isProxyMode,
