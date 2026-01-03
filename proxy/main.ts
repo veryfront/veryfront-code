@@ -19,7 +19,15 @@
 import { TokenManager, type TokenScope } from "./token-manager.ts";
 import { parseProjectDomain } from "../src/server/utils/domain-parser.ts";
 import { createCacheFromEnv } from "./cache/index.ts";
-import { initializeOTLP, shutdownOTLP } from "./tracing.ts";
+import {
+  endSpan,
+  extractContext,
+  initializeOTLPWithApis,
+  injectContext,
+  shutdownOTLP,
+  startServerSpan,
+  withContext,
+} from "./tracing.ts";
 import { proxyLogger } from "./logger.ts";
 
 // Configuration from environment variables
@@ -63,99 +71,82 @@ function getScope(environment: string | null): TokenScope {
   return environment === "preview" ? "preview" : "production";
 }
 
-/**
- * Handle incoming requests: parse domain, get token, forward to renderer.
- */
 async function handleRequest(req: Request): Promise<Response> {
   const startTime = performance.now();
   const host = req.headers.get("host") || "";
   const url = new URL(req.url);
 
-  try {
-    // Parse domain to extract project slug and environment
-    const parsed = parseProjectDomain(host);
-    const scope = getScope(parsed.environment);
-    const projectSlug = parsed.slug || undefined;
+  const parentContext = extractContext(req.headers);
+  const spanInfo = startServerSpan(req.method, url.pathname, parentContext);
 
-    // Create request-scoped logger with context
-    const reqLogger = proxyLogger.child({
-      projectSlug: projectSlug || undefined,
-      method: req.method,
-      path: url.pathname,
-      environment: scope,
-    });
+  const execute = async (): Promise<Response> => {
+    try {
+      const parsed = parseProjectDomain(host);
+      const scope = getScope(parsed.environment);
+      const projectSlug = parsed.slug || undefined;
 
-    reqLogger.info("Request received");
+      const reqLogger = proxyLogger.child({
+        projectSlug,
+        method: req.method,
+        path: url.pathname,
+        environment: scope,
+      });
 
-    // Get OAuth token for this scope + project
-    let token = "";
-    if (config.clientId && config.clientSecret) {
-      try {
-        token = await tokenManager.getToken(scope, projectSlug);
-      } catch (error) {
-        reqLogger.error("Token fetch failed", error as Error);
-        // Continue without token - renderer may have fallback
+      reqLogger.info("Request received");
+
+      let token = "";
+      if (config.clientId && config.clientSecret) {
+        try {
+          token = await tokenManager.getToken(scope, projectSlug);
+        } catch (error) {
+          reqLogger.error("Token fetch failed", error as Error);
+        }
       }
+
+      const newHeaders = new Headers(req.headers);
+      if (token) newHeaders.set("x-token", token);
+      newHeaders.set("x-project-slug", projectSlug || "");
+      newHeaders.set("x-environment", scope);
+      newHeaders.set("x-forwarded-host", host);
+      newHeaders.delete("host");
+
+      injectContext(newHeaders);
+
+      const rendererUrl = new URL(url.pathname + url.search, RENDERER_URL);
+      const response = await fetch(rendererUrl.toString(), {
+        method: req.method,
+        headers: newHeaders,
+        body: req.body,
+        redirect: "manual",
+      });
+
+      const durationMs = Math.round(performance.now() - startTime);
+      reqLogger.info("Request completed", { status: response.status, durationMs });
+
+      endSpan(spanInfo?.span, response.status);
+
+      return new Response(response.body, {
+        status: response.status,
+        statusText: response.statusText,
+        headers: response.headers,
+      });
+    } catch (error) {
+      const durationMs = Math.round(performance.now() - startTime);
+      proxyLogger.error("Error forwarding request", { path: url.pathname, durationMs }, error as Error);
+
+      endSpan(spanInfo?.span, 502, error as Error);
+
+      return new Response(
+        JSON.stringify({
+          error: "Proxy Error",
+          message: error instanceof Error ? error.message : "Unknown error",
+        }),
+        { status: 502, headers: { "Content-Type": "application/json" } },
+      );
     }
+  };
 
-    // Create new headers with authentication
-    const newHeaders = new Headers(req.headers);
-
-    if (token) {
-      newHeaders.set("x-token", token);
-    }
-
-    newHeaders.set("x-project-slug", projectSlug || "");
-    newHeaders.set("x-environment", scope);
-    newHeaders.set("x-forwarded-host", host);
-    newHeaders.delete("host"); // Let renderer determine its own host
-
-    reqLogger.debug("Forwarding to renderer", {
-      hasToken: !!token,
-      forwardedHost: host,
-    });
-
-    // Build renderer URL
-    const rendererUrl = new URL(url.pathname + url.search, RENDERER_URL);
-
-    // Forward request to renderer
-    const response = await fetch(rendererUrl.toString(), {
-      method: req.method,
-      headers: newHeaders,
-      body: req.body,
-      redirect: "manual",
-    });
-
-    const durationMs = Math.round(performance.now() - startTime);
-    reqLogger.info("Request completed", {
-      status: response.status,
-      durationMs,
-    });
-
-    // Return response with original headers
-    return new Response(response.body, {
-      status: response.status,
-      statusText: response.statusText,
-      headers: response.headers,
-    });
-  } catch (error) {
-    const durationMs = Math.round(performance.now() - startTime);
-    proxyLogger.error("Error forwarding request", {
-      path: url.pathname,
-      durationMs,
-    }, error as Error);
-
-    return new Response(
-      JSON.stringify({
-        error: "Proxy Error",
-        message: error instanceof Error ? error.message : "Unknown error",
-      }),
-      {
-        status: 502,
-        headers: { "Content-Type": "application/json" },
-      },
-    );
-  }
+  return spanInfo?.context ? withContext(spanInfo.context, execute) : execute();
 }
 
 /**
@@ -201,7 +192,7 @@ Deno.addSignalListener("SIGINT", shutdown);
 Deno.addSignalListener("SIGTERM", shutdown);
 
 // Initialize tracing and start server
-await initializeOTLP();
+await initializeOTLPWithApis();
 validateConfig();
 
 const cacheType = Deno.env.get("CACHE_TYPE") || "memory";
