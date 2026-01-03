@@ -24,6 +24,8 @@ export interface PageRenderOptions {
   params?: Record<string, string | string[]>;
   props?: ComponentProps;
   nonce?: string;
+  /** Project ID for multi-project SSR module isolation */
+  projectId?: string;
 }
 
 export interface PageBundleResult {
@@ -172,6 +174,7 @@ export class PageRenderer {
             props: componentProps,
             cachedClientModule: cachedModule?.type === "component" ? cachedModule.code : undefined,
             moduleServerUrl: this.moduleServerUrl,
+            projectId: options?.projectId,
           },
         );
         pageElement = result.pageElement;

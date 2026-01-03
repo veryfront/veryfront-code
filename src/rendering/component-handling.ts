@@ -31,6 +31,8 @@ export async function handleComponentPage(
     props?: Record<string, any>;
     cachedClientModule?: string;
     moduleServerUrl?: string;
+    /** Project ID for multi-project SSR module isolation */
+    projectId?: string;
   },
 ): Promise<ComponentPageResult> {
   try {
@@ -66,7 +68,7 @@ export async function handleComponentPage(
       projectDir,
       adapter,
       {
-        projectId: projectDir,
+        projectId: options?.projectId || projectDir,
         dev: true,
         moduleServerUrl: options?.moduleServerUrl,
         ssr: true, // SSR mode for proper import resolution
