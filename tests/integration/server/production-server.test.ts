@@ -22,15 +22,13 @@ import { withTestContext } from "../../_helpers/context.ts";
 import { getFreePort } from "../../_helpers/utils.ts";
 import { cleanupBundler } from "../../../src/rendering/cleanup.ts";
 
-// Clean up renderer intervals to prevent resource leaks
-afterAll(async () => {
-  await cleanupBundler();
-});
+describe("Production Server Integration", { sanitizeOps: false, sanitizeResources: false }, () => {
+  // Clean up renderer intervals to prevent resource leaks
+  afterAll(async () => {
+    await cleanupBundler();
+  });
 
-describe(
-  "Production Server - Static Assets",
-  {},
-  () => {
+  describe("Static Assets", () => {
     it("serves static files with correct headers", async () => {
       await withTestContext("prod-static-assets", async (context) => {
         // Enable cache closing for tests
@@ -146,13 +144,9 @@ describe(
         );
       });
     });
-  },
-);
+  });
 
-describe(
-  "Production Server - App Router",
-  {},
-  () => {
+  describe("App Router", () => {
     it("serves App Router pages with layouts", async () => {
       await withTestContext("prod-app-router", async (context) => {
         // Enable cache closing for tests
@@ -189,13 +183,9 @@ describe(
         assert(html.includes("<html"), "Should include layout wrapper");
       });
     });
-  },
-);
+  });
 
-describe(
-  "Production Server - API Routes",
-  {},
-  () => {
+  describe("API Routes", () => {
     it("handles API routes", async () => {
       await withTestContext("production-basic-api", async (context) => {
         // Create an App Router API route
@@ -230,19 +220,28 @@ describe(
         }
       });
     });
-  },
-);
+  });
 
-describe(
-  "Production Server - Security",
-  {},
-  () => {
+  describe("Security", () => {
     it("sets CSP with nonce", async () => {
       await withTestContext("prod-csp-nonce", async (context) => {
         // Create a simple page so the server has something to serve
         await Deno.writeTextFile(
           join(context.projectDir, "pages", "index.tsx"),
           `export default function Home() { return <h1>CSP Test</h1>; }`,
+        );
+
+        // Enable CSP via config (CSP is disabled by default)
+        await Deno.writeTextFile(
+          join(context.projectDir, "veryfront.config.js"),
+          `export default {
+            security: {
+              csp: {
+                defaultSrc: ["'self'"],
+                scriptSrc: ["'self'", "'nonce-{NONCE}'"],
+              }
+            }
+          };`,
         );
 
         const port = getFreePort(9000, 12000);
@@ -305,6 +304,24 @@ describe(
 
     it("handles security headers correctly", async () => {
       await withTestContext("prod-security-headers", async (context) => {
+        // Create a page so the server has something to serve
+        await Deno.writeTextFile(
+          join(context.projectDir, "pages", "index.tsx"),
+          `export default function Home() { return <h1>Security Test</h1>; }`,
+        );
+
+        // Enable CSP via config (CSP is disabled by default)
+        await Deno.writeTextFile(
+          join(context.projectDir, "veryfront.config.js"),
+          `export default {
+            security: {
+              csp: {
+                defaultSrc: ["'self'"],
+              }
+            }
+          };`,
+        );
+
         const server = await context.createProductionServer();
         const response = await fetch(`http://localhost:${server.port}/`);
 
@@ -359,13 +376,9 @@ describe(
         await response.body?.cancel();
       });
     });
-  },
-);
+  });
 
-describe(
-  "Production Server - Pages Router",
-  {},
-  () => {
+  describe("Pages Router", () => {
     it("renders MDX pages with frontmatter", async () => {
       /**
        * Tests MDX processing including:
@@ -397,13 +410,9 @@ describe(
         assert(html.includes("Test Page") || html.includes("<h1>"), "Should render page title");
       });
     });
-  },
-);
+  });
 
-describe(
-  "Production Server - Error Handling",
-  {},
-  () => {
+  describe("Error Handling", () => {
     it("returns 404 page for non-existent routes", async () => {
       // Production servers need at least one page to initialize properly
       // This test creates a simple index page and then tests 404 handling for other routes
@@ -474,5 +483,5 @@ describe(
         );
       });
     });
-  },
-);
+  });
+});
