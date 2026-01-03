@@ -19,13 +19,19 @@ describe(
       await cleanupBundler();
     });
 
-    // TODO: Fix security config loading for CSP headers
-    // This test was failing before resource leak fixes due to a bug in security config loading
+    // TODO: Fix this test - the /_metrics endpoint returns 500
+    // Investigation needed:
+    // 1. Config file naming (.js vs .ts) was fixed
+    // 2. Security config is loaded, but something in the request handling
+    //    chain is causing a 500 error
+    // 3. Need to investigate ResponseBuilder.json or securityConfig access
     it.skip("applies config-driven CORS, CSP, and CO* headers", async () => {
       await withTestContext("universal-security", async (context: TestContext) => {
-        // Write veryfront.config.ts with security settings
+        // Overwrite the default veryfront.config.js with security settings
+        // Note: Must use .js since TestContext creates veryfront.config.js and
+        // the config loader tries .js before .ts
         await Deno.writeTextFile(
-          `${context.projectDir}/veryfront.config.ts`,
+          `${context.projectDir}/veryfront.config.js`,
           `export default {
           security: {
             cors: { origin: "https://foo.example" },
