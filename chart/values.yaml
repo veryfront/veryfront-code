@@ -149,14 +149,13 @@ renderer:
   env:
     PORT: "20000"
     PROXY_MODE: "1"
-    # V8 heap size: 4GB to leave headroom for Deno overhead and prevent OOM
-    # Container limit is 6Gi; V8 heap (4GB) + Deno overhead (~400MB) ≈ 4.4GB = ~73%
-    # This gives headroom for per-request component loading in proxy mode
-    DENO_V8_FLAGS: "--max-old-space-size=4096"
-    # Limit concurrent ESM transforms to prevent memory spikes during cold start
-    # Each transform can use 100-500MB; with 4GB heap, 2 concurrent is conservative
-    # Reduced from 3 to 2 to lower peak memory during concurrent requests
-    SSR_MAX_CONCURRENT_TRANSFORMS: "2"
+    # V8 heap size: 5GB to handle large projects like codersociety
+    # Container limit is 6Gi; V8 heap (5GB) + Deno overhead (~500MB) ≈ 5.5GB = ~92%
+    # This is aggressive but necessary for projects with many components
+    DENO_V8_FLAGS: "--max-old-space-size=5120"
+    # Limit concurrent ESM transforms to prevent memory spikes
+    # Reduced to 1 to minimize peak memory during SSR
+    SSR_MAX_CONCURRENT_TRANSFORMS: "1"
     # Enable memory monitoring (logs heap usage periodically)
     ENABLE_MEMORY_MONITORING: "true"
     MEMORY_MONITORING_INTERVAL_MS: "30000"
@@ -213,15 +212,15 @@ renderer:
   # Horizontal Pod Autoscaler - scales based on memory/CPU usage
   # Memory-based scaling is critical for the renderer to avoid OOM crashes
   #
-  # IMPORTANT: V8 heap (4GB) + Deno overhead (~400MB) ≈ 4.4GB
-  # At 4.4GB container RSS = 73% of 6Gi limit
-  # We scale at 80% (~4.8GB) to give HPA reaction time before V8 OOM
+  # IMPORTANT: V8 heap (5GB) + Deno overhead (~500MB) ≈ 5.5GB
+  # At 5.5GB container RSS = 92% of 6Gi limit
+  # We scale at 85% (~5.1GB) to give HPA reaction time before V8 OOM
   autoscaling:
     enabled: true
     minReplicas: 2
     maxReplicas: 6
-    # Scale at 80% (~4.8GB) - before V8 heap limit (4GB)
-    targetMemoryUtilizationPercentage: 80
+    # Scale at 85% (~5.1GB) - before V8 heap limit (5GB)
+    targetMemoryUtilizationPercentage: 85
     # Also scale on CPU for request-heavy loads
     targetCPUUtilizationPercentage: 80
     # Wait 5 minutes before scaling down to avoid flapping

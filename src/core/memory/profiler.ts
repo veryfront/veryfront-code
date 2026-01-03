@@ -116,7 +116,7 @@ function getConfiguredHeapLimit(): number {
 
   // Default V8 heap limit (approximately 4GB on 64-bit systems)
   // But in containers it's often lower based on cgroup limits
-  return 4096; // Match values.yaml configuration
+  return 5120; // Match values.yaml configuration
 }
 
 /**
