@@ -1,3 +1,6 @@
+// Disable LRU intervals during testing to prevent resource leaks
+(globalThis as Record<string, unknown>).__vfDisableLruInterval = true;
+
 import { assert, assertEquals } from "std/testing/asserts.ts";
 import { afterAll, describe, it } from "std/testing/bdd.ts";
 import { generateServiceWorker } from "../../../src/server/build-service-worker.ts";
