@@ -63,7 +63,10 @@ export async function startUniversalServer(
   const ready = Promise.all([
     listenReady,
     handler.ready ?? Promise.resolve(),
-  ]).then(() => undefined);
+  ]).then(() => {
+    // Mark server as initialized when ready resolves
+    setServerInitialized(true);
+  });
 
   const server = await adapter.serve(handler, {
     port,
@@ -81,6 +84,7 @@ export async function startUniversalServer(
 
   const stop = async () => {
     try {
+      setServerInitialized(false);
       await server.stop();
     } catch {
       /* ignore */
@@ -143,8 +147,8 @@ if (import.meta.main) {
 
     // Wait for server to be fully ready before accepting traffic
     // This prevents K8s readiness probe from passing too early
+    // Note: setServerInitialized(true) is called inside ready promise
     await server.ready;
-    setServerInitialized(true);
     logger.info("Server fully initialized, ready to accept traffic");
 
     // Graceful shutdown for direct CLI execution (e.g., deno run)
