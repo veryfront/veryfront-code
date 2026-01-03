@@ -11,6 +11,14 @@ Guides to help you debug and resolve issues in your Veryfront applications.
 
 ## Available Guides
 
+### [Renderer Memory Troubleshooting](/guides/troubleshooting/renderer-memory.md)
+Diagnose and resolve renderer pod memory issues:
+- Exit code 133 (V8 heap exhaustion)
+- Exit code 137 (container OOM)
+- V8 heap sizing and DENO_V8_FLAGS
+- Prometheus alerting rules
+- Resource sizing recommendations
+
 ### [Debugging Guide](/guides/troubleshooting/debugging.md)
 Comprehensive debugging guide covering:
 - Common error messages and solutions
