@@ -146,6 +146,7 @@ renderer:
 
   env:
     PORT: "20000"
+    PROXY_MODE: "1"
     # OpenTelemetry tracing
     OTEL_TRACES_ENABLED: "true"
     OTEL_TRACES_EXPORTER: "otlp"
