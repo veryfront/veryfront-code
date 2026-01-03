@@ -62,6 +62,17 @@ export class DevServer {
     this.adapter = bootstrap.adapter;
     this.appConfig = bootstrap.config;
 
+    // Merge CLI enableHMR flag into config to ensure HMR scripts are disabled when --no-hmr is passed
+    if (this.appConfig && this.options.enableHMR === false) {
+      this.appConfig = {
+        ...this.appConfig,
+        dev: {
+          ...this.appConfig.dev,
+          hmr: false,
+        },
+      };
+    }
+
     if (bootstrap.usingFSAdapter) {
       logger.debug(`[FSAdapter] Using ${bootstrap.fsAdapterType} backend`);
     }

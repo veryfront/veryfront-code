@@ -6,7 +6,9 @@ import { generateDevComponentManifestScript } from "./dev-component-manifest.ts"
 import { generateDevClientRendererScript } from "./dev-client-renderer.ts";
 
 function generateHMRScript(config: VeryfrontConfig, nonce?: string): string {
-  if (!config.dev?.hmr) return "";
+  if (!config.dev?.hmr) {
+    return "";
+  }
   const port = config.dev?.port ?? DEFAULT_DASHBOARD_PORT;
   // HMR WebSocket server runs on port + 1 by default (see dev-server/server.ts)
   // Use hmrPort from config if explicitly set, otherwise use port + 1

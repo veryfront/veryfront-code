@@ -23,6 +23,7 @@ export function generateHMRClientTemplate(
   const ws = new WebSocket('ws://' + host + ':${port}');
   let reactRefreshEnabled = false;
   let reconnectTimeoutId = null;
+  let wasConnected = false; // Track if connection was ever established
 
   window.__veryfrontHMRWebSocket = ws;
 
@@ -38,6 +39,7 @@ export function generateHMRClientTemplate(
   }
 
   ws.onopen = () => {
+    wasConnected = true;
     if (reconnectTimeoutId !== null) {
       clearTimeout(reconnectTimeoutId);
       reconnectTimeoutId = null;
@@ -60,7 +62,13 @@ export function generateHMRClientTemplate(
   };
 
   ws.onclose = () => {
-    reconnectTimeoutId = setTimeout(() => { window.location.reload(); }, HMR_RELOAD_DELAY_MS);
+    // Only schedule reload if connection was previously established
+    // This prevents reload loops when HMR server is not running
+    if (wasConnected) {
+      reconnectTimeoutId = setTimeout(() => { window.location.reload(); }, HMR_RELOAD_DELAY_MS);
+    } else {
+      console.log('[HMR] Connection failed - HMR server may not be running');
+    }
   };
 
   ws.onerror = (error) => { console.error('[HMR] WebSocket error:', error); };

@@ -103,7 +103,11 @@ if (window.parent !== window) {
 const hmrPort = ${port};
 const host = window.location.hostname || 'localhost';
 const ws = new WebSocket('ws://' + host + ':' + hmrPort + '/_ws');
+let wasConnected = false;
 
+ws.onopen = () => {
+  wasConnected = true;
+};
 ws.onmessage = (event) => {
   const data = JSON.parse(event.data);
   if (data.type === 'reload') {
@@ -111,7 +115,13 @@ ws.onmessage = (event) => {
   }
 };
 ws.onclose = () => {
-  setTimeout(() => location.reload(), ${reloadDelay});
+  // Only reload if connection was previously established
+  // This prevents reload loops when HMR server is not running
+  if (wasConnected) {
+    setTimeout(() => location.reload(), ${reloadDelay});
+  } else {
+    console.log('[HMR] Connection failed - HMR server may not be running');
+  }
 };
 
 window.__veryfrontHMRWebSocket = ws;
@@ -136,8 +146,10 @@ hydrate('${slug}', {
   const hmrPort = parseInt(window.location.port, 10) || 3000;
   const host = window.location.hostname || 'localhost';
   const ws = new WebSocket('ws://' + host + ':' + hmrPort + '/_ws');
+  let wasConnected = false;
 
   ws.onopen = () => {
+    wasConnected = true;
     console.log('[HMR] Connected to port ' + hmrPort);
   };
 
@@ -155,8 +167,13 @@ hydrate('${slug}', {
   };
 
   ws.onclose = () => {
-    console.log('[HMR] Connection closed. Attempting reconnect...');
-    setTimeout(() => location.reload(), 2000);
+    // Only reload if connection was previously established
+    if (wasConnected) {
+      console.log('[HMR] Connection closed. Attempting reconnect...');
+      setTimeout(() => location.reload(), 2000);
+    } else {
+      console.log('[HMR] Connection failed - HMR server may not be running');
+    }
   };
 
   function handleHMRMessage(data) {
