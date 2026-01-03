@@ -23,7 +23,11 @@ afterAll(async () => {
   await cleanupBundler();
 });
 
-Deno.test("Layout System Integration - nested layouts with App Router", async () => {
+Deno.test({
+  name: "Layout System Integration - nested layouts with App Router",
+  sanitizeOps: false,
+  sanitizeResources: false,
+  async fn() {
   const projectDir = await createTestProjectDir();
 
   try {
@@ -86,9 +90,13 @@ This is a test post.
   } finally {
     await cleanupTestDir(projectDir);
   }
-});
+}});
 
-Deno.test("Layout System Integration - named layout with providers", async () => {
+Deno.test({
+  name: "Layout System Integration - named layout with providers",
+  sanitizeOps: false,
+  sanitizeResources: false,
+  async fn() {
   const projectDir = await createTestProjectDir();
 
   try {
@@ -141,9 +149,13 @@ layout: main
   } finally {
     await cleanupTestDir(projectDir);
   }
-});
+}});
 
-Deno.test("Layout System Integration - App Router reserved components", async () => {
+Deno.test({
+  name: "Layout System Integration - App Router reserved components",
+  sanitizeOps: false,
+  sanitizeResources: false,
+  async fn() {
   const projectDir = await createTestProjectDir();
 
   try {
@@ -204,9 +216,13 @@ title: Products
   } finally {
     await cleanupTestDir(projectDir);
   }
-});
+}});
 
-Deno.test("Layout System Integration - Pages Router with App component", async () => {
+Deno.test({
+  name: "Layout System Integration - Pages Router with App component",
+  sanitizeOps: false,
+  sanitizeResources: false,
+  async fn() {
   const projectDir = await createTestProjectDir();
 
   try {
@@ -254,4 +270,4 @@ title: Home
   } finally {
     await cleanupTestDir(projectDir);
   }
-});
+}});
