@@ -67,6 +67,7 @@ export class SSRModuleLoader {
     filePath: string,
     source?: string,
   ): Promise<void> {
+    console.log("[SSRModuleLoader] transformWithDependencies START:", filePath);
     const code = source ?? await this.options.adapter.fs.readFile(filePath);
 
     const contentHash = this.hashCode(code);
@@ -77,11 +78,13 @@ export class SSRModuleLoader {
 
     const cachedTempPath = globalModuleCache.get(contentCacheKey);
     if (cachedTempPath) {
+      console.log("[SSRModuleLoader] Cache hit for:", filePath, "->", cachedTempPath);
       globalModuleCache.set(filePathCacheKey, cachedTempPath);
       return;
     }
 
     if (globalInProgress.has(inProgressKey)) {
+      console.log("[SSRModuleLoader] Already in progress:", filePath);
       return;
     }
 
