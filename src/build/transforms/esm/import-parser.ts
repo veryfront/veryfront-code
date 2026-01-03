@@ -14,7 +14,7 @@ const EXTENSIONS = [".tsx", ".ts", ".jsx", ".js", ".mdx"];
 export async function parseLocalImports(
   code: string,
   filePath: string,
-  _projectDir: string,
+  projectDir: string,
   adapter?: RuntimeAdapter,
 ): Promise<LocalImport[]> {
   // es-module-lexer can't parse TypeScript/JSX, so use esbuild to strip types first
@@ -40,10 +40,36 @@ export async function parseLocalImports(
       if (resolved) {
         localImports.push({ specifier: imp.n, absolutePath: resolved });
       }
+    } else if (imp.n?.startsWith("@/")) {
+      // Handle @/ path aliases - resolve relative to project root
+      // In virtual filesystem mode (API-backed), paths are relative like "components/Welcome.tsx"
+      // The @/ alias maps to the project root, so we just remove the @/ prefix
+      const aliasPath = imp.n.substring(2); // Remove '@/' prefix
+      const resolved = await resolveAliasImportPath(aliasPath, adapter);
+      if (resolved) {
+        localImports.push({ specifier: imp.n, absolutePath: resolved });
+      }
     }
   }
 
   return localImports;
+}
+
+async function checkFileExists(
+  path: string,
+  adapter?: RuntimeAdapter,
+): Promise<boolean> {
+  try {
+    if (adapter?.fs.stat) {
+      const stat = await adapter.fs.stat(path);
+      return stat.isFile;
+    }
+    const fs = createFileSystem();
+    const stat = await fs.stat(path);
+    return stat.isFile;
+  } catch {
+    return false;
+  }
 }
 
 async function resolveLocalImportPath(
@@ -54,22 +80,8 @@ async function resolveLocalImportPath(
   const fromDir = fromFile.substring(0, fromFile.lastIndexOf("/"));
   const basePath = resolveRelative(fromDir, importSpecifier);
 
-  const checkFileExists = async (path: string): Promise<boolean> => {
-    try {
-      if (adapter?.fs.stat) {
-        const stat = await adapter.fs.stat(path);
-        return stat.isFile;
-      }
-      const fs = createFileSystem();
-      const stat = await fs.stat(path);
-      return stat.isFile;
-    } catch {
-      return false;
-    }
-  };
-
   if (/\.(tsx?|jsx?|mjs|cjs|mdx)$/.test(importSpecifier)) {
-    if (await checkFileExists(basePath)) {
+    if (await checkFileExists(basePath, adapter)) {
       return basePath;
     }
     return null;
@@ -77,14 +89,53 @@ async function resolveLocalImportPath(
 
   for (const ext of EXTENSIONS) {
     const fullPath = basePath + ext;
-    if (await checkFileExists(fullPath)) {
+    if (await checkFileExists(fullPath, adapter)) {
       return fullPath;
     }
   }
 
   for (const ext of EXTENSIONS) {
     const indexPath = basePath + "/index" + ext;
-    if (await checkFileExists(indexPath)) {
+    if (await checkFileExists(indexPath, adapter)) {
+      return indexPath;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Resolve an alias import path (e.g., @/components) to a file path.
+ * The basePath should already have @/ prefix removed.
+ * In virtual filesystem mode, paths are relative like "components/Welcome".
+ */
+async function resolveAliasImportPath(
+  basePath: string,
+  adapter?: RuntimeAdapter,
+): Promise<string | null> {
+  // Normalize the path - remove any leading slashes for consistency
+  const normalizedPath = basePath.replace(/^\/+/, "");
+
+  // Check if path already has extension
+  if (/\.(tsx?|jsx?|mjs|cjs|mdx)$/.test(normalizedPath)) {
+    if (await checkFileExists(normalizedPath, adapter)) {
+      return normalizedPath;
+    }
+    return null;
+  }
+
+  // Try common extensions
+  for (const ext of EXTENSIONS) {
+    const fullPath = normalizedPath + ext;
+    if (await checkFileExists(fullPath, adapter)) {
+      return fullPath;
+    }
+  }
+
+  // Try index files
+  for (const ext of EXTENSIONS) {
+    const indexPath = normalizedPath + "/index" + ext;
+    if (await checkFileExists(indexPath, adapter)) {
       return indexPath;
     }
   }
