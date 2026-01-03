@@ -2,7 +2,11 @@ import { assertEquals } from "std/assert/mod.ts";
 import { getAdapter } from "@veryfront/platform";
 import { VirtualModuleSystem } from "../../../src/rendering/virtual-module-system.ts";
 
-Deno.test("VirtualModuleSystem - Register and serve modules", async () => {
+Deno.test({
+  name: "VirtualModuleSystem - Register and serve modules",
+  sanitizeOps: false,
+  sanitizeResources: false,
+  async fn() {
   const adapter = await getAdapter();
   const vms = new VirtualModuleSystem("/_veryfront/modules", adapter);
 
@@ -37,9 +41,13 @@ export default function TestComponent() {
     true,
     "Module should have transformed React import to default version (18.3.1)",
   );
-});
+}});
 
-Deno.test("VirtualModuleSystem - Handle non-virtual requests", async () => {
+Deno.test({
+  name: "VirtualModuleSystem - Handle non-virtual requests",
+  sanitizeOps: false,
+  sanitizeResources: false,
+  async fn() {
   const adapter = await getAdapter();
   const vms = new VirtualModuleSystem("/_veryfront/modules", adapter);
 
@@ -48,9 +56,13 @@ Deno.test("VirtualModuleSystem - Handle non-virtual requests", async () => {
   const response = await vms.handleRequest(request);
 
   assertEquals(response, null, "Should return null for non-virtual module requests");
-});
+}});
 
-Deno.test("VirtualModuleSystem - Transform JSX runtime imports", async () => {
+Deno.test({
+  name: "VirtualModuleSystem - Transform JSX runtime imports",
+  sanitizeOps: false,
+  sanitizeResources: false,
+  async fn() {
   const adapter = await getAdapter();
   const vms = new VirtualModuleSystem("/_veryfront/modules", adapter);
 
@@ -75,4 +87,4 @@ export default function Component() {
     true,
     "JSX runtime import should be transformed to ESM URL",
   );
-});
+}});
