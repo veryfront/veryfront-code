@@ -36,7 +36,7 @@ const RENDERER_TTL_MS = 30 * 60 * 1000;
  * Memory pressure thresholds (percentage of heap limit).
  * When heap usage exceeds these thresholds, aggressive eviction kicks in.
  */
-const MEMORY_PRESSURE_WARNING = 70;  // Start evicting 50% of cache
+const MEMORY_PRESSURE_WARNING = 70; // Start evicting 50% of cache
 const MEMORY_PRESSURE_CRITICAL = 85; // Emergency: keep only 2 renderers
 
 /**
@@ -183,7 +183,9 @@ async function checkAndEvictUnderMemoryPressure(
 
     // Also clear single project renderer if we have one and cache is still too big
     if (singleProjectRenderer && rendererCache.size >= targetSize) {
-      rendererLogger.warn("[RendererFactory] Evicting single-project renderer due to critical pressure");
+      rendererLogger.warn(
+        "[RendererFactory] Evicting single-project renderer due to critical pressure",
+      );
       await destroyRenderer(singleProjectRenderer);
       singleProjectRenderer = null;
     }
