@@ -283,7 +283,13 @@ describe("bootstrap - Basic Flow", () => {
 // 2. FSAdapter Initialization (10 tests)
 // ============================================================================
 
-describe("bootstrap - FSAdapter Initialization", () => {
+// Note: sanitizeOps and sanitizeResources disabled because global module caches
+// create background intervals that persist across tests (LRU cleanup timers).
+// These are intentional and cleaned up on process exit.
+describe("bootstrap - FSAdapter Initialization", {
+  sanitizeOps: false,
+  sanitizeResources: false,
+}, () => {
   afterEach(() => {
     clearConfigCache();
   });
