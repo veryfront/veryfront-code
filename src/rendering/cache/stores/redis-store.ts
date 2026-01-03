@@ -27,6 +27,7 @@ export class RedisCacheStore implements CacheStore {
   private readonly enableFallback: boolean;
   private fallbackStore: MemoryCacheStore | null = null;
   private redisUnavailable = false;
+  private errorLogged = false;
 
   constructor(options: RedisCacheStoreOptions = {}) {
     this.url = options.url;
@@ -67,7 +68,11 @@ export class RedisCacheStore implements CacheStore {
     const client = createClient({ url: this.url });
     if (typeof client?.on === "function") {
       client.on("error", (err: unknown) => {
-        logger.error("[redis] client error", err);
+        // Only log the first error to avoid flooding logs during reconnection attempts
+        if (!this.errorLogged) {
+          logger.error("[redis] client error", err);
+          this.errorLogged = true;
+        }
         this.redisUnavailable = true;
       });
     }
@@ -75,6 +80,7 @@ export class RedisCacheStore implements CacheStore {
     await client.connect();
     this.client = client;
     this.redisUnavailable = false;
+    this.errorLogged = false;
     return client;
   }
 

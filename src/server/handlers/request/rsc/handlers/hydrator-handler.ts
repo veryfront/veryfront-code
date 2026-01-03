@@ -79,8 +79,10 @@ export class HydratorHandler {
 
       return outputFile.text;
     } finally {
-      // Cleanup esbuild resources
-      await stop();
+      // Only stop esbuild if not in test mode with global initialization
+      if (!(globalThis as Record<string, unknown>).__vfTestPreserveEsbuild) {
+        await stop();
+      }
     }
   }
 

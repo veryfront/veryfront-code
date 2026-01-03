@@ -67,10 +67,13 @@ export async function handleClientScript(
       headers: { "content-type": "application/typescript" },
     });
   } finally {
-    try {
-      esbuild?.stop?.();
-    } catch (stopError) {
-      serverLogger.debug("[ScriptHandlers] esbuild stop failed", stopError);
+    // Only stop esbuild if not in test mode with global initialization
+    if (!(globalThis as Record<string, unknown>).__vfTestPreserveEsbuild) {
+      try {
+        esbuild?.stop?.();
+      } catch (stopError) {
+        serverLogger.debug("[ScriptHandlers] esbuild stop failed", stopError);
+      }
     }
   }
 }
@@ -132,10 +135,13 @@ export async function handleDomScript(
       headers: { "content-type": "application/typescript" },
     });
   } finally {
-    try {
-      esbuild?.stop?.();
-    } catch (stopError) {
-      serverLogger.debug("[ScriptHandlers] esbuild stop failed", stopError);
+    // Only stop esbuild if not in test mode with global initialization
+    if (!(globalThis as Record<string, unknown>).__vfTestPreserveEsbuild) {
+      try {
+        esbuild?.stop?.();
+      } catch (stopError) {
+        serverLogger.debug("[ScriptHandlers] esbuild stop failed", stopError);
+      }
     }
   }
 }
