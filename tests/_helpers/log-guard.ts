@@ -89,6 +89,8 @@ const allowedWarnings: string[] = [
   // FS integration fallback (expected when veryfront-api adapter fails)
   "[FSIntegration] Falling back to local filesystem",
   "[VERYFRONT] WARN:",
+  // Custom domain lookup without API token (expected in local/test environments)
+  "[universal] Cannot look up custom domain - no API token available",
 ];
 
 function isAllowed(args: unknown[]): boolean {
