@@ -36,34 +36,20 @@ export function buildCSP(
   const envCsp = adapter?.env?.get?.("VERYFRONT_CSP");
   if (envCsp?.trim()) return envCsp.replace(/{NONCE}/g, nonce);
 
-  // Development CSP - relaxed for HMR and dev tools
-  // Note: unsafe-eval allowed in dev only for source maps and dev tools
-  // Note: 'self' covers /_vf_modules/ (same-origin module server)
-  // Note: In dev, we allow 'unsafe-inline' for flexibility with external scripts/styles
-  const defaultCsp = isDev
-    ? [
-      "default-src 'self' https: data: blob:",
-      `style-src 'self' 'unsafe-inline' https: data:`,
-      "img-src 'self' data: blob: https: http:",
-      `script-src 'self' 'unsafe-inline' 'unsafe-eval' https:`,
-      "connect-src 'self' https: wss: ws: http:",
-      "font-src 'self' data: https:",
-      "worker-src 'self' blob:",
-      "object-src 'none'",
-    ].join("; ")
-    : [
-      "default-src 'self'",
-      `style-src 'self' 'nonce-${nonce}'`,
-      "img-src 'self' data:",
-      `script-src 'self' 'nonce-${nonce}'`,
-      "connect-src 'self'",
-    ].join("; ");
+  // CSP disabled by default - users can enable via config or env var
+  // Projects often use various CDNs, analytics, etc. that would be blocked
+  // To enable CSP, set VERYFRONT_CSP env var or use security.csp in config
+  //
+  // Development mode has relaxed CSP for HMR and dev tools (if CSP is forced)
+  // Production mode uses nonce-based CSP (if CSP is forced via env/config)
+  const defaultCsp = "";
 
+  // User-provided CSP from config header takes precedence
   if (cspUserHeader?.trim()) {
-    return `${cspUserHeader.replace(/{NONCE}/g, nonce)}; ${defaultCsp}`;
+    return cspUserHeader.replace(/{NONCE}/g, nonce);
   }
 
-  // If config has CSP directives, merge them
+  // If config has CSP directives, use them
   const cfgCsp = config?.csp;
   if (cfgCsp && typeof cfgCsp === "object") {
     const pieces: string[] = [];
@@ -74,10 +60,11 @@ export function buildCSP(
       pieces.push(`${key} ${val}`.replace(/{NONCE}/g, nonce));
     }
     if (pieces.length > 0) {
-      return `${pieces.join("; ")}; ${defaultCsp}`;
+      return pieces.join("; ");
     }
   }
 
+  // Return empty string - CSP disabled by default
   return defaultCsp;
 }
 
