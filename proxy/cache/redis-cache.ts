@@ -129,17 +129,18 @@ class RedisClient {
   private parseResponse(response: string): unknown {
     const type = response[0];
     const data = response.slice(1);
+    const lines = data.split("\r\n");
+    const firstLine = lines[0] ?? "";
 
     switch (type) {
       case "+": // Simple string
-        return data.split("\r\n")[0];
+        return firstLine;
       case "-": // Error
-        throw new Error(data.split("\r\n")[0]);
+        throw new Error(firstLine);
       case ":": // Integer
-        return parseInt(data.split("\r\n")[0], 10);
+        return parseInt(firstLine, 10);
       case "$": { // Bulk string
-        const lines = data.split("\r\n");
-        const len = parseInt(lines[0], 10);
+        const len = parseInt(firstLine, 10);
         if (len === -1) return null;
         return lines[1];
       }

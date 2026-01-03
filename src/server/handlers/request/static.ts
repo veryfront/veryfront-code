@@ -83,16 +83,39 @@ export class StaticHandler extends BaseHandler {
     }
 
     const fsWrapper = ctx.adapter.fs as {
-      runWithContext?: <T>(slug: string, token: string, fn: () => Promise<T>) => Promise<T>;
+      runWithContext?: <T>(
+        slug: string,
+        token: string,
+        fn: () => Promise<T>,
+        projectId?: string,
+        options?: { productionMode?: boolean; releaseId?: string | null },
+      ) => Promise<T>;
     };
 
     // Multi-project mode: use runWithContext
     if (typeof fsWrapper.runWithContext === "function") {
+      // Determine production mode based on domain type
+      let isProduction = false;
+      if (ctx.parsedDomain?.isVeryfrontDomain) {
+        isProduction = ctx.parsedDomain.isDraft === false;
+      } else {
+        // Custom domain - proxy tells us the environment
+        isProduction = ctx.proxyEnvironment === "production";
+      }
+
       this.logDebug("Using multi-project context for static files", {
         projectSlug: ctx.projectSlug,
+        projectId: ctx.projectId,
+        productionMode: isProduction,
       }, ctx);
       // Token can be empty - the adapter will use fallback token from config
-      return fsWrapper.runWithContext(ctx.projectSlug, ctx.proxyToken || "", fn);
+      return fsWrapper.runWithContext(
+        ctx.projectSlug,
+        ctx.proxyToken || "",
+        fn,
+        ctx.projectId,
+        { productionMode: isProduction },
+      );
     }
 
     return fn();

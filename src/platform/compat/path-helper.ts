@@ -1,9 +1,23 @@
 // Conditional imports for path module
 import nodePath from "node:path";
-import type { PlatformPath } from "node:path";
+
+/**
+ * Common path module interface compatible with both Node.js and Deno.
+ */
+interface PathModule {
+  basename(path: string, suffix?: string): string;
+  dirname(path: string): string;
+  join(...paths: string[]): string;
+  relative(from: string, to: string): string;
+  resolve(...paths: string[]): string;
+  extname(path: string): string;
+  isAbsolute(path: string): boolean;
+  sep: string;
+  fromFileUrl?: (url: string | URL) => string;
+}
 
 // Use node:path for Node.js or import Deno's std/path for Deno
-let pathMod: PlatformPath | null = null;
+let pathMod: PathModule | null = null;
 
 // Initialize path module synchronously for Node.js
 // @ts-ignore - Deno global
@@ -13,12 +27,12 @@ if (typeof Deno === "undefined") {
   // Deno environment - start loading asynchronously but don't await
   // @ts-ignore - Deno global
   import("std/path/mod.ts").then((mod) => {
-    pathMod = mod as unknown as PlatformPath;
+    pathMod = mod as unknown as PathModule;
   });
 }
 
 // Helper to get path module, ensuring it's loaded
-function getPathMod(): PlatformPath {
+function getPathMod(): PathModule {
   if (pathMod) return pathMod;
   // In Deno, if pathMod is not yet loaded, use Node.js path as temporary fallback
   // This should rarely happen as the import is fast

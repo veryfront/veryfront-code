@@ -21,7 +21,7 @@ const DEV_MODULE_PREFIX = /^\/(?:_vf_modules|_veryfront\/modules)\//;
 const SNIPPET_MODULE_PREFIX = /^\/_vf_modules\/_snippets\/([a-f0-9]+)\.js/;
 
 export interface ModuleServerOptions {
-  /** Project identifier */
+  /** Project identifier (directory path, legacy naming) */
   projectId: string;
   /** Project root directory */
   projectDir: string;
@@ -29,6 +29,8 @@ export interface ModuleServerOptions {
   adapter: RuntimeAdapter;
   /** Development mode */
   dev?: boolean;
+  /** Project UUID for multi-project mode (from domain lookup) */
+  projectUUID?: string;
 }
 
 /**
@@ -55,7 +57,7 @@ export async function serveModule(
 ): Promise<Response> {
   const startTime = performance.now();
   const timings: Record<string, number> = {};
-  const { projectId, projectDir, adapter, dev = true } = options;
+  const { projectId, projectDir, adapter, dev = true, projectUUID } = options;
   const url = new URL(req.url);
   const method = req.method.toUpperCase();
   const isHeadRequest = method === "HEAD";
@@ -292,7 +294,13 @@ export async function serveModule(
   const runWithOptionalContext = <T>(fn: () => Promise<T>): Promise<T> => {
     // Set branch context on FSAdapter if available (for branch-aware file resolution)
     const fsWrapper = adapter.fs as {
-      runWithContext?: <T>(slug: string, token: string, fn: () => Promise<T>) => Promise<T>;
+      runWithContext?: <T>(
+        slug: string,
+        token: string,
+        fn: () => Promise<T>,
+        projectId?: string,
+        options?: { productionMode?: boolean; releaseId?: string | null },
+      ) => Promise<T>;
       setRequestBranch?: (b: string | null) => void;
     };
 
@@ -306,8 +314,20 @@ export async function serveModule(
 
     // Try to use multi-project context if available
     if (typeof fsWrapper.runWithContext === "function") {
-      logger.info("[ModuleServer] Using project context", { projectSlug, branch });
-      return fsWrapper.runWithContext(projectSlug, "", fn);
+      // Determine production mode: check env query param or use non-dev mode
+      // In SSR context, modules are loaded from the server which runs in prod mode
+      const envParam = url.searchParams.get("env");
+      const isProduction = envParam === "production" || !dev;
+
+      logger.info("[ModuleServer] Using project context", {
+        projectSlug,
+        branch,
+        projectUUID,
+        productionMode: isProduction,
+      });
+      return fsWrapper.runWithContext(projectSlug, "", fn, projectUUID, {
+        productionMode: isProduction,
+      });
     }
 
     return fn();

@@ -9,6 +9,14 @@ interface RequestContext {
   projectSlug: string;
   projectId?: string;
   token: string;
+  productionMode: boolean;
+  releaseId?: string | null;
+}
+
+interface RunWithContextOptions {
+  projectSlug: string;
+  token: string;
+  projectId?: string;
   productionMode?: boolean;
   releaseId?: string | null;
 }
@@ -39,13 +47,28 @@ export class MultiProjectFSAdapter implements FSAdapter {
     token: string,
     fn: () => Promise<T>,
     projectId?: string,
+    options?: { productionMode?: boolean; releaseId?: string | null },
   ): Promise<T> {
+    const productionMode = options?.productionMode ?? false;
+    const releaseId = options?.releaseId ?? null;
+
     logger.info("[MultiProjectFSAdapter] runWithContext called", {
       projectSlug,
       projectId: projectId || "(none)",
       hasToken: !!token,
+      productionMode,
     });
-    return asyncLocalStorage.run({ projectSlug, projectId, token }, fn);
+
+    // Store production mode in context so getAdapter can use it
+    const context: RequestContext = {
+      projectSlug,
+      projectId,
+      token,
+      productionMode,
+      releaseId,
+    };
+
+    return asyncLocalStorage.run(context, fn);
   }
 
   setRequestContext(projectSlug: string, token: string): void {
@@ -84,19 +107,24 @@ export class MultiProjectFSAdapter implements FSAdapter {
       );
     }
 
+    // Use production mode from context (set by runWithContext)
+    // Fall back to class-level setting for backward compatibility
+    const productionMode = context.productionMode ?? this.productionMode;
+    const releaseId = context.releaseId ?? this.releaseId;
+
     logger.info("[MultiProjectFSAdapter] getAdapter context", {
       projectSlug: context.projectSlug,
       projectId: context.projectId || "(none)",
       hasToken: !!context.token,
-      productionMode: this.productionMode,
+      productionMode,
     });
 
     return this.manager.getAdapter(
       context.projectSlug,
       context.token,
       context.projectId,
-      this.productionMode,
-      this.releaseId,
+      productionMode,
+      releaseId,
     );
   }
 

@@ -7,6 +7,9 @@ export interface VeryfrontAPIConfig {
   /** Project slug - optional in proxy mode where slug comes per-request */
   projectSlug?: string;
 
+  /** Project ID - if known, skips the listProjects lookup */
+  projectId?: string;
+
   /** Enable proxy mode for multi-project per-request handling */
   proxyMode?: boolean;
 

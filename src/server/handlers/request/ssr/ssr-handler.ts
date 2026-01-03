@@ -86,56 +86,40 @@ export class SSRHandler extends BaseHandler {
       const fsWrapper = ctx.adapter.fs as {
         setRequestToken?: (t: string) => void;
         setRequestBranch?: (b: string | null) => void;
-        runWithContext?: <T>(slug: string, token: string, fn: () => Promise<T>, projectId?: string) => Promise<T>;
+        runWithContext?: <T>(
+          slug: string,
+          token: string,
+          fn: () => Promise<T>,
+          projectId?: string,
+          options?: { productionMode?: boolean; releaseId?: string | null },
+        ) => Promise<T>;
       };
 
       // For multi-project mode, use runWithContext (required for MultiProjectFSAdapter)
       // The token can be empty - ProxyFSAdapterManager will fall back to config token
       if (ctx.projectSlug && typeof fsWrapper.runWithContext === "function") {
+        // Determine production mode based on domain type
+        let isProduction = false;
+        if (ctx.parsedDomain?.isVeryfrontDomain) {
+          isProduction = ctx.parsedDomain.isDraft === false;
+        } else {
+          isProduction = ctx.proxyEnvironment === "production";
+        }
+
         this.logDebug("Using multi-project context", {
           projectSlug: ctx.projectSlug,
           projectId: ctx.projectId,
           hasProxyToken: !!ctx.proxyToken,
+          productionMode: isProduction,
         }, ctx);
-        _logger.info("[SSR] Using multi-project context for rendering", {
-          projectSlug: ctx.projectSlug,
-          projectId: ctx.projectId || "(none)",
-          hasProxyToken: !!ctx.proxyToken,
-          proxyEnvironment: ctx.proxyEnvironment,
-          slug,
-        });
-        // Debug: Log projectId just before passing to runWithContext
-        const projectIdToPass = ctx.projectId;
-        _logger.info("[SSR] About to call runWithContext with projectId", {
-          projectIdToPass: projectIdToPass || "(none)",
-          projectSlug: ctx.projectSlug,
-          fsAdapterType: ctx.adapter.fs?.constructor?.name || "unknown",
-          hasRunWithContext: typeof fsWrapper.runWithContext,
-        });
-        return fsWrapper.runWithContext(ctx.projectSlug, ctx.proxyToken || "", () => {
-          // Set production mode for non-draft environments
-          const setProductionModeFn = fsWrapper as {
-            setProductionMode?: (enabled: boolean, releaseId?: string | null) => void;
-          };
-          if (typeof setProductionModeFn.setProductionMode === "function") {
-            // Determine production mode based on domain type
-            let isProduction = false;
-            if (ctx.parsedDomain?.isVeryfrontDomain) {
-              isProduction = ctx.parsedDomain.isDraft === false;
-            } else {
-              isProduction = ctx.proxyEnvironment === "production";
-            }
 
-            setProductionModeFn.setProductionMode(isProduction);
-            if (isProduction) {
-              this.logDebug("Production mode enabled in multi-project context", {
-                environment: ctx.parsedDomain?.environment ?? ctx.proxyEnvironment,
-                isCustomDomain: !ctx.parsedDomain?.isVeryfrontDomain,
-              }, ctx);
-            }
-          }
-          return this.handleWithContext(req, ctx, slug, requestId, url);
-        }, projectIdToPass);
+        return fsWrapper.runWithContext(
+          ctx.projectSlug,
+          ctx.proxyToken || "",
+          () => this.handleWithContext(req, ctx, slug, requestId, url),
+          ctx.projectId,
+          { productionMode: isProduction },
+        );
       }
 
       // Log why multi-project context wasn't used
@@ -202,6 +186,10 @@ export class SSRHandler extends BaseHandler {
     requestId: string,
     url: URL,
   ): Promise<HandlerResult> {
+    // Extract builder options before try block so they're available in catch handlers
+    const studioEmbed = url.searchParams.get("studio_embed") === "true";
+    const builderOptions = { studioEmbed };
+
     try {
       const renderer = await timeAsync("renderer-init", () => {
         if (!this.rendererInit) {
@@ -254,8 +242,6 @@ export class SSRHandler extends BaseHandler {
       const nonce = generateNonce();
       this.logDebug(`[NONCE-TRACE] Generated nonce for SSR: ${nonce}`, { slug }, ctx);
 
-      const studioEmbed = url.searchParams.get("studio_embed") === "true";
-      const builderOptions = { studioEmbed };
       const projectId = ctx.projectSlug || url.searchParams.get("project_id") || undefined;
       const pageId = url.searchParams.get("page_id") || undefined;
 

@@ -10,7 +10,7 @@ import {
   serverLogger,
 } from "@veryfront/utils";
 
-export type LogFormat = "combined" | "common" | "dev" | "short" | "tiny";
+export type LogFormat = "combined" | "common" | "dev" | "short" | "tiny" | "json";
 
 export interface LoggerOptions {
   format?: LogFormat;
@@ -67,6 +67,80 @@ function getRemoteAddr(req: Request): string {
   return req.headers.get("x-forwarded-for") || req.headers.get("x-real-ip") || "-";
 }
 
+/**
+ * HTTP log entry structure for JSON format.
+ * Designed for easy Grafana/Loki filtering.
+ */
+interface HttpLogEntry {
+  timestamp: string;
+  level: "info" | "warn" | "error";
+  service: string;
+  message: string;
+  http: {
+    method: string;
+    path: string;
+    status: number;
+    durationMs: number;
+    remoteAddr: string;
+    userAgent?: string;
+    referer?: string;
+  };
+  // Request context if available
+  requestId?: string;
+  traceId?: string;
+  projectSlug?: string;
+}
+
+function formatJsonLog(
+  req: Request,
+  status: number,
+  duration: number,
+): string {
+  const url = new URL(req.url);
+  const userAgent = req.headers.get("user-agent");
+  const referer = req.headers.get("referer");
+
+  // Determine log level based on status code
+  let level: HttpLogEntry["level"] = "info";
+  if (status >= HTTP_STATUS_SERVER_ERROR_MIN) {
+    level = "error";
+  } else if (status >= HTTP_STATUS_CLIENT_ERROR_MIN) {
+    level = "warn";
+  }
+
+  const entry: HttpLogEntry = {
+    timestamp: new Date().toISOString(),
+    level,
+    service: "server",
+    message: `${req.method} ${url.pathname} ${status}`,
+    http: {
+      method: req.method,
+      path: url.pathname,
+      status,
+      durationMs: Math.round(duration),
+      remoteAddr: getRemoteAddr(req),
+    },
+  };
+
+  if (userAgent && userAgent !== "-") {
+    entry.http.userAgent = userAgent;
+  }
+  if (referer && referer !== "-") {
+    entry.http.referer = referer;
+  }
+
+  // Extract request context headers if present
+  const requestId = req.headers.get("x-request-id");
+  const traceId = req.headers.get("x-trace-id") || req.headers.get("traceparent");
+  const projectSlug = req.headers.get("x-project-slug");
+
+  if (requestId) entry.requestId = requestId;
+  if (traceId) entry.traceId = traceId;
+  if (projectSlug) entry.projectSlug = projectSlug;
+
+  return JSON.stringify(entry);
+}
+
 function formatLog(
   format: LogFormat,
   req: Request,
@@ -82,6 +156,9 @@ function formatLog(
   const referer = req.headers.get("referer") || "-";
 
   switch (format) {
+    case "json":
+      return formatJsonLog(req, status, duration);
+
     case "combined":
       return `${remoteAddr} - - [${timestamp}] "${method} ${pathname} HTTP/1.1" ${status} - "${referer}" "${userAgent}" ${
         formatDuration(duration)
@@ -114,7 +191,11 @@ function formatLog(
 export function logger(options?: LoggerOptions): Middleware {
   const format = options?.format ?? "dev";
   const skip = options?.skip;
-  const log = options?.log ?? ((msg: string) => serverLogger.info(msg));
+  // For JSON format, output directly to console to preserve structure
+  const isJson = format === "json";
+  const log = options?.log ?? (isJson
+    ? (msg: string) => console.log(msg)
+    : (msg: string) => serverLogger.info(msg));
 
   return async (ctx, next) => {
     const req = getRequest(ctx);
@@ -132,7 +213,12 @@ export function logger(options?: LoggerOptions): Middleware {
 
       if (!response) {
         const message = formatLog(format, req, HTTP_SERVER_ERROR, duration);
-        log(`${message} ${colors.red}[ERROR]${colors.reset}`);
+        // Don't append color codes to JSON output
+        if (isJson) {
+          log(message);
+        } else {
+          log(`${message} ${colors.red}[ERROR]${colors.reset}`);
+        }
         return response;
       }
 
@@ -143,7 +229,12 @@ export function logger(options?: LoggerOptions): Middleware {
     } catch (error) {
       const duration = performance.now() - start;
       const message = formatLog(format, req, HTTP_SERVER_ERROR, duration);
-      log(`${message} ${colors.red}[ERROR]${colors.reset}`);
+      // Don't append color codes to JSON output
+      if (isJson) {
+        log(message);
+      } else {
+        log(`${message} ${colors.red}[ERROR]${colors.reset}`);
+      }
       throw error;
     }
   };
@@ -153,6 +244,10 @@ export function devLogger(): Middleware {
   return logger({ format: "dev" });
 }
 
+/**
+ * Production logger with JSON format for Grafana/Loki compatibility.
+ * Outputs structured JSON logs with HTTP request details.
+ */
 export function prodLogger(): Middleware {
-  return logger({ format: "combined" });
+  return logger({ format: "json" });
 }

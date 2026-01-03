@@ -13,12 +13,14 @@
  * - CACHE_TYPE: "memory" (default) or "redis"
  * - REDIS_URL: Redis connection URL (required if CACHE_TYPE=redis)
  * - REDIS_PREFIX: Key prefix for Redis (default: "vf:token:")
+ * - LOG_FORMAT: "json" (default in production) or "text"
  */
 
 import { TokenManager, type TokenScope } from "./token-manager.ts";
 import { parseProjectDomain } from "../src/server/utils/domain-parser.ts";
 import { createCacheFromEnv } from "./cache/index.ts";
 import { initializeOTLP, shutdownOTLP } from "./tracing.ts";
+import { proxyLogger } from "../src/core/utils/logger/logger.ts";
 
 // Configuration from environment variables
 const config = {
@@ -42,8 +44,8 @@ function validateConfig(): void {
   if (!config.previewClientSecret) missing.push("OAUTH_PREVIEW_CLIENT_SECRET");
 
   if (missing.length > 0) {
-    console.warn(`[Proxy] Warning: Missing OAuth credentials: ${missing.join(", ")}`);
-    console.warn("[Proxy] Proxy will forward requests without authentication");
+    proxyLogger.warn("Missing OAuth credentials", { missingCredentials: missing });
+    proxyLogger.warn("Proxy will forward requests without authentication");
   }
 }
 
@@ -72,9 +74,15 @@ async function handleRequest(req: Request): Promise<Response> {
     const scope = getScope(parsed.environment);
     const projectSlug = parsed.slug || undefined;
 
-    console.log(
-      `[Proxy] ${req.method} ${url.pathname} -> ${scope} (project: ${projectSlug || "none"})`,
-    );
+    // Create request-scoped logger with context
+    const reqLogger = proxyLogger.child({
+      projectSlug: projectSlug || undefined,
+      method: req.method,
+      path: url.pathname,
+      environment: scope,
+    });
+
+    reqLogger.info("Request received");
 
     // Get OAuth token for this scope + project
     let token = "";
@@ -82,7 +90,7 @@ async function handleRequest(req: Request): Promise<Response> {
       try {
         token = await tokenManager.getToken(scope, projectSlug);
       } catch (error) {
-        console.error("[Proxy] Token fetch failed:", error);
+        reqLogger.error("Token fetch failed", error as Error);
         // Continue without token - renderer may have fallback
       }
     }
@@ -99,12 +107,9 @@ async function handleRequest(req: Request): Promise<Response> {
     newHeaders.set("x-forwarded-host", host);
     newHeaders.delete("host"); // Let renderer determine its own host
 
-    // Debug: Log headers being sent to renderer
-    console.log(`[Proxy] Forwarding to renderer with headers:`, {
-      "x-token": token ? `${token.substring(0, 20)}...` : "(none)",
-      "x-project-slug": projectSlug || "(none)",
-      "x-environment": scope,
-      "x-forwarded-host": host,
+    reqLogger.debug("Forwarding to renderer", {
+      hasToken: !!token,
+      forwardedHost: host,
     });
 
     // Build renderer URL
@@ -118,8 +123,11 @@ async function handleRequest(req: Request): Promise<Response> {
       redirect: "manual",
     });
 
-    const duration = (performance.now() - startTime).toFixed(0);
-    console.log(`[Proxy] ${req.method} ${url.pathname} -> ${response.status} (${duration}ms)`);
+    const durationMs = Math.round(performance.now() - startTime);
+    reqLogger.info("Request completed", {
+      status: response.status,
+      durationMs,
+    });
 
     // Return response with original headers
     return new Response(response.body, {
@@ -128,8 +136,11 @@ async function handleRequest(req: Request): Promise<Response> {
       headers: response.headers,
     });
   } catch (error) {
-    const duration = (performance.now() - startTime).toFixed(0);
-    console.error(`[Proxy] Error forwarding request (${duration}ms):`, error);
+    const durationMs = Math.round(performance.now() - startTime);
+    proxyLogger.error("Error forwarding request", {
+      path: url.pathname,
+      durationMs,
+    }, error as Error);
 
     return new Response(
       JSON.stringify({
@@ -176,10 +187,10 @@ async function router(req: Request): Promise<Response> {
 
 // Graceful shutdown
 async function shutdown(): Promise<void> {
-  console.log("[Proxy] Shutting down...");
+  proxyLogger.info("Shutting down");
   await tokenManager.close();
   await shutdownOTLP();
-  console.log("[Proxy] Closed cache connections");
+  proxyLogger.info("Closed cache connections");
   Deno.exit(0);
 }
 
@@ -191,9 +202,11 @@ await initializeOTLP();
 validateConfig();
 
 const cacheType = Deno.env.get("CACHE_TYPE") || "memory";
-console.log(`[Proxy] Starting on port ${PORT}`);
-console.log(`[Proxy] Forwarding to ${RENDERER_URL}`);
-console.log(`[Proxy] API Base URL: ${config.apiBaseUrl}`);
-console.log(`[Proxy] Cache type: ${cacheType}`);
+proxyLogger.info("Starting proxy server", {
+  port: PORT,
+  rendererUrl: RENDERER_URL,
+  apiBaseUrl: config.apiBaseUrl,
+  cacheType,
+});
 
 Deno.serve({ port: PORT }, router);

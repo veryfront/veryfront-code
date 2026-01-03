@@ -137,6 +137,8 @@ export class SnippetHandler extends BaseHandler {
         slug: string,
         token: string,
         fn: () => Promise<T>,
+        projectId?: string,
+        options?: { productionMode?: boolean; releaseId?: string | null },
       ) => Promise<T>;
       setRequestBranch?: (b: string | null) => void;
     };
@@ -152,8 +154,26 @@ export class SnippetHandler extends BaseHandler {
     }
 
     if (typeof fsWrapper.runWithContext === "function") {
-      this.logDebug("Using multi-project context", { projectSlug: ctx.projectSlug }, ctx);
-      return fsWrapper.runWithContext(ctx.projectSlug, ctx.proxyToken || "", fn);
+      // Determine production mode based on domain type
+      let isProduction = false;
+      if (ctx.parsedDomain?.isVeryfrontDomain) {
+        isProduction = ctx.parsedDomain.isDraft === false;
+      } else {
+        isProduction = ctx.proxyEnvironment === "production";
+      }
+
+      this.logDebug("Using multi-project context", {
+        projectSlug: ctx.projectSlug,
+        projectId: ctx.projectId,
+        productionMode: isProduction,
+      }, ctx);
+      return fsWrapper.runWithContext(
+        ctx.projectSlug,
+        ctx.proxyToken || "",
+        fn,
+        ctx.projectId,
+        { productionMode: isProduction },
+      );
     }
 
     return fn();

@@ -81,17 +81,19 @@ export class FSAdapterWrapper implements FileSystemAdapter {
     token: string,
     fn: () => Promise<T>,
     projectId?: string,
+    options?: { productionMode?: boolean; releaseId?: string | null },
   ): Promise<T> {
-    console.log("[FSAdapterWrapper] runWithContext called with:", {
-      projectSlug,
-      projectId: projectId || "(none)",
-      hasToken: !!token,
-    });
     const adapter = this.fsAdapter as unknown as {
-      runWithContext?: <T>(slug: string, token: string, fn: () => Promise<T>, projectId?: string) => Promise<T>;
+      runWithContext?: <T>(
+        slug: string,
+        token: string,
+        fn: () => Promise<T>,
+        projectId?: string,
+        options?: { productionMode?: boolean; releaseId?: string | null },
+      ) => Promise<T>;
     };
     if (typeof adapter.runWithContext === "function") {
-      return adapter.runWithContext(projectSlug, token, fn, projectId);
+      return adapter.runWithContext(projectSlug, token, fn, projectId, options);
     }
     // Fallback: just run the function directly
     return fn();

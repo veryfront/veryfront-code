@@ -36,6 +36,7 @@ export interface FSAdapterConfig {
     apiKey?: string;
     apiToken?: string;
     projectSlug?: string;
+    projectId?: string;
     baseUrl?: string;
     proxyMode?: boolean;
     cache?: {
@@ -53,6 +54,7 @@ export interface VeryfrontConfig {
   apiBaseUrl: string;
   apiToken: string;
   projectSlug: string;
+  projectId?: string;
   proxyMode?: boolean;
   cache: {
     enabled: boolean;
@@ -95,6 +97,7 @@ export function createVeryfrontConfig(config: FSAdapterConfig): VeryfrontConfig 
     apiBaseUrl: config.veryfront.baseUrl || "",
     apiToken: config.veryfront.apiToken || config.veryfront.apiKey || "",
     projectSlug: config.veryfront.projectSlug || "",
+    projectId: config.veryfront.projectId,
     proxyMode: config.veryfront.proxyMode,
     cache: {
       enabled: true,

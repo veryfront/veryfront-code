@@ -73,7 +73,13 @@ export class ModuleHandler extends BaseHandler {
     const fsWrapper = ctx.adapter.fs as {
       setRequestToken?: (t: string) => void;
       setRequestBranch?: (b: string | null) => void;
-      runWithContext?: <T>(slug: string, token: string, fn: () => Promise<T>) => Promise<T>;
+      runWithContext?: <T>(
+        slug: string,
+        token: string,
+        fn: () => Promise<T>,
+        projectId?: string,
+        options?: { productionMode?: boolean; releaseId?: string | null },
+      ) => Promise<T>;
     };
 
     // Always set branch from parsed domain (for module resolution)
@@ -88,7 +94,21 @@ export class ModuleHandler extends BaseHandler {
 
     // Multi-project mode: use runWithContext
     if (typeof fsWrapper.runWithContext === "function") {
-      return fsWrapper.runWithContext(ctx.projectSlug, ctx.proxyToken, fn);
+      // Determine production mode based on domain type
+      let isProduction = false;
+      if (ctx.parsedDomain?.isVeryfrontDomain) {
+        isProduction = ctx.parsedDomain.isDraft === false;
+      } else {
+        isProduction = ctx.proxyEnvironment === "production";
+      }
+
+      return fsWrapper.runWithContext(
+        ctx.projectSlug,
+        ctx.proxyToken,
+        fn,
+        ctx.projectId,
+        { productionMode: isProduction },
+      );
     }
 
     // Single-project mode: use setRequestToken
