@@ -60,7 +60,7 @@ export class RedisCacheStore implements CacheStore {
           type: "render",
           message:
             "Redis cache store requires npm:@redis/client. Install dependencies or switch cache.render.type to 'memory' or 'filesystem'.",
-        })
+        }),
       );
     }
 
