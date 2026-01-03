@@ -20,8 +20,9 @@ import { z } from "zod";
 // Mock tool for testing
 const createMockTool = (name: string, handler: (input: any) => any): Tool => ({
   id: name,
+  type: "function" as const,
   description: `Mock tool: ${name}`,
-  parameters: z.object({}).passthrough(),
+  inputSchema: z.object({}).passthrough(),
   execute: (input) => Promise.resolve(handler(input)),
 });
 
@@ -50,7 +51,8 @@ describe("Workflow Integration", () => {
         return { result: "success", input };
       });
 
-      const simpleWorkflow = workflow("simple", {
+      const simpleWorkflow = workflow({
+        id: "simple",
         steps: [
           step("first", {
             tool: mockTool,
@@ -64,7 +66,8 @@ describe("Workflow Integration", () => {
       const result = await handle.result();
 
       expect(toolCalled).toBe(true);
-      expect(result.status).toBe("completed");
+      const run = await client.getRun(handle.runId);
+      expect(run?.status).toBe("completed");
     });
 
     it("should execute parallel steps", async () => {
@@ -82,14 +85,13 @@ describe("Workflow Integration", () => {
         return { tool: 2 };
       });
 
-      const parallelWorkflow = workflow("parallel-test", {
+      const parallelWorkflow = workflow({
+        id: "parallel-test",
         steps: [
-          parallel("both", {
-            nodes: [
-              step("step1", { tool: tool1 }),
-              step("step2", { tool: tool2 }),
-            ],
-          }),
+          parallel("both", [
+            step("step1", { tool: tool1 }),
+            step("step2", { tool: tool2 }),
+          ]),
         ],
       });
 
@@ -115,10 +117,11 @@ describe("Workflow Integration", () => {
         return { branch: "else" };
       });
 
-      const branchWorkflow = workflow("branch-test", {
+      const branchWorkflow = workflow({
+        id: "branch-test",
         steps: [
           branch("check", {
-            condition: (ctx) => ctx.input.value > 10,
+            condition: (ctx) => (ctx.input as { value: number }).value > 10,
             then: [step("then-step", { tool: thenTool })],
             else: [step("else-step", { tool: elseTool })],
           }),
@@ -149,7 +152,8 @@ describe("Workflow Integration", () => {
         return { count: counter };
       });
 
-      const loopWorkflow = workflow("loop-test", {
+      const loopWorkflow = workflow({
+        id: "loop-test",
         steps: [
           loop("count-loop", {
             maxIterations: 10,
@@ -163,10 +167,11 @@ describe("Workflow Integration", () => {
 
       client.register(loopWorkflow);
       const handle = await client.start("loop-test", {});
-      const result = await handle.result();
+      await handle.result();
 
       expect(counter).toBe(3);
-      expect(result.status).toBe("completed");
+      const run = await client.getRun(handle.runId);
+      expect(run?.status).toBe("completed");
     });
 
     it("should respect maxIterations", async () => {
@@ -177,7 +182,8 @@ describe("Workflow Integration", () => {
         return { count: counter };
       });
 
-      const loopWorkflow = workflow("max-iter-test", {
+      const loopWorkflow = workflow({
+        id: "max-iter-test",
         steps: [
           loop("infinite-loop", {
             maxIterations: 5,
@@ -195,10 +201,11 @@ describe("Workflow Integration", () => {
 
       client.register(loopWorkflow);
       const handle = await client.start("max-iter-test", {});
-      const result = await handle.result();
+      await handle.result();
 
       expect(counter).toBe(5);
-      expect(result.status).toBe("completed");
+      const run = await client.getRun(handle.runId);
+      expect(run?.status).toBe("completed");
     });
 
     it("should pass loop context to steps", async () => {
@@ -209,7 +216,8 @@ describe("Workflow Integration", () => {
         return { tracked: true };
       });
 
-      const loopWorkflow = workflow("context-test", {
+      const loopWorkflow = workflow({
+        id: "context-test",
         steps: [
           loop("track-loop", {
             maxIterations: 3,
@@ -244,7 +252,8 @@ describe("Workflow Integration", () => {
         return { success: true };
       });
 
-      const retryWorkflow = workflow("retry-test", {
+      const retryWorkflow = workflow({
+        id: "retry-test",
         steps: [
           step("flakey-step", {
             tool: flakeyTool,
@@ -259,10 +268,11 @@ describe("Workflow Integration", () => {
 
       client.register(retryWorkflow);
       const handle = await client.start("retry-test", {});
-      const result = await handle.result();
+      await handle.result();
 
       expect(attempts).toBe(3);
-      expect(result.status).toBe("completed");
+      const run = await client.getRun(handle.runId);
+      expect(run?.status).toBe("completed");
     });
 
     it("should fail after max retries", async () => {
@@ -273,7 +283,8 @@ describe("Workflow Integration", () => {
         throw new Error("ECONNREFUSED");
       });
 
-      const retryWorkflow = workflow("fail-test", {
+      const retryWorkflow = workflow({
+        id: "fail-test",
         steps: [
           step("fail-step", {
             tool: alwaysFailTool,
@@ -288,10 +299,13 @@ describe("Workflow Integration", () => {
 
       client.register(retryWorkflow);
       const handle = await client.start("fail-test", {});
-      const result = await handle.result();
+
+      // result() throws on failure, so we catch and verify via getRun
+      await expect(handle.result()).rejects.toThrow();
 
       expect(attempts).toBe(3);
-      expect(result.status).toBe("failed");
+      const run = await client.getRun(handle.runId);
+      expect(run?.status).toBe("failed");
     });
   });
 
@@ -302,7 +316,8 @@ describe("Workflow Integration", () => {
         return { result: "done" };
       });
 
-      const timeoutWorkflow = workflow("timeout-test", {
+      const timeoutWorkflow = workflow({
+        id: "timeout-test",
         steps: [
           step("slow-step", {
             tool: slowTool,
@@ -313,10 +328,12 @@ describe("Workflow Integration", () => {
 
       client.register(timeoutWorkflow);
       const handle = await client.start("timeout-test", {});
-      const result = await handle.result();
 
-      expect(result.status).toBe("failed");
-      expect(result.error).toMatch(/timed out/i);
+      // result() throws on failure
+      await expect(handle.result()).rejects.toThrow(/timed out/i);
+
+      const run = await client.getRun(handle.runId);
+      expect(run?.status).toBe("failed");
     });
   });
 
@@ -325,7 +342,8 @@ describe("Workflow Integration", () => {
       const mockTool = createMockTool("before", () => ({ before: true }));
       const afterTool = createMockTool("after", () => ({ after: true }));
 
-      const approvalWorkflow = workflow("approval-test", {
+      const approvalWorkflow = workflow({
+        id: "approval-test",
         steps: [
           step("before", { tool: mockTool }),
           waitForApproval("need-approval", {
@@ -359,7 +377,8 @@ describe("Workflow Integration", () => {
         return { after: true };
       });
 
-      const approvalWorkflow = workflow("resume-test", {
+      const approvalWorkflow = workflow({
+        id: "resume-test",
         steps: [
           step("before", { tool: mockTool }),
           waitForApproval("need-approval", {
@@ -381,10 +400,11 @@ describe("Workflow Integration", () => {
       await client.approve(handle.runId, approvals[0]!.id, "test@test.com");
 
       // Wait for completion
-      const result = await handle.result();
+      await handle.result();
 
       expect(afterExecuted).toBe(true);
-      expect(result.status).toBe("completed");
+      const run = await client.getRun(handle.runId);
+      expect(run?.status).toBe("completed");
     });
   });
 });
@@ -400,7 +420,8 @@ describe("Cron Job Pattern", () => {
     });
 
     // Simulate a cron-like workflow using loop with delay
-    const cronWorkflow = workflow("cron-job", {
+    const cronWorkflow = workflow({
+      id: "cron-job",
       steps: [
         loop("cron-loop", {
           maxIterations, // In production, set high (e.g., 1000000)
