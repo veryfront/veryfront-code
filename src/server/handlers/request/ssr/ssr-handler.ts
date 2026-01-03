@@ -149,13 +149,14 @@ export class SSRHandler extends BaseHandler {
         setProductionMode?: (enabled: boolean, releaseId?: string | null) => void;
       };
       if (typeof setProductionMode.setProductionMode === "function") {
-        // Determine production mode based on domain type:
-        // - Veryfront domains: use isDraft flag (false = production)
-        // - Custom domains: use proxyEnvironment header from proxy
-        let isProduction = false;
-        if (ctx.parsedDomain?.isVeryfrontDomain) {
+        // Determine production mode based on:
+        // 1. Config's productionMode setting (from PRODUCTION_MODE env var)
+        // 2. Veryfront domain isDraft flag
+        // 3. Proxy environment header
+        let isProduction = ctx.config?.fs?.veryfront?.productionMode === true;
+        if (!isProduction && ctx.parsedDomain?.isVeryfrontDomain) {
           isProduction = ctx.parsedDomain.isDraft === false;
-        } else {
+        } else if (!isProduction) {
           // Custom domain - proxy tells us the environment
           isProduction = ctx.proxyEnvironment === "production";
         }
@@ -165,6 +166,7 @@ export class SSRHandler extends BaseHandler {
           this.logDebug("Production mode enabled - serving from releases", {
             environment: ctx.parsedDomain?.environment ?? ctx.proxyEnvironment,
             isCustomDomain: !ctx.parsedDomain?.isVeryfrontDomain,
+            fromConfig: ctx.config?.fs?.veryfront?.productionMode === true,
           }, ctx);
         }
       }

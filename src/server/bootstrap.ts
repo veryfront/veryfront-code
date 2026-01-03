@@ -92,8 +92,10 @@ export async function bootstrap(
   // Step 4: Reload config using enhanced adapter (only if FSAdapter was initialized)
   // This allows config file itself to be served from API
   // Skip in proxy mode - config is always local and FSAdapter requires request context
+  // Skip in production mode - config is local and remote fetch is unnecessary
   const isProxyMode = config.fs?.veryfront?.proxyMode === true;
-  if (fsAdapterInitialized && !isProxyMode) {
+  const isProductionMode = config.fs?.veryfront?.productionMode === true;
+  if (fsAdapterInitialized && !isProxyMode && !isProductionMode) {
     logger.debug("[Bootstrap] Reloading config with FSAdapter");
     clearConfigCache();
     const originalConfig = config;
@@ -112,6 +114,8 @@ export async function bootstrap(
     }
   } else if (isProxyMode) {
     logger.debug("[Bootstrap] Skipping config reload in proxy mode (using local config)");
+  } else if (isProductionMode) {
+    logger.debug("[Bootstrap] Skipping config reload in production mode (using local config)");
   }
 
   logger.debug("[Bootstrap] Framework initialized successfully", {

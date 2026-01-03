@@ -168,19 +168,22 @@ export function createVeryfrontHandler(
     let proxyEnv = req.headers.get("x-environment") as "preview" | "production" | undefined;
     const forwardedHost = req.headers.get("x-forwarded-host") || undefined;
 
-    // Debug: Log received proxy headers
-    logger.info("[RENDERER] Received proxy headers:", {
-      "x-token": proxyToken ? `${proxyToken.substring(0, 20)}...` : "(none)",
-      "x-project-slug": proxySlug || "(none)",
-      "x-environment": proxyEnv || "(none)",
-      "x-forwarded-host": forwardedHost || "(none)",
-      pathname: _url.pathname,
-    });
-
     // Get project slug: proxy header > URL parsing > config
     const configuredSlug = config?.fs?.veryfront?.projectSlug;
     let projectSlug = proxySlug || parsedDomain.slug || configuredSlug;
     let projectId: string | undefined;
+
+    // DEBUG: Log config state
+    logger.info("[universal] DEBUG config state", {
+      hasConfig: !!config,
+      hasFsConfig: !!config?.fs,
+      hasVeryfrontConfig: !!config?.fs?.veryfront,
+      configuredSlug,
+      proxySlug,
+      parsedDomainSlug: parsedDomain.slug,
+      finalProjectSlug: projectSlug,
+      isVeryfrontDomain: parsedDomain.isVeryfrontDomain,
+    });
 
     // For custom domains without a slug, look up the project via API
     // This enables JIT rendering for production sites with custom domains
@@ -265,17 +268,6 @@ export function createVeryfrontHandler(
       proxyToken,
       proxyEnvironment: proxyEnv,
     };
-
-    // Debug: Log resolved context
-    logger.info("[RENDERER] Resolved context:", {
-      projectSlug: projectSlug || "(none)",
-      projectId: projectId || "(none)",
-      proxyEnvironment: proxyEnv || "(none)",
-      hasProxyToken: !!proxyToken,
-      isProxyMode,
-      fsType: config?.fs?.type || "local",
-      pathname: _url.pathname,
-    });
 
     // Track metrics
     await metrics.incRequest();

@@ -4,6 +4,7 @@ import type { ProjectFile } from "../veryfront-api-client.ts";
 import type { VeryfrontAPIClient } from "../veryfront-api-client.ts";
 import { FileCache } from "../file-cache/file-cache.ts";
 import { PathNormalizer } from "./path-normalizer.ts";
+import type { ProductionModeContext } from "./read-operations.ts";
 
 interface DirNode {
   files: Map<string, ProjectFile>;
@@ -18,6 +19,7 @@ export class DirectoryOperations {
     private readonly client: VeryfrontAPIClient,
     private readonly cache: FileCache,
     private readonly normalizer: PathNormalizer,
+    private readonly productionContext?: ProductionModeContext,
   ) {}
 
   async readdir(path: string): Promise<DirectoryEntry[]> {
@@ -135,6 +137,25 @@ export class DirectoryOperations {
   }
 
   private async getAllFilesRaw(): Promise<ProjectFile[]> {
+    const isProduction = this.productionContext?.isProductionMode() ?? false;
+    const releaseId = this.productionContext?.getReleaseId() ?? null;
+
+    // In production mode, use the published files cache
+    if (isProduction) {
+      const cacheKey = `files:published:${releaseId ?? "latest"}`;
+      logger.debug("[DirectoryOperations] Production mode - checking published files cache", { cacheKey });
+      const cached = this.cache.get<ProjectFile[]>(cacheKey);
+      if (cached) {
+        return cached;
+      }
+      // If not cached, fetch published files
+      logger.debug("[DirectoryOperations] Fetching published files from API", { releaseId });
+      const files = await this.client.listPublishedFiles(undefined, releaseId ?? undefined);
+      this.cache.set(cacheKey, files);
+      return files;
+    }
+
+    // In development mode, use draft files
     const branch = this.client.getRequestBranch() || "main";
     const cacheKey = `files:all:${branch}`;
     const cached = this.cache.get<ProjectFile[]>(cacheKey);

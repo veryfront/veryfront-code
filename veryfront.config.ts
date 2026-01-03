@@ -23,6 +23,10 @@ try {
 // Check if running behind proxy (PROXY_MODE=1) or direct mode
 const proxyMode = Deno.env.get("PROXY_MODE") === "1";
 
+// Production mode for serving published content (not draft)
+// In production deployment, this should be true to fetch from releases
+const productionMode = Deno.env.get("PRODUCTION_MODE") === "1";
+
 // Derive REST API base URL
 // Production: VERYFRONT_API_URL is the GraphQL URL (http://veryfront-api.veryfront-production/graphql)
 // Local dev: VERYFRONT_API_BASE_URL is the REST API URL (http://api.lvh.me:4000/api)
@@ -80,6 +84,9 @@ export default {
       // In direct mode, use the configured values directly
       apiToken: apiToken || undefined, // Fallback for both modes
       projectSlug: proxyMode ? undefined : projectSlug,
+      // Production mode fetches from releases (published content)
+      // instead of draft files and skips WebSocket connection
+      productionMode,
       cache: {
         enabled: true, // WebSocket pokes invalidate cache on file changes
         ttl: 60000, // 60s TTL as safety net
