@@ -2,6 +2,9 @@
  * Tests for LayoutCompiler
  */
 
+// Disable LRU intervals during testing to prevent resource leaks
+(globalThis as Record<string, unknown>).__vfDisableLruInterval = true;
+
 import { assertEquals, assertExists } from "jsr:@std/assert@1";
 import { join } from "https://deno.land/std@0.220.0/path/mod.ts";
 import { LayoutCompiler } from "../../../../src/rendering/layouts/layout-compiler.ts";
