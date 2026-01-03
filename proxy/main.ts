@@ -20,11 +20,12 @@ import { TokenManager, type TokenScope } from "./token-manager.ts";
 import { parseProjectDomain } from "../src/server/utils/domain-parser.ts";
 import { createCacheFromEnv } from "./cache/index.ts";
 import { initializeOTLP, shutdownOTLP } from "./tracing.ts";
-import { proxyLogger } from "../src/core/utils/logger/logger.ts";
+import { proxyLogger } from "./logger.ts";
 
 // Configuration from environment variables
 const config = {
-  apiBaseUrl: Deno.env.get("VERYFRONT_API_BASE_URL") || "http://api.lvh.me:4000",
+  apiBaseUrl: Deno.env.get("VERYFRONT_API_BASE_URL") ||
+    "http://api.lvh.me:4000",
   clientId: Deno.env.get("OAUTH_CLIENT_ID") || "",
   clientSecret: Deno.env.get("OAUTH_CLIENT_SECRET") || "",
   previewClientId: Deno.env.get("OAUTH_PREVIEW_CLIENT_ID") || "",
@@ -44,7 +45,9 @@ function validateConfig(): void {
   if (!config.previewClientSecret) missing.push("OAUTH_PREVIEW_CLIENT_SECRET");
 
   if (missing.length > 0) {
-    proxyLogger.warn("Missing OAuth credentials", { missingCredentials: missing });
+    proxyLogger.warn("Missing OAuth credentials", {
+      missingCredentials: missing,
+    });
     proxyLogger.warn("Proxy will forward requests without authentication");
   }
 }
