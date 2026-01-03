@@ -117,6 +117,20 @@ export function parseProjectDomain(host: string): ParsedDomain {
     };
   }
 
+  // Handle environment-specific root domains (no project slug)
+  // preview.veryfront.com, staging.veryfront.com, production.veryfront.com
+  const vfEnvRootMatch = domain.match(/^(preview|staging|production)\.veryfront\.(com|org)$/);
+  if (vfEnvRootMatch?.[1]) {
+    const env = vfEnvRootMatch[1] as "preview" | "staging" | "production";
+    return {
+      slug: null, // No project slug - this is the environment root
+      branch: null,
+      environment: env,
+      isVeryfrontDomain: true,
+      isDraft: env === "preview",
+    };
+  }
+
   const vfBaseMatch = domain.match(/^([A-Za-z0-9-]+)\.veryfront\.(com|org)$/);
   if (vfBaseMatch?.[1]) {
     return {
