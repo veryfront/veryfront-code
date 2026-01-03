@@ -54,9 +54,8 @@ export class WorkflowClient {
     this.debug = config.debug ?? false;
     this.backend = config.backend ?? new MemoryBackend({ debug: this.debug });
 
-    // Initialize approval manager first (executor needs its callback)
-    // Use a deferred pattern since executor and approval manager reference each other
-    let approvalManagerRef: ApprovalManager;
+    // Note: onWaiting callback references this.approvalManager which is set below.
+    // The callback is only invoked after construction completes, so this is safe.
 
     // Initialize executor with onWaiting callback to create approvals
     this.executor = new WorkflowExecutor({
@@ -87,7 +86,7 @@ export class WorkflowClient {
         };
 
         try {
-          await approvalManagerRef.createApproval(run, nodeId, waitConfig, run.context);
+          await this.approvalManager.createApproval(run, nodeId, waitConfig, run.context);
           if (this.debug) {
             console.log(`[WorkflowClient] Created approval for node: ${nodeId}`);
           }
@@ -107,9 +106,6 @@ export class WorkflowClient {
       debug: this.debug,
       ...config.approval,
     });
-
-    // Set the reference for the onWaiting callback
-    approvalManagerRef = this.approvalManager;
   }
 
   // =========================================================================
