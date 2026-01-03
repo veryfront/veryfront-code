@@ -34,7 +34,13 @@ export function generateLinkTags(metadata: HTMLMetadata): string {
 
   if (metadata.links) {
     metadata.links.forEach((link) => {
-      tags.push(`<link ${buildAttributes(link as Record<string, string>)}>`);
+      const linkAttrs = { ...link } as Record<string, string>;
+      // Font preloads require crossorigin="anonymous" to match fetch behavior
+      // Without this, the preloaded font won't be used and will be re-fetched
+      if (linkAttrs.rel === "preload" && linkAttrs.as === "font" && !linkAttrs.crossorigin) {
+        linkAttrs.crossorigin = "anonymous";
+      }
+      tags.push(`<link ${buildAttributes(linkAttrs)}>`);
     });
   }
 
