@@ -9,6 +9,9 @@
  * - Complete isolation between tests
  */
 
+// Disable LRU intervals during testing to prevent resource leaks
+(globalThis as Record<string, unknown>).__vfDisableLruInterval = true;
+
 import { assertEquals, assertExists } from "std/assert/mod.ts";
 import { describe, it } from "std/testing/bdd.ts";
 import { withTestContext } from "../../_helpers/context.ts";
