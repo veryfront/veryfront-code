@@ -175,4 +175,5 @@ jobs:
             --set proxy.image.repository=${{ env.REGISTRY }}/veryfront/veryfront-proxy \
             --set proxy.image.tag=${{ needs.build.outputs.image_tag }} \
             --set renderer.image.repository=${{ env.REGISTRY }}/veryfront/veryfront-renderer \
-            --set renderer.image.tag=${{ needs.build.outputs.image_tag }}
+            --set renderer.image.tag=${{ needs.build.outputs.image_tag }} \
+            --set proxy.ingress.enabled=true
