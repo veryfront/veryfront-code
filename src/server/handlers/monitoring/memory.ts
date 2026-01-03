@@ -34,7 +34,7 @@ export class MemoryDebugHandler extends BaseHandler {
     ],
   };
 
-  handle(req: Request, ctx: HandlerContext): HandlerResult {
+  async handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
     const url = new URL(req.url);
     const pathname = url.pathname;
 
@@ -46,23 +46,23 @@ export class MemoryDebugHandler extends BaseHandler {
     try {
       // Route to specific handlers
       if (pathname === "/_debug/memory" || pathname === "/_debug/memory/") {
-        return this.handleFullSnapshot(req, ctx);
+        return await this.handleFullSnapshot(req, ctx);
       }
 
       if (pathname === "/_debug/memory/heap") {
-        return this.handleHeapStats(req, ctx);
+        return await this.handleHeapStats(req, ctx);
       }
 
       if (pathname === "/_debug/memory/caches") {
-        return this.handleCacheStats(req, ctx);
+        return await this.handleCacheStats(req, ctx);
       }
 
       if (pathname === "/_debug/memory/gc") {
-        return this.handleGC(req, ctx);
+        return await this.handleGC(req, ctx);
       }
 
       if (pathname === "/_debug/memory/pressure") {
-        return this.handlePressureCheck(req, ctx);
+        return await this.handlePressureCheck(req, ctx);
       }
 
       // Unknown path
