@@ -181,7 +181,7 @@ export class ProxyFSAdapterManager {
     }
 
     if (toRemove.length > 0) {
-      logger.info("[ProxyFSAdapterManager] Cleanup complete", {
+      logger.debug("[ProxyFSAdapterManager] Cleanup complete", {
         removed: toRemove.length,
         remaining: this.adapters.size,
       });

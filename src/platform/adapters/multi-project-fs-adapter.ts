@@ -52,9 +52,8 @@ export class MultiProjectFSAdapter implements FSAdapter {
     const productionMode = options?.productionMode ?? false;
     const releaseId = options?.releaseId ?? null;
 
-    logger.info("[MultiProjectFSAdapter] runWithContext called", {
+    logger.debug("[MultiProjectFSAdapter] runWithContext", {
       projectSlug,
-      projectId: projectId || "(none)",
       hasToken: !!token,
       productionMode,
     });
@@ -112,10 +111,9 @@ export class MultiProjectFSAdapter implements FSAdapter {
     const productionMode = context.productionMode ?? this.productionMode;
     const releaseId = context.releaseId ?? this.releaseId;
 
-    logger.info("[MultiProjectFSAdapter] getAdapter context", {
+    // Debug level - this is called on every filesystem operation
+    logger.debug("[MultiProjectFSAdapter] getAdapter", {
       projectSlug: context.projectSlug,
-      projectId: context.projectId || "(none)",
-      hasToken: !!context.token,
       productionMode,
     });
 
