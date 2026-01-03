@@ -60,7 +60,10 @@ export class ReadOperations {
         undefined,
         releaseId ?? undefined,
       );
-      logger.debug("[ReadOperations] Fetched published content", { path: normalizedPath, contentLength: content.length });
+      logger.debug("[ReadOperations] Fetched published content", {
+        path: normalizedPath,
+        contentLength: content.length,
+      });
       // Published content is immutable, cache for long time
       this.cache.set(cacheKey, content);
       return content;
