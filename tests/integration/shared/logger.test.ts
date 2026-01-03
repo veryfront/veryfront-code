@@ -530,10 +530,20 @@ describe("Logger", () => {
         };
 
         const messages: string[] = [];
-        console.debug = (msg: string) => messages.push(msg);
-        console.log = (msg: string) => messages.push(msg);
-        console.warn = (msg: string) => messages.push(msg);
-        console.error = (msg: string) => messages.push(msg);
+        // Capture all args and stringify objects for proper matching
+        const capture = (...args: unknown[]) => {
+          for (const arg of args) {
+            if (typeof arg === "string") {
+              messages.push(arg);
+            } else if (arg !== null && typeof arg === "object") {
+              messages.push(JSON.stringify(arg));
+            }
+          }
+        };
+        console.debug = capture;
+        console.log = capture;
+        console.warn = capture;
+        console.error = capture;
 
         try {
           Deno.env.set("LOG_LEVEL", "DEBUG");
@@ -547,12 +557,15 @@ describe("Logger", () => {
           });
 
           assertEquals(result, 42);
+          // New format: "test operation completed" with durationMs in context
           assertEquals(
-            messages.some((m) => m.includes("test operation completed in")),
+            messages.some((m) => m.includes("test operation completed")),
             true,
           );
+          // durationMs is now in context object, which is logged as second arg
+          // or included in JSON output - check for durationMs in any message
           assertEquals(
-            messages.some((m) => m.includes("ms")),
+            messages.some((m) => m.includes("durationMs")),
             true,
           );
         } finally {
@@ -579,10 +592,20 @@ describe("Logger", () => {
         };
 
         const messages: string[] = [];
-        console.debug = (msg: string) => messages.push(msg);
-        console.log = (msg: string) => messages.push(msg);
-        console.warn = (msg: string) => messages.push(msg);
-        console.error = (msg: string, ..._args: unknown[]) => messages.push(msg);
+        // Capture all args and stringify objects for proper matching
+        const capture = (...args: unknown[]) => {
+          for (const arg of args) {
+            if (typeof arg === "string") {
+              messages.push(arg);
+            } else if (arg !== null && typeof arg === "object") {
+              messages.push(JSON.stringify(arg));
+            }
+          }
+        };
+        console.debug = capture;
+        console.log = capture;
+        console.warn = capture;
+        console.error = capture;
 
         try {
           Deno.env.set("LOG_LEVEL", "ERROR");
@@ -602,12 +625,14 @@ describe("Logger", () => {
             "Test error",
           );
 
+          // New format: "failing operation failed" with durationMs in context
           assertEquals(
-            messages.some((m) => m.includes("failing operation failed after")),
+            messages.some((m) => m.includes("failing operation failed")),
             true,
           );
+          // durationMs is now in context object
           assertEquals(
-            messages.some((m) => m.includes("ms")),
+            messages.some((m) => m.includes("durationMs")),
             true,
           );
         } finally {
