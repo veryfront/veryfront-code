@@ -30,6 +30,7 @@ import { CorsHandler } from "../handlers/response/cors.ts";
 import { HealthHandler } from "../handlers/monitoring/health.ts";
 import { MetricsHandler } from "../handlers/monitoring/metrics.ts";
 import { ClientLogHandler } from "../handlers/monitoring/client-log.ts";
+import { MemoryDebugHandler } from "../handlers/monitoring/memory.ts";
 import { DevEndpointsHandler } from "../handlers/dev/endpoints.ts";
 import { DevFileHandler } from "../handlers/dev/files/index.ts";
 import { StudioEndpointsHandler } from "../handlers/studio/endpoints.ts";
@@ -119,6 +120,7 @@ export function createVeryfrontHandler(
     new CorsHandler(), // Priority: 50
     new HealthHandler(), // Priority: 100 (HIGH)
     new MetricsHandler(), // Priority: 100 (HIGH)
+    new MemoryDebugHandler(), // Priority: 100 (HIGH, memory profiling endpoints)
     new ClientLogHandler(), // Priority: 200 (HIGH, dev only)
     new DevEndpointsHandler(), // Priority: 300 (HIGH, dev only)
     new StudioEndpointsHandler(), // Priority: 300 (HIGH, Studio iframe scripts)

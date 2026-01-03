@@ -7,11 +7,26 @@
 import { rendererLogger as logger } from "@veryfront/utils";
 import { CompilationError } from "@veryfront/errors/index.ts";
 import type { MDXModule } from "./types.ts";
+import { LRUCache } from "../../core/utils/lru-wrapper.ts";
+import { registerCache } from "../../core/memory/index.ts";
+import { MDX_RENDERER_MAX_ENTRIES, MDX_RENDERER_TTL_MS } from "../../core/utils/constants/cache.ts";
 
 /**
  * Cache for loaded MDX modules (browser-side)
+ * Using LRU cache with limits to prevent unbounded memory growth
  */
-const browserMDXCache = new Map<string, MDXModule>();
+const browserMDXCache = new LRUCache<string, MDXModule>({
+  maxEntries: MDX_RENDERER_MAX_ENTRIES,
+  ttlMs: MDX_RENDERER_TTL_MS,
+  cleanupIntervalMs: 60000,
+});
+
+// Register with memory profiler
+registerCache("mdx-browser-cache", () => ({
+  name: "mdx-browser-cache",
+  entries: browserMDXCache.size,
+  maxEntries: MDX_RENDERER_MAX_ENTRIES,
+}));
 
 /**
  * Loads compiled MDX code in the browser using Blob URLs + dynamic import.

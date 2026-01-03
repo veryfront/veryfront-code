@@ -4,12 +4,30 @@
  */
 
 import { RSCDevServerHandler } from "../handlers/index.ts";
+import { LRUCache } from "../../../../../core/utils/lru-wrapper.ts";
+import { registerCache } from "../../../../../core/memory/index.ts";
+
+// Limit to prevent unbounded memory growth in multi-tenant environments
+const RSC_HANDLERS_MAX_ENTRIES = 50;
+const RSC_HANDLERS_TTL_MS = 60 * 60 * 1000; // 1 hour
 
 /**
  * Global registry of RSC handlers by project directory
  * Maintains handlers per projectDir to avoid cross-project leakage
+ * Using LRU cache to prevent unbounded memory growth
  */
-const rscHandlersByProject = new Map<string, RSCDevServerHandler>();
+const rscHandlersByProject = new LRUCache<string, RSCDevServerHandler>({
+  maxEntries: RSC_HANDLERS_MAX_ENTRIES,
+  ttlMs: RSC_HANDLERS_TTL_MS,
+  cleanupIntervalMs: 300000, // 5 minutes
+});
+
+// Register with memory profiler
+registerCache("rsc-handlers", () => ({
+  name: "rsc-handlers",
+  entries: rscHandlersByProject.size,
+  maxEntries: RSC_HANDLERS_MAX_ENTRIES,
+}));
 
 /**
  * Get or create RSC handler instance for a project
