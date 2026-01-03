@@ -67,7 +67,7 @@ export function generateHMRClientTemplate(
     if (wasConnected) {
       reconnectTimeoutId = setTimeout(() => { window.location.reload(); }, HMR_RELOAD_DELAY_MS);
     } else {
-      console.log('[HMR] Connection failed - HMR server may not be running');
+      console.warn('[HMR] Connection failed - HMR server may not be running');
     }
   };
 
