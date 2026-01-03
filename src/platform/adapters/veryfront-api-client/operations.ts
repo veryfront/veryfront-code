@@ -121,8 +121,9 @@ export class VeryfrontAPIOperations {
     const allFiles: ProjectFile[] = [];
     let cursor: string | undefined;
 
+    // Use high limit (10000) to minimize API calls for large projects
     do {
-      const response = await this.listFiles(id, cursor, 100, branch);
+      const response = await this.listFiles(id, cursor, 10000, branch);
       allFiles.push(...response.data);
       cursor = response.pagination?.hasMore ? response.pagination.cursor : undefined;
     } while (cursor);
