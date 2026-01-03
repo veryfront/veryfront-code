@@ -8,9 +8,12 @@ import {
 import { getStudioScripts } from "./dev-scripts.ts";
 import { processMetadata } from "./metadata-builder.ts";
 import {
+  convertTailwindConfigForBrowser,
+  generateTailwindConfig,
   generateThemeVariables,
   getDevStyles,
   getProductionStyles,
+  getTailwindCDNUrl,
 } from "./styles-builder/index.ts";
 import { generateTailwindCSS } from "./styles-builder/unocss-generator.ts";
 import type { HTMLGenerationOptions } from "./types.ts";
@@ -171,9 +174,29 @@ export async function generateHTMLShellParts(
 
   const syntaxHighlightTheme = options.mode === "development" ? "github-dark" : "github";
 
-  // UnoCSS is used for all modes (dev, preview, production)
-  // It scans HTML content and source files to generate only needed CSS
-  // No more Tailwind CDN dependency - eliminates flickering from CDN's built-in watcher
+  // In development, use Tailwind CDN for runtime CSS compilation (works with 'use client' pages)
+  // In production, use UnoCSS-generated CSS from pre-rendered HTML
+  const tailwindCDNUrl = getTailwindCDNUrl(tailwindConfig);
+
+  // Use project's tailwind.config.js if available, otherwise fall back to generated config
+  const tailwindConfigScript = options.tailwindConfigJs
+    ? convertTailwindConfigForBrowser(options.tailwindConfigJs)
+    : generateTailwindConfig(tailwindConfig);
+
+  // Project's tailwind.config.js may use ESM imports, so use type="module"
+  const configScriptType = options.tailwindConfigJs ? ' type="module"' : "";
+
+  const tailwindCDN = options.mode === "development"
+    ? `<script src="${tailwindCDNUrl}"${nonce ? ` nonce="${nonce}"` : ""}></script>
+  <script${configScriptType}${nonce ? ` nonce="${nonce}"` : ""}>${tailwindConfigScript}</script>${
+      tailwindConfig?.customCSS
+        ? `
+  <style type="text/tailwindcss"${nonce ? ` nonce="${nonce}"` : ""}>
+${tailwindConfig.customCSS}
+  </style>`
+        : ""
+    }`
+    : "";
 
   // Generate modulepreload hints for page and layout modules (faster cold start)
   const modulePreloadHints = generateModulePreloadHints(options);
@@ -192,8 +215,13 @@ export async function generateHTMLShellParts(
   <!-- Modulepreload hints for faster cold start -->
   ${modulePreloadHints}
 
-  <!-- UnoCSS-generated Tailwind CSS (all modes) -->
-  ${tailwindCSS ? `<style${nonce ? ` nonce="${nonce}"` : ""}>\n${tailwindCSS}\n  </style>` : ""}
+  <!-- Tailwind CSS: CDN in dev (runtime compilation), UnoCSS in prod (pre-generated) -->
+  ${tailwindCDN}
+  ${
+    options.mode !== "development" && tailwindCSS
+      ? `<style${nonce ? ` nonce="${nonce}"` : ""}>\n${tailwindCSS}\n  </style>`
+      : ""
+  }
 
   <!-- CSS Variables for Theming (veryfront-renderer compatible) -->
   <style${nonce ? ` nonce="${nonce}"` : ""}>
