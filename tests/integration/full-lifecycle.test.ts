@@ -2,6 +2,9 @@
  * Integration tests for full request lifecycle
  */
 
+// Disable LRU intervals during testing to prevent resource leaks
+(globalThis as Record<string, unknown>).__vfDisableLruInterval = true;
+
 import { assert, assertEquals, assertExists } from "std/assert/mod.ts";
 import { join } from "std/path/mod.ts";
 import { DevServer } from "@veryfront/server/dev-server.ts";

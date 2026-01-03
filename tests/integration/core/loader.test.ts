@@ -1,3 +1,6 @@
+// Disable LRU intervals during testing to prevent resource leaks
+(globalThis as Record<string, unknown>).__vfDisableLruInterval = true;
+
 import { assertEquals } from "std/assert/mod.ts";
 import { getAdapter } from "@veryfront/platform";
 import { clearConfigCache, getConfig, type VeryfrontConfig } from "@veryfront/config";
