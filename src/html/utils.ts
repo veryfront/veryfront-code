@@ -1,6 +1,10 @@
 import { escapeHTML } from "./html-escape.ts";
 import type { VeryfrontConfig } from "../core/config/types.ts";
-import { REACT_DEFAULT_VERSION, VERYFRONT_VERSION } from "../core/utils/constants/cdn.ts";
+import {
+  REACT_DEFAULT_VERSION,
+  TAILWIND_VERSION,
+  VERYFRONT_VERSION,
+} from "../core/utils/constants/cdn.ts";
 
 export function buildRootAttributes(
   slug: string,
@@ -75,6 +79,25 @@ export async function detectVersions(projectDir: string): Promise<DetectedVersio
 type CdnProvider = "esm.sh" | "unpkg" | "jsdelivr";
 
 /**
+ * Generate Tailwind CSS import map entries
+ * Pins all tailwindcss imports to a unified version to prevent conflicts
+ */
+function getTailwindImportMap(): Record<string, string> {
+  const tw = TAILWIND_VERSION;
+  return {
+    // Core tailwindcss package and subpaths
+    "tailwindcss": `https://esm.sh/tailwindcss@${tw}`,
+    "tailwindcss/": `https://esm.sh/tailwindcss@${tw}/`,
+    "tailwindcss/plugin": `https://esm.sh/tailwindcss@${tw}/plugin`,
+    "tailwindcss/colors": `https://esm.sh/tailwindcss@${tw}/colors`,
+    "tailwindcss/defaultTheme": `https://esm.sh/tailwindcss@${tw}/defaultTheme`,
+    // Common utilities that components import
+    "tailwindcss/lib/util/flattenColorPalette":
+      `https://esm.sh/tailwindcss@${tw}/lib/util/flattenColorPalette`,
+  };
+}
+
+/**
  * Generate import map for esm.sh CDN
  */
 function getEsmShImportMap(versions: DetectedVersions): Record<string, string> {
@@ -89,6 +112,8 @@ function getEsmShImportMap(versions: DetectedVersions): Record<string, string> {
     "veryfront/ai/react": `https://esm.sh/veryfront@${veryfront}/ai/react?external=react`,
     "veryfront/ai/components": `https://esm.sh/veryfront@${veryfront}/ai/components?external=react`,
     "veryfront/ai/primitives": `https://esm.sh/veryfront@${veryfront}/ai/primitives?external=react`,
+    // Tailwind CSS - unified version to prevent conflicts
+    ...getTailwindImportMap(),
   };
 }
 
@@ -106,6 +131,8 @@ function getUnpkgImportMap(versions: DetectedVersions): Record<string, string> {
     "veryfront/ai/react": `https://unpkg.com/veryfront@${veryfront}/dist/ai/react.js`,
     "veryfront/ai/components": `https://unpkg.com/veryfront@${veryfront}/dist/ai/components.js`,
     "veryfront/ai/primitives": `https://unpkg.com/veryfront@${veryfront}/dist/ai/primitives.js`,
+    // Tailwind CSS - unified version (use esm.sh for ESM compatibility)
+    ...getTailwindImportMap(),
   };
 }
 
@@ -126,6 +153,8 @@ function getJsdelivrImportMap(versions: DetectedVersions): Record<string, string
       `https://cdn.jsdelivr.net/npm/veryfront@${veryfront}/dist/ai/components.js`,
     "veryfront/ai/primitives":
       `https://cdn.jsdelivr.net/npm/veryfront@${veryfront}/dist/ai/primitives.js`,
+    // Tailwind CSS - unified version (use esm.sh for ESM compatibility)
+    ...getTailwindImportMap(),
   };
 }
 
@@ -147,6 +176,8 @@ function getSelfHostedImportMap(versions: DetectedVersions): Record<string, stri
     "veryfront/ai/react": "/_veryfront/lib/ai/react.js",
     "veryfront/ai/components": "/_veryfront/lib/ai/components.js",
     "veryfront/ai/primitives": "/_veryfront/lib/ai/primitives.js",
+    // Tailwind CSS - unified version
+    ...getTailwindImportMap(),
   };
 }
 

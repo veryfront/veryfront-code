@@ -95,10 +95,14 @@ export class SSRModuleLoader {
         this.options.adapter,
       );
 
-      for (const imp of localImports) {
-        const depSource = await this.options.adapter.fs.readFile(imp.absolutePath);
-        await this.transformWithDependencies(imp.absolutePath, depSource);
-      }
+      // Transform all dependencies in parallel for better performance
+      // The globalInProgress set prevents duplicate work
+      await Promise.all(
+        localImports.map(async (imp) => {
+          const depSource = await this.options.adapter.fs.readFile(imp.absolutePath);
+          await this.transformWithDependencies(imp.absolutePath, depSource);
+        }),
+      );
 
       const transformOpts: TransformOptions = {
         projectId: this.options.projectId,

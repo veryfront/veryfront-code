@@ -55,6 +55,9 @@ export function getDenoStdNodeBase(): string {
   return `${DENO_STD_BASE}/std@${DENO_STD_VERSION}/node`;
 }
 
+// Tailwind CSS constants - unified version for all imports
+export const TAILWIND_VERSION = "4.1.8";
+
 // UnoCSS constants
 export const UNOCSS_VERSION = "0.59.0";
 
