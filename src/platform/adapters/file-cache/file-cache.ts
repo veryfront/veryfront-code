@@ -3,6 +3,11 @@ import type { CacheEntry, CacheStats, FileCacheOptions } from "./types.ts";
 import { estimateSize } from "./size-estimator.ts";
 import { LRUTracker } from "./lru-tracker.ts";
 import { EvictionManager } from "@veryfront/utils/cache/eviction/eviction-manager.ts";
+import {
+  getRedisClient,
+  isRedisConfigured,
+  type RedisClient,
+} from "../../../core/utils/redis-client.ts";
 
 /** Default maximum memory for file cache (100 MB) */
 const DEFAULT_MAX_MEMORY_BYTES = 100 * 1024 * 1024;
@@ -12,6 +17,95 @@ const DEFAULT_CACHE_TTL_MS = 60_000;
 
 /** Default maximum number of cache entries */
 const DEFAULT_MAX_ENTRIES = 1000;
+
+const REDIS_KEY_PREFIX = "veryfront:file-cache:";
+const REDIS_TTL_SECONDS = 300; // 5 minutes
+
+// Shared Redis state across all FileCache instances
+let redisEnabled = false;
+let redisClient: RedisClient | null = null;
+let redisInitialized = false;
+let redisInitPromise: Promise<void> | null = null;
+
+/**
+ * Initialize Redis for file cache.
+ * Call this at startup if you want to enable Redis caching.
+ */
+export async function initializeFileCacheRedis(): Promise<boolean> {
+  if (redisInitialized) {
+    return redisEnabled;
+  }
+
+  if (redisInitPromise) {
+    await redisInitPromise;
+    return redisEnabled;
+  }
+
+  redisInitPromise = (async () => {
+    if (!isRedisConfigured()) {
+      logger.debug("[FileCache] Redis not configured, using memory cache");
+      redisInitialized = true;
+      return;
+    }
+
+    try {
+      redisClient = await getRedisClient();
+      redisEnabled = true;
+      redisInitialized = true;
+      logger.info("[FileCache] Redis cache enabled");
+    } catch (error) {
+      logger.warn("[FileCache] Redis unavailable, falling back to memory cache", { error });
+      redisEnabled = false;
+      redisInitialized = true;
+    }
+  })();
+
+  await redisInitPromise;
+  redisInitPromise = null;
+  return redisEnabled;
+}
+
+/**
+ * Check if Redis caching is enabled for file cache.
+ */
+export function isFileCacheRedisEnabled(): boolean {
+  return redisEnabled && redisClient !== null;
+}
+
+function redisKey(key: string): string {
+  return `${REDIS_KEY_PREFIX}${key}`;
+}
+
+/**
+ * Get cached entry from Redis.
+ */
+async function getFromRedis<T>(key: string): Promise<CacheEntry<T> | null> {
+  if (!redisEnabled || !redisClient) return null;
+
+  try {
+    const raw = await redisClient.get(redisKey(key));
+    if (raw) {
+      return JSON.parse(raw) as CacheEntry<T>;
+    }
+    return null;
+  } catch (error) {
+    logger.debug("[FileCache] Redis get failed", { key, error });
+    return null;
+  }
+}
+
+/**
+ * Store cached entry in Redis.
+ */
+async function setInRedis<T>(key: string, entry: CacheEntry<T>): Promise<void> {
+  if (!redisEnabled || !redisClient) return;
+
+  try {
+    await redisClient.set(redisKey(key), JSON.stringify(entry), { EX: REDIS_TTL_SECONDS });
+  } catch (error) {
+    logger.debug("[FileCache] Redis set failed", { key, error });
+  }
+}
 
 export class FileCache {
   private cache: Map<string, CacheEntry<unknown>>;
@@ -67,6 +161,50 @@ export class FileCache {
     return entry.value;
   }
 
+  /**
+   * Async get that checks Redis after memory miss.
+   * Use this when Redis caching is enabled for cross-pod cache sharing.
+   */
+  async getAsync<T>(key: string): Promise<T | undefined> {
+    if (!this.options.enabled) {
+      this.misses++;
+      return undefined;
+    }
+
+    // Try memory first
+    const entry = this.cache.get(key) as CacheEntry<T> | undefined;
+
+    if (entry) {
+      if (this.evictionManager.isExpired(entry, this.options.ttl)) {
+        this.delete(key);
+      } else {
+        this.lruTracker.update(key);
+        this.hits++;
+        return entry.value;
+      }
+    }
+
+    // Try Redis if enabled
+    if (redisEnabled && redisClient) {
+      const redisEntry = await getFromRedis<T>(key);
+      if (redisEntry) {
+        // Check if expired
+        const now = Date.now();
+        if (now - redisEntry.timestamp < this.options.ttl) {
+          // Store in memory for faster subsequent access
+          this.cache.set(key, redisEntry as CacheEntry<unknown>);
+          this.lruTracker.update(key);
+          this.hits++;
+          logger.debug("[FileCache] Redis cache hit", { key });
+          return redisEntry.value;
+        }
+      }
+    }
+
+    this.misses++;
+    return undefined;
+  }
+
   set<T>(key: string, value: T): void {
     if (!this.options.enabled) {
       return;
@@ -99,6 +237,56 @@ export class FileCache {
 
     this.cache.set(key, entry as CacheEntry<unknown>);
     this.lruTracker.update(key);
+
+    // Fire-and-forget Redis write if enabled
+    if (redisEnabled && redisClient) {
+      setInRedis(key, entry).catch(() => {});
+    }
+
+    logger.debug("[FileCache] Cached", { key, size, entries: this.cache.size });
+  }
+
+  /**
+   * Async set that writes through to Redis.
+   * Use this when you need to ensure Redis write completes.
+   */
+  async setAsync<T>(key: string, value: T): Promise<void> {
+    if (!this.options.enabled) {
+      return;
+    }
+
+    const size = estimateSize(value);
+
+    if (size > this.options.maxMemory) {
+      logger.warn("[FileCache] Value too large to cache", {
+        key,
+        size,
+        maxMemory: this.options.maxMemory,
+      });
+      return;
+    }
+
+    this.evictionManager.evictIfNeeded(
+      this.cache,
+      this.lruTracker,
+      size,
+      this.options.maxSize,
+      this.options.maxMemory,
+    );
+
+    const entry: CacheEntry<T> = {
+      value,
+      timestamp: Date.now(),
+      size,
+    };
+
+    this.cache.set(key, entry as CacheEntry<unknown>);
+    this.lruTracker.update(key);
+
+    // Write to Redis if enabled
+    if (redisEnabled && redisClient) {
+      await setInRedis(key, entry);
+    }
 
     logger.debug("[FileCache] Cached", { key, size, entries: this.cache.size });
   }
@@ -167,7 +355,7 @@ export class FileCache {
     logger.debug("[FileCache] Cleared");
   }
 
-  stats(): CacheStats {
+  stats(): CacheStats & { redisEnabled: boolean } {
     const memoryUsed = Array.from(this.cache.values()).reduce((sum, entry) => sum + entry.size, 0);
     const total = this.hits + this.misses;
     const hitRate = total > 0 ? this.hits / total : 0;
@@ -178,6 +366,7 @@ export class FileCache {
       hits: this.hits,
       misses: this.misses,
       hitRate,
+      redisEnabled,
     };
   }
 
