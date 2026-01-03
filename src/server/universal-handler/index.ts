@@ -184,27 +184,48 @@ export function createVeryfrontHandler(
     // For custom domains without a slug, look up the project via API
     // This enables JIT rendering for production sites with custom domains
     if (!projectSlug && !parsedDomain.isVeryfrontDomain && config?.fs?.veryfront) {
+      // Use proxy token (from x-token header) or fall back to config token
+      const effectiveToken = proxyToken || config.fs.veryfront.apiToken || "";
+      // Support both baseUrl (FSAdapterConfig) and apiBaseUrl (VeryfrontConfig) for compatibility
+      const baseUrl = (config.fs.veryfront as { baseUrl?: string; apiBaseUrl?: string }).baseUrl
+        || config.fs.veryfront.apiBaseUrl
+        || "https://api.veryfront.com/api";
       const apiConfig = {
-        apiBaseUrl: config.fs.veryfront.apiBaseUrl || "https://api.veryfront.com/api",
-        apiToken: config.fs.veryfront.apiToken || "",
+        apiBaseUrl: baseUrl,
+        apiToken: effectiveToken,
       };
 
+      // Use forwarded host (original domain) for lookup, fall back to host header
+      const lookupHost = forwardedHost || host;
+
       if (apiConfig.apiToken) {
-        logDebug("[universal] Custom domain detected, looking up project", { host });
-        const lookupResult = await lookupProjectByDomain(host, apiConfig);
+        logger.info("[universal] Custom domain detected, looking up project", {
+          host: lookupHost,
+          originalHost: host,
+          forwardedHost,
+          hasProxyToken: !!proxyToken,
+          hasConfigToken: !!config.fs.veryfront.apiToken,
+        });
+        const lookupResult = await lookupProjectByDomain(lookupHost, apiConfig);
 
         if (lookupResult) {
           projectSlug = lookupResult.projectSlug;
           proxyEnv = getEnvironmentType(lookupResult);
-          logDebug("[universal] Domain lookup successful", {
+          logger.info("[universal] Domain lookup successful", {
             domain: host,
             projectSlug: lookupResult.projectSlug,
             environment: proxyEnv,
             releaseId: lookupResult.releaseId,
           });
         } else {
-          logDebug("[universal] No project found for domain", { host });
+          logger.warn("[universal] No project found for domain", { host: lookupHost });
         }
+      } else {
+        logger.warn("[universal] Cannot look up custom domain - no API token available", {
+          host: lookupHost,
+          hasProxyToken: !!proxyToken,
+          hasConfigToken: !!config?.fs?.veryfront?.apiToken,
+        });
       }
     }
 
