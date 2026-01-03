@@ -15,9 +15,10 @@ export interface SSRModuleLoaderOptions {
 }
 
 // Shared cache across all SSRModuleLoader instances (persists across requests)
-const globalModuleCache = new Map<string, string>(); // absolutePath -> tempPath
-const globalInProgress = new Set<string>();
-const globalTmpDirs = new Map<string, string>(); // projectDir -> tmpDir
+// Keys include projectId to isolate caches between different projects
+const globalModuleCache = new Map<string, string>(); // projectId:absolutePath -> tempPath
+const globalInProgress = new Set<string>(); // projectId:absolutePath
+const globalTmpDirs = new Map<string, string>(); // projectDir:projectId -> tmpDir
 
 /**
  * Clear the global SSR module cache.
@@ -39,7 +40,8 @@ export class SSRModuleLoader {
   ): Promise<React.ComponentType<Record<string, unknown>>> {
     await this.transformWithDependencies(filePath, source);
 
-    const tempPath = globalModuleCache.get(filePath);
+    const cacheKey = this.getCacheKey(filePath);
+    const tempPath = globalModuleCache.get(cacheKey);
     if (!tempPath) {
       throw toError(createError({
         type: "build",
@@ -54,6 +56,13 @@ export class SSRModuleLoader {
     return this.extractComponent(mod, filePath);
   }
 
+  /**
+   * Create a cache key that includes projectId to isolate between projects
+   */
+  private getCacheKey(filePath: string): string {
+    return `${this.options.projectId}:${filePath}`;
+  }
+
   private async transformWithDependencies(
     filePath: string,
     source?: string,
@@ -61,19 +70,22 @@ export class SSRModuleLoader {
     const code = source ?? await this.options.adapter.fs.readFile(filePath);
 
     const contentHash = this.hashCode(code);
-    const cacheKey = `${filePath}:${contentHash}`;
+    // Include projectId in cache keys to isolate between projects
+    const contentCacheKey = this.getCacheKey(`${filePath}:${contentHash}`);
+    const filePathCacheKey = this.getCacheKey(filePath);
+    const inProgressKey = this.getCacheKey(filePath);
 
-    const cachedTempPath = globalModuleCache.get(cacheKey);
+    const cachedTempPath = globalModuleCache.get(contentCacheKey);
     if (cachedTempPath) {
-      globalModuleCache.set(filePath, cachedTempPath);
+      globalModuleCache.set(filePathCacheKey, cachedTempPath);
       return;
     }
 
-    if (globalInProgress.has(filePath)) {
+    if (globalInProgress.has(inProgressKey)) {
       return;
     }
 
-    globalInProgress.add(filePath);
+    globalInProgress.add(inProgressKey);
 
     try {
       const localImports = await parseLocalImports(
@@ -109,10 +121,10 @@ export class SSRModuleLoader {
       await this.fs.writeTextFile(tempPath, transformed);
 
       // Store both the content-keyed and filePath-keyed entries
-      globalModuleCache.set(cacheKey, tempPath);
-      globalModuleCache.set(filePath, tempPath);
+      globalModuleCache.set(contentCacheKey, tempPath);
+      globalModuleCache.set(filePathCacheKey, tempPath);
     } finally {
-      globalInProgress.delete(filePath);
+      globalInProgress.delete(inProgressKey);
     }
   }
 
@@ -144,19 +156,30 @@ export class SSRModuleLoader {
 
   private async ensureTmpDir(): Promise<string> {
     const projectDir = this.options.projectDir;
+    const projectId = this.options.projectId;
+
+    // Include projectId in cache key to isolate between projects
+    const cacheKey = `${projectDir}:${projectId}`;
 
     // Check global cache first (shared across loader instances for same project)
-    const existingDir = globalTmpDirs.get(projectDir);
+    const existingDir = globalTmpDirs.get(cacheKey);
     if (existingDir) {
       return existingDir;
     }
 
     // Use node_modules/.cache for consistent temp directory across Node/Deno
     // This avoids temp dir leaks and enables cross-request caching
-    const tmpDir = join(projectDir, "node_modules", ".cache", "veryfront-ssr");
+    // Include projectId in path to isolate temp files between projects
+    const tmpDir = join(
+      projectDir,
+      "node_modules",
+      ".cache",
+      "veryfront-ssr",
+      projectId || "default",
+    );
 
     await this.fs.mkdir(tmpDir, { recursive: true });
-    globalTmpDirs.set(projectDir, tmpDir);
+    globalTmpDirs.set(cacheKey, tmpDir);
     return tmpDir;
   }
 

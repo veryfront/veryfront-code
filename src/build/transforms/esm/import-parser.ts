@@ -14,7 +14,7 @@ const EXTENSIONS = [".tsx", ".ts", ".jsx", ".js", ".mdx"];
 export async function parseLocalImports(
   code: string,
   filePath: string,
-  projectDir: string,
+  _projectDir: string,
   adapter?: RuntimeAdapter,
 ): Promise<LocalImport[]> {
   // es-module-lexer can't parse TypeScript/JSX, so use esbuild to strip types first
@@ -34,6 +34,15 @@ export async function parseLocalImports(
   const imports = await parseImports(result.code);
   const localImports: LocalImport[] = [];
 
+  // Debug: log all imports found
+  const allImportSpecifiers = imports.map((i) => i.n).filter(Boolean);
+  if (allImportSpecifiers.some((s) => s?.includes("@/"))) {
+    console.log(
+      "[parseLocalImports] Found @/ imports:",
+      allImportSpecifiers.filter((s) => s?.startsWith("@/")),
+    );
+  }
+
   for (const imp of imports) {
     if (imp.n?.startsWith("./") || imp.n?.startsWith("../")) {
       const resolved = await resolveLocalImportPath(filePath, imp.n, adapter);
@@ -45,7 +54,13 @@ export async function parseLocalImports(
       // In virtual filesystem mode (API-backed), paths are relative like "components/Welcome.tsx"
       // The @/ alias maps to the project root, so we just remove the @/ prefix
       const aliasPath = imp.n.substring(2); // Remove '@/' prefix
+      console.log("[parseLocalImports] Resolving @/ import:", {
+        specifier: imp.n,
+        aliasPath,
+        hasAdapter: !!adapter,
+      });
       const resolved = await resolveAliasImportPath(aliasPath, adapter);
+      console.log("[parseLocalImports] Resolved @/ import:", { specifier: imp.n, resolved });
       if (resolved) {
         localImports.push({ specifier: imp.n, absolutePath: resolved });
       }
