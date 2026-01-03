@@ -133,33 +133,7 @@ export function generateTailwindConfig(userConfig?: TailwindConfig): string {
     },
   };
 
-  return `
-    tailwind.config = ${JSON.stringify(configObject, null, 6)}
-
-    if (typeof MutationObserver !== 'undefined') {
-      const observer = new MutationObserver(() => {
-        if (window.tailwind && window.tailwind.refresh) {
-          window.tailwind.refresh();
-        }
-      });
-
-      if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', () => {
-          observer.observe(document.body, {
-            childList: true,
-            subtree: true,
-            attributes: true,
-            attributeFilter: ['class']
-          });
-        });
-      } else {
-        observer.observe(document.body, {
-          childList: true,
-          subtree: true,
-          attributes: true,
-          attributeFilter: ['class']
-        });
-      }
-    }
-  `;
+  // Tailwind CDN has its own built-in MutationObserver that watches for DOM changes
+  // and re-processes styles automatically. No need for manual refresh calls.
+  return `tailwind.config = ${JSON.stringify(configObject, null, 6)}`;
 }
