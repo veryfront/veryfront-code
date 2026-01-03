@@ -229,10 +229,13 @@ export async function buildEmbeddedPreset(
 
   logger.info("Embedded preset built", { outDir: embeddedDir } as unknown);
 
-  try {
-    esbuild.stop();
-  } catch {
-    // ignore
+  // Only stop esbuild if not in test mode with global initialization
+  if (!(globalThis as Record<string, unknown>).__vfTestPreserveEsbuild) {
+    try {
+      esbuild.stop();
+    } catch {
+      // ignore
+    }
   }
   return { manifest };
 }
