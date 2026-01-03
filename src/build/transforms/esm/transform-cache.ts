@@ -23,7 +23,24 @@ registerCache("transform-cache", () => ({
 // Periodic cleanup of expired entries to prevent memory bloat
 let cleanupInterval: ReturnType<typeof setInterval> | undefined;
 
+function shouldDisableInterval(): boolean {
+  if ((globalThis as Record<string, unknown>).__vfDisableLruInterval === true) {
+    return true;
+  }
+  try {
+    if (typeof Deno !== "undefined" && Deno.env) {
+      return Deno.env.get("VF_DISABLE_LRU_INTERVAL") === "1";
+    }
+  } catch {
+    // Ignore env access errors
+  }
+  return false;
+}
+
 function startPeriodicCleanup(): void {
+  if (shouldDisableInterval()) {
+    return;
+  }
   if (cleanupInterval) return;
 
   cleanupInterval = setInterval(() => {
