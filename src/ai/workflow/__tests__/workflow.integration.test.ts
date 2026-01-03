@@ -344,9 +344,17 @@ describe("Workflow Integration", { sanitizeOps: false, sanitizeResources: false 
 
   describe("Timeout Enforcement", () => {
     it("should timeout long-running steps", async () => {
+      let timeoutId: number | undefined;
+
       const slowTool = createMockTool("slow", async () => {
-        await new Promise((r) => setTimeout(r, 5000));
-        return { result: "done" };
+        try {
+          await new Promise((resolve) => {
+            timeoutId = setTimeout(resolve, 5000);
+          });
+          return { result: "done" };
+        } catch {
+          return { result: "cancelled" };
+        }
       });
 
       const timeoutWorkflow = workflow({
@@ -364,6 +372,9 @@ describe("Workflow Integration", { sanitizeOps: false, sanitizeResources: false 
 
       // result() throws on failure
       await expect(handle.result()).rejects.toThrow(/timed out/i);
+
+      // Clean up the leaked timer
+      if (timeoutId) clearTimeout(timeoutId);
 
       const run = await client.getRun(handle.runId);
       expect(run?.status).toBe("failed");
