@@ -149,11 +149,12 @@ renderer:
   env:
     PORT: "20000"
     PROXY_MODE: "1"
-    # V8 heap size: ~2GB to leave headroom for Deno overhead and prevent OOM
-    # Container limit is 6Gi, but V8 GC needs breathing room
-    DENO_V8_FLAGS: "--max-old-space-size=2048"
+    # V8 heap size: 3GB to leave headroom for Deno overhead and prevent OOM
+    # Container limit is 6Gi; V8 heap (3GB) + Deno overhead (~400MB) ≈ 3.4GB = ~57%
+    # This gives headroom for per-request component loading in proxy mode
+    DENO_V8_FLAGS: "--max-old-space-size=3072"
     # Limit concurrent ESM transforms to prevent memory spikes during cold start
-    # Each transform can use 100-500MB; with 2GB heap, 3 is conservative
+    # Each transform can use 100-500MB; with 3GB heap, 3 concurrent is safe
     # Tune based on observed memory usage in /_metrics or logs
     SSR_MAX_CONCURRENT_TRANSFORMS: "3"
     # Enable memory monitoring (logs heap usage periodically)
@@ -212,15 +213,15 @@ renderer:
   # Horizontal Pod Autoscaler - scales based on memory/CPU usage
   # Memory-based scaling is critical for the renderer to avoid OOM crashes
   #
-  # IMPORTANT: V8 heap (2800MB) + Deno overhead (~400MB) ≈ 3200MB
-  # At 3200MB container RSS = 78% of 4Gi limit
-  # We scale at 60% to give HPA 15-60s reaction time before V8 OOM
+  # IMPORTANT: V8 heap (3GB) + Deno overhead (~400MB) ≈ 3.4GB
+  # At 3.4GB container RSS = 57% of 6Gi limit
+  # We scale at 70% (~4.2GB) to give HPA reaction time before V8 OOM
   autoscaling:
     enabled: true
     minReplicas: 2
     maxReplicas: 6
-    # Scale at 60% (~2450MB) - well before V8 heap limit (2800MB)
-    targetMemoryUtilizationPercentage: 60
+    # Scale at 70% (~4.2GB) - well before V8 heap limit (3GB)
+    targetMemoryUtilizationPercentage: 70
     # Also scale on CPU for request-heavy loads
     targetCPUUtilizationPercentage: 80
     # Wait 5 minutes before scaling down to avoid flapping
