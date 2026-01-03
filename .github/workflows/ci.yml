@@ -134,40 +134,22 @@ jobs:
           echo "${{ secrets.KUBECONFIG_PRODUCTION }}" | base64 -d > /tmp/kubeconfig
           export KUBECONFIG=/tmp/kubeconfig
 
-          # Create proxy secret
+          # Create proxy secret (only secrets actually used in code)
           kubectl create secret generic veryfront-proxy-secret \
             --namespace veryfront-production \
-            --from-literal=APP_ENVIRONMENT="${{ secrets.APP_ENVIRONMENT_PRODUCTION }}" \
-            --from-literal=AUTH_MS_URL="${{ secrets.AUTH_MS_URL_PRODUCTION }}" \
             --from-literal=OAUTH_CLIENT_ID="${{ secrets.OAUTH_CLIENT_ID_PRODUCTION }}" \
             --from-literal=OAUTH_CLIENT_SECRET="${{ secrets.OAUTH_CLIENT_SECRET_PRODUCTION }}" \
             --from-literal=OAUTH_PREVIEW_CLIENT_ID="${{ secrets.OAUTH_PREVIEW_CLIENT_ID_PRODUCTION }}" \
             --from-literal=OAUTH_PREVIEW_CLIENT_SECRET="${{ secrets.OAUTH_PREVIEW_CLIENT_SECRET_PRODUCTION }}" \
-            --from-literal=OAUTH_PUBLIC_KEY="${{ secrets.OAUTH_PUBLIC_KEY_PRODUCTION }}" \
-            --from-literal=PUBLIC_URL="${{ secrets.PUBLIC_URL_PRODUCTION }}" \
-            --from-literal=REDIS_APP_SERVER_PASSWORD="${{ secrets.REDIS_APP_SERVER_PASSWORD_PRODUCTION }}" \
             --from-literal=REDIS_URL="${{ secrets.REDIS_URL_PRODUCTION }}" \
-            --from-literal=REPLICACHE_URL="${{ secrets.REPLICACHE_URL_PRODUCTION }}" \
-            --from-literal=STUDIO_URL="${{ secrets.STUDIO_URL_PRODUCTION }}" \
-            --from-literal=VERYFRONT_API_URL="${{ secrets.VERYFRONT_API_URL_PRODUCTION }}" \
-            --from-literal=VERYFRONT_API_URL_PUBLIC="${{ secrets.VERYFRONT_API_URL_PUBLIC_PRODUCTION }}" \
             --from-literal=VERYFRONT_API_BASE_URL="https://api.veryfront.com" \
-            --from-literal=WS_URL="${{ secrets.WS_URL_PRODUCTION }}" \
             --from-literal=OTEL_EXPORTER_OTLP_HEADERS="${{ secrets.OTEL_EXPORTER_OTLP_HEADERS }}" \
             --dry-run=client -o yaml | kubectl apply -f -
 
-          # Create renderer secret
+          # Create renderer secret (only secrets actually used in code)
           kubectl create secret generic veryfront-renderer-secret \
             --namespace veryfront-production \
-            --from-literal=APP_ENVIRONMENT="${{ secrets.APP_ENVIRONMENT_PRODUCTION }}" \
-            --from-literal=AUTH_MS_URL="${{ secrets.AUTH_MS_URL_PRODUCTION }}" \
-            --from-literal=OAUTH_PUBLIC_KEY="${{ secrets.OAUTH_PUBLIC_KEY_PRODUCTION }}" \
-            --from-literal=PUBLIC_URL="${{ secrets.PUBLIC_URL_PRODUCTION }}" \
-            --from-literal=REPLICACHE_URL="${{ secrets.REPLICACHE_URL_PRODUCTION }}" \
-            --from-literal=STUDIO_URL="${{ secrets.STUDIO_URL_PRODUCTION }}" \
             --from-literal=VERYFRONT_API_URL="${{ secrets.VERYFRONT_API_URL_PRODUCTION }}" \
-            --from-literal=VERYFRONT_API_URL_PUBLIC="${{ secrets.VERYFRONT_API_URL_PUBLIC_PRODUCTION }}" \
-            --from-literal=WS_URL="${{ secrets.WS_URL_PRODUCTION }}" \
             --from-literal=OTEL_EXPORTER_OTLP_HEADERS="${{ secrets.OTEL_EXPORTER_OTLP_HEADERS }}" \
             --dry-run=client -o yaml | kubectl apply -f -
 
