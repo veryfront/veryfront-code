@@ -194,14 +194,9 @@ export class RendererLifecycle {
       compilerService,
     };
 
-    // Skip eager component loading when:
-    // 1. Running in compiled binary (to avoid @mdx-js/mdx Worker issues)
-    // 2. Running in proxy mode (each request handles a different project, components loaded per-request)
+    // Skip eager component loading in compiled binaries to avoid @mdx-js/mdx Worker issues
     // Components will be loaded lazily on-demand instead
-    const isProxyMode = config.fs?.veryfront?.proxyMode === true;
-    const shouldLoadEagerly = !isCompiledBinary() && !isProxyMode;
-
-    if (shouldLoadEagerly) {
+    if (!isCompiledBinary()) {
       logger.info("Loading components eagerly for MDX import mapping");
 
       const componentDirs = config.directories?.components || ["components"];
@@ -213,10 +208,9 @@ export class RendererLifecycle {
         );
       }
     } else {
-      const reason = isProxyMode
-        ? "proxy mode (components loaded per-request)"
-        : "compiled binary (will load lazily on-demand)";
-      logger.info(`Skipping eager component loading in ${reason}`);
+      logger.info(
+        "Skipping eager component loading in compiled binary (will load lazily on-demand)",
+      );
     }
 
     logger.info("Renderer services initialized successfully");
