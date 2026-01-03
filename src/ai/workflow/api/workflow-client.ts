@@ -80,6 +80,7 @@ export class WorkflowClient {
         }
 
         const waitConfig = {
+          type: "wait" as const,
           waitType: "approval" as const,
           message: input.message,
           payload: input.payload,
