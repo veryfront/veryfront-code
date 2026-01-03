@@ -96,6 +96,12 @@ export class SSRHandler extends BaseHandler {
           projectSlug: ctx.projectSlug,
           hasProxyToken: !!ctx.proxyToken,
         }, ctx);
+        _logger.info("[SSR] Using multi-project context for rendering", {
+          projectSlug: ctx.projectSlug,
+          hasProxyToken: !!ctx.proxyToken,
+          proxyEnvironment: ctx.proxyEnvironment,
+          slug,
+        });
         return fsWrapper.runWithContext(ctx.projectSlug, ctx.proxyToken || "", () => {
           // Set production mode for non-draft environments
           const setProductionModeFn = fsWrapper as {
@@ -121,6 +127,13 @@ export class SSRHandler extends BaseHandler {
           return this.handleWithContext(req, ctx, slug, requestId, url);
         });
       }
+
+      // Log why multi-project context wasn't used
+      _logger.info("[SSR] NOT using multi-project context", {
+        hasProjectSlug: !!ctx.projectSlug,
+        hasRunWithContext: typeof fsWrapper.runWithContext === "function",
+        projectSlug: ctx.projectSlug || "(none)",
+      });
 
       // For single-project mode with proxy token, use setRequestToken
       if (ctx.proxyToken && typeof fsWrapper.setRequestToken === "function") {
