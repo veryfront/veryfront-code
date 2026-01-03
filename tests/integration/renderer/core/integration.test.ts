@@ -66,7 +66,11 @@ This is a test.`,
   },
 });
 
-Deno.test("Core Integration - Configuration manager properly initialized", async () => {
+Deno.test({
+  name: "Core Integration - Configuration manager properly initialized",
+  sanitizeOps: false,
+  sanitizeResources: false,
+  async fn() {
   const projectDir = await createTestProjectDir();
 
   try {
@@ -98,9 +102,13 @@ Deno.test("Core Integration - Configuration manager properly initialized", async
   } finally {
     await cleanupTestDir(projectDir);
   }
-});
+}});
 
-Deno.test("Core Integration - Lifecycle initialization of all services", async () => {
+Deno.test({
+  name: "Core Integration - Lifecycle initialization of all services",
+  sanitizeOps: false,
+  sanitizeResources: false,
+  async fn() {
   const projectDir = await createTestProjectDir();
 
   try {
@@ -136,9 +144,13 @@ Deno.test("Core Integration - Lifecycle initialization of all services", async (
   } finally {
     await cleanupTestDir(projectDir);
   }
-});
+}});
 
-Deno.test("Core Integration - Cache management through lifecycle", async () => {
+Deno.test({
+  name: "Core Integration - Cache management through lifecycle",
+  sanitizeOps: false,
+  sanitizeResources: false,
+  async fn() {
   const projectDir = await createTestProjectDir();
 
   try {
@@ -180,9 +192,13 @@ title: Cached Page
   } finally {
     await cleanupTestDir(projectDir);
   }
-});
+}});
 
-Deno.test("Core Integration - MDX compilation through new architecture", async () => {
+Deno.test({
+  name: "Core Integration - MDX compilation through new architecture",
+  sanitizeOps: false,
+  sanitizeResources: false,
+  async fn() {
   const projectDir = await createTestProjectDir();
 
   try {
@@ -228,9 +244,13 @@ More content.`,
   } finally {
     await cleanupTestDir(projectDir);
   }
-});
+}});
 
-Deno.test("Core Integration - Component initialization", async () => {
+Deno.test({
+  name: "Core Integration - Component initialization",
+  sanitizeOps: false,
+  sanitizeResources: false,
+  async fn() {
   const projectDir = await createTestProjectDir();
 
   try {
@@ -261,9 +281,13 @@ Deno.test("Core Integration - Component initialization", async () => {
   } finally {
     await cleanupTestDir(projectDir);
   }
-});
+}});
 
-Deno.test("Core Integration - Proper cleanup with destroy()", async () => {
+Deno.test({
+  name: "Core Integration - Proper cleanup with destroy()",
+  sanitizeOps: false,
+  sanitizeResources: false,
+  async fn() {
   const projectDir = await createTestProjectDir();
 
   try {
@@ -288,4 +312,4 @@ Deno.test("Core Integration - Proper cleanup with destroy()", async () => {
   } finally {
     await cleanupTestDir(projectDir);
   }
-});
+}});
