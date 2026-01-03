@@ -51,11 +51,11 @@ Formula: `--max-old-space-size` = container_memory_limit × 0.70
 
 | Tier | Memory Limit | V8 Heap | CPU Request | CPU Limit |
 |------|--------------|---------|-------------|-----------|
-| Minimal | 2Gi | 1400MB | 250m | 1000m |
-| Standard | 3Gi | 2100MB | 500m | 2000m |
-| Heavy Load | 4Gi | 2800MB | 1000m | 4000m |
+| Minimal | 3Gi | 2100MB | 250m | 1000m |
+| Standard | 4Gi | 2800MB | 500m | 2000m |
+| Heavy Load | 6Gi | 4200MB | 1000m | 4000m |
 
-**Note**: Memory requirements are high due to per-module processing in VirtualModuleSystem. Code optimization is planned.
+**Note**: Memory requirements are high due to per-module processing in VirtualModuleSystem. Observed usage reaches 2GB+ under load. Code optimization is planned.
 
 ---
 
