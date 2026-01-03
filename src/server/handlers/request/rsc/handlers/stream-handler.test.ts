@@ -1,4 +1,4 @@
-import { describe, it, beforeEach } from "@std/testing/bdd.ts";
+import { beforeEach, describe, it } from "@std/testing/bdd.ts";
 import { expect } from "@std/expect";
 import { StreamHandler } from "./stream-handler.ts";
 import type { RenderHandler } from "./render-handler.ts";
@@ -18,7 +18,7 @@ describe("StreamHandler", () => {
           new Response(JSON.stringify({ html: "<div>Test Content</div>" }), {
             status: 200,
             headers: { "content-type": "application/json" },
-          })
+          }),
         );
       },
     } as unknown as RenderHandler;
@@ -32,7 +32,7 @@ describe("StreamHandler", () => {
 
       expect(response).toBeInstanceOf(Response);
       expect(response.headers.get("content-type")).toBe(
-        "application/x-ndjson; charset=utf-8"
+        "application/x-ndjson; charset=utf-8",
       );
       expect(response.headers.get("cache-control")).toBe("no-cache");
     });
@@ -75,8 +75,7 @@ describe("StreamHandler", () => {
     });
 
     it("should handle render handler returning non-ok response", async () => {
-      mockRenderHandler.handle = () =>
-        Promise.resolve(new Response(null, { status: 500 }));
+      mockRenderHandler.handle = () => Promise.resolve(new Response(null, { status: 500 }));
 
       const response = await streamHandler.handle("/", new URLSearchParams());
       const text = await response.text();
@@ -86,8 +85,7 @@ describe("StreamHandler", () => {
     });
 
     it("should handle invalid JSON from render handler", async () => {
-      mockRenderHandler.handle = () =>
-        Promise.resolve(new Response("not-json", { status: 200 }));
+      mockRenderHandler.handle = () => Promise.resolve(new Response("not-json", { status: 200 }));
 
       const response = await streamHandler.handle("/", new URLSearchParams());
       const text = await response.text();
@@ -113,14 +111,13 @@ describe("StreamHandler", () => {
 
       // The error from getFinalHtml propagates before stream is created
       await expect(
-        streamHandler.handle("/", new URLSearchParams())
+        streamHandler.handle("/", new URLSearchParams()),
       ).rejects.toThrow("Render failed");
     });
 
     it("should return valid response even with non-ok render response", async () => {
       // When renderHandler returns a non-ok response, stream still works
-      mockRenderHandler.handle = () =>
-        Promise.resolve(new Response("Error", { status: 500 }));
+      mockRenderHandler.handle = () => Promise.resolve(new Response("Error", { status: 500 }));
 
       const response = await streamHandler.handle("/", new URLSearchParams());
 

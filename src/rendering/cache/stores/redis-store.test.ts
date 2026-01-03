@@ -1,4 +1,4 @@
-import { describe, it, beforeEach, afterEach } from "@std/testing/bdd.ts";
+import { afterEach, beforeEach, describe, it } from "@std/testing/bdd.ts";
 import { expect } from "@std/expect";
 import { RedisCacheStore } from "./redis-store.ts";
 import type { CachePayload } from "../types.ts";

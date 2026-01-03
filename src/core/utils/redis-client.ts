@@ -13,7 +13,10 @@ export interface RedisClient {
   get(key: string): Promise<string | null>;
   set(key: string, value: string, options?: { EX?: number }): Promise<string | null>;
   del(key: string | string[]): Promise<number>;
-  scan(cursor: number, options?: { MATCH?: string; COUNT?: number }): Promise<{ cursor: number; keys: string[] }>;
+  scan(
+    cursor: number,
+    options?: { MATCH?: string; COUNT?: number },
+  ): Promise<{ cursor: number; keys: string[] }>;
   expire(key: string, seconds: number): Promise<number>;
   on?(event: string, listener: (...args: unknown[]) => void): void;
   isOpen?: boolean;
@@ -90,7 +93,7 @@ async function createClient(options: RedisClientOptions): Promise<RedisClient> {
     createClientFn = mod.createClient as unknown as (opts: { url?: string }) => RedisClient;
   } catch {
     throw new Error(
-      "[Redis] Failed to load @redis/client. Install with: deno add npm:@redis/client@1.5.8"
+      "[Redis] Failed to load @redis/client. Install with: deno add npm:@redis/client@1.5.8",
     );
   }
 
