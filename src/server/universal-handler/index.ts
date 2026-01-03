@@ -7,6 +7,13 @@
 import { serverLogger as logger } from "@veryfront/utils";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import { metrics } from "@veryfront/observability/simple-metrics/index.ts";
+import {
+  endServerSpan,
+  extractContext,
+  setSpanAttributes,
+  startServerSpan,
+  withContext,
+} from "@veryfront/observability/tracing/otlp-setup.ts";
 
 // Import handler system (from new location)
 import type { HandlerContext } from "../handlers/types.ts";
@@ -158,131 +165,177 @@ export function createVeryfrontHandler(
 
     const _url = new URL(req.url);
 
-    // Parse domain from host header
-    const host = req.headers.get("host") || _url.host;
-    const parsedDomain = parseProjectDomain(host);
+    // Start tracing span for this request
+    const parentContext = extractContext(req.headers);
+    const spanInfo = startServerSpan(req.method, _url.pathname, parentContext);
+    const span = spanInfo?.span;
 
-    // Check for proxy-provided headers (from Deno proxy)
-    const proxyToken = req.headers.get("x-token") || undefined;
-    const proxySlug = req.headers.get("x-project-slug") || undefined;
-    let proxyEnv = req.headers.get("x-environment") as "preview" | "production" | undefined;
-    const forwardedHost = req.headers.get("x-forwarded-host") || undefined;
+    // Set initial span attributes
+    if (span) {
+      setSpanAttributes(span, {
+        "http.url": req.url,
+        "http.host": req.headers.get("host") || _url.host,
+        "http.scheme": _url.protocol.replace(":", ""),
+      });
+    }
 
-    // Get project slug: proxy header > URL parsing > config
-    const configuredSlug = config?.fs?.veryfront?.projectSlug;
-    let projectSlug = proxySlug || parsedDomain.slug || configuredSlug;
-    let projectId: string | undefined;
+    // Execute request handling within span context
+    const executeHandler = async (): Promise<Response> => {
+      // Parse domain from host header
+      const host = req.headers.get("host") || _url.host;
+      const parsedDomain = parseProjectDomain(host);
 
-    // DEBUG: Log config state
-    logger.info("[universal] DEBUG config state", {
-      hasConfig: !!config,
-      hasFsConfig: !!config?.fs,
-      hasVeryfrontConfig: !!config?.fs?.veryfront,
-      configuredSlug,
-      proxySlug,
-      parsedDomainSlug: parsedDomain.slug,
-      finalProjectSlug: projectSlug,
-      isVeryfrontDomain: parsedDomain.isVeryfrontDomain,
-    });
+      // Check for proxy-provided headers (from Deno proxy)
+      const proxyToken = req.headers.get("x-token") || undefined;
+      const proxySlug = req.headers.get("x-project-slug") || undefined;
+      let proxyEnv = req.headers.get("x-environment") as "preview" | "production" | undefined;
+      const forwardedHost = req.headers.get("x-forwarded-host") || undefined;
 
-    // For custom domains without a slug, look up the project via API
-    // This enables JIT rendering for production sites with custom domains
-    if (!projectSlug && !parsedDomain.isVeryfrontDomain && config?.fs?.veryfront) {
-      // Use proxy token (from x-token header) or fall back to config token
-      const effectiveToken = proxyToken || config.fs.veryfront.apiToken || "";
-      // Support both baseUrl (FSAdapterConfig) and apiBaseUrl (VeryfrontConfig) for compatibility
-      const baseUrl = (config.fs.veryfront as { baseUrl?: string; apiBaseUrl?: string }).baseUrl ||
-        config.fs.veryfront.apiBaseUrl ||
-        "https://api.veryfront.com/api";
-      const apiConfig = {
-        apiBaseUrl: baseUrl,
-        apiToken: effectiveToken,
-      };
+      // Get project slug: proxy header > URL parsing > config
+      const configuredSlug = config?.fs?.veryfront?.projectSlug;
+      let projectSlug = proxySlug || parsedDomain.slug || configuredSlug;
+      let projectId: string | undefined;
 
-      // Use forwarded host (original domain) for lookup, fall back to host header
-      const lookupHost = forwardedHost || host;
+      // DEBUG: Log config state
+      logger.info("[universal] DEBUG config state", {
+        hasConfig: !!config,
+        hasFsConfig: !!config?.fs,
+        hasVeryfrontConfig: !!config?.fs?.veryfront,
+        configuredSlug,
+        proxySlug,
+        parsedDomainSlug: parsedDomain.slug,
+        finalProjectSlug: projectSlug,
+        isVeryfrontDomain: parsedDomain.isVeryfrontDomain,
+      });
 
-      if (apiConfig.apiToken) {
-        logger.info("[universal] Custom domain detected, looking up project", {
-          host: lookupHost,
-          originalHost: host,
-          forwardedHost,
-          hasProxyToken: !!proxyToken,
-          hasConfigToken: !!config.fs.veryfront.apiToken,
-        });
-        const lookupResult = await lookupProjectByDomain(lookupHost, apiConfig);
+      // For custom domains without a slug, look up the project via API
+      // This enables JIT rendering for production sites with custom domains
+      if (!projectSlug && !parsedDomain.isVeryfrontDomain && config?.fs?.veryfront) {
+        // Use proxy token (from x-token header) or fall back to config token
+        const effectiveToken = proxyToken || config.fs.veryfront.apiToken || "";
+        // Support both baseUrl (FSAdapterConfig) and apiBaseUrl (VeryfrontConfig) for compatibility
+        const baseUrl =
+          (config.fs.veryfront as { baseUrl?: string; apiBaseUrl?: string }).baseUrl ||
+          config.fs.veryfront.apiBaseUrl ||
+          "https://api.veryfront.com/api";
+        const apiConfig = {
+          apiBaseUrl: baseUrl,
+          apiToken: effectiveToken,
+        };
 
-        if (lookupResult) {
-          projectSlug = lookupResult.projectSlug;
-          projectId = lookupResult.projectId;
-          proxyEnv = getEnvironmentType(lookupResult);
-          logger.info("[universal] Domain lookup successful", {
-            domain: host,
-            projectSlug: lookupResult.projectSlug,
-            projectId: lookupResult.projectId,
-            environment: proxyEnv,
-            releaseId: lookupResult.releaseId,
+        // Use forwarded host (original domain) for lookup, fall back to host header
+        const lookupHost = forwardedHost || host;
+
+        if (apiConfig.apiToken) {
+          logger.info("[universal] Custom domain detected, looking up project", {
+            host: lookupHost,
+            originalHost: host,
+            forwardedHost,
+            hasProxyToken: !!proxyToken,
+            hasConfigToken: !!config.fs.veryfront.apiToken,
           });
+          const lookupResult = await lookupProjectByDomain(lookupHost, apiConfig);
+
+          if (lookupResult) {
+            projectSlug = lookupResult.projectSlug;
+            projectId = lookupResult.projectId;
+            proxyEnv = getEnvironmentType(lookupResult);
+            logger.info("[universal] Domain lookup successful", {
+              domain: host,
+              projectSlug: lookupResult.projectSlug,
+              projectId: lookupResult.projectId,
+              environment: proxyEnv,
+              releaseId: lookupResult.releaseId,
+            });
+          } else {
+            logger.warn("[universal] No project found for domain", { host: lookupHost });
+          }
         } else {
-          logger.warn("[universal] No project found for domain", { host: lookupHost });
+          logger.warn("[universal] Cannot look up custom domain - no API token available", {
+            host: lookupHost,
+            hasProxyToken: !!proxyToken,
+            hasConfigToken: !!config?.fs?.veryfront?.apiToken,
+          });
         }
-      } else {
-        logger.warn("[universal] Cannot look up custom domain - no API token available", {
-          host: lookupHost,
-          hasProxyToken: !!proxyToken,
-          hasConfigToken: !!config?.fs?.veryfront?.apiToken,
+      }
+
+      // Log if slug from URL differs from config (for debugging)
+      if (parsedDomain.slug && configuredSlug && parsedDomain.slug !== configuredSlug) {
+        logDebug("[universal] Project slug mismatch", {
+          fromUrl: parsedDomain.slug,
+          fromConfig: configuredSlug,
+          usingSlug: projectSlug,
         });
       }
-    }
 
-    // Log if slug from URL differs from config (for debugging)
-    if (parsedDomain.slug && configuredSlug && parsedDomain.slug !== configuredSlug) {
-      logDebug("[universal] Project slug mismatch", {
-        fromUrl: parsedDomain.slug,
-        fromConfig: configuredSlug,
-        usingSlug: projectSlug,
-      });
-    }
+      // Log proxy mode for debugging
+      if (proxyToken) {
+        logDebug("[universal] Using proxy-provided token", {
+          projectSlug,
+          environment: proxyEnv,
+        });
+      }
 
-    // Log proxy mode for debugging
-    if (proxyToken) {
-      logDebug("[universal] Using proxy-provided token", {
+      // Add project info to span
+      if (span && projectSlug) {
+        setSpanAttributes(span, {
+          "veryfront.project_slug": projectSlug,
+          "veryfront.environment": proxyEnv || "unknown",
+        });
+      }
+
+      // Create handler context
+      const ctx: HandlerContext = {
+        projectDir,
+        adapter,
+        mode: opts.mode ?? "production",
+        moduleServerUrl: opts.moduleServerUrl,
+        securityConfig: securityLoader.getSecurityConfig(),
+        cspUserHeader: securityLoader.getCspUserHeader(),
+        debug: opts.debug,
+        config,
+        parsedDomain,
         projectSlug,
-        environment: proxyEnv,
-      });
-    }
+        projectId,
+        proxyToken,
+        proxyEnvironment: proxyEnv,
+      };
 
-    // Create handler context
-    const ctx: HandlerContext = {
-      projectDir,
-      adapter,
-      mode: opts.mode ?? "production",
-      moduleServerUrl: opts.moduleServerUrl,
-      securityConfig: securityLoader.getSecurityConfig(),
-      cspUserHeader: securityLoader.getCspUserHeader(),
-      debug: opts.debug,
-      config,
-      parsedDomain,
-      projectSlug,
-      projectId,
-      proxyToken,
-      proxyEnvironment: proxyEnv,
+      // Track metrics
+      await metrics.incRequest();
+
+      // Execute handler chain
+      const response = await registry.execute(req, ctx);
+
+      // If no handler produced a response, this should not happen
+      // as NotFoundHandler is the fallback
+      if (!response) {
+        logDebug("[universal] No handler produced response (unexpected)", {
+          path: new URL(req.url).pathname,
+        });
+        return new Response("Internal Server Error", { status: 500 });
+      }
+
+      return response;
     };
 
-    // Track metrics
-    await metrics.incRequest();
+    // Execute with span context and finalize span
+    let response: Response;
+    let error: Error | undefined;
 
-    // Execute handler chain
-    const response = await registry.execute(req, ctx);
-
-    // If no handler produced a response, this should not happen
-    // as NotFoundHandler is the fallback
-    if (!response) {
-      logDebug("[universal] No handler produced response (unexpected)", {
-        path: new URL(req.url).pathname,
-      });
-      return new Response("Internal Server Error", { status: 500 });
+    try {
+      if (spanInfo?.context) {
+        response = await withContext(spanInfo.context, executeHandler);
+      } else {
+        response = await executeHandler();
+      }
+    } catch (e) {
+      error = e instanceof Error ? e : new Error(String(e));
+      response = new Response("Internal Server Error", { status: 500 });
     }
+
+    // End the span with status
+    endServerSpan(span, response.status, error);
 
     return response;
   };
