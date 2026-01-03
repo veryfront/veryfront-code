@@ -10,15 +10,22 @@ spec:
   entryPoints:
     {{- toYaml .Values.proxy.ingress.entryPoints | nindent 4 }}
   routes:
-    {{- range .Values.proxy.ingress.hosts }}
-    - match: Host(`{{ . }}`)
-      kind: Rule
+    {{- range .Values.proxy.ingress.routes }}
+    - kind: Rule
+      match: {{ .match }}
+      {{- if .priority }}
+      priority: {{ .priority }}
+      {{- end }}
       services:
         - name: {{ include "veryfront-renderer.proxy.fullname" $ }}
           port: {{ $.Values.proxy.service.port }}
-      {{- if $.Values.proxy.ingress.middlewares }}
+          {{- if $.Values.proxy.ingress.sticky }}
+          sticky:
+            cookie: {}
+          {{- end }}
+      {{- if .middlewares }}
       middlewares:
-        {{- range $.Values.proxy.ingress.middlewares }}
+        {{- range .middlewares }}
         - name: {{ .name }}
           {{- if .namespace }}
           namespace: {{ .namespace }}

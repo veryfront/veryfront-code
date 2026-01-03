@@ -93,12 +93,20 @@ proxy:
     enabled: false
     entryPoints:
       - websecure
-    hosts: []
-    # - veryfront.com
-    # - "*.veryfront.com"
-    # Middlewares reference the local middleware created by this chart
-    # Use format: veryfront-proxy-compress, veryfront-proxy-cors, etc.
-    middlewares: []
+    # Enable sticky sessions (cookie-based session affinity)
+    sticky: true
+    # Routes define the matching rules and middlewares
+    # Use HostRegexp for wildcard matching, Host for exact matching
+    routes:
+      - match: HostRegexp(`^.+\.veryfront\.com$`)
+        middlewares:
+          - name: compress
+          - name: cors-public-api
+      # Additional routes can be added with priority for specific paths
+      # - match: Host(`api.veryfront.com`) && PathPrefix(`/special`)
+      #   priority: 10001
+      #   middlewares:
+      #     - name: cors-public-api
     tls:
       enabled: true
       secretName: veryfront-com-wildcard-cert
