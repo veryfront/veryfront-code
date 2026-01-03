@@ -21,13 +21,21 @@ export class HealthHandler extends BaseHandler {
 
   /**
    * Check if system is ready to serve requests
-   * Verifies adapter, filesystem access, and project directory
+   * Verifies adapter availability. In proxy mode, skip filesystem checks
+   * since there's no project context yet.
    */
   private async checkReadiness(ctx: HandlerContext): Promise<boolean> {
     try {
       // Check adapter is available
       if (!ctx.adapter) {
         return false;
+      }
+
+      // In proxy mode, we can't check filesystem without a project context
+      // The adapter being available is sufficient for readiness
+      const isProxyMode = ctx.config?.fs?.veryfront?.proxyMode === true;
+      if (isProxyMode) {
+        return true;
       }
 
       // Check filesystem is accessible by reading project directory
