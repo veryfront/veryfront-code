@@ -86,6 +86,9 @@ const allowedWarnings: string[] = [
   "[VERYFRONT] ERROR:",
   // Pipeable stream errors
   "[RENDERER] ERROR: renderToPipeableStream failed",
+  // FS integration fallback (expected when veryfront-api adapter fails)
+  "[FSIntegration] Falling back to local filesystem",
+  "[VERYFRONT] WARN:",
 ];
 
 function isAllowed(args: unknown[]): boolean {
