@@ -26,12 +26,9 @@ export function resolvePathAliases(
 ): Promise<string> {
   const _normalizedProjectDir = projectDir.replace(/\\/g, "/").replace(/\/$/, "");
 
-  // For SSR, leave @/ imports unchanged - they'll be handled by the pipeline's recursive transformer
-  if (ssr) {
-    return Promise.resolve(code);
-  }
-
-  // For browser, use relative paths
+  // For both SSR and browser, we need to resolve @/ aliases to relative paths
+  // SSR files are written to a temp directory with the same relative structure as the source
+  // So @/components from pages/index.tsx becomes ../components (relative path)
   let relativeFilePath = filePath;
   if (filePath.startsWith(_normalizedProjectDir)) {
     relativeFilePath = filePath.substring(_normalizedProjectDir.length + 1);
@@ -58,6 +55,10 @@ export function resolvePathAliases(
       // This ensures Deno can properly identify the module type when loading via HTTP
       if (!/\.(tsx?|jsx?|mjs|cjs|mdx)$/.test(relativePath)) {
         return relativePath + ".js";
+      }
+      // For SSR, also normalize TS/TSX extensions to .js
+      if (ssr) {
+        return relativePath.replace(/\.(tsx?|jsx|mdx)$/, ".js");
       }
       return relativePath;
     }
