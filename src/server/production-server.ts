@@ -17,10 +17,7 @@ import {
 } from "../core/memory/index.ts";
 import { initializeRedisCaches } from "../core/cache/redis-init.ts";
 import { setServerInitialized } from "./handlers/monitoring/health.ts";
-import {
-  startPeriodicMemoryCheck,
-  stopPeriodicMemoryCheck,
-} from "./shared/renderer-factory.ts";
+import { startPeriodicMemoryCheck, stopPeriodicMemoryCheck } from "./shared/renderer-factory.ts";
 
 interface ServerOptions {
   projectDir: string;

@@ -241,7 +241,10 @@ export function clearSSRModuleCacheForProject(projectId: string): void {
   }
 
   if (cleared > 0) {
-    logger.info("[SSR-MODULE-LOADER] Project cache cleared", { projectId, entriesCleared: cleared });
+    logger.info("[SSR-MODULE-LOADER] Project cache cleared", {
+      projectId,
+      entriesCleared: cleared,
+    });
   }
 }
 
