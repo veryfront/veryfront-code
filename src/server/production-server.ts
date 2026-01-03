@@ -6,6 +6,7 @@ import { createVeryfrontHandler } from "./universal-handler/index.ts";
 import { bootstrapProd } from "./bootstrap.ts";
 import { cwd, onSignal } from "@veryfront/platform/compat/process.ts";
 import { isDebugEnabled } from "../core/utils/constants/env.ts";
+import { initializeOTLP, shutdownOTLP } from "@veryfront/observability/tracing/otlp-setup.ts";
 
 interface ServerOptions {
   projectDir: string;
@@ -84,6 +85,9 @@ export async function startProductionServer(options: ServerOptions): Promise<Ser
 
 if (import.meta.main) {
   try {
+    // Initialize OpenTelemetry tracing before starting server
+    await initializeOTLP();
+
     const adapter = await getAdapter();
 
     const shutdownController = new AbortController();
@@ -111,6 +115,7 @@ if (import.meta.main) {
       try {
         shutdownController.abort();
         await server.stop();
+        await shutdownOTLP();
       } catch (error) {
         logger.warn("Error while shutting down production server:", error);
       }

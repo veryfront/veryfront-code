@@ -64,3 +64,11 @@ export {
   instrumentSync,
   isAutoInstrumentEnabled,
 } from "./auto-instrument/index.ts";
+
+// Export OTLP setup for Grafana Cloud
+export {
+  initializeOTLP,
+  isOTLPEnabled,
+  type OTLPConfig,
+  shutdownOTLP,
+} from "./tracing/otlp-setup.ts";
