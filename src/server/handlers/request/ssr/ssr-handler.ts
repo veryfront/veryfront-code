@@ -16,7 +16,7 @@ import type {
 } from "../../types.ts";
 import { hasMatchingEtag } from "../../utils/etag.ts";
 import { getContentType } from "../../utils/content-types.ts";
-import { createRenderer } from "@veryfront/rendering/index.ts";
+import { getRendererForProject } from "../../../shared/renderer-factory.ts";
 import { serverLogger as _logger } from "@veryfront/utils";
 import { endRequest, startRequest, timeAsync } from "@veryfront/utils";
 import { computeSSRETag } from "./etag-handler.ts";
@@ -62,8 +62,6 @@ export class SSRHandler extends BaseHandler {
       { pattern: /^(?!\/_).*/, method: ["GET", "HEAD"] },
     ],
   };
-
-  private rendererInit: Promise<Awaited<ReturnType<typeof createRenderer>>> | null = null;
 
   handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
     const url = new URL(req.url);
@@ -193,19 +191,10 @@ export class SSRHandler extends BaseHandler {
     const builderOptions = { studioEmbed };
 
     try {
-      const renderer = await timeAsync("renderer-init", () => {
-        if (!this.rendererInit) {
-          this.rendererInit = createRenderer({
-            projectDir: ctx.projectDir,
-            mode: ctx.mode,
-            adapter: ctx.adapter,
-            moduleServerUrl: ctx.moduleServerUrl,
-            config: ctx.config,
-          });
-        }
-        return this.rendererInit;
-      });
-      this.logDebug("renderer obtained", { mode: ctx.mode }, ctx);
+      // Use centralized renderer factory with per-project LRU caching
+      // This prevents memory growth in multi-project mode
+      const renderer = await timeAsync("renderer-init", () => getRendererForProject(ctx));
+      this.logDebug("renderer obtained", { mode: ctx.mode, projectSlug: ctx.projectSlug }, ctx);
 
       // Extract route parameters for both App Router and Pages Router
       // Run both extractions in parallel for better performance

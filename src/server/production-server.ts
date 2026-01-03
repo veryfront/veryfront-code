@@ -17,6 +17,10 @@ import {
 } from "../core/memory/index.ts";
 import { initializeRedisCaches } from "../core/cache/redis-init.ts";
 import { setServerInitialized } from "./handlers/monitoring/health.ts";
+import {
+  startPeriodicMemoryCheck,
+  stopPeriodicMemoryCheck,
+} from "./shared/renderer-factory.ts";
 
 interface ServerOptions {
   projectDir: string;
@@ -129,6 +133,11 @@ if (import.meta.main) {
       });
     }
 
+    // Start periodic memory pressure check for renderer cache eviction
+    // This catches slow memory growth even when no new renderers are being created
+    startPeriodicMemoryCheck();
+    logger.info("Periodic renderer memory check enabled");
+
     const shutdownController = new AbortController();
     const projectDir = cwd();
     const port = Number(
@@ -162,8 +171,9 @@ if (import.meta.main) {
       setServerInitialized(false);
 
       try {
-        // Stop memory monitoring
+        // Stop memory monitoring and periodic checks
         stopMemoryMonitoring();
+        stopPeriodicMemoryCheck();
 
         shutdownController.abort();
         await server.stop();
