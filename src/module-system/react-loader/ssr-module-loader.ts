@@ -100,10 +100,10 @@ class Semaphore {
     this.permits = permits;
   }
 
-  async acquire(): Promise<void> {
+  acquire(): Promise<void> {
     if (this.permits > 0) {
       this.permits--;
-      return;
+      return Promise.resolve();
     }
     return new Promise<void>((resolve) => {
       this.waitQueue.push(resolve);

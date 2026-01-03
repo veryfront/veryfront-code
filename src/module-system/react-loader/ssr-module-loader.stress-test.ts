@@ -34,7 +34,7 @@ async function writeComponentFiles(
 }
 
 // Create adapter that uses real filesystem
-function createRealAdapter(projectDir: string): RuntimeAdapter {
+function createRealAdapter(_projectDir: string): RuntimeAdapter {
   return {
     name: "deno",
     fs: {
@@ -43,7 +43,7 @@ function createRealAdapter(projectDir: string): RuntimeAdapter {
       },
       writeFile: async () => {},
       readDir: async function* () {},
-      stat: async () => null,
+      stat: () => Promise.resolve(null),
       exists: async (path: string) => {
         try {
           await Deno.stat(path);
@@ -54,7 +54,7 @@ function createRealAdapter(projectDir: string): RuntimeAdapter {
       },
       mkdir: async () => {},
       rm: async () => {},
-      realPath: async (path: string) => path,
+      realPath: (path: string) => Promise.resolve(path),
     },
     env: {
       get: (key: string) => {
@@ -66,7 +66,7 @@ function createRealAdapter(projectDir: string): RuntimeAdapter {
       toObject: () => ({}),
       has: () => false,
     },
-    serve: async () => ({ stop: async () => {} }),
+    serve: () => Promise.resolve({ stop: () => Promise.resolve() }),
     exit: () => {},
   } as unknown as RuntimeAdapter;
 }
