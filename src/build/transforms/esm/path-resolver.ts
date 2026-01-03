@@ -1,4 +1,4 @@
-import { replaceSpecifiers, parseImports } from "./lexer.ts";
+import { parseImports, replaceSpecifiers } from "./lexer.ts";
 
 export interface BlockExternalUrlResult {
   code: string;

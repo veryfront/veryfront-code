@@ -11,9 +11,9 @@ import {
   shutdownOTLP,
 } from "@veryfront/observability/tracing/otlp-setup.ts";
 import {
+  getMemorySnapshot,
   startMemoryMonitoring,
   stopMemoryMonitoring,
-  getMemorySnapshot,
 } from "../core/memory/index.ts";
 
 interface ServerOptions {

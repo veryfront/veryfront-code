@@ -3,11 +3,11 @@ import { generateCacheKey, getCachedTransform, setCachedTransform } from "./tran
 import { computeContentHash, getLoaderFromPath } from "./transform-utils.ts";
 import { addDepsToEsmShUrls, resolveReactImports } from "./react-imports.ts";
 import {
+  blockExternalUrlImports,
   resolvePathAliases,
   resolveRelativeImports,
   resolveRelativeImportsForSSR,
   resolveVeryfrontImports,
-  blockExternalUrlImports,
 } from "./path-resolver.ts";
 import { rewriteBareImports, rewriteVendorImports } from "./import-rewriter.ts";
 import type { TransformOptions } from "./types.ts";
