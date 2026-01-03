@@ -23,14 +23,14 @@ import type {
 } from "../../../../../src/build/renderer/types/bundler-types.ts";
 import { withTestContext } from "../../../../_helpers/context.ts";
 
-afterAll(async () => {
-  await esbuild.stop();
-});
-
 describe(
   "Script Bundler",
   { sanitizeOps: false, sanitizeResources: false },
   () => {
+    afterAll(async () => {
+      await esbuild.stop();
+    });
+
     describe("bundleScript", () => {
       it("bundles all file types (JS/TS/JSX/TSX)", async () => {
         // Batched test for all file type bundling - reduces esbuild invocation overhead

@@ -103,7 +103,7 @@
     "esbuild": "npm:esbuild@0.20.2",
     "esbuild/mod.js": "npm:esbuild@0.20.2",
     "es-module-lexer": "npm:es-module-lexer@1.5.0",
-    "zod": "npm:zod@3.23.8",
+    "zod": "npm:zod@3.25.76",
     "mime-types": "npm:mime-types@2.1.35",
     "mdast": "npm:@types/mdast@4.0.3",
     "hast": "npm:@types/hast@3.0.3",
