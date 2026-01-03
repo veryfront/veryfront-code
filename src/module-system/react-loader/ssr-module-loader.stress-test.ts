@@ -9,7 +9,7 @@
 
 import { assertEquals } from "std/assert/mod.ts";
 import { join } from "std/path/mod.ts";
-import { SSRModuleLoader, clearSSRModuleCache } from "./ssr-module-loader.ts";
+import { clearSSRModuleCache, SSRModuleLoader } from "./ssr-module-loader.ts";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 
 // Create a real temp directory for tests
@@ -21,7 +21,10 @@ async function createTempProjectDir(): Promise<string> {
 }
 
 // Write component files to disk
-async function writeComponentFiles(projectDir: string, files: Record<string, string>): Promise<void> {
+async function writeComponentFiles(
+  projectDir: string,
+  files: Record<string, string>,
+): Promise<void> {
   for (const [path, content] of Object.entries(files)) {
     const fullPath = path.startsWith(projectDir) ? path : join(projectDir, path);
     const dir = fullPath.substring(0, fullPath.lastIndexOf("/"));
@@ -117,14 +120,15 @@ Deno.test({
       const concurrentRequests = 10;
       const buttonPath = `${projectDir}/components/Button.tsx`;
       const buttonSource = files[buttonPath]!;
-      const promises = Array.from({ length: concurrentRequests }, () =>
-        loader.loadModule(buttonPath, buttonSource).catch(err => ({ error: err }))
+      const promises = Array.from(
+        { length: concurrentRequests },
+        () => loader.loadModule(buttonPath, buttonSource).catch((err) => ({ error: err })),
       );
 
       const results = await Promise.all(promises);
 
       // All requests should succeed (no race condition)
-      const errors = results.filter(r => r && typeof r === 'object' && 'error' in r);
+      const errors = results.filter((r) => r && typeof r === "object" && "error" in r);
       assertEquals(errors.length, 0, `Expected no errors, got: ${JSON.stringify(errors)}`);
 
       console.log(`✓ ${concurrentRequests} concurrent requests completed without race condition`);
@@ -162,23 +166,31 @@ Deno.test({
 
         // Mid-level components
         [`${projectDir}/components/Header.tsx`]: generateComponent("Header", ["Logo", "Nav"]),
-        [`${projectDir}/components/Footer.tsx`]: generateComponent("Footer", ["Links", "Copyright"]),
+        [`${projectDir}/components/Footer.tsx`]: generateComponent("Footer", [
+          "Links",
+          "Copyright",
+        ]),
         [`${projectDir}/components/Sidebar.tsx`]: generateComponent("Sidebar", ["Menu", "Search"]),
 
         // Root component
-        [`${projectDir}/components/App.tsx`]: generateComponent("App", ["Header", "Footer", "Sidebar"]),
+        [`${projectDir}/components/App.tsx`]: generateComponent("App", [
+          "Header",
+          "Footer",
+          "Sidebar",
+        ]),
       };
       await writeComponentFiles(projectDir, files);
 
       const adapter = createRealAdapter(projectDir);
 
       // Create multiple loaders (simulating different requests)
-      const loaders = Array.from({ length: 5 }, () => new SSRModuleLoader({
-        projectDir,
-        projectId: "test-deep-deps",
-        adapter,
-        dev: true,
-      }));
+      const loaders = Array.from({ length: 5 }, () =>
+        new SSRModuleLoader({
+          projectDir,
+          projectId: "test-deep-deps",
+          adapter,
+          dev: true,
+        }));
 
       // Simulate concurrent requests for the root component
       // With semaphore=3 and deep deps, this would deadlock if not handled properly
@@ -187,27 +199,27 @@ Deno.test({
       const appPath = `${projectDir}/components/App.tsx`;
       const appSource = files[appPath]!;
 
-      const promises = loaders.map(loader =>
+      const promises = loaders.map((loader) =>
         Promise.race([
           loader.loadModule(appPath, appSource),
           new Promise((_, reject) =>
             setTimeout(() => reject(new Error("TIMEOUT - possible deadlock")), timeout)
           ),
-        ]).catch(err => ({ error: err }))
+        ]).catch((err) => ({ error: err }))
       );
 
       const results = await Promise.all(promises);
       const elapsed = Date.now() - startTime;
 
       // Check for deadlock (timeout)
-      const timeouts = results.filter(r =>
-        r && typeof r === 'object' && 'error' in r &&
+      const timeouts = results.filter((r) =>
+        r && typeof r === "object" && "error" in r &&
         (r as { error: Error }).error.message.includes("TIMEOUT")
       );
       assertEquals(timeouts.length, 0, "Deadlock detected! Some requests timed out.");
 
       // Check for other errors
-      const errors = results.filter(r => r && typeof r === 'object' && 'error' in r);
+      const errors = results.filter((r) => r && typeof r === "object" && "error" in r);
 
       console.log(`✓ Deep dependency tree (3 levels) completed in ${elapsed}ms`);
       console.log(`  - 5 concurrent requests, semaphore=3`);
@@ -251,26 +263,27 @@ Deno.test({
 
       // Simulate 20 concurrent requests (more than deps)
       const concurrentRequests = 20;
-      const loaders = Array.from({ length: concurrentRequests }, () => new SSRModuleLoader({
-        projectDir,
-        projectId: "test-wide-deps",
-        adapter,
-        dev: true,
-      }));
+      const loaders = Array.from({ length: concurrentRequests }, () =>
+        new SSRModuleLoader({
+          projectDir,
+          projectId: "test-wide-deps",
+          adapter,
+          dev: true,
+        }));
 
       const startTime = Date.now();
       const pagePath = `${projectDir}/components/Page.tsx`;
       const pageSource = files[pagePath]!;
 
-      const promises = loaders.map(loader =>
-        loader.loadModule(pagePath, pageSource).catch(err => ({ error: err }))
+      const promises = loaders.map((loader) =>
+        loader.loadModule(pagePath, pageSource).catch((err) => ({ error: err }))
       );
 
       const results = await Promise.all(promises);
       const elapsed = Date.now() - startTime;
 
       // Check for errors
-      const errors = results.filter(r => r && typeof r === 'object' && 'error' in r);
+      const errors = results.filter((r) => r && typeof r === "object" && "error" in r);
 
       console.log(`✓ Wide dependency tree (10 deps) completed in ${elapsed}ms`);
       console.log(`  - ${concurrentRequests} concurrent requests`);
