@@ -166,6 +166,16 @@ export function createVeryfrontHandler(
     const proxyToken = req.headers.get("x-token") || undefined;
     const proxySlug = req.headers.get("x-project-slug") || undefined;
     let proxyEnv = req.headers.get("x-environment") as "preview" | "production" | undefined;
+    const forwardedHost = req.headers.get("x-forwarded-host") || undefined;
+
+    // Debug: Log received proxy headers
+    logger.info("[RENDERER] Received proxy headers:", {
+      "x-token": proxyToken ? `${proxyToken.substring(0, 20)}...` : "(none)",
+      "x-project-slug": proxySlug || "(none)",
+      "x-environment": proxyEnv || "(none)",
+      "x-forwarded-host": forwardedHost || "(none)",
+      pathname: _url.pathname,
+    });
 
     // Get project slug: proxy header > URL parsing > config
     const configuredSlug = config?.fs?.veryfront?.projectSlug;
@@ -230,6 +240,16 @@ export function createVeryfrontHandler(
       proxyToken,
       proxyEnvironment: proxyEnv,
     };
+
+    // Debug: Log resolved context
+    logger.info("[RENDERER] Resolved context:", {
+      projectSlug: projectSlug || "(none)",
+      proxyEnvironment: proxyEnv || "(none)",
+      hasProxyToken: !!proxyToken,
+      isProxyMode,
+      fsType: config?.fs?.type || "local",
+      pathname: _url.pathname,
+    });
 
     // Track metrics
     await metrics.incRequest();

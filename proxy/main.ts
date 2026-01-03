@@ -99,6 +99,14 @@ async function handleRequest(req: Request): Promise<Response> {
     newHeaders.set("x-forwarded-host", host);
     newHeaders.delete("host"); // Let renderer determine its own host
 
+    // Debug: Log headers being sent to renderer
+    console.log(`[Proxy] Forwarding to renderer with headers:`, {
+      "x-token": token ? `${token.substring(0, 20)}...` : "(none)",
+      "x-project-slug": projectSlug || "(none)",
+      "x-environment": scope,
+      "x-forwarded-host": host,
+    });
+
     // Build renderer URL
     const rendererUrl = new URL(url.pathname + url.search, RENDERER_URL);
 
