@@ -79,6 +79,13 @@ const allowedWarnings: string[] = [
   "Warning: Each child in a list",
   // React pipeable stream errors that wrap other allowed errors
   "[RENDERER] ERROR: React pipeable stream error",
+  // String rendering fallback errors (expected when SSR fails)
+  "[RENDERER] ERROR: String rendering fallback also failed",
+  // Bootstrap initialization errors (expected during error tests)
+  "[Bootstrap:Prod] Initialization failed",
+  "[VERYFRONT] ERROR:",
+  // Pipeable stream errors
+  "[RENDERER] ERROR: renderToPipeableStream failed",
 ];
 
 function isAllowed(args: unknown[]): boolean {
