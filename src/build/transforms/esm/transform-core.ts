@@ -119,7 +119,7 @@ export async function transformToESM(
   setCachedTransform(cacheKey, code, contentHash);
 
   const totalMs = performance.now() - transformStart;
-  logger.info("[ESM-TRANSFORM] Timing breakdown", {
+  logger.debug("[ESM-TRANSFORM] Timing breakdown", {
     file: filePath.slice(-40),
     totalMs: totalMs.toFixed(1),
     hashMs: timings.hash?.toFixed(1),

@@ -160,7 +160,7 @@ export class VeryfrontAPIClient {
     }
 
     // Otherwise, look up project by slug via listProjects
-    logger.info("[VeryfrontAPIClient] Initializing via listProjects...", { slug });
+    logger.debug("[VeryfrontAPIClient] Initializing via listProjects", { slug });
 
     const projects = await this.operations.listProjects();
     const project = projects.find((p) => p.slug === slug);

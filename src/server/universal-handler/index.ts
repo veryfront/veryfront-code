@@ -198,8 +198,8 @@ export function createVeryfrontHandler(
       let projectSlug = proxySlug || parsedDomain.slug || configuredSlug;
       let projectId: string | undefined;
 
-      // DEBUG: Log config state
-      logger.info("[universal] DEBUG config state", {
+      // Debug: Log config state for troubleshooting
+      logger.debug("[universal] config state", {
         hasConfig: !!config,
         hasFsConfig: !!config?.fs,
         hasVeryfrontConfig: !!config?.fs?.veryfront,
