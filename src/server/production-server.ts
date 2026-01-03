@@ -16,6 +16,7 @@ import {
   stopMemoryMonitoring,
 } from "../core/memory/index.ts";
 import { initializeRedisCaches } from "../core/cache/redis-init.ts";
+import { setServerInitialized } from "./handlers/monitoring/health.ts";
 
 interface ServerOptions {
   projectDir: string;
@@ -140,12 +141,22 @@ if (import.meta.main) {
       signal: shutdownController.signal,
     });
 
+    // Wait for server to be fully ready before accepting traffic
+    // This prevents K8s readiness probe from passing too early
+    await server.ready;
+    setServerInitialized(true);
+    logger.info("Server fully initialized, ready to accept traffic");
+
     // Graceful shutdown for direct CLI execution (e.g., deno run)
     let shuttingDown = false;
     const shutdown = async (signal: "SIGINT" | "SIGTERM") => {
       if (shuttingDown) return;
       shuttingDown = true;
       logger.info(`Received ${signal}, shutting down production server...`);
+
+      // Mark server as not ready to stop accepting new requests
+      setServerInitialized(false);
+
       try {
         // Stop memory monitoring
         stopMemoryMonitoring();

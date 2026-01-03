@@ -8,6 +8,27 @@ import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } 
 import { joinPath } from "@veryfront/utils/path-utils.ts";
 import { HTTP_OK, HTTP_UNAVAILABLE, PRIORITY_HIGH } from "@veryfront/core/constants/index.ts";
 
+/**
+ * Global initialization state tracker for readiness probes.
+ * This prevents K8s from routing traffic before the server is fully initialized.
+ */
+let serverInitialized = false;
+
+/**
+ * Mark the server as fully initialized and ready to accept traffic.
+ * Call this after all startup tasks (Redis, caches, etc.) are complete.
+ */
+export function setServerInitialized(ready: boolean): void {
+  serverInitialized = ready;
+}
+
+/**
+ * Check if the server has been marked as initialized.
+ */
+export function isServerInitialized(): boolean {
+  return serverInitialized;
+}
+
 export class HealthHandler extends BaseHandler {
   metadata: HandlerMetadata = {
     name: "HealthHandler",
@@ -20,19 +41,31 @@ export class HealthHandler extends BaseHandler {
   };
 
   /**
-   * Check if system is ready to serve requests
-   * Verifies adapter availability. In proxy mode, skip filesystem checks
-   * since there's no project context yet.
+   * Check if system is ready to serve requests.
+   *
+   * Readiness requires:
+   * 1. Server initialization complete (Redis, caches warmup)
+   * 2. Adapter available
+   * 3. In non-proxy mode: filesystem accessible
+   *
+   * This prevents K8s from routing traffic before the server is ready,
+   * avoiding OOM crashes from concurrent cold-start compilations.
    */
   private async checkReadiness(ctx: HandlerContext): Promise<boolean> {
     try {
+      // CRITICAL: Wait for full server initialization before accepting traffic
+      // This prevents OOM from concurrent compilations during cold start
+      if (!serverInitialized) {
+        return false;
+      }
+
       // Check adapter is available
       if (!ctx.adapter) {
         return false;
       }
 
       // In proxy mode, we can't check filesystem without a project context
-      // The adapter being available is sufficient for readiness
+      // Server initialization + adapter available is sufficient
       const isProxyMode = ctx.config?.fs?.veryfront?.proxyMode === true;
       if (isProxyMode) {
         return true;
