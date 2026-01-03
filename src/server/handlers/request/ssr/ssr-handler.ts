@@ -86,7 +86,7 @@ export class SSRHandler extends BaseHandler {
       const fsWrapper = ctx.adapter.fs as {
         setRequestToken?: (t: string) => void;
         setRequestBranch?: (b: string | null) => void;
-        runWithContext?: <T>(slug: string, token: string, fn: () => Promise<T>) => Promise<T>;
+        runWithContext?: <T>(slug: string, token: string, fn: () => Promise<T>, projectId?: string) => Promise<T>;
       };
 
       // For multi-project mode, use runWithContext (required for MultiProjectFSAdapter)
@@ -94,13 +94,23 @@ export class SSRHandler extends BaseHandler {
       if (ctx.projectSlug && typeof fsWrapper.runWithContext === "function") {
         this.logDebug("Using multi-project context", {
           projectSlug: ctx.projectSlug,
+          projectId: ctx.projectId,
           hasProxyToken: !!ctx.proxyToken,
         }, ctx);
         _logger.info("[SSR] Using multi-project context for rendering", {
           projectSlug: ctx.projectSlug,
+          projectId: ctx.projectId || "(none)",
           hasProxyToken: !!ctx.proxyToken,
           proxyEnvironment: ctx.proxyEnvironment,
           slug,
+        });
+        // Debug: Log projectId just before passing to runWithContext
+        const projectIdToPass = ctx.projectId;
+        _logger.info("[SSR] About to call runWithContext with projectId", {
+          projectIdToPass: projectIdToPass || "(none)",
+          projectSlug: ctx.projectSlug,
+          fsAdapterType: ctx.adapter.fs?.constructor?.name || "unknown",
+          hasRunWithContext: typeof fsWrapper.runWithContext,
         });
         return fsWrapper.runWithContext(ctx.projectSlug, ctx.proxyToken || "", () => {
           // Set production mode for non-draft environments
@@ -125,7 +135,7 @@ export class SSRHandler extends BaseHandler {
             }
           }
           return this.handleWithContext(req, ctx, slug, requestId, url);
-        });
+        }, projectIdToPass);
       }
 
       // Log why multi-project context wasn't used
@@ -245,6 +255,7 @@ export class SSRHandler extends BaseHandler {
       this.logDebug(`[NONCE-TRACE] Generated nonce for SSR: ${nonce}`, { slug }, ctx);
 
       const studioEmbed = url.searchParams.get("studio_embed") === "true";
+      const builderOptions = { studioEmbed };
       const projectId = ctx.projectSlug || url.searchParams.get("project_id") || undefined;
       const pageId = url.searchParams.get("page_id") || undefined;
 
@@ -270,7 +281,7 @@ export class SSRHandler extends BaseHandler {
       // (cached HTML has old nonces, but each request generates a fresh nonce for CSP)
       const cacheStrategy = ctx.mode === "development" ? "no-cache" : "short";
       const isHeadRequest = req.method.toUpperCase() === "HEAD";
-      const builder = this.createResponseBuilder(ctx, nonce);
+      const builder = this.createResponseBuilder(ctx, nonce, builderOptions);
 
       // For true streaming, skip ETag and return stream immediately for fast TTFB
       if (isTrueStreaming) {
@@ -346,7 +357,7 @@ export class SSRHandler extends BaseHandler {
 
         // Generate nonce for 404 response HTML
         const notFoundNonce = generateNonce();
-        const builder = this.createResponseBuilder(ctx, notFoundNonce);
+        const builder = this.createResponseBuilder(ctx, notFoundNonce, builderOptions);
 
         // Try App Router not-found.tsx first
         const notFoundResponse = await tryNotFoundFallback(req, slug, ctx, builder);
@@ -379,6 +390,13 @@ export class SSRHandler extends BaseHandler {
         return this.respond(response);
       }
 
+      // Always log SSR errors for debugging (not just in debug mode)
+      _logger.error("[SSR] renderPage failed", {
+        slug,
+        error: this.getErrorMessage(error),
+        stack: error instanceof Error ? error.stack : undefined,
+        projectSlug: ctx.projectSlug,
+      });
       this.logDebug("SSR renderPage failed with error", {
         slug,
         error: this.getErrorMessage(error),
@@ -386,7 +404,7 @@ export class SSRHandler extends BaseHandler {
 
       // Generate nonce for error response HTML
       const errorNonce = generateNonce();
-      const builder = this.createResponseBuilder(ctx, errorNonce);
+      const builder = this.createResponseBuilder(ctx, errorNonce, builderOptions);
       const isHead = req.method.toUpperCase() === "HEAD";
       const errorObj = error instanceof Error ? error : new Error(String(error));
 

@@ -23,6 +23,7 @@ export class ResponseBuilder implements FluentMethodsContext, ResponseMethodsCon
   public nonce: string;
   public cspUserHeader: string | null;
   public adapter: import("@veryfront/platform/adapters/base.ts").RuntimeAdapter | undefined;
+  public studioEmbed: boolean;
 
   constructor(config?: ResponseBuilderConfig) {
     this.headers = new Headers();
@@ -32,6 +33,7 @@ export class ResponseBuilder implements FluentMethodsContext, ResponseMethodsCon
     this.nonce = config?.nonce ?? generateNonce();
     this.cspUserHeader = config?.cspUserHeader ?? null;
     this.adapter = config?.adapter;
+    this.studioEmbed = config?.studioEmbed ?? false;
   }
 
   withCORS = fluentMethods.withCORS;

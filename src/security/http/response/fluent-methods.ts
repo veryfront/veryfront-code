@@ -19,6 +19,7 @@ export interface FluentMethodsContext {
   nonce: string;
   cspUserHeader: string | null;
   adapter: import("@veryfront/platform/adapters/base.ts").RuntimeAdapter | undefined;
+  studioEmbed: boolean;
 }
 
 /**
@@ -67,6 +68,7 @@ export function withSecurity<T extends FluentMethodsContext>(
     this.cspUserHeader,
     cfg,
     this.adapter,
+    this.studioEmbed,
   );
   return this;
 }

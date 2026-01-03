@@ -111,6 +111,7 @@ export function getSecurityHeader(
  * @param cspUserHeader - User-provided CSP header
  * @param config - Security configuration
  * @param adapter - Runtime adapter for environment variables
+ * @param studioEmbed - When true, skips X-Frame-Options to allow Studio iframe embedding
  */
 export function applySecurityHeaders(
   headers: Headers,
@@ -119,6 +120,7 @@ export function applySecurityHeaders(
   cspUserHeader: string | null,
   config?: SecurityConfig | null,
   adapter?: RuntimeAdapter,
+  studioEmbed?: boolean,
 ): void {
   const getHeaderOverride = (name: string): string | undefined => {
     const overrides = config?.headers;
@@ -136,9 +138,10 @@ export function applySecurityHeaders(
   const contentTypeOptions = getHeaderOverride("x-content-type-options") ?? "nosniff";
   headers.set("X-Content-Type-Options", contentTypeOptions);
 
-  // In development mode, skip X-Frame-Options to allow Studio iframe embedding
-  // In production, default to DENY for security
-  if (!isDev) {
+  // Skip X-Frame-Options in development mode or when embedded in Studio
+  // This allows Studio iframe embedding for preview functionality
+  // In production (non-studio), default to DENY for security
+  if (!isDev && !studioEmbed) {
     const frameOptions = getHeaderOverride("x-frame-options") ?? "DENY";
     headers.set("X-Frame-Options", frameOptions);
   }

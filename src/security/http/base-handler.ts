@@ -110,14 +110,20 @@ export abstract class BaseHandler implements Handler {
    * Create a response builder with context
    * @param ctx - Handler context
    * @param nonce - Optional pre-generated nonce for CSP consistency
+   * @param options - Additional options for the builder
    */
-  protected createResponseBuilder(ctx: HandlerContext, nonce?: string): ResponseBuilder {
+  protected createResponseBuilder(
+    ctx: HandlerContext,
+    nonce?: string,
+    options?: { studioEmbed?: boolean },
+  ): ResponseBuilder {
     return new ResponseBuilder({
       securityConfig: ctx.securityConfig ?? undefined,
       isDev: ctx.mode === "development",
       cspUserHeader: ctx.cspUserHeader,
       adapter: ctx.adapter,
       nonce, // Pass through the nonce if provided
+      studioEmbed: options?.studioEmbed,
     });
   }
 
