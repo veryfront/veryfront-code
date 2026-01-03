@@ -220,9 +220,15 @@ export function setSpanAttributes(
 /**
  * Execute a function within a span context
  */
-export async function withContext<T>(spanContext: unknown, fn: () => Promise<T>): Promise<T> {
-  if (!traceApi) return fn();
-  return traceApi.context.with(spanContext as import("@opentelemetry/api").Context, fn);
+export async function withContext<T>(
+  spanContext: unknown,
+  fn: () => Promise<T>,
+): Promise<T> {
+  if (!traceApi) return await fn();
+  return await traceApi.context.with(
+    spanContext as import("@opentelemetry/api").Context,
+    fn,
+  );
 }
 
 /**
