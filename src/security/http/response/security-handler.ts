@@ -27,7 +27,7 @@ export function generateNonce(): string {
  * @returns CSP header string
  */
 export function buildCSP(
-  isDev: boolean,
+  _isDev: boolean,
   nonce: string,
   cspUserHeader: string | null,
   config?: SecurityConfig | null,
