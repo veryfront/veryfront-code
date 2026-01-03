@@ -67,7 +67,6 @@ export class SSRModuleLoader {
     filePath: string,
     source?: string,
   ): Promise<void> {
-    console.log("[SSRModuleLoader] transformWithDependencies START:", filePath);
     const code = source ?? await this.options.adapter.fs.readFile(filePath);
 
     const contentHash = this.hashCode(code);
@@ -78,13 +77,11 @@ export class SSRModuleLoader {
 
     const cachedTempPath = globalModuleCache.get(contentCacheKey);
     if (cachedTempPath) {
-      console.log("[SSRModuleLoader] Cache hit for:", filePath, "->", cachedTempPath);
       globalModuleCache.set(filePathCacheKey, cachedTempPath);
       return;
     }
 
     if (globalInProgress.has(inProgressKey)) {
-      console.log("[SSRModuleLoader] Already in progress:", filePath);
       return;
     }
 
@@ -98,19 +95,9 @@ export class SSRModuleLoader {
         this.options.adapter,
       );
 
-      console.log(
-        "[SSRModuleLoader] Processing local imports for:",
-        filePath,
-        "imports:",
-        localImports.map((i) => i.absolutePath),
-      );
-
       for (const imp of localImports) {
-        console.log("[SSRModuleLoader] Reading dependency:", imp.absolutePath);
         const depSource = await this.options.adapter.fs.readFile(imp.absolutePath);
-        console.log("[SSRModuleLoader] Got dependency source, length:", depSource.length);
         await this.transformWithDependencies(imp.absolutePath, depSource);
-        console.log("[SSRModuleLoader] Finished transforming dependency:", imp.absolutePath);
       }
 
       const transformOpts: TransformOptions = {
@@ -133,10 +120,8 @@ export class SSRModuleLoader {
       // Cache busting is handled by the ?t=<timestamp> query string on import
       const tempPath = await this.getTempPath(filePath);
       const tempDir = tempPath.substring(0, tempPath.lastIndexOf("/"));
-      console.log("[SSRModuleLoader] Writing file to cache:", { filePath, tempPath });
       await this.fs.mkdir(tempDir, { recursive: true });
       await this.fs.writeTextFile(tempPath, transformed);
-      console.log("[SSRModuleLoader] Successfully wrote file:", tempPath);
 
       // Store both the content-keyed and filePath-keyed entries
       globalModuleCache.set(contentCacheKey, tempPath);
