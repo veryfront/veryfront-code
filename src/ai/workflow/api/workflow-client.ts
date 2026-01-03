@@ -54,11 +54,50 @@ export class WorkflowClient {
     this.debug = config.debug ?? false;
     this.backend = config.backend ?? new MemoryBackend({ debug: this.debug });
 
-    // Initialize executor
+    // Initialize approval manager first (executor needs its callback)
+    // Use a deferred pattern since executor and approval manager reference each other
+    let approvalManagerRef: ApprovalManager;
+
+    // Initialize executor with onWaiting callback to create approvals
     this.executor = new WorkflowExecutor({
       backend: this.backend,
       debug: this.debug,
       ...config.executor,
+      onWaiting: async (run, nodeId) => {
+        // Get the node state to extract wait config
+        const nodeState = run.nodeStates[nodeId];
+        if (!nodeState?.input) {
+          if (this.debug) {
+            console.log(`[WorkflowClient] No wait config found for node: ${nodeId}`);
+          }
+          return;
+        }
+
+        // Reconstruct wait config from node state input
+        const input = nodeState.input as { type?: string; message?: string; payload?: unknown };
+        if (input.type !== "approval") {
+          // Not an approval wait (might be event wait)
+          return;
+        }
+
+        const waitConfig = {
+          waitType: "approval" as const,
+          message: input.message,
+          payload: input.payload,
+        };
+
+        try {
+          await approvalManagerRef.createApproval(run, nodeId, waitConfig, run.context);
+          if (this.debug) {
+            console.log(`[WorkflowClient] Created approval for node: ${nodeId}`);
+          }
+        } catch (error) {
+          console.error(`[WorkflowClient] Failed to create approval:`, error);
+        }
+
+        // Call user's onWaiting callback if provided
+        config.executor?.onWaiting?.(run, nodeId);
+      },
     });
 
     // Initialize approval manager
@@ -68,6 +107,9 @@ export class WorkflowClient {
       debug: this.debug,
       ...config.approval,
     });
+
+    // Set the reference for the onWaiting callback
+    approvalManagerRef = this.approvalManager;
   }
 
   // =========================================================================

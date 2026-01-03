@@ -381,10 +381,7 @@ describe("Workflow Integration", { sanitizeOps: false, sanitizeResources: false 
     });
   });
 
-  // NOTE: Approval flow tests are skipped due to timing issues with MemoryBackend.
-  // The savePendingApproval is not being called by the DAG executor when reaching waitForApproval nodes.
-  // This needs investigation in the workflow executor implementation.
-  describe.skip("Approval Flow", () => {
+  describe("Approval Flow", () => {
     it("should pause at waitForApproval", async () => {
       const mockTool = createMockTool("before", () => ({ before: true }));
       const afterTool = createMockTool("after", () => ({ after: true }));
