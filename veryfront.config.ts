@@ -33,7 +33,8 @@ function getApiBaseUrl(): string {
     return graphqlUrl.replace("/graphql", "/api");
   }
   // Fall back to explicit base URL or env.local value
-  return Deno.env.get("VERYFRONT_API_BASE_URL") || env.VERYFRONT_API_BASE_URL || "http://api.lvh.me:4000/api";
+  return Deno.env.get("VERYFRONT_API_BASE_URL") || env.VERYFRONT_API_BASE_URL ||
+    "http://api.lvh.me:4000/api";
 }
 
 const apiBaseUrl = getApiBaseUrl();
@@ -42,7 +43,9 @@ const projectSlug = Deno.env.get("VERYFRONT_PROJECT_SLUG") || env.VERYFRONT_PROJ
 
 // In proxy mode, token comes from x-token header per-request
 // In direct mode, require token and slug from env
-if (!proxyMode && (!apiToken || !projectSlug)) {
+// Skip check during tests or CI
+const isTestEnv = Deno.env.get("DENO_JOBS") !== undefined || Deno.env.get("CI") !== undefined;
+if (!isTestEnv && !proxyMode && (!apiToken || !projectSlug)) {
   console.error(`
 ❌ Missing required environment variables in .env.local:
 
@@ -75,7 +78,7 @@ export default {
       // In proxy mode, token from header takes precedence, but still provide
       // a fallback token from env for local dev when proxy doesn't have OAuth
       // In direct mode, use the configured values directly
-      apiToken: apiToken || undefined,  // Fallback for both modes
+      apiToken: apiToken || undefined, // Fallback for both modes
       projectSlug: proxyMode ? undefined : projectSlug,
       cache: {
         enabled: true, // WebSocket pokes invalidate cache on file changes
