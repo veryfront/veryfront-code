@@ -136,6 +136,8 @@ export interface VeryfrontConfig {
       projectSlug?: string;
       /** Enable proxy mode for multi-project handling (tokens/slugs from headers) */
       proxyMode?: boolean;
+      /** Production mode - fetch from releases instead of draft files */
+      productionMode?: boolean;
       cache?: {
         enabled?: boolean;
         ttl?: number;

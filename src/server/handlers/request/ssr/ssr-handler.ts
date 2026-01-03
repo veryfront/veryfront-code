@@ -208,25 +208,29 @@ export class SSRHandler extends BaseHandler {
       this.logDebug("renderer obtained", { mode: ctx.mode }, ctx);
 
       // Extract route parameters for both App Router and Pages Router
+      // Run both extractions in parallel for better performance
       let params: Record<string, string | string[]> | null | undefined;
       try {
         const { extractAppRouteParams, extractPagesRouteParams } = await import(
           "../../../../rendering/router-detection.ts"
         );
 
-        // Try App Router params first
-        let extractedParams: Record<string, string | string[]> | null = await timeAsync(
-          "extract-app-route-params",
-          () => extractAppRouteParams(ctx.projectDir, slug, ctx.adapter),
-        );
+        // Run both extractions in parallel - use the first non-null result
+        const [appParams, pagesParams] = await Promise.all([
+          timeAsync(
+            "extract-app-route-params",
+            () => extractAppRouteParams(ctx.projectDir, slug, ctx.adapter),
+          ),
+          typeof extractPagesRouteParams === "function"
+            ? timeAsync(
+              "extract-pages-route-params",
+              () => extractPagesRouteParams(ctx.projectDir, slug, ctx.adapter),
+            )
+            : Promise.resolve(null),
+        ]);
 
-        // If no App Router params, try Pages Router
-        if (!extractedParams && typeof extractPagesRouteParams === "function") {
-          extractedParams = await timeAsync(
-            "extract-pages-route-params",
-            () => extractPagesRouteParams(ctx.projectDir, slug, ctx.adapter),
-          );
-        }
+        // Prefer App Router params, fallback to Pages Router
+        const extractedParams = appParams || pagesParams;
 
         if (extractedParams) {
           params = extractedParams;
