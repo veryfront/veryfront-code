@@ -8,7 +8,7 @@ import { ensureDir } from "https://deno.land/std@0.220.0/fs/mod.ts";
 const SSR_STUBS_DIR = join(
   Deno.env.get("HOME") || "/tmp",
   ".cache",
-  "veryfront-ssr-stubs"
+  "veryfront-ssr-stubs",
 );
 
 // Cache of created stub files to avoid re-creating them
@@ -75,7 +75,7 @@ const CROSS_PROJECT_LATEST_PATTERN = /^([a-z0-9-]+)\/@\/(.+)$/;
  */
 export function isCrossProjectImport(specifier: string): boolean {
   return CROSS_PROJECT_VERSIONED_PATTERN.test(specifier) ||
-         CROSS_PROJECT_LATEST_PATTERN.test(specifier);
+    CROSS_PROJECT_LATEST_PATTERN.test(specifier);
 }
 
 /**
@@ -207,7 +207,7 @@ async function hashUrl(url: string): Promise<string> {
   const data = encoder.encode(url);
   const hashBuffer = await crypto.subtle.digest("SHA-256", data);
   const hashArray = Array.from(new Uint8Array(hashBuffer));
-  return hashArray.slice(0, 8).map(b => b.toString(16).padStart(2, "0")).join("");
+  return hashArray.slice(0, 8).map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
 /**
@@ -217,7 +217,10 @@ async function hashUrl(url: string): Promise<string> {
  * @param specifier - The original URL being stubbed
  * @param namedExports - Array of named exports to include in the stub
  */
-async function getOrCreateStubFile(specifier: string, namedExports: string[] = []): Promise<string> {
+async function getOrCreateStubFile(
+  specifier: string,
+  namedExports: string[] = [],
+): Promise<string> {
   // Cache key includes exports to regenerate if different exports are needed
   const sortedExports = [...namedExports].sort();
   const cacheKey = `${specifier}::${sortedExports.join(",")}`;

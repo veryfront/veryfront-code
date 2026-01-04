@@ -33,7 +33,9 @@ function warnUnversionedImport(specifier: string): void {
   const packageName = specifier.split("/")[0];
   const isScoped = specifier.startsWith("@");
   const scopedPackage = isScoped ? specifier.split("/").slice(0, 2).join("/") : packageName;
-  const subpath = isScoped ? specifier.split("/").slice(2).join("/") : specifier.split("/").slice(1).join("/");
+  const subpath = isScoped
+    ? specifier.split("/").slice(2).join("/")
+    : specifier.split("/").slice(1).join("/");
   const versionedSpecifier = subpath
     ? `${scopedPackage}@${suggestedVersion}/${subpath}`
     : `${scopedPackage}@${suggestedVersion}`;
@@ -41,7 +43,8 @@ function warnUnversionedImport(specifier: string): void {
   logger.warn("[ESM] Unversioned import may cause reproducibility issues", {
     import: specifier,
     suggestion: `Pin version: import '${versionedSpecifier}'`,
-    help: "Run 'npm info " + (isScoped ? scopedPackage : packageName!) + " version' to find current version",
+    help: "Run 'npm info " + (isScoped ? scopedPackage : packageName!) +
+      " version' to find current version",
   });
 }
 
