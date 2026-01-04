@@ -10,7 +10,11 @@ import type * as React from "react";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import { transformToESM } from "@veryfront/transforms/esm/transform-core.ts";
 import type { TransformOptions } from "@veryfront/transforms/esm/types.ts";
-import { type MissingImport, parseLocalImports } from "@veryfront/transforms/esm/import-parser.ts";
+import {
+  type CrossProjectImport,
+  type MissingImport,
+  parseLocalImports,
+} from "@veryfront/transforms/esm/import-parser.ts";
 import { createFileSystem } from "../../platform/compat/fs.ts";
 import { createError, toError } from "../../core/errors/veryfront-error.ts";
 import { rendererLogger as logger } from "@veryfront/utils";
@@ -27,6 +31,7 @@ export interface SSRModuleLoaderOptions {
   projectId: string;
   adapter: RuntimeAdapter;
   dev: boolean;
+  apiBaseUrl?: string; // Base URL for cross-project imports (e.g., http://api.lvh.me:4000/api)
 }
 
 // Cache limits to prevent unbounded memory growth
@@ -49,6 +54,14 @@ const globalModuleCache = new LRUCache<string, ModuleCacheEntry>({
   ttlMs: SSR_MODULE_CACHE_TTL_MS,
   cleanupIntervalMs: 60000,
 }); // projectId:absolutePath -> { tempPath, contentHash }
+
+// Cache for cross-project imports (shared across requests)
+// Key format: projectSlug@version/@/path -> tempPath
+const globalCrossProjectCache = new LRUCache<string, ModuleCacheEntry>({
+  maxEntries: SSR_MODULE_CACHE_MAX_ENTRIES,
+  ttlMs: SSR_MODULE_CACHE_TTL_MS,
+  cleanupIntervalMs: 60000,
+});
 
 // Map of in-progress transforms to their completion promises
 // This allows concurrent requests for the same file to wait for the first transform
@@ -381,6 +394,126 @@ export class SSRModuleLoader {
     return `${this.options.projectId}:${filePath}`;
   }
 
+  /**
+   * Get the registry base URL for cross-project imports.
+   * Removes /api suffix if present since registry is mounted at root.
+   */
+  private getRegistryBaseUrl(): string {
+    const apiBaseUrl = this.options.apiBaseUrl ||
+      Deno.env.get("VERYFRONT_API_BASE_URL") ||
+      Deno.env.get("VERYFRONT_API_URL")?.replace("/graphql", "/api") ||
+      "http://api.lvh.me:4000/api";
+    // Remove trailing /api or /api/ if present
+    return apiBaseUrl.replace(/\/api\/?$/, "");
+  }
+
+  /**
+   * Fetch and transform a cross-project import.
+   * Returns the temp file path where the transformed module was written.
+   */
+  private async transformCrossProjectImport(
+    crossProjectImport: CrossProjectImport,
+  ): Promise<string> {
+    const { specifier, projectSlug, version, path } = crossProjectImport;
+    const cacheKey = specifier;
+
+    // Check cache first
+    const cachedEntry = globalCrossProjectCache.get(cacheKey);
+    if (cachedEntry) {
+      return cachedEntry.tempPath;
+    }
+
+    // Fetch from registry API
+    const registryBaseUrl = this.getRegistryBaseUrl();
+    const projectRef = `${projectSlug}@${version}`;
+    const registryUrl = `${registryBaseUrl}/${projectRef}/@/${path}`;
+
+    logger.info("[SSR-MODULE-LOADER] Fetching cross-project import", {
+      specifier,
+      registryUrl,
+    });
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 30000);
+
+    try {
+      const response = await fetch(registryUrl, {
+        signal: controller.signal,
+        headers: {
+          "Accept": "text/plain, application/javascript, */*",
+        },
+      });
+      clearTimeout(timeout);
+
+      if (!response.ok) {
+        throw new Error(`Failed to fetch ${registryUrl}: ${response.status} ${response.statusText}`);
+      }
+
+      const sourceCode = await response.text();
+      const contentHash = this.hashCode(sourceCode);
+
+      // Determine file extension for temp path
+      let ext = ".tsx";
+      if (path.endsWith(".ts")) ext = ".ts";
+      else if (path.endsWith(".jsx")) ext = ".jsx";
+      else if (path.endsWith(".js")) ext = ".js";
+      else if (path.endsWith(".mdx")) ext = ".mdx";
+
+      // Create a synthetic file path for the cross-project module
+      const syntheticFilePath = `cross-project/${projectRef}/@/${path}`;
+      const tempPath = await this.getTempPath(syntheticFilePath);
+      const tempDir = tempPath.substring(0, tempPath.lastIndexOf("/"));
+      await this.fs.mkdir(tempDir, { recursive: true });
+
+      // Transform the source code
+      await transformSemaphore.acquire();
+      try {
+        const transformOpts: TransformOptions = {
+          projectId: this.options.projectId,
+          dev: this.options.dev,
+          ssr: true,
+          apiBaseUrl: this.options.apiBaseUrl,
+        };
+
+        // Use the synthetic path with correct extension for esbuild loader detection
+        const filePathWithExt = syntheticFilePath.endsWith(ext)
+          ? syntheticFilePath
+          : syntheticFilePath + ext;
+
+        const transformed = await transformToESM(
+          sourceCode,
+          filePathWithExt,
+          this.options.projectDir,
+          this.options.adapter,
+          transformOpts,
+        );
+
+        await this.fs.writeTextFile(tempPath, transformed);
+
+        // Cache the result
+        const entry: ModuleCacheEntry = { tempPath, contentHash };
+        globalCrossProjectCache.set(cacheKey, entry);
+
+        logger.info("[SSR-MODULE-LOADER] Cross-project import transformed", {
+          specifier,
+          tempPath,
+        });
+
+        return tempPath;
+      } finally {
+        transformSemaphore.release();
+      }
+    } catch (error) {
+      clearTimeout(timeout);
+      logger.error("[SSR-MODULE-LOADER] Failed to fetch cross-project import", {
+        specifier,
+        registryUrl,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
+    }
+  }
+
   private async transformWithDependencies(
     filePath: string,
     source?: string,
@@ -453,8 +586,13 @@ export class SSRModuleLoader {
       // Transform all resolved dependencies in parallel BEFORE acquiring semaphore
       // This prevents deadlock: if we held the semaphore while waiting for children,
       // and children need the semaphore, we'd deadlock on deep dependency trees
-      await Promise.all(
-        parseResult.imports.map(async (imp) => {
+
+      // Build a mapping of cross-project imports to their temp file paths
+      const crossProjectPaths = new Map<string, string>();
+
+      await Promise.all([
+        // Transform local imports
+        ...parseResult.imports.map(async (imp) => {
           try {
             const depSource = await this.options.adapter.fs.readFile(imp.absolutePath);
             await this.transformWithDependencies(imp.absolutePath, depSource);
@@ -469,7 +607,23 @@ export class SSRModuleLoader {
             });
           }
         }),
-      );
+        // Transform cross-project imports
+        ...parseResult.crossProjectImports.map(async (crossImport) => {
+          try {
+            const tempPath = await this.transformCrossProjectImport(crossImport);
+            crossProjectPaths.set(crossImport.specifier, tempPath);
+          } catch (error) {
+            // Track failed cross-project imports
+            this.missingDependencies.push({
+              specifier: crossImport.specifier,
+              fromFile: filePath,
+              reason: `Failed to fetch cross-project import: ${
+                error instanceof Error ? error.message : String(error)
+              }`,
+            });
+          }
+        }),
+      ]);
 
       // NOW acquire semaphore for the CPU-intensive transform
       // This limits concurrent ESM transforms to prevent OOM
@@ -480,15 +634,34 @@ export class SSRModuleLoader {
           projectId: this.options.projectId,
           dev: this.options.dev,
           ssr: true,
+          apiBaseUrl: this.options.apiBaseUrl,
         };
 
-        const transformed = await transformToESM(
+        let transformed = await transformToESM(
           code,
           filePath,
           this.options.projectDir,
           this.options.adapter,
           transformOpts,
         );
+
+        // Post-process: Rewrite cross-project imports to file:// paths
+        // The transformed code still has cross-project import specifiers that need
+        // to be rewritten to the temp file paths we pre-fetched
+        for (const [specifier, tempPath] of crossProjectPaths.entries()) {
+          // Match import patterns like: from "demo@0.0/@/app.tsx" or from 'demo@0.0/@/app.tsx'
+          // Also handle .js extension that may have been added during transform
+          const jsSpecifier = specifier.replace(/\.(tsx?|jsx|mdx)$/, ".js");
+          const escapedSpecifier = specifier.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+          const escapedJsSpecifier = jsSpecifier.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+          // Replace both original and .js variants
+          const pattern = new RegExp(
+            `from\\s+["'](${escapedSpecifier}|${escapedJsSpecifier})["']`,
+            "g",
+          );
+          transformed = transformed.replace(pattern, `from "file://${tempPath}"`);
+        }
 
         // Write to temp path without content hash in filename
         // The imports are resolved to plain .js paths (e.g., ../components/Welcome.js)

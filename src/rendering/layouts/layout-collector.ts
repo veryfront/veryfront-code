@@ -234,7 +234,9 @@ export class LayoutCollector {
     });
 
     if (projectData?.layout && isValidLayoutPath(projectData.layout)) {
-      const layoutPath = join(this.projectDir, "components", projectData.layout);
+      // Layout paths from API project data are stored as relative paths (e.g., "layouts/DefaultLayout.mdx")
+      // Don't prepend "components/" - use the path as-is from the API
+      const layoutPath = join(this.projectDir, projectData.layout);
       const layoutExists = await (wrappedAdapter as { exists: (path: string) => Promise<boolean> })
         .exists(layoutPath);
 

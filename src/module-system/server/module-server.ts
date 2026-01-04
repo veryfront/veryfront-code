@@ -19,6 +19,17 @@ import { parseProjectDomain } from "../../server/utils/domain-parser.ts";
 
 const DEV_MODULE_PREFIX = /^\/(?:_vf_modules|_veryfront\/modules)\//;
 const SNIPPET_MODULE_PREFIX = /^\/_vf_modules\/_snippets\/([a-f0-9]+)\.js/;
+/**
+ * Cross-project import route patterns.
+ * Versioned: /_vf_modules/_cross/<projectSlug>@<version>/@/<filePath>
+ * Versionless: /_vf_modules/_cross/<projectSlug>/@/<filePath> (defaults to "latest")
+ *
+ * Examples:
+ *   - /_vf_modules/_cross/demo@0.0/@/app.tsx
+ *   - /_vf_modules/_cross/demo/@/app.tsx (latest)
+ */
+const CROSS_PROJECT_VERSIONED_PREFIX = /^\/_vf_modules\/_cross\/([a-z0-9-]+)@([\d^~x][\d.x^~-]*)\/\@\/(.+)$/;
+const CROSS_PROJECT_LATEST_PREFIX = /^\/_vf_modules\/_cross\/([a-z0-9-]+)\/\@\/(.+)$/;
 
 export interface ModuleServerOptions {
   /** Project identifier (directory path, legacy naming) */
@@ -265,6 +276,78 @@ export async function serveModule(
     }
   }
 
+  // Handle cross-project module requests
+  // Versioned: /_vf_modules/_cross/<projectSlug>@<version>/@/<path>
+  // Versionless: /_vf_modules/_cross/<projectSlug>/@/<path> (defaults to "latest")
+  const versionedMatch = url.pathname.match(CROSS_PROJECT_VERSIONED_PREFIX);
+  const latestMatch = url.pathname.match(CROSS_PROJECT_LATEST_PREFIX);
+  const crossProjectMatch = versionedMatch || latestMatch;
+
+  if (crossProjectMatch) {
+    let crossProjectSlug: string;
+    let crossVersion: string;
+    let crossPath: string;
+
+    if (versionedMatch) {
+      [, crossProjectSlug, crossVersion, crossPath] = versionedMatch;
+    } else {
+      [, crossProjectSlug, crossPath] = latestMatch!;
+      crossVersion = "latest";
+    }
+
+    if (!crossProjectSlug || !crossPath) {
+      return createModuleResponse(method, "Invalid cross-project import path", HTTP_NOT_FOUND, {
+        "Content-Type": "text/plain; charset=utf-8",
+        "Cache-Control": "no-cache",
+      });
+    }
+
+    // Build projectRef - omit version for versionless (API resolves to latest release)
+    const projectRef = crossVersion === "latest" ? crossProjectSlug : `${crossProjectSlug}@${crossVersion}`;
+    logger.debug("[ModuleServer] Cross-project import", { projectRef, path: crossPath, isLatest: crossVersion === "latest" });
+
+    try {
+      // Fetch source from registry API
+      const source = await fetchCrossProjectSource(projectRef, crossPath);
+      if (!source) {
+        return createModuleResponse(method, `Cross-project module not found: ${projectRef}/@/${crossPath}`, HTTP_NOT_FOUND, {
+          "Content-Type": "text/plain; charset=utf-8",
+          "Cache-Control": "no-cache",
+        });
+      }
+
+      // Detect SSR mode
+      const userAgent = req.headers.get("user-agent") || "";
+      const isSSR = url.searchParams.get("ssr") === "true" || userAgent.startsWith("Deno/");
+
+      // Transform using same pipeline as internal modules
+      let code = await transformToESM(source, crossPath, projectDir, adapter, {
+        projectId: projectDir,
+        dev,
+        ssr: isSSR,
+        moduleServerUrl: `http://${url.host}`,
+      });
+
+      // SSR: Apply cross-project specific rewrites for @/ paths
+      // @/ in cross-project code should resolve to the external project, not current
+      if (isSSR && code) {
+        const cacheBuster = Date.now();
+        code = applySSRImportRewrites(code, { projectRef, cacheBuster });
+      }
+
+      return createModuleResponse(method, code, HTTP_OK, {
+        "Content-Type": "application/javascript; charset=utf-8",
+        "Cache-Control": "no-cache",
+      });
+    } catch (error) {
+      logger.error("[ModuleServer] Cross-project error", { projectRef, error: String(error) });
+      return createModuleResponse(method, `// Error: ${String(error)}`, HTTP_SERVER_ERROR, {
+        "Content-Type": "application/javascript; charset=utf-8",
+        "Cache-Control": "no-cache",
+      });
+    }
+  }
+
   // Extract file path from URL
   // /_vf_modules/components/app.js → components/app
   let modulePath = url.pathname.replace(DEV_MODULE_PREFIX, "");
@@ -337,12 +420,12 @@ export async function serveModule(
     // Find source file (try .tsx, .ts, .jsx, .js, .mdx)
     const findStart = performance.now();
 
-    const sourceFile = await runWithOptionalContext(() =>
+    const findResult = await runWithOptionalContext(() =>
       findSourceFile(secureFs, projectDir, filePathWithoutExt)
     );
     timings.findFile = performance.now() - findStart;
 
-    if (!sourceFile) {
+    if (!findResult) {
       logger.warn("Module not found", { modulePath, filePathWithoutExt, projectSlug, projectDir });
       return new Response("Module not found", {
         status: HTTP_NOT_FOUND,
@@ -350,15 +433,14 @@ export async function serveModule(
       });
     }
 
+    const { path: sourceFile, isFrameworkFile } = findResult;
+
     // Read source content
     let code: string | undefined;
 
     if (!isHeadRequest) {
       // For framework lib files, read directly from filesystem instead of through adapter
-      // Only files specifically under FRAMEWORK_ROOT/lib/ are framework files
-      const frameworkLibDir = join(FRAMEWORK_ROOT, "lib");
-      const isFrameworkFile = sourceFile.startsWith(frameworkLibDir + "/") ||
-        sourceFile.startsWith(frameworkLibDir + "\\");
+      // isFrameworkFile flag is set by findSourceFile when file is from framework lib
       const readStart = performance.now();
       let source = isFrameworkFile
         ? await Deno.readTextFile(sourceFile)
@@ -544,18 +626,23 @@ const FRAMEWORK_ROOT = new URL("../../..", import.meta.url).pathname;
  *
  * Tries in order: .tsx, .ts, .jsx, .js, .mdx
  * Also tries common directories (app/, pages/, lib/) if file not found at root
- * For lib/* imports, also checks framework lib directory
+ * For lib/* imports, also checks framework lib directory as fallback
  *
  * @param secureFs - Secure filesystem wrapper
  * @param projectDir - Project root directory
  * @param basePath - Base path without extension
- * @returns Full path to source file or null if not found
+ * @returns Object with path and isFrameworkFile flag, or null if not found
  */
+interface FindSourceFileResult {
+  path: string;
+  isFrameworkFile: boolean;
+}
+
 async function findSourceFile(
   secureFs: ReturnType<typeof createSecureFs>,
   projectDir: string,
   basePath: string,
-): Promise<string | null> {
+): Promise<FindSourceFileResult | null> {
   const extensions = [".tsx", ".ts", ".jsx", ".js", ".mdx", ".md"];
 
   // Check if basePath already has a known extension (e.g., DocsLayout.mdx from DocsLayout.mdx.js)
@@ -571,7 +658,7 @@ async function findSourceFile(
           basePath,
           resolvedPath: fullPath,
         });
-        return fullPath;
+        return { path: fullPath, isFrameworkFile: false };
       }
     } catch {
       // Continue trying other methods
@@ -583,41 +670,56 @@ async function findSourceFile(
     ? basePath.replace(/\.(tsx|ts|jsx|js|mdx|md)$/, "")
     : basePath;
 
-  // For lib/* imports, first check the framework lib directory
-  // This allows framework-provided modules like lib/Router, lib/Head, lib/usePageContext
-  if (basePathWithoutExt.startsWith("lib/")) {
-    for (const ext of extensions) {
-      const frameworkPath = join(FRAMEWORK_ROOT, basePathWithoutExt + ext);
-      try {
-        const stat = await Deno.stat(frameworkPath);
-        if (stat.isFile) {
-          serverLogger.debug("[ModuleServer] Found framework lib file", {
-            basePath: basePathWithoutExt,
-            resolvedPath: frameworkPath,
-          });
-          return frameworkPath;
-        }
-      } catch {
-        // Continue trying other paths
-      }
-    }
-  }
-
-  // Try the basePath with different extensions
+  // Try the basePath with different extensions (PROJECT FILES FIRST)
+  // This ensures user code takes precedence over framework lib files
+  const triedPaths: string[] = [];
   for (const ext of extensions) {
     const fullPath = join(projectDir, basePathWithoutExt + ext);
+    triedPaths.push(basePathWithoutExt + ext);
 
     try {
       // Use secure filesystem wrapper (automatic path validation)
       const stat = await secureFs.stat(fullPath);
       if (stat.isFile) {
-        return fullPath;
+        serverLogger.info("[ModuleServer] Found file with extension", {
+          basePath,
+          resolvedPath: fullPath,
+          triedPaths,
+        });
+        return { path: fullPath, isFrameworkFile: false };
       }
     } catch (error) {
-      serverLogger.debug("[ModuleServer] File not found, trying next extension", {
-        fullPath,
-        error,
-      });
+      // Continue trying next extension
+    }
+  }
+  serverLogger.info("[ModuleServer] Extension resolution failed", {
+    basePath,
+    basePathWithoutExt,
+    triedPaths,
+  });
+
+  // For paths starting with common directory prefixes (components/, pages/, etc.),
+  // also try without the prefix since API files may be stored at root level
+  const prefixesToStrip = ["components/", "pages/", "lib/", "app/", "src/"];
+  for (const prefix of prefixesToStrip) {
+    if (basePathWithoutExt.startsWith(prefix)) {
+      const strippedPath = basePathWithoutExt.slice(prefix.length);
+      for (const ext of extensions) {
+        const fullPath = join(projectDir, strippedPath + ext);
+        try {
+          const stat = await secureFs.stat(fullPath);
+          if (stat.isFile) {
+            serverLogger.debug("[ModuleServer] Found file after stripping prefix", {
+              originalPath: basePathWithoutExt,
+              strippedPath,
+              resolvedPath: fullPath,
+            });
+            return { path: fullPath, isFrameworkFile: false };
+          }
+        } catch {
+          // Continue trying
+        }
+      }
     }
   }
 
@@ -632,7 +734,7 @@ async function findSourceFile(
           basePath: basePathWithoutExt,
           resolvedPath: fullPath,
         });
-        return fullPath;
+        return { path: fullPath, isFrameworkFile: false };
       }
     } catch {
       // Continue trying other extensions
@@ -654,7 +756,27 @@ async function findSourceFile(
             basePath,
             resolvedPath: fullPath,
           });
-          return fullPath;
+          return { path: fullPath, isFrameworkFile: false };
+        }
+      } catch {
+        // Continue trying other paths
+      }
+    }
+  }
+
+  // FALLBACK: For lib/* imports not found in project, check framework lib directory
+  // This provides framework utilities like lib/Router, lib/Head, lib/usePageContext
+  if (basePathWithoutExt.startsWith("lib/")) {
+    for (const ext of extensions) {
+      const frameworkPath = join(FRAMEWORK_ROOT, basePathWithoutExt + ext);
+      try {
+        const stat = await Deno.stat(frameworkPath);
+        if (stat.isFile) {
+          serverLogger.debug("[ModuleServer] Found framework lib file (fallback)", {
+            basePath: basePathWithoutExt,
+            resolvedPath: frameworkPath,
+          });
+          return { path: frameworkPath, isFrameworkFile: true };
         }
       } catch {
         // Continue trying other paths
@@ -730,4 +852,40 @@ function createModuleResponse(
   }
 
   return new Response(body, { status, headers });
+}
+
+/**
+ * Fetch source code from registry API for cross-project imports.
+ * Returns null if not found.
+ */
+async function fetchCrossProjectSource(projectRef: string, filePath: string): Promise<string | null> {
+  const apiBaseUrl = Deno.env.get("VERYFRONT_API_BASE_URL") ||
+    Deno.env.get("VERYFRONT_API_URL")?.replace("/graphql", "/api") ||
+    "http://api.lvh.me:4000/api";
+  const registryBaseUrl = apiBaseUrl.replace(/\/api\/?$/, "");
+  const registryUrl = `${registryBaseUrl}/${projectRef}/@/${filePath}`;
+
+  const response = await fetch(registryUrl);
+  if (!response.ok) {
+    logger.warn("[ModuleServer] Cross-project fetch failed", { registryUrl, status: response.status });
+    return null;
+  }
+  return response.text();
+}
+
+/**
+ * Apply SSR-specific import rewrites for cross-project modules.
+ * Handles @/ path aliases to resolve within the external project.
+ */
+function applySSRImportRewrites(code: string, opts: { projectRef: string; cacheBuster: number }): string {
+  const { projectRef, cacheBuster } = opts;
+
+  // @/ paths in cross-project code resolve to the external project
+  return code.replace(
+    /from\s+["']@\/([^"']+)["']/g,
+    (_match, path) => {
+      const jsPath = path.endsWith(".js") ? path : `${path}.js`;
+      return `from "/_vf_modules/_cross/${projectRef}/@/${jsPath}?ssr=true&v=${cacheBuster}"`;
+    },
+  );
 }

@@ -61,11 +61,7 @@ export class PageResolver {
       this.adapter,
     );
 
-    logger.debug("[PageResolver] Router mode", {
-      useAppRouter,
-      projectDir: this.projectDir,
-      slug,
-    });
+    logger.debug("[PageResolver] Router mode", { useAppRouter, slug });
 
     const appDirName = this.config?.directories?.app || "app";
 
@@ -77,9 +73,7 @@ export class PageResolver {
     // Fallback to Pages Router if App Router didn't find the page
     // This allows mixed routing modes during migration
     if (!pageInfo && useAppRouter) {
-      logger.debug("App Router resolution failed, falling back to Pages Router", {
-        slug,
-      });
+      logger.debug("App Router resolution failed, falling back to Pages Router", { slug });
       pageInfo = await getEntityBySlug(this.projectDir, slug, this.adapter);
     }
 

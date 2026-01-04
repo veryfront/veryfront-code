@@ -7,7 +7,7 @@ import {
   transformImportsWithMap,
 } from "@veryfront/modules/import-map/index.ts";
 import type { MDXFrontmatter, MDXModule } from "./types.ts";
-import { join } from "https://deno.land/std@0.220.0/path/mod.ts";
+import { join, posix } from "https://deno.land/std@0.220.0/path/mod.ts";
 import { isDeno, isNode } from "../../../platform/compat/runtime.ts";
 import { cwd } from "../../../platform/compat/process.ts";
 import { transformToESM } from "../esm-transform.ts";
@@ -777,15 +777,9 @@ export async function loadModuleESM(
       if (parentModulePath && (modulePath.startsWith("./") || modulePath.startsWith("../"))) {
         // Get the directory of the parent module
         const parentDir = parentModulePath.replace(/\/[^/]+$/, "");
-        // Resolve the relative path
-        if (modulePath.startsWith("./")) {
-          normalizedPath = `${parentDir}/${modulePath.slice(2)}`;
-        } else if (modulePath.startsWith("../")) {
-          // Handle ../ by going up one directory level
-          const parentParts = parentDir.split("/");
-          parentParts.pop();
-          normalizedPath = `${parentParts.join("/")}/${modulePath.slice(3)}`;
-        }
+        // Use posix.join and posix.normalize to properly resolve all ../ segments
+        const joinedPath = posix.join(parentDir, modulePath);
+        normalizedPath = posix.normalize(joinedPath);
         // Ensure it has _vf_modules prefix
         if (!normalizedPath.startsWith("_vf_modules/")) {
           normalizedPath = `_vf_modules/${normalizedPath}`;
@@ -838,6 +832,8 @@ export async function loadModuleESM(
           const extensions = [".tsx", ".ts", ".jsx", ".js", ".mdx"];
           // Also try common directory prefixes
           const prefixes = ["", "src/"];
+          // Directory prefixes to try stripping (API may store files without these prefixes)
+          const prefixesToStrip = ["components/", "pages/", "lib/", "app/"];
           let sourceCode: string | null = null;
           let actualFilePath: string | null = null;
 
@@ -868,18 +864,63 @@ export async function loadModuleESM(
               ? filePathWithoutJs.replace(/\.(tsx|ts|jsx|js|mdx)$/, "")
               : filePathWithoutJs;
 
+            const triedPaths: string[] = [];
             outer: for (const prefix of prefixes) {
               for (const ext of extensions) {
                 const tryPath = prefix + filePathWithoutExt + ext;
+                triedPaths.push(tryPath);
                 try {
                   const content = await adapter.fs.readFile(tryPath);
                   sourceCode = typeof content === "string"
                     ? content
                     : new TextDecoder().decode(content as Uint8Array);
                   actualFilePath = tryPath;
+                  logger.debug(`${LOG_PREFIX_MDX_LOADER} Found file with extension`, {
+                    normalizedPath,
+                    tryPath,
+                  });
                   break outer;
                 } catch {
                   // Try next extension
+                }
+              }
+            }
+            if (!sourceCode) {
+              logger.debug(`${LOG_PREFIX_MDX_LOADER} Extension resolution failed`, {
+                normalizedPath,
+                filePathWithoutExt,
+                triedPaths,
+              });
+            }
+          }
+
+          // If still not found, try stripping common directory prefixes
+          // This handles cases where API stores files at root level (e.g., "VideoPlayer.tsx")
+          // but code imports them as "components/VideoPlayer"
+          if (!sourceCode) {
+            const filePathWithoutExt = hasKnownExt
+              ? filePathWithoutJs.replace(/\.(tsx|ts|jsx|js|mdx)$/, "")
+              : filePathWithoutJs;
+
+            stripLoop: for (const stripPrefix of prefixesToStrip) {
+              if (filePathWithoutExt.startsWith(stripPrefix)) {
+                const strippedPath = filePathWithoutExt.slice(stripPrefix.length);
+                for (const ext of extensions) {
+                  const tryPath = strippedPath + ext;
+                  try {
+                    const content = await adapter.fs.readFile(tryPath);
+                    sourceCode = typeof content === "string"
+                      ? content
+                      : new TextDecoder().decode(content as Uint8Array);
+                    actualFilePath = tryPath;
+                    logger.debug(`${LOG_PREFIX_MDX_LOADER} Found file after stripping prefix`, {
+                      originalPath: filePathWithoutJs,
+                      strippedPath: tryPath,
+                    });
+                    break stripLoop;
+                  } catch {
+                    // Try next extension
+                  }
                 }
               }
             }
@@ -915,9 +956,11 @@ export async function loadModuleESM(
             logger.debug(
               `${LOG_PREFIX_MDX_LOADER} Direct read failed, falling back to HTTP: ${filePathWithoutJs}`,
             );
-            const port =
+            // Try multiple port sources: VERYFRONT_DEV_PORT (set by dev server), PORT env, then default
+            const envGet = (key: string) =>
               (globalThis as { Deno?: { env: { get(key: string): string | undefined } } })
-                .Deno?.env?.get("PORT") || "3001";
+                .Deno?.env?.get(key);
+            const port = envGet("VERYFRONT_DEV_PORT") || envGet("PORT") || "3001";
             const moduleUrl = `http://localhost:${port}/${normalizedPath}?ssr=true`;
             const response = await fetch(moduleUrl);
             if (!response.ok) {
@@ -1055,12 +1098,38 @@ export async function loadModuleESM(
           const nestedResults = await Promise.all(
             nestedImports.map(async ({ original, path: nestedPath }) => {
               const nestedFilePath = await fetchAndCacheModule(nestedPath, normalizedPath);
-              return { original, nestedFilePath };
+              return { original, nestedFilePath, nestedPath };
             }),
           );
-          for (const { original, nestedFilePath } of nestedResults) {
+          for (const { original, nestedFilePath, nestedPath } of nestedResults) {
             if (nestedFilePath) {
               moduleCode = moduleCode.replace(original, `from "file://${nestedFilePath}"`);
+            } else {
+              // Create stub module for missing files
+              const stubCode = `
+// Stub module for missing file: ${nestedPath}
+// This file was not found in the project's published release.
+const handler = {
+  get(_, prop) {
+    if (prop === 'default' || prop === '__esModule' || typeof prop === 'symbol') {
+      return new Proxy({}, handler);
+    }
+    console.warn('[Veryfront] Missing module: ${nestedPath}. Component "' + prop + '" was not found.');
+    return () => null;
+  },
+  apply() { return null; }
+};
+export default new Proxy(function(){}, handler);
+`;
+              const stubHash = hashString(`stub:${nestedPath}`);
+              const stubPath = join(context.esmCacheDir!, `stub-${stubHash}.mjs`);
+              try {
+                await adapter.fs.writeFile(stubPath, stubCode);
+                moduleCode = moduleCode.replace(original, `from "file://${stubPath}"`);
+                logger.warn(`${LOG_PREFIX_MDX_LOADER} Created stub for missing module: ${nestedPath}`);
+              } catch (e) {
+                logger.error(`${LOG_PREFIX_MDX_LOADER} Failed to create stub for: ${nestedPath}`, e);
+              }
             }
           }
 
@@ -1068,12 +1137,38 @@ export async function loadModuleESM(
           const relativeResults = await Promise.all(
             relativeImports.map(async ({ original, path: relativePath }) => {
               const nestedFilePath = await fetchAndCacheModule(relativePath, normalizedPath);
-              return { original, nestedFilePath };
+              return { original, nestedFilePath, relativePath };
             }),
           );
-          for (const { original, nestedFilePath } of relativeResults) {
+          for (const { original, nestedFilePath, relativePath } of relativeResults) {
             if (nestedFilePath) {
               moduleCode = moduleCode.replace(original, `from "file://${nestedFilePath}"`);
+            } else {
+              // Create stub module for missing files to prevent import errors
+              const stubCode = `
+// Stub module for missing file: ${relativePath}
+// This file was not found in the project's published release.
+const handler = {
+  get(_, prop) {
+    if (prop === 'default' || prop === '__esModule' || typeof prop === 'symbol') {
+      return new Proxy({}, handler);
+    }
+    console.warn('[Veryfront] Missing module: ${relativePath}. Component "' + prop + '" was not found.');
+    return () => null;
+  },
+  apply() { return null; }
+};
+export default new Proxy(function(){}, handler);
+`;
+              const stubHash = hashString(`stub:${relativePath}`);
+              const stubPath = join(context.esmCacheDir!, `stub-${stubHash}.mjs`);
+              try {
+                await adapter.fs.writeFile(stubPath, stubCode);
+                moduleCode = moduleCode.replace(original, `from "file://${stubPath}"`);
+                logger.warn(`${LOG_PREFIX_MDX_LOADER} Created stub for missing module: ${relativePath}`);
+              } catch (e) {
+                logger.error(`${LOG_PREFIX_MDX_LOADER} Failed to create stub for: ${relativePath}`, e);
+              }
             }
           }
 

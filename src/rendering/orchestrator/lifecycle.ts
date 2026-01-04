@@ -194,9 +194,12 @@ export class RendererLifecycle {
       compilerService,
     };
 
-    // Skip eager component loading in compiled binaries to avoid @mdx-js/mdx Worker issues
+    // Skip eager component loading in:
+    // 1. Compiled binaries - to avoid @mdx-js/mdx Worker issues
+    // 2. veryfront-api mode - local components don't exist, they come from the API
     // Components will be loaded lazily on-demand instead
-    if (!isCompiledBinary()) {
+    const isVeryFrontAPI = config.fs?.type === "veryfront-api";
+    if (!isCompiledBinary() && !isVeryFrontAPI) {
       logger.info("Loading components eagerly for MDX import mapping");
 
       const componentDirs = config.directories?.components || ["components"];
@@ -209,7 +212,8 @@ export class RendererLifecycle {
       }
     } else {
       logger.info(
-        "Skipping eager component loading in compiled binary (will load lazily on-demand)",
+        "Skipping eager component loading (will load lazily on-demand)",
+        { isCompiledBinary: isCompiledBinary(), isVeryFrontAPI },
       );
     }
 

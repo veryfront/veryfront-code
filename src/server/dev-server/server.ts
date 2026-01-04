@@ -84,6 +84,10 @@ export class DevServer {
       fastRefresh: this.options.enableFastRefresh,
     });
 
+    // Set VERYFRONT_DEV_PORT for ESM module loader HTTP fallback
+    // This ensures the correct port is used when fetching modules via localhost
+    Deno.env.set("VERYFRONT_DEV_PORT", String(this.options.port));
+
     await this.logRSCStatus();
 
     // Module serving is now handled by the main server at /_vf_modules/

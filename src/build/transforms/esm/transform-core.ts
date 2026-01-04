@@ -4,6 +4,7 @@ import { computeContentHash, getLoaderFromPath } from "./transform-utils.ts";
 import { addDepsToEsmShUrls, resolveReactImports } from "./react-imports.ts";
 import {
   blockExternalUrlImports,
+  resolveCrossProjectImports,
   resolvePathAliases,
   resolveRelativeImports,
   resolveRelativeImportsForSSR,
@@ -87,10 +88,23 @@ export async function transformToESM(
   code = await addDepsToEsmShUrls(code, ssr);
   code = await resolvePathAliases(code, filePath, projectDir, ssr);
 
+  // Resolve cross-project versioned imports (e.g., demo@0.0.1/@/components/Button)
+  // Must be done before other import rewrites since it transforms to absolute URLs
+  // Try to get API base URL from options, env var, or default
+  const apiBaseUrl = options.apiBaseUrl ||
+    Deno.env.get("VERYFRONT_API_BASE_URL") ||
+    Deno.env.get("VERYFRONT_API_URL")?.replace("/graphql", "/api") ||
+    "http://api.lvh.me:4000/api";
+
+  code = await resolveCrossProjectImports(code, {
+    apiBaseUrl,
+    ssr,
+  });
+
   // Different import resolution strategies for SSR vs browser
   if (ssr) {
-    // SSR: Block external URL imports (https://) that can't be loaded via file://
-    // This prevents user code with CDN imports from crashing the renderer
+    // SSR: Block external URL imports (https://) from unknown hosts
+    // Allowed CDN hosts (esm.sh, deno.land) are kept as-is
     const urlBlockResult = await blockExternalUrlImports(code, filePath);
     code = urlBlockResult.code;
     if (urlBlockResult.blockedUrls.length > 0) {
@@ -99,6 +113,7 @@ export async function transformToESM(
         blockedUrls: urlBlockResult.blockedUrls,
       });
     }
+
     // SSR: Keep relative imports but normalize extensions to .js
     // SSRModuleLoader ensures all dependencies are transformed to temp directory
     code = await resolveRelativeImportsForSSR(code);

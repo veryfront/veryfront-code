@@ -1,4 +1,6 @@
 import { parseImports, replaceSpecifiers } from "./lexer.ts";
+import { DEFAULT_ALLOWED_CDN_HOSTS } from "@veryfront/utils/constants/cdn.ts";
+import { rendererLogger as logger } from "@veryfront/utils";
 
 export interface BlockExternalUrlResult {
   code: string;
@@ -6,8 +8,156 @@ export interface BlockExternalUrlResult {
 }
 
 /**
- * Block external URL imports (https://, http://) in SSR mode.
- * These can't be loaded when the transformed module is imported via file:// protocol.
+ * Pattern to match cross-project imports (with or without version).
+ *
+ * Supported formats:
+ *   - projectSlug@version/@/path (versioned)
+ *   - projectSlug/@/path (versionless, defaults to "latest")
+ *
+ * Examples:
+ *   - demo@0.0.1/@/components/Button
+ *   - shadcn-ui@1.2.3/@/lib/utils
+ *   - demo/@/app.tsx (defaults to latest)
+ *
+ * The separator /@/ distinguishes cross-project imports from other patterns.
+ */
+const CROSS_PROJECT_VERSIONED_PATTERN = /^([a-z0-9-]+)@([\d^~x][\d.x^~-]*)\/@\/(.+)$/;
+const CROSS_PROJECT_LATEST_PATTERN = /^([a-z0-9-]+)\/@\/(.+)$/;
+
+/**
+ * Check if a specifier is a cross-project import (versioned or versionless).
+ */
+export function isCrossProjectImport(specifier: string): boolean {
+  return CROSS_PROJECT_VERSIONED_PATTERN.test(specifier) ||
+         CROSS_PROJECT_LATEST_PATTERN.test(specifier);
+}
+
+/**
+ * Parse a cross-project import specifier into its components.
+ * Returns null if the specifier doesn't match the pattern.
+ * Versionless imports default to "latest".
+ */
+export function parseCrossProjectImport(
+  specifier: string,
+): { projectSlug: string; version: string; path: string } | null {
+  // Try versioned pattern first
+  const versionedMatch = specifier.match(CROSS_PROJECT_VERSIONED_PATTERN);
+  if (versionedMatch) {
+    return {
+      projectSlug: versionedMatch[1]!,
+      version: versionedMatch[2]!,
+      path: versionedMatch[3]!,
+    };
+  }
+
+  // Try versionless pattern (defaults to "latest")
+  const latestMatch = specifier.match(CROSS_PROJECT_LATEST_PATTERN);
+  if (latestMatch) {
+    return {
+      projectSlug: latestMatch[1]!,
+      version: "latest",
+      path: latestMatch[2]!,
+    };
+  }
+
+  return null;
+}
+
+export interface CrossProjectImportOptions {
+  /** Base URL for the API (unused in browser mode, kept for interface compat) */
+  apiBaseUrl?: string;
+  /** Whether this is SSR mode */
+  ssr?: boolean;
+}
+
+/**
+ * Rewrite cross-project imports to module server URLs (browser mode only).
+ *
+ * For browser mode, transforms imports like:
+ *   import { Button } from "demo@0.0.1/@/components/Button"  (versioned)
+ *   import { Button } from "demo/@/components/Button"        (versionless → latest)
+ *
+ * To module server URL:
+ *   /_vf_modules/_cross/demo@0.0.1/@/components/Button.tsx
+ *   /_vf_modules/_cross/demo/@/components/Button.tsx
+ *
+ * For SSR mode, imports are left as-is. The SSRModuleLoader handles cross-project
+ * imports by fetching from registry and writing to temp files with file:// URLs.
+ */
+export function resolveCrossProjectImports(
+  code: string,
+  options: CrossProjectImportOptions,
+): Promise<string> {
+  const { ssr = false } = options;
+
+  // In SSR mode, leave cross-project imports as-is
+  // SSRModuleLoader handles them by fetching from registry and writing to temp files
+  if (ssr) {
+    return Promise.resolve(code);
+  }
+
+  // Browser mode: rewrite to module server URL
+  return Promise.resolve(
+    replaceSpecifiers(code, (specifier) => {
+      const parsed = parseCrossProjectImport(specifier);
+      if (!parsed) return null;
+
+      const { projectSlug, version, path } = parsed;
+
+      // Keep the original extension - module server will handle it
+      let modulePath = path;
+      if (!/\.(js|mjs|jsx|ts|tsx|mdx)$/.test(modulePath)) {
+        modulePath = `${modulePath}.tsx`;
+      }
+
+      // Build URL - omit version for "latest" (versionless imports)
+      const projectRef = version === "latest" ? projectSlug : `${projectSlug}@${version}`;
+      const moduleServerUrl = `/_vf_modules/_cross/${projectRef}/@/${modulePath}`;
+
+      logger.debug("[CrossProjectImport] Rewriting", { from: specifier, to: moduleServerUrl });
+
+      return moduleServerUrl;
+    }),
+  );
+}
+
+/**
+ * Check if a URL is from an allowed CDN host (esm.sh, deno.land, etc.)
+ * or is a cross-project registry URL (api.lvh.me, api.veryfront.com, registry.veryfront.com).
+ * These URLs are supported by Deno's module loader and can be imported in SSR mode.
+ */
+function isAllowedCdnUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    const origin = `${parsed.protocol}//${parsed.host}`;
+
+    // Allow known CDN hosts (esm.sh, deno.land)
+    if (DEFAULT_ALLOWED_CDN_HOSTS.some((allowed) => origin.startsWith(allowed))) {
+      return true;
+    }
+
+    // Allow cross-project registry URLs from the Veryfront API
+    // These URLs are used for importing components from other Veryfront projects
+    const registryHosts = [
+      "http://api.lvh.me:4000", // Local dev
+      "https://api.veryfront.com", // Production
+      "https://registry.veryfront.com", // Registry subdomain
+    ];
+    if (registryHosts.some((host) => origin.startsWith(host))) {
+      return true;
+    }
+
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Block external URL imports (https://, http://) in SSR mode,
+ * EXCEPT for known CDN hosts like esm.sh and deno.land which Deno can load natively.
+ *
+ * Unknown external URLs can't be loaded when the transformed module is imported via file:// protocol.
  * Instead of crashing, we replace them with a stub that throws a clear error at runtime.
  */
 export async function blockExternalUrlImports(
@@ -16,11 +166,14 @@ export async function blockExternalUrlImports(
 ): Promise<BlockExternalUrlResult> {
   const blockedUrls: string[] = [];
 
-  // First, collect all external URL imports
+  // First, collect all external URL imports (excluding allowed CDN hosts)
   const imports = await parseImports(code);
   for (const imp of imports) {
     if (imp.n && (imp.n.startsWith("https://") || imp.n.startsWith("http://"))) {
-      blockedUrls.push(imp.n);
+      // Allow known CDN hosts - Deno can load these directly
+      if (!isAllowedCdnUrl(imp.n)) {
+        blockedUrls.push(imp.n);
+      }
     }
   }
 
@@ -29,8 +182,14 @@ export async function blockExternalUrlImports(
   }
 
   // Replace external URL imports with a stub module that provides a helpful error
+  // Only block URLs that are NOT from allowed CDN hosts
   const transformedCode = await replaceSpecifiers(code, (specifier) => {
     if (specifier.startsWith("https://") || specifier.startsWith("http://")) {
+      // Allow known CDN hosts - Deno can load these directly
+      if (isAllowedCdnUrl(specifier)) {
+        return null; // Keep the import as-is
+      }
+
       // Create a data: URL module that exports a proxy throwing helpful errors
       const errorMessage = `External URL imports are not supported in SSR mode. ` +
         `The import "${specifier}" in "${filePath}" cannot be loaded server-side. ` +
