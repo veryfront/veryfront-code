@@ -688,7 +688,7 @@ async function findSourceFile(
         });
         return { path: fullPath, isFrameworkFile: false };
       }
-    } catch (error) {
+    } catch (_error) {
       // Continue trying next extension
     }
   }
