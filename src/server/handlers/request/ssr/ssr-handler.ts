@@ -207,7 +207,7 @@ export class SSRHandler extends BaseHandler {
           .withCache("no-cache")
           .withContentType(
             getContentType(".html"),
-            "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><title>Service Temporarily Unavailable</title></head><body><h1>503 Service Temporarily Unavailable</h1><p>The server is under heavy load. Please try again.</p></body></html>",
+            '<!DOCTYPE html><html><head><meta charset="utf-8"><title>Service Temporarily Unavailable</title></head><body><h1>503 Service Temporarily Unavailable</h1><p>The server is under heavy load. Please try again.</p></body></html>',
             503,
           ),
       );
