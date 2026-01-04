@@ -200,7 +200,7 @@ export class ProviderManager {
     let exists = await vfAdapter.exists(providerPath);
 
     logger.info("[ProviderManager] Checking API project provider (components/)", {
-      provider: projectData.provider,
+      provider: projectData?.provider,
       providerPath,
       exists,
     });
