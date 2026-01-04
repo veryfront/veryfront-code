@@ -740,6 +740,9 @@ export async function loadModuleESM(
         undefined,
         { resolveBare: true },
       );
+
+      // HTTP imports will be bundled with esbuild later (same as Node.js)
+      // This allows real code to run during SSR instead of stubs
     }
 
     // Transform /_vf_modules/ imports to file:// paths
@@ -974,6 +977,7 @@ export async function loadModuleESM(
             moduleCode = addExternalToEsmShUrls(moduleCode);
             // Normalize React imports to npm:
             moduleCode = normalizeReactToNpm(moduleCode);
+            // HTTP imports will be bundled by esbuild later
 
             // Find and recursively process any /_vf_modules/ imports
             const vfModuleImportPattern = /from\s+["'](\/?_vf_modules\/[^"'?]+)(?:\?[^"']*)?["']/g;
@@ -1060,18 +1064,34 @@ export async function loadModuleESM(
           }
 
           // Transform the source code directly (SSR mode)
-          let moduleCode = await transformToESM(
-            sourceCode,
-            actualFilePath,
-            projectDir,
-            adapter as RuntimeAdapter,
-            { projectId, dev: true, ssr: true },
-          );
+          let moduleCode: string;
+          try {
+            moduleCode = await transformToESM(
+              sourceCode,
+              actualFilePath,
+              projectDir,
+              adapter as RuntimeAdapter,
+              { projectId, dev: true, ssr: true },
+            );
+          } catch (transformError) {
+            logger.error(`${LOG_PREFIX_MDX_LOADER} Transform failed for module`, {
+              normalizedPath,
+              actualFilePath,
+              sourceLength: sourceCode.length,
+              sourcePreview: sourceCode.slice(0, 200),
+              error: transformError instanceof Error
+                ? transformError.message
+                : String(transformError),
+            });
+            throw transformError;
+          }
 
           // Add external param to esm.sh URLs to prevent React bundling
           moduleCode = addExternalToEsmShUrls(moduleCode);
           // Normalize React imports to npm:
           moduleCode = normalizeReactToNpm(moduleCode);
+          // HTTP imports are handled by esbuild bundling earlier in the pipeline
+          // No stub blocking needed - real code is bundled for SSR
 
           // Find and recursively process any /_vf_modules/ imports
           const vfModuleImportPattern = /from\s+["'](\/?_vf_modules\/[^"'?]+)(?:\?[^"']*)?["']/g;
@@ -1126,9 +1146,14 @@ export default new Proxy(function(){}, handler);
               try {
                 await adapter.fs.writeFile(stubPath, stubCode);
                 moduleCode = moduleCode.replace(original, `from "file://${stubPath}"`);
-                logger.warn(`${LOG_PREFIX_MDX_LOADER} Created stub for missing module: ${nestedPath}`);
+                logger.warn(
+                  `${LOG_PREFIX_MDX_LOADER} Created stub for missing module: ${nestedPath}`,
+                );
               } catch (e) {
-                logger.error(`${LOG_PREFIX_MDX_LOADER} Failed to create stub for: ${nestedPath}`, e);
+                logger.error(
+                  `${LOG_PREFIX_MDX_LOADER} Failed to create stub for: ${nestedPath}`,
+                  e,
+                );
               }
             }
           }
@@ -1165,9 +1190,14 @@ export default new Proxy(function(){}, handler);
               try {
                 await adapter.fs.writeFile(stubPath, stubCode);
                 moduleCode = moduleCode.replace(original, `from "file://${stubPath}"`);
-                logger.warn(`${LOG_PREFIX_MDX_LOADER} Created stub for missing module: ${relativePath}`);
+                logger.warn(
+                  `${LOG_PREFIX_MDX_LOADER} Created stub for missing module: ${relativePath}`,
+                );
               } catch (e) {
-                logger.error(`${LOG_PREFIX_MDX_LOADER} Failed to create stub for: ${relativePath}`, e);
+                logger.error(
+                  `${LOG_PREFIX_MDX_LOADER} Failed to create stub for: ${relativePath}`,
+                  e,
+                );
               }
             }
           }
@@ -1307,9 +1337,10 @@ export default new Proxy(function(){}, handler);
       rewritten += "\nexport { MDXLayout as __vfLayout };\n";
     }
 
-    // On Node.js, bundle HTTP imports via esbuild instead of trying to import them directly
-    if (IS_TRUE_NODE && HTTP_IMPORT_PATTERN.test(rewritten)) {
-      logger.info(`${LOG_PREFIX_MDX_LOADER} Bundling HTTP imports via esbuild for Node.js`);
+    // Bundle HTTP imports via esbuild for both Node.js and Deno
+    // This allows real code to run during SSR instead of no-op stubs
+    if (HTTP_IMPORT_PATTERN.test(rewritten)) {
+      logger.info(`${LOG_PREFIX_MDX_LOADER} Bundling HTTP imports via esbuild`);
       const { build } = await import("esbuild/mod.js");
 
       // Write temp source file for esbuild to process
@@ -1335,11 +1366,12 @@ export default new Proxy(function(){}, handler);
           logger.info(`${LOG_PREFIX_MDX_LOADER} Successfully bundled HTTP imports`);
         }
       } catch (bundleError) {
-        logger.warn(
-          `${LOG_PREFIX_MDX_LOADER} Failed to bundle HTTP imports, falling back to original code`,
+        // Bundling failed - log error but keep original code
+        // The runtime will show a clear error if the package uses browser-only APIs
+        logger.error(
+          `${LOG_PREFIX_MDX_LOADER} Failed to bundle HTTP imports`,
           bundleError,
         );
-        // Keep original code if bundling fails
       } finally {
         // Clean up temp file (use unlink since rm may not exist on all adapters)
         try {

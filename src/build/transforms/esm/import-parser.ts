@@ -4,6 +4,11 @@ import { createFileSystem } from "../../../platform/compat/fs.ts";
 import { getLoaderFromPath } from "./transform-utils.ts";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import { isCrossProjectImport, parseCrossProjectImport } from "./path-resolver.ts";
+import { join } from "https://deno.land/std@0.220.0/path/mod.ts";
+
+// Framework root directory (veryfront-renderer/) - computed from this file's location
+// From src/build/transforms/esm/import-parser.ts, go up 4 levels
+const FRAMEWORK_ROOT = new URL("../../../..", import.meta.url).pathname;
 
 export interface LocalImport {
   specifier: string;
@@ -200,6 +205,23 @@ async function resolveAliasImportPath(
     const indexPath = normalizedPath + "/index" + ext;
     if (await checkFileExists(indexPath, adapter)) {
       return indexPath;
+    }
+  }
+
+  // FALLBACK: For lib/* imports not found in project, check framework lib directory
+  // This provides framework utilities like lib/Head, lib/Router, lib/usePageContext
+  if (normalizedPath.startsWith("lib/")) {
+    const fs = createFileSystem();
+    for (const ext of EXTENSIONS) {
+      const frameworkPath = join(FRAMEWORK_ROOT, normalizedPath + ext);
+      try {
+        const stat = await fs.stat(frameworkPath);
+        if (stat.isFile) {
+          return frameworkPath;
+        }
+      } catch {
+        // Continue trying other paths
+      }
     }
   }
 

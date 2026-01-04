@@ -446,7 +446,9 @@ export class SSRModuleLoader {
       clearTimeout(timeout);
 
       if (!response.ok) {
-        throw new Error(`Failed to fetch ${registryUrl}: ${response.status} ${response.statusText}`);
+        throw new Error(
+          `Failed to fetch ${registryUrl}: ${response.status} ${response.statusText}`,
+        );
       }
 
       const sourceCode = await response.text();
@@ -590,11 +592,21 @@ export class SSRModuleLoader {
       // Build a mapping of cross-project imports to their temp file paths
       const crossProjectPaths = new Map<string, string>();
 
+      // Local filesystem for framework lib files
+      const localFs = createFileSystem();
+
       await Promise.all([
         // Transform local imports
         ...parseResult.imports.map(async (imp) => {
           try {
-            const depSource = await this.options.adapter.fs.readFile(imp.absolutePath);
+            // Framework lib files have absolute local paths (start with /)
+            // Read them directly from local filesystem, not through adapter
+            let depSource: string;
+            if (imp.absolutePath.startsWith("/")) {
+              depSource = await localFs.readTextFile(imp.absolutePath);
+            } else {
+              depSource = await this.options.adapter.fs.readFile(imp.absolutePath);
+            }
             await this.transformWithDependencies(imp.absolutePath, depSource);
           } catch (error) {
             // Track failed dependency reads

@@ -28,7 +28,8 @@ const SNIPPET_MODULE_PREFIX = /^\/_vf_modules\/_snippets\/([a-f0-9]+)\.js/;
  *   - /_vf_modules/_cross/demo@0.0/@/app.tsx
  *   - /_vf_modules/_cross/demo/@/app.tsx (latest)
  */
-const CROSS_PROJECT_VERSIONED_PREFIX = /^\/_vf_modules\/_cross\/([a-z0-9-]+)@([\d^~x][\d.x^~-]*)\/\@\/(.+)$/;
+const CROSS_PROJECT_VERSIONED_PREFIX =
+  /^\/_vf_modules\/_cross\/([a-z0-9-]+)@([\d^~x][\d.x^~-]*)\/\@\/(.+)$/;
 const CROSS_PROJECT_LATEST_PREFIX = /^\/_vf_modules\/_cross\/([a-z0-9-]+)\/\@\/(.+)$/;
 
 export interface ModuleServerOptions {
@@ -303,17 +304,28 @@ export async function serveModule(
     }
 
     // Build projectRef - omit version for versionless (API resolves to latest release)
-    const projectRef = crossVersion === "latest" ? crossProjectSlug : `${crossProjectSlug}@${crossVersion}`;
-    logger.debug("[ModuleServer] Cross-project import", { projectRef, path: crossPath, isLatest: crossVersion === "latest" });
+    const projectRef = crossVersion === "latest"
+      ? crossProjectSlug
+      : `${crossProjectSlug}@${crossVersion}`;
+    logger.debug("[ModuleServer] Cross-project import", {
+      projectRef,
+      path: crossPath,
+      isLatest: crossVersion === "latest",
+    });
 
     try {
       // Fetch source from registry API
       const source = await fetchCrossProjectSource(projectRef, crossPath);
       if (!source) {
-        return createModuleResponse(method, `Cross-project module not found: ${projectRef}/@/${crossPath}`, HTTP_NOT_FOUND, {
-          "Content-Type": "text/plain; charset=utf-8",
-          "Cache-Control": "no-cache",
-        });
+        return createModuleResponse(
+          method,
+          `Cross-project module not found: ${projectRef}/@/${crossPath}`,
+          HTTP_NOT_FOUND,
+          {
+            "Content-Type": "text/plain; charset=utf-8",
+            "Cache-Control": "no-cache",
+          },
+        );
       }
 
       // Detect SSR mode
@@ -858,7 +870,10 @@ function createModuleResponse(
  * Fetch source code from registry API for cross-project imports.
  * Returns null if not found.
  */
-async function fetchCrossProjectSource(projectRef: string, filePath: string): Promise<string | null> {
+async function fetchCrossProjectSource(
+  projectRef: string,
+  filePath: string,
+): Promise<string | null> {
   const apiBaseUrl = Deno.env.get("VERYFRONT_API_BASE_URL") ||
     Deno.env.get("VERYFRONT_API_URL")?.replace("/graphql", "/api") ||
     "http://api.lvh.me:4000/api";
@@ -867,7 +882,10 @@ async function fetchCrossProjectSource(projectRef: string, filePath: string): Pr
 
   const response = await fetch(registryUrl);
   if (!response.ok) {
-    logger.warn("[ModuleServer] Cross-project fetch failed", { registryUrl, status: response.status });
+    logger.warn("[ModuleServer] Cross-project fetch failed", {
+      registryUrl,
+      status: response.status,
+    });
     return null;
   }
   return response.text();
@@ -877,7 +895,10 @@ async function fetchCrossProjectSource(projectRef: string, filePath: string): Pr
  * Apply SSR-specific import rewrites for cross-project modules.
  * Handles @/ path aliases to resolve within the external project.
  */
-function applySSRImportRewrites(code: string, opts: { projectRef: string; cacheBuster: number }): string {
+function applySSRImportRewrites(
+  code: string,
+  opts: { projectRef: string; cacheBuster: number },
+): string {
   const { projectRef, cacheBuster } = opts;
 
   // @/ paths in cross-project code resolve to the external project

@@ -68,17 +68,42 @@ export async function transformToESM(
   }
 
   const esbuildStart = performance.now();
-  const result = await esbuild.transform(transformSource, {
-    loader: getLoaderFromPath(filePath),
-    format: "esm",
-    target: "es2020",
-    jsx: "automatic",
-    jsxImportSource,
-    minify: !dev,
-    sourcemap: dev ? "inline" : false,
-    treeShaking: !dev, // Disable in dev mode to preserve import errors
-    keepNames: true,
-  });
+  const loader = getLoaderFromPath(filePath);
+
+  let result: esbuild.TransformResult;
+  try {
+    result = await esbuild.transform(transformSource, {
+      loader,
+      format: "esm",
+      target: "es2020",
+      jsx: "automatic",
+      jsxImportSource,
+      minify: !dev,
+      sourcemap: dev ? "inline" : false,
+      treeShaking: !dev, // Disable in dev mode to preserve import errors
+      keepNames: true,
+    });
+  } catch (transformError) {
+    // Structured debugging for transform errors
+    const sourcePreview = transformSource.split("\n").slice(0, 10).map((line, i) =>
+      `${String(i + 1).padStart(3, " ")}| ${line}`
+    ).join("\n");
+
+    logger.error("[ESM-TRANSFORM] Transform failed", {
+      filePath,
+      loader,
+      sourceLength: transformSource.length,
+      isMdx: filePath.endsWith(".mdx"),
+      error: transformError instanceof Error ? transformError.message : String(transformError),
+    });
+    logger.error("[ESM-TRANSFORM] Source preview (first 10 lines):\n" + sourcePreview);
+
+    // Re-throw with enhanced error message
+    const errorMsg = transformError instanceof Error
+      ? transformError.message
+      : String(transformError);
+    throw new Error(`ESM transform failed for ${filePath} (loader: ${loader}): ${errorMsg}`);
+  }
   timings.esbuild = performance.now() - esbuildStart;
 
   const rewriteStart = performance.now();
