@@ -1,6 +1,5 @@
 import {
   getLoaderScript,
-  getQueryClientScript,
   getRendererScript,
   getRouterScript,
 } from "./templates/index.ts";
@@ -11,11 +10,9 @@ export function generateDevClientRendererScript(nonce?: string): string {
   <script type="module"${nonceAttr}>
     import * as React from 'react';
     import { createRoot } from 'react-dom/client';
-    import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+    // Note: QueryClient/QueryClientProvider removed - user's app.tsx should provide if needed
 
     ${getRouterScript()}
-
-    ${getQueryClientScript()}
 
     ${getLoaderScript()}
 

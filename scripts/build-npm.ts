@@ -107,6 +107,11 @@ const entryPoints: Record<string, string> = {
 	data: "./src/data/index.ts",
 	components: "./src/react/components/index.ts",
 	index: "./src/index.ts",
+	// Platform utilities (previously @/lib/*)
+	head: "./lib/Head.tsx",
+	router: "./lib/Router.tsx",
+	context: "./lib/usePageContext.tsx",
+	fonts: "./lib/GoogleFonts.tsx",
 };
 
 // Import mappings: Deno URLs -> npm packages
@@ -1232,6 +1237,173 @@ export interface DevToolsConfig {
 
 export declare function AIDevTools(props: DevToolsConfig): JSX.Element | null;
 `,
+
+	// Platform utilities (previously @/lib/*)
+	"head.d.ts": `// Head component type definitions
+import type { ReactNode } from 'react';
+
+export interface HeadProps {
+  children?: ReactNode;
+}
+
+/**
+ * SSR-compatible Head component for managing document head elements.
+ * During SSR, collects head elements; during hydration, manages them client-side.
+ *
+ * @example
+ * import { Head } from 'veryfront/head';
+ *
+ * <Head>
+ *   <title>My Page</title>
+ *   <meta name="description" content="Page description" />
+ * </Head>
+ */
+export declare const Head: React.FC<HeadProps>;
+export default Head;
+`,
+
+	"router.d.ts": `// Router type definitions
+import type { ReactNode } from 'react';
+
+export interface Router {
+  /** Current domain */
+  domain: string;
+  /** Full path including query string */
+  path: string;
+  /** Path without query string */
+  pathname: string;
+  /** Route parameters (e.g., { id: "123" } for /users/[id]) */
+  params: Record<string, string>;
+  /** Query string parameters */
+  query: Record<string, string>;
+  /** Whether running in preview mode */
+  isPreview: boolean;
+  /** Whether component is mounted (false during SSR) */
+  isMounted: boolean;
+  /** Navigate to a new path */
+  navigate: (path: string | PathObject, options?: NavigateOptions) => Promise<void>;
+  /** Push a new entry to history */
+  push: (path: string | PathObject, options?: NavigateOptions) => Promise<void>;
+  /** Replace current history entry */
+  replace: (path: string | PathObject, options?: NavigateOptions) => Promise<void>;
+  /** Reload the current page */
+  reload: () => Promise<void>;
+}
+
+export interface PathObject {
+  pathname: string;
+  query?: Record<string, string>;
+  search?: Record<string, string>;
+}
+
+export interface NavigateOptions {
+  keepScrollPosition?: boolean;
+  overwriteLastHistoryEntry?: boolean;
+}
+
+/**
+ * Router context provider.
+ *
+ * @example
+ * import { RouterProvider } from 'veryfront/router';
+ *
+ * <RouterProvider router={routerInstance}>
+ *   {children}
+ * </RouterProvider>
+ */
+export declare function RouterProvider(props: {
+  children: ReactNode;
+  router?: Router;
+}): JSX.Element;
+
+/**
+ * Hook to access router state and navigation methods.
+ *
+ * @example
+ * import { useRouter } from 'veryfront/router';
+ *
+ * function MyComponent() {
+ *   const router = useRouter();
+ *   return <button onClick={() => router.push('/about')}>About</button>;
+ * }
+ */
+export declare function useRouter(): Router;
+
+/** @deprecated Use RouterProvider instead */
+export { RouterProvider as Router };
+`,
+
+	"context.d.ts": `// Page context type definitions
+import type { ReactNode } from 'react';
+
+export interface PageContext {
+  /** Current page slug */
+  slug: string;
+  /** Current path */
+  path: string;
+  /** Route parameters */
+  params: Record<string, string>;
+  /** Query string parameters */
+  query: Record<string, string>;
+  /** Page frontmatter (for MDX pages) */
+  frontmatter?: Record<string, unknown>;
+}
+
+/**
+ * Page context provider.
+ *
+ * @example
+ * import { PageContextProvider } from 'veryfront/context';
+ *
+ * <PageContextProvider pageContext={context}>
+ *   {children}
+ * </PageContextProvider>
+ */
+export declare function PageContextProvider(props: {
+  children: ReactNode;
+  pageContext?: PageContext;
+}): JSX.Element;
+
+/**
+ * Hook to access page context (params, query, frontmatter).
+ *
+ * @example
+ * import { usePageContext } from 'veryfront/context';
+ *
+ * function MyComponent() {
+ *   const { params, query, frontmatter } = usePageContext();
+ *   return <div>Post ID: {params.id}</div>;
+ * }
+ */
+export declare function usePageContext(): PageContext;
+export default usePageContext;
+`,
+
+	"fonts.d.ts": `// GoogleFonts component type definitions
+
+export interface GoogleFontsProps {
+  /** Font family names (e.g., "Inter" or "Inter:wght@400;500;600") */
+  fonts: string | string[];
+  /** Font display strategy */
+  display?: 'auto' | 'block' | 'swap' | 'fallback' | 'optional';
+}
+
+/**
+ * SSR-compatible Google Fonts loader.
+ * Generates preconnect and stylesheet link tags.
+ *
+ * @example
+ * import { GoogleFonts } from 'veryfront/fonts';
+ *
+ * // Single font
+ * <GoogleFonts fonts="Inter" />
+ *
+ * // Multiple fonts with weights
+ * <GoogleFonts fonts={["Inter:wght@400;500;600", "Fira Code:wght@400"]} />
+ */
+export declare const GoogleFonts: React.FC<GoogleFontsProps>;
+export default GoogleFonts;
+`,
 };
 
 // Write all declaration files
@@ -1324,6 +1496,23 @@ const packageJson = {
 		"./oauth/token-store": {
 			types: "./dist/oauth/token-store.d.ts",
 			import: "./dist/oauth/token-store.js",
+		},
+		// Platform utilities (previously @/lib/*)
+		"./head": {
+			types: "./dist/head.d.ts",
+			import: "./dist/head.js",
+		},
+		"./router": {
+			types: "./dist/router.d.ts",
+			import: "./dist/router.js",
+		},
+		"./context": {
+			types: "./dist/context.d.ts",
+			import: "./dist/context.js",
+		},
+		"./fonts": {
+			types: "./dist/fonts.d.ts",
+			import: "./dist/fonts.js",
 		},
 	},
 	files: ["bin", "dist", "README.md", "LICENSE"],

@@ -1,6 +1,6 @@
 {
   "name": "veryfront",
-  "version": "0.0.73",
+  "version": "0.0.74",
   "description": "Zero-config React meta-framework for building agentic AI applications",
   "type": "module",
   "main": "./dist/index.js",
@@ -77,6 +77,22 @@
     "./oauth/token-store": {
       "types": "./dist/oauth/token-store.d.ts",
       "import": "./dist/oauth/token-store.js"
+    },
+    "./head": {
+      "types": "./dist/head.d.ts",
+      "import": "./dist/head.js"
+    },
+    "./router": {
+      "types": "./dist/router.d.ts",
+      "import": "./dist/router.js"
+    },
+    "./context": {
+      "types": "./dist/context.d.ts",
+      "import": "./dist/context.js"
+    },
+    "./fonts": {
+      "types": "./dist/fonts.d.ts",
+      "import": "./dist/fonts.js"
     }
   },
   "files": [
