@@ -13,6 +13,8 @@ export class StatOperations {
   private fileIndex: Map<string, ProjectFile> | null = null;
   private directoryIndex: Set<string> | null = null;
   private buildingIndex: Promise<void> | null = null;
+  // Map normalized paths to original API paths (for trailing slash files)
+  private pathMapping: Map<string, string> = new Map();
 
   constructor(
     private readonly client: VeryfrontAPIClient,
@@ -102,11 +104,26 @@ export class StatOperations {
     const allFiles = await this.getAllFilesRaw();
     const fileIdx = new Map<string, ProjectFile>();
     const dirIdx = new Set<string>();
+    const pathMap = new Map<string, string>();
 
     for (const file of allFiles) {
-      fileIdx.set(file.path, file);
+      // Normalize path: handle trailing slash paths like "pages/" -> "pages/index.mdx"
+      let normalizedPath = file.path;
+      if (file.path.endsWith("/")) {
+        // Determine extension from file type - default to .mdx for pages
+        const ext = file.type === "page" ? ".mdx" : ".tsx";
+        normalizedPath = file.path.replace(/\/+$/, "") + "/index" + ext;
+        // Store mapping from normalized path to original API path
+        pathMap.set(normalizedPath, file.path);
+        logger.debug("[StatOperations] Normalized trailing slash path", {
+          original: file.path,
+          normalized: normalizedPath,
+        });
+      }
 
-      const parts = file.path.split("/");
+      fileIdx.set(normalizedPath, file);
+
+      const parts = normalizedPath.split("/");
       let current = "";
       for (let i = 0; i < parts.length - 1; i++) {
         const part = parts[i];
@@ -119,16 +136,28 @@ export class StatOperations {
 
     this.fileIndex = fileIdx;
     this.directoryIndex = dirIdx;
+    this.pathMapping = pathMap;
 
     logger.debug("[StatOperations] Index built", {
       files: fileIdx.size,
       directories: dirIdx.size,
+      pathMappings: pathMap.size,
     });
   }
 
   clearIndex(): void {
     this.fileIndex = null;
     this.directoryIndex = null;
+    this.pathMapping.clear();
+  }
+
+  /**
+   * Get the original API path for a normalized path.
+   * For paths like "pages/index.mdx" that were normalized from "pages/",
+   * this returns the original "pages/" path for API content fetching.
+   */
+  getOriginalApiPath(normalizedPath: string): string {
+    return this.pathMapping.get(normalizedPath) || normalizedPath;
   }
 
   private async getAllFilesRaw(): Promise<ProjectFile[]> {

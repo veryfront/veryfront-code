@@ -14,6 +14,8 @@ export class ReadOperations {
     private readonly cache: FileCache,
     private readonly normalizer: PathNormalizer,
     private readonly productionContext?: ProductionModeContext,
+    // Resolver for normalized paths -> original API paths (e.g., "pages/index.mdx" -> "pages/")
+    private readonly getOriginalApiPath?: (path: string) => string,
   ) {}
 
   async readFile(path: string): Promise<Uint8Array> {
@@ -31,15 +33,18 @@ export class ReadOperations {
   private fetchContent(normalizedPath: string): Promise<string> {
     const isProduction = this.productionContext?.isProductionMode() ?? false;
     const releaseId = this.productionContext?.getReleaseId() ?? null;
+    // Get the original API path for fetching (handles normalized paths like "pages/index.mdx" -> "pages/")
+    const apiPath = this.getOriginalApiPath?.(normalizedPath) ?? normalizedPath;
 
     if (isProduction) {
-      return this.fetchPublishedContent(normalizedPath, releaseId);
+      return this.fetchPublishedContent(normalizedPath, apiPath, releaseId);
     }
-    return this.fetchDraftContent(normalizedPath);
+    return this.fetchDraftContent(normalizedPath, apiPath);
   }
 
   private async fetchPublishedContent(
     normalizedPath: string,
+    apiPath: string,
     releaseId: string | null,
   ): Promise<string> {
     const cacheKey = `file:published:${releaseId ?? "latest"}:${normalizedPath}`;
@@ -52,11 +57,13 @@ export class ReadOperations {
 
     logger.debug("[ReadOperations] Fetching published content", {
       path: normalizedPath,
+      apiPath,
       releaseId: releaseId ?? "latest",
     });
     try {
+      // Use apiPath for the actual API call (handles normalized paths like "pages/index.mdx" -> "pages/")
       const content = await this.client.getPublishedFileContent(
-        normalizedPath,
+        apiPath,
         undefined,
         releaseId ?? undefined,
       );
@@ -74,11 +81,13 @@ export class ReadOperations {
       if (is404Error) {
         logger.debug("[ReadOperations] File not found (expected for optional files)", {
           path: normalizedPath,
+          apiPath,
           releaseId,
         });
       } else {
         logger.error("[ReadOperations] Failed to fetch published content", {
           path: normalizedPath,
+          apiPath,
           releaseId,
           error: errorMessage,
         });
@@ -87,7 +96,7 @@ export class ReadOperations {
     }
   }
 
-  private async fetchDraftContent(normalizedPath: string): Promise<string> {
+  private async fetchDraftContent(normalizedPath: string, apiPath: string): Promise<string> {
     const branch = this.client.getRequestBranch() || "main";
     const cacheKey = `file:text:${branch}:${normalizedPath}`;
 
@@ -97,8 +106,9 @@ export class ReadOperations {
       return cached;
     }
 
-    logger.debug("[ReadOperations] Fetching draft content", { path: normalizedPath });
-    const content = await this.client.getFileContent(normalizedPath);
+    logger.debug("[ReadOperations] Fetching draft content", { path: normalizedPath, apiPath });
+    // Use apiPath for the actual API call (handles normalized paths like "pages/index.mdx" -> "pages/")
+    const content = await this.client.getFileContent(apiPath);
 
     this.cache.set(cacheKey, content);
     return content;

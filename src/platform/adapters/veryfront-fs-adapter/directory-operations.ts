@@ -96,7 +96,22 @@ export class DirectoryOperations {
     tree.set("", { files: new Map(), dirs: new Set() });
 
     for (const file of allFiles) {
-      const parts = file.path.split("/");
+      // Normalize path: remove leading and trailing slashes, filter empty parts
+      let normalizedPath = file.path.replace(/^\/+/, "").replace(/\/+$/, "");
+
+      // Handle paths that end with "/" (like "pages/") - treat as index file
+      // The API sometimes returns "pages/" for the root page instead of "pages/index.mdx"
+      if (file.path.endsWith("/")) {
+        // Determine extension from file type - default to .mdx for pages
+        const ext = file.type === "page" ? ".mdx" : ".tsx";
+        normalizedPath = normalizedPath + "/index" + ext;
+        logger.debug("[DirectoryOperations] Normalized trailing slash path", {
+          original: file.path,
+          normalized: normalizedPath,
+        });
+      }
+
+      const parts = normalizedPath.split("/").filter(Boolean);
       const fileName = parts.pop();
       if (!fileName) continue;
 

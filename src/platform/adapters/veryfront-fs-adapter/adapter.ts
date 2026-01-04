@@ -68,14 +68,22 @@ export class VeryfrontFSAdapter implements FSAdapter {
       isProductionMode: () => this.productionMode,
       getReleaseId: () => this.releaseId,
     };
-    this.readOps = new ReadOperations(this.client, this.cache, this.normalizer, productionContext);
+    // Create statOps first so readOps can use its getOriginalApiPath method
+    this.statOps = new StatOperations(this.client, this.cache, this.normalizer, productionContext);
+    this.readOps = new ReadOperations(
+      this.client,
+      this.cache,
+      this.normalizer,
+      productionContext,
+      // Pass path resolver for normalized paths like "pages/index.mdx" -> "pages/"
+      (path) => this.statOps.getOriginalApiPath(path),
+    );
     this.dirOps = new DirectoryOperations(
       this.client,
       this.cache,
       this.normalizer,
       productionContext,
     );
-    this.statOps = new StatOperations(this.client, this.cache, this.normalizer, productionContext);
 
     logger.debug("[VeryfrontFSAdapter] Created", {
       apiBaseUrl: veryfrontConfig.apiBaseUrl,

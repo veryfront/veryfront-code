@@ -111,14 +111,23 @@ export class RouteDiscovery {
         if (entry.name.startsWith("_") || entry.name.startsWith(".")) continue;
 
         const fullPath = join(dir, entry.name);
-        const routePath = `${prefix}/${entry.name.replace(/\.(tsx?|jsx?|mdx)$/, "")}`;
+        // Normalize route path: remove extension and collapse multiple slashes
+        let routePath = `${prefix}/${entry.name.replace(/\.(tsx?|jsx?|mdx)$/, "")}`;
+        routePath = routePath.replace(/\/+/g, "/"); // Collapse multiple slashes to single
+
+        // Sanity check: if pattern is too long, something is wrong
+        if (routePath.length > 500) {
+          logger.warn(`[SERVER] Route path too long, skipping: ${routePath.slice(0, 100)}...`);
+          continue;
+        }
 
         if (entry.isDirectory) {
           await this.discoverPagesRoutes(fullPath, routePath);
         } else if (entry.isFile && /\.(tsx?|jsx?|mdx|ts)$/.test(entry.name)) {
           if (routePath.startsWith("/api")) continue;
 
-          const pattern = routePath.replace(/\/index$/, "") || "/";
+          let pattern = routePath.replace(/\/index$/, "") || "/";
+          pattern = pattern.replace(/\/+/g, "/"); // Collapse multiple slashes
           const relativePath = this.toProjectRelativePath(fullPath);
 
           this.router.addRoute(pattern, relativePath);
