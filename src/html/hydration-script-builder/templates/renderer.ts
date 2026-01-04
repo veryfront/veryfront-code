@@ -77,7 +77,8 @@ export const getRendererScript = () => `
         }
 
         tree = React.createElement(RouterProvider, { children: tree });
-        tree = React.createElement(QueryClientProviderWrapper, { children: tree });
+        // Note: QueryClientProvider should be added by user's app.tsx if needed
+        // This allows users to configure their own QueryClient options
 
         const container = document.getElementById('veryfront-content');
         if (container) {

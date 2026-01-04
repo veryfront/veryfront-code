@@ -39,11 +39,8 @@ export const getSpaRendererScript = () => `
         }
 
         // Create React tree with ClientApp
-        const tree = React.createElement(
-          QueryClientProviderWrapper,
-          null,
-          React.createElement(ClientApp, { initialData })
-        );
+        // Note: QueryClientProvider should be in user's app.tsx if needed
+        const tree = React.createElement(ClientApp, { initialData });
 
         // Hydrate or render based on whether SSR content exists
         if (container.innerHTML.trim() !== '') {

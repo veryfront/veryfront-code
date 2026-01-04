@@ -471,7 +471,7 @@ export const getRouterScript = () => `
 
       // Wrap with providers
       tree = React.createElement(RouterProvider, { children: tree });
-      tree = React.createElement(QueryClientProviderWrapper, { children: tree });
+      // Note: QueryClientProvider should be in user's app.tsx
 
       // Get the container and render
       const container = document.getElementById('veryfront-content');

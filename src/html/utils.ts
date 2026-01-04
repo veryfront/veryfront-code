@@ -108,10 +108,14 @@ function getEsmShImportMap(versions: DetectedVersions): Record<string, string> {
     "react-dom/client": `https://esm.sh/react-dom@${react}/client`,
     "react/jsx-runtime": `https://esm.sh/react@${react}/jsx-runtime`,
     "react/jsx-dev-runtime": `https://esm.sh/react@${react}/jsx-dev-runtime`,
-    "@tanstack/react-query": `https://esm.sh/@tanstack/react-query@5?external=react`,
     "veryfront/ai/react": `https://esm.sh/veryfront@${veryfront}/ai/react?external=react`,
     "veryfront/ai/components": `https://esm.sh/veryfront@${veryfront}/ai/components?external=react`,
     "veryfront/ai/primitives": `https://esm.sh/veryfront@${veryfront}/ai/primitives?external=react`,
+    // Platform utilities
+    "veryfront/head": `https://esm.sh/veryfront@${veryfront}/head?external=react`,
+    "veryfront/router": `https://esm.sh/veryfront@${veryfront}/router?external=react`,
+    "veryfront/context": `https://esm.sh/veryfront@${veryfront}/context?external=react`,
+    "veryfront/fonts": `https://esm.sh/veryfront@${veryfront}/fonts?external=react`,
     // Tailwind CSS - unified version to prevent conflicts
     ...getTailwindImportMap(),
   };
@@ -171,11 +175,15 @@ function getSelfHostedImportMap(versions: DetectedVersions): Record<string, stri
     "react-dom/client": `https://esm.sh/react-dom@${react}/client`,
     "react/jsx-runtime": `https://esm.sh/react@${react}/jsx-runtime`,
     "react/jsx-dev-runtime": `https://esm.sh/react@${react}/jsx-dev-runtime`,
-    "@tanstack/react-query": `https://esm.sh/@tanstack/react-query@5?external=react`,
     // Veryfront modules served from local endpoint
     "veryfront/ai/react": "/_veryfront/lib/ai/react.js",
     "veryfront/ai/components": "/_veryfront/lib/ai/components.js",
     "veryfront/ai/primitives": "/_veryfront/lib/ai/primitives.js",
+    // Platform utilities
+    "veryfront/head": "/_veryfront/lib/head.js",
+    "veryfront/router": "/_veryfront/lib/router.js",
+    "veryfront/context": "/_veryfront/lib/context.js",
+    "veryfront/fonts": "/_veryfront/lib/fonts.js",
     // Tailwind CSS - unified version
     ...getTailwindImportMap(),
   };
@@ -269,7 +277,6 @@ export async function buildImportMapJson(
       "react-dom/client": `https://esm.sh/react-dom@${versions.react}/client`,
       "react/jsx-runtime": `https://esm.sh/react@${versions.react}/jsx-runtime`,
       "react/jsx-dev-runtime": `https://esm.sh/react@${versions.react}/jsx-dev-runtime`,
-      "@tanstack/react-query": `https://esm.sh/@tanstack/react-query@5?external=react`,
       ...customImports,
     };
 
