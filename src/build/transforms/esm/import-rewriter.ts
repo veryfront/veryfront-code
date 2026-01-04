@@ -1,5 +1,49 @@
 import { parseImports, replaceSpecifiers, rewriteImports } from "./lexer.ts";
 import { REACT_DEFAULT_VERSION, TAILWIND_VERSION } from "@veryfront/utils/constants/cdn.ts";
+import { rendererLogger as logger } from "@veryfront/utils";
+
+/**
+ * Track unversioned imports to warn users about reproducibility.
+ * Imports without explicit versions may break when packages update.
+ */
+const unversionedImportsWarned = new Set<string>();
+
+/**
+ * Check if a specifier has an inline version specifier.
+ * Returns true for: pkg@1.2.3, pkg@^1.2.3, @scope/pkg@1.2.3
+ */
+function hasVersionSpecifier(specifier: string): boolean {
+  // Match @version patterns: @1.2.3, @^1.2.3, @~1.2.3, @1.x
+  return /@[\d^~x][\d.x^~-]*(?=\/|$)/.test(specifier);
+}
+
+/**
+ * Warn about unversioned npm imports for reproducibility.
+ * These imports can break when packages update on esm.sh.
+ */
+function warnUnversionedImport(specifier: string): void {
+  // Only warn once per specifier to avoid spam
+  if (unversionedImportsWarned.has(specifier)) {
+    return;
+  }
+  unversionedImportsWarned.add(specifier);
+
+  // Suggest a versioned import
+  const suggestedVersion = "x.y.z"; // User needs to find actual version
+  const packageName = specifier.split("/")[0];
+  const isScoped = specifier.startsWith("@");
+  const scopedPackage = isScoped ? specifier.split("/").slice(0, 2).join("/") : packageName;
+  const subpath = isScoped ? specifier.split("/").slice(2).join("/") : specifier.split("/").slice(1).join("/");
+  const versionedSpecifier = subpath
+    ? `${scopedPackage}@${suggestedVersion}/${subpath}`
+    : `${scopedPackage}@${suggestedVersion}`;
+
+  logger.warn("[ESM] Unversioned import may cause reproducibility issues", {
+    import: specifier,
+    suggestion: `Pin version: import '${versionedSpecifier}'`,
+    help: "Run 'npm info " + (isScoped ? scopedPackage : packageName!) + " version' to find current version",
+  });
+}
 
 /**
  * Normalize package specifier by stripping inline version specifiers.
@@ -60,6 +104,10 @@ export function rewriteBareImports(code: string, _moduleServerUrl?: string): Pro
     let finalSpecifier = normalized;
     if (normalized === "tailwindcss" || normalized.startsWith("tailwindcss/")) {
       finalSpecifier = normalized.replace(/^tailwindcss/, `tailwindcss@${TAILWIND_VERSION}`);
+    } else if (!hasVersionSpecifier(specifier)) {
+      // Warn about unversioned imports for reproducibility
+      // Skip warning for known packages that we pin versions for
+      warnUnversionedImport(specifier);
     }
 
     // Convert remaining bare imports (npm packages) to esm.sh URLs

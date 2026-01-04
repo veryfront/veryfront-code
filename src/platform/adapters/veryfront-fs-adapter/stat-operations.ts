@@ -138,10 +138,11 @@ export class StatOperations {
     this.directoryIndex = dirIdx;
     this.pathMapping = pathMap;
 
-    logger.debug("[StatOperations] Index built", {
+    logger.info("[StatOperations] Index built", {
       files: fileIdx.size,
       directories: dirIdx.size,
       pathMappings: pathMap.size,
+      filePaths: Array.from(fileIdx.keys()),
     });
   }
 
@@ -233,9 +234,9 @@ export class StatOperations {
       return null;
     }
 
-    logger.debug("[StatOperations] resolveFile index size", {
+    logger.debug("[StatOperations] resolveFile index lookup", {
+      normalizedPath,
       fileCount: fileIdx.size,
-      sampleKeys: Array.from(fileIdx.keys()).slice(0, 10),
     });
 
     // 1. Try exact match first

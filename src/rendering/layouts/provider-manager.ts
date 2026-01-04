@@ -9,6 +9,7 @@ import { join } from "../../platform/compat/path-helper.ts";
 interface VeryfrontFSAdapterLike {
   getProjectData: () => { provider?: string; layout?: string } | undefined;
   exists: (path: string) => Promise<boolean>;
+  getFilePathByEntityId?: (entityId: string) => string | undefined;
 }
 
 function getVeryfrontFSAdapter(adapter: RuntimeAdapter): VeryfrontFSAdapterLike | null {
@@ -123,6 +124,10 @@ export class ProviderManager {
     return /\.(tsx|jsx|ts|js|mdx)$/.test(provider);
   }
 
+  private isUUID(value: string): boolean {
+    return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
+  }
+
   private async collectConfigProvider(): Promise<ProviderItem | null> {
     const configProvider = this.config?.provider;
     if (!configProvider || !this.isValidProviderPath(configProvider)) {
@@ -164,15 +169,34 @@ export class ProviderManager {
     const projectData = vfAdapter.getProjectData();
     logger.info("[ProviderManager] Project data", { projectData });
 
-    if (!projectData?.provider || !this.isValidProviderPath(projectData.provider)) {
+    let providerValue = projectData?.provider;
+
+    // If provider is a UUID, try to resolve it to a file path via entity lookup
+    if (providerValue && this.isUUID(providerValue)) {
+      const resolvedPath = vfAdapter.getFilePathByEntityId?.(providerValue);
+      if (resolvedPath) {
+        logger.info("[ProviderManager] Resolved UUID provider to path", {
+          uuid: providerValue,
+          path: resolvedPath,
+        });
+        providerValue = resolvedPath.replace(/^components\//, "");
+      } else {
+        logger.info("[ProviderManager] Could not resolve UUID provider", {
+          uuid: providerValue,
+        });
+      }
+    }
+
+    if (!providerValue || !this.isValidProviderPath(providerValue)) {
       logger.info("[ProviderManager] Skipping invalid API provider value", {
         provider: projectData?.provider,
+        resolved: providerValue,
       });
       return null;
     }
 
     // First try components/ directory (legacy convention)
-    let providerPath = join(this.projectDir, "components", projectData.provider);
+    let providerPath = join(this.projectDir, "components", providerValue);
     let exists = await vfAdapter.exists(providerPath);
 
     logger.info("[ProviderManager] Checking API project provider (components/)", {
@@ -183,10 +207,10 @@ export class ProviderManager {
 
     // If not in components/, try project root (app.mdx convention)
     if (!exists) {
-      providerPath = join(this.projectDir, projectData.provider);
+      providerPath = join(this.projectDir, providerValue);
       exists = await vfAdapter.exists(providerPath);
       logger.info("[ProviderManager] Checking API project provider (root)", {
-        provider: projectData.provider,
+        provider: providerValue,
         providerPath,
         exists,
       });

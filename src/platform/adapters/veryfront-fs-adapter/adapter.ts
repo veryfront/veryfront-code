@@ -52,6 +52,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
     this.apiBaseUrl = veryfrontConfig.apiBaseUrl;
     this.apiToken = veryfrontConfig.apiToken;
     this.productionMode = veryfrontConfig.productionMode ?? false;
+    this.releaseId = veryfrontConfig.releaseId ?? null;
 
     this.client = new VeryfrontAPIClient({
       apiBaseUrl: veryfrontConfig.apiBaseUrl,
@@ -467,6 +468,22 @@ export class VeryfrontFSAdapter implements FSAdapter {
 
     const file = cachedFiles.find((f) => f.path === normalizedPath);
     return file?.id;
+  }
+
+  /**
+   * Get the file path for a given entity ID (UUID).
+   * This is used to resolve component UUIDs to their file paths.
+   * Returns undefined if no file matches the entity ID.
+   */
+  getFilePathByEntityId(entityId: string): string | undefined {
+    const branch = this.requestBranch || "main";
+    const cachedFiles = this.cache.get(`files:all:${branch}`) as
+      | Array<{ id?: string; path: string }>
+      | undefined;
+    if (!cachedFiles) return undefined;
+
+    const file = cachedFiles.find((f) => f.id === entityId);
+    return file?.path;
   }
 
   /**

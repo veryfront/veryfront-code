@@ -44,6 +44,8 @@ function getApiBaseUrl(): string {
 const apiBaseUrl = getApiBaseUrl();
 const apiToken = Deno.env.get("VERYFRONT_API_TOKEN") || env.VERYFRONT_API_TOKEN || "";
 const projectSlug = Deno.env.get("VERYFRONT_PROJECT_SLUG") || env.VERYFRONT_PROJECT_SLUG || "";
+const projectId = Deno.env.get("VERYFRONT_PROJECT_ID") || env.VERYFRONT_PROJECT_ID || "";
+const releaseId = Deno.env.get("VERYFRONT_RELEASE_ID") || env.VERYFRONT_RELEASE_ID || "";
 
 // In proxy mode, token comes from x-token header per-request
 // In direct mode, require token and slug from env
@@ -84,9 +86,12 @@ export default {
       // In direct mode, use the configured values directly
       apiToken: apiToken || undefined, // Fallback for both modes
       projectSlug: proxyMode ? undefined : projectSlug,
+      projectId: proxyMode ? undefined : projectId || undefined, // Skip listProjects lookup if set
       // Production mode fetches from releases (published content)
       // instead of draft files and skips WebSocket connection
       productionMode,
+      // Specific release ID to fetch (defaults to "latest" if not set)
+      releaseId: proxyMode ? undefined : releaseId || undefined,
       cache: {
         enabled: true, // WebSocket pokes invalidate cache on file changes
         ttl: 60000, // 60s TTL as safety net

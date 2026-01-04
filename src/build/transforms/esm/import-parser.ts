@@ -3,10 +3,18 @@ import { parseImports } from "./lexer.ts";
 import { createFileSystem } from "../../../platform/compat/fs.ts";
 import { getLoaderFromPath } from "./transform-utils.ts";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
+import { isCrossProjectImport, parseCrossProjectImport } from "./path-resolver.ts";
 
 export interface LocalImport {
   specifier: string;
   absolutePath: string;
+}
+
+export interface CrossProjectImport {
+  specifier: string;
+  projectSlug: string;
+  version: string;
+  path: string;
 }
 
 export interface MissingImport {
@@ -17,6 +25,7 @@ export interface MissingImport {
 
 export interface ParseLocalImportsResult {
   imports: LocalImport[];
+  crossProjectImports: CrossProjectImport[];
   missing: MissingImport[];
 }
 
@@ -48,6 +57,7 @@ export async function parseLocalImports(
 
   const imports = await parseImports(result.code);
   const localImports: LocalImport[] = [];
+  const crossProjectImports: CrossProjectImport[] = [];
   const missingImports: MissingImport[] = [];
 
   for (const imp of imports) {
@@ -77,10 +87,21 @@ export async function parseLocalImports(
           reason: `Alias path not found: @/${aliasPath}`,
         });
       }
+    } else if (imp.n && isCrossProjectImport(imp.n)) {
+      // Handle cross-project versioned imports like demo@0.0/@/components/Button
+      const parsed = parseCrossProjectImport(imp.n);
+      if (parsed) {
+        crossProjectImports.push({
+          specifier: imp.n,
+          projectSlug: parsed.projectSlug,
+          version: parsed.version,
+          path: parsed.path,
+        });
+      }
     }
   }
 
-  return { imports: localImports, missing: missingImports };
+  return { imports: localImports, crossProjectImports, missing: missingImports };
 }
 
 /**

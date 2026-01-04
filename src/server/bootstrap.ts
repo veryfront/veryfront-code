@@ -118,6 +118,7 @@ export async function bootstrap(
     logger.debug("[Bootstrap] Skipping config reload in production mode (using local config)");
   }
 
+  const finalAdapter = fsAdapterInitialized ? enhancedAdapter : adapter;
   logger.debug("[Bootstrap] Framework initialized successfully", {
     projectDir,
     runtime: adapter.platform,
@@ -125,7 +126,7 @@ export async function bootstrap(
   });
 
   return {
-    adapter: fsAdapterInitialized ? enhancedAdapter : adapter,
+    adapter: finalAdapter,
     config,
     usingFSAdapter: fsAdapterInitialized,
     fsAdapterType: fsAdapterInitialized ? fsType : undefined,
