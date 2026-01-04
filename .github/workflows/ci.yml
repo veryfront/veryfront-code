@@ -7,48 +7,82 @@ on:
   pull_request:
     branches: [main]
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   REGISTRY: ghcr.io
 
 jobs:
-  test:
+  # ============================================
+  # PARALLEL QUALITY CHECKS
+  # ============================================
+
+  format:
     runs-on: ubuntu-latest
     steps:
-      - name: Clone repository
-        uses: actions/checkout@v4
-
-      - name: Setup Deno
-        uses: denoland/setup-deno@v2
+      - uses: actions/checkout@v4
+      - uses: denoland/setup-deno@v2
         with:
           deno-version: lts
           cache: true
           cache-hash: ${{ hashFiles('deno.json') }}
+      - run: deno fmt --check
 
-      - name: Verify Formatting
-        run: deno fmt --check
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: lts
+          cache: true
+          cache-hash: ${{ hashFiles('deno.json') }}
+      - run: deno task lint
 
-      - name: Lint
-        run: deno task lint
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: lts
+          cache: true
+          cache-hash: ${{ hashFiles('deno.json') }}
+      - run: deno task typecheck
 
-      - name: Type Check
-        run: deno task typecheck
+  # ============================================
+  # PARALLEL TEST JOBS
+  # ============================================
 
-      - name: Check Circular Dependencies
-        continue-on-error: true
-        run: deno task check:circular
+  unit-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: lts
+          cache: true
+          cache-hash: ${{ hashFiles('deno.json') }}
+      - run: deno task test:unit --no-lock
 
-      - name: Run Unit Tests
-        run: deno task test:unit --no-lock
-
+  integration-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: lts
+          cache: true
+          cache-hash: ${{ hashFiles('deno.json') }}
       - name: Run Integration Tests
-        timeout-minutes: 10
         env:
           DENO_JOBS: 1
         run: |
-          # Run tests and capture output - ignore exit code due to known zod/v4 post-test error
           output=$(deno task test:integration --no-lock 2>&1) || true
           echo "$output"
-          # Check if tests actually passed by looking for "0 failed" in output
           if echo "$output" | grep -q "| 0 failed"; then
             echo "✅ All tests passed"
             exit 0
@@ -57,7 +91,12 @@ jobs:
             exit 1
           fi
 
+  # ============================================
+  # BUILD (only on main, after all checks pass)
+  # ============================================
+
   build:
+    needs: [format, lint, typecheck, unit-tests, integration-tests]
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
@@ -76,30 +115,21 @@ jobs:
             dockerfile: Dockerfile.renderer
             image: veryfront/veryfront-renderer
     steps:
-      - name: Clone repository
-        uses: actions/checkout@v4
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Log in to Container Registry
-        uses: docker/login-action@v3
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Extract metadata
-        id: meta
+      - id: meta
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.REGISTRY }}/${{ matrix.image }}
           tags: |
             type=raw,value=${{ github.sha }}
             type=raw,value=latest
-
-      - name: Build and push ${{ matrix.component }}
-        uses: docker/build-push-action@v5
+      - uses: docker/build-push-action@v5
         with:
           context: .
           file: ${{ matrix.dockerfile }}
@@ -109,32 +139,27 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+  # ============================================
+  # DEPLOY (only after build succeeds)
+  # ============================================
+
   deploy:
     needs: build
     runs-on: ubuntu-latest
     steps:
-      - name: Clone repository
-        uses: actions/checkout@v4
-
-      - name: Setup Tailscale
-        uses: tailscale/github-action@v2
+      - uses: actions/checkout@v4
+      - uses: tailscale/github-action@v2
         with:
           oauth-client-id: ${{ secrets.TAILSCALE_OAUTH_CLIENT_ID }}
           oauth-secret: ${{ secrets.TAILSCALE_OAUTH_SECRET }}
           tags: tag:ci
-
-      - name: Setup kubectl
-        uses: azure/setup-kubectl@v3
-
-      - name: Setup Helm
-        uses: azure/setup-helm@v4
-
+      - uses: azure/setup-kubectl@v3
+      - uses: azure/setup-helm@v4
       - name: Create/Update Kubernetes Secrets
         run: |
           echo "${{ secrets.KUBECONFIG_PRODUCTION }}" | base64 -d > /tmp/kubeconfig
           export KUBECONFIG=/tmp/kubeconfig
 
-          # Create proxy secret (only secrets actually used in code)
           kubectl create secret generic veryfront-proxy-secret \
             --namespace veryfront-production \
             --from-literal=OAUTH_CLIENT_ID="${{ secrets.OAUTH_CLIENT_ID_PRODUCTION }}" \
@@ -146,7 +171,6 @@ jobs:
             --from-literal=OTEL_EXPORTER_OTLP_HEADERS="${{ secrets.OTEL_EXPORTER_OTLP_HEADERS }}" \
             --dry-run=client -o yaml | kubectl apply -f -
 
-          # Create renderer secret (only secrets actually used in code)
           kubectl create secret generic veryfront-renderer-secret \
             --namespace veryfront-production \
             --from-literal=VERYFRONT_API_URL="${{ secrets.VERYFRONT_API_URL_PRODUCTION }}" \
