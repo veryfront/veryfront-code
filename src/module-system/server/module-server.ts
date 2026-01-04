@@ -284,14 +284,14 @@ export async function serveModule(
   const crossProjectMatch = versionedMatch || latestMatch;
 
   if (crossProjectMatch) {
-    let crossProjectSlug: string;
-    let crossVersion: string;
-    let crossPath: string;
+    let crossProjectSlug: string | undefined;
+    let crossVersion: string | undefined;
+    let crossPath: string | undefined;
 
     if (versionedMatch) {
       [, crossProjectSlug, crossVersion, crossPath] = versionedMatch;
-    } else {
-      [, crossProjectSlug, crossPath] = latestMatch!;
+    } else if (latestMatch) {
+      [, crossProjectSlug, crossPath] = latestMatch;
       crossVersion = "latest";
     }
 
