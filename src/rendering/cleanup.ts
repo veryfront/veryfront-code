@@ -12,12 +12,8 @@ export async function cleanupBundler() {
   const { clearMDXModuleCache } = await import("./ssr/index.ts");
   clearMDXModuleCache();
 
-  // Skip renderer cleanup if esbuild was initialized globally for tests
-  // This prevents "child process started before test but closed during test" errors
-  if ((globalThis as Record<string, unknown>).__vfTestPreserveEsbuild) {
-    return;
-  }
-
+  // Always clean up renderers to prevent test isolation issues
+  // (each test needs a fresh renderer with its own projectDir)
   const { cleanupRenderers } = await import("../server/shared/index.ts");
   await cleanupRenderers();
 }
