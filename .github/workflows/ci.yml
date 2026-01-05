@@ -69,11 +69,7 @@ jobs:
 
   integration-tests:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
-    strategy:
-      fail-fast: false
-      matrix:
-        shard: [1, 2, 3]
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: denoland/setup-deno@v2
@@ -81,32 +77,10 @@ jobs:
           deno-version: lts
           cache: true
           cache-hash: ${{ hashFiles('deno.json') }}
-      - name: Run Integration Tests (Shard ${{ matrix.shard }}/3)
+      - name: Run Integration Tests
         env:
           VF_DISABLE_LRU_INTERVAL: "1"
-        run: |
-          # Get all test files and shard them
-          all_tests=$(find tests/integration -name "*.test.ts" | sort)
-          total=$(echo "$all_tests" | wc -l)
-          per_shard=$(( (total + 2) / 3 ))
-          start=$(( ((${{ matrix.shard }} - 1) * per_shard) + 1 ))
-
-          # Get tests for this shard
-          shard_tests=$(echo "$all_tests" | sed -n "${start},$(( start + per_shard - 1 ))p" | tr '\n' ' ')
-
-          echo "Running shard ${{ matrix.shard }}/3 with $(echo $shard_tests | wc -w) test files"
-
-          # Run tests with increased parallelism
-          output=$(deno test --parallel --allow-all --unstable-worker-options --unstable-net --no-lock $shard_tests 2>&1) || true
-          echo "$output"
-
-          if echo "$output" | grep -q "| 0 failed"; then
-            echo "✅ All tests passed"
-            exit 0
-          else
-            echo "❌ Tests failed"
-            exit 1
-          fi
+        run: deno task test:integration --no-lock
 
   # ============================================
   # BUILD (only on main, after all checks pass)
