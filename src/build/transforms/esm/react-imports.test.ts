@@ -21,13 +21,17 @@ describe("react-imports", () => {
     it("should resolve react/jsx-runtime import", async () => {
       const code = 'import { jsx } from "react/jsx-runtime"';
       const result = await resolveReactImports(code);
-      expect(result).toBe('import { jsx } from "https://esm.sh/react@18.3.1/jsx-runtime?target=es2022"');
+      expect(result).toBe(
+        'import { jsx } from "https://esm.sh/react@18.3.1/jsx-runtime?target=es2022"',
+      );
     });
 
     it("should resolve react/jsx-dev-runtime import", async () => {
       const code = 'import { jsxDEV } from "react/jsx-dev-runtime"';
       const result = await resolveReactImports(code);
-      expect(result).toBe('import { jsxDEV } from "https://esm.sh/react@18.3.1/jsx-dev-runtime?target=es2022"');
+      expect(result).toBe(
+        'import { jsxDEV } from "https://esm.sh/react@18.3.1/jsx-dev-runtime?target=es2022"',
+      );
     });
 
     it("should resolve react-dom import", async () => {
@@ -47,7 +51,9 @@ describe("react-imports", () => {
     it("should resolve react-dom/client import", async () => {
       const code = 'import { createRoot } from "react-dom/client"';
       const result = await resolveReactImports(code);
-      expect(result).toBe('import { createRoot } from "https://esm.sh/react-dom@18.3.1/client?target=es2022"');
+      expect(result).toBe(
+        'import { createRoot } from "https://esm.sh/react-dom@18.3.1/client?target=es2022"',
+      );
     });
 
     it("should handle multiple React imports in order", async () => {
@@ -63,7 +69,9 @@ import ReactDOM from "react-dom"`;
     it("should prioritize specific paths over generic react", async () => {
       const code = 'import { jsx } from "react/jsx-runtime"';
       const result = await resolveReactImports(code);
-      expect(result).toBe('import { jsx } from "https://esm.sh/react@18.3.1/jsx-runtime?target=es2022"');
+      expect(result).toBe(
+        'import { jsx } from "https://esm.sh/react@18.3.1/jsx-runtime?target=es2022"',
+      );
       expect(result).not.toContain("https://esm.sh/react@18.3.1/jsx-runtime@18.3.1");
     });
 
