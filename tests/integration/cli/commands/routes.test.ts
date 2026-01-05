@@ -6,7 +6,6 @@ import { type TestContext, withTestContext } from "../../../_helpers/context.ts"
 
 describe(
   "CLI routes command",
-  
   () => {
     it("prints pages and api routes", async () => {
       await withTestContext("routes-print", async (context: TestContext) => {

@@ -5,9 +5,9 @@ import { NodeAdapter, nodeAdapter } from "@veryfront/platform/adapters/node/inde
 import { startUniversalServer } from "../../../src/server/production-server.ts";
 import { getFreePort } from "../../_helpers/utils.ts";
 
-  // Note: Sanitizers disabled due to React 19 SSR MessagePort cleanup issue
-  // See: https://github.com/facebook/react/issues/24669
-  describe(
+// Note: Sanitizers disabled due to React 19 SSR MessagePort cleanup issue
+// See: https://github.com/facebook/react/issues/24669
+describe(
   "NodeAdapter",
   {
     sanitizeResources: false,

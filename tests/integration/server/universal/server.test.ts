@@ -1,4 +1,10 @@
-import { assert, assertEquals, assertExists, assertMatch, assertStringIncludes } from "std/assert/mod.ts";
+import {
+  assert,
+  assertEquals,
+  assertExists,
+  assertMatch,
+  assertStringIncludes,
+} from "std/assert/mod.ts";
 import { afterAll, describe, it } from "std/testing/bdd.ts";
 import "../../../_helpers/log-guard.ts";
 
@@ -150,67 +156,67 @@ describe(
         );
 
         const port = await context.allocatePort();
-          const controller = new AbortController();
-          const server = await startUniversalServer({
-            projectDir: context.projectDir,
-            port,
-            hostname: "127.0.0.1",
-            signal: controller.signal,
-          });
-          await server.ready;
+        const controller = new AbortController();
+        const server = await startUniversalServer({
+          projectDir: context.projectDir,
+          port,
+          hostname: "127.0.0.1",
+          signal: controller.signal,
+        });
+        await server.ready;
 
-          // pages/api
-          const a = await fetch(`http://127.0.0.1:${port}/api/hello`);
-          const aj = await a.json();
-          assertEquals(aj.msg, "pages api");
+        // pages/api
+        const a = await fetch(`http://127.0.0.1:${port}/api/hello`);
+        const aj = await a.json();
+        assertEquals(aj.msg, "pages api");
 
-          // app route POST
-          const b = await fetch(`http://127.0.0.1:${port}/api/echo`, {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({ ok: true }),
-          });
-          assertEquals(b.status, 200);
-          const bj = await b.json();
-          assertEquals(bj.youSent.ok, true);
+        // app route POST
+        const b = await fetch(`http://127.0.0.1:${port}/api/echo`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ ok: true }),
+        });
+        assertEquals(b.status, 200);
+        const bj = await b.json();
+        assertEquals(bj.youSent.ok, true);
 
-          // app router SSR root (write file before fetch)
-          await Deno.writeTextFile(join(context.projectDir, "app", "page.mdx"), `# Hello World`);
-          // Re-issue readiness (renderer caches on first call); small delay for fs
-          await new Promise((r) => setTimeout(r, 50));
-          const p = await fetch(`http://127.0.0.1:${port}/`);
-          assertEquals(p.status, 200);
-          const html = await p.text();
-          if (!/Hello World/i.test(html)) throw new Error("SSR content missing");
+        // app router SSR root (write file before fetch)
+        await Deno.writeTextFile(join(context.projectDir, "app", "page.mdx"), `# Hello World`);
+        // Re-issue readiness (renderer caches on first call); small delay for fs
+        await new Promise((r) => setTimeout(r, 50));
+        const p = await fetch(`http://127.0.0.1:${port}/`);
+        assertEquals(p.status, 200);
+        const html = await p.text();
+        if (!/Hello World/i.test(html)) throw new Error("SSR content missing");
 
-          // minimal RSC endpoints via universal delegator
-          const m = await fetch(`http://127.0.0.1:${port}/_veryfront/rsc/manifest`);
-          assertEquals(m.status, 200);
-          await m.text(); // Consume body
+        // minimal RSC endpoints via universal delegator
+        const m = await fetch(`http://127.0.0.1:${port}/_veryfront/rsc/manifest`);
+        assertEquals(m.status, 200);
+        await m.text(); // Consume body
 
-          const hydr = await fetch(`http://127.0.0.1:${port}/_veryfront/rsc/hydrator.js`);
-          assertEquals(hydr.status, 200);
-          await hydr.text(); // Consume body
+        const hydr = await fetch(`http://127.0.0.1:${port}/_veryfront/rsc/hydrator.js`);
+        assertEquals(hydr.status, 200);
+        await hydr.text(); // Consume body
 
-          const dom = await fetch(`http://127.0.0.1:${port}/_veryfront/rsc/dom.js`);
-          assertEquals(dom.status, 200);
-          await dom.text(); // Consume body
+        const dom = await fetch(`http://127.0.0.1:${port}/_veryfront/rsc/dom.js`);
+        assertEquals(dom.status, 200);
+        await dom.text(); // Consume body
 
-          const stream = await fetch(`http://127.0.0.1:${port}/_veryfront/rsc/stream`);
-          assertEquals(stream.status, 200);
-          // stream should be no-cache
-          const cc = stream.headers.get("cache-control") || "";
-          if (!/no-cache/i.test(cc)) {
-            throw new Error(`stream missing no-cache: ${cc}`);
-          }
-          await stream.text(); // Consume body
+        const stream = await fetch(`http://127.0.0.1:${port}/_veryfront/rsc/stream`);
+        assertEquals(stream.status, 200);
+        // stream should be no-cache
+        const cc = stream.headers.get("cache-control") || "";
+        if (!/no-cache/i.test(cc)) {
+          throw new Error(`stream missing no-cache: ${cc}`);
+        }
+        await stream.text(); // Consume body
 
-          const payload = await fetch(`http://127.0.0.1:${port}/_veryfront/rsc/payload`);
-          assertEquals(payload.status, 200);
-          await payload.text(); // Consume body
+        const payload = await fetch(`http://127.0.0.1:${port}/_veryfront/rsc/payload`);
+        assertEquals(payload.status, 200);
+        await payload.text(); // Consume body
 
-          controller.abort();
-          await server.stop();
+        controller.abort();
+        await server.stop();
       });
     });
 
@@ -221,42 +227,42 @@ describe(
           join(context.projectDir, "veryfront.config.js"),
           `export default { experimental: { rsc: true } };`,
         );
-          const dir = join(context.projectDir, "app");
-          await Deno.mkdir(dir, { recursive: true });
-          await Deno.writeTextFile(
-            join(dir, "page.ts"),
-            `export default async function Page(){ return '<div>Hi</div>'; }`,
-          );
+        const dir = join(context.projectDir, "app");
+        await Deno.mkdir(dir, { recursive: true });
+        await Deno.writeTextFile(
+          join(dir, "page.ts"),
+          `export default async function Page(){ return '<div>Hi</div>'; }`,
+        );
 
-          const port = await context.allocatePort();
-          const controller = new AbortController();
-          const server = await startUniversalServer({
-            projectDir: context.projectDir,
-            port,
-            hostname: "127.0.0.1",
-            signal: controller.signal,
-          });
-          await server.ready;
+        const port = await context.allocatePort();
+        const controller = new AbortController();
+        const server = await startUniversalServer({
+          projectDir: context.projectDir,
+          port,
+          hostname: "127.0.0.1",
+          signal: controller.signal,
+        });
+        await server.ready;
 
-          // hydrate.js alias
-          const hyd = await fetch(`http://127.0.0.1:${port}/_veryfront/rsc/hydrate.js`);
-          assertEquals(hyd.status, 200);
-          await hyd.body?.cancel();
+        // hydrate.js alias
+        const hyd = await fetch(`http://127.0.0.1:${port}/_veryfront/rsc/hydrate.js`);
+        assertEquals(hyd.status, 200);
+        await hyd.body?.cancel();
 
-          // render payload ETag behaviour
-          const r1 = await fetch(`http://127.0.0.1:${port}/_veryfront/rsc/render`);
-          assertEquals(r1.status, 200);
-          const etag = r1.headers.get("etag");
-          if (!etag) throw new Error("missing etag on render payload");
-          await r1.body?.cancel();
-          const r2 = await fetch(`http://127.0.0.1:${port}/_veryfront/rsc/render`, {
-            headers: { "if-none-match": etag },
-          });
-          assertEquals(r2.status, 304);
-          await r2.body?.cancel();
+        // render payload ETag behaviour
+        const r1 = await fetch(`http://127.0.0.1:${port}/_veryfront/rsc/render`);
+        assertEquals(r1.status, 200);
+        const etag = r1.headers.get("etag");
+        if (!etag) throw new Error("missing etag on render payload");
+        await r1.body?.cancel();
+        const r2 = await fetch(`http://127.0.0.1:${port}/_veryfront/rsc/render`, {
+          headers: { "if-none-match": etag },
+        });
+        assertEquals(r2.status, 304);
+        await r2.body?.cancel();
 
-          controller.abort();
-          await server.stop();
+        controller.abort();
+        await server.stop();
       });
     });
 
@@ -469,54 +475,54 @@ describe(
         );
 
         const port = await context.allocatePort();
-          const controller = new AbortController();
-          const server = await startUniversalServer({
-            projectDir: context.projectDir,
-            port,
-            hostname: "127.0.0.1",
-            signal: controller.signal,
-          });
-          await server.ready;
+        const controller = new AbortController();
+        const server = await startUniversalServer({
+          projectDir: context.projectDir,
+          port,
+          hostname: "127.0.0.1",
+          signal: controller.signal,
+        });
+        await server.ready;
 
-          const resp = await fetch(`http://127.0.0.1:${port}/_veryfront/rsc/stream?page=/rsc`);
-          assertEquals(resp.status, 200);
-          assertExists(resp.body);
-          const reader = resp.body.getReader();
-          const dec = new TextDecoder();
-          let buf = "";
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            buf += dec.decode(value);
-          }
-          const lines = buf.split(/\n+/).filter((l) => l.trim().startsWith("{"));
-          const events = lines
-            .map((l) => {
-              try {
-                return JSON.parse(l);
-              } catch {
-                return null;
-              }
-            })
-            .filter(Boolean) as Array<{ type: string; id: string; html: string }>;
-          if (events.length === 0) throw new Error("no stream events parsed");
-          const ids = events.map((e) => e.id);
-          if (!ids.includes("root")) throw new Error("root slot missing");
-          if (!ids.includes("sidebar")) throw new Error("sidebar slot missing");
-          // Ensure at least one sidebar event occurs before the final root event
-          const lastRoot = events
-            .map((e, i) => [e, i] as const)
-            .filter(([e]) => e.id === "root")
-            .pop();
-          const anySidebarBefore = events.slice(0, lastRoot?.[1] ?? 0).some((e) =>
-            e.id === "sidebar"
-          );
-          if (!anySidebarBefore) {
-            throw new Error("sidebar did not appear before final root");
-          }
+        const resp = await fetch(`http://127.0.0.1:${port}/_veryfront/rsc/stream?page=/rsc`);
+        assertEquals(resp.status, 200);
+        assertExists(resp.body);
+        const reader = resp.body.getReader();
+        const dec = new TextDecoder();
+        let buf = "";
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buf += dec.decode(value);
+        }
+        const lines = buf.split(/\n+/).filter((l) => l.trim().startsWith("{"));
+        const events = lines
+          .map((l) => {
+            try {
+              return JSON.parse(l);
+            } catch {
+              return null;
+            }
+          })
+          .filter(Boolean) as Array<{ type: string; id: string; html: string }>;
+        if (events.length === 0) throw new Error("no stream events parsed");
+        const ids = events.map((e) => e.id);
+        if (!ids.includes("root")) throw new Error("root slot missing");
+        if (!ids.includes("sidebar")) throw new Error("sidebar slot missing");
+        // Ensure at least one sidebar event occurs before the final root event
+        const lastRoot = events
+          .map((e, i) => [e, i] as const)
+          .filter(([e]) => e.id === "root")
+          .pop();
+        const anySidebarBefore = events.slice(0, lastRoot?.[1] ?? 0).some((e) =>
+          e.id === "sidebar"
+        );
+        if (!anySidebarBefore) {
+          throw new Error("sidebar did not appear before final root");
+        }
 
-          controller.abort();
-          await server.stop();
+        controller.abort();
+        await server.stop();
       });
     });
 

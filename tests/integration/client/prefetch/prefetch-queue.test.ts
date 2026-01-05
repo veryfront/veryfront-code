@@ -5,7 +5,10 @@
 
 import { assertEquals, assertExists } from "std/assert/mod.ts";
 import { describe, it } from "std/testing/bdd.ts";
-import { PrefetchQueue, PrefetchQueueOptions } from "@veryfront/rendering/client/prefetch/prefetch-queue.ts";
+import {
+  PrefetchQueue,
+  PrefetchQueueOptions,
+} from "@veryfront/rendering/client/prefetch/prefetch-queue.ts";
 
 // Mock fetch function
 interface MockFetchOptions {
@@ -74,7 +77,7 @@ const setupMocks = () => {
   };
 };
 
-describe("PrefetchQueue",  () => {
+describe("PrefetchQueue", () => {
   describe("Constructor and Configuration", () => {
     it("should create PrefetchQueue with options and prefetchedUrls", () => {
       const options: PrefetchQueueOptions = {

@@ -7,7 +7,6 @@ import { withTestContext } from "../../_helpers/context.ts";
 
 describe(
   "ModuleResolver",
-  
   () => {
     describe("Basic Resolution", () => {
       it("resolves virtual, mapped, file, absolute and npm", async () => {

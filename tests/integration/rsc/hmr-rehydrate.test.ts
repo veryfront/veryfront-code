@@ -32,7 +32,9 @@ Deno.test(
       }
       return new Response("", { status: 404 });
     };
-    const { hydrateAllClientBoundaries } = await import("../../../src/rendering/rsc/hydrate-client.ts");
+    const { hydrateAllClientBoundaries } = await import(
+      "../../../src/rendering/rsc/hydrate-client.ts"
+    );
     await hydrateAllClientBoundaries(doc as any);
     assert((globalThis as any).__VF_MANIFEST_HASH === "abc"); // Second run with same hash should return early and not flip the test flag again
     (globalThis as any).__VF_HYDRATE_CALLED = false;

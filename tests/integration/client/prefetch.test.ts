@@ -10,7 +10,7 @@ import { PrefetchManager } from "@veryfront/rendering/client/prefetch.ts";
 import type { DOMEnvironment } from "./test-helpers.ts";
 import { setupDOMEnvironment } from "./test-helpers.ts";
 
-describe("Prefetch Manager",  () => {
+describe("Prefetch Manager", () => {
   let env: DOMEnvironment;
   const managers: PrefetchManager[] = [];
 

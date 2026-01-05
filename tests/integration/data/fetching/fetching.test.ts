@@ -749,7 +749,7 @@ Deno.test({
         assertEquals(callCount, 1);
       });
 
-      it("should revalidate after specified time",  async () => {
+      it("should revalidate after specified time", async () => {
         let callCount = 0;
 
         const pageModule: PageWithData = {
@@ -785,7 +785,7 @@ Deno.test({
         assertEquals(getProp<number>(result4.props, "count"), 2);
       });
 
-      it("should implement stale-while-revalidate pattern",  async () => {
+      it("should implement stale-while-revalidate pattern", async () => {
         let callCount = 0;
 
         const pageModule: PageWithData = {
@@ -818,7 +818,7 @@ Deno.test({
         assertEquals(getProp<number>(result3.props, "count"), 2);
       });
 
-      it("should not start multiple background revalidations",  async () => {
+      it("should not start multiple background revalidations", async () => {
         let callCount = 0;
 
         const pageModule: PageWithData = {
@@ -870,7 +870,7 @@ Deno.test({
         assertEquals(callCount, 1);
       });
 
-      it("should handle errors during background revalidation",  async () => {
+      it("should handle errors during background revalidation", async () => {
         let callCount = 0;
 
         const pageModule: PageWithData = {
@@ -1254,7 +1254,7 @@ Deno.test({
         assertEquals(result.props, {});
       });
 
-      it("should handle revalidate: 0",  async () => {
+      it("should handle revalidate: 0", async () => {
         let callCount = 0;
 
         const pageModule: PageWithData = {

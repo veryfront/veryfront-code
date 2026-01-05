@@ -25,7 +25,6 @@ import { withTestContext } from "../../../../_helpers/context.ts";
 
 describe(
   "MDX Bundler",
-  
   () => {
     describe("bundleMdx", () => {
       it("bundles basic MDX content", async () => {

@@ -24,6 +24,7 @@ tests/
 ```
 
 **Key Principles:**
+
 - **Unit tests** (pure functions, no I/O, no external dependencies) are **colocated** with source code in `src/`
 - **Integration tests** (servers, databases, file systems, multiple components) live in `tests/integration/`
 - No separate `e2e/` directory yet - add when needed for full end-to-end user flows
@@ -37,6 +38,7 @@ tests/
 ### When to Use Each Type
 
 **Colocated Unit Tests (`src/`):**
+
 - Pure functions with deterministic output
 - Classes/modules with no external dependencies
 - No file system, network, or database access
@@ -44,6 +46,7 @@ tests/
 - Example: String manipulation, data transformation, validation logic
 
 **Integration Tests (`tests/integration/`):**
+
 - Tests requiring TestContext and dev/production servers
 - File system operations
 - Network requests
@@ -75,11 +78,13 @@ describe("ComponentName", () => {
 **Write self-documenting test names:**
 
 ✅ **Good:**
+
 - `"should return user data when valid ID is provided"`
 - `"should throw ValidationError when email format is invalid"`
 - `"handles 404 for missing files"`
 
 ❌ **Bad:**
+
 - `"test user"` - too vague
 - `"works"` - no context
 - `"test1"` - meaningless

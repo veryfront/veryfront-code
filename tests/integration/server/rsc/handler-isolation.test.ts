@@ -27,7 +27,9 @@ describe("RSC Handler Isolation Tests", { sanitizeOps: false, sanitizeResources:
         );
       });
       // Reset between contexts
-      const { __resetRSCHandlerForTests } = await import("../../../../src/server/handlers/request/rsc/endpoints/index.ts");
+      const { __resetRSCHandlerForTests } = await import(
+        "../../../../src/server/handlers/request/rsc/endpoints/index.ts"
+      );
       __resetRSCHandlerForTests();
 
       await withTestContext("rsc-iso-2", async (ctx2) => {

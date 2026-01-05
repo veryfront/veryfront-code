@@ -26,30 +26,30 @@ describe(
 
         const dir = join(context.projectDir, "app");
         await Deno.mkdir(dir, { recursive: true });
-          await Deno.writeTextFile(
-            join(dir, "page.ts"),
-            `export default async function Page(){ return '<div>Hi</div>'; }`,
-          );
+        await Deno.writeTextFile(
+          join(dir, "page.ts"),
+          `export default async function Page(){ return '<div>Hi</div>'; }`,
+        );
 
-          const server = await context.createProductionServer();
+        const server = await context.createProductionServer();
 
-          // hydrate.js alias
-          const hyd = await fetch(`http://127.0.0.1:${server.port}/_veryfront/rsc/hydrate.js`);
-          assertEquals(hyd.status, 200);
-          await hyd.text(); // Consume body
+        // hydrate.js alias
+        const hyd = await fetch(`http://127.0.0.1:${server.port}/_veryfront/rsc/hydrate.js`);
+        assertEquals(hyd.status, 200);
+        await hyd.text(); // Consume body
 
-          // render payload ETag behaviour
-          const r1 = await fetch(`http://127.0.0.1:${server.port}/_veryfront/rsc/render`);
-          assertEquals(r1.status, 200);
-          const etag = r1.headers.get("etag");
-          if (!etag) throw new Error("missing etag on render payload");
-          await r1.text(); // Consume body
-          const r2 = await fetch(`http://127.0.0.1:${server.port}/_veryfront/rsc/render`, {
-            headers: { "if-none-match": etag },
-          });
-          assertEquals(r2.status, 304);
-          // 304 responses typically have no body, but call text() to be safe
-          await r2.text();
+        // render payload ETag behaviour
+        const r1 = await fetch(`http://127.0.0.1:${server.port}/_veryfront/rsc/render`);
+        assertEquals(r1.status, 200);
+        const etag = r1.headers.get("etag");
+        if (!etag) throw new Error("missing etag on render payload");
+        await r1.text(); // Consume body
+        const r2 = await fetch(`http://127.0.0.1:${server.port}/_veryfront/rsc/render`, {
+          headers: { "if-none-match": etag },
+        });
+        assertEquals(r2.status, 304);
+        // 304 responses typically have no body, but call text() to be safe
+        await r2.text();
       });
     });
 
@@ -63,49 +63,49 @@ describe(
 
         const dir = join(context.projectDir, "app", "rsc");
         await Deno.mkdir(dir, { recursive: true });
-          await Deno.writeTextFile(
-            join(dir, "page.ts"),
-            `export default async function Page(){ return '<div>RSC Stream</div>'; }`,
-          );
+        await Deno.writeTextFile(
+          join(dir, "page.ts"),
+          `export default async function Page(){ return '<div>RSC Stream</div>'; }`,
+        );
 
-          const server = await context.createProductionServer();
+        const server = await context.createProductionServer();
 
-          const resp = await fetch(`http://127.0.0.1:${server.port}/_veryfront/rsc/stream?page=/rsc`);
-          assertEquals(resp.status, 200);
-          assertExists(resp.body);
-          const reader = resp.body.getReader();
-          const dec = new TextDecoder();
-          let buf = "";
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            buf += dec.decode(value);
-          }
-          const lines = buf.split(/\n+/).filter((l) => l.trim().startsWith("{"));
-          const events = lines
-            .map((l) => {
-              try {
-                return JSON.parse(l);
-              } catch {
-                return null;
-              }
-            })
-            .filter(Boolean) as Array<{ type: string; id: string; html: string }>;
-          if (events.length === 0) throw new Error("no stream events parsed");
-          const ids = events.map((e) => e.id);
-          if (!ids.includes("root")) throw new Error("root slot missing");
-          if (!ids.includes("sidebar")) throw new Error("sidebar slot missing");
-          // Ensure at least one sidebar event occurs before the final root event
-          const lastRoot = events
-            .map((e, i) => [e, i] as const)
-            .filter(([e]) => e.id === "root")
-            .pop();
-          const anySidebarBefore = events.slice(0, lastRoot?.[1] ?? 0).some((e) =>
-            e.id === "sidebar"
-          );
-          if (!anySidebarBefore) {
-            throw new Error("sidebar did not appear before final root");
-          }
+        const resp = await fetch(`http://127.0.0.1:${server.port}/_veryfront/rsc/stream?page=/rsc`);
+        assertEquals(resp.status, 200);
+        assertExists(resp.body);
+        const reader = resp.body.getReader();
+        const dec = new TextDecoder();
+        let buf = "";
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buf += dec.decode(value);
+        }
+        const lines = buf.split(/\n+/).filter((l) => l.trim().startsWith("{"));
+        const events = lines
+          .map((l) => {
+            try {
+              return JSON.parse(l);
+            } catch {
+              return null;
+            }
+          })
+          .filter(Boolean) as Array<{ type: string; id: string; html: string }>;
+        if (events.length === 0) throw new Error("no stream events parsed");
+        const ids = events.map((e) => e.id);
+        if (!ids.includes("root")) throw new Error("root slot missing");
+        if (!ids.includes("sidebar")) throw new Error("sidebar slot missing");
+        // Ensure at least one sidebar event occurs before the final root event
+        const lastRoot = events
+          .map((e, i) => [e, i] as const)
+          .filter(([e]) => e.id === "root")
+          .pop();
+        const anySidebarBefore = events.slice(0, lastRoot?.[1] ?? 0).some((e) =>
+          e.id === "sidebar"
+        );
+        if (!anySidebarBefore) {
+          throw new Error("sidebar did not appear before final root");
+        }
       });
     });
 

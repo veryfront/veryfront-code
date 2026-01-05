@@ -7,7 +7,6 @@ import { withTestContext } from "../../_helpers/context.ts";
 
 describe(
   "ComponentRegistry",
-  
   () => {
     // ===========================
     // Component Discovery Tests

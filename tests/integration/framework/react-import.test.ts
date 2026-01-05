@@ -4,13 +4,10 @@ import { assertEquals, assertExists } from "std/assert/mod.ts";
 import { describe, it } from "std/testing/bdd.ts";
 import { denoAdapter } from "@veryfront/platform/adapters/deno.ts";
 import { ComponentRegistry } from "@veryfront/modules/component-registry/index.ts";
-import {
-  loadImportMap,
-  transformImportsWithMap,
-} from "@veryfront/modules/import-map/index.ts";
+import { loadImportMap, transformImportsWithMap } from "@veryfront/modules/import-map/index.ts";
 import { withTestContext } from "../../_helpers/context.ts";
 
-describe("React Import Tests",  () => {
+describe("React Import Tests", () => {
   describe("ComponentRegistry", () => {
     it("should handle React imports in components", async () => {
       await withTestContext("react-import-component", async (context) => {

@@ -16,7 +16,6 @@ import { withTestContext } from "../../_helpers/context.ts";
 
 describe(
   "File Watching Abstraction",
-  
   () => {
     describe("Deno Adapter", () => {
       it("should watch file changes and emit events", async () => {
@@ -56,7 +55,9 @@ describe(
           try {
             await Promise.race([
               watchPromise,
-              new Promise((resolve) => { timeoutId = setTimeout(resolve, 2000); }),
+              new Promise((resolve) => {
+                timeoutId = setTimeout(resolve, 2000);
+              }),
             ]);
           } finally {
             if (timeoutId !== undefined) clearTimeout(timeoutId);
@@ -114,7 +115,9 @@ describe(
           try {
             await Promise.race([
               watchPromise,
-              new Promise((resolve) => { timeoutId = setTimeout(resolve, 1500); }),
+              new Promise((resolve) => {
+                timeoutId = setTimeout(resolve, 1500);
+              }),
             ]);
           } finally {
             if (timeoutId !== undefined) clearTimeout(timeoutId);
@@ -208,7 +211,9 @@ describe(
           try {
             await Promise.race([
               watchPromise,
-              new Promise((resolve) => { timeoutId = setTimeout(resolve, 1500); }),
+              new Promise((resolve) => {
+                timeoutId = setTimeout(resolve, 1500);
+              }),
             ]);
           } finally {
             if (timeoutId !== undefined) clearTimeout(timeoutId);

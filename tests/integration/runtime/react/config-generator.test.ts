@@ -14,7 +14,6 @@ import type { TestContext } from "../../../_helpers/context.ts";
 
 describe(
   "React Config Generator",
-  
   () => {
     describe("Config Generation", () => {
       it("generates valid React 17 config", async () => {

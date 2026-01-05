@@ -95,14 +95,18 @@ function getEsmShImportMap(versions: DetectedVersions): Record<string, string> {
     "react-dom/client": `https://esm.sh/react-dom@${react}/client?target=es2022`,
     "react/jsx-runtime": `https://esm.sh/react@${react}/jsx-runtime?target=es2022`,
     "react/jsx-dev-runtime": `https://esm.sh/react@${react}/jsx-dev-runtime?target=es2022`,
-    "veryfront/ai/react": `https://esm.sh/veryfront@${veryfront}/ai/react?external=react&target=es2022`,
-    "veryfront/ai/components": `https://esm.sh/veryfront@${veryfront}/ai/components?external=react&target=es2022`,
-    "veryfront/ai/primitives": `https://esm.sh/veryfront@${veryfront}/ai/primitives?external=react&target=es2022`,
+    "veryfront/ai/react":
+      `https://esm.sh/veryfront@${veryfront}/ai/react?external=react&target=es2022`,
+    "veryfront/ai/components":
+      `https://esm.sh/veryfront@${veryfront}/ai/components?external=react&target=es2022`,
+    "veryfront/ai/primitives":
+      `https://esm.sh/veryfront@${veryfront}/ai/primitives?external=react&target=es2022`,
     // Platform utilities - serve from local module server to match SSR behavior
     // This ensures hydration matches (same code on server and client)
     "veryfront/head": "/_vf_modules/exports/head.js",
     "veryfront/router": "/_vf_modules/exports/router.js",
-    "veryfront/context": `https://esm.sh/veryfront@${veryfront}/context?external=react&target=es2022`,
+    "veryfront/context":
+      `https://esm.sh/veryfront@${veryfront}/context?external=react&target=es2022`,
     "veryfront/fonts": `https://esm.sh/veryfront@${veryfront}/fonts?external=react&target=es2022`,
     // Context packages - MUST match SSR import map (from package-registry.ts)
     ...getContextPackageImportMap(),
@@ -270,7 +274,8 @@ export async function buildImportMapJson(
       "react-dom": `https://esm.sh/react-dom@${versions.react}?target=es2022`,
       "react-dom/client": `https://esm.sh/react-dom@${versions.react}/client?target=es2022`,
       "react/jsx-runtime": `https://esm.sh/react@${versions.react}/jsx-runtime?target=es2022`,
-      "react/jsx-dev-runtime": `https://esm.sh/react@${versions.react}/jsx-dev-runtime?target=es2022`,
+      "react/jsx-dev-runtime":
+        `https://esm.sh/react@${versions.react}/jsx-dev-runtime?target=es2022`,
       ...customImports,
     };
 

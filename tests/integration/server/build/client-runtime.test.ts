@@ -4,7 +4,10 @@ import {
   assertStringIncludes,
 } from "std/testing/asserts.ts";
 import { afterAll, describe, it } from "std/testing/bdd.ts";
-import { generateAppModule, generateImportMap } from "../../../../src/build/production-build/index.ts";
+import {
+  generateAppModule,
+  generateImportMap,
+} from "../../../../src/build/production-build/index.ts";
 import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";
 
 describe("Client Runtime Generation", { sanitizeOps: false, sanitizeResources: false }, () => {

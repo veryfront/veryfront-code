@@ -178,7 +178,7 @@ function createFailingAdapter(): RuntimeAdapter {
   }) as any;
 }
 
-describe("router-detection",  () => {
+describe("router-detection", () => {
   describe("detectAppRouter", () => {
     it("should detect app router when app directory exists", async () => {
       await withTestContext("router-detection-app-exists", async (context) => {

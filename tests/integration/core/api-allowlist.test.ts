@@ -6,7 +6,6 @@ import { withTestContext } from "../../_helpers/context.ts";
 
 describe(
   "API Allow-list",
-  
   () => {
     it("blocks disallowed remote import hosts", async () => {
       await withTestContext("api-allowlist-block", async (context) => {

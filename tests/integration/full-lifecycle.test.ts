@@ -268,7 +268,10 @@ Deno.test(
       assertEquals(response.status, 200);
       const html = await response.text();
       // Check for both "App Post ID:" and "42" - React SSR may insert comment markers between text nodes
-      assert(html.includes("App Post ID:") && html.includes("42"), `Expected "App Post ID:" and "42" but got: ${html}`);
+      assert(
+        html.includes("App Post ID:") && html.includes("42"),
+        `Expected "App Post ID:" and "42" but got: ${html}`,
+      );
     });
   },
 );
@@ -328,7 +331,10 @@ Deno.test(
       assertEquals(response.status, 200);
       const html = await response.text();
       // Check for both "Docs Path:" and "one/two/three" - React SSR may insert comment markers between text nodes
-      assert(html.includes("Docs Path:") && html.includes("one/two/three"), `Expected "Docs Path:" and "one/two/three" but got: ${html}`);
+      assert(
+        html.includes("Docs Path:") && html.includes("one/two/three"),
+        `Expected "Docs Path:" and "one/two/three" but got: ${html}`,
+      );
     });
   },
 );
@@ -404,9 +410,18 @@ export default function BlogPost({ slug, title, content }) {
 
       const html = await response.text();
       // React SSR may insert comment markers between text nodes, check for parts separately
-      assert(html.includes("Post:") && html.includes("test-post"), `Expected "Post:" and "test-post" in HTML`);
-      assert(html.includes("This is the content for") && html.includes("test-post"), `Expected content text in HTML`);
-      assert(html.includes("Slug:") && html.includes("test-post"), `Expected "Slug:" and "test-post" in HTML`);
+      assert(
+        html.includes("Post:") && html.includes("test-post"),
+        `Expected "Post:" and "test-post" in HTML`,
+      );
+      assert(
+        html.includes("This is the content for") && html.includes("test-post"),
+        `Expected content text in HTML`,
+      );
+      assert(
+        html.includes("Slug:") && html.includes("test-post"),
+        `Expected "Slug:" and "test-post" in HTML`,
+      );
     });
   },
 );
@@ -808,7 +823,10 @@ export default function ProductPage({ id, name, price, timestamp }) {
       const html = await response.text();
       // React SSR may insert comment markers between text nodes, check for parts separately
       assert(html.includes("Product") && html.includes("1"), `Expected "Product" and "1" in HTML`);
-      assert(html.includes("Price:") && html.includes("100"), `Expected "Price:" and "100" in HTML`);
+      assert(
+        html.includes("Price:") && html.includes("100"),
+        `Expected "Price:" and "100" in HTML`,
+      );
       assert(html.includes("ID:") && html.includes("1"), `Expected "ID:" and "1" in HTML`);
     });
   },
@@ -979,9 +997,15 @@ export default function SearchPage({ query, page, results }) {
 
       const html = await response.text();
       // React SSR may insert comment markers between text nodes, check for parts separately
-      assert(html.includes("Search:") && html.includes("veryfront"), `Expected "Search:" and "veryfront" in HTML`);
+      assert(
+        html.includes("Search:") && html.includes("veryfront"),
+        `Expected "Search:" and "veryfront" in HTML`,
+      );
       assert(html.includes("Page:") && html.includes("2"), `Expected "Page:" and "2" in HTML`);
-      assert(html.includes("Result for") && html.includes("veryfront"), `Expected "Result for" and "veryfront" in HTML`);
+      assert(
+        html.includes("Result for") && html.includes("veryfront"),
+        `Expected "Result for" and "veryfront" in HTML`,
+      );
       // Body already consumed by text()
     });
   },

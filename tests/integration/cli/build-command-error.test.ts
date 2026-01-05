@@ -5,7 +5,6 @@ import { withTestContext } from "../../_helpers/context.ts";
 
 describe(
   "cli build",
-  
   () => {
     it("exits with error on invalid config when main", async () => {
       await withTestContext("build-invalid-config", async (context) => {
