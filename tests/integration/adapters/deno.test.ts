@@ -80,18 +80,28 @@ describe(
       it("should handle errors in request handler", async () => {
         const ac = new AbortController();
         let port = 0;
+        let resolveReady: () => void;
+        const ready = new Promise<void>((resolve) => {
+          resolveReady = resolve;
+        });
 
         const server = await denoAdapter.serve(
           (_req) => {
             throw new Error("boom");
           },
           {
+            port: 0, // Use random available port
+            hostname: "127.0.0.1", // Explicit IPv4 to match fetch
             signal: ac.signal,
             onListen: (p) => {
               port = p.port;
+              resolveReady();
             },
           },
         );
+
+        // Wait for server to be ready
+        await ready;
 
         try {
           const res = await fetch(`http://127.0.0.1:${port}/test`);
