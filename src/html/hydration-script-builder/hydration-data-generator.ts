@@ -80,6 +80,9 @@ export function generateHydrationData(
     pageType: options.pageType || inferPageType(options.pagePath),
     frontmatter: options.frontmatter,
     layoutProps: options.layoutProps,
+    // In dev mode, client uses createRoot instead of hydrateRoot to avoid
+    // hydration mismatches from compilation differences between SSR and client
+    dev: options.mode === "development",
   };
 
   return JSON.stringify(data, null, 2);

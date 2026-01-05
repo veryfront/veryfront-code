@@ -32,7 +32,20 @@ export const compilePlugin: TransformPlugin = {
         keepNames: true,
       });
 
-      return result.code;
+      let code = result.code;
+
+      // For MDX files, export MDXLayout so client can use it instead of MDXContent (default).
+      // MDXContent (default export) has a bug where it overwrites children prop, breaking layouts.
+      // By exporting MDXLayout, client-side can use the inner component that properly passes children.
+      // This matches what SSR does in esm-module-loader.ts
+      if (ctx.filePath.endsWith(".mdx")) {
+        // Check if MDXLayout is defined but not exported
+        if (/\bconst\s+MDXLayout\b/.test(code) && !/export\s+\{[^}]*MDXLayout/.test(code)) {
+          code += "\nexport { MDXLayout };\n";
+        }
+      }
+
+      return code;
     } catch (transformError) {
       // Structured debugging for transform errors
       const sourcePreview = ctx.code

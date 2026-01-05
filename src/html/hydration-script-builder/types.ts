@@ -14,4 +14,10 @@ export interface HydrationDataStructure {
   pageType?: "mdx" | "tsx" | "jsx" | "ts" | "js";
   frontmatter?: Record<string, unknown>;
   layoutProps?: Record<string, Record<string, unknown>>;
+  /**
+   * Whether running in development mode.
+   * In dev mode, client uses createRoot instead of hydrateRoot to avoid
+   * hydration mismatches from compilation differences between SSR and client.
+   */
+  dev?: boolean;
 }

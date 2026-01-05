@@ -104,7 +104,23 @@ export function generateHMRClientTemplate(
       script.type = 'module';
       script.crossOrigin = 'anonymous';
       script.onload = () => {
-        if (reactRefreshEnabled && window.$RefreshRuntime$?.performReactRefresh) {
+        // Clear component cache to ensure fresh components are loaded
+        if (window.__veryfrontClearComponentCache) {
+          window.__veryfrontClearComponentCache();
+        }
+        // Re-render the page with fresh components
+        // This is more reliable than React Refresh for our architecture
+        // where layouts and pages are dynamically loaded
+        if (window.__veryfrontRenderPage) {
+          window.__veryfrontRenderPage(window.location.pathname);
+          console.log('[HMR] Page re-rendered with updated components');
+          // Notify Studio that update completed
+          if (window.parent !== window) {
+            try {
+              window.parent.postMessage({ action: 'appUpdated', url: window.location.href }, '*');
+            } catch (e) { /* ignore */ }
+          }
+        } else if (reactRefreshEnabled && window.$RefreshRuntime$?.performReactRefresh) {
           window.$RefreshRuntime$.performReactRefresh();
         } else {
           window.location.reload();
