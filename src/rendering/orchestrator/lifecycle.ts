@@ -263,7 +263,9 @@ export class RendererLifecycle {
   clearAllCaches(): void {
     if (!this.services) return;
 
-    void this.services.cacheCoordinator.clearAll();
+    this.services.cacheCoordinator.clearAll().catch((err) => {
+      logger.warn("[Lifecycle] Failed to clear all caches", { error: String(err) });
+    });
     this.services.virtualModules.clear();
 
     // Clear component registry state
@@ -275,7 +277,9 @@ export class RendererLifecycle {
 
   clearSlugCache(slug: string): void {
     if (!this.services) return;
-    void this.services.cacheCoordinator.clearSlug(slug);
+    this.services.cacheCoordinator.clearSlug(slug).catch((err) => {
+      logger.warn("[Lifecycle] Failed to clear slug cache", { slug, error: String(err) });
+    });
   }
 
   async destroy(): Promise<void> {

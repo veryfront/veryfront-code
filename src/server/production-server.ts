@@ -4,7 +4,7 @@ import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import { getAdapter } from "@veryfront/platform/adapters/detect.ts";
 import { createVeryfrontHandler } from "./universal-handler/index.ts";
 import { bootstrapProd } from "./bootstrap.ts";
-import { cwd, onSignal } from "@veryfront/platform/compat/process.ts";
+import { cwd, onGlobalError, onSignal } from "@veryfront/platform/compat/process.ts";
 import { isDebugEnabled } from "../core/utils/constants/env.ts";
 import {
   initializeOTLPWithApis,
@@ -100,6 +100,19 @@ export async function startProductionServer(options: ServerOptions): Promise<Ser
 }
 
 if (import.meta.main) {
+  // Register global error handlers FIRST to prevent process crashes from application errors
+  // This ensures the renderer stays up even if user code throws unhandled exceptions
+  onGlobalError((error, type) => {
+    logger.error(`[GLOBAL] ${type}: Application error caught (process will continue)`, {
+      message: error.message,
+      stack: error.stack,
+      type,
+    });
+    // Return true to prevent process exit - the renderer should stay up
+    // Individual requests may fail, but the service remains available
+    return true;
+  });
+
   try {
     // Initialize OpenTelemetry tracing before starting server
     await initializeOTLPWithApis();

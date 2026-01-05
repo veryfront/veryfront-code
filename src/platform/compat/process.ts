@@ -228,6 +228,47 @@ export function onSignal(signal: "SIGINT" | "SIGTERM", handler: () => void): voi
 }
 
 /**
+ * Register global error handlers for uncaught exceptions and unhandled promise rejections.
+ * These handlers prevent the process from crashing due to application code errors.
+ *
+ * IMPORTANT: These handlers should be registered early in the application lifecycle
+ * to catch errors that escape try/catch blocks.
+ *
+ * @param onError - Callback invoked with the error. Return true to prevent process exit.
+ */
+export function onGlobalError(onError: (error: Error, type: "uncaughtException" | "unhandledRejection") => boolean | void): void {
+  if (IS_DENO) {
+    // Deno uses global event listeners
+    globalThis.addEventListener("error", (event) => {
+      const error = event.error instanceof Error ? event.error : new Error(String(event.error));
+      const shouldPreventExit = onError(error, "uncaughtException");
+      if (shouldPreventExit) {
+        event.preventDefault();
+      }
+    });
+
+    globalThis.addEventListener("unhandledrejection", (event) => {
+      const error = event.reason instanceof Error ? event.reason : new Error(String(event.reason));
+      const shouldPreventExit = onError(error, "unhandledRejection");
+      if (shouldPreventExit) {
+        event.preventDefault();
+      }
+    });
+  } else if (hasNodeProcess) {
+    // Node.js uses process event handlers
+    nodeProcess!.on("uncaughtException", (error: Error) => {
+      onError(error, "uncaughtException");
+      // Note: In Node.js, uncaughtException doesn't exit by default if handler is registered
+    });
+
+    nodeProcess!.on("unhandledRejection", (reason: unknown) => {
+      const error = reason instanceof Error ? reason : new Error(String(reason));
+      onError(error, "unhandledRejection");
+    });
+  }
+}
+
+/**
  * Unreference a timer to prevent it from keeping the process alive
  */
 export function unrefTimer(timerId: ReturnType<typeof setInterval>): void {
