@@ -105,7 +105,7 @@ export async function loadMDXLayout(
   const map = await loadImportMap(projectDir, adapter);
   const code = transformImportsWithMap(bundle.compiledCode, map);
   logger.info("[loadMDXLayout] Loading module, code length:", code.length);
-  const mod = (await mdxRenderer.loadModuleESM(code)) as MDXModule;
+  const mod = (await mdxRenderer.loadModuleESM(code, adapter)) as MDXModule;
   logger.info("[loadMDXLayout] Module exports:", {
     hasMDXLayout: !!mod.MDXLayout,
     hasMainLayout: !!mod.MainLayout,

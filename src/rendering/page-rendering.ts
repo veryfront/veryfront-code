@@ -25,7 +25,7 @@ export async function handleMDXPage(
     frontmatter?: Record<string, unknown>,
     filePath?: string,
   ) => Promise<MdxBundle>,
-  _adapter: RuntimeAdapter,
+  adapter: RuntimeAdapter,
   options?: {
     params?: Record<string, string | string[]>;
     precompiledModule?: string;
@@ -75,7 +75,7 @@ export async function handleMDXPage(
         ErrorCode.RENDER_ERROR,
       );
     }
-    const mod = (await mdxRenderer.loadModuleESM(clientModuleCode)) as MDXModule;
+    const mod = (await mdxRenderer.loadModuleESM(clientModuleCode, adapter)) as MDXModule;
     const MDXComp = mod.MDXContent || mod.default;
     if (!MDXComp) {
       throw new VeryfrontError("Compiled MDX module has no content export", ErrorCode.RENDER_ERROR);

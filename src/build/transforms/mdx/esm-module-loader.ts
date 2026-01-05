@@ -200,6 +200,8 @@ async function transformReactImportsToAbsolute(code: string): Promise<string> {
 export interface ESMLoaderContext {
   esmCacheDir?: string;
   moduleCache: LRUCache<string, MDXModule>;
+  /** Optional adapter to use for file operations. If not provided, uses getAdapter() */
+  adapter?: import("../../../platform/adapters/base.ts").RuntimeAdapter;
 }
 
 export function hashString(input: string): string {
@@ -482,8 +484,11 @@ export async function loadModuleESM(
 ): Promise<MDXModule> {
   const loadStart = performance.now();
   try {
-    const { getAdapter } = await import("@veryfront/platform/adapters/detect.ts");
-    const adapter = await getAdapter();
+    // Use provided adapter if available, otherwise fall back to detecting runtime adapter
+    const adapter = context.adapter ?? await (async () => {
+      const { getAdapter } = await import("@veryfront/platform/adapters/detect.ts");
+      return getAdapter();
+    })();
 
     if (!context.esmCacheDir) {
       // Use persistent cache directory that survives server restarts
@@ -746,13 +751,24 @@ export async function loadModuleESM(
           if (!sourceCode || !actualFilePath) {
             // Fallback to HTTP fetch if direct file read fails
             // This handles cases where files are in remote storage (Veryfront API)
+            const envGet = (key: string) =>
+              (globalThis as { Deno?: { env: { get(key: string): string | undefined } } })
+                .Deno?.env?.get(key);
+
+            // In proxy mode, HTTP fallback to localhost won't work (self-referential request)
+            // The files should be loaded via the API adapter at a higher level
+            const isProxyMode = envGet("PROXY_MODE") === "1";
+            if (isProxyMode) {
+              logger.warn(
+                `${LOG_PREFIX_MDX_LOADER} Direct read failed in proxy mode (module must be pre-loaded): ${filePathWithoutJs}`,
+              );
+              return null;
+            }
+
             logger.debug(
               `${LOG_PREFIX_MDX_LOADER} Direct read failed, falling back to HTTP: ${filePathWithoutJs}`,
             );
             // Try multiple port sources: VERYFRONT_DEV_PORT (set by dev server), PORT env, then default
-            const envGet = (key: string) =>
-              (globalThis as { Deno?: { env: { get(key: string): string | undefined } } })
-                .Deno?.env?.get(key);
             const port = envGet("VERYFRONT_DEV_PORT") || envGet("PORT") || "3001";
             const moduleUrl = `http://localhost:${port}/${normalizedPath}?ssr=true`;
             const response = await fetch(moduleUrl);

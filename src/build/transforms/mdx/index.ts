@@ -43,10 +43,14 @@ export class MDXRenderer {
     }
   }
 
-  async loadModuleESM(compiledProgramCode: string): Promise<MDXModule> {
+  async loadModuleESM(
+    compiledProgramCode: string,
+    adapter?: import("@veryfront/platform/adapters/base.ts").RuntimeAdapter,
+  ): Promise<MDXModule> {
     const context: ESMLoaderContext = {
       esmCacheDir: this.esmCacheDir,
       moduleCache: this.moduleCache,
+      adapter,
     };
     const result = await loadModuleESM(compiledProgramCode, context);
     this.esmCacheDir = context.esmCacheDir;
