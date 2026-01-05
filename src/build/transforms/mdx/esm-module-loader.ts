@@ -1130,9 +1130,7 @@ ${namedExports}
         // Create stub module for missing top-level imports (same as nested imports)
         // This prevents MDX rendering failures when lib modules aren't published
         const importNamePattern = new RegExp(
-          `import\\s+(?:({[^}]+})|([\\w$]+))\\s*${
-            original.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
-          }`,
+          `import\\s+(?:({[^}]+})|([\\w$]+))\\s*${original.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`,
         );
         const importMatch = rewritten.match(importNamePattern);
         let namedExports = "";
