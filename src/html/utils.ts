@@ -2,9 +2,12 @@ import { escapeHTML } from "./html-escape.ts";
 import type { VeryfrontConfig } from "../core/config/types.ts";
 import {
   REACT_DEFAULT_VERSION,
-  TAILWIND_VERSION,
   VERYFRONT_VERSION,
 } from "../core/utils/constants/cdn.ts";
+import {
+  getContextPackageImportMap,
+  getTailwindImportMap,
+} from "../build/transforms/esm/package-registry.ts";
 
 export function buildRootAttributes(
   slug: string,
@@ -78,27 +81,12 @@ export async function detectVersions(projectDir: string): Promise<DetectedVersio
 
 type CdnProvider = "esm.sh" | "unpkg" | "jsdelivr";
 
-/**
- * Generate Tailwind CSS import map entries
- * Pins all tailwindcss imports to a unified version to prevent conflicts
- */
-function getTailwindImportMap(): Record<string, string> {
-  const tw = TAILWIND_VERSION;
-  return {
-    // Core tailwindcss package and subpaths
-    "tailwindcss": `https://esm.sh/tailwindcss@${tw}`,
-    "tailwindcss/": `https://esm.sh/tailwindcss@${tw}/`,
-    "tailwindcss/plugin": `https://esm.sh/tailwindcss@${tw}/plugin`,
-    "tailwindcss/colors": `https://esm.sh/tailwindcss@${tw}/colors`,
-    "tailwindcss/defaultTheme": `https://esm.sh/tailwindcss@${tw}/defaultTheme`,
-    // Common utilities that components import
-    "tailwindcss/lib/util/flattenColorPalette":
-      `https://esm.sh/tailwindcss@${tw}/lib/util/flattenColorPalette`,
-  };
-}
+// getTailwindImportMap is now imported from package-registry.ts
 
 /**
  * Generate import map for esm.sh CDN
+ * CRITICAL: Context packages use getContextPackageImportMap() from package-registry.ts
+ * to ensure identical URLs with SSR (default-import-map.ts).
  */
 function getEsmShImportMap(versions: DetectedVersions): Record<string, string> {
   const { react, veryfront } = versions;
@@ -111,15 +99,14 @@ function getEsmShImportMap(versions: DetectedVersions): Record<string, string> {
     "veryfront/ai/react": `https://esm.sh/veryfront@${veryfront}/ai/react?external=react`,
     "veryfront/ai/components": `https://esm.sh/veryfront@${veryfront}/ai/components?external=react`,
     "veryfront/ai/primitives": `https://esm.sh/veryfront@${veryfront}/ai/primitives?external=react`,
-    // Platform utilities
-    "veryfront/head": `https://esm.sh/veryfront@${veryfront}/head?external=react`,
-    "veryfront/router": `https://esm.sh/veryfront@${veryfront}/router?external=react`,
+    // Platform utilities - serve from local module server to match SSR behavior
+    // This ensures hydration matches (same code on server and client)
+    "veryfront/head": "/_vf_modules/exports/head.js",
+    "veryfront/router": "/_vf_modules/exports/router.js",
     "veryfront/context": `https://esm.sh/veryfront@${veryfront}/context?external=react`,
     "veryfront/fonts": `https://esm.sh/veryfront@${veryfront}/fonts?external=react`,
-    // Common packages that need single module instance for context to work
-    "@tanstack/react-query": `https://esm.sh/@tanstack/react-query@5?external=react`,
-    "next-themes": `https://esm.sh/next-themes@0.4?external=react`,
-    "framer-motion": `https://esm.sh/framer-motion@11?external=react`,
+    // Context packages - MUST match SSR import map (from package-registry.ts)
+    ...getContextPackageImportMap(),
     // Tailwind CSS - unified version to prevent conflicts
     ...getTailwindImportMap(),
   };
@@ -188,6 +175,8 @@ function getSelfHostedImportMap(versions: DetectedVersions): Record<string, stri
     "veryfront/router": "/_veryfront/lib/router.js",
     "veryfront/context": "/_veryfront/lib/context.js",
     "veryfront/fonts": "/_veryfront/lib/fonts.js",
+    // Context packages - MUST match SSR import map
+    ...getContextPackageImportMap(),
     // Tailwind CSS - unified version
     ...getTailwindImportMap(),
   };

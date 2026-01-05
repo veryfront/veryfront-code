@@ -1,23 +1,10 @@
-import { getReactImportMap, REACT_DEFAULT_VERSION } from "@veryfront/utils";
-import { isDeno, isNode } from "../../platform/compat/runtime.ts";
 import type { ImportMapConfig } from "./types.ts";
-
-const IS_TRUE_NODE = isNode && !isDeno;
-
-function getNpmReactImportMap(version: string): Record<string, string> {
-  return {
-    react: `npm:react@${version}`,
-    "react-dom": `npm:react-dom@${version}`,
-    "react-dom/client": `npm:react-dom@${version}/client`,
-    "react-dom/server": `npm:react-dom@${version}/server`,
-    "react/jsx-runtime": `npm:react@${version}/jsx-runtime`,
-    "react/jsx-dev-runtime": `npm:react@${version}/jsx-dev-runtime`,
-    "react/": `npm:react@${version}/`,
-  };
-}
+import {
+  getContextPackageImportMap,
+} from "../../build/transforms/esm/package-registry.ts";
 
 /**
- * Get veryfront/* import mappings for SSR (Deno runtime).
+ * Get veryfront/* import mappings for SSR.
  * These map to local exports to avoid esm.sh's Deno shim which fails in actual Deno.
  */
 function getVeryfrontSsrImportMap(): Record<string, string> {
@@ -30,38 +17,22 @@ function getVeryfrontSsrImportMap(): Record<string, string> {
 }
 
 /**
- * Get npm: mappings for common packages that need consistent module instances.
- * Using npm: ensures all imports resolve to the same module, avoiding
- * the React context mismatch issue when using different esm.sh URLs.
+ * Get the default import map for SSR transforms.
+ *
+ * React is NOT included here - it's resolved via deno.json import map (npm:react).
+ * This ensures user code uses the same React instance as react-dom/server.
+ *
+ * Context packages use esm.sh with ?external=react, so they'll use whatever
+ * React is available at runtime (npm:react on SSR, esm.sh/react on browser).
  */
-function getCommonPackagesNpmMap(): Record<string, string> {
-  return {
-    // TanStack Query - commonly used, must be single instance for context to work
-    "@tanstack/react-query": "npm:@tanstack/react-query@5",
-    "@tanstack/query-core": "npm:@tanstack/query-core@5",
-    // Theme providers
-    "next-themes": "npm:next-themes@0.4",
-    // Animation libraries
-    "framer-motion": "npm:framer-motion@11",
-  };
-}
-
 export function getDefaultImportMap(): ImportMapConfig {
-  const reactVersion = REACT_DEFAULT_VERSION;
-
-  if (!IS_TRUE_NODE) {
-    // Deno: use npm: for React, common packages, and local exports for veryfront/*
-    return {
-      imports: {
-        ...getNpmReactImportMap(reactVersion),
-        ...getVeryfrontSsrImportMap(),
-        ...getCommonPackagesNpmMap(),
-      },
-    };
-  }
-
-  const importMap = getReactImportMap(reactVersion);
-  importMap["react/"] = `https://esm.sh/react@${reactVersion}/`;
-
-  return { imports: importMap };
+  return {
+    imports: {
+      // Veryfront exports - local resolution
+      ...getVeryfrontSsrImportMap(),
+      // Context packages from esm.sh with ?external=react
+      // They'll use npm:react at runtime (from deno.json import map)
+      ...getContextPackageImportMap(),
+    },
+  };
 }

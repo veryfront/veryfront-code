@@ -423,16 +423,24 @@ export const getRouterScript = () => `
     // Render page from page data
     // ============================================
     async function renderPageFromData(pageData) {
-      // Load page and all layout components in PARALLEL for faster cold start
+      // Load page, layouts, and app components in PARALLEL for faster cold start
       perfStart('render:loadAll');
       const layoutPaths = (pageData.layouts || []).map(l => l.path);
       const allPaths = [pageData.pagePath, ...layoutPaths];
+
+      // Also load App component if available (contains QueryClientProvider, ThemeProvider, etc.)
+      if (pageData.appPath) {
+        allPaths.push(pageData.appPath);
+      }
 
       const loadPromises = allPaths.map(path => loadComponent(path));
       const components = await Promise.all(loadPromises);
       perfEnd('render:loadAll');
 
-      const [PageComponent, ...LayoutComponents] = components;
+      const [PageComponent, ...rest] = components;
+      // Split off App component if we loaded it
+      const AppComponent = pageData.appPath ? rest.pop() : null;
+      const LayoutComponents = rest;
 
       if (!PageComponent) {
         throw new Error('Failed to load page component: ' + pageData.pagePath);
@@ -469,9 +477,14 @@ export const getRouterScript = () => `
         }
       }
 
-      // Wrap with providers
-      tree = React.createElement(RouterProvider, { children: tree });
-      // Note: QueryClientProvider should be in user's app.tsx
+      // Wrap with App component if available (contains QueryClientProvider, ThemeProvider, etc.)
+      if (AppComponent) {
+        tree = React.createElement(AppComponent, { children: tree });
+        log('Wrapped with App component for SPA navigation');
+      }
+
+      // Wrap with providers - use imported RouterProvider with client router
+      tree = React.createElement(RouterProvider, { router: router, children: tree });
 
       // Get the container and render
       const container = document.getElementById('veryfront-content');
@@ -652,19 +665,21 @@ export const getRouterScript = () => `
     }, true);
 
     // ============================================
-    // Router context and provider
+    // Router hooks - use imported RouterProvider from veryfront/router
+    // This ensures the same component instance is used for SSR and client hydration
     // ============================================
-    const RouterContext = React.createContext(router);
-
+    // window.useRouter uses the imported hook but falls back to global router for non-React usage
     window.useRouter = () => {
-      const ctx = React.useContext(RouterContext);
-      if (!ctx) {
+      try {
+        // Try to use the React hook from the module (for React components)
+        return useRouterFromModule();
+      } catch {
+        // Fall back to global router for non-React contexts
         return window.__veryfrontRouter;
       }
-      return ctx;
     };
 
-    const RouterProvider = ({ children }) => {
-      return React.createElement(RouterContext.Provider, { value: router }, children);
-    };
+    // RouterProvider is imported from 'veryfront/router' at the top of the script
+    // When using it, pass the client router via the 'router' prop:
+    //   React.createElement(RouterProvider, { router: router, children: tree })
 `;

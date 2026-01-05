@@ -71,7 +71,11 @@ export function applyHeadDirectives(container: HTMLElement): void {
   }
 
   nodes.forEach((wrapper) => {
-    processHeadWrapper(wrapper);
+    // Handle <template> elements - content is in .content DocumentFragment
+    const contentSource = wrapper instanceof HTMLTemplateElement
+      ? wrapper.content
+      : wrapper;
+    processHeadWrapper(contentSource);
     wrapper.parentElement?.removeChild(wrapper);
   });
 }
@@ -82,7 +86,7 @@ function cleanManagedHeadTags(): void {
     .forEach((element) => element.parentElement?.removeChild(element));
 }
 
-function processHeadWrapper(wrapper: Element): void {
+function processHeadWrapper(wrapper: Element | DocumentFragment): void {
   wrapper.childNodes.forEach((node) => {
     if (!(node instanceof Element)) return;
 

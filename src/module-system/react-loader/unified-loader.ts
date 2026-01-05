@@ -1,6 +1,6 @@
 import { join } from "std/path/mod.ts";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
-import { transformToESM } from "@veryfront/transforms/esm/transform-core.ts";
+import { transformToESM } from "@veryfront/transforms/esm/index.ts";
 import type { TransformOptions } from "@veryfront/transforms/esm/types.ts";
 import { rendererLogger as logger } from "@veryfront/utils";
 import { getGlobalTmpDir } from "./temp-directory.ts";

@@ -1,18 +1,13 @@
 /**
  * HTTP Import Handler for SSR.
  *
- * Strategy:
- * - Deno (temp files outside node_modules): Pass through HTTP imports as-is.
- *   Deno natively supports https:// imports when not in Node.js compat mode.
- * - Node/Bun (future): Use esbuild to bundle HTTP imports into local files.
- *
- * The key insight: files in node_modules/ use Node.js compat mode in Deno
- * (due to nodeModulesDir: "auto"), which doesn't support HTTP imports.
- * By placing temp files in .cache/ (outside node_modules), Deno uses its
- * native module resolution which handles HTTP imports directly.
+ * UNIFIED APPROACH: Both SSR and browser use esm.sh URLs for React.
+ * This ensures identical module instances, preventing hydration mismatches.
+ * Works across Deno, Node, and Bun since esm.sh URLs are standard HTTPS imports.
  */
 
 import { rendererLogger as logger } from "@veryfront/utils";
+import { getReactUrls } from "./package-registry.ts";
 
 const LOG_PREFIX = "[HTTP-HANDLER]";
 
@@ -21,15 +16,21 @@ export function hasHttpImports(code: string): boolean {
   return /['"]https?:\/\/[^'"]+['"]/.test(code);
 }
 
-/** Get React aliases for SSR (npm: specifiers work in Deno) */
+/**
+ * Get React aliases for SSR bundling.
+ *
+ * UNIFIED APPROACH: Uses esm.sh URLs (same as browser) to ensure
+ * SSR and browser use identical React instances, preventing hydration errors.
+ */
 export function getReactAliases(): Record<string, string> {
+  const urls = getReactUrls();
   return {
-    "react": "npm:react@18.3.1",
-    "react-dom": "npm:react-dom@18.3.1",
-    "react/jsx-runtime": "npm:react@18.3.1/jsx-runtime",
-    "react/jsx-dev-runtime": "npm:react@18.3.1/jsx-runtime",
-    "react-dom/server": "npm:react-dom@18.3.1/server",
-    "react-dom/client": "npm:react-dom@18.3.1/client",
+    "react": urls.react,
+    "react-dom": urls["react-dom"],
+    "react/jsx-runtime": urls["react/jsx-runtime"],
+    "react/jsx-dev-runtime": urls["react/jsx-dev-runtime"],
+    "react-dom/server": urls["react-dom/server"],
+    "react-dom/client": urls["react-dom/client"],
   };
 }
 

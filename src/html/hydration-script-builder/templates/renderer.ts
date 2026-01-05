@@ -82,7 +82,9 @@ export const getRendererScript = () => `
           }
         }
 
-        tree = React.createElement(RouterProvider, { children: tree });
+        // Use imported RouterProvider with client router for SPA navigation
+        // The router object is defined in router.ts (same module scope)
+        tree = React.createElement(RouterProvider, { router: router, children: tree });
         // Note: QueryClientProvider should be added by user's app.tsx if needed
         // This allows users to configure their own QueryClient options
 

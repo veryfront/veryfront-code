@@ -129,18 +129,24 @@ import { renderToString } from "react-dom/server"`;
 
   describe("addDepsToEsmShUrls", () => {
     it("should add deps parameter to esm.sh URL", async () => {
-      const code = 'import foo from "https://esm.sh/next-themes@0.4.6"';
+      const code = 'import foo from "https://esm.sh/some-package@1.0.0"';
       const result = await addDepsToEsmShUrls(code);
       expect(result).toBe(
-        'import foo from "https://esm.sh/next-themes@0.4.6?deps=react@18.3.1,react-dom@18.3.1"',
+        'import foo from "https://esm.sh/some-package@1.0.0?external=react,react-dom"',
       );
+    });
+
+    it("should convert import-map packages to bare specifiers", async () => {
+      const code = 'import foo from "https://esm.sh/next-themes@0.4.6"';
+      const result = await addDepsToEsmShUrls(code);
+      expect(result).toBe('import foo from "next-themes"');
     });
 
     it("should add deps to scoped packages", async () => {
       const code = 'import { Button } from "https://esm.sh/@radix-ui/react-button@1.0.0"';
       const result = await addDepsToEsmShUrls(code);
       expect(result).toBe(
-        'import { Button } from "https://esm.sh/@radix-ui/react-button@1.0.0?deps=react@18.3.1,react-dom@18.3.1"',
+        'import { Button } from "https://esm.sh/@radix-ui/react-button@1.0.0?external=react,react-dom"',
       );
     });
 
@@ -160,7 +166,7 @@ import { renderToString } from "react-dom/server"`;
       const code = 'import ReactDOM from "https://esm.sh/react-dom@18.3.1"';
       const result = await addDepsToEsmShUrls(code);
       expect(result).toBe(
-        'import ReactDOM from "https://esm.sh/react-dom@18.3.1?deps=react@18.3.1,react-dom@18.3.1"',
+        'import ReactDOM from "https://esm.sh/react-dom@18.3.1?external=react,react-dom"',
       );
     });
 
@@ -168,18 +174,18 @@ import { renderToString } from "react-dom/server"`;
       const code = `import foo from "https://esm.sh/package-a@1.0.0"
 import bar from "https://esm.sh/package-b@2.0.0"`;
       const result = await addDepsToEsmShUrls(code);
-      expect(result).toContain("package-a@1.0.0?deps=react@18.3.1,react-dom@18.3.1");
-      expect(result).toContain("package-b@2.0.0?deps=react@18.3.1,react-dom@18.3.1");
+      expect(result).toContain("package-a@1.0.0?external=react,react-dom");
+      expect(result).toContain("package-b@2.0.0?external=react,react-dom");
     });
 
     it("should handle mixed URLs", async () => {
       const code = `import React from "https://esm.sh/react@18.3.1"
-import foo from "https://esm.sh/next-themes@0.4.6"
+import foo from "https://esm.sh/some-package@1.0.0"
 import bar from "https://example.com/package.js"`;
       const result = await addDepsToEsmShUrls(code);
 
       expect(result).toContain('from "https://esm.sh/react@18.3.1"');
-      expect(result).toContain("next-themes@0.4.6?deps=react@18.3.1,react-dom@18.3.1");
+      expect(result).toContain("some-package@1.0.0?external=react,react-dom");
       expect(result).toContain('from "https://example.com/package.js"');
     });
 
@@ -187,7 +193,7 @@ import bar from "https://example.com/package.js"`;
       const code = 'import { something } from "https://esm.sh/package@1.0.0/subpath"';
       const result = await addDepsToEsmShUrls(code);
       expect(result).toBe(
-        'import { something } from "https://esm.sh/package@1.0.0/subpath?deps=react@18.3.1,react-dom@18.3.1"',
+        'import { something } from "https://esm.sh/package@1.0.0/subpath?external=react,react-dom"',
       );
     });
 
@@ -200,7 +206,7 @@ import bar from "https://example.com/package.js"`;
     it("should handle whitespace", async () => {
       const code = 'import   foo   from   "https://esm.sh/package@1.0.0"';
       const result = await addDepsToEsmShUrls(code);
-      expect(result).toContain("?deps=react@18.3.1,react-dom@18.3.1");
+      expect(result).toContain("?external=react,react-dom");
     });
 
     it("should handle single quotes", async () => {
@@ -208,7 +214,7 @@ import bar from "https://example.com/package.js"`;
       const result = await addDepsToEsmShUrls(code);
       // Preserves single quotes
       expect(result).toBe(
-        "import foo from 'https://esm.sh/package@1.0.0?deps=react@18.3.1,react-dom@18.3.1'",
+        "import foo from 'https://esm.sh/package@1.0.0?external=react,react-dom'",
       );
     });
 
@@ -227,16 +233,16 @@ import bar from "https://example.com/package.js"`;
   describe("combined usage", () => {
     it("should work with both functions in sequence", async () => {
       let code = `import React from "react"
-import { Button } from "next-themes"`;
+import { Button } from "some-ui-lib"`;
 
       code = await resolveReactImports(code);
       expect(code).toContain('from "https://esm.sh/react@18.3.1"');
 
-      code = code.replace('from "next-themes"', 'from "https://esm.sh/next-themes@0.4.6"');
+      code = code.replace('from "some-ui-lib"', 'from "https://esm.sh/some-ui-lib@1.0.0"');
       code = await addDepsToEsmShUrls(code);
 
       expect(code).toContain('from "https://esm.sh/react@18.3.1"');
-      expect(code).toContain("next-themes@0.4.6?deps=react@18.3.1,react-dom@18.3.1");
+      expect(code).toContain("some-ui-lib@1.0.0?external=react,react-dom");
     });
 
     it("should preserve React imports when adding deps", async () => {

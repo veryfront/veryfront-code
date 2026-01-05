@@ -11,7 +11,7 @@ import {
   remarkMdxImports,
   remarkMdxRemoveParagraphs,
 } from "./remark-mdx-utils.ts";
-import { remarkAddNodeId } from "./remark-node-id.ts";
+import { remarkAddNodeId as _remarkAddNodeId } from "./remark-node-id.ts";
 import { rehypeMermaid } from "./rehype-mermaid.ts";
 import remarkGfm from "remark-gfm";
 import remarkFrontmatter from "remark-frontmatter";
@@ -80,10 +80,16 @@ export async function getRemarkPlugins(
   projectDir: string,
   adapter?: RuntimeAdapter,
 ): Promise<PluginEntry[]> {
+  // DISABLED: remarkAddNodeId temporarily disabled to fix hydration mismatch.
+  // This was adding data-node-id, data-node-line, etc. to MDX elements.
+  // Browser modules (via module server) no longer inject positions, so SSR
+  // must not inject them either for hydration to succeed.
+  // TODO(#studio-navigator): Re-enable with proper SSR/browser synchronization when Studio Navigator
+  // is implemented with edit-in-place support.
   const defaultPlugins: PluginEntry[] = [
     remarkGfm as PluginEntry,
     remarkFrontmatter as PluginEntry,
-    remarkAddNodeId as PluginEntry,
+    // remarkAddNodeId as PluginEntry,
     remarkMdxHeadings as PluginEntry,
     remarkMdxRemoveParagraphs as PluginEntry,
     remarkCodeBlocks as PluginEntry,

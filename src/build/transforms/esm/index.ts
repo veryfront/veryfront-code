@@ -1,6 +1,17 @@
-export { transformToESM } from "./transform-core.ts";
+// Export new pipeline transformToESM (drop-in replacement for legacy transform-core)
+export { transformToESM, runPipeline, TransformStage } from "../pipeline/index.ts";
 
+// Export legacy types for backwards compatibility
 export type { TransformContext, TransformOptions } from "./types.ts";
+
+// Export pipeline types
+export type {
+  TransformContext as PipelineContext,
+  TransformOptions as PipelineOptions,
+  TransformResult,
+  TransformPlugin,
+  PipelineConfig,
+} from "../pipeline/types.ts";
 
 export { needsTransform } from "./transform-utils.ts";
 
