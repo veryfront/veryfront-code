@@ -236,7 +236,9 @@ export function onSignal(signal: "SIGINT" | "SIGTERM", handler: () => void): voi
  *
  * @param onError - Callback invoked with the error. Return true to prevent process exit.
  */
-export function onGlobalError(onError: (error: Error, type: "uncaughtException" | "unhandledRejection") => boolean | void): void {
+export function onGlobalError(
+  onError: (error: Error, type: "uncaughtException" | "unhandledRejection") => boolean | void,
+): void {
   if (IS_DENO) {
     // Deno uses global event listeners
     globalThis.addEventListener("error", (event) => {
