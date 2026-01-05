@@ -11,6 +11,8 @@ export function getLoaderFromPath(filePath: string): Loader {
   if (filePath.endsWith(".jsx")) return "jsx";
   if (filePath.endsWith(".js")) return "js";
   if (filePath.endsWith(".mdx")) return "jsx"; // MDX pre-compiled to JSX
+  if (filePath.endsWith(".css")) return "css";
+  if (filePath.endsWith(".json")) return "json";
   return "tsx"; // Default
 }
 

@@ -46,6 +46,11 @@ export async function parseLocalImports(
   _projectDir: string,
   adapter?: RuntimeAdapter,
 ): Promise<ParseLocalImportsResult> {
+  // CSS and JSON files don't have JS imports - skip parsing
+  if (filePath.endsWith(".css") || filePath.endsWith(".json")) {
+    return { imports: [], crossProjectImports: [], missing: [] };
+  }
+
   // es-module-lexer can't parse TypeScript/JSX, so use esbuild to strip types first
   // This is a minimal transform just for import extraction
   const result = await esbuild.transform(code, {
