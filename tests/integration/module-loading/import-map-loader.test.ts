@@ -944,7 +944,7 @@ function hello() { return 'world'; }
         assertExists(importMap.imports!["react-hook-form"]);
       });
 
-      it("should use npm: specifiers for context packages (SSR)", () => {
+      it("should use esm.sh URLs for context packages (SSR)", () => {
         const importMap = getDefaultImportMap();
 
         const contextPackages = [
@@ -955,15 +955,15 @@ function hello() { return 'world'; }
           "react-hook-form",
         ];
 
-        // SSR uses npm: specifiers so Deno resolves them locally
-        // This ensures they share the same React instance from deno.json's npm:react
+        // SSR uses esm.sh URLs (same as browser) to ensure identical module instances
+        // This prevents hydration errors from module instance mismatch
         for (const pkg of contextPackages) {
           const value = importMap.imports![pkg];
           if (typeof value !== "string") continue;
           assertEquals(
-            value.startsWith("npm:"),
+            value.startsWith("https://esm.sh/"),
             true,
-            `Context package ${pkg} should use npm: specifier for SSR`,
+            `Context package ${pkg} should use esm.sh URL for SSR (got: ${value})`,
           );
         }
       });
@@ -984,11 +984,11 @@ function hello() { return 'world'; }
         assertEquals((importMap as any).scopes, undefined);
       });
 
-      it("should use npm: specifiers for React-dependent context packages", () => {
+      it("should use esm.sh URLs for React-dependent context packages", () => {
         const importMap = getDefaultImportMap();
 
-        // React-dependent packages use npm: specifiers for SSR
-        // This ensures they share Deno's npm:react instance from deno.json
+        // React-dependent packages use esm.sh URLs (same as browser)
+        // This ensures identical module instances across SSR and client
         const reactDependentPackages = [
           "@tanstack/react-query",
           "next-themes",
@@ -999,9 +999,9 @@ function hello() { return 'world'; }
           const value = importMap.imports![pkg];
           if (typeof value !== "string") continue;
           assertEquals(
-            value.startsWith("npm:"),
+            value.startsWith("https://esm.sh/"),
             true,
-            `${pkg} should use npm: specifier to share React instance via deno.json`,
+            `${pkg} should use esm.sh URL for SSR (got: ${value})`,
           );
         }
       });
