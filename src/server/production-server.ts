@@ -18,7 +18,11 @@ import {
 import { initializeRedisCaches } from "../core/cache/redis-init.ts";
 import { setServerInitialized } from "./handlers/monitoring/health.ts";
 import { startPeriodicMemoryCheck, stopPeriodicMemoryCheck } from "./shared/renderer-factory.ts";
-import { enableSSRFetchInterception, setSSRServerPort } from "../rendering/ssr-globals.ts";
+import {
+  enableSSRClientOnlyFetching,
+  enableSSRFetchInterception,
+  setSSRServerPort,
+} from "../rendering/ssr-globals.ts";
 
 interface ServerOptions {
   projectDir: string;
@@ -54,6 +58,12 @@ export async function startUniversalServer(
   // This allows user code to use fetch('/api/...') during SSR
   setSSRServerPort(port);
   enableSSRFetchInterception();
+
+  // Enable client-only fetching for /api/* routes in production
+  // This makes API fetches return never-resolving promises during SSR,
+  // causing React Suspense to render fallbacks. Data loads client-side.
+  // This prevents the renderer from trying to HTTP request itself during SSR.
+  enableSSRClientOnlyFetching();
 
   logger.info("Starting universal production server", { projectDir, port, hostname });
 
