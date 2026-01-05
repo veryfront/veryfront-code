@@ -18,8 +18,8 @@ export interface RouterValue {
   reload: () => Promise<void>;
 }
 
-const RouterContext = React.createContext<RouterValue | null>(null);
-
+// SSR-safe default router - used when no provider is present
+// This ensures useContext(RouterContext) never returns null, even during SSR
 const defaultRouter: RouterValue = {
   domain: "",
   path: "/",
@@ -34,6 +34,11 @@ const defaultRouter: RouterValue = {
   reload: async () => {},
 };
 
+// Initialize context with defaultRouter instead of null
+// This prevents "Cannot read properties of null" errors when user code
+// accesses the context directly (without using useRouter hook) during SSR
+const RouterContext = React.createContext<RouterValue>(defaultRouter);
+
 export interface RouterProviderProps {
   children: React.ReactNode;
   router?: RouterValue;
@@ -47,11 +52,8 @@ export function RouterProvider({ children, router }: RouterProviderProps) {
 }
 
 export function useRouter(): RouterValue {
-  const value = React.useContext(RouterContext);
-  if (!value) {
-    return defaultRouter;
-  }
-  return value;
+  // Context is initialized with defaultRouter, so this never returns null
+  return React.useContext(RouterContext);
 }
 
 export { RouterProvider as Router };
