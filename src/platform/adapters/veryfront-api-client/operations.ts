@@ -305,7 +305,11 @@ export class VeryfrontAPIOperations {
   ): Promise<{ id: string; path: string; importPath: string; body?: string } | null> {
     const url = `/projects/${projectSlug}/components/${entityId}`;
 
-    logger.info("[VeryfrontAPIClient] Getting component by entity ID", { entityId, projectSlug, url });
+    logger.info("[VeryfrontAPIClient] Getting component by entity ID", {
+      entityId,
+      projectSlug,
+      url,
+    });
 
     try {
       const response = await this.request<{

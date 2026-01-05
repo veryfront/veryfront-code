@@ -529,7 +529,8 @@ import lodash from 'lodash';
         assertEquals(transformed.includes("/src/component.ts"), true);
       });
 
-      it("should not transform http/https URLs", () => {
+      it("should normalize esm.sh URLs to import map version", () => {
+        // esm.sh URLs are now intentionally normalized to prevent duplicate package instances
         const code = `import React from 'https://esm.sh/react@18';`;
         const importMap = {
           imports: {
@@ -538,8 +539,22 @@ import lodash from 'lodash';
         };
 
         const transformed = transformImportsWithMap(code, importMap);
-        // Quotes may change to double quotes, but URL should stay the same
-        assertEquals(transformed.includes("https://esm.sh/react@18"), true);
+        // esm.sh URLs are normalized to the import map version
+        assertEquals(transformed.includes("https://esm.sh/react@17"), true);
+      });
+
+      it("should not transform non-esm.sh http/https URLs", () => {
+        // Non-esm.sh URLs should stay unchanged
+        const code = `import Something from 'https://example.com/module.js';`;
+        const importMap = {
+          imports: {
+            react: "https://esm.sh/react@18",
+          },
+        };
+
+        const transformed = transformImportsWithMap(code, importMap);
+        // Non-esm.sh URLs stay unchanged
+        assertEquals(transformed.includes("https://example.com/module.js"), true);
       });
 
       it("should return unchanged code when no matches found", () => {
@@ -904,62 +919,61 @@ function hello() { return 'world'; }
     });
 
     describe("getDefaultImportMap", () => {
-      it("should return default import map with React imports", () => {
+      // Note: React is no longer included in getDefaultImportMap() - it's resolved via deno.json (npm:react)
+      // The default import map now contains veryfront/* mappings and context packages
+
+      it("should return default import map with veryfront imports", () => {
         const importMap = getDefaultImportMap();
 
         assertExists(importMap);
         assertExists(importMap.imports);
-        assertExists(importMap.imports!["react"]);
-        assertExists(importMap.imports!["react-dom"]);
-        assertExists(importMap.imports!["react/jsx-runtime"]);
-        assertExists(importMap.imports!["react/jsx-dev-runtime"]);
+        // Check veryfront mappings
+        assertExists(importMap.imports!["veryfront/head"]);
+        assertExists(importMap.imports!["veryfront/router"]);
+        assertExists(importMap.imports!["veryfront/context"]);
+        assertExists(importMap.imports!["veryfront/fonts"]);
       });
 
-      it("should include react/ prefix mapping", () => {
+      it("should include context packages", () => {
         const importMap = getDefaultImportMap();
 
-        assertExists(importMap.imports!["react/"]);
-        assertEquals(importMap.imports!["react/"].endsWith("/"), true);
+        // Context packages should be included with esm.sh URLs
+        assertExists(importMap.imports!["@tanstack/react-query"]);
+        assertExists(importMap.imports!["@tanstack/query-core"]);
+        assertExists(importMap.imports!["next-themes"]);
+        assertExists(importMap.imports!["framer-motion"]);
+        assertExists(importMap.imports!["react-hook-form"]);
       });
 
-      it("should include react-dom/server mapping", () => {
+      it("should use esm.sh URLs for context packages", () => {
         const importMap = getDefaultImportMap();
 
-        assertExists(importMap.imports!["react-dom/server"]);
-      });
+        const contextPackages = [
+          "@tanstack/react-query",
+          "@tanstack/query-core",
+          "next-themes",
+          "framer-motion",
+          "react-hook-form",
+        ];
 
-      it("should include react-dom/client for React 18+", () => {
-        const importMap = getDefaultImportMap();
-
-        // Default should be React 18 or 19
-        assertExists(importMap.imports!["react-dom/client"]);
-      });
-
-      it("should use valid module specifiers", () => {
-        const importMap = getDefaultImportMap();
-
-        for (const [key, value] of Object.entries(importMap.imports!)) {
+        for (const pkg of contextPackages) {
+          const value = importMap.imports![pkg];
           if (typeof value !== "string") continue;
-          // In Deno, we use npm: specifiers; in true Node, we use esm.sh URLs
-          const isValidSpecifier = value.startsWith("https://esm.sh/") ||
-            value.startsWith("npm:");
           assertEquals(
-            isValidSpecifier,
+            value.startsWith("https://esm.sh/"),
             true,
-            `Import ${key} should use valid module specifier (esm.sh URL or npm: specifier)`,
+            `Context package ${pkg} should use esm.sh URL`,
           );
         }
       });
 
-      it("should have consistent React versions across imports", () => {
+      it("should NOT include React (resolved via deno.json)", () => {
         const importMap = getDefaultImportMap();
 
-        const reactVersion = importMap.imports!["react"]!.match(/@([\d.]+)/)?.[1];
-        const domVersion = importMap.imports!["react-dom"]!.match(/@([\d.]+)/)?.[1];
-
-        assertExists(reactVersion);
-        assertExists(domVersion);
-        assertEquals(reactVersion, domVersion, "React and React DOM versions should match");
+        // React is intentionally not in the default import map
+        // It's resolved via deno.json import map (npm:react)
+        assertEquals(importMap.imports!["react"], undefined);
+        assertEquals(importMap.imports!["react-dom"], undefined);
       });
 
       it("should return imports object only (no scopes by default)", () => {
@@ -969,27 +983,24 @@ function hello() { return 'world'; }
         assertEquals((importMap as any).scopes, undefined);
       });
 
-      it("should handle version detection failure gracefully", () => {
-        // This test verifies the try-catch behavior
-        // Even if version detection fails, we should get a default map
+      it("should have external=react for context packages that need it", () => {
         const importMap = getDefaultImportMap();
 
-        assertExists(importMap);
-        assertExists(importMap.imports);
-        assertExists(importMap.imports!["react"]);
-      });
+        // Packages that use React context should have ?external=react
+        const reactDependentPackages = [
+          "@tanstack/react-query",
+          "next-themes",
+          "framer-motion",
+        ];
 
-      it("should not include react-dom/client for React 17", () => {
-        // This tests the conditional logic
-        // We can't easily mock getReactVersionInfo, but we can verify
-        // the structure is correct based on version detection
-        const importMap = getDefaultImportMap();
-
-        const reactVersion = importMap.imports!["react"]!.match(/@([\d.]+)/)?.[1];
-        if (reactVersion?.startsWith("17.")) {
-          assertEquals(importMap.imports!["react-dom/client"], undefined);
-        } else {
-          assertExists(importMap.imports!["react-dom/client"]);
+        for (const pkg of reactDependentPackages) {
+          const value = importMap.imports![pkg];
+          if (typeof value !== "string") continue;
+          assertEquals(
+            value.includes("external=react"),
+            true,
+            `${pkg} should have external=react to prevent duplicate React instances`,
+          );
         }
       });
     });
@@ -1068,7 +1079,9 @@ function hello() { return 'world'; }
         const merged = mergeImportMaps(defaultMap, customMap);
 
         // Should have both default and custom imports
-        assertExists(merged.imports!["react"]);
+        // Default map now contains veryfront/* and context packages (not React)
+        assertExists(merged.imports!["veryfront/head"]);
+        assertExists(merged.imports!["@tanstack/react-query"]);
         assertExists(merged.imports!["lodash"]);
       });
 

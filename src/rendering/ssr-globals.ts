@@ -310,7 +310,9 @@ export function setupSSRGlobals(): void {
     (globalThis as Record<string, unknown>).Comment = createElementClass("Comment");
   }
   if (typeof globalThis.DocumentFragment === "undefined") {
-    (globalThis as Record<string, unknown>).DocumentFragment = createElementClass("DocumentFragment");
+    (globalThis as Record<string, unknown>).DocumentFragment = createElementClass(
+      "DocumentFragment",
+    );
   }
 
   ssrGlobalsInitialized = true;

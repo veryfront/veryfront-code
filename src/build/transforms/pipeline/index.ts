@@ -5,7 +5,11 @@
  * This replaces the monolithic transform-core.ts with a modular, testable architecture.
  */
 
-import { generateCacheKey, getCachedTransform, setCachedTransform } from "../esm/transform-cache.ts";
+import {
+  generateCacheKey,
+  getCachedTransform,
+  setCachedTransform,
+} from "../esm/transform-cache.ts";
 import { rendererLogger as logger } from "@veryfront/utils";
 import { createTransformContext, formatTimingLog, recordStageTiming } from "./context.ts";
 import type {
@@ -15,14 +19,14 @@ import type {
   TransformResult,
 } from "./types.ts";
 import {
-  parsePlugin,
   compilePlugin,
-  resolveAliasesPlugin,
-  resolveReactPlugin,
-  resolveContextPlugin,
-  resolveRelativePlugin,
-  resolveBarePlugin,
   finalizePlugin,
+  parsePlugin,
+  resolveAliasesPlugin,
+  resolveBarePlugin,
+  resolveContextPlugin,
+  resolveReactPlugin,
+  resolveRelativePlugin,
 } from "./stages/index.ts";
 
 /**
@@ -79,7 +83,12 @@ export async function runPipeline(
   ctx.debug = config?.debug ?? false;
 
   // Generate cache key and check cache
-  const cacheKey = generateCacheKey(options.projectId, filePath, ctx.contentHash, options.ssr ?? false);
+  const cacheKey = generateCacheKey(
+    options.projectId,
+    filePath,
+    ctx.contentHash,
+    options.ssr ?? false,
+  );
   const cached = getCachedTransform(cacheKey);
 
   if (cached) {
@@ -175,12 +184,12 @@ export function getDefaultPlugins(ssr: boolean): TransformPlugin[] {
 
 // Re-export types for consumers
 export type {
+  PipelineConfig,
   TransformContext,
   TransformOptions,
   TransformPlugin,
   TransformResult,
   TransformTarget,
-  PipelineConfig,
 } from "./types.ts";
 
 export { TransformStage } from "./types.ts";
@@ -189,8 +198,8 @@ export { TransformStage } from "./types.ts";
 export {
   createTransformContext,
   createTransformContextSync,
-  isSSR,
   isBrowser,
   isMDX,
+  isSSR,
   isTypeScript,
 } from "./context.ts";

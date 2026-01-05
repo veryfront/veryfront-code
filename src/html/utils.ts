@@ -1,9 +1,6 @@
 import { escapeHTML } from "./html-escape.ts";
 import type { VeryfrontConfig } from "../core/config/types.ts";
-import {
-  REACT_DEFAULT_VERSION,
-  VERYFRONT_VERSION,
-} from "../core/utils/constants/cdn.ts";
+import { REACT_DEFAULT_VERSION, VERYFRONT_VERSION } from "../core/utils/constants/cdn.ts";
 import {
   getContextPackageImportMap,
   getTailwindImportMap,

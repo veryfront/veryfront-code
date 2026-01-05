@@ -1,5 +1,5 @@
 import { replaceSpecifiers } from "./lexer.ts";
-import { REACT_VERSION, getReactImportMap } from "./package-registry.ts";
+import { getReactImportMap, REACT_VERSION } from "./package-registry.ts";
 
 /**
  * Get the absolute path to the veryfront AI React module for SSR.

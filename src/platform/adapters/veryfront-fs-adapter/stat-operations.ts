@@ -56,9 +56,16 @@ export class StatOperations {
     }
 
     const file = fileIdx.get(normalizedPath);
-    const indexKeys = fileIdx ? Array.from(fileIdx.keys()).filter(k => k.includes("index")).slice(0, 3) : [];
+    const indexKeys = fileIdx
+      ? Array.from(fileIdx.keys()).filter((k) => k.includes("index")).slice(0, 3)
+      : [];
     if (normalizedPath.includes("index")) {
-      console.log("[DEBUG] stat lookup INDEX", { normalizedPath, found: !!file, indexSize: fileIdx?.size, indexKeys });
+      console.log("[DEBUG] stat lookup INDEX", {
+        normalizedPath,
+        found: !!file,
+        indexSize: fileIdx?.size,
+        indexKeys,
+      });
     }
     if (file) {
       logger.debug("[StatOperations] stat found file", { normalizedPath });
@@ -220,7 +227,9 @@ export class StatOperations {
 
     await this.ensureIndexBuilt();
     const fIdx = this.fileIndex;
-    const indexKeys = fIdx ? Array.from(fIdx.keys()).filter(k => k.includes("index")).slice(0, 5) : [];
+    const indexKeys = fIdx
+      ? Array.from(fIdx.keys()).filter((k) => k.includes("index")).slice(0, 5)
+      : [];
     console.log("[DEBUG] resolveFile", { basePath, normalizedPath, isProduction, indexKeys });
 
     logger.debug("[StatOperations] resolveFile called", {

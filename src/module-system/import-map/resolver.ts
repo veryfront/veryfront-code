@@ -53,7 +53,11 @@ export function resolveImport(
   // Handle esm.sh URLs - normalize package version but preserve subpath
   if (specifier.startsWith("https://esm.sh/") || specifier.startsWith("http://esm.sh/")) {
     const esmShPackage = extractEsmShPackage(specifier);
-    if (esmShPackage && importMap.imports?.[esmShPackage]) {
+    // Check scoped imports first, then global imports
+    const scopedMapping = scope && esmShPackage && importMap.scopes?.[scope]?.[esmShPackage];
+    const globalMapping = esmShPackage && importMap.imports?.[esmShPackage];
+    const mapping = scopedMapping || globalMapping;
+    if (mapping) {
       // Extract subpath from original URL
       const url = new URL(specifier);
       const pathname = url.pathname.slice(1).replace(/^v\d+\//, ""); // Remove leading / and version prefix
@@ -87,8 +91,7 @@ export function resolveImport(
       }
 
       // Return mapped URL with preserved subpath
-      const mappedUrl = importMap.imports[esmShPackage];
-      return subpath ? mappedUrl + subpath : mappedUrl;
+      return subpath ? mapping + subpath : mapping;
     }
   }
 

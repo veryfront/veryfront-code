@@ -7,7 +7,7 @@
 import * as esbuild from "esbuild/mod.js";
 import { getLoaderFromPath } from "../../esm/transform-utils.ts";
 import { rendererLogger as logger } from "@veryfront/utils";
-import { TransformStage, type TransformContext, type TransformPlugin } from "../types.ts";
+import { type TransformContext, type TransformPlugin, TransformStage } from "../types.ts";
 
 /**
  * Compile plugin - transforms JSX/TSX to JS using esbuild.

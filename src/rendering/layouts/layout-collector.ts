@@ -320,7 +320,9 @@ export class LayoutCollector {
         }
       }
       // Only treat as MDX if there's actual content after frontmatter
-      const kind = (hasFrontmatter && hasContentAfterFrontmatter) ? "mdx" : getLayoutKind(layoutValue);
+      const kind = (hasFrontmatter && hasContentAfterFrontmatter)
+        ? "mdx"
+        : getLayoutKind(layoutValue);
 
       logger.info("[LayoutCollector] Content analysis", {
         hasFrontmatter,
@@ -343,8 +345,9 @@ export class LayoutCollector {
 
       if (!content) {
         // For Veryfront API adapter, use relative path for exists check
-        const layoutExists = await (wrappedAdapter as { exists: (path: string) => Promise<boolean> })
-          .exists(layoutValue);
+        const layoutExists =
+          await (wrappedAdapter as { exists: (path: string) => Promise<boolean> })
+            .exists(layoutValue);
 
         logger.info("[LayoutCollector] Checking API layout file", {
           layoutPath,

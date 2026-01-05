@@ -6,9 +6,9 @@
  * - Browser: module server URLs
  */
 
-import { resolvePathAliases, resolveCrossProjectImports } from "../../esm/path-resolver.ts";
+import { resolveCrossProjectImports, resolvePathAliases } from "../../esm/path-resolver.ts";
 import { isSSR } from "../context.ts";
-import { TransformStage, type TransformContext, type TransformPlugin } from "../types.ts";
+import { type TransformContext, type TransformPlugin, TransformStage } from "../types.ts";
 
 /**
  * Resolve aliases plugin - transforms @/ imports.

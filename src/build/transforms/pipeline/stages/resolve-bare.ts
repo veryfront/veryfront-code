@@ -11,8 +11,8 @@ import {
   getDefaultImportMap,
   transformImportsWithMap,
 } from "@veryfront/modules/import-map/index.ts";
-import { isSSR, isBrowser } from "../context.ts";
-import { TransformStage, type TransformContext, type TransformPlugin } from "../types.ts";
+import { isBrowser, isSSR } from "../context.ts";
+import { type TransformContext, type TransformPlugin, TransformStage } from "../types.ts";
 
 /**
  * Resolve bare plugin - transforms bare imports to CDN URLs.

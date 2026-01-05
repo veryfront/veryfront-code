@@ -10,7 +10,7 @@ import { bundleHttpImports } from "../../esm/http-bundler.ts";
 import { cwd } from "../../../../platform/compat/process.ts";
 import { join } from "std/path/mod.ts";
 import { isSSR } from "../context.ts";
-import { TransformStage, type TransformContext, type TransformPlugin } from "../types.ts";
+import { type TransformContext, type TransformPlugin, TransformStage } from "../types.ts";
 
 /**
  * Finalize plugin - performs final cleanup and SSR HTTP bundling.
