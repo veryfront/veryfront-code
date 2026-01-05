@@ -594,22 +594,32 @@ export class VeryfrontFSAdapter implements FSAdapter {
    * In production mode, files are fetched from published releases instead of drafts.
    */
   setProductionMode(enabled: boolean, releaseId?: string | null): void {
+    const oldProductionMode = this.productionMode;
     const oldReleaseId = this.releaseId;
     const newReleaseId = releaseId ?? null;
 
     this.productionMode = enabled;
     this.releaseId = newReleaseId;
 
-    // Clear index when releaseId changes to force re-fetch
-    if (oldReleaseId !== newReleaseId) {
+    // Clear index when productionMode or releaseId changes to force re-fetch
+    // This is critical for JIT rendering where the same adapter may be used for
+    // both preview (draft) and production (published) requests
+    const modeChanged = oldProductionMode !== enabled;
+    const releaseChanged = oldReleaseId !== newReleaseId;
+
+    if (modeChanged || releaseChanged) {
       this.statOps.clearIndex();
-      logger.info("[VeryfrontFSAdapter] Cleared index due to releaseId change", {
+      logger.info("[VeryfrontFSAdapter] Cleared index due to mode change", {
+        oldProductionMode,
+        newProductionMode: enabled,
         oldReleaseId: oldReleaseId ?? "null",
         newReleaseId: newReleaseId ?? "null",
+        modeChanged,
+        releaseChanged,
       });
     }
 
-    logger.debug("[VeryfrontFSAdapter] Production mode set", {
+    logger.info("[VeryfrontFSAdapter] Production mode set", {
       enabled,
       releaseId: newReleaseId ?? "latest",
     });
