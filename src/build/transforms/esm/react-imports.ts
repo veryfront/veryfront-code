@@ -247,6 +247,43 @@ export async function resolveReactImports(code: string, forSSR: boolean = false)
   });
 }
 
+/**
+ * Packages that are in the browser import map and should be converted to bare specifiers.
+ * This ensures the browser import map can intercept these imports for consistent module instances.
+ */
+const IMPORT_MAP_PACKAGES = [
+  "@tanstack/react-query",
+  "@tanstack/query-core",
+  "next-themes",
+  "framer-motion",
+];
+
+/**
+ * Extract package name from esm.sh URL.
+ * E.g., "https://esm.sh/@tanstack/react-query@5?external=react" -> "@tanstack/react-query"
+ */
+function extractPackageFromEsmSh(url: string): string | null {
+  if (!url.startsWith("https://esm.sh/") && !url.startsWith("http://esm.sh/")) {
+    return null;
+  }
+
+  // Remove protocol and host
+  let path = url.replace(/^https?:\/\/esm\.sh\//, "");
+
+  // Remove version prefix like /v135/
+  path = path.replace(/^v\d+\//, "");
+
+  // Handle scoped packages like @tanstack/react-query@5?external=...
+  if (path.startsWith("@")) {
+    const match = path.match(/^(@[^/]+\/[^@/?]+)/);
+    return match ? match[1] : null;
+  } else {
+    // Regular package: name@version or name?query
+    const match = path.match(/^([^@/?]+)/);
+    return match ? match[1] : null;
+  }
+}
+
 export function addDepsToEsmShUrls(code: string, forSSR: boolean = false): Promise<string> {
   // Skip for Node.js - no esm.sh URLs needed
   if (isNodeRuntime()) {
@@ -258,6 +295,15 @@ export function addDepsToEsmShUrls(code: string, forSSR: boolean = false): Promi
       specifier.startsWith("https://esm.sh/") &&
       !specifier.includes(`react@${REACT_DEFAULT_VERSION}`)
     ) {
+      // For browser: Convert import-mapped packages to bare specifiers
+      // This allows the browser import map to intercept and provide consistent modules
+      if (!forSSR) {
+        const packageName = extractPackageFromEsmSh(specifier);
+        if (packageName && IMPORT_MAP_PACKAGES.includes(packageName)) {
+          return packageName; // Return bare specifier for import map to handle
+        }
+      }
+
       // Parse existing query params if any
       const hasQuery = specifier.includes("?");
       const hasExternal = specifier.includes("external=");

@@ -116,6 +116,10 @@ function getEsmShImportMap(versions: DetectedVersions): Record<string, string> {
     "veryfront/router": `https://esm.sh/veryfront@${veryfront}/router?external=react`,
     "veryfront/context": `https://esm.sh/veryfront@${veryfront}/context?external=react`,
     "veryfront/fonts": `https://esm.sh/veryfront@${veryfront}/fonts?external=react`,
+    // Common packages that need single module instance for context to work
+    "@tanstack/react-query": `https://esm.sh/@tanstack/react-query@5?external=react`,
+    "next-themes": `https://esm.sh/next-themes@0.4?external=react`,
+    "framer-motion": `https://esm.sh/framer-motion@11?external=react`,
     // Tailwind CSS - unified version to prevent conflicts
     ...getTailwindImportMap(),
   };

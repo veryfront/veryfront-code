@@ -11,10 +11,17 @@ import {
   resolveVeryfrontImports,
 } from "./path-resolver.ts";
 import { rewriteBareImports, rewriteVendorImports } from "./import-rewriter.ts";
+import { bundleHttpImports } from "./http-bundler.ts";
 import type { TransformOptions } from "./types.ts";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import { compileMDXRuntime } from "../mdx/compiler/mdx-compiler.ts";
 import { rendererLogger as logger } from "@veryfront/utils";
+import { cwd } from "../../../platform/compat/process.ts";
+import { join } from "std/path/mod.ts";
+import {
+  getDefaultImportMap,
+  transformImportsWithMap,
+} from "@veryfront/modules/import-map/index.ts";
 
 export async function transformToESM(
   source: string,
@@ -109,6 +116,17 @@ export async function transformToESM(
   const rewriteStart = performance.now();
   let code = result.code;
 
+  // In dev mode for browser, rewrite hardcoded project domain URLs to use current origin
+  // This allows fetch calls to work against the local dev server
+  if (dev && !ssr) {
+    // Match patterns like: "https://codersociety.com" or 'https://codersociety.com'
+    // Rewrite to location.origin for relative URL resolution
+    code = code.replace(
+      /(['"])https?:\/\/[a-zA-Z0-9-]+\.(?:com|org|net|io|dev|app|veryfront\.com)\1/g,
+      "location.origin",
+    );
+  }
+
   code = await resolveReactImports(code, ssr);
   code = await addDepsToEsmShUrls(code, ssr);
   code = await resolvePathAliases(code, filePath, projectDir, ssr);
@@ -144,6 +162,15 @@ export async function transformToESM(
     code = await resolveRelativeImportsForSSR(code);
     // Rewrite @veryfront/* imports for npm compatibility (both Node.js and Deno)
     code = await resolveVeryfrontImports(code);
+
+    // SSR: Apply import map to normalize esm.sh URLs to npm: specifiers
+    // This ensures all imports of the same package use the same module instance,
+    // preventing React context mismatch issues
+    code = transformImportsWithMap(code, getDefaultImportMap(), undefined, { resolveBare: true });
+
+    // SSR: Process remaining HTTP imports (ones not in import map)
+    const httpCacheDir = join(cwd(), ".cache", "veryfront-http-bundle");
+    code = bundleHttpImports(code, httpCacheDir, contentHash);
   } else {
     // Browser: Rewrite imports to use module server (HTTP paths)
     code = await resolveRelativeImports(code, filePath, projectDir, moduleServerUrl);
