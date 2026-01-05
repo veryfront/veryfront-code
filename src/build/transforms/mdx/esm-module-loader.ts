@@ -10,6 +10,7 @@ import type { MDXFrontmatter, MDXModule } from "./types.ts";
 import { join, posix } from "https://deno.land/std@0.220.0/path/mod.ts";
 import { isDeno, isNode } from "../../../platform/compat/runtime.ts";
 import { cwd } from "../../../platform/compat/process.ts";
+import { createFileSystem, type FileSystem } from "../../../platform/compat/fs.ts";
 import { transformToESM } from "../esm-transform.ts";
 import type { RuntimeAdapter } from "../../../platform/adapters/base.ts";
 import {
@@ -38,6 +39,16 @@ const ESBUILD_JSX_FRAGMENT = "React.Fragment";
 // Cache for resolved react package paths (Node.js only)
 const _resolvedPaths: Record<string, string | null> = {};
 
+// Local filesystem for cache operations (not project's FSAdapter which may be remote/read-only)
+// This uses the platform's native fs (Deno, Node, Bun) for local cache writes
+let _localFs: FileSystem | null = null;
+function getLocalFs(): FileSystem {
+  if (!_localFs) {
+    _localFs = createFileSystem();
+  }
+  return _localFs;
+}
+
 // Persistent module path cache - survives across requests
 // Maps normalized module paths to their disk cache file paths
 let _modulePathCache: Map<string, string> | null = null;
@@ -52,7 +63,7 @@ async function getModulePathCache(cacheDir: string): Promise<Map<string, string>
   const indexPath = join(cacheDir, "_index.json");
 
   try {
-    const content = await Deno.readTextFile(indexPath);
+    const content = await getLocalFs().readTextFile(indexPath);
     const index = JSON.parse(content) as Record<string, string>;
     for (const [path, cachePath] of Object.entries(index)) {
       _modulePathCache.set(path, cachePath);
@@ -76,7 +87,7 @@ async function saveModulePathCache(cacheDir: string): Promise<void> {
   }
 
   try {
-    await Deno.writeTextFile(indexPath, JSON.stringify(index));
+    await getLocalFs().writeTextFile(indexPath, JSON.stringify(index));
   } catch (error) {
     logger.warn(`${LOG_PREFIX_MDX_LOADER} Failed to save module index`, error);
   }
@@ -494,18 +505,19 @@ export async function loadModuleESM(
       // Use persistent cache directory that survives server restarts
       // This dramatically improves first-request performance after initial warm-up
       const persistentCacheDir = join(cwd(), ".cache", "veryfront-mdx-esm");
+      const localFs = getLocalFs();
       try {
-        await Deno.mkdir(persistentCacheDir, { recursive: true });
+        await localFs.mkdir(persistentCacheDir, { recursive: true });
         context.esmCacheDir = persistentCacheDir;
         logger.info(`${LOG_PREFIX_MDX_LOADER} Using persistent cache dir: ${persistentCacheDir}`);
       } catch {
         // Fallback to temp dir if persistent cache fails
         if (IS_TRUE_NODE) {
           const projectCacheDir = join(cwd(), "node_modules", ".cache", "veryfront-mdx");
-          await adapter.fs.mkdir(projectCacheDir, { recursive: true });
+          await localFs.mkdir(projectCacheDir, { recursive: true });
           context.esmCacheDir = projectCacheDir;
         } else {
-          context.esmCacheDir = await adapter.fs.makeTempDir("veryfront-mdx-esm-");
+          context.esmCacheDir = await localFs.makeTempDir({ prefix: "veryfront-mdx-esm-" });
         }
       }
     }
@@ -854,8 +866,10 @@ export async function loadModuleESM(
             }
 
             // Ensure cache directory exists before writing
-            await Deno.mkdir(context.esmCacheDir!, { recursive: true });
-            await adapter.fs.writeFile(cachePath, moduleCode);
+            // Use local filesystem for cache (not adapter.fs which may be remote/read-only)
+            const localFs = getLocalFs();
+            await localFs.mkdir(context.esmCacheDir!, { recursive: true });
+            await localFs.writeTextFile(cachePath, moduleCode);
             pathCache.set(normalizedPath, cachePath);
             await saveModulePathCache(context.esmCacheDir!);
             logger.debug(`${LOG_PREFIX_MDX_LOADER} Cached: ${normalizedPath} -> ${cachePath}`);
@@ -938,7 +952,7 @@ export default new Proxy(function(){}, handler);
               const stubHash = hashString(`stub:${nestedPath}`);
               const stubPath = join(context.esmCacheDir!, `stub-${stubHash}.mjs`);
               try {
-                await adapter.fs.writeFile(stubPath, stubCode);
+                await getLocalFs().writeTextFile(stubPath, stubCode);
                 moduleCode = moduleCode.replace(original, `from "file://${stubPath}"`);
                 logger.warn(
                   `${LOG_PREFIX_MDX_LOADER} Created stub for missing module: ${nestedPath}`,
@@ -982,7 +996,7 @@ export default new Proxy(function(){}, handler);
               const stubHash = hashString(`stub:${relativePath}`);
               const stubPath = join(context.esmCacheDir!, `stub-${stubHash}.mjs`);
               try {
-                await adapter.fs.writeFile(stubPath, stubCode);
+                await getLocalFs().writeTextFile(stubPath, stubCode);
                 moduleCode = moduleCode.replace(original, `from "file://${stubPath}"`);
                 logger.warn(
                   `${LOG_PREFIX_MDX_LOADER} Created stub for missing module: ${relativePath}`,
@@ -1026,8 +1040,10 @@ export default new Proxy(function(){}, handler);
           }
 
           // Ensure cache directory exists before writing
-          await Deno.mkdir(context.esmCacheDir!, { recursive: true });
-          await adapter.fs.writeFile(cachePath, moduleCode);
+          // Use local filesystem for cache (not adapter.fs which may be remote/read-only)
+          const localFs = getLocalFs();
+          await localFs.mkdir(context.esmCacheDir!, { recursive: true });
+          await localFs.writeTextFile(cachePath, moduleCode);
           pathCache.set(normalizedPath, cachePath);
           await saveModulePathCache(context.esmCacheDir!);
           logger.debug(
@@ -1103,10 +1119,10 @@ export default new Proxy(function(){}, handler);
           transformed = `import React from 'react';\n${transformed}`;
         }
 
-        // Write transformed code to temp file
+        // Write transformed code to temp file (local cache)
         const transformedFileName = `jsx-${hashString(filePath)}.mjs`;
         const transformedPath = join(context.esmCacheDir!, transformedFileName);
-        await adapter.fs.writeFile(transformedPath, transformed);
+        await getLocalFs().writeTextFile(transformedPath, transformed);
 
         jsxTransforms.push({
           original: fullMatch,
@@ -1142,9 +1158,9 @@ export default new Proxy(function(){}, handler);
       logger.info(`${LOG_PREFIX_MDX_LOADER} Bundling HTTP imports via esbuild`);
       const { build } = await import("esbuild/mod.js");
 
-      // Write temp source file for esbuild to process
+      // Write temp source file for esbuild to process (local cache)
       const tempSourcePath = join(context.esmCacheDir!, `temp-${hashString(rewritten)}.mjs`);
-      await adapter.fs.writeFile(tempSourcePath, rewritten);
+      await getLocalFs().writeTextFile(tempSourcePath, rewritten);
 
       try {
         const reactAliases = getReactAliases();
@@ -1219,8 +1235,10 @@ export default new Proxy(function(){}, handler);
     }
 
     const nsDir = join(context.esmCacheDir, namespace);
+    // Use local filesystem for cache operations (not adapter.fs which may be remote/read-only)
+    const localFs = getLocalFs();
     try {
-      await adapter.fs.mkdir(nsDir, { recursive: true });
+      await localFs.mkdir(nsDir, { recursive: true });
     } catch (e) {
       logger.debug(
         `${LOG_PREFIX_MDX_RENDERER} mkdir nsDir failed`,
@@ -1230,13 +1248,13 @@ export default new Proxy(function(){}, handler);
 
     const filePath = join(nsDir, `${codeHash}.mjs`);
     try {
-      const stat = await adapter.fs.stat(filePath);
+      const stat = await localFs.stat(filePath);
       if (!stat?.isFile) {
-        await adapter.fs.writeFile(filePath, rewritten);
+        await localFs.writeTextFile(filePath, rewritten);
       }
     } catch (error) {
       logger.debug(`${LOG_PREFIX_MDX_RENDERER} Writing temporary MDX module file:`, error);
-      await adapter.fs.writeFile(filePath, rewritten);
+      await localFs.writeTextFile(filePath, rewritten);
     }
 
     logger.info(`${LOG_PREFIX_MDX_RENDERER} Loading MDX module`, {
