@@ -81,14 +81,15 @@ describe("html-generation/utils", () => {
       assert(map["veryfront/fonts"] !== undefined);
     });
 
-    it("should return context packages from esm.sh", () => {
+    it("should return context packages as npm: specifiers for SSR", () => {
       const config = getDefaultImportMap();
       const map = config.imports;
 
       assert(map !== undefined);
-      // Context packages use esm.sh with ?external=react
+      // Context packages use npm: specifiers for SSR so Deno resolves them locally
+      // This ensures they share the same React instance from deno.json's npm:react
       assert(map["@tanstack/react-query"] !== undefined);
-      assert(map["@tanstack/react-query"]?.includes("esm.sh"));
+      assert(map["@tanstack/react-query"]?.startsWith("npm:"));
     });
 
     it("should NOT include React directly (resolved via deno.json)", () => {
