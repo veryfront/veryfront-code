@@ -321,6 +321,7 @@ export function setupSSRGlobals(): void {
 // Track SSR server port and project domain for fetch rewriting
 let ssrServerPort: number | null = null;
 let ssrProjectDomain: string | null = null;
+let ssrClientOnlyFetching = false; // When true, API fetches don't complete during SSR
 const originalFetch = globalThis.fetch;
 
 /**
@@ -340,11 +341,35 @@ export function setSSRProjectDomain(domain: string | null): void {
 }
 
 /**
+ * Enable client-only fetching mode.
+ * When enabled, API fetches (starting with /api/) during SSR return
+ * promises that never resolve, causing React Query to suspend and
+ * render fallbacks. This prevents hydration mismatches.
+ */
+export function enableSSRClientOnlyFetching(): void {
+  ssrClientOnlyFetching = true;
+}
+
+/**
+ * Disable client-only fetching mode.
+ */
+export function disableSSRClientOnlyFetching(): void {
+  ssrClientOnlyFetching = false;
+}
+
+/**
  * Rewrite fetch URL for SSR.
- * Redirects requests to the project's own domain to the local server.
+ * - Handles relative URLs (starting with /) by prepending localhost
+ * - Redirects requests to the project's own domain to the local server
  */
 function rewriteFetchUrlForSSR(url: string): string {
   if (!ssrServerPort) return url;
+
+  // Handle relative URLs (e.g., "/api/articles-2")
+  // These need an absolute base URL during SSR
+  if (url.startsWith("/")) {
+    return `http://localhost:${ssrServerPort}${url}`;
+  }
 
   try {
     const parsed = new URL(url);
@@ -367,7 +392,26 @@ function rewriteFetchUrlForSSR(url: string): string {
 }
 
 /**
+ * Check if a URL is an API endpoint that should be client-only.
+ */
+function isClientOnlyApiUrl(url: string): boolean {
+  // Match /api/* paths (both relative and absolute to localhost)
+  if (url.startsWith("/api/")) return true;
+  try {
+    const parsed = new URL(url);
+    if (parsed.hostname === "localhost" && parsed.pathname.startsWith("/api/")) {
+      return true;
+    }
+  } catch {
+    // Invalid URL
+  }
+  return false;
+}
+
+/**
  * Create SSR fetch wrapper that rewrites URLs for local development.
+ * In client-only mode, API fetches return never-resolving promises
+ * to allow React to render Suspense fallbacks.
  */
 function createSSRFetch(): typeof fetch {
   return (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
@@ -381,6 +425,16 @@ function createSSRFetch(): typeof fetch {
     }
 
     const rewrittenUrl = rewriteFetchUrlForSSR(url);
+
+    // In client-only mode, API fetches don't resolve during SSR.
+    // This causes React Query to suspend and render fallbacks,
+    // preventing hydration mismatches.
+    if (ssrClientOnlyFetching && isClientOnlyApiUrl(rewrittenUrl)) {
+      // Return a promise that never resolves
+      // React streaming will timeout and send the Suspense fallback
+      return new Promise(() => {});
+    }
+
     if (rewrittenUrl !== url) {
       // Create new request with rewritten URL
       if (typeof input === "string" || input instanceof URL) {

@@ -19,8 +19,10 @@ function getVeryfrontSsrImportMap(): Record<string, string> {
 
 /**
  * Get context package import map for SSR.
- * Uses npm: specifiers so Deno resolves these locally.
- * This ensures React context packages use the same React instance as the app.
+ *
+ * Uses esm.sh URLs (same as browser) to ensure identical module instances.
+ * This prevents hydration errors caused by different module instances having
+ * different React contexts (e.g., "No QueryClient set" error).
  */
 function getContextPackageImportMapSSR(): Record<string, string> {
   const map: Record<string, string> = {};
@@ -34,16 +36,16 @@ function getContextPackageImportMapSSR(): Record<string, string> {
  * Get the default import map for SSR transforms.
  *
  * React is NOT included here - it's resolved via deno.json import map.
- * Context packages use npm: specifiers so they use Deno's local resolution,
- * which shares the same React instance from deno.json's npm:react mapping.
+ *
+ * Context packages use esm.sh URLs (same as browser) to ensure identical
+ * module instances across SSR and client, preventing hydration errors.
  */
 export function getDefaultImportMap(): ImportMapConfig {
   return {
     imports: {
       // Veryfront exports - local resolution
       ...getVeryfrontSsrImportMap(),
-      // Context packages via npm: specifiers - Deno resolves locally
-      // This ensures they use the same React from deno.json's npm:react
+      // Context packages via esm.sh URLs (matches browser)
       ...getContextPackageImportMapSSR(),
     },
   };
