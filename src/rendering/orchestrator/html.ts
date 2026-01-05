@@ -184,7 +184,10 @@ export class HTMLGenerator {
     const reactContent = decoder.decode(combinedArray);
 
     // Extract head elements from React content (moves <link>, <meta>, etc. from body to head)
-    const { headElements, cleanedContent } = extractHeadElements(reactContent);
+    const { headElements, cleanedContent: rawCleanedContent } = extractHeadElements(reactContent);
+    // Trim leading/trailing whitespace to prevent hydration mismatch
+    // React's virtual DOM doesn't include whitespace at container boundaries
+    const cleanedContent = rawCleanedContent.trim();
 
     const { start, end } = await generateHTMLShellParts(
       {

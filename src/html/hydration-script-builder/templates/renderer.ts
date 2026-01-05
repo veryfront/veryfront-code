@@ -91,11 +91,23 @@ export const getRendererScript = () => `
         const container = document.getElementById('veryfront-content');
         if (container) {
           if (!container.__reactRoot) {
-            // Use hydrateRoot for initial render to preserve SSR content
-            // This prevents flash/flicker when hydrating
+            // Always use hydrateRoot to preserve SSR content
+            // In dev mode, suppress hydration mismatch errors (they're expected due to
+            // MDX compilation differences between SSR and client)
             // IMPORTANT: identifierPrefix must match SSR to prevent useId() mismatch
             const { hydrateRoot } = await import('react-dom/client');
-            const root = hydrateRoot(container, tree, { identifierPrefix: 'vf' });
+            const options = { identifierPrefix: 'vf' };
+            if (data.dev) {
+              // Suppress hydration errors in development - they're noisy but harmless
+              // SSR content is preserved, client takes over interactivity
+              options.onRecoverableError = (error) => {
+                // Only log if DEBUG is enabled, otherwise silently ignore
+                if (typeof DEBUG !== 'undefined' && DEBUG) {
+                  log('Hydration mismatch (suppressed):', error.message);
+                }
+              };
+            }
+            const root = hydrateRoot(container, tree, options);
             container.__reactRoot = root;
             log('Client-side React app hydrated successfully');
           } else {
@@ -107,6 +119,9 @@ export const getRendererScript = () => `
         logError('Client initialization error:', error);
       }
     }
+
+    // Expose renderPage for HMR to trigger re-render after module updates
+    window.__veryfrontRenderPage = renderPage;
 
     renderPage(window.location.pathname);
 

@@ -5,6 +5,20 @@ export const getLoaderScript = () => `
     const componentCache = new Map();
     const loadingPromises = new Map();
 
+    // Clear component cache (called by HMR to invalidate stale components)
+    function clearComponentCache(path) {
+      if (path) {
+        componentCache.delete(path);
+        loadingPromises.delete(path);
+        log('Cleared component cache for:', path);
+      } else {
+        componentCache.clear();
+        loadingPromises.clear();
+        log('Cleared all component caches');
+      }
+    }
+    window.__veryfrontClearComponentCache = clearComponentCache;
+
     function pathToModuleUrl(path) {
       const pattern = /(pages|components|app|lib|layouts|shared|features)\\/(.+)\\.(tsx|ts|jsx|mdx)$/;
 
@@ -49,7 +63,10 @@ export const getLoaderScript = () => `
           const start = DEBUG ? performance.now() : 0;
           log('Loading component:', moduleUrl);
           const module = await import(moduleUrl);
-          const component = module.default || module;
+          // Prefer MDXLayout/MainLayout over default for MDX files
+          // MDXContent (default export) has a bug where it overwrites children prop
+          // SSR uses mod.MDXLayout || mod.MainLayout || mod.default - match that behavior
+          const component = module.MDXLayout || module.MainLayout || module.default || module;
           if (DEBUG) {
             const duration = performance.now() - start;
             console.log('[Veryfront Perf] %cimport:' + path.split('/').pop() + ': %c' + duration.toFixed(2) + 'ms',

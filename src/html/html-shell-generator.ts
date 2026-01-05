@@ -273,8 +273,7 @@ ${options.globalCSS || generateThemeVariables()}
 </head>
 <body${bodyClass ? ` class="${bodyClass}"` : ""}>
   <div ${rootAttributes}>
-    <div ${contentAttributes}>
-`;
+    <div ${contentAttributes}>`;
 
   // Studio bridge scripts for iframe communication with Studio
   // pageId should be the entity UUID from the API (preferred) or relative path as fallback
@@ -298,8 +297,7 @@ ${options.globalCSS || generateThemeVariables()}
     mermaid.initialize({ startOnLoad: true, theme: 'default' });
   </script>`;
 
-  const end = `
-    </div>
+  const end = `</div>
   </div>
   <div id="veryfront-portals"></div>
 
@@ -327,7 +325,10 @@ export async function wrapInHTMLShell(
 ): Promise<string> {
   // Extract head elements from React content to inject into actual <head>
   // This fixes hydration mismatch caused by browser hoisting <link>/<meta> out of <div>
-  const { headElements, cleanedContent } = extractHeadElements(content);
+  const { headElements, cleanedContent: rawCleanedContent } = extractHeadElements(content);
+  // Trim leading/trailing whitespace to prevent hydration mismatch
+  // React's virtual DOM doesn't include whitespace at container boundaries
+  const cleanedContent = rawCleanedContent.trim();
 
   const { start, end } = await generateHTMLShellParts(
     meta,

@@ -20,14 +20,12 @@ export class ReadOperations {
 
   async readFile(path: string): Promise<Uint8Array> {
     const normalizedPath = this.normalizer.normalize(path);
-    console.log("[DEBUG] ReadOperations.readFile", { path, normalizedPath });
     const content = await this.fetchContent(normalizedPath);
     return new TextEncoder().encode(content);
   }
 
   readTextFile(path: string): Promise<string> {
     const normalizedPath = this.normalizer.normalize(path);
-    console.log("[DEBUG] ReadOperations.readTextFile", { path, normalizedPath });
     logger.debug("[ReadOperations] readTextFile called", { path, normalizedPath });
     return this.fetchContent(normalizedPath);
   }
@@ -108,24 +106,13 @@ export class ReadOperations {
       return cached;
     }
 
-    console.log("[DEBUG] fetchDraftContent", { normalizedPath, apiPath, branch });
     logger.debug("[ReadOperations] Fetching draft content", { path: normalizedPath, apiPath });
     try {
       // Use apiPath for the actual API call (handles normalized paths like "pages/index.mdx" -> "pages/")
       const content = await this.client.getFileContent(apiPath);
-      console.log("[DEBUG] fetchDraftContent SUCCESS", {
-        normalizedPath,
-        contentLength: content?.length ?? 0,
-      });
-
       this.cache.set(cacheKey, content);
       return content;
     } catch (error) {
-      console.log("[DEBUG] fetchDraftContent ERROR", {
-        normalizedPath,
-        apiPath,
-        error: error instanceof Error ? error.message : String(error),
-      });
       throw error;
     }
   }
