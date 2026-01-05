@@ -10,7 +10,7 @@ import { rehypeNodePositions as _rehypeNodePositions } from "../../plugins/rehyp
 type PluggableList = Pluggable[];
 
 export async function compileMDXRuntime(
-  mode: CompilationMode,
+  _mode: CompilationMode,
   projectDir: string,
   content: string,
   frontmatter?: Record<string, unknown>,
@@ -44,9 +44,13 @@ export async function compileMDXRuntime(
       // [rehypeNodePositions, { filePath }],
     ];
 
+    // Always use production JSX mode for SSR stability.
+    // Development mode outputs jsxDEV calls which require react/jsx-dev-runtime,
+    // but this module resolution is flaky in some environments (especially CI).
+    // Production mode uses jsx/jsxs which is always reliably available.
     const compiled = await compile(body, {
       outputFormat: "program",
-      development: mode === "development",
+      development: false,
       remarkPlugins,
       rehypePlugins: allRehypePlugins,
       providerImportSource: undefined,
