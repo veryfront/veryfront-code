@@ -426,13 +426,18 @@ function createSSRFetch(): typeof fetch {
 
     const rewrittenUrl = rewriteFetchUrlForSSR(url);
 
-    // In client-only mode, API fetches don't resolve during SSR.
-    // This causes React Query to suspend and render fallbacks,
-    // preventing hydration mismatches.
+    // In client-only mode, API fetches return empty responses during SSR.
+    // React Query will treat this as a successful fetch with empty data.
+    // After hydration, the client will refetch with actual data.
     if (ssrClientOnlyFetching && isClientOnlyApiUrl(rewrittenUrl)) {
-      // Return a promise that never resolves
-      // React streaming will timeout and send the Suspense fallback
-      return new Promise(() => {});
+      // Return a mock empty response - this prevents the Invalid URL error
+      // and allows SSR to complete. React Query will refetch client-side.
+      return Promise.resolve(
+        new Response(JSON.stringify({ data: [], _ssrSkipped: true }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
     }
 
     if (rewrittenUrl !== url) {
