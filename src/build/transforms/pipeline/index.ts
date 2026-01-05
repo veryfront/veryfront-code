@@ -171,6 +171,11 @@ export async function transformToESM(
   _adapter: unknown,
   options: TransformOptions,
 ): Promise<string> {
+  // CSS and JSON files don't need JS transforms - return as-is
+  if (filePath.endsWith(".css") || filePath.endsWith(".json")) {
+    return source;
+  }
+
   const result = await runPipeline(source, filePath, projectDir, options);
   return result.code;
 }
