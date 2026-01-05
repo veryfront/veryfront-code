@@ -933,6 +933,25 @@ export async function loadModuleESM(
             if (nestedFilePath) {
               moduleCode = moduleCode.replace(original, `from "file://${nestedFilePath}"`);
             } else {
+              // Extract named imports from the full import statement to create proper stub exports
+              const importNamePattern = new RegExp(
+                `import\\s+(?:({[^}]+})|([\\w$]+))\\s*${original.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`,
+              );
+              const importMatch = moduleCode.match(importNamePattern);
+              let namedExports = "";
+              if (importMatch) {
+                if (importMatch[1]) {
+                  // Named imports: import { a, b as c } from "..."
+                  const names = importMatch[1]
+                    .replace(/[{}]/g, "")
+                    .split(",")
+                    .map((n) => n.trim().split(/\s+as\s+/)[0]?.trim())
+                    .filter((n): n is string => !!n);
+                  namedExports = names
+                    .map((n) => `export const ${n} = () => { console.warn('[Veryfront] Missing export "${n}" from "${nestedPath}"'); return null; };`)
+                    .join("\n");
+                }
+              }
               // Create stub module for missing files
               const stubCode = `
 // Stub module for missing file: ${nestedPath}
@@ -948,8 +967,9 @@ const handler = {
   apply() { return null; }
 };
 export default new Proxy(function(){}, handler);
+${namedExports}
 `;
-              const stubHash = hashString(`stub:${nestedPath}`);
+              const stubHash = hashString(`stub:${nestedPath}:${namedExports}`);
               const stubPath = join(context.esmCacheDir!, `stub-${stubHash}.mjs`);
               try {
                 await getLocalFs().writeTextFile(stubPath, stubCode);
@@ -977,6 +997,25 @@ export default new Proxy(function(){}, handler);
             if (nestedFilePath) {
               moduleCode = moduleCode.replace(original, `from "file://${nestedFilePath}"`);
             } else {
+              // Extract named imports from the full import statement to create proper stub exports
+              const importNamePattern = new RegExp(
+                `import\\s+(?:({[^}]+})|([\\w$]+))\\s*${original.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`,
+              );
+              const importMatch = moduleCode.match(importNamePattern);
+              let namedExports = "";
+              if (importMatch) {
+                if (importMatch[1]) {
+                  // Named imports: import { a, b as c } from "..."
+                  const names = importMatch[1]
+                    .replace(/[{}]/g, "")
+                    .split(",")
+                    .map((n) => n.trim().split(/\s+as\s+/)[0]?.trim())
+                    .filter((n): n is string => !!n);
+                  namedExports = names
+                    .map((n) => `export const ${n} = () => { console.warn('[Veryfront] Missing export "${n}" from "${relativePath}"'); return null; };`)
+                    .join("\n");
+                }
+              }
               // Create stub module for missing files to prevent import errors
               const stubCode = `
 // Stub module for missing file: ${relativePath}
@@ -992,8 +1031,9 @@ const handler = {
   apply() { return null; }
 };
 export default new Proxy(function(){}, handler);
+${namedExports}
 `;
-              const stubHash = hashString(`stub:${relativePath}`);
+              const stubHash = hashString(`stub:${relativePath}:${namedExports}`);
               const stubPath = join(context.esmCacheDir!, `stub-${stubHash}.mjs`);
               try {
                 await getLocalFs().writeTextFile(stubPath, stubCode);
