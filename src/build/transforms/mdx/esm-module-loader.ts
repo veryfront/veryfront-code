@@ -751,13 +751,10 @@ export async function loadModuleESM(
           if (!sourceCode || !actualFilePath) {
             // Fallback to HTTP fetch if direct file read fails
             // This handles cases where files are in remote storage (Veryfront API)
-            const envGet = (key: string) =>
-              (globalThis as { Deno?: { env: { get(key: string): string | undefined } } })
-                .Deno?.env?.get(key);
 
             // In proxy mode, HTTP fallback to localhost won't work (self-referential request)
             // The files should be loaded via the API adapter at a higher level
-            const isProxyMode = envGet("PROXY_MODE") === "1";
+            const isProxyMode = adapter.env.get("PROXY_MODE") === "1";
             if (isProxyMode) {
               logger.warn(
                 `${LOG_PREFIX_MDX_LOADER} Direct read failed in proxy mode (module must be pre-loaded): ${filePathWithoutJs}`,
@@ -769,7 +766,7 @@ export async function loadModuleESM(
               `${LOG_PREFIX_MDX_LOADER} Direct read failed, falling back to HTTP: ${filePathWithoutJs}`,
             );
             // Try multiple port sources: VERYFRONT_DEV_PORT (set by dev server), PORT env, then default
-            const port = envGet("VERYFRONT_DEV_PORT") || envGet("PORT") || "3001";
+            const port = adapter.env.get("VERYFRONT_DEV_PORT") || adapter.env.get("PORT") || "3001";
             const moduleUrl = `http://localhost:${port}/${normalizedPath}?ssr=true`;
             const response = await fetch(moduleUrl);
             if (!response.ok) {
