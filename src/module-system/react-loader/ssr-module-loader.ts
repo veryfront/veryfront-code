@@ -8,7 +8,7 @@
 import { join } from "std/path/mod.ts";
 import type * as React from "react";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
-import { transformToESM } from "@veryfront/transforms/esm/transform-core.ts";
+import { transformToESM } from "@veryfront/transforms/esm/index.ts";
 import type { TransformOptions } from "@veryfront/transforms/esm/types.ts";
 import {
   type CrossProjectImport,

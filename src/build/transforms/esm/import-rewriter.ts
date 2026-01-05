@@ -130,8 +130,8 @@ export function rewriteBareImports(code: string, _moduleServerUrl?: string): Pro
     }
 
     // Convert remaining bare imports (npm packages) to esm.sh URLs
-    // Include react deps for proper bundling
-    return `https://esm.sh/${finalSpecifier}?deps=react@${REACT_DEFAULT_VERSION},react-dom@${REACT_DEFAULT_VERSION}`;
+    // Use ?external=react,react-dom so React is provided by the runtime's import map
+    return `https://esm.sh/${finalSpecifier}?external=react,react-dom`;
   }));
 }
 

@@ -82,4 +82,6 @@ export interface PageDataResponse {
   layoutProps: Record<string, Record<string, unknown>>;
   /** Build version for cache invalidation during SPA navigation */
   buildVersion: BuildVersion;
+  /** Path to the App component (contains providers like QueryClientProvider) */
+  appPath?: string;
 }

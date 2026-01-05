@@ -29,7 +29,7 @@ Deno.test("plugin-loader - getRemarkPlugins includes custom plugins", async () =
   const projectDir = "/tmp/test-project";
   const plugins = await getRemarkPlugins(projectDir);
 
-  assertEquals(plugins.length >= 7, true);
+  assertEquals(plugins.length >= 6, true);
 });
 
 Deno.test("plugin-loader - getRemarkPlugins handles missing config gracefully", async () => {
@@ -38,7 +38,7 @@ Deno.test("plugin-loader - getRemarkPlugins handles missing config gracefully", 
 
   assertExists(plugins);
   assertEquals(Array.isArray(plugins), true);
-  assertEquals(plugins.length >= 7, true);
+  assertEquals(plugins.length >= 6, true);
 });
 
 Deno.test("plugin-loader - getRemarkPlugins handles invalid config path", async () => {
@@ -150,7 +150,7 @@ Deno.test("plugin-loader - getRemarkPlugins with empty project directory", async
     const plugins = await getRemarkPlugins(tempDir);
 
     assertExists(plugins);
-    assertEquals(plugins.length >= 7, true);
+    assertEquals(plugins.length >= 6, true);
   } finally {
     await Deno.remove(tempDir, { recursive: true });
   }

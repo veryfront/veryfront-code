@@ -14,8 +14,10 @@ import { serverLogger, serverLogger as logger } from "@veryfront/utils";
 import { HTTP_NOT_FOUND, HTTP_OK, HTTP_SERVER_ERROR } from "@veryfront/utils";
 import { getContentTypeForPath } from "../../server/handlers/utils/content-types.ts";
 import { createSecureFs } from "@veryfront/security";
-import { injectNodePositions } from "../../build/transforms/plugins/babel-node-positions.ts";
+// DISABLED: Position injection temporarily disabled to fix hydration mismatch
+// import { injectNodePositions } from "../../build/transforms/plugins/babel-node-positions.ts";
 import { parseProjectDomain } from "../../server/utils/domain-parser.ts";
+// Note: React imports are kept as bare specifiers for SSR, resolved via deno.json to npm:react
 
 const DEV_MODULE_PREFIX = /^\/(?:_vf_modules|_veryfront\/modules)\//;
 const SNIPPET_MODULE_PREFIX = /^\/_vf_modules\/_snippets\/([a-f0-9]+)\.js/;
@@ -157,30 +159,12 @@ export async function serveModule(
       );
 
       // Apply SSR-specific rewrites (same as regular modules)
+      // Leave React as bare specifiers - deno.json import map resolves to npm:react
+      // This ensures user code uses the same React instance as react-dom/server
       if (isSSR && transformedCode) {
-        const REACT_VERSION = "18.3.1";
         const cacheBuster = Date.now();
 
-        // Transform esm.sh React URLs to npm: specifiers for consistency
-        transformedCode = transformedCode.replace(
-          /from\s+["']https:\/\/esm\.sh\/((?:@[^@/?]+\/[^@/?]+|[^@/?]+))(?:@[^/?]+)?(\/[^?"']+)?(?:\?[^"']*)?["']/g,
-          (match, packageName, subpath) => {
-            const normalized = packageName.replace(/\/$/, "");
-            if (normalized === "react") {
-              const path = subpath ? `react@${REACT_VERSION}${subpath}` : `react@${REACT_VERSION}`;
-              return `from "npm:${path}"`;
-            }
-            if (normalized === "react-dom") {
-              const path = subpath
-                ? `react-dom@${REACT_VERSION}${subpath}`
-                : `react-dom@${REACT_VERSION}`;
-              return `from "npm:${path}"`;
-            }
-            return match;
-          },
-        );
-
-        // Transform bare imports to npm: specifiers
+        // Transform non-React bare imports to esm.sh URLs
         transformedCode = transformedCode.replace(
           /from\s+["']([^"'./][^"']*)["']/g,
           (_match, specifier) => {
@@ -196,45 +180,21 @@ export async function serveModule(
             if (specifier.startsWith("@/")) {
               return `from "${specifier}"`;
             }
-            if (specifier === "react") {
-              return `from "npm:react@${REACT_VERSION}"`;
+            // Keep React as bare specifiers - deno.json resolves to npm:react
+            // This ensures same React instance as react-dom/server
+            if (specifier === "react" || specifier.startsWith("react/")) {
+              return `from "${specifier}"`;
             }
-            if (specifier.startsWith("react/")) {
-              const subpath = specifier.slice(6);
-              return `from "npm:react@${REACT_VERSION}/${subpath}"`;
-            }
-            if (specifier === "react-dom") {
-              return `from "npm:react-dom@${REACT_VERSION}"`;
-            }
-            if (specifier.startsWith("react-dom/")) {
-              const subpath = specifier.slice(10);
-              return `from "npm:react-dom@${REACT_VERSION}/${subpath}"`;
+            if (specifier === "react-dom" || specifier.startsWith("react-dom/")) {
+              return `from "${specifier}"`;
             }
             // Keep veryfront/* imports as bare specifiers for Deno to resolve via deno.json exports
-            // This avoids esm.sh's Deno shim which conflicts with actual Deno runtime
             if (specifier.startsWith("veryfront/")) {
               return `from "${specifier}"`;
             }
+            // Other packages go to esm.sh with external=react so they use npm:react
             return `from "https://esm.sh/${specifier}?external=react,react-dom"`;
           },
-        );
-
-        // Normalize any unversioned npm:react specifiers
-        transformedCode = transformedCode.replace(
-          /from\s+["']npm:react\/([^"'@]+)["']/g,
-          `from "npm:react@${REACT_VERSION}/$1"`,
-        );
-        transformedCode = transformedCode.replace(
-          /from\s+["']npm:react["']/g,
-          `from "npm:react@${REACT_VERSION}"`,
-        );
-        transformedCode = transformedCode.replace(
-          /from\s+["']npm:react-dom\/([^"'@]+)["']/g,
-          `from "npm:react-dom@${REACT_VERSION}/$1"`,
-        );
-        transformedCode = transformedCode.replace(
-          /from\s+["']npm:react-dom["']/g,
-          `from "npm:react-dom@${REACT_VERSION}"`,
         );
 
         // Transform @/ path aliases to absolute /_vf_modules/ URLs for SSR
@@ -459,20 +419,10 @@ export async function serveModule(
       // For framework lib files, read directly from filesystem instead of through adapter
       // isFrameworkFile flag is set by findSourceFile when file is from framework lib
       const readStart = performance.now();
-      let source = isFrameworkFile
+      const source = isFrameworkFile
         ? await Deno.readTextFile(sourceFile)
         : await runWithOptionalContext(() => secureFs.readFile(sourceFile));
       timings.readFile = performance.now() - readStart;
-
-      // Inject source position data attributes for Studio Navigator
-      // This adds data-node-line, data-node-column, etc. to JSX elements
-      // Only apply to project TSX/JSX files (not framework files)
-      const isJsxFile = /\.(tsx|jsx)$/i.test(sourceFile);
-      if (!isFrameworkFile && isJsxFile) {
-        const injectStart = performance.now();
-        source = injectNodePositions(source, { filePath: sourceFile });
-        timings.injectPositions = performance.now() - injectStart;
-      }
 
       // Check for SSR mode via query parameter or Deno User-Agent
       // Deno's fetch uses "Deno/x.x.x" as User-Agent, while browsers use different UAs
@@ -481,6 +431,23 @@ export async function serveModule(
       const isDenoRequest = userAgent.startsWith("Deno/");
       const hasSSRParam = url.searchParams.get("ssr") === "true";
       const isSSR = hasSSRParam || isDenoRequest;
+
+      // DISABLED: Position injection for Studio Navigator
+      // This was adding data-node-line, data-node-column, etc. to JSX elements.
+      // CRITICAL: Disabled to prevent hydration mismatch.
+      // SSR dependencies (via SSRModuleLoader) don't have positions, so browser
+      // dependencies must not have them either for hydration to succeed.
+      // Page components get positions injected separately via component-handling.ts
+      // which handles both SSR and client bundle consistently.
+      //
+      // TODO(#studio-navigator): Re-enable with proper SSR/browser synchronization when Studio Navigator
+      // is implemented with edit-in-place support.
+      // const isJsxFile = /\.(tsx|jsx)$/i.test(sourceFile);
+      // if (!isFrameworkFile && isJsxFile) {
+      //   const injectStart = performance.now();
+      //   source = injectNodePositions(source, { filePath: sourceFile });
+      //   timings.injectPositions = performance.now() - injectStart;
+      // }
       logger.info("[ModuleServer] SSR mode check", {
         isSSR,
         isDenoRequest,
@@ -501,35 +468,12 @@ export async function serveModule(
       timings.transform = performance.now() - transformStart;
 
       // For SSR mode, transform imports for Deno compatibility
-      // IMPORTANT: Use npm: for React to match third-party packages like @tanstack/react-query
-      // which always import React via bare specifiers resolved to npm:.
+      // Leave React as bare specifiers - deno.json import map resolves to npm:react
+      // This ensures user code uses the same React instance as react-dom/server
       if (isSSR && code) {
-        const REACT_VERSION = "18.3.1";
         const cacheBuster = Date.now();
 
-        // Transform esm.sh React URLs to npm: specifiers for consistency
-        // Keep other packages as esm.sh (better CJS to ESM conversion)
-        code = code.replace(
-          /from\s+["']https:\/\/esm\.sh\/((?:@[^@/?]+\/[^@/?]+|[^@/?]+))(?:@[^/?]+)?(\/[^?"']+)?(?:\?[^"']*)?["']/g,
-          (match, packageName, subpath) => {
-            const normalized = packageName.replace(/\/$/, "");
-            // For React, use npm: to match third-party packages
-            if (normalized === "react") {
-              const path = subpath ? `react@${REACT_VERSION}${subpath}` : `react@${REACT_VERSION}`;
-              return `from "npm:${path}"`;
-            }
-            if (normalized === "react-dom") {
-              const path = subpath
-                ? `react-dom@${REACT_VERSION}${subpath}`
-                : `react-dom@${REACT_VERSION}`;
-              return `from "npm:${path}"`;
-            }
-            // Keep other packages as esm.sh - it handles CJS properly
-            return match;
-          },
-        );
-
-        // Transform bare imports to npm: specifiers
+        // Transform non-React bare imports to esm.sh URLs
         code = code.replace(
           /from\s+["']([^"'./][^"']*)["']/g,
           (_match, specifier) => {
@@ -547,48 +491,21 @@ export async function serveModule(
             if (specifier.startsWith("@/")) {
               return `from "${specifier}"`;
             }
-            // Use versioned specifier for React packages
-            if (specifier === "react") {
-              return `from "npm:react@${REACT_VERSION}"`;
+            // Keep React as bare specifiers - deno.json resolves to npm:react
+            // This ensures same React instance as react-dom/server
+            if (specifier === "react" || specifier.startsWith("react/")) {
+              return `from "${specifier}"`;
             }
-            if (specifier.startsWith("react/")) {
-              const subpath = specifier.slice(6); // Remove "react/"
-              return `from "npm:react@${REACT_VERSION}/${subpath}"`;
-            }
-            if (specifier === "react-dom") {
-              return `from "npm:react-dom@${REACT_VERSION}"`;
-            }
-            if (specifier.startsWith("react-dom/")) {
-              const subpath = specifier.slice(10); // Remove "react-dom/"
-              return `from "npm:react-dom@${REACT_VERSION}/${subpath}"`;
+            if (specifier === "react-dom" || specifier.startsWith("react-dom/")) {
+              return `from "${specifier}"`;
             }
             // Keep veryfront/* imports as bare specifiers for Deno to resolve via deno.json exports
-            // This avoids esm.sh's Deno shim which conflicts with actual Deno runtime
             if (specifier.startsWith("veryfront/")) {
               return `from "${specifier}"`;
             }
-            // Convert other bare imports to esm.sh URLs
-            // esm.sh handles CJS to ESM conversion properly (npm: doesn't always expose named exports)
+            // Other packages go to esm.sh with external=react so they use npm:react
             return `from "https://esm.sh/${specifier}?external=react,react-dom"`;
           },
-        );
-
-        // Normalize any unversioned npm:react specifiers to versioned ones
-        code = code.replace(
-          /from\s+["']npm:react\/([^"'@]+)["']/g,
-          `from "npm:react@${REACT_VERSION}/$1"`,
-        );
-        code = code.replace(
-          /from\s+["']npm:react["']/g,
-          `from "npm:react@${REACT_VERSION}"`,
-        );
-        code = code.replace(
-          /from\s+["']npm:react-dom\/([^"'@]+)["']/g,
-          `from "npm:react-dom@${REACT_VERSION}/$1"`,
-        );
-        code = code.replace(
-          /from\s+["']npm:react-dom["']/g,
-          `from "npm:react-dom@${REACT_VERSION}"`,
         );
 
         // Transform @/ path aliases to absolute /_vf_modules/ URLs for SSR
@@ -795,6 +712,49 @@ async function findSourceFile(
         const stat = await Deno.stat(frameworkPath);
         if (stat.isFile) {
           serverLogger.debug("[ModuleServer] Found framework lib file (fallback)", {
+            basePath: basePathWithoutExt,
+            resolvedPath: frameworkPath,
+          });
+          return { path: frameworkPath, isFrameworkFile: true };
+        }
+      } catch {
+        // Continue trying other paths
+      }
+    }
+  }
+
+  // FALLBACK: For exports/* imports, serve from framework exports directory
+  // This provides internal exports like veryfront/head, veryfront/router, etc.
+  // These are served from src/exports/ to ensure SSR and browser use the same code
+  if (basePathWithoutExt.startsWith("exports/")) {
+    for (const ext of extensions) {
+      // FRAMEWORK_ROOT is veryfront-renderer/, so add src/ prefix
+      const frameworkPath = join(FRAMEWORK_ROOT, "src", basePathWithoutExt + ext);
+      try {
+        const stat = await Deno.stat(frameworkPath);
+        if (stat.isFile) {
+          serverLogger.debug("[ModuleServer] Found framework exports file", {
+            basePath: basePathWithoutExt,
+            resolvedPath: frameworkPath,
+          });
+          return { path: frameworkPath, isFrameworkFile: true };
+        }
+      } catch {
+        // Continue trying other paths
+      }
+    }
+  }
+
+  // FALLBACK: For react/* imports, serve from framework react components directory
+  // This handles relative imports from exports files (e.g., ../react/components/Head.tsx)
+  if (basePathWithoutExt.startsWith("react/")) {
+    for (const ext of extensions) {
+      // FRAMEWORK_ROOT is veryfront-renderer/, so add src/ prefix
+      const frameworkPath = join(FRAMEWORK_ROOT, "src", basePathWithoutExt + ext);
+      try {
+        const stat = await Deno.stat(frameworkPath);
+        if (stat.isFile) {
+          serverLogger.debug("[ModuleServer] Found framework react file", {
             basePath: basePathWithoutExt,
             resolvedPath: frameworkPath,
           });

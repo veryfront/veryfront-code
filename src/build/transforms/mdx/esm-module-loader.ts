@@ -1143,10 +1143,14 @@ export default new Proxy(function(){}, handler);
           target: "es2020",
           write: false,
           plugins: [createHTTPPlugin()],
-          // Use aliases to normalize all React imports to npm:react@version
+          // Use aliases to normalize all React imports to esm.sh URLs
           alias: reactAliases,
-          // Mark npm packages as external so they're not bundled
-          external: Object.values(reactAliases),
+          // Mark external: React URLs, file:// URLs (local modules), veryfront/* (framework)
+          external: [
+            ...Object.values(reactAliases),
+            "file://*",
+            "veryfront/*",
+          ],
         });
 
         const bundledCode = result.outputFiles?.[0]?.text;

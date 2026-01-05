@@ -2,6 +2,7 @@ import { join } from "../../platform/compat/path-helper.ts";
 import type { VeryfrontConfig } from "@veryfront/config";
 import type { HTMLGenerationOptions } from "@veryfront/html";
 import {
+  extractHeadElements,
   extractHTMLMetadata,
   generateHTMLShellParts,
   injectHTMLContent,
@@ -156,6 +157,35 @@ export class HTMLGenerator {
       sourceHash,
     };
 
+    // Buffer the React stream to extract head elements
+    // This is necessary because head elements need to be moved from body to <head>
+    const decoder = new TextDecoder();
+    const chunks: Uint8Array[] = [];
+    const reader = reactStream.getReader();
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+      }
+    } finally {
+      reader.releaseLock();
+    }
+
+    // Combine chunks and extract head elements
+    const totalLength = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
+    const combinedArray = new Uint8Array(totalLength);
+    let offset = 0;
+    for (const chunk of chunks) {
+      combinedArray.set(chunk, offset);
+      offset += chunk.length;
+    }
+    const reactContent = decoder.decode(combinedArray);
+
+    // Extract head elements from React content (moves <link>, <meta>, etc. from body to head)
+    const { headElements, cleanedContent } = extractHeadElements(reactContent);
+
     const { start, end } = await generateHTMLShellParts(
       {
         title: mergedFrontmatter.title || "Veryfront App",
@@ -168,33 +198,22 @@ export class HTMLGenerator {
       htmlOptions,
       context.options?.params,
       context.options?.props,
+      cleanedContent, // Pass cleaned content for Tailwind CSS generation
     );
 
+    // Inject extracted head elements into the <head> section (before </head>)
+    const startWithHeadElements = headElements
+      ? start.replace("</head>", `  ${headElements}\n</head>`)
+      : start;
+
     const encoder = new TextEncoder();
-    const startChunk = encoder.encode(start);
-    const endChunk = encoder.encode(end);
+    const fullHtml = `${startWithHeadElements}${cleanedContent}${end}`;
+    const htmlChunk = encoder.encode(fullHtml);
 
     return new ReadableStream({
       start(controller) {
-        controller.enqueue(startChunk);
-      },
-      async pull(controller) {
-        const reader = reactStream.getReader();
-        try {
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) {
-              controller.enqueue(endChunk);
-              controller.close();
-              break;
-            }
-            controller.enqueue(value);
-          }
-        } catch (error) {
-          controller.error(error);
-        } finally {
-          reader.releaseLock();
-        }
+        controller.enqueue(htmlChunk);
+        controller.close();
       },
     });
   }

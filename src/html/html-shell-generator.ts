@@ -25,6 +25,41 @@ import {
 } from "./utils.ts";
 
 /**
+ * Extract head elements from React SSR content and return them separately.
+ *
+ * React's Head component renders a hidden div with data-veryfront-head attribute.
+ * The browser's HTML parser hoists elements like <link>, <meta>, <title> out of divs,
+ * causing hydration mismatch. This function extracts those elements to inject
+ * into the actual <head>, and removes them from the body content.
+ *
+ * @param content - The React SSR rendered HTML content
+ * @returns Object with extracted head elements HTML and cleaned content
+ */
+export function extractHeadElements(content: string): { headElements: string; cleanedContent: string } {
+  // Match data-veryfront-head wrappers and extract their inner content
+  // Pattern: <div data-veryfront-head="1" style="display:none">...</div>
+  // Also handles <template data-veryfront-head="1">...</template>
+  const headPattern = /<(div|template)(\s+data-veryfront-head="1"[^>]*)>([\s\S]*?)<\/\1>/gi;
+
+  const headElements: string[] = [];
+  const cleanedContent = content.replace(headPattern, (_match, tagName, attrs, innerContent) => {
+    // Extract valid head elements from the inner content
+    // Filter out <body> elements which are invalid in head
+    const validHeadContent = innerContent.replace(/<body[^>]*>.*?<\/body>/gi, "");
+    if (validHeadContent.trim()) {
+      headElements.push(validHeadContent.trim());
+    }
+    // Return EMPTY wrapper (not removed) so hydration matches client initial render
+    return `<${tagName}${attrs}></${tagName}>`;
+  });
+
+  return {
+    headElements: headElements.join("\n  "),
+    cleanedContent,
+  };
+}
+
+/**
  * Convert a source path to a module URL for preloading.
  * E.g., pages/index.mdx -> /_vf_modules/pages/index.js
  * E.g., _snippets/abc123 -> /_vf_modules/_snippets/abc123.js
@@ -288,12 +323,22 @@ export async function wrapInHTMLShell(
   params?: Record<string, string | string[]>,
   props?: ComponentProps,
 ): Promise<string> {
+  // Extract head elements from React content to inject into actual <head>
+  // This fixes hydration mismatch caused by browser hoisting <link>/<meta> out of <div>
+  const { headElements, cleanedContent } = extractHeadElements(content);
+
   const { start, end } = await generateHTMLShellParts(
     meta,
     options,
     params,
     props,
-    content,
+    cleanedContent, // Pass cleaned content for Tailwind CSS generation
   );
-  return `${start}${content}${end}`;
+
+  // Inject extracted head elements into the <head> section (before </head>)
+  const startWithHeadElements = headElements
+    ? start.replace("</head>", `  ${headElements}\n</head>`)
+    : start;
+
+  return `${startWithHeadElements}${cleanedContent}${end}`;
 }

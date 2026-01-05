@@ -69,37 +69,37 @@ describe("html-generation/utils", () => {
   });
 
   describe("getDefaultImportMap", () => {
-    it("should return default React imports", () => {
+    it("should return veryfront exports for SSR", () => {
       const config = getDefaultImportMap();
       const map = config.imports;
 
       assert(map !== undefined);
-      assert(map.react !== undefined);
-      assert(map["react-dom"] !== undefined);
-      assert(map["react-dom/client"] !== undefined);
-      assert(map["react/jsx-runtime"] !== undefined);
-      assert(map["react/jsx-dev-runtime"] !== undefined);
+      // Veryfront exports are included for SSR transforms
+      assert(map["veryfront/head"] !== undefined);
+      assert(map["veryfront/router"] !== undefined);
+      assert(map["veryfront/context"] !== undefined);
+      assert(map["veryfront/fonts"] !== undefined);
     });
 
-    it("should use correct import format for current runtime", () => {
+    it("should return context packages from esm.sh", () => {
       const config = getDefaultImportMap();
       const map = config.imports;
 
       assert(map !== undefined);
-      // In Deno, uses npm: specifiers; in true Node, uses esm.sh CDN
-      // Test just verifies imports include correct package names
-      if (map.react) {
-        assert(
-          map.react.includes("react") &&
-            (map.react.includes("npm:") || map.react.includes("esm.sh")),
-        );
-      }
-      if (map["react-dom"]) {
-        assert(
-          map["react-dom"].includes("react-dom") &&
-            (map["react-dom"].includes("npm:") || map["react-dom"].includes("esm.sh")),
-        );
-      }
+      // Context packages use esm.sh with ?external=react
+      assert(map["@tanstack/react-query"] !== undefined);
+      assert(map["@tanstack/react-query"]?.includes("esm.sh"));
+    });
+
+    it("should NOT include React directly (resolved via deno.json)", () => {
+      const config = getDefaultImportMap();
+      const map = config.imports;
+
+      assert(map !== undefined);
+      // React is NOT in getDefaultImportMap - it's resolved via deno.json import map
+      // This ensures SSR user code uses the same React instance as react-dom/server
+      assertEquals(map.react, undefined);
+      assertEquals(map["react-dom"], undefined);
     });
   });
 

@@ -6,6 +6,7 @@ import {
   extractRelativePath as extractRelativePathShared,
   extractRouteParams as extractRouteParamsShared,
 } from "@veryfront/core/utils/route-path-utils.ts";
+import { join } from "../../platform/compat/path-helper.ts";
 import type { MdxBundle } from "@veryfront/types";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import { getLocalAdapter } from "@veryfront/platform/adapters/registry.ts";
@@ -787,12 +788,25 @@ export class RenderPipeline {
       projectUpdatedAt = projectData?.updatedAt;
     }
 
+    // 11. Resolve app component path (contains QueryClientProvider, etc.)
+    let appPath: string | undefined;
+    const appExtensions = ["tsx", "jsx", "ts", "js"];
+    for (const ext of appExtensions) {
+      const candidatePath = join(this.config.projectDir, `components/app.${ext}`);
+      const exists = await this.config.adapter.fs.exists(candidatePath);
+      if (exists) {
+        appPath = extractRelativePathShared(candidatePath, this.config.projectDir);
+        break;
+      }
+    }
+
     logger.info("[resolvePageData] Resolved page data", {
       slug,
       pagePath,
       pageType,
       layoutCount: layouts.length,
       providerCount: providers.length,
+      appPath,
     });
 
     return {
@@ -806,6 +820,7 @@ export class RenderPipeline {
       params,
       layoutProps,
       buildVersion: createBuildVersion(projectUpdatedAt),
+      appPath,
     };
   }
 }

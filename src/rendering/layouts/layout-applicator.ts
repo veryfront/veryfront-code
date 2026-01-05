@@ -14,6 +14,7 @@ import {
 } from "../app-reserved.ts";
 import { detectAppRouter } from "../router-detection.ts";
 import { getProjectReact } from "@veryfront/react";
+import { RouterProvider } from "../../exports/router.ts";
 
 export interface LayoutApplicationOptions {
   projectDir: string;
@@ -63,11 +64,34 @@ export class LayoutApplicator {
     const useAppRouter = await detectAppRouter(this.projectDir, this.config, this.adapter);
     const pageFilePath = pageInfo.entity.id;
 
-    if (!useAppRouter) {
+    // Check if App was already applied as a provider to avoid double-wrapping
+    // which causes duplicate <Head> content and hydration errors
+    const hasAppProvider = providerItems.some((p) =>
+      p.componentPath?.includes("/components/app.") ||
+      p.componentPath?.endsWith("/app.tsx") ||
+      p.componentPath?.endsWith("/app.ts") ||
+      p.componentPath?.endsWith("/app.jsx") ||
+      p.componentPath?.endsWith("/app.js")
+    );
+
+    if (!useAppRouter && !hasAppProvider) {
       wrappedElement = await this.wrapWithAppComponent(wrappedElement);
-    } else {
+    } else if (hasAppProvider) {
+      logger.debug("Skipping wrapWithAppComponent - App already applied as provider");
+    }
+
+    if (useAppRouter) {
       wrappedElement = await this.wrapWithReservedComponents(wrappedElement, pageFilePath);
     }
+
+    // Wrap with RouterProvider to match client-side tree structure
+    // This ensures useId() generates consistent IDs between SSR and client
+    const React = await getProjectReact();
+    wrappedElement = React.createElement(
+      RouterProvider,
+      { children: wrappedElement },
+    ) as BundledReact.ReactElement;
+    logger.debug("Wrapped element with RouterProvider for SSR/client tree consistency");
 
     return wrappedElement;
   }
