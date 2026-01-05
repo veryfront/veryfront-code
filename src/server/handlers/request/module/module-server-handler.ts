@@ -53,6 +53,8 @@ export async function handleModuleServer(
       // Pass project context from handler (set via proxy headers or domain lookup)
       projectSlug: ctx.projectSlug,
       branch: ctx.parsedDomain?.branch ?? null,
+      // Pass release ID for production mode (published files)
+      releaseId: ctx.releaseId ?? null,
     });
 
     const builder = createResponseBuilder(ctx);
