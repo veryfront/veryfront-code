@@ -634,7 +634,12 @@ async function findSourceFile(
         });
         return { path: fullPath, isFrameworkFile: false };
       }
-    } catch (_error) {
+    } catch (error) {
+      // Log the error for debugging - important to understand why files aren't being found
+      serverLogger.info("[ModuleServer] stat failed for extension", {
+        fullPath,
+        error: error instanceof Error ? error.message : String(error),
+      });
       // Continue trying next extension
     }
   }
