@@ -197,6 +197,7 @@ export function createVeryfrontHandler(
       const configuredSlug = config?.fs?.veryfront?.projectSlug;
       let projectSlug = proxySlug || parsedDomain.slug || configuredSlug;
       let projectId: string | undefined;
+      let releaseId: string | undefined;
 
       // Debug: Log config state for troubleshooting
       logger.debug("[universal] config state", {
@@ -241,6 +242,7 @@ export function createVeryfrontHandler(
           if (lookupResult) {
             projectSlug = lookupResult.projectSlug;
             projectId = lookupResult.projectId;
+            releaseId = lookupResult.releaseId ?? undefined;
             proxyEnv = getEnvironmentType(lookupResult);
             logger.info("[universal] Domain lookup successful", {
               domain: host,
@@ -299,6 +301,7 @@ export function createVeryfrontHandler(
         parsedDomain,
         projectSlug,
         projectId,
+        releaseId,
         proxyToken,
         proxyEnvironment: proxyEnv,
       };

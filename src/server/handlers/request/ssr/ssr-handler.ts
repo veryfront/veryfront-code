@@ -121,7 +121,7 @@ export class SSRHandler extends BaseHandler {
           ctx.proxyToken || "",
           () => this.handleWithContext(req, ctx, slug, requestId, url),
           ctx.projectId,
-          { productionMode: isProduction },
+          { productionMode: isProduction, releaseId: ctx.releaseId },
         );
       }
 

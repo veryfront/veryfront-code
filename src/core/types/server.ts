@@ -43,6 +43,8 @@ export interface HandlerContext {
   projectSlug?: string;
   /** Project ID (from domain lookup or proxy header) */
   projectId?: string;
+  /** Release ID (from domain lookup for production custom domains) */
+  releaseId?: string;
   /** OAuth token from proxy (via x-token header) */
   proxyToken?: string;
   /** Environment scope from proxy (via x-environment header) */
