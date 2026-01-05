@@ -18,6 +18,10 @@ import {
 import { initializeRedisCaches } from "../core/cache/redis-init.ts";
 import { setServerInitialized } from "./handlers/monitoring/health.ts";
 import { startPeriodicMemoryCheck, stopPeriodicMemoryCheck } from "./shared/renderer-factory.ts";
+import {
+  enableSSRFetchInterception,
+  setSSRServerPort,
+} from "../rendering/ssr-globals.ts";
 
 interface ServerOptions {
   projectDir: string;
@@ -48,6 +52,11 @@ export async function startUniversalServer(
   if (bootstrap.usingFSAdapter) {
     logger.info("FSAdapter initialized", { type: bootstrap.fsAdapterType });
   }
+
+  // Enable SSR fetch interception to rewrite relative URLs
+  // This allows user code to use fetch('/api/...') during SSR
+  setSSRServerPort(port);
+  enableSSRFetchInterception();
 
   logger.info("Starting universal production server", { projectDir, port, hostname });
 
