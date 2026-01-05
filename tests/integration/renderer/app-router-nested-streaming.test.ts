@@ -68,7 +68,7 @@ describe(
             // Fetch with timeout to avoid hanging test environments
             const ctrl = new AbortController();
             const timer = setTimeout(() => ctrl.abort(), 5000);
-            const res = await fetch(`http://localhost:${port}/a/b`, {
+            const res = await fetch(`http://127.0.0.1:${port}/a/b`, {
               signal: ctrl.signal,
             }).catch(() => new Response("", { status: 599 }));
             clearTimeout(timer);

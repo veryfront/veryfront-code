@@ -33,7 +33,7 @@ describe("ProductionServer", () => {
 
         // Act: Start server and make request
         const server = await context.createProductionServer();
-        const response = await fetch(`http://localhost:${server.port}/styles.css`);
+        const response = await fetch(`http://127.0.0.1:${server.port}/styles.css`);
         const body = await response.text();
 
         // Assert: Verify response
@@ -52,7 +52,7 @@ describe("ProductionServer", () => {
         assertExists(response.headers.get("cache-control"), "Should include cache-control header");
 
         // Additional test: Verify 404 for non-existent files
-        const notFoundResponse = await fetch(`http://localhost:${server.port}/non-existent.css`);
+        const notFoundResponse = await fetch(`http://127.0.0.1:${server.port}/non-existent.css`);
         assertEquals(notFoundResponse.status, 404, "Should return 404 for non-existent files");
         await notFoundResponse.body?.cancel(); // Consume the response body
       });
@@ -73,7 +73,7 @@ describe("ProductionServer", () => {
         // Act: Make 10 concurrent requests
         const requests = Array.from(
           { length: 10 },
-          (_, i) => fetch(`http://localhost:${server.port}/test.txt?req=${i}`),
+          (_, i) => fetch(`http://127.0.0.1:${server.port}/test.txt?req=${i}`),
         );
 
         const responses = await Promise.all(requests);
@@ -108,7 +108,7 @@ describe("ProductionServer", () => {
         const server = await context.createProductionServer();
 
         // Act
-        const response = await fetch(`http://localhost:${server.port}/pages/error`);
+        const response = await fetch(`http://127.0.0.1:${server.port}/pages/error`);
         const body = await response.text();
 
         // Assert
@@ -146,7 +146,7 @@ describe("Performance", () => {
 
       // Act: Measure response time
       const startTime = performance.now();
-      const response = await fetch(`http://localhost:${server.port}/large.css`);
+      const response = await fetch(`http://127.0.0.1:${server.port}/large.css`);
       await response.text(); // Consume body
       const endTime = performance.now();
       const responseTime = endTime - startTime;
@@ -224,7 +224,7 @@ describe(
         const server = await context.createDevServer();
 
         // Act
-        const response = await fetch(`http://localhost:${server.port}/test`);
+        const response = await fetch(`http://127.0.0.1:${server.port}/test`);
         const html = await response.text();
 
         // Assert with meaningful messages

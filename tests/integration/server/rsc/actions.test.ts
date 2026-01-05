@@ -56,7 +56,7 @@ describe("RSC Actions Tests", { sanitizeOps: false, sanitizeResources: false }, 
         const server = await context.createProductionServer();
 
         // Test successful action invocation
-        const response = await fetch(`http://localhost:${server.port}/_veryfront/rsc/action`, {
+        const response = await fetch(`http://127.0.0.1:${server.port}/_veryfront/rsc/action`, {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ id: "echo", args: ["test-input"] }),
@@ -101,7 +101,7 @@ describe("RSC Actions Tests", { sanitizeOps: false, sanitizeResources: false }, 
 
         // Test missing action ID
         const missingIdResponse = await fetch(
-          `http://localhost:${server.port}/_veryfront/rsc/action`,
+          `http://127.0.0.1:${server.port}/_veryfront/rsc/action`,
           {
             method: "POST",
             headers: { "content-type": "application/json" },
@@ -144,7 +144,7 @@ describe("RSC Actions Tests", { sanitizeOps: false, sanitizeResources: false }, 
         const server = await context.createProductionServer();
 
         // Test non-existent action
-        const response = await fetch(`http://localhost:${server.port}/_veryfront/rsc/action`, {
+        const response = await fetch(`http://127.0.0.1:${server.port}/_veryfront/rsc/action`, {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ id: "nonExistentAction", args: [] }),
@@ -186,14 +186,14 @@ describe("RSC Actions Tests", { sanitizeOps: false, sanitizeResources: false }, 
         const server = await context.createProductionServer();
 
         // Test GET request (should fail)
-        const getResponse = await fetch(`http://localhost:${server.port}/_veryfront/rsc/action`);
+        const getResponse = await fetch(`http://127.0.0.1:${server.port}/_veryfront/rsc/action`);
         assertEquals(getResponse.status, 405, "Should return 405 for GET request");
 
         // Consume response body to prevent resource leak
         await getResponse.text();
 
         // Test PUT request (should fail)
-        const putResponse = await fetch(`http://localhost:${server.port}/_veryfront/rsc/action`, {
+        const putResponse = await fetch(`http://127.0.0.1:${server.port}/_veryfront/rsc/action`, {
           method: "PUT",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ id: "test", args: [] }),

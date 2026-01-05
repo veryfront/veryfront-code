@@ -94,7 +94,7 @@ describe(
         );
 
         try {
-          const res = await fetch(`http://localhost:${port}/test`);
+          const res = await fetch(`http://127.0.0.1:${port}/test`);
           await res.text(); // Consume response body
           assertEquals(res.status, 500);
         } finally {

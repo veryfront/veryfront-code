@@ -16,7 +16,7 @@ Deno.test("Simple Production Server - basic functionality without leaks", async 
     const server = await context.createProductionServer();
 
     // Make request
-    const response = await fetch(`http://localhost:${server.port}/test.txt`);
+    const response = await fetch(`http://127.0.0.1:${server.port}/test.txt`);
     assertEquals(response.status, 200, "Should serve file");
 
     // IMPORTANT: Consume response body to prevent leak

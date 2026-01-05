@@ -52,7 +52,7 @@ Deno.test({
     await delay(100);
 
     // Verify server is running by making a request
-    const response = await fetch(`http://localhost:${port}/test`);
+    const response = await fetch(`http://127.0.0.1:${port}/test`);
     assertEquals(response.status, 404);
     assertEquals(await response.text(), "Not Found");
 
@@ -76,7 +76,7 @@ Deno.test({
     server.start();
     await delay(100);
 
-    const response = await fetch(`http://localhost:${port}/hmr-runtime.js`);
+    const response = await fetch(`http://127.0.0.1:${port}/hmr-runtime.js`);
     assertEquals(response.status, 200);
     assertEquals(response.headers.get("content-type"), "application/javascript");
     assertEquals(response.headers.get("cache-control"), "no-cache");
@@ -106,7 +106,7 @@ Deno.test({
     await delay(100);
 
     // Connect WebSocket client
-    const ws = new WebSocket(`ws://localhost:${port}`);
+    const ws = new WebSocket(`ws://127.0.0.1:${port}`);
 
     const messages: any[] = [];
     ws.onmessage = (event) => {
@@ -145,7 +145,7 @@ Deno.test({
     server.start();
     await delay(100);
 
-    const ws = new WebSocket(`ws://localhost:${port}`);
+    const ws = new WebSocket(`ws://127.0.0.1:${port}`);
 
     const messages: any[] = [];
     ws.onmessage = (event) => {
@@ -199,7 +199,7 @@ Deno.test({
     const messageArrays = [];
 
     for (let i = 0; i < 3; i++) {
-      const ws = new WebSocket(`ws://localhost:${port}`);
+      const ws = new WebSocket(`ws://127.0.0.1:${port}`);
       const messages: any[] = [];
 
       ws.onmessage = (event) => {
@@ -261,8 +261,8 @@ Deno.test({
     await delay(100);
 
     // Connect two clients
-    const ws1 = new WebSocket(`ws://localhost:${port}`);
-    const ws2 = new WebSocket(`ws://localhost:${port}`);
+    const ws1 = new WebSocket(`ws://127.0.0.1:${port}`);
+    const ws2 = new WebSocket(`ws://127.0.0.1:${port}`);
 
     const messages1: any[] = [];
     const messages2: any[] = [];
@@ -326,7 +326,7 @@ Deno.test({
     await delay(100);
 
     // Make a regular HTTP request (no upgrade)
-    const response = await fetch(`http://localhost:${port}/`, {
+    const response = await fetch(`http://127.0.0.1:${port}/`, {
       headers: {
         connection: "keep-alive",
       },
@@ -355,8 +355,8 @@ Deno.test({
     await delay(100);
 
     // Connect two clients
-    const ws1 = new WebSocket(`ws://localhost:${port}`);
-    const ws2 = new WebSocket(`ws://localhost:${port}`);
+    const ws1 = new WebSocket(`ws://127.0.0.1:${port}`);
+    const ws2 = new WebSocket(`ws://127.0.0.1:${port}`);
 
     const messages: any[] = [];
     ws2.onmessage = (event) => {
@@ -458,7 +458,7 @@ Deno.test({
     const closedPromises = [];
 
     for (let i = 0; i < 3; i++) {
-      const ws = new WebSocket(`ws://localhost:${port}`);
+      const ws = new WebSocket(`ws://127.0.0.1:${port}`);
 
       const closedPromise = new Promise((resolve) => {
         ws.onclose = resolve;
