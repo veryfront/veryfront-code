@@ -173,6 +173,11 @@ export class LayoutCollector {
       return /\.(tsx|jsx|ts|js|mdx)$/.test(layout);
     };
 
+    // Check if a string is a UUID
+    const isUUID = (value: string): boolean => {
+      return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
+    };
+
     // Determine layout kind based on file extension
     const getLayoutKind = (layout: string): "tsx" | "mdx" => {
       return layout.endsWith(".mdx") ? "mdx" : "tsx";
@@ -233,23 +238,136 @@ export class LayoutCollector {
       layout: projectData?.layout,
     });
 
-    if (projectData?.layout && isValidLayoutPath(projectData.layout)) {
-      // Layout paths from API project data are stored as relative paths (e.g., "layouts/DefaultLayout.mdx")
-      // Don't prepend "components/" - use the path as-is from the API
-      const layoutPath = join(this.projectDir, projectData.layout);
-      const layoutExists = await (wrappedAdapter as { exists: (path: string) => Promise<boolean> })
-        .exists(layoutPath);
+    let layoutValue = projectData?.layout;
 
-      logger.debug("[LayoutCollector] Checking API layout", {
-        layoutPath,
-        exists: layoutExists,
+    // If layout is a UUID, try to resolve it to a file path via entity lookup
+    // Also get the body content if available from components API
+    let componentBody: string | undefined;
+
+    if (layoutValue && isUUID(layoutValue)) {
+      const vfAdapter = wrappedAdapter as {
+        getFilePathByEntityId?: (entityId: string) => string | undefined;
+        getFilePathByEntityIdAsync?: (
+          entityId: string,
+        ) => Promise<{ path: string; body?: string } | undefined>;
+      };
+
+      logger.info("[LayoutCollector] Attempting to resolve UUID layout", {
+        uuid: layoutValue,
+        hasSyncMethod: typeof vfAdapter.getFilePathByEntityId === "function",
+        hasAsyncMethod: typeof vfAdapter.getFilePathByEntityIdAsync === "function",
       });
 
-      if (layoutExists) {
-        const kind = getLayoutKind(projectData.layout);
-        if (kind === "mdx") {
-          // For MDX layouts, we need to compile them first
-          const content = await this.adapter.fs.readFile(layoutPath);
+      // First try synchronous cache lookup
+      let resolvedPath = vfAdapter.getFilePathByEntityId?.(layoutValue);
+      logger.info("[LayoutCollector] Sync cache lookup result", {
+        uuid: layoutValue,
+        resolvedPath: resolvedPath ?? "(not found)",
+      });
+
+      // If not in cache, try async API lookup (which also returns body content)
+      if (!resolvedPath && vfAdapter.getFilePathByEntityIdAsync) {
+        logger.info("[LayoutCollector] Trying async API lookup", { uuid: layoutValue });
+        const result = await vfAdapter.getFilePathByEntityIdAsync(layoutValue);
+        if (result) {
+          resolvedPath = result.path;
+          componentBody = result.body;
+        }
+        logger.info("[LayoutCollector] Async API lookup result", {
+          uuid: layoutValue,
+          resolvedPath: resolvedPath ?? "(not found)",
+          hasBody: !!componentBody,
+        });
+      }
+
+      if (resolvedPath) {
+        logger.info("[LayoutCollector] Resolved UUID layout to path", {
+          uuid: layoutValue,
+          path: resolvedPath,
+          hasBody: !!componentBody,
+        });
+        layoutValue = resolvedPath;
+      } else {
+        logger.info("[LayoutCollector] Could not resolve UUID layout", {
+          uuid: layoutValue,
+        });
+      }
+    }
+
+    logger.info("[LayoutCollector] Validating layout path", {
+      layoutValue,
+      isValid: layoutValue ? isValidLayoutPath(layoutValue) : false,
+      hasComponentBody: !!componentBody,
+    });
+
+    if (layoutValue && isValidLayoutPath(layoutValue)) {
+      // Use absolute path for component path
+      const layoutPath = join(this.projectDir, layoutValue);
+
+      // Determine layout kind - check content for frontmatter even if extension is .tsx
+      // Component body from API may be MDX even with .tsx extension
+      // BUT: If the body is ONLY frontmatter metadata (no content after ---),
+      // treat it as TSX and load the actual file instead
+      const hasFrontmatter = componentBody?.trimStart().startsWith("---");
+      let hasContentAfterFrontmatter = false;
+      if (hasFrontmatter && componentBody) {
+        // Check if there's actual content after the frontmatter closing ---
+        const trimmed = componentBody.trimStart();
+        const firstClose = trimmed.indexOf("---", 3); // Find closing ---
+        if (firstClose !== -1) {
+          const afterFrontmatter = trimmed.slice(firstClose + 3).trim();
+          hasContentAfterFrontmatter = afterFrontmatter.length > 0;
+        }
+      }
+      // Only treat as MDX if there's actual content after frontmatter
+      const kind = (hasFrontmatter && hasContentAfterFrontmatter) ? "mdx" : getLayoutKind(layoutValue);
+
+      logger.info("[LayoutCollector] Content analysis", {
+        hasFrontmatter,
+        hasContentAfterFrontmatter,
+        bodyLength: componentBody?.length,
+        bodyPreview: componentBody?.substring(0, 200),
+      });
+
+      logger.info("[LayoutCollector] Determined layout kind", {
+        layoutPath,
+        kind,
+        hasFrontmatter,
+        extension: layoutValue.split(".").pop(),
+      });
+
+      // If we have body content from components API, use it directly
+      // Otherwise check if file exists and read it
+      let content: string | undefined = componentBody;
+      let layoutAvailable = !!componentBody;
+
+      if (!content) {
+        // For Veryfront API adapter, use relative path for exists check
+        const layoutExists = await (wrappedAdapter as { exists: (path: string) => Promise<boolean> })
+          .exists(layoutValue);
+
+        logger.info("[LayoutCollector] Checking API layout file", {
+          layoutPath,
+          layoutValue,
+          exists: layoutExists,
+        });
+
+        if (layoutExists) {
+          layoutAvailable = true;
+          if (kind === "mdx") {
+            content = await this.adapter.fs.readFile(layoutValue);
+          }
+        }
+      } else {
+        logger.info("[LayoutCollector] Using component body from API", {
+          layoutPath,
+          bodyLength: content.length,
+        });
+      }
+
+      if (layoutAvailable) {
+        if (kind === "mdx" && content) {
+          // For MDX layouts, compile the content
           const bundle = await this.compileMDX(content, { isLayout: true }, layoutPath);
           nestedLayouts.push({
             kind: "mdx",
@@ -265,14 +383,16 @@ export class LayoutCollector {
           });
         }
 
-        logger.debug("[LayoutCollector] Added API layout to nestedLayouts", {
+        logger.info("[LayoutCollector] Added API layout to nestedLayouts", {
           layoutPath,
           kind,
+          fromComponentBody: !!componentBody,
         });
       }
     } else if (projectData?.layout) {
       logger.debug("[LayoutCollector] Skipping invalid layout value (not a file path)", {
         layout: projectData.layout,
+        resolved: layoutValue,
       });
     }
 

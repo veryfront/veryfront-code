@@ -294,6 +294,50 @@ export class VeryfrontAPIOperations {
     }
   }
 
+  /**
+   * Get component/entity info by UUID.
+   * Used to resolve layout/provider UUIDs to file paths.
+   * Note: This endpoint uses project slug, not project ID.
+   */
+  async getComponentByEntityId(
+    entityId: string,
+    projectSlug: string,
+  ): Promise<{ id: string; path: string; importPath: string; body?: string } | null> {
+    const url = `/projects/${projectSlug}/components/${entityId}`;
+
+    logger.info("[VeryfrontAPIClient] Getting component by entity ID", { entityId, projectSlug, url });
+
+    try {
+      const response = await this.request<{
+        id: string;
+        slug: string;
+        name: string;
+        importPath: string;
+        body?: string;
+      }>(url);
+      logger.info("[VeryfrontAPIClient] Component found", {
+        entityId,
+        importPath: response.importPath,
+        slug: response.slug,
+        hasBody: !!response.body,
+      });
+      // Map importPath to path for consistency with existing code
+      return {
+        id: response.id,
+        path: response.importPath,
+        importPath: response.importPath,
+        body: response.body,
+      };
+    } catch (error) {
+      // 404 means component not found
+      if (error instanceof Error && error.message.includes("404")) {
+        logger.debug("[VeryfrontAPIClient] Component not found", { entityId, projectSlug });
+        return null;
+      }
+      throw error;
+    }
+  }
+
   private async request<T>(
     endpoint: string,
     options: { returnText?: boolean } = {},

@@ -16,11 +16,30 @@ function getNpmReactImportMap(version: string): Record<string, string> {
   };
 }
 
+/**
+ * Get veryfront/* import mappings for SSR (Deno runtime).
+ * These map to local exports to avoid esm.sh's Deno shim which fails in actual Deno.
+ */
+function getVeryfrontSsrImportMap(): Record<string, string> {
+  return {
+    "veryfront/head": "veryfront/head",
+    "veryfront/router": "veryfront/router",
+    "veryfront/context": "veryfront/context",
+    "veryfront/fonts": "veryfront/fonts",
+  };
+}
+
 export function getDefaultImportMap(): ImportMapConfig {
   const reactVersion = REACT_DEFAULT_VERSION;
 
   if (!IS_TRUE_NODE) {
-    return { imports: getNpmReactImportMap(reactVersion) };
+    // Deno: use npm: for React and local exports for veryfront/*
+    return {
+      imports: {
+        ...getNpmReactImportMap(reactVersion),
+        ...getVeryfrontSsrImportMap(),
+      },
+    };
   }
 
   const importMap = getReactImportMap(reactVersion);

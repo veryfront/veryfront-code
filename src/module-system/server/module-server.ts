@@ -210,6 +210,11 @@ export async function serveModule(
               const subpath = specifier.slice(10);
               return `from "npm:react-dom@${REACT_VERSION}/${subpath}"`;
             }
+            // Keep veryfront/* imports as bare specifiers for Deno to resolve via deno.json exports
+            // This avoids esm.sh's Deno shim which conflicts with actual Deno runtime
+            if (specifier.startsWith("veryfront/")) {
+              return `from "${specifier}"`;
+            }
             return `from "https://esm.sh/${specifier}?external=react,react-dom"`;
           },
         );
@@ -556,6 +561,11 @@ export async function serveModule(
             if (specifier.startsWith("react-dom/")) {
               const subpath = specifier.slice(10); // Remove "react-dom/"
               return `from "npm:react-dom@${REACT_VERSION}/${subpath}"`;
+            }
+            // Keep veryfront/* imports as bare specifiers for Deno to resolve via deno.json exports
+            // This avoids esm.sh's Deno shim which conflicts with actual Deno runtime
+            if (specifier.startsWith("veryfront/")) {
+              return `from "${specifier}"`;
             }
             // Convert other bare imports to esm.sh URLs
             // esm.sh handles CJS to ESM conversion properly (npm: doesn't always expose named exports)

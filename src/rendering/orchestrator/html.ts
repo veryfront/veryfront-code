@@ -227,7 +227,7 @@ export class HTMLGenerator {
       mode: this.config.mode,
       slug: context.slug,
       devPort: this.config.config?.dev?.port || DEFAULT_DASHBOARD_PORT,
-      pagePath: isClientPage ? pagePath : undefined,
+      pagePath, // Always provide pagePath for module resolution, not just client pages
       isClientPage,
     });
 
