@@ -62,7 +62,10 @@ export class ProxyFSAdapterManager {
       const effectiveProductionMode = productionMode ?? this.productionMode;
       const effectiveReleaseId = releaseId ?? this.releaseId;
       if (effectiveProductionMode) {
-        existing.adapter.setProductionMode(effectiveProductionMode, effectiveReleaseId ?? undefined);
+        existing.adapter.setProductionMode(
+          effectiveProductionMode,
+          effectiveReleaseId ?? undefined,
+        );
       }
 
       if (existing.initializing) {
