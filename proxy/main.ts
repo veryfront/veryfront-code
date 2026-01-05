@@ -97,7 +97,9 @@ async function handleRequest(req: Request): Promise<Response> {
       let token = "";
       if (config.clientId && config.clientSecret) {
         try {
-          token = await tokenManager.getToken(scope, projectSlug);
+          // Don't pass projectSlug as projectId - the API expects a UUID, not a slug.
+          // The token works globally for all projects under the OAuth client credentials.
+          token = await tokenManager.getToken(scope);
         } catch (error) {
           reqLogger.error("Token fetch failed", error as Error);
         }

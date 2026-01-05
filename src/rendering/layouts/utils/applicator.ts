@@ -300,7 +300,7 @@ async function applyProviders(
         providerCode = transformBareImportsToNpm(providerCode);
         // Transform file:// local imports to module server URLs for Deno SSR
         providerCode = transformLocalFileImportsToModuleServer(providerCode);
-        const providerModule = await mdxRenderer.loadModuleESM(providerCode);
+        const providerModule = await mdxRenderer.loadModuleESM(providerCode, adapter);
         const providerMod = providerModule as MDXModule;
         const ProviderFn = providerMod.MDXLayout || providerMod.default;
         if (ProviderFn) {
