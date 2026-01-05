@@ -86,9 +86,10 @@ export class VeryfrontFSAdapter implements FSAdapter {
       productionContext,
     );
 
-    logger.debug("[VeryfrontFSAdapter] Created", {
+    logger.info("[VeryfrontFSAdapter] Created", {
       apiBaseUrl: veryfrontConfig.apiBaseUrl,
       projectSlug: veryfrontConfig.projectSlug,
+      projectDir: config.projectDir,
       cacheEnabled: veryfrontConfig.cache.enabled,
     });
   }
@@ -393,7 +394,6 @@ export class VeryfrontFSAdapter implements FSAdapter {
 
   async readFile(path: string): Promise<string> {
     await this.ensureInitialized();
-    console.log("[DEBUG] VeryfrontFSAdapter.readFile", { path });
     return this.readOps.readTextFile(path);
   }
 
