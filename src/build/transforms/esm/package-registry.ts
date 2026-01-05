@@ -14,13 +14,14 @@ export const TAILWIND_VERSION = "4.1.8";
 
 /**
  * Context-dependent packages that require a single module instance.
- * These packages use React context and must be the SAME instance within each environment.
+ * These packages use React context and must be the SAME instance across SSR and browser.
  *
- * - SSR uses npm: specifiers → Deno resolves locally with npm:react
- * - Browser uses esm.sh with ?external= → import map provides react
+ * IMPORTANT: Both SSR and browser use esm.sh URLs to ensure identical module instances.
+ * This prevents hydration errors caused by different module instances having different
+ * React contexts (e.g., "No QueryClient set" error).
  *
- * The `external` field lists dependencies that should be provided by the import map
- * in browser, ensuring all packages share the same React instance.
+ * The `external` field lists dependencies that should be provided by the import map,
+ * ensuring all packages share the same React instance.
  */
 export const CONTEXT_PACKAGES = {
   "@tanstack/react-query": { version: "5", external: ["react"] },
@@ -37,7 +38,7 @@ export const CONTEXT_PACKAGE_NAMES = Object.keys(CONTEXT_PACKAGES) as Array<
 
 /**
  * Generate npm: specifier for SSR (Deno).
- * Deno resolves npm: specifiers locally, ensuring consistent module instances.
+ * @deprecated Use esm.sh URLs instead for consistent module instances across SSR and browser.
  */
 export function getNpmSpecifier(pkg: string, version: string): string {
   return `npm:${pkg}@${version}`;
@@ -64,11 +65,14 @@ export function getEsmShUrl(pkg: string, version: string, external?: readonly st
 }
 
 /**
- * Get URL for a context package - SSR version (npm: specifier).
+ * Get URL for a context package - SSR version.
+ * Uses esm.sh URLs (same as browser) to ensure identical module instances.
+ * This prevents hydration errors from module instance mismatch.
  */
 export function getContextPackageUrlSSR(pkg: keyof typeof CONTEXT_PACKAGES): string {
   const config = CONTEXT_PACKAGES[pkg];
-  return getNpmSpecifier(pkg, config.version);
+  // Use esm.sh for SSR to match browser modules exactly
+  return getEsmShUrl(pkg, config.version, config.external);
 }
 
 /**

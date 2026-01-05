@@ -14,7 +14,11 @@ import { RequestHandler } from "./request-handler.ts";
 import { setupMiddleware } from "./middleware.ts";
 import { RouteDiscovery } from "./route-discovery.ts";
 import { FileWatchSetup } from "./file-watch-setup.ts";
-import { enableSSRFetchInterception, setSSRServerPort } from "../../rendering/ssr-globals.ts";
+import {
+  enableSSRClientOnlyFetching,
+  enableSSRFetchInterception,
+  setSSRServerPort,
+} from "../../rendering/ssr-globals.ts";
 
 export class DevServer {
   private router: DynamicRouter;
@@ -93,6 +97,10 @@ export class DevServer {
     // This rewrites fetch URLs from project domains to localhost
     setSSRServerPort(this.options.port);
     enableSSRFetchInterception();
+    // Enable client-only fetching: API fetches don't complete during SSR,
+    // causing React Query to suspend and render fallbacks instead of data.
+    // This prevents hydration mismatches between SSR and client.
+    enableSSRClientOnlyFetching();
 
     await this.logRSCStatus();
 
