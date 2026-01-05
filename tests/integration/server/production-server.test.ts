@@ -57,7 +57,7 @@ describe(
         const server = await context.createProductionServer();
 
         // Test text file
-        const txtResponse = await fetch(`http://localhost:${server.port}/test.txt`);
+        const txtResponse = await fetch(`http://127.0.0.1:${server.port}/test.txt`);
         const txtContent = await txtResponse.text();
 
         // Assert text file
@@ -70,7 +70,7 @@ describe(
         );
 
         // Test CSS file
-        const cssResponse = await fetch(`http://localhost:${server.port}/styles.css`);
+        const cssResponse = await fetch(`http://127.0.0.1:${server.port}/styles.css`);
         const cssContent = await cssResponse.text();
 
         // Assert CSS file
@@ -88,7 +88,7 @@ describe(
       await withTestContext("production-basic-404", async (context) => {
         const server = await context.createProductionServer();
 
-        const res = await fetch(`http://localhost:${server.port}/missing.txt`);
+        const res = await fetch(`http://127.0.0.1:${server.port}/missing.txt`);
         assertEquals(res.status, 404);
         await res.text();
       });
@@ -110,7 +110,7 @@ describe(
         const start = performance.now();
         const requests = Array.from(
           { length: 5 },
-          (_, i) => fetch(`http://localhost:${server.port}/file${i}.txt`),
+          (_, i) => fetch(`http://127.0.0.1:${server.port}/file${i}.txt`),
         );
 
         const responses = await Promise.all(requests);
@@ -164,7 +164,7 @@ describe(
         });
 
         const server = await context.createProductionServer();
-        const response = await fetch(`http://localhost:${server.port}/`);
+        const response = await fetch(`http://127.0.0.1:${server.port}/`);
         const html = await response.text();
 
         assertEquals(response.status, 200, "Should serve App Router pages");
@@ -192,7 +192,7 @@ describe(
 
         const server = await context.createProductionServer();
 
-        const res = await fetch(`http://localhost:${server.port}/api/hello`);
+        const res = await fetch(`http://127.0.0.1:${server.port}/api/hello`);
         assertEquals(res.status, 200);
         const data = await res.json();
         assertEquals(data.message, "Hello API");
@@ -215,7 +215,7 @@ describe(
 
         const server = await context.createProductionServer();
 
-        const res = await fetch(`http://localhost:${server.port}/`);
+        const res = await fetch(`http://127.0.0.1:${server.port}/`);
         assertEquals(res.status, 200, "Should serve the page");
         // CSP is not set by default to allow user-generated content
         const csp = res.headers.get("content-security-policy");
@@ -234,7 +234,7 @@ describe(
 
         const server = await context.createProductionServer();
 
-        const res = await fetch(`http://localhost:${server.port}/`);
+        const res = await fetch(`http://127.0.0.1:${server.port}/`);
         assertEquals(res.status, 200);
 
         // Check security headers
@@ -247,7 +247,7 @@ describe(
     it("sets basic security headers by default", async () => {
       await withTestContext("prod-security-headers", async (context) => {
         const server = await context.createProductionServer();
-        const response = await fetch(`http://localhost:${server.port}/`);
+        const response = await fetch(`http://127.0.0.1:${server.port}/`);
 
         // Basic security headers are set by default
         assertEquals(
@@ -284,7 +284,7 @@ describe(
         );
 
         const server = await context.createProductionServer();
-        const response = await fetch(`http://localhost:${server.port}/api/hello`, {
+        const response = await fetch(`http://127.0.0.1:${server.port}/api/hello`, {
           method: "OPTIONS",
         });
 
@@ -327,7 +327,7 @@ describe(
         const server = await context.createProductionServer();
 
         // Act
-        const response = await fetch(`http://localhost:${server.port}/pages/test`);
+        const response = await fetch(`http://127.0.0.1:${server.port}/pages/test`);
         const html = await response.text();
 
         // Assert
@@ -367,7 +367,7 @@ describe(
         const server = await context.createProductionServer();
 
         // Test that a non-existent page returns 404
-        const response = await fetch(`http://localhost:${server.port}/non-existent-page`);
+        const response = await fetch(`http://127.0.0.1:${server.port}/non-existent-page`);
         const html = await response.text();
 
         assertEquals(response.status, 404, "Should return 404 status");
@@ -392,7 +392,7 @@ describe(
 
         // Start server without pre-building - this forces dynamic SSR
         const server = await context.createProductionServer();
-        const response = await fetch(`http://localhost:${server.port}/error`);
+        const response = await fetch(`http://127.0.0.1:${server.port}/error`);
         const html = await response.text();
 
         // In production mode, SSR errors may return 404 or 500 depending on

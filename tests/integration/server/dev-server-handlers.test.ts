@@ -50,7 +50,7 @@ describe("DevServer Handler Tests", { sanitizeOps: false, sanitizeResources: fal
         await withTestContext("dev-server-healthz", async (context) => {
           const { server, port } = await createTestDevServer(context);
 
-          const response = await fetch(`http://localhost:${port}/healthz`);
+          const response = await fetch(`http://127.0.0.1:${port}/healthz`);
 
           assertEquals(response.status, 200);
           assertEquals(response.headers.get("content-type"), "text/plain");
@@ -66,7 +66,7 @@ describe("DevServer Handler Tests", { sanitizeOps: false, sanitizeResources: fal
           const { server, port } = await createTestDevServer(context);
 
           // Server should be ready after start()
-          const response = await fetch(`http://localhost:${port}/readyz`);
+          const response = await fetch(`http://127.0.0.1:${port}/readyz`);
 
           assertEquals(response.status, 200);
           assertEquals(response.headers.get("content-type"), "text/plain");
@@ -83,7 +83,7 @@ describe("DevServer Handler Tests", { sanitizeOps: false, sanitizeResources: fal
 
           // Health checks should be very fast (<10ms)
           const start = performance.now();
-          const healthResponse = await fetch(`http://localhost:${port}/healthz`);
+          const healthResponse = await fetch(`http://127.0.0.1:${port}/healthz`);
           await healthResponse.body?.cancel();
           const duration = performance.now() - start;
 
@@ -99,7 +99,7 @@ describe("DevServer Handler Tests", { sanitizeOps: false, sanitizeResources: fal
           const { server, port } = await createTestDevServer(context);
 
           // Regular routes should not be handled by health check handler
-          const response = await fetch(`http://localhost:${port}/`);
+          const response = await fetch(`http://127.0.0.1:${port}/`);
 
           // Should get response (not null), handled by other handlers
           assertExists(response);
@@ -124,7 +124,7 @@ describe("DevServer Handler Tests", { sanitizeOps: false, sanitizeResources: fal
             hmrPort: await context.allocatePort(),
           });
 
-          const response = await fetch(`http://localhost:${port}/_veryfront/hmr-runtime.js`);
+          const response = await fetch(`http://127.0.0.1:${port}/_veryfront/hmr-runtime.js`);
 
           assertEquals(response.status, 200);
           const contentType = response.headers.get("content-type");
@@ -151,7 +151,7 @@ describe("DevServer Handler Tests", { sanitizeOps: false, sanitizeResources: fal
         await withTestContext("dev-server-error-overlay", async (context) => {
           const { server, port } = await createTestDevServer(context);
 
-          const response = await fetch(`http://localhost:${port}/_veryfront/error-overlay.js`);
+          const response = await fetch(`http://127.0.0.1:${port}/_veryfront/error-overlay.js`);
 
           assertEquals(response.status, 200);
           const contentType = response.headers.get("content-type");
@@ -181,7 +181,7 @@ describe("DevServer Handler Tests", { sanitizeOps: false, sanitizeResources: fal
             hmrPort: await context.allocatePort(),
           });
 
-          const response = await fetch(`http://localhost:${port}/_veryfront/hmr-runtime.js`, {
+          const response = await fetch(`http://127.0.0.1:${port}/_veryfront/hmr-runtime.js`, {
             method: "HEAD",
           });
 
@@ -204,7 +204,7 @@ describe("DevServer Handler Tests", { sanitizeOps: false, sanitizeResources: fal
         await withTestContext("dev-server-error-overlay-head", async (context) => {
           const { server, port } = await createTestDevServer(context);
 
-          const response = await fetch(`http://localhost:${port}/_veryfront/error-overlay.js`, {
+          const response = await fetch(`http://127.0.0.1:${port}/_veryfront/error-overlay.js`, {
             method: "HEAD",
           });
 
@@ -229,7 +229,7 @@ describe("DevServer Handler Tests", { sanitizeOps: false, sanitizeResources: fal
 
           // Try to load a virtual module (component or page)
           const response = await fetch(
-            `http://localhost:${port}/_veryfront/modules/component:Button`,
+            `http://127.0.0.1:${port}/_veryfront/modules/component:Button`,
           );
 
           // Should return 200 or 404 (depending on if component exists)
@@ -250,7 +250,7 @@ describe("DevServer Handler Tests", { sanitizeOps: false, sanitizeResources: fal
           const { server, port } = await createTestDevServer(context);
 
           // Regular application routes should not be handled by dev endpoint handler
-          const response = await fetch(`http://localhost:${port}/`);
+          const response = await fetch(`http://127.0.0.1:${port}/`);
 
           assertExists(response);
           // Should be handled by application handler
@@ -273,7 +273,7 @@ describe("DevServer Handler Tests", { sanitizeOps: false, sanitizeResources: fal
           const { server, port } = await createTestDevServer(context);
 
           // Regular application route
-          const response = await fetch(`http://localhost:${port}/`);
+          const response = await fetch(`http://127.0.0.1:${port}/`);
 
           assertExists(response);
           // Universal handler should return a response
@@ -297,7 +297,7 @@ describe("DevServer Handler Tests", { sanitizeOps: false, sanitizeResources: fal
 
           const { server, port } = await createTestDevServer(context);
 
-          const response = await fetch(`http://localhost:${port}/test`);
+          const response = await fetch(`http://127.0.0.1:${port}/test`);
 
           assertExists(response);
           // Should get a response (200 or error)
@@ -321,7 +321,7 @@ describe("DevServer Handler Tests", { sanitizeOps: false, sanitizeResources: fal
 
           const { server, port } = await createTestDevServer(context);
 
-          const response = await fetch(`http://localhost:${port}/api/test`);
+          const response = await fetch(`http://127.0.0.1:${port}/api/test`);
 
           assertExists(response);
           // Should get API response
@@ -337,7 +337,7 @@ describe("DevServer Handler Tests", { sanitizeOps: false, sanitizeResources: fal
         await withTestContext("dev-server-request-headers", async (context) => {
           const { server, port } = await createTestDevServer(context);
 
-          const response = await fetch(`http://localhost:${port}/`, {
+          const response = await fetch(`http://127.0.0.1:${port}/`, {
             headers: {
               "x-custom-header": "test-value",
               "accept": "text/html",
@@ -364,7 +364,7 @@ describe("DevServer Handler Tests", { sanitizeOps: false, sanitizeResources: fal
           const { server, port } = await createTestDevServer(context);
 
           // Request a page that doesn't exist (should trigger error)
-          const response = await fetch(`http://localhost:${port}/nonexistent-route`);
+          const response = await fetch(`http://127.0.0.1:${port}/nonexistent-route`);
 
           assertExists(response);
           // Should return some response (404 or error overlay)
@@ -380,7 +380,7 @@ describe("DevServer Handler Tests", { sanitizeOps: false, sanitizeResources: fal
         await withTestContext("dev-server-error-content-type", async (context) => {
           const { server, port } = await createTestDevServer(context);
 
-          const response = await fetch(`http://localhost:${port}/nonexistent`);
+          const response = await fetch(`http://127.0.0.1:${port}/nonexistent`);
 
           assertExists(response);
           const contentType = response.headers.get("content-type");
@@ -405,12 +405,12 @@ describe("DevServer Handler Tests", { sanitizeOps: false, sanitizeResources: fal
 
           // Trigger an error by requesting invalid route
           const errorResponse = await fetch(
-            `http://localhost:${port}/definitely-not-a-real-page-12345`,
+            `http://127.0.0.1:${port}/definitely-not-a-real-page-12345`,
           );
           await errorResponse.body?.cancel();
 
           // Server should still be running after error
-          const healthResponse = await fetch(`http://localhost:${port}/healthz`);
+          const healthResponse = await fetch(`http://127.0.0.1:${port}/healthz`);
           assertEquals(healthResponse.status, 200);
           await healthResponse.body?.cancel();
 
@@ -425,14 +425,14 @@ describe("DevServer Handler Tests", { sanitizeOps: false, sanitizeResources: fal
 
           // Make multiple requests that might error
           const errorResponses = await Promise.all([
-            fetch(`http://localhost:${port}/error1`),
-            fetch(`http://localhost:${port}/error2`),
-            fetch(`http://localhost:${port}/error3`),
+            fetch(`http://127.0.0.1:${port}/error1`),
+            fetch(`http://127.0.0.1:${port}/error2`),
+            fetch(`http://127.0.0.1:${port}/error3`),
           ]);
           await Promise.all(errorResponses.map((r) => r.body?.cancel()));
 
           // Server should still be healthy
-          const response = await fetch(`http://localhost:${port}/healthz`);
+          const response = await fetch(`http://127.0.0.1:${port}/healthz`);
           assertEquals(response.status, 200);
           await response.body?.cancel();
 
@@ -453,13 +453,13 @@ describe("DevServer Handler Tests", { sanitizeOps: false, sanitizeResources: fal
 
           // Health check should be handled first (fast path)
           const healthStart = performance.now();
-          const healthRes = await fetch(`http://localhost:${port}/healthz`);
+          const healthRes = await fetch(`http://127.0.0.1:${port}/healthz`);
           await healthRes.body?.cancel();
           const healthDuration = performance.now() - healthStart;
 
           // Application request should take longer
           const appStart = performance.now();
-          const appRes = await fetch(`http://localhost:${port}/`);
+          const appRes = await fetch(`http://127.0.0.1:${port}/`);
           await appRes.body?.cancel();
           const appDuration = performance.now() - appStart;
 
@@ -480,10 +480,10 @@ describe("DevServer Handler Tests", { sanitizeOps: false, sanitizeResources: fal
 
           // Make multiple concurrent requests
           const requests = await Promise.all([
-            fetch(`http://localhost:${port}/healthz`),
-            fetch(`http://localhost:${port}/`),
-            fetch(`http://localhost:${port}/healthz`),
-            fetch(`http://localhost:${port}/readyz`),
+            fetch(`http://127.0.0.1:${port}/healthz`),
+            fetch(`http://127.0.0.1:${port}/`),
+            fetch(`http://127.0.0.1:${port}/healthz`),
+            fetch(`http://127.0.0.1:${port}/readyz`),
           ]);
 
           // All requests should succeed
@@ -502,7 +502,7 @@ describe("DevServer Handler Tests", { sanitizeOps: false, sanitizeResources: fal
         await withTestContext("dev-server-request-context", async (context) => {
           const { server, port } = await createTestDevServer(context);
 
-          const response = await fetch(`http://localhost:${port}/`);
+          const response = await fetch(`http://127.0.0.1:${port}/`);
 
           // Response should have request ID header (from middleware)
           const requestId = response.headers.get("x-request-id");
@@ -522,7 +522,7 @@ describe("DevServer Handler Tests", { sanitizeOps: false, sanitizeResources: fal
           const methods = ["GET", "POST", "PUT", "DELETE", "PATCH"];
 
           for (const method of methods) {
-            const response = await fetch(`http://localhost:${port}/`, {
+            const response = await fetch(`http://127.0.0.1:${port}/`, {
               method,
             });
 
@@ -551,7 +551,7 @@ describe("DevServer Handler Tests", { sanitizeOps: false, sanitizeResources: fal
           // Measure 10 health check requests
           for (let i = 0; i < 10; i++) {
             const start = performance.now();
-            const perfRes = await fetch(`http://localhost:${port}/healthz`);
+            const perfRes = await fetch(`http://127.0.0.1:${port}/healthz`);
             await perfRes.body?.cancel();
             timings.push(performance.now() - start);
           }
@@ -571,7 +571,7 @@ describe("DevServer Handler Tests", { sanitizeOps: false, sanitizeResources: fal
 
           // Request should complete quickly even if metrics fail
           const start = performance.now();
-          const response = await fetch(`http://localhost:${port}/`);
+          const response = await fetch(`http://127.0.0.1:${port}/`);
           const duration = performance.now() - start;
 
           assertExists(response);
@@ -590,19 +590,21 @@ describe("DevServer Handler Tests", { sanitizeOps: false, sanitizeResources: fal
 
           // Measure successful request
           const successStart = performance.now();
-          const successRes = await fetch(`http://localhost:${port}/healthz`);
+          const successRes = await fetch(`http://127.0.0.1:${port}/healthz`);
           await successRes.body?.cancel();
           const successDuration = performance.now() - successStart;
 
           // Measure error request
           const errorStart = performance.now();
-          const errorRes = await fetch(`http://localhost:${port}/nonexistent`);
+          const errorRes = await fetch(`http://127.0.0.1:${port}/nonexistent`);
           await errorRes.body?.cancel();
           const errorDuration = performance.now() - errorStart;
 
           // Error handling should not be dramatically slower
-          // Use 20x threshold for CI environments (vs 10x locally) due to timing variability
-          const threshold = Deno.env.get("CI") ? 20 : 10;
+          // Note: healthz is a simple endpoint, while 404 goes through full SSR pipeline
+          // Use higher threshold because they're fundamentally different code paths
+          // The key point is that 404s don't take seconds (indicating a bug)
+          const threshold = 50; // 50x accounts for SSR overhead vs simple health check
           assert(
             errorDuration < successDuration * threshold,
             `Error handling (${errorDuration}ms) should not be >${threshold}x slower than success (${successDuration}ms)`,

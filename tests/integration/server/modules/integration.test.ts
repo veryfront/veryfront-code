@@ -78,9 +78,9 @@ describe(
             await delay(300);
 
             // Connect multiple clients
-            const client1 = new WebSocket(`ws://localhost:${port}`);
-            const client2 = new WebSocket(`ws://localhost:${port}`);
-            const client3 = new WebSocket(`ws://localhost:${port}`);
+            const client1 = new WebSocket(`ws://127.0.0.1:${port}`);
+            const client2 = new WebSocket(`ws://127.0.0.1:${port}`);
+            const client3 = new WebSocket(`ws://127.0.0.1:${port}`);
 
             const messages1: any[] = [];
             const messages2: any[] = [];
@@ -139,7 +139,7 @@ describe(
             await delay(300);
 
             // Connect client
-            const ws = new WebSocket(`ws://localhost:${port}`);
+            const ws = new WebSocket(`ws://127.0.0.1:${port}`);
             await new Promise((resolve) => (ws.onopen = resolve));
             await delay(100);
 
@@ -154,7 +154,7 @@ describe(
             assertEquals(hmrServer.getConnectionCount(), 0);
 
             // Server should still be responsive
-            const response = await fetch(`http://localhost:${port}/hmr-runtime.js`);
+            const response = await fetch(`http://127.0.0.1:${port}/hmr-runtime.js`);
             assertEquals(response.status, 200);
             await response.text();
 
@@ -182,9 +182,9 @@ describe(
             await delay(300);
 
             // Connect 3 clients
-            const ws1 = new WebSocket(`ws://localhost:${port}`);
-            const ws2 = new WebSocket(`ws://localhost:${port}`);
-            const ws3 = new WebSocket(`ws://localhost:${port}`);
+            const ws1 = new WebSocket(`ws://127.0.0.1:${port}`);
+            const ws2 = new WebSocket(`ws://127.0.0.1:${port}`);
+            const ws3 = new WebSocket(`ws://127.0.0.1:${port}`);
 
             await Promise.all([
               new Promise((resolve) => (ws1.onopen = resolve)),
@@ -233,8 +233,8 @@ describe(
             hmrServer.start();
             await delay(300);
 
-            const ws1 = new WebSocket(`ws://localhost:${port}`);
-            const ws2 = new WebSocket(`ws://localhost:${port}`);
+            const ws1 = new WebSocket(`ws://127.0.0.1:${port}`);
+            const ws2 = new WebSocket(`ws://127.0.0.1:${port}`);
 
             const messages1: any[] = [];
             const messages2: any[] = [];
@@ -289,7 +289,7 @@ describe(
             hmrServer.start();
             await delay(300);
 
-            const response = await fetch(`http://localhost:${port}/hmr-runtime.js`);
+            const response = await fetch(`http://127.0.0.1:${port}/hmr-runtime.js`);
             assertEquals(response.status, 200);
             assertEquals(response.headers.get("content-type"), "application/javascript");
 
@@ -493,7 +493,7 @@ describe(
             const apiServer = new APIServer({ renderer });
 
             // Both should work independently
-            const hmrResponse = await fetch(`http://localhost:${port}/hmr-runtime.js`);
+            const hmrResponse = await fetch(`http://127.0.0.1:${port}/hmr-runtime.js`);
             assertEquals(hmrResponse.status, 200);
             await hmrResponse.text();
 
@@ -528,8 +528,8 @@ describe(
             const apiServer = new APIServer({ renderer });
 
             // Connect HMR clients
-            const ws1 = new WebSocket(`ws://localhost:${port}`);
-            const ws2 = new WebSocket(`ws://localhost:${port}`);
+            const ws1 = new WebSocket(`ws://127.0.0.1:${port}`);
+            const ws2 = new WebSocket(`ws://127.0.0.1:${port}`);
 
             const messages1: any[] = [];
             const messages2: any[] = [];
@@ -622,7 +622,7 @@ describe(
             await delay(300);
 
             // Verify server is running
-            const response1 = await fetch(`http://localhost:${port}/hmr-runtime.js`);
+            const response1 = await fetch(`http://127.0.0.1:${port}/hmr-runtime.js`);
             assertEquals(response1.status, 200);
             await response1.text();
 
@@ -645,7 +645,7 @@ describe(
             await delay(300);
 
             // Verify new server is running
-            const response2 = await fetch(`http://localhost:${port}/hmr-runtime.js`);
+            const response2 = await fetch(`http://127.0.0.1:${port}/hmr-runtime.js`);
             assertEquals(response2.status, 200);
             await response2.text();
 
@@ -674,7 +674,7 @@ describe(
             // Connect clients
             const clients: WebSocket[] = [];
             for (let i = 0; i < 5; i++) {
-              const ws = new WebSocket(`ws://localhost:${port}`);
+              const ws = new WebSocket(`ws://127.0.0.1:${port}`);
               clients.push(ws);
             }
 
@@ -718,7 +718,7 @@ describe(
               await delay(300);
 
               // Get HMR runtime
-              const hmrResponse = await fetch(`http://localhost:${port}/hmr-runtime.js`);
+              const hmrResponse = await fetch(`http://127.0.0.1:${port}/hmr-runtime.js`);
               const hmrRuntime = await hmrResponse.text();
 
               // Get error overlay runtime
@@ -803,7 +803,7 @@ describe(
 
             // Should either throw error or handle gracefully
             // The important part is that the first server still works
-            const response = await fetch(`http://localhost:${port}/hmr-runtime.js`);
+            const response = await fetch(`http://127.0.0.1:${port}/hmr-runtime.js`);
             assertEquals(response.status, 200);
             await response.text();
 

@@ -78,7 +78,7 @@ export default function HomePage() {
       });
       context.trackResource(server);
 
-      const response = await fetch(`http://localhost:${server.port}/`);
+      const response = await fetch(`http://127.0.0.1:${server.port}/`);
       assertEquals(response.status, 200);
 
       const html = await response.text();
@@ -148,7 +148,7 @@ Deno.test(
       });
       context.trackResource(server);
 
-      const response = await fetch(`http://localhost:${server.port}/nested`);
+      const response = await fetch(`http://127.0.0.1:${server.port}/nested`);
       assertEquals(response.status, 200);
       const html = await response.text();
       assert(html.includes("Nested App Page"));
@@ -204,7 +204,7 @@ Deno.test(
       });
       context.trackResource(server);
 
-      const response = await fetch(`http://localhost:${server.port}/`);
+      const response = await fetch(`http://127.0.0.1:${server.port}/`);
       assertEquals(response.status, 200);
       // We can't guarantee streaming in all envs; just ensure HTML arrives
       const html = await response.text();
@@ -264,7 +264,7 @@ Deno.test(
       });
       context.trackResource(server);
 
-      const response = await fetch(`http://localhost:${server.port}/app-posts/42`);
+      const response = await fetch(`http://127.0.0.1:${server.port}/app-posts/42`);
       assertEquals(response.status, 200);
       const html = await response.text();
       // Check for both "App Post ID:" and "42" - React SSR may insert comment markers between text nodes
@@ -327,7 +327,7 @@ Deno.test(
       });
       context.trackResource(server);
 
-      const response = await fetch(`http://localhost:${server.port}/docs/one/two/three`);
+      const response = await fetch(`http://127.0.0.1:${server.port}/docs/one/two/three`);
       assertEquals(response.status, 200);
       const html = await response.text();
       // Check for both "Docs Path:" and "one/two/three" - React SSR may insert comment markers between text nodes
@@ -405,7 +405,7 @@ export default function BlogPost({ slug, title, content }) {
       });
       context.trackResource(server);
 
-      const response = await fetch(`http://localhost:${server.port}/blog/test-post`);
+      const response = await fetch(`http://127.0.0.1:${server.port}/blog/test-post`);
       assertEquals(response.status, 200);
 
       const html = await response.text();
@@ -491,7 +491,7 @@ export default function BlogPost({ slug, title, content }) {
       });
       context.trackResource(server);
 
-      const response = await fetch(`http://localhost:${server.port}/blog/not-found`);
+      const response = await fetch(`http://127.0.0.1:${server.port}/blog/not-found`);
       assertEquals(response.status, 404);
       await response.body?.cancel();
     });
@@ -514,7 +514,7 @@ Deno.test(
       });
       context.trackResource(server);
 
-      const response = await fetch(`http://localhost:${server.port}/does-not-exist`);
+      const response = await fetch(`http://127.0.0.1:${server.port}/does-not-exist`);
       assertEquals(response.status, 404);
       await response.body?.cancel();
     });
@@ -530,6 +530,8 @@ Deno.test(
   },
   async () => {
     await withTestContext("full-lifecycle-api-get", async (context) => {
+      // Remove default app directory to use pages router
+      await Deno.remove(join(context.projectDir, "app"), { recursive: true });
       await Deno.mkdir(join(context.projectDir, "pages", "api", "posts"), { recursive: true });
       await Deno.writeTextFile(
         join(context.projectDir, "deno.json"),
@@ -581,7 +583,7 @@ export const POST = async (ctx) => {
       });
       context.trackResource(server);
 
-      const response = await fetch(`http://localhost:${server.port}/api/posts/123`);
+      const response = await fetch(`http://127.0.0.1:${server.port}/api/posts/123`);
       assertEquals(response.status, 200);
 
       const data = await response.json();
@@ -601,6 +603,8 @@ Deno.test(
   },
   async () => {
     await withTestContext("full-lifecycle-api-post", async (context) => {
+      // Remove default app directory to use pages router
+      await Deno.remove(join(context.projectDir, "app"), { recursive: true });
       await Deno.mkdir(join(context.projectDir, "pages", "api", "posts"), { recursive: true });
       await Deno.writeTextFile(
         join(context.projectDir, "deno.json"),
@@ -652,7 +656,7 @@ export const POST = async (ctx) => {
       });
       context.trackResource(server);
 
-      const response = await fetch(`http://localhost:${server.port}/api/posts/456`, {
+      const response = await fetch(`http://127.0.0.1:${server.port}/api/posts/456`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -680,6 +684,8 @@ Deno.test(
   },
   async () => {
     await withTestContext("full-lifecycle-api-405", async (context) => {
+      // Remove default app directory to use pages router
+      await Deno.remove(join(context.projectDir, "app"), { recursive: true });
       await Deno.mkdir(join(context.projectDir, "pages", "api", "posts"), { recursive: true });
       await Deno.writeTextFile(
         join(context.projectDir, "deno.json"),
@@ -731,7 +737,7 @@ export const POST = async (ctx) => {
       });
       context.trackResource(server);
 
-      const response = await fetch(`http://localhost:${server.port}/api/posts/789`, {
+      const response = await fetch(`http://127.0.0.1:${server.port}/api/posts/789`, {
         method: "DELETE",
       });
       assertEquals(response.status, 405);
@@ -817,7 +823,7 @@ export default function ProductPage({ id, name, price, timestamp }) {
       });
       context.trackResource(server);
 
-      const response = await fetch(`http://localhost:${server.port}/products/1`);
+      const response = await fetch(`http://127.0.0.1:${server.port}/products/1`);
       assertEquals(response.status, 200);
 
       const html = await response.text();
@@ -909,12 +915,12 @@ export default function ProductPage({ id, name, price, timestamp }) {
       context.trackResource(server);
 
       // First request
-      const response1 = await fetch(`http://localhost:${server.port}/products/2`);
+      const response1 = await fetch(`http://127.0.0.1:${server.port}/products/2`);
       const html1 = await response1.text();
       const timestamp1 = html1.match(/Generated at: ([^<]+)/)?.[1];
 
       // Second request (should be cached)
-      const response2 = await fetch(`http://localhost:${server.port}/products/2`);
+      const response2 = await fetch(`http://127.0.0.1:${server.port}/products/2`);
       const html2 = await response2.text();
       const timestamp2 = html2.match(/Generated at: ([^<]+)/)?.[1];
       // Do not cancel locked body streams after consumption
@@ -992,7 +998,7 @@ export default function SearchPage({ query, page, results }) {
       });
       context.trackResource(server);
 
-      const response = await fetch(`http://localhost:${server.port}/search?q=veryfront&page=2`);
+      const response = await fetch(`http://127.0.0.1:${server.port}/search?q=veryfront&page=2`);
       assertEquals(response.status, 200);
 
       const html = await response.text();
@@ -1061,7 +1067,7 @@ export default function ErrorPage() {
       });
       context.trackResource(server);
 
-      const response = await fetch(`http://localhost:${server.port}/error`);
+      const response = await fetch(`http://127.0.0.1:${server.port}/error`);
       assertEquals(response.status, 500);
 
       const html = await response.text();

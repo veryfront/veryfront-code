@@ -57,7 +57,7 @@ describe("Dev Server Integration", { sanitizeOps: false, sanitizeResources: fals
           });
 
           // Test the home page
-          const response = await fetch(`http://localhost:${server.port}/`);
+          const response = await fetch(`http://127.0.0.1:${server.port}/`);
           assertEquals(response.status, 200, "Should serve home page");
 
           const html = await response.text();
@@ -81,7 +81,7 @@ describe("Dev Server Integration", { sanitizeOps: false, sanitizeResources: fals
             signal: controller.signal,
           });
 
-          const response = await fetch(`http://localhost:${server.port}/non-existent-page`);
+          const response = await fetch(`http://127.0.0.1:${server.port}/non-existent-page`);
           assertEquals(response.status, 404, "Should return 404 for missing routes");
 
           // Consume response body to prevent leak
@@ -146,14 +146,14 @@ describe("Dev Server Integration", { sanitizeOps: false, sanitizeResources: fals
           });
 
           // Test allowed import
-          const allowedResponse = await fetch(`http://localhost:${server.port}/api/allowed`);
+          const allowedResponse = await fetch(`http://127.0.0.1:${server.port}/api/allowed`);
           assertEquals(allowedResponse.status, 200, "Should allow esm.sh imports");
           const allowedBody = await allowedResponse.text();
           assertEquals(allowedBody, "ok", "Should successfully import from allowed host");
 
           // Test blocked import
           // Returns 502 (build failure) or 500 (runtime import failure in Deno direct mode)
-          const blockedResponse = await fetch(`http://localhost:${server.port}/api/blocked`);
+          const blockedResponse = await fetch(`http://127.0.0.1:${server.port}/api/blocked`);
           assertEquals(
             blockedResponse.status === 502 || blockedResponse.status === 500,
             true,
@@ -183,7 +183,7 @@ describe("Dev Server Integration", { sanitizeOps: false, sanitizeResources: fals
           });
 
           // Test HMR runtime endpoint
-          const response = await fetch(`http://localhost:${server.port}/_veryfront/hmr-runtime.js`);
+          const response = await fetch(`http://127.0.0.1:${server.port}/_veryfront/hmr-runtime.js`);
           assertEquals(response.status, 200, "Should serve HMR runtime");
 
           const body = await response.text();
@@ -228,7 +228,7 @@ describe("Dev Server Integration", { sanitizeOps: false, sanitizeResources: fals
           });
 
           // Test CSS file
-          const cssResponse = await fetch(`http://localhost:${server.port}/styles.css`);
+          const cssResponse = await fetch(`http://127.0.0.1:${server.port}/styles.css`);
           assertEquals(cssResponse.status, 200, "Should serve CSS file");
           assertEquals(
             cssResponse.headers.get("content-type"),
@@ -239,7 +239,7 @@ describe("Dev Server Integration", { sanitizeOps: false, sanitizeResources: fals
           assertEquals(cssContent, "body { margin: 0; padding: 0; }", "Should serve correct CSS");
 
           // Test JS file
-          const jsResponse = await fetch(`http://localhost:${server.port}/script.js`);
+          const jsResponse = await fetch(`http://127.0.0.1:${server.port}/script.js`);
           assertEquals(jsResponse.status, 200, "Should serve JS file");
           const jsContent = await jsResponse.text();
           assertEquals(
@@ -249,7 +249,7 @@ describe("Dev Server Integration", { sanitizeOps: false, sanitizeResources: fals
           );
 
           // Test JSON file
-          const jsonResponse = await fetch(`http://localhost:${server.port}/data.json`);
+          const jsonResponse = await fetch(`http://127.0.0.1:${server.port}/data.json`);
           assertEquals(jsonResponse.status, 200, "Should serve JSON file");
           const jsonData = await jsonResponse.json();
           assertEquals(jsonData.message, "Static JSON data", "Should serve correct JSON");
@@ -274,13 +274,13 @@ describe("Dev Server Integration", { sanitizeOps: false, sanitizeResources: fals
           });
 
           // Unhashed asset
-          const u = await fetch(`http://localhost:${server.port}/plain.txt`);
+          const u = await fetch(`http://127.0.0.1:${server.port}/plain.txt`);
           const uCC = u.headers.get("cache-control");
           // Default cache for non-hashed public assets
           assertEquals(uCC, "public, max-age=3600");
           const uTag = u.headers.get("etag");
           if (uTag) {
-            const u304 = await fetch(`http://localhost:${server.port}/plain.txt`, {
+            const u304 = await fetch(`http://127.0.0.1:${server.port}/plain.txt`, {
               headers: { "if-none-match": uTag },
             });
             assertEquals(u304.status, 304);
@@ -289,7 +289,7 @@ describe("Dev Server Integration", { sanitizeOps: false, sanitizeResources: fals
           await u.body?.cancel();
 
           // Hashed asset
-          const h = await fetch(`http://localhost:${server.port}/app.12345678.js`);
+          const h = await fetch(`http://127.0.0.1:${server.port}/app.12345678.js`);
           const hCC = h.headers.get("cache-control");
           assertEquals(hCC, "public, max-age=31536000, immutable");
           await h.body?.cancel();
@@ -314,7 +314,7 @@ describe("Dev Server Integration", { sanitizeOps: false, sanitizeResources: fals
             signal: controller.signal,
           });
 
-          const res = await fetch(`http://localhost:${server.port}/`);
+          const res = await fetch(`http://127.0.0.1:${server.port}/`);
           assertEquals(res.status, 200);
           // cache-control for SSR HTML in dev mode should be no-cache
           // (streaming mode also uses no-cache since ETag isn't supported)
@@ -326,7 +326,7 @@ describe("Dev Server Integration", { sanitizeOps: false, sanitizeResources: fals
           assert(body.includes("Home"), "Response should contain page content");
 
           // HEAD should return 200 with appropriate headers
-          const head = await fetch(`http://localhost:${server.port}/`, {
+          const head = await fetch(`http://127.0.0.1:${server.port}/`, {
             method: "HEAD",
           });
           assertEquals(head.status, 200);
@@ -362,7 +362,7 @@ describe("Dev Server Integration", { sanitizeOps: false, sanitizeResources: fals
           });
 
           // HEAD should be 405 (no GET to shim)
-          const h = await fetch(`http://localhost:${server.port}/admin`, {
+          const h = await fetch(`http://127.0.0.1:${server.port}/admin`, {
             method: "HEAD",
           });
           assertEquals(h.status, 405);
@@ -372,7 +372,7 @@ describe("Dev Server Integration", { sanitizeOps: false, sanitizeResources: fals
           await h.body?.cancel();
 
           // OPTIONS preflight should include Allow and Access-Control-Allow-Methods
-          const pre = await fetch(`http://localhost:${server.port}/admin`, {
+          const pre = await fetch(`http://127.0.0.1:${server.port}/admin`, {
             method: "OPTIONS",
           });
           assertEquals(pre.status, 204);
@@ -419,7 +419,7 @@ This is a test page for the Pages Router.
             signal: controller.signal,
           });
 
-          const response = await fetch(`http://localhost:${server.port}/`);
+          const response = await fetch(`http://127.0.0.1:${server.port}/`);
           assertEquals(response.status, 200, "Should serve Pages Router page");
 
           const html = await response.text();
@@ -454,7 +454,7 @@ This is a test page for the Pages Router.
 
           // Note: API routes in Pages Router might not be fully implemented
           // This test documents expected behavior
-          const response = await fetch(`http://localhost:${server.port}/api/test`);
+          const response = await fetch(`http://127.0.0.1:${server.port}/api/test`);
 
           // API routes might return 404 if not implemented
           if (response.status === 404) {
@@ -503,7 +503,7 @@ This is a test page for the Pages Router.
             signal: controller.signal,
           });
 
-          const response = await fetch(`http://localhost:${server.port}/`);
+          const response = await fetch(`http://127.0.0.1:${server.port}/`);
           assertEquals(response.status, 200, "Should serve App Router page");
 
           const html = await response.text();
@@ -545,7 +545,7 @@ This is a test page for the Pages Router.
             signal: controller.signal,
           });
 
-          const response = await fetch(`http://localhost:${server.port}/blog/test-post`);
+          const response = await fetch(`http://127.0.0.1:${server.port}/blog/test-post`);
           assertEquals(response.status, 200, "Should serve nested dynamic route");
 
           const html = await response.text();
@@ -592,7 +592,7 @@ This is a test page for the Pages Router.
             signal: controller.signal,
           });
 
-          const response = await fetch(`http://localhost:${server.port}/error-test`);
+          const response = await fetch(`http://127.0.0.1:${server.port}/error-test`);
           // In dev mode, errors might return 500 or 200 depending on error boundary handling
           assert(response.status === 200 || response.status === 500, "Should handle error page");
 
@@ -651,7 +651,7 @@ This is a test page for the Pages Router.
             signal: controller.signal,
           });
 
-          const response = await fetch(`http://localhost:${server.port}/async`);
+          const response = await fetch(`http://127.0.0.1:${server.port}/async`);
           assertEquals(response.status, 200, "Should serve async page");
 
           const html = await response.text();

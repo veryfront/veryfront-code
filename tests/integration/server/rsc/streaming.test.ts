@@ -52,7 +52,7 @@ export default function HomePage({ searchParams }: { searchParams: { name?: stri
 
           // Fetch RSC stream endpoint
           const response = await fetch(
-            `http://localhost:${server.port}/_veryfront/rsc/stream?name=Eve`,
+            `http://127.0.0.1:${server.port}/_veryfront/rsc/stream?name=Eve`,
           );
           assertEquals(response.status, 200, "RSC stream endpoint should be available");
 

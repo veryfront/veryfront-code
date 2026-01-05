@@ -36,7 +36,7 @@ describe("RSC Config Tests", { sanitizeOps: false, sanitizeResources: false }, (
       const server = await context.createProductionServer();
 
       // Test RSC probe endpoint
-      const response = await fetch(`http://localhost:${server.port}/_veryfront/rsc/probe`);
+      const response = await fetch(`http://127.0.0.1:${server.port}/_veryfront/rsc/probe`);
       assertEquals(response.status, 404, "RSC probe should return 404 when disabled");
 
       // Consume response body
@@ -98,13 +98,13 @@ describe("RSC Config Tests", { sanitizeOps: false, sanitizeResources: false }, (
       const server = await context.createProductionServer();
 
       // Test 1: RSC probe endpoint
-      const probeResponse = await fetch(`http://localhost:${server.port}/_veryfront/rsc/probe`);
+      const probeResponse = await fetch(`http://127.0.0.1:${server.port}/_veryfront/rsc/probe`);
       assertEquals(probeResponse.status, 200, "RSC probe should return 200 when enabled");
       await probeResponse.text();
 
       // Test 2: Payload endpoint (multi-slot)
       const payloadResponse = await fetch(
-        `http://localhost:${server.port}/_veryfront/rsc/payload`,
+        `http://127.0.0.1:${server.port}/_veryfront/rsc/payload`,
       );
       assertEquals(payloadResponse.status, 200, "Payload endpoint should return 200");
       const payload = await payloadResponse.json();
@@ -121,7 +121,7 @@ describe("RSC Config Tests", { sanitizeOps: false, sanitizeResources: false }, (
 
       // Test 3: Parameterized payload
       const paramResponse = await fetch(
-        `http://localhost:${server.port}/_veryfront/rsc/payload?name=Alice`,
+        `http://127.0.0.1:${server.port}/_veryfront/rsc/payload?name=Alice`,
       );
       assertEquals(paramResponse.status, 200, "Parameterized payload should return 200");
       const paramPayload = await paramResponse.json();
@@ -131,7 +131,7 @@ describe("RSC Config Tests", { sanitizeOps: false, sanitizeResources: false }, (
 
       // Test 4: Manifest endpoint
       const manifestResponse = await fetch(
-        `http://localhost:${server.port}/_veryfront/rsc/manifest`,
+        `http://127.0.0.1:${server.port}/_veryfront/rsc/manifest`,
       );
       assertEquals(manifestResponse.status, 200, "Manifest endpoint should return 200");
       const manifest = await manifestResponse.json();
@@ -139,7 +139,7 @@ describe("RSC Config Tests", { sanitizeOps: false, sanitizeResources: false }, (
 
       // Test 5: Flight endpoint (RSC streaming)
       const flightResponse = await fetch(
-        `http://localhost:${server.port}/_veryfront/rsc/flight_page?name=Zed`,
+        `http://127.0.0.1:${server.port}/_veryfront/rsc/flight_page?name=Zed`,
       );
 
       if (flightResponse.status === 200) {
@@ -165,7 +165,7 @@ describe("RSC Config Tests", { sanitizeOps: false, sanitizeResources: false }, (
       }
 
       // Test 6: Page shell endpoint
-      const pageResponse = await fetch(`http://localhost:${server.port}/_veryfront/rsc/page`);
+      const pageResponse = await fetch(`http://127.0.0.1:${server.port}/_veryfront/rsc/page`);
       assertEquals(pageResponse.status, 200, "Page shell endpoint should return 200");
       await pageResponse.text();
     });

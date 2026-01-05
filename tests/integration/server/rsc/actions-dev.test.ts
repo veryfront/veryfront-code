@@ -62,7 +62,7 @@ describe("RSC Actions Dev Tests", { sanitizeOps: false, sanitizeResources: false
       const port = server.port;
 
       // Missing id -> 400
-      let res = await fetch(`http://localhost:${port}/_veryfront/rsc/action`, {
+      let res = await fetch(`http://127.0.0.1:${port}/_veryfront/rsc/action`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({}),
@@ -71,7 +71,7 @@ describe("RSC Actions Dev Tests", { sanitizeOps: false, sanitizeResources: false
       await res.body?.cancel();
 
       // Invalid args type -> converts to empty array (current behavior)
-      res = await fetch(`http://localhost:${port}/_veryfront/rsc/action`, {
+      res = await fetch(`http://127.0.0.1:${port}/_veryfront/rsc/action`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ id: "echo", args: { bad: true } }),
@@ -83,7 +83,7 @@ describe("RSC Actions Dev Tests", { sanitizeOps: false, sanitizeResources: false
       assertEquals(json2.result, "ok:undefined");
 
       // Invalid id traversal -> 400
-      res = await fetch(`http://localhost:${port}/_veryfront/rsc/action`, {
+      res = await fetch(`http://127.0.0.1:${port}/_veryfront/rsc/action`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ id: "../secret", args: [] }),
@@ -92,7 +92,7 @@ describe("RSC Actions Dev Tests", { sanitizeOps: false, sanitizeResources: false
       await res.body?.cancel();
 
       // Happy path
-      res = await fetch(`http://localhost:${port}/_veryfront/rsc/action`, {
+      res = await fetch(`http://127.0.0.1:${port}/_veryfront/rsc/action`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ id: "echo", args: ["x"] }),

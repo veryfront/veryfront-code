@@ -209,7 +209,8 @@ export class TestContext {
     // Add to tracked servers
     const testServer = server as TestServer;
     testServer.port = port;
-    testServer.hostname = "localhost";
+    // Use 127.0.0.1 explicitly to avoid IPv6 resolution issues with localhost
+    testServer.hostname = "127.0.0.1";
     this.servers.push(testServer);
 
     // Wait for server to be ready

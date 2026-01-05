@@ -35,7 +35,7 @@ describe(
 
         try {
           // First load (simulate hydration by requesting page shell+manifest+hydrator in browser normally)
-          const res1 = await fetch(`http://localhost:${server.port}/_veryfront/rsc/page`);
+          const res1 = await fetch(`http://127.0.0.1:${server.port}/_veryfront/rsc/page`);
           assertEquals(res1.status, 200);
           await res1.body?.cancel();
 
@@ -47,7 +47,7 @@ describe(
           await new Promise((r) => setTimeout(r, 400));
 
           // Second load
-          const res2 = await fetch(`http://localhost:${server.port}/_veryfront/rsc/page`);
+          const res2 = await fetch(`http://127.0.0.1:${server.port}/_veryfront/rsc/page`);
           assertEquals(res2.status, 200);
           await res2.body?.cancel();
         } finally {

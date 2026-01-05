@@ -74,7 +74,7 @@ describe("HMR Server Tests", { sanitizeOps: false, sanitizeResources: false }, (
           const { server, port } = await createHMRServer(context, {}, controller.signal);
 
           // Verify server is running
-          const response = await fetch(`http://localhost:${port}/hmr-runtime.js`);
+          const response = await fetch(`http://127.0.0.1:${port}/hmr-runtime.js`);
           assertEquals(response.status, 200, "Server should be running");
           await response.text();
 
@@ -99,8 +99,8 @@ describe("HMR Server Tests", { sanitizeOps: false, sanitizeResources: false }, (
           const { server, port } = await createHMRServer(context);
 
           // Connect WebSocket clients
-          const ws1 = new WebSocket(`ws://localhost:${port}/hmr`);
-          const ws2 = new WebSocket(`ws://localhost:${port}/hmr`);
+          const ws1 = new WebSocket(`ws://127.0.0.1:${port}/hmr`);
+          const ws2 = new WebSocket(`ws://127.0.0.1:${port}/hmr`);
 
           const closedPromises = [
             new Promise((resolve) => (ws1.onclose = resolve)),
@@ -137,7 +137,7 @@ describe("HMR Server Tests", { sanitizeOps: false, sanitizeResources: false }, (
           const controller = new AbortController();
           const { server, port } = await createHMRServer(context, {}, controller.signal);
 
-          const ws = new WebSocket(`ws://localhost:${port}/hmr`);
+          const ws = new WebSocket(`ws://127.0.0.1:${port}/hmr`);
 
           const openPromise = new Promise((resolve) => (ws.onopen = resolve));
           await openPromise;
@@ -161,7 +161,7 @@ describe("HMR Server Tests", { sanitizeOps: false, sanitizeResources: false }, (
             controller.signal,
           );
 
-          const ws = new WebSocket(`ws://localhost:${port}/hmr`);
+          const ws = new WebSocket(`ws://127.0.0.1:${port}/hmr`);
           const messages: any[] = [];
 
           const messagePromise = new Promise((resolve) => {
@@ -194,7 +194,7 @@ describe("HMR Server Tests", { sanitizeOps: false, sanitizeResources: false }, (
           const messageArrays: any[][] = [];
 
           for (let i = 0; i < 3; i++) {
-            const ws = new WebSocket(`ws://localhost:${port}/hmr`);
+            const ws = new WebSocket(`ws://127.0.0.1:${port}/hmr`);
             const messages: any[] = [];
 
             ws.onmessage = (event) => {
@@ -227,8 +227,8 @@ describe("HMR Server Tests", { sanitizeOps: false, sanitizeResources: false }, (
           const controller = new AbortController();
           const { server, port } = await createHMRServer(context, {}, controller.signal);
 
-          const ws1 = new WebSocket(`ws://localhost:${port}/hmr`);
-          const ws2 = new WebSocket(`ws://localhost:${port}/hmr`);
+          const ws1 = new WebSocket(`ws://127.0.0.1:${port}/hmr`);
+          const ws2 = new WebSocket(`ws://127.0.0.1:${port}/hmr`);
 
           await Promise.all([
             new Promise((resolve) => (ws1.onopen = resolve)),
@@ -259,7 +259,7 @@ describe("HMR Server Tests", { sanitizeOps: false, sanitizeResources: false }, (
           const controller = new AbortController();
           const { server, port } = await createHMRServer(context, {}, controller.signal);
 
-          const ws = new WebSocket(`ws://localhost:${port}/hmr`);
+          const ws = new WebSocket(`ws://127.0.0.1:${port}/hmr`);
 
           await new Promise((resolve) => (ws.onopen = resolve));
 
@@ -268,7 +268,7 @@ describe("HMR Server Tests", { sanitizeOps: false, sanitizeResources: false }, (
           await delay(100);
 
           // Server should handle this gracefully without crashing
-          const response = await fetch(`http://localhost:${port}/hmr-runtime.js`);
+          const response = await fetch(`http://127.0.0.1:${port}/hmr-runtime.js`);
           assertEquals(response.status, 200);
           await response.text();
 
@@ -284,7 +284,7 @@ describe("HMR Server Tests", { sanitizeOps: false, sanitizeResources: false }, (
           const { server, port } = await createHMRServer(context, {}, controller.signal);
 
           // Try regular HTTP request to WebSocket endpoint
-          const response = await fetch(`http://localhost:${port}/hmr`);
+          const response = await fetch(`http://127.0.0.1:${port}/hmr`);
 
           // Should either return error or 404
           assert(
@@ -310,7 +310,7 @@ describe("HMR Server Tests", { sanitizeOps: false, sanitizeResources: false }, (
           const controller = new AbortController();
           const { server, port } = await createHMRServer(context, {}, controller.signal);
 
-          const ws = new WebSocket(`ws://localhost:${port}/hmr`);
+          const ws = new WebSocket(`ws://127.0.0.1:${port}/hmr`);
           const messages: any[] = [];
 
           ws.onmessage = (event) => {
@@ -341,7 +341,7 @@ describe("HMR Server Tests", { sanitizeOps: false, sanitizeResources: false }, (
           const controller = new AbortController();
           const { server, port } = await createHMRServer(context, {}, controller.signal);
 
-          const ws = new WebSocket(`ws://localhost:${port}/hmr`);
+          const ws = new WebSocket(`ws://127.0.0.1:${port}/hmr`);
 
           await new Promise((resolve) => (ws.onopen = resolve));
           await delay(100);
@@ -359,7 +359,7 @@ describe("HMR Server Tests", { sanitizeOps: false, sanitizeResources: false }, (
 
           // Server should register the module without errors
           // Verify by checking server is still responsive
-          const response = await fetch(`http://localhost:${port}/hmr-runtime.js`);
+          const response = await fetch(`http://127.0.0.1:${port}/hmr-runtime.js`);
           assertEquals(response.status, 200);
           await response.text();
 
@@ -376,7 +376,7 @@ describe("HMR Server Tests", { sanitizeOps: false, sanitizeResources: false }, (
           const controller = new AbortController();
           const { server, port } = await createHMRServer(context, {}, controller.signal);
 
-          const ws = new WebSocket(`ws://localhost:${port}/hmr`);
+          const ws = new WebSocket(`ws://127.0.0.1:${port}/hmr`);
 
           await new Promise((resolve) => (ws.onopen = resolve));
           await delay(100);
@@ -386,7 +386,7 @@ describe("HMR Server Tests", { sanitizeOps: false, sanitizeResources: false }, (
           await delay(100);
 
           // Server should handle gracefully
-          const response = await fetch(`http://localhost:${port}/hmr-runtime.js`);
+          const response = await fetch(`http://127.0.0.1:${port}/hmr-runtime.js`);
           assertEquals(response.status, 200);
           await response.text();
 
@@ -403,7 +403,7 @@ describe("HMR Server Tests", { sanitizeOps: false, sanitizeResources: false }, (
           const controller = new AbortController();
           const { server, port } = await createHMRServer(context, {}, controller.signal);
 
-          const ws = new WebSocket(`ws://localhost:${port}/hmr`);
+          const ws = new WebSocket(`ws://127.0.0.1:${port}/hmr`);
 
           await new Promise((resolve) => (ws.onopen = resolve));
           await delay(100);
@@ -413,7 +413,7 @@ describe("HMR Server Tests", { sanitizeOps: false, sanitizeResources: false }, (
           await delay(100);
 
           // Server should handle gracefully
-          const response = await fetch(`http://localhost:${port}/hmr-runtime.js`);
+          const response = await fetch(`http://127.0.0.1:${port}/hmr-runtime.js`);
           assertEquals(response.status, 200);
           await response.text();
 
@@ -436,7 +436,7 @@ describe("HMR Server Tests", { sanitizeOps: false, sanitizeResources: false }, (
           const controller = new AbortController();
           const { server, port } = await createHMRServer(context, {}, controller.signal);
 
-          const response = await fetch(`http://localhost:${port}/hmr-runtime.js`);
+          const response = await fetch(`http://127.0.0.1:${port}/hmr-runtime.js`);
 
           assertEquals(response.status, 200);
           assertEquals(response.headers.get("content-type"), "application/javascript");
@@ -462,7 +462,7 @@ describe("HMR Server Tests", { sanitizeOps: false, sanitizeResources: false }, (
             controller.signal,
           );
 
-          const response = await fetch(`http://localhost:${port}/react-refresh-runtime.js`);
+          const response = await fetch(`http://127.0.0.1:${port}/react-refresh-runtime.js`);
 
           assertEquals(response.status, 200);
           assertEquals(response.headers.get("content-type"), "application/javascript");
@@ -489,7 +489,7 @@ describe("HMR Server Tests", { sanitizeOps: false, sanitizeResources: false }, (
             controller.signal,
           );
 
-          const response = await fetch(`http://localhost:${port}/react-refresh-runtime.js`);
+          const response = await fetch(`http://127.0.0.1:${port}/react-refresh-runtime.js`);
 
           assertEquals(response.status, 404);
           await response.text();
@@ -505,7 +505,7 @@ describe("HMR Server Tests", { sanitizeOps: false, sanitizeResources: false }, (
           const controller = new AbortController();
           const { server, port } = await createHMRServer(context, {}, controller.signal);
 
-          const response = await fetch(`http://localhost:${port}/unknown-endpoint`);
+          const response = await fetch(`http://127.0.0.1:${port}/unknown-endpoint`);
 
           assertEquals(response.status, 404);
           assertEquals(await response.text(), "Not Found");
@@ -538,7 +538,7 @@ describe("HMR Server Tests", { sanitizeOps: false, sanitizeResources: false }, (
             controller.signal,
           );
 
-          const ws = new WebSocket(`ws://localhost:${port}/hmr`);
+          const ws = new WebSocket(`ws://127.0.0.1:${port}/hmr`);
           const messages: any[] = [];
 
           ws.onmessage = (event) => {
@@ -582,7 +582,7 @@ describe("HMR Server Tests", { sanitizeOps: false, sanitizeResources: false }, (
           const controller = new AbortController();
           const { server, port } = await createHMRServer(context, {}, controller.signal);
 
-          const ws = new WebSocket(`ws://localhost:${port}/hmr`);
+          const ws = new WebSocket(`ws://127.0.0.1:${port}/hmr`);
           const messages: any[] = [];
 
           ws.onmessage = (event) => {
@@ -619,7 +619,7 @@ describe("HMR Server Tests", { sanitizeOps: false, sanitizeResources: false }, (
           const controller = new AbortController();
           const { server, port } = await createHMRServer(context, {}, controller.signal);
 
-          const ws = new WebSocket(`ws://localhost:${port}/hmr`);
+          const ws = new WebSocket(`ws://127.0.0.1:${port}/hmr`);
           const messages: any[] = [];
 
           ws.onmessage = (event) => {
@@ -680,7 +680,7 @@ describe("HMR Server Tests", { sanitizeOps: false, sanitizeResources: false }, (
           await server.start();
           await delay(200);
 
-          const response = await fetch(`http://localhost:${port}/hmr-runtime.js`);
+          const response = await fetch(`http://127.0.0.1:${port}/hmr-runtime.js`);
           assertEquals(response.status, 200);
           await response.text();
 
@@ -697,7 +697,7 @@ describe("HMR Server Tests", { sanitizeOps: false, sanitizeResources: false }, (
 
           // Try to connect with invalid WebSocket request
           try {
-            const response = await fetch(`http://localhost:${port}/hmr`, {
+            const response = await fetch(`http://127.0.0.1:${port}/hmr`, {
               headers: {
                 Connection: "keep-alive",
               },
@@ -711,7 +711,7 @@ describe("HMR Server Tests", { sanitizeOps: false, sanitizeResources: false }, (
           }
 
           // Server should still be running
-          const response = await fetch(`http://localhost:${port}/hmr-runtime.js`);
+          const response = await fetch(`http://127.0.0.1:${port}/hmr-runtime.js`);
           assertEquals(response.status, 200);
           await response.text();
 
@@ -729,7 +729,7 @@ describe("HMR Server Tests", { sanitizeOps: false, sanitizeResources: false }, (
           // Connect multiple clients
           const clients: WebSocket[] = [];
           for (let i = 0; i < 3; i++) {
-            const ws = new WebSocket(`ws://localhost:${port}/hmr`);
+            const ws = new WebSocket(`ws://127.0.0.1:${port}/hmr`);
             clients.push(ws);
           }
 
@@ -760,12 +760,12 @@ describe("HMR Server Tests", { sanitizeOps: false, sanitizeResources: false }, (
           const { server, port } = await createHMRServer(context, {}, controller.signal);
 
           // Verify server works with runtime adapter
-          const response = await fetch(`http://localhost:${port}/hmr-runtime.js`);
+          const response = await fetch(`http://127.0.0.1:${port}/hmr-runtime.js`);
           assertEquals(response.status, 200);
           await response.text();
 
           // Verify WebSocket works
-          const ws = new WebSocket(`ws://localhost:${port}/hmr`);
+          const ws = new WebSocket(`ws://127.0.0.1:${port}/hmr`);
           await new Promise((resolve) => (ws.onopen = resolve));
           assertEquals(ws.readyState, WebSocket.OPEN);
 
@@ -789,7 +789,7 @@ describe("HMR Server Tests", { sanitizeOps: false, sanitizeResources: false }, (
             controller.signal,
           );
 
-          const response = await fetch(`http://localhost:${port}/hmr-runtime.js`);
+          const response = await fetch(`http://127.0.0.1:${port}/hmr-runtime.js`);
           const content = await response.text();
 
           // Verify runtime includes correct configuration
@@ -815,7 +815,7 @@ describe("HMR Server Tests", { sanitizeOps: false, sanitizeResources: false }, (
           const controller = new AbortController();
           const { server, port } = await createHMRServer(context, {}, controller.signal);
 
-          const ws = new WebSocket(`ws://localhost:${port}/hmr`);
+          const ws = new WebSocket(`ws://127.0.0.1:${port}/hmr`);
 
           await new Promise((resolve) => (ws.onopen = resolve));
           await delay(100);
@@ -829,7 +829,7 @@ describe("HMR Server Tests", { sanitizeOps: false, sanitizeResources: false }, (
           await delay(100);
 
           // Server should maintain module graph without errors
-          const response = await fetch(`http://localhost:${port}/hmr-runtime.js`);
+          const response = await fetch(`http://127.0.0.1:${port}/hmr-runtime.js`);
           assertEquals(response.status, 200);
           await response.text();
 
