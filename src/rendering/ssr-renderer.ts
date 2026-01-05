@@ -196,7 +196,11 @@ export class SSRRenderer {
         delivery: options.wantsStream ? "stream" : "string",
       });
 
-      const renderResult = await renderToStreamAdapter(pageElement);
+      // Use consistent identifierPrefix to ensure useId() generates matching IDs
+      // between SSR and browser hydration (prevents hydration mismatch errors)
+      const renderResult = await renderToStreamAdapter(pageElement, {
+        identifierPrefix: "vf",
+      });
 
       if (renderResult.stream) {
         // TRUE STREAMING: If client wants stream, return it directly WITHOUT buffering

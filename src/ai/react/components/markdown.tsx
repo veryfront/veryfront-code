@@ -34,9 +34,10 @@ const isBrowser = typeof window !== "undefined" && typeof document !== "undefine
 
 // esm.sh CDN URLs for browser-side dynamic imports
 // These URLs are stored in variables to prevent bundler transforms
-const ESM_REACT_MARKDOWN = "https://esm.sh/react-markdown@9?external=react";
-const ESM_REMARK_GFM = "https://esm.sh/remark-gfm@4";
-const ESM_REHYPE_HIGHLIGHT = "https://esm.sh/rehype-highlight@7";
+// Using ?external= so React comes from browser import map (shared instance)
+const ESM_REACT_MARKDOWN = "https://esm.sh/react-markdown@9?external=react&target=es2022";
+const ESM_REMARK_GFM = "https://esm.sh/remark-gfm@4?target=es2022";
+const ESM_REHYPE_HIGHLIGHT = "https://esm.sh/rehype-highlight@7?target=es2022";
 const ESM_MERMAID = "https://esm.sh/mermaid@11";
 
 // Lazy load heavy dependencies

@@ -122,12 +122,12 @@ export function addDepsToEsmShUrls(code: string, _forSSR: boolean = false): Prom
       }
 
       // For other esm.sh URLs, add external param if not present
-      // This ensures React is provided by the runtime (via import map) rather than bundled
+      // Using ?external= so esm.sh doesn't bundle React - browser import map provides it
       const hasQuery = specifier.includes("?");
       if (hasQuery) {
         return null; // Already has query params
       }
-      return `${specifier}?external=react,react-dom`;
+      return `${specifier}?external=react,react-dom&target=es2022`;
     }
     return null;
   }));

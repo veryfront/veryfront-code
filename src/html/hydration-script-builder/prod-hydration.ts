@@ -23,7 +23,8 @@ export function generateProdHydrationScript(
 
     const root = document.getElementById('root');
     if (root) {
-      ReactDOM.hydrateRoot(root, tree);
+      // identifierPrefix must match SSR to prevent useId() mismatch
+      ReactDOM.hydrateRoot(root, tree, { identifierPrefix: 'vf' });
     }
   </script>`;
 }

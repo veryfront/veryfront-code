@@ -349,18 +349,14 @@ function rewriteFetchUrlForSSR(url: string): string {
   try {
     const parsed = new URL(url);
 
-    // Rewrite if hostname matches the current project domain
+    // Rewrite if hostname matches the current project domain (set via setSSRProjectDomain)
+    // This handles all project domains dynamically without hardcoding specific domains
     if (ssrProjectDomain && parsed.hostname === ssrProjectDomain) {
       return `http://localhost:${ssrServerPort}${parsed.pathname}${parsed.search}`;
     }
 
-    // Also rewrite common project domains (for known projects)
-    const knownProjectDomains = [
-      "codersociety.com",
-      "www.codersociety.com",
-    ];
-
-    if (knownProjectDomains.some((d) => parsed.hostname === d)) {
+    // Also check for www variant of the project domain
+    if (ssrProjectDomain && parsed.hostname === `www.${ssrProjectDomain}`) {
       return `http://localhost:${ssrServerPort}${parsed.pathname}${parsed.search}`;
     }
   } catch {

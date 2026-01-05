@@ -76,13 +76,15 @@ export function rewriteBareImports(code: string, _moduleServerUrl?: string): Pro
     "framer-motion",
   ];
 
+  // Use ?target=es2022 to ensure identical builds between SSR (Deno) and browser
+  // Without this, esm.sh auto-detects target and may serve different builds, causing hydration mismatches
   const importMap: Record<string, string> = {
-    "react": `https://esm.sh/react@${REACT_DEFAULT_VERSION}`,
-    "react-dom": `https://esm.sh/react-dom@${REACT_DEFAULT_VERSION}`,
-    "react-dom/client": `https://esm.sh/react-dom@${REACT_DEFAULT_VERSION}/client`,
-    "react-dom/server": `https://esm.sh/react-dom@${REACT_DEFAULT_VERSION}/server`,
-    "react/jsx-runtime": `https://esm.sh/react@${REACT_DEFAULT_VERSION}/jsx-runtime`,
-    "react/jsx-dev-runtime": `https://esm.sh/react@${REACT_DEFAULT_VERSION}/jsx-dev-runtime`,
+    "react": `https://esm.sh/react@${REACT_DEFAULT_VERSION}?target=es2022`,
+    "react-dom": `https://esm.sh/react-dom@${REACT_DEFAULT_VERSION}?target=es2022`,
+    "react-dom/client": `https://esm.sh/react-dom@${REACT_DEFAULT_VERSION}/client?target=es2022`,
+    "react-dom/server": `https://esm.sh/react-dom@${REACT_DEFAULT_VERSION}/server?target=es2022`,
+    "react/jsx-runtime": `https://esm.sh/react@${REACT_DEFAULT_VERSION}/jsx-runtime?target=es2022`,
+    "react/jsx-dev-runtime": `https://esm.sh/react@${REACT_DEFAULT_VERSION}/jsx-dev-runtime?target=es2022`,
     // NOTE: veryfront/ai/react is NOT rewritten here - it's handled by the HTML import map
     // which points to /_veryfront/lib/ai/react.js served from the local package
   };
@@ -130,8 +132,10 @@ export function rewriteBareImports(code: string, _moduleServerUrl?: string): Pro
     }
 
     // Convert remaining bare imports (npm packages) to esm.sh URLs
-    // Use ?external=react,react-dom so React is provided by the runtime's import map
-    return `https://esm.sh/${finalSpecifier}?external=react,react-dom`;
+    // Use ?external=react,react-dom so esm.sh does NOT bundle React inside packages.
+    // Instead, packages will import React from the browser's import map (shared instance).
+    // Use ?target=es2022 to ensure identical builds between SSR and browser.
+    return `https://esm.sh/${finalSpecifier}?external=react,react-dom&target=es2022`;
   }));
 }
 

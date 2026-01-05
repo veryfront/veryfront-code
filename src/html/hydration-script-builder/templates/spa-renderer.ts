@@ -45,8 +45,9 @@ export const getSpaRendererScript = () => `
         // Hydrate or render based on whether SSR content exists
         if (container.innerHTML.trim() !== '') {
           // SSR content exists, hydrate
+          // identifierPrefix must match SSR to prevent useId() mismatch
           const { hydrateRoot } = await import('react-dom/client');
-          hydrateRoot(container, tree);
+          hydrateRoot(container, tree, { identifierPrefix: 'vf' });
           log('Hydrated successfully');
         } else {
           // No SSR content, render fresh

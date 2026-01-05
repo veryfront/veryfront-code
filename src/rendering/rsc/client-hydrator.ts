@@ -82,8 +82,9 @@ export class RSCHydrator {
       // Check if element has children (for hydration)
       if (element.innerHTML.trim()) {
         // Hydrate existing content - hydrateRoot accepts Element, not just HTMLElement
+        // identifierPrefix must match SSR to prevent useId() mismatch
         rscLogger.debug(`Hydrating ${componentName} #${instanceId}`);
-        hydrateRoot(element, reactElement);
+        hydrateRoot(element, reactElement, { identifierPrefix: "vf" });
       } else {
         // Render into empty container
         rscLogger.debug(`Rendering ${componentName} #${instanceId}`);

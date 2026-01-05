@@ -96,7 +96,8 @@ async function hydratePageComponent(pagePath: string): Promise<boolean> {
       document.body;
 
     // Use hydrateRoot for proper React hydration
-    ReactDOM.hydrateRoot(root, React.createElement(Component, {}));
+    // identifierPrefix must match SSR to prevent useId() mismatch
+    ReactDOM.hydrateRoot(root, React.createElement(Component, {}), { identifierPrefix: "vf" });
     console.debug?.("[RSC] Page component hydrated successfully");
     return true;
   } catch (e) {

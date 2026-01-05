@@ -17,7 +17,8 @@ import { createSecureFs } from "@veryfront/security";
 // DISABLED: Position injection temporarily disabled to fix hydration mismatch
 // import { injectNodePositions } from "../../build/transforms/plugins/babel-node-positions.ts";
 import { parseProjectDomain } from "../../server/utils/domain-parser.ts";
-// Note: React imports are kept as bare specifiers for SSR, resolved via deno.json to npm:react
+import { REACT_VERSION } from "@veryfront/transforms/esm/package-registry.ts";
+// Note: React imports are kept as bare specifiers for SSR, resolved via deno.json to esm.sh
 
 const DEV_MODULE_PREFIX = /^\/(?:_vf_modules|_veryfront\/modules)\//;
 const SNIPPET_MODULE_PREFIX = /^\/_vf_modules\/_snippets\/([a-f0-9]+)\.js/;
@@ -192,8 +193,9 @@ export async function serveModule(
             if (specifier.startsWith("veryfront/")) {
               return `from "${specifier}"`;
             }
-            // Other packages go to esm.sh with external=react so they use npm:react
-            return `from "https://esm.sh/${specifier}?external=react,react-dom"`;
+            // Other packages go to esm.sh with ?deps to pin React version
+            // Using ?deps instead of ?external because Deno import maps don't apply to HTTP modules
+            return `from "https://esm.sh/${specifier}?deps=react@${REACT_VERSION},react-dom@${REACT_VERSION}&target=es2022"`;
           },
         );
 
@@ -503,8 +505,9 @@ export async function serveModule(
             if (specifier.startsWith("veryfront/")) {
               return `from "${specifier}"`;
             }
-            // Other packages go to esm.sh with external=react so they use npm:react
-            return `from "https://esm.sh/${specifier}?external=react,react-dom"`;
+            // Other packages go to esm.sh with ?deps to pin React version
+            // Using ?deps instead of ?external because Deno import maps don't apply to HTTP modules
+            return `from "https://esm.sh/${specifier}?deps=react@${REACT_VERSION},react-dom@${REACT_VERSION}&target=es2022"`;
           },
         );
 
