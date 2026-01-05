@@ -50,6 +50,8 @@ export interface ModuleServerOptions {
   projectSlug?: string;
   /** Branch name for branch-aware file resolution */
   branch?: string | null;
+  /** Release ID for production mode (published files) */
+  releaseId?: string | null;
 }
 
 /**
@@ -76,7 +78,7 @@ export async function serveModule(
 ): Promise<Response> {
   const startTime = performance.now();
   const timings: Record<string, number> = {};
-  const { projectId, projectDir, adapter, dev = true, projectUUID } = options;
+  const { projectId, projectDir, adapter, dev = true, projectUUID, releaseId } = options;
   const url = new URL(req.url);
   const method = req.method.toUpperCase();
   const isHeadRequest = method === "HEAD";
@@ -390,9 +392,11 @@ export async function serveModule(
         branch,
         projectUUID,
         productionMode: isProduction,
+        releaseId: releaseId ?? null,
       });
       return fsWrapper.runWithContext(projectSlug, "", fn, projectUUID, {
         productionMode: isProduction,
+        releaseId: releaseId ?? null,
       });
     }
 
