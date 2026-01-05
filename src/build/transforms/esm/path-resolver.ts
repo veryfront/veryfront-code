@@ -1,7 +1,6 @@
 import { replaceSpecifiers } from "./lexer.ts";
 import { rendererLogger as logger } from "@veryfront/utils";
 
-
 export interface BlockExternalUrlResult {
   code: string;
   blockedUrls: string[];

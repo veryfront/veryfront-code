@@ -74,7 +74,11 @@ export async function getEntityInfo(
           },
           { operationName: "stat:getEntityInfo", logError: false },
         );
-        console.log("[DEBUG] getEntityInfo stat result", { filePath, isFile: stat.isFile, isDir: stat.isDirectory });
+        console.log("[DEBUG] getEntityInfo stat result", {
+          filePath,
+          isFile: stat.isFile,
+          isDir: stat.isDirectory,
+        });
         if (!stat.isFile) return null;
       } catch (error) {
         entityInfoScope.runSync(
@@ -98,7 +102,10 @@ export async function getEntityInfo(
         { operationName: "readFile:getEntityInfo", logError: false },
       )
       : await fs.readTextFile(filePath);
-    console.log("[DEBUG] getEntityInfo readFile", { filePath, contentLength: content?.length ?? 0 });
+    console.log("[DEBUG] getEntityInfo readFile", {
+      filePath,
+      contentLength: content?.length ?? 0,
+    });
     const ext = pathHelper.extname(filePath).toLowerCase();
 
     let frontmatter: Frontmatter = {};
@@ -194,7 +201,12 @@ export async function getEntityBySlug(
       const resolvedPath = await adapter.fs.resolveFile(basePath);
       if (resolvedPath) {
         const info = await getEntityInfo(resolvedPath, adapter);
-        console.log("[DEBUG] getEntityBySlug", { basePath, resolvedPath, hasInfo: !!info, isPage: info?.entity?.isPage });
+        console.log("[DEBUG] getEntityBySlug", {
+          basePath,
+          resolvedPath,
+          hasInfo: !!info,
+          isPage: info?.entity?.isPage,
+        });
         if (info?.entity.isPage) return info;
       }
     }

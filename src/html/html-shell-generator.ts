@@ -35,7 +35,9 @@ import {
  * @param content - The React SSR rendered HTML content
  * @returns Object with extracted head elements HTML and cleaned content
  */
-export function extractHeadElements(content: string): { headElements: string; cleanedContent: string } {
+export function extractHeadElements(
+  content: string,
+): { headElements: string; cleanedContent: string } {
   // Match data-veryfront-head wrappers and extract their inner content
   // Pattern: <div data-veryfront-head="1" style="display:none">...</div>
   // Also handles <template data-veryfront-head="1">...</template>

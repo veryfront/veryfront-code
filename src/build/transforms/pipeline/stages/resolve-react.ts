@@ -6,9 +6,9 @@
  * For browser: Resolves to esm.sh URLs
  */
 
-import { resolveReactImports, addDepsToEsmShUrls } from "../../esm/react-imports.ts";
-import { isSSR, isBrowser } from "../context.ts";
-import { TransformStage, type TransformContext, type TransformPlugin } from "../types.ts";
+import { addDepsToEsmShUrls, resolveReactImports } from "../../esm/react-imports.ts";
+import { isBrowser, isSSR } from "../context.ts";
+import { type TransformContext, type TransformPlugin, TransformStage } from "../types.ts";
 
 /**
  * Resolve React plugin - transforms react imports to target-appropriate URLs.

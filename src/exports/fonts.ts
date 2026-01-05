@@ -63,7 +63,7 @@ export function GoogleFonts({ fonts, display = "swap" }: GoogleFontsProps) {
       href: "https://fonts.gstatic.com",
       crossOrigin: "",
     }),
-    React.createElement("link", { rel: "stylesheet", href })
+    React.createElement("link", { rel: "stylesheet", href }),
   );
 }
 

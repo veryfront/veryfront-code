@@ -14,7 +14,7 @@ import {
   getContextPackageUrl,
   isContextPackage,
 } from "../../esm/package-registry.ts";
-import { TransformStage, type TransformContext, type TransformPlugin } from "../types.ts";
+import { type TransformContext, type TransformPlugin, TransformStage } from "../types.ts";
 
 /**
  * Build import map from bare specifier to esm.sh URL for context packages.

@@ -113,12 +113,19 @@ export class ReadOperations {
     try {
       // Use apiPath for the actual API call (handles normalized paths like "pages/index.mdx" -> "pages/")
       const content = await this.client.getFileContent(apiPath);
-      console.log("[DEBUG] fetchDraftContent SUCCESS", { normalizedPath, contentLength: content?.length ?? 0 });
+      console.log("[DEBUG] fetchDraftContent SUCCESS", {
+        normalizedPath,
+        contentLength: content?.length ?? 0,
+      });
 
       this.cache.set(cacheKey, content);
       return content;
     } catch (error) {
-      console.log("[DEBUG] fetchDraftContent ERROR", { normalizedPath, apiPath, error: error instanceof Error ? error.message : String(error) });
+      console.log("[DEBUG] fetchDraftContent ERROR", {
+        normalizedPath,
+        apiPath,
+        error: error instanceof Error ? error.message : String(error),
+      });
       throw error;
     }
   }

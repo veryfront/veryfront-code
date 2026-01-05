@@ -7,14 +7,14 @@
  */
 
 import {
+  blockExternalUrlImports,
   resolveRelativeImports,
   resolveRelativeImportsForSSR,
   resolveVeryfrontImports,
-  blockExternalUrlImports,
 } from "../../esm/path-resolver.ts";
 import { rendererLogger as logger } from "@veryfront/utils";
-import { isSSR, isBrowser } from "../context.ts";
-import { TransformStage, type TransformContext, type TransformPlugin } from "../types.ts";
+import { isBrowser, isSSR } from "../context.ts";
+import { type TransformContext, type TransformPlugin, TransformStage } from "../types.ts";
 
 /**
  * Resolve relative plugin - transforms relative imports to full paths.

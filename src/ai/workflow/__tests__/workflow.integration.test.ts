@@ -9,8 +9,8 @@
  * - Approval flow
  */
 
-import { afterEach, beforeEach, describe, it } from "jsr:@std/testing/bdd";
-import { expect } from "jsr:@std/expect";
+import { afterEach, beforeEach, describe, it } from "@std/testing/bdd.ts";
+import { expect } from "@std/expect";
 import { createWorkflowClient, WorkflowClient } from "../api/workflow-client.ts";
 import { branch, loop, parallel, step, waitForApproval, workflow } from "../dsl/index.ts";
 import { MemoryBackend } from "../backends/memory.ts";

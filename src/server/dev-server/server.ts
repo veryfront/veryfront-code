@@ -14,7 +14,7 @@ import { RequestHandler } from "./request-handler.ts";
 import { setupMiddleware } from "./middleware.ts";
 import { RouteDiscovery } from "./route-discovery.ts";
 import { FileWatchSetup } from "./file-watch-setup.ts";
-import { setSSRServerPort, enableSSRFetchInterception } from "../../rendering/ssr-globals.ts";
+import { enableSSRFetchInterception, setSSRServerPort } from "../../rendering/ssr-globals.ts";
 
 export class DevServer {
   private router: DynamicRouter;

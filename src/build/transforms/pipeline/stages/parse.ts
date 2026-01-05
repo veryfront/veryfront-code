@@ -6,7 +6,7 @@
 
 import { compileMDXRuntime } from "../../mdx/compiler/mdx-compiler.ts";
 import { isMDX, isSSR } from "../context.ts";
-import { TransformStage, type TransformContext, type TransformPlugin } from "../types.ts";
+import { type TransformContext, type TransformPlugin, TransformStage } from "../types.ts";
 
 /**
  * Parse plugin - compiles MDX to JSX.
