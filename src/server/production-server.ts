@@ -18,10 +18,7 @@ import {
 import { initializeRedisCaches } from "../core/cache/redis-init.ts";
 import { setServerInitialized } from "./handlers/monitoring/health.ts";
 import { startPeriodicMemoryCheck, stopPeriodicMemoryCheck } from "./shared/renderer-factory.ts";
-import {
-  enableSSRFetchInterception,
-  setSSRServerPort,
-} from "../rendering/ssr-globals.ts";
+import { enableSSRFetchInterception, setSSRServerPort } from "../rendering/ssr-globals.ts";
 
 interface ServerOptions {
   projectDir: string;
