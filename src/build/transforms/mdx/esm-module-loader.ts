@@ -1115,7 +1115,7 @@ ${namedExports}
     const vfModuleResults = await Promise.all(
       vfModuleImports.map(async ({ original, path }) => {
         const filePath = await fetchAndCacheModule(path);
-        return { original, filePath };
+        return { original, filePath, path };
       }),
     );
     const fetchEnd = performance.now();
@@ -1123,9 +1123,64 @@ ${namedExports}
       moduleCount: vfModuleImports.length,
       durationMs: (fetchEnd - fetchStart).toFixed(1),
     });
-    for (const { original, filePath } of vfModuleResults) {
+    for (const { original, filePath, path } of vfModuleResults) {
       if (filePath) {
         rewritten = rewritten.replace(original, `from "file://${filePath}"`);
+      } else {
+        // Create stub module for missing top-level imports (same as nested imports)
+        // This prevents MDX rendering failures when lib modules aren't published
+        const importNamePattern = new RegExp(
+          `import\\s+(?:({[^}]+})|([\\w$]+))\\s*${
+            original.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+          }`,
+        );
+        const importMatch = rewritten.match(importNamePattern);
+        let namedExports = "";
+        if (importMatch) {
+          if (importMatch[1]) {
+            // Named imports: import { a, b as c } from "..."
+            const names = importMatch[1]
+              .replace(/[{}]/g, "")
+              .split(",")
+              .map((n) => n.trim().split(/\s+as\s+/)[0]?.trim())
+              .filter((n): n is string => !!n);
+            namedExports = names
+              .map((n) =>
+                `export const ${n} = () => { console.warn('[Veryfront] Missing export "${n}" from "${path}"'); return null; };`
+              )
+              .join("\n");
+          }
+        }
+        const stubCode = `
+// Stub module for missing file: ${path}
+// This file was not found in the project's published release.
+const handler = {
+  get(_, prop) {
+    if (prop === 'default' || prop === '__esModule' || typeof prop === 'symbol') {
+      return new Proxy({}, handler);
+    }
+    console.warn('[Veryfront] Missing module: ${path}. Component "' + prop + '" was not found.');
+    return () => null;
+  },
+  apply() { return null; }
+};
+export default new Proxy(function(){}, handler);
+${namedExports}
+`;
+        const stubHash = hashString(`stub:${path}:${namedExports}`);
+        const stubPath = join(context.esmCacheDir!, `stub-${stubHash}.mjs`);
+        try {
+          await getLocalFs().writeTextFile(stubPath, stubCode);
+          rewritten = rewritten.replace(original, `from "file://${stubPath}"`);
+          logger.warn(
+            `${LOG_PREFIX_MDX_LOADER} Created stub for missing top-level module: ${path}`,
+          );
+        } catch (e) {
+          logger.error(
+            `${LOG_PREFIX_MDX_LOADER} Failed to create stub for: ${path}`,
+            e,
+          );
+        }
       }
     }
 

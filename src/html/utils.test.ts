@@ -81,15 +81,15 @@ describe("html-generation/utils", () => {
       assert(map["veryfront/fonts"] !== undefined);
     });
 
-    it("should return context packages as npm: specifiers for SSR", () => {
+    it("should return context packages as esm.sh URLs for SSR", () => {
       const config = getDefaultImportMap();
       const map = config.imports;
 
       assert(map !== undefined);
-      // Context packages use npm: specifiers for SSR so Deno resolves them locally
-      // This ensures they share the same React instance from deno.json's npm:react
+      // Context packages use esm.sh URLs (same as browser) to ensure identical
+      // module instances across SSR and client, preventing hydration errors
       assert(map["@tanstack/react-query"] !== undefined);
-      assert(map["@tanstack/react-query"]?.startsWith("npm:"));
+      assert(map["@tanstack/react-query"]?.startsWith("https://esm.sh/"));
     });
 
     it("should NOT include React directly (resolved via deno.json)", () => {
