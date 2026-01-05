@@ -7,7 +7,7 @@
  */
 
 import { rendererLogger as logger } from "@veryfront/utils";
-import { getReactUrls } from "./package-registry.ts";
+import { getReactUrls, REACT_VERSION } from "./package-registry.ts";
 
 const LOG_PREFIX = "[HTTP-HANDLER]";
 
@@ -21,16 +21,29 @@ export function hasHttpImports(code: string): boolean {
  *
  * UNIFIED APPROACH: Uses esm.sh URLs (same as browser) to ensure
  * SSR and browser use identical React instances, preventing hydration errors.
+ *
+ * Includes aliases for npm: specifiers (from Deno import map resolution)
+ * so esbuild can resolve them to esm.sh URLs.
  */
 export function getReactAliases(): Record<string, string> {
   const urls = getReactUrls();
   return {
+    // Bare specifiers
     "react": urls.react,
     "react-dom": urls["react-dom"],
     "react/jsx-runtime": urls["react/jsx-runtime"],
     "react/jsx-dev-runtime": urls["react/jsx-dev-runtime"],
     "react-dom/server": urls["react-dom/server"],
     "react-dom/client": urls["react-dom/client"],
+    // npm: specifiers (Deno import map resolution produces these)
+    "npm:react": urls.react,
+    [`npm:react@${REACT_VERSION}`]: urls.react,
+    [`npm:react@${REACT_VERSION}/jsx-runtime`]: urls["react/jsx-runtime"],
+    [`npm:react@${REACT_VERSION}/jsx-dev-runtime`]: urls["react/jsx-dev-runtime"],
+    "npm:react-dom": urls["react-dom"],
+    [`npm:react-dom@${REACT_VERSION}`]: urls["react-dom"],
+    [`npm:react-dom@${REACT_VERSION}/server`]: urls["react-dom/server"],
+    [`npm:react-dom@${REACT_VERSION}/client`]: urls["react-dom/client"],
   };
 }
 
