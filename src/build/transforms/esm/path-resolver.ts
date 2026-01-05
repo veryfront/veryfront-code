@@ -1,101 +1,6 @@
-import { parseImports, replaceSpecifiers } from "./lexer.ts";
-import { DEFAULT_ALLOWED_CDN_HOSTS } from "@veryfront/utils/constants/cdn.ts";
+import { replaceSpecifiers } from "./lexer.ts";
 import { rendererLogger as logger } from "@veryfront/utils";
-import { join } from "https://deno.land/std@0.220.0/path/mod.ts";
-import { ensureDir } from "https://deno.land/std@0.220.0/fs/mod.ts";
 
-// Directory for SSR stub modules - will be created on first use
-const SSR_STUBS_DIR = join(
-  Deno.env.get("HOME") || "/tmp",
-  ".cache",
-  "veryfront-ssr-stubs",
-);
-
-// Cache of created stub files to avoid re-creating them
-// Key format: "url::export1,export2,export3" to ensure we regenerate if different exports are needed
-const stubFileCache = new Map<string, string>();
-
-// SSR-safe packages that should NOT be stubbed - they work fine in server-side rendering
-// These packages are pure JS/TS utilities without browser-only dependencies
-const SSR_SAFE_PACKAGES = new Set([
-  "zod", // Schema validation - works perfectly in SSR
-  "clsx", // Class name utility
-  "class-variance-authority", // CVA utility
-  "tailwind-merge", // Tailwind merge utility
-  "lodash", // Utility library
-  "date-fns", // Date utilities
-  "uuid", // UUID generation
-  "nanoid", // ID generation
-  "@tanstack/react-query", // React Query - SSR compatible
-  "@tanstack/query-core", // Query core - SSR compatible
-]);
-
-/**
- * Check if a URL points to an SSR-safe package that should not be stubbed
- */
-function isSSRSafePackage(url: string): boolean {
-  try {
-    const parsed = new URL(url);
-    // Extract package name from esm.sh URLs
-    // Examples: https://esm.sh/zod, https://esm.sh/zod@3.22.0, https://esm.sh/@tanstack/react-query@5
-    const pathname = parsed.pathname;
-    // Remove leading slash
-    const pathWithoutSlash = pathname.slice(1);
-
-    // Handle scoped packages like @tanstack/react-query
-    let packageName: string;
-    if (pathWithoutSlash.startsWith("@")) {
-      // Scoped package: @scope/package[@version]
-      const parts = pathWithoutSlash.split("/");
-      const scope = parts[0] || "";
-      const pkgWithVersion = parts[1] || "";
-      // Remove version suffix
-      const pkg = pkgWithVersion.split("@")[0] || pkgWithVersion;
-      packageName = `${scope}/${pkg}`;
-    } else {
-      // Regular package: package[@version]
-      const firstSegment = pathWithoutSlash.split("/")[0] || "";
-      packageName = firstSegment.split("@")[0] || "";
-    }
-
-    return SSR_SAFE_PACKAGES.has(packageName);
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Extract named imports from an import statement
- * e.g., "import { clsx, cn } from '...'" -> ["clsx", "cn"]
- * e.g., "import { motion as m } from '...'" -> ["motion"]
- * e.g., "import Default from '...'" -> [] (default imports don't need named exports)
- * e.g., "import * as pkg from '...'" -> [] (namespace imports use default)
- */
-function extractNamedImports(statement: string): string[] {
-  const namedImports: string[] = [];
-
-  // Match destructured imports: { a, b as c, d }
-  const braceMatch = statement.match(/\{([^}]+)\}/);
-  if (braceMatch) {
-    const inside = braceMatch[1]!;
-    // Split by comma and extract the import name (not the alias)
-    const parts = inside.split(",");
-    for (const part of parts) {
-      const trimmed = part.trim();
-      if (!trimmed) continue;
-      // Handle "name as alias" - we need the original name
-      const asMatch = trimmed.match(/^(\w+)\s+as\s+\w+$/);
-      if (asMatch) {
-        namedImports.push(asMatch[1]!);
-      } else {
-        // Simple import name
-        namedImports.push(trimmed);
-      }
-    }
-  }
-
-  return namedImports;
-}
 
 export interface BlockExternalUrlResult {
   code: string;
@@ -217,165 +122,13 @@ export function resolveCrossProjectImports(
 }
 
 /**
- * Check if a URL is from an allowed CDN host (esm.sh, deno.land, etc.)
- * or is a cross-project registry URL (api.lvh.me, api.veryfront.com, registry.veryfront.com).
- * These URLs are supported by Deno's module loader and can be imported in SSR mode.
- */
-function _isAllowedCdnUrl(url: string): boolean {
-  try {
-    const parsed = new URL(url);
-    const origin = `${parsed.protocol}//${parsed.host}`;
-
-    // Allow known CDN hosts (esm.sh, deno.land)
-    if (DEFAULT_ALLOWED_CDN_HOSTS.some((allowed) => origin.startsWith(allowed))) {
-      return true;
-    }
-
-    // Allow cross-project registry URLs from the Veryfront API
-    // These URLs are used for importing components from other Veryfront projects
-    const registryHosts = [
-      "http://api.lvh.me:4000", // Local dev
-      "https://api.veryfront.com", // Production
-      "https://registry.veryfront.com", // Registry subdomain
-    ];
-    if (registryHosts.some((host) => origin.startsWith(host))) {
-      return true;
-    }
-
-    return false;
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Create a hash from a URL to use as filename
- */
-async function hashUrl(url: string): Promise<string> {
-  const encoder = new TextEncoder();
-  const data = encoder.encode(url);
-  const hashBuffer = await crypto.subtle.digest("SHA-256", data);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  return hashArray.slice(0, 8).map((b) => b.toString(16).padStart(2, "0")).join("");
-}
-
-/**
- * Get or create an SSR stub file for a given URL.
- * Pre-imports the stub to warm Deno's module cache.
+ * Convert esm.sh URLs to npm: specifiers for SSR mode.
  *
- * @param specifier - The original URL being stubbed
- * @param namedExports - Array of named exports to include in the stub
- */
-async function getOrCreateStubFile(
-  specifier: string,
-  namedExports: string[] = [],
-): Promise<string> {
-  // Cache key includes exports to regenerate if different exports are needed
-  const sortedExports = [...namedExports].sort();
-  const cacheKey = `${specifier}::${sortedExports.join(",")}`;
-
-  // Check cache first
-  const cached = stubFileCache.get(cacheKey);
-  if (cached) {
-    return cached;
-  }
-
-  // Generate named export declarations
-  // For each named export, we create a no-op that's appropriate for common patterns
-  const namedExportDeclarations = namedExports.map((name) => {
-    // Common component names get noopComponent
-    if (/^[A-Z]/.test(name) || name.endsWith("Provider") || name.endsWith("Consumer")) {
-      return `export const ${name} = noopComponent;`;
-    }
-    // Hook-like names get a function returning empty object
-    if (name.startsWith("use")) {
-      return `export const ${name} = () => ({});`;
-    }
-    // Functions like clsx, cn, twMerge - class name merging utilities
-    if (["clsx", "cn", "twMerge", "twJoin", "cx", "classNames", "classnames"].includes(name)) {
-      return `export const ${name} = (...args) => args.filter(Boolean).join(" ");`;
-    }
-    // cva is special - returns a function that takes variant options and returns a class string
-    if (name === "cva") {
-      return `export const ${name} = (base, _config) => (_props) => base || "";`;
-    }
-    // motion is special - it's a Proxy-based API
-    if (name === "motion" || name === "m") {
-      return `export const ${name} = motionProxy;`;
-    }
-    if (name === "AnimatePresence") {
-      return `export const ${name} = noopComponent;`;
-    }
-    // Default: return a no-op function
-    return `export const ${name} = noop;`;
-  }).join("\n");
-
-  // Create the stub module content
-  const stubModule = `// SSR stub for ${specifier}
-// Named exports: ${namedExports.join(", ") || "(none)"}
-const noop = () => {};
-const noopComponent = (props) => props?.children || null;
-
-// Proxy for motion-like APIs (motion.div, motion.span, etc.)
-const motionProxy = new Proxy(noopComponent, {
-  get(_, prop) {
-    if (prop === 'default' || prop === '__esModule') return motionProxy;
-    // motion.div, motion.span, etc. should return a component
-    return noopComponent;
-  }
-});
-
-const noopProxy = new Proxy(function(){}, {
-  get(_, prop) {
-    if (prop === 'default' || prop === '__esModule') return noopProxy;
-    if (prop === 'Provider' || prop === 'Consumer') return noopComponent;
-    if (typeof prop === 'string' && prop.startsWith('use')) return () => ({});
-    return noop;
-  },
-  apply() { return null; }
-});
-
-// Named exports
-${namedExportDeclarations}
-
-// Default export and metadata
-export default noopProxy;
-export const __ssr_stub__ = true;
-export const __original_url__ = ${JSON.stringify(specifier)};
-`;
-
-  // Create hash-based filename (include exports in hash for uniqueness)
-  const hash = await hashUrl(cacheKey);
-  const stubPath = join(SSR_STUBS_DIR, `stub-${hash}.js`);
-
-  // Ensure directory exists and write file
-  await ensureDir(SSR_STUBS_DIR);
-  await Deno.writeTextFile(stubPath, stubModule);
-
-  // Pre-import the stub to warm Deno's module cache
-  // This ensures the module is "prepared" for subsequent dynamic imports
-  try {
-    await import(`file://${stubPath}`);
-  } catch {
-    // Ignore errors - the stub should be valid, but we don't want to fail if it isn't
-  }
-
-  // Cache and return
-  stubFileCache.set(cacheKey, stubPath);
-  return stubPath;
-}
-
-/**
- * Block ALL external URL imports (https://, http://) in SSR mode.
+ * When transformed code is written to a temp file and imported via file://,
+ * nested https:// imports don't work. Instead of stubbing packages, we convert
+ * esm.sh URLs to npm: specifiers which Deno supports natively.
  *
- * Even though Deno can load https:// URLs natively, when transformed code is written
- * to a temp file and imported via file:// protocol, the dynamic import mechanism
- * can't resolve https:// imports from within that file.
- *
- * Instead of crashing with "ERR_UNSUPPORTED_ESM_URL_SCHEME", we replace external URLs
- * with file:// URLs pointing to stub modules that provide no-op implementations.
- * This allows the page to render server-side, and the real client-side implementation
- * will take over after hydration.
+ * Example: https://esm.sh/@tanstack/react-query@5?external=react → npm:@tanstack/react-query@5
  */
 export async function blockExternalUrlImports(
   code: string,
@@ -383,54 +136,49 @@ export async function blockExternalUrlImports(
 ): Promise<BlockExternalUrlResult> {
   const blockedUrls: string[] = [];
 
-  // Collect ALL external URL imports with their named exports
-  // We need the full import statement to extract named imports
-  const imports = await parseImports(code);
-  const urlToNamedExports = new Map<string, string[]>();
-
-  for (const imp of imports) {
-    if (imp.n && (imp.n.startsWith("https://") || imp.n.startsWith("http://"))) {
-      // Skip SSR-safe packages - they work fine without stubbing
-      if (isSSRSafePackage(imp.n)) {
-        logger.debug("[path-resolver] Skipping SSR-safe package (no stub needed)", { url: imp.n });
-        continue;
-      }
-
-      blockedUrls.push(imp.n);
-
-      // Extract the full import statement to parse named imports
-      const statement = code.substring(imp.ss, imp.se);
-      const namedExports = extractNamedImports(statement);
-
-      // Merge with existing exports for this URL (same URL may be imported multiple times)
-      const existing = urlToNamedExports.get(imp.n) || [];
-      urlToNamedExports.set(imp.n, [...new Set([...existing, ...namedExports])]);
-    }
-  }
-
-  if (blockedUrls.length === 0) {
-    return { code, blockedUrls };
-  }
-
-  // Create stub files for all external URLs with their named exports
-  const stubPaths = new Map<string, string>();
-  for (const [url, namedExports] of urlToNamedExports) {
-    const stubPath = await getOrCreateStubFile(url, namedExports);
-    stubPaths.set(url, stubPath);
-  }
-
-  // Replace external URL imports with file:// URLs to stub modules
+  // Convert esm.sh URLs to npm: specifiers
   const transformedCode = await replaceSpecifiers(code, (specifier) => {
-    if (specifier.startsWith("https://") || specifier.startsWith("http://")) {
-      const stubPath = stubPaths.get(specifier);
-      if (stubPath) {
-        return `file://${stubPath}`;
+    if (specifier.startsWith("https://esm.sh/")) {
+      const npmSpec = esmShUrlToNpmSpecifier(specifier);
+      if (npmSpec) {
+        blockedUrls.push(specifier);
+        logger.debug("[path-resolver] Converting esm.sh to npm:", { from: specifier, to: npmSpec });
+        return npmSpec;
       }
     }
     return null;
   });
 
   return { code: transformedCode, blockedUrls };
+}
+
+/**
+ * Convert an esm.sh URL to an npm: specifier.
+ *
+ * Examples:
+ *   https://esm.sh/zod → npm:zod
+ *   https://esm.sh/zod@3.22.0 → npm:zod@3.22.0
+ *   https://esm.sh/@tanstack/react-query@5 → npm:@tanstack/react-query@5
+ *   https://esm.sh/@tanstack/react-query@5?external=react → npm:@tanstack/react-query@5
+ */
+function esmShUrlToNpmSpecifier(url: string): string | null {
+  try {
+    const parsed = new URL(url);
+    if (parsed.host !== "esm.sh") return null;
+
+    // Get pathname without leading slash
+    let path = parsed.pathname.slice(1);
+
+    // Remove any trailing slashes
+    path = path.replace(/\/+$/, "");
+
+    // Handle empty path
+    if (!path) return null;
+
+    return `npm:${path}`;
+  } catch {
+    return null;
+  }
 }
 
 /**
