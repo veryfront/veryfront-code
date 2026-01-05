@@ -24,6 +24,10 @@ import { setupSSRGlobals } from "../../../rendering/ssr-globals.ts";
 // True Node.js runtime (not Deno with Node.js compat)
 const IS_TRUE_NODE = isNode && !isDeno;
 
+// Framework root directory (veryfront-renderer/) - computed from this file's location
+// From src/build/transforms/mdx/esm-module-loader.ts, go up 4 levels
+const FRAMEWORK_ROOT = new URL("../../../..", import.meta.url).pathname;
+
 // Constants
 const LOG_PREFIX_MDX_LOADER = "[mdx-loader]";
 const LOG_PREFIX_MDX_RENDERER = "[mdx-renderer]";
@@ -756,6 +760,30 @@ export async function loadModuleESM(
                 } catch {
                   // Try next extension
                 }
+              }
+            }
+          }
+
+          // FALLBACK: For lib/* imports not found in project, check framework lib directory
+          // This provides framework utilities like lib/Router, lib/Head, lib/usePageContext
+          if (!sourceCode && filePathWithoutJs.startsWith("lib/")) {
+            const localFs = getLocalFs();
+            for (const ext of extensions) {
+              const frameworkPath = join(FRAMEWORK_ROOT, filePathWithoutJs + ext);
+              try {
+                const stat = await localFs.stat(frameworkPath);
+                if (stat?.isFile) {
+                  const content = await localFs.readTextFile(frameworkPath);
+                  sourceCode = content;
+                  actualFilePath = frameworkPath;
+                  logger.debug(`${LOG_PREFIX_MDX_LOADER} Found framework lib file (fallback)`, {
+                    basePath: filePathWithoutJs,
+                    resolvedPath: frameworkPath,
+                  });
+                  break;
+                }
+              } catch {
+                // Continue trying other extensions
               }
             }
           }
