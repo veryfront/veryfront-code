@@ -54,15 +54,14 @@ export async function startUniversalServer(
     logger.info("FSAdapter initialized", { type: bootstrap.fsAdapterType });
   }
 
-  // Enable SSR fetch interception to rewrite relative URLs
-  // This allows user code to use fetch('/api/...') during SSR
+  // Enable SSR fetch interception to handle relative URLs during SSR
   setSSRServerPort(port);
   enableSSRFetchInterception();
 
-  // Enable client-only fetching for /api/* routes in production
-  // This makes API fetches return never-resolving promises during SSR,
-  // causing React Suspense to render fallbacks. Data loads client-side.
-  // This prevents the renderer from trying to HTTP request itself during SSR.
+  // Enable client-only fetching for /api/* routes in production.
+  // This returns empty mock responses during SSR (instead of failing with
+  // "Invalid URL" or "Connection refused"). React Query will refetch
+  // the actual data client-side after hydration.
   enableSSRClientOnlyFetching();
 
   logger.info("Starting universal production server", { projectDir, port, hostname });
