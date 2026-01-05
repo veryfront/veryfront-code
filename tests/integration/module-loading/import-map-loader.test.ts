@@ -945,7 +945,7 @@ function hello() { return 'world'; }
         assertExists(importMap.imports!["react-hook-form"]);
       });
 
-      it("should use esm.sh URLs for context packages", () => {
+      it("should use npm: specifiers for context packages (SSR)", () => {
         const importMap = getDefaultImportMap();
 
         const contextPackages = [
@@ -956,13 +956,15 @@ function hello() { return 'world'; }
           "react-hook-form",
         ];
 
+        // SSR uses npm: specifiers so Deno resolves them locally
+        // This ensures they share the same React instance from deno.json's npm:react
         for (const pkg of contextPackages) {
           const value = importMap.imports![pkg];
           if (typeof value !== "string") continue;
           assertEquals(
-            value.startsWith("https://esm.sh/"),
+            value.startsWith("npm:"),
             true,
-            `Context package ${pkg} should use esm.sh URL`,
+            `Context package ${pkg} should use npm: specifier for SSR`,
           );
         }
       });
@@ -983,10 +985,11 @@ function hello() { return 'world'; }
         assertEquals((importMap as any).scopes, undefined);
       });
 
-      it("should have external=react for context packages that need it", () => {
+      it("should use npm: specifiers for React-dependent context packages", () => {
         const importMap = getDefaultImportMap();
 
-        // Packages that use React context should have ?external=react
+        // React-dependent packages use npm: specifiers for SSR
+        // This ensures they share Deno's npm:react instance from deno.json
         const reactDependentPackages = [
           "@tanstack/react-query",
           "next-themes",
@@ -997,9 +1000,9 @@ function hello() { return 'world'; }
           const value = importMap.imports![pkg];
           if (typeof value !== "string") continue;
           assertEquals(
-            value.includes("external=react"),
+            value.startsWith("npm:"),
             true,
-            `${pkg} should have external=react to prevent duplicate React instances`,
+            `${pkg} should use npm: specifier to share React instance via deno.json`,
           );
         }
       });
