@@ -935,7 +935,9 @@ export async function loadModuleESM(
             } else {
               // Extract named imports from the full import statement to create proper stub exports
               const importNamePattern = new RegExp(
-                `import\\s+(?:({[^}]+})|([\\w$]+))\\s*${original.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`,
+                `import\\s+(?:({[^}]+})|([\\w$]+))\\s*${
+                  original.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+                }`,
               );
               const importMatch = moduleCode.match(importNamePattern);
               let namedExports = "";
@@ -948,7 +950,9 @@ export async function loadModuleESM(
                     .map((n) => n.trim().split(/\s+as\s+/)[0]?.trim())
                     .filter((n): n is string => !!n);
                   namedExports = names
-                    .map((n) => `export const ${n} = () => { console.warn('[Veryfront] Missing export "${n}" from "${nestedPath}"'); return null; };`)
+                    .map((n) =>
+                      `export const ${n} = () => { console.warn('[Veryfront] Missing export "${n}" from "${nestedPath}"'); return null; };`
+                    )
                     .join("\n");
                 }
               }
@@ -999,7 +1003,9 @@ ${namedExports}
             } else {
               // Extract named imports from the full import statement to create proper stub exports
               const importNamePattern = new RegExp(
-                `import\\s+(?:({[^}]+})|([\\w$]+))\\s*${original.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`,
+                `import\\s+(?:({[^}]+})|([\\w$]+))\\s*${
+                  original.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+                }`,
               );
               const importMatch = moduleCode.match(importNamePattern);
               let namedExports = "";
@@ -1012,7 +1018,9 @@ ${namedExports}
                     .map((n) => n.trim().split(/\s+as\s+/)[0]?.trim())
                     .filter((n): n is string => !!n);
                   namedExports = names
-                    .map((n) => `export const ${n} = () => { console.warn('[Veryfront] Missing export "${n}" from "${relativePath}"'); return null; };`)
+                    .map((n) =>
+                      `export const ${n} = () => { console.warn('[Veryfront] Missing export "${n}" from "${relativePath}"'); return null; };`
+                    )
                     .join("\n");
                 }
               }
