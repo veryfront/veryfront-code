@@ -37,90 +37,90 @@ describe("RSC Streaming Tests", { sanitizeOps: false, sanitizeResources: false }
           const appDir = join(context.projectDir, "app");
           await Deno.mkdir(appDir, { recursive: true });
 
-            await Deno.writeTextFile(
-              join(appDir, "page.tsx"),
-              `import React from 'react';
+          await Deno.writeTextFile(
+            join(appDir, "page.tsx"),
+            `import React from 'react';
 
 export default function HomePage({ searchParams }: { searchParams: { name?: string } }) {
   const name = searchParams?.name || 'World';
   return <div>Hello {name}</div>;
 }`,
-            );
+          );
 
-            // Start production server
-            const server = await context.createProductionServer();
+          // Start production server
+          const server = await context.createProductionServer();
 
-            // Fetch RSC stream endpoint
-            const response = await fetch(
-              `http://localhost:${server.port}/_veryfront/rsc/stream?name=Eve`,
-            );
-            assertEquals(response.status, 200, "RSC stream endpoint should be available");
+          // Fetch RSC stream endpoint
+          const response = await fetch(
+            `http://localhost:${server.port}/_veryfront/rsc/stream?name=Eve`,
+          );
+          assertEquals(response.status, 200, "RSC stream endpoint should be available");
 
-            if (!response.body) {
-              throw new Error("Expected response body for streaming");
-            }
+          if (!response.body) {
+            throw new Error("Expected response body for streaming");
+          }
 
-            // Read and parse NDJSON stream
-            const reader = response.body.getReader();
-            assertExists(reader);
-            const decoder = new TextDecoder();
-            let buffer = "";
-            const events: Array<{ id: string; html: string }> = [];
+          // Read and parse NDJSON stream
+          const reader = response.body.getReader();
+          assertExists(reader);
+          const decoder = new TextDecoder();
+          let buffer = "";
+          const events: Array<{ id: string; html: string }> = [];
 
-            while (true) {
-              const { done, value } = await reader.read();
-              if (done) break;
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
 
-              buffer += decoder.decode(value, { stream: true });
-              const lines = buffer.split("\n");
-              buffer = lines.pop() || "";
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split("\n");
+            buffer = lines.pop() || "";
 
-              for (const line of lines) {
-                if (!line.trim()) continue;
-                try {
-                  const message = JSON.parse(line);
-                  if (message.type === "slot") {
-                    events.push({
-                      id: String(message.id),
-                      html: String(message.html),
-                    });
-                  }
-                } catch {
-                  // Skip malformed JSON lines
+            for (const line of lines) {
+              if (!line.trim()) continue;
+              try {
+                const message = JSON.parse(line);
+                if (message.type === "slot") {
+                  events.push({
+                    id: String(message.id),
+                    html: String(message.html),
+                  });
                 }
+              } catch {
+                // Skip malformed JSON lines
               }
             }
+          }
 
-            // Verify we received updates for both slots
-            const rootEvents = events.filter((e) => e.id === "root");
-            const sidebarEvents = events.filter((e) => e.id === "sidebar");
+          // Verify we received updates for both slots
+          const rootEvents = events.filter((e) => e.id === "root");
+          const sidebarEvents = events.filter((e) => e.id === "sidebar");
 
-            assertEquals(
-              rootEvents.length >= 2,
-              true,
-              "Should receive at least 2 root events (loading + final)",
-            );
+          assertEquals(
+            rootEvents.length >= 2,
+            true,
+            "Should receive at least 2 root events (loading + final)",
+          );
 
-            assertEquals(
-              sidebarEvents.length >= 2,
-              true,
-              "Should receive at least 2 sidebar events (loading + final)",
-            );
+          assertEquals(
+            sidebarEvents.length >= 2,
+            true,
+            "Should receive at least 2 sidebar events (loading + final)",
+          );
 
-            // Verify final content
-            const lastRootHtml = rootEvents[rootEvents.length - 1]?.html || "";
-            assertEquals(
-              /Hello|OK/.test(lastRootHtml),
-              true,
-              "Final root content should contain expected text",
-            );
+          // Verify final content
+          const lastRootHtml = rootEvents[rootEvents.length - 1]?.html || "";
+          assertEquals(
+            /Hello|OK/.test(lastRootHtml),
+            true,
+            "Final root content should contain expected text",
+          );
 
-            const lastSidebarHtml = sidebarEvents[sidebarEvents.length - 1]?.html || "";
-            assertEquals(
-              /<li>/.test(lastSidebarHtml),
-              true,
-              "Final sidebar content should contain list items",
-            );
+          const lastSidebarHtml = sidebarEvents[sidebarEvents.length - 1]?.html || "";
+          assertEquals(
+            /<li>/.test(lastSidebarHtml),
+            true,
+            "Final sidebar content should contain list items",
+          );
         });
       });
     },

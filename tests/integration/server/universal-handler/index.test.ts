@@ -218,7 +218,10 @@ describe(
             const body = await res.text();
 
             // Should not list directory contents
-            assert(!body.includes("file1.txt") || !body.includes("file2.txt"), "Should not list files");
+            assert(
+              !body.includes("file1.txt") || !body.includes("file2.txt"),
+              "Should not list files",
+            );
           } finally {
             await Deno.remove(tempDir, { recursive: true });
           }
@@ -466,7 +469,10 @@ describe(
             // Request without auth
             const res1 = await handler(new Request("http://localhost:8000/healthz"));
             assertEquals(res1.status, 401, "Should require auth");
-            assertExists(res1.headers.get("www-authenticate"), "Should send WWW-Authenticate header");
+            assertExists(
+              res1.headers.get("www-authenticate"),
+              "Should send WWW-Authenticate header",
+            );
 
             // Request with correct auth
             const authHeader = `Basic ${btoa("admin:secret123")}`;

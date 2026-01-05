@@ -15,7 +15,6 @@ async function exists(p: string) {
 
 describe(
   "CLI generate command",
-  
   () => {
     it("creates files", async () => {
       await withTestContext("generate-files", async (context: TestContext) => {

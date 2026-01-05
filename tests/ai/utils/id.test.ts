@@ -1,6 +1,6 @@
 import { describe, it } from "std/testing/bdd.ts";
 import { assertEquals, assertMatch } from "std/assert/mod.ts";
-import { generateId, createIdGenerator } from "../../../src/ai/utils/id.ts";
+import { createIdGenerator, generateId } from "../../../src/ai/utils/id.ts";
 
 describe("generateId", () => {
   it("generates 16-char alphanumeric ID without prefix", () => {

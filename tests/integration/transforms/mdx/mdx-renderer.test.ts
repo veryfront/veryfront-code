@@ -5,7 +5,6 @@ import { mdxRenderer } from "@veryfront/transforms/mdx/index.ts";
 
 describe(
   "MDX renderer - ESM Loader (Secure)",
-  
   () => {
     it("renders program-format MDXContent", async () => {
       const compiled = `
@@ -177,7 +176,6 @@ describe(
 
 describe(
   "MDX ESM loader",
-  
   () => {
     it("loads simple module and caches", async () => {
       const code = `

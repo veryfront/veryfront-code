@@ -32,7 +32,9 @@ describe(
 
         // Create development server since /_veryfront/fs/ is only available in dev mode
         const port = await context.allocatePort();
-        const { startUniversalServer } = await import("../../../../src/server/production-server.ts");
+        const { startUniversalServer } = await import(
+          "../../../../src/server/production-server.ts"
+        );
         const server = await startUniversalServer({
           projectDir: context.projectDir,
           port,

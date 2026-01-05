@@ -106,7 +106,6 @@ function createMockCompileMDX() {
 
 describe(
   "Layout Handling",
-  
   () => {
     describe("discoverNestedLayouts", () => {
       it("discovers MDX layout in the same directory", async () => {

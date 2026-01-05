@@ -6,7 +6,6 @@ import { withTestContext } from "../../_helpers/context.ts";
 
 describe(
   "DenoAdapter",
-  
   () => {
     describe("File system operations", () => {
       it("should handle file exists checks", async () => {

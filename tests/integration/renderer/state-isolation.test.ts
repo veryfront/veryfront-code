@@ -10,9 +10,9 @@ import { createRenderer } from "../../../src/rendering/index.ts";
 import { cleanupBundler } from "../../../src/rendering/cleanup.ts";
 import { withTestContext } from "../../_helpers/context.ts";
 
-  // Note: Sanitizers disabled due to React 19 SSR MessagePort cleanup issue
-  // See: https://github.com/facebook/react/issues/24669
-  describe(
+// Note: Sanitizers disabled due to React 19 SSR MessagePort cleanup issue
+// See: https://github.com/facebook/react/issues/24669
+describe(
   "Renderer State Isolation",
   {
     sanitizeResources: false,

@@ -1,17 +1,25 @@
 import { assertEquals, assertExists } from "std/assert/mod.ts";
 import { describe, it } from "std/testing/bdd.ts";
-import { createInstrumentedFetch, instrumentHttpHandler } from "../../../src/observability/auto-instrument/http-instrumentation.ts";
-import { initTracing, startSpan, endSpan, withActiveSpan } from "../../../src/observability/tracing/index.ts";
+import {
+  createInstrumentedFetch,
+  instrumentHttpHandler,
+} from "../../../src/observability/auto-instrument/http-instrumentation.ts";
+import {
+  endSpan,
+  initTracing,
+  startSpan,
+  withActiveSpan,
+} from "../../../src/observability/tracing/index.ts";
 
 describe("HTTP Tracing Integration", () => {
   // Initialize tracing with a dummy config to ensure the tracer provider is active
-  // We assume the default/noop provider might not propagate, so we might need to rely on 
+  // We assume the default/noop provider might not propagate, so we might need to rely on
   // the fact that the API uses the global propagator which defaults to no-op or trace-context
   // if configured.
-  
+
   // Ideally we would configure a test tracer provider, but for this integration test
   // we mostly want to verify the *logic* of injection is called.
-  
+
   it("should inject W3C trace context into fetch headers", async () => {
     // Mock fetch that captures headers
     let capturedHeaders: Headers | null = null;
@@ -30,12 +38,12 @@ describe("HTTP Tracing Integration", () => {
     // Verify headers were injected
     // Note: If the default global propagator is NoOp, this might fail to add headers.
     // However, we updated the code to explicitly call propagation.inject().
-    // Even with NoOp, it might inject nothing, so we might need to mock the context/propagation logic 
+    // Even with NoOp, it might inject nothing, so we might need to mock the context/propagation logic
     // or ensure the environment sets up a valid propagator.
-    
-    // In a real "Google" env, we'd ensure the test env has a valid tracer. 
+
+    // In a real "Google" env, we'd ensure the test env has a valid tracer.
     // If this fails, it implies we need to bootstrap OTEL properly in the test.
-    
+
     assertExists(capturedHeaders);
     // Check if traceparent or trace-id exists (depending on default propagator)
     // If default is W3C Trace Context (standard in OTEL JS), it should be there.
@@ -62,7 +70,7 @@ describe("HTTP Tracing Integration", () => {
 
     const instrumented = instrumentHttpHandler(handler);
     const req = new Request("http://localhost/test", {
-      headers: { "traceparent": traceparent }
+      headers: { "traceparent": traceparent },
     });
 
     const res = await instrumented(req);

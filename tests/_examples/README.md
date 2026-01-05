@@ -5,7 +5,9 @@ This directory contains example test files demonstrating best practices for writ
 ## Available Examples
 
 ### `unit-test.example.ts`
+
 Demonstrates unit testing patterns:
+
 - Testing pure functions
 - Testing classes with state
 - Async operations
@@ -14,7 +16,9 @@ Demonstrates unit testing patterns:
 - Performance budgets
 
 ### `integration-server.example.ts`
+
 Demonstrates integration testing with servers:
+
 - Using TestContext for server tests
 - Testing dev and production servers
 - Environment variable management
@@ -44,13 +48,13 @@ deno test tests/_examples/integration-server.example.ts --allow-all
 
 ## When to Use Each Example
 
-| Scenario | Use This Example |
-|----------|------------------|
-| Testing utility functions | `unit-test.example.ts` |
-| Testing classes/modules | `unit-test.example.ts` |
-| Testing with dev server | `integration-server.example.ts` |
-| Testing with production server | `integration-server.example.ts` |
-| Testing API endpoints | `integration-server.example.ts` |
+| Scenario                           | Use This Example                |
+| ---------------------------------- | ------------------------------- |
+| Testing utility functions          | `unit-test.example.ts`          |
+| Testing classes/modules            | `unit-test.example.ts`          |
+| Testing with dev server            | `integration-server.example.ts` |
+| Testing with production server     | `integration-server.example.ts` |
+| Testing API endpoints              | `integration-server.example.ts` |
 | Testing with environment variables | `integration-server.example.ts` |
 
 ## Quick Start: Copy Template
@@ -66,32 +70,38 @@ cp tests/_examples/integration-server.example.ts tests/integration/my-feature/my
 ## Key Principles Demonstrated
 
 ### 1. Test Structure
+
 - ✅ Use `describe` for grouping related tests
 - ✅ Use `it` for individual test cases
 - ✅ Follow Arrange-Act-Assert pattern
 
 ### 2. Test Naming
+
 - ✅ Descriptive names: "should do X when Y"
 - ✅ Clear expectations in the name
 - ✅ Avoid vague names like "test1" or "works"
 
 ### 3. Assertions
+
 - ✅ Include assertion messages
 - ✅ Test both happy paths and edge cases
 - ✅ Use appropriate assertion functions
 
 ### 4. Resource Management
+
 - ✅ Use `withTestContext` for server tests
 - ✅ Automatic cleanup (no manual cleanup needed)
 - ✅ Isolated environments per test
 
 ### 5. Timeouts
+
 - ✅ Set appropriate timeouts using `TEST_TIMEOUTS`
 - ✅ Unit tests: 5s
 - ✅ Integration tests: 30s
 - ✅ E2E tests: 60s
 
 ### 6. Performance
+
 - ✅ Set performance budgets
 - ✅ Measure execution time
 - ✅ Fail tests that exceed budgets
@@ -115,6 +125,7 @@ To add a new example:
 ## Questions?
 
 If these examples don't cover your use case, check:
+
 - [Test Style Guide](../README.md) for detailed guidelines
 - [Existing Tests](../integration/) for real-world examples
 - The team for guidance on complex scenarios

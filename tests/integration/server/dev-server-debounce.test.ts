@@ -84,7 +84,10 @@ describe("Dev Server Debounce Tests", { sanitizeOps: false, sanitizeResources: f
           // Just verify the metrics object exists
           if (initialMetrics) {
             assertExists(initialMetrics.totalFileChangeEvents, "Metrics should track file events");
-            assertExists(initialMetrics.routeDiscoveryCalls, "Metrics should track discovery calls");
+            assertExists(
+              initialMetrics.routeDiscoveryCalls,
+              "Metrics should track discovery calls",
+            );
           }
         });
       });

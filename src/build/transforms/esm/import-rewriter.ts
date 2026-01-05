@@ -84,7 +84,8 @@ export function rewriteBareImports(code: string, _moduleServerUrl?: string): Pro
     "react-dom/client": `https://esm.sh/react-dom@${REACT_DEFAULT_VERSION}/client?target=es2022`,
     "react-dom/server": `https://esm.sh/react-dom@${REACT_DEFAULT_VERSION}/server?target=es2022`,
     "react/jsx-runtime": `https://esm.sh/react@${REACT_DEFAULT_VERSION}/jsx-runtime?target=es2022`,
-    "react/jsx-dev-runtime": `https://esm.sh/react@${REACT_DEFAULT_VERSION}/jsx-dev-runtime?target=es2022`,
+    "react/jsx-dev-runtime":
+      `https://esm.sh/react@${REACT_DEFAULT_VERSION}/jsx-dev-runtime?target=es2022`,
     // NOTE: veryfront/ai/react is NOT rewritten here - it's handled by the HTML import map
     // which points to /_veryfront/lib/ai/react.js served from the local package
   };

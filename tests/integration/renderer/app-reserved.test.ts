@@ -14,7 +14,6 @@ import {
 
 describe(
   "App Reserved Components",
-  
   () => {
     describe("collectAncestorDirs", () => {
       it("should collect ancestor directories from nested path", () => {

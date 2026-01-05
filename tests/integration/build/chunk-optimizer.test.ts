@@ -11,7 +11,6 @@ import { withTestContext } from "../../_helpers/context.ts";
 
 describe(
   "chunk-optimizer",
-  
   () => {
     it("analyzes empty project gracefully", async () => {
       await withTestContext("chunk-optimizer-empty", async (context) => {

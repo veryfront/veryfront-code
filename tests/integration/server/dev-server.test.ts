@@ -242,7 +242,11 @@ describe("Dev Server Integration", { sanitizeOps: false, sanitizeResources: fals
           const jsResponse = await fetch(`http://localhost:${server.port}/script.js`);
           assertEquals(jsResponse.status, 200, "Should serve JS file");
           const jsContent = await jsResponse.text();
-          assertEquals(jsContent, "console.log('Hello from static JS');", "Should serve correct JS");
+          assertEquals(
+            jsContent,
+            "console.log('Hello from static JS');",
+            "Should serve correct JS",
+          );
 
           // Test JSON file
           const jsonResponse = await fetch(`http://localhost:${server.port}/data.json`);

@@ -10,7 +10,7 @@ import { VeryfrontRouter } from "@veryfront/rendering/client/router.ts";
 import type { DOMEnvironment } from "./test-helpers.ts";
 import { mockRoots, setupDOMEnvironment } from "./test-helpers.ts";
 
-describe("Veryfront Router",  () => {
+describe("Veryfront Router", () => {
   let env: DOMEnvironment;
   let rootElement: HTMLElement;
 

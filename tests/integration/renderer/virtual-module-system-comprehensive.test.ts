@@ -85,7 +85,6 @@ function createMockAdapter(): RuntimeAdapter {
 
 describe(
   "VirtualModuleSystem",
-  
   () => {
     it("registers, serves and clears modules", async () => {
       const adapter = createMockAdapter();

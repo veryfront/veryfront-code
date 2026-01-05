@@ -64,129 +64,129 @@ This is a test.`,
   });
 
   it("Configuration manager properly initialized", async () => {
-  const projectDir = await createTestProjectDir();
+    const projectDir = await createTestProjectDir();
 
-  try {
-    await Deno.mkdir(join(projectDir, "pages"), { recursive: true });
-    await Deno.writeTextFile(join(projectDir, "pages/test.mdx"), "# Test");
-    await Deno.writeTextFile(
-      join(projectDir, "veryfront.config.ts"),
-      `export default {
+    try {
+      await Deno.mkdir(join(projectDir, "pages"), { recursive: true });
+      await Deno.writeTextFile(join(projectDir, "pages/test.mdx"), "# Test");
+      await Deno.writeTextFile(
+        join(projectDir, "veryfront.config.ts"),
+        `export default {
         mode: "development" as const,
         cache: { dir: ".test-cache" },
       };`,
-    );
+      );
 
-    const adapter = new DenoAdapter();
-    const renderer = new VeryfrontRenderer({
-      projectDir,
-      mode: "development",
-      adapter,
-    });
+      const adapter = new DenoAdapter();
+      const renderer = new VeryfrontRenderer({
+        projectDir,
+        mode: "development",
+        adapter,
+      });
 
-    await renderer.initialize();
+      await renderer.initialize();
 
-    // Render to ensure all services are working
-    const result = await renderer.renderPage("test");
-    assertExists(result);
-    assertExists(result.html);
+      // Render to ensure all services are working
+      const result = await renderer.renderPage("test");
+      assertExists(result);
+      assertExists(result.html);
 
-    await renderer.destroy();
-  } finally {
-    await cleanupTestDir(projectDir);
-  }
+      await renderer.destroy();
+    } finally {
+      await cleanupTestDir(projectDir);
+    }
   });
 
   it("Lifecycle initialization of all services", async () => {
-  const projectDir = await createTestProjectDir();
+    const projectDir = await createTestProjectDir();
 
-  try {
-    await Deno.mkdir(join(projectDir, "pages"), { recursive: true });
-    await Deno.mkdir(join(projectDir, "components"), { recursive: true });
-    await Deno.writeTextFile(join(projectDir, "pages/simple.mdx"), "# Simple");
-    await Deno.writeTextFile(
-      join(projectDir, "components/Button.tsx"),
-      `export default function Button() {
+    try {
+      await Deno.mkdir(join(projectDir, "pages"), { recursive: true });
+      await Deno.mkdir(join(projectDir, "components"), { recursive: true });
+      await Deno.writeTextFile(join(projectDir, "pages/simple.mdx"), "# Simple");
+      await Deno.writeTextFile(
+        join(projectDir, "components/Button.tsx"),
+        `export default function Button() {
         return <button>Click me</button>;
       }`,
-    );
+      );
 
-    const adapter = new DenoAdapter();
-    const renderer = new VeryfrontRenderer({
-      projectDir,
-      mode: "development",
-      adapter,
-    });
+      const adapter = new DenoAdapter();
+      const renderer = new VeryfrontRenderer({
+        projectDir,
+        mode: "development",
+        adapter,
+      });
 
-    await renderer.initialize();
+      await renderer.initialize();
 
-    // Check virtual module system is accessible
-    const vms = renderer.getVirtualModuleSystem();
-    assertExists(vms);
+      // Check virtual module system is accessible
+      const vms = renderer.getVirtualModuleSystem();
+      assertExists(vms);
 
-    // Render a page to ensure all services work together
-    const result = await renderer.renderPage("simple");
-    assertExists(result);
-    assertExists(result.html);
+      // Render a page to ensure all services work together
+      const result = await renderer.renderPage("simple");
+      assertExists(result);
+      assertExists(result.html);
 
-    await renderer.destroy();
-  } finally {
-    await cleanupTestDir(projectDir);
-  }
+      await renderer.destroy();
+    } finally {
+      await cleanupTestDir(projectDir);
+    }
   });
 
   it("Cache management through lifecycle", async () => {
-  const projectDir = await createTestProjectDir();
+    const projectDir = await createTestProjectDir();
 
-  try {
-    await Deno.mkdir(join(projectDir, "pages"), { recursive: true });
-    await Deno.writeTextFile(
-      join(projectDir, "pages/cached.mdx"),
-      `---
+    try {
+      await Deno.mkdir(join(projectDir, "pages"), { recursive: true });
+      await Deno.writeTextFile(
+        join(projectDir, "pages/cached.mdx"),
+        `---
 title: Cached Page
 ---
 
 # Cached Page`,
-    );
+      );
 
-    const adapter = new DenoAdapter();
-    const renderer = new VeryfrontRenderer({
-      projectDir,
-      mode: "development",
-      adapter,
-    });
+      const adapter = new DenoAdapter();
+      const renderer = new VeryfrontRenderer({
+        projectDir,
+        mode: "development",
+        adapter,
+      });
 
-    await renderer.initialize();
+      await renderer.initialize();
 
-    // First render
-    const result1 = await renderer.renderPage("cached");
-    assertExists(result1);
+      // First render
+      const result1 = await renderer.renderPage("cached");
+      assertExists(result1);
 
-    // Clear cache
-    renderer.clearCache("cached");
+      // Clear cache
+      renderer.clearCache("cached");
 
-    // Second render (after cache clear)
-    const result2 = await renderer.renderPage("cached");
-    assertExists(result2);
-    assertEquals(result2.frontmatter.title, "Cached Page");
+      // Second render (after cache clear)
+      const result2 = await renderer.renderPage("cached");
+      assertExists(result2);
+      assertEquals(result2.frontmatter.title, "Cached Page");
 
-    // Clear all state
-    renderer.clearAllState();
+      // Clear all state
+      renderer.clearAllState();
 
-    await renderer.destroy();
-  } finally {
-    await cleanupTestDir(projectDir);
-  }
+      await renderer.destroy();
+    } finally {
+      await cleanupTestDir(projectDir);
+    }
   });
 
   it("MDX compilation through new architecture", async () => {
-  const projectDir = await createTestProjectDir();
+    const projectDir = await createTestProjectDir();
 
-  try {
-    await Deno.mkdir(join(projectDir, "pages"), { recursive: true });
-    await Deno.writeTextFile(
-      join(projectDir, "pages/mdx-test.mdx"),
-      `---
+    try {
+      await Deno.mkdir(join(projectDir, "pages"), { recursive: true });
+      await Deno.writeTextFile(
+        join(projectDir, "pages/mdx-test.mdx"),
+        `---
 title: MDX Test
 description: Testing MDX compilation
 ---
@@ -200,90 +200,90 @@ Some content here.
 ### Subsection
 
 More content.`,
-    );
+      );
 
-    const adapter = new DenoAdapter();
-    const renderer = new VeryfrontRenderer({
-      projectDir,
-      mode: "development",
-      adapter,
-    });
+      const adapter = new DenoAdapter();
+      const renderer = new VeryfrontRenderer({
+        projectDir,
+        mode: "development",
+        adapter,
+      });
 
-    await renderer.initialize();
+      await renderer.initialize();
 
-    const result = await renderer.renderPage("mdx-test");
+      const result = await renderer.renderPage("mdx-test");
 
-    assertExists(result);
-    assertExists(result.html);
-    assertEquals(result.frontmatter.title, "MDX Test");
-    assertEquals(result.frontmatter.description, "Testing MDX compilation");
-    // Headings may or may not be present depending on MDX compilation
-    // Just check that result is valid
-    assertExists(result.headings);
+      assertExists(result);
+      assertExists(result.html);
+      assertEquals(result.frontmatter.title, "MDX Test");
+      assertEquals(result.frontmatter.description, "Testing MDX compilation");
+      // Headings may or may not be present depending on MDX compilation
+      // Just check that result is valid
+      assertExists(result.headings);
 
-    await renderer.destroy();
-  } finally {
-    await cleanupTestDir(projectDir);
-  }
+      await renderer.destroy();
+    } finally {
+      await cleanupTestDir(projectDir);
+    }
   });
 
   it("Component initialization", async () => {
-  const projectDir = await createTestProjectDir();
+    const projectDir = await createTestProjectDir();
 
-  try {
-    await Deno.mkdir(join(projectDir, "pages"), { recursive: true });
-    await Deno.mkdir(join(projectDir, "components"), { recursive: true });
-    await Deno.writeTextFile(join(projectDir, "pages/test.mdx"), "# Test");
-    await Deno.writeTextFile(
-      join(projectDir, "components/TestComponent.tsx"),
-      `export default function TestComponent() {
+    try {
+      await Deno.mkdir(join(projectDir, "pages"), { recursive: true });
+      await Deno.mkdir(join(projectDir, "components"), { recursive: true });
+      await Deno.writeTextFile(join(projectDir, "pages/test.mdx"), "# Test");
+      await Deno.writeTextFile(
+        join(projectDir, "components/TestComponent.tsx"),
+        `export default function TestComponent() {
         return <div>Test Component</div>;
       }`,
-    );
+      );
 
-    const adapter = new DenoAdapter();
-    const renderer = new VeryfrontRenderer({
-      projectDir,
-      mode: "development",
-      adapter,
-    });
+      const adapter = new DenoAdapter();
+      const renderer = new VeryfrontRenderer({
+        projectDir,
+        mode: "development",
+        adapter,
+      });
 
-    await renderer.initialize();
-    await renderer.initializeComponents();
+      await renderer.initialize();
+      await renderer.initializeComponents();
 
-    const result = await renderer.renderPage("test");
-    assertExists(result);
+      const result = await renderer.renderPage("test");
+      assertExists(result);
 
-    await renderer.destroy();
-  } finally {
-    await cleanupTestDir(projectDir);
-  }
+      await renderer.destroy();
+    } finally {
+      await cleanupTestDir(projectDir);
+    }
   });
 
   it("Proper cleanup with destroy()", async () => {
-  const projectDir = await createTestProjectDir();
+    const projectDir = await createTestProjectDir();
 
-  try {
-    await Deno.mkdir(join(projectDir, "pages"), { recursive: true });
-    await Deno.writeTextFile(join(projectDir, "pages/cleanup.mdx"), "# Cleanup Test");
+    try {
+      await Deno.mkdir(join(projectDir, "pages"), { recursive: true });
+      await Deno.writeTextFile(join(projectDir, "pages/cleanup.mdx"), "# Cleanup Test");
 
-    const adapter = new DenoAdapter();
-    const renderer = new VeryfrontRenderer({
-      projectDir,
-      mode: "development",
-      adapter,
-    });
+      const adapter = new DenoAdapter();
+      const renderer = new VeryfrontRenderer({
+        projectDir,
+        mode: "development",
+        adapter,
+      });
 
-    await renderer.initialize();
-    await renderer.renderPage("cleanup");
+      await renderer.initialize();
+      await renderer.renderPage("cleanup");
 
-    // Destroy should clean up all resources
-    await renderer.destroy();
+      // Destroy should clean up all resources
+      await renderer.destroy();
 
-    // Should not throw after destroy
-    await renderer.destroy();
-  } finally {
-    await cleanupTestDir(projectDir);
-  }
+      // Should not throw after destroy
+      await renderer.destroy();
+    } finally {
+      await cleanupTestDir(projectDir);
+    }
   });
 });

@@ -5,7 +5,6 @@ import { type TestContext, withTestContext } from "../../../_helpers/context.ts"
 
 describe(
   "CLI analyze-chunks",
-  
   () => {
     it("runs without throwing", async () => {
       await withTestContext("analyze-chunks", async (context: TestContext) => {

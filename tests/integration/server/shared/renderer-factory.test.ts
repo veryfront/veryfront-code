@@ -220,8 +220,14 @@ describe(
         const renderers = await Promise.all(promises);
 
         // All should return the same instance (use strict reference equality)
-        assert(renderers[0] === renderers[1], "renderers[0] should be same instance as renderers[1]");
-        assert(renderers[1] === renderers[2], "renderers[1] should be same instance as renderers[2]");
+        assert(
+          renderers[0] === renderers[1],
+          "renderers[0] should be same instance as renderers[1]",
+        );
+        assert(
+          renderers[1] === renderers[2],
+          "renderers[1] should be same instance as renderers[2]",
+        );
         assertEquals(getRendererCount(), 1);
       });
     });

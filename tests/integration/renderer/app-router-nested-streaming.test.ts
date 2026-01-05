@@ -4,9 +4,9 @@ import { join } from "https://deno.land/std@0.220.1/path/mod.ts";
 import { describe, it } from "std/testing/bdd.ts";
 import { withTestContext } from "../../_helpers/context.ts";
 
-  // Note: Sanitizers disabled due to React 19 SSR MessagePort cleanup issue
-  // See: https://github.com/facebook/react/issues/24669
-  describe(
+// Note: Sanitizers disabled due to React 19 SSR MessagePort cleanup issue
+// See: https://github.com/facebook/react/issues/24669
+describe(
   "App Router",
   {
     sanitizeResources: false,

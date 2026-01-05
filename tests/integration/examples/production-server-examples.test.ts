@@ -195,9 +195,9 @@ export default function ${name}${propsStr} {
 }
 
 // Example usage with factory
-  // Note: Sanitizers disabled due to React 19 SSR MessagePort cleanup issue
-  // See: https://github.com/facebook/react/issues/24669
-  describe(
+// Note: Sanitizers disabled due to React 19 SSR MessagePort cleanup issue
+// See: https://github.com/facebook/react/issues/24669
+describe(
   "MDX Processing",
   {
     // React 19's SSR implementation uses MessagePorts internally which causes leak detection

@@ -6,7 +6,10 @@
  */
 
 import { assertEquals, assertExists, assertStringIncludes } from "std/assert/mod.ts";
-import { type ErrorInfo, ErrorOverlay } from "../../../../src/server/dev-server/error-overlay/index.ts";
+import {
+  type ErrorInfo,
+  ErrorOverlay,
+} from "../../../../src/server/dev-server/error-overlay/index.ts";
 
 // Test: ErrorOverlay class exists and is constructable
 Deno.test({

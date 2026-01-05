@@ -7,10 +7,10 @@ import { assertEquals, assertExists } from "std/assert/mod.ts";
 
 // Import AI SDK v5 compatible types for testing
 import type {
+  ToolState,
+  ToolUIPart,
   UIMessage,
   UIMessagePart,
-  ToolUIPart,
-  ToolState,
 } from "../../src/ai/react/hooks/use-chat.ts";
 
 /**
@@ -269,8 +269,17 @@ describe("v5 UI Message Stream Protocol", () => {
       { type: "tool-input-start", toolCallId: "call-1", toolName: "getWeather" },
       { type: "tool-input-delta", toolCallId: "call-1", inputTextDelta: '{"city":' },
       { type: "tool-input-delta", toolCallId: "call-1", inputTextDelta: '"Tokyo"}' },
-      { type: "tool-input-available", toolCallId: "call-1", toolName: "getWeather", input: { city: "Tokyo" } },
-      { type: "tool-output-available", toolCallId: "call-1", output: { temp: 72, weather: "sunny" } },
+      {
+        type: "tool-input-available",
+        toolCallId: "call-1",
+        toolName: "getWeather",
+        input: { city: "Tokyo" },
+      },
+      {
+        type: "tool-output-available",
+        toolCallId: "call-1",
+        output: { temp: 72, weather: "sunny" },
+      },
       { type: "text-start", id: "text-1" },
       { type: "text-delta", id: "text-1", delta: "The weather in Tokyo is sunny." },
       { type: "text-end", id: "text-1" },

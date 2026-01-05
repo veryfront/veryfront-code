@@ -70,11 +70,11 @@ describe("Service Worker Generation", {
       const code = generateServiceWorker(createTestManifest());
 
       assert(code.includes("STATIC_CACHE_URLS"));
-      assert(code.includes("\"/\""));
-      assert(code.includes("\"/_veryfront/router.js\""));
-      assert(code.includes("\"/_veryfront/prefetch.js\""));
-      assert(code.includes("\"/_veryfront/manifest.json\""));
-      assert(code.includes("\"/sw.js\""));
+      assert(code.includes('"/"'));
+      assert(code.includes('"/_veryfront/router.js"'));
+      assert(code.includes('"/_veryfront/prefetch.js"'));
+      assert(code.includes('"/_veryfront/manifest.json"'));
+      assert(code.includes('"/sw.js"'));
     });
 
     it("should include manifest assets in static cache", () => {
@@ -98,10 +98,10 @@ describe("Service Worker Generation", {
 
       const code = generateServiceWorker(manifest);
 
-      assert(code.includes("\"/_veryfront/chunks/home-abc123.js\""));
-      assert(code.includes("\"/_veryfront/chunks/home-abc123.css\""));
-      assert(code.includes("\"/_veryfront/chunks/vendor-xyz.js\""));
-      assert(code.includes("\"/_veryfront/chunks/shared-1.js\""));
+      assert(code.includes('"/_veryfront/chunks/home-abc123.js"'));
+      assert(code.includes('"/_veryfront/chunks/home-abc123.css"'));
+      assert(code.includes('"/_veryfront/chunks/vendor-xyz.js"'));
+      assert(code.includes('"/_veryfront/chunks/shared-1.js"'));
     });
 
     it("should define cache strategies object", () => {
