@@ -46,6 +46,10 @@ export interface ModuleServerOptions {
   dev?: boolean;
   /** Project UUID for multi-project mode (from domain lookup) */
   projectUUID?: string;
+  /** Project slug for multi-project mode (from proxy headers or domain lookup) */
+  projectSlug?: string;
+  /** Branch name for branch-aware file resolution */
+  branch?: string | null;
 }
 
 /**
@@ -339,11 +343,11 @@ export async function serveModule(
 
   const filePathWithoutExt = modulePath.replace(/\.(?:mjs|js)$/i, "");
 
-  // Check for project context in query params (for SSR imports in proxy mode)
-  // Also extract from hostname as fallback using domain parser
-  // e.g., "shadcn-uizz--ffff.preview.lvh.me" → { slug: "shadcn-uizz", branch: "ffff" }
-  let projectSlug = url.searchParams.get("project");
-  let branch = url.searchParams.get("branch");
+  // Get project context from options (set by handler from proxy headers/domain lookup)
+  // Fall back to query params or hostname parsing for direct requests
+  // Priority: options > query params > hostname parsing
+  let projectSlug = options.projectSlug ?? url.searchParams.get("project");
+  let branch = options.branch ?? url.searchParams.get("branch");
   if (!projectSlug) {
     const parsedHost = parseProjectDomain(url.host);
     projectSlug = parsedHost.slug;

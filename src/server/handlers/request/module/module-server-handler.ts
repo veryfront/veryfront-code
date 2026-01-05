@@ -50,6 +50,9 @@ export async function handleModuleServer(
       adapter: ctx.adapter,
       dev: ctx.mode === "development",
       projectUUID: ctx.projectId,
+      // Pass project context from handler (set via proxy headers or domain lookup)
+      projectSlug: ctx.projectSlug,
+      branch: ctx.parsedDomain?.branch ?? null,
     });
 
     const builder = createResponseBuilder(ctx);
