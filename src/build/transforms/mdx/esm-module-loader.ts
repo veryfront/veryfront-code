@@ -193,6 +193,22 @@ async function transformReactImportsToAbsolute(code: string): Promise<string> {
 }
 
 /**
+ * Strip Deno shim code from esm.sh bundled modules.
+ * esm.sh includes `globalThis.Deno = globalThis.Deno || {...}` for Node.js compat,
+ * but this fails in actual Deno where globalThis.Deno is read-only.
+ */
+function stripDenoShim(code: string): string {
+  if (!isDeno) return code; // Only strip in Deno runtime
+
+  // Pattern to match the Deno shim block that esm.sh adds
+  // This matches: globalThis.Deno = globalThis.Deno || { env: { ... } };
+  const denoShimPattern =
+    /globalThis\.Deno\s*=\s*globalThis\.Deno\s*\|\|\s*\{[\s\S]*?env:\s*\{[\s\S]*?\}\s*\};?/g;
+
+  return code.replace(denoShimPattern, "/* Deno shim stripped for Deno runtime */");
+}
+
+/**
  * Add ?external=react,react-dom to esm.sh URLs for SSR.
  * This prevents esm.sh from bundling its own React copy,
  * ensuring all packages use our npm:react instance.
@@ -1394,6 +1410,8 @@ export default new Proxy(function(){}, handler);
     // Normalize React imports to use consistent npm: specifiers
     // This ensures MDX modules use the same React as third-party npm packages
     rewritten = normalizeReactToNpm(rewritten);
+    // Strip Deno shim from esm.sh bundled code (prevents read-only property error)
+    rewritten = stripDenoShim(rewritten);
 
     const codeHash = hashString(rewritten);
     const namespace = getCacheNamespace() || "default";

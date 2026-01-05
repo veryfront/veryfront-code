@@ -32,7 +32,11 @@
     "./oauth": "./src/core/oauth/index.ts",
     "./oauth/providers": "./src/core/oauth/providers/index.ts",
     "./oauth/handlers": "./src/core/oauth/handlers/index.ts",
-    "./oauth/token-store": "./src/core/oauth/token-store/index.ts"
+    "./oauth/token-store": "./src/core/oauth/token-store/index.ts",
+    "./head": "./src/exports/head.ts",
+    "./router": "./src/exports/router.ts",
+    "./context": "./src/exports/context.ts",
+    "./fonts": "./src/exports/fonts.ts"
   },
   "imports": {
     "@veryfront": "./src/index.ts",

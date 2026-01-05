@@ -17,6 +17,16 @@ function getVeryfrontAIReactPath(subpath: string = ""): string {
   return `file://${srcDir}/ai/react/${modulePath}`;
 }
 
+/**
+ * Get the absolute path to a veryfront export module for Deno SSR.
+ * Exports are located at: src/exports/{name}.ts
+ */
+function getVeryfrontExportPath(name: string): string {
+  const currentDir = new URL(".", import.meta.url).pathname;
+  const srcDir = currentDir.replace(/\/build\/transforms\/esm\/?$/, "");
+  return `file://${srcDir}/exports/${name}.ts`;
+}
+
 // Cache whether project has both react and react-dom
 let projectHasReactDom: boolean | null = null;
 
@@ -205,9 +215,16 @@ export async function resolveReactImports(code: string, forSSR: boolean = false)
   // Only transform veryfront-specific imports to file:// URLs.
   if (forSSR) {
     const denoSSRImports: Record<string, string> = {
+      // AI modules
       "veryfront/ai/react": getVeryfrontAIReactPath(),
       "veryfront/ai/components": getVeryfrontAIReactPath("components/index.ts"),
       "veryfront/ai/primitives": getVeryfrontAIReactPath("primitives/index.ts"),
+      // Framework exports - these need file:// URLs because SSR cache is in node_modules/.cache
+      // where Deno can't resolve bare veryfront/* imports from deno.json
+      "veryfront/head": getVeryfrontExportPath("head"),
+      "veryfront/router": getVeryfrontExportPath("router"),
+      "veryfront/context": getVeryfrontExportPath("context"),
+      "veryfront/fonts": getVeryfrontExportPath("fonts"),
     };
 
     return replaceSpecifiers(code, (specifier) => {

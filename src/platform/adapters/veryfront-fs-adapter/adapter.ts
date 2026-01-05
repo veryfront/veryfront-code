@@ -391,7 +391,13 @@ export class VeryfrontFSAdapter implements FSAdapter {
     });
   }
 
-  async readFile(path: string): Promise<Uint8Array> {
+  async readFile(path: string): Promise<string> {
+    await this.ensureInitialized();
+    console.log("[DEBUG] VeryfrontFSAdapter.readFile", { path });
+    return this.readOps.readTextFile(path);
+  }
+
+  async readFileBytes(path: string): Promise<Uint8Array> {
     await this.ensureInitialized();
     return this.readOps.readFile(path);
   }
@@ -474,16 +480,70 @@ export class VeryfrontFSAdapter implements FSAdapter {
    * Get the file path for a given entity ID (UUID).
    * This is used to resolve component UUIDs to their file paths.
    * Returns undefined if no file matches the entity ID.
+   * Synchronous version - only checks cache.
    */
   getFilePathByEntityId(entityId: string): string | undefined {
+    // In production mode, check published files cache
+    if (this.productionMode) {
+      const cacheKey = `files:published:${this.releaseId ?? "latest"}`;
+      const publishedFiles = this.cache.get(cacheKey) as
+        | Array<{ id?: string; path: string }>
+        | undefined;
+      if (publishedFiles) {
+        const file = publishedFiles.find((f) => f.id === entityId);
+        if (file?.path) return file.path;
+      }
+    }
+
+    // Check draft files cache (development mode or fallback)
     const branch = this.requestBranch || "main";
     const cachedFiles = this.cache.get(`files:all:${branch}`) as
       | Array<{ id?: string; path: string }>
       | undefined;
-    if (!cachedFiles) return undefined;
+    if (cachedFiles) {
+      const file = cachedFiles.find((f) => f.id === entityId);
+      if (file?.path) return file.path;
+    }
 
-    const file = cachedFiles.find((f) => f.id === entityId);
-    return file?.path;
+    return undefined;
+  }
+
+  /**
+   * Get the file path for a given entity ID (UUID) with API fallback.
+   * First checks cache, then tries components API.
+   * Returns path and optionally body content if available from components API.
+   */
+  async getFilePathByEntityIdAsync(
+    entityId: string,
+  ): Promise<{ path: string; body?: string } | undefined> {
+    // First try synchronous cache lookup
+    const cachedPath = this.getFilePathByEntityId(entityId);
+    if (cachedPath) {
+      return { path: cachedPath };
+    }
+
+    // Try components API (uses project slug)
+    try {
+      const component = await this.client.getComponentByEntityId(entityId);
+      if (component?.path) {
+        logger.info("[VeryfrontFSAdapter] Resolved entity via components API", {
+          entityId,
+          path: component.path,
+          hasBody: !!component.body,
+        });
+        return {
+          path: component.path,
+          body: component.body,
+        };
+      }
+    } catch (error) {
+      logger.debug("[VeryfrontFSAdapter] Components API lookup failed", {
+        entityId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+
+    return undefined;
   }
 
   /**

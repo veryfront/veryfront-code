@@ -51,10 +51,12 @@ export async function getEntityInfo(
   filePath: string,
   adapter?: RuntimeAdapter,
 ): Promise<EntityInfo | null> {
+  console.log("[DEBUG] getEntityInfo called", { filePath, hasAdapter: !!adapter });
   try {
     // Check file existence using adapter with fallback to local filesystem
     if (adapter) {
       try {
+        console.log("[DEBUG] getEntityInfo calling stat", { filePath });
         const stat = await withFallback(
           () => adapter.fs.stat(filePath),
           async () => {
@@ -72,6 +74,7 @@ export async function getEntityInfo(
           },
           { operationName: "stat:getEntityInfo", logError: false },
         );
+        console.log("[DEBUG] getEntityInfo stat result", { filePath, isFile: stat.isFile, isDir: stat.isDirectory });
         if (!stat.isFile) return null;
       } catch (error) {
         entityInfoScope.runSync(
@@ -87,6 +90,7 @@ export async function getEntityInfo(
       if (!(await fs.exists(filePath))) return null;
     }
 
+    console.log("[DEBUG] getEntityInfo passed stat check", { filePath });
     const content = adapter
       ? await withFallback(
         () => adapter.fs.readFile(filePath),
@@ -94,6 +98,7 @@ export async function getEntityInfo(
         { operationName: "readFile:getEntityInfo", logError: false },
       )
       : await fs.readTextFile(filePath);
+    console.log("[DEBUG] getEntityInfo readFile", { filePath, contentLength: content?.length ?? 0 });
     const ext = pathHelper.extname(filePath).toLowerCase();
 
     let frontmatter: Frontmatter = {};
@@ -189,6 +194,7 @@ export async function getEntityBySlug(
       const resolvedPath = await adapter.fs.resolveFile(basePath);
       if (resolvedPath) {
         const info = await getEntityInfo(resolvedPath, adapter);
+        console.log("[DEBUG] getEntityBySlug", { basePath, resolvedPath, hasInfo: !!info, isPage: info?.entity?.isPage });
         if (info?.entity.isPage) return info;
       }
     }

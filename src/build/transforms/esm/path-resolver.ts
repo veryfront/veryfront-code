@@ -15,6 +15,55 @@ const SSR_STUBS_DIR = join(
 // Key format: "url::export1,export2,export3" to ensure we regenerate if different exports are needed
 const stubFileCache = new Map<string, string>();
 
+// SSR-safe packages that should NOT be stubbed - they work fine in server-side rendering
+// These packages are pure JS/TS utilities without browser-only dependencies
+const SSR_SAFE_PACKAGES = new Set([
+  "zod", // Schema validation - works perfectly in SSR
+  "clsx", // Class name utility
+  "class-variance-authority", // CVA utility
+  "tailwind-merge", // Tailwind merge utility
+  "lodash", // Utility library
+  "date-fns", // Date utilities
+  "uuid", // UUID generation
+  "nanoid", // ID generation
+  "@tanstack/react-query", // React Query - SSR compatible
+  "@tanstack/query-core", // Query core - SSR compatible
+]);
+
+/**
+ * Check if a URL points to an SSR-safe package that should not be stubbed
+ */
+function isSSRSafePackage(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    // Extract package name from esm.sh URLs
+    // Examples: https://esm.sh/zod, https://esm.sh/zod@3.22.0, https://esm.sh/@tanstack/react-query@5
+    const pathname = parsed.pathname;
+    // Remove leading slash
+    const pathWithoutSlash = pathname.slice(1);
+
+    // Handle scoped packages like @tanstack/react-query
+    let packageName: string;
+    if (pathWithoutSlash.startsWith("@")) {
+      // Scoped package: @scope/package[@version]
+      const parts = pathWithoutSlash.split("/");
+      const scope = parts[0] || "";
+      const pkgWithVersion = parts[1] || "";
+      // Remove version suffix
+      const pkg = pkgWithVersion.split("@")[0] || pkgWithVersion;
+      packageName = `${scope}/${pkg}`;
+    } else {
+      // Regular package: package[@version]
+      const firstSegment = pathWithoutSlash.split("/")[0] || "";
+      packageName = firstSegment.split("@")[0] || "";
+    }
+
+    return SSR_SAFE_PACKAGES.has(packageName);
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Extract named imports from an import statement
  * e.g., "import { clsx, cn } from '...'" -> ["clsx", "cn"]
@@ -341,6 +390,12 @@ export async function blockExternalUrlImports(
 
   for (const imp of imports) {
     if (imp.n && (imp.n.startsWith("https://") || imp.n.startsWith("http://"))) {
+      // Skip SSR-safe packages - they work fine without stubbing
+      if (isSSRSafePackage(imp.n)) {
+        logger.debug("[path-resolver] Skipping SSR-safe package (no stub needed)", { url: imp.n });
+        continue;
+      }
+
       blockedUrls.push(imp.n);
 
       // Extract the full import statement to parse named imports

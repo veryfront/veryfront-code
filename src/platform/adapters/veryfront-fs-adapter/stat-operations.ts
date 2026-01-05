@@ -32,6 +32,8 @@ export class StatOperations {
       ? `file:stat:published:${releaseId ?? "latest"}:${normalizedPath}`
       : `file:stat:${this.client.getRequestBranch() || "main"}:${normalizedPath}`;
 
+    console.log("[DEBUG] stat called", { path, normalizedPath });
+
     logger.debug("[StatOperations] stat called", { path, normalizedPath, isProduction, releaseId });
 
     const cached = this.cache.get<FileInfo>(cacheKey);
@@ -54,6 +56,10 @@ export class StatOperations {
     }
 
     const file = fileIdx.get(normalizedPath);
+    const indexKeys = fileIdx ? Array.from(fileIdx.keys()).filter(k => k.includes("index")).slice(0, 3) : [];
+    if (normalizedPath.includes("index")) {
+      console.log("[DEBUG] stat lookup INDEX", { normalizedPath, found: !!file, indexSize: fileIdx?.size, indexKeys });
+    }
     if (file) {
       logger.debug("[StatOperations] stat found file", { normalizedPath });
       const info: FileInfo = {
@@ -212,6 +218,11 @@ export class StatOperations {
       ? `file:resolve:published:${releaseId ?? "latest"}:${normalizedPath}`
       : `file:resolve:${this.client.getRequestBranch() || "main"}:${normalizedPath}`;
 
+    await this.ensureIndexBuilt();
+    const fIdx = this.fileIndex;
+    const indexKeys = fIdx ? Array.from(fIdx.keys()).filter(k => k.includes("index")).slice(0, 5) : [];
+    console.log("[DEBUG] resolveFile", { basePath, normalizedPath, isProduction, indexKeys });
+
     logger.debug("[StatOperations] resolveFile called", {
       basePath,
       normalizedPath,
@@ -260,6 +271,7 @@ export class StatOperations {
     // 3. Try each extension in priority order from cached index
     for (const ext of EXTENSION_PRIORITY) {
       const pathWithExt = pathWithoutExt + ext;
+      console.log("[DEBUG] trying extension", { pathWithExt, found: fileIdx.has(pathWithExt) });
       if (fileIdx.has(pathWithExt)) {
         logger.debug("[StatOperations] resolveFile found with extension", { pathWithExt });
         this.cache.set(cacheKey, pathWithExt);
