@@ -93,8 +93,9 @@ export const getRendererScript = () => `
           if (!container.__reactRoot) {
             // Use hydrateRoot for initial render to preserve SSR content
             // This prevents flash/flicker when hydrating
+            // IMPORTANT: identifierPrefix must match SSR to prevent useId() mismatch
             const { hydrateRoot } = await import('react-dom/client');
-            const root = hydrateRoot(container, tree);
+            const root = hydrateRoot(container, tree, { identifierPrefix: 'vf' });
             container.__reactRoot = root;
             log('Client-side React app hydrated successfully');
           } else {

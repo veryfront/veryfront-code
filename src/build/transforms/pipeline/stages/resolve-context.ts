@@ -1,9 +1,11 @@
 /**
  * Resolve context stage - context packages → unified URLs.
  *
- * CRITICAL: This stage ensures SSR and browser resolve context-dependent packages
- * (like @tanstack/react-query) to IDENTICAL module instances, preventing
- * React context mismatch errors like "No QueryClient set".
+ * CRITICAL: This stage ensures context-dependent packages (like @tanstack/react-query)
+ * resolve to consistent module instances WITHIN each environment:
+ *
+ * - SSR uses npm: specifiers → Deno resolves locally, shares React with app
+ * - Browser uses esm.sh URLs with ?deps= → esm.sh bundles React internally
  *
  * Uses package-registry.ts as single source of truth for package URLs.
  */
@@ -11,34 +13,36 @@
 import { replaceSpecifiers } from "../../esm/lexer.ts";
 import {
   CONTEXT_PACKAGE_NAMES,
-  getContextPackageUrl,
+  getContextPackageUrlSSR,
+  getContextPackageUrlBrowser,
   isContextPackage,
 } from "../../esm/package-registry.ts";
 import { type TransformContext, type TransformPlugin, TransformStage } from "../types.ts";
 
 /**
- * Build import map from bare specifier to esm.sh URL for context packages.
+ * Build import map from bare specifier to resolved URL for context packages.
+ * Uses different URLs for SSR (npm:) vs browser (esm.sh).
  */
-function buildContextImportMap(): Record<string, string> {
+function buildContextImportMap(ssr: boolean): Record<string, string> {
   const map: Record<string, string> = {};
   for (const pkg of CONTEXT_PACKAGE_NAMES) {
-    map[pkg] = getContextPackageUrl(pkg);
+    map[pkg] = ssr ? getContextPackageUrlSSR(pkg) : getContextPackageUrlBrowser(pkg);
   }
   return map;
 }
 
 /**
- * Resolve context plugin - ensures context packages resolve to unified URLs.
+ * Resolve context plugin - ensures context packages resolve consistently.
  *
- * This runs for BOTH SSR and browser to ensure identical module instances.
- * The package-registry.ts provides URLs that work in both environments.
+ * SSR: Uses npm: specifiers so Deno resolves locally (shares React with deno.json)
+ * Browser: Uses esm.sh URLs with ?deps= to pin React version
  */
 export const resolveContextPlugin: TransformPlugin = {
   name: "resolve-context",
   stage: TransformStage.RESOLVE_CONTEXT,
 
   async transform(ctx: TransformContext): Promise<string> {
-    const importMap = buildContextImportMap();
+    const importMap = buildContextImportMap(ctx.target === "ssr");
 
     return await replaceSpecifiers(ctx.code, (specifier) => {
       // Check if this is a context package that needs unified resolution
