@@ -29,15 +29,33 @@ function getVeryfrontSsrImportMap(): Record<string, string> {
   };
 }
 
+/**
+ * Get npm: mappings for common packages that need consistent module instances.
+ * Using npm: ensures all imports resolve to the same module, avoiding
+ * the React context mismatch issue when using different esm.sh URLs.
+ */
+function getCommonPackagesNpmMap(): Record<string, string> {
+  return {
+    // TanStack Query - commonly used, must be single instance for context to work
+    "@tanstack/react-query": "npm:@tanstack/react-query@5",
+    "@tanstack/query-core": "npm:@tanstack/query-core@5",
+    // Theme providers
+    "next-themes": "npm:next-themes@0.4",
+    // Animation libraries
+    "framer-motion": "npm:framer-motion@11",
+  };
+}
+
 export function getDefaultImportMap(): ImportMapConfig {
   const reactVersion = REACT_DEFAULT_VERSION;
 
   if (!IS_TRUE_NODE) {
-    // Deno: use npm: for React and local exports for veryfront/*
+    // Deno: use npm: for React, common packages, and local exports for veryfront/*
     return {
       imports: {
         ...getNpmReactImportMap(reactVersion),
         ...getVeryfrontSsrImportMap(),
+        ...getCommonPackagesNpmMap(),
       },
     };
   }

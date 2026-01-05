@@ -14,6 +14,7 @@ import { RequestHandler } from "./request-handler.ts";
 import { setupMiddleware } from "./middleware.ts";
 import { RouteDiscovery } from "./route-discovery.ts";
 import { FileWatchSetup } from "./file-watch-setup.ts";
+import { setSSRServerPort, enableSSRFetchInterception } from "../../rendering/ssr-globals.ts";
 
 export class DevServer {
   private router: DynamicRouter;
@@ -87,6 +88,11 @@ export class DevServer {
     // Set VERYFRONT_DEV_PORT for ESM module loader HTTP fallback
     // This ensures the correct port is used when fetching modules via localhost
     Deno.env.set("VERYFRONT_DEV_PORT", String(this.options.port));
+
+    // Enable SSR fetch interception for local development
+    // This rewrites fetch URLs from project domains to localhost
+    setSSRServerPort(this.options.port);
+    enableSSRFetchInterception();
 
     await this.logRSCStatus();
 

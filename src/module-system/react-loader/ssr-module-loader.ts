@@ -750,12 +750,13 @@ export class SSRModuleLoader {
       return existingDir;
     }
 
-    // Use node_modules/.cache for consistent temp directory across Node/Deno
-    // This avoids temp dir leaks and enables cross-request caching
-    // Include projectId in path to isolate temp files between projects
+    // Use .cache/ at project root (outside node_modules) for SSR temp files
+    // This is critical for Deno: files in node_modules use Node.js compat mode
+    // which doesn't support https:// imports. Files outside node_modules
+    // use Deno's native module resolution which supports HTTP imports natively.
+    // For Node/Bun support, we'll use esbuild to bundle HTTP imports.
     const tmpDir = join(
       projectDir,
-      "node_modules",
       ".cache",
       "veryfront-ssr",
       projectId || "default",

@@ -247,6 +247,18 @@ const createWindowStub = () => ({
 });
 
 /**
+ * Create a stub class for DOM element types.
+ * Used by libraries like framer-motion that check instanceof.
+ */
+// deno-lint-ignore no-explicit-any
+function createElementClass(name: string): any {
+  // Create a named class for better debugging
+  const ElementClass = class {};
+  Object.defineProperty(ElementClass, "name", { value: name });
+  return ElementClass;
+}
+
+/**
  * Set up browser globals for SSR
  * Safe to call multiple times - only initializes once
  */
@@ -277,7 +289,129 @@ export function setupSSRGlobals(): void {
   // Self-reference
   (globalThis as Record<string, unknown>).self = windowStub;
 
+  // DOM Element classes - needed by framer-motion and other animation libraries
+  // These check `instanceof SVGElement` etc to determine element types
+  if (typeof globalThis.Element === "undefined") {
+    (globalThis as Record<string, unknown>).Element = createElementClass("Element");
+  }
+  if (typeof globalThis.HTMLElement === "undefined") {
+    (globalThis as Record<string, unknown>).HTMLElement = createElementClass("HTMLElement");
+  }
+  if (typeof globalThis.SVGElement === "undefined") {
+    (globalThis as Record<string, unknown>).SVGElement = createElementClass("SVGElement");
+  }
+  if (typeof globalThis.Node === "undefined") {
+    (globalThis as Record<string, unknown>).Node = createElementClass("Node");
+  }
+  if (typeof globalThis.Text === "undefined") {
+    (globalThis as Record<string, unknown>).Text = createElementClass("Text");
+  }
+  if (typeof globalThis.Comment === "undefined") {
+    (globalThis as Record<string, unknown>).Comment = createElementClass("Comment");
+  }
+  if (typeof globalThis.DocumentFragment === "undefined") {
+    (globalThis as Record<string, unknown>).DocumentFragment = createElementClass("DocumentFragment");
+  }
+
   ssrGlobalsInitialized = true;
+}
+
+// Track SSR server port and project domain for fetch rewriting
+let ssrServerPort: number | null = null;
+let ssrProjectDomain: string | null = null;
+const originalFetch = globalThis.fetch;
+
+/**
+ * Set the SSR server port for fetch URL rewriting.
+ * Called by the dev server when starting.
+ */
+export function setSSRServerPort(port: number): void {
+  ssrServerPort = port;
+}
+
+/**
+ * Set the current project domain for fetch URL rewriting.
+ * Called during SSR request handling.
+ */
+export function setSSRProjectDomain(domain: string | null): void {
+  ssrProjectDomain = domain;
+}
+
+/**
+ * Rewrite fetch URL for SSR.
+ * Redirects requests to the project's own domain to the local server.
+ */
+function rewriteFetchUrlForSSR(url: string): string {
+  if (!ssrServerPort) return url;
+
+  try {
+    const parsed = new URL(url);
+
+    // Rewrite if hostname matches the current project domain
+    if (ssrProjectDomain && parsed.hostname === ssrProjectDomain) {
+      return `http://localhost:${ssrServerPort}${parsed.pathname}${parsed.search}`;
+    }
+
+    // Also rewrite common project domains (for known projects)
+    const knownProjectDomains = [
+      "codersociety.com",
+      "www.codersociety.com",
+    ];
+
+    if (knownProjectDomains.some((d) => parsed.hostname === d)) {
+      return `http://localhost:${ssrServerPort}${parsed.pathname}${parsed.search}`;
+    }
+  } catch {
+    // Invalid URL, return as-is
+  }
+
+  return url;
+}
+
+/**
+ * Create SSR fetch wrapper that rewrites URLs for local development.
+ */
+function createSSRFetch(): typeof fetch {
+  return (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    let url: string;
+    if (typeof input === "string") {
+      url = input;
+    } else if (input instanceof URL) {
+      url = input.toString();
+    } else {
+      url = input.url;
+    }
+
+    const rewrittenUrl = rewriteFetchUrlForSSR(url);
+    if (rewrittenUrl !== url) {
+      // Create new request with rewritten URL
+      if (typeof input === "string" || input instanceof URL) {
+        return originalFetch(rewrittenUrl, init);
+      } else {
+        // Clone request with new URL
+        return originalFetch(new Request(rewrittenUrl, input), init);
+      }
+    }
+
+    return originalFetch(input, init);
+  };
+}
+
+/**
+ * Enable SSR fetch interception.
+ * Replaces globalThis.fetch with a wrapper that rewrites URLs.
+ */
+export function enableSSRFetchInterception(): void {
+  if (!ssrServerPort) return;
+  (globalThis as Record<string, unknown>).fetch = createSSRFetch();
+}
+
+/**
+ * Disable SSR fetch interception.
+ * Restores the original fetch.
+ */
+export function disableSSRFetchInterception(): void {
+  (globalThis as Record<string, unknown>).fetch = originalFetch;
 }
 
 /**

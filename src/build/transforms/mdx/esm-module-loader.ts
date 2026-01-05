@@ -12,6 +12,13 @@ import { isDeno, isNode } from "../../../platform/compat/runtime.ts";
 import { cwd } from "../../../platform/compat/process.ts";
 import { transformToESM } from "../esm-transform.ts";
 import type { RuntimeAdapter } from "../../../platform/adapters/base.ts";
+import {
+  createHTTPPlugin,
+  getReactAliases,
+  hasHttpImports,
+  stripDenoShim,
+} from "../esm/http-bundler.ts";
+import { setupSSRGlobals } from "../../../rendering/ssr-globals.ts";
 
 // True Node.js runtime (not Deno with Node.js compat)
 const IS_TRUE_NODE = isNode && !isDeno;
@@ -21,14 +28,12 @@ const LOG_PREFIX_MDX_LOADER = "[mdx-loader]";
 const LOG_PREFIX_MDX_RENDERER = "[mdx-renderer]";
 const JSX_IMPORT_PATTERN = /import\s+([^'"]+)\s+from\s+['"]file:\/\/([^'"]+\.(jsx|tsx))['"];?/g;
 const REACT_IMPORT_PATTERN = /import\s+.*React.*\s+from\s+['"]react['"]/;
-const HTTP_IMPORT_PATTERN = /['"]https?:\/\/[^'"]+['"]/;
 // Pattern for @/ aliased imports (project-relative paths)
 const PROJECT_ALIAS_IMPORT_PATTERN = /import\s+([^'"]+)\s+from\s+['"]@\/([^'"]+)['"];?/g;
 // Pattern for /_vf_modules/ imports (browser-style module URLs)
 const MODULE_SERVER_IMPORT_PATTERN = /from\s+["']\/?_vf_modules\/([^"']+)["']/g;
 const ESBUILD_JSX_FACTORY = "React.createElement";
 const ESBUILD_JSX_FRAGMENT = "React.Fragment";
-const HTTP_MODULE_FETCH_TIMEOUT_MS = 30000;
 
 // Cache for resolved react package paths (Node.js only)
 const _resolvedPaths: Record<string, string | null> = {};
@@ -192,162 +197,6 @@ async function transformReactImportsToAbsolute(code: string): Promise<string> {
   return result;
 }
 
-/**
- * Strip Deno shim code from esm.sh bundled modules.
- * esm.sh includes `globalThis.Deno = globalThis.Deno || {...}` for Node.js compat,
- * but this fails in actual Deno where globalThis.Deno is read-only.
- */
-function stripDenoShim(code: string): string {
-  if (!isDeno) return code; // Only strip in Deno runtime
-
-  // Pattern to match the Deno shim block that esm.sh adds
-  // This matches: globalThis.Deno = globalThis.Deno || { env: { ... } };
-  const denoShimPattern =
-    /globalThis\.Deno\s*=\s*globalThis\.Deno\s*\|\|\s*\{[\s\S]*?env:\s*\{[\s\S]*?\}\s*\};?/g;
-
-  return code.replace(denoShimPattern, "/* Deno shim stripped for Deno runtime */");
-}
-
-/**
- * Add ?external=react,react-dom to esm.sh URLs for SSR.
- * This prevents esm.sh from bundling its own React copy,
- * ensuring all packages use our npm:react instance.
- */
-function addExternalToEsmShUrls(code: string): string {
-  if (IS_TRUE_NODE) return code; // Only for Deno
-
-  // Match esm.sh URLs that don't already have external param
-  return code.replace(
-    /from\s+["'](https:\/\/esm\.sh\/[^"']+)["']/g,
-    (match, url) => {
-      // Skip if already has external param
-      if (url.includes("external=")) {
-        return match;
-      }
-      // Skip React packages - they're normalized separately
-      if (url.includes("/react@") || url.includes("/react-dom@")) {
-        return match;
-      }
-      // Add external param
-      const separator = url.includes("?") ? "&" : "?";
-      return `from "${url}${separator}external=react,react-dom"`;
-    },
-  );
-}
-
-/**
- * Normalize React imports to use consistent npm: specifiers for Deno SSR.
- * Third-party packages like @tanstack/react-query always use npm:react,
- * so we must use npm: everywhere to ensure consistent React instances.
- *
- * CRITICAL: For SSR, we convert jsx-dev-runtime to jsx-runtime because:
- * - jsx-dev-runtime's jsxDEV export becomes undefined when NODE_ENV=production
- * - This can happen when production tests run before development tests
- * - Using jsx-runtime ensures consistent behavior regardless of NODE_ENV
- */
-function normalizeReactToNpm(code: string): string {
-  if (IS_TRUE_NODE) return code; // Only for Deno
-
-  // Use explicit version to ensure consistent resolution
-  const REACT_VERSION = "18.3.1";
-  let result = code;
-
-  // CRITICAL FIX: Convert jsx-dev-runtime imports to jsx-runtime for SSR
-  // This prevents "_jsxDEV is not a function" errors when NODE_ENV=production
-  // because React's jsx-dev-runtime exports jsxDEV as undefined in production mode.
-  //
-  // Transform: import {jsxDEV as _jsxDEV, Fragment as _Fragment} from "react/jsx-dev-runtime"
-  // To:        import {jsx as _jsxDEV, Fragment as _Fragment} from "react/jsx-runtime"
-  result = result.replace(
-    /import\s*\{([^}]*)\bjsxDEV\s+as\s+(\w+)([^}]*)\}\s*from\s*["']([^"']*\/?)jsx-dev-runtime["']/g,
-    (_match, before, alias, after, prefix) => {
-      // Preserve any other imports in the same statement, just change jsxDEV to jsx
-      return `import {${before}jsx as ${alias}${after}} from "${prefix}jsx-runtime"`;
-    },
-  );
-
-  // Also handle simple jsxDEV imports without "as" alias
-  result = result.replace(
-    /import\s*\{([^}]*)\bjsxDEV\b([^}]*)\}\s*from\s*["']([^"']*\/?)jsx-dev-runtime["']/g,
-    (_match, before, after, prefix) => {
-      return `import {${before}jsx${after}} from "${prefix}jsx-runtime"`;
-    },
-  );
-
-  // IMPORTANT: Process subpath imports FIRST (jsx-runtime, jsx-dev-runtime, server)
-  // before processing base imports.
-
-  // 1. Normalize esm.sh URLs WITH subpaths to npm: specifiers
-  // Note: jsx-dev-runtime -> jsx-runtime conversion (for SSR stability)
-  result = result.replace(
-    /from\s+['"]https:\/\/esm\.sh\/react@[^'"\/]+\/jsx-dev-runtime[^'"]*['"]/g,
-    `from "npm:react@${REACT_VERSION}/jsx-runtime"`,
-  );
-  result = result.replace(
-    /from\s+['"]https:\/\/esm\.sh\/react@[^'"\/]+\/jsx-runtime[^'"]*['"]/g,
-    `from "npm:react@${REACT_VERSION}/jsx-runtime"`,
-  );
-  result = result.replace(
-    /from\s+['"]https:\/\/esm\.sh\/react-dom@[^'"\/]+\/server[^'"]*['"]/g,
-    `from "npm:react-dom@${REACT_VERSION}/server"`,
-  );
-
-  // 2. Normalize unversioned npm: specifiers WITH subpaths
-  // Note: jsx-dev-runtime -> jsx-runtime conversion (for SSR stability)
-  result = result.replace(
-    /from\s+['"]npm:react\/jsx-dev-runtime['"]/g,
-    `from "npm:react@${REACT_VERSION}/jsx-runtime"`,
-  );
-  result = result.replace(
-    /from\s+['"]npm:react\/jsx-runtime['"]/g,
-    `from "npm:react@${REACT_VERSION}/jsx-runtime"`,
-  );
-  result = result.replace(
-    /from\s+['"]npm:react-dom\/server['"]/g,
-    `from "npm:react-dom@${REACT_VERSION}/server"`,
-  );
-
-  // 3. Normalize bare react/jsx-dev-runtime imports (before esm.sh transformation)
-  // Note: jsx-dev-runtime -> jsx-runtime conversion (for SSR stability)
-  result = result.replace(
-    /from\s+['"]react\/jsx-dev-runtime['"]/g,
-    `from "npm:react@${REACT_VERSION}/jsx-runtime"`,
-  );
-  result = result.replace(
-    /from\s+['"]react\/jsx-runtime['"]/g,
-    `from "npm:react@${REACT_VERSION}/jsx-runtime"`,
-  );
-
-  // 4. Normalize esm.sh base URLs to npm:
-  result = result.replace(
-    /from\s+['"]https:\/\/esm\.sh\/react@[^'"\/]+['"]/g,
-    `from "npm:react@${REACT_VERSION}"`,
-  );
-  result = result.replace(
-    /from\s+['"]https:\/\/esm\.sh\/react-dom@[^'"\/]+['"]/g,
-    `from "npm:react-dom@${REACT_VERSION}"`,
-  );
-
-  // 5. Normalize unversioned npm: base specifiers
-  result = result.replace(
-    /from\s+['"]npm:react['"]/g,
-    `from "npm:react@${REACT_VERSION}"`,
-  );
-  result = result.replace(
-    /from\s+['"]npm:react-dom['"]/g,
-    `from "npm:react-dom@${REACT_VERSION}"`,
-  );
-
-  // 6. Normalize @tanstack/react-query to esm.sh for consistent context sharing
-  // All react-query imports must use the same source to share QueryClient context
-  result = result.replace(
-    /from\s+['"]npm:@tanstack\/react-query(?:@[^'"\/]+)?['"]/g,
-    `from "https://esm.sh/@tanstack/react-query?external=react,react-dom"`,
-  );
-
-  return result;
-}
-
 export interface ESMLoaderContext {
   esmCacheDir?: string;
   moduleCache: LRUCache<string, MDXModule>;
@@ -383,81 +232,6 @@ export async function clearESMDiskCache(): Promise<void> {
       logger.warn(`${LOG_PREFIX_MDX_LOADER} Failed to clear ESM disk cache`, error);
     }
   }
-}
-
-/**
- * Creates an esbuild plugin to fetch and bundle HTTP/HTTPS imports.
- * This allows Node.js to use remote imports via esbuild bundling.
- */
-function createHTTPPluginForMDX(): import("esbuild").Plugin {
-  return {
-    name: "vf-mdx-http-fetch",
-    setup(build) {
-      // Intercept HTTP/HTTPS imports
-      build.onResolve({ filter: /^(http|https):\/\// }, (args) => ({
-        path: args.path,
-        namespace: "http-url",
-      }));
-
-      // Resolve relative imports within HTTP modules
-      build.onResolve({ filter: /.*/, namespace: "http-url" }, (args) => {
-        if (args.path.startsWith("http://") || args.path.startsWith("https://")) {
-          return { path: args.path, namespace: "http-url" };
-        }
-        try {
-          const resolved = new URL(args.path, args.importer).toString();
-          return { path: resolved, namespace: "http-url" };
-        } catch {
-          return undefined;
-        }
-      });
-
-      // Fetch and return HTTP module contents
-      build.onLoad({ filter: /.*/, namespace: "http-url" }, async (args) => {
-        let requestUrl = args.path;
-        try {
-          const u = new URL(args.path);
-          // Optimize esm.sh URLs
-          if (u.hostname === "esm.sh") {
-            if (u.pathname.includes("/denonext/")) {
-              u.pathname = u.pathname.replace("/denonext/", "/");
-            }
-            u.searchParams.set("target", "es2020");
-            u.searchParams.set("bundle", "true");
-            requestUrl = u.toString();
-          }
-        } catch {
-          // Use original URL if parsing fails
-        }
-
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), HTTP_MODULE_FETCH_TIMEOUT_MS);
-        try {
-          const res = await fetch(requestUrl, {
-            headers: { "user-agent": "Mozilla/5.0 Veryfront/1.0" },
-            signal: controller.signal,
-          });
-          clearTimeout(timeout);
-
-          if (!res.ok) {
-            return {
-              errors: [{ text: `Failed to fetch ${args.path}: ${res.status}` }],
-            };
-          }
-
-          const text = await res.text();
-          return { contents: text, loader: "js" };
-        } catch (e) {
-          clearTimeout(timeout);
-          return {
-            errors: [{
-              text: `Failed to fetch ${args.path}: ${e instanceof Error ? e.message : String(e)}`,
-            }],
-          };
-        }
-      });
-    },
-  };
 }
 
 interface FSAdapter {
@@ -989,11 +763,7 @@ export async function loadModuleESM(
               return null;
             }
             let moduleCode = await response.text();
-            // Add external param to esm.sh URLs to prevent React bundling
-            moduleCode = addExternalToEsmShUrls(moduleCode);
-            // Normalize React imports to npm:
-            moduleCode = normalizeReactToNpm(moduleCode);
-            // HTTP imports will be bundled by esbuild later
+            // Note: React normalization is handled by esbuild aliasing when loading the module
 
             // Find and recursively process any /_vf_modules/ imports
             const vfModuleImportPattern = /from\s+["'](\/?_vf_modules\/[^"'?]+)(?:\?[^"']*)?["']/g;
@@ -1102,12 +872,7 @@ export async function loadModuleESM(
             throw transformError;
           }
 
-          // Add external param to esm.sh URLs to prevent React bundling
-          moduleCode = addExternalToEsmShUrls(moduleCode);
-          // Normalize React imports to npm:
-          moduleCode = normalizeReactToNpm(moduleCode);
-          // HTTP imports are handled by esbuild bundling earlier in the pipeline
-          // No stub blocking needed - real code is bundled for SSR
+          // Note: React normalization is handled by esbuild aliasing when loading the module
 
           // Find and recursively process any /_vf_modules/ imports
           const vfModuleImportPattern = /from\s+["'](\/?_vf_modules\/[^"'?]+)(?:\?[^"']*)?["']/g;
@@ -1355,7 +1120,12 @@ export default new Proxy(function(){}, handler);
 
     // Bundle HTTP imports via esbuild for both Node.js and Deno
     // This allows real code to run during SSR instead of no-op stubs
-    if (HTTP_IMPORT_PATTERN.test(rewritten)) {
+    const codeHasHttpImports = hasHttpImports(rewritten);
+    logger.info(`${LOG_PREFIX_MDX_LOADER} HTTP imports check`, {
+      hasHttpImports: codeHasHttpImports,
+      codePreview: rewritten.substring(0, 500),
+    });
+    if (codeHasHttpImports) {
       logger.info(`${LOG_PREFIX_MDX_LOADER} Bundling HTTP imports via esbuild`);
       const { build } = await import("esbuild/mod.js");
 
@@ -1364,6 +1134,7 @@ export default new Proxy(function(){}, handler);
       await adapter.fs.writeFile(tempSourcePath, rewritten);
 
       try {
+        const reactAliases = getReactAliases();
         const result = await build({
           entryPoints: [tempSourcePath],
           bundle: true,
@@ -1371,9 +1142,11 @@ export default new Proxy(function(){}, handler);
           platform: "neutral",
           target: "es2020",
           write: false,
-          plugins: [createHTTPPluginForMDX()],
+          plugins: [createHTTPPlugin()],
+          // Use aliases to normalize all React imports to npm:react@version
+          alias: reactAliases,
           // Mark npm packages as external so they're not bundled
-          external: ["react", "react-dom", "react/jsx-runtime", "react/jsx-dev-runtime"],
+          external: Object.values(reactAliases),
         });
 
         const bundledCode = result.outputFiles?.[0]?.text;
@@ -1405,12 +1178,8 @@ export default new Proxy(function(){}, handler);
       }
     }
 
-    // Add external param to esm.sh URLs to prevent React bundling
-    rewritten = addExternalToEsmShUrls(rewritten);
-    // Normalize React imports to use consistent npm: specifiers
-    // This ensures MDX modules use the same React as third-party npm packages
-    rewritten = normalizeReactToNpm(rewritten);
     // Strip Deno shim from esm.sh bundled code (prevents read-only property error)
+    // Note: esbuild aliasing handles React normalization, so we only need to strip the shim
     rewritten = stripDenoShim(rewritten);
 
     const codeHash = hashString(rewritten);
@@ -1457,6 +1226,11 @@ export default new Proxy(function(){}, handler);
       filePath,
       codePreview: rewritten.substring(0, 300),
     });
+
+    // Set up browser globals before importing - required for libraries like
+    // framer-motion that check for SVGElement during module initialization
+    setupSSRGlobals();
+
     const mod = await import(`file://${filePath}?v=${codeHash}`) as Record<string, unknown> & {
       __vfLayout?: React.ComponentType;
     };

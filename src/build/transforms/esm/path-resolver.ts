@@ -122,63 +122,19 @@ export function resolveCrossProjectImports(
 }
 
 /**
- * Convert esm.sh URLs to npm: specifiers for SSR mode.
+ * Pass-through function for SSR mode.
  *
- * When transformed code is written to a temp file and imported via file://,
- * nested https:// imports don't work. Instead of stubbing packages, we convert
- * esm.sh URLs to npm: specifiers which Deno supports natively.
+ * External URL imports (esm.sh, etc.) are left as-is. The esm-module-loader's
+ * esbuild bundling handles HTTP imports properly by fetching and bundling them.
  *
- * Example: https://esm.sh/@tanstack/react-query@5?external=react → npm:@tanstack/react-query@5
+ * This function exists for interface compatibility but doesn't transform anything.
  */
-export async function blockExternalUrlImports(
+export function blockExternalUrlImports(
   code: string,
   _filePath: string,
 ): Promise<BlockExternalUrlResult> {
-  const blockedUrls: string[] = [];
-
-  // Convert esm.sh URLs to npm: specifiers
-  const transformedCode = await replaceSpecifiers(code, (specifier) => {
-    if (specifier.startsWith("https://esm.sh/")) {
-      const npmSpec = esmShUrlToNpmSpecifier(specifier);
-      if (npmSpec) {
-        blockedUrls.push(specifier);
-        logger.debug("[path-resolver] Converting esm.sh to npm:", { from: specifier, to: npmSpec });
-        return npmSpec;
-      }
-    }
-    return null;
-  });
-
-  return { code: transformedCode, blockedUrls };
-}
-
-/**
- * Convert an esm.sh URL to an npm: specifier.
- *
- * Examples:
- *   https://esm.sh/zod → npm:zod
- *   https://esm.sh/zod@3.22.0 → npm:zod@3.22.0
- *   https://esm.sh/@tanstack/react-query@5 → npm:@tanstack/react-query@5
- *   https://esm.sh/@tanstack/react-query@5?external=react → npm:@tanstack/react-query@5
- */
-function esmShUrlToNpmSpecifier(url: string): string | null {
-  try {
-    const parsed = new URL(url);
-    if (parsed.host !== "esm.sh") return null;
-
-    // Get pathname without leading slash
-    let path = parsed.pathname.slice(1);
-
-    // Remove any trailing slashes
-    path = path.replace(/\/+$/, "");
-
-    // Handle empty path
-    if (!path) return null;
-
-    return `npm:${path}`;
-  } catch {
-    return null;
-  }
+  // No transformation - let esbuild bundle HTTP imports in esm-module-loader
+  return Promise.resolve({ code, blockedUrls: [] });
 }
 
 /**

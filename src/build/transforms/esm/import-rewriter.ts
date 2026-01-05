@@ -67,6 +67,15 @@ export function rewriteBareImports(code: string, _moduleServerUrl?: string): Pro
   // Always use esm.sh URLs for React packages in browser mode
   // The _vendor/ path approach requires a handler to serve vendor modules,
   // which is not implemented. Using esm.sh ensures React is loaded correctly.
+  // Packages that should be kept as bare specifiers for HTML import map to resolve
+  // These need consistent module instances, so HTML import map handles them
+  const htmlImportMapPackages = [
+    "@tanstack/react-query",
+    "@tanstack/query-core",
+    "next-themes",
+    "framer-motion",
+  ];
+
   const importMap: Record<string, string> = {
     "react": `https://esm.sh/react@${REACT_DEFAULT_VERSION}`,
     "react-dom": `https://esm.sh/react-dom@${REACT_DEFAULT_VERSION}`,
@@ -74,8 +83,6 @@ export function rewriteBareImports(code: string, _moduleServerUrl?: string): Pro
     "react-dom/server": `https://esm.sh/react-dom@${REACT_DEFAULT_VERSION}/server`,
     "react/jsx-runtime": `https://esm.sh/react@${REACT_DEFAULT_VERSION}/jsx-runtime`,
     "react/jsx-dev-runtime": `https://esm.sh/react@${REACT_DEFAULT_VERSION}/jsx-dev-runtime`,
-    // React Query must use same URL as HTML import map to avoid multiple module instances
-    "@tanstack/react-query": `https://esm.sh/@tanstack/react-query@5?external=react`,
     // NOTE: veryfront/ai/react is NOT rewritten here - it's handled by the HTML import map
     // which points to /_veryfront/lib/ai/react.js served from the local package
   };
@@ -102,6 +109,15 @@ export function rewriteBareImports(code: string, _moduleServerUrl?: string): Pro
     // Normalize: strip inline version specifiers (e.g., tailwindcss@3.4.17 -> tailwindcss)
     // This allows the import map in HTML to control the actual version
     const normalized = normalizeVersionedSpecifier(specifier);
+
+    // Check if this package should be kept as a bare specifier for HTML import map
+    // This ensures consistent module instances for context-dependent packages
+    const matchesImportMapPackage = htmlImportMapPackages.some(
+      (pkg) => normalized === pkg || normalized.startsWith(`${pkg}/`),
+    );
+    if (matchesImportMapPackage) {
+      return null; // Keep as bare specifier - HTML import map will resolve it
+    }
 
     // Pin tailwindcss to unified version to prevent multiple versions loading
     let finalSpecifier = normalized;
