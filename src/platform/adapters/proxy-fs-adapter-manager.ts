@@ -57,16 +57,24 @@ export class ProxyFSAdapterManager {
       existing.lastAccessed = Date.now();
       existing.adapter.setRequestToken(effectiveToken);
 
-      // Update production mode and releaseId for cached adapters
-      // This ensures custom domain requests use the correct release
+      // Always update production mode for cached adapters
+      // This ensures the adapter's mode matches the current request
       const effectiveProductionMode = productionMode ?? this.productionMode;
       const effectiveReleaseId = releaseId ?? this.releaseId;
-      if (effectiveProductionMode) {
-        existing.adapter.setProductionMode(
-          effectiveProductionMode,
-          effectiveReleaseId ?? undefined,
-        );
-      }
+
+      logger.info("[ProxyFSAdapterManager] Reusing cached adapter", {
+        projectSlug,
+        requestProductionMode: productionMode,
+        effectiveProductionMode,
+        effectiveReleaseId: effectiveReleaseId ?? "null",
+      });
+
+      // Set production mode on every request to ensure index is correct
+      // This will clear the index if mode changes
+      existing.adapter.setProductionMode(
+        effectiveProductionMode,
+        effectiveReleaseId ?? undefined,
+      );
 
       if (existing.initializing) {
         await existing.initializing;

@@ -95,6 +95,12 @@ export class MultiProjectFSAdapter implements FSAdapter {
     const context = asyncLocalStorage.getStore();
 
     if (!context) {
+      // Log at info level to debug production issues
+      logger.info("[MultiProjectFSAdapter] No context available", {
+        hasDefaultAdapter: !!this.defaultAdapter,
+        stack: new Error().stack?.split("\n").slice(0, 10).join("\n"),
+      });
+
       if (this.defaultAdapter) {
         return Promise.resolve(this.defaultAdapter);
       }
@@ -111,10 +117,11 @@ export class MultiProjectFSAdapter implements FSAdapter {
     const productionMode = context.productionMode ?? this.productionMode;
     const releaseId = context.releaseId ?? this.releaseId;
 
-    // Debug level - this is called on every filesystem operation
-    logger.debug("[MultiProjectFSAdapter] getAdapter", {
+    // Log at info level to debug context propagation issues
+    logger.info("[MultiProjectFSAdapter] getAdapter with context", {
       projectSlug: context.projectSlug,
       productionMode,
+      hasProjectId: !!context.projectId,
     });
 
     return this.manager.getAdapter(
