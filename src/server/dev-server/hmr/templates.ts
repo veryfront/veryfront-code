@@ -113,7 +113,6 @@ export function generateHMRClientTemplate(
         // where layouts and pages are dynamically loaded
         if (window.__veryfrontRenderPage) {
           window.__veryfrontRenderPage(window.location.pathname);
-          console.log('[HMR] Page re-rendered with updated components');
           // Notify Studio that update completed
           if (window.parent !== window) {
             try {
