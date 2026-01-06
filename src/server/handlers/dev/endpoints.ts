@@ -6,7 +6,6 @@
 import { BaseHandler } from "../response/base.ts";
 import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } from "../types.ts";
 import { HTTP_OK, PRIORITY_HIGH_DEV } from "@veryfront/core/constants/index.ts";
-import { HMR_CLIENT_RELOAD_DELAY_MS } from "@veryfront/utils/constants/hmr.ts";
 
 export class DevEndpointsHandler extends BaseHandler {
   metadata: HandlerMetadata = {
@@ -83,7 +82,6 @@ export class DevEndpointsHandler extends BaseHandler {
   }
 
   private getHMRScript(port: number): string {
-    const reloadDelay = HMR_CLIENT_RELOAD_DELAY_MS;
     // Use the port parameter passed from the HTML (same port as server - no offset)
     return `
 // Veryfront HMR WebSocket Client
