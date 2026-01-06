@@ -6,14 +6,21 @@ import type { VeryfrontConfig } from "@veryfront/config";
 import { getProviderEntities } from "../../core/types/entities/getEntityInfo.ts";
 import { join } from "../../platform/compat/path-helper.ts";
 
+interface ProjectData {
+  id?: string;
+  slug?: string;
+  provider?: string;
+  layout?: string;
+}
+
 interface VeryfrontFSAdapterLike {
-  getProjectData: () => { provider?: string; layout?: string } | undefined;
+  getProjectData: () => ProjectData | undefined;
   exists: (path: string) => Promise<boolean>;
   getFilePathByEntityId?: (entityId: string) => string | undefined;
 }
 
 interface MultiProjectFSAdapterLike {
-  getProjectData: () => Promise<{ provider?: string; layout?: string } | undefined>;
+  getProjectData: () => Promise<ProjectData | undefined>;
   exists: (path: string) => Promise<boolean>;
   getFilePathByEntityId?: (entityId: string) => Promise<string | undefined>;
 }
@@ -68,7 +75,9 @@ export class ProviderManager {
     frontmatter?: Record<string, unknown>,
     filePath?: string,
   ) => Promise<MdxBundle>;
-  private cachedResult: ProviderCollectionResult | null = null;
+  // Cache is keyed by project ID to support multi-project proxy mode
+  private cache: Map<string, ProviderCollectionResult> = new Map();
+  private static DEFAULT_CACHE_KEY = "__default__";
 
   constructor(options: ProviderManagerOptions) {
     this.projectDir = options.projectDir;
@@ -77,16 +86,41 @@ export class ProviderManager {
     this.compileMDX = options.compileMDX;
   }
 
-  clearCache(): void {
-    this.cachedResult = null;
+  clearCache(projectId?: string): void {
+    if (projectId) {
+      this.cache.delete(projectId);
+    } else {
+      this.cache.clear();
+    }
+  }
+
+  private getCacheKey(projectData?: ProjectData): string {
+    return projectData?.id || projectData?.slug || ProviderManager.DEFAULT_CACHE_KEY;
   }
 
   async collectProviders(): Promise<ProviderCollectionResult> {
     logger.info("[ProviderManager] collectProviders called");
-    if (this.cachedResult) {
-      logger.info("[ProviderManager] Using cached providers");
-      return this.cachedResult;
+
+    // Get project data first to determine cache key
+    const vfAdapter = getVeryfrontFSAdapter(this.adapter);
+    let projectData: ProjectData | undefined;
+    if (vfAdapter) {
+      const projectDataResult = vfAdapter.getProjectData();
+      projectData = projectDataResult instanceof Promise
+        ? await projectDataResult
+        : projectDataResult;
     }
+    const cacheKey = this.getCacheKey(projectData);
+
+    // Check cache with project-specific key
+    const cachedResult = this.cache.get(cacheKey);
+    if (cachedResult) {
+      logger.info("[ProviderManager] Using cached providers", { cacheKey });
+      return cachedResult;
+    }
+
+    logger.info("[ProviderManager] Cache miss, collecting providers", { cacheKey });
+
     const providerItems: ProviderItem[] = [];
     const providerBundles: MdxBundle[] = [];
     const providerInfos: EntityInfo[] = [];
@@ -99,19 +133,19 @@ export class ProviderManager {
         path: configProviderItem.componentPath,
       });
       const result = { providerBundles, providerItems, providerInfos };
-      this.cachedResult = result;
+      this.cache.set(cacheKey, result);
       return result;
     }
 
     // Priority 2: Check project data provider (legacy API)
-    const apiProviderItem = await this.collectAPIProvider();
+    const apiProviderItem = await this.collectAPIProviderWithData(vfAdapter, projectData);
     if (apiProviderItem) {
       providerItems.push(apiProviderItem);
       logger.debug("[ProviderManager] Using API project provider", {
         path: apiProviderItem.componentPath,
       });
       const result = { providerBundles, providerItems, providerInfos };
-      this.cachedResult = result;
+      this.cache.set(cacheKey, result);
       return result;
     }
 
@@ -129,7 +163,7 @@ export class ProviderManager {
       providerItems: compiled.providerItems,
       providerInfos: discoveredInfos,
     };
-    this.cachedResult = result;
+    this.cache.set(cacheKey, result);
     return result;
   }
 
@@ -172,19 +206,16 @@ export class ProviderManager {
     };
   }
 
-  private async collectAPIProvider(): Promise<ProviderItem | null> {
+  private async collectAPIProviderWithData(
+    vfAdapter: FSAdapterLike | null,
+    projectData: ProjectData | undefined,
+  ): Promise<ProviderItem | null> {
     logger.info("[ProviderManager] collectAPIProvider called");
-    const vfAdapter = getVeryfrontFSAdapter(this.adapter);
     if (!vfAdapter) {
       logger.info("[ProviderManager] No VeryfrontFSAdapter found");
       return null;
     }
 
-    // getProjectData() may be async (MultiProjectFSAdapter) or sync (VeryfrontFSAdapter)
-    const projectDataResult = vfAdapter.getProjectData();
-    const projectData = projectDataResult instanceof Promise
-      ? await projectDataResult
-      : projectDataResult;
     logger.info("[ProviderManager] Project data", { projectData });
 
     let providerValue = projectData?.provider;
