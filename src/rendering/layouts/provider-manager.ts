@@ -89,6 +89,17 @@ export class ProviderManager {
   private static CACHE_TTL_MS = 30 * 60 * 1000;
 
   constructor(options: ProviderManagerOptions) {
+    // Sanity checks - warn early if misconfigured
+    if (!options.projectDir) {
+      logger.warn("[ProviderManager] Initialized with empty projectDir");
+    }
+    if (!options.adapter) {
+      logger.warn("[ProviderManager] Initialized without adapter");
+    }
+    if (!options.compileMDX) {
+      logger.warn("[ProviderManager] Initialized without compileMDX function");
+    }
+
     this.projectDir = options.projectDir;
     this.adapter = options.adapter;
     this.config = options.config;
@@ -223,11 +234,19 @@ export class ProviderManager {
       providerInfos: discoveredInfos,
     };
     this.cache.set(cacheKey, { result, timestamp: Date.now() });
-    logger.info("[ProviderManager] Fetched providers (discovery)", {
-      ...logCtx,
-      count: discoveredInfos.length,
-      durationMs: Date.now() - startTime,
-    });
+
+    if (discoveredInfos.length === 0) {
+      logger.info("[ProviderManager] No providers found", {
+        ...logCtx,
+        durationMs: Date.now() - startTime,
+      });
+    } else {
+      logger.info("[ProviderManager] Fetched providers (discovery)", {
+        ...logCtx,
+        count: discoveredInfos.length,
+        durationMs: Date.now() - startTime,
+      });
+    }
     return result;
   }
 
@@ -253,13 +272,11 @@ export class ProviderManager {
 
     const exists = await this.adapter.fs.exists(providerPath);
 
-    logger.debug("[ProviderManager] Checking config.provider", {
-      configProvider,
-      providerPath,
-      exists,
-    });
-
     if (!exists) {
+      logger.warn("[ProviderManager] Config provider specified but file not found", {
+        configProvider,
+        providerPath,
+      });
       return null;
     }
 
@@ -297,7 +314,7 @@ export class ProviderManager {
         });
         providerValue = resolvedPath.replace(/^components\//, "");
       } else {
-        logger.debug("[ProviderManager] Could not resolve UUID provider", {
+        logger.warn("[ProviderManager] Provider UUID specified but could not resolve to file", {
           uuid: providerValue,
         });
       }
