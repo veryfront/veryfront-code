@@ -1,4 +1,5 @@
 import type { RouteMatch } from "./api-route-matcher.ts";
+import type { FileSystemAdapter } from "@veryfront/platform/adapters/base.ts";
 import { parseCookies } from "@veryfront/utils/cookie-utils.ts";
 
 export { parseCookies };
@@ -22,9 +23,15 @@ export interface APIContext {
   json: (data: unknown, init?: ResponseInit) => Response;
   /** Helper to return a text response */
   text: (data: string, init?: ResponseInit) => Response;
+  /** Filesystem adapter for accessing project files */
+  fs: FileSystemAdapter;
 }
 
-export function createContext(request: Request, match: RouteMatch): APIContext {
+export function createContext(
+  request: Request,
+  match: RouteMatch,
+  fs: FileSystemAdapter,
+): APIContext {
   const url = new URL(request.url);
 
   return {
@@ -53,6 +60,7 @@ export function createContext(request: Request, match: RouteMatch): APIContext {
         },
       });
     },
+    fs,
   };
 }
 

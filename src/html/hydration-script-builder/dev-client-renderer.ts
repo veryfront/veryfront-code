@@ -8,6 +8,8 @@ export function generateDevClientRendererScript(nonce?: string): string {
     import { createRoot } from 'react-dom/client';
     // Import RouterProvider from veryfront/router to match SSR (same module instance)
     import { RouterProvider, useRouter as useRouterFromModule } from 'veryfront/router';
+    // Import PageContextProvider to provide page frontmatter via usePageContext()
+    import { PageContextProvider } from 'veryfront/context';
     // Note: QueryClient/QueryClientProvider removed - user's app.tsx should provide if needed
 
     ${getRouterScript()}

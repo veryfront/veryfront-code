@@ -46,7 +46,7 @@ export class LayoutCollector {
     const hasExplicitFrontmatterLayout = typeof layoutValue === "string" && layoutValue.length > 0;
 
     // Collect the named layout (from frontmatter or config.defaultLayout)
-    const { layoutBundle, layoutPath } = await timeAsync(
+    const { layoutBundle, layoutPath, layoutName } = await timeAsync(
       "layout-named",
       () => this.collectNamedLayoutWithPath(pageInfo),
       "collect-layouts",
@@ -54,13 +54,20 @@ export class LayoutCollector {
 
     let nestedLayouts: LayoutItem[];
 
+    // Helper to determine kind - use layoutName (file path) rather than layoutPath (may be UUID)
+    const determineKind = (name: string | undefined, path: string | undefined): "mdx" | "tsx" => {
+      if (name?.endsWith(".mdx")) return "mdx";
+      if (path?.endsWith(".mdx")) return "mdx";
+      return "tsx";
+    };
+
     if (hasExplicitFrontmatterLayout && layoutPath) {
       // Page has explicit frontmatter layout - use it INSTEAD of project-level layouts
       // This prevents double-wrapping (e.g., page's DocsLayoutV2 + project's DefaultLayout)
       // Include the frontmatter layout as a nestedLayout for client-side hydration
-      const kind = layoutPath.endsWith(".mdx") ? "mdx" : "tsx";
+      const kind = determineKind(layoutName, layoutPath);
       nestedLayouts = [{
-        kind: kind as "mdx" | "tsx",
+        kind,
         bundle: kind === "mdx" ? layoutBundle : undefined,
         componentPath: kind === "tsx" ? layoutPath : undefined,
         path: layoutPath,
@@ -69,6 +76,7 @@ export class LayoutCollector {
       // This ensures SSR and client hydration apply the same layout
       logger.info("[LayoutCollector] Using frontmatter layout as nestedLayout", {
         layoutPath,
+        layoutName,
         kind,
       });
       return { layoutBundle: undefined, nestedLayouts };
@@ -83,7 +91,7 @@ export class LayoutCollector {
       // If we have a layoutBundle from config.defaultLayout, add it to nestedLayouts
       // so the client can apply the same layout during hydration
       if (layoutBundle && layoutPath) {
-        const kind = layoutPath.endsWith(".mdx") ? "mdx" : "tsx";
+        const kind = determineKind(layoutName, layoutPath);
 
         // Prepend the defaultLayout to nestedLayouts (it wraps outermost)
         nestedLayouts = [{
@@ -116,7 +124,7 @@ export class LayoutCollector {
 
   private async collectNamedLayoutWithPath(
     pageInfo: EntityInfo,
-  ): Promise<{ layoutBundle: MdxBundle | undefined; layoutPath: string | undefined }> {
+  ): Promise<{ layoutBundle: MdxBundle | undefined; layoutPath: string | undefined; layoutName: string | undefined }> {
     const layoutValue = pageInfo.entity.frontmatter.layout;
 
     logger.info("[LayoutCollector] collectNamedLayoutWithPath called", {
@@ -135,14 +143,14 @@ export class LayoutCollector {
     logger.info("[LayoutCollector] Resolved layoutName:", { layoutName });
 
     if (!layoutName) {
-      return { layoutBundle: undefined, layoutPath: undefined };
+      return { layoutBundle: undefined, layoutPath: undefined, layoutName: undefined };
     }
 
     const layoutInfo = await getLayoutEntity(this.projectDir, layoutName, this.adapter);
     logger.info("[LayoutCollector] Layout entity found:", { found: !!layoutInfo, layoutName });
 
     if (!layoutInfo) {
-      return { layoutBundle: undefined, layoutPath: undefined };
+      return { layoutBundle: undefined, layoutPath: undefined, layoutName: undefined };
     }
 
     logger.debug("Compiling named layout", {
@@ -160,7 +168,7 @@ export class LayoutCollector {
       codeLength: layoutBundle.compiledCode?.length,
     });
 
-    return { layoutBundle, layoutPath: layoutInfo.entity.id };
+    return { layoutBundle, layoutPath: layoutInfo.entity.id, layoutName };
   }
 
   private async collectNestedLayouts(pageInfo: EntityInfo): Promise<LayoutItem[]> {

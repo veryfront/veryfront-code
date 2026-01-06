@@ -63,6 +63,7 @@ export class LayoutOrchestrator {
     nestedLayouts: LayoutItem[],
     providerItems: ProviderItem[],
     layoutDataMap?: Map<string, Record<string, unknown>>,
+    requestUrl?: URL,
   ): Promise<React.ReactElement> {
     const defaultComponents = createDefaultMDXComponents();
     const mergedComponents = { ...defaultComponents, ...this.config.componentRegistry };
@@ -75,6 +76,7 @@ export class LayoutOrchestrator {
       mergedComponents,
       mode: this.config.mode,
       moduleServerUrl: this.config.moduleServerUrl,
+      requestUrl,
     });
 
     logger.info("[LayoutOrchestrator] Before applyLayouts", {

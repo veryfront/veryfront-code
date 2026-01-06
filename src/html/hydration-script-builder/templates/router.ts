@@ -232,7 +232,8 @@ export const getRouterScript = () => `
     // ============================================
     // Page data fetching with caching
     // ============================================
-    async function fetchPageDataFresh(path, signal) {
+    async function fetchPageDataFresh(path, signal, options = {}) {
+      const { triggerReloadOnVersionMismatch = false } = options;
       const normalizedPath = path === '/' ? '' : path.replace(/^\\//, '');
       const endpoint = '/_veryfront/page-data/' + normalizedPath + '.json';
 
@@ -256,8 +257,8 @@ export const getRouterScript = () => `
       perfEnd('parse:' + path);
       perfEnd('fetch:' + path);
 
-      // Check for version mismatch - triggers full page reload if detected
-      if (data.buildVersion && checkVersionMismatch(data.buildVersion)) {
+      // Check for version mismatch - only trigger reload during actual navigation
+      if (triggerReloadOnVersionMismatch && data.buildVersion && checkVersionMismatch(data.buildVersion)) {
         log('Version mismatch detected, performing full page reload to:', path);
         window.location.href = path;
         // Return a promise that never resolves since we're reloading
@@ -268,17 +269,24 @@ export const getRouterScript = () => `
       return data;
     }
 
-    async function fetchPageData(path, signal) {
+    // Fetch for navigation (triggers reload on version mismatch)
+    async function fetchPageDataForNavigation(path, signal) {
       // Check cache first
       const cached = getCachedPageData(path);
       if (cached) {
         log('Using cached page data:', path);
-        // Revalidate in background (stale-while-revalidate)
+        // Revalidate in background (no reload trigger)
         fetchPageDataFresh(path, null).catch(() => {});
         return cached;
       }
 
-      return fetchPageDataFresh(path, signal);
+      return fetchPageDataFresh(path, signal, { triggerReloadOnVersionMismatch: true });
+    }
+
+    // Fetch for prefetch (no reload trigger - just cache the data)
+    async function fetchPageDataForPrefetch(path) {
+      if (getCachedPageData(path)) return; // Already cached
+      return fetchPageDataFresh(path, null).catch(() => {});
     }
 
     // ============================================
@@ -290,28 +298,6 @@ export const getRouterScript = () => `
     // ============================================
     // SPA navigation handler
     // ============================================
-    // Speculatively preload a module URL using link[rel=modulepreload]
-    function speculativePreload(moduleUrl) {
-      if (!moduleUrl || document.querySelector('link[href="' + moduleUrl + '"]')) return;
-      const link = document.createElement('link');
-      link.rel = 'modulepreload';
-      link.href = moduleUrl;
-      document.head.appendChild(link);
-      log('Speculative preload:', moduleUrl);
-    }
-
-    // Infer likely page module URL from path
-    function inferPageModuleUrl(path) {
-      const normalizedPath = path === '/' ? '/index' : path;
-      const slug = normalizedPath.replace(/^\\//, '');
-      // Don't add pages/ prefix for @/ paths (alias paths like @/components/)
-      if (slug.startsWith('@/')) {
-        return MODULE_SERVER_URL + '/' + slug + '.js';
-      }
-      // Try direct path first, then index
-      return MODULE_SERVER_URL + '/pages/' + slug + '.js';
-    }
-
     async function navigateSPA(href, pushState = true, restoreScroll = false) {
       // Cancel any pending navigation
       if (currentAbortController) {
@@ -339,20 +325,9 @@ export const getRouterScript = () => `
         const [path, hash] = href.split('#');
         const targetPath = path || currentPath;
 
-        // OPTIMIZATION: Start speculative module preloading immediately
-        // while page data is being fetched (parallel loading)
-        const likelyPageUrl = inferPageModuleUrl(targetPath);
-        speculativePreload(likelyPageUrl);
-        // Also try index variant for directory paths
-        if (!targetPath.includes('.')) {
-          const targetSlug = targetPath.replace(/^\\//, '');
-          const prefix = targetSlug.startsWith('@/') ? '' : '/pages';
-          speculativePreload(MODULE_SERVER_URL + prefix + '/' + targetSlug + '/index.js');
-        }
-
-        // Fetch page data (runs in parallel with speculative preloads)
+        // Fetch page data (triggers reload on version mismatch)
         perfStart('nav:fetchData:' + href);
-        const pageData = await fetchPageData(targetPath, signal);
+        const pageData = await fetchPageDataForNavigation(targetPath, signal);
         perfEnd('nav:fetchData:' + href);
 
         // Check if navigation was aborted
@@ -483,6 +458,18 @@ export const getRouterScript = () => `
         log('Wrapped with App component for SPA navigation');
       }
 
+      // Build page context for usePageContext() hook
+      const pageContext = {
+        slug: pageData.slug || '',
+        path: pageData.pagePath || targetPath,
+        params: pageData.params || {},
+        query: Object.fromEntries(new URLSearchParams(window.location.search)),
+        frontmatter: pageData.frontmatter || {},
+      };
+
+      // Wrap with PageContextProvider so layout components can access frontmatter
+      tree = React.createElement(PageContextProvider, { pageContext, children: tree });
+
       // Wrap with providers - use imported RouterProvider with client router
       tree = React.createElement(RouterProvider, { router: router, children: tree });
 
@@ -499,13 +486,15 @@ export const getRouterScript = () => `
     }
 
     // ============================================
-    // Prefetching on hover
+    // Prefetching on hover (page data only, no module preloading)
     // ============================================
     let prefetchTimeout = null;
     const prefetchedPaths = new Set();
+    const inFlightPrefetches = new Set(); // Track in-flight prefetch requests
 
     function prefetchPage(href) {
-      if (prefetchedPaths.has(href) || getCachedPageData(href)) {
+      // Skip if already prefetched, cached, or currently fetching
+      if (prefetchedPaths.has(href) || getCachedPageData(href) || inFlightPrefetches.has(href)) {
         return;
       }
 
@@ -516,43 +505,25 @@ export const getRouterScript = () => `
       }
 
       prefetchedPaths.add(href);
+      inFlightPrefetches.add(href);
 
-      // OPTIMIZATION: Start speculative module preload IMMEDIATELY
-      // (don't wait for page data - predict likely module from URL)
-      const likelyPageUrl = inferPageModuleUrl(href);
-      speculativePreload(likelyPageUrl);
-      if (!href.includes('.')) {
-        const hrefSlug = href.replace(/^\\//, '');
-        const prefix = hrefSlug.startsWith('@/') ? '' : '/pages';
-        speculativePreload(MODULE_SERVER_URL + prefix + '/' + hrefSlug + '/index.js');
-      }
-
-      // Prefetch page data (runs in parallel with speculative preloads)
-      fetchPageData(href, null).then(data => {
-        // Preload the actual component module (if different from speculative)
-        if (data?.pagePath) {
-          const moduleUrl = MODULE_SERVER_URL + '/' + data.pagePath.replace(/\\.(tsx?|jsx?|mdx)$/, '.js');
-          speculativePreload(moduleUrl);
-        }
-        // Also preload layouts
-        if (data?.layouts) {
-          for (const layout of data.layouts) {
-            if (layout.path) {
-              const layoutUrl = MODULE_SERVER_URL + '/' + layout.path.replace(/\\.(tsx?|jsx?|mdx)$/, '.js');
-              speculativePreload(layoutUrl);
-            }
-          }
-        }
-      }).catch(() => {
-        // Silently fail prefetch
-        prefetchedPaths.delete(href);
-      });
+      // Prefetch page data only (no reload on version mismatch)
+      fetchPageDataForPrefetch(href)
+        .catch(() => {
+          // Silently fail prefetch
+          prefetchedPaths.delete(href);
+        })
+        .finally(() => {
+          inFlightPrefetches.delete(href);
+        });
     }
 
     // ============================================
     // Router object
     // ============================================
     const router = {
+      domain: window.location.origin,
+      path: window.location.pathname,
       push: (path) => {
         navigateSPA(path, true);
       },
@@ -569,7 +540,12 @@ export const getRouterScript = () => `
         prefetchPage(path);
       },
       pathname: window.location.pathname,
-      query: Object.fromEntries(new URLSearchParams(window.location.search))
+      query: Object.fromEntries(new URLSearchParams(window.location.search)),
+      params: {},
+      isPreview: false,
+      isMounted: true,
+      navigate: (path) => navigateSPA(path, true),
+      reload: () => window.location.reload(),
     };
 
     window.__veryfrontRouter = router;
@@ -642,6 +618,9 @@ export const getRouterScript = () => `
     });
 
     // Prefetch on hover (with debounce)
+    // Track which link we're currently hovering to avoid duplicate work
+    let currentHoverLink = null;
+
     document.addEventListener('mouseenter', (e) => {
       if (!e.target || typeof e.target.closest !== 'function') return;
       const link = e.target.closest('a[href]');
@@ -650,18 +629,39 @@ export const getRouterScript = () => `
       const href = link.getAttribute('href');
       if (!href?.startsWith('/') || href.startsWith('//')) return;
 
+      // If we're already tracking this link, don't restart the timeout
+      if (currentHoverLink === link) return;
+
+      // Clear any existing timeout before setting a new one
+      if (prefetchTimeout) {
+        clearTimeout(prefetchTimeout);
+        prefetchTimeout = null;
+      }
+
+      currentHoverLink = link;
       prefetchTimeout = setTimeout(() => {
         prefetchPage(href);
+        prefetchTimeout = null;
       }, PREFETCH_DELAY_MS);
     }, true);
 
     document.addEventListener('mouseleave', (e) => {
       if (!e.target || typeof e.target.closest !== 'function') return;
-      const link = e.target.closest('a[href]');
-      if (link && prefetchTimeout) {
+
+      // Only clear timeout if we're actually leaving the link entirely
+      // Check if the mouse is moving to an element outside the current hover link
+      const relatedTarget = e.relatedTarget;
+      if (currentHoverLink && relatedTarget) {
+        // If moving to an element inside the same link, don't cancel
+        if (currentHoverLink.contains(relatedTarget)) return;
+      }
+
+      // Actually leaving the link
+      if (prefetchTimeout) {
         clearTimeout(prefetchTimeout);
         prefetchTimeout = null;
       }
+      currentHoverLink = null;
     }, true);
 
     // ============================================

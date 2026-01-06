@@ -82,6 +82,18 @@ export const getRendererScript = () => `
           }
         }
 
+        // Build page context for usePageContext() hook
+        const pageContext = {
+          slug: data.slug || '',
+          path: data.pagePath || pathname,
+          params: data.params || {},
+          query: Object.fromEntries(new URLSearchParams(window.location.search)),
+          frontmatter: data.frontmatter || {},
+        };
+
+        // Wrap with PageContextProvider so layout components can access frontmatter
+        tree = React.createElement(PageContextProvider, { pageContext, children: tree });
+
         // Use imported RouterProvider with client router for SPA navigation
         // The router object is defined in router.ts (same module scope)
         tree = React.createElement(RouterProvider, { router: router, children: tree });
