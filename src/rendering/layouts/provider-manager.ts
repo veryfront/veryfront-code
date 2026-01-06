@@ -142,7 +142,8 @@ export class ProviderManager {
   }
 
   private async collectConfigProvider(): Promise<ProviderItem | null> {
-    const configProvider = this.config?.provider;
+    // Check both config.provider and config.app (app is an alias for provider/wrapper component)
+    const configProvider = this.config?.provider || this.config?.app;
     if (!configProvider || !this.isValidProviderPath(configProvider)) {
       return null;
     }
