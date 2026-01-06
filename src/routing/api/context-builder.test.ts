@@ -2,10 +2,20 @@ import { assertEquals, assertExists } from "std/testing/asserts.ts";
 import { describe, it } from "std/testing/bdd.ts";
 import { createContext, normalizeParams, parseCookies } from "./context-builder.ts";
 import type { RouteMatch } from "./api-route-matcher.ts";
-import type { FileSystemAdapter } from "../../platform/adapters/base.ts";
+import type { FileSystemAdapter } from "@veryfront/platform/adapters/base.ts";
 
-// Mock FileSystemAdapter for tests
-const mockFs = {} as FileSystemAdapter;
+// Mock filesystem adapter for tests
+const mockFs: FileSystemAdapter = {
+  readFile: () => Promise.resolve(""),
+  writeFile: () => Promise.resolve(),
+  readDir: async function* () {},
+  exists: () => Promise.resolve(false),
+  stat: () => Promise.resolve({ isFile: false, isDirectory: false, isSymlink: false, size: 0, mtime: null }),
+  mkdir: () => Promise.resolve(),
+  remove: () => Promise.resolve(),
+  makeTempDir: () => Promise.resolve("/tmp/mock"),
+  watch: () => ({ close: () => {}, [Symbol.asyncIterator]: async function* () {} }),
+};
 
 describe("API Context Builder", () => {
   describe("parseCookies()", () => {

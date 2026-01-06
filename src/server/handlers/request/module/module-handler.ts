@@ -14,7 +14,7 @@ import type {
   HandlerPriority,
   HandlerResult,
 } from "../../types.ts";
-import { createRenderer } from "@veryfront/rendering/index.ts";
+import { getRendererForProject } from "../../../shared/renderer-factory.ts";
 import { handleModuleServer } from "./module-server-handler.ts";
 import { handlePageModule } from "./page-module-handler.ts";
 import { handleDataEndpoint } from "./data-endpoint-handler.ts";
@@ -50,20 +50,14 @@ export class ModuleHandler extends BaseHandler {
     ],
   };
 
-  private rendererInit: Promise<Awaited<ReturnType<typeof createRenderer>>> | null = null;
-
+  /**
+   * Get or create renderer using shared factory cache.
+   * This ensures renderer persists across handler invalidations (HMR).
+   */
   private ensureRenderer(
     ctx: HandlerContext,
-  ): Promise<Awaited<ReturnType<typeof createRenderer>>> {
-    if (!this.rendererInit) {
-      this.rendererInit = createRenderer({
-        projectDir: ctx.projectDir,
-        mode: ctx.mode,
-        adapter: ctx.adapter,
-        moduleServerUrl: ctx.moduleServerUrl,
-      });
-    }
-    return this.rendererInit;
+  ): ReturnType<typeof getRendererForProject> {
+    return getRendererForProject(ctx);
   }
 
   private withProxyContext<T>(
