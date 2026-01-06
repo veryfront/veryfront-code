@@ -38,75 +38,9 @@ export class RequestHandler {
       const devResponse = this.handleDevEndpoint(req, url.pathname);
       if (devResponse) return devResponse;
 
-      // Handle built-in articles API for development
-      const articlesResponse = await this.handleArticlesApi(url.pathname);
-      if (articlesResponse) return articlesResponse;
-
       return await this.handleApplicationRequest(req);
     } catch (error) {
       return this.handleServerError(error);
-    }
-  }
-
-  /**
-   * Built-in articles API for development.
-   * Returns article metadata from MDX files in pages/blog/articles/.
-   */
-  private async handleArticlesApi(pathname: string): Promise<Response | null> {
-    if (pathname !== "/api/articles-2" && pathname !== "/api/articles") {
-      return null;
-    }
-
-    try {
-      // Get article files from the adapter
-      const articlesDir = "pages/blog/articles";
-      const files: string[] = [];
-
-      try {
-        const entries = await this.adapter.fs.readDir(articlesDir);
-        for await (const entry of entries) {
-          if (entry.name.endsWith(".mdx") || entry.name.endsWith(".md")) {
-            files.push(entry.name);
-          }
-        }
-      } catch {
-        // Directory might not exist
-        logger.debug("[dev] articles directory not found");
-      }
-
-      // Build article data from file names
-      // Format must match what BlogTeaser expects: article.frontmatter.summary
-      const articles = files.map((file) => {
-        const slug = file.replace(/\.(mdx?|md)$/, "");
-        const title = slug.split("-").map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
-        return {
-          slug: `blog/articles/${slug}`,
-          frontmatter: {
-            summary: {
-              title,
-              category: "articles",
-              description: `Read about ${title.toLowerCase()}`,
-              imageSrc: "/images/placeholder.jpg",
-              publishDate: new Date().toISOString(),
-              author: "Coder Society",
-            },
-          },
-        };
-      });
-
-      return new Response(JSON.stringify({ data: articles }), {
-        status: 200,
-        headers: {
-          "Content-Type": "application/json",
-          "Cache-Control": "no-cache",
-        },
-      });
-    } catch (error) {
-      logger.error("[dev] articles API error", error);
-      return new Response(JSON.stringify({ data: [], error: "Failed to load articles" }), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      });
     }
   }
 

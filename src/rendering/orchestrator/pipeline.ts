@@ -583,6 +583,7 @@ export class RenderPipeline {
           layoutResult.nestedLayouts,
           providerResult.providerItems,
           layoutDataMap,
+          options?.url,
         ),
       "render-page",
     );

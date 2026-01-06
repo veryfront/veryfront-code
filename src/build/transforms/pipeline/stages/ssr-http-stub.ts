@@ -91,10 +91,10 @@ function generateStub(imp: {
 
   // Named imports: import { X, Y as Z } from 'url' -> const X = null, Z = null
   const namedMatch = importClause.match(/^\{([^}]+)\}$/);
-  if (namedMatch) {
+  if (namedMatch?.[1]) {
     const names = namedMatch[1].split(",").map((n) => {
       const parts = n.trim().split(/\s+as\s+/);
-      return parts[parts.length - 1].trim();
+      return parts[parts.length - 1]?.trim() ?? "";
     });
     const stubs = names.map((n) => `${n} = null`).join(", ");
     return `const ${stubs}; /* SSR stub for ${imp.n} */`;
@@ -102,11 +102,11 @@ function generateStub(imp: {
 
   // Mixed import: import X, { Y } from 'url'
   const mixedMatch = importClause.match(/^([a-zA-Z_$][a-zA-Z0-9_$]*)\s*,\s*\{([^}]+)\}$/);
-  if (mixedMatch) {
+  if (mixedMatch?.[1] && mixedMatch[2]) {
     const defaultName = mixedMatch[1];
     const names = mixedMatch[2].split(",").map((n) => {
       const parts = n.trim().split(/\s+as\s+/);
-      return parts[parts.length - 1].trim();
+      return parts[parts.length - 1]?.trim() ?? "";
     });
     const allNames = [defaultName, ...names].map((n) => `${n} = null`).join(", ");
     return `const ${allNames}; /* SSR stub for ${imp.n} */`;

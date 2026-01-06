@@ -22,6 +22,7 @@ import { detectAppRouter } from "../router-detection.ts";
 import type { RenderOptions } from "./types.ts";
 import { injectElementSelectors } from "../../studio/element-selector-injector.ts";
 import { computeSourceHash } from "../../studio/hash-utils.ts";
+import { extractRelativePath } from "@veryfront/core/utils/route-path-utils.ts";
 
 export interface HTMLGeneratorConfig {
   projectDir: string;
@@ -114,21 +115,9 @@ export class HTMLGenerator {
       logger.debug("[HTMLGenerator] No tailwind.config.js found, using default config");
     }
 
-    // Construct page path from entity slug for Studio Navigator integration
-    // Entity slug is like "index.tsx" or "about.tsx", prepend "pages/" to get file path
-    // Handle "/" slug (home page) by converting to "pages/index.tsx"
-    const pageSlug = context.pageInfo.entity.slug;
-    let pagePath: string;
-    if (pageSlug === "/" || pageSlug === "") {
-      // Home page - determine extension from entity id or default to tsx
-      const entityId = context.pageInfo.entity.id;
-      const ext = entityId.match(/\.(tsx|jsx|mdx|ts|js)$/)?.[0] || ".tsx";
-      pagePath = `pages/index${ext}`;
-    } else if (pageSlug.startsWith("pages/")) {
-      pagePath = pageSlug;
-    } else {
-      pagePath = `pages/${pageSlug}`;
-    }
+    // Extract page path from entity id (the actual file path) for client-side module loading
+    // This ensures the client can correctly import the page module during hydration/SPA navigation
+    const pagePath = extractRelativePath(context.pageInfo.entity.id, this.config.projectDir);
 
     // Compute source hash for Navigator tree sync detection (only in studio embed mode)
     const sourceHash = context.options?.studioEmbed && context.pageInfo.entity.content
@@ -294,21 +283,9 @@ export class HTMLGenerator {
       logger.debug("[HTMLGenerator] No tailwind.config.js found, using default config");
     }
 
-    // Construct page path from entity slug for Studio Navigator integration
-    // Entity slug is like "index.tsx" or "about.tsx", prepend "pages/" to get file path
-    // Handle "/" slug (home page) by converting to "pages/index.tsx"
-    const pageSlug = context.pageInfo.entity.slug;
-    let pagePath: string;
-    if (pageSlug === "/" || pageSlug === "") {
-      // Home page - determine extension from entity id or default to tsx
-      const entityId = context.pageInfo.entity.id;
-      const ext = entityId.match(/\.(tsx|jsx|mdx|ts|js)$/)?.[0] || ".tsx";
-      pagePath = `pages/index${ext}`;
-    } else if (pageSlug.startsWith("pages/")) {
-      pagePath = pageSlug;
-    } else {
-      pagePath = `pages/${pageSlug}`;
-    }
+    // Extract page path from entity id (the actual file path) for client-side module loading
+    // This ensures the client can correctly import the page module during hydration/SPA navigation
+    const pagePath = extractRelativePath(context.pageInfo.entity.id, this.config.projectDir);
 
     // Compute source hash for Navigator tree sync detection (only in studio embed mode)
     const sourceHash = context.options?.studioEmbed && context.pageInfo.entity.content

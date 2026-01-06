@@ -73,7 +73,7 @@ export async function executePagesRoute(
   pathname: string,
   adapter: RuntimeAdapter,
 ): Promise<Response> {
-  const ctx = createContext(request, match);
+  const ctx = createContext(request, match, adapter.fs);
   const method = request.method as keyof APIRoute;
   const methodHandler = handler[method] || handler.default;
 

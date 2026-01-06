@@ -21,6 +21,8 @@ export function getProdScripts(
     import * as React from 'react';
     // Import RouterProvider from veryfront/router to match SSR (same module instance)
     import { RouterProvider, useRouter as useRouterFromModule } from 'veryfront/router';
+    // Import PageContextProvider to provide page frontmatter via usePageContext()
+    import { PageContextProvider } from 'veryfront/context';
 
     ${getRouterScript()}
 

@@ -15,6 +15,7 @@ import {
 import { detectAppRouter } from "../router-detection.ts";
 import { getProjectReact } from "@veryfront/react";
 import { RouterProvider } from "../../exports/router.ts";
+import { PageContextProvider } from "../../exports/context.ts";
 
 export interface LayoutApplicationOptions {
   projectDir: string;
@@ -24,6 +25,8 @@ export interface LayoutApplicationOptions {
   mergedComponents: MDXComponents;
   mode: "development" | "production";
   moduleServerUrl?: string;
+  /** Request URL for SSR - provides domain for useRouter() */
+  requestUrl?: URL;
 }
 
 export class LayoutApplicator {
@@ -34,6 +37,7 @@ export class LayoutApplicator {
   private mergedComponents: MDXComponents;
   private mode: "development" | "production";
   private moduleServerUrl?: string;
+  private requestUrl?: URL;
 
   constructor(options: LayoutApplicationOptions) {
     this.projectDir = options.projectDir;
@@ -43,6 +47,7 @@ export class LayoutApplicator {
     this.mergedComponents = options.mergedComponents;
     this.mode = options.mode;
     this.moduleServerUrl = options.moduleServerUrl;
+    this.requestUrl = options.requestUrl;
   }
 
   async applyLayouts(
@@ -87,11 +92,49 @@ export class LayoutApplicator {
     // Wrap with RouterProvider to match client-side tree structure
     // This ensures useId() generates consistent IDs between SSR and client
     const React = await getProjectReact();
+
+    // Build page context with frontmatter for usePageContext() hook
+    const pageContext = {
+      slug: pageInfo.entity.slug || "",
+      path: pageFilePath,
+      params: {},
+      query: {},
+      frontmatter: pageInfo.entity.frontmatter || {},
+    };
+
+    // Wrap with PageContextProvider so layout components can access frontmatter via usePageContext()
+    wrappedElement = React.createElement(
+      PageContextProvider,
+      { pageContext, children: wrappedElement },
+    ) as BundledReact.ReactElement;
+    logger.debug("Wrapped element with PageContextProvider for frontmatter access");
+
+    // Build router value with domain from request URL for SSR
+    const ssrRouter = {
+      domain: this.requestUrl ? this.requestUrl.origin : "",
+      path: this.requestUrl?.pathname || pageFilePath,
+      pathname: this.requestUrl?.pathname || `/${pageInfo.entity.slug || ""}`,
+      params: {},
+      query: this.requestUrl
+        ? Object.fromEntries(this.requestUrl.searchParams)
+        : {},
+      isPreview: false,
+      isMounted: false,
+      navigate: async () => {},
+      push: async () => {},
+      replace: async () => {},
+      reload: async () => {},
+    };
+
     wrappedElement = React.createElement(
       RouterProvider,
-      { children: wrappedElement },
+      { router: ssrRouter, children: wrappedElement },
     ) as BundledReact.ReactElement;
-    logger.debug("Wrapped element with RouterProvider for SSR/client tree consistency");
+    logger.info("Wrapped element with RouterProvider for SSR", {
+      hasRequestUrl: !!this.requestUrl,
+      domain: ssrRouter.domain,
+      pathname: ssrRouter.pathname,
+    });
 
     return wrappedElement;
   }
