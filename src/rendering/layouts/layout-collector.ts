@@ -79,6 +79,30 @@ export class LayoutCollector {
         () => this.collectNestedLayouts(pageInfo),
         "collect-layouts",
       );
+
+      // If we have a layoutBundle from config.defaultLayout, add it to nestedLayouts
+      // so the client can apply the same layout during hydration
+      if (layoutBundle && layoutPath) {
+        const kind = layoutPath.endsWith(".mdx") ? "mdx" : "tsx";
+
+        // Prepend the defaultLayout to nestedLayouts (it wraps outermost)
+        nestedLayouts = [{
+          kind: kind as "mdx" | "tsx",
+          bundle: kind === "mdx" ? layoutBundle : undefined,
+          componentPath: kind === "tsx" ? layoutPath : undefined,
+          path: layoutPath,
+        }, ...nestedLayouts];
+
+        logger.info("[LayoutCollector] Added defaultLayout to nestedLayouts for client hydration", {
+          layoutPath,
+          kind,
+          totalNestedLayouts: nestedLayouts.length,
+        });
+
+        // Return undefined layoutBundle since we're now using nestedLayouts
+        // This ensures SSR and client hydration apply layouts the same way
+        return { layoutBundle: undefined, nestedLayouts };
+      }
     }
 
     logger.debug("[LayoutCollector] collectLayouts result", {
