@@ -24,7 +24,11 @@ export function generateProdHydrationScript(
     const root = document.getElementById('root');
     if (root) {
       // identifierPrefix must match SSR to prevent useId() mismatch
-      ReactDOM.hydrateRoot(root, tree, { identifierPrefix: 'vf' });
+      // Suppress recoverable hydration errors - common with animation libraries
+      ReactDOM.hydrateRoot(root, tree, {
+        identifierPrefix: 'vf',
+        onRecoverableError: () => {} // Silently ignore hydration mismatches
+      });
     }
   </script>`;
 }

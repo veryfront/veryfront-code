@@ -97,7 +97,11 @@ async function hydratePageComponent(pagePath: string): Promise<boolean> {
 
     // Use hydrateRoot for proper React hydration
     // identifierPrefix must match SSR to prevent useId() mismatch
-    ReactDOM.hydrateRoot(root, React.createElement(Component, {}), { identifierPrefix: "vf" });
+    // Suppress recoverable hydration errors - common with animation libraries
+    ReactDOM.hydrateRoot(root, React.createElement(Component, {}), {
+      identifierPrefix: "vf",
+      onRecoverableError: () => {}, // Silently ignore hydration mismatches
+    });
     console.debug?.("[RSC] Page component hydrated successfully");
     return true;
   } catch (e) {

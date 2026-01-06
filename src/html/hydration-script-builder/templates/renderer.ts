@@ -92,21 +92,21 @@ export const getRendererScript = () => `
         if (container) {
           if (!container.__reactRoot) {
             // Always use hydrateRoot to preserve SSR content
-            // In dev mode, suppress hydration mismatch errors (they're expected due to
-            // MDX compilation differences between SSR and client)
             // IMPORTANT: identifierPrefix must match SSR to prevent useId() mismatch
             const { hydrateRoot } = await import('react-dom/client');
-            const options = { identifierPrefix: 'vf' };
-            if (data.dev) {
-              // Suppress hydration errors in development - they're noisy but harmless
-              // SSR content is preserved, client takes over interactivity
-              options.onRecoverableError = (error) => {
-                // Only log if DEBUG is enabled, otherwise silently ignore
-                if (typeof DEBUG !== 'undefined' && DEBUG) {
+            // Always suppress recoverable hydration errors - they're common with animation
+            // libraries that use useLayoutEffect and other SSR edge cases. React 18's
+            // hydration recovers gracefully from mismatches. The SSR content is preserved
+            // and client takes over interactivity.
+            const options = {
+              identifierPrefix: 'vf',
+              onRecoverableError: (error) => {
+                // Only log in dev mode with DEBUG enabled
+                if (data.dev && typeof DEBUG !== 'undefined' && DEBUG) {
                   log('Hydration mismatch (suppressed):', error.message);
                 }
-              };
-            }
+              }
+            };
             const root = hydrateRoot(container, tree, options);
             container.__reactRoot = root;
             log('Client-side React app hydrated successfully');
