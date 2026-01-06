@@ -206,7 +206,11 @@ isLayout: true
     const result = await collector.collectLayouts(pageInfo);
 
     assertEquals(compileCalled, true);
-    assertExists(result.layoutBundle);
+    // defaultLayout is now added to nestedLayouts instead of layoutBundle
+    // for consistent SSR/client hydration
+    assertEquals(result.nestedLayouts.length, 1);
+    assertEquals(result.nestedLayouts[0].kind, "mdx");
+    assertExists(result.nestedLayouts[0].bundle);
   } finally {
     await cleanupTestDir(projectDir);
   }
