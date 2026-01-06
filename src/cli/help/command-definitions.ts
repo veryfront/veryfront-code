@@ -273,4 +273,72 @@ export const COMMANDS: CommandRegistry = {
       "Integration type launches interactive wizard if name not provided",
     ],
   },
+  pull: {
+    name: "pull",
+    description: "Download project content from Veryfront remote",
+    usage: "veryfront pull [options]",
+    options: [
+      {
+        flag: "-b, --branch <name>",
+        description: "Branch to pull from (default: main)",
+      },
+      {
+        flag: "--types <list>",
+        description: "Entity types to include (page,component,function,virtualFile)",
+      },
+      {
+        flag: "-f, --force",
+        description: "Force overwrite without confirmation",
+      },
+      {
+        flag: "--dry-run",
+        description: "Show what would be written without writing",
+      },
+    ],
+    examples: [
+      "veryfront pull",
+      "veryfront pull --branch feature-header",
+      "veryfront pull --types page,component",
+      "veryfront pull --dry-run",
+      "veryfront pull --force",
+    ],
+    notes: [
+      "Requires VERYFRONT_API_TOKEN env var or .veryfrontrc config",
+      "Project slug is inferred from package.json name or directory",
+    ],
+  },
+  push: {
+    name: "push",
+    description: "Create a branch and upload local content to Veryfront",
+    usage: "veryfront push [options]",
+    options: [
+      {
+        flag: "-b, --branch <name>",
+        description: "Branch name to create (default: cli/push-<timestamp>)",
+      },
+      {
+        flag: "--types <list>",
+        description: "Entity types to include (page,component,function,virtualFile)",
+      },
+      {
+        flag: "-f, --force",
+        description: "Push without confirmation",
+      },
+      {
+        flag: "--dry-run",
+        description: "Show what would be uploaded without uploading",
+      },
+    ],
+    examples: [
+      "veryfront push",
+      "veryfront push --branch feature-header",
+      "veryfront push --types page,component",
+      "veryfront push --dry-run",
+    ],
+    notes: [
+      "Requires VERYFRONT_API_TOKEN env var or .veryfrontrc config",
+      "Creates a new branch for each push - merge in Studio",
+      "Scans app/ for pages, components/ for components, functions/ for functions",
+    ],
+  },
 };
