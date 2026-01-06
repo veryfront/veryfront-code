@@ -193,7 +193,7 @@ export class ProviderManager {
       this.cache.set(cacheKey, { result, timestamp: Date.now() });
       logger.info("[ProviderManager] Fetched provider (config)", {
         ...logCtx,
-        path: configProviderItem.componentPath,
+        providerPath: configProviderItem.componentPath,
         durationMs: Date.now() - startTime,
       });
       return result;
@@ -207,7 +207,7 @@ export class ProviderManager {
       this.cache.set(cacheKey, { result, timestamp: Date.now() });
       logger.info("[ProviderManager] Fetched provider (API)", {
         ...logCtx,
-        path: apiProviderItem.componentPath,
+        providerPath: apiProviderItem.componentPath,
         durationMs: Date.now() - startTime,
       });
       return result;
