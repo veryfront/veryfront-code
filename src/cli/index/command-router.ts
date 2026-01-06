@@ -318,24 +318,38 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
 
       case "pull":
         showLogo();
-        await pullCommand({
-          projectDir: cwd(),
-          branch: args.branch ? String(args.branch) : args.b ? String(args.b) : undefined,
-          types: args.types ? String(args.types).split(",") : undefined,
-          force: Boolean(args.force) || Boolean(args.f),
-          dryRun: Boolean(args["dry-run"]),
-        });
+        {
+          // Resolve directory: --dir/-d option, or current working directory
+          const dirArg = args.dir ? String(args.dir) : args.d ? String(args.d) : undefined;
+          const projectDir = dirArg
+            ? (dirArg.startsWith("/") ? dirArg : join(cwd(), dirArg))
+            : cwd();
+          await pullCommand({
+            projectDir,
+            branch: args.branch ? String(args.branch) : args.b ? String(args.b) : undefined,
+            types: args.types ? String(args.types).split(",") : undefined,
+            force: Boolean(args.force) || Boolean(args.f),
+            dryRun: Boolean(args["dry-run"]),
+          });
+        }
         break;
 
       case "push":
         showLogo();
-        await pushCommand({
-          projectDir: cwd(),
-          branch: args.branch ? String(args.branch) : args.b ? String(args.b) : undefined,
-          types: args.types ? String(args.types).split(",") : undefined,
-          force: Boolean(args.force) || Boolean(args.f),
-          dryRun: Boolean(args["dry-run"]),
-        });
+        {
+          // Resolve directory: --dir/-d option, or current working directory
+          const dirArg = args.dir ? String(args.dir) : args.d ? String(args.d) : undefined;
+          const projectDir = dirArg
+            ? (dirArg.startsWith("/") ? dirArg : join(cwd(), dirArg))
+            : cwd();
+          await pushCommand({
+            projectDir,
+            branch: args.branch ? String(args.branch) : args.b ? String(args.b) : undefined,
+            types: args.types ? String(args.types).split(",") : undefined,
+            force: Boolean(args.force) || Boolean(args.f),
+            dryRun: Boolean(args["dry-run"]),
+          });
+        }
         break;
 
       case "help":

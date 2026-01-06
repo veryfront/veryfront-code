@@ -279,6 +279,10 @@ export const COMMANDS: CommandRegistry = {
     usage: "veryfront pull [options]",
     options: [
       {
+        flag: "-d, --dir <path>",
+        description: "Target directory (default: current directory)",
+      },
+      {
         flag: "-b, --branch <name>",
         description: "Branch to pull from (default: main)",
       },
@@ -297,6 +301,7 @@ export const COMMANDS: CommandRegistry = {
     ],
     examples: [
       "veryfront pull",
+      "veryfront pull --dir ./my-project",
       "veryfront pull --branch feature-header",
       "veryfront pull --types page,component",
       "veryfront pull --dry-run",
@@ -312,6 +317,10 @@ export const COMMANDS: CommandRegistry = {
     description: "Create a branch and upload local content to Veryfront",
     usage: "veryfront push [options]",
     options: [
+      {
+        flag: "-d, --dir <path>",
+        description: "Source directory (default: current directory)",
+      },
       {
         flag: "-b, --branch <name>",
         description: "Branch name to create (default: cli/push-<timestamp>)",
@@ -331,6 +340,7 @@ export const COMMANDS: CommandRegistry = {
     ],
     examples: [
       "veryfront push",
+      "veryfront push --dir ./my-project",
       "veryfront push --branch feature-header",
       "veryfront push --types page,component",
       "veryfront push --dry-run",
