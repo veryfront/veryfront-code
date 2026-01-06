@@ -622,9 +622,10 @@ export async function loadModuleESM(
         const pathCache = await getModulePathCache(context.esmCacheDir!);
         const cachedPath = pathCache.get(normalizedPath);
         if (cachedPath) {
-          // Verify the file still exists
+          // Verify the file still exists (use local filesystem, not API adapter)
           try {
-            const stat = await adapter.fs.stat(cachedPath);
+            const localFs = getLocalFs();
+            const stat = await localFs.stat(cachedPath);
             if (stat?.isFile) {
               return cachedPath;
             }
@@ -881,9 +882,10 @@ export async function loadModuleESM(
             const contentHash = hashString(normalizedPath + moduleCode);
             const cachePath = join(context.esmCacheDir!, `vfmod-${contentHash}.mjs`);
 
-            // Check if this exact content is already cached
+            // Check if this exact content is already cached (use local filesystem, not API adapter)
+            const localFs = getLocalFs();
             try {
-              const stat = await adapter.fs.stat(cachePath);
+              const stat = await localFs.stat(cachePath);
               if (stat?.isFile) {
                 pathCache.set(normalizedPath, cachePath);
                 logger.debug(`${LOG_PREFIX_MDX_LOADER} Content cache hit: ${normalizedPath}`);
@@ -894,8 +896,6 @@ export async function loadModuleESM(
             }
 
             // Ensure cache directory exists before writing
-            // Use local filesystem for cache (not adapter.fs which may be remote/read-only)
-            const localFs = getLocalFs();
             await localFs.mkdir(context.esmCacheDir!, { recursive: true });
             await localFs.writeTextFile(cachePath, moduleCode);
             pathCache.set(normalizedPath, cachePath);
@@ -1103,9 +1103,10 @@ ${namedExports}
           const contentHash = hashString(normalizedPath + moduleCode);
           const cachePath = join(context.esmCacheDir!, `vfmod-${contentHash}.mjs`);
 
-          // Check if this exact content is already cached
+          // Check if this exact content is already cached (use local filesystem, not API adapter)
+          const localFs = getLocalFs();
           try {
-            const stat = await adapter.fs.stat(cachePath);
+            const stat = await localFs.stat(cachePath);
             if (stat?.isFile) {
               pathCache.set(normalizedPath, cachePath);
               logger.debug(`${LOG_PREFIX_MDX_LOADER} Content cache hit: ${normalizedPath}`);
@@ -1116,8 +1117,6 @@ ${namedExports}
           }
 
           // Ensure cache directory exists before writing
-          // Use local filesystem for cache (not adapter.fs which may be remote/read-only)
-          const localFs = getLocalFs();
           await localFs.mkdir(context.esmCacheDir!, { recursive: true });
           await localFs.writeTextFile(cachePath, moduleCode);
           pathCache.set(normalizedPath, cachePath);
