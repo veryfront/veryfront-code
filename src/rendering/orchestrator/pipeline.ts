@@ -32,6 +32,36 @@ export interface RenderPipelineConfig {
   projectDir: string;
 }
 
+/**
+ * RenderPipeline orchestrates the complete page rendering process.
+ *
+ * ## Pipeline Stages
+ *
+ * The rendering process follows these stages in order:
+ *
+ * | Stage | Name | Description |
+ * |-------|------|-------------|
+ * | 1 | Page Resolution | Resolve slug to page file (pageInfo) |
+ * | 2 | Layout & Provider Collection | Collect nested layouts and providers (parallel) |
+ * | 3 | Route Params Extraction | Extract dynamic params from URL if not provided |
+ * | 4 | Data Fetching | Execute getServerData/getStaticData for page and layouts (parallel) |
+ * | 5 | Cache Check | Check if compiled modules are cached |
+ * | 6 | Page Bundle Preparation | Compile MDX, load components, generate client module code |
+ * | 7 | Layout Application | Wrap page element with layouts and providers |
+ * | 8 | SSR Rendering | Perform React server-side rendering (streaming or string) |
+ * | 9 | Result Assembly | Combine HTML, frontmatter, headings, stream into RenderResult |
+ *
+ * ## Performance Instrumentation
+ *
+ * Each stage is wrapped with `timeAsync()` for performance tracking.
+ * Stage timings are logged under the "render-page" context.
+ *
+ * ## Error Handling
+ *
+ * - Data fetching can return `notFound` or `redirect` which throw VeryfrontError
+ * - Bundle preparation failures throw VeryfrontError with RENDER_ERROR code
+ * - All errors preserve the original slug for debugging
+ */
 export class RenderPipeline {
   private config: RenderPipelineConfig;
   private dataFetcher: DataFetcher;
@@ -389,13 +419,18 @@ export class RenderPipeline {
       clearSSRModuleCache();
     }
 
+    // ─────────────────────────────────────────────────────────────────────────
+    // Stage 1: Page Resolution
+    // ─────────────────────────────────────────────────────────────────────────
     const pageInfo = await timeAsync(
       "resolve-page",
       () => this.config.pageResolver.resolvePage(slug),
       "render-page",
     );
 
-    // 1. Collect layouts and providers in parallel for better cold start perf
+    // ─────────────────────────────────────────────────────────────────────────
+    // Stage 2: Layout & Provider Collection (parallel)
+    // ─────────────────────────────────────────────────────────────────────────
     const [layoutResult, providerResult] = await Promise.all([
       timeAsync(
         "collect-layouts",
@@ -416,10 +451,14 @@ export class RenderPipeline {
     const isComponentPage = ["tsx", "jsx", "ts", "js"].includes(fileExtension);
     const isInPagesDir = pageInfo.entity.id.includes("/pages/");
 
+    // ─────────────────────────────────────────────────────────────────────────
+    // Stage 3: Route Params Extraction
+    // Stage 4: Data Fetching (parallel jobs for page + layouts)
+    // ─────────────────────────────────────────────────────────────────────────
     if (options?.request && options?.url) {
       try {
         if (!options.params || Object.keys(options.params).length === 0) {
-          logger.info("[renderPage] Attempting to extract route params", {
+          logger.debug("[renderPage] Extracting route params", {
             slug,
             pageId: pageInfo.entity.id,
           });
@@ -427,7 +466,7 @@ export class RenderPipeline {
           const extracted = extractRouteParamsShared(pageInfo.entity.id, slug);
           if (extracted.matched) {
             options.params = extracted.params;
-            logger.info("[renderPage] Extracted route params", {
+            logger.debug("[renderPage] Extracted route params", {
               slug,
               params: extracted.params,
             });
@@ -529,6 +568,9 @@ export class RenderPipeline {
       }
     }
 
+    // ─────────────────────────────────────────────────────────────────────────
+    // Stage 5: Cache Check
+    // ─────────────────────────────────────────────────────────────────────────
     const cacheResult = await timeAsync(
       "check-cache",
       () =>
@@ -550,6 +592,9 @@ export class RenderPipeline {
       ? { ...options, props: { ...options?.props, ...dataFetchingProps } }
       : options;
 
+    // ─────────────────────────────────────────────────────────────────────────
+    // Stage 6: Page Bundle Preparation
+    // ─────────────────────────────────────────────────────────────────────────
     const pageBundleResult = await timeAsync(
       "prepare-page-bundles",
       () =>
@@ -573,6 +618,9 @@ export class RenderPipeline {
     const pageElement = pageBundleResult.pageElement;
     const pageBundle = pageBundleResult.pageBundle;
 
+    // ─────────────────────────────────────────────────────────────────────────
+    // Stage 7: Layout Application
+    // ─────────────────────────────────────────────────────────────────────────
     const wrappedElement = await timeAsync(
       "apply-layouts",
       () =>
@@ -588,6 +636,9 @@ export class RenderPipeline {
       "render-page",
     );
 
+    // ─────────────────────────────────────────────────────────────────────────
+    // Stage 8: SSR Rendering
+    // ─────────────────────────────────────────────────────────────────────────
     const ssrResult = await timeAsync(
       "ssr-rendering",
       () =>
@@ -607,6 +658,9 @@ export class RenderPipeline {
       "render-page",
     );
 
+    // ─────────────────────────────────────────────────────────────────────────
+    // Stage 9: Result Assembly
+    // ─────────────────────────────────────────────────────────────────────────
     const pageModule = pageBundleResult.clientModuleCode && pageBundleResult.pageModuleType
       ? {
         slug,
@@ -624,8 +678,6 @@ export class RenderPipeline {
       ssrHash: ssrResult.ssrHash,
       ...(pageModule ? { pageModule } : {}),
     };
-
-    logger.info("Page bundle frontmatter:", (pageBundleResult.pageBundle as MdxBundle).frontmatter);
 
     if (cacheResult) {
       await this.config.cacheCoordinator.persistResult(
