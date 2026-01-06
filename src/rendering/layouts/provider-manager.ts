@@ -66,6 +66,11 @@ export interface ProviderCollectionResult {
   providerInfos: EntityInfo[];
 }
 
+interface CacheEntry {
+  result: ProviderCollectionResult;
+  timestamp: number;
+}
+
 export class ProviderManager {
   private projectDir: string;
   private adapter: RuntimeAdapter;
@@ -76,8 +81,10 @@ export class ProviderManager {
     filePath?: string,
   ) => Promise<MdxBundle>;
   // Cache is keyed by project ID to support multi-project proxy mode
-  private cache: Map<string, ProviderCollectionResult> = new Map();
+  private cache: Map<string, CacheEntry> = new Map();
   private static DEFAULT_CACHE_KEY = "__default__";
+  // Cache TTL: 5 minutes (providers rarely change, but we want to pick up updates)
+  private static CACHE_TTL_MS = 5 * 60 * 1000;
 
   constructor(options: ProviderManagerOptions) {
     this.projectDir = options.projectDir;
@@ -98,6 +105,10 @@ export class ProviderManager {
     return projectData?.id || projectData?.slug || ProviderManager.DEFAULT_CACHE_KEY;
   }
 
+  private isCacheValid(entry: CacheEntry): boolean {
+    return Date.now() - entry.timestamp < ProviderManager.CACHE_TTL_MS;
+  }
+
   async collectProviders(): Promise<ProviderCollectionResult> {
     logger.info("[ProviderManager] collectProviders called");
 
@@ -112,14 +123,19 @@ export class ProviderManager {
     }
     const cacheKey = this.getCacheKey(projectData);
 
-    // Check cache with project-specific key
-    const cachedResult = this.cache.get(cacheKey);
-    if (cachedResult) {
+    // Check cache with project-specific key and TTL
+    const cachedEntry = this.cache.get(cacheKey);
+    if (cachedEntry && this.isCacheValid(cachedEntry)) {
       logger.info("[ProviderManager] Using cached providers", { cacheKey });
-      return cachedResult;
+      return cachedEntry.result;
     }
 
-    logger.info("[ProviderManager] Cache miss, collecting providers", { cacheKey });
+    if (cachedEntry) {
+      logger.info("[ProviderManager] Cache expired, refreshing providers", { cacheKey });
+      this.cache.delete(cacheKey);
+    } else {
+      logger.info("[ProviderManager] Cache miss, collecting providers", { cacheKey });
+    }
 
     const providerItems: ProviderItem[] = [];
     const providerBundles: MdxBundle[] = [];
@@ -133,7 +149,7 @@ export class ProviderManager {
         path: configProviderItem.componentPath,
       });
       const result = { providerBundles, providerItems, providerInfos };
-      this.cache.set(cacheKey, result);
+      this.cache.set(cacheKey, { result, timestamp: Date.now() });
       return result;
     }
 
@@ -145,7 +161,7 @@ export class ProviderManager {
         path: apiProviderItem.componentPath,
       });
       const result = { providerBundles, providerItems, providerInfos };
-      this.cache.set(cacheKey, result);
+      this.cache.set(cacheKey, { result, timestamp: Date.now() });
       return result;
     }
 
@@ -163,7 +179,7 @@ export class ProviderManager {
       providerItems: compiled.providerItems,
       providerInfos: discoveredInfos,
     };
-    this.cache.set(cacheKey, result);
+    this.cache.set(cacheKey, { result, timestamp: Date.now() });
     return result;
   }
 
