@@ -38,3 +38,5 @@ deno.lock
 
 # Veryfront ESM module cache
 .cache/
+
+data/projects/
