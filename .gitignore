@@ -39,4 +39,5 @@ deno.lock
 # Veryfront ESM module cache
 .cache/
 
-data/projects/
+data/projects/*
+!data/projects/.gitkeep
