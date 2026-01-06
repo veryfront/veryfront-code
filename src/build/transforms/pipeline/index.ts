@@ -27,6 +27,7 @@ import {
   resolveContextPlugin,
   resolveReactPlugin,
   resolveRelativePlugin,
+  ssrHttpStubPlugin,
 } from "./stages/index.ts";
 
 /**
@@ -39,6 +40,7 @@ const SSR_PIPELINE: TransformPlugin[] = [
   resolveAliasesPlugin,
   resolveReactPlugin,
   resolveContextPlugin,
+  ssrHttpStubPlugin, // Stub browser-only HTTP imports during SSR
   resolveRelativePlugin,
   resolveBarePlugin,
   finalizePlugin,
