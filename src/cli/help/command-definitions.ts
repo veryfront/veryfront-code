@@ -275,7 +275,7 @@ export const COMMANDS: CommandRegistry = {
   },
   pull: {
     name: "pull",
-    description: "Download project content from Veryfront remote",
+    description: "Download project files from Veryfront remote",
     usage: "veryfront pull [options]",
     options: [
       {
@@ -285,10 +285,6 @@ export const COMMANDS: CommandRegistry = {
       {
         flag: "-b, --branch <name>",
         description: "Branch to pull from (default: main)",
-      },
-      {
-        flag: "--types <list>",
-        description: "Entity types to include (page,component,function,virtualFile)",
       },
       {
         flag: "-f, --force",
@@ -303,7 +299,6 @@ export const COMMANDS: CommandRegistry = {
       "veryfront pull",
       "veryfront pull --dir ./my-project",
       "veryfront pull --branch feature-header",
-      "veryfront pull --types page,component",
       "veryfront pull --dry-run",
       "veryfront pull --force",
     ],
@@ -314,7 +309,7 @@ export const COMMANDS: CommandRegistry = {
   },
   push: {
     name: "push",
-    description: "Create a branch and upload local content to Veryfront",
+    description: "Create a branch and upload local files to Veryfront",
     usage: "veryfront push [options]",
     options: [
       {
@@ -324,10 +319,6 @@ export const COMMANDS: CommandRegistry = {
       {
         flag: "-b, --branch <name>",
         description: "Branch name to create (default: cli/push-<timestamp>)",
-      },
-      {
-        flag: "--types <list>",
-        description: "Entity types to include (page,component,function,virtualFile)",
       },
       {
         flag: "-f, --force",
@@ -342,13 +333,12 @@ export const COMMANDS: CommandRegistry = {
       "veryfront push",
       "veryfront push --dir ./my-project",
       "veryfront push --branch feature-header",
-      "veryfront push --types page,component",
       "veryfront push --dry-run",
     ],
     notes: [
       "Requires VERYFRONT_API_TOKEN env var or .veryfrontrc config",
       "Creates a new branch for each push - merge in Studio",
-      "Scans app/ for pages, components/ for components, functions/ for functions",
+      "Uploads all files using their relative paths",
     ],
   },
 };
