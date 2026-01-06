@@ -1,8 +1,8 @@
 /**
- * Pull command - Download project content from Veryfront API
+ * Pull command - Download project files from Veryfront API
  *
- * Downloads pages, components, functions, and virtual files from the remote
- * Veryfront project and writes them to the local filesystem.
+ * Downloads all files from the remote Veryfront project using the files API
+ * and writes them to the local filesystem with their original paths.
  *
  * @module cli/commands/pull
  */
@@ -22,8 +22,6 @@ export interface PullOptions {
   projectDir?: string;
   /** Branch name to pull from (optional) */
   branch?: string;
-  /** Entity types to include (default: all) */
-  types?: string[];
   /** Force overwrite without confirmation */
   force?: boolean;
   /** Dry run - show what would be written without writing */
@@ -31,36 +29,27 @@ export interface PullOptions {
 }
 
 /**
- * Sync response from API
+ * File from the API
  */
-interface SyncResponse {
-  data: {
-    pages: SyncEntity[];
-    components: SyncEntity[];
-    functions: SyncEntity[];
-    virtualFiles: VirtualFileEntity[];
-  };
-  metadata: {
-    projectId: string;
-    branchId: string | null;
-    syncedAt: string;
-    totalEntities: number;
-  };
-}
-
-interface SyncEntity {
-  id: string;
-  entityType: string;
-  name: string;
-  slug: string;
-  body: string | null;
-}
-
-interface VirtualFileEntity {
-  id: string;
-  entityType: string;
+interface ProjectFile {
+  id?: string;
   path: string;
-  body: string | null;
+  size: number;
+  type: string;
+  mimeType?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/**
+ * List files response from API
+ */
+interface ListFilesResponse {
+  data: ProjectFile[];
+  pagination?: {
+    cursor?: string;
+    hasMore: boolean;
+  };
 }
 
 /**
@@ -68,79 +57,60 @@ interface VirtualFileEntity {
  */
 interface WriteOp {
   path: string;
-  content: string;
-  entityType: string;
+  relativePath: string;
 }
 
 /**
- * Common file extensions to strip from slugs
+ * Fetch all files from API with pagination
  */
-const STRIP_EXTENSIONS = [".tsx", ".jsx", ".ts", ".js", ".mdx", ".md"];
+async function listAllFiles(
+  client: ReturnType<typeof createApiClient>,
+  projectSlug: string,
+  branch?: string,
+): Promise<ProjectFile[]> {
+  const allFiles: ProjectFile[] = [];
+  let cursor: string | undefined;
 
-/**
- * Strip file extension from slug if present
- */
-function stripExtension(slug: string): string {
-  for (const ext of STRIP_EXTENSIONS) {
-    if (slug.endsWith(ext)) {
-      return slug.slice(0, -ext.length);
-    }
-  }
-  return slug;
+  do {
+    const params: Record<string, string> = {
+      limit: "10000",
+      sortBy: "updatedAt",
+      sortOrder: "desc",
+    };
+    if (cursor) params.cursor = cursor;
+    if (branch) params.branch = branch;
+
+    const response = await client.get<ListFilesResponse>(
+      `/projects/${projectSlug}/files`,
+      params,
+    );
+
+    allFiles.push(...response.data);
+    cursor = response.pagination?.hasMore ? response.pagination.cursor : undefined;
+  } while (cursor);
+
+  return allFiles;
 }
 
 /**
- * Convert entity to file path and content
+ * Get file content from API
  */
-function entityToWriteOp(
-  entity: SyncEntity,
-  projectDir: string,
-  entityType: "page" | "component" | "function",
-): WriteOp | null {
-  if (!entity.body) return null;
+async function getFileContent(
+  client: ReturnType<typeof createApiClient>,
+  projectSlug: string,
+  path: string,
+  branch?: string,
+): Promise<string> {
+  const encodedPath = encodeURIComponent(path);
+  const params: Record<string, string> = {};
+  if (branch) params.branch = branch;
 
-  let path: string;
-  const ext = entityType === "function" ? ".ts" : ".tsx";
+  const response = await client.get<{ path: string; content: string; size: number }>(
+    `/projects/${projectSlug}/files/${encodedPath}`,
+    params,
+  );
 
-  // Strip extension from slug to avoid double extensions
-  const cleanSlug = stripExtension(entity.slug);
-
-  switch (entityType) {
-    case "page": {
-      // Pages go in app/{slug}/page.tsx
-      // "index" or "/" → app/page.tsx
-      // "about" → app/about/page.tsx
-      const pageSlug = cleanSlug === "/" || cleanSlug === "index" ? "" : cleanSlug;
-      path = join(projectDir, "app", pageSlug, "page.tsx");
-      break;
-    }
-    case "component":
-      // Components go in components/{slug}.tsx
-      path = join(projectDir, "components", `${cleanSlug}${ext}`);
-      break;
-    case "function":
-      // Functions go in functions/{slug}.ts
-      path = join(projectDir, "functions", `${cleanSlug}${ext}`);
-      break;
-  }
-
-  return { path, content: entity.body, entityType };
-}
-
-/**
- * Convert virtual file to write operation
- */
-function virtualFileToWriteOp(
-  vf: VirtualFileEntity,
-  projectDir: string,
-): WriteOp | null {
-  if (!vf.body) return null;
-
-  return {
-    path: join(projectDir, vf.path),
-    content: vf.body,
-    entityType: "virtualFile",
-  };
+  return response.content;
 }
 
 /**
@@ -148,6 +118,9 @@ function virtualFileToWriteOp(
  */
 async function writeFiles(
   ops: WriteOp[],
+  client: ReturnType<typeof createApiClient>,
+  projectSlug: string,
+  branch: string | undefined,
   dryRun: boolean,
 ): Promise<{ written: number; skipped: number }> {
   const fs = createFileSystem();
@@ -156,21 +129,24 @@ async function writeFiles(
 
   for (const op of ops) {
     if (dryRun) {
-      cliLogger.info(`  Would write: ${op.path}`);
+      cliLogger.info(`  Would write: ${op.relativePath}`);
       written++;
       continue;
     }
 
     try {
+      // Fetch content
+      const content = await getFileContent(client, projectSlug, op.relativePath, branch);
+
       // Ensure parent directory exists
       const dir = dirname(op.path);
       await fs.mkdir(dir, { recursive: true });
 
       // Write the file
-      await fs.writeTextFile(op.path, op.content);
+      await fs.writeTextFile(op.path, content);
       written++;
     } catch (error) {
-      cliLogger.error(`Failed to write ${op.path}:`, error);
+      cliLogger.error(`Failed to write ${op.relativePath}:`, error);
       skipped++;
     }
   }
@@ -179,13 +155,12 @@ async function writeFiles(
 }
 
 /**
- * Pull content from Veryfront API
+ * Pull files from Veryfront API
  */
 export async function pullCommand(options: PullOptions = {}): Promise<void> {
   const {
     projectDir = cwd(),
     branch,
-    types,
     force = false,
     dryRun = false,
   } = options;
@@ -201,25 +176,13 @@ export async function pullCommand(options: PullOptions = {}): Promise<void> {
     throw error;
   }
 
-  spinner.update(`Fetching content from ${config.projectSlug}...`);
+  spinner.update(`Fetching files from ${config.projectSlug}...`);
 
   const client = createApiClient(config);
 
-  // Build query params
-  const params: Record<string, string> = {};
-  if (branch) {
-    params.branch = branch;
-  }
-  if (types && types.length > 0) {
-    params.types = types.join(",");
-  }
-
-  let syncData: SyncResponse;
+  let files: ProjectFile[];
   try {
-    syncData = await client.get<SyncResponse>(
-      `/projects/${config.projectSlug}/sync`,
-      params,
-    );
+    files = await listAllFiles(client, config.projectSlug, branch);
   } catch (error) {
     spinner.stop();
     throw error;
@@ -227,54 +190,18 @@ export async function pullCommand(options: PullOptions = {}): Promise<void> {
 
   spinner.stop();
 
-  // Convert to write operations
-  const writeOps: WriteOp[] = [];
-
-  // Pages
-  for (const page of syncData.data.pages) {
-    const op = entityToWriteOp(page, projectDir, "page");
-    if (op) writeOps.push(op);
-  }
-
-  // Components
-  for (const component of syncData.data.components) {
-    const op = entityToWriteOp(component, projectDir, "component");
-    if (op) writeOps.push(op);
-  }
-
-  // Functions
-  for (const fn of syncData.data.functions) {
-    const op = entityToWriteOp(fn, projectDir, "function");
-    if (op) writeOps.push(op);
-  }
-
-  // Virtual files
-  for (const vf of syncData.data.virtualFiles) {
-    const op = virtualFileToWriteOp(vf, projectDir);
-    if (op) writeOps.push(op);
-  }
-
-  if (writeOps.length === 0) {
-    logInfo("No content to pull.");
+  if (files.length === 0) {
+    logInfo("No files to pull.");
     return;
   }
 
-  // Show summary
-  const counts = {
-    page: syncData.data.pages.length,
-    component: syncData.data.components.length,
-    function: syncData.data.functions.length,
-    virtualFile: syncData.data.virtualFiles.length,
-  };
+  // Convert to write operations using path from API directly
+  const writeOps: WriteOp[] = files.map((file) => ({
+    path: join(projectDir, file.path),
+    relativePath: file.path,
+  }));
 
-  cliLogger.info(`\nContent to ${dryRun ? "pull" : "write"}:`);
-  if (counts.page > 0) cliLogger.info(`  Pages: ${counts.page}`);
-  if (counts.component > 0) cliLogger.info(`  Components: ${counts.component}`);
-  if (counts.function > 0) cliLogger.info(`  Functions: ${counts.function}`);
-  if (counts.virtualFile > 0) {
-    cliLogger.info(`  Virtual Files: ${counts.virtualFile}`);
-  }
-  cliLogger.info("");
+  cliLogger.info(`\nFound ${files.length} files to ${dryRun ? "pull" : "write"}.`);
 
   // Confirm if not forced
   if (!force && !dryRun) {
@@ -292,7 +219,7 @@ export async function pullCommand(options: PullOptions = {}): Promise<void> {
   spinner.start();
   spinner.update("Writing files...");
 
-  const result = await writeFiles(writeOps, dryRun);
+  const result = await writeFiles(writeOps, client, config.projectSlug, branch, dryRun);
 
   spinner.stop();
 

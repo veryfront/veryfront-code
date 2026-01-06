@@ -327,7 +327,6 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
           await pullCommand({
             projectDir,
             branch: args.branch ? String(args.branch) : args.b ? String(args.b) : undefined,
-            types: args.types ? String(args.types).split(",") : undefined,
             force: Boolean(args.force) || Boolean(args.f),
             dryRun: Boolean(args["dry-run"]),
           });
@@ -345,7 +344,6 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
           await pushCommand({
             projectDir,
             branch: args.branch ? String(args.branch) : args.b ? String(args.b) : undefined,
-            types: args.types ? String(args.types).split(",") : undefined,
             force: Boolean(args.force) || Boolean(args.f),
             dryRun: Boolean(args["dry-run"]),
           });
