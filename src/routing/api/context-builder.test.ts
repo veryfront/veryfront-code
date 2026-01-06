@@ -10,7 +10,8 @@ const mockFs: FileSystemAdapter = {
   writeFile: () => Promise.resolve(),
   readDir: async function* () {},
   exists: () => Promise.resolve(false),
-  stat: () => Promise.resolve({ isFile: false, isDirectory: false, isSymlink: false, size: 0, mtime: null }),
+  stat: () =>
+    Promise.resolve({ isFile: false, isDirectory: false, isSymlink: false, size: 0, mtime: null }),
   mkdir: () => Promise.resolve(),
   remove: () => Promise.resolve(),
   makeTempDir: () => Promise.resolve("/tmp/mock"),
