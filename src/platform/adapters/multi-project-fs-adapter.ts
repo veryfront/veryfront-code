@@ -180,6 +180,31 @@ export class MultiProjectFSAdapter implements FSAdapter {
   getManagerStats(): ReturnType<ProxyFSAdapterManager["getStats"]> {
     return this.manager.getStats();
   }
+
+  /**
+   * Get project data from the current request's adapter.
+   * Required for ProviderManager to access API project settings (provider, layout).
+   */
+  async getProjectData(): Promise<ReturnType<VeryfrontFSAdapter["getProjectData"]> | undefined> {
+    try {
+      const adapter = await this.getAdapter();
+      return adapter.getProjectData?.();
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
+   * Get file path by entity ID from the current request's adapter.
+   */
+  async getFilePathByEntityId(entityId: string): Promise<string | undefined> {
+    try {
+      const adapter = await this.getAdapter();
+      return adapter.getFilePathByEntityId?.(entityId);
+    } catch {
+      return undefined;
+    }
+  }
 }
 
 export function isMultiProjectAdapter(adapter: unknown): adapter is MultiProjectFSAdapter {

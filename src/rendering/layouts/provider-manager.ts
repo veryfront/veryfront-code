@@ -12,7 +12,15 @@ interface VeryfrontFSAdapterLike {
   getFilePathByEntityId?: (entityId: string) => string | undefined;
 }
 
-function getVeryfrontFSAdapter(adapter: RuntimeAdapter): VeryfrontFSAdapterLike | null {
+interface MultiProjectFSAdapterLike {
+  getProjectData: () => Promise<{ provider?: string; layout?: string } | undefined>;
+  exists: (path: string) => Promise<boolean>;
+  getFilePathByEntityId?: (entityId: string) => Promise<string | undefined>;
+}
+
+type FSAdapterLike = VeryfrontFSAdapterLike | MultiProjectFSAdapterLike;
+
+function getVeryfrontFSAdapter(adapter: RuntimeAdapter): FSAdapterLike | null {
   const fs = adapter?.fs;
   if (!fs || typeof fs !== "object") return null;
 
@@ -20,13 +28,18 @@ function getVeryfrontFSAdapter(adapter: RuntimeAdapter): VeryfrontFSAdapterLike 
   if (!wrapped || typeof wrapped !== "object") return null;
 
   const constructor = (wrapped as { constructor?: { name?: string } }).constructor;
-  if (constructor?.name !== "VeryfrontFSAdapter") return null;
+  const adapterName = constructor?.name;
 
-  const typedAdapter = wrapped as Partial<VeryfrontFSAdapterLike>;
+  // Support both VeryfrontFSAdapter (single-project) and MultiProjectFSAdapter (proxy mode)
+  if (adapterName !== "VeryfrontFSAdapter" && adapterName !== "MultiProjectFSAdapter") {
+    return null;
+  }
+
+  const typedAdapter = wrapped as Partial<FSAdapterLike>;
   if (typeof typedAdapter.getProjectData !== "function") return null;
   if (typeof typedAdapter.exists !== "function") return null;
 
-  return typedAdapter as VeryfrontFSAdapterLike;
+  return typedAdapter as FSAdapterLike;
 }
 
 export interface ProviderManagerOptions {
@@ -166,14 +179,22 @@ export class ProviderManager {
       return null;
     }
 
-    const projectData = vfAdapter.getProjectData();
+    // getProjectData() may be async (MultiProjectFSAdapter) or sync (VeryfrontFSAdapter)
+    const projectDataResult = vfAdapter.getProjectData();
+    const projectData = projectDataResult instanceof Promise
+      ? await projectDataResult
+      : projectDataResult;
     logger.info("[ProviderManager] Project data", { projectData });
 
     let providerValue = projectData?.provider;
 
     // If provider is a UUID, try to resolve it to a file path via entity lookup
     if (providerValue && this.isUUID(providerValue)) {
-      const resolvedPath = vfAdapter.getFilePathByEntityId?.(providerValue);
+      // getFilePathByEntityId may be async (MultiProjectFSAdapter) or sync (VeryfrontFSAdapter)
+      const resolvedPathResult = vfAdapter.getFilePathByEntityId?.(providerValue);
+      const resolvedPath = resolvedPathResult instanceof Promise
+        ? await resolvedPathResult
+        : resolvedPathResult;
       if (resolvedPath) {
         logger.info("[ProviderManager] Resolved UUID provider to path", {
           uuid: providerValue,
