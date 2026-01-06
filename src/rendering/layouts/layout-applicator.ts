@@ -115,9 +115,7 @@ export class LayoutApplicator {
       path: this.requestUrl?.pathname || pageFilePath,
       pathname: this.requestUrl?.pathname || `/${pageInfo.entity.slug || ""}`,
       params: {},
-      query: this.requestUrl
-        ? Object.fromEntries(this.requestUrl.searchParams)
-        : {},
+      query: this.requestUrl ? Object.fromEntries(this.requestUrl.searchParams) : {},
       isPreview: false,
       isMounted: false,
       navigate: async () => {},

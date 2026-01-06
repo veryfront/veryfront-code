@@ -124,7 +124,13 @@ export class LayoutCollector {
 
   private async collectNamedLayoutWithPath(
     pageInfo: EntityInfo,
-  ): Promise<{ layoutBundle: MdxBundle | undefined; layoutPath: string | undefined; layoutName: string | undefined }> {
+  ): Promise<
+    {
+      layoutBundle: MdxBundle | undefined;
+      layoutPath: string | undefined;
+      layoutName: string | undefined;
+    }
+  > {
     const layoutValue = pageInfo.entity.frontmatter.layout;
 
     logger.info("[LayoutCollector] collectNamedLayoutWithPath called", {

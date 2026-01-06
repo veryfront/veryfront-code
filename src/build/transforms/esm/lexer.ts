@@ -19,7 +19,7 @@ function maskHttpUrls(code: string): UrlMaskResult {
   const urlMap = new Map<string, string>();
   let counter = 0;
 
-  const masked = code.replace(HTTP_URL_PATTERN, (match, quote, url) => {
+  const masked = code.replace(HTTP_URL_PATTERN, (_match, quote, url) => {
     const placeholder = `__VFURL_${counter++}__`;
     urlMap.set(placeholder, url);
     return `${quote}${placeholder}${quote}`;
@@ -143,9 +143,7 @@ export async function rewriteImports(
     if (!imp) continue;
 
     // Unmask the import specifier for the rewriter
-    const unmaskedImp = imp.n
-      ? { ...imp, n: unmaskHttpUrls(imp.n, urlMap) }
-      : imp;
+    const unmaskedImp = imp.n ? { ...imp, n: unmaskHttpUrls(imp.n, urlMap) } : imp;
 
     // Extract the full statement from the masked code and unmask it
     const statement = unmaskHttpUrls(masked.substring(imp.ss, imp.se), urlMap);
