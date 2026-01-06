@@ -88,18 +88,15 @@ function showBasicHelp(command?: string): void {
     cliLogger.info(`Unknown command: ${command}`);
     cliLogger.info(`Use 'veryfront --help' to see available commands.`);
   } else {
+    // Dynamically generate command list from COMMANDS registry
+    const maxLen = Math.max(...Object.values(COMMANDS).map((c) => c.name.length)) + 2;
+    const commandList = Object.values(COMMANDS)
+      .map((cmd) => `  ${cmd.name.padEnd(maxLen)}${cmd.description}`)
+      .join("\n");
     cliLogger.info(`Veryfront CLI v${VERSION}
 
 Available commands:
-  init          Create a new Veryfront project
-  dev           Start the development server
-  build         Build for production
-  preview       Preview the production build
-  doctor        Run diagnostic checks
-  clean         Clean build and cache directories
-  routes        List application routes
-  lock          Manage remote import lockfile
-  generate      Generate new pages/components
+${commandList}
 
 Use 'veryfront <command> --help' for command-specific help.`);
   }
