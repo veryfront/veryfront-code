@@ -130,19 +130,19 @@ export class ProviderManager {
 
     // If cache is valid, return immediately
     if (cachedEntry && this.isCacheValid(cachedEntry)) {
-      logger.debug("[ProviderManager] Cache hit", { cacheKey, durationMs: Date.now() - startTime });
+      logger.debug("[ProviderManager] Cache hit", { project: cacheKey, durationMs: Date.now() - startTime });
       return cachedEntry.result;
     }
 
     // Stale-while-revalidate: if we have stale cache, return it and refresh in background
     if (cachedEntry && !this.refreshing.has(cacheKey)) {
-      logger.info("[ProviderManager] Stale cache, refreshing in background", { cacheKey });
+      logger.info("[ProviderManager] Stale cache, refreshing in background", { project: cacheKey });
       this.refreshInBackground(cacheKey, vfAdapter, projectData);
       return cachedEntry.result;
     }
 
     // No cache or already refreshing - fetch synchronously
-    logger.info("[ProviderManager] Cache miss", { cacheKey });
+    logger.info("[ProviderManager] Cache miss", { project: cacheKey });
     return this.fetchProviders(cacheKey, vfAdapter, projectData);
   }
 
@@ -154,7 +154,7 @@ export class ProviderManager {
     this.refreshing.add(cacheKey);
     this.fetchProviders(cacheKey, vfAdapter, projectData)
       .catch((error) => {
-        logger.error("[ProviderManager] Background refresh failed", { cacheKey, error });
+        logger.error("[ProviderManager] Background refresh failed", { project: cacheKey, error });
       })
       .finally(() => {
         this.refreshing.delete(cacheKey);
@@ -178,7 +178,7 @@ export class ProviderManager {
       const result = { providerBundles, providerItems, providerInfos };
       this.cache.set(cacheKey, { result, timestamp: Date.now() });
       logger.info("[ProviderManager] Fetched provider (config)", {
-        cacheKey,
+        project: cacheKey,
         path: configProviderItem.componentPath,
         durationMs: Date.now() - startTime,
       });
@@ -192,7 +192,7 @@ export class ProviderManager {
       const result = { providerBundles, providerItems, providerInfos };
       this.cache.set(cacheKey, { result, timestamp: Date.now() });
       logger.info("[ProviderManager] Fetched provider (API)", {
-        cacheKey,
+        project: cacheKey,
         path: apiProviderItem.componentPath,
         durationMs: Date.now() - startTime,
       });
@@ -210,7 +210,7 @@ export class ProviderManager {
     };
     this.cache.set(cacheKey, { result, timestamp: Date.now() });
     logger.info("[ProviderManager] Fetched providers (discovery)", {
-      cacheKey,
+      project: cacheKey,
       count: discoveredInfos.length,
       durationMs: Date.now() - startTime,
     });
