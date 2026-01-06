@@ -135,8 +135,6 @@ export const ssrHttpStubPlugin: TransformPlugin = {
     }
 
     // Rewrite browser-only HTTP imports to stubs
-    return await rewriteImports(ctx.code, (imp, statement) =>
-      generateStub(imp, statement)
-    );
+    return await rewriteImports(ctx.code, (imp, statement) => generateStub(imp, statement));
   },
 };
