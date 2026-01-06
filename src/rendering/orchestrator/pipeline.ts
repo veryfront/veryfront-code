@@ -404,7 +404,7 @@ export class RenderPipeline {
       ),
       timeAsync(
         "collect-providers",
-        () => this.config.layoutOrchestrator.collectProviders(),
+        () => this.config.layoutOrchestrator.collectProviders(slug),
         "render-page",
       ),
     ]);
@@ -683,7 +683,7 @@ export class RenderPipeline {
       ),
       timeAsync(
         "collect-providers-data",
-        () => this.config.layoutOrchestrator.collectProviders(),
+        () => this.config.layoutOrchestrator.collectProviders(slug),
         "resolve-page-data",
       ),
     ]);

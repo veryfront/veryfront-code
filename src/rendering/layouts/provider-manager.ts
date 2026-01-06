@@ -111,14 +111,15 @@ export class ProviderManager {
     return Date.now() - entry.timestamp < ProviderManager.CACHE_TTL_MS;
   }
 
-  private getProjectLogContext(projectData?: ProjectData): Record<string, string | undefined> {
+  private getLogContext(projectData?: ProjectData, route?: string): Record<string, string | undefined> {
     return {
       projectId: projectData?.id,
       projectSlug: projectData?.slug,
+      route,
     };
   }
 
-  async collectProviders(): Promise<ProviderCollectionResult> {
+  async collectProviders(route?: string): Promise<ProviderCollectionResult> {
     const startTime = Date.now();
 
     // Get project data first to determine cache key
@@ -135,36 +136,37 @@ export class ProviderManager {
     // Check cache with project-specific key
     const cachedEntry = this.cache.get(cacheKey);
 
-    const projectCtx = this.getProjectLogContext(projectData);
+    const logCtx = this.getLogContext(projectData, route);
 
     // If cache is valid, return immediately
     if (cachedEntry && this.isCacheValid(cachedEntry)) {
-      logger.debug("[ProviderManager] Cache hit", { ...projectCtx, durationMs: Date.now() - startTime });
+      logger.debug("[ProviderManager] Cache hit", { ...logCtx, durationMs: Date.now() - startTime });
       return cachedEntry.result;
     }
 
     // Stale-while-revalidate: if we have stale cache, return it and refresh in background
     if (cachedEntry && !this.refreshing.has(cacheKey)) {
-      logger.info("[ProviderManager] Stale cache, refreshing in background", projectCtx);
-      this.refreshInBackground(cacheKey, vfAdapter, projectData);
+      logger.info("[ProviderManager] Stale cache, refreshing in background", logCtx);
+      this.refreshInBackground(cacheKey, vfAdapter, projectData, route);
       return cachedEntry.result;
     }
 
     // No cache or already refreshing - fetch synchronously
-    logger.info("[ProviderManager] Cache miss", projectCtx);
-    return this.fetchProviders(cacheKey, vfAdapter, projectData);
+    logger.info("[ProviderManager] Cache miss", logCtx);
+    return this.fetchProviders(cacheKey, vfAdapter, projectData, route);
   }
 
   private refreshInBackground(
     cacheKey: string,
     vfAdapter: FSAdapterLike | null,
     projectData: ProjectData | undefined,
+    route?: string,
   ): void {
     this.refreshing.add(cacheKey);
-    const projectCtx = this.getProjectLogContext(projectData);
-    this.fetchProviders(cacheKey, vfAdapter, projectData)
+    const logCtx = this.getLogContext(projectData, route);
+    this.fetchProviders(cacheKey, vfAdapter, projectData, route)
       .catch((error) => {
-        logger.error("[ProviderManager] Background refresh failed", { ...projectCtx, error });
+        logger.error("[ProviderManager] Background refresh failed", { ...logCtx, error });
       })
       .finally(() => {
         this.refreshing.delete(cacheKey);
@@ -175,9 +177,10 @@ export class ProviderManager {
     cacheKey: string,
     vfAdapter: FSAdapterLike | null,
     projectData: ProjectData | undefined,
+    route?: string,
   ): Promise<ProviderCollectionResult> {
     const startTime = Date.now();
-    const projectCtx = this.getProjectLogContext(projectData);
+    const logCtx = this.getLogContext(projectData, route);
     const providerItems: ProviderItem[] = [];
     const providerBundles: MdxBundle[] = [];
     const providerInfos: EntityInfo[] = [];
@@ -189,7 +192,7 @@ export class ProviderManager {
       const result = { providerBundles, providerItems, providerInfos };
       this.cache.set(cacheKey, { result, timestamp: Date.now() });
       logger.info("[ProviderManager] Fetched provider (config)", {
-        ...projectCtx,
+        ...logCtx,
         path: configProviderItem.componentPath,
         durationMs: Date.now() - startTime,
       });
@@ -203,7 +206,7 @@ export class ProviderManager {
       const result = { providerBundles, providerItems, providerInfos };
       this.cache.set(cacheKey, { result, timestamp: Date.now() });
       logger.info("[ProviderManager] Fetched provider (API)", {
-        ...projectCtx,
+        ...logCtx,
         path: apiProviderItem.componentPath,
         durationMs: Date.now() - startTime,
       });
@@ -221,7 +224,7 @@ export class ProviderManager {
     };
     this.cache.set(cacheKey, { result, timestamp: Date.now() });
     logger.info("[ProviderManager] Fetched providers (discovery)", {
-      ...projectCtx,
+      ...logCtx,
       count: discoveredInfos.length,
       durationMs: Date.now() - startTime,
     });

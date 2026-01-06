@@ -52,8 +52,8 @@ export class LayoutOrchestrator {
     return result;
   }
 
-  async collectProviders(): Promise<ProviderCollectionResult> {
-    return await this.config.providerManager.collectProviders();
+  async collectProviders(route?: string): Promise<ProviderCollectionResult> {
+    return await this.config.providerManager.collectProviders(route);
   }
 
   async applyLayoutsAndWrappers(
