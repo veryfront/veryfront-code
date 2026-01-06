@@ -82,9 +82,11 @@ export class ProviderManager {
   ) => Promise<MdxBundle>;
   // Cache is keyed by project ID to support multi-project proxy mode
   private cache: Map<string, CacheEntry> = new Map();
+  // Track in-flight refreshes to avoid duplicate work
+  private refreshing: Set<string> = new Set();
   private static DEFAULT_CACHE_KEY = "__default__";
-  // Cache TTL: 5 minutes (providers rarely change, but we want to pick up updates)
-  private static CACHE_TTL_MS = 5 * 60 * 1000;
+  // Cache TTL: 30 minutes (stale-while-revalidate makes this safe)
+  private static CACHE_TTL_MS = 30 * 60 * 1000;
 
   constructor(options: ProviderManagerOptions) {
     this.projectDir = options.projectDir;
@@ -123,20 +125,47 @@ export class ProviderManager {
     }
     const cacheKey = this.getCacheKey(projectData);
 
-    // Check cache with project-specific key and TTL
+    // Check cache with project-specific key
     const cachedEntry = this.cache.get(cacheKey);
+
+    // If cache is valid, return immediately
     if (cachedEntry && this.isCacheValid(cachedEntry)) {
       logger.info("[ProviderManager] Using cached providers", { cacheKey });
       return cachedEntry.result;
     }
 
-    if (cachedEntry) {
-      logger.info("[ProviderManager] Cache expired, refreshing providers", { cacheKey });
-      this.cache.delete(cacheKey);
-    } else {
-      logger.info("[ProviderManager] Cache miss, collecting providers", { cacheKey });
+    // Stale-while-revalidate: if we have stale cache, return it and refresh in background
+    if (cachedEntry && !this.refreshing.has(cacheKey)) {
+      logger.info("[ProviderManager] Returning stale cache, refreshing in background", { cacheKey });
+      this.refreshInBackground(cacheKey, vfAdapter, projectData);
+      return cachedEntry.result;
     }
 
+    // No cache or already refreshing - fetch synchronously
+    logger.info("[ProviderManager] Cache miss, collecting providers", { cacheKey });
+    return this.fetchProviders(cacheKey, vfAdapter, projectData);
+  }
+
+  private refreshInBackground(
+    cacheKey: string,
+    vfAdapter: FSAdapterLike | null,
+    projectData: ProjectData | undefined,
+  ): void {
+    this.refreshing.add(cacheKey);
+    this.fetchProviders(cacheKey, vfAdapter, projectData)
+      .catch((error) => {
+        logger.error("[ProviderManager] Background refresh failed", { cacheKey, error });
+      })
+      .finally(() => {
+        this.refreshing.delete(cacheKey);
+      });
+  }
+
+  private async fetchProviders(
+    cacheKey: string,
+    vfAdapter: FSAdapterLike | null,
+    projectData: ProjectData | undefined,
+  ): Promise<ProviderCollectionResult> {
     const providerItems: ProviderItem[] = [];
     const providerBundles: MdxBundle[] = [];
     const providerInfos: EntityInfo[] = [];
