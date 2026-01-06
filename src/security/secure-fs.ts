@@ -102,20 +102,9 @@ function getContextValidationOptions(
       return {
         baseDir,
         level: "normal",
-        allowedDirs: [
-          "app",
-          "pages",
-          "components",
-          "lib",
-          "modules",
-          "server",
-          "client",
-          "shared",
-          "islands",
-          "features",
-          "src",
-          "_snippets", // Virtual snippet modules (cached in memory)
-        ],
+        // Allow all files within project directory (no directory restrictions)
+        // Security is ensured by baseDir containment check
+        allowedDirs: [],
         followSymlinks: false,
         allowAbsolute: true, // Allow node_modules, etc.
       };

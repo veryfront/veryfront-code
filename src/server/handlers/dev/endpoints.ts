@@ -100,6 +100,8 @@ if (window.parent !== window) {
 }
 
 // HMR WebSocket runs on same port as server
+// NOTE: This script only handles Studio notifications. Actual HMR reloads
+// are handled by the inline HMR runtime (templates.ts) to avoid duplicate reloads.
 const hmrPort = ${port};
 const host = window.location.hostname || 'localhost';
 const ws = new WebSocket('ws://' + host + ':' + hmrPort + '/_ws');
@@ -109,19 +111,18 @@ ws.onopen = () => {
   wasConnected = true;
 };
 ws.onmessage = (event) => {
+  // Don't reload here - the inline HMR runtime handles reloads.
+  // This script just maintains the connection for Studio notifications.
   const data = JSON.parse(event.data);
-  if (data.type === 'reload') {
-    location.reload();
+  if (data.type === 'reload' || data.type === 'update') {
+    console.log('[HMR] Update received (handled by inline runtime):', data.type);
   }
 };
 ws.onclose = () => {
-  // Only reload if connection was previously established
-  // This prevents reload loops when HMR server is not running
-  if (wasConnected) {
-    setTimeout(() => location.reload(), ${reloadDelay});
-  } else {
+  if (!wasConnected) {
     console.log('[HMR] Connection failed - HMR server may not be running');
   }
+  // Don't reload on close - let the inline HMR runtime handle reconnection
 };
 
 window.__veryfrontHMRWebSocket = ws;
@@ -141,8 +142,9 @@ hydrate('${slug}', {
   private getHMRRuntime(): string {
     return `
 // Veryfront HMR Runtime
+// NOTE: This runtime only handles CSS updates. Full page reloads are handled
+// by the inline HMR runtime (templates.ts) to avoid duplicate reloads.
 (function() {
-  // HMR WebSocket runs on same port as server
   const hmrPort = parseInt(window.location.port, 10) || 3000;
   const host = window.location.hostname || 'localhost';
   const ws = new WebSocket('ws://' + host + ':' + hmrPort + '/_ws');
@@ -150,7 +152,7 @@ hydrate('${slug}', {
 
   ws.onopen = () => {
     wasConnected = true;
-    console.log('[HMR] Connected to port ' + hmrPort);
+    console.log('[HMR Runtime] Connected to port ' + hmrPort);
   };
 
   ws.onmessage = (event) => {
@@ -158,38 +160,35 @@ hydrate('${slug}', {
       const data = JSON.parse(event.data);
       handleHMRMessage(data);
     } catch (e) {
-      console.error('[HMR] Failed to parse message', e);
+      console.error('[HMR Runtime] Failed to parse message', e);
     }
   };
 
   ws.onerror = (error) => {
-    console.error('[HMR] WebSocket error', error);
+    console.error('[HMR Runtime] WebSocket error', error);
   };
 
   ws.onclose = () => {
-    // Only reload if connection was previously established
-    if (wasConnected) {
-      console.log('[HMR] Connection closed. Attempting reconnect...');
-      setTimeout(() => location.reload(), 2000);
-    } else {
-      console.log('[HMR] Connection failed - HMR server may not be running');
+    if (!wasConnected) {
+      console.log('[HMR Runtime] Connection failed - HMR server may not be running');
     }
+    // Don't reload on close - inline HMR runtime handles reconnection
   };
 
   function handleHMRMessage(data) {
     switch (data.type) {
       case 'reload':
-        console.log('[HMR] Reloading page');
-        location.reload();
+        // Don't reload - inline HMR runtime handles this
+        console.log('[HMR Runtime] Reload signal (handled by inline runtime)');
         break;
       case 'css-update':
         updateCSS(data.path);
         break;
       case 'connected':
-        console.log('[HMR] Server acknowledged connection');
+        console.log('[HMR Runtime] Server acknowledged connection');
         break;
       default:
-        console.log('[HMR] Unknown message type:', data.type);
+        console.log('[HMR Runtime] Message:', data.type);
     }
   }
 
@@ -200,7 +199,7 @@ hydrate('${slug}', {
       if (href && href.includes(path)) {
         const newHref = href.split('?')[0] + '?t=' + Date.now();
         link.setAttribute('href', newHref);
-        console.log('[HMR] Updated CSS:', path);
+        console.log('[HMR Runtime] Updated CSS:', path);
       }
     });
   }
