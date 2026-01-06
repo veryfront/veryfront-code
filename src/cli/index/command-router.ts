@@ -14,6 +14,8 @@ import { doctorCommand } from "../commands/doctor/index.ts";
 import { initCommand } from "../commands/init/index.ts";
 import { lockCommand } from "../commands/lock.ts";
 import { routesCommand } from "../commands/routes.ts";
+import { pullCommand } from "../commands/pull.ts";
+import { pushCommand } from "../commands/push.ts";
 import {
   exitProcess,
   registerTerminationSignals,
@@ -315,6 +317,28 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
       case "g":
         showLogo();
         await handleGenerateCommand(args);
+        break;
+
+      case "pull":
+        showLogo();
+        await pullCommand({
+          projectDir: cwd(),
+          branch: args.branch ? String(args.branch) : args.b ? String(args.b) : undefined,
+          types: args.types ? String(args.types).split(",") : undefined,
+          force: Boolean(args.force) || Boolean(args.f),
+          dryRun: Boolean(args["dry-run"]),
+        });
+        break;
+
+      case "push":
+        showLogo();
+        await pushCommand({
+          projectDir: cwd(),
+          branch: args.branch ? String(args.branch) : args.b ? String(args.b) : undefined,
+          types: args.types ? String(args.types).split(",") : undefined,
+          force: Boolean(args.force) || Boolean(args.f),
+          dryRun: Boolean(args["dry-run"]),
+        });
         break;
 
       case "help":
