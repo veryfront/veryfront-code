@@ -46,8 +46,12 @@ export const getSpaRendererScript = () => `
         if (container.innerHTML.trim() !== '') {
           // SSR content exists, hydrate
           // identifierPrefix must match SSR to prevent useId() mismatch
+          // Suppress recoverable hydration errors - common with animation libraries
           const { hydrateRoot } = await import('react-dom/client');
-          hydrateRoot(container, tree, { identifierPrefix: 'vf' });
+          hydrateRoot(container, tree, {
+            identifierPrefix: 'vf',
+            onRecoverableError: () => {} // Silently ignore hydration mismatches
+          });
           log('Hydrated successfully');
         } else {
           // No SSR content, render fresh

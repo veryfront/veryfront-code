@@ -83,8 +83,12 @@ export class RSCHydrator {
       if (element.innerHTML.trim()) {
         // Hydrate existing content - hydrateRoot accepts Element, not just HTMLElement
         // identifierPrefix must match SSR to prevent useId() mismatch
+        // Suppress recoverable hydration errors - common with animation libraries
         rscLogger.debug(`Hydrating ${componentName} #${instanceId}`);
-        hydrateRoot(element, reactElement, { identifierPrefix: "vf" });
+        hydrateRoot(element, reactElement, {
+          identifierPrefix: "vf",
+          onRecoverableError: () => {}, // Silently ignore hydration mismatches
+        });
       } else {
         // Render into empty container
         rscLogger.debug(`Rendering ${componentName} #${instanceId}`);
