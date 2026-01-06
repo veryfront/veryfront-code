@@ -2,6 +2,10 @@ import { assertEquals, assertExists } from "std/testing/asserts.ts";
 import { describe, it } from "std/testing/bdd.ts";
 import { createContext, normalizeParams, parseCookies } from "./context-builder.ts";
 import type { RouteMatch } from "./api-route-matcher.ts";
+import type { FileSystemAdapter } from "../../platform/adapters/base.ts";
+
+// Mock FileSystemAdapter for tests
+const mockFs = {} as FileSystemAdapter;
 
 describe("API Context Builder", () => {
   describe("parseCookies()", () => {
@@ -115,7 +119,7 @@ describe("API Context Builder", () => {
         params: {},
       };
 
-      const context = createContext(request, match);
+      const context = createContext(request, match, mockFs);
 
       assertEquals(context.request, request);
       assertEquals(context.params, {});
@@ -132,7 +136,7 @@ describe("API Context Builder", () => {
         params: { id: "123" },
       };
 
-      const context = createContext(request, match);
+      const context = createContext(request, match, mockFs);
 
       assertEquals(context.params.id, "123");
     });
@@ -144,7 +148,7 @@ describe("API Context Builder", () => {
         params: {},
       };
 
-      const context = createContext(request, match);
+      const context = createContext(request, match, mockFs);
 
       assertEquals(context.query.get("page"), "2");
       assertEquals(context.query.get("limit"), "10");
@@ -161,7 +165,7 @@ describe("API Context Builder", () => {
         params: {},
       };
 
-      const context = createContext(request, match);
+      const context = createContext(request, match, mockFs);
 
       assertEquals(context.cookies.session, "abc123");
       assertEquals(context.cookies.theme, "dark");
@@ -174,7 +178,7 @@ describe("API Context Builder", () => {
         params: {},
       };
 
-      const context = createContext(request, match);
+      const context = createContext(request, match, mockFs);
 
       assertEquals(context.cookies, {});
     });
@@ -191,7 +195,7 @@ describe("API Context Builder", () => {
         params: {},
       };
 
-      const context = createContext(request, match);
+      const context = createContext(request, match, mockFs);
 
       assertEquals(context.headers.get("authorization"), "Bearer token123");
       assertEquals(context.headers.get("content-type"), "application/json");
@@ -204,7 +208,7 @@ describe("API Context Builder", () => {
         params: {},
       };
 
-      const context = createContext(request, match);
+      const context = createContext(request, match, mockFs);
 
       assertEquals(context.url.hostname, "localhost");
       assertEquals(context.url.port, "3000");
@@ -222,7 +226,7 @@ describe("API Context Builder", () => {
         params: { userId: "123", postId: "456" },
       };
 
-      const context = createContext(request, match);
+      const context = createContext(request, match, mockFs);
 
       assertEquals(context.params.userId, "123");
       assertEquals(context.params.postId, "456");
@@ -235,7 +239,7 @@ describe("API Context Builder", () => {
         params: { slug: ["guide", "intro"] },
       };
 
-      const context = createContext(request, match);
+      const context = createContext(request, match, mockFs);
 
       assertEquals(context.params.slug, ["guide", "intro"]);
     });
@@ -247,7 +251,7 @@ describe("API Context Builder", () => {
         params: {},
       };
 
-      const context = createContext(request, match);
+      const context = createContext(request, match, mockFs);
 
       assertEquals(context.query.toString(), "");
     });
@@ -261,7 +265,7 @@ describe("API Context Builder", () => {
         params: {},
       };
 
-      const context = createContext(request, match);
+      const context = createContext(request, match, mockFs);
 
       assertEquals(context.query.get("filter[status]"), "active");
       assertEquals(context.query.get("sort"), "-created");
@@ -277,7 +281,7 @@ describe("API Context Builder", () => {
         params: {},
       };
 
-      const context = createContext(request, match);
+      const context = createContext(request, match, mockFs);
 
       assertEquals(context.query.get("q"), "hello world");
       assertEquals(context.query.get("type"), "user profile");
@@ -290,7 +294,7 @@ describe("API Context Builder", () => {
         params: {},
       };
 
-      const context = createContext(request, match);
+      const context = createContext(request, match, mockFs);
 
       assertEquals(context.query.getAll("tags"), ["js", "ts", "deno"]);
     });
@@ -405,7 +409,7 @@ describe("API Context Builder", () => {
         params: { id: "123" },
       };
 
-      const context = createContext(request, match);
+      const context = createContext(request, match, mockFs);
 
       assertEquals(context.request.method, "GET");
       assertEquals(context.params.id, "123");
@@ -424,7 +428,7 @@ describe("API Context Builder", () => {
         params: { slug: ["guide", "intro", "basics"] },
       };
 
-      const context = createContext(request, match);
+      const context = createContext(request, match, mockFs);
       const normalized = normalizeParams(context.params);
 
       assertEquals(normalized.slug, "guide/intro/basics");
@@ -445,7 +449,7 @@ describe("API Context Builder", () => {
         params: {},
       };
 
-      const context = createContext(request, match);
+      const context = createContext(request, match, mockFs);
 
       assertEquals(context.request.method, "POST");
       assertEquals(context.headers.get("content-type"), "application/json");
