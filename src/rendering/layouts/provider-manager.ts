@@ -112,7 +112,7 @@ export class ProviderManager {
   }
 
   async collectProviders(): Promise<ProviderCollectionResult> {
-    logger.info("[ProviderManager] collectProviders called");
+    const startTime = Date.now();
 
     // Get project data first to determine cache key
     const vfAdapter = getVeryfrontFSAdapter(this.adapter);
@@ -130,19 +130,19 @@ export class ProviderManager {
 
     // If cache is valid, return immediately
     if (cachedEntry && this.isCacheValid(cachedEntry)) {
-      logger.info("[ProviderManager] Using cached providers", { cacheKey });
+      logger.debug("[ProviderManager] Cache hit", { cacheKey, durationMs: Date.now() - startTime });
       return cachedEntry.result;
     }
 
     // Stale-while-revalidate: if we have stale cache, return it and refresh in background
     if (cachedEntry && !this.refreshing.has(cacheKey)) {
-      logger.info("[ProviderManager] Returning stale cache, refreshing in background", { cacheKey });
+      logger.info("[ProviderManager] Stale cache, refreshing in background", { cacheKey });
       this.refreshInBackground(cacheKey, vfAdapter, projectData);
       return cachedEntry.result;
     }
 
     // No cache or already refreshing - fetch synchronously
-    logger.info("[ProviderManager] Cache miss, collecting providers", { cacheKey });
+    logger.info("[ProviderManager] Cache miss", { cacheKey });
     return this.fetchProviders(cacheKey, vfAdapter, projectData);
   }
 
@@ -166,6 +166,7 @@ export class ProviderManager {
     vfAdapter: FSAdapterLike | null,
     projectData: ProjectData | undefined,
   ): Promise<ProviderCollectionResult> {
+    const startTime = Date.now();
     const providerItems: ProviderItem[] = [];
     const providerBundles: MdxBundle[] = [];
     const providerInfos: EntityInfo[] = [];
@@ -174,11 +175,13 @@ export class ProviderManager {
     const configProviderItem = await this.collectConfigProvider();
     if (configProviderItem) {
       providerItems.push(configProviderItem);
-      logger.debug("[ProviderManager] Using config.provider", {
-        path: configProviderItem.componentPath,
-      });
       const result = { providerBundles, providerItems, providerInfos };
       this.cache.set(cacheKey, { result, timestamp: Date.now() });
+      logger.info("[ProviderManager] Fetched provider (config)", {
+        cacheKey,
+        path: configProviderItem.componentPath,
+        durationMs: Date.now() - startTime,
+      });
       return result;
     }
 
@@ -186,11 +189,13 @@ export class ProviderManager {
     const apiProviderItem = await this.collectAPIProviderWithData(vfAdapter, projectData);
     if (apiProviderItem) {
       providerItems.push(apiProviderItem);
-      logger.debug("[ProviderManager] Using API project provider", {
-        path: apiProviderItem.componentPath,
-      });
       const result = { providerBundles, providerItems, providerInfos };
       this.cache.set(cacheKey, { result, timestamp: Date.now() });
+      logger.info("[ProviderManager] Fetched provider (API)", {
+        cacheKey,
+        path: apiProviderItem.componentPath,
+        durationMs: Date.now() - startTime,
+      });
       return result;
     }
 
@@ -198,17 +203,17 @@ export class ProviderManager {
     const discoveredInfos = await this.discoverProviders();
     const compiled = await this.compileProviders(discoveredInfos);
 
-    logger.debug("[ProviderManager] Collected providers", {
-      count: discoveredInfos.length,
-      providers: discoveredInfos.map((p) => p.entity.id),
-    });
-
     const result = {
       providerBundles: compiled.providerBundles,
       providerItems: compiled.providerItems,
       providerInfos: discoveredInfos,
     };
     this.cache.set(cacheKey, { result, timestamp: Date.now() });
+    logger.info("[ProviderManager] Fetched providers (discovery)", {
+      cacheKey,
+      count: discoveredInfos.length,
+      durationMs: Date.now() - startTime,
+    });
     return result;
   }
 
@@ -255,13 +260,12 @@ export class ProviderManager {
     vfAdapter: FSAdapterLike | null,
     projectData: ProjectData | undefined,
   ): Promise<ProviderItem | null> {
-    logger.info("[ProviderManager] collectAPIProvider called");
     if (!vfAdapter) {
-      logger.info("[ProviderManager] No VeryfrontFSAdapter found");
+      logger.debug("[ProviderManager] No VeryfrontFSAdapter, skipping API provider");
       return null;
     }
 
-    logger.info("[ProviderManager] Project data", { projectData });
+    logger.debug("[ProviderManager] Checking API provider", { projectData });
 
     let providerValue = projectData?.provider;
 
@@ -273,20 +277,20 @@ export class ProviderManager {
         ? await resolvedPathResult
         : resolvedPathResult;
       if (resolvedPath) {
-        logger.info("[ProviderManager] Resolved UUID provider to path", {
+        logger.info("[ProviderManager] Resolved provider UUID", {
           uuid: providerValue,
           path: resolvedPath,
         });
         providerValue = resolvedPath.replace(/^components\//, "");
       } else {
-        logger.info("[ProviderManager] Could not resolve UUID provider", {
+        logger.debug("[ProviderManager] Could not resolve UUID provider", {
           uuid: providerValue,
         });
       }
     }
 
     if (!providerValue || !this.isValidProviderPath(providerValue)) {
-      logger.info("[ProviderManager] Skipping invalid API provider value", {
+      logger.debug("[ProviderManager] No valid API provider", {
         provider: projectData?.provider,
         resolved: providerValue,
       });
@@ -297,8 +301,7 @@ export class ProviderManager {
     let providerPath = join(this.projectDir, "components", providerValue);
     let exists = await vfAdapter.exists(providerPath);
 
-    logger.info("[ProviderManager] Checking API project provider (components/)", {
-      provider: projectData?.provider,
+    logger.debug("[ProviderManager] Checking provider path (components/)", {
       providerPath,
       exists,
     });
@@ -307,8 +310,7 @@ export class ProviderManager {
     if (!exists) {
       providerPath = join(this.projectDir, providerValue);
       exists = await vfAdapter.exists(providerPath);
-      logger.info("[ProviderManager] Checking API project provider (root)", {
-        provider: providerValue,
+      logger.debug("[ProviderManager] Checking provider path (root)", {
         providerPath,
         exists,
       });
@@ -330,9 +332,8 @@ export class ProviderManager {
           { isProvider: true },
           providerPath,
         );
-        logger.info("[ProviderManager] Compiled API MDX provider", {
+        logger.debug("[ProviderManager] Compiled MDX provider", {
           path: providerPath,
-          hasCompiledCode: !!bundle?.compiledCode,
         });
         return {
           kind,
