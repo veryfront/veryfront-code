@@ -73,6 +73,23 @@ interface WriteOp {
 }
 
 /**
+ * Common file extensions to strip from slugs
+ */
+const STRIP_EXTENSIONS = [".tsx", ".jsx", ".ts", ".js", ".mdx", ".md"];
+
+/**
+ * Strip file extension from slug if present
+ */
+function stripExtension(slug: string): string {
+  for (const ext of STRIP_EXTENSIONS) {
+    if (slug.endsWith(ext)) {
+      return slug.slice(0, -ext.length);
+    }
+  }
+  return slug;
+}
+
+/**
  * Convert entity to file path and content
  */
 function entityToWriteOp(
@@ -85,20 +102,25 @@ function entityToWriteOp(
   let path: string;
   const ext = entityType === "function" ? ".ts" : ".tsx";
 
+  // Strip extension from slug to avoid double extensions
+  const cleanSlug = stripExtension(entity.slug);
+
   switch (entityType) {
     case "page": {
       // Pages go in app/{slug}/page.tsx
-      const pageSlug = entity.slug === "/" ? "" : entity.slug;
+      // "index" or "/" → app/page.tsx
+      // "about" → app/about/page.tsx
+      const pageSlug = cleanSlug === "/" || cleanSlug === "index" ? "" : cleanSlug;
       path = join(projectDir, "app", pageSlug, "page.tsx");
       break;
     }
     case "component":
       // Components go in components/{slug}.tsx
-      path = join(projectDir, "components", `${entity.slug}${ext}`);
+      path = join(projectDir, "components", `${cleanSlug}${ext}`);
       break;
     case "function":
       // Functions go in functions/{slug}.ts
-      path = join(projectDir, "functions", `${entity.slug}${ext}`);
+      path = join(projectDir, "functions", `${cleanSlug}${ext}`);
       break;
   }
 
