@@ -3,7 +3,7 @@
  */
 
 import { rendererLogger as logger } from "@veryfront/utils";
-import { join } from "std/path/mod.ts";
+import { join, dirname } from "std/path/mod.ts";
 import { ErrorCode, VeryfrontError } from "@veryfront/errors/index.ts";
 import { createError, toError } from "../core/errors/veryfront-error.ts";
 import type {
@@ -21,6 +21,7 @@ import { getContentHash } from "./utils/index.ts";
 import { type HTMLGenerationOptions, wrapInHTMLShell } from "@veryfront/html";
 import { extractHTMLMetadata, injectHTMLContent, isFullHTMLDocument } from "@veryfront/html";
 import { detectAppRouter } from "./router-detection.ts";
+import { createFileSystem } from "../platform/compat/fs.ts";
 
 /**
  * Handle plain TS/JS script pages - no React required
@@ -39,8 +40,10 @@ export async function handleScriptPage(
   },
 ): Promise<RenderResult> {
   try {
-    logger.info(`Loading TS/JS page module: ${pageInfo.entity.id}`);
-    const mod = (await import(`file://${pageInfo.entity.id}?t=${Date.now()}`)) as ScriptPageModule;
+    logger.info(`[Script] Loading TS/JS page module: ${pageInfo.entity.id}`);
+
+    // Load the module - check if file exists locally first
+    const mod = await loadScriptModule(pageInfo.entity.id, options.projectDir, options.adapter);
 
     // Build a minimal context
     const ctx: PageContext = {
@@ -212,4 +215,132 @@ async function resolveAppComponentPath(
 ): Promise<string | undefined> {
   const candidate = join(projectDir, "components/app.tsx");
   return (await adapter.fs.exists(candidate)) ? candidate : undefined;
+}
+
+/**
+ * Load a script module, handling both local and remote files.
+ * For local files, uses direct import. For remote files (proxy mode),
+ * reads via adapter and transpiles with esbuild.
+ */
+async function loadScriptModule(
+  modulePath: string,
+  projectDir: string,
+  adapter: RuntimeAdapter,
+): Promise<ScriptPageModule> {
+  const fs = createFileSystem();
+
+  // Normalize path - handle both absolute and relative paths
+  let normalizedPath = modulePath;
+  if (!modulePath.startsWith("/") && projectDir) {
+    normalizedPath = join(projectDir, modulePath);
+  }
+
+  logger.debug(`[Script] Checking if file exists locally: ${normalizedPath}`);
+
+  // Check if file exists on local filesystem
+  const fileExistsLocally = await fs.exists(normalizedPath);
+
+  if (fileExistsLocally) {
+    // File exists locally - use direct import
+    logger.debug(`[Script] File exists locally, using direct import: ${normalizedPath}`);
+    const cacheBuster = `?v=${Date.now()}`;
+    const url = normalizedPath.startsWith("file://")
+      ? `${normalizedPath}${cacheBuster}`
+      : `file://${normalizedPath}${cacheBuster}`;
+    return await import(url) as ScriptPageModule;
+  }
+
+  // File is remote (proxy mode) - read via adapter and transpile
+  logger.info(`[Script] File not local, using adapter-based loading: ${modulePath}`);
+
+  // Read file content via adapter (which handles API calls in proxy mode)
+  let source: string;
+  try {
+    source = await adapter.fs.readFile(modulePath);
+  } catch (_readError) {
+    // Try with projectDir prefix
+    try {
+      source = await adapter.fs.readFile(normalizedPath);
+    } catch {
+      throw toError(createError({
+        type: "file",
+        message: `Script file not found: ${modulePath} (tried: ${normalizedPath})`,
+        context: { path: modulePath },
+      }));
+    }
+  }
+
+  logger.debug(`[Script] Read ${source.length} bytes from adapter`);
+
+  // Determine file extension for esbuild loader
+  const isTsx = modulePath.endsWith(".tsx");
+  const isJsx = modulePath.endsWith(".jsx");
+  const loader = isTsx ? "tsx" : isJsx ? "jsx" : modulePath.endsWith(".ts") ? "ts" : "js";
+
+  // Transpile with esbuild
+  const { build } = await import("esbuild");
+
+  const resolveDir = dirname(normalizedPath) || projectDir;
+
+  const result = await build({
+    bundle: true,
+    write: false,
+    format: "esm",
+    platform: "neutral",
+    target: "es2022",
+    jsx: "automatic",
+    jsxImportSource: "react",
+    resolveExtensions: [".ts", ".tsx", ".js", ".jsx", ".mjs"],
+    external: [
+      "ai",
+      "ai/*",
+      "zod",
+      "node:*",
+      "veryfront",
+      "veryfront/*",
+      "@opentelemetry/*",
+    ],
+    stdin: {
+      contents: source,
+      loader,
+      resolveDir,
+      sourcefile: modulePath,
+    },
+  });
+
+  if (result.errors && result.errors.length > 0) {
+    const firstError = result.errors[0]?.text || "unknown error";
+    throw toError(createError({
+      type: "render",
+      message: `[Script] Build failed: ${firstError}`,
+    }));
+  }
+
+  logger.info(`[Script] Transpiled ${modulePath}`);
+  const js = result.outputFiles?.[0]?.text ?? "export {}";
+
+  // Write to temp file and import
+  const tempDir = await fs.makeTempDir({ prefix: "vf-script-" });
+  const tempFile = join(tempDir, "module.mjs");
+
+  // Rewrite npm imports for Deno compatibility
+  let transformedCode = js;
+  const isDeno = typeof (globalThis as { Deno?: unknown }).Deno !== "undefined";
+  if (isDeno) {
+    const npmRewrites = [
+      { pattern: /from\s+["']ai["']/g, replacement: 'from "npm:ai@latest"' },
+      { pattern: /from\s+["']zod["']/g, replacement: 'from "npm:zod@latest"' },
+    ];
+    for (const { pattern, replacement } of npmRewrites) {
+      transformedCode = transformedCode.replace(pattern, replacement);
+    }
+  }
+
+  await fs.writeTextFile(tempFile, transformedCode);
+
+  try {
+    return await import(`file://${tempFile}?v=${Date.now()}`) as ScriptPageModule;
+  } finally {
+    await fs.remove(tempDir, { recursive: true });
+  }
 }

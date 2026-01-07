@@ -53,29 +53,52 @@ export class APIRouteHandler {
     const adapter = await this.ensureAdapter();
     await this.ensureConfig(adapter);
 
+    logger.debug("[API] Initializing route handler", { projectDir: this.projectDir });
+
     const pagesDir = this.config?.directories?.pages || "pages";
     const apiDir = join(this.projectDir, pagesDir, "api");
     const apiDirExists = await adapter.fs.exists(apiDir);
 
+    logger.debug("[API] Checking API directory", { apiDir, exists: apiDirExists });
+
     if (apiDirExists) {
       await discoverPagesRoutes(this.router, apiDir, "/api", adapter);
+      const discoveredRoutes = this.router.listRoutes();
+      logger.debug("[API] Discovered Pages API routes", {
+        count: discoveredRoutes.length,
+        routes: discoveredRoutes.map((r) => ({ pattern: r.pattern, page: r.page })),
+      });
     }
 
     const appDirName = this.config?.directories?.app || "app";
     const appDir = join(this.projectDir, appDirName);
     const appDirExists = await adapter.fs.exists(appDir);
 
+    logger.debug("[API] Checking App directory", { appDir, exists: appDirExists });
+
     if (appDirExists) {
       await discoverAppRoutes(this.router, appDir, "", adapter);
+      const allRoutes = this.router.listRoutes();
+      logger.debug("[API] All discovered routes after App Router", {
+        count: allRoutes.length,
+        routes: allRoutes.map((r) => ({ pattern: r.pattern, page: r.page })),
+      });
     }
 
     await this.ensureCorsConfig(adapter);
+    logger.debug("[API] Route handler initialized");
   }
 
   async handle(request: Request): Promise<Response | null> {
     const adapter = await this.ensureAdapter();
     const url = new URL(request.url);
     const pathname = url.pathname;
+
+    logger.debug("[API] Handling request", {
+      pathname,
+      method: request.method,
+      registeredRouteCount: this.router.listRoutes().length,
+    });
 
     if (request.method.toUpperCase() === "OPTIONS") {
       await this.ensureCorsConfig(adapter);
@@ -90,11 +113,23 @@ export class APIRouteHandler {
     const match = this.router.match(pathname);
 
     if (!match) {
+      logger.debug("[API] No route match", {
+        pathname,
+        isApiPath: pathname.startsWith("/api/"),
+        availableRoutes: this.router.listRoutes().map((r) => r.pattern),
+      });
       if (pathname === "/api" || pathname.startsWith("/api/")) {
         return notFound();
       }
       return null;
     }
+
+    logger.debug("[API] Route matched", {
+      pathname,
+      pattern: match.route.pattern,
+      page: match.route.page,
+      params: match.params,
+    });
 
     const handler = await this.loadHandler(match);
 

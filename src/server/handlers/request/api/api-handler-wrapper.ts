@@ -75,6 +75,15 @@ export class ApiHandlerWrapper extends BaseHandler {
    * @returns Handler result (respond or continue)
    */
   async handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
+    const url = new URL(req.url);
+    const pathname = url.pathname;
+
+    this.logDebug("[API-Wrapper] Handling request", {
+      pathname,
+      projectDir: ctx.projectDir,
+      projectSlug: ctx.projectSlug,
+    }, ctx);
+
     try {
       // Use the APIRouteHandler for all routes (Pages API and App Router)
       // It discovers routes during initialization and can handle both types
@@ -82,6 +91,10 @@ export class ApiHandlerWrapper extends BaseHandler {
       const apiRes = await api.handle(req);
 
       if (apiRes) {
+        this.logDebug("[API-Wrapper] API handler returned response", {
+          pathname,
+          status: apiRes.status,
+        }, ctx);
         const builder = this.createResponseBuilder(ctx);
         const finalRes = builder
           .withCORS(req, ctx.securityConfig?.cors)
@@ -89,12 +102,19 @@ export class ApiHandlerWrapper extends BaseHandler {
           .withHeaders(apiRes.headers)
           .build(apiRes.body, apiRes.status);
         return this.respond(finalRes);
+      } else {
+        this.logDebug("[API-Wrapper] API handler returned null, continuing to next handler", {
+          pathname,
+        }, ctx);
       }
     } catch (error) {
+      // Log API errors at info level for better visibility
       this.logDebug(
-        "API handler error",
+        "[API-Wrapper] API handler error - falling through to next handler",
         {
+          pathname,
           error: this.getErrorMessage(error),
+          stack: error instanceof Error ? error.stack : undefined,
         },
         ctx,
       );
