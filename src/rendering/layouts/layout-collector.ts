@@ -184,8 +184,8 @@ export class LayoutCollector {
     const wrappedAdapter: unknown = (this.adapter?.fs as { fsAdapter?: unknown })?.fsAdapter;
     const adapterName = (wrappedAdapter as { constructor?: { name?: string } })?.constructor?.name;
     // Check for both VeryfrontFSAdapter (single project) and MultiProjectFSAdapter (proxy mode)
-    const isVeryfrontAPI =
-      adapterName === "VeryfrontFSAdapter" || adapterName === "MultiProjectFSAdapter";
+    const isVeryfrontAPI = adapterName === "VeryfrontFSAdapter" ||
+      adapterName === "MultiProjectFSAdapter";
 
     logger.info("[LayoutCollector] Checking FS adapter type", {
       hasAdapter: !!this.adapter,
@@ -297,7 +297,9 @@ export class LayoutCollector {
       const vfAdapter = wrappedAdapter as {
         // VeryfrontFSAdapter: sync method returns string from cache
         // MultiProjectFSAdapter: async method returns Promise<string>
-        getFilePathByEntityId?: (entityId: string) => string | Promise<string | undefined> | undefined;
+        getFilePathByEntityId?: (
+          entityId: string,
+        ) => string | Promise<string | undefined> | undefined;
         // Only on VeryfrontFSAdapter - async method with body content
         getFilePathByEntityIdAsync?: (
           entityId: string,
