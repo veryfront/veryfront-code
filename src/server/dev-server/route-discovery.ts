@@ -8,18 +8,30 @@ import { withFallback } from "@veryfront/platform/adapters/index.ts";
 import { createFileSystem } from "../../platform/compat/fs.ts";
 
 export class RouteDiscovery {
+  private useRelativePaths: boolean;
+
   constructor(
     private projectDir: string,
     private adapter: RuntimeAdapter,
     private router: DynamicRouter,
     private config?: VeryfrontConfig,
-  ) {}
+  ) {
+    // For remote FS adapters (github, veryfront-api), use relative paths
+    const fsType = config?.fs?.type;
+    this.useRelativePaths = fsType === "github" || fsType === "veryfront-api";
+  }
 
   async discoverRoutes(): Promise<void> {
     this.router.clear();
     this.router.clearCache();
 
+    logger.debug("[SERVER] Starting route discovery", {
+      useRelativePaths: this.useRelativePaths,
+      fsType: this.config?.fs?.type,
+    });
+
     const routeDirs = await this.resolveRouteDirectories();
+    logger.debug("[SERVER] Route directories resolved", { count: routeDirs.length, dirs: routeDirs });
     if (routeDirs.length === 0) {
       logger.warn("[SERVER] No route directories found; skipping discovery");
       return;
@@ -54,14 +66,15 @@ export class RouteDiscovery {
       ];
 
     for (const candidate of candidates) {
-      const absolute = join(this.projectDir, candidate.dir);
-      if (await this.directoryExists(absolute)) {
-        results.push({ type: candidate.type, path: absolute });
+      // For remote FS adapters, use relative paths; for local, use absolute
+      const pathToCheck = this.useRelativePaths ? candidate.dir : join(this.projectDir, candidate.dir);
+      if (await this.directoryExists(pathToCheck)) {
+        results.push({ type: candidate.type, path: pathToCheck });
       }
     }
 
     if (results.length === 0 && preferredRouter === "app") {
-      const pagesFallback = join(this.projectDir, "pages");
+      const pagesFallback = this.useRelativePaths ? "pages" : join(this.projectDir, "pages");
       if (await this.directoryExists(pagesFallback)) {
         logger.warn('[SERVER] router="app" but app/ directory missing; falling back to pages/');
         results.push({ type: "pages", path: pagesFallback });
@@ -69,7 +82,7 @@ export class RouteDiscovery {
     }
 
     if (results.length === 0 && preferredRouter === "pages") {
-      const appFallback = join(this.projectDir, "app");
+      const appFallback = this.useRelativePaths ? "app" : join(this.projectDir, "app");
       if (await this.directoryExists(appFallback)) {
         logger.warn('[SERVER] router="pages" but pages/ directory missing; using app/');
         results.push({ type: "app", path: appFallback });
@@ -78,8 +91,8 @@ export class RouteDiscovery {
 
     if (results.length === 0 && preferredRouter === undefined) {
       const fallbackDirs = [
-        { type: "app" as const, path: join(this.projectDir, "app") },
-        { type: "pages" as const, path: join(this.projectDir, "pages") },
+        { type: "app" as const, path: this.useRelativePaths ? "app" : join(this.projectDir, "app") },
+        { type: "pages" as const, path: this.useRelativePaths ? "pages" : join(this.projectDir, "pages") },
       ];
       for (const fallback of fallbackDirs) {
         if (await this.directoryExists(fallback.path)) {
@@ -93,13 +106,22 @@ export class RouteDiscovery {
 
   private async directoryExists(path: string): Promise<boolean> {
     try {
+      logger.debug("[SERVER] Checking directory exists", { path, useRelativePaths: this.useRelativePaths });
+      // For remote FS adapters, don't fall back to local filesystem
+      if (this.useRelativePaths) {
+        const stat = await this.adapter.fs.stat(path);
+        logger.debug("[SERVER] Directory stat result", { path, isDirectory: stat.isDirectory });
+        return stat.isDirectory;
+      }
+      // For local filesystem, use fallback
       const stat = await withFallback(
         () => this.adapter.fs.stat(path),
         () => createFileSystem().stat(path),
         { operationName: "stat:routeDiscovery:directoryExists", logError: false },
       );
       return stat.isDirectory;
-    } catch {
+    } catch (error) {
+      logger.debug("[SERVER] Directory check failed", { path, error: String(error) });
       return false;
     }
   }
@@ -185,6 +207,10 @@ export class RouteDiscovery {
   }
 
   private toProjectRelativePath(fullPath: string): string {
+    // For remote FS adapters, paths are already relative
+    if (this.useRelativePaths) {
+      return fullPath;
+    }
     return fullPath.startsWith(this.projectDir)
       ? fullPath.slice(this.projectDir.length + 1)
       : fullPath;
