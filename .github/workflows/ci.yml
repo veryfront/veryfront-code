@@ -139,41 +139,65 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: tailscale/github-action@v2
+
+      - name: Load secrets from 1Password
+        uses: 1password/load-secrets-action@v2
         with:
-          oauth-client-id: ${{ secrets.TAILSCALE_OAUTH_CLIENT_ID }}
-          oauth-secret: ${{ secrets.TAILSCALE_OAUTH_SECRET }}
+          export-env: true
+        env:
+          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+          # Tailscale
+          TAILSCALE_OAUTH_CLIENT_ID: op://VERYFRONT_CI/TAILSCALE_OAUTH/client_id
+          TAILSCALE_OAUTH_CLIENT_SECRET: op://VERYFRONT_CI/TAILSCALE_OAUTH/client_secret
+          # Proxy OAuth
+          OAUTH_CLIENT_ID: op://VERYFRONT_CI/PROXY_OAUTH_LIVE_PRODUCTION/client_id
+          OAUTH_CLIENT_SECRET: op://VERYFRONT_CI/PROXY_OAUTH_LIVE_PRODUCTION/client_secret
+          OAUTH_PREVIEW_CLIENT_ID: op://VERYFRONT_CI/PROXY_OAUTH_PREVIEW_PRODUCTION/client_id
+          OAUTH_PREVIEW_CLIENT_SECRET: op://VERYFRONT_CI/PROXY_OAUTH_PREVIEW_PRODUCTION/client_secret
+          # Cache
+          REDIS_URL: op://VERYFRONT_CI/UPSTASH_REDIS_PRODUCTION/url
+          # Observability
+          OTEL_EXPORTER_OTLP_HEADERS: op://VERYFRONT_CI/GRAFANA/otlp_auth
+
+      - uses: tailscale/github-action@v3
+        with:
+          oauth-client-id: ${{ env.TAILSCALE_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ env.TAILSCALE_OAUTH_CLIENT_SECRET }}
           tags: tag:ci
+
       - uses: azure/setup-kubectl@v3
+      - name: Setup kubeconfig
+        run: |
+          mkdir -p ~/.kube
+          op read "op://VERYFRONT_CI/KUBECONFIG/credential" > ~/.kube/config
+          chmod 600 ~/.kube/config
+        env:
+          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+
       - uses: azure/setup-helm@v4
+
       - name: Create/Update Kubernetes Secrets
         run: |
-          echo "${{ secrets.KUBECONFIG_PRODUCTION }}" | base64 -d > /tmp/kubeconfig
-          export KUBECONFIG=/tmp/kubeconfig
-
           kubectl create secret generic veryfront-proxy-secret \
             --namespace veryfront-production \
-            --from-literal=OAUTH_CLIENT_ID="${{ secrets.OAUTH_CLIENT_ID_PRODUCTION }}" \
-            --from-literal=OAUTH_CLIENT_SECRET="${{ secrets.OAUTH_CLIENT_SECRET_PRODUCTION }}" \
-            --from-literal=OAUTH_PREVIEW_CLIENT_ID="${{ secrets.OAUTH_PREVIEW_CLIENT_ID_PRODUCTION }}" \
-            --from-literal=OAUTH_PREVIEW_CLIENT_SECRET="${{ secrets.OAUTH_PREVIEW_CLIENT_SECRET_PRODUCTION }}" \
-            --from-literal=REDIS_URL="${{ secrets.REDIS_URL_PRODUCTION }}" \
+            --from-literal=OAUTH_CLIENT_ID="$OAUTH_CLIENT_ID" \
+            --from-literal=OAUTH_CLIENT_SECRET="$OAUTH_CLIENT_SECRET" \
+            --from-literal=OAUTH_PREVIEW_CLIENT_ID="$OAUTH_PREVIEW_CLIENT_ID" \
+            --from-literal=OAUTH_PREVIEW_CLIENT_SECRET="$OAUTH_PREVIEW_CLIENT_SECRET" \
+            --from-literal=REDIS_URL="$REDIS_URL" \
             --from-literal=VERYFRONT_API_BASE_URL="https://api.veryfront.com" \
-            --from-literal=OTEL_EXPORTER_OTLP_HEADERS="${{ secrets.OTEL_EXPORTER_OTLP_HEADERS }}" \
+            --from-literal=OTEL_EXPORTER_OTLP_HEADERS="$OTEL_EXPORTER_OTLP_HEADERS" \
             --dry-run=client -o yaml | kubectl apply -f -
 
           kubectl create secret generic veryfront-renderer-secret \
             --namespace veryfront-production \
-            --from-literal=VERYFRONT_API_URL="${{ secrets.VERYFRONT_API_URL_PRODUCTION }}" \
-            --from-literal=REDIS_URL="${{ secrets.REDIS_URL_PRODUCTION }}" \
-            --from-literal=OTEL_EXPORTER_OTLP_HEADERS="${{ secrets.OTEL_EXPORTER_OTLP_HEADERS }}" \
+            --from-literal=VERYFRONT_API_URL="https://api.veryfront.com" \
+            --from-literal=REDIS_URL="$REDIS_URL" \
+            --from-literal=OTEL_EXPORTER_OTLP_HEADERS="$OTEL_EXPORTER_OTLP_HEADERS" \
             --dry-run=client -o yaml | kubectl apply -f -
 
       - name: Deploy via Helm
         run: |
-          echo "${{ secrets.KUBECONFIG_PRODUCTION }}" | base64 -d > /tmp/kubeconfig
-          export KUBECONFIG=/tmp/kubeconfig
-
           helm upgrade --install veryfront-renderer ./chart \
             --namespace veryfront-production \
             --set proxy.image.repository=${{ env.REGISTRY }}/veryfront/veryfront-proxy \
