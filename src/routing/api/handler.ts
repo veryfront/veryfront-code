@@ -146,7 +146,10 @@ export class APIRouteHandler {
       return internalServerError("Handler not found");
     }
 
-    const isAppRoute = /\/(app)\//.test(match.route.page);
+    // App Router routes are always named route.ts/js/tsx/jsx
+    // Pages Router routes have descriptive names like articles.ts
+    // Note: Cannot use path-based detection (/app/) as projectDir may be '/app' in production
+    const isAppRoute = /\/route\.(ts|js|tsx|jsx)$/.test(match.route.page);
     const response = isAppRoute
       ? await executeAppRoute(handler, request, match, pathname, adapter)
       : await executePagesRoute(handler, request, match, pathname, adapter);
