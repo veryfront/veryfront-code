@@ -184,6 +184,13 @@ function escapeSelector(className: string): string {
 }
 
 /**
+ * Escape special regex characters in a string
+ */
+function escapeRegex(str: string): string {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
  * Generate CSS aliases for comma-based arbitrary value classes
  * Creates rules that map comma-syntax selectors to their underscore-generated CSS
  *
@@ -200,13 +207,14 @@ function generateCommaAliases(
   const aliasRules: string[] = [];
 
   for (const [original, normalized] of aliasMap) {
-    // Find the CSS rule for the normalized class
-    const escapedNormalized = escapeSelector(normalized);
-    // Match the rule with its content, handling both simple and media query wrapped rules
-    const rulePattern = new RegExp(
-      `\\.${escapedNormalized.replace(/\\/g, "\\\\")}\\s*\\{([^}]*)\\}`,
-      "g",
-    );
+    // UnoCSS generates CSS selectors with escaped special chars like: .grid-cols-\[0\.25fr_0\.5fr_0\.25fr\]
+    // We need to find this selector pattern in the CSS to extract the rule content
+    const cssSelector = escapeSelector(normalized);
+    // Escape for regex matching - the CSS has backslash-escaped chars that need double escaping in regex
+    const regexPattern = escapeRegex(`.${cssSelector}`);
+
+    // Match the rule with its content
+    const rulePattern = new RegExp(`${regexPattern}\\s*\\{([^}]*)\\}`, "g");
 
     let ruleMatch: RegExpExecArray | null;
     while ((ruleMatch = rulePattern.exec(generatedCss)) !== null) {
