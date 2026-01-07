@@ -122,6 +122,107 @@ async function ensureInitialized(
 }
 
 /**
+ * Find arbitrary value classes with commas and create CSS aliases
+ * Maps classes like "grid-cols-[0.25fr,0.5fr,0.25fr]" to their underscore equivalents
+ *
+ * @param htmlContent - HTML content with class attributes
+ * @returns Map of original (comma) class names to normalized (underscore) class names
+ */
+function findCommaArbitraryClasses(htmlContent: string): Map<string, string> {
+  const aliasMap = new Map<string, string>();
+
+  // Find all class attributes
+  const classPattern = /class="([^"]*)"/g;
+  let match: RegExpExecArray | null;
+
+  while ((match = classPattern.exec(htmlContent)) !== null) {
+    const classes = (match[1] || "").split(/\s+/);
+    for (const cls of classes) {
+      // Check if class has arbitrary value with commas inside brackets
+      if (cls.includes("[") && cls.includes(",")) {
+        // Create normalized version with underscores
+        const normalized = cls.replace(
+          /\[([^\]]*)\]/g,
+          (_: string, content: string) => `[${content.replace(/,/g, "_")}]`,
+        );
+        if (normalized !== cls) {
+          aliasMap.set(cls, normalized);
+        }
+      }
+    }
+  }
+
+  return aliasMap;
+}
+
+/**
+ * Normalize Tailwind arbitrary value syntax in class names for CSS generation
+ * Converts commas to underscores within square brackets
+ * e.g., "grid-cols-[0.25fr,0.5fr,0.25fr]" -> "grid-cols-[0.25fr_0.5fr_0.25fr]"
+ *
+ * @param htmlContent - HTML content with class attributes
+ * @returns HTML with normalized class names (for CSS generation only)
+ */
+function normalizeArbitraryValues(htmlContent: string): string {
+  return htmlContent.replace(/class="([^"]*)"/g, (_match, classes: string) => {
+    const normalizedClasses = classes.replace(
+      /\[([^\]]*)\]/g,
+      (_bracketMatch: string, bracketContent: string) => {
+        return `[${bracketContent.replace(/,/g, "_")}]`;
+      },
+    );
+    return `class="${normalizedClasses}"`;
+  });
+}
+
+/**
+ * Escape a class name for use in CSS selector
+ * Escapes special characters like brackets, dots, colons, etc.
+ */
+function escapeSelector(className: string): string {
+  return className.replace(/([[\].:#(),>+~=|^$*])/g, "\\$1");
+}
+
+/**
+ * Generate CSS aliases for comma-based arbitrary value classes
+ * Creates rules that map comma-syntax selectors to their underscore-generated CSS
+ *
+ * @param aliasMap - Map of original to normalized class names
+ * @param generatedCss - CSS generated from normalized classes
+ * @returns Additional CSS rules for comma-syntax classes
+ */
+function generateCommaAliases(
+  aliasMap: Map<string, string>,
+  generatedCss: string,
+): string {
+  if (aliasMap.size === 0) return "";
+
+  const aliasRules: string[] = [];
+
+  for (const [original, normalized] of aliasMap) {
+    // Find the CSS rule for the normalized class
+    const escapedNormalized = escapeSelector(normalized);
+    // Match the rule with its content, handling both simple and media query wrapped rules
+    const rulePattern = new RegExp(
+      `\\.${escapedNormalized.replace(/\\/g, "\\\\")}\\s*\\{([^}]*)\\}`,
+      "g",
+    );
+
+    let ruleMatch: RegExpExecArray | null;
+    while ((ruleMatch = rulePattern.exec(generatedCss)) !== null) {
+      const ruleContent = ruleMatch[1];
+      if (ruleContent && ruleContent.trim()) {
+        // Create an alias rule for the original (comma) class name
+        const escapedOriginal = escapeSelector(original);
+        aliasRules.push(`.${escapedOriginal} {${ruleContent}}`);
+      }
+    }
+  }
+
+  return aliasRules.length > 0 ? `\n/* Comma-syntax aliases */\n${aliasRules.join("\n")}` : "";
+}
+
+/**
  * Generate Tailwind-compatible CSS from HTML content
  * Includes Tailwind's preflight/reset styles for consistent cross-browser rendering
  * @param htmlContent - The HTML to scan for class names
@@ -135,13 +236,22 @@ export async function generateTailwindCSS(
   try {
     const { reset, generator } = await ensureInitialized(tailwindConfig);
 
-    // Generate CSS for all classes found in the HTML
-    const result = await generator.generate(htmlContent, {
+    // Find classes that use comma syntax in arbitrary values
+    const commaAliases = findCommaArbitraryClasses(htmlContent);
+
+    // Normalize arbitrary values (convert commas to underscores in brackets)
+    const normalizedContent = normalizeArbitraryValues(htmlContent);
+
+    // Generate CSS for all classes found in the normalized HTML
+    const result = await generator.generate(normalizedContent, {
       minify: false, // Keep readable for development
     });
 
+    // Generate alias rules for comma-syntax classes
+    const aliasRules = generateCommaAliases(commaAliases, result.css);
+
     // Prepend Tailwind reset/preflight CSS before utility classes
-    return `${reset}\n${result.css}`;
+    return `${reset}\n${result.css}${aliasRules}`;
   } catch (error) {
     logger.error("UnoCSS generation error:", error);
     // Return empty string on error to avoid breaking the page
