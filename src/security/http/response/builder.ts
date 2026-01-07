@@ -44,6 +44,7 @@ export class ResponseBuilder implements FluentMethodsContext, ResponseMethodsCon
   withHeaders = fluentMethods.withHeaders;
   withStatus = fluentMethods.withStatus;
   withAllow = fluentMethods.withAllow;
+  withClientHints = fluentMethods.withClientHints;
 
   json = responseMethods.json;
   text = responseMethods.text;

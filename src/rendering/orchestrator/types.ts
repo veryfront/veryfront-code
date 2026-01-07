@@ -46,6 +46,8 @@ export interface RenderOptions {
   projectId?: string;
   /** Page ID for Studio communication */
   pageId?: string;
+  /** User's preferred color scheme from Sec-CH-Prefers-Color-Scheme client hint */
+  colorScheme?: "light" | "dark";
 }
 
 export interface RenderContext {

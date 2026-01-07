@@ -131,6 +131,25 @@ export function withStatus<T extends FluentMethodsContext>(
 }
 
 /**
+ * Apply Client Hints headers for theme detection
+ * This enables browser to send Sec-CH-Prefers-Color-Scheme header
+ * @see https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Sec-CH-Prefers-Color-Scheme
+ */
+export function withClientHints<T extends FluentMethodsContext>(
+  this: T,
+): T {
+  // Tell browser we accept color scheme hints
+  this.headers.set("Accept-CH", "Sec-CH-Prefers-Color-Scheme");
+  // Vary response by color scheme for correct caching
+  const existingVary = this.headers.get("Vary");
+  const varyValue = existingVary
+    ? `${existingVary}, Sec-CH-Prefers-Color-Scheme`
+    : "Sec-CH-Prefers-Color-Scheme";
+  this.headers.set("Vary", varyValue);
+  return this;
+}
+
+/**
  * Set Allow header for OPTIONS requests
  */
 export function withAllow<T extends FluentMethodsContext>(
