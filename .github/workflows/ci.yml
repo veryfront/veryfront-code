@@ -166,13 +166,12 @@ jobs:
           tags: tag:ci
 
       - uses: azure/setup-kubectl@v3
+
       - name: Setup kubeconfig
         run: |
           mkdir -p ~/.kube
           op read "op://VERYFRONT_CI/KUBECONFIG/credential" > ~/.kube/config
           chmod 600 ~/.kube/config
-        env:
-          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
 
       - uses: azure/setup-helm@v4
 
