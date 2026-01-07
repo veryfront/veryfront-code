@@ -279,6 +279,10 @@ export const COMMANDS: CommandRegistry = {
     usage: "veryfront pull [options]",
     options: [
       {
+        flag: "--projects <slugs>",
+        description: "Comma-separated list of project slugs to pull",
+      },
+      {
         flag: "-d, --dir <path>",
         description: "Target directory (default: current directory)",
       },
@@ -299,12 +303,16 @@ export const COMMANDS: CommandRegistry = {
       "veryfront pull",
       "veryfront pull --dir ./my-project",
       "veryfront pull --branch feature-header",
+      "veryfront pull --projects project-a,project-b,project-c",
+      "veryfront pull --projects my-app --dir ./apps",
       "veryfront pull --dry-run",
       "veryfront pull --force",
     ],
     notes: [
       "Requires VERYFRONT_API_TOKEN env var or .veryfrontrc config",
       "Project slug is inferred from package.json name or directory",
+      "With --projects, each project is pulled into a subdirectory named after the slug",
+      "Projects list can also be specified in .veryfrontrc: { \"projects\": [\"slug1\", \"slug2\"] }",
     ],
   },
   push: {

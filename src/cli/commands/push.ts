@@ -141,7 +141,7 @@ async function uploadFiles(
 
     try {
       const encodedPath = encodeURIComponent(op.path);
-      await client.post(`/projects/${projectSlug}/files/${encodedPath}?branch=${branchId}`, {
+      await client.put(`/projects/${projectSlug}/files/${encodedPath}?branchId=${branchId}`, {
         content: op.content,
       });
       uploaded++;

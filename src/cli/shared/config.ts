@@ -26,6 +26,8 @@ function getEnv(name: string): string | undefined {
  */
 export interface VeryfrontConfig {
   projectSlug?: string;
+  /** List of project slugs for multi-project pull */
+  projects?: string[];
   apiToken?: string;
   apiUrl?: string;
 }
@@ -47,7 +49,7 @@ const DEFAULT_API_URL = "https://api.veryfront.com/api";
 /**
  * Read .veryfrontrc configuration file from the project directory
  */
-async function readConfigFile(
+export async function readConfigFile(
   projectDir: string,
 ): Promise<VeryfrontConfig | null> {
   const fs = createFileSystem();
@@ -146,6 +148,7 @@ export async function resolveConfig(
 export interface ApiClient {
   get<T>(path: string, params?: Record<string, string>): Promise<T>;
   post<T>(path: string, body?: unknown): Promise<T>;
+  put<T>(path: string, body?: unknown): Promise<T>;
   patch<T>(path: string, body?: unknown): Promise<T>;
   delete<T>(path: string): Promise<T>;
 }
@@ -211,6 +214,7 @@ export function createApiClient(config: ResolvedConfig): ApiClient {
     get: <T>(path: string, params?: Record<string, string>) =>
       request<T>("GET", path, undefined, params),
     post: <T>(path: string, body?: unknown) => request<T>("POST", path, body),
+    put: <T>(path: string, body?: unknown) => request<T>("PUT", path, body),
     patch: <T>(path: string, body?: unknown) => request<T>("PATCH", path, body),
     delete: <T>(path: string) => request<T>("DELETE", path),
   };

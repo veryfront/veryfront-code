@@ -319,12 +319,27 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
       case "pull":
         showLogo();
         {
-          // Resolve directory: --dir/-d option, or current working directory
-          const dirArg = args.dir ? String(args.dir) : args.d ? String(args.d) : undefined;
+          // Get project slug from positional argument (e.g., `pull my-project`)
+          const projectSlug = args._.length > 1 ? String(args._[1]) : undefined;
+          // Parse --projects flag (comma-separated list)
+          const projectsArg = args.projects ? String(args.projects) : undefined;
+          const projects = projectsArg
+            ? projectsArg.split(",").map((p) => p.trim()).filter(Boolean)
+            : undefined;
+          // Resolve directory: --project-dir/--dir/-d option, or current working directory
+          const dirArg = args["project-dir"]
+            ? String(args["project-dir"])
+            : args.dir
+              ? String(args.dir)
+              : args.d
+                ? String(args.d)
+                : undefined;
           const projectDir = dirArg
             ? (dirArg.startsWith("/") ? dirArg : join(cwd(), dirArg))
             : cwd();
           await pullCommand({
+            projectSlug,
+            projects,
             projectDir,
             branch: args.branch ? String(args.branch) : args.b ? String(args.b) : undefined,
             force: Boolean(args.force) || Boolean(args.f),
