@@ -34,11 +34,28 @@ export async function createFSAdapter(config: FSAdapterConfig): Promise<FSAdapte
     return adapter;
   }
 
+  if (type === "github") {
+    if (!config.github) {
+      throw toError(
+        createError({
+          type: "config",
+          message: "GitHub adapter requires github configuration. " +
+            "Provide github.owner, github.repo, and github.token (or GITHUB_TOKEN env var).",
+        }),
+      );
+    }
+
+    const { GitHubFSAdapter } = await import("./github-fs-adapter/index.ts");
+    const adapter = new GitHubFSAdapter(config);
+    await adapter.initialize?.();
+    return adapter;
+  }
+
   throw toError(
     createError({
       type: "config",
       message: `FSAdapter type "${type}" is not implemented. ` +
-        `Supported types: "local" (default, uses RuntimeAdapter.fs), "veryfront-api".`,
+        `Supported types: "local" (default, uses RuntimeAdapter.fs), "veryfront-api", "github".`,
     }),
   );
 }
