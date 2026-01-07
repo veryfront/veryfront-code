@@ -54,14 +54,6 @@ export function getProductionStyles(nonce?: string): string {
       color: inherit;
     }
 
-    /* Framer-motion hydration workaround */
-    /* When React hydration fails, framer-motion leaves elements at opacity: 0 */
-    /* This ensures content is visible even if animations don't complete */
-    .vf-tailwind [style*="opacity: 0"],
-    .vf-tailwind [style*="opacity:0"] {
-      opacity: 1 !important;
-    }
-
     /* Tailwind-like utility classes */
     .vf-tailwind {
       width: 100%;
