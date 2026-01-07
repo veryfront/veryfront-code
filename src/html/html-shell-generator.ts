@@ -266,7 +266,7 @@ ${tailwindConfig.customCSS}
     : "";
 
   const start = `<!DOCTYPE html>
-<html lang="${escapeHTML(lang)}">
+<html lang="${escapeHTML(lang)}" suppressHydrationWarning>
 <head>
   ${hydrationErrorSuppression}
   ${metaTags}
@@ -299,7 +299,7 @@ ${options.globalCSS || generateThemeVariables()}
   ${styleTags}
   ${modeStyles}
 </head>
-<body${bodyClass ? ` class="${bodyClass}"` : ""}>
+<body${bodyClass ? ` class="${bodyClass}"` : ""} suppressHydrationWarning>
   <div ${rootAttributes}>
     <div ${contentAttributes}>`;
 
