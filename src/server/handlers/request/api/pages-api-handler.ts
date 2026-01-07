@@ -9,8 +9,9 @@ import { serverLogger } from "@veryfront/utils";
 import type { HandlerContext } from "../../types.ts";
 
 /**
- * API handler cache keyed by project directory
- * Each project directory gets its own API handler instance
+ * API handler cache keyed by project directory and slug
+ * In proxy mode: key = `${projectDir}:${projectSlug}` (each project gets its own handler)
+ * In direct mode: key = `${projectDir}` (single project)
  */
 const apiHandlerCache = new Map<string, Promise<APIRouteHandler>>();
 
@@ -45,7 +46,9 @@ async function destroyHandler(promise: Promise<APIRouteHandler> | undefined): Pr
 export async function getApiHandler(
   ctx: HandlerContext,
 ): Promise<APIRouteHandler> {
-  const key = ctx.projectDir;
+  // In proxy mode, projectDir is always '/app' but projectSlug varies per project
+  // Include projectSlug in cache key to prevent cross-project route conflicts
+  const key = ctx.projectSlug ? `${ctx.projectDir}:${ctx.projectSlug}` : ctx.projectDir;
   if (!apiHandlerCache.has(key)) {
     apiHandlerCache.set(
       key,
