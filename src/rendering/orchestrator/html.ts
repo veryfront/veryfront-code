@@ -144,6 +144,7 @@ export class HTMLGenerator {
       projectId: context.options?.projectId,
       pageId: context.options?.pageId,
       sourceHash,
+      colorScheme: context.options?.colorScheme,
     };
 
     // Buffer the React stream to extract head elements
@@ -312,6 +313,7 @@ export class HTMLGenerator {
       projectId: context.options?.projectId,
       pageId: context.options?.pageId,
       sourceHash,
+      colorScheme: context.options?.colorScheme,
     };
 
     return await wrapInHTMLShell(

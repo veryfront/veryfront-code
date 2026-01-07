@@ -265,8 +265,17 @@ ${tailwindConfig.customCSS}
 </script>`
     : "";
 
+  // Build HTML element attributes including color scheme from client hints
+  const colorScheme = options.colorScheme || "light";
+  const htmlAttrs = [
+    `lang="${escapeHTML(lang)}"`,
+    `data-theme="${colorScheme}"`,
+    `style="color-scheme: ${colorScheme};"`,
+    "suppressHydrationWarning",
+  ].join(" ");
+
   const start = `<!DOCTYPE html>
-<html lang="${escapeHTML(lang)}" suppressHydrationWarning>
+<html ${htmlAttrs}>
 <head>
   ${hydrationErrorSuppression}
   ${metaTags}
