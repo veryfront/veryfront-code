@@ -182,16 +182,16 @@ export class LayoutCollector {
     const useAppRouter = await detectAppRouter(this.projectDir, this.config, this.adapter);
 
     const wrappedAdapter: unknown = (this.adapter?.fs as { fsAdapter?: unknown })?.fsAdapter;
+    const adapterName = (wrappedAdapter as { constructor?: { name?: string } })?.constructor?.name;
+    // Check for both VeryfrontFSAdapter (single project) and MultiProjectFSAdapter (proxy mode)
     const isVeryfrontAPI =
-      (wrappedAdapter as { constructor?: { name?: string } })?.constructor?.name ===
-        "VeryfrontFSAdapter";
+      adapterName === "VeryfrontFSAdapter" || adapterName === "MultiProjectFSAdapter";
 
-    logger.debug("[LayoutCollector] Checking FS adapter type", {
+    logger.info("[LayoutCollector] Checking FS adapter type", {
       hasAdapter: !!this.adapter,
       hasFs: !!this.adapter?.fs,
       wrapperName: this.adapter?.fs?.constructor?.name,
-      wrappedAdapterName: (wrappedAdapter as { constructor?: { name?: string } })?.constructor
-        ?.name,
+      wrappedAdapterName: adapterName,
       isVeryfrontAPI,
     });
 
@@ -267,11 +267,22 @@ export class LayoutCollector {
     }
 
     // Priority 2: Check project data (legacy, from API project settings)
-    const projectData = (wrappedAdapter as {
-      getProjectData: () => { provider?: string; layout?: string } | undefined;
-    }).getProjectData();
+    // Note: getProjectData() may be sync (VeryfrontFSAdapter) or async (MultiProjectFSAdapter)
+    const getProjectDataFn = (wrappedAdapter as {
+      getProjectData?: () =>
+        | { provider?: string; layout?: string }
+        | Promise<{ provider?: string; layout?: string } | undefined>
+        | undefined;
+    }).getProjectData;
 
-    logger.debug("[LayoutCollector] Veryfront API project data", {
+    let projectData: { provider?: string; layout?: string } | undefined;
+    if (getProjectDataFn) {
+      const result = getProjectDataFn.call(wrappedAdapter);
+      // Handle both sync and async return values
+      projectData = result instanceof Promise ? await result : result;
+    }
+
+    logger.info("[LayoutCollector] Veryfront API project data", {
       provider: projectData?.provider,
       layout: projectData?.layout,
     });
@@ -284,7 +295,10 @@ export class LayoutCollector {
 
     if (layoutValue && isUUID(layoutValue)) {
       const vfAdapter = wrappedAdapter as {
-        getFilePathByEntityId?: (entityId: string) => string | undefined;
+        // VeryfrontFSAdapter: sync method returns string from cache
+        // MultiProjectFSAdapter: async method returns Promise<string>
+        getFilePathByEntityId?: (entityId: string) => string | Promise<string | undefined> | undefined;
+        // Only on VeryfrontFSAdapter - async method with body content
         getFilePathByEntityIdAsync?: (
           entityId: string,
         ) => Promise<{ path: string; body?: string } | undefined>;
@@ -296,16 +310,21 @@ export class LayoutCollector {
         hasAsyncMethod: typeof vfAdapter.getFilePathByEntityIdAsync === "function",
       });
 
-      // First try synchronous cache lookup
-      let resolvedPath = vfAdapter.getFilePathByEntityId?.(layoutValue);
-      logger.info("[LayoutCollector] Sync cache lookup result", {
+      // Try to get file path - may be sync or async depending on adapter type
+      let resolvedPath: string | undefined;
+      if (vfAdapter.getFilePathByEntityId) {
+        const pathResult = vfAdapter.getFilePathByEntityId(layoutValue);
+        // Handle both sync (VeryfrontFSAdapter) and async (MultiProjectFSAdapter) results
+        resolvedPath = pathResult instanceof Promise ? await pathResult : pathResult;
+      }
+      logger.info("[LayoutCollector] File path lookup result", {
         uuid: layoutValue,
         resolvedPath: resolvedPath ?? "(not found)",
       });
 
-      // If not in cache, try async API lookup (which also returns body content)
+      // If not found yet, try the async method with body content (only on VeryfrontFSAdapter)
       if (!resolvedPath && vfAdapter.getFilePathByEntityIdAsync) {
-        logger.info("[LayoutCollector] Trying async API lookup", { uuid: layoutValue });
+        logger.info("[LayoutCollector] Trying async API lookup with body", { uuid: layoutValue });
         const result = await vfAdapter.getFilePathByEntityIdAsync(layoutValue);
         if (result) {
           resolvedPath = result.path;
