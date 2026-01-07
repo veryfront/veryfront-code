@@ -122,7 +122,10 @@ export class ProviderManager {
     return Date.now() - entry.timestamp < ProviderManager.CACHE_TTL_MS;
   }
 
-  private getLogContext(projectData?: ProjectData, route?: string): Record<string, string | undefined> {
+  private getLogContext(
+    projectData?: ProjectData,
+    route?: string,
+  ): Record<string, string | undefined> {
     return {
       projectId: projectData?.id,
       projectSlug: projectData?.slug,
@@ -151,7 +154,10 @@ export class ProviderManager {
 
     // If cache is valid, return immediately
     if (cachedEntry && this.isCacheValid(cachedEntry)) {
-      logger.debug("[ProviderManager] Cache hit", { ...logCtx, durationMs: Date.now() - startTime });
+      logger.debug("[ProviderManager] Cache hit", {
+        ...logCtx,
+        durationMs: Date.now() - startTime,
+      });
       return cachedEntry.result;
     }
 
