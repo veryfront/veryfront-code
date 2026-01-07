@@ -84,6 +84,56 @@ export class ApiHandlerWrapper extends BaseHandler {
       projectSlug: ctx.projectSlug,
     }, ctx);
 
+    // Check if adapter supports multi-project mode via runWithContext
+    const fsWrapper = ctx.adapter.fs as {
+      runWithContext?: <T>(
+        slug: string,
+        token: string,
+        fn: () => Promise<T>,
+        projectId?: string,
+        options?: { productionMode?: boolean; releaseId?: string | null },
+      ) => Promise<T>;
+    };
+
+    // For multi-project mode, use runWithContext (required for MultiProjectFSAdapter)
+    // This ensures API route discovery and handling uses the correct project context
+    if (ctx.projectSlug && typeof fsWrapper.runWithContext === "function") {
+      // Determine production mode based on domain type
+      let isProduction = false;
+      if (ctx.parsedDomain?.isVeryfrontDomain) {
+        isProduction = ctx.parsedDomain.isDraft === false;
+      } else {
+        isProduction = ctx.proxyEnvironment === "production";
+      }
+
+      this.logDebug("[API-Wrapper] Using multi-project context", {
+        projectSlug: ctx.projectSlug,
+        projectId: ctx.projectId,
+        hasProxyToken: !!ctx.proxyToken,
+        productionMode: isProduction,
+      }, ctx);
+
+      return await fsWrapper.runWithContext(
+        ctx.projectSlug,
+        ctx.proxyToken || "",
+        () => this.handleWithContext(req, ctx, pathname),
+        ctx.projectId,
+        { productionMode: isProduction, releaseId: ctx.releaseId },
+      );
+    }
+
+    // Single-project mode - handle directly
+    return await this.handleWithContext(req, ctx, pathname);
+  }
+
+  /**
+   * Internal handler that runs within project context
+   */
+  private async handleWithContext(
+    req: Request,
+    ctx: HandlerContext,
+    pathname: string,
+  ): Promise<HandlerResult> {
     try {
       // Use the APIRouteHandler for all routes (Pages API and App Router)
       // It discovers routes during initialization and can handle both types
