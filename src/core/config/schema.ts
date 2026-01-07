@@ -156,7 +156,7 @@ export const veryfrontConfigSchema = z
       .optional(),
     fs: z
       .object({
-        type: z.enum(["local", "veryfront-api", "memory"]).optional(),
+        type: z.enum(["local", "veryfront-api", "memory", "github"]).optional(),
         local: z
           .object({
             baseDir: z.string().optional(),
@@ -192,6 +192,32 @@ export const veryfrontConfigSchema = z
         memory: z
           .object({
             files: z.record(z.union([z.string(), z.instanceof(Uint8Array)])).optional(),
+          })
+          .partial()
+          .optional(),
+        github: z
+          .object({
+            token: z.string(),
+            owner: z.string(),
+            repo: z.string(),
+            ref: z.string().optional(),
+            cache: z
+              .object({
+                enabled: z.boolean().optional(),
+                ttl: z.number().int().positive().optional(),
+                maxSize: z.number().int().positive().optional(),
+                maxMemory: z.number().int().positive().optional(),
+              })
+              .partial()
+              .optional(),
+            retry: z
+              .object({
+                maxRetries: z.number().int().min(0).optional(),
+                initialDelay: z.number().int().positive().optional(),
+                maxDelay: z.number().int().positive().optional(),
+              })
+              .partial()
+              .optional(),
           })
           .partial()
           .optional(),
