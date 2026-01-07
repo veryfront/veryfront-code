@@ -221,8 +221,8 @@ export class LayoutCollector {
       return layout.endsWith(".mdx") ? "mdx" : "tsx";
     };
 
-    // Priority 1: Check config.layout from veryfront.config.ts
-    const configLayout = this.config?.layout;
+    // Priority 1: Check config.layout or config.defaultLayout from veryfront.config.ts
+    const configLayout = this.config?.layout || this.config?.defaultLayout;
     if (configLayout && isValidLayoutPath(configLayout)) {
       // Config layout can be absolute or relative to project
       const layoutPath = configLayout.startsWith("/") || configLayout.startsWith(this.projectDir)
