@@ -15,7 +15,7 @@ import { createRenderer } from "@veryfront/rendering/index.ts";
 import { rendererLogger } from "@veryfront/utils";
 import { clearSSRModuleCacheForProject } from "../../module-system/react-loader/ssr-module-loader.ts";
 import { getHeapStats, registerCache } from "../../core/memory/index.ts";
-import { getConfig } from "@veryfront/config";
+import { clearConfigCache, getConfig } from "@veryfront/config";
 
 type RendererInstance = Awaited<ReturnType<typeof createRenderer>>;
 type RendererPromise = Promise<RendererInstance>;
@@ -408,6 +408,10 @@ async function createRendererInternal(
         projectSlug,
         projectDir: ctx.projectDir,
       });
+      // Clear config cache before loading - in proxy mode, projectDir is always /app
+      // but different projects have different configs. The cache is keyed by projectDir
+      // so we need to clear it to ensure we load the correct project's config.
+      clearConfigCache();
       config = await getConfig(ctx.projectDir, ctx.adapter);
       rendererLogger.info("[RendererFactory] Project config loaded", {
         projectSlug,
