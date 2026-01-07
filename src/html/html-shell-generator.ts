@@ -238,9 +238,36 @@ ${tailwindConfig.customCSS}
   // Generate modulepreload hints for page and layout modules (faster cold start)
   const modulePreloadHints = generateModulePreloadHints(options);
 
+  // Deduplicate React hydration errors in production (error #418, #423, #425)
+  // These are common with SSR + client-side libraries (themes, animations) and React 18
+  // recovers gracefully. We log once with helpful context instead of spamming console.
+  // Must run BEFORE React loads to intercept the console.error calls.
+  const hydrationErrorSuppression = options.mode !== "development"
+    ? `<script${nonce ? ` nonce="${nonce}"` : ""}>
+(function(){
+  var origError = console.error;
+  var hydrationErrorLogged = false;
+  console.error = function() {
+    var msg = arguments[0];
+    var isHydrationError = (typeof msg === 'string' && msg.includes('Minified React error #4')) ||
+      (arguments[0] instanceof Error && arguments[0].message && arguments[0].message.includes('Minified React error #4'));
+    if (isHydrationError) {
+      if (!hydrationErrorLogged) {
+        hydrationErrorLogged = true;
+        origError.call(console, '[Veryfront] React hydration mismatch detected. This is usually caused by client-only code (localStorage, window checks) in SSR. React will recover automatically. See: https://react.dev/link/hydration-mismatch');
+      }
+      return;
+    }
+    origError.apply(console, arguments);
+  };
+})();
+</script>`
+    : "";
+
   const start = `<!DOCTYPE html>
 <html lang="${escapeHTML(lang)}">
 <head>
+  ${hydrationErrorSuppression}
   ${metaTags}
   <title>${escapeHTML(effectiveTitle)}</title>
 
