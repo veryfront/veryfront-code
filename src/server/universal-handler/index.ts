@@ -19,6 +19,37 @@ import {
 import type { HandlerContext } from "../handlers/types.ts";
 import { parseProjectDomain } from "../utils/domain-parser.ts";
 import { getEnvironmentType, lookupProjectByDomain } from "../utils/domain-lookup.ts";
+
+/** Check if host is a private/internal IP address */
+function isInternalHost(host: string): boolean {
+  // Extract hostname without port
+  const hostname = host.split(":")[0] ?? "";
+
+  // Check for localhost
+  if (hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1") {
+    return true;
+  }
+
+  // Check for private IPv4 ranges (10.x.x.x, 172.16-31.x.x, 192.168.x.x)
+  const ipv4Match = hostname.match(/^(\d+)\.(\d+)\.(\d+)\.(\d+)$/);
+  if (ipv4Match) {
+    const a = Number(ipv4Match[1]);
+    const b = Number(ipv4Match[2]);
+    if (a === 10) return true; // 10.0.0.0/8
+    if (a === 172 && b >= 16 && b <= 31) return true; // 172.16.0.0/12
+    if (a === 192 && b === 168) return true; // 192.168.0.0/16
+  }
+
+  return false;
+}
+
+/** Check if request path is a monitoring endpoint that should skip domain lookup */
+function isMonitoringPath(pathname: string): boolean {
+  return pathname === "/healthz" ||
+    pathname === "/readyz" ||
+    pathname === "/_health" ||
+    pathname === "/metrics";
+}
 import { RouteRegistry } from "@veryfront/routing/registry/index.ts";
 import { SecurityConfigLoader } from "@veryfront/security/http/config.ts";
 import { getConfig } from "@veryfront/config/loader.ts";
@@ -213,7 +244,12 @@ export function createVeryfrontHandler(
 
       // For custom domains without a slug, look up the project via API
       // This enables JIT rendering for production sites with custom domains
-      if (!projectSlug && !parsedDomain.isVeryfrontDomain && config?.fs?.veryfront) {
+      // Skip for: internal IPs (health checks), monitoring endpoints, veryfront domains
+      const shouldSkipDomainLookup = isInternalHost(host) || isMonitoringPath(_url.pathname);
+      if (
+        !projectSlug && !parsedDomain.isVeryfrontDomain && config?.fs?.veryfront &&
+        !shouldSkipDomainLookup
+      ) {
         // Use proxy token (from x-token header) or fall back to config token
         const effectiveToken = proxyToken || config.fs.veryfront.apiToken || "";
         // Support both baseUrl (FSAdapterConfig) and apiBaseUrl (VeryfrontConfig) for compatibility
