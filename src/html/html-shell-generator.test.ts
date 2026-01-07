@@ -29,7 +29,8 @@ describe("html-generation/html-shell-generator", () => {
       assertStringIncludes(result, "<!DOCTYPE html>");
       assertStringIncludes(result, "<html");
       assertStringIncludes(result, "<head>");
-      assertStringIncludes(result, "<body>");
+      assertStringIncludes(result, "<body");
+      assertStringIncludes(result, "suppressHydrationWarning");
       assertStringIncludes(result, "</html>");
     });
 
@@ -366,7 +367,7 @@ describe("html-generation/html-shell-generator", () => {
 
       const result = await wrapInHTMLShell("<div>Content</div>", meta, options);
 
-      assertStringIncludes(result, '<html lang="ja">');
+      assertStringIncludes(result, '<html lang="ja" suppressHydrationWarning>');
     });
 
     it("should use default language when not specified", async () => {
@@ -383,7 +384,7 @@ describe("html-generation/html-shell-generator", () => {
 
       const result = await wrapInHTMLShell("<div>Content</div>", meta, options);
 
-      assertStringIncludes(result, '<html lang="en">');
+      assertStringIncludes(result, '<html lang="en" suppressHydrationWarning>');
     });
 
     it("should add body class if specified", async () => {
@@ -402,7 +403,7 @@ describe("html-generation/html-shell-generator", () => {
 
       const result = await wrapInHTMLShell("<div>Content</div>", meta, options);
 
-      assertStringIncludes(result, '<body class="custom-body-class">');
+      assertStringIncludes(result, '<body class="custom-body-class" suppressHydrationWarning>');
     });
 
     it("should include veryfront-portals div", async () => {
