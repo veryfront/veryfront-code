@@ -15,6 +15,7 @@ import { createRenderer } from "@veryfront/rendering/index.ts";
 import { rendererLogger } from "@veryfront/utils";
 import { clearSSRModuleCacheForProject } from "../../module-system/react-loader/ssr-module-loader.ts";
 import { getHeapStats, registerCache } from "../../core/memory/index.ts";
+import { getConfig } from "@veryfront/config";
 
 type RendererInstance = Awaited<ReturnType<typeof createRenderer>>;
 type RendererPromise = Promise<RendererInstance>;
@@ -397,12 +398,30 @@ async function createRendererInternal(
   });
 
   try {
+    // In multi-project mode (when projectSlug !== "__single__"), load config fresh
+    // This runs within runWithContext so FSAdapter reads from the correct project
+    // This is necessary because ctx.config from the universal handler is the startup config
+    // which doesn't have project-specific settings like defaultLayout
+    let config = ctx.config;
+    if (projectSlug !== "__single__" && ctx.projectSlug) {
+      rendererLogger.info("[RendererFactory] Loading project-specific config", {
+        projectSlug,
+        projectDir: ctx.projectDir,
+      });
+      config = await getConfig(ctx.projectDir, ctx.adapter);
+      rendererLogger.info("[RendererFactory] Project config loaded", {
+        projectSlug,
+        hasDefaultLayout: !!config?.defaultLayout,
+        defaultLayout: config?.defaultLayout,
+      });
+    }
+
     const renderer = await createRenderer({
       projectDir: ctx.projectDir,
       mode: ctx.mode,
       adapter: ctx.adapter,
       moduleServerUrl: ctx.moduleServerUrl,
-      config: ctx.config,
+      config,
     });
 
     rendererLogger.debug("[RendererFactory] Renderer created", { projectSlug });
