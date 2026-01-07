@@ -228,13 +228,13 @@ export async function generateHTMLShellParts(
   // This provides runtime CSS generation for any classes UnoCSS might miss
   const tailwindCDN = `<script src="${tailwindCDNUrl}"${nonce ? ` nonce="${nonce}"` : ""}></script>
   <script${configScriptType}${nonce ? ` nonce="${nonce}"` : ""}>${tailwindConfigScript}</script>${
-      tailwindConfig?.customCSS
-        ? `
+    tailwindConfig?.customCSS
+      ? `
   <style type="text/tailwindcss"${nonce ? ` nonce="${nonce}"` : ""}>
 ${tailwindConfig.customCSS}
   </style>`
-        : ""
-    }`;
+      : ""
+  }`;
 
   // Generate modulepreload hints for page and layout modules (faster cold start)
   const modulePreloadHints = generateModulePreloadHints(options);

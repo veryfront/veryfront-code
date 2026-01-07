@@ -370,7 +370,7 @@ describe("html-generation/html-shell-generator", () => {
       // Client hints default to light theme, includes data-theme and color-scheme
       assertStringIncludes(result, 'lang="ja"');
       assertStringIncludes(result, 'data-theme="light"');
-      assertStringIncludes(result, 'color-scheme: light');
+      assertStringIncludes(result, "color-scheme: light");
     });
 
     it("should use default language when not specified", async () => {
