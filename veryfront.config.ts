@@ -28,13 +28,18 @@ const proxyMode = Deno.env.get("PROXY_MODE") === "1";
 const productionMode = Deno.env.get("PRODUCTION_MODE") === "1";
 
 // Derive REST API base URL
-// Production: VERYFRONT_API_URL is the GraphQL URL (http://veryfront-api.veryfront-production/graphql)
+// Production: VERYFRONT_API_URL is the API base (https://api.veryfront.com)
 // Local dev: VERYFRONT_API_BASE_URL is the REST API URL (http://api.lvh.me:4000/api)
 function getApiBaseUrl(): string {
-  // Check for GraphQL URL first (production Kubernetes)
-  const graphqlUrl = Deno.env.get("VERYFRONT_API_URL") || "";
-  if (graphqlUrl.endsWith("/graphql")) {
-    return graphqlUrl.replace("/graphql", "/api");
+  // Check for API URL first (production)
+  const apiUrl = Deno.env.get("VERYFRONT_API_URL") || "";
+  if (apiUrl) {
+    // Handle both "https://api.veryfront.com" and "https://api.veryfront.com/graphql"
+    const baseUrl = apiUrl.endsWith("/graphql")
+      ? apiUrl.replace("/graphql", "")
+      : apiUrl;
+    // Ensure URL ends with /api
+    return baseUrl.endsWith("/api") ? baseUrl : `${baseUrl}/api`;
   }
   // Fall back to explicit base URL or env.local value
   return Deno.env.get("VERYFRONT_API_BASE_URL") || env.VERYFRONT_API_BASE_URL ||
