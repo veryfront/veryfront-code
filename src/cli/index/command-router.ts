@@ -14,6 +14,8 @@ import { doctorCommand } from "../commands/doctor/index.ts";
 import { initCommand } from "../commands/init/index.ts";
 import { lockCommand } from "../commands/lock.ts";
 import { routesCommand } from "../commands/routes.ts";
+import { pullCommand } from "../commands/pull.ts";
+import { pushCommand } from "../commands/push.ts";
 import {
   exitProcess,
   registerTerminationSignals,
@@ -86,18 +88,15 @@ function showBasicHelp(command?: string): void {
     cliLogger.info(`Unknown command: ${command}`);
     cliLogger.info(`Use 'veryfront --help' to see available commands.`);
   } else {
+    // Dynamically generate command list from COMMANDS registry
+    const maxLen = Math.max(...Object.values(COMMANDS).map((c) => c.name.length)) + 2;
+    const commandList = Object.values(COMMANDS)
+      .map((cmd) => `  ${cmd.name.padEnd(maxLen)}${cmd.description}`)
+      .join("\n");
     cliLogger.info(`Veryfront CLI v${VERSION}
 
 Available commands:
-  init          Create a new Veryfront project
-  dev           Start the development server
-  build         Build for production
-  preview       Preview the production build
-  doctor        Run diagnostic checks
-  clean         Clean build and cache directories
-  routes        List application routes
-  lock          Manage remote import lockfile
-  generate      Generate new pages/components
+${commandList}
 
 Use 'veryfront <command> --help' for command-specific help.`);
   }
@@ -315,6 +314,55 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
       case "g":
         showLogo();
         await handleGenerateCommand(args);
+        break;
+
+      case "pull":
+        showLogo();
+        {
+          // Get project slug from positional argument (e.g., `pull my-project`)
+          const projectSlug = args._.length > 1 ? String(args._[1]) : undefined;
+          // Parse --projects flag (comma-separated list)
+          const projectsArg = args.projects ? String(args.projects) : undefined;
+          const projects = projectsArg
+            ? projectsArg.split(",").map((p) => p.trim()).filter(Boolean)
+            : undefined;
+          // Resolve directory: --project-dir/--dir/-d option, or current working directory
+          const dirArg = args["project-dir"]
+            ? String(args["project-dir"])
+            : args.dir
+            ? String(args.dir)
+            : args.d
+            ? String(args.d)
+            : undefined;
+          const projectDir = dirArg
+            ? (dirArg.startsWith("/") ? dirArg : join(cwd(), dirArg))
+            : cwd();
+          await pullCommand({
+            projectSlug,
+            projects,
+            projectDir,
+            branch: args.branch ? String(args.branch) : args.b ? String(args.b) : undefined,
+            force: Boolean(args.force) || Boolean(args.f),
+            dryRun: Boolean(args["dry-run"]),
+          });
+        }
+        break;
+
+      case "push":
+        showLogo();
+        {
+          // Resolve directory: --dir/-d option, or current working directory
+          const dirArg = args.dir ? String(args.dir) : args.d ? String(args.d) : undefined;
+          const projectDir = dirArg
+            ? (dirArg.startsWith("/") ? dirArg : join(cwd(), dirArg))
+            : cwd();
+          await pushCommand({
+            projectDir,
+            branch: args.branch ? String(args.branch) : args.b ? String(args.b) : undefined,
+            force: Boolean(args.force) || Boolean(args.f),
+            dryRun: Boolean(args["dry-run"]),
+          });
+        }
         break;
 
       case "help":

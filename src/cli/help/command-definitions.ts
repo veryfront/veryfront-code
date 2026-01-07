@@ -273,4 +273,80 @@ export const COMMANDS: CommandRegistry = {
       "Integration type launches interactive wizard if name not provided",
     ],
   },
+  pull: {
+    name: "pull",
+    description: "Download project files from Veryfront remote",
+    usage: "veryfront pull [options]",
+    options: [
+      {
+        flag: "--projects <slugs>",
+        description: "Comma-separated list of project slugs to pull",
+      },
+      {
+        flag: "-d, --dir <path>",
+        description: "Target directory (default: current directory)",
+      },
+      {
+        flag: "-b, --branch <name>",
+        description: "Branch to pull from (default: main)",
+      },
+      {
+        flag: "-f, --force",
+        description: "Force overwrite without confirmation",
+      },
+      {
+        flag: "--dry-run",
+        description: "Show what would be written without writing",
+      },
+    ],
+    examples: [
+      "veryfront pull",
+      "veryfront pull --dir ./my-project",
+      "veryfront pull --branch feature-header",
+      "veryfront pull --projects project-a,project-b,project-c",
+      "veryfront pull --projects my-app --dir ./apps",
+      "veryfront pull --dry-run",
+      "veryfront pull --force",
+    ],
+    notes: [
+      "Requires VERYFRONT_API_TOKEN env var or .veryfrontrc config",
+      "Project slug is inferred from package.json name or directory",
+      "With --projects, each project is pulled into a subdirectory named after the slug",
+      'Projects list can also be specified in .veryfrontrc: { "projects": ["slug1", "slug2"] }',
+    ],
+  },
+  push: {
+    name: "push",
+    description: "Create a branch and upload local files to Veryfront",
+    usage: "veryfront push [options]",
+    options: [
+      {
+        flag: "-d, --dir <path>",
+        description: "Source directory (default: current directory)",
+      },
+      {
+        flag: "-b, --branch <name>",
+        description: "Branch name to create (default: cli/push-<timestamp>)",
+      },
+      {
+        flag: "-f, --force",
+        description: "Push without confirmation",
+      },
+      {
+        flag: "--dry-run",
+        description: "Show what would be uploaded without uploading",
+      },
+    ],
+    examples: [
+      "veryfront push",
+      "veryfront push --dir ./my-project",
+      "veryfront push --branch feature-header",
+      "veryfront push --dry-run",
+    ],
+    notes: [
+      "Requires VERYFRONT_API_TOKEN env var or .veryfrontrc config",
+      "Creates a new branch for each push - merge in Studio",
+      "Uploads all files using their relative paths",
+    ],
+  },
 };
