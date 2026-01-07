@@ -211,8 +211,9 @@ export async function generateHTMLShellParts(
 
   const syntaxHighlightTheme = options.mode === "development" ? "github-dark" : "github";
 
-  // In development, use Tailwind CDN for runtime CSS compilation (works with 'use client' pages)
-  // In production, use UnoCSS-generated CSS from pre-rendered HTML
+  // Use Tailwind CDN for runtime CSS compilation in both dev and production
+  // This ensures all Tailwind classes work correctly, including arbitrary values
+  // UnoCSS pre-generated CSS is still included as a fallback for faster initial render
   const tailwindCDNUrl = getTailwindCDNUrl(tailwindConfig);
 
   // Use project's tailwind.config.js if available, otherwise fall back to generated config
@@ -223,8 +224,9 @@ export async function generateHTMLShellParts(
   // Project's tailwind.config.js may use ESM imports, so use type="module"
   const configScriptType = options.tailwindConfigJs ? ' type="module"' : "";
 
-  const tailwindCDN = options.mode === "development"
-    ? `<script src="${tailwindCDNUrl}"${nonce ? ` nonce="${nonce}"` : ""}></script>
+  // Always include Tailwind CDN for both dev and production
+  // This provides runtime CSS generation for any classes UnoCSS might miss
+  const tailwindCDN = `<script src="${tailwindCDNUrl}"${nonce ? ` nonce="${nonce}"` : ""}></script>
   <script${configScriptType}${nonce ? ` nonce="${nonce}"` : ""}>${tailwindConfigScript}</script>${
       tailwindConfig?.customCSS
         ? `
@@ -232,8 +234,7 @@ export async function generateHTMLShellParts(
 ${tailwindConfig.customCSS}
   </style>`
         : ""
-    }`
-    : "";
+    }`;
 
   // Generate modulepreload hints for page and layout modules (faster cold start)
   const modulePreloadHints = generateModulePreloadHints(options);

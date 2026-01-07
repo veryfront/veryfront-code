@@ -168,7 +168,7 @@ describe("html-generation/html-shell-generator", () => {
       );
     });
 
-    it("should use UnoCSS-generated CSS in production mode", async () => {
+    it("should use Tailwind CDN and UnoCSS-generated CSS in production mode", async () => {
       const meta: RenderMetadata = {
         title: "Test Page",
         slug: "test",
@@ -182,8 +182,9 @@ describe("html-generation/html-shell-generator", () => {
 
       const result = await wrapInHTMLShell("<div>Content</div>", meta, options);
 
-      // In production, use UnoCSS pre-generated CSS (no Tailwind CDN)
-      assert(!result.includes("cdn.tailwindcss.com"));
+      // In production, use both Tailwind CDN (runtime) and UnoCSS pre-generated CSS
+      // CDN ensures all classes work, UnoCSS provides faster initial render
+      assertStringIncludes(result, "cdn.tailwindcss.com");
     });
 
     it("should include syntax highlighting styles", async () => {
