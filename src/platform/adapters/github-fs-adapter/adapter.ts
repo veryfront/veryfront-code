@@ -28,6 +28,7 @@ export class GitHubFSAdapter implements FSAdapter {
   private readonly statOps: GitHubStatOperations;
   private readonly readOps: GitHubReadOperations;
   private readonly dirOps: GitHubDirectoryOperations;
+  private readonly projectDir: string;
 
   private initialized = false;
 
@@ -35,6 +36,9 @@ export class GitHubFSAdapter implements FSAdapter {
     if (!adapterConfig.github) {
       throw new Error("GitHub adapter requires github configuration");
     }
+
+    // Store projectDir to strip from absolute paths
+    this.projectDir = adapterConfig.projectDir || "";
 
     // Resolve config from raw config + environment
     const rawConfig: GitHubConfig = {
@@ -58,14 +62,15 @@ export class GitHubFSAdapter implements FSAdapter {
       maxMemory: this.config.cache.maxMemory,
     });
 
-    this.statOps = new GitHubStatOperations(this.config, this.client, this.cache);
+    this.statOps = new GitHubStatOperations(this.config, this.client, this.cache, this.projectDir);
     this.readOps = new GitHubReadOperations(
       this.config,
       this.client,
       this.cache,
       this.statOps,
+      this.projectDir,
     );
-    this.dirOps = new GitHubDirectoryOperations(this.config, this.cache, this.statOps);
+    this.dirOps = new GitHubDirectoryOperations(this.config, this.cache, this.statOps, this.projectDir);
 
     logger.info(`${LOG_PREFIX} Created adapter`, {
       repo: this.client.repoId,

@@ -16,6 +16,7 @@ export class GitHubStatOperations {
   private readonly config: ResolvedGitHubConfig;
   private readonly client: GitHubAPIClient;
   private readonly cache: FileCache;
+  private readonly projectDir: string;
 
   /** File index built from tree */
   private fileIndex: Map<string, FileIndexEntry> = new Map();
@@ -33,10 +34,12 @@ export class GitHubStatOperations {
     config: ResolvedGitHubConfig,
     client: GitHubAPIClient,
     cache: FileCache,
+    projectDir: string = "",
   ) {
     this.config = config;
     this.client = client;
     this.cache = cache;
+    this.projectDir = projectDir;
   }
 
   /**
@@ -149,6 +152,13 @@ export class GitHubStatOperations {
     await this.ensureIndex();
 
     const normalizedPath = this.normalizePath(path);
+
+    logger.debug(`${LOG_PREFIX} stat called`, {
+      inputPath: path,
+      normalizedPath,
+      projectDir: this.projectDir,
+      indexSize: this.fileIndex.size,
+    });
 
     // Check cache
     const cacheKey = `github:stat:${this.config.ref}:${normalizedPath}`;
@@ -365,10 +375,17 @@ export class GitHubStatOperations {
   }
 
   /**
-   * Normalize a file path
+   * Normalize a file path, stripping projectDir prefix if present
    */
   private normalizePath(path: string): string {
-    return path
+    let normalized = path;
+
+    // Strip projectDir prefix if present (handles absolute paths from renderer)
+    if (this.projectDir && normalized.startsWith(this.projectDir)) {
+      normalized = normalized.slice(this.projectDir.length);
+    }
+
+    return normalized
       .replace(/^\/+/, "") // Remove leading slashes
       .replace(/\/+$/, "") // Remove trailing slashes
       .replace(/\/+/g, "/"); // Collapse multiple slashes

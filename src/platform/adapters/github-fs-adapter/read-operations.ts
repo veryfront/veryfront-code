@@ -18,17 +18,20 @@ export class GitHubReadOperations {
   private readonly client: GitHubAPIClient;
   private readonly cache: FileCache;
   private readonly statOps: GitHubStatOperations;
+  private readonly projectDir: string;
 
   constructor(
     config: ResolvedGitHubConfig,
     client: GitHubAPIClient,
     cache: FileCache,
     statOps: GitHubStatOperations,
+    projectDir: string = "",
   ) {
     this.config = config;
     this.client = client;
     this.cache = cache;
     this.statOps = statOps;
+    this.projectDir = projectDir;
   }
 
   /**
@@ -173,12 +176,19 @@ export class GitHubReadOperations {
   }
 
   /**
-   * Normalize a file path
+   * Normalize a file path, stripping projectDir prefix if present
    */
   private normalizePath(path: string): string {
-    return path
-      .replace(/^\/+/, "")
-      .replace(/\/+$/, "")
-      .replace(/\/+/g, "/");
+    let normalized = path;
+
+    // Strip projectDir prefix if present (handles absolute paths from renderer)
+    if (this.projectDir && normalized.startsWith(this.projectDir)) {
+      normalized = normalized.slice(this.projectDir.length);
+    }
+
+    return normalized
+      .replace(/^\/+/, "") // Remove leading slashes
+      .replace(/\/+$/, "") // Remove trailing slashes
+      .replace(/\/+/g, "/"); // Collapse multiple slashes
   }
 }

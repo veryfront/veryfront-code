@@ -159,12 +159,12 @@ class ConfigValidationError extends Error {
 }
 
 /**
- * Check if the adapter is using a virtual filesystem (e.g., Veryfront API)
+ * Check if the adapter is using a virtual filesystem (e.g., Veryfront API, GitHub)
  */
 function isVirtualFilesystem(adapter: RuntimeAdapter): boolean {
   const wrappedAdapter = (adapter?.fs as { fsAdapter?: unknown })?.fsAdapter;
   const adapterName = (wrappedAdapter as { constructor?: { name?: string } })?.constructor?.name;
-  return adapterName === "VeryfrontFSAdapter";
+  return adapterName === "VeryfrontFSAdapter" || adapterName === "GitHubFSAdapter";
 }
 
 /**
