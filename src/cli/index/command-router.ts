@@ -330,10 +330,10 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
           const dirArg = args["project-dir"]
             ? String(args["project-dir"])
             : args.dir
-              ? String(args.dir)
-              : args.d
-                ? String(args.d)
-                : undefined;
+            ? String(args.dir)
+            : args.d
+            ? String(args.d)
+            : undefined;
           const projectDir = dirArg
             ? (dirArg.startsWith("/") ? dirArg : join(cwd(), dirArg))
             : cwd();

@@ -11,7 +11,12 @@ import { dirname, join } from "std/path/mod.ts";
 import { cliLogger } from "@veryfront/utils";
 import { cwd } from "../../platform/compat/process.ts";
 import { createFileSystem } from "../../platform/compat/fs.ts";
-import { createApiClient, readConfigFile, resolveConfig, type ResolvedConfig } from "../shared/config.ts";
+import {
+  createApiClient,
+  readConfigFile,
+  resolveConfig,
+  type ResolvedConfig,
+} from "../shared/config.ts";
 import { confirmPrompt, createSpinner, logInfo, logSuccess, logWarning } from "../utils/index.ts";
 
 /**
@@ -228,7 +233,9 @@ async function pullSingleProject(
     relativePath: file.path,
   }));
 
-  cliLogger.info(`\nFound ${files.length} files to ${dryRun ? "pull" : "write"} from ${projectSlug}.`);
+  cliLogger.info(
+    `\nFound ${files.length} files to ${dryRun ? "pull" : "write"} from ${projectSlug}.`,
+  );
 
   // Confirm if not forced
   if (!force && !dryRun) {
@@ -254,9 +261,7 @@ async function pullSingleProject(
     logInfo(`Dry run complete for ${projectSlug}. Would write ${result.written} files.`);
   } else {
     logSuccess(
-      `Pulled ${result.written} files from ${projectSlug}${
-        branch ? ` (branch: ${branch})` : ""
-      }.`,
+      `Pulled ${result.written} files from ${projectSlug}${branch ? ` (branch: ${branch})` : ""}.`,
     );
     if (result.skipped > 0) {
       logWarning(`Skipped ${result.skipped} files due to errors.`);
@@ -298,10 +303,14 @@ export async function pullCommand(options: PullOptions = {}): Promise<void> {
     // If projects list is provided (CLI or config), we don't need the local config's projectSlug
     if (projects && projects.length > 0) {
       // Create a minimal config with just the API token from env or config file
-      const apiToken = typeof Deno !== "undefined" ? Deno.env.get("VERYFRONT_API_TOKEN") : process?.env?.VERYFRONT_API_TOKEN;
+      const apiToken = typeof Deno !== "undefined"
+        ? Deno.env.get("VERYFRONT_API_TOKEN")
+        : process?.env?.VERYFRONT_API_TOKEN;
       const token = apiToken ?? configFile?.apiToken;
       if (!token) {
-        throw new Error("VERYFRONT_API_TOKEN environment variable or apiToken in .veryfrontrc is required when using --projects");
+        throw new Error(
+          "VERYFRONT_API_TOKEN environment variable or apiToken in .veryfrontrc is required when using --projects",
+        );
       }
       config = {
         apiUrl: configFile?.apiUrl ?? "https://api.veryfront.com/api",
@@ -350,7 +359,9 @@ export async function pullCommand(options: PullOptions = {}): Promise<void> {
 
     cliLogger.info("");
     if (dryRun) {
-      logInfo(`Dry run complete. Would write ${totalWritten} files total across ${projects.length} projects.`);
+      logInfo(
+        `Dry run complete. Would write ${totalWritten} files total across ${projects.length} projects.`,
+      );
     } else {
       logSuccess(`Pulled ${totalWritten} files total across ${projects.length} projects.`);
       if (totalSkipped > 0) {

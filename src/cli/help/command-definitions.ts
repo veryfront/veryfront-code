@@ -312,7 +312,7 @@ export const COMMANDS: CommandRegistry = {
       "Requires VERYFRONT_API_TOKEN env var or .veryfrontrc config",
       "Project slug is inferred from package.json name or directory",
       "With --projects, each project is pulled into a subdirectory named after the slug",
-      "Projects list can also be specified in .veryfrontrc: { \"projects\": [\"slug1\", \"slug2\"] }",
+      'Projects list can also be specified in .veryfrontrc: { "projects": ["slug1", "slug2"] }',
     ],
   },
   push: {
