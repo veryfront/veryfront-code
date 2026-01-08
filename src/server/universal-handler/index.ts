@@ -214,16 +214,15 @@ export function createVeryfrontHandler(
 
     // Execute request handling within span context
     const executeHandler = async (): Promise<Response> => {
+      // Parse domain from host header
+      const host = req.headers.get("host") || _url.host;
+      const parsedDomain = parseProjectDomain(host);
+
       // Check for proxy-provided headers (from Deno proxy)
       const proxyToken = req.headers.get("x-token") || undefined;
       const proxySlug = req.headers.get("x-project-slug") || undefined;
       let proxyEnv = req.headers.get("x-environment") as "preview" | "production" | undefined;
       const forwardedHost = req.headers.get("x-forwarded-host") || undefined;
-
-      // Parse domain from host header - use forwarded host when available (proxy mode)
-      const host = req.headers.get("host") || _url.host;
-      const effectiveHost = forwardedHost || host;
-      const parsedDomain = parseProjectDomain(effectiveHost);
 
       // Get project slug: proxy header > URL parsing > config
       const configuredSlug = config?.fs?.veryfront?.projectSlug;
@@ -243,17 +242,12 @@ export function createVeryfrontHandler(
         isVeryfrontDomain: parsedDomain.isVeryfrontDomain,
       });
 
-      // Domain lookup scenarios:
-      // 1. Custom domains without a slug: Need projectSlug + releaseId for cache key
-      // 2. Veryfront.com subdomains in production: Need releaseId for cache invalidation
-      // Skip for: internal IPs (health checks), monitoring endpoints
+      // For custom domains without a slug, look up the project via API
+      // This enables JIT rendering for production sites with custom domains
+      // Skip for: internal IPs (health checks), monitoring endpoints, veryfront domains
       const shouldSkipDomainLookup = isInternalHost(host) || isMonitoringPath(_url.pathname);
-      const needsProjectSlug = !projectSlug && !parsedDomain.isVeryfrontDomain;
-      const needsReleaseId = proxyEnv === "production" && parsedDomain.isVeryfrontDomain &&
-        projectSlug;
-
       if (
-        (needsProjectSlug || needsReleaseId) && config?.fs?.veryfront &&
+        !projectSlug && !parsedDomain.isVeryfrontDomain && config?.fs?.veryfront &&
         !shouldSkipDomainLookup
       ) {
         // Use proxy token (from x-token header) or fall back to config token
@@ -272,43 +266,27 @@ export function createVeryfrontHandler(
         const lookupHost = forwardedHost || host;
 
         if (apiConfig.apiToken) {
-          logger.info("[universal] Domain lookup required", {
-            reason: needsProjectSlug ? "custom_domain" : "release_id_for_cache",
+          logger.info("[universal] Custom domain detected, looking up project", {
             host: lookupHost,
             originalHost: host,
             forwardedHost,
-            projectSlug: projectSlug ?? "null",
-            environment: proxyEnv ?? "null",
             hasProxyToken: !!proxyToken,
             hasConfigToken: !!config.fs.veryfront.apiToken,
           });
           const lookupResult = await lookupProjectByDomain(lookupHost, apiConfig);
 
           if (lookupResult) {
-            // If we already have projectSlug from proxy, only use lookup if it matches
-            // This prevents stale domain mappings from overwriting correct proxy values
-            if (projectSlug && lookupResult.projectSlug !== projectSlug) {
-              logger.warn("[universal] Domain lookup returned different project", {
-                domain: lookupHost,
-                proxySlug: projectSlug,
-                lookupSlug: lookupResult.projectSlug,
-                skippingLookup: true,
-              });
-              // Don't use stale lookup result - keep proxy values
-            } else {
-              // Use lookup result (custom domain case or matching project)
-              projectSlug = lookupResult.projectSlug;
-              projectId = lookupResult.projectId;
-              releaseId = lookupResult.releaseId ?? undefined;
-              proxyEnv = getEnvironmentType(lookupResult);
-              logger.info("[universal] Domain lookup successful", {
-                domain: effectiveHost,
-                projectSlug: lookupResult.projectSlug,
-                projectId: lookupResult.projectId,
-                environment: proxyEnv,
-                releaseId: lookupResult.releaseId,
-              });
-            }
+            projectSlug = lookupResult.projectSlug;
+            projectId = lookupResult.projectId;
+            releaseId = lookupResult.releaseId ?? undefined;
+            proxyEnv = getEnvironmentType(lookupResult);
+            logger.info("[universal] Domain lookup successful", {
+              domain: host,
+              projectSlug: lookupResult.projectSlug,
+              projectId: lookupResult.projectId,
+              environment: proxyEnv,
+              releaseId: lookupResult.releaseId,
+            });
           } else {
             logger.warn("[universal] No project found for domain", { host: lookupHost });
           }
@@ -343,18 +321,6 @@ export function createVeryfrontHandler(
         setSpanAttributes(span, {
           "veryfront.project_slug": projectSlug,
           "veryfront.environment": proxyEnv || "unknown",
-          "veryfront.release_id": releaseId || "none",
-        });
-      }
-
-      // Log request context for production debugging
-      if (proxyEnv === "production") {
-        logger.info("[universal] Production request context", {
-          projectSlug: projectSlug ?? "null",
-          releaseId: releaseId ?? "null",
-          host: effectiveHost,
-          forwardedHost: forwardedHost ?? "null",
-          isVeryfrontDomain: parsedDomain.isVeryfrontDomain,
         });
       }
 
