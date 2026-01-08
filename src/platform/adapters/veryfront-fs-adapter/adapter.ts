@@ -609,7 +609,8 @@ export class VeryfrontFSAdapter implements FSAdapter {
 
     if (modeChanged || releaseChanged) {
       this.statOps.clearIndex();
-      logger.info("[VeryfrontFSAdapter] Cleared index due to mode change", {
+      this.dirOps.clearTree();
+      logger.info("[VeryfrontFSAdapter] Cleared index and dirTree due to mode change", {
         oldProductionMode,
         newProductionMode: enabled,
         oldReleaseId: oldReleaseId ?? "null",

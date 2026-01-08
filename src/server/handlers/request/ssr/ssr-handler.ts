@@ -165,12 +165,13 @@ export class SSRHandler extends BaseHandler {
           isProduction = ctx.proxyEnvironment === "production";
         }
 
-        setProductionMode.setProductionMode(isProduction);
+        setProductionMode.setProductionMode(isProduction, ctx.releaseId);
         if (isProduction) {
           this.logDebug("Production mode enabled - serving from releases", {
             environment: ctx.parsedDomain?.environment ?? ctx.proxyEnvironment,
             isCustomDomain: !ctx.parsedDomain?.isVeryfrontDomain,
             fromConfig: ctx.config?.fs?.veryfront?.productionMode === true,
+            releaseId: ctx.releaseId ?? "latest",
           }, ctx);
         }
       }

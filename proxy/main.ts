@@ -95,7 +95,20 @@ async function handleRequest(req: Request): Promise<Response> {
       reqLogger.info("Request received");
 
       let token = "";
-      if (config.clientId && config.clientSecret) {
+
+      // For preview requests, try to use user's auth token from cookie first.
+      // This allows previewing user-owned projects that aren't accessible via OAuth client credentials.
+      if (scope === "preview") {
+        const cookieHeader = req.headers.get("cookie") || "";
+        const authTokenMatch = cookieHeader.match(/(?:^|;\s*)authToken=([^;]+)/);
+        if (authTokenMatch?.[1]) {
+          token = decodeURIComponent(authTokenMatch[1]);
+          reqLogger.info("Using user auth token for preview");
+        }
+      }
+
+      // Fall back to OAuth client credentials if no user token or for production requests
+      if (!token && config.clientId && config.clientSecret) {
         try {
           // Don't pass projectSlug as projectId - the API expects a UUID, not a slug.
           // The token works globally for all projects under the OAuth client credentials.
