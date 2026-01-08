@@ -101,7 +101,7 @@ export class ModuleHandler extends BaseHandler {
         ctx.proxyToken,
         fn,
         ctx.projectId,
-        { productionMode: isProduction },
+        { productionMode: isProduction, releaseId: ctx.releaseId },
       );
     }
 

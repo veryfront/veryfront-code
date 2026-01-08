@@ -114,7 +114,7 @@ export class StaticHandler extends BaseHandler {
         ctx.proxyToken || "",
         fn,
         ctx.projectId,
-        { productionMode: isProduction },
+        { productionMode: isProduction, releaseId: ctx.releaseId },
       );
     }
 
