@@ -278,10 +278,7 @@ export function createVeryfrontHandler(
           if (lookupResult) {
             projectSlug = lookupResult.projectSlug;
             projectId = lookupResult.projectId;
-            // NOTE: Temporarily NOT using releaseId from domain lookup
-            // The release data is incomplete (52 files vs 153 in draft)
-            // Until release data is fixed, use draft content (releaseId: undefined)
-            // releaseId = lookupResult.releaseId ?? undefined;
+            releaseId = lookupResult.releaseId ?? undefined;
             proxyEnv = getEnvironmentType(lookupResult);
             logger.info("[universal] Domain lookup successful", {
               domain: host,
