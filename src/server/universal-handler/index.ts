@@ -242,12 +242,17 @@ export function createVeryfrontHandler(
         isVeryfrontDomain: parsedDomain.isVeryfrontDomain,
       });
 
-      // For custom domains without a slug, look up the project via API
-      // This enables JIT rendering for production sites with custom domains
-      // Skip for: internal IPs (health checks), monitoring endpoints, veryfront domains
+      // Domain lookup scenarios:
+      // 1. Custom domains without a slug: Need projectSlug + releaseId for cache key
+      // 2. Veryfront.com subdomains in production: Need releaseId for cache invalidation
+      // Skip for: internal IPs (health checks), monitoring endpoints
       const shouldSkipDomainLookup = isInternalHost(host) || isMonitoringPath(_url.pathname);
+      const needsProjectSlug = !projectSlug && !parsedDomain.isVeryfrontDomain;
+      const needsReleaseId = proxyEnv === "production" && parsedDomain.isVeryfrontDomain &&
+        projectSlug;
+
       if (
-        !projectSlug && !parsedDomain.isVeryfrontDomain && config?.fs?.veryfront &&
+        (needsProjectSlug || needsReleaseId) && config?.fs?.veryfront &&
         !shouldSkipDomainLookup
       ) {
         // Use proxy token (from x-token header) or fall back to config token
@@ -266,10 +271,13 @@ export function createVeryfrontHandler(
         const lookupHost = forwardedHost || host;
 
         if (apiConfig.apiToken) {
-          logger.info("[universal] Custom domain detected, looking up project", {
+          logger.info("[universal] Domain lookup required", {
+            reason: needsProjectSlug ? "custom_domain" : "release_id_for_cache",
             host: lookupHost,
             originalHost: host,
             forwardedHost,
+            projectSlug: projectSlug ?? "null",
+            environment: proxyEnv ?? "null",
             hasProxyToken: !!proxyToken,
             hasConfigToken: !!config.fs.veryfront.apiToken,
           });
@@ -321,6 +329,17 @@ export function createVeryfrontHandler(
         setSpanAttributes(span, {
           "veryfront.project_slug": projectSlug,
           "veryfront.environment": proxyEnv || "unknown",
+          "veryfront.release_id": releaseId || "none",
+        });
+      }
+
+      // Log request context for production debugging
+      if (proxyEnv === "production") {
+        logger.info("[universal] Production request context", {
+          projectSlug: projectSlug ?? "null",
+          releaseId: releaseId ?? "null",
+          host,
+          isVeryfrontDomain: parsedDomain.isVeryfrontDomain,
         });
       }
 
