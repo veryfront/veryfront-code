@@ -326,6 +326,12 @@ ${options.globalCSS || generateThemeVariables()}
     })
     : "";
 
+  // Preview HMR script for live updates in cloud preview mode
+  // Connects to /_ws WebSocket and reloads on file changes
+  const previewHMRScript = options.proxyEnvironment === "preview"
+    ? `<script src="/_veryfront/preview-hmr.js"${nonce ? ` nonce="${nonce}"` : ""}></script>`
+    : "";
+
   // Mermaid initialization script for diagram rendering
   const mermaidScript = `
   <!-- Mermaid diagram rendering -->
@@ -346,6 +352,7 @@ ${options.globalCSS || generateThemeVariables()}
   ${scriptTags}
   ${modeScripts}
   ${studioScripts}
+  ${previewHMRScript}
   ${mermaidScript}
 </body>
 </html>`;

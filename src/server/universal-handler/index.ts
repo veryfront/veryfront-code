@@ -73,6 +73,7 @@ import { ModuleHandler } from "../handlers/request/module/index.ts";
 import { ApiHandlerWrapper } from "../handlers/request/api/index.ts";
 import { SSRHandler } from "../handlers/request/ssr/index.ts";
 import { NotFoundHandler } from "../handlers/response/not-found.ts";
+import { HMRHandler } from "../handlers/preview/hmr-handler.ts";
 
 export interface UniversalHandlerOptions {
   projectDir: string;
@@ -148,6 +149,7 @@ export function createVeryfrontHandler(
   // Register handlers in priority order
   registry.registerAll([
     new AuthHandler(), // Priority: 0 (CRITICAL)
+    new HMRHandler(), // Priority: 25 (preview mode HMR WebSocket)
     new CorsHandler(), // Priority: 50
     new HealthHandler(), // Priority: 100 (HIGH)
     new MetricsHandler(), // Priority: 100 (HIGH)
@@ -219,9 +221,12 @@ export function createVeryfrontHandler(
       const parsedDomain = parseProjectDomain(host);
 
       // Check for proxy-provided headers (from Deno proxy)
+      // For WebSocket requests, also check query params since custom headers aren't supported
       const proxyToken = req.headers.get("x-token") || undefined;
-      const proxySlug = req.headers.get("x-project-slug") || undefined;
-      let proxyEnv = req.headers.get("x-environment") as "preview" | "production" | undefined;
+      const proxySlug = req.headers.get("x-project-slug") ||
+        _url.searchParams.get("x-project-slug") || undefined;
+      let proxyEnv = (req.headers.get("x-environment") ||
+        _url.searchParams.get("x-environment")) as "preview" | "production" | undefined;
       const forwardedHost = req.headers.get("x-forwarded-host") || undefined;
 
       // Get project slug: proxy header > URL parsing > config
