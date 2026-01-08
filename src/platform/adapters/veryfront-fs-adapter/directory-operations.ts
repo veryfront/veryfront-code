@@ -25,7 +25,11 @@ export class DirectoryOperations {
   async readdir(path: string): Promise<DirectoryEntry[]> {
     const normalizedPath = this.normalizer.normalize(path);
     const branch = this.client.getRequestBranch() || "main";
-    const cacheKey = `dir:entries:${branch}:${normalizedPath}`;
+    const isProduction = this.productionContext?.isProductionMode() ?? false;
+    const releaseId = this.productionContext?.getReleaseId() ?? null;
+    // Include production context in cache key to prevent mixing preview/production entries
+    const mode = isProduction ? `production:${releaseId ?? "latest"}` : `preview:${branch}`;
+    const cacheKey = `dir:entries:${mode}:${normalizedPath}`;
 
     const cached = this.cache.get<DirectoryEntry[]>(cacheKey);
     if (cached) {
