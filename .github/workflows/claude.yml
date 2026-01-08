@@ -35,27 +35,9 @@ concurrency:
 
 jobs:
   # ===========================================
-  # Load secrets from 1Password
-  # ===========================================
-  load-secrets:
-    runs-on: ubuntu-latest
-    outputs:
-      anthropic_api_key: ${{ steps.secrets.outputs.ANTHROPIC_API_KEY }}
-    steps:
-      - name: Load secrets from 1Password
-        id: secrets
-        uses: 1password/load-secrets-action@v2
-        with:
-          export-env: false
-        env:
-          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
-          ANTHROPIC_API_KEY: op://VERYFRONT_CI/ANTHROPIC_PRODUCTION/api_key
-
-  # ===========================================
   # Interactive: @claude mentions
   # ===========================================
   claude-mention:
-    needs: load-secrets
     if: |
       (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude')) ||
       (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude')) ||
@@ -67,6 +49,11 @@ jobs:
       issues: write
       id-token: write
     steps:
+      - name: Load secrets from 1Password
+        uses: 1password/load-secrets-action@v2
+        env:
+          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+          ANTHROPIC_API_KEY: op://VERYFRONT_CI/ANTHROPIC_PRODUCTION/api_key
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
@@ -75,13 +62,12 @@ jobs:
           deno-version: v2.x
       - uses: anthropics/claude-code-action@v1
         with:
-          anthropic_api_key: ${{ needs.load-secrets.outputs.anthropic_api_key }}
+          anthropic_api_key: ${{ env.ANTHROPIC_API_KEY }}
 
   # ===========================================
   # CI Auto-Fix: Fix lint/typecheck/test failures
   # ===========================================
   ci-auto-fix:
-    needs: load-secrets
     if: |
       github.event_name == 'workflow_run' &&
       github.event.workflow_run.conclusion == 'failure' &&
@@ -93,6 +79,11 @@ jobs:
       actions: read
       id-token: write
     steps:
+      - name: Load secrets from 1Password
+        uses: 1password/load-secrets-action@v2
+        env:
+          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+          ANTHROPIC_API_KEY: op://VERYFRONT_CI/ANTHROPIC_PRODUCTION/api_key
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.workflow_run.head_branch }}
@@ -102,7 +93,7 @@ jobs:
           deno-version: v2.x
       - uses: anthropics/claude-code-action@v1
         with:
-          anthropic_api_key: ${{ needs.load-secrets.outputs.anthropic_api_key }}
+          anthropic_api_key: ${{ env.ANTHROPIC_API_KEY }}
           prompt: |
             CI failed on branch: ${{ github.event.workflow_run.head_branch }}
 
@@ -119,7 +110,6 @@ jobs:
   # Issue Triage: Auto-label new issues
   # ===========================================
   issue-triage:
-    needs: load-secrets
     if: github.event_name == 'issues' && github.event.action == 'opened'
     runs-on: ubuntu-latest
     permissions:
@@ -127,10 +117,15 @@ jobs:
       issues: write
       id-token: write
     steps:
+      - name: Load secrets from 1Password
+        uses: 1password/load-secrets-action@v2
+        env:
+          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+          ANTHROPIC_API_KEY: op://VERYFRONT_CI/ANTHROPIC_PRODUCTION/api_key
       - uses: actions/checkout@v4
       - uses: anthropics/claude-code-action@v1
         with:
-          anthropic_api_key: ${{ needs.load-secrets.outputs.anthropic_api_key }}
+          anthropic_api_key: ${{ env.ANTHROPIC_API_KEY }}
           prompt: |
             Triage issue #${{ github.event.issue.number }}
             Title: ${{ github.event.issue.title }}
@@ -147,7 +142,6 @@ jobs:
   # PR Review: Automated code review
   # ===========================================
   pr-review:
-    needs: load-secrets
     if: |
       github.event_name == 'pull_request' &&
       github.event.pull_request.draft == false &&
@@ -158,10 +152,15 @@ jobs:
       pull-requests: write
       id-token: write
     steps:
+      - name: Load secrets from 1Password
+        uses: 1password/load-secrets-action@v2
+        env:
+          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+          ANTHROPIC_API_KEY: op://VERYFRONT_CI/ANTHROPIC_PRODUCTION/api_key
       - uses: actions/checkout@v4
       - uses: anthropics/claude-code-action@v1
         with:
-          anthropic_api_key: ${{ needs.load-secrets.outputs.anthropic_api_key }}
+          anthropic_api_key: ${{ env.ANTHROPIC_API_KEY }}
           track_progress: true
           prompt: |
             Review PR #${{ github.event.pull_request.number }}
@@ -182,7 +181,6 @@ jobs:
   # Weekly Maintenance
   # ===========================================
   maintenance:
-    needs: load-secrets
     if: |
       github.event_name == 'schedule' ||
       (github.event_name == 'workflow_dispatch' && github.event.inputs.task == 'maintenance')
@@ -192,6 +190,11 @@ jobs:
       issues: write
       id-token: write
     steps:
+      - name: Load secrets from 1Password
+        uses: 1password/load-secrets-action@v2
+        env:
+          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+          ANTHROPIC_API_KEY: op://VERYFRONT_CI/ANTHROPIC_PRODUCTION/api_key
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
@@ -200,7 +203,7 @@ jobs:
           deno-version: v2.x
       - uses: anthropics/claude-code-action@v1
         with:
-          anthropic_api_key: ${{ needs.load-secrets.outputs.anthropic_api_key }}
+          anthropic_api_key: ${{ env.ANTHROPIC_API_KEY }}
           prompt: |
             Weekly maintenance for veryfront-renderer:
 
