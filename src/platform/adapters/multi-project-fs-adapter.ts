@@ -82,9 +82,6 @@ export class MultiProjectFSAdapter implements FSAdapter {
     this.productionMode = enabled;
     this.releaseId = releaseId ?? null;
 
-    // Apply to all existing cached adapters
-    this.manager.setProductionModeAll(enabled, releaseId);
-
     logger.info("[MultiProjectFSAdapter] Production mode set", {
       enabled,
       releaseId: releaseId ?? "(none)",
