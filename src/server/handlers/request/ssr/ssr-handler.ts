@@ -35,6 +35,7 @@ import {
   PRIORITY_LOW,
 } from "@veryfront/core/constants/index.ts";
 import { generateNonce } from "@veryfront/security/http/response/security-handler.ts";
+import { getColorSchemeFromRequest } from "@veryfront/security/http/client-hints.ts";
 
 /**
  * SSR Handler Class
@@ -164,12 +165,13 @@ export class SSRHandler extends BaseHandler {
           isProduction = ctx.proxyEnvironment === "production";
         }
 
-        setProductionMode.setProductionMode(isProduction);
+        setProductionMode.setProductionMode(isProduction, ctx.releaseId);
         if (isProduction) {
           this.logDebug("Production mode enabled - serving from releases", {
             environment: ctx.parsedDomain?.environment ?? ctx.proxyEnvironment,
             isCustomDomain: !ctx.parsedDomain?.isVeryfrontDomain,
             fromConfig: ctx.config?.fs?.veryfront?.productionMode === true,
+            releaseId: ctx.releaseId ?? "latest",
           }, ctx);
         }
       }
@@ -263,6 +265,9 @@ export class SSRHandler extends BaseHandler {
       const projectId = ctx.projectSlug || url.searchParams.get("project_id") || undefined;
       const pageId = url.searchParams.get("page_id") || undefined;
 
+      // Extract color scheme from client hints (Sec-CH-Prefers-Color-Scheme header)
+      const colorScheme = getColorSchemeFromRequest(req);
+
       // Memory profiling: log heap before render for debugging large projects
       const preRenderHeap = getHeapStats();
       if (preRenderHeap.heapUsedPercent > 30) {
@@ -285,6 +290,8 @@ export class SSRHandler extends BaseHandler {
           studioEmbed,
           projectId,
           pageId,
+          colorScheme,
+          proxyEnvironment: ctx.proxyEnvironment,
         }));
       this.logDebug("SSR successful", { slug, params }, ctx);
       endRequest(requestId);
@@ -326,6 +333,7 @@ export class SSRHandler extends BaseHandler {
         const response = builder
           .withCORS(req, ctx.securityConfig?.cors)
           .withSecurity(ctx.securityConfig ?? undefined)
+          .withClientHints() // Enable Sec-CH-Prefers-Color-Scheme for theme detection
           .withCache("no-cache") // Don't cache streaming responses
           .withContentType(
             getContentType(".html"),
@@ -363,6 +371,7 @@ export class SSRHandler extends BaseHandler {
       const response = builder
         .withCORS(req, ctx.securityConfig?.cors)
         .withSecurity(ctx.securityConfig ?? undefined)
+        .withClientHints() // Enable Sec-CH-Prefers-Color-Scheme for theme detection
         .withCache(cacheStrategy)
         .withETag(etag)
         .withContentType(

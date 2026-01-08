@@ -7,9 +7,11 @@
  * Two event types:
  * - invalidate: Triggered immediately when files change (for clearing caches)
  * - reload: Debounced for browser refresh (to batch rapid changes)
+ *
+ * When changedPaths are provided, HMR can do smart updates instead of full reload.
  */
 
-type ReloadListener = () => void;
+type ReloadListener = (changedPaths?: string[]) => void;
 type InvalidateListener = () => void;
 
 const DEBOUNCE_MS = 300;
@@ -18,9 +20,11 @@ class ReloadNotifierImpl {
   private listeners = new Set<ReloadListener>();
   private invalidateListeners = new Set<InvalidateListener>();
   private debounceTimer: ReturnType<typeof setTimeout> | null = null;
+  private pendingChangedPaths: Set<string> = new Set();
 
   /**
    * Subscribe to reload notifications (debounced, for browser refresh)
+   * Listener receives changedPaths if available for smart HMR updates
    */
   subscribe(listener: ReloadListener): () => void {
     this.listeners.add(listener);
@@ -37,12 +41,21 @@ class ReloadNotifierImpl {
 
   /**
    * Trigger a reload notification to all subscribers (debounced)
+   * @param changedPaths - Optional array of changed file paths for smart HMR
    */
-  triggerReload(): void {
+  triggerReload(changedPaths?: string[]): void {
     console.log("[ReloadNotifier] ✅ triggerReload called", {
       invalidateListeners: this.invalidateListeners.size,
       reloadListeners: this.listeners.size,
+      changedPaths: changedPaths?.length ?? 0,
     });
+
+    // Accumulate changed paths for batching
+    if (changedPaths) {
+      for (const path of changedPaths) {
+        this.pendingChangedPaths.add(path);
+      }
+    }
 
     // First, trigger immediate invalidation for cache clearing
     this.notifyInvalidateListeners();
@@ -53,10 +66,15 @@ class ReloadNotifierImpl {
     }
     this.debounceTimer = setTimeout(() => {
       this.debounceTimer = null;
+      const paths = this.pendingChangedPaths.size > 0
+        ? Array.from(this.pendingChangedPaths)
+        : undefined;
+      this.pendingChangedPaths.clear();
       console.log("[ReloadNotifier] ✅ Debounce complete, notifying reload listeners", {
         listenerCount: this.listeners.size,
+        changedPaths: paths?.length ?? 0,
       });
-      this.notifyListeners();
+      this.notifyListeners(paths);
     }, DEBOUNCE_MS);
   }
 
@@ -74,13 +92,14 @@ class ReloadNotifierImpl {
     console.log("[ReloadNotifier] ✅ Invalidate listeners notified");
   }
 
-  private notifyListeners(): void {
+  private notifyListeners(changedPaths?: string[]): void {
     console.log("[ReloadNotifier] ✅ Notifying reload listeners", {
       count: this.listeners.size,
+      changedPaths: changedPaths?.length ?? 0,
     });
     for (const listener of this.listeners) {
       try {
-        listener();
+        listener(changedPaths);
       } catch (error) {
         console.error("[ReloadNotifier] Listener error:", error);
       }

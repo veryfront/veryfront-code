@@ -29,7 +29,8 @@ describe("html-generation/html-shell-generator", () => {
       assertStringIncludes(result, "<!DOCTYPE html>");
       assertStringIncludes(result, "<html");
       assertStringIncludes(result, "<head>");
-      assertStringIncludes(result, "<body>");
+      assertStringIncludes(result, "<body");
+      assertStringIncludes(result, "suppressHydrationWarning");
       assertStringIncludes(result, "</html>");
     });
 
@@ -168,7 +169,7 @@ describe("html-generation/html-shell-generator", () => {
       );
     });
 
-    it("should use UnoCSS-generated CSS in production mode", async () => {
+    it("should use Tailwind CDN and UnoCSS-generated CSS in production mode", async () => {
       const meta: RenderMetadata = {
         title: "Test Page",
         slug: "test",
@@ -182,8 +183,9 @@ describe("html-generation/html-shell-generator", () => {
 
       const result = await wrapInHTMLShell("<div>Content</div>", meta, options);
 
-      // In production, use UnoCSS pre-generated CSS (no Tailwind CDN)
-      assert(!result.includes("cdn.tailwindcss.com"));
+      // In production, use both Tailwind CDN (runtime) and UnoCSS pre-generated CSS
+      // CDN ensures all classes work, UnoCSS provides faster initial render
+      assertStringIncludes(result, "cdn.tailwindcss.com");
     });
 
     it("should include syntax highlighting styles", async () => {
@@ -365,7 +367,10 @@ describe("html-generation/html-shell-generator", () => {
 
       const result = await wrapInHTMLShell("<div>Content</div>", meta, options);
 
-      assertStringIncludes(result, '<html lang="ja">');
+      // Client hints default to light theme, includes data-theme and color-scheme
+      assertStringIncludes(result, 'lang="ja"');
+      assertStringIncludes(result, 'data-theme="light"');
+      assertStringIncludes(result, "color-scheme: light");
     });
 
     it("should use default language when not specified", async () => {
@@ -382,7 +387,9 @@ describe("html-generation/html-shell-generator", () => {
 
       const result = await wrapInHTMLShell("<div>Content</div>", meta, options);
 
-      assertStringIncludes(result, '<html lang="en">');
+      // Default language is 'en', client hints default to light theme
+      assertStringIncludes(result, 'lang="en"');
+      assertStringIncludes(result, 'data-theme="light"');
     });
 
     it("should add body class if specified", async () => {
@@ -401,7 +408,7 @@ describe("html-generation/html-shell-generator", () => {
 
       const result = await wrapInHTMLShell("<div>Content</div>", meta, options);
 
-      assertStringIncludes(result, '<body class="custom-body-class">');
+      assertStringIncludes(result, '<body class="custom-body-class" suppressHydrationWarning>');
     });
 
     it("should include veryfront-portals div", async () => {

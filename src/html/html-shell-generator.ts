@@ -211,8 +211,9 @@ export async function generateHTMLShellParts(
 
   const syntaxHighlightTheme = options.mode === "development" ? "github-dark" : "github";
 
-  // In development, use Tailwind CDN for runtime CSS compilation (works with 'use client' pages)
-  // In production, use UnoCSS-generated CSS from pre-rendered HTML
+  // Use Tailwind CDN for runtime CSS compilation in both dev and production
+  // This ensures all Tailwind classes work correctly, including arbitrary values
+  // UnoCSS pre-generated CSS is still included as a fallback for faster initial render
   const tailwindCDNUrl = getTailwindCDNUrl(tailwindConfig);
 
   // Use project's tailwind.config.js if available, otherwise fall back to generated config
@@ -223,17 +224,17 @@ export async function generateHTMLShellParts(
   // Project's tailwind.config.js may use ESM imports, so use type="module"
   const configScriptType = options.tailwindConfigJs ? ' type="module"' : "";
 
-  const tailwindCDN = options.mode === "development"
-    ? `<script src="${tailwindCDNUrl}"${nonce ? ` nonce="${nonce}"` : ""}></script>
+  // Always include Tailwind CDN for both dev and production
+  // This provides runtime CSS generation for any classes UnoCSS might miss
+  const tailwindCDN = `<script src="${tailwindCDNUrl}"${nonce ? ` nonce="${nonce}"` : ""}></script>
   <script${configScriptType}${nonce ? ` nonce="${nonce}"` : ""}>${tailwindConfigScript}</script>${
-      tailwindConfig?.customCSS
-        ? `
+    tailwindConfig?.customCSS
+      ? `
   <style type="text/tailwindcss"${nonce ? ` nonce="${nonce}"` : ""}>
 ${tailwindConfig.customCSS}
   </style>`
-        : ""
-    }`
-    : "";
+      : ""
+  }`;
 
   // Generate modulepreload hints for page and layout modules (faster cold start)
   const modulePreloadHints = generateModulePreloadHints(options);
@@ -264,8 +265,17 @@ ${tailwindConfig.customCSS}
 </script>`
     : "";
 
+  // Build HTML element attributes including color scheme from client hints
+  const colorScheme = options.colorScheme || "light";
+  const htmlAttrs = [
+    `lang="${escapeHTML(lang)}"`,
+    `data-theme="${colorScheme}"`,
+    `style="color-scheme: ${colorScheme};"`,
+    "suppressHydrationWarning",
+  ].join(" ");
+
   const start = `<!DOCTYPE html>
-<html lang="${escapeHTML(lang)}">
+<html ${htmlAttrs}>
 <head>
   ${hydrationErrorSuppression}
   ${metaTags}
@@ -298,7 +308,7 @@ ${options.globalCSS || generateThemeVariables()}
   ${styleTags}
   ${modeStyles}
 </head>
-<body${bodyClass ? ` class="${bodyClass}"` : ""}>
+<body${bodyClass ? ` class="${bodyClass}"` : ""} suppressHydrationWarning>
   <div ${rootAttributes}>
     <div ${contentAttributes}>`;
 
@@ -314,6 +324,12 @@ ${options.globalCSS || generateThemeVariables()}
       nonce,
       sourceHash: options.sourceHash,
     })
+    : "";
+
+  // Preview HMR script for live updates in cloud preview mode
+  // Connects to /_ws WebSocket and reloads on file changes
+  const previewHMRScript = options.proxyEnvironment === "preview"
+    ? `<script src="/_veryfront/preview-hmr.js"${nonce ? ` nonce="${nonce}"` : ""}></script>`
     : "";
 
   // Mermaid initialization script for diagram rendering
@@ -336,6 +352,7 @@ ${options.globalCSS || generateThemeVariables()}
   ${scriptTags}
   ${modeScripts}
   ${studioScripts}
+  ${previewHMRScript}
   ${mermaidScript}
 </body>
 </html>`;

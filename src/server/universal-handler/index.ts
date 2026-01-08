@@ -19,6 +19,37 @@ import {
 import type { HandlerContext } from "../handlers/types.ts";
 import { parseProjectDomain } from "../utils/domain-parser.ts";
 import { getEnvironmentType, lookupProjectByDomain } from "../utils/domain-lookup.ts";
+
+/** Check if host is a private/internal IP address */
+function isInternalHost(host: string): boolean {
+  // Extract hostname without port
+  const hostname = host.split(":")[0] ?? "";
+
+  // Check for localhost
+  if (hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1") {
+    return true;
+  }
+
+  // Check for private IPv4 ranges (10.x.x.x, 172.16-31.x.x, 192.168.x.x)
+  const ipv4Match = hostname.match(/^(\d+)\.(\d+)\.(\d+)\.(\d+)$/);
+  if (ipv4Match) {
+    const a = Number(ipv4Match[1]);
+    const b = Number(ipv4Match[2]);
+    if (a === 10) return true; // 10.0.0.0/8
+    if (a === 172 && b >= 16 && b <= 31) return true; // 172.16.0.0/12
+    if (a === 192 && b === 168) return true; // 192.168.0.0/16
+  }
+
+  return false;
+}
+
+/** Check if request path is a monitoring endpoint that should skip domain lookup */
+function isMonitoringPath(pathname: string): boolean {
+  return pathname === "/healthz" ||
+    pathname === "/readyz" ||
+    pathname === "/_health" ||
+    pathname === "/metrics";
+}
 import { RouteRegistry } from "@veryfront/routing/registry/index.ts";
 import { SecurityConfigLoader } from "@veryfront/security/http/config.ts";
 import { getConfig } from "@veryfront/config/loader.ts";
@@ -42,6 +73,7 @@ import { ModuleHandler } from "../handlers/request/module/index.ts";
 import { ApiHandlerWrapper } from "../handlers/request/api/index.ts";
 import { SSRHandler } from "../handlers/request/ssr/index.ts";
 import { NotFoundHandler } from "../handlers/response/not-found.ts";
+import { HMRHandler } from "../handlers/preview/hmr-handler.ts";
 
 export interface UniversalHandlerOptions {
   projectDir: string;
@@ -117,6 +149,7 @@ export function createVeryfrontHandler(
   // Register handlers in priority order
   registry.registerAll([
     new AuthHandler(), // Priority: 0 (CRITICAL)
+    new HMRHandler(), // Priority: 25 (preview mode HMR WebSocket)
     new CorsHandler(), // Priority: 50
     new HealthHandler(), // Priority: 100 (HIGH)
     new MetricsHandler(), // Priority: 100 (HIGH)
@@ -188,9 +221,12 @@ export function createVeryfrontHandler(
       const parsedDomain = parseProjectDomain(host);
 
       // Check for proxy-provided headers (from Deno proxy)
+      // For WebSocket requests, also check query params since custom headers aren't supported
       const proxyToken = req.headers.get("x-token") || undefined;
-      const proxySlug = req.headers.get("x-project-slug") || undefined;
-      let proxyEnv = req.headers.get("x-environment") as "preview" | "production" | undefined;
+      const proxySlug = req.headers.get("x-project-slug") ||
+        _url.searchParams.get("x-project-slug") || undefined;
+      let proxyEnv = (req.headers.get("x-environment") ||
+        _url.searchParams.get("x-environment")) as "preview" | "production" | undefined;
       const forwardedHost = req.headers.get("x-forwarded-host") || undefined;
 
       // Get project slug: proxy header > URL parsing > config
@@ -213,7 +249,12 @@ export function createVeryfrontHandler(
 
       // For custom domains without a slug, look up the project via API
       // This enables JIT rendering for production sites with custom domains
-      if (!projectSlug && !parsedDomain.isVeryfrontDomain && config?.fs?.veryfront) {
+      // Skip for: internal IPs (health checks), monitoring endpoints, veryfront domains
+      const shouldSkipDomainLookup = isInternalHost(host) || isMonitoringPath(_url.pathname);
+      if (
+        !projectSlug && !parsedDomain.isVeryfrontDomain && config?.fs?.veryfront &&
+        !shouldSkipDomainLookup
+      ) {
         // Use proxy token (from x-token header) or fall back to config token
         const effectiveToken = proxyToken || config.fs.veryfront.apiToken || "";
         // Support both baseUrl (FSAdapterConfig) and apiBaseUrl (VeryfrontConfig) for compatibility

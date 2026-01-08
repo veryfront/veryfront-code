@@ -26,8 +26,6 @@ const asyncLocalStorage = new AsyncLocalStorage<RequestContext>();
 export class MultiProjectFSAdapter implements FSAdapter {
   private manager: ProxyFSAdapterManager;
   private defaultAdapter?: VeryfrontFSAdapter;
-  private productionMode = false;
-  private releaseId: string | null = null;
 
   constructor(config: FSAdapterConfig) {
     this.manager = new ProxyFSAdapterManager({
@@ -78,17 +76,10 @@ export class MultiProjectFSAdapter implements FSAdapter {
     }
   }
 
-  setProductionMode(enabled: boolean, releaseId?: string | null): void {
-    this.productionMode = enabled;
-    this.releaseId = releaseId ?? null;
-
-    // Apply to all existing cached adapters
-    this.manager.setProductionModeAll(enabled, releaseId);
-
-    logger.info("[MultiProjectFSAdapter] Production mode set", {
-      enabled,
-      releaseId: releaseId ?? "(none)",
-    });
+  setProductionMode(_enabled: boolean, _releaseId?: string | null): void {
+    // No-op: In proxy mode, productionMode/releaseId are passed via runWithContext().
+    // This method exists for interface compatibility but is never called in practice
+    // because ssr-handler returns early after runWithContext().
   }
 
   private getAdapter(): Promise<VeryfrontFSAdapter> {
@@ -112,10 +103,9 @@ export class MultiProjectFSAdapter implements FSAdapter {
       );
     }
 
-    // Use production mode from context (set by runWithContext)
-    // Fall back to class-level setting for backward compatibility
-    const productionMode = context.productionMode ?? this.productionMode;
-    const releaseId = context.releaseId ?? this.releaseId;
+    // Production mode is set by runWithContext() - always present in context
+    const productionMode = context.productionMode ?? false;
+    const releaseId = context.releaseId ?? null;
 
     // Log at info level to debug context propagation issues
     logger.info("[MultiProjectFSAdapter] getAdapter with context", {

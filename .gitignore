@@ -40,4 +40,4 @@ deno.lock
 .cache/
 
 data/projects/*
-!data/projects/.gitkeep
+!data/projects/.gitkeep.env.docker

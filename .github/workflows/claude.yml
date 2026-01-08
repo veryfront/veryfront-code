@@ -1,0 +1,215 @@
+name: Claude Code
+
+on:
+  # Interactive: @claude mentions
+  issue_comment:
+    types: [created]
+  issues:
+    types: [opened, assigned]
+  pull_request_review_comment:
+    types: [created]
+
+  # Automated: CI failures, PR reviews, issue triage
+  workflow_run:
+    workflows: ["CI/CD"]
+    types: [completed]
+  pull_request:
+    types: [opened, synchronize, ready_for_review]
+
+  # Scheduled maintenance
+  schedule:
+    - cron: "0 9 * * 1" # Monday 9am UTC
+  workflow_dispatch:
+    inputs:
+      task:
+        description: "Task to run"
+        required: true
+        type: choice
+        options:
+          - maintenance
+          - dependency-audit
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.event.issue.number || github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  # ===========================================
+  # Interactive: @claude mentions
+  # ===========================================
+  claude-mention:
+    if: |
+      (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude')) ||
+      (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude')) ||
+      (github.event_name == 'issues' && github.event.action == 'assigned' && github.event.assignee.login == 'claude')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      id-token: write
+    steps:
+      - name: Load secrets from 1Password
+        uses: 1password/load-secrets-action@v2
+        env:
+          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+          ANTHROPIC_API_KEY: op://VERYFRONT_CI/ANTHROPIC_PRODUCTION/api_key
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ env.ANTHROPIC_API_KEY }}
+
+  # ===========================================
+  # CI Auto-Fix: Fix lint/typecheck/test failures
+  # ===========================================
+  ci-auto-fix:
+    if: |
+      github.event_name == 'workflow_run' &&
+      github.event.workflow_run.conclusion == 'failure' &&
+      github.event.workflow_run.head_branch != 'main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: read
+      id-token: write
+    steps:
+      - name: Load secrets from 1Password
+        uses: 1password/load-secrets-action@v2
+        env:
+          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+          ANTHROPIC_API_KEY: op://VERYFRONT_CI/ANTHROPIC_PRODUCTION/api_key
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_branch }}
+          fetch-depth: 0
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ env.ANTHROPIC_API_KEY }}
+          prompt: |
+            CI failed on branch: ${{ github.event.workflow_run.head_branch }}
+
+            1. Run: gh run view ${{ github.event.workflow_run.id }} --log-failed
+            2. Identify and fix lint, typecheck, or test failures
+            3. Commit with message: "fix: auto-fix CI failures"
+            4. Push the fix
+
+            Only fix obvious issues. Comment if manual attention needed.
+          allowed_tools: |
+            Read,Write,Edit,Bash(deno task lint),Bash(deno task typecheck),Bash(deno task test:unit),Bash(git:*),Bash(gh run view:*)
+
+  # ===========================================
+  # Issue Triage: Auto-label new issues
+  # ===========================================
+  issue-triage:
+    if: github.event_name == 'issues' && github.event.action == 'opened'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+      id-token: write
+    steps:
+      - name: Load secrets from 1Password
+        uses: 1password/load-secrets-action@v2
+        env:
+          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+          ANTHROPIC_API_KEY: op://VERYFRONT_CI/ANTHROPIC_PRODUCTION/api_key
+      - uses: actions/checkout@v4
+      - uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ env.ANTHROPIC_API_KEY }}
+          prompt: |
+            Triage issue #${{ github.event.issue.number }}
+            Title: ${{ github.event.issue.title }}
+
+            1. Classify: bug, feature, question, or documentation
+            2. Priority: critical, high, medium, low
+            3. Area: renderer, proxy, cli, ai, routing, rsc
+            4. Apply labels with: gh issue edit ${{ github.event.issue.number }} --add-label "<labels>"
+            5. If bug without reproduction steps, ask for them
+          allowed_tools: |
+            Bash(gh issue edit:*),Bash(gh issue comment:*),Bash(gh search issues:*)
+
+  # ===========================================
+  # PR Review: Automated code review
+  # ===========================================
+  pr-review:
+    if: |
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.draft == false &&
+      !contains(github.event.pull_request.labels.*.name, 'skip-review')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      id-token: write
+    steps:
+      - name: Load secrets from 1Password
+        uses: 1password/load-secrets-action@v2
+        env:
+          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+          ANTHROPIC_API_KEY: op://VERYFRONT_CI/ANTHROPIC_PRODUCTION/api_key
+      - uses: actions/checkout@v4
+      - uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ env.ANTHROPIC_API_KEY }}
+          track_progress: true
+          prompt: |
+            Review PR #${{ github.event.pull_request.number }}
+
+            Focus on:
+            - Deno/TypeScript best practices
+            - React Server Components patterns
+            - SSR performance
+            - OAuth/proxy security
+            - Memory leaks in streaming
+            - Error handling
+
+            Post inline comments for specific issues.
+          allowed_tools: |
+            mcp__github_file_ops__create_or_update_file,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*)
+
+  # ===========================================
+  # Weekly Maintenance
+  # ===========================================
+  maintenance:
+    if: |
+      github.event_name == 'schedule' ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.task == 'maintenance')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+      id-token: write
+    steps:
+      - name: Load secrets from 1Password
+        uses: 1password/load-secrets-action@v2
+        env:
+          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+          ANTHROPIC_API_KEY: op://VERYFRONT_CI/ANTHROPIC_PRODUCTION/api_key
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ env.ANTHROPIC_API_KEY }}
+          prompt: |
+            Weekly maintenance for veryfront-renderer:
+
+            1. Check for outdated Deno dependencies in deno.json
+            2. Find TODO/FIXME comments from last week
+            3. List issues with no activity for 30+ days
+            4. Create a summary issue with findings
+          allowed_tools: |
+            Read,Bash(deno info),Bash(git log:*),Bash(gh issue:*)

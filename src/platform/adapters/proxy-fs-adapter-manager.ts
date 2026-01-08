@@ -15,6 +15,22 @@ interface ProxyFSAdapterManagerConfig {
   maxIdleMs?: number;
 }
 
+/**
+ * Generate cache key for adapter lookup.
+ * Includes productionMode and releaseId to prevent race conditions between
+ * concurrent requests with different modes/releases.
+ */
+function buildCacheKey(
+  projectSlug: string,
+  productionMode: boolean,
+  releaseId: string | null,
+): string {
+  if (productionMode) {
+    return `${projectSlug}:production:${releaseId ?? "latest"}`;
+  }
+  return `${projectSlug}:preview`;
+}
+
 export class ProxyFSAdapterManager {
   private adapters = new Map<string, ProjectAdapter>();
   private pendingAdapters = new Map<string, Promise<VeryfrontFSAdapter>>();
@@ -22,8 +38,6 @@ export class ProxyFSAdapterManager {
   private maxAdapters: number;
   private maxIdleMs: number;
   private cleanupTimer?: ReturnType<typeof setInterval>;
-  private productionMode = false;
-  private releaseId: string | null = null;
 
   constructor(config: ProxyFSAdapterManagerConfig) {
     this.baseConfig = config.baseConfig;
@@ -49,32 +63,24 @@ export class ProxyFSAdapterManager {
     productionMode?: boolean,
     releaseId?: string | null,
   ): Promise<VeryfrontFSAdapter> {
-    // Use provided token or fall back to base config token
     const effectiveToken = token || this.baseConfig.veryfront?.apiToken || "";
-    const existing = this.adapters.get(projectSlug);
+    const effectiveProductionMode = productionMode ?? false;
+    const effectiveReleaseId = releaseId ?? null;
+
+    // Cache key includes productionMode and releaseId to prevent race conditions
+    const cacheKey = buildCacheKey(projectSlug, effectiveProductionMode, effectiveReleaseId);
+    const existing = this.adapters.get(cacheKey);
 
     if (existing) {
       existing.lastAccessed = Date.now();
       existing.adapter.setRequestToken(effectiveToken);
 
-      // Always update production mode for cached adapters
-      // This ensures the adapter's mode matches the current request
-      const effectiveProductionMode = productionMode ?? this.productionMode;
-      const effectiveReleaseId = releaseId ?? this.releaseId;
-
       logger.info("[ProxyFSAdapterManager] Reusing cached adapter", {
         projectSlug,
-        requestProductionMode: productionMode,
-        effectiveProductionMode,
-        effectiveReleaseId: effectiveReleaseId ?? "null",
+        cacheKey,
+        productionMode: effectiveProductionMode,
+        releaseId: effectiveReleaseId ?? "null",
       });
-
-      // Set production mode on every request to ensure index is correct
-      // This will clear the index if mode changes
-      existing.adapter.setProductionMode(
-        effectiveProductionMode,
-        effectiveReleaseId ?? undefined,
-      );
 
       if (existing.initializing) {
         await existing.initializing;
@@ -84,7 +90,7 @@ export class ProxyFSAdapterManager {
     }
 
     // Check for pending adapter creation to prevent concurrent creation
-    const pending = this.pendingAdapters.get(projectSlug);
+    const pending = this.pendingAdapters.get(cacheKey);
     if (pending) {
       const adapter = await pending;
       adapter.setRequestToken(effectiveToken);
@@ -95,25 +101,32 @@ export class ProxyFSAdapterManager {
       this.evictLeastRecentlyUsed();
     }
 
-    return this.createAdapter(projectSlug, token, projectId, productionMode, releaseId);
+    return this.createAdapter(
+      cacheKey,
+      projectSlug,
+      token,
+      projectId,
+      effectiveProductionMode,
+      effectiveReleaseId,
+    );
   }
 
   private createAdapter(
+    cacheKey: string,
     projectSlug: string,
     token: string,
-    projectId?: string,
-    productionMode?: boolean,
-    releaseId?: string | null,
+    projectId: string | undefined,
+    productionMode: boolean,
+    releaseId: string | null,
   ): Promise<VeryfrontFSAdapter> {
-    // Use provided token or fall back to base config token (from VERYFRONT_API_TOKEN)
     const effectiveToken = token || this.baseConfig.veryfront?.apiToken;
 
-    logger.info("[ProxyFSAdapterManager] Creating adapter for project", {
+    logger.info("[ProxyFSAdapterManager] Creating adapter", {
+      cacheKey,
       projectSlug,
       projectId: projectId || "(none)",
-      hasProxyToken: !!token,
-      hasConfigToken: !!this.baseConfig.veryfront?.apiToken,
-      productionMode: productionMode ?? this.productionMode,
+      productionMode,
+      releaseId: releaseId ?? "null",
     });
 
     const config: FSAdapterConfig = {
@@ -129,10 +142,8 @@ export class ProxyFSAdapterManager {
     const adapter = new VeryfrontFSAdapter(config);
 
     // Apply production mode before initialization
-    const effectiveProductionMode = productionMode ?? this.productionMode;
-    const effectiveReleaseId = releaseId ?? this.releaseId;
-    if (effectiveProductionMode) {
-      adapter.setProductionMode(effectiveProductionMode, effectiveReleaseId ?? undefined);
+    if (productionMode) {
+      adapter.setProductionMode(productionMode, releaseId ?? undefined);
     }
 
     const projectAdapter: ProjectAdapter = {
@@ -145,37 +156,37 @@ export class ProxyFSAdapterManager {
       projectAdapter.initializing = adapter.initialize();
       try {
         await projectAdapter.initializing;
-        logger.info("[ProxyFSAdapterManager] Adapter initialized", { projectSlug });
-        this.adapters.set(projectSlug, projectAdapter);
+        logger.info("[ProxyFSAdapterManager] Adapter initialized", { cacheKey, projectSlug });
+        this.adapters.set(cacheKey, projectAdapter);
       } catch (error) {
         throw error;
       } finally {
         projectAdapter.initializing = undefined;
-        this.pendingAdapters.delete(projectSlug);
+        this.pendingAdapters.delete(cacheKey);
       }
       return adapter;
     })();
 
-    this.pendingAdapters.set(projectSlug, initPromise);
+    this.pendingAdapters.set(cacheKey, initPromise);
 
     return initPromise;
   }
 
   private evictLeastRecentlyUsed(): void {
-    let oldest: { slug: string; time: number } | null = null;
+    let oldest: { cacheKey: string; time: number } | null = null;
 
-    for (const [slug, adapter] of this.adapters) {
+    for (const [cacheKey, adapter] of this.adapters) {
       if (!oldest || adapter.lastAccessed < oldest.time) {
-        oldest = { slug, time: adapter.lastAccessed };
+        oldest = { cacheKey, time: adapter.lastAccessed };
       }
     }
 
     if (oldest) {
-      logger.info("[ProxyFSAdapterManager] Evicting LRU adapter", { projectSlug: oldest.slug });
-      const adapter = this.adapters.get(oldest.slug);
+      logger.info("[ProxyFSAdapterManager] Evicting LRU adapter", { cacheKey: oldest.cacheKey });
+      const adapter = this.adapters.get(oldest.cacheKey);
       if (adapter) {
         adapter.adapter.dispose();
-        this.adapters.delete(oldest.slug);
+        this.adapters.delete(oldest.cacheKey);
       }
     }
   }
@@ -184,18 +195,18 @@ export class ProxyFSAdapterManager {
     const now = Date.now();
     const toRemove: string[] = [];
 
-    for (const [slug, adapter] of this.adapters) {
+    for (const [cacheKey, adapter] of this.adapters) {
       if (now - adapter.lastAccessed > this.maxIdleMs) {
-        toRemove.push(slug);
+        toRemove.push(cacheKey);
       }
     }
 
-    for (const slug of toRemove) {
-      logger.info("[ProxyFSAdapterManager] Removing idle adapter", { projectSlug: slug });
-      const adapter = this.adapters.get(slug);
+    for (const cacheKey of toRemove) {
+      logger.info("[ProxyFSAdapterManager] Removing idle adapter", { cacheKey });
+      const adapter = this.adapters.get(cacheKey);
       if (adapter) {
         adapter.adapter.dispose();
-        this.adapters.delete(slug);
+        this.adapters.delete(cacheKey);
       }
     }
 
@@ -207,33 +218,16 @@ export class ProxyFSAdapterManager {
     }
   }
 
-  hasAdapter(projectSlug: string): boolean {
-    return this.adapters.has(projectSlug);
-  }
-
-  setProductionModeAll(enabled: boolean, releaseId?: string | null): void {
-    this.productionMode = enabled;
-    this.releaseId = releaseId ?? null;
-
-    for (const [slug, entry] of this.adapters.entries()) {
-      entry.adapter.setProductionMode(enabled, releaseId ?? undefined);
-      logger.debug("[ProxyFSAdapterManager] Set production mode on adapter", {
-        slug,
-        enabled,
-      });
-    }
-
-    logger.info("[ProxyFSAdapterManager] Production mode set on all adapters", {
-      enabled,
-      adapterCount: this.adapters.size,
-    });
+  hasAdapter(projectSlug: string, productionMode?: boolean, releaseId?: string | null): boolean {
+    const cacheKey = buildCacheKey(projectSlug, productionMode ?? false, releaseId ?? null);
+    return this.adapters.has(cacheKey);
   }
 
   getStats(): { adapters: number; stats: Record<string, CacheStats> } {
     const stats: Record<string, CacheStats> = {};
 
-    for (const [slug, adapter] of this.adapters) {
-      stats[slug] = adapter.adapter.getCacheStats();
+    for (const [cacheKey, adapter] of this.adapters) {
+      stats[cacheKey] = adapter.adapter.getCacheStats();
     }
 
     return {
@@ -248,8 +242,8 @@ export class ProxyFSAdapterManager {
       this.cleanupTimer = undefined;
     }
 
-    for (const [slug, adapter] of this.adapters) {
-      logger.info("[ProxyFSAdapterManager] Disposing adapter", { projectSlug: slug });
+    for (const [cacheKey, adapter] of this.adapters) {
+      logger.info("[ProxyFSAdapterManager] Disposing adapter", { cacheKey });
       adapter.adapter.dispose();
     }
 

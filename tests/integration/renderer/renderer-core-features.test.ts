@@ -136,7 +136,8 @@ description: Test description
           assertStringIncludes(result.html, "<html");
           assertStringIncludes(result.html, "<head>");
           assertStringIncludes(result.html, "<title>Test Page</title>");
-          assertStringIncludes(result.html, "<body>");
+          assertStringIncludes(result.html, "<body");
+          assertStringIncludes(result.html, "suppressHydrationWarning");
         });
       });
 
