@@ -59,12 +59,10 @@ export async function lookupProjectByDomain(
 
     const result = await response.json() as DomainLookupResult;
 
-    logger.info("[DomainLookup] Domain lookup result", {
+    logger.debug("[DomainLookup] Domain lookup result", {
       domain,
       projectSlug: result.projectSlug,
-      projectId: result.projectId,
       environment: result.environment?.name,
-      releaseId: result.releaseId ?? "null",
     });
 
     return result;

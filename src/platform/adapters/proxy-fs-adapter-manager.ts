@@ -20,7 +20,7 @@ interface ProxyFSAdapterManagerConfig {
  * Includes productionMode and releaseId to prevent race conditions between
  * concurrent requests with different modes/releases.
  */
-export function buildCacheKey(
+function buildCacheKey(
   projectSlug: string,
   productionMode: boolean,
   releaseId: string | null,
