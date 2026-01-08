@@ -10,7 +10,15 @@ jobs:
   add-to-project:
     runs-on: ubuntu-latest
     steps:
+      - name: Load secret from 1Password
+        uses: 1password/load-secrets-action@v2
+        with:
+          export-env: true
+        env:
+          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+          PROJECT_TOKEN: op://VERYFRONT_CI/GITHUB_VERYFRONT_PAT/credential
+
       - uses: actions/add-to-project@v1
         with:
           project-url: https://github.com/orgs/veryfront/projects/3
-          github-token: ${{ secrets.PROJECT_TOKEN }}
+          github-token: ${{ env.PROJECT_TOKEN }}
