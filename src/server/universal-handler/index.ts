@@ -285,17 +285,30 @@ export function createVeryfrontHandler(
           const lookupResult = await lookupProjectByDomain(lookupHost, apiConfig);
 
           if (lookupResult) {
-            projectSlug = lookupResult.projectSlug;
-            projectId = lookupResult.projectId;
-            releaseId = lookupResult.releaseId ?? undefined;
-            proxyEnv = getEnvironmentType(lookupResult);
-            logger.info("[universal] Domain lookup successful", {
-              domain: host,
-              projectSlug: lookupResult.projectSlug,
-              projectId: lookupResult.projectId,
-              environment: proxyEnv,
-              releaseId: lookupResult.releaseId,
-            });
+            // If we already have projectSlug from proxy, only use lookup if it matches
+            // This prevents stale domain mappings from overwriting correct proxy values
+            if (projectSlug && lookupResult.projectSlug !== projectSlug) {
+              logger.warn("[universal] Domain lookup returned different project", {
+                domain: lookupHost,
+                proxySlug: projectSlug,
+                lookupSlug: lookupResult.projectSlug,
+                skippingLookup: true,
+              });
+              // Don't use stale lookup result - keep proxy values
+            } else {
+              // Use lookup result (custom domain case or matching project)
+              projectSlug = lookupResult.projectSlug;
+              projectId = lookupResult.projectId;
+              releaseId = lookupResult.releaseId ?? undefined;
+              proxyEnv = getEnvironmentType(lookupResult);
+              logger.info("[universal] Domain lookup successful", {
+                domain: effectiveHost,
+                projectSlug: lookupResult.projectSlug,
+                projectId: lookupResult.projectId,
+                environment: proxyEnv,
+                releaseId: lookupResult.releaseId,
+              });
+            }
           } else {
             logger.warn("[universal] No project found for domain", { host: lookupHost });
           }
