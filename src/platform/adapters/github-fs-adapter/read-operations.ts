@@ -71,13 +71,35 @@ export class GitHubReadOperations {
   /**
    * Read file content as bytes
    */
-  async readFile(path: string): Promise<Uint8Array | string> {
-    const content = await this.readTextFile(path);
+  async readFile(path: string): Promise<Uint8Array> {
+    const normalizedPath = this.normalizePath(path);
 
-    // For binary files, we might want to return Uint8Array
-    // For now, GitHub's API returns base64 which we decode to string
-    // If binary handling is needed, we can enhance this later
-    return content;
+    // Check cache for bytes
+    const cacheKey = `github:bytes:${this.config.ref}:${normalizedPath}`;
+    const cached = this.cache.get<Uint8Array>(cacheKey);
+    if (cached !== undefined) {
+      return cached;
+    }
+
+    logger.debug(`${LOG_PREFIX} Reading file as bytes`, { path: normalizedPath });
+
+    // Get file entry from index for size check
+    const fileEntry = this.statOps.getFileEntry(normalizedPath);
+
+    let bytes: Uint8Array;
+
+    if (fileEntry && fileEntry.size > MAX_CONTENTS_SIZE) {
+      // Large file: use Blob API
+      bytes = await this.readLargeFileBytes(fileEntry.sha);
+    } else {
+      // Normal file: use Contents API
+      bytes = await this.readContentsFileBytes(normalizedPath);
+    }
+
+    // Cache the bytes
+    this.cache.set(cacheKey, bytes);
+
+    return bytes;
   }
 
   /**
@@ -165,30 +187,98 @@ export class GitHubReadOperations {
   }
 
   /**
-   * Decode base64 content from GitHub API
+   * Read file as bytes using Contents API
    */
-  private decodeBase64(content: string): string {
-    // GitHub API returns content with newlines in base64
-    const cleanContent = content.replace(/\n/g, "");
+  private async readContentsFileBytes(path: string): Promise<Uint8Array> {
+    try {
+      const response = await this.client.getContents(path);
 
-    // Use built-in atob for base64 decoding (available in Deno)
-    return atob(cleanContent);
+      if (Array.isArray(response)) {
+        throw toError(
+          createError({
+            type: "file",
+            message: `Path is a directory: ${path}`,
+          }),
+        );
+      }
+
+      const item = response as GitHubContentItem;
+
+      if (item.type !== "file") {
+        throw toError(
+          createError({
+            type: "file",
+            message: `Not a file: ${path} (type: ${item.type})`,
+          }),
+        );
+      }
+
+      if (!item.content) {
+        throw toError(
+          createError({
+            type: "file",
+            message: `File has no content: ${path}`,
+          }),
+        );
+      }
+
+      return this.decodeBase64ToBytes(item.content);
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        (error as Error & { statusCode?: number }).statusCode === 404
+      ) {
+        throw toError(
+          createError({
+            type: "file",
+            message: `File not found: ${path}`,
+            context: { path, operation: "read" },
+          }),
+        );
+      }
+      throw error;
+    }
   }
 
   /**
-   * Normalize a file path, stripping projectDir prefix if present
+   * Read large file as bytes using Blob API
    */
+  private async readLargeFileBytes(sha: string): Promise<Uint8Array> {
+    const blobCacheKey = `github:blob:bytes:${sha}`;
+    const cachedBlob = this.cache.get<Uint8Array>(blobCacheKey);
+    if (cachedBlob !== undefined) {
+      return cachedBlob;
+    }
+
+    logger.debug(`${LOG_PREFIX} Reading large file via Blob API`, { sha });
+
+    const blob = await this.client.getBlob(sha);
+    const bytes = blob.encoding === "base64"
+      ? this.decodeBase64ToBytes(blob.content)
+      : new TextEncoder().encode(blob.content);
+
+    this.cache.set(blobCacheKey, bytes);
+    return bytes;
+  }
+
+  private decodeBase64ToBytes(content: string): Uint8Array {
+    const binaryString = atob(content.replace(/\n/g, ""));
+    const bytes = new Uint8Array(binaryString.length);
+    for (let i = 0; i < binaryString.length; i++) {
+      bytes[i] = binaryString.charCodeAt(i);
+    }
+    return bytes;
+  }
+
+  private decodeBase64(content: string): string {
+    return new TextDecoder().decode(this.decodeBase64ToBytes(content));
+  }
+
   private normalizePath(path: string): string {
     let normalized = path;
-
-    // Strip projectDir prefix if present (handles absolute paths from renderer)
     if (this.projectDir && normalized.startsWith(this.projectDir)) {
       normalized = normalized.slice(this.projectDir.length);
     }
-
-    return normalized
-      .replace(/^\/+/, "") // Remove leading slashes
-      .replace(/\/+$/, "") // Remove trailing slashes
-      .replace(/\/+/g, "/"); // Collapse multiple slashes
+    return normalized.replace(/^\/+/, "").replace(/\/+$/, "").replace(/\/+/g, "/");
   }
 }
