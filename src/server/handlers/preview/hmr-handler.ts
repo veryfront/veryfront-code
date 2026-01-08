@@ -11,7 +11,7 @@ import { serverLogger as logger } from "@veryfront/utils";
 import { BaseHandler } from "../response/base.ts";
 import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } from "../types.ts";
 import { ReloadNotifier } from "../../reload-notifier.ts";
-import { setupWebSocketHandlers, RateLimiter } from "@veryfront/modules/server/index.ts";
+import { RateLimiter, setupWebSocketHandlers } from "@veryfront/modules/server/index.ts";
 import { HMR_MAX_MESSAGE_SIZE_BYTES, HMR_MAX_MESSAGES_PER_MINUTE } from "@veryfront/utils";
 
 // Priority between auth (0) and cors (50)
@@ -100,8 +100,6 @@ export class HMRHandler extends BaseHandler {
   }
 
   handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
-    const url = new URL(req.url);
-
     if (!this.shouldHandle(req, ctx)) {
       return Promise.resolve(this.continue());
     }
