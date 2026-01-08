@@ -116,6 +116,10 @@ function handleWebSocketUpgrade(req: Request): Response {
 
     rendererSocket.onmessage = (event) => {
       // Forward renderer messages to client
+      proxyLogger.debug("Renderer->Client message", {
+        data: typeof event.data === 'string' ? event.data.slice(0, 100) : 'binary',
+        clientState: clientSocket.readyState
+      });
       if (clientSocket.readyState === WebSocket.OPEN) {
         clientSocket.send(event.data);
       }
