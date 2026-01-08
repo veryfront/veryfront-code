@@ -221,9 +221,12 @@ export function createVeryfrontHandler(
       const parsedDomain = parseProjectDomain(host);
 
       // Check for proxy-provided headers (from Deno proxy)
+      // For WebSocket requests, also check query params since custom headers aren't supported
       const proxyToken = req.headers.get("x-token") || undefined;
-      const proxySlug = req.headers.get("x-project-slug") || undefined;
-      let proxyEnv = req.headers.get("x-environment") as "preview" | "production" | undefined;
+      const proxySlug = req.headers.get("x-project-slug") ||
+        _url.searchParams.get("x-project-slug") || undefined;
+      let proxyEnv = (req.headers.get("x-environment") ||
+        _url.searchParams.get("x-environment")) as "preview" | "production" | undefined;
       const forwardedHost = req.headers.get("x-forwarded-host") || undefined;
 
       // Get project slug: proxy header > URL parsing > config

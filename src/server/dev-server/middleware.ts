@@ -46,7 +46,10 @@ export function createRequestLoggerMiddleware() {
     }
 
     const duration = (performance.now() - start).toFixed(0);
-    if (response) response.headers.set("x-request-id", requestId);
+    // Don't modify headers for WebSocket upgrade responses (status 101) - they're immutable
+    if (response && response.status !== 101) {
+      response.headers.set("x-request-id", requestId);
+    }
 
     try {
       logger.info(
