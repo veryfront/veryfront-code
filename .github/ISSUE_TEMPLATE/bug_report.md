@@ -1,31 +1,69 @@
 ---
-name: Bug report
-about: Create a report to help us improve
+name: Bug Report
+about: Report a bug with clear reproduction steps
 title: ''
 labels: bug
 assignees: ''
 ---
 
-**Describe the bug**
-A clear and concise description of what the bug is.
+## Summary
 
-**To Reproduce**
-Steps to reproduce the behavior:
-1. Go to '...'
-2. Click on '...'
-3. Scroll down to '...'
-4. See error
+<!-- One-line description of the bug -->
 
-**Expected behavior**
-A clear and concise description of what you expected to happen.
+---
 
-**Screenshots**
-If applicable, add screenshots to help explain your problem.
+## Problem
 
-**System Info (please complete the following information):**
- - OS: [e.g. macOS, Windows]
- - Runtime: [e.g. Deno v1.40, Node v20]
- - Veryfront Version: [e.g. 0.1.0]
+<!-- Explain the root cause if known. Include relevant code snippets with file paths. -->
 
-**Additional context**
-Add any other context about the problem here.
+**File:** `src/path/to/file.ts:line`
+```typescript
+// Relevant code
+```
+
+---
+
+## Current Outcome
+
+<!-- What happens now? Include error messages, logs, or HTTP responses if applicable. -->
+
+```
+// Error or unexpected output
+```
+
+---
+
+## Expected Outcome
+
+<!-- What should happen instead? -->
+
+---
+
+## How to Test
+
+<!-- Step-by-step instructions to verify the fix -->
+
+```bash
+# Commands to reproduce or test
+curl -s -o /dev/null -w "%{http_code}" 'https://example.preview.veryfront.com/'
+```
+
+1. Step one
+2. Step two
+3. **Verify:** Expected result
+
+---
+
+## Environment
+
+- **Mode:** Proxy / Direct
+- **Runtime:** Deno version
+- **Component:** Proxy / Renderer / Both
+
+---
+
+## Files
+
+<!-- List of files that need to be modified -->
+
+- `src/path/to/file.ts` — Description of change needed

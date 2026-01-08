@@ -1,19 +1,51 @@
 ---
-name: Feature request
-about: Suggest an idea for this project
+name: Feature Request
+about: Suggest a new feature or enhancement
 title: ''
 labels: enhancement
 assignees: ''
 ---
 
-**Is your feature request related to a problem? Please describe.**
-A clear and concise description of what the problem is. Ex: I'm always frustrated when [...]
+## Summary
 
-**Describe the solution you'd like**
-A clear and concise description of what you want to happen.
+<!-- One-line description of the feature -->
 
-**Describe alternatives you've considered**
-A clear and concise description of any alternative solutions or features you've considered.
+---
 
-**Additional context**
-Add any other context or screenshots about the feature request here.
+## Problem
+
+<!-- What problem does this solve? Why is it needed? -->
+
+---
+
+## Proposed Solution
+
+<!-- How should this work? Include code examples if helpful. -->
+
+```typescript
+// Example implementation
+```
+
+---
+
+## Alternatives Considered
+
+<!-- What other approaches were considered? Why were they rejected? -->
+
+---
+
+## How to Test
+
+<!-- How do we verify this feature works correctly? -->
+
+1. Step one
+2. Step two
+3. **Verify:** Expected result
+
+---
+
+## Files
+
+<!-- List of files that likely need to be modified -->
+
+- `src/path/to/file.ts` — Description of change
