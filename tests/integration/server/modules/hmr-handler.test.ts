@@ -32,8 +32,10 @@ describe("HMR Handler Tests", { sanitizeOps: false, sanitizeResources: false }, 
       assertEquals(handler.metadata.priority, 25);
       assertExists(handler.metadata.patterns);
       assertEquals(handler.metadata.patterns.length, 1);
-      assertEquals(handler.metadata.patterns[0].pattern, "/_ws");
-      assertEquals(handler.metadata.patterns[0].exact, true);
+      const firstPattern = handler.metadata.patterns[0];
+      assertExists(firstPattern);
+      assertEquals(firstPattern.pattern, "/_ws");
+      assertEquals(firstPattern.exact, true);
     });
 
     it("is enabled only in preview mode", () => {

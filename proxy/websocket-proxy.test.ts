@@ -116,7 +116,8 @@ describe("Proxy WebSocket Handler Tests", { sanitizeOps: false, sanitizeResource
       const parts = host.split(".");
 
       // For branch preview: slug--branch.preview.veryfront.com
-      const slugAndBranch = parts[0].split("--");
+      const firstPart = parts[0] ?? "";
+      const slugAndBranch = firstPart.split("--");
       const slug = slugAndBranch[0];
       const branch = slugAndBranch[1];
 
