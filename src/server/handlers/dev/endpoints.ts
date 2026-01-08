@@ -17,8 +17,10 @@ export class DevEndpointsHandler extends BaseHandler {
       { pattern: "/_veryfront/dev-loader.js", exact: true },
       { pattern: "/_veryfront/hmr.js", exact: true },
       { pattern: "/_veryfront/hydrate.js", exact: true },
+      { pattern: "/_veryfront/preview-hmr.js", exact: true },
     ],
-    enabled: (ctx) => ctx.mode === "development", // Only in dev mode
+    // Enable in dev mode OR preview mode (for live updates)
+    enabled: (ctx) => ctx.mode === "development" || ctx.proxyEnvironment === "preview",
   };
 
   handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
@@ -72,6 +74,15 @@ export class DevEndpointsHandler extends BaseHandler {
     // Dev loader
     if (pathname === "/_veryfront/dev-loader.js") {
       const script = this.getDevLoader();
+      const response = builder
+        .withCache("no-cache")
+        .javascript(script, HTTP_OK);
+      return Promise.resolve(this.respond(response));
+    }
+
+    // Preview HMR script (for cloud preview mode - actually reloads)
+    if (pathname === "/_veryfront/preview-hmr.js") {
+      const script = this.getPreviewHMRScript();
       const response = builder
         .withCache("no-cache")
         .javascript(script, HTTP_OK);
@@ -313,6 +324,190 @@ if (window.__HMR_ENABLED__) {
 const errorScript = document.createElement('script');
 errorScript.src = '/_veryfront/error-overlay.js';
 document.head.appendChild(errorScript);
+    `.trim();
+  }
+
+  /**
+   * Preview HMR script for cloud preview mode.
+   * Implements true HMR with module cache clearing and re-rendering,
+   * matching the local dev server behavior. Falls back to full reload
+   * when HMR functions aren't available.
+   */
+  private getPreviewHMRScript(): string {
+    return `
+// Veryfront Preview HMR Client
+// Connects to /_ws WebSocket and handles true HMR updates
+
+(function() {
+  // Notify Studio that the app is ready (clears loading indicator)
+  if (window.parent !== window) {
+    try {
+      window.parent.postMessage({
+        action: 'appUpdated',
+        isInitialLoad: true,
+        url: window.location.href
+      }, '*');
+    } catch (e) { /* postMessage may fail in cross-origin iframes */ }
+  }
+
+  // Determine WebSocket URL (same host, use wss for https)
+  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const wsUrl = protocol + '//' + window.location.host + '/_ws';
+
+  let ws = null;
+  let reconnectAttempts = 0;
+  const maxReconnectAttempts = 10;
+  const reconnectDelay = 2000;
+
+  function connect() {
+    if (reconnectAttempts >= maxReconnectAttempts) {
+      console.log('[Preview HMR] Max reconnection attempts reached');
+      return;
+    }
+
+    ws = new WebSocket(wsUrl);
+
+    ws.onopen = () => {
+      console.log('[Preview HMR] Connected to', wsUrl);
+      reconnectAttempts = 0;
+    };
+
+    ws.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+
+        switch (data.type) {
+          case 'update':
+            handleUpdate(data);
+            break;
+          case 'reload':
+            console.log('[Preview HMR] Full reload requested');
+            notifyStudioAndReload();
+            break;
+          case 'connected':
+            console.log('[Preview HMR] Server acknowledged connection');
+            break;
+          default:
+            console.log('[Preview HMR] Unknown message type:', data.type);
+        }
+      } catch (e) {
+        console.error('[Preview HMR] Failed to parse message', e);
+      }
+    };
+
+    ws.onerror = (error) => {
+      console.error('[Preview HMR] WebSocket error', error);
+    };
+
+    ws.onclose = () => {
+      console.log('[Preview HMR] Connection closed, reconnecting...');
+      reconnectAttempts++;
+      setTimeout(connect, reconnectDelay);
+    };
+  }
+
+  function handleUpdate(update) {
+    if (!update.path) {
+      console.warn('[Preview HMR] Update message missing path');
+      return;
+    }
+
+    console.log('[Preview HMR] Update received for:', update.path);
+
+    // Handle CSS updates without full reload
+    if (update.path.endsWith('.css')) {
+      updateCSS(update.path);
+      notifyStudio();
+      return;
+    }
+
+    // Handle JS/TSX/MDX updates
+    updateJS(update.path);
+  }
+
+  function updateCSS(path) {
+    console.log('[Preview HMR] Updating CSS:', path);
+    document.querySelectorAll('link[rel="stylesheet"]').forEach((link) => {
+      try {
+        const url = new URL(link.href);
+        if (url.pathname === path || url.pathname.includes(path)) {
+          const newUrl = new URL(link.href);
+          newUrl.searchParams.set('t', Date.now().toString());
+          link.href = newUrl.toString();
+          console.log('[Preview HMR] CSS updated:', path);
+        }
+      } catch (error) {
+        console.error('[Preview HMR] Failed to update CSS link:', error);
+      }
+    });
+  }
+
+  function updateJS(path) {
+    console.log('[Preview HMR] Updating JS module:', path);
+    try {
+      // Load the changed module with cache busting to get fresh code
+      const cacheBusted = path + (path.includes('?') ? '&' : '?') + 't=' + Date.now();
+      const script = document.createElement('script');
+      script.type = 'module';
+      script.crossOrigin = 'anonymous';
+
+      script.onload = () => {
+        console.log('[Preview HMR] Module loaded, applying update');
+        // Clear component cache to ensure fresh components are loaded
+        if (window.__veryfrontClearComponentCache) {
+          window.__veryfrontClearComponentCache();
+          console.log('[Preview HMR] Component cache cleared');
+        }
+
+        // Re-render the page with fresh components
+        if (window.__veryfrontRenderPage) {
+          console.log('[Preview HMR] Re-rendering page');
+          window.__veryfrontRenderPage(window.location.pathname);
+          notifyStudio();
+        } else {
+          // Fall back to full reload if re-render function not available
+          console.log('[Preview HMR] No __veryfrontRenderPage, falling back to reload');
+          notifyStudioAndReload();
+        }
+      };
+
+      script.onerror = () => {
+        console.log('[Preview HMR] Module load failed, falling back to reload');
+        notifyStudioAndReload();
+      };
+
+      script.src = cacheBusted;
+      document.head.appendChild(script);
+    } catch (error) {
+      console.error('[Preview HMR] Failed to update JS module:', error);
+      notifyStudioAndReload();
+    }
+  }
+
+  function notifyStudio() {
+    if (window.parent !== window) {
+      try {
+        window.parent.postMessage({
+          action: 'appUpdated',
+          isInitialLoad: false,
+          url: window.location.href
+        }, '*');
+      } catch (e) { /* ignore */ }
+    }
+  }
+
+  function notifyStudioAndReload() {
+    notifyStudio();
+    // Small delay to let Studio know, then reload
+    setTimeout(() => window.location.reload(), 100);
+  }
+
+  // Start connection
+  connect();
+
+  // Expose for debugging
+  window.__veryfrontPreviewHMR = { getSocket: () => ws };
+})();
     `.trim();
   }
 }

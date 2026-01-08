@@ -291,6 +291,7 @@ export class SSRHandler extends BaseHandler {
           projectId,
           pageId,
           colorScheme,
+          proxyEnvironment: ctx.proxyEnvironment,
         }));
       this.logDebug("SSR successful", { slug, params }, ctx);
       endRequest(requestId);

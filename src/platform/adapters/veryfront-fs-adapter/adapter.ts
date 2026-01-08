@@ -181,12 +181,15 @@ export class VeryfrontFSAdapter implements FSAdapter {
         try {
           const data = JSON.parse(event.data as string);
           const changedPaths = data.data?.changedPaths as string[] | undefined;
-          // Only log poke messages at info level, ping/pong are debug
-          if (data.type === "poke") {
+          // Handle both legacy "poke" messages and new "entity_updated" messages from API
+          const isPoke = data.type === "poke" || data.type === "entity_updated";
+          if (isPoke) {
             logger.info("[VeryfrontFSAdapter] 🔄 POKE RECEIVED - triggering cache invalidation", {
+              type: data.type,
               source: data.data?.source,
               entityId: data.data?.entityId,
               entityType: data.data?.entityType,
+              action: data.data?.action,
               changedPathsCount: changedPaths?.length || 0,
               changedPaths: changedPaths || [],
             });
@@ -330,8 +333,8 @@ export class VeryfrontFSAdapter implements FSAdapter {
       });
     }
 
-    // Notify browser to reload
-    ReloadNotifier.triggerReload();
+    // Notify browser to reload with changed paths for smart HMR
+    ReloadNotifier.triggerReload(changedPaths);
 
     const durationMs = Date.now() - startTime;
     logger.info("[VeryfrontFSAdapter] Selective invalidation complete", {

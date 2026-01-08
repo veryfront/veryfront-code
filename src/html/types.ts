@@ -32,6 +32,8 @@ export interface HTMLGenerationOptions {
   sourceHash?: string;
   /** User's preferred color scheme from Sec-CH-Prefers-Color-Scheme header */
   colorScheme?: "light" | "dark";
+  /** Proxy environment for cloud deployments (preview or production) */
+  proxyEnvironment?: "preview" | "production";
 }
 
 export type { ImportMapConfig } from "../module-system/import-map/types.ts";
