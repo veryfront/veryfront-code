@@ -168,9 +168,16 @@ export class StaticHandler extends BaseHandler {
       pushCandidate(abs, dir);
     }
 
+    this.logDebug(`Trying static file candidates`, {
+      reqPath,
+      candidateCount: candidates.length,
+      candidates: candidates.map(c => ({ source: c.source, path: c.abs })),
+    }, ctx);
+
     for (const candidate of candidates) {
       try {
         // Use secure filesystem wrapper (automatic path validation)
+        this.logDebug(`Checking candidate`, { path: candidate.abs, source: candidate.source }, ctx);
         const info = await secureFs.stat(candidate.abs);
         if (!info.isFile) continue;
 

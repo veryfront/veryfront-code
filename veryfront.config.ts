@@ -66,7 +66,22 @@ if (proxyMode) {
   console.log(`[Config] API Base URL: ${apiBaseUrl}`);
 }
 
-export default {
+// GitHub test mode: Use GITHUB_TOKEN env var to enable
+const useGitHub = !!Deno.env.get("GITHUB_TOKEN");
+
+export default useGitHub ? {
+  fs: {
+    type: "github" as const,
+    github: {
+      token: Deno.env.get("GITHUB_TOKEN"),
+      owner: "veryfront",
+      repo: "codersociety",
+      ref: "main",
+      cache: { enabled: true, ttl: 60000 },
+    },
+  },
+  dev: { port: 3001, host: "localhost", hmr: false },
+} : {
   // Use veryfront-api filesystem adapter
   fs: {
     type: "veryfront-api" as const,
