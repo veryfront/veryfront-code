@@ -123,6 +123,7 @@ jobs:
     if: github.event_name == 'issues' && github.event.action == 'opened'
     runs-on: ubuntu-latest
     permissions:
+      contents: read
       issues: write
       id-token: write
     steps:
