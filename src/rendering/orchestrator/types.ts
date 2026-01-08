@@ -48,6 +48,8 @@ export interface RenderOptions {
   pageId?: string;
   /** User's preferred color scheme from Sec-CH-Prefers-Color-Scheme client hint */
   colorScheme?: "light" | "dark";
+  /** Proxy environment for cloud deployments (preview or production) */
+  proxyEnvironment?: "preview" | "production";
 }
 
 export interface RenderContext {

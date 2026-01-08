@@ -71,10 +71,98 @@ function getScope(environment: string | null): TokenScope {
   return environment === "preview" ? "preview" : "production";
 }
 
+/**
+ * Handle WebSocket upgrade requests by proxying to renderer.
+ */
+function handleWebSocketUpgrade(req: Request): Response {
+  const url = new URL(req.url);
+  const host = req.headers.get("host") || "";
+  const parsed = parseProjectDomain(host);
+  const scope = getScope(parsed.environment);
+  const projectSlug = parsed.slug || undefined;
+
+  proxyLogger.info("WebSocket upgrade request", {
+    path: url.pathname,
+    projectSlug,
+    environment: scope,
+  });
+
+  // Upgrade the client connection
+  const { socket: clientSocket, response } = Deno.upgradeWebSocket(req);
+
+  // Build renderer WebSocket URL
+  const rendererWsUrl = RENDERER_URL.replace(/^http/, "ws");
+  const targetUrl = `${rendererWsUrl}${url.pathname}${url.search}`;
+
+  // Connect to renderer WebSocket with auth headers as query params
+  // (WebSocket doesn't support custom headers, so we pass token via query)
+  const targetUrlWithAuth = new URL(targetUrl);
+  // For preview HMR, we don't need token - it's internal renderer communication
+  targetUrlWithAuth.searchParams.set("x-project-slug", projectSlug || "");
+  targetUrlWithAuth.searchParams.set("x-environment", scope);
+
+  let rendererSocket: WebSocket | null = null;
+
+  clientSocket.onopen = () => {
+    proxyLogger.debug("Client WebSocket opened, connecting to renderer", {
+      targetUrl: targetUrlWithAuth.toString().replace(/token=[^&]+/, "token=***"),
+    });
+
+    rendererSocket = new WebSocket(targetUrlWithAuth.toString());
+
+    rendererSocket.onopen = () => {
+      proxyLogger.debug("Renderer WebSocket connected");
+    };
+
+    rendererSocket.onmessage = (event) => {
+      // Forward renderer messages to client
+      if (clientSocket.readyState === WebSocket.OPEN) {
+        clientSocket.send(event.data);
+      }
+    };
+
+    rendererSocket.onerror = (error) => {
+      proxyLogger.error("Renderer WebSocket error", { error });
+    };
+
+    rendererSocket.onclose = () => {
+      proxyLogger.debug("Renderer WebSocket closed");
+      if (clientSocket.readyState === WebSocket.OPEN) {
+        clientSocket.close();
+      }
+    };
+  };
+
+  clientSocket.onmessage = (event) => {
+    // Forward client messages to renderer
+    if (rendererSocket?.readyState === WebSocket.OPEN) {
+      rendererSocket.send(event.data);
+    }
+  };
+
+  clientSocket.onerror = (error) => {
+    proxyLogger.error("Client WebSocket error", { error });
+  };
+
+  clientSocket.onclose = () => {
+    proxyLogger.debug("Client WebSocket closed");
+    if (rendererSocket?.readyState === WebSocket.OPEN) {
+      rendererSocket.close();
+    }
+  };
+
+  return response;
+}
+
 async function handleRequest(req: Request): Promise<Response> {
   const startTime = performance.now();
   const host = req.headers.get("host") || "";
   const url = new URL(req.url);
+
+  // Handle WebSocket upgrade requests
+  if (req.headers.get("upgrade")?.toLowerCase() === "websocket") {
+    return handleWebSocketUpgrade(req);
+  }
 
   const parentContext = extractContext(req.headers);
   const spanInfo = startServerSpan(req.method, url.pathname, parentContext);

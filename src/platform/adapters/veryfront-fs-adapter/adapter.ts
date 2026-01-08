@@ -330,8 +330,8 @@ export class VeryfrontFSAdapter implements FSAdapter {
       });
     }
 
-    // Notify browser to reload
-    ReloadNotifier.triggerReload();
+    // Notify browser to reload with changed paths for smart HMR
+    ReloadNotifier.triggerReload(changedPaths);
 
     const durationMs = Date.now() - startTime;
     logger.info("[VeryfrontFSAdapter] Selective invalidation complete", {
