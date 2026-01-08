@@ -214,15 +214,16 @@ export function createVeryfrontHandler(
 
     // Execute request handling within span context
     const executeHandler = async (): Promise<Response> => {
-      // Parse domain from host header
-      const host = req.headers.get("host") || _url.host;
-      const parsedDomain = parseProjectDomain(host);
-
       // Check for proxy-provided headers (from Deno proxy)
       const proxyToken = req.headers.get("x-token") || undefined;
       const proxySlug = req.headers.get("x-project-slug") || undefined;
       let proxyEnv = req.headers.get("x-environment") as "preview" | "production" | undefined;
       const forwardedHost = req.headers.get("x-forwarded-host") || undefined;
+
+      // Parse domain from host header - use forwarded host when available (proxy mode)
+      const host = req.headers.get("host") || _url.host;
+      const effectiveHost = forwardedHost || host;
+      const parsedDomain = parseProjectDomain(effectiveHost);
 
       // Get project slug: proxy header > URL parsing > config
       const configuredSlug = config?.fs?.veryfront?.projectSlug;
@@ -338,7 +339,8 @@ export function createVeryfrontHandler(
         logger.info("[universal] Production request context", {
           projectSlug: projectSlug ?? "null",
           releaseId: releaseId ?? "null",
-          host,
+          host: effectiveHost,
+          forwardedHost: forwardedHost ?? "null",
           isVeryfrontDomain: parsedDomain.isVeryfrontDomain,
         });
       }
