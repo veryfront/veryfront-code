@@ -124,7 +124,7 @@ export interface VeryfrontConfig {
     };
   };
   fs?: {
-    type?: "local" | "veryfront-api" | "memory";
+    type?: "local" | "veryfront-api" | "memory" | "github";
     local?: {
       baseDir?: string;
     };
@@ -151,6 +151,27 @@ export interface VeryfrontConfig {
     };
     memory?: {
       files?: Record<string, string | Uint8Array>;
+    };
+    github?: {
+      /** GitHub Personal Access Token */
+      token: string;
+      /** Repository owner (user or organization) */
+      owner: string;
+      /** Repository name */
+      repo: string;
+      /** Branch, tag, or commit SHA (default: "main") */
+      ref?: string;
+      cache?: {
+        enabled?: boolean;
+        ttl?: number;
+        maxSize?: number;
+        maxMemory?: number;
+      };
+      retry?: {
+        maxRetries?: number;
+        initialDelay?: number;
+        maxDelay?: number;
+      };
     };
   };
   ai?: {

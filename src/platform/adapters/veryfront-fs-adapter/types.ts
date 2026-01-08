@@ -1,5 +1,6 @@
 import type { Project } from "../veryfront-api-client.ts";
 import { createError, toError } from "../../../core/errors/veryfront-error.ts";
+import type { GitHubConfig } from "../github-fs-adapter/types.ts";
 
 export interface DirectoryEntry {
   name: string;
@@ -30,7 +31,7 @@ export interface FSAdapter {
 }
 
 export interface FSAdapterConfig {
-  type?: "local" | "veryfront-api" | "memory";
+  type?: "local" | "veryfront-api" | "memory" | "github";
   projectDir?: string;
   veryfront?: {
     apiKey?: string;
@@ -50,6 +51,7 @@ export interface FSAdapterConfig {
       retryDelay?: number;
     };
   };
+  github?: GitHubConfig;
 }
 
 export interface VeryfrontConfig {
