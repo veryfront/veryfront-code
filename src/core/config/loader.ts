@@ -164,7 +164,8 @@ class ConfigValidationError extends Error {
 function isVirtualFilesystem(adapter: RuntimeAdapter): boolean {
   const wrappedAdapter = (adapter?.fs as { fsAdapter?: unknown })?.fsAdapter;
   const adapterName = (wrappedAdapter as { constructor?: { name?: string } })?.constructor?.name;
-  return adapterName === "VeryfrontFSAdapter" || adapterName === "MultiProjectFSAdapter" || adapterName === "GitHubFSAdapter";
+  return adapterName === "VeryfrontFSAdapter" || adapterName === "MultiProjectFSAdapter" ||
+    adapterName === "GitHubFSAdapter";
 }
 
 /**

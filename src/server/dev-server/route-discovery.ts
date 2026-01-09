@@ -31,7 +31,10 @@ export class RouteDiscovery {
     });
 
     const routeDirs = await this.resolveRouteDirectories();
-    logger.debug("[SERVER] Route directories resolved", { count: routeDirs.length, dirs: routeDirs });
+    logger.debug("[SERVER] Route directories resolved", {
+      count: routeDirs.length,
+      dirs: routeDirs,
+    });
     if (routeDirs.length === 0) {
       logger.warn("[SERVER] No route directories found; skipping discovery");
       return;
@@ -67,7 +70,9 @@ export class RouteDiscovery {
 
     for (const candidate of candidates) {
       // For remote FS adapters, use relative paths; for local, use absolute
-      const pathToCheck = this.useRelativePaths ? candidate.dir : join(this.projectDir, candidate.dir);
+      const pathToCheck = this.useRelativePaths
+        ? candidate.dir
+        : join(this.projectDir, candidate.dir);
       if (await this.directoryExists(pathToCheck)) {
         results.push({ type: candidate.type, path: pathToCheck });
       }
@@ -91,8 +96,14 @@ export class RouteDiscovery {
 
     if (results.length === 0 && preferredRouter === undefined) {
       const fallbackDirs = [
-        { type: "app" as const, path: this.useRelativePaths ? "app" : join(this.projectDir, "app") },
-        { type: "pages" as const, path: this.useRelativePaths ? "pages" : join(this.projectDir, "pages") },
+        {
+          type: "app" as const,
+          path: this.useRelativePaths ? "app" : join(this.projectDir, "app"),
+        },
+        {
+          type: "pages" as const,
+          path: this.useRelativePaths ? "pages" : join(this.projectDir, "pages"),
+        },
       ];
       for (const fallback of fallbackDirs) {
         if (await this.directoryExists(fallback.path)) {
@@ -106,7 +117,10 @@ export class RouteDiscovery {
 
   private async directoryExists(path: string): Promise<boolean> {
     try {
-      logger.debug("[SERVER] Checking directory exists", { path, useRelativePaths: this.useRelativePaths });
+      logger.debug("[SERVER] Checking directory exists", {
+        path,
+        useRelativePaths: this.useRelativePaths,
+      });
       // For remote FS adapters, don't fall back to local filesystem
       if (this.useRelativePaths) {
         const stat = await this.adapter.fs.stat(path);
