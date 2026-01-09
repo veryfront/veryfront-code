@@ -169,6 +169,7 @@ jobs:
       - uses: anthropics/claude-code-action@v1
         with:
           anthropic_api_key: ${{ env.ANTHROPIC_API_KEY }}
+          claude_args: "--allowedTools 'Bash,Read,Write,Edit,Glob,Grep,Bash(git:*),Bash(gh:*),Bash(deno task lint),Bash(deno task typecheck)'"
           prompt: |
             Review PR #${{ github.event.pull_request.number }} in a self-healing loop.
 
