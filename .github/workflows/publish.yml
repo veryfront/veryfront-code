@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   publish:
-    runs-on: ubuntu-latest
+    runs-on: veryfront-k8s-runners
     permissions:
       contents: write
       id-token: write
