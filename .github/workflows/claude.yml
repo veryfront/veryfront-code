@@ -87,23 +87,26 @@ jobs:
         env:
           OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
           ANTHROPIC_API_KEY: op://VERYFRONT_CI/ANTHROPIC_PRODUCTION/api_key
-      - name: Get PR info
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Get PR info and checkout branch
         id: pr
         run: |
           if [ "${{ github.event_name }}" == "issue_comment" ]; then
-            echo "number=${{ github.event.issue.number }}" >> $GITHUB_OUTPUT
-            PR_DATA=$(gh pr view ${{ github.event.issue.number }} --json headRefName)
-            echo "ref=$(echo $PR_DATA | jq -r '.headRefName')" >> $GITHUB_OUTPUT
+            PR_NUMBER=${{ github.event.issue.number }}
+            PR_DATA=$(gh pr view $PR_NUMBER --json headRefName)
+            PR_REF=$(echo $PR_DATA | jq -r '.headRefName')
           else
-            echo "number=${{ github.event.pull_request.number }}" >> $GITHUB_OUTPUT
-            echo "ref=${{ github.event.pull_request.head.ref }}" >> $GITHUB_OUTPUT
+            PR_NUMBER=${{ github.event.pull_request.number }}
+            PR_REF=${{ github.event.pull_request.head.ref }}
           fi
+          echo "number=$PR_NUMBER" >> $GITHUB_OUTPUT
+          echo "ref=$PR_REF" >> $GITHUB_OUTPUT
+          git fetch origin $PR_REF
+          git checkout $PR_REF
         env:
           GH_TOKEN: ${{ github.token }}
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ steps.pr.outputs.ref }}
-          fetch-depth: 0
       - uses: denoland/setup-deno@v2
         with:
           deno-version: v2.x
