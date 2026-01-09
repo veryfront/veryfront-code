@@ -50,6 +50,7 @@ function isMonitoringPath(pathname: string): boolean {
     pathname === "/_health" ||
     pathname === "/metrics";
 }
+
 import { RouteRegistry } from "@veryfront/routing/registry/index.ts";
 import { SecurityConfigLoader } from "@veryfront/security/http/config.ts";
 import { getConfig } from "@veryfront/config/loader.ts";
@@ -74,6 +75,18 @@ import { ApiHandlerWrapper } from "../handlers/request/api/index.ts";
 import { SSRHandler } from "../handlers/request/ssr/index.ts";
 import { NotFoundHandler } from "../handlers/response/not-found.ts";
 import { HMRHandler } from "../handlers/preview/hmr-handler.ts";
+
+/** Valid proxy environment values */
+const VALID_PROXY_ENVIRONMENTS = ["preview", "production"] as const;
+type ProxyEnvironment = (typeof VALID_PROXY_ENVIRONMENTS)[number];
+
+/** Validate and parse proxy environment header */
+function parseProxyEnvironment(value: string | null): ProxyEnvironment | undefined {
+  if (!value) return undefined;
+  return VALID_PROXY_ENVIRONMENTS.includes(value as ProxyEnvironment)
+    ? (value as ProxyEnvironment)
+    : undefined;
+}
 
 export interface UniversalHandlerOptions {
   projectDir: string;
@@ -225,8 +238,9 @@ export function createVeryfrontHandler(
       const proxyToken = req.headers.get("x-token") || undefined;
       const proxySlug = req.headers.get("x-project-slug") ||
         _url.searchParams.get("x-project-slug") || undefined;
-      let proxyEnv = (req.headers.get("x-environment") ||
-        _url.searchParams.get("x-environment")) as "preview" | "production" | undefined;
+      let proxyEnv = parseProxyEnvironment(
+        req.headers.get("x-environment") || _url.searchParams.get("x-environment"),
+      );
       const forwardedHost = req.headers.get("x-forwarded-host") || undefined;
 
       // Get project slug: proxy header > URL parsing > config

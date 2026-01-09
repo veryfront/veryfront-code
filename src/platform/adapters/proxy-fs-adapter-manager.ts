@@ -75,11 +75,8 @@ export class ProxyFSAdapterManager {
       existing.lastAccessed = Date.now();
       existing.adapter.setRequestToken(effectiveToken);
 
-      logger.info("[ProxyFSAdapterManager] Reusing cached adapter", {
-        projectSlug,
+      logger.debug("[ProxyFSAdapterManager] Reusing cached adapter", {
         cacheKey,
-        productionMode: effectiveProductionMode,
-        releaseId: effectiveReleaseId ?? "null",
       });
 
       if (existing.initializing) {
@@ -121,12 +118,9 @@ export class ProxyFSAdapterManager {
   ): Promise<VeryfrontFSAdapter> {
     const effectiveToken = token || this.baseConfig.veryfront?.apiToken;
 
-    logger.info("[ProxyFSAdapterManager] Creating adapter", {
+    logger.debug("[ProxyFSAdapterManager] Creating adapter", {
       cacheKey,
       projectSlug,
-      projectId: projectId || "(none)",
-      productionMode,
-      releaseId: releaseId ?? "null",
     });
 
     const config: FSAdapterConfig = {
@@ -156,7 +150,7 @@ export class ProxyFSAdapterManager {
       projectAdapter.initializing = adapter.initialize();
       try {
         await projectAdapter.initializing;
-        logger.info("[ProxyFSAdapterManager] Adapter initialized", { cacheKey, projectSlug });
+        logger.debug("[ProxyFSAdapterManager] Adapter initialized", { cacheKey });
         this.adapters.set(cacheKey, projectAdapter);
       } catch (error) {
         throw error;
