@@ -1,5 +1,5 @@
 import { assertEquals } from "https://deno.land/std@0.220.0/assert/mod.ts";
-import { parseProjectDomain, isVeryfrontDomain, getEffectiveProjectSlug } from "./domain-parser.ts";
+import { getEffectiveProjectSlug, isVeryfrontDomain, parseProjectDomain } from "./domain-parser.ts";
 
 Deno.test("parseProjectDomain", async (t) => {
   // Local development (lvh.me)
