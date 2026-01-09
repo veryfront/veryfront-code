@@ -42,6 +42,7 @@ const config = {
 
 const RENDERER_URL = Deno.env.get("RENDERER_URL") || "http://localhost:3001";
 const PORT = parseInt(Deno.env.get("PORT") || "8080");
+const WS_CONNECT_TIMEOUT_MS = 30000;
 
 // Validate required configuration
 function validateConfig(): void {
@@ -71,9 +72,6 @@ function getScope(environment: string | null): TokenScope {
   return environment === "preview" ? "preview" : "production";
 }
 
-/**
- * Handle WebSocket upgrade requests by proxying to renderer.
- */
 function handleWebSocketUpgrade(req: Request): Response {
   const url = new URL(req.url);
   const host = req.headers.get("host") || "";
@@ -87,49 +85,60 @@ function handleWebSocketUpgrade(req: Request): Response {
     environment: scope,
   });
 
-  // Upgrade the client connection
   const { socket: clientSocket, response } = Deno.upgradeWebSocket(req);
 
-  // Build renderer WebSocket URL
   const rendererWsUrl = RENDERER_URL.replace(/^http/, "ws");
-  const targetUrl = `${rendererWsUrl}${url.pathname}${url.search}`;
-
-  // Connect to renderer WebSocket with auth headers as query params
-  // (WebSocket doesn't support custom headers, so we pass token via query)
-  const targetUrlWithAuth = new URL(targetUrl);
-  // For preview HMR, we don't need token - it's internal renderer communication
-  targetUrlWithAuth.searchParams.set("x-project-slug", projectSlug || "");
-  targetUrlWithAuth.searchParams.set("x-environment", scope);
+  const targetUrl = new URL(`${rendererWsUrl}${url.pathname}${url.search}`);
+  targetUrl.searchParams.set("x-project-slug", projectSlug || "");
+  targetUrl.searchParams.set("x-environment", scope);
 
   let rendererSocket: WebSocket | null = null;
+  let connectTimeoutId: ReturnType<typeof setTimeout> | null = null;
+  let timedOut = false;
+
+  const clearConnectTimeout = () => {
+    if (connectTimeoutId) {
+      clearTimeout(connectTimeoutId);
+      connectTimeoutId = null;
+    }
+  };
 
   clientSocket.onopen = () => {
-    proxyLogger.debug("Client WebSocket opened, connecting to renderer", {
-      targetUrl: targetUrlWithAuth.toString().replace(/token=[^&]+/, "token=***"),
-    });
+    proxyLogger.debug("Client WebSocket opened, connecting to renderer");
 
-    rendererSocket = new WebSocket(targetUrlWithAuth.toString());
+    rendererSocket = new WebSocket(targetUrl.toString());
+
+    connectTimeoutId = setTimeout(() => {
+      timedOut = true;
+      proxyLogger.error("Renderer WebSocket connection timeout");
+      rendererSocket?.close();
+      if (clientSocket.readyState === WebSocket.OPEN) {
+        clientSocket.close(1001, "Renderer connection timeout");
+      }
+    }, WS_CONNECT_TIMEOUT_MS);
 
     rendererSocket.onopen = () => {
+      clearConnectTimeout();
+      if (timedOut) {
+        rendererSocket?.close();
+        return;
+      }
       proxyLogger.debug("Renderer WebSocket connected");
     };
 
     rendererSocket.onmessage = (event) => {
-      // Forward renderer messages to client
-      proxyLogger.debug("Renderer->Client message", {
-        data: typeof event.data === 'string' ? event.data.slice(0, 100) : 'binary',
-        clientState: clientSocket.readyState
-      });
       if (clientSocket.readyState === WebSocket.OPEN) {
         clientSocket.send(event.data);
       }
     };
 
     rendererSocket.onerror = (error) => {
+      clearConnectTimeout();
       proxyLogger.error("Renderer WebSocket error", { error });
     };
 
     rendererSocket.onclose = () => {
+      clearConnectTimeout();
       proxyLogger.debug("Renderer WebSocket closed");
       if (clientSocket.readyState === WebSocket.OPEN) {
         clientSocket.close();
@@ -138,17 +147,18 @@ function handleWebSocketUpgrade(req: Request): Response {
   };
 
   clientSocket.onmessage = (event) => {
-    // Forward client messages to renderer
     if (rendererSocket?.readyState === WebSocket.OPEN) {
       rendererSocket.send(event.data);
     }
   };
 
   clientSocket.onerror = (error) => {
+    clearConnectTimeout();
     proxyLogger.error("Client WebSocket error", { error });
   };
 
   clientSocket.onclose = () => {
+    clearConnectTimeout();
     proxyLogger.debug("Client WebSocket closed");
     if (rendererSocket?.readyState === WebSocket.OPEN) {
       rendererSocket.close();
@@ -158,14 +168,13 @@ function handleWebSocketUpgrade(req: Request): Response {
   return response;
 }
 
-async function handleRequest(req: Request): Promise<Response> {
+function handleRequest(req: Request): Promise<Response> {
   const startTime = performance.now();
   const host = req.headers.get("host") || "";
   const url = new URL(req.url);
 
-  // Handle WebSocket upgrade requests
   if (req.headers.get("upgrade")?.toLowerCase() === "websocket") {
-    return handleWebSocketUpgrade(req);
+    return Promise.resolve(handleWebSocketUpgrade(req));
   }
 
   const parentContext = extractContext(req.headers);
@@ -266,23 +275,17 @@ async function handleStats(): Promise<Response> {
   });
 }
 
-/**
- * Route requests to appropriate handler.
- */
-async function router(req: Request): Promise<Response> {
+function router(req: Request): Promise<Response> {
   const url = new URL(req.url);
 
-  // Stats endpoint for monitoring
   if (url.pathname === "/_proxy/stats") {
     return handleStats();
   }
 
-  // Health check
   if (url.pathname === "/_proxy/health") {
-    return new Response("OK", { status: 200 });
+    return Promise.resolve(new Response("OK", { status: 200 }));
   }
 
-  // Forward all other requests to renderer
   return handleRequest(req);
 }
 

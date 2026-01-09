@@ -19,4 +19,4 @@ ENV PORT=20000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD deno eval "const res = await fetch('http://localhost:' + Deno.env.get('PORT') + '/_proxy/health'); if (!res.ok) Deno.exit(1);"
 
-CMD ["run", "--allow-all", "--no-lock", "proxy/main.ts"]
+CMD ["run", "--allow-net", "--allow-env", "--allow-read=/app", "proxy/main.ts"]
