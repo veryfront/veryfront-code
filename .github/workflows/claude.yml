@@ -92,6 +92,13 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - name: Acknowledge issue
+        run: |
+          gh issue comment ${{ github.event.issue.number }} --body "👋 I'm on it! I'll create a PR to fix this issue.
+
+          _This may take a few minutes. I'll update this issue when the PR is ready._"
+        env:
+          GH_TOKEN: ${{ github.token }}
       - uses: denoland/setup-deno@v2
         with:
           deno-version: v2.x
