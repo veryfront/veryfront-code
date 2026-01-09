@@ -1,15 +1,7 @@
-/**
- * Proxy WebSocket Handler Tests
- *
- * Tests for the WebSocket proxy functionality in the Veryfront proxy.
- * Note: These are unit tests for the WebSocket upgrade detection logic.
- * Full integration tests require running both proxy and renderer.
- */
-
-import { assertEquals, assertExists } from "std/assert/mod.ts";
+import { assertEquals } from "std/assert/mod.ts";
 import { describe, it } from "std/testing/bdd.ts";
 
-describe("Proxy WebSocket Handler Tests", { sanitizeOps: false, sanitizeResources: false }, () => {
+describe("Proxy WebSocket Handler Tests", () => {
   describe("WebSocket Upgrade Detection", () => {
     it("detects WebSocket upgrade request", () => {
       const req = new Request("http://localhost:8080/_ws", {

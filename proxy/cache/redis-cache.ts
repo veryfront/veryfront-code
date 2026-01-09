@@ -7,7 +7,6 @@ import type { CacheStats, RedisCacheOptions, TokenCache, TokenCacheEntry } from 
 
 const DEFAULT_PREFIX = "vf:token:";
 const DEFAULT_CONNECT_TIMEOUT = 5000;
-const DEFAULT_COMMAND_TIMEOUT = 3000;
 const DEFAULT_REDIS_PORT = 6379;
 const DEFAULT_SCAN_COUNT = 100;
 const MAX_RECONNECT_ATTEMPTS = 3;
@@ -58,7 +57,7 @@ class RedisClient {
     }
   }
 
-  async close(): Promise<void> {
+  close(): void {
     if (this.conn) {
       try {
         this.conn.close();
@@ -97,7 +96,7 @@ class RedisClient {
     return await this.sendCommand("DBSIZE") as number;
   }
 
-  private async sendCommand(...args: string[]): Promise<unknown> {
+  private sendCommand(...args: string[]): Promise<unknown> {
     return this.sendCommandWithRetry(args, 0);
   }
 
@@ -321,9 +320,10 @@ export class RedisCache implements TokenCache {
     return { hits: this.hits, misses: this.misses, size, type: "redis" };
   }
 
-  async close(): Promise<void> {
-    await this.client.close();
+  close(): Promise<void> {
+    this.client.close();
     this.connected = false;
+    return Promise.resolve();
   }
 
   private async ensureConnected(): Promise<void> {

@@ -1,8 +1,8 @@
 /**
- * OAuth Client for Veryfront API
- *
- * Handles OAuth 2.0 client credentials flow to obtain access tokens.
+ * OAuth Client for Veryfront API - client credentials flow.
  */
+
+const DEFAULT_TIMEOUT_MS = 10000;
 
 export interface TokenResponse {
   access_token: string;
@@ -15,31 +15,42 @@ export interface OAuthTokenConfig {
   clientId: string;
   clientSecret: string;
   projectId?: string;
+  timeoutMs?: number;
 }
 
-/**
- * Fetch an OAuth access token using client credentials grant.
- */
 export async function fetchOAuthToken(config: OAuthTokenConfig): Promise<TokenResponse> {
   const url = `${config.apiBaseUrl}/oauth/token`;
+  const controller = new AbortController();
+  const timeoutId = setTimeout(
+    () => controller.abort(),
+    config.timeoutMs ?? DEFAULT_TIMEOUT_MS
+  );
 
-  const response = await fetch(url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      grant_type: "client_credentials",
-      client_id: config.clientId,
-      client_secret: config.clientSecret,
-      ...(config.projectId && { projectId: config.projectId }),
-    }),
-  });
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        grant_type: "client_credentials",
+        client_id: config.clientId,
+        client_secret: config.clientSecret,
+        ...(config.projectId && { projectId: config.projectId }),
+      }),
+      signal: controller.signal,
+    });
 
-  if (!response.ok) {
-    const errorText = await response.text().catch(() => "Unknown error");
-    throw new Error(`OAuth token request failed: ${response.status} - ${errorText}`);
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => "Unknown error");
+      throw new Error(`OAuth token request failed: ${response.status} - ${errorText}`);
+    }
+
+    return response.json();
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") {
+      throw new Error(`OAuth token request timed out after ${config.timeoutMs ?? DEFAULT_TIMEOUT_MS}ms`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
   }
-
-  return response.json();
 }
