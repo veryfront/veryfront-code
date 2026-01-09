@@ -29,6 +29,9 @@ on:
           - maintenance
           - dependency-audit
 
+env:
+  RALPH_MAX_ITERATIONS: "10"  # Max fix attempts per PR review
+
 concurrency:
   # Group by branch name for PR events, issue number for issues, run_id for others
   # This ensures PR review and auto-fix on same branch don't overlap
@@ -117,10 +120,12 @@ jobs:
           prompt: |
             @ralph was mentioned on PR #${{ steps.pr.outputs.number }}. Run the self-healing review loop.
 
+            Max iterations: ${{ env.RALPH_MAX_ITERATIONS }}
+
             ## Loop Logic
 
             attempts = 0
-            while attempts < 3:
+            while attempts < ${{ env.RALPH_MAX_ITERATIONS }}:
                 1. Review the current code for BLOCKING issues:
                    - Security vulnerabilities (OAuth bypass, proxy exploits, injection)
                    - Bugs that will cause runtime errors or server crashes
@@ -141,7 +146,7 @@ jobs:
                    - Exit successfully
 
             # If we get here, we've exhausted attempts
-            gh pr review ${{ steps.pr.outputs.number }} --request-changes --body "Could not auto-fix all blocking issues after 3 attempts. Manual intervention required."
+            gh pr review ${{ steps.pr.outputs.number }} --request-changes --body "Could not auto-fix all blocking issues after ${{ env.RALPH_MAX_ITERATIONS }} attempts. Manual intervention required."
             Exit with failure
 
             ## Important
@@ -258,10 +263,12 @@ jobs:
           prompt: |
             Review PR #${{ github.event.pull_request.number }} in a self-healing loop.
 
+            Max iterations: ${{ env.RALPH_MAX_ITERATIONS }}
+
             ## Loop Logic
 
             attempts = 0
-            while attempts < 3:
+            while attempts < ${{ env.RALPH_MAX_ITERATIONS }}:
                 1. Review the current code for BLOCKING issues:
                    - Security vulnerabilities (OAuth bypass, proxy exploits, injection)
                    - Bugs that will cause runtime errors or server crashes
@@ -282,7 +289,7 @@ jobs:
                    - Exit successfully
 
             # If we get here, we've exhausted attempts
-            gh pr review ${{ github.event.pull_request.number }} --request-changes --body "Could not auto-fix all blocking issues after 3 attempts. Manual intervention required."
+            gh pr review ${{ github.event.pull_request.number }} --request-changes --body "Could not auto-fix all blocking issues after ${{ env.RALPH_MAX_ITERATIONS }} attempts. Manual intervention required."
             Exit with failure
 
             ## Important
