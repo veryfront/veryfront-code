@@ -94,6 +94,7 @@ function handleWebSocketUpgrade(req: Request): Response {
 
   let rendererSocket: WebSocket | null = null;
   let connectTimeoutId: ReturnType<typeof setTimeout> | null = null;
+  let timedOut = false;
 
   const clearConnectTimeout = () => {
     if (connectTimeoutId) {
@@ -108,17 +109,20 @@ function handleWebSocketUpgrade(req: Request): Response {
     rendererSocket = new WebSocket(targetUrl.toString());
 
     connectTimeoutId = setTimeout(() => {
-      if (rendererSocket?.readyState === WebSocket.CONNECTING) {
-        proxyLogger.error("Renderer WebSocket connection timeout");
-        rendererSocket.close();
-        if (clientSocket.readyState === WebSocket.OPEN) {
-          clientSocket.close(1001, "Renderer connection timeout");
-        }
+      timedOut = true;
+      proxyLogger.error("Renderer WebSocket connection timeout");
+      rendererSocket?.close();
+      if (clientSocket.readyState === WebSocket.OPEN) {
+        clientSocket.close(1001, "Renderer connection timeout");
       }
     }, WS_CONNECT_TIMEOUT_MS);
 
     rendererSocket.onopen = () => {
       clearConnectTimeout();
+      if (timedOut) {
+        rendererSocket?.close();
+        return;
+      }
       proxyLogger.debug("Renderer WebSocket connected");
     };
 

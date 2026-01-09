@@ -62,10 +62,9 @@ export interface MemoryCacheOptions {
 }
 
 export interface RedisCacheOptions {
-  url: string; // Redis connection URL
-  prefix?: string; // Key prefix (default: "vf:token:")
+  url: string;
+  prefix?: string;
   connectTimeout?: number;
-  commandTimeout?: number;
 }
 
 export type CacheOptions =

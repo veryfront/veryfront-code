@@ -30,7 +30,7 @@ class RedisClient {
   private password?: string;
   private connectTimeout: number;
 
-  constructor(url: string, options: { connectTimeout?: number; commandTimeout?: number } = {}) {
+  constructor(url: string, options: { connectTimeout?: number } = {}) {
     const parsed = new URL(url);
     this.host = parsed.hostname;
     this.port = parseInt(parsed.port) || DEFAULT_REDIS_PORT;
@@ -41,17 +41,29 @@ class RedisClient {
   async connect(): Promise<void> {
     if (this.conn) return;
 
+    let timedOut = false;
+    let timeoutId: ReturnType<typeof setTimeout>;
+
     const connectPromise = Deno.connect({ hostname: this.host, port: this.port });
     const timeoutPromise = new Promise<never>((_, reject) => {
-      setTimeout(() => reject(new Error("Connection timeout")), this.connectTimeout);
+      timeoutId = setTimeout(() => {
+        timedOut = true;
+        reject(new Error("Connection timeout"));
+      }, this.connectTimeout);
     });
 
     try {
       this.conn = await Promise.race([connectPromise, timeoutPromise]);
+      clearTimeout(timeoutId!);
       if (this.password) {
         await this.sendCommand("AUTH", this.password);
       }
     } catch (error) {
+      clearTimeout(timeoutId!);
+      // If timed out, clean up late connection when it resolves
+      if (timedOut) {
+        connectPromise.then((conn) => conn.close()).catch(() => {});
+      }
       this.conn = null;
       throw error;
     }
@@ -112,7 +124,7 @@ class RedisClient {
     } catch (error) {
       if (attempt < MAX_RECONNECT_ATTEMPTS && this.isConnectionError(error)) {
         console.warn(`[RedisClient] Connection error, reconnecting (attempt ${attempt + 1})`);
-        await this.close();
+        this.close();
         return this.sendCommandWithRetry(args, attempt + 1);
       }
       throw error;
@@ -214,7 +226,6 @@ export class RedisCache implements TokenCache {
   constructor(options: RedisCacheOptions) {
     this.client = new RedisClient(options.url, {
       connectTimeout: options.connectTimeout,
-      commandTimeout: options.commandTimeout,
     });
     this.prefix = options.prefix ?? DEFAULT_PREFIX;
   }
