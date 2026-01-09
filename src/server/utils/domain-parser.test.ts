@@ -88,6 +88,13 @@ Deno.test("parseProjectDomain", async (t) => {
     assertEquals(result.environment, null);
     assertEquals(result.isVeryfrontDomain, false);
   });
+
+  // Edge cases
+  await t.step("handles mixed case domains", () => {
+    const result = parseProjectDomain("MyProject.preview.lvh.me");
+    assertEquals(result.slug, "MyProject");
+    assertEquals(result.environment, "preview");
+  });
 });
 
 Deno.test("isVeryfrontDomain", async (t) => {
