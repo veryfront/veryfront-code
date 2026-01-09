@@ -1,4 +1,8 @@
-import { assertEquals, assertRejects, assertThrows } from "https://deno.land/std@0.220.0/assert/mod.ts";
+import {
+  assertEquals,
+  assertRejects,
+  assertThrows,
+} from "https://deno.land/std@0.220.0/assert/mod.ts";
 import { VeryfrontAPIClient } from "./client.ts";
 import { VeryfrontAPIError } from "./types.ts";
 
