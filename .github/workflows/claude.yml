@@ -146,6 +146,7 @@ jobs:
   pr-review:
     if: |
       github.event_name == 'pull_request' &&
+      github.event.action != 'labeled' &&
       github.event.pull_request.draft == false &&
       !contains(github.event.pull_request.labels.*.name, 'skip-review') &&
       !contains(github.event.pull_request.labels.*.name, 'auto-fix-in-progress')
@@ -245,11 +246,15 @@ jobs:
 
           if [ "$ATTEMPT_COUNT" -ge 3 ]; then
             echo "Max auto-fix attempts (3) reached. Adding auto-fix-failed label."
+            gh label create "auto-fix-failed" --description "Auto-fix loop exhausted" --color "B60205" --force --repo ${{ github.repository }} 2>/dev/null || true
             gh pr edit $PR_NUMBER --repo ${{ github.repository }} --add-label "auto-fix-failed"
             gh pr comment $PR_NUMBER --repo ${{ github.repository }} --body "🛑 Auto-fix has failed after 3 attempts. Manual intervention required."
             echo "skip=true" >> $GITHUB_OUTPUT
           else
             NEXT_ATTEMPT=$((ATTEMPT_COUNT + 1))
+            # Create labels if they don't exist
+            gh label create "auto-fix-attempt-$NEXT_ATTEMPT" --description "Auto-fix attempt $NEXT_ATTEMPT" --color "FFA500" --force --repo ${{ github.repository }} 2>/dev/null || true
+            gh label create "auto-fix-in-progress" --description "Auto-fix is running" --color "FBCA04" --force --repo ${{ github.repository }} 2>/dev/null || true
             gh pr edit $PR_NUMBER --repo ${{ github.repository }} --add-label "auto-fix-attempt-$NEXT_ATTEMPT,auto-fix-in-progress"
             echo "skip=false" >> $GITHUB_OUTPUT
             echo "attempt=$NEXT_ATTEMPT" >> $GITHUB_OUTPUT
