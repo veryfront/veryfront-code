@@ -86,10 +86,8 @@ export class MultiProjectFSAdapter implements FSAdapter {
     const context = asyncLocalStorage.getStore();
 
     if (!context) {
-      // Log at info level to debug production issues
-      logger.info("[MultiProjectFSAdapter] No context available", {
+      logger.debug("[MultiProjectFSAdapter] No context available", {
         hasDefaultAdapter: !!this.defaultAdapter,
-        stack: new Error().stack?.split("\n").slice(0, 10).join("\n"),
       });
 
       if (this.defaultAdapter) {
@@ -107,11 +105,9 @@ export class MultiProjectFSAdapter implements FSAdapter {
     const productionMode = context.productionMode ?? false;
     const releaseId = context.releaseId ?? null;
 
-    // Log at info level to debug context propagation issues
-    logger.info("[MultiProjectFSAdapter] getAdapter with context", {
+    logger.debug("[MultiProjectFSAdapter] getAdapter with context", {
       projectSlug: context.projectSlug,
       productionMode,
-      hasProjectId: !!context.projectId,
     });
 
     return this.manager.getAdapter(

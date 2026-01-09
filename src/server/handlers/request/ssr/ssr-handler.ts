@@ -36,6 +36,24 @@ import {
 } from "@veryfront/core/constants/index.ts";
 import { generateNonce } from "@veryfront/security/http/response/security-handler.ts";
 import { getColorSchemeFromRequest } from "@veryfront/security/http/client-hints.ts";
+import { isMultiProjectAdapter } from "@veryfront/platform/adapters/multi-project-fs-adapter.ts";
+
+/**
+ * Determine if request should serve production (released) content.
+ * Priority: config > veryfront domain isDraft flag > proxy environment header
+ */
+function isProductionMode(ctx: HandlerContext): boolean {
+  // Config override (PRODUCTION_MODE env var)
+  if (ctx.config?.fs?.veryfront?.productionMode === true) {
+    return true;
+  }
+  // Veryfront domain: production if not draft
+  if (ctx.parsedDomain?.isVeryfrontDomain) {
+    return ctx.parsedDomain.isDraft === false;
+  }
+  // Custom domain: use proxy environment header
+  return ctx.proxyEnvironment === "production";
+}
 
 /**
  * SSR Handler Class
@@ -85,95 +103,47 @@ export class SSRHandler extends BaseHandler {
     this.logDebug("SSR attempt", { pathname, slug }, ctx);
 
     try {
-      // Inject proxy token into FSAdapter before rendering
-      // This ensures API calls use the per-request OAuth token from the proxy
-      const fsWrapper = ctx.adapter.fs as {
-        setRequestToken?: (t: string) => void;
-        setRequestBranch?: (b: string | null) => void;
-        runWithContext?: <T>(
-          slug: string,
-          token: string,
-          fn: () => Promise<T>,
-          projectId?: string,
-          options?: { productionMode?: boolean; releaseId?: string | null },
-        ) => Promise<T>;
-      };
+      const fsAdapter = ctx.adapter.fs;
 
       // For multi-project mode, use runWithContext (required for MultiProjectFSAdapter)
-      // The token can be empty - ProxyFSAdapterManager will fall back to config token
-      if (ctx.projectSlug && typeof fsWrapper.runWithContext === "function") {
-        // Determine production mode based on domain type
-        let isProduction = false;
-        if (ctx.parsedDomain?.isVeryfrontDomain) {
-          isProduction = ctx.parsedDomain.isDraft === false;
-        } else {
-          isProduction = ctx.proxyEnvironment === "production";
-        }
+      if (ctx.projectSlug && isMultiProjectAdapter(fsAdapter)) {
+        const prodMode = isProductionMode(ctx);
 
         this.logDebug("Using multi-project context", {
           projectSlug: ctx.projectSlug,
-          projectId: ctx.projectId,
-          hasProxyToken: !!ctx.proxyToken,
-          productionMode: isProduction,
+          productionMode: prodMode,
         }, ctx);
 
-        return fsWrapper.runWithContext(
+        return fsAdapter.runWithContext(
           ctx.projectSlug,
           ctx.proxyToken || "",
           () => this.handleWithContext(req, ctx, slug, requestId, url),
           ctx.projectId,
-          { productionMode: isProduction, releaseId: ctx.releaseId },
+          { productionMode: prodMode, releaseId: ctx.releaseId },
         );
       }
 
-      // Log why multi-project context wasn't used
-      _logger.info("[SSR] NOT using multi-project context", {
-        hasProjectSlug: !!ctx.projectSlug,
-        hasRunWithContext: typeof fsWrapper.runWithContext === "function",
-        projectSlug: ctx.projectSlug || "(none)",
-      });
-
-      // For single-project mode with proxy token, use setRequestToken
-      if (ctx.proxyToken && typeof fsWrapper.setRequestToken === "function") {
-        fsWrapper.setRequestToken(ctx.proxyToken);
-        this.logDebug("Injected proxy token into FSAdapter", {}, ctx);
-      }
-
-      // Always set branch from URL - either the parsed branch or null for main
-      // This ensures each request uses the correct branch and clears any previously set branch
-      if (typeof fsWrapper.setRequestBranch === "function") {
-        const branch = ctx.parsedDomain?.branch ?? null;
-        fsWrapper.setRequestBranch(branch);
-        this.logDebug("Set FSAdapter branch", { branch: branch ?? "main" }, ctx);
-      }
-
-      // Set production mode for non-draft environments (staging, production)
-      // When production mode is enabled, content is served from releases (JIT rendering)
-      const setProductionMode = fsWrapper as {
+      // Single-project mode: duck-type for optional methods
+      const fsWrapper = fsAdapter as {
+        setRequestToken?: (t: string) => void;
+        setRequestBranch?: (b: string | null) => void;
         setProductionMode?: (enabled: boolean, releaseId?: string | null) => void;
       };
-      if (typeof setProductionMode.setProductionMode === "function") {
-        // Determine production mode based on:
-        // 1. Config's productionMode setting (from PRODUCTION_MODE env var)
-        // 2. Veryfront domain isDraft flag
-        // 3. Proxy environment header
-        let isProduction = ctx.config?.fs?.veryfront?.productionMode === true;
-        if (!isProduction && ctx.parsedDomain?.isVeryfrontDomain) {
-          isProduction = ctx.parsedDomain.isDraft === false;
-        } else if (!isProduction) {
-          // Custom domain - proxy tells us the environment
-          isProduction = ctx.proxyEnvironment === "production";
-        }
 
-        setProductionMode.setProductionMode(isProduction, ctx.releaseId);
-        if (isProduction) {
-          this.logDebug("Production mode enabled - serving from releases", {
-            environment: ctx.parsedDomain?.environment ?? ctx.proxyEnvironment,
-            isCustomDomain: !ctx.parsedDomain?.isVeryfrontDomain,
-            fromConfig: ctx.config?.fs?.veryfront?.productionMode === true,
-            releaseId: ctx.releaseId ?? "latest",
-          }, ctx);
-        }
+      // Single-project mode: set per-request token if available
+      if (ctx.proxyToken && typeof fsWrapper.setRequestToken === "function") {
+        fsWrapper.setRequestToken(ctx.proxyToken);
+      }
+
+      // Set branch from URL
+      if (typeof fsWrapper.setRequestBranch === "function") {
+        fsWrapper.setRequestBranch(ctx.parsedDomain?.branch ?? null);
+      }
+
+      // Set production mode for non-draft environments
+      if (typeof fsWrapper.setProductionMode === "function") {
+        const prodMode = isProductionMode(ctx);
+        fsWrapper.setProductionMode(prodMode, ctx.releaseId);
       }
 
       return this.handleWithContext(req, ctx, slug, requestId, url);
