@@ -105,8 +105,7 @@ jobs:
             4. Push the fix
 
             Only fix obvious issues. Comment if manual attention needed.
-          allowed_tools: |
-            Read,Write,Edit,Bash(deno task lint),Bash(deno task typecheck),Bash(deno task test:unit),Bash(git:*),Bash(gh run view:*)
+          claude_args: "--allowedTools 'Read,Write,Edit,Bash(deno task lint),Bash(deno task typecheck),Bash(deno task test:unit),Bash(git:*),Bash(gh:*)'"
 
   # ===========================================
   # Issue Triage: Auto-label new issues
@@ -137,8 +136,7 @@ jobs:
             3. Area: renderer, proxy, cli, ai, routing, rsc
             4. Apply labels with: gh issue edit ${{ github.event.issue.number }} --add-label "<labels>"
             5. If bug without reproduction steps, ask for them
-          allowed_tools: |
-            Bash(gh issue edit:*),Bash(gh issue comment:*),Bash(gh search issues:*)
+          claude_args: "--allowedTools 'Bash(gh:*)'"
 
   # ===========================================
   # PR Review: Automated code review
@@ -305,8 +303,7 @@ jobs:
             gh pr edit ${{ github.event.pull_request.number }} --remove-label "auto-fix-in-progress"
 
             If you cannot fix an issue or push fails repeatedly, comment on the PR explaining why manual intervention is needed.
-          allowed_tools: |
-            Read,Write,Edit,Bash(deno task lint),Bash(deno task typecheck),Bash(deno task test:unit),Bash(git:*),Bash(gh pr:*),Bash(gh api:*)
+          claude_args: "--allowedTools 'Read,Write,Edit,Bash(deno task lint),Bash(deno task typecheck),Bash(deno task test:unit),Bash(git:*),Bash(gh:*)'"
 
   # ===========================================
   # Weekly Maintenance
@@ -342,5 +339,4 @@ jobs:
             2. Find TODO/FIXME comments from last week
             3. List issues with no activity for 30+ days
             4. Create a summary issue with findings
-          allowed_tools: |
-            Read,Bash(deno info),Bash(git log:*),Bash(gh issue:*)
+          claude_args: "--allowedTools 'Read,Bash(deno info),Bash(git:*),Bash(gh:*)'"
