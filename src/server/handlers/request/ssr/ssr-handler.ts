@@ -42,7 +42,7 @@ import { isMultiProjectAdapter } from "@veryfront/platform/adapters/multi-projec
  * Determine if request should serve production (released) content.
  * Priority: config > veryfront domain isDraft flag > proxy environment header
  */
-function isProductionMode(ctx: HandlerContext): boolean {
+export function isProductionMode(ctx: HandlerContext): boolean {
   // Config override (PRODUCTION_MODE env var)
   if (ctx.config?.fs?.veryfront?.productionMode === true) {
     return true;
