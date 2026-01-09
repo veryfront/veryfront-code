@@ -238,10 +238,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           PR_NUMBER=${{ github.event.pull_request.number }}
-          LABELS=$(gh pr view $PR_NUMBER --repo ${{ github.repository }} --json labels --jq '.labels[].name')
 
-          # Count existing auto-fix-attempt labels
-          ATTEMPT_COUNT=$(echo "$LABELS" | grep -c "auto-fix-attempt" || echo "0")
+          # Count existing auto-fix-attempt labels using jq
+          ATTEMPT_COUNT=$(gh pr view $PR_NUMBER --repo ${{ github.repository }} --json labels \
+            --jq '[.labels[].name | select(startswith("auto-fix-attempt"))] | length')
 
           if [ "$ATTEMPT_COUNT" -ge 3 ]; then
             echo "Max auto-fix attempts (3) reached. Adding auto-fix-failed label."
