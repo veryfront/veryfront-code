@@ -165,17 +165,28 @@ jobs:
           prompt: |
             Review PR #${{ github.event.pull_request.number }}
 
-            Focus on:
-            - Deno/TypeScript best practices
-            - React Server Components patterns
-            - SSR performance
-            - OAuth/proxy security
-            - Memory leaks in streaming
-            - Error handling
+            Focus on BLOCKING issues only:
+            - Security vulnerabilities (OAuth bypass, proxy exploits, injection)
+            - Bugs that will cause runtime errors or server crashes
+            - Memory leaks in streaming responses
+            - RSC hydration mismatches that break the app
+            - Critical Deno/TypeScript errors
 
-            Post inline comments for specific issues.
+            NON-BLOCKING (comment only, don't request changes):
+            - Style preferences, minor refactoring suggestions
+            - Performance optimizations that aren't critical
+            - SSR patterns that are just preferences
+            - Missing tests (unless for critical paths)
+
+            After reviewing:
+            1. Post inline comments for specific issues
+            2. If BLOCKING issues found:
+               - Run: gh pr review ${{ github.event.pull_request.number }} --request-changes --body "Found blocking issues that must be addressed. See inline comments."
+               - Then exit with: exit 1
+            3. If NO blocking issues (minor suggestions OK):
+               - Run: gh pr review ${{ github.event.pull_request.number }} --approve --body "LGTM - no blocking issues found."
           allowed_tools: |
-            mcp__github_file_ops__create_or_update_file,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*)
+            mcp__github_file_ops__create_or_update_file,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr review:*),Bash(exit:*)
 
   # ===========================================
   # Weekly Maintenance
