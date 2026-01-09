@@ -81,7 +81,7 @@ const VALID_PROXY_ENVIRONMENTS = ["preview", "production"] as const;
 type ProxyEnvironment = (typeof VALID_PROXY_ENVIRONMENTS)[number];
 
 /** Validate and parse proxy environment header */
-function parseProxyEnvironment(value: string | null): ProxyEnvironment | undefined {
+export function parseProxyEnvironment(value: string | null): ProxyEnvironment | undefined {
   if (!value) return undefined;
   return VALID_PROXY_ENVIRONMENTS.includes(value as ProxyEnvironment)
     ? (value as ProxyEnvironment)

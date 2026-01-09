@@ -10,6 +10,18 @@
  *   Direct mode: Set VERYFRONT_API_TOKEN and VERYFRONT_PROJECT_SLUG in .env.local
  */
 
+// Default URLs
+const DEFAULT_API_URL_LOCAL = "http://api.lvh.me:4000/api";
+const DEFAULT_API_URL_PROD = "https://api.veryfront.com";
+const DEFAULT_CORS_ORIGIN_LOCAL = "http://api.lvh.me:4000";
+
+class ConfigError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ConfigError";
+  }
+}
+
 // Load .env.local manually since config is evaluated before bootstrap
 // In production, .env.local won't exist - that's fine, we use env vars
 let env: Record<string, string> = {};
@@ -31,7 +43,7 @@ const productionMode = Deno.env.get("PRODUCTION_MODE") === "1";
 function getApiBaseUrl(): string {
   return Deno.env.get("VERYFRONT_API_BASE_URL") ||
     env.VERYFRONT_API_BASE_URL ||
-    "http://api.lvh.me:4000/api";
+    DEFAULT_API_URL_LOCAL;
 }
 
 const apiBaseUrl = getApiBaseUrl();
@@ -45,8 +57,7 @@ const releaseId = Deno.env.get("VERYFRONT_RELEASE_ID") || env.VERYFRONT_RELEASE_
 // Skip check during tests or CI
 const isTestEnv = Deno.env.get("DENO_JOBS") !== undefined || Deno.env.get("CI") !== undefined;
 if (!isTestEnv && !proxyMode && (!apiToken || !projectSlug)) {
-  console.error(`
-❌ Missing required environment variables in .env.local:
+  throw new ConfigError(`Missing required environment variables in .env.local:
 
    VERYFRONT_API_TOKEN=${apiToken ? "✓" : "missing"}
    VERYFRONT_PROJECT_SLUG=${projectSlug ? "✓" : "missing"}
@@ -56,9 +67,7 @@ To get started:
   Option B (Direct mode):
     1. Get an API key from veryfront.com settings
     2. Copy the token to .env.local
-    3. Set your project slug in .env.local
-  `);
-  Deno.exit(1);
+    3. Set your project slug in .env.local`);
 }
 
 if (proxyMode) {
@@ -122,7 +131,7 @@ export default useGitHub ? {
   // Security - allow requests from local API (in proxy mode) or production
   security: {
     cors: {
-      origin: proxyMode ? "http://api.lvh.me:4000" : "https://api.veryfront.com",
+      origin: proxyMode ? DEFAULT_CORS_ORIGIN_LOCAL : DEFAULT_API_URL_PROD,
     },
   },
 };
