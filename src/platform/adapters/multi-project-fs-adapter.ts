@@ -160,6 +160,8 @@ export class MultiProjectFSAdapter implements FSAdapter {
 
   dispose(): void {
     this.manager.dispose();
+    this.defaultAdapter?.dispose();
+    this.defaultAdapter = undefined;
     logger.info("[MultiProjectFSAdapter] Disposed");
   }
 
