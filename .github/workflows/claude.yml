@@ -32,8 +32,10 @@ on:
           - dependency-audit
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.event.issue.number || github.run_id }}
-  cancel-in-progress: false
+  # Group by branch name for PR events, issue number for issues, run_id for others
+  # This ensures PR review and auto-fix on same branch don't overlap
+  group: claude-${{ github.event.pull_request.head.ref || github.event.issue.number || github.run_id }}
+  cancel-in-progress: false  # Don't cancel - let running jobs complete (especially auto-fix)
 
 jobs:
   # ===========================================
@@ -207,7 +209,27 @@ jobs:
       pull-requests: write
       id-token: write
     steps:
+      - name: Check if review is still current
+        id: check-current
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Get the commit SHA the review was made on
+          REVIEW_SHA="${{ github.event.review.commit_id }}"
+
+          # Get current HEAD of the PR branch
+          CURRENT_SHA=$(gh pr view ${{ github.event.pull_request.number }} --repo ${{ github.repository }} --json headRefOid --jq '.headRefOid')
+
+          if [ "$REVIEW_SHA" != "$CURRENT_SHA" ]; then
+            echo "Review was on $REVIEW_SHA but branch is now at $CURRENT_SHA. Skipping auto-fix (new commits arrived)."
+            echo "skip=true" >> $GITHUB_OUTPUT
+          else
+            echo "Review is current. Proceeding with auto-fix."
+            echo "skip=false" >> $GITHUB_OUTPUT
+          fi
+
       - name: Check auto-fix attempt count
+        if: steps.check-current.outputs.skip != 'true'
         id: check-attempts
         env:
           GH_TOKEN: ${{ github.token }}
@@ -231,30 +253,33 @@ jobs:
           fi
 
       - name: Load secrets from 1Password
-        if: steps.check-attempts.outputs.skip != 'true'
+        if: steps.check-current.outputs.skip != 'true' && steps.check-attempts.outputs.skip != 'true'
         uses: 1password/load-secrets-action@v2
         env:
           OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
           ANTHROPIC_API_KEY: op://VERYFRONT_CI/ANTHROPIC_PRODUCTION/api_key
 
       - uses: actions/checkout@v4
-        if: steps.check-attempts.outputs.skip != 'true'
+        if: steps.check-current.outputs.skip != 'true' && steps.check-attempts.outputs.skip != 'true'
         with:
           ref: ${{ github.event.pull_request.head.ref }}
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - uses: denoland/setup-deno@v2
-        if: steps.check-attempts.outputs.skip != 'true'
+        if: steps.check-current.outputs.skip != 'true' && steps.check-attempts.outputs.skip != 'true'
         with:
           deno-version: v2.x
 
       - uses: anthropics/claude-code-action@v1
-        if: steps.check-attempts.outputs.skip != 'true'
+        if: steps.check-current.outputs.skip != 'true' && steps.check-attempts.outputs.skip != 'true'
         with:
           anthropic_api_key: ${{ env.ANTHROPIC_API_KEY }}
           prompt: |
             PR #${{ github.event.pull_request.number }} review requested changes (attempt ${{ steps.check-attempts.outputs.attempt }}/3).
+
+            IMPORTANT: Before making any changes, pull latest to avoid conflicts:
+            git pull --rebase origin ${{ github.event.pull_request.head.ref }}
 
             1. Read the review comments: gh pr view ${{ github.event.pull_request.number }} --comments
             2. Read the specific inline review comments: gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/comments --jq '.[] | "\(.path):\(.line) - \(.body)"'
@@ -263,12 +288,15 @@ jobs:
                - deno task lint
                - deno task typecheck
             5. Commit with message: "fix: address PR review feedback (auto-fix attempt ${{ steps.check-attempts.outputs.attempt }})"
-            6. Push the changes
+            6. Push the changes. If push fails due to new commits:
+               - Run: git pull --rebase origin ${{ github.event.pull_request.head.ref }}
+               - Then push again
+               - If still failing, comment on PR and skip
 
             After pushing, remove the auto-fix-in-progress label:
             gh pr edit ${{ github.event.pull_request.number }} --remove-label "auto-fix-in-progress"
 
-            If you cannot fix an issue, comment on the PR explaining why manual intervention is needed.
+            If you cannot fix an issue or push fails repeatedly, comment on the PR explaining why manual intervention is needed.
           allowed_tools: |
             Read,Write,Edit,Bash(deno task lint),Bash(deno task typecheck),Bash(deno task test:unit),Bash(git:*),Bash(gh pr:*),Bash(gh api:*)
 
