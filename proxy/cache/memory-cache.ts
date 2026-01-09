@@ -1,14 +1,11 @@
 /**
- * In-Memory Token Cache
- *
- * Fast in-memory cache with automatic expiration cleanup.
- * Suitable for single-instance deployments or development.
+ * In-Memory Token Cache - single-instance deployments.
  */
 
 import type { CacheStats, MemoryCacheOptions, TokenCache, TokenCacheEntry } from "./types.ts";
 
 const DEFAULT_MAX_SIZE = 1000;
-const DEFAULT_CLEANUP_INTERVAL = 60_000; // 1 minute
+const DEFAULT_CLEANUP_INTERVAL = 60_000;
 
 export class MemoryCache implements TokenCache {
   private cache = new Map<string, TokenCacheEntry>();
@@ -19,86 +16,81 @@ export class MemoryCache implements TokenCache {
 
   constructor(options: MemoryCacheOptions = {}) {
     this.maxSize = options.maxSize ?? DEFAULT_MAX_SIZE;
-
-    // Start cleanup timer
     const interval = options.cleanupInterval ?? DEFAULT_CLEANUP_INTERVAL;
     this.cleanupTimer = setInterval(() => this.cleanup(), interval);
   }
 
-  async get(key: string): Promise<TokenCacheEntry | null> {
+  get(key: string): Promise<TokenCacheEntry | null> {
     const entry = this.cache.get(key);
 
     if (!entry) {
       this.misses++;
-      return null;
+      return Promise.resolve(null);
     }
 
-    // Check if expired
     if (Date.now() >= entry.expiresAt) {
       this.cache.delete(key);
       this.misses++;
-      return null;
+      return Promise.resolve(null);
     }
 
     this.hits++;
-    return entry;
+    return Promise.resolve(entry);
   }
 
-  async set(key: string, entry: TokenCacheEntry): Promise<void> {
-    // Enforce max size (LRU-like: remove oldest entries)
+  set(key: string, entry: TokenCacheEntry): Promise<void> {
     if (this.cache.size >= this.maxSize) {
       const firstKey = this.cache.keys().next().value;
       if (firstKey) {
         this.cache.delete(firstKey);
       }
     }
-
     this.cache.set(key, entry);
+    return Promise.resolve();
   }
 
-  async delete(key: string): Promise<void> {
+  delete(key: string): Promise<void> {
     this.cache.delete(key);
+    return Promise.resolve();
   }
 
-  async clear(): Promise<void> {
+  clear(): Promise<void> {
     this.cache.clear();
     this.hits = 0;
     this.misses = 0;
+    return Promise.resolve();
   }
 
-  async has(key: string): Promise<boolean> {
+  has(key: string): Promise<boolean> {
     const entry = this.cache.get(key);
-    if (!entry) return false;
+    if (!entry) return Promise.resolve(false);
 
-    // Check if expired
     if (Date.now() >= entry.expiresAt) {
       this.cache.delete(key);
-      return false;
+      return Promise.resolve(false);
     }
 
-    return true;
+    return Promise.resolve(true);
   }
 
-  async stats(): Promise<CacheStats> {
-    return {
+  stats(): Promise<CacheStats> {
+    return Promise.resolve({
       hits: this.hits,
       misses: this.misses,
       size: this.cache.size,
       type: "memory",
-    };
+    });
   }
 
-  async close(): Promise<void> {
+  close(): Promise<void> {
     if (this.cleanupTimer) {
       clearInterval(this.cleanupTimer);
       this.cleanupTimer = null;
     }
     this.cache.clear();
+    return Promise.resolve();
   }
 
-  /**
-   * Remove expired entries.
-   */
   private cleanup(): void {
     const now = Date.now();
     let cleaned = 0;
