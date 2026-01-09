@@ -1,4 +1,4 @@
-import { assertEquals, assertThrows } from "https://deno.land/std@0.220.0/assert/mod.ts";
+import { assertEquals, assertRejects, assertThrows } from "https://deno.land/std@0.220.0/assert/mod.ts";
 import { VeryfrontAPIClient } from "./client.ts";
 import { VeryfrontAPIError } from "./types.ts";
 
@@ -103,7 +103,15 @@ Deno.test("VeryfrontAPIClient", async (t) => {
     assertEquals(client.isInitialized(), false);
     client.reset();
     assertEquals(client.isInitialized(), false);
-    // getProjectId throws when not initialized, which is expected behavior
+  });
+
+  await t.step("initialize throws when no slug available", async () => {
+    const client = new VeryfrontAPIClient({ apiBaseUrl: "http://test.api", apiToken: "token" });
+    await assertRejects(
+      () => client.initialize(),
+      VeryfrontAPIError,
+      "No project slug available",
+    );
   });
 
   // Retry config defaults
