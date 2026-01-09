@@ -8,7 +8,7 @@ on:
 
 jobs:
   add-to-project:
-    runs-on: ubuntu-latest
+    runs-on: veryfront-k8s-runners
     steps:
       - name: Load secret from 1Password
         uses: 1password/load-secrets-action@v2

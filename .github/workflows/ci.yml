@@ -20,7 +20,7 @@ jobs:
   # ============================================
 
   format:
-    runs-on: ubuntu-latest
+    runs-on: veryfront-k8s-runners
     steps:
       - uses: actions/checkout@v4
       - uses: denoland/setup-deno@v2
@@ -31,7 +31,7 @@ jobs:
       - run: deno fmt --check
 
   lint:
-    runs-on: ubuntu-latest
+    runs-on: veryfront-k8s-runners
     steps:
       - uses: actions/checkout@v4
       - uses: denoland/setup-deno@v2
@@ -42,7 +42,7 @@ jobs:
       - run: deno task lint
 
   typecheck:
-    runs-on: ubuntu-latest
+    runs-on: veryfront-k8s-runners
     steps:
       - uses: actions/checkout@v4
       - uses: denoland/setup-deno@v2
@@ -57,7 +57,7 @@ jobs:
   # ============================================
 
   unit-tests:
-    runs-on: ubuntu-latest
+    runs-on: veryfront-k8s-runners
     steps:
       - uses: actions/checkout@v4
       - uses: denoland/setup-deno@v2
@@ -76,7 +76,7 @@ jobs:
           command: deno task test:unit --no-lock
 
   integration-tests:
-    runs-on: ubuntu-latest
+    runs-on: veryfront-k8s-runners
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
@@ -102,7 +102,7 @@ jobs:
   build:
     needs: [format, lint, typecheck, unit-tests, integration-tests]
     if: github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
+    runs-on: veryfront-k8s-runners
     permissions:
       contents: read
       packages: write
@@ -149,7 +149,7 @@ jobs:
 
   deploy:
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: veryfront-k8s-runners
     steps:
       - uses: actions/checkout@v4
 
