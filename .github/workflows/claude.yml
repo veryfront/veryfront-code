@@ -139,171 +139,71 @@ jobs:
           claude_args: "--allowedTools 'Bash(gh:*)'"
 
   # ===========================================
-  # PR Review: Automated code review
+  # Ralph Loop: Self-healing PR review
   # ===========================================
-  pr-review:
+  ralph-loop:
     if: |
       github.event_name == 'pull_request' &&
       github.event.action != 'labeled' &&
       github.event.pull_request.draft == false &&
-      !contains(github.event.pull_request.labels.*.name, 'skip-review') &&
-      !contains(github.event.pull_request.labels.*.name, 'auto-fix-in-progress')
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      pull-requests: write
-      id-token: write
-    steps:
-      - name: Load secrets from 1Password
-        uses: 1password/load-secrets-action@v2
-        env:
-          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
-          ANTHROPIC_API_KEY: op://VERYFRONT_CI/ANTHROPIC_PRODUCTION/api_key
-      - uses: actions/checkout@v4
-      - uses: anthropics/claude-code-action@v1
-        with:
-          anthropic_api_key: ${{ env.ANTHROPIC_API_KEY }}
-          track_progress: true
-          prompt: |
-            Review PR #${{ github.event.pull_request.number }}
-
-            Focus on BLOCKING issues only:
-            - Security vulnerabilities (OAuth bypass, proxy exploits, injection)
-            - Bugs that will cause runtime errors or server crashes
-            - Memory leaks in streaming responses
-            - RSC hydration mismatches that break the app
-            - Critical Deno/TypeScript errors
-
-            NON-BLOCKING (comment only, don't request changes):
-            - Style preferences, minor refactoring suggestions
-            - Performance optimizations that aren't critical
-            - SSR patterns that are just preferences
-            - Missing tests (unless for critical paths)
-
-            After reviewing:
-            1. Post inline comments for specific issues using gh pr comment
-            2. Create a file /tmp/review-result.txt with either "APPROVE" or "REQUEST_CHANGES"
-            3. If blocking issues, also create /tmp/review-body.txt with the summary
-
-      - name: Submit PR review
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          if [ -f /tmp/review-result.txt ]; then
-            RESULT=$(cat /tmp/review-result.txt)
-            BODY="LGTM - no blocking issues found."
-            if [ -f /tmp/review-body.txt ]; then
-              BODY=$(cat /tmp/review-body.txt)
-            fi
-
-            if [ "$RESULT" = "REQUEST_CHANGES" ]; then
-              gh pr review ${{ github.event.pull_request.number }} --request-changes --body "$BODY"
-              # Add label to trigger auto-fix loop
-              gh pr edit ${{ github.event.pull_request.number }} --add-label "needs-auto-fix"
-              exit 1
-            else
-              gh pr review ${{ github.event.pull_request.number }} --approve --body "$BODY"
-            fi
-          else
-            echo "No review result file found, approving by default"
-            gh pr review ${{ github.event.pull_request.number }} --approve --body "Review completed - no blocking issues found."
-          fi
-
-  # ===========================================
-  # Review Auto-Fix: Fix issues from PR review (label-triggered)
-  # ===========================================
-  review-auto-fix:
-    if: |
-      github.event_name == 'pull_request' &&
-      github.event.action == 'labeled' &&
-      github.event.label.name == 'needs-auto-fix' &&
-      !contains(github.event.pull_request.labels.*.name, 'skip-auto-fix') &&
-      !contains(github.event.pull_request.labels.*.name, 'auto-fix-failed')
+      !contains(github.event.pull_request.labels.*.name, 'skip-review')
     runs-on: ubuntu-latest
     permissions:
       contents: write
       pull-requests: write
       id-token: write
     steps:
-      - name: Remove trigger label immediately
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh pr edit ${{ github.event.pull_request.number }} --repo ${{ github.repository }} --remove-label "needs-auto-fix"
-
-      - name: Check auto-fix attempt count
-        id: check-attempts
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          PR_NUMBER=${{ github.event.pull_request.number }}
-
-          # Count existing auto-fix-attempt labels using jq
-          ATTEMPT_COUNT=$(gh pr view $PR_NUMBER --repo ${{ github.repository }} --json labels \
-            --jq '[.labels[].name | select(startswith("auto-fix-attempt"))] | length')
-
-          if [ "$ATTEMPT_COUNT" -ge 3 ]; then
-            echo "Max auto-fix attempts (3) reached. Adding auto-fix-failed label."
-            gh label create "auto-fix-failed" --description "Auto-fix loop exhausted" --color "B60205" --force --repo ${{ github.repository }} 2>/dev/null || true
-            gh pr edit $PR_NUMBER --repo ${{ github.repository }} --add-label "auto-fix-failed"
-            gh pr comment $PR_NUMBER --repo ${{ github.repository }} --body "🛑 Auto-fix has failed after 3 attempts. Manual intervention required."
-            echo "skip=true" >> $GITHUB_OUTPUT
-          else
-            NEXT_ATTEMPT=$((ATTEMPT_COUNT + 1))
-            # Create labels if they don't exist
-            gh label create "auto-fix-attempt-$NEXT_ATTEMPT" --description "Auto-fix attempt $NEXT_ATTEMPT" --color "FFA500" --force --repo ${{ github.repository }} 2>/dev/null || true
-            gh label create "auto-fix-in-progress" --description "Auto-fix is running" --color "FBCA04" --force --repo ${{ github.repository }} 2>/dev/null || true
-            gh pr edit $PR_NUMBER --repo ${{ github.repository }} --add-label "auto-fix-attempt-$NEXT_ATTEMPT,auto-fix-in-progress"
-            echo "skip=false" >> $GITHUB_OUTPUT
-            echo "attempt=$NEXT_ATTEMPT" >> $GITHUB_OUTPUT
-          fi
-
       - name: Load secrets from 1Password
-        if: steps.check-attempts.outputs.skip != 'true'
         uses: 1password/load-secrets-action@v2
         env:
           OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
           ANTHROPIC_API_KEY: op://VERYFRONT_CI/ANTHROPIC_PRODUCTION/api_key
-
       - uses: actions/checkout@v4
-        if: steps.check-attempts.outputs.skip != 'true'
         with:
           ref: ${{ github.event.pull_request.head.ref }}
           fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
-
       - uses: denoland/setup-deno@v2
-        if: steps.check-attempts.outputs.skip != 'true'
         with:
           deno-version: v2.x
-
       - uses: anthropics/claude-code-action@v1
-        if: steps.check-attempts.outputs.skip != 'true'
         with:
           anthropic_api_key: ${{ env.ANTHROPIC_API_KEY }}
           prompt: |
-            PR #${{ github.event.pull_request.number }} review requested changes (attempt ${{ steps.check-attempts.outputs.attempt }}/3).
+            Review PR #${{ github.event.pull_request.number }} in a self-healing loop.
 
-            IMPORTANT: Before making any changes, pull latest to avoid conflicts:
-            git pull --rebase origin ${{ github.event.pull_request.head.ref }}
+            ## Loop Logic
 
-            1. Read the review comments: gh pr view ${{ github.event.pull_request.number }} --comments
-            2. Read the specific inline review comments: gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/comments --jq '.[] | "\(.path):\(.line) - \(.body)"'
-            3. Fix ALL blocking issues mentioned in the review
-            4. Run lint and typecheck to ensure fixes don't break anything:
-               - deno task lint
-               - deno task typecheck
-            5. Commit with message: "fix: address PR review feedback (auto-fix attempt ${{ steps.check-attempts.outputs.attempt }})"
-            6. Push the changes. If push fails due to new commits:
-               - Run: git pull --rebase origin ${{ github.event.pull_request.head.ref }}
-               - Then push again
-               - If still failing, comment on PR and skip
+            attempts = 0
+            while attempts < 3:
+                1. Review the current code for BLOCKING issues:
+                   - Security vulnerabilities (OAuth bypass, proxy exploits, injection)
+                   - Bugs that will cause runtime errors or server crashes
+                   - Memory leaks in streaming responses
+                   - RSC hydration mismatches that break the app
+                   - Critical Deno/TypeScript errors
 
-            After pushing, remove the auto-fix-in-progress label:
-            gh pr edit ${{ github.event.pull_request.number }} --remove-label "auto-fix-in-progress"
+                2. If blocking issues found:
+                   - Fix them
+                   - Run deno task lint && deno task typecheck to verify
+                   - git add -A && git commit -m "fix: address review feedback"
+                   - git push
+                   - attempts += 1
+                   - Loop back to step 1 (re-review your own fixes)
 
-            If you cannot fix an issue or push fails repeatedly, comment on the PR explaining why manual intervention is needed.
-          claude_args: "--allowedTools 'Read,Write,Edit,Bash(deno task lint),Bash(deno task typecheck),Bash(deno task test:unit),Bash(git:*),Bash(gh:*)'"
+                3. If no blocking issues:
+                   - gh pr review ${{ github.event.pull_request.number }} --approve --body "LGTM - no blocking issues"
+                   - Exit successfully
+
+            # If we get here, we've exhausted attempts
+            gh pr review ${{ github.event.pull_request.number }} --request-changes --body "Could not auto-fix all blocking issues after 3 attempts. Manual intervention required."
+            Exit with failure
+
+            ## Important
+
+            - Only fix BLOCKING issues, ignore style preferences
+            - Re-review after each fix to catch regressions
+            - Be persistent but know when to stop
+            - If you can't fix something, explain why in the review
 
   # ===========================================
   # Weekly Maintenance
