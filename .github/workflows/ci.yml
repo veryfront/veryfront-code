@@ -159,9 +159,6 @@ jobs:
           export-env: true
         env:
           OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
-          # Tailscale
-          TAILSCALE_OAUTH_CLIENT_ID: op://VERYFRONT_CI/TAILSCALE_OAUTH/client_id
-          TAILSCALE_OAUTH_CLIENT_SECRET: op://VERYFRONT_CI/TAILSCALE_OAUTH/client_secret
           # Proxy OAuth
           OAUTH_CLIENT_ID: op://VERYFRONT_CI/PROXY_OAUTH_LIVE_PRODUCTION/client_id
           OAUTH_CLIENT_SECRET: op://VERYFRONT_CI/PROXY_OAUTH_LIVE_PRODUCTION/client_secret
@@ -172,22 +169,7 @@ jobs:
           # Observability
           OTEL_EXPORTER_OTLP_HEADERS: op://VERYFRONT_CI/GRAFANA/otlp_auth
 
-      - uses: tailscale/github-action@v3
-        with:
-          oauth-client-id: ${{ env.TAILSCALE_OAUTH_CLIENT_ID }}
-          oauth-secret: ${{ env.TAILSCALE_OAUTH_CLIENT_SECRET }}
-          tags: tag:ci
-
-      - uses: azure/setup-kubectl@v3
-
-      - name: Setup kubeconfig
-        run: |
-          mkdir -p ~/.kube
-          op read "op://VERYFRONT_CI/KUBECONFIG/credential" > ~/.kube/config
-          chmod 600 ~/.kube/config
-        env:
-          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
-
+      - uses: azure/setup-kubectl@v4
       - uses: azure/setup-helm@v4
 
       - name: Create/Update Kubernetes Secrets
