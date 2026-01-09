@@ -70,6 +70,59 @@ jobs:
           anthropic_api_key: ${{ env.ANTHROPIC_API_KEY }}
 
   # ===========================================
+  # Interactive: @ralph on issues (creates PR, then ralph-loop reviews)
+  # ===========================================
+  ralph-issue:
+    if: |
+      github.event_name == 'issue_comment' &&
+      !github.event.issue.pull_request &&
+      contains(github.event.comment.body, '@ralph')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      id-token: write
+    steps:
+      - name: Load secrets from 1Password
+        uses: 1password/load-secrets-action@v2
+        env:
+          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+          ANTHROPIC_API_KEY: op://VERYFRONT_CI/ANTHROPIC_PRODUCTION/api_key
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ env.ANTHROPIC_API_KEY }}
+          claude_args: "--allowedTools 'Bash,Read,Write,Edit,Glob,Grep,Bash(git:*),Bash(gh:*),Bash(deno task lint),Bash(deno task typecheck)'"
+          prompt: |
+            @ralph was mentioned on issue #${{ github.event.issue.number }}.
+
+            ## Task
+
+            1. Read the issue: gh issue view ${{ github.event.issue.number }}
+            2. Understand what needs to be fixed or implemented
+            3. Create a branch: git checkout -b fix/issue-${{ github.event.issue.number }}
+            4. Implement the fix or feature
+            5. Run deno task lint && deno task typecheck to verify
+            6. Commit with message referencing the issue: "fix: <description> (closes #${{ github.event.issue.number }})"
+            7. Push the branch: git push -u origin fix/issue-${{ github.event.issue.number }}
+            8. Create a PR: gh pr create --title "<title>" --body "Fixes #${{ github.event.issue.number }}" --head fix/issue-${{ github.event.issue.number }}
+
+            The PR will automatically trigger ralph-loop for self-healing review.
+
+            ## Important
+
+            - Focus on the issue description and any comments
+            - Keep changes minimal and focused
+            - If the issue is unclear, comment asking for clarification instead of guessing
+            - If the issue requires changes beyond your capabilities, explain why in a comment
+
+  # ===========================================
   # Interactive: @ralph mentions (on-demand ralph-loop)
   # ===========================================
   ralph-mention:
