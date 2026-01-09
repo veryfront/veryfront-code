@@ -70,7 +70,12 @@ export class GitHubFSAdapter implements FSAdapter {
       this.statOps,
       this.projectDir,
     );
-    this.dirOps = new GitHubDirectoryOperations(this.config, this.cache, this.statOps, this.projectDir);
+    this.dirOps = new GitHubDirectoryOperations(
+      this.config,
+      this.cache,
+      this.statOps,
+      this.projectDir,
+    );
 
     logger.info(`${LOG_PREFIX} Created adapter`, {
       repo: this.client.repoId,

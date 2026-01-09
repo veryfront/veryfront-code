@@ -171,7 +171,7 @@ export class StaticHandler extends BaseHandler {
     this.logDebug(`Trying static file candidates`, {
       reqPath,
       candidateCount: candidates.length,
-      candidates: candidates.map(c => ({ source: c.source, path: c.abs })),
+      candidates: candidates.map((c) => ({ source: c.source, path: c.abs })),
     }, ctx);
 
     for (const candidate of candidates) {
