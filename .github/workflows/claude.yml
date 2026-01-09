@@ -67,6 +67,88 @@ jobs:
           anthropic_api_key: ${{ env.ANTHROPIC_API_KEY }}
 
   # ===========================================
+  # Interactive: @ralph mentions (on-demand ralph-loop)
+  # ===========================================
+  ralph-mention:
+    if: |
+      (github.event_name == 'issue_comment' &&
+       github.event.issue.pull_request &&
+       contains(github.event.comment.body, '@ralph')) ||
+      (github.event_name == 'pull_request_review_comment' &&
+       contains(github.event.comment.body, '@ralph'))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      id-token: write
+    steps:
+      - name: Load secrets from 1Password
+        uses: 1password/load-secrets-action@v2
+        env:
+          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+          ANTHROPIC_API_KEY: op://VERYFRONT_CI/ANTHROPIC_PRODUCTION/api_key
+      - name: Get PR info
+        id: pr
+        run: |
+          if [ "${{ github.event_name }}" == "issue_comment" ]; then
+            echo "number=${{ github.event.issue.number }}" >> $GITHUB_OUTPUT
+            PR_DATA=$(gh pr view ${{ github.event.issue.number }} --json headRefName)
+            echo "ref=$(echo $PR_DATA | jq -r '.headRefName')" >> $GITHUB_OUTPUT
+          else
+            echo "number=${{ github.event.pull_request.number }}" >> $GITHUB_OUTPUT
+            echo "ref=${{ github.event.pull_request.head.ref }}" >> $GITHUB_OUTPUT
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.pr.outputs.ref }}
+          fetch-depth: 0
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ env.ANTHROPIC_API_KEY }}
+          claude_args: "--allowedTools 'Bash,Read,Write,Edit,Glob,Grep,Bash(git:*),Bash(gh:*),Bash(deno task lint),Bash(deno task typecheck)'"
+          prompt: |
+            @ralph was mentioned on PR #${{ steps.pr.outputs.number }}. Run the self-healing review loop.
+
+            ## Loop Logic
+
+            attempts = 0
+            while attempts < 3:
+                1. Review the current code for BLOCKING issues:
+                   - Security vulnerabilities (OAuth bypass, proxy exploits, injection)
+                   - Bugs that will cause runtime errors or server crashes
+                   - Memory leaks in streaming responses
+                   - RSC hydration mismatches that break the app
+                   - Critical Deno/TypeScript errors
+
+                2. If blocking issues found:
+                   - Fix them
+                   - Run deno task lint && deno task typecheck to verify
+                   - git add -A && git commit -m "fix: address review feedback"
+                   - git push
+                   - attempts += 1
+                   - Loop back to step 1 (re-review your own fixes)
+
+                3. If no blocking issues:
+                   - gh pr review ${{ steps.pr.outputs.number }} --approve --body "LGTM - no blocking issues"
+                   - Exit successfully
+
+            # If we get here, we've exhausted attempts
+            gh pr review ${{ steps.pr.outputs.number }} --request-changes --body "Could not auto-fix all blocking issues after 3 attempts. Manual intervention required."
+            Exit with failure
+
+            ## Important
+
+            - Only fix BLOCKING issues, ignore style preferences
+            - Re-review after each fix to catch regressions
+            - Be persistent but know when to stop
+            - If you can't fix something, explain why in the review
+
+  # ===========================================
   # CI Auto-Fix: Fix lint/typecheck/test failures
   # ===========================================
   ci-auto-fix:
