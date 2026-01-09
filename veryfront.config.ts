@@ -39,18 +39,15 @@ const proxyMode = Deno.env.get("PROXY_MODE") === "1";
 // In production deployment, this should be true to fetch from releases
 const productionMode = Deno.env.get("PRODUCTION_MODE") === "1";
 
-// Get REST API base URL
-function getApiBaseUrl(): string {
-  return Deno.env.get("VERYFRONT_API_BASE_URL") ||
-    env.VERYFRONT_API_BASE_URL ||
-    DEFAULT_API_URL_LOCAL;
-}
+// Get env var from Deno.env or .env.local
+const getEnv = (key: string, fallback = "") =>
+  Deno.env.get(key) || env[key] || fallback;
 
-const apiBaseUrl = getApiBaseUrl();
-const apiToken = Deno.env.get("VERYFRONT_API_TOKEN") || env.VERYFRONT_API_TOKEN || "";
-const projectSlug = Deno.env.get("VERYFRONT_PROJECT_SLUG") || env.VERYFRONT_PROJECT_SLUG || "";
-const projectId = Deno.env.get("VERYFRONT_PROJECT_ID") || env.VERYFRONT_PROJECT_ID || "";
-const releaseId = Deno.env.get("VERYFRONT_RELEASE_ID") || env.VERYFRONT_RELEASE_ID || "";
+const apiBaseUrl = getEnv("VERYFRONT_API_BASE_URL", DEFAULT_API_URL_LOCAL);
+const apiToken = getEnv("VERYFRONT_API_TOKEN");
+const projectSlug = getEnv("VERYFRONT_PROJECT_SLUG");
+const projectId = getEnv("VERYFRONT_PROJECT_ID");
+const releaseId = getEnv("VERYFRONT_RELEASE_ID");
 
 // In proxy mode, token comes from x-token header per-request
 // In direct mode, require token and slug from env
