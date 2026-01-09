@@ -11,10 +11,12 @@ on:
 
   # Automated: CI failures, PR reviews, issue triage
   workflow_run:
-    workflows: ["CI/CD"]
+    workflows: ["CI/CD", "Claude Code"]
     types: [completed]
   pull_request:
     types: [opened, synchronize, ready_for_review]
+  pull_request_review:
+    types: [submitted]
 
   # Scheduled maintenance
   schedule:
@@ -145,7 +147,8 @@ jobs:
     if: |
       github.event_name == 'pull_request' &&
       github.event.pull_request.draft == false &&
-      !contains(github.event.pull_request.labels.*.name, 'skip-review')
+      !contains(github.event.pull_request.labels.*.name, 'skip-review') &&
+      !contains(github.event.pull_request.labels.*.name, 'auto-fix-in-progress')
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -187,6 +190,87 @@ jobs:
                - Run: gh pr review ${{ github.event.pull_request.number }} --approve --body "LGTM - no blocking issues found."
           allowed_tools: |
             mcp__github_file_ops__create_or_update_file,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr review:*),Bash(exit:*)
+
+  # ===========================================
+  # Review Auto-Fix: Fix issues from PR review
+  # ===========================================
+  review-auto-fix:
+    if: |
+      github.event_name == 'pull_request_review' &&
+      github.event.review.state == 'changes_requested' &&
+      contains(github.event.review.body, 'blocking issues') &&
+      !contains(github.event.pull_request.labels.*.name, 'skip-auto-fix') &&
+      !contains(github.event.pull_request.labels.*.name, 'auto-fix-failed')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      id-token: write
+    steps:
+      - name: Check auto-fix attempt count
+        id: check-attempts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          PR_NUMBER=${{ github.event.pull_request.number }}
+          LABELS=$(gh pr view $PR_NUMBER --repo ${{ github.repository }} --json labels --jq '.labels[].name')
+
+          # Count existing auto-fix-attempt labels
+          ATTEMPT_COUNT=$(echo "$LABELS" | grep -c "auto-fix-attempt" || echo "0")
+
+          if [ "$ATTEMPT_COUNT" -ge 3 ]; then
+            echo "Max auto-fix attempts (3) reached. Adding auto-fix-failed label."
+            gh pr edit $PR_NUMBER --repo ${{ github.repository }} --add-label "auto-fix-failed"
+            gh pr comment $PR_NUMBER --repo ${{ github.repository }} --body "🛑 Auto-fix has failed after 3 attempts. Manual intervention required."
+            echo "skip=true" >> $GITHUB_OUTPUT
+          else
+            NEXT_ATTEMPT=$((ATTEMPT_COUNT + 1))
+            gh pr edit $PR_NUMBER --repo ${{ github.repository }} --add-label "auto-fix-attempt-$NEXT_ATTEMPT,auto-fix-in-progress"
+            echo "skip=false" >> $GITHUB_OUTPUT
+            echo "attempt=$NEXT_ATTEMPT" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Load secrets from 1Password
+        if: steps.check-attempts.outputs.skip != 'true'
+        uses: 1password/load-secrets-action@v2
+        env:
+          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+          ANTHROPIC_API_KEY: op://VERYFRONT_CI/ANTHROPIC_PRODUCTION/api_key
+
+      - uses: actions/checkout@v4
+        if: steps.check-attempts.outputs.skip != 'true'
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: denoland/setup-deno@v2
+        if: steps.check-attempts.outputs.skip != 'true'
+        with:
+          deno-version: v2.x
+
+      - uses: anthropics/claude-code-action@v1
+        if: steps.check-attempts.outputs.skip != 'true'
+        with:
+          anthropic_api_key: ${{ env.ANTHROPIC_API_KEY }}
+          prompt: |
+            PR #${{ github.event.pull_request.number }} review requested changes (attempt ${{ steps.check-attempts.outputs.attempt }}/3).
+
+            1. Read the review comments: gh pr view ${{ github.event.pull_request.number }} --comments
+            2. Read the specific inline review comments: gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/comments --jq '.[] | "\(.path):\(.line) - \(.body)"'
+            3. Fix ALL blocking issues mentioned in the review
+            4. Run lint and typecheck to ensure fixes don't break anything:
+               - deno task lint
+               - deno task typecheck
+            5. Commit with message: "fix: address PR review feedback (auto-fix attempt ${{ steps.check-attempts.outputs.attempt }})"
+            6. Push the changes
+
+            After pushing, remove the auto-fix-in-progress label:
+            gh pr edit ${{ github.event.pull_request.number }} --remove-label "auto-fix-in-progress"
+
+            If you cannot fix an issue, comment on the PR explaining why manual intervention is needed.
+          allowed_tools: |
+            Read,Write,Edit,Bash(deno task lint),Bash(deno task typecheck),Bash(deno task test:unit),Bash(git:*),Bash(gh pr:*),Bash(gh api:*)
 
   # ===========================================
   # Weekly Maintenance
