@@ -40,12 +40,7 @@ function randomString(length: number): string {
  */
 export function generateId(prefix?: string): string {
   const id = randomString(16);
-
-  if (prefix) {
-    return `${prefix}-${id}`;
-  }
-
-  return id;
+  return prefix ? `${prefix}-${id}` : id;
 }
 
 /**
@@ -69,9 +64,6 @@ export function createIdGenerator(options: {
 
   return () => {
     const id = randomString(size);
-    if (prefix) {
-      return `${prefix}${separator}${id}`;
-    }
-    return id;
+    return prefix ? `${prefix}${separator}${id}` : id;
   };
 }

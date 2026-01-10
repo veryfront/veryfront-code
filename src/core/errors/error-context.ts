@@ -72,17 +72,12 @@ function logError(
 
   const logMessage = `[${context.operation}] Silent failure: ${message}`;
 
-  switch (logLevel) {
-    case "error":
-      serverLogger.error(logMessage, logData);
-      break;
-    case "warn":
-      serverLogger.warn(logMessage, logData);
-      break;
-    case "debug":
-    default:
-      serverLogger.debug(logMessage, logData);
-      break;
+  if (logLevel === "error") {
+    serverLogger.error(logMessage, logData);
+  } else if (logLevel === "warn") {
+    serverLogger.warn(logMessage, logData);
+  } else {
+    serverLogger.debug(logMessage, logData);
   }
 }
 
