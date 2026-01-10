@@ -1,0 +1,7 @@
+# Base image with cached Deno dependencies
+FROM denoland/deno:2.6.1
+WORKDIR /app
+COPY deno.json deno.lock ./
+COPY src/ ./src/
+COPY lib/ ./lib/
+RUN deno cache src/server/production-server.ts
