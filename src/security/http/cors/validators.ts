@@ -1,20 +1,10 @@
-/**
- * CORS Validators
- * Origin validation logic for CORS handling
- *
- * @module core/cors/validators
- */
-
 import type { CORSConfig, CORSValidationResult } from "./types.ts";
 import { serverLogger } from "@veryfront/utils/logger/logger.ts";
 import { recordCorsRejection } from "@veryfront/observability";
 
 const NO_CORS_RESULT: CORSValidationResult = { allowedOrigin: null, allowCredentials: false };
 
-/**
- * Handle early validation checks common to sync and async paths.
- * Returns a result if validation is complete, or null to continue.
- */
+/** Early validation checks common to sync and async paths */
 function validateEarly(
   requestOrigin: string | null,
   config?: boolean | CORSConfig,
@@ -55,9 +45,6 @@ function validateEarly(
   return null;
 }
 
-/**
- * Validate array or string origin configuration.
- */
 function validateStaticOrigin(
   requestOrigin: string,
   corsConfig: CORSConfig,
@@ -101,9 +88,6 @@ function validateStaticOrigin(
   };
 }
 
-/**
- * Process function validation result into CORSValidationResult.
- */
 function processFunctionResult(
   result: string | boolean,
   requestOrigin: string,
@@ -120,14 +104,7 @@ function processFunctionResult(
   };
 }
 
-/**
- * Validate origin against CORS configuration
- * Returns the allowed origin or null if not allowed
- *
- * @param requestOrigin - The origin from the request header
- * @param config - CORS configuration
- * @returns Validation result with allowed origin and credentials
- */
+/** Validate origin against CORS configuration */
 export async function validateOrigin(
   requestOrigin: string | null,
   config?: boolean | CORSConfig,
@@ -150,11 +127,7 @@ export async function validateOrigin(
   return validateStaticOrigin(requestOrigin!, corsConfig);
 }
 
-/**
- * Synchronous origin validation helper for environments that require
- * immediate header evaluation (e.g., fluent response builders).
- * Async origin validators are NOT supported here.
- */
+/** Synchronous origin validation (async validators not supported) */
 export function validateOriginSync(
   requestOrigin: string | null,
   config?: boolean | CORSConfig,
@@ -187,13 +160,7 @@ export function validateOriginSync(
   return validateStaticOrigin(requestOrigin!, corsConfig);
 }
 
-/**
- * Validate CORS configuration for security issues
- * Prevents dangerous combinations
- *
- * @param config - CORS configuration to validate
- * @returns Validation result with error if invalid
- */
+/** Validate CORS configuration for security issues */
 export function validateCORSConfig(config?: boolean | CORSConfig): {
   valid: boolean;
   error?: string;

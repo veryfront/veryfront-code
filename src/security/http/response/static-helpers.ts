@@ -1,16 +1,7 @@
-/**
- * ResponseBuilder - Static Helper Methods
- * Static utility methods for common response patterns
- */
-
 import { CONTENT_TYPES } from "./constants.ts";
 import type { CacheStrategy, CORSConfig, SecurityConfig } from "./types.ts";
 import { createError, toError } from "../../../core/errors/veryfront-error.ts";
 
-/**
- * Type definition for ResponseBuilder constructor
- * Using a minimal interface to avoid circular dependency
- */
 interface ResponseBuilderConstructor {
   new (config?: {
     securityConfig?: SecurityConfig | null;
@@ -20,9 +11,6 @@ interface ResponseBuilderConstructor {
   }): ResponseBuilderInstance;
 }
 
-/**
- * Type definition for ResponseBuilder instance
- */
 interface ResponseBuilderInstance {
   headers: Headers;
   status: number;
@@ -38,20 +26,13 @@ interface ResponseBuilderInstance {
   build(body?: BodyInit | null, status?: number): Response;
 }
 
-// Forward declaration - will be set by builder.ts to avoid circular dependency
 let ResponseBuilderClass: ResponseBuilderConstructor | null = null;
 
-/**
- * Set the ResponseBuilder class reference
- * This is called by builder.ts to avoid circular dependencies
- */
+/** Set ResponseBuilder class reference (called by builder.ts to avoid circular deps) */
 export function setResponseBuilderClass(builderClass: ResponseBuilderConstructor): void {
   ResponseBuilderClass = builderClass;
 }
 
-/**
- * Create and configure a ResponseBuilder with common options.
- */
 function createBuilder(
   req: Request,
   config?: {
@@ -81,9 +62,6 @@ function createBuilder(
   return builder;
 }
 
-/**
- * Static helper for error responses
- */
 export function error(
   status: number,
   message: string,
@@ -106,9 +84,6 @@ export function error(
   return builder.text(message, status);
 }
 
-/**
- * Static helper for JSON responses
- */
 export function json(
   data: unknown,
   req: Request,
@@ -123,9 +98,6 @@ export function json(
   return createBuilder(req, config).json(data, config?.status);
 }
 
-/**
- * Static helper for HTML responses
- */
 export function html(
   body: string,
   req: Request,
@@ -140,9 +112,6 @@ export function html(
   return createBuilder(req, config).html(body, config?.status);
 }
 
-/**
- * Static helper for OPTIONS preflight responses
- */
 export function preflight(
   req: Request,
   config?: {
@@ -168,9 +137,6 @@ export function preflight(
   return builder.build(null, 204);
 }
 
-/**
- * Static helper for streaming responses
- */
 export function stream(
   streamData: ReadableStream,
   req: Request,

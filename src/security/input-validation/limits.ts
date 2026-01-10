@@ -1,26 +1,7 @@
-/**
- * Request Limit Validators
- * Functions for validating request size limits
- */
-
 import { ValidationError } from "./errors.ts";
 import { DEFAULT_LIMITS, type RequestLimits } from "./types.ts";
 
-/**
- * Validate request size limits (URL, headers, body)
- *
- * @param request - Request object to validate
- * @param limits - Optional custom size limits
- * @throws ValidationError if any limit is exceeded
- *
- * @example
- * ```ts
- * validateRequestLimits(request, {
- *   maxUrlLength: 1024,
- *   maxBodySize: 512 * 1024
- * })
- * ```
- */
+/** Validate request size limits (URL, headers, body) */
 export function validateRequestLimits(
   request: Request,
   limits: RequestLimits = {},
@@ -32,13 +13,6 @@ export function validateRequestLimits(
   validateHeaderSize(request, config.maxHeaderSize);
 }
 
-/**
- * Validate URL length
- *
- * @param url - URL to validate
- * @param maxLength - Maximum allowed URL length
- * @throws ValidationError if URL is too long
- */
 function validateUrlLength(url: string, maxLength: number): void {
   if (url.length > maxLength) {
     throw new ValidationError("URL too long", {
@@ -48,13 +22,6 @@ function validateUrlLength(url: string, maxLength: number): void {
   }
 }
 
-/**
- * Validate Content-Length header
- *
- * @param request - Request object with headers
- * @param maxSize - Maximum allowed body size
- * @throws ValidationError if Content-Length is invalid or too large
- */
 function validateContentLength(request: Request, maxSize: number): void {
   const contentLength = request.headers.get("content-length");
   if (!contentLength) return;
@@ -72,13 +39,6 @@ function validateContentLength(request: Request, maxSize: number): void {
   }
 }
 
-/**
- * Validate total header size (approximate)
- *
- * @param request - Request object with headers
- * @param maxSize - Maximum allowed header size
- * @throws ValidationError if headers are too large
- */
 function validateHeaderSize(request: Request, maxSize: number): void {
   let headerSize = 0;
 
@@ -94,19 +54,7 @@ function validateHeaderSize(request: Request, maxSize: number): void {
   }
 }
 
-/**
- * Read request body with size limit enforcement
- *
- * @param request - Request object with body stream
- * @param maxSize - Maximum allowed body size
- * @returns Body content as string
- * @throws ValidationError if body exceeds size limit
- *
- * @example
- * ```ts
- * const body = await readBodyWithLimit(request, 1024 * 1024) // 1MB limit
- * ```
- */
+/** Read request body with size limit enforcement */
 export async function readBodyWithLimit(
   request: Request,
   maxSize: number = DEFAULT_LIMITS.maxBodySize,
