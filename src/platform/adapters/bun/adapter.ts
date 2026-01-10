@@ -9,6 +9,7 @@ import { BunFileSystemAdapter } from "./filesystem-adapter.ts";
 import { BunEnvironmentAdapter } from "./environment-adapter.ts";
 import { BunServerAdapter } from "./websocket-adapter.ts";
 import { createBunServer } from "./http-server.ts";
+import { NodeBasedShellAdapter } from "../shared/node-based-shell-adapter.ts";
 
 export class BunAdapter implements RuntimeAdapter {
   readonly id = "bun" as const;
@@ -19,6 +20,7 @@ export class BunAdapter implements RuntimeAdapter {
   fs = new BunFileSystemAdapter();
   env = new BunEnvironmentAdapter();
   server = new BunServerAdapter();
+  shell = new NodeBasedShellAdapter();
 
   readonly capabilities: RuntimeCapabilities = {
     typescript: true,

@@ -3,7 +3,7 @@ import { logger } from "@veryfront/utils";
 import type { DirectoryEntry, FSAdapter, FSAdapterConfig } from "./veryfront-fs-adapter/types.ts";
 import type { FileInfo } from "./base.ts";
 import { ProxyFSAdapterManager } from "./proxy-fs-adapter-manager.ts";
-import type { VeryfrontFSAdapter } from "./veryfront-fs-adapter.ts";
+import type { VeryfrontFSAdapter } from "./veryfront-fs-adapter/index.ts";
 
 interface RequestContext {
   projectSlug: string;

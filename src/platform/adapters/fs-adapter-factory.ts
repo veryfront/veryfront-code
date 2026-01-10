@@ -28,7 +28,7 @@ export async function createFSAdapter(config: FSAdapterConfig): Promise<FSAdapte
     }
 
     // Single-project mode (direct API access)
-    const { VeryfrontFSAdapter } = await import("./veryfront-fs-adapter.ts");
+    const { VeryfrontFSAdapter } = await import("./veryfront-fs-adapter/index.ts");
     const adapter = new VeryfrontFSAdapter(config);
     await adapter.initialize?.();
     return adapter;
