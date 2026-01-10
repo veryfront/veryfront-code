@@ -78,7 +78,11 @@ export function createOAuthCallbackHandler(
       return Response.redirect(errorUrl.toString());
     }
 
-    async function handleError(errorCode: string, logMessage?: string, logData?: unknown): Promise<Response> {
+    async function handleError(
+      errorCode: string,
+      logMessage?: string,
+      logData?: unknown,
+    ): Promise<Response> {
       if (logMessage) {
         console.error(logMessage, logData);
       }

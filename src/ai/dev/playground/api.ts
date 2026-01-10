@@ -6,6 +6,17 @@ import { PLAYGROUND_HTML } from "./client.ts";
 import { toolRegistry } from "../../utils/tool.ts";
 import { agentRegistry } from "../../agent/composition.ts";
 
+function jsonResponse(data: unknown, status = 200): Response {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+function errorResponse(error: unknown, status = 500): Response {
+  return jsonResponse({ error: error instanceof Error ? error.message : String(error) }, status);
+}
+
 export async function handlePlaygroundRequest(req: Request): Promise<Response> {
   const url = new URL(req.url);
 
@@ -19,80 +30,43 @@ export async function handlePlaygroundRequest(req: Request): Promise<Response> {
   // API Endpoints
   if (url.pathname === "/_vf/playground/api/registry") {
     const tools = toolRegistry.getToolsForProvider();
-
-    // Map registered agents to simple objects
     const agents = Array.from(agentRegistry.getAll().values()).map((agent) => ({
       id: agent.id,
-      description: (agent.config as any).description || `Model: ${agent.config.model}`,
+      description: (agent.config as Record<string, unknown>).description ?? `Model: ${agent.config.model}`,
       model: agent.config.model,
     }));
 
-    return new Response(
-      JSON.stringify({
-        agents,
-        tools,
-      }),
-      {
-        headers: { "Content-Type": "application/json" },
-      },
-    );
+    return jsonResponse({ agents, tools });
   }
 
   if (url.pathname === "/_vf/playground/api/tool" && req.method === "POST") {
     try {
-      const body = await req.json();
-      const { toolName, args } = body;
-
+      const { toolName, args } = await req.json();
       const tool = toolRegistry.get(toolName);
-      if (!tool) {
-        return new Response(JSON.stringify({ error: "Tool not found" }), { status: 404 });
-      }
+      if (!tool) return jsonResponse({ error: "Tool not found" }, 404);
 
       const result = await tool.execute(args);
-      return new Response(JSON.stringify(result), {
-        headers: { "Content-Type": "application/json" },
-      });
+      return jsonResponse(result);
     } catch (error) {
-      return new Response(
-        JSON.stringify({
-          error: error instanceof Error ? error.message : String(error),
-        }),
-        { status: 500 },
-      );
+      return errorResponse(error);
     }
   }
 
   // Chat endpoint
   if (url.pathname === "/_vf/playground/api/chat" && req.method === "POST") {
     try {
-      const body = await req.json();
-      const { agentId, message } = body;
-
+      const { agentId, message } = await req.json();
       const agent = agentRegistry.get(agentId);
-      if (!agent) {
-        return new Response(JSON.stringify({ error: "Agent not found" }), { status: 404 });
-      }
+      if (!agent) return jsonResponse({ error: "Agent not found" }, 404);
 
-      // Execute agent
       const result = await agent.generate({ input: message });
-
-      return new Response(
-        JSON.stringify({
-          response: result.text,
-          toolCalls: result.toolCalls,
-          usage: result.usage,
-        }),
-        {
-          headers: { "Content-Type": "application/json" },
-        },
-      );
+      return jsonResponse({
+        response: result.text,
+        toolCalls: result.toolCalls,
+        usage: result.usage,
+      });
     } catch (error) {
-      return new Response(
-        JSON.stringify({
-          error: error instanceof Error ? error.message : String(error),
-        }),
-        { status: 500 },
-      );
+      return errorResponse(error);
     }
   }
 

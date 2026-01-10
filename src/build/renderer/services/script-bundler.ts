@@ -95,7 +95,6 @@ export async function bundleScript(
   }
 }
 
-
 function createResolvePlugin(fileCache: Map<string, string>, projectDir: string): esbuild.Plugin {
   return {
     name: "veryfront-resolve",

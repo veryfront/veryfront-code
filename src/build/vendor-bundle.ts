@@ -98,7 +98,9 @@ export async function buildVendorBundle(
 
   // Build export map
   const exports = Object.fromEntries(
-    Object.keys({ ...reactImports, ...thirdPartyImports }).map((key) => [key, sanitizeExportName(key)]),
+    Object.keys({ ...reactImports, ...thirdPartyImports }).map((
+      key,
+    ) => [key, sanitizeExportName(key)]),
   );
 
   return { code, hash, exports };

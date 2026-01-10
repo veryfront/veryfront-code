@@ -120,7 +120,8 @@ export class OAuthProvider {
     const mapping = this.config.tokenResponseMapping ?? {};
     const tokens: OAuthTokens = {
       accessToken: data[mapping.accessToken ?? "access_token"] as string,
-      refreshToken: (data[mapping.refreshToken ?? "refresh_token"] as string) ?? fallbackRefreshToken,
+      refreshToken: (data[mapping.refreshToken ?? "refresh_token"] as string) ??
+        fallbackRefreshToken,
       tokenType: data[mapping.tokenType ?? "token_type"] as string,
       scope: data[mapping.scope ?? "scope"] as string,
       idToken: data.id_token as string | undefined,
@@ -282,28 +283,20 @@ export class OAuthService extends OAuthProvider {
   }
 
   async getAccessToken(): Promise<string | null> {
-    if (!this.tokenStore) {
-      return null;
-    }
-
-    const tokens = await this.tokenStore.getTokens(this.serviceId);
-    if (!tokens) {
-      return null;
-    }
+    const tokens = await this.tokenStore?.getTokens(this.serviceId);
+    if (!tokens) return null;
 
     // Check if token is expired (with 5 min buffer)
-    if (tokens.expiresAt && Date.now() > tokens.expiresAt - 300000) {
-      if (tokens.refreshToken) {
-        const result = await this.refreshTokens(tokens.refreshToken);
-        if (result.success && result.tokens) {
-          await this.tokenStore.setTokens(this.serviceId, result.tokens);
-          return result.tokens.accessToken;
-        }
-      }
-      return null;
-    }
+    const isExpired = tokens.expiresAt && Date.now() > tokens.expiresAt - 300000;
+    if (!isExpired) return tokens.accessToken;
 
-    return tokens.accessToken;
+    if (!tokens.refreshToken) return null;
+
+    const result = await this.refreshTokens(tokens.refreshToken);
+    if (!result.success || !result.tokens) return null;
+
+    await this.tokenStore!.setTokens(this.serviceId, result.tokens);
+    return result.tokens.accessToken;
   }
 
   async fetch<T>(

@@ -6,7 +6,10 @@
  */
 
 // deno-lint-ignore no-explicit-any
-type GlobalWithRuntime = typeof globalThis & { process?: { versions?: { node?: string } }; Bun?: unknown };
+type GlobalWithRuntime = typeof globalThis & {
+  process?: { versions?: { node?: string } };
+  Bun?: unknown;
+};
 
 function hasDenoVersion(): boolean {
   return typeof Deno !== "undefined" && typeof Deno.version === "object";

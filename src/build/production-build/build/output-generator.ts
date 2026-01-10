@@ -71,7 +71,9 @@ export async function generateClientScripts(
 /**
  * Generate manifest and service worker
  */
-export async function generateManifestAndServiceWorker(options: OutputGeneratorOptions): Promise<void> {
+export async function generateManifestAndServiceWorker(
+  options: OutputGeneratorOptions,
+): Promise<void> {
   const manifest = generateManifest({
     routes: options.routes,
     appRoutes: options.appRoutes,

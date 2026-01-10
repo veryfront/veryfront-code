@@ -244,8 +244,12 @@ export function createCostTracker(config: CostConfig) {
   const tracker = new CostTracker(config);
 
   return {
-    track: (agentId: string, model: string, response: AgentResponse, userId?: string): UsageRecord =>
-      tracker.track(agentId, model, response, userId),
+    track: (
+      agentId: string,
+      model: string,
+      response: AgentResponse,
+      userId?: string,
+    ): UsageRecord => tracker.track(agentId, model, response, userId),
     getSummary: (startTime?: number, endTime?: number): UsageSummary =>
       tracker.getSummary(startTime, endTime),
     getDailySummary: (): UsageSummary => tracker.getDailySummary(),

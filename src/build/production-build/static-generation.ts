@@ -50,9 +50,7 @@ export interface SSGOptions {
  * Get output path for a route slug
  */
 function getOutputPath(outputDir: string, slug: string): string {
-  return slug === "index"
-    ? join(outputDir, "index.html")
-    : join(outputDir, slug, "index.html");
+  return slug === "index" ? join(outputDir, "index.html") : join(outputDir, slug, "index.html");
 }
 
 /**

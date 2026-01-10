@@ -83,7 +83,10 @@ export class HTMLGenerator {
     const mergedFrontmatter = this.mergeFrontmatter(
       context as HTMLGenerationContext,
     );
-    const htmlOptions = await this.buildHTMLOptions(context as HTMLGenerationContext, mergedFrontmatter);
+    const htmlOptions = await this.buildHTMLOptions(
+      context as HTMLGenerationContext,
+      mergedFrontmatter,
+    );
 
     // Buffer the React stream to extract head elements
     // This is necessary because head elements need to be moved from body to <head>
