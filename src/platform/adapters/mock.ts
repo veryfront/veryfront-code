@@ -148,8 +148,37 @@ export function createMockAdapter(): MockRuntimeAdapter {
 
         return Promise.reject(pathNotFoundError(path));
       },
-      mkdir: (_path: string) => Promise.resolve(),
-      remove: (_path: string) => Promise.resolve(),
+      mkdir: (path: string, options?: { recursive?: boolean }) => {
+        directories.add(path);
+        if (options?.recursive) {
+          // Add parent directories
+          const parts = path.split("/").filter(Boolean);
+          let current = "";
+          for (const part of parts) {
+            current += "/" + part;
+            directories.add(current);
+          }
+        }
+        return Promise.resolve();
+      },
+      remove: (path: string, options?: { recursive?: boolean }) => {
+        files.delete(path);
+        directories.delete(path);
+        if (options?.recursive) {
+          // Remove all children
+          for (const filePath of [...files.keys()]) {
+            if (filePath.startsWith(path + "/")) {
+              files.delete(filePath);
+            }
+          }
+          for (const dirPath of [...directories]) {
+            if (dirPath.startsWith(path + "/")) {
+              directories.delete(dirPath);
+            }
+          }
+        }
+        return Promise.resolve();
+      },
       makeTempDir: (prefix: string) =>
         Promise.resolve(`/tmp/${prefix}-${Math.random().toString(36).slice(2)}`),
       watch: (_paths: string | string[], _options?: WatchOptions): FileWatcher => ({
@@ -161,7 +190,9 @@ export function createMockAdapter(): MockRuntimeAdapter {
     },
     env: {
       get: (key: string) => envVars.get(key),
-      set: (key: string, value: string) => envVars.set(key, value),
+      set: (key: string, value: string) => {
+        envVars.set(key, value);
+      },
       toObject: () => Object.fromEntries(envVars),
     },
     server: {

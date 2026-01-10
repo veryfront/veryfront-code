@@ -172,18 +172,56 @@ describe("MockAdapter", () => {
   });
 
   describe("fs.mkdir", () => {
-    it("should succeed (no-op in mock)", async () => {
+    it("should add directory to directories set", async () => {
       const adapter = createMockAdapter();
       await adapter.fs.mkdir("/newdir");
-      // No error thrown means success
+
+      assertEquals(adapter.fs.directories.has("/newdir"), true);
+      assertEquals(await adapter.fs.exists("/newdir"), true);
+    });
+
+    it("should add parent directories when recursive", async () => {
+      const adapter = createMockAdapter();
+      await adapter.fs.mkdir("/a/b/c", { recursive: true });
+
+      assertEquals(adapter.fs.directories.has("/a"), true);
+      assertEquals(adapter.fs.directories.has("/a/b"), true);
+      assertEquals(adapter.fs.directories.has("/a/b/c"), true);
     });
   });
 
   describe("fs.remove", () => {
-    it("should succeed (no-op in mock)", async () => {
+    it("should remove file from files map", async () => {
       const adapter = createMockAdapter();
-      await adapter.fs.remove("/anything");
-      // No error thrown means success
+      adapter.fs.files.set("/test.txt", "content");
+
+      await adapter.fs.remove("/test.txt");
+
+      assertEquals(adapter.fs.files.has("/test.txt"), false);
+    });
+
+    it("should remove directory from directories set", async () => {
+      const adapter = createMockAdapter();
+      adapter.fs.directories.add("/mydir");
+
+      await adapter.fs.remove("/mydir");
+
+      assertEquals(adapter.fs.directories.has("/mydir"), false);
+    });
+
+    it("should remove children when recursive", async () => {
+      const adapter = createMockAdapter();
+      adapter.fs.files.set("/dir/file1.txt", "a");
+      adapter.fs.files.set("/dir/file2.txt", "b");
+      adapter.fs.files.set("/dir/sub/file3.txt", "c");
+      adapter.fs.directories.add("/dir/sub");
+
+      await adapter.fs.remove("/dir", { recursive: true });
+
+      assertEquals(adapter.fs.files.has("/dir/file1.txt"), false);
+      assertEquals(adapter.fs.files.has("/dir/file2.txt"), false);
+      assertEquals(adapter.fs.files.has("/dir/sub/file3.txt"), false);
+      assertEquals(adapter.fs.directories.has("/dir/sub"), false);
     });
   });
 
