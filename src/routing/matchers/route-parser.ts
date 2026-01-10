@@ -41,23 +41,15 @@ export function parseRoute(pattern: string, page: string): Route {
   };
 }
 
+function getSegmentScore(segment: string): number {
+  if (segment.includes("[[...")) return 1; // Optional catch-all - lowest priority
+  if (segment.includes("[...")) return 2; // Catch-all
+  if (segment.includes("[")) return 3; // Dynamic segment
+  return 4; // Static segment - highest priority
+}
+
 export function getSpecificityScore(route: Route): number {
-  let score = 0;
   const segments = route.pattern.split("/").filter(Boolean);
-
-  for (const segment of segments) {
-    if (segment.includes("[[...")) {
-      score += 1; // Optional catch-all - lowest priority
-    } else if (segment.includes("[...")) {
-      score += 2; // Catch-all
-    } else if (segment.includes("[")) {
-      score += 3; // Dynamic segment
-    } else {
-      score += 4; // Static segment - highest priority
-    }
-  }
-
-  score += segments.length * 0.1;
-
-  return score;
+  const baseScore = segments.reduce((sum, seg) => sum + getSegmentScore(seg), 0);
+  return baseScore + segments.length * 0.1;
 }

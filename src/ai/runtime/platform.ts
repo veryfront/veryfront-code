@@ -104,19 +104,9 @@ export function getPlatformCapabilities(platform?: Platform): PlatformCapabiliti
 }
 
 export function supportsCapability(capability: keyof PlatformCapabilities): boolean {
-  const capabilities = getPlatformCapabilities();
-  const value = capabilities[capability];
-
-  // Handle boolean capabilities
-  if (typeof value === "boolean") {
-    return value;
-  }
-
-  // Handle numeric capabilities (non-zero means supported)
-  if (typeof value === "number") {
-    return value > 0;
-  }
-
+  const value = getPlatformCapabilities()[capability];
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") return value > 0;
   return false;
 }
 

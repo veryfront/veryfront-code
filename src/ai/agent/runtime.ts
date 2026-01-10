@@ -724,44 +724,35 @@ export class AgentRuntime {
   }
 
   private getAvailableTools(): ToolDefinition[] {
-    if (!this.config.tools) {
-      return [];
-    }
-
-    const tools: ToolDefinition[] = [];
+    if (!this.config.tools) return [];
 
     // When tools === true, load ALL tools from the registry
     if (this.config.tools === true) {
       const allTools = toolRegistry.getAll();
       logger.debug(`[AGENT] Loading all ${allTools.size} tools from registry`);
-      for (const [name, tool] of allTools) {
+      return Array.from(allTools, ([name, tool]) => {
         const def = toolToProviderDefinition(tool);
         logger.debug(`[AGENT] Tool definition for "${name}":`, JSON.stringify(def, null, 2));
-        tools.push(def);
-      }
-      return tools;
+        return def;
+      });
     }
 
-    // Otherwise, load specific tools from the config
+    // Load specific tools from config
+    const tools: ToolDefinition[] = [];
     for (const [name, entry] of Object.entries(this.config.tools)) {
       if (entry === true) {
         const tool = toolRegistry.get(name);
-        if (tool) {
-          const def = toolToProviderDefinition(tool);
-          logger.debug(`[AGENT] Tool definition for "${name}":`, JSON.stringify(def, null, 2));
-          tools.push(def);
-        }
-        continue;
-      }
-
-      if (entry && typeof entry === "object") {
+        if (!tool) continue;
+        const def = toolToProviderDefinition(tool);
+        logger.debug(`[AGENT] Tool definition for "${name}":`, JSON.stringify(def, null, 2));
+        tools.push(def);
+      } else if (entry && typeof entry === "object") {
         const inlineTool = entry.id === name ? entry : { ...entry, id: name };
         const def = toolToProviderDefinition(inlineTool);
         logger.debug(`[AGENT] Tool definition for "${name}":`, JSON.stringify(def, null, 2));
         tools.push(def);
       }
     }
-
     return tools;
   }
 
@@ -769,16 +760,9 @@ export class AgentRuntime {
    * Resolve system prompt (handle string or function)
    */
   private async resolveSystemPrompt(): Promise<string> {
-    const system = this.config.system;
-
-    if (typeof system === "string") {
-      return system;
-    }
-
-    if (typeof system === "function") {
-      return await system();
-    }
-
+    const { system } = this.config;
+    if (typeof system === "string") return system;
+    if (typeof system === "function") return await system();
     return "You are a helpful AI assistant.";
   }
 
@@ -821,12 +805,8 @@ export class AgentRuntime {
    * Priority: edge config > agent config > default (20).
    */
   private getMaxSteps(platformLimit: number): number {
-    const DEFAULT_MAX_STEPS = 20;
-
-    // Determine configured max steps with priority: edge > agent > default
     const edgeMaxSteps = this.config.edge?.enabled ? this.config.edge.maxSteps : undefined;
-    const configuredMaxSteps = edgeMaxSteps ?? this.config.maxSteps ?? DEFAULT_MAX_STEPS;
-
+    const configuredMaxSteps = edgeMaxSteps ?? this.config.maxSteps ?? 20;
     return Math.min(configuredMaxSteps, platformLimit);
   }
 

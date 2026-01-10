@@ -50,16 +50,10 @@ export function getMCPStats(): {
   prompts: number;
   total: number;
 } {
-  const counts = {
-    tools: toolRegistry.getAll().size,
-    resources: resourceRegistry.getAll().size,
-    prompts: promptRegistry.getAll().size,
-  };
-
-  return {
-    ...counts,
-    total: counts.tools + counts.resources + counts.prompts,
-  };
+  const tools = toolRegistry.getAll().size;
+  const resources = resourceRegistry.getAll().size;
+  const prompts = promptRegistry.getAll().size;
+  return { tools, resources, prompts, total: tools + resources + prompts };
 }
 
 /**

@@ -291,27 +291,9 @@ async function rewriteDiscoveryImports(
 
       try {
         const pkgJson = JSON.parse(await fs.readTextFile(packageJsonPath));
-        let entryPoint: string | undefined;
-
-        if (pkgJson.exports) {
-          const dotExport = pkgJson.exports["."];
-          if (typeof dotExport === "string") {
-            entryPoint = dotExport;
-          } else if (dotExport?.import) {
-            entryPoint = dotExport.import;
-          } else if (dotExport?.default) {
-            entryPoint = dotExport.default;
-          }
-        }
-
-        if (!entryPoint) {
-          entryPoint = pkgJson.module || pkgJson.main || "index.js";
-        }
-
-        if (!entryPoint) {
-          return null;
-        }
-
+        const dotExport = pkgJson.exports?.["."];
+        const entryPoint = (typeof dotExport === "string" ? dotExport : dotExport?.import ?? dotExport?.default) ??
+          pkgJson.module ?? pkgJson.main ?? "index.js";
         const resolvedPath = pathHelper.join(packagePath, entryPoint);
         return pathToFileURL(resolvedPath).href;
       } catch {
