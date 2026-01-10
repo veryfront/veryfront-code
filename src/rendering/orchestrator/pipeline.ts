@@ -585,8 +585,7 @@ export class RenderPipeline {
       throw new VeryfrontError("Failed to prepare page bundle", ErrorCode.RENDER_ERROR, { slug });
     }
 
-    const pageElement = pageBundleResult.pageElement;
-    const pageBundle = pageBundleResult.pageBundle;
+    const { pageElement, pageBundle } = pageBundleResult;
 
     // ─────────────────────────────────────────────────────────────────────────
     // Stage 7: Layout Application

@@ -104,8 +104,7 @@ export function useWorkflowList(
 
         const data = await response.json();
         const fetchedRuns = (data.runs || data) as WorkflowRun[];
-        const nextCursor = data.cursor;
-        const total = data.totalCount;
+        const { cursor: nextCursor, totalCount: total } = data;
 
         if (append) {
           setRuns((prev) => [...prev, ...fetchedRuns]);

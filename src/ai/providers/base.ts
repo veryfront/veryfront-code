@@ -203,8 +203,7 @@ export abstract class BaseProvider implements Provider {
 
                   if (!choice) continue;
 
-                  const delta = choice.delta;
-                  const finishReason = choice.finish_reason;
+                  const { delta, finish_reason: finishReason } = choice;
 
                   // Handle text content
                   if (delta?.content) {
