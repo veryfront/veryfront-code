@@ -1,14 +1,3 @@
-/**
- * CSS Optimizer Service
- *
- * Main orchestrator for CSS optimization using pluggable strategies.
- * Coordinates between different optimization strategies and manages the
- * optimization pipeline.
- *
- * Updated to use RuntimeAdapter for cross-platform compatibility and
- * path validation for security.
- */
-
 import { dirname, relative } from "std/path/mod.ts";
 import { logger } from "@veryfront/utils";
 import type {
@@ -37,9 +26,6 @@ const DEFAULT_OPTIONS: Required<CSSOptimizationOptions> = {
   sourceMap: false,
 };
 
-/**
- * CSS Optimizer Service using Strategy Pattern
- */
 export class CSSOptimizerService {
   private options: Required<CSSOptimizationOptions>;
   private strategies: CSSOptimizationStrategy[] = [];
@@ -81,9 +67,6 @@ export class CSSOptimizerService {
     ];
   }
 
-  /**
-   * Initialize the optimizer (loads external dependencies)
-   */
   async init(): Promise<boolean> {
     if (!this.options.enabled) {
       logger.info("CSS optimization is disabled");
@@ -102,9 +85,6 @@ export class CSSOptimizerService {
     return true;
   }
 
-  /**
-   * Optimize all CSS files
-   */
   async optimize(): Promise<Map<string, CSSBundle>> {
     const _isReady = await this.init();
 
@@ -146,9 +126,6 @@ export class CSSOptimizerService {
     return this.cacheManager.getAllBundles();
   }
 
-  /**
-   * Optimize a single CSS file
-   */
   private async optimizeFile(cssPath: string): Promise<void> {
     const relPath = relative(this.options.inputDir, cssPath);
     logger.debug(`Optimizing: ${relPath}`);
@@ -218,9 +195,6 @@ export class CSSOptimizerService {
     }
   }
 
-  /**
-   * Select the best strategy for the current options
-   */
   private selectStrategy(): CSSOptimizationStrategy | null {
     // Sort strategies by priority (descending)
     const sortedStrategies = [...this.strategies].sort((a, b) => b.priority - a.priority);
@@ -236,30 +210,18 @@ export class CSSOptimizerService {
     return null;
   }
 
-  /**
-   * Get optimization statistics
-   */
   getStats(): CSSOptimizerStats {
     return this.cacheManager.getStats();
   }
 
-  /**
-   * Get the current options
-   */
   getOptions(): Required<CSSOptimizationOptions> {
     return this.options;
   }
 
-  /**
-   * Get the cache manager (for advanced use cases)
-   */
   getCacheManager(): CacheManager {
     return this.cacheManager;
   }
 
-  /**
-   * Get the purge strategy (for testing/debugging)
-   */
   getPurgeStrategy(): PurgeStrategy {
     return this.purgeStrategy;
   }

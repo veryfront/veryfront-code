@@ -1,21 +1,9 @@
-/**
- * Build Setup Module
- *
- * Handles filesystem setup and cleanup for the build process:
- * - Output directory cleanup
- * - Directory structure creation
- * - Initial filesystem preparation
- */
-
 import { serverLogger as logger } from "@veryfront/utils";
 import { join } from "node:path";
 import { handleErrorWithFallback } from "@veryfront/errors/index.ts";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/index.ts";
 import { createFileSystem } from "../../../platform/compat/fs.ts";
 
-/**
- * Clean and prepare the output directory for the build
- */
 export async function setupBuildDirectories(
   adapter: RuntimeAdapter,
   outputDir: string,

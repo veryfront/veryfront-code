@@ -1,9 +1,3 @@
-/**
- * Extract React component from a loaded module.
- *
- * Tries default export first, then falls back to first named export.
- */
-
 import type * as React from "react";
 import { createError, toError } from "../../core/errors/veryfront-error.ts";
 

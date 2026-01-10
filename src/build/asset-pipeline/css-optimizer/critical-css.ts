@@ -1,10 +1,3 @@
-/**
- * Critical CSS Extraction Module
- *
- * Extracts above-the-fold (critical) CSS from stylesheets based on HTML content.
- * This helps optimize initial page load by inlining critical styles.
- */
-
 import { logger } from "@veryfront/utils";
 import type { CriticalCSSResult, CSSOptimizationOptions } from "@veryfront/types";
 import { createFileSystem } from "../../../platform/compat/fs.ts";
@@ -12,9 +5,6 @@ import { basicMinify, extractSelectorsFromHTML } from "./utils.ts";
 
 const fs = createFileSystem();
 
-/**
- * Extract critical CSS from a CSS file based on HTML content
- */
 export async function extractCriticalCSS(
   cssPath: string,
   htmlContent: string,

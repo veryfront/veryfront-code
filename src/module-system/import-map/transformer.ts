@@ -1,12 +1,6 @@
 import type { ImportMapConfig, TransformOptions } from "./types.ts";
 import { resolveImport } from "./resolver.ts";
 
-/**
- * Check if specifier should be processed by the import map.
- * - Bare imports (no path prefix): only if resolveBare option is set
- * - esm.sh URLs: always process (to normalize package instances)
- * - Other URLs/paths: process via import map
- */
 function shouldResolve(specifier: string, options?: TransformOptions): boolean {
   // Always process esm.sh URLs to normalize them
   if (specifier.startsWith("https://esm.sh/") || specifier.startsWith("http://esm.sh/")) {

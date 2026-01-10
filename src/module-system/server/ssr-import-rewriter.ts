@@ -1,10 +1,3 @@
-/**
- * SSR Import Rewriter
- *
- * Shared utilities for rewriting imports in SSR context.
- * Transforms bare imports to esm.sh URLs and handles path aliases.
- */
-
 import { REACT_VERSION } from "@veryfront/transforms/esm/package-registry.ts";
 
 export interface SSRRewriteOptions {
@@ -18,9 +11,6 @@ export interface SSRRewriteOptions {
   crossProjectRef?: string;
 }
 
-/**
- * Check if a specifier should be kept as-is (not rewritten to esm.sh).
- */
 function shouldKeepBareSpecifier(specifier: string): boolean {
   // Skip if already has protocol prefix
   if (
@@ -55,10 +45,6 @@ function shouldKeepBareSpecifier(specifier: string): boolean {
   return false;
 }
 
-/**
- * Transform bare imports to esm.sh URLs for SSR.
- * Keeps React, react-dom, and veryfront/* as bare specifiers.
- */
 function rewriteBareImports(code: string): string {
   return code.replace(
     /from\s+["']([^"'./][^"']*)["']/g,
@@ -72,9 +58,6 @@ function rewriteBareImports(code: string): string {
   );
 }
 
-/**
- * Transform @/ path aliases to /_vf_modules/ URLs for SSR.
- */
 function rewritePathAliases(code: string, options: SSRRewriteOptions): string {
   const { projectSlug, branch, cacheBuster = Date.now(), crossProjectRef } = options;
   const projectParam = projectSlug ? `&project=${projectSlug}` : "";
@@ -101,9 +84,6 @@ function rewritePathAliases(code: string, options: SSRRewriteOptions): string {
   );
 }
 
-/**
- * Add SSR params to relative imports.
- */
 function rewriteRelativeImports(code: string, options: SSRRewriteOptions): string {
   const { projectSlug, branch, cacheBuster = Date.now() } = options;
   const projectParam = projectSlug ? `&project=${projectSlug}` : "";
@@ -115,14 +95,6 @@ function rewriteRelativeImports(code: string, options: SSRRewriteOptions): strin
   );
 }
 
-/**
- * Apply all SSR import rewrites to transformed code.
- *
- * This applies three transformations:
- * 1. Bare imports (lodash, @tanstack/react-query) -> esm.sh URLs
- * 2. @/ path aliases -> /_vf_modules/ URLs with SSR params
- * 3. Relative imports -> add ?ssr=true and cache buster
- */
 export function applySSRImportRewrites(code: string, options: SSRRewriteOptions = {}): string {
   let result = rewriteBareImports(code);
   result = rewritePathAliases(result, options);

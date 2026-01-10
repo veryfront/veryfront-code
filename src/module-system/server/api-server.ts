@@ -1,8 +1,3 @@
-/**
- * API Server Module
- * Handles API routes and data endpoints
- */
-
 import { serverLogger as logger } from "@veryfront/utils";
 
 export interface PageRenderResult {
