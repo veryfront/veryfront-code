@@ -101,15 +101,10 @@ export function useStreaming(
           const chunk = decoder.decode(value, { stream: true });
           accumulatedData += chunk;
           setData(accumulatedData);
-
-          if (options.onChunk) {
-            options.onChunk(chunk);
-          }
+          options.onChunk?.(chunk);
         }
 
-        if (options.onComplete) {
-          options.onComplete();
-        }
+        options.onComplete?.();
       } catch (err) {
         if (err instanceof Error && err.name === "AbortError") {
           return;
@@ -117,10 +112,7 @@ export function useStreaming(
 
         const error = err instanceof Error ? err : new Error(String(err));
         setError(error);
-
-        if (options.onError) {
-          options.onError(error);
-        }
+        options.onError?.(error);
       } finally {
         setIsStreaming(false);
         abortControllerRef.current = null;
