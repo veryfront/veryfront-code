@@ -8,21 +8,17 @@ import type {
 import { agentLogger } from "../../core/utils/logger/logger.ts";
 import { z } from "zod";
 
+const FINISH_REASON_MAP: Record<string, CompletionResponse["finishReason"]> = {
+  stop: "stop",
+  length: "length",
+  max_tokens: "length",
+  tool_calls: "tool_calls",
+  function_call: "tool_calls",
+  content_filter: "content_filter",
+} as const;
+
 export function mapFinishReason(reason: string): CompletionResponse["finishReason"] {
-  switch (reason) {
-    case "stop":
-      return "stop";
-    case "length":
-    case "max_tokens":
-      return "length";
-    case "tool_calls":
-    case "function_call":
-      return "tool_calls";
-    case "content_filter":
-      return "content_filter";
-    default:
-      return "stop";
-  }
+  return FINISH_REASON_MAP[reason] ?? "stop";
 }
 
 const OpenAIStreamChunkSchema = z.object({

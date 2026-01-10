@@ -30,15 +30,12 @@ export function getInitTemplates(): string {
   );
 }
 
+const COMMAND_TIPS: Record<string, () => string> = {
+  dev: getDevTips,
+  build: getBuildTips,
+  init: getInitTemplates,
+} as const;
+
 export function getCommandTips(command: string): string | undefined {
-  switch (command) {
-    case "dev":
-      return getDevTips();
-    case "build":
-      return getBuildTips();
-    case "init":
-      return getInitTemplates();
-    default:
-      return undefined;
-  }
+  return COMMAND_TIPS[command]?.();
 }
