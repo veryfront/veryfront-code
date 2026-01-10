@@ -2,24 +2,17 @@ import type { HTMLMetadata } from "@veryfront/transforms/mdx/types.ts";
 import { buildAttributes, escapeHTML } from "./html-escape.ts";
 
 export function generateMetaTags(metadata: HTMLMetadata): string {
-  const tags: string[] = [];
+  const tags: string[] = ['<meta charset="UTF-8">'];
 
-  tags.push('<meta charset="UTF-8">');
-
-  if (metadata.viewport) {
-    tags.push(`<meta name="viewport" content="${escapeHTML(metadata.viewport)}">`);
-  } else {
-    tags.push('<meta name="viewport" content="width=device-width, initial-scale=1.0">');
-  }
+  const viewport = metadata.viewport || "width=device-width, initial-scale=1.0";
+  tags.push(`<meta name="viewport" content="${escapeHTML(viewport)}">`);
 
   if (metadata.description) {
     tags.push(`<meta name="description" content="${escapeHTML(metadata.description)}">`);
   }
 
-  if (metadata.meta) {
-    metadata.meta.forEach((meta) => {
-      tags.push(`<meta ${buildAttributes(meta as Record<string, string>)}>`);
-    });
+  for (const meta of metadata.meta || []) {
+    tags.push(`<meta ${buildAttributes(meta as Record<string, string>)}>`);
   }
 
   if (metadata.themeColor) {
@@ -32,23 +25,19 @@ export function generateMetaTags(metadata: HTMLMetadata): string {
 export function generateLinkTags(metadata: HTMLMetadata): string {
   const tags: string[] = [];
 
-  if (metadata.links) {
-    metadata.links.forEach((link) => {
-      const linkAttrs = { ...link } as Record<string, string>;
-      // Font preloads require crossorigin="anonymous" to match fetch behavior
-      // Without this, the preloaded font won't be used and will be re-fetched
-      if (linkAttrs.rel === "preload" && linkAttrs.as === "font" && !linkAttrs.crossorigin) {
-        linkAttrs.crossorigin = "anonymous";
-      }
-      tags.push(`<link ${buildAttributes(linkAttrs)}>`);
-    });
+  for (const link of metadata.links || []) {
+    const linkAttrs = { ...link } as Record<string, string>;
+    // Font preloads require crossorigin="anonymous" to match fetch behavior
+    // Without this, the preloaded font won't be used and will be re-fetched
+    if (linkAttrs.rel === "preload" && linkAttrs.as === "font" && !linkAttrs.crossorigin) {
+      linkAttrs.crossorigin = "anonymous";
+    }
+    tags.push(`<link ${buildAttributes(linkAttrs)}>`);
   }
 
-  if (metadata.icons) {
-    metadata.icons.forEach((icon) => {
-      const rel = icon.rel || "icon";
-      tags.push(`<link ${buildAttributes({ rel, ...icon } as Record<string, string>)}>`);
-    });
+  for (const icon of metadata.icons || []) {
+    const rel = icon.rel || "icon";
+    tags.push(`<link ${buildAttributes({ rel, ...icon } as Record<string, string>)}>`);
   }
 
   return tags.join("\n  ");
@@ -57,28 +46,26 @@ export function generateLinkTags(metadata: HTMLMetadata): string {
 export function generateScriptTags(metadata: HTMLMetadata, nonce?: string): string {
   const tags: string[] = [];
 
-  if (metadata.scripts) {
-    metadata.scripts.forEach((script) => {
-      const filteredAttrs = Object.fromEntries(
-        Object.entries(script).filter(([key]) => key !== "content"),
-      );
+  for (const script of metadata.scripts || []) {
+    const filteredAttrs = Object.fromEntries(
+      Object.entries(script).filter(([key]) => key !== "content"),
+    );
 
-      if (script.src) {
-        tags.push(`<script ${buildAttributes(filteredAttrs as Record<string, string>)}></script>`);
-      } else if (script.content) {
-        const attrsWithNonce = {
-          ...Object.fromEntries(
-            Object.entries(filteredAttrs).filter(([key]) => key !== "src"),
-          ),
-          ...(nonce ? { nonce } : {}),
-        };
-        tags.push(
-          `<script ${
-            buildAttributes(attrsWithNonce as Record<string, string>)
-          }>${script.content}</script>`,
-        );
-      }
-    });
+    if (script.src) {
+      tags.push(`<script ${buildAttributes(filteredAttrs as Record<string, string>)}></script>`);
+    } else if (script.content) {
+      const attrsWithNonce = {
+        ...Object.fromEntries(
+          Object.entries(filteredAttrs).filter(([key]) => key !== "src"),
+        ),
+        ...(nonce ? { nonce } : {}),
+      };
+      tags.push(
+        `<script ${
+          buildAttributes(attrsWithNonce as Record<string, string>)
+        }>${script.content}</script>`,
+      );
+    }
   }
 
   return tags.join("\n  ");
@@ -87,30 +74,28 @@ export function generateScriptTags(metadata: HTMLMetadata, nonce?: string): stri
 export function generateStyleTags(metadata: HTMLMetadata, nonce?: string): string {
   const tags: string[] = [];
 
-  if (metadata.styles) {
-    metadata.styles.forEach((style) => {
-      const filteredAttrs = Object.fromEntries(
-        Object.entries(style).filter(([key]) => key !== "content"),
-      );
+  for (const style of metadata.styles || []) {
+    const filteredAttrs = Object.fromEntries(
+      Object.entries(style).filter(([key]) => key !== "content"),
+    );
 
-      if (style.href) {
-        tags.push(
-          `<link rel="stylesheet" ${buildAttributes(filteredAttrs as Record<string, string>)}>`,
-        );
-      } else if (style.content) {
-        const attrsWithNonce = {
-          ...Object.fromEntries(
-            Object.entries(filteredAttrs).filter(([key]) => key !== "href"),
-          ),
-          ...(nonce ? { nonce } : {}),
-        };
-        tags.push(
-          `<style ${
-            buildAttributes(attrsWithNonce as Record<string, string>)
-          }>${style.content}</style>`,
-        );
-      }
-    });
+    if (style.href) {
+      tags.push(
+        `<link rel="stylesheet" ${buildAttributes(filteredAttrs as Record<string, string>)}>`,
+      );
+    } else if (style.content) {
+      const attrsWithNonce = {
+        ...Object.fromEntries(
+          Object.entries(filteredAttrs).filter(([key]) => key !== "href"),
+        ),
+        ...(nonce ? { nonce } : {}),
+      };
+      tags.push(
+        `<style ${
+          buildAttributes(attrsWithNonce as Record<string, string>)
+        }>${style.content}</style>`,
+      );
+    }
   }
 
   return tags.join("\n  ");

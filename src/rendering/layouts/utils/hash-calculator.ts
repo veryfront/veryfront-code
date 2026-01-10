@@ -1,5 +1,4 @@
-import { rendererLogger as logger } from "@veryfront/utils";
-import { getContentHash } from "@veryfront/utils";
+import { getContentHash, rendererLogger as logger } from "@veryfront/utils";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import type { LayoutItem, MdxBundle } from "@veryfront/types";
 
@@ -40,7 +39,7 @@ export async function computeDepsHash(
       }
     }
 
-    depsHash = depParts.length > 0 ? depParts.join(":") : "";
+    depsHash = depParts.join(":");
   } catch (e) {
     logger.debug("[layout] dep hash computation failed", e as Error);
   }

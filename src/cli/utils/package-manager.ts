@@ -119,21 +119,18 @@ export async function detectPackageManager(
   return "npm";
 }
 
+const INSTALL_COMMANDS: Record<PackageManager, string> = {
+  bun: "bun install",
+  pnpm: "pnpm install",
+  yarn: "yarn",
+  npm: "npm install",
+} as const;
+
 /**
  * Get the install command for a package manager
  */
 export function getInstallCommand(pm: PackageManager): string {
-  switch (pm) {
-    case "bun":
-      return "bun install";
-    case "pnpm":
-      return "pnpm install";
-    case "yarn":
-      return "yarn";
-    case "npm":
-    default:
-      return "npm install";
-  }
+  return INSTALL_COMMANDS[pm];
 }
 
 /**

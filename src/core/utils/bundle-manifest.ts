@@ -106,13 +106,10 @@ export class InMemoryBundleManifestStore implements BundleManifestStore {
     const keys = this.sourceIndex.get(source);
     if (!keys) return 0;
 
-    let count = 0;
-    for (const key of Array.from(keys)) {
-      await this.deleteBundle(key);
-      count++;
-    }
+    const keysArray = [...keys];
+    await Promise.all(keysArray.map((key) => this.deleteBundle(key)));
     this.sourceIndex.delete(source);
-    return count;
+    return keysArray.length;
   }
 
   clear(): Promise<void> {

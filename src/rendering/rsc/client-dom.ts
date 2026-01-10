@@ -31,11 +31,6 @@ export function applySlotMessage(doc: Document, msg: SlotMessage) {
   el.innerHTML = validateTrustedHtml(String(msg.html || ""));
 }
 
-/**
- * Process an NDJSON chunk with possible partial trailing line.
- * Returns the leftover (incomplete) fragment that should be
- * prefixed to the next chunk.
- */
 export function processNdjsonChunk(doc: Document, buffered: string): string {
   // Split into lines; keep last fragment unprocessed
   const parts = buffered.split("\n");
@@ -65,15 +60,11 @@ export function processNdjsonChunk(doc: Document, buffered: string): string {
   return remainder;
 }
 
-// Back-compat helper: process a full NDJSON string (no remainder)
 export function processNdjsonLines(doc: Document, ndjson: string) {
   // Ensure trailing newline so the final line is flushed
   processNdjsonChunk(doc, ndjson.endsWith("\n") ? ndjson : `${ndjson}\n`);
 }
 
-/**
- * Stream consumer with cancellation and backpressure-friendly loop.
- */
 export async function consumeNdjsonStream(
   input: Response | ReadableStream<Uint8Array>,
   doc: Document = document,
@@ -163,7 +154,6 @@ export async function consumeNdjsonStream(
   }
 }
 
-// Hydration stubs for client boundaries
 export function findClientBoundaries(
   doc: Document,
   slotId: string,
@@ -174,18 +164,12 @@ export function findClientBoundaries(
     if ((node as HTMLElement).dataset?.clientRef) {
       out.push(node as HTMLElement);
     }
-    for (const child of Array.from(node.children)) walker(child);
+    for (const child of node.children) walker(child);
   };
   walker(root);
   return out;
 }
 
-/**
- * Mark client boundaries as seen during streaming.
- * This is a lightweight marker to track elements for hydration.
- * Actual React component hydration happens in hydrate-client.ts via bootHydration()
- * after streaming completes (called from script-handlers.ts boot function).
- */
 export function hydrateClientBoundaries(doc: Document, slotId: string) {
   const nodes = findClientBoundaries(doc, slotId);
   for (const el of nodes) {

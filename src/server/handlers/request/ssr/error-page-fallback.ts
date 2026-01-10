@@ -54,7 +54,12 @@ export async function tryErrorPageFallback(
     }
 
     // Priority 1: Try specific error page (404.tsx, 500.tsx)
-    const specificPage = statusCode === 404 ? "404" : statusCode === 500 ? "500" : null;
+    let specificPage: ErrorPageType | null = null;
+    if (statusCode === 404) {
+      specificPage = "404";
+    } else if (statusCode === 500) {
+      specificPage = "500";
+    }
     if (specificPage) {
       const ErrorComponent = await tryLoadErrorPage(pagesDir, specificPage, ctx);
       if (ErrorComponent) {
@@ -192,9 +197,11 @@ async function renderErrorPage(
  * Generate a simple fallback HTML when rendering fails
  */
 function generateFallbackHtml(statusCode: number, pathname?: string): string {
-  const title = statusCode === 404 ? "Not Found" : "Server Error";
-  const message = statusCode === 404
-    ? `The page ${pathname ? `"${pathname}" ` : ""}could not be found.`
+  const isNotFound = statusCode === 404;
+  const title = isNotFound ? "Not Found" : "Server Error";
+  const pathDisplay = pathname ? `"${pathname}" ` : "";
+  const message = isNotFound
+    ? `The page ${pathDisplay}could not be found.`
     : "An unexpected error occurred.";
 
   return `<!DOCTYPE html>

@@ -1,8 +1,3 @@
-/**
- * Not Found Handler
- * Fallback handler for 404 responses
- */
-
 import { BaseHandler } from "./base.ts";
 import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } from "../types.ts";
 import { ResponseBuilder } from "@veryfront/security/index.ts";
@@ -11,6 +6,7 @@ import {
   HTTP_NOT_FOUND,
   PRIORITY_FALLBACK,
 } from "@veryfront/core/constants/index.ts";
+import { escapeHtml } from "../../../html/html-escape.ts";
 
 export class NotFoundHandler extends BaseHandler {
   metadata: HandlerMetadata = {
@@ -145,7 +141,7 @@ export class NotFoundHandler extends BaseHandler {
         <h1>404</h1>
         <h2>Page Not Found</h2>
         <p>
-            The path <code>${this.escapeHtml(pathname)}</code> was not found on this server.
+            The path <code>${escapeHtml(pathname)}</code> was not found on this server.
         </p>
         <div class="actions">
             <a href="/" class="button">Go Home</a>
@@ -154,14 +150,5 @@ export class NotFoundHandler extends BaseHandler {
     </div>
 </body>
 </html>`;
-  }
-
-  private escapeHtml(text: string): string {
-    return text
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;")
-      .replace(/'/g, "&#039;");
   }
 }

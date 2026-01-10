@@ -1,10 +1,11 @@
-import { createError, toError } from "../../../core/errors/veryfront-error.ts";
 /**
  * Rate Limiting System
  *
  * Prevents abuse and ensures fair usage of AI resources.
  * Supports multiple strategies: fixed window, sliding window, token bucket.
  */
+
+import { createError, toError } from "../../../core/errors/veryfront-error.ts";
 
 export interface RateLimitConfig {
   /** Strategy type */
@@ -174,49 +175,40 @@ class TokenBucketLimiter {
   }
 }
 
+/** Factory for creating rate limiter instances by strategy */
+function createLimiterByStrategy(
+  config: RateLimitConfig,
+): FixedWindowLimiter | TokenBucketLimiter {
+  switch (config.strategy) {
+    case "fixed-window":
+      return new FixedWindowLimiter(config);
+    default:
+      // token-bucket and sliding-window both use TokenBucketLimiter
+      return new TokenBucketLimiter(config);
+  }
+}
+
 /**
  * Create a rate limiter
  */
 export function createRateLimiter(config: RateLimitConfig) {
-  let limiter: FixedWindowLimiter | TokenBucketLimiter;
+  const limiter = createLimiterByStrategy(config);
 
-  switch (config.strategy) {
-    case "fixed-window":
-      limiter = new FixedWindowLimiter(config);
-      break;
-    case "token-bucket":
-      limiter = new TokenBucketLimiter(config);
-      break;
-    case "sliding-window":
-      // Use token bucket as approximation for sliding window
-      limiter = new TokenBucketLimiter(config);
-      break;
-    default:
-      limiter = new FixedWindowLimiter(config);
-  }
+  const getIdentifier = (context?: Record<string, unknown>): string =>
+    config.identify?.(context!) ?? "default";
 
   return {
-    /**
-     * Check if request is allowed
-     */
+    /** Check if request is allowed */
     check(context?: Record<string, unknown>): RateLimitResult {
-      const identifier = config.identify ? config.identify(context!) : "default";
-
-      return limiter.check(identifier);
+      return limiter.check(getIdentifier(context));
     },
 
-    /**
-     * Reset rate limit for identifier
-     */
+    /** Reset rate limit for identifier */
     reset(context?: Record<string, unknown>): void {
-      const identifier = config.identify ? config.identify(context!) : "default";
-
-      limiter.reset(identifier);
+      limiter.reset(getIdentifier(context));
     },
 
-    /**
-     * Clear all rate limits
-     */
+    /** Clear all rate limits */
     clear(): void {
       limiter.clear();
     },

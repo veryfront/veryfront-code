@@ -1,12 +1,3 @@
-/**
- * ESBuild Plugins
- *
- * Custom esbuild plugins for development file bundling.
- * Handles relative imports and bare module externalization.
- *
- * @module server/handlers/dev/files/esbuild-plugins
- */
-
 import type { OnLoadArgs, OnResolveArgs, Plugin, PluginBuild } from "esbuild";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/index.ts";
 import { getDirectory, joinPath } from "@veryfront/utils/path-utils.ts";
@@ -25,27 +16,16 @@ import {
 } from "@veryfront/utils/import-lockfile.ts";
 import { serverLogger as logger } from "@veryfront/utils/logger/index.ts";
 
-/**
- * Create relative file system plugin
- *
- * Resolves relative imports (./foo, ../bar, /absolute) using the adapter's
- * file system. Tries multiple extensions and index files.
- *
- * Resolution order:
- * 1. Exact path
- * 2. Path + .tsx, .ts, .jsx, .js, .mjs
- * 3. Path/index.tsx, Path/index.ts, etc.
- *
- * @param projectDir - Project root directory
- * @param adapter - Runtime adapter with fs access
- * @returns ESBuild plugin
- *
- * @example
- * ```typescript
- * const plugin = createRelativeFsPlugin('/project', adapter);
- * // Resolves './components/Button' to '/project/components/Button.tsx'
- * ```
- */
+type EsbuildLoader = "tsx" | "ts" | "jsx" | "js";
+
+function getLoaderForPath(path: string): EsbuildLoader {
+  if (path.endsWith(".tsx")) return "tsx";
+  if (path.endsWith(".ts")) return "ts";
+  if (path.endsWith(".jsx")) return "jsx";
+  return "js";
+}
+
+/** Create relative file system plugin for resolving imports via adapter's fs */
 export function createRelativeFsPlugin(projectDir: string, adapter: RuntimeAdapter): Plugin {
   return {
     name: "veryfront-rel-fs",
@@ -80,13 +60,7 @@ export function createRelativeFsPlugin(projectDir: string, adapter: RuntimeAdapt
       build.onLoad({ filter: /\.(tsx?|jsx?|mjs)$/ }, async (args: OnLoadArgs) => {
         try {
           const contents = await adapter.fs.readFile(args.path);
-          const loader = args.path.endsWith(".tsx")
-            ? "tsx"
-            : args.path.endsWith(".ts")
-            ? "ts"
-            : args.path.endsWith(".jsx")
-            ? "jsx"
-            : "js";
+          const loader = getLoaderForPath(args.path);
           return { contents, loader };
         } catch (error) {
           return {
@@ -103,10 +77,7 @@ export function createRelativeFsPlugin(projectDir: string, adapter: RuntimeAdapt
   };
 }
 
-/**
- * Map of common packages to their esm.sh versions for browser imports.
- * Uses centralized React version constants from cdn.ts.
- */
+/** Map of common packages to their esm.sh URLs for browser imports */
 const ESM_PACKAGE_MAP: Record<string, string> = {
   "react": getReactCDNUrl(REACT_DEFAULT_VERSION),
   "react-dom": getReactDOMCDNUrl(REACT_DEFAULT_VERSION),
@@ -122,29 +93,7 @@ export interface BareExternalPluginOptions {
   strict?: boolean;
 }
 
-/**
- * Create bare module external plugin
- *
- * Rewrites bare module imports (npm packages) to esm.sh URLs for browser compatibility.
- * For packages not in the map, marks them as external.
- *
- * Bare modules:
- * - 'react' -> esm.sh React URL (via centralized constants)
- * - 'lodash' -> external (marked for import map)
- * - './relative' ✗ (not handled)
- * - '/absolute' ✗ (not handled)
- * - 'https://...' ✗ (not handled)
- *
- * @param options - Plugin options or boolean for backwards compatibility
- * @returns ESBuild plugin
- *
- * @example
- * ```typescript
- * const plugin = createBareExternalPlugin();
- * // import React from 'react' -> import React from 'https://esm.sh/react@19.1.1'
- * // import './Button' -> bundled normally
- * ```
- */
+/** Create bare module external plugin that rewrites npm imports to esm.sh URLs */
 export function createBareExternalPlugin(
   options: BareExternalPluginOptions | boolean = false,
 ): Plugin {

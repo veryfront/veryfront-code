@@ -8,46 +8,21 @@ import type { Plugin } from "esbuild";
 import type { BundleResult, BundlerOptions } from "../types/bundler-types.ts";
 import { extractImports } from "../utils/import-utils.ts";
 import { getEsbuildLoader } from "../../utils/file-types.ts";
-import { createError, toError } from "../../../core/errors/veryfront-error.ts";
+import { createError, ensureError, toError } from "../../../core/errors/veryfront-error.ts";
 import { createFileSystem } from "../../../platform/compat/fs.ts";
-
-interface BundleCodeOptions {
-  source: { path: string; content: string; type: string };
-  options: BundlerOptions;
-  result: BundleResult;
-  esbuildInstance: typeof esbuild;
-  fileCache: Map<string, string>;
-}
 
 /**
  * Bundle JavaScript/TypeScript files
  */
-export function bundleScript(
+export async function bundleScript(
   source: { path: string; content: string; type: string },
   options: BundlerOptions,
   result: BundleResult,
   esbuildInstance: typeof esbuild,
   fileCache: Map<string, string>,
 ): Promise<void> {
-  return bundleCode({
-    source,
-    options,
-    result,
-    esbuildInstance,
-    fileCache,
-  });
-}
+  const isProduction = options.mode === "production";
 
-/**
- * Bundle code with esbuild
- */
-export async function bundleCode({
-  source,
-  options,
-  result,
-  esbuildInstance,
-  fileCache,
-}: BundleCodeOptions): Promise<void> {
   try {
     // Add to file cache for resolution
     fileCache.set(source.path, source.content);
@@ -61,13 +36,12 @@ export async function bundleCode({
       },
       bundle: true,
       format: options.platform === "node" ? "cjs" : "esm",
-      platform: options.platform ? options.platform : "browser",
-      target: options.mode === "production" ? ["es2020"] : ["esnext"],
-      minify: options.mode === "production",
-      sourcemap: options.mode === "development" ? "inline" : false,
-      treeShaking: options.mode === "production",
-      external: options.external ? options.external : [],
-      globalName: options.platform === "browser" ? undefined : undefined,
+      platform: options.platform ?? "browser",
+      target: isProduction ? ["es2020"] : ["esnext"],
+      minify: isProduction,
+      sourcemap: isProduction ? false : "inline",
+      treeShaking: isProduction,
+      external: options.external ?? [],
       write: false,
       plugins: [
         createResolvePlugin(fileCache, options.projectDir),
@@ -104,21 +78,19 @@ export async function bundleCode({
     }
 
     // Add warnings
-    if (buildResult.warnings.length > 0) {
-      buildResult.warnings.forEach((warning) => {
-        result.warnings.push(formatEsbuildMessage(warning));
-      });
+    for (const warning of buildResult.warnings) {
+      result.warnings.push(formatEsbuildMessage(warning));
     }
   } catch (error) {
     logger.error(`Failed to bundle script ${source.path}`, error);
 
     if (error instanceof Error && "errors" in error) {
       const buildError = error as esbuild.BuildFailure;
-      buildError.errors.forEach((err) => {
+      for (const err of buildError.errors) {
         result.errors.push(new Error(formatEsbuildMessage(err)));
-      });
+      }
     } else {
-      result.errors.push(error as Error);
+      result.errors.push(ensureError(error));
     }
   }
 }

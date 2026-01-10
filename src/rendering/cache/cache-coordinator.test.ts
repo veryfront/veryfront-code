@@ -20,13 +20,13 @@ Deno.test("CacheCoordinator returns cached result on second lookup", async () =>
 
   const slug = "home";
 
-  const lookupMiss = await coordinator.checkCache(slug, null, null, null, null);
+  const lookupMiss = await coordinator.checkCache(slug);
   assertEquals(lookupMiss.cachedResult, undefined);
 
   const render = makeResult("<html>hello</html>");
-  await coordinator.persistResult(render, slug, slug, slug, null, undefined, undefined, undefined);
+  await coordinator.persistResult(render, slug);
 
-  const lookupHit = await coordinator.checkCache(slug, null, null, null, null);
+  const lookupHit = await coordinator.checkCache(slug);
   assertObjectMatch(lookupHit.cachedResult ?? {}, { html: "<html>hello</html>" });
 
   await coordinator.destroy();
@@ -38,20 +38,11 @@ Deno.test("CacheCoordinator respects TTL", async () => {
   });
 
   const slug = "ttl-test";
-  await coordinator.persistResult(
-    makeResult("first"),
-    slug,
-    slug,
-    slug,
-    null,
-    undefined,
-    undefined,
-    undefined,
-  );
+  await coordinator.persistResult(makeResult("first"), slug);
 
   await new Promise((resolve) => setTimeout(resolve, 5));
 
-  const lookup = await coordinator.checkCache(slug, null, null, null, null);
+  const lookup = await coordinator.checkCache(slug);
   assertEquals(lookup.cachedResult, undefined);
 
   await coordinator.destroy();

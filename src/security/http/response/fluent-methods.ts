@@ -1,6 +1,5 @@
 /**
- * ResponseBuilder - Fluent Builder Methods
- * Fluent methods for configuring response builder state
+ * ResponseBuilder - Fluent methods for configuring response builder state
  */
 
 import { applyCORSHeaders, applyCORSHeadersSync } from "../cors/index.ts";
@@ -8,9 +7,6 @@ import { applySecurityHeaders } from "./security-handler.ts";
 import { buildCacheControl } from "./cache-handler.ts";
 import type { CacheStrategy, CORSConfig, SecurityConfig } from "./types.ts";
 
-/**
- * Internal state interface for fluent methods
- */
 export interface FluentMethodsContext {
   headers: Headers;
   status: number;
@@ -22,9 +18,7 @@ export interface FluentMethodsContext {
   studioEmbed: boolean;
 }
 
-/**
- * Apply CORS headers based on configuration
- */
+/** Apply CORS headers based on configuration */
 export function withCORS<T extends FluentMethodsContext>(
   this: T,
   req: Request,
@@ -39,9 +33,7 @@ export function withCORS<T extends FluentMethodsContext>(
   return this;
 }
 
-/**
- * Apply CORS headers asynchronously (for loading config)
- */
+/** Apply CORS headers asynchronously */
 export function withCORSAsync<T extends FluentMethodsContext>(
   this: T,
   req: Request,
@@ -53,9 +45,7 @@ export function withCORSAsync<T extends FluentMethodsContext>(
   }).then(() => this);
 }
 
-/**
- * Apply security headers (CSP, COOP, CORP, COEP)
- */
+/** Apply security headers (CSP, COOP, CORP, COEP) */
 export function withSecurity<T extends FluentMethodsContext>(
   this: T,
   config?: SecurityConfig,
@@ -73,9 +63,7 @@ export function withSecurity<T extends FluentMethodsContext>(
   return this;
 }
 
-/**
- * Apply cache control headers based on strategy
- */
+/** Apply cache control headers based on strategy */
 export function withCache<T extends FluentMethodsContext>(
   this: T,
   strategy: CacheStrategy,
@@ -85,9 +73,7 @@ export function withCache<T extends FluentMethodsContext>(
   return this;
 }
 
-/**
- * Set ETag header
- */
+/** Set ETag header */
 export function withETag<T extends FluentMethodsContext>(
   this: T,
   etag: string,
@@ -96,32 +82,28 @@ export function withETag<T extends FluentMethodsContext>(
   return this;
 }
 
-/**
- * Set custom headers
- */
+/** Set custom headers */
 export function withHeaders<T extends FluentMethodsContext>(
   this: T,
   headers: HeadersInit | Record<string, string>,
 ): T {
   if (headers instanceof Headers) {
-    headers.forEach((value, key) => {
+    for (const [key, value] of headers) {
       this.headers.set(key, value);
-    });
+    }
   } else if (Array.isArray(headers)) {
-    headers.forEach(([key, value]) => {
+    for (const [key, value] of headers) {
       this.headers.set(key, value);
-    });
+    }
   } else {
-    Object.entries(headers).forEach(([key, value]) => {
+    for (const [key, value] of Object.entries(headers)) {
       this.headers.set(key, value);
-    });
+    }
   }
   return this;
 }
 
-/**
- * Set response status
- */
+/** Set response status */
 export function withStatus<T extends FluentMethodsContext>(
   this: T,
   status: number,
@@ -130,11 +112,7 @@ export function withStatus<T extends FluentMethodsContext>(
   return this;
 }
 
-/**
- * Apply Client Hints headers for theme detection
- * This enables browser to send Sec-CH-Prefers-Color-Scheme header
- * @see https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Sec-CH-Prefers-Color-Scheme
- */
+/** Apply Client Hints headers for theme detection */
 export function withClientHints<T extends FluentMethodsContext>(
   this: T,
 ): T {
@@ -149,9 +127,7 @@ export function withClientHints<T extends FluentMethodsContext>(
   return this;
 }
 
-/**
- * Set Allow header for OPTIONS requests
- */
+/** Set Allow header for OPTIONS requests */
 export function withAllow<T extends FluentMethodsContext>(
   this: T,
   methods: string | string[],

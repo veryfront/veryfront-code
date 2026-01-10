@@ -55,11 +55,11 @@ export class ViewportPrefetch {
         document.createDocumentFragment().querySelectorAll("a");
     const isViewportEnabled = Boolean(this.prefetchOptions.viewport);
 
-    anchors.forEach((anchor) => {
+    for (const anchor of anchors) {
       if (this.shouldObserveAnchor(anchor, isViewportEnabled)) {
         this.observer?.observe(anchor);
       }
-    });
+    }
   }
 
   private shouldObserveAnchor(anchor: HTMLAnchorElement, isViewportEnabled: boolean): boolean {

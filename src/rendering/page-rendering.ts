@@ -6,6 +6,7 @@ import type { EntityInfo, MdxBundle, MDXComponents, MDXModule, PageBundle } from
 import { mdxRenderer } from "@veryfront/transforms/mdx/index.ts";
 import { getProjectReact } from "@veryfront/react";
 import { compileMDXRuntime } from "@veryfront/transforms/mdx/compiler/index.ts";
+import { ensureError, getErrorMessage } from "../core/errors/veryfront-error.ts";
 // DISABLED: Position injection temporarily disabled to fix hydration mismatch
 // import { injectNodePositions } from "../build/transforms/plugins/babel-node-positions.ts";
 
@@ -107,7 +108,7 @@ export async function handleMDXPage(
         }
       }
     } catch (e) {
-      const error = e instanceof Error ? e : new Error(String(e));
+      const error = ensureError(e);
       logger.warn("generateMetadata threw for MDX page", error);
       // Re-throw if this was a critical error (not just missing metadata)
       if (error.message.includes("ReferenceError") || error.message.includes("SyntaxError")) {
@@ -130,9 +131,7 @@ export async function handleMDXPage(
     };
   } catch (error) {
     throw new VeryfrontError(
-      `Failed to import MDX page via ESM: ${
-        error instanceof Error ? error.message : String(error)
-      }`,
+      `Failed to import MDX page via ESM: ${getErrorMessage(error)}`,
       ErrorCode.RENDER_ERROR,
       { slug, error },
     );

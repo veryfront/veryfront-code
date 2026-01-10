@@ -9,86 +9,77 @@
 import type { ParsedArgs } from "./types.ts";
 import { DEFAULT_PORT } from "@veryfront/config/defaults.ts";
 
-/**
- * Flags that should accumulate values instead of replacing
- */
+/** Flags that should accumulate values instead of replacing */
 const ARRAY_FLAGS = new Set(["with"]);
+
+/** Converts a string to number if it matches a numeric pattern */
+function maybeNumber(val: unknown): unknown {
+  if (typeof val === "string" && /^\d+$/.test(val)) {
+    return parseInt(val, 10);
+  }
+  return val;
+}
+
+/** Checks if an argument looks like a value (not a flag) */
+function isValue(arg: string | undefined): boolean {
+  return arg !== undefined && !arg.startsWith("-");
+}
 
 function parse(
   args: string[],
-  options: {
-    alias?: Record<string, string>;
-    default?: Record<string, unknown>;
-  } = {},
+  options: { alias?: Record<string, string>; default?: Record<string, unknown> } = {},
 ): Record<string, unknown> {
   const result: Record<string, unknown> = { _: [] as string[], ...options.default };
-  const aliasMap = new Map<string, string>();
+  const aliasMap = new Map(Object.entries(options.alias ?? {}));
 
-  if (options.alias) {
-    for (const [short, long] of Object.entries(options.alias)) {
-      aliasMap.set(short, long);
-    }
-  }
-
-  /**
-   * Convert a string value to number if it looks like a number
-   */
-  const maybeNumber = (val: unknown): unknown => {
-    if (typeof val === "string" && /^\d+$/.test(val)) {
-      return parseInt(val, 10);
-    }
-    return val;
-  };
-
-  /**
-   * Set a value, handling array flags that accumulate
-   */
-  const setValue = (key: string, value: unknown) => {
+  function setValue(key: string, value: unknown): void {
     const converted = maybeNumber(value);
     if (ARRAY_FLAGS.has(key)) {
-      if (!result[key]) {
-        result[key] = [];
-      }
-      (result[key] as unknown[]).push(converted);
+      const arr = (result[key] as unknown[]) ?? [];
+      result[key] = [...arr, converted];
     } else {
       result[key] = converted;
     }
-  };
+  }
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
     if (!arg) continue;
 
+    // Long flag: --key=value or --key value
     if (arg.startsWith("--")) {
       const eqIdx = arg.indexOf("=");
       if (eqIdx !== -1) {
-        const key = arg.slice(2, eqIdx);
-        setValue(key, arg.slice(eqIdx + 1));
+        setValue(arg.slice(2, eqIdx), arg.slice(eqIdx + 1));
       } else {
         const key = arg.slice(2);
         const next = args[i + 1];
-        if (next && !next.startsWith("-")) {
+        if (isValue(next)) {
           setValue(key, next);
           i++;
         } else {
           setValue(key, true);
         }
       }
-    } else if (arg.startsWith("-") && arg.length === 2) {
+      continue;
+    }
+
+    // Short flag: -k value
+    if (arg.startsWith("-") && arg.length === 2) {
       const short = arg.slice(1);
-      const key = aliasMap.get(short) || short;
+      const key = aliasMap.get(short) ?? short;
       const next = args[i + 1];
-      if (next && !next.startsWith("-")) {
+      if (isValue(next)) {
         setValue(key, next);
         i++;
       } else {
         setValue(key, true);
       }
-    } else if (!result._) {
-      result._ = [arg];
-    } else {
-      (result._ as string[]).push(arg);
+      continue;
     }
+
+    // Positional argument
+    (result._ as string[]).push(arg);
   }
 
   return result;

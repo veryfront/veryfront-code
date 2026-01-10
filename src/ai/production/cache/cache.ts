@@ -37,6 +37,24 @@ export interface CacheEntry {
   lastAccessedAt: number;
 }
 
+/** Creates a new cache entry with initial values */
+function createCacheEntry(response: AgentResponse, expiresAt?: number): CacheEntry {
+  const now = Date.now();
+  return {
+    response,
+    cachedAt: now,
+    expiresAt,
+    accessCount: 0,
+    lastAccessedAt: now,
+  };
+}
+
+/** Updates access stats on a cache entry */
+function markAccessed(entry: CacheEntry): void {
+  entry.accessCount++;
+  entry.lastAccessedAt = Date.now();
+}
+
 /**
  * Memory Cache (simple in-memory storage)
  */
@@ -44,22 +62,14 @@ class MemoryCache {
   private cache = new Map<string, CacheEntry>();
 
   set(key: string, response: AgentResponse): void {
-    this.cache.set(key, {
-      response,
-      cachedAt: Date.now(),
-      accessCount: 0,
-      lastAccessedAt: Date.now(),
-    });
+    this.cache.set(key, createCacheEntry(response));
   }
 
   get(key: string): AgentResponse | null {
     const entry = this.cache.get(key);
-
     if (!entry) return null;
 
-    entry.accessCount++;
-    entry.lastAccessedAt = Date.now();
-
+    markAccessed(entry);
     return entry.response;
   }
 
@@ -105,23 +115,16 @@ class LRUCache {
       }
     }
 
-    this.cache.set(key, {
-      response,
-      cachedAt: Date.now(),
-      accessCount: 0,
-      lastAccessedAt: Date.now(),
-    });
+    this.cache.set(key, createCacheEntry(response));
   }
 
   get(key: string): AgentResponse | null {
     const entry = this.cache.get(key);
-
     if (!entry) return null;
 
     // Move to end (mark as recently used)
     this.cache.delete(key);
-    entry.accessCount++;
-    entry.lastAccessedAt = Date.now();
+    markAccessed(entry);
     this.cache.set(key, entry);
 
     return entry.response;
@@ -158,20 +161,11 @@ class TTLCache {
   }
 
   set(key: string, response: AgentResponse): void {
-    const now = Date.now();
-
-    this.cache.set(key, {
-      response,
-      cachedAt: now,
-      expiresAt: now + this.ttl,
-      accessCount: 0,
-      lastAccessedAt: now,
-    });
+    this.cache.set(key, createCacheEntry(response, Date.now() + this.ttl));
   }
 
   get(key: string): AgentResponse | null {
     const entry = this.cache.get(key);
-
     if (!entry) return null;
 
     // Check if expired
@@ -180,9 +174,7 @@ class TTLCache {
       return null;
     }
 
-    entry.accessCount++;
-    entry.lastAccessedAt = Date.now();
-
+    markAccessed(entry);
     return entry.response;
   }
 
@@ -233,26 +225,23 @@ class TTLCache {
   }
 }
 
+/** Factory for creating cache instances by strategy */
+function createCacheByStrategy(config: CacheConfig): MemoryCache | LRUCache | TTLCache {
+  switch (config.strategy) {
+    case "lru":
+      return new LRUCache(config.maxSize ?? 100);
+    case "ttl":
+      return new TTLCache(config.ttl ?? 300000);
+    default:
+      return new MemoryCache();
+  }
+}
+
 /**
  * Create a cache instance
  */
 export function createCache(config: CacheConfig) {
-  let cache: MemoryCache | LRUCache | TTLCache;
-
-  switch (config.strategy) {
-    case "memory":
-      cache = new MemoryCache();
-      break;
-    case "lru":
-      cache = new LRUCache(config.maxSize || 100);
-      break;
-    case "ttl":
-      cache = new TTLCache(config.ttl || 300000);
-      break;
-    default:
-      cache = new MemoryCache();
-  }
-
+  const cache = createCacheByStrategy(config);
   const keyGenerator = config.keyGenerator || ((input: string) => `cache_${hashString(input)}`);
 
   return {

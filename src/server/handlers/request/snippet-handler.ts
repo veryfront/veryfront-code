@@ -11,6 +11,7 @@ import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } 
 const PRIORITY_SNIPPET = 450;
 import { serverLogger as logger } from "@veryfront/utils";
 import { renderSnippet } from "@veryfront/rendering/snippet-renderer.ts";
+import { getErrorMessage } from "../../../core/errors/veryfront-error.ts";
 
 /**
  * SnippetHandler handles @/ and @components/ prefixed paths.
@@ -120,62 +121,11 @@ export class SnippetHandler extends BaseHandler {
       } catch (error) {
         logger.error("[SnippetHandler] Error rendering snippet", {
           filePath,
-          error: error instanceof Error ? error.message : String(error),
+          error: getErrorMessage(error),
           stack: error instanceof Error ? error.stack : undefined,
         });
         return this.continue();
       }
     });
-  }
-
-  private withProxyContext<T>(
-    ctx: HandlerContext,
-    fn: () => Promise<T>,
-  ): Promise<T> {
-    const fsWrapper = ctx.adapter.fs as {
-      runWithContext?: <T>(
-        slug: string,
-        token: string,
-        fn: () => Promise<T>,
-        projectId?: string,
-        options?: { productionMode?: boolean; releaseId?: string | null },
-      ) => Promise<T>;
-      setRequestBranch?: (b: string | null) => void;
-    };
-
-    // Set branch context from parsed domain (for branch-aware file resolution)
-    if (typeof fsWrapper.setRequestBranch === "function") {
-      const branch = ctx.parsedDomain?.branch ?? null;
-      fsWrapper.setRequestBranch(branch);
-    }
-
-    if (!ctx.projectSlug) {
-      return fn();
-    }
-
-    if (typeof fsWrapper.runWithContext === "function") {
-      // Determine production mode based on domain type
-      let isProduction = false;
-      if (ctx.parsedDomain?.isVeryfrontDomain) {
-        isProduction = ctx.parsedDomain.isDraft === false;
-      } else {
-        isProduction = ctx.proxyEnvironment === "production";
-      }
-
-      this.logDebug("Using multi-project context", {
-        projectSlug: ctx.projectSlug,
-        projectId: ctx.projectId,
-        productionMode: isProduction,
-      }, ctx);
-      return fsWrapper.runWithContext(
-        ctx.projectSlug,
-        ctx.proxyToken || "",
-        fn,
-        ctx.projectId,
-        { productionMode: isProduction, releaseId: ctx.releaseId },
-      );
-    }
-
-    return fn();
   }
 }

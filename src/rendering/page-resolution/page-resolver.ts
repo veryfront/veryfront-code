@@ -20,6 +20,20 @@ import type { EntityInfo } from "@veryfront/types";
 import { getEntityBySlug } from "../../core/types/entities/getEntityInfo.ts";
 import { detectAppRouter, getAppRouteEntity } from "../router-detection.ts";
 
+/** Supported page file extensions */
+const PAGE_EXTENSIONS = /\.(mdx|md|tsx|jsx|ts|js)$/;
+
+/** Check if a filename is a page file */
+function isPageFile(name: string): boolean {
+  return PAGE_EXTENSIONS.test(name);
+}
+
+/** Extract slug from page filename */
+function fileToSlug(name: string): string {
+  const slug = name.replace(PAGE_EXTENSIONS, "");
+  return slug === "index" ? "/" : slug;
+}
+
 export interface PageResolverOptions {
   projectDir: string;
   config: VeryfrontConfig;
@@ -103,52 +117,30 @@ export class PageResolver {
    * @returns Array of slugs for all pages
    */
   async getAllPages(): Promise<string[]> {
-    const pages: string[] = [];
+    const pages = new Set<string>();
     const pagesDirName = this.config?.directories?.pages || "pages";
 
     // Check pages directory
     const pagesDir = join(this.projectDir, pagesDirName);
     if (await this.adapter.fs.exists(pagesDir)) {
       for await (const entry of this.adapter.fs.readDir(pagesDir)) {
-        if (
-          entry.isFile &&
-          (entry.name.endsWith(".mdx") ||
-            entry.name.endsWith(".md") ||
-            entry.name.endsWith(".tsx") ||
-            entry.name.endsWith(".jsx") ||
-            entry.name.endsWith(".ts") ||
-            entry.name.endsWith(".js"))
-        ) {
-          const slug = entry.name.replace(/\.(mdx|md|tsx|jsx|ts|js)$/, "");
-          pages.push(slug === "index" ? "/" : slug);
+        if (entry.isFile && isPageFile(entry.name)) {
+          pages.add(fileToSlug(entry.name));
         }
       }
     }
 
-    // Also check root directory
+    // Also check root directory (Set handles deduplication)
     for await (const entry of this.adapter.fs.readDir(this.projectDir)) {
-      if (
-        entry.isFile &&
-        (entry.name.endsWith(".mdx") ||
-          entry.name.endsWith(".md") ||
-          entry.name.endsWith(".tsx") ||
-          entry.name.endsWith(".jsx") ||
-          entry.name.endsWith(".ts") ||
-          entry.name.endsWith(".js")) &&
-        // Exclude config files
-        !entry.name.includes("config")
-      ) {
-        const slug = entry.name.replace(/\.(mdx|md|tsx|jsx|ts|js)$/, "");
-        // Deduplicate - don't add if already found in pages/
-        if (!pages.includes(slug === "index" ? "/" : slug)) {
-          pages.push(slug === "index" ? "/" : slug);
-        }
+      if (entry.isFile && isPageFile(entry.name) && !entry.name.includes("config")) {
+        pages.add(fileToSlug(entry.name));
       }
     }
 
-    logger.debug("Discovered pages:", { count: pages.length, pages });
+    const result = Array.from(pages);
+    logger.debug("Discovered pages:", { count: result.length, pages: result });
 
-    return pages;
+    return result;
   }
 
   /**

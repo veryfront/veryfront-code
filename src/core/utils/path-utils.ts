@@ -38,6 +38,20 @@ export function hasHashedFilename(path: string): boolean {
   return /\.[a-f0-9]{8,}\./.test(path);
 }
 
+const EXTENSION_TO_LOADER: Record<string, "tsx" | "jsx" | "ts" | "js"> = {
+  ".tsx": "tsx",
+  ".jsx": "jsx",
+  ".ts": "ts",
+};
+
+/**
+ * Get esbuild loader type from file extension
+ */
+export function getEsbuildLoader(filePath: string): "tsx" | "jsx" | "ts" | "js" {
+  const ext = getExtension(filePath).toLowerCase();
+  return EXTENSION_TO_LOADER[ext] ?? "js";
+}
+
 export function isAbsolutePath(path: string): boolean {
   return path.startsWith("/") || /^[A-Za-z]:[\\/]/.test(path);
 }
@@ -47,11 +61,16 @@ export function toBase64Url(s: string): string {
   return b64.replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "");
 }
 
+const BASE64_PADDING: Record<number, string> = { 2: "==", 3: "=" };
+
+function getBase64Padding(length: number): string {
+  return BASE64_PADDING[length % 4] ?? "";
+}
+
 export function fromBase64Url(encoded: string): string {
   const b64 = encoded.replaceAll("-", "+").replaceAll("_", "/");
-  const pad = b64.length % 4 === 2 ? "==" : b64.length % 4 === 3 ? "=" : "";
   try {
-    return atob(b64 + pad);
+    return atob(b64 + getBase64Padding(b64.length));
   } catch (error) {
     logger.debug(`Failed to decode base64url string "${encoded}":`, error);
     return "";

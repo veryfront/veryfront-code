@@ -156,15 +156,14 @@ export class LocalBlobStorage implements BlobStorage {
           if (entry.isFile && entry.name.endsWith(".meta.json")) {
             const id = entry.name.replace(".meta.json", "");
             const blobRef = await this.stat(id);
-            if (blobRef && blobRef.expiresAt && blobRef.expiresAt < new Date()) {
+            if (blobRef?.expiresAt && blobRef.expiresAt < new Date()) {
               logger.debug(`[LocalBlobStorage] Deleting expired blob: ${id}`);
               await this.delete(id);
             }
           }
         }
-      } catch (_e) {
+      } catch {
         // Directory not found is fine, skip
-        continue;
       }
     }
   }

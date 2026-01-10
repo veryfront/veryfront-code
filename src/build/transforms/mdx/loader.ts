@@ -1,8 +1,9 @@
 import { rendererLogger as logger } from "@veryfront/utils";
 import { join } from "@std/path";
 import * as React from "react";
-import type { MDXComponents, MDXFrontmatter, MDXModule } from "./types.ts";
+import { getErrorMessage } from "../../../core/errors/veryfront-error.ts";
 import { createFileSystem } from "../../../platform/compat/fs.ts";
+import type { MDXComponents, MDXFrontmatter, MDXModule } from "./types.ts";
 
 export async function loadCompiledMDX(modulePath: string): Promise<MDXModule | null> {
   try {
@@ -67,9 +68,8 @@ export async function hasCompiledMDX(
     const stat = await fs.stat(modulePath);
     logger.debug(`Found compiled MDX file: ${modulePath}, size: ${stat.size}`);
     return true;
-  } catch (_error) {
-    logger.debug(`No compiled MDX found at: ${modulePath}, error: ${(_error as Error).message}`);
-
+  } catch (error) {
+    logger.debug(`No compiled MDX found at: ${modulePath}, error: ${getErrorMessage(error)}`);
     return false;
   }
 }

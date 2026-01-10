@@ -47,6 +47,22 @@ export interface SSGOptions {
 }
 
 /**
+ * Get output path for a route slug
+ */
+function getOutputPath(outputDir: string, slug: string): string {
+  return slug === "index" ? join(outputDir, "index.html") : join(outputDir, slug, "index.html");
+}
+
+/**
+ * Get output path for an app route path
+ */
+function getAppRouteOutputPath(outputDir: string, routePath: string): string {
+  return routePath === "/"
+    ? join(outputDir, "index.html")
+    : join(outputDir, routePath.slice(1), "index.html");
+}
+
+/**
  * Build all pages from Pages Router
  */
 export async function buildPagesRoutes(
@@ -109,9 +125,7 @@ ${clientStyles}
       enhancedHtml = enhancedHtml.replace("</body>", generateClientRuntime(route, result, baseUrl));
 
       // Determine output path
-      const outputPath = route.slug === "index"
-        ? join(outputDir, "index.html")
-        : join(outputDir, route.slug, "index.html");
+      const outputPath = getOutputPath(outputDir, route.slug);
 
       // Ensure directory exists
       await mkdir(dirname(outputPath), { recursive: true });
@@ -196,9 +210,7 @@ export async function buildAppRoutes(
           pageFile: route.pageFile,
         }));
 
-      const outputPath = route.path === "/"
-        ? join(outputDir, "index.html")
-        : join(outputDir, route.path.slice(1), "index.html");
+      const outputPath = getAppRouteOutputPath(outputDir, route.path);
 
       if (!dryRun) {
         await mkdir(dirname(outputPath), { recursive: true });

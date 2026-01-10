@@ -91,21 +91,15 @@ function isFragment(openingElement: t.JSXOpeningElement): boolean {
   const name = openingElement.name;
 
   if (t.isJSXMemberExpression(name)) {
-    if (
+    return (
       t.isJSXIdentifier(name.object) &&
       name.object.name === "React" &&
       t.isJSXIdentifier(name.property) &&
       name.property.name === "Fragment"
-    ) {
-      return true;
-    }
+    );
   }
 
-  if (t.isJSXIdentifier(name) && name.name === "Fragment") {
-    return true;
-  }
-
-  return false;
+  return t.isJSXIdentifier(name) && name.name === "Fragment";
 }
 
 function hasPositionAttribute(attributes: (t.JSXAttribute | t.JSXSpreadAttribute)[]): boolean {

@@ -13,24 +13,26 @@ import {
   ToolExecutionCore,
 } from "./tool-execution-core.ts";
 
+function createMockMemory() {
+  return {
+    add: () => Promise.resolve(),
+    getMessages: () => Promise.resolve([]),
+    clear: () => Promise.resolve(),
+    getStats: () =>
+      Promise.resolve({
+        totalMessages: 0,
+        estimatedTokens: 0,
+        type: "conversation" as const,
+      }),
+  };
+}
+
 describe("ToolExecutionCore", () => {
   describe("createToolExecutionCore factory", () => {
     it("should create ToolExecutionCore instance", () => {
-      const mockMemory = {
-        add: () => Promise.resolve(),
-        getMessages: () => Promise.resolve([]),
-        clear: () => Promise.resolve(),
-        getStats: () =>
-          Promise.resolve({
-            totalMessages: 0,
-            estimatedTokens: 0,
-            type: "conversation" as const,
-          }),
-      };
-
       const instance = createToolExecutionCore({
         agentId: "factory-test",
-        memory: mockMemory,
+        memory: createMockMemory(),
       });
 
       assertEquals(instance instanceof ToolExecutionCore, true);
@@ -66,21 +68,9 @@ describe("ToolExecutionCore", () => {
 
   describe("Instance creation", () => {
     it("should create instance with context", () => {
-      const mockMemory = {
-        add: () => Promise.resolve(),
-        getMessages: () => Promise.resolve([]),
-        clear: () => Promise.resolve(),
-        getStats: () =>
-          Promise.resolve({
-            totalMessages: 0,
-            estimatedTokens: 0,
-            type: "conversation" as const,
-          }),
-      };
-
       const core = new ToolExecutionCore({
         agentId: "test-agent-123",
-        memory: mockMemory,
+        memory: createMockMemory(),
       });
 
       assertExists(core);
@@ -89,42 +79,18 @@ describe("ToolExecutionCore", () => {
     });
 
     it("should have execute method", () => {
-      const mockMemory = {
-        add: () => Promise.resolve(),
-        getMessages: () => Promise.resolve([]),
-        clear: () => Promise.resolve(),
-        getStats: () =>
-          Promise.resolve({
-            totalMessages: 0,
-            estimatedTokens: 0,
-            type: "conversation" as const,
-          }),
-      };
-
       const core = new ToolExecutionCore({
         agentId: "test-agent",
-        memory: mockMemory,
+        memory: createMockMemory(),
       });
 
       assertEquals(typeof core.execute, "function");
     });
 
     it("should have executeAll method", () => {
-      const mockMemory = {
-        add: () => Promise.resolve(),
-        getMessages: () => Promise.resolve([]),
-        clear: () => Promise.resolve(),
-        getStats: () =>
-          Promise.resolve({
-            totalMessages: 0,
-            estimatedTokens: 0,
-            type: "conversation" as const,
-          }),
-      };
-
       const core = new ToolExecutionCore({
         agentId: "test-agent",
-        memory: mockMemory,
+        memory: createMockMemory(),
       });
 
       assertEquals(typeof core.executeAll, "function");

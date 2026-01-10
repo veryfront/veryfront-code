@@ -74,7 +74,7 @@ export class ResourceHintsManager {
     prefetchedUrls: Set<string>,
     hints: ResourceHint[],
   ): void {
-    doc.querySelectorAll('link[rel="preload"], link[rel="prefetch"]').forEach((link) => {
+    for (const link of doc.querySelectorAll('link[rel="preload"], link[rel="prefetch"]')) {
       const htmlLink = link as HTMLLinkElement;
       const href = htmlLink.href;
       if (href && !prefetchedUrls.has(href) && this.isValidResourceHintType(htmlLink.rel)) {
@@ -84,7 +84,7 @@ export class ResourceHintsManager {
           as: htmlLink.getAttribute("as") || undefined,
         });
       }
-    });
+    }
   }
 
   private extractScripts(
@@ -92,12 +92,12 @@ export class ResourceHintsManager {
     prefetchedUrls: Set<string>,
     hints: ResourceHint[],
   ): void {
-    doc.querySelectorAll("script[src]").forEach((script) => {
+    for (const script of doc.querySelectorAll("script[src]")) {
       const src = (script as HTMLScriptElement).src;
       if (src && !prefetchedUrls.has(src)) {
         hints.push({ type: "prefetch", href: src, as: "script" });
       }
-    });
+    }
   }
 
   private extractStylesheets(
@@ -105,12 +105,12 @@ export class ResourceHintsManager {
     prefetchedUrls: Set<string>,
     hints: ResourceHint[],
   ): void {
-    doc.querySelectorAll('link[rel="stylesheet"]').forEach((link) => {
+    for (const link of doc.querySelectorAll('link[rel="stylesheet"]')) {
       const href = (link as HTMLLinkElement).href;
       if (href && !prefetchedUrls.has(href)) {
         hints.push({ type: "prefetch", href, as: "style" });
       }
-    });
+    }
   }
 
   static generateResourceHints(_route: string, assets: string[]): string {

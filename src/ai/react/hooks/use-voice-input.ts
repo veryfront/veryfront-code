@@ -186,37 +186,25 @@ export function useVoiceInput(
 
       const currentTranscript = finalTranscript || interimTranscript;
       setTranscript(currentTranscript);
-
-      if (onTranscript) {
-        onTranscript(currentTranscript, !!finalTranscript);
-      }
+      onTranscript?.(currentTranscript, !!finalTranscript);
     };
 
     recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
       const errorMessage = getErrorMessage(event.error);
       setError(errorMessage);
       setIsListening(false);
-
-      if (onError) {
-        onError(errorMessage);
-      }
+      onError?.(errorMessage);
     };
 
     recognition.onstart = () => {
       setIsListening(true);
       setError(null);
-
-      if (onStart) {
-        onStart();
-      }
+      onStart?.();
     };
 
     recognition.onend = () => {
       setIsListening(false);
-
-      if (onEnd) {
-        onEnd();
-      }
+      onEnd?.();
     };
 
     recognitionRef.current = recognition;

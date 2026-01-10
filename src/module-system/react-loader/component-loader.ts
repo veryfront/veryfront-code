@@ -6,9 +6,9 @@ import type { TransformOptions } from "@veryfront/transforms/esm/types.ts";
 import { getGlobalTmpDir } from "./temp-directory.ts";
 import { normalizeModulePath, resolveRelativePath } from "./path-resolver.ts";
 import type { LoadComponentOptions } from "./types.ts";
-import { createError, toError } from "../../core/errors/veryfront-error.ts";
 import { createFileSystem } from "../../platform/compat/fs.ts";
 import { SSRModuleLoader } from "./ssr-module-loader.ts";
+import { extractComponent } from "./extract-component.ts";
 
 export async function loadComponentFromSource(
   source: string,
@@ -67,34 +67,5 @@ export async function loadComponentFromSource(
   const cacheBuster = Date.now();
   const mod = await import(`file://${componentFile}?t=${cacheBuster}`);
 
-  const component = extractComponent(mod, filePath);
-
-  return component;
-}
-
-function extractComponent(
-  mod: unknown,
-  filePath: string,
-): React.ComponentType<Record<string, unknown>> {
-  const moduleObj = mod as Record<string, unknown>;
-
-  let component = moduleObj.default;
-
-  if (!component) {
-    const keys = Object.keys(moduleObj);
-    const firstKey = keys[0];
-    if (firstKey) {
-      component = moduleObj[firstKey];
-    }
-  }
-
-  if (!component) {
-    throw toError(createError({
-      type: "build",
-      message: `No component exported from ${filePath}`,
-      context: { file: filePath, phase: "transform" },
-    }));
-  }
-
-  return component as React.ComponentType<Record<string, unknown>>;
+  return extractComponent(mod, filePath);
 }

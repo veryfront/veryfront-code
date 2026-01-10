@@ -44,29 +44,22 @@ export class MemoryDebugHandler extends BaseHandler {
     }
 
     try {
-      // Route to specific handlers
-      if (pathname === "/_debug/memory" || pathname === "/_debug/memory/") {
-        return await this.handleFullSnapshot(req, ctx);
+      // Route to specific handlers based on pathname
+      switch (pathname) {
+        case "/_debug/memory":
+        case "/_debug/memory/":
+          return this.handleFullSnapshot(req, ctx);
+        case "/_debug/memory/heap":
+          return this.handleHeapStats(req, ctx);
+        case "/_debug/memory/caches":
+          return this.handleCacheStats(req, ctx);
+        case "/_debug/memory/gc":
+          return await this.handleGC(req, ctx);
+        case "/_debug/memory/pressure":
+          return this.handlePressureCheck(req, ctx);
+        default:
+          return this.continue();
       }
-
-      if (pathname === "/_debug/memory/heap") {
-        return await this.handleHeapStats(req, ctx);
-      }
-
-      if (pathname === "/_debug/memory/caches") {
-        return await this.handleCacheStats(req, ctx);
-      }
-
-      if (pathname === "/_debug/memory/gc") {
-        return await this.handleGC(req, ctx);
-      }
-
-      if (pathname === "/_debug/memory/pressure") {
-        return await this.handlePressureCheck(req, ctx);
-      }
-
-      // Unknown path
-      return this.continue();
     } catch (e) {
       logger.error("[MemoryDebugHandler] Error", { error: e });
 
@@ -74,122 +67,97 @@ export class MemoryDebugHandler extends BaseHandler {
         HTTP_INTERNAL_SERVER_ERROR,
         "Failed to get memory info",
         req,
-        {
-          securityConfig: ctx.securityConfig ?? undefined,
-          corsConfig: ctx.securityConfig?.cors,
-        },
+        this.getSecurityOptions(ctx),
       );
 
       return this.respond(response);
     }
   }
 
-  private handleFullSnapshot(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
-    const snapshot = getMemorySnapshot();
-
-    const response = ResponseBuilder.json(
-      snapshot,
-      req,
-      {
-        securityConfig: ctx.securityConfig ?? undefined,
-        corsConfig: ctx.securityConfig?.cors,
-        status: HTTP_OK,
-      },
-    );
-
-    return Promise.resolve(this.respond(response));
+  private getSecurityOptions(ctx: HandlerContext): {
+    securityConfig: NonNullable<HandlerContext["securityConfig"]> | undefined;
+    corsConfig: NonNullable<HandlerContext["securityConfig"]>["cors"] | undefined;
+  } {
+    return {
+      securityConfig: ctx.securityConfig ?? undefined,
+      corsConfig: ctx.securityConfig?.cors,
+    };
   }
 
-  private handleHeapStats(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
-    const heap = getHeapStats();
+  private jsonResponse(
+    data: unknown,
+    req: Request,
+    ctx: HandlerContext,
+  ): HandlerResult {
+    const response = ResponseBuilder.json(data, req, {
+      ...this.getSecurityOptions(ctx),
+      status: HTTP_OK,
+    });
+    return this.respond(response);
+  }
 
-    const response = ResponseBuilder.json(
+  private handleFullSnapshot(req: Request, ctx: HandlerContext): HandlerResult {
+    return this.jsonResponse(getMemorySnapshot(), req, ctx);
+  }
+
+  private handleHeapStats(req: Request, ctx: HandlerContext): HandlerResult {
+    return this.jsonResponse(
       {
         timestamp: new Date().toISOString(),
-        heap,
+        heap: getHeapStats(),
       },
       req,
-      {
-        securityConfig: ctx.securityConfig ?? undefined,
-        corsConfig: ctx.securityConfig?.cors,
-        status: HTTP_OK,
-      },
+      ctx,
     );
-
-    return Promise.resolve(this.respond(response));
   }
 
-  private handleCacheStats(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
+  private handleCacheStats(req: Request, ctx: HandlerContext): HandlerResult {
     const caches = getCacheStats();
-    const totalEntries = caches.reduce((sum, c) => sum + Math.max(0, c.entries), 0);
-
-    const response = ResponseBuilder.json(
+    return this.jsonResponse(
       {
         timestamp: new Date().toISOString(),
         caches,
-        totalEntries,
+        totalEntries: caches.reduce((sum, c) => sum + Math.max(0, c.entries), 0),
       },
       req,
-      {
-        securityConfig: ctx.securityConfig ?? undefined,
-        corsConfig: ctx.securityConfig?.cors,
-        status: HTTP_OK,
-      },
+      ctx,
     );
-
-    return Promise.resolve(this.respond(response));
   }
 
   private async handleGC(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
     const beforeHeap = getHeapStats();
-
     const gcTriggered = await forceGC();
 
     // Wait a bit for GC to complete
     await new Promise((resolve) => setTimeout(resolve, 200));
 
     const afterHeap = getHeapStats();
-    const freedMB = beforeHeap.usedHeapSizeMB - afterHeap.usedHeapSizeMB;
 
-    const response = ResponseBuilder.json(
+    return this.jsonResponse(
       {
         timestamp: new Date().toISOString(),
         gcTriggered,
         before: beforeHeap,
         after: afterHeap,
-        freedMB: Math.round(freedMB * 100) / 100,
+        freedMB: Math.round((beforeHeap.usedHeapSizeMB - afterHeap.usedHeapSizeMB) * 100) / 100,
       },
       req,
-      {
-        securityConfig: ctx.securityConfig ?? undefined,
-        corsConfig: ctx.securityConfig?.cors,
-        status: HTTP_OK,
-      },
+      ctx,
     );
-
-    return this.respond(response);
   }
 
-  private handlePressureCheck(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
+  private handlePressureCheck(req: Request, ctx: HandlerContext): HandlerResult {
     const pressure = checkMemoryPressure();
-    const heap = getHeapStats();
-
-    const response = ResponseBuilder.json(
+    return this.jsonResponse(
       {
         timestamp: new Date().toISOString(),
         ...pressure,
-        heap,
+        heap: getHeapStats(),
         recommendations: this.getRecommendations(pressure),
       },
       req,
-      {
-        securityConfig: ctx.securityConfig ?? undefined,
-        corsConfig: ctx.securityConfig?.cors,
-        status: HTTP_OK,
-      },
+      ctx,
     );
-
-    return Promise.resolve(this.respond(response));
   }
 
   private getRecommendations(pressure: { critical: boolean; warning: boolean }): string[] {

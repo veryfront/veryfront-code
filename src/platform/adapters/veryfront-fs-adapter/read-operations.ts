@@ -178,13 +178,9 @@ export class ReadOperations {
     }
 
     logger.debug("[ReadOperations] Fetching draft content", { path: normalizedPath, apiPath });
-    try {
-      // Use apiPath for the actual API call (handles normalized paths like "pages/index.mdx" -> "pages/")
-      const content = await this.client.getFileContent(apiPath);
-      this.cache.set(cacheKey, content);
-      return content;
-    } catch (error) {
-      throw error;
-    }
+    // Use apiPath for the actual API call (handles normalized paths like "pages/index.mdx" -> "pages/")
+    const content = await this.client.getFileContent(apiPath);
+    this.cache.set(cacheKey, content);
+    return content;
   }
 }

@@ -142,7 +142,9 @@ async function ensureApis(): Promise<void> {
 export function extractContext(headers: Headers): unknown {
   if (!traceApi || !propagationApi) return traceApi?.context?.active();
   const carrier: Record<string, string> = {};
-  headers.forEach((v, k) => (carrier[k.toLowerCase()] = v));
+  for (const [k, v] of headers) {
+    carrier[k.toLowerCase()] = v;
+  }
   return propagationApi.W3CTraceContextPropagator
     ? new propagationApi.W3CTraceContextPropagator().extract(
       traceApi.context.active(),
@@ -163,7 +165,7 @@ export function injectContext(headers: Headers): void {
     carrier,
     traceApi.defaultTextMapSetter,
   );
-  Object.entries(carrier).forEach(([k, v]) => headers.set(k, v));
+  for (const [k, v] of Object.entries(carrier)) headers.set(k, v);
 }
 
 /**

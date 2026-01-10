@@ -6,21 +6,21 @@ import {
   getTailwindImportMap,
 } from "../build/transforms/esm/package-registry.ts";
 
+function joinAttributes(attrs: (string | false | undefined | null | "")[]): string {
+  return attrs.filter(Boolean).join(" ");
+}
+
 export function buildRootAttributes(
   slug: string,
   mode: string,
   noLayout: boolean,
 ): string {
-  const attributes = [
+  return joinAttributes([
     'id="root"',
-    noLayout ? "" : 'class="vf-tailwind"',
+    !noLayout && 'class="vf-tailwind"',
     `data-veryfront-slug="${escapeHTML(slug || "")}"`,
     `data-veryfront-mode="${escapeHTML(mode || "production")}"`,
-  ]
-    .filter(Boolean)
-    .join(" ");
-
-  return attributes;
+  ]);
 }
 
 export function buildContentAttributes(
@@ -28,16 +28,12 @@ export function buildContentAttributes(
   noLayout: boolean,
   ssrHash?: string,
 ): string {
-  const attrs = [
+  return joinAttributes([
     'id="veryfront-content"',
     `data-slug="${slug || ""}"`,
     `data-layout="${noLayout ? "none" : "default"}"`,
-    ssrHash ? `data-ssr-hash="${escapeHTML(ssrHash)}"` : "",
-  ]
-    .filter(Boolean)
-    .join(" ");
-
-  return attrs;
+    ssrHash && `data-ssr-hash="${escapeHTML(ssrHash)}"`,
+  ]);
 }
 
 interface DetectedVersions {
@@ -50,10 +46,6 @@ const DEFAULT_VERSIONS: DetectedVersions = {
   veryfront: VERYFRONT_VERSION,
 };
 
-/**
- * Detect package versions from project's package.json
- * Falls back to defaults if not found
- */
 export async function detectVersions(projectDir: string): Promise<DetectedVersions> {
   try {
     const { createFileSystem } = await import("../platform/compat/fs.ts");
@@ -78,13 +70,6 @@ export async function detectVersions(projectDir: string): Promise<DetectedVersio
 
 type CdnProvider = "esm.sh" | "unpkg" | "jsdelivr";
 
-// getTailwindImportMap is now imported from package-registry.ts
-
-/**
- * Generate import map for esm.sh CDN
- * CRITICAL: Context packages use getContextPackageImportMap() from package-registry.ts
- * to ensure identical URLs with SSR (default-import-map.ts).
- */
 function getEsmShImportMap(versions: DetectedVersions): Record<string, string> {
   const { react, veryfront } = versions;
   // Use ?target=es2022 to ensure identical builds between SSR (Deno) and browser
@@ -115,9 +100,6 @@ function getEsmShImportMap(versions: DetectedVersions): Record<string, string> {
   };
 }
 
-/**
- * Generate import map for unpkg CDN
- */
 function getUnpkgImportMap(versions: DetectedVersions): Record<string, string> {
   const { react, veryfront } = versions;
   return {
@@ -134,9 +116,6 @@ function getUnpkgImportMap(versions: DetectedVersions): Record<string, string> {
   };
 }
 
-/**
- * Generate import map for jsdelivr CDN
- */
 function getJsdelivrImportMap(versions: DetectedVersions): Record<string, string> {
   const { react, veryfront } = versions;
   return {
@@ -156,10 +135,6 @@ function getJsdelivrImportMap(versions: DetectedVersions): Record<string, string
   };
 }
 
-/**
- * Generate import map for self-hosted mode
- * Modules served from /_veryfront/lib/* endpoint
- */
 function getSelfHostedImportMap(versions: DetectedVersions): Record<string, string> {
   const { react } = versions;
   return {
@@ -186,35 +161,27 @@ function getSelfHostedImportMap(versions: DetectedVersions): Record<string, stri
   };
 }
 
-/**
- * Get CDN import map based on provider
- */
+const CDN_IMPORT_MAP_FACTORIES: Record<
+  CdnProvider,
+  (versions: DetectedVersions) => Record<string, string>
+> = {
+  unpkg: getUnpkgImportMap,
+  jsdelivr: getJsdelivrImportMap,
+  "esm.sh": getEsmShImportMap,
+} as const;
+
 function getCdnImportMap(
   versions: DetectedVersions,
   provider: CdnProvider = "esm.sh",
 ): Record<string, string> {
-  switch (provider) {
-    case "unpkg":
-      return getUnpkgImportMap(versions);
-    case "jsdelivr":
-      return getJsdelivrImportMap(versions);
-    case "esm.sh":
-    default:
-      return getEsmShImportMap(versions);
-  }
+  const factory = CDN_IMPORT_MAP_FACTORIES[provider] ?? getEsmShImportMap;
+  return factory(versions);
 }
 
-/**
- * Get default HTML import map (legacy function for backwards compatibility)
- */
 function getDefaultHTMLImportMap(): Record<string, string> {
   return getEsmShImportMap(DEFAULT_VERSIONS);
 }
 
-/**
- * Resolve versions based on config
- * Returns auto-detected versions or explicit config versions
- */
 async function resolveVersions(
   projectDir: string,
   config?: VeryfrontConfig,
@@ -239,10 +206,6 @@ export interface BuildImportMapOptions {
   customImports?: Record<string, string>;
 }
 
-/**
- * Build import map JSON string
- * Supports multiple modes: cdn, self-hosted, bundled
- */
 export async function buildImportMapJson(
   options?: BuildImportMapOptions | Record<string, string>,
 ): Promise<string> {
@@ -307,10 +270,6 @@ export async function buildImportMapJson(
   return JSON.stringify({ imports }, null, 2);
 }
 
-/**
- * Synchronous version for backwards compatibility
- * Uses default versions without project detection
- */
 export function buildImportMapJsonSync(importMap?: Record<string, string>): string {
   const imports = importMap || getDefaultHTMLImportMap();
   return JSON.stringify({ imports }, null, 2);

@@ -23,11 +23,9 @@ export class DataFetcher {
     context: DataContext,
     mode: "development" | "production" = "development",
   ): Promise<DataResult> {
-    if (!pageModule.getServerData && !pageModule.getStaticData) {
-      return { props: {} };
-    }
+    const preferServerData = mode === "development" || !pageModule.getStaticData;
 
-    if (mode === "development" && pageModule.getServerData) {
+    if (preferServerData && pageModule.getServerData) {
       return await this.serverFetcher.fetch(pageModule, context);
     }
 
@@ -35,15 +33,11 @@ export class DataFetcher {
       return await this.staticFetcher.fetch(pageModule, context);
     }
 
-    if (pageModule.getServerData) {
-      return await this.serverFetcher.fetch(pageModule, context);
-    }
-
     return { props: {} };
   }
 
-  async getStaticPaths(pageModule: PageWithData): Promise<StaticPathsResult | null> {
-    return await this.pathsFetcher.fetch(pageModule);
+  getStaticPaths(pageModule: PageWithData): Promise<StaticPathsResult | null> {
+    return this.pathsFetcher.fetch(pageModule);
   }
 
   clearCache(pattern?: string): void {

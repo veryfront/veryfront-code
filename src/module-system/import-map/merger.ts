@@ -11,9 +11,7 @@ export function mergeImportMaps(...maps: ImportMapConfig[]): ImportMapConfig {
 
     if (map.scopes) {
       for (const [scope, scopeImports] of Object.entries(map.scopes)) {
-        if (!scopes[scope]) {
-          scopes[scope] = {};
-        }
+        scopes[scope] ??= {};
         Object.assign(scopes[scope], scopeImports);
       }
     }

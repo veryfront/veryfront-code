@@ -261,14 +261,28 @@ function stripTrailingSeparator(path: string): string {
 function stripSpecifier(specifier: string): string {
   const queryIndex = specifier.indexOf("?");
   const hashIndex = specifier.indexOf("#");
-  const cutIndex = queryIndex === -1
-    ? hashIndex
-    : hashIndex === -1
-    ? queryIndex
-    : Math.min(queryIndex, hashIndex);
 
-  return cutIndex === -1 ? specifier : specifier.slice(0, cutIndex);
+  // Find the first occurrence of either ? or #
+  let cutIndex: number;
+  if (queryIndex === -1 && hashIndex === -1) {
+    return specifier;
+  } else if (queryIndex === -1) {
+    cutIndex = hashIndex;
+  } else if (hashIndex === -1) {
+    cutIndex = queryIndex;
+  } else {
+    cutIndex = Math.min(queryIndex, hashIndex);
+  }
+
+  return specifier.slice(0, cutIndex);
 }
+
+const extensionToLoader: Record<string, "js" | "ts" | "tsx" | "jsx" | "json"> = {
+  ".ts": "ts",
+  ".tsx": "tsx",
+  ".jsx": "jsx",
+  ".json": "json",
+};
 
 function createFsLoaderPlugin(): Plugin {
   return {
@@ -278,16 +292,9 @@ function createFsLoaderPlugin(): Plugin {
         try {
           const contents = await readTextFile(args.path);
           const ext = extname(args.path).toLowerCase();
-          let loader: "js" | "ts" | "tsx" | "jsx" | "json" = "js";
-          if (ext === ".ts") loader = "ts";
-          if (ext === ".tsx") loader = "tsx";
-          if (ext === ".jsx") loader = "jsx";
-          if (ext === ".json") loader = "json";
+          const loader = extensionToLoader[ext] ?? "js";
 
-          return {
-            contents,
-            loader,
-          };
+          return { contents, loader };
         } catch (_error) {
           return null;
         }

@@ -3,6 +3,7 @@ import type { MiddlewarePipelineOptions } from "./types.ts";
 import { composeMiddleware } from "./composer.ts";
 import { executeMiddlewarePipeline } from "./executor.ts";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/index.ts";
+import { serverLogger } from "../../../core/utils/logger/logger.ts";
 
 export class MiddlewarePipeline {
   private middlewares: MiddlewareHandler[] = [];
@@ -30,14 +31,13 @@ export class MiddlewarePipeline {
     return composeMiddleware(this.middlewares, this.registry);
   }
 
-  async execute(
+  execute(
     req: Request,
     env?: Record<string, unknown>,
     executionCtx?: ExecutionContext,
     adapter?: RuntimeAdapter,
   ): Promise<Response> {
-    const composed = this.compose();
-    return await executeMiddlewarePipeline(req, composed, env, executionCtx, adapter);
+    return executeMiddlewarePipeline(req, this.compose(), env, executionCtx, adapter);
   }
 
   async teardown(): Promise<void> {
@@ -45,7 +45,6 @@ export class MiddlewarePipeline {
       try {
         await cb();
       } catch (e) {
-        const { serverLogger } = await import("../../../core/utils/logger/logger.ts");
         serverLogger.warn("middleware teardown failed", e);
       }
     }
@@ -54,7 +53,7 @@ export class MiddlewarePipeline {
 
   getMiddleware(): Array<{ name?: string; order?: number }> {
     return this.middlewares.map((mw, index) => ({
-      name: mw.name || "anonymous",
+      name: mw.name ?? "anonymous",
       order: index,
     }));
   }

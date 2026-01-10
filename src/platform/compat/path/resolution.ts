@@ -48,13 +48,7 @@ export function relative(from: string, to: string): string {
   }
 
   const ups = fromParts.length - common;
-  const result = [];
-
-  for (let i = 0; i < ups; i++) {
-    result.push("..");
-  }
-
-  result.push(...toParts.slice(common));
+  const result = [...Array(ups).fill(".."), ...toParts.slice(common)];
 
   return result.join("/") || ".";
 }

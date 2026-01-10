@@ -3,6 +3,8 @@ import { extname } from "std/path/mod.ts";
 import { logger } from "@veryfront/utils";
 import { SUPPORTED_EXTENSIONS } from "./constants.ts";
 
+const supportedExtensionsSet = new Set(SUPPORTED_EXTENSIONS);
+
 export async function findImages(dir: string): Promise<string[]> {
   const images: string[] = [];
 
@@ -14,7 +16,7 @@ export async function findImages(dir: string): Promise<string[]> {
       })
     ) {
       const ext = extname(entry.path).toLowerCase();
-      if (SUPPORTED_EXTENSIONS.includes(ext)) {
+      if (supportedExtensionsSet.has(ext)) {
         images.push(entry.path);
       }
     }

@@ -1,11 +1,5 @@
 import { Z_INDEX_ERROR_OVERLAY } from "@veryfront/utils";
 
-/**
- * Dev-mode specific styles
- *
- * Note: Tailwind utility classes are now handled by Tailwind CDN in development mode.
- * This file only contains dev-specific UI styles (error overlay).
- */
 export function getDevStyles(nonce?: string): string {
   const nonceAttr = nonce ? ` nonce="${nonce}"` : "";
   return `

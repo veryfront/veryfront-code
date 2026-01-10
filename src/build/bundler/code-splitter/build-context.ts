@@ -17,13 +17,7 @@ const VERYFRONT_AI_MODULES = [
   "veryfront/ai/primitives",
 ];
 
-/**
- * Gets list of external dependencies to exclude from bundle
- *
- * @param customExternal - Additional external packages from options
- * @param moduleResolution - Module resolution mode: 'cdn', 'self-hosted', or 'bundled'
- * @returns Array of package names to mark as external
- */
+/** Gets list of external dependencies to exclude from bundle */
 export function getExternalDependencies(
   customExternal: string[] = [],
   moduleResolution: "cdn" | "self-hosted" | "bundled" = "cdn",
@@ -45,12 +39,7 @@ export function getExternalDependencies(
   return [...baseExternal, ...customExternal];
 }
 
-/**
- * Creates a browser shim file for global compatibility
- *
- * @param outDir - Output directory for the shim file
- * @returns Path to the created shim file
- */
+/** Creates a browser shim file for global compatibility */
 export async function createShimFile(outDir: string): Promise<string> {
   const shimPath = join(outDir, ".veryfront-shim.js");
   const reactImports = JSON.stringify(getReactImportMap(REACT_DEFAULT_VERSION));
@@ -72,13 +61,7 @@ if (typeof window !== 'undefined' && !window.__veryfront_react_imports) {
   return shimPath;
 }
 
-/**
- * Creates an ESBuild context with code splitting configuration
- *
- * @param options - Code splitting options
- * @param entryPoints - Map of entry point names to file paths
- * @returns Configured ESBuild context
- */
+/** Creates an ESBuild context with code splitting configuration */
 export async function createBuildContext(
   options: SplitOptions,
   entryPoints: Record<string, string>,

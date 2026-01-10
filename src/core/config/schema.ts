@@ -278,28 +278,12 @@ export function validateVeryfrontConfig(input: unknown): VeryfrontConfig {
   return parsed.data as VeryfrontConfig;
 }
 
+/**
+ * Get known top-level keys from the schema definition.
+ * Uses the schema's shape to avoid duplicating the list of keys.
+ */
+const knownConfigKeys = new Set(Object.keys(veryfrontConfigSchema.shape));
+
 export function findUnknownTopLevelKeys(input: Record<string, unknown>): string[] {
-  const known = new Set([
-    "title",
-    "description",
-    "experimental",
-    "router",
-    "defaultLayout",
-    "layout",
-    "provider",
-    "app",
-    "theme",
-    "build",
-    "cache",
-    "dev",
-    "resolve",
-    "security",
-    "middleware",
-    "theming",
-    "assetPipeline",
-    "observability",
-    "fs",
-    "client",
-  ]);
-  return Object.keys(input).filter((k) => !known.has(k));
+  return Object.keys(input).filter((k) => !knownConfigKeys.has(k));
 }

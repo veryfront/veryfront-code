@@ -8,6 +8,27 @@ import { getLayoutEntity } from "../../core/types/entities/getEntityInfo.ts";
 import { discoverNestedLayouts } from "./utils/discovery.ts";
 import { detectAppRouter } from "../router-detection.ts";
 
+/**
+ * Determine layout kind based on file extension
+ */
+function getLayoutKind(path: string): "mdx" | "tsx" {
+  return path.endsWith(".mdx") ? "mdx" : "tsx";
+}
+
+/**
+ * Check if a string is a UUID
+ */
+function isUUID(value: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
+}
+
+/**
+ * Check if a layout value is a valid file path (not a UUID)
+ */
+function isValidLayoutPath(layout: string): boolean {
+  return /\.(tsx|jsx|ts|js|mdx)$/.test(layout);
+}
+
 export interface LayoutCollectionResult {
   layoutBundle: MdxBundle | undefined;
   nestedLayouts: LayoutItem[];
@@ -54,18 +75,12 @@ export class LayoutCollector {
 
     let nestedLayouts: LayoutItem[];
 
-    // Helper to determine kind - use layoutName (file path) rather than layoutPath (may be UUID)
-    const determineKind = (name: string | undefined, path: string | undefined): "mdx" | "tsx" => {
-      if (name?.endsWith(".mdx")) return "mdx";
-      if (path?.endsWith(".mdx")) return "mdx";
-      return "tsx";
-    };
-
     if (hasExplicitFrontmatterLayout && layoutPath) {
       // Page has explicit frontmatter layout - use it INSTEAD of project-level layouts
       // This prevents double-wrapping (e.g., page's DocsLayoutV2 + project's DefaultLayout)
       // Include the frontmatter layout as a nestedLayout for client-side hydration
-      const kind = determineKind(layoutName, layoutPath);
+      // Use layoutPath (full file path with extension) to determine kind
+      const kind = getLayoutKind(layoutPath);
       nestedLayouts = [{
         kind,
         bundle: kind === "mdx" ? layoutBundle : undefined,
@@ -91,11 +106,11 @@ export class LayoutCollector {
       // If we have a layoutBundle from config.defaultLayout, add it to nestedLayouts
       // so the client can apply the same layout during hydration
       if (layoutBundle && layoutPath) {
-        const kind = determineKind(layoutName, layoutPath);
+        const kind = getLayoutKind(layoutPath);
 
         // Prepend the defaultLayout to nestedLayouts (it wraps outermost)
         nestedLayouts = [{
-          kind: kind as "mdx" | "tsx",
+          kind,
           bundle: kind === "mdx" ? layoutBundle : undefined,
           componentPath: kind === "tsx" ? layoutPath : undefined,
           path: layoutPath,
@@ -197,29 +212,12 @@ export class LayoutCollector {
 
     if (isVeryfrontAPI) {
       return await this.collectAPILayoutConfiguration(wrappedAdapter);
-    } else {
-      return await this.collectFilesystemLayouts(pageFilePath, useAppRouter);
     }
+    return await this.collectFilesystemLayouts(pageFilePath, useAppRouter);
   }
 
   private async collectAPILayoutConfiguration(wrappedAdapter: unknown): Promise<LayoutItem[]> {
     const nestedLayouts: LayoutItem[] = [];
-
-    // Check if layout value is a valid file path (not a UUID)
-    // Valid paths end with .tsx, .jsx, .ts, .js, or .mdx
-    const isValidLayoutPath = (layout: string): boolean => {
-      return /\.(tsx|jsx|ts|js|mdx)$/.test(layout);
-    };
-
-    // Check if a string is a UUID
-    const isUUID = (value: string): boolean => {
-      return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
-    };
-
-    // Determine layout kind based on file extension
-    const getLayoutKind = (layout: string): "tsx" | "mdx" => {
-      return layout.endsWith(".mdx") ? "mdx" : "tsx";
-    };
 
     // Priority 1: Check config.layout or config.defaultLayout from veryfront.config.ts
     const configLayout = this.config?.layout || this.config?.defaultLayout;
@@ -489,13 +487,6 @@ export class LayoutCollector {
   ): Promise<LayoutItem[]> {
     const rootDir = useAppRouter ? join(this.projectDir, "app") : join(this.projectDir, "pages");
 
-    const nestedLayouts = await discoverNestedLayouts(
-      pageFilePath,
-      rootDir,
-      this.projectDir,
-      this.adapter,
-    );
-
-    return nestedLayouts;
+    return await discoverNestedLayouts(pageFilePath, rootDir, this.projectDir, this.adapter);
   }
 }

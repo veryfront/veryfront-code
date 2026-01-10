@@ -30,7 +30,7 @@ function extractExportConstants(body: string): { body: string; exports: Record<s
   while ((match = exportRegex.exec(body)) !== null) {
     const key = match[1];
     const rawValue = match[2];
-    if (key && key.length > 0 && rawValue) {
+    if (key && rawValue) {
       linesToRemove.push(match[0]);
       // Parse the value
       if (rawValue === "true") {

@@ -167,6 +167,27 @@ export function recordRSCStreamDuration(durationMs: number): void {
   });
 }
 
+type ObservabilityRSCKind = "manifest" | "page" | "stream" | "action";
+
+function recordObservabilityRSC(obsKind: ObservabilityRSCKind): void {
+  void getObservabilityMetrics().then((obs) => obs?.recordRSCRequest(obsKind)).catch(() => {
+    /* metrics recording failure - non-critical */
+  });
+}
+
+/** RSC kind to state property and observability kind mapping */
+const RSC_KIND_MAP: Record<
+  RSCRequestKind,
+  { prop: keyof typeof state; obs?: ObservabilityRSCKind }
+> = {
+  manifest: { prop: "rscManifest", obs: "manifest" },
+  page: { prop: "rscPage", obs: "page" },
+  flight_page: { prop: "rscPage", obs: "page" },
+  stream: { prop: "rscStream", obs: "stream" },
+  action: { prop: "rscAction", obs: "action" },
+  error: { prop: "rscErrors" },
+};
+
 /**
  * Record RSC endpoint request
  *
@@ -179,40 +200,10 @@ export function recordRSCStreamDuration(durationMs: number): void {
  * ```
  */
 export function recordRSC(kind: RSCRequestKind): void {
-  switch (kind) {
-    case "manifest":
-      state.rscManifest++;
-      void getObservabilityMetrics().then((obs) => obs?.recordRSCRequest("manifest")).catch(() => {
-        /* metrics recording failure - non-critical */
-      });
-      break;
-    case "page":
-      state.rscPage++;
-      void getObservabilityMetrics().then((obs) => obs?.recordRSCRequest("page")).catch(() => {
-        /* metrics recording failure - non-critical */
-      });
-      break;
-    case "flight_page":
-      state.rscPage++;
-      void getObservabilityMetrics().then((obs) => obs?.recordRSCRequest("page")).catch(() => {
-        /* metrics recording failure - non-critical */
-      });
-      break; // Count flight_page as page
-    case "stream":
-      state.rscStream++;
-      void getObservabilityMetrics().then((obs) => obs?.recordRSCRequest("stream")).catch(() => {
-        /* metrics recording failure - non-critical */
-      });
-      break;
-    case "action":
-      state.rscAction++;
-      void getObservabilityMetrics().then((obs) => obs?.recordRSCRequest("action")).catch(() => {
-        /* metrics recording failure - non-critical */
-      });
-      break;
-    case "error":
-      state.rscErrors++;
-      break;
+  const mapping = RSC_KIND_MAP[kind];
+  if (mapping) {
+    (state[mapping.prop] as number)++;
+    if (mapping.obs) recordObservabilityRSC(mapping.obs);
   }
 }
 

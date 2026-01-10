@@ -33,34 +33,10 @@ export interface RenderPipelineConfig {
 }
 
 /**
- * RenderPipeline orchestrates the complete page rendering process.
- *
- * ## Pipeline Stages
- *
- * The rendering process follows these stages in order:
- *
- * | Stage | Name | Description |
- * |-------|------|-------------|
- * | 1 | Page Resolution | Resolve slug to page file (pageInfo) |
- * | 2 | Layout & Provider Collection | Collect nested layouts and providers (parallel) |
- * | 3 | Route Params Extraction | Extract dynamic params from URL if not provided |
- * | 4 | Data Fetching | Execute getServerData/getStaticData for page and layouts (parallel) |
- * | 5 | Cache Check | Check if compiled modules are cached |
- * | 6 | Page Bundle Preparation | Compile MDX, load components, generate client module code |
- * | 7 | Layout Application | Wrap page element with layouts and providers |
- * | 8 | SSR Rendering | Perform React server-side rendering (streaming or string) |
- * | 9 | Result Assembly | Combine HTML, frontmatter, headings, stream into RenderResult |
- *
- * ## Performance Instrumentation
- *
- * Each stage is wrapped with `timeAsync()` for performance tracking.
- * Stage timings are logged under the "render-page" context.
- *
- * ## Error Handling
- *
- * - Data fetching can return `notFound` or `redirect` which throw VeryfrontError
- * - Bundle preparation failures throw VeryfrontError with RENDER_ERROR code
- * - All errors preserve the original slug for debugging
+ * Orchestrates the complete page rendering process through 9 stages:
+ * 1. Page Resolution - 2. Layout/Provider Collection - 3. Route Params
+ * 4. Data Fetching - 5. Cache Check - 6. Bundle Preparation
+ * 7. Layout Application - 8. SSR Rendering - 9. Result Assembly
  */
 export class RenderPipeline {
   private config: RenderPipelineConfig;
@@ -84,6 +60,47 @@ export class RenderPipeline {
   // Cache of fetched esm.sh modules
   private esmCache = new Map<string, string>();
 
+  /**
+   * Rewrite import/export paths in esm.sh code.
+   * Transforms absolute paths to https://esm.sh URLs and relative paths to resolved URLs.
+   */
+  private rewriteEsmPaths(code: string, urlBase: string): string {
+    const resolveAbsolute = (path: string): string => `https://esm.sh${path}`;
+    const resolveRelative = (path: string): string => new URL(path, urlBase).href;
+
+    // Pattern configs: [pathPattern, pathGroupIndex, resolver]
+    type PathResolver = (path: string) => string;
+    const patterns: Array<[RegExp, number, PathResolver]> = [
+      // Absolute paths (like "/@radix-ui/..." or "/react@...")
+      [/import\s*(["'])(\/[^"']+)\1/g, 2, resolveAbsolute],
+      [/from\s*(["'])(\/[^"']+)\1/g, 2, resolveAbsolute],
+      [/export\s*\*\s*from\s*(["'])(\/[^"']+)\1/g, 2, resolveAbsolute],
+      [/export\s*\{([^}]+)\}\s*from\s*(["'])(\/[^"']+)\2/g, 3, resolveAbsolute],
+      // Relative paths (like "./dist/..." or "../utils/...")
+      [/import\s*(["'])(\.\.?\/[^"']+)\1/g, 2, resolveRelative],
+      [/from\s*(["'])(\.\.?\/[^"']+)\1/g, 2, resolveRelative],
+      [/export\s*\*\s*from\s*(["'])(\.\.?\/[^"']+)\1/g, 2, resolveRelative],
+      [/export\s*\{([^}]+)\}\s*from\s*(["'])(\.\.?\/[^"']+)\2/g, 3, resolveRelative],
+    ];
+
+    let result = code;
+    for (const [pattern, pathIndex, resolver] of patterns) {
+      result = result.replace(pattern, (...args) => {
+        const match = args[0] as string;
+        const path = args[pathIndex - 1] as string;
+        const resolved = resolver(path);
+        // Replace the path portion while preserving the rest of the match structure
+        const quote = pathIndex === 3 ? args[2] : args[1];
+        return match.replace(
+          new RegExp(`${quote}${path.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}${quote}`),
+          `${quote}${resolved}${quote}`,
+        );
+      });
+    }
+
+    return result;
+  }
+
   // Fetch and cache an esm.sh module
   private async fetchEsmModule(
     url: string,
@@ -105,48 +122,8 @@ export class RenderPipeline {
 
     // Transform relative esm.sh paths to absolute URLs
     // esm.sh code is often minified with no spaces (e.g., from"/@pkg/...")
-    // Also handle relative paths like "./dist/..." by resolving against the original URL
-
-    // Get the base URL for resolving relative paths
     const urlBase = url.substring(0, url.lastIndexOf("/") + 1);
-
-    // Handle absolute paths (like "/@radix-ui/..." or "/react@...")
-    code = code.replace(
-      /import\s*(["'])(\/[^"']+)\1/g,
-      (_match, quote, path) => `import${quote}https://esm.sh${path}${quote}`,
-    );
-    code = code.replace(
-      /from\s*(["'])(\/[^"']+)\1/g,
-      (_match, quote, path) => `from${quote}https://esm.sh${path}${quote}`,
-    );
-    code = code.replace(
-      /export\s*\*\s*from\s*(["'])(\/[^"']+)\1/g,
-      (_match, quote, path) => `export*from${quote}https://esm.sh${path}${quote}`,
-    );
-    code = code.replace(
-      /export\s*\{([^}]+)\}\s*from\s*(["'])(\/[^"']+)\2/g,
-      (_match, exports, quote, path) =>
-        `export{${exports}}from${quote}https://esm.sh${path}${quote}`,
-    );
-
-    // Handle relative paths (like "./dist/..." or "../utils/...")
-    code = code.replace(
-      /import\s*(["'])(\.\.?\/[^"']+)\1/g,
-      (_match, quote, path) => `import${quote}${new URL(path, urlBase).href}${quote}`,
-    );
-    code = code.replace(
-      /from\s*(["'])(\.\.?\/[^"']+)\1/g,
-      (_match, quote, path) => `from${quote}${new URL(path, urlBase).href}${quote}`,
-    );
-    code = code.replace(
-      /export\s*\*\s*from\s*(["'])(\.\.?\/[^"']+)\1/g,
-      (_match, quote, path) => `export*from${quote}${new URL(path, urlBase).href}${quote}`,
-    );
-    code = code.replace(
-      /export\s*\{([^}]+)\}\s*from\s*(["'])(\.\.?\/[^"']+)\2/g,
-      (_match, exports, quote, path) =>
-        `export{${exports}}from${quote}${new URL(path, urlBase).href}${quote}`,
-    );
+    code = this.rewriteEsmPaths(code, urlBase);
 
     // Find ALL esm.sh URLs in the code and fetch/replace them
     // Use a simple pattern to find all https://esm.sh URLs
@@ -246,21 +223,13 @@ export class RenderPipeline {
     );
 
     // Find all @/ imports and transform them recursively
-    const aliasImportPattern = /from\s+["'](@\/[^"']+)["']/g;
-    const aliasImports: Array<{ full: string; path: string }> = [];
-    let match;
-    while ((match = aliasImportPattern.exec(transformedCode)) !== null) {
-      aliasImports.push({ full: match[0], path: match[1]! });
-    }
+    const aliasImports = [...transformedCode.matchAll(/from\s+["'](@\/[^"']+)["']/g)]
+      .map((m) => ({ full: m[0], path: m[1]! }));
 
     // Find and transform esm.sh URLs - fetch them and cache locally
     // Dynamic import from file:// URLs doesn't support https:// imports
-    const esmImportPattern = /from\s+(["'])(https:\/\/esm\.sh\/[^"']+)\1/g;
-    const esmImports: Array<{ full: string; url: string }> = [];
-    let esmMatch;
-    while ((esmMatch = esmImportPattern.exec(transformedCode)) !== null) {
-      esmImports.push({ full: esmMatch[0], url: esmMatch[2]! });
-    }
+    const esmImports = [...transformedCode.matchAll(/from\s+(["'])(https:\/\/esm\.sh\/[^"']+)\1/g)]
+      .map((m) => ({ full: m[0], url: m[2]! }));
 
     // Fetch and cache all esm.sh dependencies in parallel
     if (esmImports.length > 0) {
@@ -314,99 +283,71 @@ export class RenderPipeline {
     return tempFilePath;
   }
 
-  // Find local lib files (framework utilities in veryfront-private/lib)
-  private async findLocalLibFile(
-    relativePath: string,
-    localAdapter: RuntimeAdapter,
+  /** Build candidate paths for a base path with extensions (direct and index variants) */
+  private buildCandidatePaths(baseDir: string, fileName: string, extensions: string[]): string[] {
+    return [
+      ...extensions.map((ext) => `${baseDir}/${fileName}${ext}`),
+      ...extensions.map((ext) => `${baseDir}/${fileName}/index${ext}`),
+    ];
+  }
+
+  /** Find the first existing path from candidates using the provided stat function */
+  private async findFirstExisting(
+    candidates: string[],
+    statFn: (path: string) => Promise<unknown>,
   ): Promise<string | null> {
-    const extensions = [".tsx", ".ts", ".jsx", ".js"];
-    const libDir = this.getLocalLibDir();
-    // relativePath is "lib/Router" or "lib/usePageContext" - strip "lib/" since we already have libDir
-    const fileName = relativePath.replace(/^lib\//, "");
-
-    // Build all candidate paths to check in parallel
-    const candidates: string[] = [];
-    for (const ext of extensions) {
-      candidates.push(`${libDir}/${fileName}${ext}`);
-    }
-    for (const ext of extensions) {
-      candidates.push(`${libDir}/${fileName}/index${ext}`);
-    }
-
-    // Check all paths in parallel
     const results = await Promise.all(
       candidates.map(async (fullPath) => {
         try {
-          await localAdapter.fs.stat(fullPath);
+          await statFn(fullPath);
           return fullPath;
         } catch {
           return null;
         }
       }),
     );
+    return results.find((r) => r !== null) ?? null;
+  }
 
-    // Return the first existing path (maintains priority order)
-    for (const result of results) {
-      if (result) {
-        logger.debug("[RenderPipeline] Found local lib file:", result);
-        return result;
-      }
+  // Find local lib files (framework utilities in veryfront-private/lib)
+  private async findLocalLibFile(
+    relativePath: string,
+    localAdapter: RuntimeAdapter,
+  ): Promise<string | null> {
+    const libDir = this.getLocalLibDir();
+    // relativePath is "lib/Router" or "lib/usePageContext" - strip "lib/" since we already have libDir
+    const fileName = relativePath.replace(/^lib\//, "");
+    const candidates = this.buildCandidatePaths(libDir, fileName, [".tsx", ".ts", ".jsx", ".js"]);
+
+    const result = await this.findFirstExisting(candidates, (p) => localAdapter.fs.stat(p));
+    if (result) {
+      logger.debug("[RenderPipeline] Found local lib file:", result);
+    } else {
+      logger.debug("[RenderPipeline] Local lib file not found:", relativePath);
     }
-
-    logger.debug("[RenderPipeline] Local lib file not found:", relativePath);
-    return null;
+    return result;
   }
 
   private async findSourceFile(basePath: string): Promise<string | null> {
     const extensions = [".tsx", ".ts", ".jsx", ".js", ".mdx"];
     const projectDir = this.config.projectDir;
 
-    // Build all candidate paths to check in parallel
-    // Priority order: direct with ext > direct index > without components prefix > without components index
-    const candidates: string[] = [];
+    // Build candidates: Priority order: direct with ext > direct index > without components prefix
+    const candidates = this.buildCandidatePaths(projectDir, basePath, extensions);
 
-    // Priority 1: With components/ prefix (for @/ aliased imports)
-    for (const ext of extensions) {
-      candidates.push(`${projectDir}/${basePath}${ext}`);
-    }
-    // Priority 2: Index file with components/ prefix
-    for (const ext of extensions) {
-      candidates.push(`${projectDir}/${basePath}/index${ext}`);
-    }
-
-    // Priority 3 & 4: Without components/ prefix
+    // Add variants without components/ prefix
     const withoutComponents = basePath.replace(/^components\//, "");
     if (withoutComponents !== basePath) {
-      for (const ext of extensions) {
-        candidates.push(`${projectDir}/${withoutComponents}${ext}`);
-      }
-      for (const ext of extensions) {
-        candidates.push(`${projectDir}/${withoutComponents}/index${ext}`);
-      }
+      candidates.push(...this.buildCandidatePaths(projectDir, withoutComponents, extensions));
     }
 
-    // Check all paths in parallel
-    const results = await Promise.all(
-      candidates.map(async (fullPath) => {
-        try {
-          await this.config.adapter.fs.stat(fullPath);
-          return fullPath;
-        } catch {
-          return null;
-        }
-      }),
-    );
-
-    // Return the first existing path (maintains priority order)
-    for (const result of results) {
-      if (result) {
-        logger.debug("[RenderPipeline] Found file:", result);
-        return result;
-      }
+    const result = await this.findFirstExisting(candidates, (p) => this.config.adapter.fs.stat(p));
+    if (result) {
+      logger.debug("[RenderPipeline] Found file:", result);
+    } else {
+      logger.debug("[RenderPipeline] File not found:", basePath);
     }
-
-    logger.debug("[RenderPipeline] File not found:", basePath);
-    return null;
+    return result;
   }
 
   async renderPage(slug: string, options?: RenderOptions): Promise<RenderResult> {
@@ -573,14 +514,7 @@ export class RenderPipeline {
     // ─────────────────────────────────────────────────────────────────────────
     const cacheResult = await timeAsync(
       "check-cache",
-      () =>
-        this.config.cacheCoordinator.checkCache(
-          slug,
-          pageInfo,
-          layoutResult.layoutBundle,
-          layoutResult.nestedLayouts,
-          providerResult.providerInfos,
-        ),
+      () => this.config.cacheCoordinator.checkCache(slug),
       "render-page",
     );
 
@@ -615,8 +549,7 @@ export class RenderPipeline {
       throw new VeryfrontError("Failed to prepare page bundle", ErrorCode.RENDER_ERROR, { slug });
     }
 
-    const pageElement = pageBundleResult.pageElement;
-    const pageBundle = pageBundleResult.pageBundle;
+    const { pageElement, pageBundle } = pageBundleResult;
 
     // ─────────────────────────────────────────────────────────────────────────
     // Stage 7: Layout Application
@@ -680,16 +613,7 @@ export class RenderPipeline {
     };
 
     if (cacheResult) {
-      await this.config.cacheCoordinator.persistResult(
-        result,
-        slug,
-        cacheResult.depAwareSlug,
-        cacheResult.moduleCacheKey,
-        pageInfo,
-        pageBundleResult.clientModuleCode,
-        pageBundleResult.pageModuleType,
-        cacheResult.cachedModule,
-      );
+      await this.config.cacheCoordinator.persistResult(result, slug);
     }
 
     logger.info("[renderPage] Returning result", {
@@ -701,15 +625,7 @@ export class RenderPipeline {
     return result;
   }
 
-  /**
-   * Resolve page data for SPA client-side navigation.
-   * Returns structured data without rendering HTML, allowing the client
-   * to dynamically import and render the page component.
-   *
-   * @param slug - Page slug to resolve
-   * @param options - Render options (request, url, params)
-   * @returns Page data response for client-side rendering
-   */
+  /** Resolve page data for SPA client-side navigation without rendering HTML. */
   async resolvePageData(slug: string, options?: RenderOptions): Promise<PageDataResponse> {
     // Set up browser globals for any SSR-related checks
     setupSSRGlobals();

@@ -58,14 +58,9 @@ export class HMRHandler extends BaseHandler {
 
     // If we have specific changed paths, send update messages for smart HMR
     // This allows the client to update only changed modules without full reload
-    if (changedPaths && changedPaths.length > 0) {
+    if (changedPaths?.length) {
       for (const path of changedPaths) {
-        const message = JSON.stringify({
-          type: "update",
-          path,
-          timestamp,
-        });
-        HMRHandler.broadcastMessage(message);
+        HMRHandler.broadcastMessage(JSON.stringify({ type: "update", path, timestamp }));
       }
       logger.info("[HMRHandler] Broadcast update", {
         changedPaths: changedPaths.length,
@@ -73,11 +68,7 @@ export class HMRHandler extends BaseHandler {
       });
     } else {
       // No specific paths - fall back to full reload
-      const message = JSON.stringify({
-        type: "reload",
-        timestamp,
-      });
-      HMRHandler.broadcastMessage(message);
+      HMRHandler.broadcastMessage(JSON.stringify({ type: "reload", timestamp }));
       logger.info("[HMRHandler] Broadcast reload (no paths)", {
         totalClients: HMRHandler.clients.size,
       });

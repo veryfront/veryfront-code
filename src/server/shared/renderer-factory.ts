@@ -149,8 +149,8 @@ async function checkAndEvictUnderMemoryPressure(
   source: "pre-creation" | "periodic" | "manual" = "pre-creation",
 ): Promise<boolean> {
   const heap = getHeapStats();
-  const usedPercent = heap.heapUsedPercent;
-  const cacheSize = rendererCache.size;
+  const { heapUsedPercent: usedPercent } = heap;
+  const { size: cacheSize } = rendererCache;
   const hasSingleProject = !!singleProjectRenderer;
 
   // Always log the check with current state

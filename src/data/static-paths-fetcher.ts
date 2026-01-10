@@ -10,12 +10,8 @@ export class StaticPathsFetcher {
     try {
       return await pageModule.getStaticPaths();
     } catch (error) {
-      this.logError("Error in getStaticPaths:", error);
+      serverLogger.error("Error in getStaticPaths:", error);
       throw error;
     }
-  }
-
-  private logError(message: string, error: unknown): void {
-    serverLogger.error(message, error);
   }
 }

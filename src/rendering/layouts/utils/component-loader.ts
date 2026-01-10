@@ -7,11 +7,8 @@ import { createError, toError } from "../../../core/errors/veryfront-error.ts";
 import { loadImportMap, transformImportsWithMap } from "@veryfront/modules/import-map/index.ts";
 import { mdxRenderer } from "@veryfront/transforms/mdx/index.ts";
 import { loadComponentFromSource } from "@veryfront/modules/react-loader/component-loader.ts";
-import {
-  getElementDebugInfo,
-  getElementTypeName,
-} from "../../element-validator/primitive-checks.ts";
 import { getProjectReact } from "@veryfront/react";
+import { ensureValidChild } from "./ensure-valid-child.ts";
 
 export interface LayoutComponentCache {
   get(key: string): BundledReact.ComponentType | undefined;
@@ -174,37 +171,4 @@ export async function applyMDXLayout(
   }
   logger.warn("[applyMDXLayout] No LayoutFn found, returning element unchanged");
   return element;
-}
-
-function ensureValidChild(
-  child: BundledReact.ReactNode,
-  React: typeof BundledReact,
-): BundledReact.ReactNode {
-  if (React.isValidElement(child)) {
-    logger.debug("[ensureValidChild] Valid React element", {
-      type: getElementTypeName(child as BundledReact.ReactElement),
-      isValidElement: true,
-    });
-    return child;
-  }
-
-  if (
-    child === null || child === undefined || typeof child === "string" ||
-    typeof child === "number" || Array.isArray(child)
-  ) {
-    logger.debug("[ensureValidChild] Valid primitive or array", { type: typeof child });
-    return child;
-  }
-
-  if (child && typeof child === "object") {
-    const debugInfo = getElementDebugInfo(child);
-    logger.error("[ensureValidChild] Invalid child: object is not a React element", {
-      keys: Object.keys(child).slice(0, 10),
-      hasSymbol: debugInfo.hasSymbol,
-      symbolValue: debugInfo.symbolValue,
-      type: debugInfo.type,
-    });
-  }
-
-  return null;
 }

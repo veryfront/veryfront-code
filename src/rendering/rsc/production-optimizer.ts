@@ -1,14 +1,7 @@
-/**
- * Production optimizations for RSC
- */
-
 import type { RSCPayload } from "./types.ts";
 import { HASH_SEED_FNV1A } from "@veryfront/utils";
 
 export class RSCProductionOptimizer {
-  /**
-   * Minify RSC payload for production
-   */
   static optimizePayload(payload: RSCPayload): RSCPayload {
     return {
       html: RSCProductionOptimizer.minifyHTML(payload.html),
@@ -19,9 +12,6 @@ export class RSCProductionOptimizer {
     };
   }
 
-  /**
-   * Basic HTML minification
-   */
   private static minifyHTML(html: string): string {
     return (
       html
@@ -34,9 +24,6 @@ export class RSCProductionOptimizer {
     );
   }
 
-  /**
-   * Generate cache headers for RSC responses
-   */
   static getCacheHeaders(
     options: { isStatic?: boolean; maxAge?: number } = {},
   ): Record<string, string> {
@@ -56,12 +43,7 @@ export class RSCProductionOptimizer {
     };
   }
 
-  /**
-   * Generate ETag for payload
-   * Streams hash without JSON serialization (3-5x faster)
-   */
   static generateETag(payload: RSCPayload): string {
-    // Stream hash without creating intermediate JSON string
     let hash = HASH_SEED_FNV1A;
 
     // Hash the HTML content directly
@@ -82,9 +64,6 @@ export class RSCProductionOptimizer {
     return `"${(hash >>> 0).toString(36)}"`;
   }
 
-  /**
-   * Check if request matches ETag
-   */
   static checkETag(requestETag: string | null, payloadETag: string): boolean {
     if (!requestETag) return false;
 
@@ -94,9 +73,6 @@ export class RSCProductionOptimizer {
     return normalizeETag(requestETag) === normalizeETag(payloadETag);
   }
 
-  /**
-   * Optimize client references for production
-   */
   static optimizeClientRefs(
     clientRefs: Record<string, string>,
     cdnPrefix?: string,
@@ -113,9 +89,6 @@ export class RSCProductionOptimizer {
     return optimized;
   }
 
-  /**
-   * Bundle multiple RSC payloads for route prefetching
-   */
   static bundlePayloads(payloads: Map<string, RSCPayload>): {
     bundles: Record<string, RSCPayload>;
     manifest: Record<string, string[]>;
@@ -134,16 +107,10 @@ export class RSCProductionOptimizer {
     return { bundles, manifest };
   }
 
-  /**
-   * Generate stable bundle ID from route
-   */
   private static generateBundleId(route: string): string {
     return route.replace(/[^a-zA-Z0-9]/g, "_");
   }
 
-  /**
-   * Preload directives for client components
-   */
   static generatePreloadLinks(clientRefs: Record<string, string>): string[] {
     const links: string[] = [];
 
@@ -154,9 +121,6 @@ export class RSCProductionOptimizer {
     return links;
   }
 
-  /**
-   * Content Security Policy for RSC
-   */
   static getCSPDirectives(): Record<string, string[]> {
     return {
       "default-src": ["'self'"],
@@ -173,9 +137,6 @@ export class RSCProductionOptimizer {
     };
   }
 
-  /**
-   * Generate CSP header value
-   */
   static generateCSP(): string {
     const directives = RSCProductionOptimizer.getCSPDirectives();
 

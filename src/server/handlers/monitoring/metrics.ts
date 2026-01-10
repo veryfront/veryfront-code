@@ -1,8 +1,3 @@
-/**
- * Metrics Handler
- * Handles /_metrics endpoint for monitoring
- */
-
 import { BaseHandler } from "../response/base.ts";
 import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } from "../types.ts";
 import { metrics } from "@veryfront/observability/simple-metrics/index.ts";
@@ -34,24 +29,8 @@ export class MetricsHandler extends BaseHandler {
     try {
       const snap = metrics.snapshot();
 
-      // Best-effort memory and uptime using platform abstraction
-      const memory = (() => {
-        try {
-          return memoryUsage();
-        } catch (err) {
-          this.logDebug("Failed to get memory usage", { error: err }, ctx);
-          return undefined;
-        }
-      })();
-
-      const uptimeValue = (() => {
-        try {
-          return uptime();
-        } catch (err) {
-          this.logDebug("Failed to get uptime", { error: err }, ctx);
-          return undefined;
-        }
-      })();
+      const memory = this.safeCall(memoryUsage);
+      const uptimeValue = this.safeCall(uptime);
 
       const response = ResponseBuilder.json(
         { counters: snap, memory, uptime: uptimeValue },
@@ -81,6 +60,14 @@ export class MetricsHandler extends BaseHandler {
       );
 
       return Promise.resolve(this.respond(response));
+    }
+  }
+
+  private safeCall<T>(fn: () => T): T | undefined {
+    try {
+      return fn();
+    } catch {
+      return undefined;
     }
   }
 }

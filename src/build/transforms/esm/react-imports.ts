@@ -2,14 +2,20 @@ import { replaceSpecifiers } from "./lexer.ts";
 import { getReactImportMap, REACT_VERSION } from "./package-registry.ts";
 
 /**
+ * Get the src directory path for resolving veryfront modules.
+ */
+function getSrcDir(): string {
+  const currentDir = new URL(".", import.meta.url).pathname;
+  return currentDir.replace(/\/build\/transforms\/esm\/?$/, "");
+}
+
+/**
  * Get the absolute path to the veryfront AI React module for SSR.
  * This resolves relative to this file's location in the veryfront source tree.
  */
 function getVeryfrontAIReactPath(subpath: string = ""): string {
-  const currentDir = new URL(".", import.meta.url).pathname;
-  const srcDir = currentDir.replace(/\/build\/transforms\/esm\/?$/, "");
   const modulePath = subpath || "index.ts";
-  return `file://${srcDir}/ai/react/${modulePath}`;
+  return `file://${getSrcDir()}/ai/react/${modulePath}`;
 }
 
 /**
@@ -17,9 +23,7 @@ function getVeryfrontAIReactPath(subpath: string = ""): string {
  * Exports are located at: src/exports/{name}.ts
  */
 function getVeryfrontExportPath(name: string): string {
-  const currentDir = new URL(".", import.meta.url).pathname;
-  const srcDir = currentDir.replace(/\/build\/transforms\/esm\/?$/, "");
-  return `file://${srcDir}/exports/${name}.ts`;
+  return `file://${getSrcDir()}/exports/${name}.ts`;
 }
 
 /**

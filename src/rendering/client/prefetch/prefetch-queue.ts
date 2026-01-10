@@ -48,7 +48,7 @@ export class PrefetchQueue {
   }
 
   get size(): number {
-    return this.getQueueSize();
+    return this.controllers.size;
   }
 
   clear(): void {

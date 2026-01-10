@@ -93,13 +93,15 @@ export abstract class BaseHandler implements Handler {
     if (typeof pattern.pattern === "string") {
       if (pattern.exact) {
         return pathname === pattern.pattern;
-      } else if (pattern.prefix) {
-        return pathname.startsWith(pattern.pattern);
-      } else {
-        // Default to exact match for strings
-        return pathname === pattern.pattern;
       }
-    } else if (pattern.pattern instanceof RegExp) {
+      if (pattern.prefix) {
+        return pathname.startsWith(pattern.pattern);
+      }
+      // Default to exact match for strings
+      return pathname === pattern.pattern;
+    }
+
+    if (pattern.pattern instanceof RegExp) {
       return pattern.pattern.test(pathname);
     }
 
@@ -122,7 +124,7 @@ export abstract class BaseHandler implements Handler {
       isDev: ctx.mode === "development",
       cspUserHeader: ctx.cspUserHeader,
       adapter: ctx.adapter,
-      nonce, // Pass through the nonce if provided
+      nonce,
       studioEmbed: options?.studioEmbed,
     });
   }
@@ -156,5 +158,79 @@ export abstract class BaseHandler implements Handler {
    */
   protected respond(response: Response, metadata?: Record<string, unknown>): HandlerResult {
     return { response, continue: false, metadata };
+  }
+
+  /**
+   * Execute a function within a proxy context for multi-project mode.
+   * Sets up the appropriate filesystem context based on project slug and token.
+   *
+   * @param ctx - Handler context with proxy information
+   * @param fn - Async function to execute within the proxy context
+   * @param options - Optional configuration
+   * @returns Promise resolving to the function result
+   */
+  protected withProxyContext<T>(
+    ctx: HandlerContext,
+    fn: () => Promise<T>,
+    options: { requireToken?: boolean } = {},
+  ): Promise<T> {
+    const fsWrapper = ctx.adapter.fs as {
+      setRequestToken?: (t: string) => void;
+      setRequestBranch?: (b: string | null) => void;
+      runWithContext?: <R>(
+        slug: string,
+        token: string,
+        fn: () => Promise<R>,
+        projectId?: string,
+        options?: { productionMode?: boolean; releaseId?: string | null },
+      ) => Promise<R>;
+    };
+
+    // Set branch context from parsed domain (for branch-aware file resolution)
+    if (typeof fsWrapper.setRequestBranch === "function") {
+      const branch = ctx.parsedDomain?.branch ?? null;
+      fsWrapper.setRequestBranch(branch);
+    }
+
+    // Check if we have required context for proxy mode
+    const requireToken = options.requireToken ?? false;
+    const hasToken = !!ctx.proxyToken;
+    const hasSlug = !!ctx.projectSlug;
+
+    if (!hasSlug || (requireToken && !hasToken)) {
+      return fn();
+    }
+
+    // Multi-project mode: use runWithContext
+    if (typeof fsWrapper.runWithContext === "function") {
+      // Determine production mode based on domain type
+      let isProduction = false;
+      if (ctx.parsedDomain?.isVeryfrontDomain) {
+        isProduction = ctx.parsedDomain.isDraft === false;
+      } else {
+        isProduction = ctx.proxyEnvironment === "production";
+      }
+
+      this.logDebug("Using multi-project context", {
+        projectSlug: ctx.projectSlug,
+        projectId: ctx.projectId,
+        productionMode: isProduction,
+      }, ctx);
+
+      return fsWrapper.runWithContext(
+        ctx.projectSlug!,
+        ctx.proxyToken || "",
+        fn,
+        ctx.projectId,
+        { productionMode: isProduction, releaseId: ctx.releaseId },
+      );
+    }
+
+    // Single-project mode: use setRequestToken
+    if (typeof fsWrapper.setRequestToken === "function" && ctx.proxyToken) {
+      fsWrapper.setRequestToken(ctx.proxyToken);
+    }
+
+    return fn();
   }
 }

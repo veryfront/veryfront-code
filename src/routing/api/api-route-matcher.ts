@@ -31,36 +31,26 @@ export class DynamicRouter {
     let isOptionalCatchAll = false;
     let isCatchAll = false;
 
-    const orderedParamNames: string[] = [];
+    const paramNames: string[] = [];
     for (
       const match of originalPattern.matchAll(/\[\[\.\.\.(\w+)\]\]|\[\.\.\.(\w+)\]|\[(\w+)\]/g)
     ) {
       if (match[1]) {
-        const name = match[1];
-        orderedParamNames.push(name);
+        paramNames.push(match[1]);
         isOptionalCatchAll = true;
         isCatchAll = true;
       } else if (match[2]) {
-        const name = match[2];
-        orderedParamNames.push(name);
+        paramNames.push(match[2]);
         isCatchAll = true;
       } else if (match[3]) {
-        orderedParamNames.push(match[3]);
+        paramNames.push(match[3]);
       }
     }
-    const paramNames = orderedParamNames;
 
-    regex = regex.replace(/\/?\[\[\.\.\.([^\]]+)\]\]/g, () => {
-      return "(?:/(.+))?";
-    });
-
-    regex = regex.replace(/\[\.\.\.([^\]]+)\]/g, () => {
-      return "(.+)";
-    });
-
-    regex = regex.replace(/\[([^\]]+)\]/g, () => {
-      return "([^/]+)";
-    });
+    regex = regex
+      .replace(/\/?\[\[\.\.\.([^\]]+)\]\]/g, "(?:/(.+))?")
+      .replace(/\[\.\.\.([^\]]+)\]/g, "(.+)")
+      .replace(/\[([^\]]+)\]/g, "([^/]+)");
 
     if (pattern !== "/" && pattern.endsWith("/")) {
       pattern = pattern.slice(0, -1);

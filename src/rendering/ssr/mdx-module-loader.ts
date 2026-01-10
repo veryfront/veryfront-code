@@ -26,6 +26,13 @@ export function clearMDXModuleCache(): void {
   mdxModuleCache.clear();
 }
 
+function validateMDXModule(module: MDXModule, context: Record<string, unknown>): void {
+  const MDXContent = module.default || module.MDXContent;
+  if (!MDXContent) {
+    throw new CompilationError("No default export found in MDX module", context);
+  }
+}
+
 export async function loadMDXModule(
   modulePath: string,
 ): Promise<MDXModule> {
@@ -38,15 +45,7 @@ export async function loadMDXModule(
     }
 
     const module = await import(modulePath) as MDXModule;
-
-    const MDXContent = module.default || module.MDXContent;
-
-    if (!MDXContent) {
-      throw new CompilationError("No default export found in MDX module", {
-        modulePath,
-      });
-    }
-
+    validateMDXModule(module, { modulePath });
     mdxModuleCache.set(key, module);
 
     return module;
@@ -71,9 +70,8 @@ export async function loadCompiledMDXModule(
 
     if (isBrowser) {
       return await loadViaBlobURL(compiledCode, cacheKey, key);
-    } else {
-      return await loadViaTempFile(compiledCode, cacheKey, key);
     }
+    return await loadViaTempFile(compiledCode, cacheKey, key);
   } catch (error) {
     throw wrapError(error, `Failed to load compiled MDX module`, { cacheKey });
   }
@@ -88,18 +86,8 @@ async function loadViaTempFile(
 
   try {
     const module = await import(tempModulePath) as MDXModule;
-
-    const MDXContent = module.default || module.MDXContent;
-
-    if (!MDXContent) {
-      throw new CompilationError("No default export found in compiled MDX", {
-        cacheKey,
-        codePreview: compiledCode.substring(0, 200),
-      });
-    }
-
+    validateMDXModule(module, { cacheKey, codePreview: compiledCode.substring(0, 200) });
     mdxModuleCache.set(key, module);
-
     return module;
   } finally {
     cleanupTempModule(tempModulePath).catch((err) =>
@@ -119,18 +107,8 @@ async function loadViaBlobURL(
 
   try {
     const module = await import(blobURL) as MDXModule;
-
-    const MDXContent = module.default || module.MDXContent;
-
-    if (!MDXContent) {
-      throw new CompilationError("No default export found in compiled MDX", {
-        cacheKey,
-        codePreview: compiledCode.substring(0, 200),
-      });
-    }
-
+    validateMDXModule(module, { cacheKey, codePreview: compiledCode.substring(0, 200) });
     mdxModuleCache.set(key, module);
-
     return module;
   } finally {
     URL.revokeObjectURL(blobURL);

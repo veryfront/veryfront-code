@@ -1,47 +1,16 @@
-/**
- * Platform Detection and Runtime Abstractions
- *
- * Detects the current JavaScript runtime and provides platform-specific
- * capabilities and constraints.
- *
- * Supported platforms:
- * - Deno
- * - Node.js
- * - Bun
- * - Cloudflare Workers
- */
-
 export type Platform = "deno" | "node" | "bun" | "cloudflare-workers" | "unknown";
 
 export interface PlatformCapabilities {
-  /** Can run MCP server (requires TCP server support) */
   canRunMCPServer: boolean;
-
-  /** Maximum agent steps before timeout risk */
   maxAgentSteps: number;
-
-  /** CPU time limit in milliseconds */
   cpuTimeLimit: number | null;
-
-  /** Memory limit in MB */
   memoryLimit: number | null;
-
-  /** Supports file system access */
   hasFileSystem: boolean;
-
-  /** Supports long-running tasks */
   supportsLongRunning: boolean;
-
-  /** Recommended for streaming */
   streamingRecommended: boolean;
-
-  /** Platform display name */
   displayName: string;
 }
 
-/**
- * Detects the current JavaScript runtime platform
- */
 export function detectPlatform(): Platform {
   // Check for Deno
   // @ts-ignore - Deno global may not exist
@@ -76,98 +45,71 @@ export function detectPlatform(): Platform {
   return "unknown";
 }
 
-/**
- * Gets platform capabilities for the current or specified platform
- */
+const PLATFORM_CAPABILITIES: Record<Platform, PlatformCapabilities> = {
+  deno: {
+    canRunMCPServer: true,
+    maxAgentSteps: Infinity,
+    cpuTimeLimit: null,
+    memoryLimit: null,
+    hasFileSystem: true,
+    supportsLongRunning: true,
+    streamingRecommended: false,
+    displayName: "Deno",
+  },
+  node: {
+    canRunMCPServer: true,
+    maxAgentSteps: Infinity,
+    cpuTimeLimit: null,
+    memoryLimit: null,
+    hasFileSystem: true,
+    supportsLongRunning: true,
+    streamingRecommended: false,
+    displayName: "Node.js",
+  },
+  bun: {
+    canRunMCPServer: true,
+    maxAgentSteps: Infinity,
+    cpuTimeLimit: null,
+    memoryLimit: null,
+    hasFileSystem: true,
+    supportsLongRunning: true,
+    streamingRecommended: false,
+    displayName: "Bun",
+  },
+  "cloudflare-workers": {
+    canRunMCPServer: false,
+    maxAgentSteps: 3,
+    cpuTimeLimit: 30000,
+    memoryLimit: 128,
+    hasFileSystem: false,
+    supportsLongRunning: false,
+    streamingRecommended: true,
+    displayName: "Cloudflare Workers",
+  },
+  unknown: {
+    canRunMCPServer: false,
+    maxAgentSteps: 5,
+    cpuTimeLimit: 60000,
+    memoryLimit: 512,
+    hasFileSystem: false,
+    supportsLongRunning: false,
+    streamingRecommended: true,
+    displayName: "Unknown Platform",
+  },
+} as const;
+
 export function getPlatformCapabilities(platform?: Platform): PlatformCapabilities {
   const detectedPlatform = platform || detectPlatform();
-
-  switch (detectedPlatform) {
-    case "deno":
-      return {
-        canRunMCPServer: true,
-        maxAgentSteps: Infinity,
-        cpuTimeLimit: null, // No hard limit
-        memoryLimit: null, // System dependent
-        hasFileSystem: true,
-        supportsLongRunning: true,
-        streamingRecommended: false,
-        displayName: "Deno",
-      };
-
-    case "node":
-      return {
-        canRunMCPServer: true,
-        maxAgentSteps: Infinity,
-        cpuTimeLimit: null,
-        memoryLimit: null,
-        hasFileSystem: true,
-        supportsLongRunning: true,
-        streamingRecommended: false,
-        displayName: "Node.js",
-      };
-
-    case "bun":
-      return {
-        canRunMCPServer: true,
-        maxAgentSteps: Infinity,
-        cpuTimeLimit: null,
-        memoryLimit: null,
-        hasFileSystem: true,
-        supportsLongRunning: true,
-        streamingRecommended: false,
-        displayName: "Bun",
-      };
-
-    case "cloudflare-workers":
-      return {
-        canRunMCPServer: false, // CF Workers cannot run TCP servers
-        maxAgentSteps: 3, // Conservative limit for 30s CPU time
-        cpuTimeLimit: 30000, // 30 seconds
-        memoryLimit: 128, // 128 MB
-        hasFileSystem: false,
-        supportsLongRunning: false,
-        streamingRecommended: true, // Required for good UX
-        displayName: "Cloudflare Workers",
-      };
-
-    default:
-      return {
-        canRunMCPServer: false,
-        maxAgentSteps: 5,
-        cpuTimeLimit: 60000,
-        memoryLimit: 512,
-        hasFileSystem: false,
-        supportsLongRunning: false,
-        streamingRecommended: true,
-        displayName: "Unknown Platform",
-      };
-  }
+  return PLATFORM_CAPABILITIES[detectedPlatform] ?? PLATFORM_CAPABILITIES.unknown;
 }
 
-/**
- * Checks if the current platform supports a specific capability
- */
 export function supportsCapability(capability: keyof PlatformCapabilities): boolean {
-  const capabilities = getPlatformCapabilities();
-  const value = capabilities[capability];
-
-  // Handle boolean capabilities
-  if (typeof value === "boolean") {
-    return value;
-  }
-
-  // Handle numeric capabilities (non-zero means supported)
-  if (typeof value === "number") {
-    return value > 0;
-  }
-
+  const value = getPlatformCapabilities()[capability];
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") return value > 0;
   return false;
 }
 
-/**
- * Gets a warning message if the current platform has constraints
- */
 export function getPlatformWarnings(): string[] {
   const platform = detectPlatform();
   const capabilities = getPlatformCapabilities(platform);
@@ -219,15 +161,15 @@ export function validatePlatformCompatibility(
   const errors: string[] = [];
   const warnings: string[] = [];
 
-  // Check max steps
-  if (config.maxSteps && config.maxSteps > capabilities.maxAgentSteps) {
-    if (capabilities.maxAgentSteps === Infinity) {
-      // No limit, all good
-    } else {
-      errors.push(
-        `Agent maxSteps (${config.maxSteps}) exceeds platform limit (${capabilities.maxAgentSteps})`,
-      );
-    }
+  // Check max steps (skip check if platform has no limit)
+  if (
+    config.maxSteps &&
+    capabilities.maxAgentSteps !== Infinity &&
+    config.maxSteps > capabilities.maxAgentSteps
+  ) {
+    errors.push(
+      `Agent maxSteps (${config.maxSteps}) exceeds platform limit (${capabilities.maxAgentSteps})`,
+    );
   }
 
   // Check file system requirement

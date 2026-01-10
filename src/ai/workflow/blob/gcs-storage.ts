@@ -90,9 +90,7 @@ export class GCSBlobStorage implements BlobStorage {
       throw new Error(`Failed to get GCS access token: ${response.status} - ${error}`);
     }
 
-    const data = await response.json();
-    const accessToken = data.access_token;
-    const expiresIn = data.expires_in; // in seconds
+    const { access_token: accessToken, expires_in: expiresIn } = await response.json();
 
     this.tokenCache = {
       accessToken,
@@ -217,34 +215,14 @@ export class GCSBlobStorage implements BlobStorage {
   async getText(id: string): Promise<string | null> {
     const stream = await this.getStream(id);
     if (!stream) return null;
-    const reader = stream.getReader();
-    let text = "";
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      text += new TextDecoder().decode(value);
-    }
-    return text;
+    return new Response(stream).text();
   }
 
   async getBytes(id: string): Promise<Uint8Array | null> {
     const stream = await this.getStream(id);
     if (!stream) return null;
-    const chunks: Uint8Array[] = [];
-    const reader = stream.getReader();
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      chunks.push(value);
-    }
-    const totalLength = chunks.reduce((acc, chunk) => acc + chunk.length, 0);
-    const result = new Uint8Array(totalLength);
-    let offset = 0;
-    for (const chunk of chunks) {
-      result.set(chunk, offset);
-      offset += chunk.length;
-    }
-    return result;
+    const buffer = await new Response(stream).arrayBuffer();
+    return new Uint8Array(buffer);
   }
 
   async delete(id: string): Promise<void> {

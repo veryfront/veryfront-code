@@ -9,7 +9,6 @@ export interface RendererOptions {
   port?: number;
   adapter?: RuntimeAdapter;
   moduleServerUrl?: string;
-  /** Pre-loaded config (avoids re-loading via FSAdapter) */
   config?: VeryfrontConfig;
   directories?: {
     app?: string;
@@ -40,15 +39,10 @@ export interface RenderOptions {
   request?: Request;
   url?: URL;
   nonce?: string;
-  /** Whether page is embedded in Studio iframe (detected from studio_embed query param) */
   studioEmbed?: boolean;
-  /** Project ID for Studio communication */
   projectId?: string;
-  /** Page ID for Studio communication */
   pageId?: string;
-  /** User's preferred color scheme from Sec-CH-Prefers-Color-Scheme client hint */
   colorScheme?: "light" | "dark";
-  /** Proxy environment for cloud deployments (preview or production) */
   proxyEnvironment?: "preview" | "production";
 }
 
@@ -57,35 +51,17 @@ export interface RenderContext {
   options?: RenderOptions;
 }
 
-/**
- * Page data response for SPA client-side navigation.
- * Contains all information needed to render a page client-side
- * without fetching pre-rendered HTML.
- */
+/** Page data for SPA client-side navigation without pre-rendered HTML. */
 export interface PageDataResponse {
-  /** URL slug for the page */
   slug: string;
-  /** Relative path to the page component (e.g., "pages/about.tsx") */
   pagePath: string;
-  /** Page component type */
   pageType: "mdx" | "tsx" | "jsx" | "ts" | "js";
-  /** Nested layouts to wrap the page, from outermost to innermost */
-  layouts: Array<{
-    kind: "mdx" | "tsx";
-    path: string;
-  }>;
-  /** Provider component paths */
+  layouts: Array<{ kind: "mdx" | "tsx"; path: string }>;
   providers: string[];
-  /** Page frontmatter/metadata */
   frontmatter: Record<string, unknown>;
-  /** Props from getServerData/getStaticData */
   props: Record<string, unknown>;
-  /** Route parameters */
   params: Record<string, string | string[]>;
-  /** Layout-specific props keyed by layout path */
   layoutProps: Record<string, Record<string, unknown>>;
-  /** Build version for cache invalidation during SPA navigation */
   buildVersion: BuildVersion;
-  /** Path to the App component (contains providers like QueryClientProvider) */
   appPath?: string;
 }

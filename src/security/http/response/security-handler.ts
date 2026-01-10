@@ -1,31 +1,19 @@
 /**
- * Security Handler
- * Handles security headers (CSP, COOP, CORP, COEP) with nonce-based CSP
+ * Security headers handler (CSP, COOP, CORP, COEP) with nonce-based CSP
  */
 
 import type { SecurityConfig } from "./types.ts";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import { recordSecurityHeaders } from "@veryfront/observability";
 
-/**
- * Generate cryptographic nonce for CSP
- */
+/** Generate cryptographic nonce for CSP */
 export function generateNonce(): string {
   const array = new Uint8Array(16);
   crypto.getRandomValues(array);
   return btoa(String.fromCharCode(...array));
 }
 
-/**
- * Build Content Security Policy header with nonce
- *
- * @param isDev - Development mode flag
- * @param nonce - Cryptographic nonce for inline scripts/styles
- * @param cspUserHeader - User-provided CSP header
- * @param config - Security configuration
- * @param adapter - Runtime adapter for environment variables
- * @returns CSP header string
- */
+/** Build Content Security Policy header with nonce */
 export function buildCSP(
   _isDev: boolean,
   nonce: string,
@@ -68,15 +56,7 @@ export function buildCSP(
   return defaultCsp;
 }
 
-/**
- * Get security header value from config or environment
- *
- * @param headerName - Header name (COOP, CORP, COEP)
- * @param defaultValue - Default value if not configured
- * @param config - Security configuration
- * @param adapter - Runtime adapter for environment variables
- * @returns Header value
- */
+/** Get security header value from config or environment */
 export function getSecurityHeader(
   headerName: string,
   defaultValue: string,
@@ -89,17 +69,7 @@ export function getSecurityHeader(
   return (typeof configValue === "string" ? configValue : undefined) || envValue || defaultValue;
 }
 
-/**
- * Apply security headers to Headers object with nonce
- *
- * @param headers - Headers object to modify
- * @param isDev - Development mode flag
- * @param nonce - Cryptographic nonce for CSP
- * @param cspUserHeader - User-provided CSP header
- * @param config - Security configuration
- * @param adapter - Runtime adapter for environment variables
- * @param studioEmbed - When true, skips X-Frame-Options to allow Studio iframe embedding
- */
+/** Apply security headers to Headers object with nonce */
 export function applySecurityHeaders(
   headers: Headers,
   isDev: boolean,

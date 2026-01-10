@@ -1,9 +1,5 @@
 /**
- * Cloudflare Adapter
- *
- * Adapter for using Cloudflare Durable Objects as the workflow backend.
- * Ideal for edge deployments on Cloudflare Workers.
- *
+ * Cloudflare Adapter - workflow backend using Durable Objects for edge deployments.
  * @see https://developers.cloudflare.com/durable-objects/
  */
 
@@ -17,9 +13,6 @@ import type {
 } from "../types.ts";
 import type { BackendConfig, WorkflowBackend } from "./types.ts";
 
-/**
- * Cloudflare adapter configuration
- */
 export interface CloudflareAdapterConfig extends BackendConfig {
   /** Durable Object namespace binding name */
   durableObjectBinding?: string;
@@ -32,31 +25,7 @@ export interface CloudflareAdapterConfig extends BackendConfig {
 }
 
 /**
- * Cloudflare Adapter
- *
- * Uses Cloudflare Durable Objects for workflow state and
- * Cloudflare Queues for job distribution.
- *
- * @example
- * ```typescript
- * // In your Cloudflare Worker
- * import { CloudflareAdapter } from 'veryfront/ai/workflow/backends/cloudflare';
- *
- * export default {
- *   async fetch(request, env) {
- *     const backend = new CloudflareAdapter({
- *       durableObjectBinding: 'WORKFLOW_DO',
- *       kvBinding: 'WORKFLOW_KV',
- *       queueBinding: 'WORKFLOW_QUEUE',
- *     });
- *
- *     // Use backend...
- *   }
- * }
- * ```
- *
- * @note This is a stub implementation. Full implementation requires
- * Cloudflare Workers environment bindings.
+ * Stub implementation - requires Cloudflare Workers environment bindings.
  */
 export class CloudflareAdapter implements WorkflowBackend {
   private config: CloudflareAdapterConfig;

@@ -10,7 +10,6 @@
 
 import { createFileSystem } from "../../platform/compat/fs.ts";
 import * as pathHelper from "../../platform/compat/path-helper.ts";
-import { isDeno } from "../../platform/compat/runtime.ts";
 import { loadTemplateFromDirectory } from "./loader.ts";
 import type { FeatureConfig, FeatureName, ResolvedFeature, TemplateFile } from "./types.ts";
 
@@ -46,11 +45,7 @@ export function getFeatureDirectory(featureName: string): string {
     moduleDir = moduleUrl.href;
   }
 
-  if (isDeno) {
-    return pathHelper.join(moduleDir, "features", featureName);
-  } else {
-    return pathHelper.join(moduleDir, "features", featureName);
-  }
+  return pathHelper.join(moduleDir, "features", featureName);
 }
 
 /**

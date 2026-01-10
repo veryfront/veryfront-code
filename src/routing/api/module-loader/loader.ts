@@ -7,6 +7,7 @@ import { validateHTTPImports } from "./http-validator.ts";
 import { loadSecurityConfig } from "./security-config.ts";
 import type { APIRoute, LoadModuleOptions } from "./types.ts";
 import { createError, toError } from "../../../core/errors/veryfront-error.ts";
+import { getEsbuildLoader } from "../../../core/utils/path-utils.ts";
 import { createFileSystem, FileSystem } from "../../../platform/compat/fs.ts";
 import * as pathHelper from "../../../platform/compat/path-helper.ts";
 import { isDeno, isNode } from "../../../platform/compat/runtime.ts";
@@ -55,7 +56,7 @@ export async function loadHandlerModule(options: LoadModuleOptions): Promise<API
  * This allows the module to share the same runtime context as the dev server,
  * enabling auto-discovery features like agentRegistry to work.
  */
-async function loadTSModuleDirect(modulePath: string): Promise<APIRoute> {
+function loadTSModuleDirect(modulePath: string): Promise<APIRoute> {
   // Add cache buster for HMR
   const cacheBuster = `?v=${Date.now()}`;
   const url = modulePath.startsWith("file://")
@@ -63,11 +64,11 @@ async function loadTSModuleDirect(modulePath: string): Promise<APIRoute> {
     : `file://${modulePath}${cacheBuster}`;
 
   logger.debug(`[API] Direct import (Deno): ${url}`);
-  return await import(url);
+  return import(url);
 }
 
-async function loadJSModule(modulePath: string): Promise<APIRoute> {
-  return await import(`file://${modulePath}`);
+function loadJSModule(modulePath: string): Promise<APIRoute> {
+  return import(`file://${modulePath}`);
 }
 
 function createImportMapPlugin(
@@ -195,17 +196,13 @@ function createImportMapPlugin(
           }
 
           const ext = filePath.split(".").pop() || "";
-          const loader = ext === "tsx"
-            ? "tsx"
-            : ext === "jsx"
-            ? "jsx"
-            : ext === "ts"
-            ? "ts"
-            : ext === "js"
-            ? "js"
-            : ext === "json"
-            ? "json"
-            : "js";
+          const loaderMap: Record<string, "tsx" | "jsx" | "ts" | "js" | "json"> = {
+            tsx: "tsx",
+            jsx: "jsx",
+            ts: "ts",
+            json: "json",
+          };
+          const loader = loaderMap[ext] ?? "js";
 
           return {
             contents,
@@ -260,9 +257,7 @@ async function loadAndTranspileModule(
     }
   }
 
-  const isTsx = resolvedPath.endsWith(".tsx");
-  const isJsx = resolvedPath.endsWith(".jsx");
-  const loader = isTsx ? "tsx" : isJsx ? "jsx" : resolvedPath.endsWith(".ts") ? "ts" : "js";
+  const loader = getEsbuildLoader(resolvedPath);
 
   const allowedHosts = await loadSecurityConfig(projectDir, adapter);
   validateHTTPImports(source, allowedHosts);
@@ -552,24 +547,18 @@ async function rewriteExternalImports(
 }
 
 function extractAPIRouteHandlers(module: unknown): APIRoute {
-  const handler: APIRoute = {};
-
   if (!module || typeof module !== "object") {
-    return handler;
+    return {};
   }
 
   const mod = module as Record<string, unknown>;
+  const handler: APIRoute = {};
+  const methods = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS", "default"] as const;
 
-  if (typeof mod.GET === "function") handler.GET = mod.GET as APIRoute["GET"];
-  if (typeof mod.POST === "function") handler.POST = mod.POST as APIRoute["POST"];
-  if (typeof mod.PUT === "function") handler.PUT = mod.PUT as APIRoute["PUT"];
-  if (typeof mod.PATCH === "function") handler.PATCH = mod.PATCH as APIRoute["PATCH"];
-  if (typeof mod.DELETE === "function") handler.DELETE = mod.DELETE as APIRoute["DELETE"];
-  if (typeof mod.HEAD === "function") handler.HEAD = mod.HEAD as APIRoute["HEAD"];
-  if (typeof mod.OPTIONS === "function") handler.OPTIONS = mod.OPTIONS as APIRoute["OPTIONS"];
-
-  if (typeof mod.default === "function") {
-    handler.default = mod.default as APIRoute["default"];
+  for (const method of methods) {
+    if (typeof mod[method] === "function") {
+      handler[method] = mod[method] as APIRoute[typeof method];
+    }
   }
 
   return handler;

@@ -1,61 +1,36 @@
-/**
- * CORS Validators
- * Origin validation logic for CORS handling
- *
- * @module core/cors/validators
- */
-
 import type { CORSConfig, CORSValidationResult } from "./types.ts";
 import { serverLogger } from "@veryfront/utils/logger/logger.ts";
 import { recordCorsRejection } from "@veryfront/observability";
 
-/**
- * Validate origin against CORS configuration
- * Returns the allowed origin or null if not allowed
- *
- * This is the main validation entry point that coordinates
- * all origin validation strategies.
- *
- * @param requestOrigin - The origin from the request header
- * @param config - CORS configuration
- * @returns Validation result with allowed origin and credentials
- */
-export async function validateOrigin(
+const NO_CORS_RESULT: CORSValidationResult = { allowedOrigin: null, allowCredentials: false };
+
+/** Early validation checks common to sync and async paths */
+function validateEarly(
   requestOrigin: string | null,
   config?: boolean | CORSConfig,
-): Promise<CORSValidationResult> {
-  // Secure by default: no CORS without explicit configuration
+): CORSValidationResult | null {
   if (!config) {
-    return { allowedOrigin: null, allowCredentials: false };
+    return NO_CORS_RESULT;
   }
 
-  // Simple boolean true = allow all origins
   if (config === true) {
-    const origin = requestOrigin || "*";
-    return { allowedOrigin: origin, allowCredentials: false };
+    return { allowedOrigin: requestOrigin || "*", allowCredentials: false };
   }
 
-  // Object configuration
   const corsConfig = config as CORSConfig;
 
-  // No origin configuration = no CORS
   if (!corsConfig.origin) {
-    return { allowedOrigin: null, allowCredentials: false };
+    return NO_CORS_RESULT;
   }
 
-  // No origin header (same-origin request or non-browser client)
   if (!requestOrigin) {
-    // For wildcard, return wildcard even without origin header
     if (corsConfig.origin === "*") {
       return { allowedOrigin: "*", allowCredentials: false };
     }
-    // For other configurations, no CORS headers for missing origin
-    return { allowedOrigin: null, allowCredentials: false };
+    return NO_CORS_RESULT;
   }
 
-  // Wildcard origin
   if (corsConfig.origin === "*") {
-    // Security: Cannot use credentials with wildcard
     if (corsConfig.credentials) {
       serverLogger.warn("[CORS] Cannot use credentials with wildcard origin - denying");
       return {
@@ -67,37 +42,13 @@ export async function validateOrigin(
     return { allowedOrigin: "*", allowCredentials: false };
   }
 
-  // Function-based validation
-  if (typeof corsConfig.origin === "function") {
-    try {
-      const result = await corsConfig.origin(requestOrigin);
+  return null;
+}
 
-      // Function returned specific origin string
-      if (typeof result === "string") {
-        return {
-          allowedOrigin: result,
-          allowCredentials: corsConfig.credentials ?? false,
-        };
-      }
-
-      // Function returned boolean
-      const allowed = result === true;
-      return {
-        allowedOrigin: allowed ? requestOrigin : null,
-        allowCredentials: allowed && (corsConfig.credentials ?? false),
-        error: allowed ? undefined : "Origin rejected by validation function",
-      };
-    } catch (error) {
-      serverLogger.error("[CORS] Origin validation function error", error);
-      return {
-        allowedOrigin: null,
-        allowCredentials: false,
-        error: "Origin validation error",
-      };
-    }
-  }
-
-  // Array of allowed origins
+function validateStaticOrigin(
+  requestOrigin: string,
+  corsConfig: CORSConfig,
+): CORSValidationResult {
   if (Array.isArray(corsConfig.origin)) {
     const allowed = corsConfig.origin.includes(requestOrigin);
     if (!allowed) {
@@ -114,7 +65,6 @@ export async function validateOrigin(
     };
   }
 
-  // Single origin string
   if (typeof corsConfig.origin === "string") {
     const allowed = corsConfig.origin === requestOrigin;
     if (!allowed) {
@@ -131,7 +81,6 @@ export async function validateOrigin(
     };
   }
 
-  // Should never reach here
   return {
     allowedOrigin: null,
     allowCredentials: false,
@@ -139,52 +88,58 @@ export async function validateOrigin(
   };
 }
 
-/**
- * Synchronous origin validation helper for environments that require
- * immediate header evaluation (e.g., fluent response builders).
- * Async origin validators are NOT supported here.
- */
+function processFunctionResult(
+  result: string | boolean,
+  requestOrigin: string,
+  credentials: boolean,
+): CORSValidationResult {
+  if (typeof result === "string") {
+    return { allowedOrigin: result, allowCredentials: credentials };
+  }
+  const allowed = result === true;
+  return {
+    allowedOrigin: allowed ? requestOrigin : null,
+    allowCredentials: allowed && credentials,
+    error: allowed ? undefined : "Origin rejected by validation function",
+  };
+}
+
+/** Validate origin against CORS configuration */
+export async function validateOrigin(
+  requestOrigin: string | null,
+  config?: boolean | CORSConfig,
+): Promise<CORSValidationResult> {
+  const earlyResult = validateEarly(requestOrigin, config);
+  if (earlyResult) return earlyResult;
+
+  const corsConfig = config as CORSConfig;
+
+  if (typeof corsConfig.origin === "function") {
+    try {
+      const result = await corsConfig.origin(requestOrigin!);
+      return processFunctionResult(result, requestOrigin!, corsConfig.credentials ?? false);
+    } catch (error) {
+      serverLogger.error("[CORS] Origin validation function error", error);
+      return { allowedOrigin: null, allowCredentials: false, error: "Origin validation error" };
+    }
+  }
+
+  return validateStaticOrigin(requestOrigin!, corsConfig);
+}
+
+/** Synchronous origin validation (async validators not supported) */
 export function validateOriginSync(
   requestOrigin: string | null,
   config?: boolean | CORSConfig,
 ): CORSValidationResult {
-  if (!config) {
-    return { allowedOrigin: null, allowCredentials: false };
-  }
-
-  if (config === true) {
-    const origin = requestOrigin || "*";
-    return { allowedOrigin: origin, allowCredentials: false };
-  }
+  const earlyResult = validateEarly(requestOrigin, config);
+  if (earlyResult) return earlyResult;
 
   const corsConfig = config as CORSConfig;
 
-  if (!corsConfig.origin) {
-    return { allowedOrigin: null, allowCredentials: false };
-  }
-
-  if (!requestOrigin) {
-    if (corsConfig.origin === "*") {
-      return { allowedOrigin: "*", allowCredentials: false };
-    }
-    return { allowedOrigin: null, allowCredentials: false };
-  }
-
-  if (corsConfig.origin === "*") {
-    if (corsConfig.credentials) {
-      serverLogger.warn("[CORS] Cannot use credentials with wildcard origin - denying");
-      return {
-        allowedOrigin: null,
-        allowCredentials: false,
-        error: "Cannot use credentials with wildcard origin",
-      };
-    }
-    return { allowedOrigin: "*", allowCredentials: false };
-  }
-
   if (typeof corsConfig.origin === "function") {
     try {
-      const result = corsConfig.origin(requestOrigin);
+      const result = corsConfig.origin(requestOrigin!);
       if (result instanceof Promise) {
         serverLogger.warn(
           "[CORS] Async origin validators are not supported in synchronous contexts",
@@ -195,74 +150,17 @@ export function validateOriginSync(
           error: "Async origin validators not supported",
         };
       }
-      if (typeof result === "string") {
-        return {
-          allowedOrigin: result,
-          allowCredentials: corsConfig.credentials ?? false,
-        };
-      }
-      const allowed = result === true;
-      return {
-        allowedOrigin: allowed ? requestOrigin : null,
-        allowCredentials: allowed && (corsConfig.credentials ?? false),
-        error: allowed ? undefined : "Origin rejected by validation function",
-      };
+      return processFunctionResult(result, requestOrigin!, corsConfig.credentials ?? false);
     } catch (error) {
       serverLogger.error("[CORS] Origin validation function error", error);
-      return {
-        allowedOrigin: null,
-        allowCredentials: false,
-        error: "Origin validation error",
-      };
+      return { allowedOrigin: null, allowCredentials: false, error: "Origin validation error" };
     }
   }
 
-  if (Array.isArray(corsConfig.origin)) {
-    const allowed = corsConfig.origin.includes(requestOrigin);
-    if (!allowed) {
-      recordCorsRejection();
-      serverLogger.warn("[CORS] Origin not in allowlist (sync)", {
-        requestOrigin,
-        allowedOrigins: corsConfig.origin,
-      });
-    }
-    return {
-      allowedOrigin: allowed ? requestOrigin : null,
-      allowCredentials: allowed && (corsConfig.credentials ?? false),
-      error: allowed ? undefined : "Origin not in allowlist",
-    };
-  }
-
-  if (typeof corsConfig.origin === "string") {
-    const allowed = corsConfig.origin === requestOrigin;
-    if (!allowed) {
-      recordCorsRejection();
-      serverLogger.warn("[CORS] Origin does not match (sync)", {
-        requestOrigin,
-        expectedOrigin: corsConfig.origin,
-      });
-    }
-    return {
-      allowedOrigin: allowed ? requestOrigin : null,
-      allowCredentials: allowed && (corsConfig.credentials ?? false),
-      error: allowed ? undefined : "Origin does not match",
-    };
-  }
-
-  return {
-    allowedOrigin: null,
-    allowCredentials: false,
-    error: "Invalid origin configuration",
-  };
+  return validateStaticOrigin(requestOrigin!, corsConfig);
 }
 
-/**
- * Validate CORS configuration for security issues
- * Prevents dangerous combinations
- *
- * @param config - CORS configuration to validate
- * @returns Validation result with error if invalid
- */
+/** Validate CORS configuration for security issues */
 export function validateCORSConfig(config?: boolean | CORSConfig): {
   valid: boolean;
   error?: string;

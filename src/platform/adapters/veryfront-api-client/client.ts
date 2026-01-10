@@ -111,6 +111,13 @@ export class VeryfrontAPIClient {
   }
 
   /**
+   * Resolve the effective branch - uses provided branch if defined, falls back to request branch.
+   */
+  private resolveBranch(branch?: string | null): string | null | undefined {
+    return branch ?? this.requestBranch;
+  }
+
+  /**
    * Get the current token being used.
    */
   getToken(): string {
@@ -203,27 +210,19 @@ export class VeryfrontAPIClient {
   }
 
   async listFiles(projectId?: string, cursor?: string, limit = 100, branch?: string | null) {
-    // Use request branch if not explicitly provided
-    const effectiveBranch = branch !== undefined ? branch : this.requestBranch;
-    return await this.operations.listFiles(projectId, cursor, limit, effectiveBranch);
+    return await this.operations.listFiles(projectId, cursor, limit, this.resolveBranch(branch));
   }
 
   async listAllFiles(projectId?: string, branch?: string | null) {
-    // Use request branch if not explicitly provided
-    const effectiveBranch = branch !== undefined ? branch : this.requestBranch;
-    return await this.operations.listAllFiles(projectId, effectiveBranch);
+    return await this.operations.listAllFiles(projectId, this.resolveBranch(branch));
   }
 
   async searchFiles(pattern: string, projectId?: string, branch?: string | null) {
-    // Use request branch if not explicitly provided
-    const effectiveBranch = branch !== undefined ? branch : this.requestBranch;
-    return await this.operations.searchFiles(pattern, projectId, effectiveBranch);
+    return await this.operations.searchFiles(pattern, projectId, this.resolveBranch(branch));
   }
 
   async getFileContent(path: string, projectId?: string, branch?: string | null) {
-    // Use request branch if not explicitly provided
-    const effectiveBranch = branch !== undefined ? branch : this.requestBranch;
-    return await this.operations.getFileContent(path, projectId, effectiveBranch);
+    return await this.operations.getFileContent(path, projectId, this.resolveBranch(branch));
   }
 
   async getFileMetadata(path: string, projectId?: string) {

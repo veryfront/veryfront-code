@@ -1,15 +1,6 @@
-/**
- * Message Transformer
- *
- * Transforms internal Message format to provider-specific formats.
- * Extracted from AgentRuntime to centralize message conversion logic.
- */
-
 import type { Message, ToolCall } from "../../types/agent.ts";
 
-/**
- * Provider message format (matches OpenAI/Anthropic API structure)
- */
+/** Provider message format (matches OpenAI/Anthropic API structure) */
 export interface ProviderMessage {
   role: string;
   content: string;
@@ -24,26 +15,12 @@ export interface ProviderMessage {
   tool_call_id?: string;
 }
 
-/**
- * Message transformer for converting between internal and provider formats.
- *
- * Usage:
- * ```ts
- * const transformer = new MessageTransformer();
- * const providerMessages = transformer.toProviderFormat(messages);
- * ```
- */
+/** Message transformer for converting between internal and provider formats. */
 export class MessageTransformer {
-  /**
-   * Convert internal messages to provider format.
-   */
   toProviderFormat(messages: Message[]): ProviderMessage[] {
     return messages.map((m) => this.convertMessage(m));
   }
 
-  /**
-   * Convert a single message to provider format.
-   */
   convertMessage(message: Message): ProviderMessage {
     const providerMsg: ProviderMessage = {
       role: message.role,
@@ -70,9 +47,6 @@ export class MessageTransformer {
     return providerMsg;
   }
 
-  /**
-   * Create a new assistant message from provider response.
-   */
   createAssistantMessage(
     text: string,
     toolCalls?: Array<{ id: string; name: string; arguments: Record<string, unknown> }>,
@@ -85,52 +59,45 @@ export class MessageTransformer {
       timestamp: Date.now(),
     };
 
-    if (toolCalls && toolCalls.length > 0) {
+    if (toolCalls?.length) {
       message.toolCalls = toolCalls;
     }
 
     return message;
   }
 
-  /**
-   * Create a tool result message.
-   */
+  private createToolMessage(
+    toolCallId: string,
+    content: string,
+    toolCall: ToolCall,
+    isError = false,
+  ): Message {
+    return {
+      id: `${isError ? "tool_error_" : "tool_"}${toolCallId}`,
+      role: "tool",
+      content,
+      toolCallId,
+      toolCall,
+      timestamp: Date.now(),
+    };
+  }
+
   createToolResultMessage(
     toolCallId: string,
     result: unknown,
     toolCall: ToolCall,
   ): Message {
-    return {
-      id: `tool_${toolCallId}`,
-      role: "tool",
-      content: JSON.stringify(result),
-      toolCallId,
-      toolCall,
-      timestamp: Date.now(),
-    };
+    return this.createToolMessage(toolCallId, JSON.stringify(result), toolCall);
   }
 
-  /**
-   * Create a tool error message.
-   */
   createToolErrorMessage(
     toolCallId: string,
     error: string,
     toolCall: ToolCall,
   ): Message {
-    return {
-      id: `tool_error_${toolCallId}`,
-      role: "tool",
-      content: `Error: ${error}`,
-      toolCallId,
-      toolCall,
-      timestamp: Date.now(),
-    };
+    return this.createToolMessage(toolCallId, `Error: ${error}`, toolCall, true);
   }
 
-  /**
-   * Create a user message from string input.
-   */
   createUserMessage(content: string): Message {
     return {
       id: `msg_${Date.now()}`,
@@ -140,10 +107,7 @@ export class MessageTransformer {
     };
   }
 
-  /**
-   * Normalize input to messages array.
-   * Handles both v4 format (content string) and v5 format (parts array).
-   */
+  /** Normalize input to messages array (handles both v4 and v5 formats). */
   normalizeInput(input: string | Message[]): Message[] {
     if (typeof input === "string") {
       return [this.createUserMessage(input)];
@@ -172,9 +136,6 @@ export class MessageTransformer {
   }
 }
 
-/**
- * Create a new message transformer instance.
- */
 export function createMessageTransformer(): MessageTransformer {
   return new MessageTransformer();
 }

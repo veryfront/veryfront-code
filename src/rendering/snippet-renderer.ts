@@ -11,6 +11,7 @@ import type { VeryfrontConfig } from "../core/config/types.ts";
 import { wrapInHTMLShell } from "../html/html-shell-generator.ts";
 import { LRUCache } from "../core/utils/lru-wrapper.ts";
 import { registerCache } from "../core/memory/index.ts";
+import { escapeHtml } from "../html/html-escape.ts";
 
 // Cache limits to prevent unbounded memory growth
 const SNIPPET_CACHE_MAX_ENTRIES = 500;
@@ -289,13 +290,4 @@ function generateErrorHTML(error: unknown, options: SnippetRenderOptions): strin
   </div>
 </body>
 </html>`;
-}
-
-function escapeHtml(str: string): string {
-  return str
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#039;");
 }

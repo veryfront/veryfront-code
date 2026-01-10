@@ -149,12 +149,13 @@ export class CheckpointManager {
     nodes: WorkflowNode[],
     checkpoint: Checkpoint,
   ): string | null {
-    const completedNodeId = checkpoint.nodeId;
-    const nodeStates = checkpoint.nodeStates;
+    const { nodeId: completedNodeId, nodeStates } = checkpoint;
 
     // Build node lookup
     const nodeIndex = new Map<string, number>();
-    nodes.forEach((node, index) => nodeIndex.set(node.id, index));
+    for (const [index, node] of nodes.entries()) {
+      nodeIndex.set(node.id, index);
+    }
 
     // Find the checkpoint node's position
     const checkpointIndex = nodeIndex.get(completedNodeId);
@@ -197,39 +198,25 @@ export class CheckpointManager {
   shouldCheckpoint(node: WorkflowNode): boolean {
     const config = node.config;
 
-    // Explicit checkpoint configuration
+    // Explicit checkpoint configuration takes precedence
     if (config.checkpoint !== undefined) {
       return config.checkpoint;
     }
 
-    // Default checkpointing rules:
-    // - Always checkpoint after agent steps
-    // - Always checkpoint before wait/approval
-    // - Checkpoint after parallel completion
-    switch (config.type) {
-      case "step":
-        // Checkpoint agent steps, but not tool steps by default
-        return "agent" in config && !!config.agent;
+    // Default checkpointing rules by node type
+    const checkpointDefaults: Record<string, boolean> = {
+      wait: true, // Always checkpoint before waiting
+      parallel: true, // Checkpoint after all parallel steps complete
+      subWorkflow: true, // Always checkpoint after sub-workflow
+      branch: false, // Don't checkpoint branches by default
+    };
 
-      case "wait":
-        // Always checkpoint before waiting
-        return true;
-
-      case "parallel":
-        // Checkpoint after all parallel steps complete
-        return true;
-
-      case "branch":
-        // Don't checkpoint branches by default
-        return false;
-
-      case "subWorkflow":
-        // Always checkpoint after sub-workflow
-        return true;
-
-      default:
-        return false;
+    // Special case: step nodes checkpoint only if they have an agent
+    if (config.type === "step") {
+      return "agent" in config && !!config.agent;
     }
+
+    return checkpointDefaults[config.type] ?? false;
   }
 
   /**

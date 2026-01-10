@@ -42,14 +42,13 @@ export class Bundler {
   }
 
   private determineFileLoader(content: string, filePath: string): "tsx" | "ts" | "jsx" | "js" {
-    const hasTypeScript = /:\s*\w+|interface\s+|type\s+|<\w|Props>/.test(content) ||
-      filePath.endsWith(".ts") ||
-      filePath.endsWith(".tsx");
+    // Check extension first
+    const loader = getLoaderForPath(filePath);
+    if (loader !== "js") return loader;
 
-    if (hasTypeScript) {
-      return filePath.endsWith(".tsx") ? "tsx" : "ts";
-    }
-    return filePath.endsWith(".jsx") ? "jsx" : "js";
+    // For .js files, check if content contains TypeScript patterns
+    const hasTypeScript = /:\s*\w+|interface\s+|type\s+|<\w|Props>/.test(content);
+    return hasTypeScript ? "ts" : "js";
   }
 }
 
@@ -81,13 +80,7 @@ function createRelativeFsPlugin(projectDir: string, shell: ShellAdapter): Plugin
       build.onLoad({ filter: /\.(tsx?|jsx?|mjs)$/ }, (args) => {
         try {
           const contents = shell.readFileSync(args.path);
-          const loader = args.path.endsWith(".tsx")
-            ? "tsx"
-            : args.path.endsWith(".ts")
-            ? "ts"
-            : args.path.endsWith(".jsx")
-            ? "jsx"
-            : "js";
+          const loader = getLoaderForPath(args.path);
           return { contents, loader } as const;
         } catch (error) {
           logger.debug("[DevBundler] Failed to read file contents", { path: args.path, error });
@@ -96,6 +89,16 @@ function createRelativeFsPlugin(projectDir: string, shell: ShellAdapter): Plugin
       });
     },
   };
+}
+
+/**
+ * Determine esbuild loader from file path extension.
+ */
+function getLoaderForPath(path: string): "tsx" | "ts" | "jsx" | "js" {
+  if (path.endsWith(".tsx")) return "tsx";
+  if (path.endsWith(".ts")) return "ts";
+  if (path.endsWith(".jsx")) return "jsx";
+  return "js";
 }
 
 function createBareExternalPlugin(): Plugin {

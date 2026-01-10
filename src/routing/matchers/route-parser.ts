@@ -7,36 +7,22 @@ export function parseRoute(pattern: string, page: string): Route {
 
   for (const match of pattern.matchAll(/\[\[\.\.\.(\w+)\]\]|\[\.\.\.(\w+)\]|\[(\w+)\]/g)) {
     if (match[1]) {
-      const name = match[1];
-      orderedParamNames.push(name);
+      orderedParamNames.push(match[1]);
       isOptionalCatchAll = true;
       isCatchAll = true;
     } else if (match[2]) {
-      const name = match[2];
-      orderedParamNames.push(name);
+      orderedParamNames.push(match[2]);
       isCatchAll = true;
     } else if (match[3]) {
       orderedParamNames.push(match[3]);
     }
   }
 
-  let regexPattern = pattern;
-
-  regexPattern = regexPattern.replace(/\[\[\.\.\.(\w+)\]\]/g, () => {
-    return "___OPTIONAL_CATCHALL___";
-  });
-
-  regexPattern = regexPattern.replace(/\[\.\.\.(\w+)\]/g, () => {
-    return "___CATCHALL___";
-  });
-
-  regexPattern = regexPattern.replace(/\[(\w+)\]/g, () => {
-    return "___PARAM___";
-  });
-
-  regexPattern = regexPattern.replace(/[-/\\^$*+?.()|[\]{}]/g, "\\$&");
-
-  regexPattern = regexPattern
+  let regexPattern = pattern
+    .replace(/\[\[\.\.\.(\w+)\]\]/g, "___OPTIONAL_CATCHALL___")
+    .replace(/\[\.\.\.(\w+)\]/g, "___CATCHALL___")
+    .replace(/\[(\w+)\]/g, "___PARAM___")
+    .replace(/[-/\\^$*+?.()|[\]{}]/g, "\\$&")
     .replace(/___OPTIONAL_CATCHALL___/g, "(.*)")
     .replace(/___CATCHALL___/g, "(.+)")
     .replace(/___PARAM___/g, "([^/]+)");
@@ -55,23 +41,22 @@ export function parseRoute(pattern: string, page: string): Route {
   };
 }
 
-export function getSpecificityScore(route: Route): number {
-  let score = 0;
-  const segments = route.pattern.split("/").filter(Boolean);
+/** Segment patterns ordered from lowest to highest priority */
+const SEGMENT_PATTERNS: Array<{ pattern: string; score: number }> = [
+  { pattern: "[[...", score: 1 }, // Optional catch-all - lowest priority
+  { pattern: "[...", score: 2 }, // Catch-all
+  { pattern: "[", score: 3 }, // Dynamic segment
+];
 
-  for (const segment of segments) {
-    if (segment.includes("[[...")) {
-      score += 1; // Optional catch-all - lowest priority
-    } else if (segment.includes("[...")) {
-      score += 2; // Catch-all
-    } else if (segment.includes("[")) {
-      score += 3; // Dynamic segment
-    } else {
-      score += 4; // Static segment - highest priority
-    }
+function getSegmentScore(segment: string): number {
+  for (const { pattern, score } of SEGMENT_PATTERNS) {
+    if (segment.includes(pattern)) return score;
   }
+  return 4; // Static segment - highest priority
+}
 
-  score += segments.length * 0.1;
-
-  return score;
+export function getSpecificityScore(route: Route): number {
+  const segments = route.pattern.split("/").filter(Boolean);
+  const baseScore = segments.reduce((sum, seg) => sum + getSegmentScore(seg), 0);
+  return baseScore + segments.length * 0.1;
 }

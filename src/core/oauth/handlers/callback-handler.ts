@@ -66,28 +66,40 @@ export function createOAuthCallbackHandler(
       getEnv("NEXT_PUBLIC_APP_URL") ||
       "http://localhost:3000";
 
-    // Handle OAuth errors
-    if (error) {
-      console.error(`OAuth error for ${config.serviceId}:`, error, errorDescription);
-      if (onError) {
-        await onError(config.serviceId, error);
-      }
+    function redirectWithError(
+      errorCode: string,
+      description?: string | null,
+    ): Response {
       const errorUrl = new URL(errorRedirect, appUrl);
-      errorUrl.searchParams.set("error", error);
-      if (errorDescription) {
-        errorUrl.searchParams.set("error_description", errorDescription);
+      errorUrl.searchParams.set("error", errorCode);
+      if (description) {
+        errorUrl.searchParams.set("error_description", description);
       }
       return Response.redirect(errorUrl.toString());
     }
 
+    async function handleError(
+      errorCode: string,
+      logMessage?: string,
+      logData?: unknown,
+    ): Promise<Response> {
+      if (logMessage) {
+        console.error(logMessage, logData);
+      }
+      await onError?.(config.serviceId, errorCode);
+      return redirectWithError(errorCode);
+    }
+
+    // Handle OAuth errors
+    if (error) {
+      console.error(`OAuth error for ${config.serviceId}:`, error, errorDescription);
+      await onError?.(config.serviceId, error);
+      return redirectWithError(error, errorDescription);
+    }
+
     // Validate code
     if (!code) {
-      if (onError) {
-        await onError(config.serviceId, "no_code");
-      }
-      const errorUrl = new URL(errorRedirect, appUrl);
-      errorUrl.searchParams.set("error", "no_code");
-      return Response.redirect(errorUrl.toString());
+      return handleError("no_code");
     }
 
     // Validate and retrieve state
@@ -111,13 +123,11 @@ export function createOAuthCallbackHandler(
       });
 
       if (!result.success || !result.tokens) {
-        console.error(`Token exchange failed for ${config.serviceId}:`, result.error);
-        if (onError) {
-          await onError(config.serviceId, result.error || "exchange_failed");
-        }
-        const errorUrl = new URL(errorRedirect, appUrl);
-        errorUrl.searchParams.set("error", result.error || "token_exchange_failed");
-        return Response.redirect(errorUrl.toString());
+        return handleError(
+          result.error || "token_exchange_failed",
+          `Token exchange failed for ${config.serviceId}:`,
+          result.error,
+        );
       }
 
       // Store tokens
@@ -129,22 +139,18 @@ export function createOAuthCallbackHandler(
       }
 
       // Call success callback
-      if (onSuccess) {
-        await onSuccess(config.serviceId, result.tokens);
-      }
+      await onSuccess?.(config.serviceId, result.tokens);
 
       // Redirect to success URL
       const successUrl = new URL(successRedirect, appUrl);
       successUrl.searchParams.set("connected", config.serviceId);
       return Response.redirect(successUrl.toString());
     } catch (err) {
-      console.error(`OAuth callback error for ${config.serviceId}:`, err);
-      if (onError) {
-        await onError(config.serviceId, "callback_error");
-      }
-      const errorUrl = new URL(errorRedirect, appUrl);
-      errorUrl.searchParams.set("error", "callback_error");
-      return Response.redirect(errorUrl.toString());
+      return handleError(
+        "callback_error",
+        `OAuth callback error for ${config.serviceId}:`,
+        err,
+      );
     }
   };
 }

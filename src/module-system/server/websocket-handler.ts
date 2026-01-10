@@ -1,8 +1,3 @@
-/**
- * WebSocket Handler for HMR
- * Manages WebSocket lifecycle and message processing
- */
-
 import { serverLogger as logger } from "@veryfront/utils";
 import {
   HMR_CLOSE_MESSAGE_TOO_LARGE,
@@ -11,13 +6,6 @@ import {
 } from "@veryfront/utils";
 import type { WebSocketContext } from "../../server/dev-server/hmr-types.ts";
 
-/**
- * Setup all WebSocket event handlers for an HMR client connection
- * Configures onopen, onmessage, onclose, and onerror handlers
- *
- * @param socket - The WebSocket connection to configure
- * @param context - Shared context for managing connections
- */
 export function setupWebSocketHandlers(
   socket: WebSocket,
   context: WebSocketContext,
@@ -117,13 +105,6 @@ export function setupWebSocketHandlers(
   };
 }
 
-/**
- * Close all WebSocket connections gracefully
- * Used during server shutdown
- *
- * @param clients - Set of active WebSocket connections
- * @param rateLimiter - Rate limiter to clean up
- */
 export async function closeAllConnections(
   clients: Set<WebSocket>,
   rateLimiter: { cleanup(socket: WebSocket): void },

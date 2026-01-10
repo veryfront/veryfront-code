@@ -19,22 +19,32 @@ export interface ParsedDomain {
   isDraft: boolean;
 }
 
+type Environment = ParsedDomain["environment"];
+
 /**
  * Parse slug and optional branch from subdomain.
  * Branch pattern: {slug}--{branch} (double dash separator)
  */
 function parseSlugAndBranch(subdomain: string): { slug: string; branch: string | null } {
-  const branchSeparator = "--";
-  const separatorIndex = subdomain.indexOf(branchSeparator);
-
+  const separatorIndex = subdomain.indexOf("--");
   if (separatorIndex > 0) {
     return {
       slug: subdomain.substring(0, separatorIndex),
-      branch: subdomain.substring(separatorIndex + branchSeparator.length),
+      branch: subdomain.substring(separatorIndex + 2),
     };
   }
-
   return { slug: subdomain, branch: null };
+}
+
+/** Create a ParsedDomain result with common defaults */
+function createParsedDomain(
+  slug: string | null,
+  branch: string | null,
+  environment: Environment,
+  isVeryfrontDomain: boolean,
+  isDraft: boolean,
+): ParsedDomain {
+  return { slug, branch, environment, isVeryfrontDomain, isDraft };
 }
 
 /**
@@ -48,73 +58,37 @@ export function parseProjectDomain(host: string): ParsedDomain {
   const lvhPreviewMatch = domain.match(/^([A-Za-z0-9-]+)\.preview\.lvh\.me$/);
   if (lvhPreviewMatch?.[1]) {
     const { slug, branch } = parseSlugAndBranch(lvhPreviewMatch[1]);
-    return {
-      slug,
-      branch,
-      environment: "preview",
-      isVeryfrontDomain: true,
-      isDraft: true,
-    };
+    return createParsedDomain(slug, branch, "preview", true, true);
   }
 
   // Local production testing: {domain}.prod.lvh.me
   // This pattern is treated as a custom domain for JIT production rendering
   const lvhProdMatch = domain.match(/^([A-Za-z0-9.-]+)\.prod\.lvh\.me$/);
   if (lvhProdMatch?.[1]) {
-    return {
-      slug: null, // No slug - will trigger domain lookup
-      branch: null,
-      environment: "production",
-      isVeryfrontDomain: false, // Custom domain
-      isDraft: false,
-    };
+    return createParsedDomain(null, null, "production", false, false);
   }
 
   const lvhMatch = domain.match(/^([A-Za-z0-9-]+)\.lvh\.me$/);
   if (lvhMatch?.[1]) {
     const { slug, branch } = parseSlugAndBranch(lvhMatch[1]);
-    return {
-      slug,
-      branch,
-      environment: "development",
-      isVeryfrontDomain: true,
-      isDraft: true,
-    };
+    return createParsedDomain(slug, branch, "development", true, true);
   }
 
   // Veryfront.com/org domains
   const vfPreviewMatch = domain.match(/^([A-Za-z0-9-]+)\.preview\.veryfront\.(com|org)$/);
   if (vfPreviewMatch?.[1]) {
     const { slug, branch } = parseSlugAndBranch(vfPreviewMatch[1]);
-    return {
-      slug,
-      branch,
-      environment: "preview",
-      isVeryfrontDomain: true,
-      isDraft: true,
-    };
+    return createParsedDomain(slug, branch, "preview", true, true);
   }
 
   const vfStagingMatch = domain.match(/^([A-Za-z0-9-]+)\.staging\.veryfront\.(com|org)$/);
   if (vfStagingMatch?.[1]) {
-    return {
-      slug: vfStagingMatch[1],
-      branch: null,
-      environment: "staging",
-      isVeryfrontDomain: true,
-      isDraft: false,
-    };
+    return createParsedDomain(vfStagingMatch[1], null, "staging", true, false);
   }
 
   const vfProdMatch = domain.match(/^([A-Za-z0-9-]+)\.production\.veryfront\.(com|org)$/);
   if (vfProdMatch?.[1]) {
-    return {
-      slug: vfProdMatch[1],
-      branch: null,
-      environment: "production",
-      isVeryfrontDomain: true,
-      isDraft: false,
-    };
+    return createParsedDomain(vfProdMatch[1], null, "production", true, false);
   }
 
   // Handle environment-specific root domains (no project slug)
@@ -122,45 +96,21 @@ export function parseProjectDomain(host: string): ParsedDomain {
   const vfEnvRootMatch = domain.match(/^(preview|staging|production)\.veryfront\.(com|org)$/);
   if (vfEnvRootMatch?.[1]) {
     const env = vfEnvRootMatch[1] as "preview" | "staging" | "production";
-    return {
-      slug: null, // No project slug - this is the environment root
-      branch: null,
-      environment: env,
-      isVeryfrontDomain: true,
-      isDraft: env === "preview",
-    };
+    return createParsedDomain(null, null, env, true, env === "preview");
   }
 
   const vfBaseMatch = domain.match(/^([A-Za-z0-9-]+)\.veryfront\.(com|org)$/);
   if (vfBaseMatch?.[1]) {
-    return {
-      slug: vfBaseMatch[1],
-      branch: null,
-      environment: "production",
-      isVeryfrontDomain: true,
-      isDraft: false,
-    };
+    return createParsedDomain(vfBaseMatch[1], null, "production", true, false);
   }
 
   // Plain lvh.me without slug (localhost:port accessed via lvh.me)
   if (domain === "lvh.me") {
-    return {
-      slug: null,
-      branch: null,
-      environment: "development",
-      isVeryfrontDomain: true,
-      isDraft: true,
-    };
+    return createParsedDomain(null, null, "development", true, true);
   }
 
   // Not a recognized domain pattern
-  return {
-    slug: null,
-    branch: null,
-    environment: null,
-    isVeryfrontDomain: false,
-    isDraft: false,
-  };
+  return createParsedDomain(null, null, null, false, false);
 }
 
 /**
@@ -179,11 +129,6 @@ export function getEffectiveProjectSlug(
   host: string,
   configuredSlug: string,
 ): { slug: string; fromHost: boolean } {
-  const parsed = parseProjectDomain(host);
-
-  if (parsed.slug) {
-    return { slug: parsed.slug, fromHost: true };
-  }
-
-  return { slug: configuredSlug, fromHost: false };
+  const { slug } = parseProjectDomain(host);
+  return slug ? { slug, fromHost: true } : { slug: configuredSlug, fromHost: false };
 }

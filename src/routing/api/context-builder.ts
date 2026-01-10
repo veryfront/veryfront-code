@@ -5,25 +5,15 @@ import { parseCookies } from "@veryfront/utils/cookie-utils.ts";
 export { parseCookies };
 
 export interface APIContext {
-  /** The original Request object (alias: req) */
   request: Request;
-  /** Alias for request */
   req: Request;
-  /** Route parameters extracted from dynamic segments */
   params: Record<string, string | string[]>;
-  /** URL search params (query string) */
   query: URLSearchParams;
-  /** Parsed cookies from the request */
   cookies: Record<string, string>;
-  /** Request headers */
   headers: Headers;
-  /** Parsed URL object */
   url: URL;
-  /** Helper to return a JSON response */
   json: (data: unknown, init?: ResponseInit) => Response;
-  /** Helper to return a text response */
   text: (data: string, init?: ResponseInit) => Response;
-  /** Filesystem adapter for accessing project files */
   fs: FileSystemAdapter;
 }
 
