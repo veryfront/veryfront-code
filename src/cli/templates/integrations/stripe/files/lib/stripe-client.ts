@@ -142,9 +142,9 @@ async function stripeFetch<T>(
       const flattenObject = (obj: Record<string, unknown>, prefix = "") => {
         for (const [key, value] of Object.entries(obj)) {
           const formKey = prefix ? `${prefix}[${key}]` : key;
-          if (value !== null && typeof value === "object" && !Array.isArray(value)) {
+          if (value != null && typeof value === "object" && !Array.isArray(value)) {
             flattenObject(value as Record<string, unknown>, formKey);
-          } else if (value !== undefined && value !== null) {
+          } else if (value != null) {
             formData.append(formKey, String(value));
           }
         }

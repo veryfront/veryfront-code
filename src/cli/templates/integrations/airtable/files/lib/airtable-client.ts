@@ -233,7 +233,7 @@ export function deleteRecord(
 
 // Helper to format field value for display
 export function formatFieldValue(value: unknown): string {
-  if (value === null || value === undefined) return "";
+  if (value == null) return "";
   if (Array.isArray(value)) {
     return value.map((v) => formatFieldValue(v)).join(", ");
   }

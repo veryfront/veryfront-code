@@ -105,11 +105,7 @@ export function getBundleManifestTTL(
     return manifestConfig.ttl;
   }
 
-  if (mode === "production") {
-    return BUNDLE_MANIFEST_PROD_TTL_MS;
-  } else {
-    return BUNDLE_MANIFEST_DEV_TTL_MS;
-  }
+  return mode === "production" ? BUNDLE_MANIFEST_PROD_TTL_MS : BUNDLE_MANIFEST_DEV_TTL_MS;
 }
 
 export async function warmupBundleManifest(

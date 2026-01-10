@@ -10,7 +10,6 @@
 
 import { createFileSystem } from "../../platform/compat/fs.ts";
 import * as pathHelper from "../../platform/compat/path-helper.ts";
-import { isDeno } from "../../platform/compat/runtime.ts";
 import { loadTemplateFromDirectory } from "./loader.ts";
 import type {
   IntegrationConfig,
@@ -177,11 +176,7 @@ export function getIntegrationDirectory(integrationName: string): string {
     moduleDir = moduleUrl.href;
   }
 
-  if (isDeno) {
-    return pathHelper.join(moduleDir, "integrations", integrationName);
-  } else {
-    return pathHelper.join(moduleDir, "integrations", integrationName);
-  }
+  return pathHelper.join(moduleDir, "integrations", integrationName);
 }
 
 /**
