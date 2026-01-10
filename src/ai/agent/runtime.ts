@@ -36,6 +36,18 @@ const DEFAULT_MAX_TOKENS = AGENT_DEFAULTS.maxTokens;
 const DEFAULT_TEMPERATURE = AGENT_DEFAULTS.temperature;
 const MAX_STREAM_BUFFER_SIZE = STREAMING_DEFAULTS.maxBufferSize;
 
+/**
+ * Encode and enqueue a Server-Sent Event (SSE) to the stream controller.
+ * Formats event as: data: {json}\n\n
+ */
+function sendSSE(
+  controller: ReadableStreamDefaultController,
+  encoder: TextEncoder,
+  event: Record<string, unknown>,
+): void {
+  controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+}
+
 export class AgentRuntime {
   private id: string;
   private config: AgentConfig;
@@ -141,15 +153,10 @@ export class AgentRuntime {
           const messageId = `msg-${Date.now().toString(36)}-${
             Math.random().toString(36).slice(2, 8)
           }`;
-          const startEvent = JSON.stringify({ type: "start", messageId });
-          controller.enqueue(encoder.encode(`data: ${startEvent}\n\n`));
+          sendSSE(controller, encoder, { type: "start", messageId });
 
           // Send text-start event with ID
-          const textStartEvent = JSON.stringify({
-            type: "text-start",
-            id: textPartId,
-          });
-          controller.enqueue(encoder.encode(`data: ${textStartEvent}\n\n`));
+          sendSSE(controller, encoder, { type: "text-start", id: textPartId });
 
           await this.executeAgentLoopStreaming(
             provider,
@@ -164,25 +171,19 @@ export class AgentRuntime {
           );
 
           // Send text-end event (UI Message Stream Protocol v5)
-          const textEndEvent = JSON.stringify({
-            type: "text-end",
-            id: textPartId,
-          });
-          controller.enqueue(encoder.encode(`data: ${textEndEvent}\n\n`));
+          sendSSE(controller, encoder, { type: "text-end", id: textPartId });
 
           // Send finish event (UI Message Stream Protocol v5)
-          const finishEvent = JSON.stringify({ type: "finish" });
-          controller.enqueue(encoder.encode(`data: ${finishEvent}\n\n`));
+          sendSSE(controller, encoder, { type: "finish" });
 
           controller.close();
         } catch (error) {
           this.status = "error";
 
-          const errorEvent = JSON.stringify({
+          sendSSE(controller, encoder, {
             type: "error",
             error: error instanceof Error ? error.message : String(error),
           });
-          controller.enqueue(encoder.encode(`data: ${errorEvent}\n\n`));
 
           controller.close();
         }
@@ -394,8 +395,7 @@ export class AgentRuntime {
 
     for (let step = 0; step < maxSteps; step++) {
       // Send start-step event (Veryfront extension, not part of standard AI SDK v5 protocol)
-      const startStepEvent = JSON.stringify({ type: "start-step" });
-      controller.enqueue(encoder.encode(`data: ${startStepEvent}\n\n`));
+      sendSSE(controller, encoder, { type: "start-step" });
 
       const tools = this.getAvailableTools();
 
@@ -445,13 +445,12 @@ export class AgentRuntime {
         // Check if this is a dynamic tool
         const errorTool = toolRegistry.get(toolCall.name);
         const errorIsDynamic = errorTool?.type === "dynamic";
-        const errorData = JSON.stringify({
+        sendSSE(controller, encoder, {
           type: "tool-output-error",
           toolCallId: toolCall.id,
           errorText: errorStr,
           ...(errorIsDynamic && { dynamic: true }),
         });
-        controller.enqueue(encoder.encode(`data: ${errorData}\n\n`));
 
         const errorMessage: Message = {
           id: `tool_error_${toolCall.id}`,
@@ -475,12 +474,11 @@ export class AgentRuntime {
             accumulatedText += event.content;
 
             // Use Vercel AI SDK UI Message Stream Protocol v5 format
-            const textDeltaEvent = JSON.stringify({
+            sendSSE(controller, encoder, {
               type: "text-delta",
               id: textPartId,
               delta: event.content,
             });
-            controller.enqueue(encoder.encode(`data: ${textDeltaEvent}\n\n`));
 
             if (callbacks?.onChunk) {
               callbacks.onChunk(event.content);
@@ -500,13 +498,12 @@ export class AgentRuntime {
               // Check if this is a dynamic tool
               const startTool = toolRegistry.get(event.toolCall.name);
               const startIsDynamic = startTool?.type === "dynamic";
-              const toolStartEvent = JSON.stringify({
+              sendSSE(controller, encoder, {
                 type: "tool-input-start",
                 toolCallId: event.toolCall.id,
                 toolName: event.toolCall.name,
                 ...(startIsDynamic && { dynamic: true }),
               });
-              controller.enqueue(encoder.encode(`data: ${toolStartEvent}\n\n`));
             }
             break;
 
@@ -516,12 +513,11 @@ export class AgentRuntime {
               tc.arguments += event.arguments;
 
               // Send tool-input-delta event (AI SDK v5 UI Message Stream Protocol)
-              const toolDeltaEvent = JSON.stringify({
+              sendSSE(controller, encoder, {
                 type: "tool-input-delta",
                 toolCallId: event.id,
                 inputTextDelta: event.arguments,
               });
-              controller.enqueue(encoder.encode(`data: ${toolDeltaEvent}\n\n`));
             }
             break;
 
@@ -538,14 +534,13 @@ export class AgentRuntime {
               const completeTool = toolRegistry.get(event.toolCall.name);
               const completeIsDynamic = completeTool?.type === "dynamic";
               const { args } = parseStreamToolArgs(event.toolCall.arguments);
-              const toolCallEvent = JSON.stringify({
+              sendSSE(controller, encoder, {
                 type: "tool-input-available",
                 toolCallId: event.toolCall.id,
                 toolName: event.toolCall.name,
                 input: args,
                 ...(completeIsDynamic && { dynamic: true }),
               });
-              controller.enqueue(encoder.encode(`data: ${toolCallEvent}\n\n`));
             }
             break;
 
@@ -666,13 +661,12 @@ export class AgentRuntime {
             // Check if this is a dynamic tool
             const inputErrorTool = toolRegistry.get(tc.name);
             const inputErrorIsDynamic = inputErrorTool?.type === "dynamic";
-            const inputErrorEvent = JSON.stringify({
+            sendSSE(controller, encoder, {
               type: "tool-input-error",
               toolCallId: tc.id,
               errorText: `Invalid tool arguments: ${argError}`,
               ...(inputErrorIsDynamic && { dynamic: true }),
             });
-            controller.enqueue(encoder.encode(`data: ${inputErrorEvent}\n\n`));
             await recordToolError(toolCall, `Invalid tool arguments: ${argError}`);
             continue;
           }
@@ -702,13 +696,12 @@ export class AgentRuntime {
             // Check if this is a dynamic tool
             const outputTool = toolRegistry.get(tc.name);
             const outputIsDynamic = outputTool?.type === "dynamic";
-            const toolResultEvent = JSON.stringify({
+            sendSSE(controller, encoder, {
               type: "tool-output-available",
               toolCallId: toolCall.id,
               output: result,
               ...(outputIsDynamic && { dynamic: true }),
             });
-            controller.enqueue(encoder.encode(`data: ${toolResultEvent}\n\n`));
 
             const toolResultMessage: Message = {
               id: `tool_${tc.id}`,
@@ -730,16 +723,14 @@ export class AgentRuntime {
         }
 
         // Send finish-step event (Veryfront extension, not part of standard AI SDK v5 protocol)
-        const finishStepToolsEvent = JSON.stringify({ type: "finish-step" });
-        controller.enqueue(encoder.encode(`data: ${finishStepToolsEvent}\n\n`));
+        sendSSE(controller, encoder, { type: "finish-step" });
 
         this.status = "thinking";
         continue;
       }
 
       // Send finish-step event (Veryfront extension, not part of standard AI SDK v5 protocol)
-      const finishStepEvent = JSON.stringify({ type: "finish-step" });
-      controller.enqueue(encoder.encode(`data: ${finishStepEvent}\n\n`));
+      sendSSE(controller, encoder, { type: "finish-step" });
 
       break;
     }

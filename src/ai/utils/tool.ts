@@ -5,6 +5,121 @@ import { agentLogger } from "../../core/utils/logger/logger.ts";
 import { createError, toError } from "../../core/errors/veryfront-error.ts";
 
 /**
+ * Schema type for checking Zod-like schemas
+ */
+interface ZodLikeSchema {
+  _def?: {
+    typeName?: string;
+    shape?: (() => Record<string, unknown>) | Record<string, unknown>;
+  };
+  parse?: (input: unknown) => void;
+}
+
+/**
+ * Check if a schema is a valid Zod schema with typeName
+ */
+function hasValidZodTypeName(schema: unknown): schema is ZodLikeSchema {
+  return Boolean(
+    schema &&
+      typeof schema === "object" &&
+      "_def" in schema &&
+      (schema as ZodLikeSchema)._def?.typeName,
+  );
+}
+
+/**
+ * Extract shape from a Zod-like schema (external instance)
+ */
+function getSchemaShape(schema: ZodLikeSchema): Record<string, unknown> | null {
+  const shape = schema._def?.shape;
+  if (!shape) return null;
+  return typeof shape === "function" ? shape() : shape;
+}
+
+/**
+ * Build JSON Schema from shape keys (fallback when full conversion fails)
+ */
+function buildSchemaFromShape(
+  shape: Record<string, unknown>,
+  additionalProperties = false,
+): JsonSchema {
+  const properties: Record<string, JsonSchema> = {};
+  for (const key of Object.keys(shape)) {
+    properties[key] = { type: "string" as const };
+  }
+  return {
+    type: "object" as const,
+    properties,
+    required: additionalProperties ? undefined : Object.keys(properties),
+    ...(additionalProperties && { additionalProperties: true }),
+  };
+}
+
+/**
+ * Convert a schema to JSON Schema with fallback strategies.
+ * Handles internal Zod, external Zod instances, and unknown schemas.
+ */
+function convertSchemaToJson(
+  schema: unknown,
+  toolId: string,
+  logPrefix: string,
+  permissive = false,
+): JsonSchema {
+  const fallbackSchema: JsonSchema = permissive
+    ? { type: "object", properties: {}, additionalProperties: true }
+    : { type: "object", properties: {} };
+
+  // Strategy 1: Full Zod conversion if typeName is present
+  if (hasValidZodTypeName(schema)) {
+    try {
+      // deno-lint-ignore no-explicit-any
+      const result = zodToJsonSchema(schema as any);
+      agentLogger.info(
+        `[${logPrefix}] Pre-converted schema for "${toolId}": ${
+          Object.keys(result.properties || {}).length
+        } properties`,
+      );
+      return result;
+    } catch (error) {
+      if (permissive) {
+        agentLogger.info(`[${logPrefix}] Using permissive schema for "${toolId}"`);
+        return fallbackSchema;
+      }
+      agentLogger.warn(`[${logPrefix}] Failed to pre-convert schema for "${toolId}":`, error);
+    }
+  }
+
+  // Strategy 2: Introspect shape from external Zod instance
+  const zodLike = schema as ZodLikeSchema;
+  const shape = getSchemaShape(zodLike);
+  if (shape) {
+    try {
+      const result = buildSchemaFromShape(shape, permissive);
+      agentLogger.info(
+        `[${logPrefix}] Introspected schema for "${toolId}" from external zod: ${
+          Object.keys(result.properties || {}).length
+        } properties`,
+      );
+      return result;
+    } catch {
+      agentLogger.warn(`[${logPrefix}] Schema for "${toolId}" could not be introspected.`);
+      return fallbackSchema;
+    }
+  }
+
+  // Strategy 3: Fallback to empty/permissive schema
+  if (permissive) {
+    agentLogger.info(`[${logPrefix}] Using fully dynamic schema for "${toolId}"`);
+  } else {
+    agentLogger.warn(
+      `[${logPrefix}] Schema for "${toolId}" is not a valid Zod schema (different zod instance?). ` +
+        `Input validation may be limited.`,
+    );
+  }
+  return fallbackSchema;
+}
+
+/**
  * Create a tool
  *
  * @example
@@ -30,73 +145,8 @@ export function tool<TInput = any, TOutput = any>(
 ): Tool<TInput, TOutput> {
   const id = config.id || generateToolId();
 
-  // Check if we have a valid zod schema (has _def property)
-  const hasValidZodSchema = config.inputSchema &&
-    typeof config.inputSchema === "object" &&
-    "_def" in config.inputSchema &&
-    (config.inputSchema as { _def?: { typeName?: string } })._def?.typeName;
-
-  // Pre-convert Zod schema to JSON Schema immediately
-  // This happens BEFORE any bundling, in a clean environment
-  let inputSchemaJson: JsonSchema | undefined;
-  if (hasValidZodSchema) {
-    try {
-      inputSchemaJson = zodToJsonSchema(config.inputSchema);
-      agentLogger.info(
-        `[TOOL] Pre-converted schema for "${id}": ${
-          Object.keys(inputSchemaJson.properties || {}).length
-        } properties`,
-      );
-    } catch (error) {
-      agentLogger.warn(`[TOOL] Failed to pre-convert schema for "${id}":`, error);
-      // Continue without pre-converted schema - will fall back to runtime conversion
-    }
-  } else {
-    // Try to introspect the schema from external zod instance
-    const externalSchema = config.inputSchema as {
-      _def?: {
-        typeName?: string;
-        shape?: (() => Record<string, unknown>) | Record<string, unknown>;
-      };
-    };
-
-    if (externalSchema?._def?.shape) {
-      try {
-        const shape = typeof externalSchema._def.shape === "function"
-          ? externalSchema._def.shape()
-          : externalSchema._def.shape;
-
-        // Build JSON Schema from shape inspection
-        const properties: Record<string, JsonSchema> = {};
-        for (const key of Object.keys(shape || {})) {
-          // Default to string type for unknown schemas
-          properties[key] = { type: "string" as const };
-        }
-        inputSchemaJson = {
-          type: "object" as const,
-          properties,
-          required: Object.keys(properties),
-        };
-        agentLogger.info(
-          `[TOOL] Introspected schema for "${id}" from external zod: ${
-            Object.keys(properties).length
-          } properties`,
-        );
-      } catch {
-        inputSchemaJson = { type: "object", properties: {} };
-        agentLogger.warn(
-          `[TOOL] Schema for "${id}" could not be introspected. Using empty schema.`,
-        );
-      }
-    } else {
-      agentLogger.warn(
-        `[TOOL] Schema for "${id}" is not a valid Zod schema (different zod instance?). ` +
-          `Skipping pre-conversion. Input validation may be limited.`,
-      );
-      // Create a basic schema from inspection if possible
-      inputSchemaJson = { type: "object", properties: {} };
-    }
-  }
+  // Pre-convert Zod schema to JSON Schema using unified conversion logic
+  const inputSchemaJson = convertSchemaToJson(config.inputSchema, id, "TOOL", false);
 
   return {
     id,
@@ -105,27 +155,11 @@ export function tool<TInput = any, TOutput = any>(
     inputSchema: config.inputSchema,
     inputSchemaJson, // Store pre-converted schema
     execute: async (input: TInput, context?: ToolExecutionContext) => {
-      // Validate input if zod schema is available
-      if (hasValidZodSchema) {
+      // Validate input if zod schema with parse method is available
+      const schema = config.inputSchema as ZodLikeSchema;
+      if (schema && typeof schema.parse === "function") {
         try {
-          config.inputSchema.parse(input);
-        } catch (error) {
-          throw toError(createError({
-            type: "agent",
-            message: `Tool "${id}" input validation failed: ${
-              error instanceof Error ? error.message : String(error)
-            }`,
-          }));
-        }
-      } else if (
-        config.inputSchema &&
-        typeof config.inputSchema === "object" &&
-        "parse" in config.inputSchema &&
-        typeof (config.inputSchema as { parse?: unknown }).parse === "function"
-      ) {
-        // Try to use parse method if available (external zod instance)
-        try {
-          (config.inputSchema as { parse: (input: unknown) => void }).parse(input);
+          schema.parse(input);
         } catch (error) {
           throw toError(createError({
             type: "agent",
@@ -213,53 +247,8 @@ export interface DynamicToolConfig {
 export function dynamicTool(config: DynamicToolConfig): Tool<unknown, unknown> {
   const id = config.id || generateToolId();
 
-  // Try to convert schema to JSON Schema if possible
-  let inputSchemaJson: JsonSchema | undefined;
-
-  // Check if it's a zod-like schema with _def
-  const zodLikeSchema = config.inputSchema as {
-    _def?: { typeName?: string; shape?: (() => Record<string, unknown>) | Record<string, unknown> };
-  };
-
-  if (zodLikeSchema?._def?.typeName) {
-    try {
-      // deno-lint-ignore no-explicit-any
-      inputSchemaJson = zodToJsonSchema(config.inputSchema as any);
-      agentLogger.info(
-        `[DYNAMIC_TOOL] Converted schema for "${id}": ${
-          Object.keys(inputSchemaJson.properties || {}).length
-        } properties`,
-      );
-    } catch {
-      // For z.unknown() or z.any(), create a permissive schema
-      inputSchemaJson = { type: "object", properties: {}, additionalProperties: true };
-      agentLogger.info(`[DYNAMIC_TOOL] Using permissive schema for "${id}"`);
-    }
-  } else if (zodLikeSchema?._def?.shape) {
-    // Try to introspect shape
-    try {
-      const shape = typeof zodLikeSchema._def.shape === "function"
-        ? zodLikeSchema._def.shape()
-        : zodLikeSchema._def.shape;
-
-      const properties: Record<string, JsonSchema> = {};
-      for (const key of Object.keys(shape || {})) {
-        properties[key] = { type: "string" as const };
-      }
-      inputSchemaJson = {
-        type: "object" as const,
-        properties,
-        additionalProperties: true,
-      };
-      agentLogger.info(`[DYNAMIC_TOOL] Introspected schema for "${id}"`);
-    } catch {
-      inputSchemaJson = { type: "object", properties: {}, additionalProperties: true };
-    }
-  } else {
-    // Fully dynamic - accept anything
-    inputSchemaJson = { type: "object", properties: {}, additionalProperties: true };
-    agentLogger.info(`[DYNAMIC_TOOL] Using fully dynamic schema for "${id}"`);
-  }
+  // Convert schema to JSON Schema with permissive fallback for dynamic tools
+  const inputSchemaJson = convertSchemaToJson(config.inputSchema, id, "DYNAMIC_TOOL", true);
 
   return {
     id,
