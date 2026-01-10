@@ -16,12 +16,10 @@ export async function executeMiddlewarePipeline(
   let response: Response | undefined;
 
   try {
-    const defaultNext: Next = () =>
-      Promise.resolve(new Response("Not Found", { status: HTTP_NOT_FOUND }));
-
-    response = await composedMiddleware(context, () => {
-      return defaultNext();
-    });
+    response = await composedMiddleware(
+      context,
+      () => Promise.resolve(new Response("Not Found", { status: HTTP_NOT_FOUND })),
+    );
   } catch (error) {
     const { serverLogger } = await import("../../../core/utils/logger/logger.ts");
     const err = ensureError(error);
