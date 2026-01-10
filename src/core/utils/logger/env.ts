@@ -26,6 +26,5 @@ export function isProductionEnvironment(): boolean {
 }
 
 export function isDevelopmentEnvironment(): boolean {
-  const env = getEnvironmentVariable("NODE_ENV");
-  return env === "development" || env === undefined;
+  return (getEnvironmentVariable("NODE_ENV") ?? "development") === "development";
 }

@@ -94,7 +94,7 @@ async function detectAppRouterImpl(
   return false; // If nothing is detectable, fall back to pages router to avoid false positives
 }
 
-const ROUTE_EXTENSIONS = [".mdx", ".tsx", ".jsx", ".ts", ".js"];
+const ROUTE_EXTENSIONS = new Set([".mdx", ".tsx", ".jsx", ".ts", ".js"]);
 const ROUTE_PATTERNS = ["page", "layout", "error", "loading", "not-found", "index"];
 
 /**
@@ -109,7 +109,8 @@ async function hasRouteFiles(
   for (const entry of entries) {
     if (entry.isFile) {
       const name = entry.name.toLowerCase();
-      const isRouteFile = ROUTE_EXTENSIONS.some((ext) => name.endsWith(ext)) &&
+      const ext = name.slice(name.lastIndexOf("."));
+      const isRouteFile = ROUTE_EXTENSIONS.has(ext) &&
         ROUTE_PATTERNS.some((pattern) => name.startsWith(pattern));
       if (isRouteFile) return true;
     } else if (entry.isDirectory) {
