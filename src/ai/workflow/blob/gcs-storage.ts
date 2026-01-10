@@ -90,9 +90,7 @@ export class GCSBlobStorage implements BlobStorage {
       throw new Error(`Failed to get GCS access token: ${response.status} - ${error}`);
     }
 
-    const data = await response.json();
-    const accessToken = data.access_token;
-    const expiresIn = data.expires_in; // in seconds
+    const { access_token: accessToken, expires_in: expiresIn } = await response.json();
 
     this.tokenCache = {
       accessToken,

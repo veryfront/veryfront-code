@@ -149,8 +149,7 @@ export class CheckpointManager {
     nodes: WorkflowNode[],
     checkpoint: Checkpoint,
   ): string | null {
-    const completedNodeId = checkpoint.nodeId;
-    const nodeStates = checkpoint.nodeStates;
+    const { nodeId: completedNodeId, nodeStates } = checkpoint;
 
     // Build node lookup
     const nodeIndex = new Map<string, number>();

@@ -136,9 +136,8 @@ function formatLog(
   status: number,
   duration: number,
 ): string {
-  const url = new URL(req.url);
-  const method = req.method;
-  const pathname = url.pathname;
+  const { pathname } = new URL(req.url);
+  const { method } = req;
   const remoteAddr = getRemoteAddr(req);
   const timestamp = getTimestamp();
   const userAgent = req.headers.get("user-agent") || "-";

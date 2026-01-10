@@ -106,9 +106,7 @@ export async function serveModule(
 
     // Extract project slug and branch from hostname using domain parser
     // e.g., "shadcn-uizz--ffff.preview.lvh.me" → { slug: "shadcn-uizz", branch: "ffff" }
-    const parsedDomain = parseProjectDomain(url.host);
-    const snippetProjectSlug = parsedDomain.slug;
-    const snippetBranch = parsedDomain.branch;
+    const { slug: snippetProjectSlug, branch: snippetBranch } = parseProjectDomain(url.host);
 
     // Apply same transformations as regular modules
     // Snippet code is already compiled JS, so use .tsx extension to skip MDX compilation
