@@ -378,17 +378,7 @@ export async function executeTool(
     }));
   }
 
-  try {
-    const result = await tool.execute(input, context);
-    return result;
-  } catch (error) {
-    throw toError(createError({
-      type: "agent",
-      message: `Tool "${toolId}" execution failed: ${
-        error instanceof Error ? error.message : String(error)
-      }`,
-    }));
-  }
+  return tool.execute(input, context);
 }
 
 export { zodToJsonSchema } from "./zod-json-schema.ts";

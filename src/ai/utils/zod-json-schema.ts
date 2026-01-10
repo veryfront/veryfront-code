@@ -2,6 +2,19 @@ import type { z } from "zod";
 import { ZodFirstPartyTypeKind } from "zod";
 import type { JsonSchema } from "../types/json-schema.ts";
 
+function getLiteralType(value: unknown): "string" | "number" | "boolean" | undefined {
+  switch (typeof value) {
+    case "string":
+      return "string";
+    case "number":
+      return "number";
+    case "boolean":
+      return "boolean";
+    default:
+      return undefined;
+  }
+}
+
 export function zodToJsonSchema(schema: z.ZodTypeAny): JsonSchema {
   // Guard against invalid schemas (can happen with different zod instances in npm bundle)
   if (!schema || typeof schema !== "object" || !("_def" in schema)) {
@@ -35,13 +48,7 @@ function convert(schema: z.ZodTypeAny): JsonSchema {
       const literal = (schema as z.ZodLiteral<unknown>)._def.value;
       return {
         const: literal,
-        type: typeof literal === "string"
-          ? "string"
-          : typeof literal === "number"
-          ? "number"
-          : typeof literal === "boolean"
-          ? "boolean"
-          : undefined,
+        type: getLiteralType(literal),
       };
     }
     case ZodFirstPartyTypeKind.ZodEnum:
