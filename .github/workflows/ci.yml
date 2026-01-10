@@ -109,6 +109,8 @@ jobs:
       packages: write
     outputs:
       image_tag: ${{ github.sha }}
+    env:
+      BASE_TAG: ${{ hashFiles('deno.lock') }}
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
@@ -117,6 +119,24 @@ jobs:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check if base image exists
+        id: base
+        run: |
+          if docker manifest inspect ${{ env.REGISTRY }}/veryfront/veryfront-renderer-base:${{ env.BASE_TAG }} > /dev/null 2>&1; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Build base image (if missing)
+        if: steps.base.outputs.exists == 'false'
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile.base
+          push: true
+          tags: ${{ env.REGISTRY }}/veryfront/veryfront-renderer-base:${{ env.BASE_TAG }}
 
       - name: Build and push proxy
         uses: docker/build-push-action@v5
@@ -127,8 +147,6 @@ jobs:
           tags: |
             ${{ env.REGISTRY }}/veryfront/veryfront-proxy:${{ github.sha }}
             ${{ env.REGISTRY }}/veryfront/veryfront-proxy:latest
-          cache-from: type=registry,ref=${{ env.REGISTRY }}/veryfront/veryfront-proxy:buildcache
-          cache-to: type=registry,ref=${{ env.REGISTRY }}/veryfront/veryfront-proxy:buildcache,mode=max
 
       - name: Build and push renderer
         uses: docker/build-push-action@v5
@@ -139,8 +157,7 @@ jobs:
           tags: |
             ${{ env.REGISTRY }}/veryfront/veryfront-renderer:${{ github.sha }}
             ${{ env.REGISTRY }}/veryfront/veryfront-renderer:latest
-          cache-from: type=registry,ref=${{ env.REGISTRY }}/veryfront/veryfront-renderer:buildcache
-          cache-to: type=registry,ref=${{ env.REGISTRY }}/veryfront/veryfront-renderer:buildcache,mode=max
+          build-args: BASE_TAG=${{ env.BASE_TAG }}
 
   # ============================================
   # DEPLOY (only after build succeeds)
