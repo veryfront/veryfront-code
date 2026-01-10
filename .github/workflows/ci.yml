@@ -97,7 +97,7 @@ jobs:
 
   # ============================================
   # BUILD (only on main, after all checks pass)
-  # Combined into single job to avoid cache contention
+  # Uses buildx with registry cache for fast builds on ephemeral runners
   # ============================================
 
   build:
@@ -116,6 +116,8 @@ jobs:
         id: tag
         run: echo "base=$(sha256sum deno.json | cut -c1-16)" >> $GITHUB_OUTPUT
 
+      - uses: docker/setup-buildx-action@v3
+
       - uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
@@ -131,25 +133,41 @@ jobs:
             echo "exists=false" >> $GITHUB_OUTPUT
           fi
 
-      - name: Build base image (if missing)
+      - name: Build and push base image (if missing)
         if: steps.base.outputs.exists == 'false'
-        run: |
-          docker build -f Dockerfile.base -t ${{ env.REGISTRY }}/veryfront/veryfront-renderer-base:${{ steps.tag.outputs.base }} .
-          docker push ${{ env.REGISTRY }}/veryfront/veryfront-renderer-base:${{ steps.tag.outputs.base }}
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.base
+          push: true
+          tags: ${{ env.REGISTRY }}/veryfront/veryfront-renderer-base:${{ steps.tag.outputs.base }}
+          cache-from: type=registry,ref=${{ env.REGISTRY }}/veryfront/veryfront-renderer-base:cache
+          cache-to: type=registry,ref=${{ env.REGISTRY }}/veryfront/veryfront-renderer-base:cache,mode=max
 
       - name: Build and push proxy
-        run: |
-          docker build -f Dockerfile.proxy -t ${{ env.REGISTRY }}/veryfront/veryfront-proxy:${{ github.sha }} .
-          docker tag ${{ env.REGISTRY }}/veryfront/veryfront-proxy:${{ github.sha }} ${{ env.REGISTRY }}/veryfront/veryfront-proxy:latest
-          docker push ${{ env.REGISTRY }}/veryfront/veryfront-proxy:${{ github.sha }}
-          docker push ${{ env.REGISTRY }}/veryfront/veryfront-proxy:latest
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.proxy
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/veryfront/veryfront-proxy:${{ github.sha }}
+            ${{ env.REGISTRY }}/veryfront/veryfront-proxy:latest
+          cache-from: type=registry,ref=${{ env.REGISTRY }}/veryfront/veryfront-proxy:cache
+          cache-to: type=registry,ref=${{ env.REGISTRY }}/veryfront/veryfront-proxy:cache,mode=max
 
       - name: Build and push renderer
-        run: |
-          docker build -f Dockerfile.renderer --build-arg BASE_TAG=${{ steps.tag.outputs.base }} -t ${{ env.REGISTRY }}/veryfront/veryfront-renderer:${{ github.sha }} .
-          docker tag ${{ env.REGISTRY }}/veryfront/veryfront-renderer:${{ github.sha }} ${{ env.REGISTRY }}/veryfront/veryfront-renderer:latest
-          docker push ${{ env.REGISTRY }}/veryfront/veryfront-renderer:${{ github.sha }}
-          docker push ${{ env.REGISTRY }}/veryfront/veryfront-renderer:latest
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.renderer
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/veryfront/veryfront-renderer:${{ github.sha }}
+            ${{ env.REGISTRY }}/veryfront/veryfront-renderer:latest
+          build-args: BASE_TAG=${{ steps.tag.outputs.base }}
+          cache-from: type=registry,ref=${{ env.REGISTRY }}/veryfront/veryfront-renderer:cache
+          cache-to: type=registry,ref=${{ env.REGISTRY }}/veryfront/veryfront-renderer:cache,mode=max
 
   # ============================================
   # DEPLOY (only after build succeeds)
