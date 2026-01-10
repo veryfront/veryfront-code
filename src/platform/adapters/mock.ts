@@ -8,6 +8,14 @@ export interface MockRuntimeAdapter extends RuntimeAdapter {
   };
 }
 
+function fileNotFoundError(path: string): Error {
+  return toError(createError({ type: "file", message: `File not found: ${path}` }));
+}
+
+function pathNotFoundError(path: string): Error {
+  return toError(createError({ type: "file", message: `Path not found: ${path}` }));
+}
+
 /**
  * Mock RuntimeAdapter for testing
  *
@@ -62,22 +70,12 @@ export function createMockAdapter(): MockRuntimeAdapter {
       directories,
       readFile: (path: string) => {
         const content = files.get(path);
-        if (!content) {
-          throw toError(createError({
-            type: "file",
-            message: `File not found: ${path}`,
-          }));
-        }
+        if (!content) return Promise.reject(fileNotFoundError(path));
         return Promise.resolve(content);
       },
       readFileBytes: (path: string) => {
         const content = files.get(path);
-        if (!content) {
-          throw toError(createError({
-            type: "file",
-            message: `File not found: ${path}`,
-          }));
-        }
+        if (!content) return Promise.reject(fileNotFoundError(path));
         return Promise.resolve(new TextEncoder().encode(content));
       },
       writeFile: (path: string, content: string) => {
@@ -148,10 +146,7 @@ export function createMockAdapter(): MockRuntimeAdapter {
           }
         }
 
-        throw toError(createError({
-          type: "file",
-          message: `Path not found: ${path}`,
-        }));
+        return Promise.reject(pathNotFoundError(path));
       },
       mkdir: (_path: string) => Promise.resolve(),
       remove: (_path: string) => Promise.resolve(),
