@@ -44,7 +44,7 @@ jobs:
   # ===========================================
   status:
     if: github.event_name == 'workflow_run'
-    runs-on: ubuntu-latest
+    runs-on: veryfront-k8s-runners
     steps:
       - run: echo "CI completed - no action needed"
 
