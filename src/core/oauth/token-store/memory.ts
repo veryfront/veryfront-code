@@ -33,13 +33,10 @@ export class MemoryTokenStore implements TokenStore {
 
   getState(state: string): Promise<OAuthState | null> {
     const oauthState = this.states.get(state);
-    if (!oauthState) {
-      return Promise.resolve(null);
-    }
 
-    // Check if state has expired
-    if (Date.now() - oauthState.createdAt > this.stateExpirationMs) {
-      this.states.delete(state);
+    // Return null if not found or expired
+    if (!oauthState || Date.now() - oauthState.createdAt > this.stateExpirationMs) {
+      if (oauthState) this.states.delete(state);
       return Promise.resolve(null);
     }
 

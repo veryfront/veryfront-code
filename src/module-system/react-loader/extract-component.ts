@@ -6,16 +6,7 @@ export function extractComponent(
   filePath: string,
 ): React.ComponentType<Record<string, unknown>> {
   const moduleObj = mod as Record<string, unknown>;
-
-  let component = moduleObj.default;
-
-  if (!component) {
-    const keys = Object.keys(moduleObj);
-    const firstKey = keys[0];
-    if (firstKey) {
-      component = moduleObj[firstKey];
-    }
-  }
+  const component = moduleObj.default ?? moduleObj[Object.keys(moduleObj)[0] ?? ""];
 
   if (!component) {
     throw toError(createError({
