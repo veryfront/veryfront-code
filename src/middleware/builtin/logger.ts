@@ -30,18 +30,11 @@ const colors = {
 };
 
 function getStatusColor(status: number): string {
-  switch (true) {
-    case status >= HTTP_STATUS_SERVER_ERROR_MIN:
-      return colors.red;
-    case status >= HTTP_STATUS_CLIENT_ERROR_MIN:
-      return colors.yellow;
-    case status >= HTTP_STATUS_REDIRECT_MIN:
-      return colors.cyan;
-    case status >= HTTP_STATUS_SUCCESS_MIN:
-      return colors.green;
-    default:
-      return colors.reset;
-  }
+  if (status >= HTTP_STATUS_SERVER_ERROR_MIN) return colors.red;
+  if (status >= HTTP_STATUS_CLIENT_ERROR_MIN) return colors.yellow;
+  if (status >= HTTP_STATUS_REDIRECT_MIN) return colors.cyan;
+  if (status >= HTTP_STATUS_SUCCESS_MIN) return colors.green;
+  return colors.reset;
 }
 
 const methodColors: Record<string, string> = {
@@ -90,12 +83,8 @@ interface HttpLogEntry {
 }
 
 function getLogLevel(status: number): HttpLogEntry["level"] {
-  if (status >= HTTP_STATUS_SERVER_ERROR_MIN) {
-    return "error";
-  }
-  if (status >= HTTP_STATUS_CLIENT_ERROR_MIN) {
-    return "warn";
-  }
+  if (status >= HTTP_STATUS_SERVER_ERROR_MIN) return "error";
+  if (status >= HTTP_STATUS_CLIENT_ERROR_MIN) return "warn";
   return "info";
 }
 

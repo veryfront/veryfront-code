@@ -19,8 +19,7 @@ export interface BundleCode {
 }
 
 export function computeCodeHash(code: BundleCode): Promise<string> {
-  const combined = code.code + (code.css || "") + (code.sourceMap || "");
-  return computeHash(combined);
+  return computeHash(`${code.code}${code.css ?? ""}${code.sourceMap ?? ""}`);
 }
 
 export function simpleHash(str: string): number {

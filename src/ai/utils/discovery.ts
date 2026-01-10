@@ -159,16 +159,11 @@ async function importModule(
 
   // In Deno, esbuild runs as WASM which doesn't support plugins.
   // We mark relative imports as external and let Deno's native TS support handle them.
-  const relativeImports: string[] = [];
-  if (isDeno) {
-    const relativeImportPattern = /from\s+["'](\.\.[^"']+)["']/g;
-    let match;
-    while ((match = relativeImportPattern.exec(source)) !== null) {
-      if (match[1]) {
-        relativeImports.push(match[1]);
-      }
-    }
-  }
+  const relativeImports: string[] = isDeno
+    ? [...source.matchAll(/from\s+["'](\.\.[^"']+)["']/g)]
+      .map((m) => m[1])
+      .filter((p): p is string => p !== undefined)
+    : [];
 
   // In Node.js with fsAdapter, use plugin to load relative imports from remote storage.
   // This properly bundles all dependencies instead of marking them external.

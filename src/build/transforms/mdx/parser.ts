@@ -8,22 +8,19 @@ export function parseMDXCode(compiledCode: string): ParsedMDX {
   logger.debug("Parsing MDX code, first 200 chars:", compiledCode.substring(0, 200));
   const importRegex = /^\s*import\s+(?:{([^}]+)}|(\w+))\s+from\s+['"]([^'"]+)['"]\s*;?\s*$/gm;
   const imports = new Map<string, MDXImportInfo>();
-  let match: RegExpExecArray | null;
 
-  while ((match = importRegex.exec(compiledCode)) !== null) {
+  for (const match of compiledCode.matchAll(importRegex)) {
+    const path = match[3];
+    if (!path) continue;
+
     if (match[1]) {
-      const names = match[1].split(",").map((n: string) => n.trim());
-      for (const name of names) {
-        if (match[3]) {
-          imports.set(name, { name, path: match[3], isDefault: false });
-        }
+      // Named imports: import { a, b } from 'path'
+      for (const name of match[1].split(",").map((n) => n.trim())) {
+        imports.set(name, { name, path, isDefault: false });
       }
-    } else if (match[2] && match[3]) {
-      imports.set(match[2], {
-        name: match[2],
-        path: match[3],
-        isDefault: true,
-      });
+    } else if (match[2]) {
+      // Default import: import X from 'path'
+      imports.set(match[2], { name: match[2], path, isDefault: true });
     }
   }
 

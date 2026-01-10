@@ -99,7 +99,9 @@ export class LRUCache<K, V> {
 }
 
 function shouldDisableInterval(): boolean {
-  if ((globalThis as Record<string, unknown>).__vfDisableLruInterval === true) return true;
+  if ((globalThis as Record<string, unknown>).__vfDisableLruInterval === true) {
+    return true;
+  }
   try {
     return getEnv("VF_DISABLE_LRU_INTERVAL") === "1";
   } catch {

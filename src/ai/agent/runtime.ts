@@ -222,9 +222,7 @@ export class AgentRuntime {
           });
         });
 
-        totalUsage.promptTokens += response.usage.promptTokens;
-        totalUsage.completionTokens += response.usage.completionTokens;
-        totalUsage.totalTokens += response.usage.totalTokens;
+        this.accumulateUsage(totalUsage, response.usage);
 
         // Build parts array for v5 Message
         const assistantParts: MessagePart[] = [];
@@ -536,9 +534,7 @@ export class AgentRuntime {
 
           case "usage":
             if (event.usage) {
-              totalUsage.promptTokens += event.usage.promptTokens || 0;
-              totalUsage.completionTokens += event.usage.completionTokens || 0;
-              totalUsage.totalTokens += event.usage.totalTokens || 0;
+              this.accumulateUsage(totalUsage, event.usage);
             }
             break;
         }
@@ -806,6 +802,18 @@ export class AgentRuntime {
       id: msg.id || `msg_${Date.now()}`,
       timestamp: msg.timestamp || Date.now(),
     }));
+  }
+
+  /**
+   * Accumulate usage statistics from a response into the total.
+   */
+  private accumulateUsage(
+    total: { promptTokens: number; completionTokens: number; totalTokens: number },
+    usage: { promptTokens?: number; completionTokens?: number; totalTokens?: number },
+  ): void {
+    total.promptTokens += usage.promptTokens ?? 0;
+    total.completionTokens += usage.completionTokens ?? 0;
+    total.totalTokens += usage.totalTokens ?? 0;
   }
 
   /**
