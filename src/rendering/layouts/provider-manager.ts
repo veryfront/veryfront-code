@@ -1,5 +1,6 @@
 import { rendererLogger as logger } from "@veryfront/utils";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
+import { isExtendedFSAdapter } from "@veryfront/platform/adapters/fs/wrapper.ts";
 import type { MdxBundle, ProviderItem } from "@veryfront/types";
 import type { EntityInfo } from "@veryfront/types";
 import type { VeryfrontConfig } from "@veryfront/config";
@@ -31,16 +32,11 @@ function getVeryfrontFSAdapter(adapter: RuntimeAdapter): FSAdapterLike | null {
   const fs = adapter?.fs;
   if (!fs || typeof fs !== "object") return null;
 
-  // Use wrapper methods if available
-  const wrapper = "isVeryfrontAdapter" in fs && "getUnderlyingAdapter" in fs
-    ? (fs as unknown as { isVeryfrontAdapter: () => boolean; getUnderlyingAdapter: () => unknown })
-    : null;
-
-  if (!wrapper?.isVeryfrontAdapter()) {
+  if (!isExtendedFSAdapter(fs) || !fs.isVeryfrontAdapter()) {
     return null;
   }
 
-  const wrapped = wrapper.getUnderlyingAdapter();
+  const wrapped = fs.getUnderlyingAdapter();
   if (!wrapped || typeof wrapped !== "object") return null;
 
   const typedAdapter = wrapped as Partial<FSAdapterLike>;

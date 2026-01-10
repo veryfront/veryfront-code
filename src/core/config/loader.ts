@@ -2,6 +2,7 @@ import type { VeryfrontConfig } from "./types.ts";
 import { findUnknownTopLevelKeys, validateVeryfrontConfig } from "./schema.ts";
 import { dirname, join } from "std/path/mod.ts";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
+import { isExtendedFSAdapter } from "@veryfront/platform/adapters/fs/wrapper.ts";
 import { serverLogger } from "@veryfront/utils/logger/logger.ts";
 import { getReactImportMap, REACT_DEFAULT_VERSION } from "@veryfront/utils/constants/cdn.ts";
 import { DEFAULT_CACHE_DIR } from "@veryfront/utils/constants/server.ts";
@@ -174,17 +175,13 @@ function isVirtualFilesystem(adapter: RuntimeAdapter): boolean {
   const fs = adapter?.fs;
   if (!fs || typeof fs !== "object") return false;
 
-  // Use wrapper methods if available
-  if ("isVeryfrontAdapter" in fs) {
-    if ((fs as { isVeryfrontAdapter: () => boolean }).isVeryfrontAdapter()) {
+  if (isExtendedFSAdapter(fs)) {
+    // Check for Veryfront adapter first (most common case)
+    if (fs.isVeryfrontAdapter()) {
       return true;
     }
-  }
-
-  // Check adapter type via getAdapterType() or fallback to constructor name
-  if ("getAdapterType" in fs) {
-    const adapterType = (fs as { getAdapterType: () => string }).getAdapterType();
-    return VIRTUAL_FS_ADAPTERS.has(adapterType);
+    // Check adapter type for other virtual filesystems (e.g., GitHub)
+    return VIRTUAL_FS_ADAPTERS.has(fs.getAdapterType());
   }
 
   return false;

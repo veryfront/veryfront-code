@@ -1,6 +1,7 @@
 import { join } from "../../platform/compat/path-helper.ts";
 import { rendererLogger as logger, timeAsync } from "@veryfront/utils";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
+import { isExtendedFSAdapter } from "@veryfront/platform/adapters/fs/wrapper.ts";
 import type { EntityInfo } from "@veryfront/types";
 import type { LayoutItem, MdxBundle } from "@veryfront/types";
 import type { VeryfrontConfig } from "@veryfront/config";
@@ -192,13 +193,7 @@ export class LayoutCollector {
 
     // Check if using Veryfront API adapter via wrapper methods
     const fs = this.adapter?.fs;
-    const wrapper = fs && "isVeryfrontAdapter" in fs && "getUnderlyingAdapter" in fs
-      ? (fs as unknown as {
-        isVeryfrontAdapter: () => boolean;
-        getUnderlyingAdapter: () => unknown;
-      })
-      : null;
-    const isVeryfrontAPI = wrapper?.isVeryfrontAdapter() ?? false;
+    const isVeryfrontAPI = fs && isExtendedFSAdapter(fs) && fs.isVeryfrontAdapter();
 
     logger.info("[LayoutCollector] Checking FS adapter type", {
       hasAdapter: !!this.adapter,
@@ -207,8 +202,8 @@ export class LayoutCollector {
       isVeryfrontAPI,
     });
 
-    if (isVeryfrontAPI && wrapper) {
-      return await this.collectAPILayoutConfiguration(wrapper.getUnderlyingAdapter());
+    if (isVeryfrontAPI && isExtendedFSAdapter(fs)) {
+      return await this.collectAPILayoutConfiguration(fs.getUnderlyingAdapter());
     }
     return await this.collectFilesystemLayouts(pageFilePath, useAppRouter);
   }

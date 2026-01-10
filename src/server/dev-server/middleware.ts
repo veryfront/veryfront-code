@@ -3,6 +3,7 @@ import { MiddlewarePipeline } from "@veryfront/middleware/core/pipeline/index.ts
 import { cors } from "@veryfront/security";
 import type { VeryfrontConfig } from "@veryfront/config";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
+import { isExtendedFSAdapter } from "@veryfront/platform/adapters/fs/wrapper.ts";
 import { dirname, join } from "std/path/mod.ts";
 import { createFileSystem } from "../../platform/compat/fs.ts";
 import { getEsbuildLoader } from "../../core/utils/path-utils.ts";
@@ -68,11 +69,7 @@ function isVirtualFilesystem(adapter: RuntimeAdapter): boolean {
   const fs = adapter?.fs;
   if (!fs || typeof fs !== "object") return false;
 
-  // Use wrapper methods if available
-  if ("isVeryfrontAdapter" in fs) {
-    return (fs as { isVeryfrontAdapter: () => boolean }).isVeryfrontAdapter();
-  }
-  return false;
+  return isExtendedFSAdapter(fs) && fs.isVeryfrontAdapter();
 }
 
 async function loadMiddlewareFile(

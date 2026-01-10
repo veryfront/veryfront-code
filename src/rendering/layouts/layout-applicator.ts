@@ -2,6 +2,7 @@ import { dirname, join } from "../../platform/compat/path-helper.ts";
 import { rendererLogger as logger } from "@veryfront/utils";
 import * as BundledReact from "react";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
+import { isExtendedFSAdapter } from "@veryfront/platform/adapters/fs/wrapper.ts";
 import type { LayoutItem, MdxBundle, MDXComponents, ProviderItem } from "@veryfront/types";
 import type { EntityInfo } from "@veryfront/types";
 import type { VeryfrontConfig } from "@veryfront/config";
@@ -196,15 +197,8 @@ export class LayoutApplicator {
 
     // Priority 2: Check API project data (for Veryfront Studio)
     const fs = this.adapter?.fs;
-    const wrapper = fs && "isVeryfrontAdapter" in fs && "getUnderlyingAdapter" in fs
-      ? (fs as unknown as {
-        isVeryfrontAdapter: () => boolean;
-        getUnderlyingAdapter: () => unknown;
-      })
-      : null;
-
-    if (wrapper?.isVeryfrontAdapter()) {
-      const wrappedAdapter = wrapper.getUnderlyingAdapter() as {
+    if (fs && isExtendedFSAdapter(fs) && fs.isVeryfrontAdapter()) {
+      const wrappedAdapter = fs.getUnderlyingAdapter() as {
         getProjectData?: () => { app?: string } | undefined;
         exists: (path: string) => Promise<boolean>;
       };

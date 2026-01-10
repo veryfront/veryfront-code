@@ -36,7 +36,7 @@ import {
 } from "@veryfront/core/constants/index.ts";
 import { generateNonce } from "@veryfront/security/http/response/security-handler.ts";
 import { getColorSchemeFromRequest } from "@veryfront/security/http/client-hints.ts";
-import { isMultiProjectAdapter } from "@veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
+import { isExtendedFSAdapter } from "@veryfront/platform/adapters/fs/wrapper.ts";
 
 /**
  * Determine if request should serve production (released) content.
@@ -106,19 +106,8 @@ export class SSRHandler extends BaseHandler {
       const fsAdapter = ctx.adapter.fs;
 
       // For multi-project mode, use runWithContext (required for MultiProjectFSAdapter)
-      // Check for runWithContext method on the adapter (works with both FSAdapterWrapper and direct adapters)
-      const fsAdapterWithContext = fsAdapter as {
-        runWithContext?: <T>(
-          slug: string,
-          token: string,
-          fn: () => Promise<T>,
-          projectId?: string,
-          options?: { productionMode?: boolean; releaseId?: string | null },
-        ) => Promise<T>;
-        isMultiProjectMode?: () => boolean;
-      };
-      const hasMultiProjectSupport = typeof fsAdapterWithContext.runWithContext === "function" &&
-        (fsAdapterWithContext.isMultiProjectMode?.() ?? isMultiProjectAdapter(fsAdapter));
+      const hasMultiProjectSupport = isExtendedFSAdapter(fsAdapter) &&
+        fsAdapter.isMultiProjectMode();
 
       if (ctx.projectSlug && hasMultiProjectSupport) {
         const prodMode = isProductionMode(ctx);
@@ -128,8 +117,7 @@ export class SSRHandler extends BaseHandler {
           productionMode: prodMode,
         }, ctx);
 
-        // runWithContext is guaranteed to exist at this point (checked in hasMultiProjectSupport)
-        return fsAdapterWithContext.runWithContext!(
+        return fsAdapter.runWithContext(
           ctx.projectSlug,
           ctx.proxyToken || "",
           () => this.handleWithContext(req, ctx, slug, requestId, url),
@@ -138,27 +126,18 @@ export class SSRHandler extends BaseHandler {
         );
       }
 
-      // Single-project mode: duck-type for optional methods
-      const fsWrapper = fsAdapter as {
-        setRequestToken?: (t: string) => void;
-        setRequestBranch?: (b: string | null) => void;
-        setProductionMode?: (enabled: boolean, releaseId?: string | null) => void;
-      };
-
-      // Single-project mode: set per-request token if available
-      if (ctx.proxyToken && typeof fsWrapper.setRequestToken === "function") {
-        fsWrapper.setRequestToken(ctx.proxyToken);
-      }
-
-      // Set branch from URL
-      if (typeof fsWrapper.setRequestBranch === "function") {
-        fsWrapper.setRequestBranch(ctx.parsedDomain?.branch ?? null);
-      }
-
-      // Set production mode for non-draft environments
-      if (typeof fsWrapper.setProductionMode === "function") {
-        const prodMode = isProductionMode(ctx);
-        fsWrapper.setProductionMode(prodMode, ctx.releaseId);
+      // Single-project mode: set per-request context if available
+      if (isExtendedFSAdapter(fsAdapter) && fsAdapter.isContextualMode()) {
+        try {
+          if (ctx.proxyToken) {
+            fsAdapter.setRequestToken(ctx.proxyToken);
+          }
+          fsAdapter.setRequestBranch(ctx.parsedDomain?.branch ?? null);
+          const prodMode = isProductionMode(ctx);
+          fsAdapter.setProductionMode(prodMode, ctx.releaseId);
+        } catch {
+          // Some operations may not be supported, continue anyway
+        }
       }
 
       return this.handleWithContext(req, ctx, slug, requestId, url);

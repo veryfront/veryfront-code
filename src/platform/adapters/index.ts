@@ -23,6 +23,7 @@ export {
   enhanceAdapterWithFS,
   FSAdapterWrapper,
   getFSAdapterType,
+  isExtendedFSAdapter,
   isFSAdapterConfigured,
   NotSupportedError,
   VeryfrontFSAdapter,
@@ -32,6 +33,7 @@ export {
 export type {
   CacheStats,
   DirectoryEntry,
+  ExtendedFileSystemAdapter,
   FSAdapter,
   FSAdapterConfig,
   VeryfrontConfig,
