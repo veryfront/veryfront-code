@@ -118,25 +118,14 @@ export class ToolExecutionCore {
       };
     } catch (error) {
       const errorStr = error instanceof Error ? error.message : String(error);
-
-      // Update status
       toolCall.status = "error";
       toolCall.error = errorStr;
-
-      // Notify error callback
       callbacks?.onToolCallError?.(toolCall, errorStr);
 
-      // Create error message
       const message = this.createErrorMessage(tc.id, errorStr, toolCall);
-
-      // Add to memory
       await this.context.memory.add(message);
 
-      return {
-        toolCall,
-        message,
-        success: false,
-      };
+      return { toolCall, message, success: false };
     }
   }
 
@@ -178,12 +167,9 @@ export class ToolExecutionCore {
     callbacks?: StreamingCallbacks,
   ): Promise<ToolExecutionResult[]> {
     const results: ToolExecutionResult[] = [];
-
     for (const tc of toolCalls) {
-      const result = await this.execute(tc, callbacks);
-      results.push(result);
+      results.push(await this.execute(tc, callbacks));
     }
-
     return results;
   }
 

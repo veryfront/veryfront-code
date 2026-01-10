@@ -240,19 +240,18 @@ async function importModule(
 }
 
 function rewriteForDeno(code: string, fileDir: string): string {
-  let transformed = code;
-
   // Rewrite external packages to npm: specifiers
-  const npmPackages = [
-    { pattern: /from\s+["']ai["']/g, replacement: 'from "npm:ai"' },
-    { pattern: /from\s+["']ai\/([^"']+)["']/g, replacement: 'from "npm:ai/$1"' },
-    { pattern: /from\s+["']@ai-sdk\/([^"']+)["']/g, replacement: 'from "npm:@ai-sdk/$1"' },
-    { pattern: /from\s+["']zod["']/g, replacement: 'from "npm:zod"' },
-    { pattern: /import\s*\(\s*["']ai["']\s*\)/g, replacement: 'import("npm:ai")' },
-    { pattern: /import\s*\(\s*["']zod["']\s*\)/g, replacement: 'import("npm:zod")' },
+  const npmReplacements: [RegExp, string][] = [
+    [/from\s+["']ai["']/g, 'from "npm:ai"'],
+    [/from\s+["']ai\/([^"']+)["']/g, 'from "npm:ai/$1"'],
+    [/from\s+["']@ai-sdk\/([^"']+)["']/g, 'from "npm:@ai-sdk/$1"'],
+    [/from\s+["']zod["']/g, 'from "npm:zod"'],
+    [/import\s*\(\s*["']ai["']\s*\)/g, 'import("npm:ai")'],
+    [/import\s*\(\s*["']zod["']\s*\)/g, 'import("npm:zod")'],
   ];
 
-  for (const { pattern, replacement } of npmPackages) {
+  let transformed = code;
+  for (const [pattern, replacement] of npmReplacements) {
     transformed = transformed.replace(pattern, replacement);
   }
 
@@ -693,8 +692,7 @@ async function getNodeDeps(context: FileDiscoveryContext) {
 }
 
 function filenameToId(filePath: string): string {
-  const filename = filePath.split("/").pop()?.replace(/\.(ts|tsx|js|jsx)$/, "") || "";
-
+  const filename = filePath.split("/").pop()?.replace(/\.(ts|tsx|js|jsx)$/, "") ?? "";
   return filename
     .replace(/[-_](.)/g, (_, char) => char.toUpperCase())
     .replace(/^[A-Z]/, (char) => char.toLowerCase());

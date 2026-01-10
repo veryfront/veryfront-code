@@ -19,11 +19,11 @@ interface ZodLikeSchema {
  * Check if a schema is a valid Zod schema with typeName
  */
 function hasValidZodTypeName(schema: unknown): schema is ZodLikeSchema {
-  return Boolean(
-    schema &&
-      typeof schema === "object" &&
-      "_def" in schema &&
-      (schema as ZodLikeSchema)._def?.typeName,
+  return (
+    schema !== null &&
+    typeof schema === "object" &&
+    "_def" in schema &&
+    !!(schema as ZodLikeSchema)._def?.typeName
   );
 }
 
@@ -32,8 +32,7 @@ function hasValidZodTypeName(schema: unknown): schema is ZodLikeSchema {
  */
 function getSchemaShape(schema: ZodLikeSchema): Record<string, unknown> | null {
   const shape = schema._def?.shape;
-  if (!shape) return null;
-  return typeof shape === "function" ? shape() : shape;
+  return shape ? (typeof shape === "function" ? shape() : shape) : null;
 }
 
 /**
@@ -106,14 +105,11 @@ function convertSchemaToJson(
   }
 
   // Strategy 3: Fallback to empty/permissive schema
-  if (permissive) {
-    agentLogger.info(`[${logPrefix}] Using fully dynamic schema for "${toolId}"`);
-  } else {
-    agentLogger.warn(
-      `[${logPrefix}] Schema for "${toolId}" is not a valid Zod schema (different zod instance?). ` +
-        `Input validation may be limited.`,
-    );
-  }
+  const logFn = permissive ? agentLogger.info : agentLogger.warn;
+  const message = permissive
+    ? `[${logPrefix}] Using fully dynamic schema for "${toolId}"`
+    : `[${logPrefix}] Schema for "${toolId}" is not a valid Zod schema (different zod instance?). Input validation may be limited.`;
+  logFn(message);
   return fallbackSchema;
 }
 
