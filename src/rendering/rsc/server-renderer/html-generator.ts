@@ -9,7 +9,7 @@ export function renderAttributes(props: Record<string, unknown>): string {
   const attrs: string[] = [];
 
   for (const [key, value] of Object.entries(props)) {
-    if (SKIP_PROPS.has(key) || value === undefined || value === null) continue;
+    if (SKIP_PROPS.has(key) || value == null) continue;
 
     const attrName = key === "className" ? "class" : key;
 

@@ -558,7 +558,7 @@ function ToolStatusBadge({ state }: { state: string }) {
  * Format JSON with syntax highlighting
  */
 function formatJsonWithHighlight(obj: unknown): React.ReactNode {
-  if (obj === undefined || obj === null) return null;
+  if (obj == null) return null;
 
   const jsonStr = typeof obj === "string" ? obj : JSON.stringify(obj, null, 2);
 
