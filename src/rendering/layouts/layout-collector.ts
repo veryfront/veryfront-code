@@ -190,22 +190,25 @@ export class LayoutCollector {
     const pageFilePath = pageInfo.entity.id;
     const useAppRouter = await detectAppRouter(this.projectDir, this.config, this.adapter);
 
-    const wrappedAdapter: unknown = (this.adapter?.fs as { fsAdapter?: unknown })?.fsAdapter;
-    const adapterName = (wrappedAdapter as { constructor?: { name?: string } })?.constructor?.name;
-    // Check for both VeryfrontFSAdapter (single project) and MultiProjectFSAdapter (proxy mode)
-    const isVeryfrontAPI = adapterName === "VeryfrontFSAdapter" ||
-      adapterName === "MultiProjectFSAdapter";
+    // Check if using Veryfront API adapter via wrapper methods
+    const fs = this.adapter?.fs;
+    const wrapper = fs && "isVeryfrontAdapter" in fs && "getUnderlyingAdapter" in fs
+      ? (fs as unknown as {
+        isVeryfrontAdapter: () => boolean;
+        getUnderlyingAdapter: () => unknown;
+      })
+      : null;
+    const isVeryfrontAPI = wrapper?.isVeryfrontAdapter() ?? false;
 
     logger.info("[LayoutCollector] Checking FS adapter type", {
       hasAdapter: !!this.adapter,
-      hasFs: !!this.adapter?.fs,
-      wrapperName: this.adapter?.fs?.constructor?.name,
-      wrappedAdapterName: adapterName,
+      hasFs: !!fs,
+      wrapperName: fs?.constructor?.name,
       isVeryfrontAPI,
     });
 
-    if (isVeryfrontAPI) {
-      return await this.collectAPILayoutConfiguration(wrappedAdapter);
+    if (isVeryfrontAPI && wrapper) {
+      return await this.collectAPILayoutConfiguration(wrapper.getUnderlyingAdapter());
     }
     return await this.collectFilesystemLayouts(pageFilePath, useAppRouter);
   }

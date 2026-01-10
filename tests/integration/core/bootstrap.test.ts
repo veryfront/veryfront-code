@@ -440,7 +440,7 @@ describe("bootstrap - FSAdapter Initialization", {
 
       const result = await bootstrap(projectDir, adapter);
 
-      assertEquals(result.adapter.platform, "deno");
+      assertEquals(result.adapter.id, "deno");
     } finally {
       await cleanupTempDir(projectDir);
     }
@@ -455,8 +455,8 @@ describe("bootstrap - FSAdapter Initialization", {
 
       const result = await bootstrap(projectDir, adapter);
 
-      assertExists(result.adapter.features);
-      assertEquals(result.adapter.features.typescript, true);
+      assertExists(result.adapter.capabilities);
+      assertEquals(result.adapter.capabilities.typescript, true);
     } finally {
       await cleanupTempDir(projectDir);
     }

@@ -195,20 +195,24 @@ export class LayoutApplicator {
     }
 
     // Priority 2: Check API project data (for Veryfront Studio)
-    const wrappedAdapter = (this.adapter?.fs as { fsAdapter?: unknown })?.fsAdapter;
-    const isVeryfrontAPI =
-      (wrappedAdapter as { constructor?: { name?: string } })?.constructor?.name ===
-        "VeryfrontFSAdapter";
+    const fs = this.adapter?.fs;
+    const wrapper = fs && "isVeryfrontAdapter" in fs && "getUnderlyingAdapter" in fs
+      ? (fs as unknown as {
+        isVeryfrontAdapter: () => boolean;
+        getUnderlyingAdapter: () => unknown;
+      })
+      : null;
 
-    if (isVeryfrontAPI) {
-      const projectData = (wrappedAdapter as {
-        getProjectData: () => { app?: string } | undefined;
-      }).getProjectData?.();
+    if (wrapper?.isVeryfrontAdapter()) {
+      const wrappedAdapter = wrapper.getUnderlyingAdapter() as {
+        getProjectData?: () => { app?: string } | undefined;
+        exists: (path: string) => Promise<boolean>;
+      };
+      const projectData = wrappedAdapter.getProjectData?.();
 
       if (projectData?.app && this.isValidComponentPath(projectData.app)) {
         const appPath = join(this.projectDir, "components", projectData.app);
-        const exists = await (wrappedAdapter as { exists: (path: string) => Promise<boolean> })
-          .exists(appPath);
+        const exists = await wrappedAdapter.exists(appPath);
 
         if (exists) {
           logger.debug("[LayoutApplicator] Using API project app", { path: appPath });

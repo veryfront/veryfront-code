@@ -160,6 +160,7 @@ class ConfigValidationError extends Error {
   }
 }
 
+// Virtual filesystem adapters that require special config loading
 const VIRTUAL_FS_ADAPTERS = new Set([
   "VeryfrontFSAdapter",
   "MultiProjectFSAdapter",
@@ -170,9 +171,23 @@ const VIRTUAL_FS_ADAPTERS = new Set([
  * Check if the adapter is using a virtual filesystem (e.g., Veryfront API, GitHub)
  */
 function isVirtualFilesystem(adapter: RuntimeAdapter): boolean {
-  const wrappedAdapter = (adapter?.fs as { fsAdapter?: unknown })?.fsAdapter;
-  const adapterName = (wrappedAdapter as { constructor?: { name?: string } })?.constructor?.name;
-  return adapterName !== undefined && VIRTUAL_FS_ADAPTERS.has(adapterName);
+  const fs = adapter?.fs;
+  if (!fs || typeof fs !== "object") return false;
+
+  // Use wrapper methods if available
+  if ("isVeryfrontAdapter" in fs) {
+    if ((fs as { isVeryfrontAdapter: () => boolean }).isVeryfrontAdapter()) {
+      return true;
+    }
+  }
+
+  // Check adapter type via getAdapterType() or fallback to constructor name
+  if ("getAdapterType" in fs) {
+    const adapterType = (fs as { getAdapterType: () => string }).getAdapterType();
+    return VIRTUAL_FS_ADAPTERS.has(adapterType);
+  }
+
+  return false;
 }
 
 /**

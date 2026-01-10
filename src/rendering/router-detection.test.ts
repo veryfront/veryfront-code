@@ -8,7 +8,6 @@ import type { VeryfrontConfig } from "@veryfront/config";
 const failingAdapter: RuntimeAdapter = {
   id: "node",
   name: "node-stub",
-  platform: "node",
   capabilities: {
     typescript: true,
     jsx: true,
@@ -71,13 +70,6 @@ const failingAdapter: RuntimeAdapter = {
     readFileSync() {
       return "";
     },
-  },
-  features: {
-    websocket: true,
-    http2: true,
-    workers: true,
-    jsx: true,
-    typescript: true,
   },
   kv: {
     // deno-lint-ignore require-await
