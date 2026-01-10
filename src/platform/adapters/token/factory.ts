@@ -39,7 +39,7 @@ export async function createTokenStorageAdapter(
 
   if (type === "memory") {
     const { MemoryTokenAdapter } = await import(
-      "./veryfront-token-adapter/memory-adapter.ts"
+      "./veryfront/memory-adapter.ts"
     );
     const adapter = new MemoryTokenAdapter();
     await adapter.initialize?.();
@@ -48,7 +48,7 @@ export async function createTokenStorageAdapter(
 
   if (type === "veryfront-api") {
     const { VeryfrontTokenAdapter } = await import(
-      "./veryfront-token-adapter/adapter.ts"
+      "./veryfront/adapter.ts"
     );
     const adapter = new VeryfrontTokenAdapter(config);
     await adapter.initialize?.();

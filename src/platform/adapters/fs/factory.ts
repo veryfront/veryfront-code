@@ -21,14 +21,14 @@ export async function createFSAdapter(config: FSAdapterConfig): Promise<FSAdapte
   if (type === "veryfront-api") {
     // Check if proxy mode is enabled (multi-project per-request handling)
     if (config.veryfront?.proxyMode) {
-      const { MultiProjectFSAdapter } = await import("./multi-project-fs-adapter.ts");
+      const { MultiProjectFSAdapter } = await import("./veryfront/multi-project-adapter.ts");
       const adapter = new MultiProjectFSAdapter(config);
       await adapter.initialize?.();
       return adapter;
     }
 
     // Single-project mode (direct API access)
-    const { VeryfrontFSAdapter } = await import("./veryfront-fs-adapter/index.ts");
+    const { VeryfrontFSAdapter } = await import("./veryfront/index.ts");
     const adapter = new VeryfrontFSAdapter(config);
     await adapter.initialize?.();
     return adapter;
@@ -45,7 +45,7 @@ export async function createFSAdapter(config: FSAdapterConfig): Promise<FSAdapte
       );
     }
 
-    const { GitHubFSAdapter } = await import("./github-fs-adapter/index.ts");
+    const { GitHubFSAdapter } = await import("./github/index.ts");
     const adapter = new GitHubFSAdapter(config);
     await adapter.initialize?.();
     return adapter;
