@@ -3,9 +3,9 @@
  * @module rsc-endpoints/action-parser
  */
 
-import { HTTP_BAD_REQUEST } from "@veryfront/utils";
-import type { ActionBody } from "./types.ts";
 import { serverLogger } from "@veryfront/utils";
+import { HttpStatus, jsonErrorResponse } from "../../../../../http/responses.ts";
+import type { ActionBody } from "./types.ts";
 
 /**
  * Parse and validate action request body
@@ -35,10 +35,7 @@ export async function parseActionBody(
       { error: schemaError instanceof Error ? schemaError.message : String(schemaError) },
     );
     if (!body || typeof body !== "object") {
-      return new Response(JSON.stringify({ ok: false, error: "invalid request body" }), {
-        status: HTTP_BAD_REQUEST,
-        headers: { "content-type": "application/json" },
-      });
+      return jsonErrorResponse(HttpStatus.BAD_REQUEST, "invalid request body");
     }
     const bodyObj = body as Record<string, unknown>;
     id = typeof bodyObj.id === "string" ? bodyObj.id : "";
@@ -46,17 +43,11 @@ export async function parseActionBody(
   }
 
   if (!id) {
-    return new Response(JSON.stringify({ ok: false, error: "missing id" }), {
-      status: HTTP_BAD_REQUEST,
-      headers: { "content-type": "application/json" },
-    });
+    return jsonErrorResponse(HttpStatus.BAD_REQUEST, "missing id");
   }
 
   if (!Array.isArray(args)) {
-    return new Response(JSON.stringify({ ok: false, error: "invalid args" }), {
-      status: HTTP_BAD_REQUEST,
-      headers: { "content-type": "application/json" },
-    });
+    return jsonErrorResponse(HttpStatus.BAD_REQUEST, "invalid args");
   }
 
   // Basic input validation to prevent traversal and malformed ids
@@ -66,10 +57,7 @@ export async function parseActionBody(
     !id.endsWith("/");
 
   if (!isValidId) {
-    return new Response(JSON.stringify({ ok: false, error: "invalid id" }), {
-      status: HTTP_BAD_REQUEST,
-      headers: { "content-type": "application/json" },
-    });
+    return jsonErrorResponse(HttpStatus.BAD_REQUEST, "invalid id");
   }
 
   return { id, args };

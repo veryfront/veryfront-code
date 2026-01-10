@@ -4,7 +4,7 @@
  */
 
 import { createError, toError } from "../../../../../core/errors/veryfront-error.ts";
-import { HTTP_BAD_REQUEST, HTTP_FORBIDDEN, HTTP_NOT_FOUND } from "@veryfront/utils";
+import { HttpStatus, jsonErrorResponse } from "../../../../../http/responses.ts";
 import { serverLogger } from "@veryfront/utils";
 import { parseActionBody } from "./action-parser.ts";
 import type { ActionRequestParams } from "./types.ts";
@@ -35,13 +35,7 @@ export async function handleActionRequest(
     if (typeof guard === "function") {
       const ok = await guard(req, { id, args });
       if (!ok) {
-        return new Response(
-          JSON.stringify({ ok: false, error: "unauthorized" }),
-          {
-            status: HTTP_FORBIDDEN,
-            headers: { "content-type": "application/json" },
-          },
-        );
+        return jsonErrorResponse(HttpStatus.FORBIDDEN, "unauthorized");
       }
     }
   } catch (e) {
@@ -58,13 +52,7 @@ export async function handleActionRequest(
       }));
     }
   } catch {
-    return new Response(
-      JSON.stringify({ ok: false, error: "action not found" }),
-      {
-        status: HTTP_NOT_FOUND,
-        headers: { "content-type": "application/json" },
-      },
-    );
+    return jsonErrorResponse(HttpStatus.NOT_FOUND, "action not found");
   }
 
   const mod = await import(`file://${file}`) as Record<string, unknown>;
@@ -74,13 +62,7 @@ export async function handleActionRequest(
     | undefined;
 
   if (typeof fn !== "function") {
-    return new Response(
-      JSON.stringify({ ok: false, error: "invalid action" }),
-      {
-        status: HTTP_BAD_REQUEST,
-        headers: { "content-type": "application/json" },
-      },
-    );
+    return jsonErrorResponse(HttpStatus.BAD_REQUEST, "invalid action");
   }
 
   const result = await fn(...args);
