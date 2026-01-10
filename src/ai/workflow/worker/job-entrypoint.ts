@@ -127,36 +127,43 @@ export async function runWorkflowJob(config: JobEntrypointConfig): Promise<numbe
       logger.info(`[WorkflowJob] Tenant: ${tenant?.projectSlug ?? "none"}`);
     }
 
-    // Execute within tenant context
-    const executeWorkflow = async () => {
-      try {
-        await executor.resume(runId);
+    // Execute workflow and determine exit code based on final status
+    const executeWorkflow = async (): Promise<number> => {
+      await executor.resume(runId);
 
-        // Check final status
-        const finalRun = await backend.getRun(runId);
-        if (finalRun?.status === "completed") {
+      const finalRun = await backend.getRun(runId);
+      const status = finalRun?.status;
+
+      switch (status) {
+        case "completed":
           if (debug) {
             logger.info(`[WorkflowJob] Workflow completed successfully: ${runId}`);
           }
           return EXIT_CODES.SUCCESS;
-        } else if (finalRun?.status === "failed") {
-          logger.error(`[WorkflowJob] Workflow failed: ${runId}`, finalRun.error);
+
+        case "failed":
+          logger.error(`[WorkflowJob] Workflow failed: ${runId}`, finalRun?.error);
           return EXIT_CODES.WORKFLOW_FAILED;
-        } else if (finalRun?.status === "waiting") {
-          // Workflow is waiting for approval/event - this is a valid pause point
+
+        case "waiting":
           if (debug) {
             logger.info(`[WorkflowJob] Workflow paused (waiting): ${runId}`);
           }
           return EXIT_CODES.SUCCESS;
-        } else {
-          // Unexpected status
-          logger.warn(`[WorkflowJob] Unexpected final status: ${finalRun?.status}`);
+
+        default:
+          logger.warn(`[WorkflowJob] Unexpected final status: ${status}`);
           return EXIT_CODES.SUCCESS;
-        }
+      }
+    };
+
+    // Wrapper that handles execution errors
+    const safeExecute = async (): Promise<number> => {
+      try {
+        return await executeWorkflow();
       } catch (error) {
         logger.error(`[WorkflowJob] Execution error:`, error);
 
-        // Update run with error
         await backend.updateRun(runId, {
           status: "failed",
           error: {
@@ -181,11 +188,11 @@ export async function runWorkflowJob(config: JobEntrypointConfig): Promise<numbe
           productionMode: tenant.productionMode,
           releaseId: tenant.releaseId,
         },
-        executeWorkflow,
+        safeExecute,
       );
-    } else {
-      return await executeWorkflow();
     }
+
+    return await safeExecute();
   } catch (error) {
     logger.error(`[WorkflowJob] Fatal error:`, error);
     return EXIT_CODES.WORKFLOW_FAILED;

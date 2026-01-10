@@ -78,11 +78,16 @@ export interface WorkerStats {
  * await worker.stop();
  * ```
  */
+/** Keys that are required (not optional) in the config */
+type RequiredConfigKeys = "backend" | "resumeFn";
+
+/** Resolved config type with defaults applied */
+type ResolvedConfig =
+  & Required<Omit<WorkflowWorkerConfig, RequiredConfigKeys>>
+  & Pick<WorkflowWorkerConfig, RequiredConfigKeys>;
+
 export class WorkflowWorker {
-  private config: Required<Omit<WorkflowWorkerConfig, "backend" | "resumeFn">> & {
-    backend: WorkflowBackend;
-    resumeFn: (runId: string) => Promise<void>;
-  };
+  private config: ResolvedConfig;
   private status: WorkerStatus = "idle";
   private pollTimeout?: ReturnType<typeof setTimeout>;
   private activeResumes = new Set<string>();
@@ -204,6 +209,15 @@ export class WorkflowWorker {
   }
 
   /**
+   * Record an error in stats
+   */
+  private recordError(error: unknown): void {
+    this.stats.errorCount++;
+    this.stats.lastErrorAt = new Date();
+    this.stats.lastError = error instanceof Error ? error.message : String(error);
+  }
+
+  /**
    * Poll for stalled workflows and resume them
    */
   private async poll(): Promise<void> {
@@ -215,12 +229,11 @@ export class WorkflowWorker {
     this.stats.lastPollAt = new Date();
 
     try {
-      // Cast backend since we validated support in constructor
-      const backend = this.config.backend as WorkflowBackend &
-        Required<Pick<WorkflowBackend, "findStalledRuns" | "claimStalledRun">>;
+      // Backend is validated in constructor to have worker support
+      const { findStalledRuns, claimStalledRun } = this.config.backend;
 
       // Find stalled runs
-      const stalledRuns = await backend.findStalledRuns(this.config.stalledThreshold);
+      const stalledRuns = await findStalledRuns!(this.config.stalledThreshold);
 
       if (stalledRuns.length === 0) {
         return;
@@ -240,22 +253,18 @@ export class WorkflowWorker {
         }
 
         // Try to claim the run
-        const claimed = await backend.claimStalledRun(
+        const claimed = await claimStalledRun!(
           run.id,
           this.config.workerId,
           this.config.stalledThreshold,
         );
 
         if (claimed) {
-          // Resume in background
           this.resumeInBackground(run);
         }
       }
     } catch (error) {
-      this.stats.errorCount++;
-      this.stats.lastErrorAt = new Date();
-      this.stats.lastError = error instanceof Error ? error.message : String(error);
-
+      this.recordError(error);
       logger.error(`[WorkflowWorker] Poll error:`, error);
     }
   }
@@ -280,10 +289,7 @@ export class WorkflowWorker {
           logger.info(`[WorkflowWorker] Successfully resumed run ${run.id}`);
         }
       } catch (error) {
-        this.stats.errorCount++;
-        this.stats.lastErrorAt = new Date();
-        this.stats.lastError = error instanceof Error ? error.message : String(error);
-
+        this.recordError(error);
         logger.error(`[WorkflowWorker] Failed to resume run ${run.id}:`, error);
       } finally {
         this.activeResumes.delete(run.id);

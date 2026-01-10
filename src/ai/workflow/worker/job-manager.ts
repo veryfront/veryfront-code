@@ -207,15 +207,16 @@ export interface K8sJobStatus {
  * await manager.stop();
  * ```
  */
+/** Keys that remain optional even after defaults are applied */
+type OptionalConfigKeys = "resources" | "env" | "envFromSecrets" | "serviceAccount";
+
+/** Resolved config type with defaults applied */
+type ResolvedConfig =
+  & Required<Omit<WorkflowJobManagerConfig, OptionalConfigKeys>>
+  & Pick<WorkflowJobManagerConfig, OptionalConfigKeys>;
+
 export class WorkflowJobManager {
-  private config: Required<
-    Omit<WorkflowJobManagerConfig, "resources" | "env" | "envFromSecrets" | "serviceAccount">
-  > & {
-    resources?: WorkflowJobManagerConfig["resources"];
-    env?: WorkflowJobManagerConfig["env"];
-    envFromSecrets?: WorkflowJobManagerConfig["envFromSecrets"];
-    serviceAccount?: WorkflowJobManagerConfig["serviceAccount"];
-  };
+  private config: ResolvedConfig;
   private k8sClient: K8sClient;
   private status: ManagerStatus = "idle";
   private pollTimeout?: ReturnType<typeof setTimeout>;
@@ -419,27 +420,30 @@ export class WorkflowJobManager {
 
         const newStatus = this.parseJobStatus(k8sJob);
 
-        if (newStatus !== jobInfo.status) {
-          jobInfo.status = newStatus;
+        if (newStatus === jobInfo.status) {
+          continue;
+        }
 
-          if (k8sJob.status.startTime) {
-            jobInfo.startedAt = new Date(k8sJob.status.startTime);
-          }
+        jobInfo.status = newStatus;
+
+        if (k8sJob.status.startTime) {
+          jobInfo.startedAt = new Date(k8sJob.status.startTime);
+        }
+
+        // Handle terminal states
+        const isTerminal = newStatus === "succeeded" || newStatus === "failed";
+        if (isTerminal) {
+          jobInfo.completedAt = new Date();
+          this.activeJobs.delete(runId);
 
           if (newStatus === "succeeded") {
-            jobInfo.completedAt = new Date();
             this.stats.jobsCompleted++;
-            this.activeJobs.delete(runId);
-
             if (this.config.debug) {
               logger.info(`[WorkflowJobManager] Job completed: ${jobInfo.name}`);
             }
-          } else if (newStatus === "failed") {
-            jobInfo.completedAt = new Date();
+          } else {
             jobInfo.error = this.extractErrorFromJob(k8sJob);
             this.stats.jobsFailed++;
-            this.activeJobs.delete(runId);
-
             logger.error(`[WorkflowJobManager] Job failed: ${jobInfo.name}`, jobInfo.error);
           }
         }
@@ -447,6 +451,24 @@ export class WorkflowJobManager {
     } catch (error) {
       logger.error(`[WorkflowJobManager] Failed to sync job statuses:`, error);
     }
+  }
+
+  /**
+   * Build tenant environment variables from workflow run
+   */
+  private buildTenantEnv(run: WorkflowRun): Array<{ name: string; value: string }> {
+    if (!run._tenant) {
+      return [];
+    }
+
+    const { projectSlug, token, projectId, productionMode, releaseId } = run._tenant;
+    return [
+      { name: "TENANT_PROJECT_SLUG", value: projectSlug },
+      { name: "TENANT_TOKEN", value: token },
+      { name: "TENANT_PROJECT_ID", value: projectId ?? "" },
+      { name: "TENANT_PRODUCTION_MODE", value: productionMode ? "1" : "0" },
+      { name: "TENANT_RELEASE_ID", value: releaseId ?? "" },
+    ];
   }
 
   /**
@@ -491,20 +513,7 @@ export class WorkflowJobManager {
                 env: [
                   { name: "MODE", value: "job" },
                   { name: "WORKFLOW_RUN_ID", value: run.id },
-                  // Inject tenant context
-                  ...(run._tenant
-                    ? [
-                        { name: "TENANT_PROJECT_SLUG", value: run._tenant.projectSlug },
-                        { name: "TENANT_TOKEN", value: run._tenant.token },
-                        { name: "TENANT_PROJECT_ID", value: run._tenant.projectId ?? "" },
-                        {
-                          name: "TENANT_PRODUCTION_MODE",
-                          value: run._tenant.productionMode ? "1" : "0",
-                        },
-                        { name: "TENANT_RELEASE_ID", value: run._tenant.releaseId ?? "" },
-                      ]
-                    : []),
-                  // Custom env vars
+                  ...this.buildTenantEnv(run),
                   ...Object.entries(this.config.env ?? {}).map(([name, value]) => ({
                     name,
                     value,
@@ -552,7 +561,9 @@ export class WorkflowJobManager {
       await this.config.backend.updateRun(run.id, {
         status: "failed",
         error: {
-          message: `Failed to create execution job: ${error instanceof Error ? error.message : String(error)}`,
+          message: `Failed to create execution job: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
           code: "JOB_CREATION_FAILED",
         },
         completedAt: new Date(),
