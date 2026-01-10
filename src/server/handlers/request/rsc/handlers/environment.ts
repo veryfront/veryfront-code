@@ -1,10 +1,7 @@
 import { getEnv } from "../../../../../platform/compat/process.ts";
 
 export function isProductionMode(): boolean {
-  try {
-    return getEnv("DENO_ENV") === "production" || getEnv("NODE_ENV") === "production";
-  } catch {
-    // ignore
-  }
-  return false;
+  const denoEnv = getEnv("DENO_ENV");
+  const nodeEnv = getEnv("NODE_ENV");
+  return denoEnv === "production" || nodeEnv === "production";
 }
