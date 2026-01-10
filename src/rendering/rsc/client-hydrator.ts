@@ -1,12 +1,3 @@
-/**
- * Client-side hydration for Veryfront's minimal RSC implementation
- *
- * This handles:
- * - Finding RSC placeholders in the DOM
- * - Loading client components dynamically
- * - Hydrating placeholders with React components
- */
-
 import * as React from "react";
 import { createRoot, hydrateRoot } from "react-dom/client";
 import { rscLogger } from "../client/browser-logger.ts";
@@ -25,9 +16,6 @@ export class RSCHydrator {
     this.onError = options.onError;
   }
 
-  /**
-   * Hydrate all RSC placeholders in the document
-   */
   async hydrate(): Promise<void> {
     try {
       // Load manifest first
@@ -56,9 +44,6 @@ export class RSCHydrator {
     }
   }
 
-  /**
-   * Hydrate a single placeholder element
-   */
   private async hydratePlaceholder(element: HTMLElement): Promise<void> {
     const componentName = element.dataset.rscComponent;
     const propsJson = element.dataset.rscProps;
@@ -113,9 +98,6 @@ export class RSCHydrator {
     }
   }
 
-  /**
-   * Load a client component module
-   */
   private async loadClientComponent(name: string): Promise<React.ComponentType<any>> {
     // Check cache first
     if (this.componentCache.has(name)) {
@@ -168,9 +150,6 @@ export class RSCHydrator {
     }
   }
 
-  /**
-   * Get component path from manifest
-   */
   private async getComponentPath(name: string): Promise<string | null> {
     if (!this.manifest) {
       await this.loadManifest();
@@ -179,9 +158,6 @@ export class RSCHydrator {
     return this.manifest?.[name] || null;
   }
 
-  /**
-   * Load the client component manifest
-   */
   private async loadManifest(): Promise<void> {
     if (this.manifest) return;
 
@@ -214,9 +190,6 @@ export class RSCHydrator {
     }
   }
 
-  /**
-   * Check if running in development mode
-   */
   private isDevelopment(): boolean {
     // Type-safe access to window globals
     interface WindowWithVeryfront extends Window {
@@ -226,17 +199,11 @@ export class RSCHydrator {
   }
 }
 
-/**
- * Global hydration function for easy use
- */
 export function hydrateRSC(options?: RSCHydratorOptions): Promise<void> {
   const hydrator = new RSCHydrator(options);
   return hydrator.hydrate();
 }
 
-/**
- * Auto-hydrate on DOMContentLoaded if enabled
- */
 if (typeof window !== "undefined") {
   // Type-safe access to window globals for auto-hydrate flag
   interface WindowWithAutoHydrate extends Window {

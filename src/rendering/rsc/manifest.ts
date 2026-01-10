@@ -65,9 +65,6 @@ export async function buildRscModules(
   return modules;
 }
 
-/**
- * Build a versioned manifest with a simple content hash for cache-busting.
- */
 export async function buildVersionedManifest(
   projectDir: string,
   graphIds: GraphIds | undefined,

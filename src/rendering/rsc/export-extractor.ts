@@ -1,21 +1,6 @@
 /**
- * Export Extraction Utilities
- *
- * Extracts named and default exports from JavaScript/TypeScript source code.
- * Used by both RSC manifest building and component analysis.
- *
- * @module export-extractor
- */
-
-/**
- * Extract all export names from source code
- *
- * Handles:
- * - export function Name() {}
- * - export class Name {}
- * - export const/let Name =
- * - export { A, B as C }
- * - export default
+ * Extract all export names from source code.
+ * Handles export function/class/const, named exports, and default exports.
  */
 export function extractExportNames(source: string): string[] {
   const names = new Set<string>();

@@ -46,10 +46,6 @@ const DEFAULT_VERSIONS: DetectedVersions = {
   veryfront: VERYFRONT_VERSION,
 };
 
-/**
- * Detect package versions from project's package.json
- * Falls back to defaults if not found
- */
 export async function detectVersions(projectDir: string): Promise<DetectedVersions> {
   try {
     const { createFileSystem } = await import("../platform/compat/fs.ts");
@@ -74,13 +70,6 @@ export async function detectVersions(projectDir: string): Promise<DetectedVersio
 
 type CdnProvider = "esm.sh" | "unpkg" | "jsdelivr";
 
-// getTailwindImportMap is now imported from package-registry.ts
-
-/**
- * Generate import map for esm.sh CDN
- * CRITICAL: Context packages use getContextPackageImportMap() from package-registry.ts
- * to ensure identical URLs with SSR (default-import-map.ts).
- */
 function getEsmShImportMap(versions: DetectedVersions): Record<string, string> {
   const { react, veryfront } = versions;
   // Use ?target=es2022 to ensure identical builds between SSR (Deno) and browser
@@ -111,9 +100,6 @@ function getEsmShImportMap(versions: DetectedVersions): Record<string, string> {
   };
 }
 
-/**
- * Generate import map for unpkg CDN
- */
 function getUnpkgImportMap(versions: DetectedVersions): Record<string, string> {
   const { react, veryfront } = versions;
   return {
@@ -130,9 +116,6 @@ function getUnpkgImportMap(versions: DetectedVersions): Record<string, string> {
   };
 }
 
-/**
- * Generate import map for jsdelivr CDN
- */
 function getJsdelivrImportMap(versions: DetectedVersions): Record<string, string> {
   const { react, veryfront } = versions;
   return {
@@ -152,10 +135,6 @@ function getJsdelivrImportMap(versions: DetectedVersions): Record<string, string
   };
 }
 
-/**
- * Generate import map for self-hosted mode
- * Modules served from /_veryfront/lib/* endpoint
- */
 function getSelfHostedImportMap(versions: DetectedVersions): Record<string, string> {
   const { react } = versions;
   return {
@@ -182,9 +161,6 @@ function getSelfHostedImportMap(versions: DetectedVersions): Record<string, stri
   };
 }
 
-/**
- * Get CDN import map based on provider
- */
 function getCdnImportMap(
   versions: DetectedVersions,
   provider: CdnProvider = "esm.sh",
@@ -200,17 +176,10 @@ function getCdnImportMap(
   }
 }
 
-/**
- * Get default HTML import map (legacy function for backwards compatibility)
- */
 function getDefaultHTMLImportMap(): Record<string, string> {
   return getEsmShImportMap(DEFAULT_VERSIONS);
 }
 
-/**
- * Resolve versions based on config
- * Returns auto-detected versions or explicit config versions
- */
 async function resolveVersions(
   projectDir: string,
   config?: VeryfrontConfig,
@@ -235,10 +204,6 @@ export interface BuildImportMapOptions {
   customImports?: Record<string, string>;
 }
 
-/**
- * Build import map JSON string
- * Supports multiple modes: cdn, self-hosted, bundled
- */
 export async function buildImportMapJson(
   options?: BuildImportMapOptions | Record<string, string>,
 ): Promise<string> {
@@ -303,10 +268,6 @@ export async function buildImportMapJson(
   return JSON.stringify({ imports }, null, 2);
 }
 
-/**
- * Synchronous version for backwards compatibility
- * Uses default versions without project detection
- */
 export function buildImportMapJsonSync(importMap?: Record<string, string>): string {
   const imports = importMap || getDefaultHTMLImportMap();
   return JSON.stringify({ imports }, null, 2);
