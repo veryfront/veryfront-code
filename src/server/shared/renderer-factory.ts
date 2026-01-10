@@ -342,28 +342,29 @@ export async function getRendererForProject(ctx: HandlerContext): Promise<Render
     return existingInFlight;
   }
 
-  // Load project-specific config BEFORE creating the IIFE
-  // This must happen while still in the AsyncLocalStorage context from runWithContext()
-  // The IIFE pattern loses AsyncLocalStorage context across async boundaries
-  let projectConfig = ctx.config;
-  if (cacheKey !== "__single__" && ctx.projectSlug) {
-    rendererLogger.info("[RendererFactory] Loading project-specific config", {
-      projectSlug: cacheKey,
-      projectDir: ctx.projectDir,
-    });
-    clearConfigCache();
-    projectConfig = await getConfig(ctx.projectDir, ctx.adapter);
-    rendererLogger.info("[RendererFactory] Project config loaded", {
-      projectSlug: cacheKey,
-      hasDefaultLayout: !!projectConfig?.defaultLayout,
-      defaultLayout: projectConfig?.defaultLayout,
-    });
-  }
-
   // Create and register the in-flight promise SYNCHRONOUSLY before any await
   // This prevents race conditions where concurrent calls all pass the in-flight check
   const creationPromise = (async () => {
-    // Check memory pressure before creating new renderer
+    // CRITICAL: Load config FIRST while AsyncLocalStorage context is still valid.
+    // The AsyncLocalStorage context may be lost after async boundaries in the IIFE.
+    // By loading config as the first await, we ensure it happens while we still have
+    // access to the MultiProjectFSAdapter's per-request context.
+    let projectConfig = ctx.config;
+    if (cacheKey !== "__single__" && ctx.projectSlug) {
+      rendererLogger.info("[RendererFactory] Loading project-specific config", {
+        projectSlug: cacheKey,
+        projectDir: ctx.projectDir,
+      });
+      clearConfigCache();
+      projectConfig = await getConfig(ctx.projectDir, ctx.adapter);
+      rendererLogger.info("[RendererFactory] Project config loaded", {
+        projectSlug: cacheKey,
+        hasDefaultLayout: !!projectConfig?.defaultLayout,
+        defaultLayout: projectConfig?.defaultLayout,
+      });
+    }
+
+    // After config is loaded, we can do memory management (context doesn't matter here)
     await checkAndEvictUnderMemoryPressure();
 
     // Evict expired entries first
