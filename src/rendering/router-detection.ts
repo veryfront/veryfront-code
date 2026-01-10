@@ -109,7 +109,8 @@ async function hasRouteFiles(
   for (const entry of entries) {
     if (entry.isFile) {
       const name = entry.name.toLowerCase();
-      const ext = name.slice(name.lastIndexOf("."));
+      const dotIndex = name.lastIndexOf(".");
+      const ext = dotIndex === -1 ? "" : name.slice(dotIndex);
       const isRouteFile = ROUTE_EXTENSIONS.has(ext) &&
         ROUTE_PATTERNS.some((pattern) => name.startsWith(pattern));
       if (isRouteFile) return true;
