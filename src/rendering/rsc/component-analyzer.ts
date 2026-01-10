@@ -5,6 +5,7 @@ import { getAdapter } from "@veryfront/platform/adapters/detect.ts";
 import type { ComponentAnalysis, ComponentType } from "./types.ts";
 import type { FileSystemAdapter } from "../../platform/adapters/base.ts";
 import { createError, toError } from "../../core/errors/veryfront-error.ts";
+import { extractExportNames } from "./export-extractor.ts";
 
 export async function analyzeComponent(
   filePath: string,
@@ -28,7 +29,7 @@ export async function analyzeComponent(
     type = "server";
   }
 
-  const exports = extractExports(content);
+  const exports = extractExportNames(content);
   const id = generateComponentId(filePath);
 
   return {
@@ -46,40 +47,6 @@ function detectDirective(content: string, directive: string): boolean {
   const directivePattern = new RegExp(`^\\s*['"]${directive}['"];?\\s*$`, "m");
 
   return directivePattern.test(content);
-}
-
-function extractExports(content: string): string[] {
-  const exports: string[] = [];
-
-  if (/export\s+default\s+/m.test(content)) {
-    exports.push("default");
-  }
-
-  const namedExportPattern = /export\s+(?:const|let|var|function|class)\s+(\w+)/gm;
-  let match;
-
-  while ((match = namedExportPattern.exec(content)) !== null) {
-    if (match[1]) {
-      exports.push(match[1]);
-    }
-  }
-
-  const exportBracesPattern = /export\s*\{([^}]+)\}/gm;
-
-  while ((match = exportBracesPattern.exec(content)) !== null) {
-    if (match[1]) {
-      const names = match[1]
-        .split(",")
-        .map((name) => {
-          const parts = name.trim().split(/\s+as\s+/);
-          return parts[parts.length - 1]?.trim() || "";
-        })
-        .filter((name) => name.length > 0);
-      exports.push(...names);
-    }
-  }
-
-  return [...new Set(exports)];
 }
 
 function generateComponentId(filePath: string): string {

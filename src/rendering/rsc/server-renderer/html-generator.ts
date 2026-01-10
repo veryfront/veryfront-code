@@ -69,16 +69,9 @@ export async function treeToHTML(node: RSCNode): Promise<string> {
       }' data-rsc-id="${instanceId}"></div>`;
     }
 
-    case "fragment": {
-      // Render all children
-      const childrenHtml = await Promise.all(
-        (node.children || []).map((child) => treeToHTML(child)),
-      );
-      return childrenHtml.join("");
-    }
-
+    case "fragment":
     case "server": {
-      // Server components should have been resolved to HTML
+      // Render all children (fragments and resolved server components)
       const childrenHtml = await Promise.all(
         (node.children || []).map((child) => treeToHTML(child)),
       );

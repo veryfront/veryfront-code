@@ -1,5 +1,6 @@
 export { hydrateRSC, RSCHydrator } from "./client-hydrator.ts";
 export { analyzeComponent, buildClientManifest } from "./component-analyzer.ts";
+export { extractExportNames } from "./export-extractor.ts";
 export { RSCProductionOptimizer } from "./production-optimizer.ts";
 export { RSCRenderer } from "./server-renderer/index.ts";
 
