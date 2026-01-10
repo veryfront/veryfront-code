@@ -6,21 +6,21 @@ import {
   getTailwindImportMap,
 } from "../build/transforms/esm/package-registry.ts";
 
+function joinAttributes(attrs: (string | false | undefined | null | "")[]): string {
+  return attrs.filter(Boolean).join(" ");
+}
+
 export function buildRootAttributes(
   slug: string,
   mode: string,
   noLayout: boolean,
 ): string {
-  const attributes = [
+  return joinAttributes([
     'id="root"',
-    noLayout ? "" : 'class="vf-tailwind"',
+    !noLayout && 'class="vf-tailwind"',
     `data-veryfront-slug="${escapeHTML(slug || "")}"`,
     `data-veryfront-mode="${escapeHTML(mode || "production")}"`,
-  ]
-    .filter(Boolean)
-    .join(" ");
-
-  return attributes;
+  ]);
 }
 
 export function buildContentAttributes(
@@ -28,16 +28,12 @@ export function buildContentAttributes(
   noLayout: boolean,
   ssrHash?: string,
 ): string {
-  const attrs = [
+  return joinAttributes([
     'id="veryfront-content"',
     `data-slug="${slug || ""}"`,
     `data-layout="${noLayout ? "none" : "default"}"`,
-    ssrHash ? `data-ssr-hash="${escapeHTML(ssrHash)}"` : "",
-  ]
-    .filter(Boolean)
-    .join(" ");
-
-  return attrs;
+    ssrHash && `data-ssr-hash="${escapeHTML(ssrHash)}"`,
+  ]);
 }
 
 interface DetectedVersions {

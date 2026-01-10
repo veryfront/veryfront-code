@@ -71,13 +71,9 @@ export class LayoutApplicator {
 
     // Check if App was already applied as a provider to avoid double-wrapping
     // which causes duplicate <Head> content and hydration errors
-    const hasAppProvider = providerItems.some((p) =>
-      p.componentPath?.includes("/components/app.") ||
-      p.componentPath?.endsWith("/app.tsx") ||
-      p.componentPath?.endsWith("/app.ts") ||
-      p.componentPath?.endsWith("/app.jsx") ||
-      p.componentPath?.endsWith("/app.js")
-    );
+    const isAppPath = (path: string | undefined): boolean =>
+      !!path && (/\/components\/app\.[jt]sx?$/.test(path) || /\/app\.[jt]sx?$/.test(path));
+    const hasAppProvider = providerItems.some((p) => isAppPath(p.componentPath));
 
     if (!useAppRouter && !hasAppProvider) {
       wrappedElement = await this.wrapWithAppComponent(wrappedElement);
