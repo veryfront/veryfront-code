@@ -84,6 +84,12 @@ async function statPath(path: string, adapter: RuntimeAdapter): Promise<PathStat
   }
 }
 
+function isDirectoryExistsError(error: unknown): boolean {
+  if (!error || typeof error !== "object" || !("code" in error)) return false;
+  const code = (error as { code?: string }).code;
+  return code === "EEXIST" || code === "ERR_FS_EISDIR";
+}
+
 async function ensureDirPath(path: string, adapter: RuntimeAdapter): Promise<void> {
   if (!path) return;
 
@@ -92,12 +98,7 @@ async function ensureDirPath(path: string, adapter: RuntimeAdapter): Promise<voi
     await fs.mkdir(path, { recursive: true });
     return;
   } catch (error) {
-    if (
-      typeof error === "object" && error !== null &&
-      "code" in error &&
-      ((error as { code?: string }).code === "EEXIST" ||
-        (error as { code?: string }).code === "ERR_FS_EISDIR")
-    ) {
+    if (isDirectoryExistsError(error)) {
       return;
     }
   }
@@ -135,33 +136,26 @@ export async function copyStaticAssets(
     return stats;
   }
 
-  const destinationRoot = outputDir;
+  const fs = createFileSystem();
 
   const readFileBytes = async (path: string): Promise<Uint8Array> => {
-    const fs = createFileSystem();
     const buffer = await fs.readFile(path);
     return buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
   };
 
   const writeFileBytes = async (path: string, data: Uint8Array): Promise<void> => {
-    const fs = createFileSystem();
     await fs.writeFile(path, data);
   };
 
+  // Verify write access by creating and removing a test file
   if (!dryRun) {
-    await ensureDirPath(destinationRoot, adapter);
-    const testFilePath = join(destinationRoot, ".vf_write_test.tmp");
-    const testBytes = new Uint8Array([0]);
+    await ensureDirPath(outputDir, adapter);
+    const testFilePath = join(outputDir, ".vf_write_test.tmp");
+    await writeFileBytes(testFilePath, new Uint8Array([0]));
     try {
-      await writeFileBytes(testFilePath, testBytes);
-      try {
-        const fs = createFileSystem();
-        await fs.remove(testFilePath);
-      } catch (_error) {
-        // Best-effort cleanup; ignore failures to remove test file.
-      }
-    } catch (error) {
-      throw error;
+      await fs.remove(testFilePath);
+    } catch (_error) {
+      // Best-effort cleanup; ignore failures to remove test file.
     }
   }
 
@@ -172,7 +166,7 @@ export async function copyStaticAssets(
       continue;
     }
 
-    const destinationPath = join(destinationRoot, relativePath);
+    const destinationPath = join(outputDir, relativePath);
 
     if (entry.isDirectory) {
       if (!dryRun) {
