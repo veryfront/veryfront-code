@@ -1,5 +1,15 @@
-import type { DirEntry, FileInfo, FileSystemAdapter, FileWatcher, WatchOptions } from "../../base.ts";
-import { createFileWatcher, createWatcherIterator, setupNodeFsWatcher } from "../shared/shared-watcher.ts";
+import type {
+  DirEntry,
+  FileInfo,
+  FileSystemAdapter,
+  FileWatcher,
+  WatchOptions,
+} from "../../base.ts";
+import {
+  createFileWatcher,
+  createWatcherIterator,
+  setupNodeFsWatcher,
+} from "../shared/shared-watcher.ts";
 import { serverLogger } from "@veryfront/utils";
 import type { FileChangeEvent } from "../../base.ts";
 

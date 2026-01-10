@@ -7,10 +7,7 @@
 
 import { logger } from "@veryfront/utils";
 import { createTokenStorageAdapter } from "./factory.ts";
-import type {
-  TokenStorageAdapter,
-  TokenStorageAdapterConfig,
-} from "./veryfront/types.ts";
+import type { TokenStorageAdapter, TokenStorageAdapterConfig } from "./veryfront/types.ts";
 
 // Singleton adapter instance
 let tokenStorageAdapter: TokenStorageAdapter | null = null;
