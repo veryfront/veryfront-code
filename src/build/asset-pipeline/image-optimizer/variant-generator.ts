@@ -66,12 +66,13 @@ export async function generateImageVariants(
   outputDir: string,
 ): Promise<ImageVariant[]> {
   const variants: ImageVariant[] = [];
+  const originalWidth = metadata.width || 1920;
 
-  for (const size of sizes) {
-    if (metadata.width && metadata.width < size) {
-      continue;
-    }
+  // Filter sizes smaller than original, then add original width
+  const validSizes = sizes.filter((size) => !metadata.width || metadata.width >= size);
+  const allSizes = [...validSizes, originalWidth];
 
+  for (const size of allSizes) {
     for (const format of formats) {
       const variant = await generateVariant(
         sharp,
@@ -86,22 +87,6 @@ export async function generateImageVariants(
       if (variant) {
         variants.push(variant);
       }
-    }
-  }
-
-  for (const format of formats) {
-    const variant = await generateVariant(
-      sharp,
-      image,
-      relPath,
-      format,
-      metadata.width || 1920,
-      metadata,
-      quality,
-      outputDir,
-    );
-    if (variant) {
-      variants.push(variant);
     }
   }
 

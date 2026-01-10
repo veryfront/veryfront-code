@@ -50,6 +50,38 @@ export function setResponseBuilderClass(builderClass: ResponseBuilderConstructor
 }
 
 /**
+ * Create and configure a ResponseBuilder with common options.
+ */
+function createBuilder(
+  req: Request,
+  config?: {
+    securityConfig?: SecurityConfig | null;
+    corsConfig?: boolean | CORSConfig;
+    cache?: CacheStrategy;
+    etag?: string;
+  },
+): ResponseBuilderInstance {
+  if (!ResponseBuilderClass) {
+    throw toError(createError({
+      type: "config",
+      message: "ResponseBuilder class not initialized",
+    }));
+  }
+  const builder = new ResponseBuilderClass(config);
+  builder.withCORS(req, config?.corsConfig);
+  if (config?.securityConfig !== undefined) {
+    builder.withSecurity(config.securityConfig ?? undefined);
+  }
+  if (config?.cache) {
+    builder.withCache(config.cache);
+  }
+  if (config?.etag) {
+    builder.withETag(config.etag);
+  }
+  return builder;
+}
+
+/**
  * Static helper for error responses
  */
 export function error(
@@ -62,22 +94,13 @@ export function error(
     contentType?: string;
   },
 ): Response {
-  if (!ResponseBuilderClass) {
-    throw toError(createError({
-      type: "config",
-      message: "ResponseBuilder class not initialized",
-    }));
-  }
-  const builder = new ResponseBuilderClass(config);
-  builder.withCORS(req, config?.corsConfig);
-  if (config?.securityConfig !== undefined) {
-    builder.withSecurity(config.securityConfig ?? undefined);
-  }
-
+  const builder = createBuilder(req, config);
   const contentType = config?.contentType ?? CONTENT_TYPES.TEXT;
+
   if (contentType === CONTENT_TYPES.JSON) {
     return builder.json({ error: message }, status);
-  } else if (contentType === CONTENT_TYPES.HTML) {
+  }
+  if (contentType === CONTENT_TYPES.HTML) {
     return builder.html(message, status);
   }
   return builder.text(message, status);
@@ -97,24 +120,7 @@ export function json(
     etag?: string;
   },
 ): Response {
-  if (!ResponseBuilderClass) {
-    throw toError(createError({
-      type: "config",
-      message: "ResponseBuilder class not initialized",
-    }));
-  }
-  const builder = new ResponseBuilderClass(config);
-  builder.withCORS(req, config?.corsConfig);
-  if (config?.securityConfig !== undefined) {
-    builder.withSecurity(config.securityConfig ?? undefined);
-  }
-  if (config?.cache) {
-    builder.withCache(config.cache);
-  }
-  if (config?.etag) {
-    builder.withETag(config.etag);
-  }
-  return builder.json(data, config?.status);
+  return createBuilder(req, config).json(data, config?.status);
 }
 
 /**
@@ -131,24 +137,7 @@ export function html(
     etag?: string;
   },
 ): Response {
-  if (!ResponseBuilderClass) {
-    throw toError(createError({
-      type: "config",
-      message: "ResponseBuilder class not initialized",
-    }));
-  }
-  const builder = new ResponseBuilderClass(config);
-  builder.withCORS(req, config?.corsConfig);
-  if (config?.securityConfig !== undefined) {
-    builder.withSecurity(config.securityConfig ?? undefined);
-  }
-  if (config?.cache) {
-    builder.withCache(config.cache);
-  }
-  if (config?.etag) {
-    builder.withETag(config.etag);
-  }
-  return builder.html(body, config?.status);
+  return createBuilder(req, config).html(body, config?.status);
 }
 
 /**
@@ -163,17 +152,7 @@ export function preflight(
     corsConfig?: boolean | CORSConfig;
   },
 ): Response {
-  if (!ResponseBuilderClass) {
-    throw toError(createError({
-      type: "config",
-      message: "ResponseBuilder class not initialized",
-    }));
-  }
-  const builder = new ResponseBuilderClass(config);
-  builder.withCORS(req, config?.corsConfig);
-  if (config?.securityConfig !== undefined) {
-    builder.withSecurity(config.securityConfig ?? undefined);
-  }
+  const builder = createBuilder(req, config);
 
   const methods = config?.allowMethods ?? "GET,POST,PUT,PATCH,DELETE,OPTIONS";
   builder.withAllow(methods);
@@ -202,20 +181,7 @@ export function stream(
     cache?: CacheStrategy;
   },
 ): Response {
-  if (!ResponseBuilderClass) {
-    throw toError(createError({
-      type: "config",
-      message: "ResponseBuilder class not initialized",
-    }));
-  }
-  const builder = new ResponseBuilderClass(config);
-  builder.withCORS(req, config?.corsConfig);
-  if (config?.securityConfig !== undefined) {
-    builder.withSecurity(config.securityConfig ?? undefined);
-  }
-  if (config?.cache) {
-    builder.withCache(config.cache);
-  }
+  const builder = createBuilder(req, config);
   const contentType = config?.contentType ?? "application/octet-stream";
   return builder.withContentType(contentType, streamData);
 }
