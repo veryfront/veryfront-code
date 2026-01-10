@@ -216,7 +216,7 @@ async function handleModuleEndpoint({
 /** Extract name parameter with fallback to "World" */
 function getNameParam(searchParams: URLSearchParams): string {
   const name = searchParams.get("name")?.trim();
-  return name && name.length > 0 ? name : "World";
+  return name || "World";
 }
 
 async function handlePayloadEndpoint({

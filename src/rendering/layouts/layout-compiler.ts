@@ -69,7 +69,7 @@ export class LayoutCompiler {
         }
       }
 
-      depsHash = depParts.length > 0 ? depParts.join(":") : "";
+      depsHash = depParts.join(":");
     } catch (e) {
       logger.debug("[LayoutCompiler] dep hash computation failed", e as Error);
     }

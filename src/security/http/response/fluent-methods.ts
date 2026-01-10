@@ -96,9 +96,9 @@ export function withHeaders<T extends FluentMethodsContext>(
       this.headers.set(key, value);
     });
   } else {
-    Object.entries(headers).forEach(([key, value]) => {
+    for (const [key, value] of Object.entries(headers)) {
       this.headers.set(key, value);
-    });
+    }
   }
   return this;
 }

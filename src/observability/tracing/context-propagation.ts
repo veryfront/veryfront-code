@@ -10,9 +10,9 @@ export class ContextPropagation {
   extractContext(headers: Headers): Context | undefined {
     try {
       const carrier: Record<string, string> = {};
-      headers.forEach((value, key) => {
+      for (const [key, value] of headers) {
         carrier[key] = value;
-      });
+      }
 
       return this.api.propagation.extract(this.api.context.active(), carrier);
     } catch (error) {
