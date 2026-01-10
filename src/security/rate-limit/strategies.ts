@@ -7,6 +7,12 @@
 import type { RateLimitConfig, RateLimitStore } from "./types.ts";
 import { MemoryRateLimitStore } from "./memory-store.ts";
 
+interface RateLimitResult {
+  allowed: boolean;
+  remaining: number;
+  resetTime: number;
+}
+
 /**
  * Fixed Window Strategy
  *
@@ -17,7 +23,7 @@ export async function fixedWindowStrategy(
   key: string,
   config: RateLimitConfig,
   store: RateLimitStore,
-): Promise<{ allowed: boolean; remaining: number; resetTime: number }> {
+): Promise<RateLimitResult> {
   const count = await store.increment(key);
   const allowed = count <= config.maxRequests;
   const remaining = Math.max(0, config.maxRequests - count);
@@ -32,51 +38,39 @@ export async function fixedWindowStrategy(
  * More accurate than fixed window, prevents burst attacks.
  * Tracks individual request timestamps.
  */
-export function slidingWindowStrategy(
+export async function slidingWindowStrategy(
   key: string,
   config: RateLimitConfig,
   store: RateLimitStore,
-): Promise<{ allowed: boolean; remaining: number; resetTime: number }> {
+): Promise<RateLimitResult> {
+  // Fallback to fixed window for non-memory stores
+  if (!(store instanceof MemoryRateLimitStore)) {
+    return await fixedWindowStrategy(key, config, store);
+  }
+
   const now = Date.now();
   const windowStart = now - config.windowMs;
+  const state = store.getState(key) ?? {
+    count: 0,
+    resetTime: now + config.windowMs,
+    requestTimestamps: [],
+  };
 
-  // Get state (need memory store for this)
-  if (!(store instanceof MemoryRateLimitStore)) {
-    // Fallback to fixed window for non-memory stores
-    return fixedWindowStrategy(key, config, store);
-  }
+  // Remove old timestamps outside the window and add current
+  const timestamps = (state.requestTimestamps ?? []).filter(
+    (timestamp) => timestamp > windowStart,
+  );
+  timestamps.push(now);
 
-  let state = store.getState(key);
-
-  if (!state) {
-    state = {
-      count: 0,
-      resetTime: now + config.windowMs,
-      requestTimestamps: [],
-    };
-  }
-
-  // Remove old timestamps outside the window
-  if (state.requestTimestamps) {
-    state.requestTimestamps = state.requestTimestamps.filter(
-      (timestamp) => timestamp > windowStart,
-    );
-  } else {
-    state.requestTimestamps = [];
-  }
-
-  // Add current timestamp
-  state.requestTimestamps.push(now);
-  state.count = state.requestTimestamps.length;
+  state.requestTimestamps = timestamps;
+  state.count = timestamps.length;
   state.resetTime = now + config.windowMs;
-
-  // Save state
   store.setState(key, state);
 
   const allowed = state.count <= config.maxRequests;
   const remaining = Math.max(0, config.maxRequests - state.count);
 
-  return Promise.resolve({ allowed, remaining, resetTime: state.resetTime });
+  return { allowed, remaining, resetTime: state.resetTime };
 }
 
 /**
@@ -85,53 +79,51 @@ export function slidingWindowStrategy(
  * Allows burst traffic up to bucket capacity.
  * Tokens refill at a constant rate.
  */
-export function tokenBucketStrategy(
+export async function tokenBucketStrategy(
   key: string,
   config: RateLimitConfig,
   store: RateLimitStore,
-): Promise<{ allowed: boolean; remaining: number; resetTime: number }> {
-  const now = Date.now();
-  const refillRate = config.maxRequests / config.windowMs; // tokens per ms
-
-  // Get state
+): Promise<RateLimitResult> {
+  // Fallback to fixed window for non-memory stores
   if (!(store instanceof MemoryRateLimitStore)) {
-    // Fallback to fixed window for non-memory stores
-    return fixedWindowStrategy(key, config, store);
+    return await fixedWindowStrategy(key, config, store);
   }
 
-  let state = store.getState(key);
+  const now = Date.now();
+  const refillRate = config.maxRequests / config.windowMs; // tokens per ms
+  const existingState = store.getState(key);
 
-  if (!state) {
-    state = {
-      count: config.maxRequests - 1, // Start with full bucket, consume one token
+  if (!existingState) {
+    // Start with full bucket, consume one token
+    const state = {
+      count: config.maxRequests - 1,
       resetTime: now,
       requestTimestamps: [now],
     };
-  } else {
-    // Refill tokens based on time elapsed
-    const timeElapsed = now - state.resetTime;
-    const tokensToAdd = timeElapsed * refillRate;
-    state.count = Math.min(config.maxRequests, state.count + tokensToAdd);
-    state.resetTime = now;
-
-    // Check if we have tokens available before consuming
-    if (state.count < 1) {
-      // No tokens available - request denied
-      store.setState(key, state);
-      const remaining = 0;
-      const resetTime = now + (config.maxRequests - state.count) / refillRate;
-      return Promise.resolve({ allowed: false, remaining, resetTime: Math.floor(resetTime) });
-    }
-
-    // Consume one token
-    state.count = state.count - 1;
+    store.setState(key, state);
+    const remaining = Math.floor(state.count);
+    const resetTime = now + (config.maxRequests - remaining) / refillRate;
+    return { allowed: true, remaining, resetTime: Math.floor(resetTime) };
   }
 
-  // Save state
-  store.setState(key, state);
+  // Refill tokens based on time elapsed
+  const timeElapsed = now - existingState.resetTime;
+  const tokensToAdd = timeElapsed * refillRate;
+  existingState.count = Math.min(config.maxRequests, existingState.count + tokensToAdd);
+  existingState.resetTime = now;
 
-  const remaining = Math.floor(state.count);
+  // Check if we have tokens available
+  if (existingState.count < 1) {
+    store.setState(key, existingState);
+    const resetTime = now + (config.maxRequests - existingState.count) / refillRate;
+    return { allowed: false, remaining: 0, resetTime: Math.floor(resetTime) };
+  }
+
+  // Consume one token
+  existingState.count -= 1;
+  store.setState(key, existingState);
+
+  const remaining = Math.floor(existingState.count);
   const resetTime = now + (config.maxRequests - remaining) / refillRate;
-
-  return Promise.resolve({ allowed: true, remaining, resetTime: Math.floor(resetTime) });
+  return { allowed: true, remaining, resetTime: Math.floor(resetTime) };
 }

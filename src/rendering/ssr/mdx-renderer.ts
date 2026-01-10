@@ -32,13 +32,6 @@ export async function renderMDXToReactAsync(
       return MDXContent;
     }
 
-    if (typeof MDXContent === "function") {
-      return React.createElement(
-        MDXContent as React.ComponentType<Record<string, unknown>>,
-        mergedProps,
-      );
-    }
-
     return React.createElement(
       MDXContent as React.ComponentType<Record<string, unknown>>,
       mergedProps,
