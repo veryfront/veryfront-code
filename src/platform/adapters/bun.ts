@@ -7,7 +7,7 @@ export {
   BunServerAdapter,
   BunWebSocket,
   createBunServer,
-} from "./bun/index.ts";
+} from "./runtime/bun/index.ts";
 
 export type {
   BunFile,
@@ -17,4 +17,4 @@ export type {
   BunServerType,
   BunWatchEvent,
   BunWatchOptions,
-} from "./bun/index.ts";
+} from "./runtime/bun/index.ts";
