@@ -226,21 +226,28 @@ async function loadConfigFromVirtualFS(
     const configModule = await import(`file://${tempFile}?v=${Date.now()}`);
     const userConfig = configModule.default || configModule;
 
-    if (userConfig === null || typeof userConfig !== "object" || Array.isArray(userConfig)) {
-      throw new ConfigValidationError(
-        `Expected object, received ${userConfig === null ? "null" : typeof userConfig}`,
-      );
-    }
-
-    validateCorsConfig(userConfig);
-    validateConfigShape(userConfig);
-
-    const merged = mergeConfigs(userConfig);
-    configCacheByProject.set(projectDir, { revision: cacheRevision, config: merged });
-    return merged;
+    return validateAndCacheConfig(userConfig, projectDir);
   } finally {
     await fs.remove(tempDir, { recursive: true });
   }
+}
+
+function validateAndCacheConfig(
+  userConfig: unknown,
+  projectDir: string,
+): VeryfrontConfig {
+  if (userConfig === null || typeof userConfig !== "object" || Array.isArray(userConfig)) {
+    throw new ConfigValidationError(
+      `Expected object, received ${userConfig === null ? "null" : typeof userConfig}`,
+    );
+  }
+
+  validateCorsConfig(userConfig);
+  validateConfigShape(userConfig);
+
+  const merged = mergeConfigs(userConfig);
+  configCacheByProject.set(projectDir, { revision: cacheRevision, config: merged });
+  return merged;
 }
 
 async function loadAndMergeConfig(
@@ -258,18 +265,7 @@ async function loadAndMergeConfig(
   const configModule = await import(configUrl);
   const userConfig = configModule.default || configModule;
 
-  if (userConfig === null || typeof userConfig !== "object" || Array.isArray(userConfig)) {
-    throw new ConfigValidationError(
-      `Expected object, received ${userConfig === null ? "null" : typeof userConfig}`,
-    );
-  }
-
-  validateCorsConfig(userConfig);
-  validateConfigShape(userConfig);
-
-  const merged = mergeConfigs(userConfig);
-  configCacheByProject.set(projectDir, { revision: cacheRevision, config: merged });
-  return merged;
+  return validateAndCacheConfig(userConfig, projectDir);
 }
 
 function isConfigError(error: unknown): boolean {
