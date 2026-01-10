@@ -2,17 +2,14 @@ import type { z } from "zod";
 import { ZodFirstPartyTypeKind } from "zod";
 import type { JsonSchema } from "../types/json-schema.ts";
 
+const LITERAL_TYPE_MAP: Record<string, "string" | "number" | "boolean"> = {
+  string: "string",
+  number: "number",
+  boolean: "boolean",
+};
+
 function getLiteralType(value: unknown): "string" | "number" | "boolean" | undefined {
-  switch (typeof value) {
-    case "string":
-      return "string";
-    case "number":
-      return "number";
-    case "boolean":
-      return "boolean";
-    default:
-      return undefined;
-  }
+  return LITERAL_TYPE_MAP[typeof value];
 }
 
 export function zodToJsonSchema(schema: z.ZodTypeAny): JsonSchema {

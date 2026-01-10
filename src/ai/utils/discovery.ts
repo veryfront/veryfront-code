@@ -472,43 +472,48 @@ export async function discoverAll(
   return result;
 }
 
-async function discoverTools(
+interface DiscoveryHandler<T> {
+  typeName: string;
+  validate: (item: unknown) => item is T;
+  getId: (item: T, file: string, dir: string) => string;
+  register: (id: string, item: T, file: string, dir: string) => T;
+  getResultMap: (result: DiscoveryResult) => Map<string, T>;
+}
+
+async function discoverItems<T>(
   dir: string,
   result: DiscoveryResult,
   context: FileDiscoveryContext,
+  handler: DiscoveryHandler<T>,
   verbose?: boolean,
 ): Promise<void> {
   const files = await findTypeScriptFiles(dir, context);
 
   if (verbose) {
-    agentLogger.info(`[Discovery] Found ${files.length} tool files in ${dir}`);
+    agentLogger.info(`[Discovery] Found ${files.length} ${handler.typeName} files in ${dir}`);
   }
 
   for (const file of files) {
     try {
       const module = await importModule(file, context);
-      const tool = (module as { default?: Tool }).default as Tool;
+      const item = (module as { default?: T }).default as T;
 
-      if (!tool || typeof tool.execute !== "function") {
+      if (!handler.validate(item)) {
         if (verbose) {
-          agentLogger.warn(`[Discovery] ${file} does not export a valid tool`);
+          agentLogger.warn(`[Discovery] ${file} does not export a valid ${handler.typeName}`);
         }
         continue;
       }
 
-      const id = filenameToId(file);
-      const toolWithId = { ...tool, id };
-      registerTool(id, toolWithId);
-      result.tools.set(id, toolWithId);
+      const id = handler.getId(item, file, dir);
+      const registered = handler.register(id, item, file, dir);
+      handler.getResultMap(result).set(id, registered);
 
       if (verbose) {
-        agentLogger.info(`[Discovery] Registered tool: ${id}`);
+        agentLogger.info(`[Discovery] Registered ${handler.typeName}: ${id}`);
       }
     } catch (error) {
-      result.errors.push({
-        file,
-        error: ensureError(error),
-      });
+      result.errors.push({ file, error: ensureError(error) });
 
       if (verbose) {
         agentLogger.error(`[Discovery] Error loading ${file}:`, error);
@@ -517,144 +522,93 @@ async function discoverTools(
   }
 }
 
-async function discoverAgents(
+const toolHandler: DiscoveryHandler<Tool> = {
+  typeName: "tool",
+  validate: (item): item is Tool =>
+    item !== null && typeof item === "object" && typeof (item as Tool).execute === "function",
+  getId: (_item, file) => filenameToId(file),
+  register: (id, tool) => {
+    const toolWithId = { ...tool, id };
+    registerTool(id, toolWithId);
+    return toolWithId;
+  },
+  getResultMap: (result) => result.tools,
+};
+
+const agentHandler: DiscoveryHandler<Agent> = {
+  typeName: "agent",
+  validate: (item): item is Agent =>
+    item !== null && typeof item === "object" && typeof (item as Agent).generate === "function",
+  getId: (agent, file) => agent.id || filenameToId(file),
+  register: (id, agent, file) => {
+    registerAgent(id, agent);
+    trackAgentPath(id, file);
+    return agent;
+  },
+  getResultMap: (result) => result.agents,
+};
+
+const resourceHandler: DiscoveryHandler<Resource> = {
+  typeName: "resource",
+  validate: (item): item is Resource =>
+    item !== null && typeof item === "object" && typeof (item as Resource).load === "function",
+  getId: (_item, file) => filenameToId(file),
+  register: (id, resource, file, dir) => {
+    const pattern = filePathToPattern(file, dir);
+    const resourceWithMeta = { ...resource, id, pattern };
+    registerResource(id, resourceWithMeta);
+    return resourceWithMeta;
+  },
+  getResultMap: (result) => result.resources,
+};
+
+const promptHandler: DiscoveryHandler<Prompt> = {
+  typeName: "prompt",
+  validate: (item): item is Prompt =>
+    item !== null && typeof item === "object" && typeof (item as Prompt).getContent === "function",
+  getId: (_item, file) => filenameToId(file),
+  register: (id, prompt) => {
+    const promptWithId = { ...prompt, id };
+    registerPrompt(id, promptWithId);
+    return promptWithId;
+  },
+  getResultMap: (result) => result.prompts,
+};
+
+function discoverTools(
   dir: string,
   result: DiscoveryResult,
   context: FileDiscoveryContext,
   verbose?: boolean,
 ): Promise<void> {
-  const files = await findTypeScriptFiles(dir, context);
-
-  if (verbose) {
-    agentLogger.info(`[Discovery] Found ${files.length} agent files in ${dir}`);
-  }
-
-  for (const file of files) {
-    try {
-      const module = await importModule(file, context);
-      const agent = (module as { default?: Agent }).default as Agent;
-
-      if (!agent || typeof agent.generate !== "function") {
-        if (verbose) {
-          agentLogger.warn(`[Discovery] ${file} does not export a valid agent`);
-        }
-        continue;
-      }
-
-      const id = agent.id || filenameToId(file);
-
-      // Register in the global agent registry
-      registerAgent(id, agent);
-      result.agents.set(id, agent);
-
-      // Track the file path for index generation
-      trackAgentPath(id, file);
-
-      if (verbose) {
-        agentLogger.info(`[Discovery] Registered agent: ${id}`);
-      }
-    } catch (error) {
-      result.errors.push({
-        file,
-        error: ensureError(error),
-      });
-
-      if (verbose) {
-        agentLogger.error(`[Discovery] Error loading ${file}:`, error);
-      }
-    }
-  }
+  return discoverItems(dir, result, context, toolHandler, verbose);
 }
 
-async function discoverResources(
+function discoverAgents(
   dir: string,
   result: DiscoveryResult,
   context: FileDiscoveryContext,
   verbose?: boolean,
 ): Promise<void> {
-  const files = await findTypeScriptFiles(dir, context);
-
-  if (verbose) {
-    agentLogger.info(`[Discovery] Found ${files.length} resource files in ${dir}`);
-  }
-
-  for (const file of files) {
-    try {
-      const module = await importModule(file, context);
-      const resource = (module as { default?: Resource }).default as Resource;
-
-      if (!resource || typeof resource.load !== "function") {
-        if (verbose) {
-          agentLogger.warn(`[Discovery] ${file} does not export a valid resource`);
-        }
-        continue;
-      }
-
-      const id = filenameToId(file);
-      const pattern = filePathToPattern(file, dir);
-      const resourceWithMeta = { ...resource, id, pattern };
-      registerResource(id, resourceWithMeta);
-      result.resources.set(id, resourceWithMeta);
-
-      if (verbose) {
-        agentLogger.info(`[Discovery] Registered resource: ${id} (${pattern})`);
-      }
-    } catch (error) {
-      result.errors.push({
-        file,
-        error: ensureError(error),
-      });
-
-      if (verbose) {
-        agentLogger.error(`[Discovery] Error loading ${file}:`, error);
-      }
-    }
-  }
+  return discoverItems(dir, result, context, agentHandler, verbose);
 }
 
-async function discoverPrompts(
+function discoverResources(
   dir: string,
   result: DiscoveryResult,
   context: FileDiscoveryContext,
   verbose?: boolean,
 ): Promise<void> {
-  const files = await findTypeScriptFiles(dir, context);
+  return discoverItems(dir, result, context, resourceHandler, verbose);
+}
 
-  if (verbose) {
-    agentLogger.info(`[Discovery] Found ${files.length} prompt files in ${dir}`);
-  }
-
-  for (const file of files) {
-    try {
-      const module = await importModule(file, context);
-      const promptInstance = (module as { default?: Prompt }).default as Prompt;
-
-      if (!promptInstance || typeof promptInstance.getContent !== "function") {
-        if (verbose) {
-          agentLogger.warn(`[Discovery] ${file} does not export a valid prompt`);
-        }
-        continue;
-      }
-
-      const id = filenameToId(file);
-      const promptWithId = { ...promptInstance, id };
-      registerPrompt(id, promptWithId);
-      result.prompts.set(id, promptWithId);
-
-      if (verbose) {
-        agentLogger.info(`[Discovery] Registered prompt: ${id}`);
-      }
-    } catch (error) {
-      result.errors.push({
-        file,
-        error: ensureError(error),
-      });
-
-      if (verbose) {
-        agentLogger.error(`[Discovery] Error loading ${file}:`, error);
-      }
-    }
-  }
+function discoverPrompts(
+  dir: string,
+  result: DiscoveryResult,
+  context: FileDiscoveryContext,
+  verbose?: boolean,
+): Promise<void> {
+  return discoverItems(dir, result, context, promptHandler, verbose);
 }
 
 async function findTypeScriptFiles(

@@ -456,11 +456,8 @@ export class SSRModuleLoader {
       const contentHash = this.hashCode(sourceCode);
 
       // Determine file extension for temp path
-      let ext = ".tsx";
-      if (path.endsWith(".ts")) ext = ".ts";
-      else if (path.endsWith(".jsx")) ext = ".jsx";
-      else if (path.endsWith(".js")) ext = ".js";
-      else if (path.endsWith(".mdx")) ext = ".mdx";
+      const extMatch = path.match(/\.(tsx?|jsx?|mdx)$/);
+      const ext = extMatch?.[0] ?? ".tsx";
 
       // Create a synthetic file path for the cross-project module
       const syntheticFilePath = `cross-project/${projectRef}/@/${path}`;

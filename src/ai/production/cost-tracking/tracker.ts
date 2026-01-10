@@ -186,18 +186,11 @@ class CostTracker {
 
   private checkLimits(): void {
     if (this.config.limits?.daily && this.dailyTotal > this.config.limits.daily) {
-      if (this.config.onLimitExceeded) {
-        this.config.onLimitExceeded(this.getDailySummary());
-      }
+      this.config.onLimitExceeded?.(this.getDailySummary());
     }
 
-    if (
-      this.config.limits?.monthly &&
-      this.monthlyTotal > this.config.limits.monthly
-    ) {
-      if (this.config.onLimitExceeded) {
-        this.config.onLimitExceeded(this.getMonthlySummary());
-      }
+    if (this.config.limits?.monthly && this.monthlyTotal > this.config.limits.monthly) {
+      this.config.onLimitExceeded?.(this.getMonthlySummary());
     }
   }
 
