@@ -1,8 +1,3 @@
-/**
- * Not Found Handler
- * Fallback handler for 404 responses
- */
-
 import { BaseHandler } from "./base.ts";
 import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } from "../types.ts";
 import { ResponseBuilder } from "@veryfront/security/index.ts";

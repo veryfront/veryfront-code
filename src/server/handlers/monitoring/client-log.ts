@@ -1,8 +1,3 @@
-/**
- * Client Logging Handler
- * Handles client-side logging in development mode
- */
-
 import { BaseHandler } from "../response/base.ts";
 import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } from "../types.ts";
 import { ResponseBuilder } from "@veryfront/security/index.ts";
@@ -33,20 +28,17 @@ export class ClientLogHandler extends BaseHandler {
       body = await req.text();
       const logData = JSON.parse(body);
 
-      // Validate log data structure
       const level = typeof logData?.level === "string" ? logData.level : "info";
       const message = typeof logData?.message === "string"
-        ? logData.message.slice(0, 5000) // Limit message length
+        ? logData.message.slice(0, 5000)
         : "[invalid message]";
       const details = logData?.details && typeof logData.details === "object"
         ? logData.details
         : undefined;
 
-      // Format and log
       const prefix = this.getLogPrefix(level);
       serverLogger.info(`${prefix} ${message}`, details);
 
-      // Return success response
       return this.respond(
         ResponseBuilder.json({ ok: true }, req, {
           corsConfig: ctx.securityConfig?.cors,
@@ -54,10 +46,8 @@ export class ClientLogHandler extends BaseHandler {
         }),
       );
     } catch (e) {
-      // Log parsing error details for debugging
       this.handleParseError(e, body);
 
-      // Still return OK to prevent client errors
       return this.respond(
         ResponseBuilder.json({ ok: true }, req, {
           corsConfig: ctx.securityConfig?.cors,

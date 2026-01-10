@@ -63,10 +63,6 @@ function getRemoteAddr(req: Request): string {
   return req.headers.get("x-forwarded-for") || req.headers.get("x-real-ip") || "-";
 }
 
-/**
- * HTTP log entry structure for JSON format.
- * Designed for easy Grafana/Loki filtering.
- */
 interface HttpLogEntry {
   timestamp: string;
   level: "info" | "warn" | "error";
@@ -81,7 +77,6 @@ interface HttpLogEntry {
     userAgent?: string;
     referer?: string;
   };
-  // Request context if available
   requestId?: string;
   traceId?: string;
   projectSlug?: string;
@@ -96,7 +91,6 @@ function formatJsonLog(
   const userAgent = req.headers.get("user-agent");
   const referer = req.headers.get("referer");
 
-  // Determine log level based on status code
   let level: HttpLogEntry["level"] = "info";
   if (status >= HTTP_STATUS_SERVER_ERROR_MIN) {
     level = "error";
@@ -125,7 +119,6 @@ function formatJsonLog(
     entry.http.referer = referer;
   }
 
-  // Extract request context headers if present
   const requestId = req.headers.get("x-request-id");
   const traceId = req.headers.get("x-trace-id") || req.headers.get("traceparent");
   const projectSlug = req.headers.get("x-project-slug");
@@ -239,10 +232,6 @@ export function devLogger(): Middleware {
   return logger({ format: "dev" });
 }
 
-/**
- * Production logger with JSON format for Grafana/Loki compatibility.
- * Outputs structured JSON logs with HTTP request details.
- */
 export function prodLogger(): Middleware {
   return logger({ format: "json" });
 }
