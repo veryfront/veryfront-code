@@ -1,13 +1,19 @@
 # Veryfront Renderer - SSR production server
-ARG BASE_TAG=latest
-FROM ghcr.io/veryfront/veryfront-renderer-base:${BASE_TAG}
+FROM denoland/deno:2.6.1
 
 WORKDIR /app
+
+# Copy application files
+COPY deno.json deno.lock* ./
 COPY veryfront.config.ts ./
 COPY src/ ./src/
 COPY lib/ ./lib/
 
+# Cache dependencies
+RUN deno cache src/server/production-server.ts
+
 EXPOSE 20000
+
 ENV PORT=20000
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
