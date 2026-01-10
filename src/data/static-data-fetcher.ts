@@ -19,21 +19,20 @@ export class StaticDataFetcher {
     const cacheKey = this.cacheManager.createCacheKey(context);
     const cached = this.cacheManager.get(cacheKey);
 
-    if (cached && !this.cacheManager.shouldRevalidate(cached)) {
-      return cached.data;
+    if (!cached) {
+      return await this.fetchFresh(pageModule, context, cacheKey);
     }
 
-    if (cached && this.cacheManager.shouldRevalidate(cached)) {
+    if (this.cacheManager.shouldRevalidate(cached)) {
       if (!this.pendingRevalidations.has(cacheKey)) {
         this.pendingRevalidations.set(
           cacheKey,
           this.revalidateInBackground(pageModule, context, cacheKey),
         );
       }
-      return cached.data;
     }
 
-    return await this.fetchFresh(pageModule, context, cacheKey);
+    return cached.data;
   }
 
   private async fetchFresh(
@@ -41,12 +40,8 @@ export class StaticDataFetcher {
     context: DataContext,
     cacheKey: string,
   ): Promise<DataResult> {
-    if (!pageModule.getStaticData) {
-      return { props: {} };
-    }
-
     try {
-      const result = await pageModule.getStaticData({
+      const result = await pageModule.getStaticData!({
         params: context.params,
         url: context.url,
       });

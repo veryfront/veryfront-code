@@ -103,18 +103,13 @@ export function createRateLimiter(config: RateLimitConfig) {
     store = new MemoryRateLimitStore(),
   } = config;
 
-  // Select strategy function based on configuration
-  function getStrategyFn() {
-    switch (strategy) {
-      case "sliding-window":
-        return slidingWindowStrategy;
-      case "token-bucket":
-        return tokenBucketStrategy;
-      default:
-        return fixedWindowStrategy;
-    }
-  }
-  const strategyFn = getStrategyFn();
+  const strategyFunctions = {
+    "sliding-window": slidingWindowStrategy,
+    "token-bucket": tokenBucketStrategy,
+    "fixed-window": fixedWindowStrategy,
+  } as const;
+
+  const strategyFn = strategyFunctions[strategy] ?? fixedWindowStrategy;
 
   return async function rateLimitMiddleware(
     request: Request,

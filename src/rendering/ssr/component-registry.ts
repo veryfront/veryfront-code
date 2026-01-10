@@ -173,14 +173,12 @@ export class ComponentRegistry {
    */
   get(name: string): React.ComponentType<Record<string, unknown>> | null {
     const component = this.components.get(name);
-
     if (component) {
       return component;
     }
 
     if (this.componentSources.has(name) && !this.initialized) {
       logger.warn(`Component ${name} requested before initialization complete`);
-      return null;
     }
 
     return null;
@@ -192,11 +190,7 @@ export class ComponentRegistry {
    * @returns Record mapping component names to component instances
    */
   getAll(): Record<string, React.ComponentType<Record<string, unknown>>> {
-    const result: Record<string, React.ComponentType<Record<string, unknown>>> = {};
-    for (const [name, component] of this.components) {
-      result[name] = component;
-    }
-    return result;
+    return Object.fromEntries(this.components);
   }
 
   /**
@@ -206,11 +200,7 @@ export class ComponentRegistry {
    * @returns Record mapping component names to component instances with unknown props
    */
   getAllAsComponents(): Record<string, React.ComponentType<unknown>> {
-    const result: Record<string, React.ComponentType<unknown>> = {};
-    for (const [name, component] of this.components) {
-      result[name] = component as React.ComponentType<unknown>;
-    }
-    return result;
+    return Object.fromEntries(this.components) as Record<string, React.ComponentType<unknown>>;
   }
 
   /**
@@ -271,12 +261,7 @@ export class ComponentRegistry {
           info.filePath,
           info.projectRoot,
           this.adapter!,
-          {
-            projectId: info.projectRoot,
-            dev: true,
-            moduleServerUrl: this.moduleServerUrl,
-            vendorBundleHash: this.vendorBundleHash,
-          },
+          this.getLoaderOptions(info.projectRoot),
         );
 
         this.components.set(componentName, Component);
@@ -336,6 +321,15 @@ export class ComponentRegistry {
     return this.failedComponents.has(name);
   }
 
+  private getLoaderOptions(projectRoot: string) {
+    return {
+      projectId: projectRoot,
+      dev: true,
+      moduleServerUrl: this.moduleServerUrl,
+      vendorBundleHash: this.vendorBundleHash,
+    };
+  }
+
   private async collectComponents(
     dir: string,
     projectRoot: string,
@@ -389,12 +383,7 @@ export class ComponentRegistry {
             entryPath,
             projectRoot,
             this.adapter!,
-            {
-              projectId: projectRoot,
-              dev: true,
-              moduleServerUrl: this.moduleServerUrl,
-              vendorBundleHash: this.vendorBundleHash,
-            },
+            this.getLoaderOptions(projectRoot),
           );
 
           this.components.set(componentName, Component);
