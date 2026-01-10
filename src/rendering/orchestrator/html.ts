@@ -86,67 +86,7 @@ export class HTMLGenerator {
     const mergedFrontmatter = this.mergeFrontmatter(
       context as HTMLGenerationContext,
     );
-    const useAppRouter = await detectAppRouter(
-      this.config.projectDir,
-      this.config.config,
-      this.config.adapter,
-    );
-    const appComponentPath = await this.resolveAppComponentPath(useAppRouter);
-
-    // Load project's globals.css for custom theme variables
-    let globalCSS: string | undefined;
-    try {
-      const globalsCSSPath = join(this.config.projectDir, "globals.css");
-      globalCSS = await this.config.adapter.fs.readFile(globalsCSSPath);
-      logger.debug("[HTMLGenerator] Loaded globals.css", { length: globalCSS.length });
-    } catch {
-      logger.debug("[HTMLGenerator] No globals.css found, using default theme");
-    }
-
-    // Load project's tailwind.config.js for runtime config
-    let tailwindConfigJs: string | undefined;
-    try {
-      const tailwindConfigPath = join(this.config.projectDir, "tailwind.config.js");
-      tailwindConfigJs = await this.config.adapter.fs.readFile(tailwindConfigPath);
-      logger.debug("[HTMLGenerator] Loaded tailwind.config.js", {
-        length: tailwindConfigJs.length,
-      });
-    } catch {
-      logger.debug("[HTMLGenerator] No tailwind.config.js found, using default config");
-    }
-
-    // Extract page path from entity id (the actual file path) for client-side module loading
-    // This ensures the client can correctly import the page module during hydration/SPA navigation
-    const pagePath = extractRelativePath(context.pageInfo.entity.id, this.config.projectDir);
-
-    // Compute source hash for Navigator tree sync detection (only in studio embed mode)
-    const sourceHash = context.options?.studioEmbed && context.pageInfo.entity.content
-      ? computeSourceHash(context.pageInfo.entity.content)
-      : undefined;
-
-    const htmlOptions: HTMLGenerationOptions = {
-      mode: this.config.mode,
-      config: this.config.config,
-      projectDir: this.config.projectDir,
-      nestedLayouts: context.nestedLayouts.map((l) => ({
-        kind: l.kind,
-        path: l.path,
-        componentPath: l.componentPath,
-      })),
-      providerPaths: context.providerInfos.map((p) => p.entity.id),
-      appPath: appComponentPath,
-      pagePath: pagePath,
-      nonce: context.options?.nonce,
-      globalCSS,
-      tailwindConfigJs,
-      frontmatter: mergedFrontmatter,
-      studioEmbed: context.options?.studioEmbed,
-      projectId: context.options?.projectId,
-      pageId: context.options?.pageId,
-      sourceHash,
-      colorScheme: context.options?.colorScheme,
-      proxyEnvironment: context.options?.proxyEnvironment,
-    };
+    const htmlOptions = await this.buildHTMLOptions(context as HTMLGenerationContext, mergedFrontmatter);
 
     // Buffer the React stream to extract head elements
     // This is necessary because head elements need to be moved from body to <head>
@@ -255,68 +195,7 @@ export class HTMLGenerator {
     const mergedFrontmatter = this.mergeFrontmatter(context);
     logger.info("Merged frontmatter for wrapInHTMLShell:", mergedFrontmatter);
 
-    const useAppRouter = await detectAppRouter(
-      this.config.projectDir,
-      this.config.config,
-      this.config.adapter,
-    );
-
-    const appComponentPath = await this.resolveAppComponentPath(useAppRouter);
-
-    // Load project's globals.css for custom theme variables
-    let globalCSS: string | undefined;
-    try {
-      const globalsCSSPath = join(this.config.projectDir, "globals.css");
-      globalCSS = await this.config.adapter.fs.readFile(globalsCSSPath);
-      logger.debug("[HTMLGenerator] Loaded globals.css", { length: globalCSS.length });
-    } catch {
-      logger.debug("[HTMLGenerator] No globals.css found, using default theme");
-    }
-
-    // Load project's tailwind.config.js for runtime config
-    let tailwindConfigJs: string | undefined;
-    try {
-      const tailwindConfigPath = join(this.config.projectDir, "tailwind.config.js");
-      tailwindConfigJs = await this.config.adapter.fs.readFile(tailwindConfigPath);
-      logger.debug("[HTMLGenerator] Loaded tailwind.config.js", {
-        length: tailwindConfigJs.length,
-      });
-    } catch {
-      logger.debug("[HTMLGenerator] No tailwind.config.js found, using default config");
-    }
-
-    // Extract page path from entity id (the actual file path) for client-side module loading
-    // This ensures the client can correctly import the page module during hydration/SPA navigation
-    const pagePath = extractRelativePath(context.pageInfo.entity.id, this.config.projectDir);
-
-    // Compute source hash for Navigator tree sync detection (only in studio embed mode)
-    const sourceHash = context.options?.studioEmbed && context.pageInfo.entity.content
-      ? computeSourceHash(context.pageInfo.entity.content)
-      : undefined;
-
-    const htmlOptions: HTMLGenerationOptions = {
-      mode: this.config.mode,
-      config: this.config.config,
-      projectDir: this.config.projectDir,
-      nestedLayouts: context.nestedLayouts.map((l) => ({
-        kind: l.kind,
-        path: l.path,
-        componentPath: l.componentPath,
-      })),
-      providerPaths: context.providerInfos.map((p) => p.entity.id),
-      appPath: appComponentPath,
-      pagePath: pagePath,
-      nonce: context.options?.nonce,
-      globalCSS,
-      tailwindConfigJs,
-      frontmatter: mergedFrontmatter,
-      studioEmbed: context.options?.studioEmbed,
-      projectId: context.options?.projectId,
-      pageId: context.options?.pageId,
-      sourceHash,
-      colorScheme: context.options?.colorScheme,
-      proxyEnvironment: context.options?.proxyEnvironment,
-    };
+    const htmlOptions = await this.buildHTMLOptions(context, mergedFrontmatter);
 
     return await wrapInHTMLShell(
       context.html,
@@ -352,5 +231,60 @@ export class HTMLGenerator {
     const appPath = join(this.config.projectDir, "components/app.tsx");
     const appExists = await this.config.adapter.fs.exists(appPath);
     return appExists ? appPath : undefined;
+  }
+
+  private async loadProjectFile(filename: string): Promise<string | undefined> {
+    try {
+      const filePath = join(this.config.projectDir, filename);
+      const content = await this.config.adapter.fs.readFile(filePath);
+      logger.debug(`[HTMLGenerator] Loaded ${filename}`, { length: content.length });
+      return content;
+    } catch {
+      logger.debug(`[HTMLGenerator] No ${filename} found, using default`);
+      return undefined;
+    }
+  }
+
+  private async buildHTMLOptions(
+    context: HTMLGenerationContext,
+    mergedFrontmatter: MDXFrontmatter,
+  ): Promise<HTMLGenerationOptions> {
+    const useAppRouter = await detectAppRouter(
+      this.config.projectDir,
+      this.config.config,
+      this.config.adapter,
+    );
+    const appComponentPath = await this.resolveAppComponentPath(useAppRouter);
+    const globalCSS = await this.loadProjectFile("globals.css");
+    const tailwindConfigJs = await this.loadProjectFile("tailwind.config.js");
+
+    const pagePath = extractRelativePath(context.pageInfo.entity.id, this.config.projectDir);
+    const sourceHash = context.options?.studioEmbed && context.pageInfo.entity.content
+      ? computeSourceHash(context.pageInfo.entity.content)
+      : undefined;
+
+    return {
+      mode: this.config.mode,
+      config: this.config.config,
+      projectDir: this.config.projectDir,
+      nestedLayouts: context.nestedLayouts.map((l) => ({
+        kind: l.kind,
+        path: l.path,
+        componentPath: l.componentPath,
+      })),
+      providerPaths: context.providerInfos.map((p) => p.entity.id),
+      appPath: appComponentPath,
+      pagePath,
+      nonce: context.options?.nonce,
+      globalCSS,
+      tailwindConfigJs,
+      frontmatter: mergedFrontmatter,
+      studioEmbed: context.options?.studioEmbed,
+      projectId: context.options?.projectId,
+      pageId: context.options?.pageId,
+      sourceHash,
+      colorScheme: context.options?.colorScheme,
+      proxyEnvironment: context.options?.proxyEnvironment,
+    };
   }
 }
