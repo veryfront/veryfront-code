@@ -37,7 +37,7 @@ describe(
           const watchPromise = (async () => {
             for await (const event of watcher) {
               // Only capture events for our test file
-              if (event.paths.some((p) => p.includes("test.txt"))) {
+              if (event.paths.some((p: string) => p.includes("test.txt"))) {
                 events.push({ kind: event.kind, paths: event.paths });
                 break;
               }
