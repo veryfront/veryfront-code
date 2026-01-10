@@ -565,10 +565,10 @@ export function validateRetryConfig(config: RetryConfig): void {
   }
 
   if (config.backoff !== undefined) {
-    const validBackoffs = ["fixed", "linear", "exponential"];
-    if (!validBackoffs.includes(config.backoff)) {
+    const validBackoffs = new Set(["fixed", "linear", "exponential"]);
+    if (!validBackoffs.has(config.backoff)) {
       throw new Error(
-        `Invalid backoff strategy: ${config.backoff}. Must be one of: ${validBackoffs.join(", ")}`,
+        `Invalid backoff strategy: ${config.backoff}. Must be one of: ${[...validBackoffs].join(", ")}`,
       );
     }
   }

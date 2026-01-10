@@ -169,22 +169,21 @@ export class InputValidator {
     };
   }
 
+  /** Sanitization patterns to remove harmful content */
+  private static readonly SANITIZE_PATTERNS: RegExp[] = [
+    /<script[^>]*>.*?<\/script>/gi, // Script tags
+    /on\w+\s*=\s*["'][^"']*["']/gi, // Event handlers
+    /javascript:/gi, // JavaScript protocol
+  ];
+
   /**
    * Sanitize input (remove potentially harmful content)
    */
   private sanitizeInput(input: string): string {
-    let sanitized = input;
-
-    // Remove script tags
-    sanitized = sanitized.replace(/<script[^>]*>.*?<\/script>/gi, "");
-
-    // Remove event handlers
-    sanitized = sanitized.replace(/on\w+\s*=\s*["'][^"']*["']/gi, "");
-
-    // Remove javascript: protocol
-    sanitized = sanitized.replace(/javascript:/gi, "");
-
-    return sanitized;
+    return InputValidator.SANITIZE_PATTERNS.reduce(
+      (text, pattern) => text.replace(pattern, ""),
+      input,
+    );
   }
 }
 
