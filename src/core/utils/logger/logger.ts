@@ -259,21 +259,16 @@ class ConsoleLogger implements Logger {
   }
 }
 
+const LOG_LEVEL_MAP: Record<string, LogLevel> = {
+  DEBUG: LogLevel.DEBUG,
+  INFO: LogLevel.INFO,
+  WARN: LogLevel.WARN,
+  ERROR: LogLevel.ERROR,
+};
+
 function parseLogLevel(levelString: string | undefined): LogLevel | undefined {
   if (!levelString) return undefined;
-  const upper = levelString.toUpperCase();
-  switch (upper) {
-    case "DEBUG":
-      return LogLevel.DEBUG;
-    case "WARN":
-      return LogLevel.WARN;
-    case "ERROR":
-      return LogLevel.ERROR;
-    case "INFO":
-      return LogLevel.INFO;
-    default:
-      return undefined;
-  }
+  return LOG_LEVEL_MAP[levelString.toUpperCase()];
 }
 
 const getDefaultLevel = (): LogLevel => {

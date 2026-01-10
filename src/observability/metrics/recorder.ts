@@ -84,20 +84,13 @@ export class MetricsRecorder {
     type: "manifest" | "page" | "stream" | "action",
     attributes?: Record<string, string>,
   ): void {
-    switch (type) {
-      case "manifest":
-        this.instruments.rscManifestCounter?.add(1, attributes);
-        break;
-      case "page":
-        this.instruments.rscPageCounter?.add(1, attributes);
-        break;
-      case "stream":
-        this.instruments.rscStreamCounter?.add(1, attributes);
-        break;
-      case "action":
-        this.instruments.rscActionCounter?.add(1, attributes);
-        break;
-    }
+    const counters = {
+      manifest: this.instruments.rscManifestCounter,
+      page: this.instruments.rscPageCounter,
+      stream: this.instruments.rscStreamCounter,
+      action: this.instruments.rscActionCounter,
+    };
+    counters[type]?.add(1, attributes);
   }
 
   recordRSCError(attributes?: Record<string, string>): void {

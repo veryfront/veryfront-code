@@ -60,7 +60,8 @@ export async function setupAI(options: SetupAIOptions = {}): Promise<SetupAIResu
   // Step 1: Load from manifest if provided
   if (manifestPath) {
     try {
-      const manifest = await fs.readTextFile(manifestPath).then(JSON.parse);
+      const manifestText = await fs.readTextFile(manifestPath);
+      const manifest = JSON.parse(manifestText);
       if (manifest.tools) {
         for (const [id, tool] of Object.entries(manifest.tools)) {
           tools.set(id, tool as Tool);
