@@ -82,9 +82,7 @@ function inspectElementProps(
   depth: number,
   options: InspectionOptions,
 ): void {
-  for (const key of Object.keys(props)) {
-    const value = props[key];
-
+  for (const [key, value] of Object.entries(props)) {
     if (key === "__self" || key === "__source") continue;
 
     if (key === "children") {

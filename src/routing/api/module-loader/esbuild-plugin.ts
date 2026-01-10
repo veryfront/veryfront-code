@@ -72,7 +72,7 @@ export function createHTTPPlugin(options: HTTPPluginOptions | string[]): Plugin 
         let requestUrl = args.path;
         try {
           const u = new URL(args.path);
-          if (allowedHosts && allowedHosts.length > 0) {
+          if (allowedHosts?.length) {
             const hostUrl = `${u.protocol}//${u.host}`;
             const isAllowed = allowedHosts.some((h) => hostUrl.startsWith(h));
             if (!isAllowed) {

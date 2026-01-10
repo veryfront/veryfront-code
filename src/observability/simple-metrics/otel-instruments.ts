@@ -125,7 +125,5 @@ export function getOtelInstruments(): OtelInstruments {
  */
 export function resetOtelInstruments(): void {
   otelInitialized = false;
-  for (const key of Object.keys(otel)) {
-    delete otel[key as keyof OtelInstruments];
-  }
+  Object.keys(otel).forEach((key) => delete otel[key as keyof OtelInstruments]);
 }

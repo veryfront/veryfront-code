@@ -43,14 +43,12 @@ function buildSchemaFromShape(
   shape: Record<string, unknown>,
   additionalProperties = false,
 ): JsonSchema {
-  const properties: Record<string, JsonSchema> = {};
-  for (const key of Object.keys(shape)) {
-    properties[key] = { type: "string" as const };
-  }
+  const keys = Object.keys(shape);
+  const properties = Object.fromEntries(keys.map((key) => [key, { type: "string" as const }]));
   return {
     type: "object" as const,
     properties,
-    required: additionalProperties ? undefined : Object.keys(properties),
+    required: additionalProperties ? undefined : keys,
     ...(additionalProperties && { additionalProperties: true }),
   };
 }

@@ -194,7 +194,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
               changedPaths: changedPaths || [],
             });
             // Use selective invalidation if we know which files changed
-            if (changedPaths && changedPaths.length > 0) {
+            if (changedPaths?.length) {
               this.scheduleSelectiveInvalidation(changedPaths);
             } else {
               // Fallback to full invalidation
