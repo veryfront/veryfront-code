@@ -24,7 +24,7 @@ import { logger } from "@veryfront/utils";
 import { runWithRequestContext } from "../../../platform/adapters/fs/veryfront/multi-project-adapter.ts";
 import type { WorkflowBackend } from "../backends/types.ts";
 import type { WorkflowExecutor } from "../executor/workflow-executor.ts";
-import type { CapturedTenantContext } from "../types.ts";
+import type { CapturedTenantContext, WorkflowDefinition } from "../types.ts";
 
 /**
  * Configuration for the job entrypoint
@@ -167,8 +167,7 @@ export async function runWorkflowJob(config: JobEntrypointConfig): Promise<numbe
         await backend.updateRun(runId, {
           status: "failed",
           error: {
-            message: error instanceof Error ? error.message : String(error),
-            code: "EXECUTION_ERROR",
+            message: `EXECUTION_ERROR: ${error instanceof Error ? error.message : String(error)}`,
             stack: error instanceof Error ? error.stack : undefined,
           },
           completedAt: new Date(),
@@ -225,7 +224,7 @@ export interface CreateJobEntrypointOptions {
   redisUrl: string;
 
   /** Workflows to register */
-  workflows: Array<{ definition: { id: string } }>;
+  workflows: Array<{ definition: WorkflowDefinition }>;
 
   /** Enable debug logging */
   debug?: boolean;

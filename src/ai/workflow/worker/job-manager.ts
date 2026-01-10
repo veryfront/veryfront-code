@@ -1,20 +1,28 @@
 /**
  * Workflow Job Manager
  *
- * Manages ephemeral K8s Jobs for workflow execution.
- * Provides tenant isolation by running each workflow in a separate container.
+ * Orchestrates workflow execution via isolated jobs.
+ * Uses pluggable JobExecutor interface for runtime flexibility.
+ *
+ * Supported runtimes:
+ * - K8sJobExecutor: Kubernetes Jobs (production)
+ * - ProcessJobExecutor: Child processes (local dev)
+ * - DockerJobExecutor: Docker containers (future)
  *
  * Key properties:
- * - Each workflow runs in a fresh container (no shared state)
- * - Containers are destroyed after workflow completion
- * - Job Manager only orchestrates, never executes user code
+ * - Each workflow runs in isolation (no shared state)
  * - Supports crash recovery via stalled job detection
+ * - Runtime-agnostic through JobExecutor abstraction
  */
 
 import { logger } from "@veryfront/utils";
 import { hasWorkerSupport, type WorkflowBackend } from "../backends/types.ts";
 import type { WorkflowRun } from "../types.ts";
 import { generateId } from "../types.ts";
+import type { JobConfig, JobExecutor, JobStatus } from "./executors/types.ts";
+
+// Re-export types for convenience
+export type { JobExecutor, JobInfo, JobStatus } from "./executors/types.ts";
 
 /**
  * Configuration for the Workflow Job Manager
@@ -23,29 +31,11 @@ export interface WorkflowJobManagerConfig {
   /** Backend for workflow persistence */
   backend: WorkflowBackend;
 
-  /** Kubernetes namespace for jobs */
-  namespace?: string;
+  /** Job executor (K8s, Docker, Process, etc.) */
+  executor: JobExecutor;
 
-  /** Container image for workflow execution */
-  image: string;
-
-  /** Image pull policy */
-  imagePullPolicy?: "Always" | "IfNotPresent" | "Never";
-
-  /** Service account for jobs */
-  serviceAccount?: string;
-
-  /** Resource requests/limits for job pods */
-  resources?: {
-    requests?: { cpu?: string; memory?: string };
-    limits?: { cpu?: string; memory?: string };
-  };
-
-  /** Environment variables to inject into job pods */
+  /** Environment variables to inject into jobs */
   env?: Record<string, string>;
-
-  /** Secrets to mount as environment variables */
-  envFromSecrets?: string[];
 
   /** Poll interval for checking pending workflows (ms) */
   pollInterval?: number;
@@ -59,30 +49,8 @@ export interface WorkflowJobManagerConfig {
   /** Time after which a run is considered stalled (ms) - for crash recovery */
   stalledThreshold?: number;
 
-  /** Time to keep completed jobs for debugging (s) */
-  ttlAfterFinished?: number;
-
   /** Enable debug logging */
   debug?: boolean;
-}
-
-/**
- * Job status
- */
-export type JobStatus = "pending" | "running" | "succeeded" | "failed" | "unknown";
-
-/**
- * Job info
- */
-export interface JobInfo {
-  name: string;
-  runId: string;
-  tenantSlug: string;
-  status: JobStatus;
-  createdAt: Date;
-  startedAt?: Date;
-  completedAt?: Date;
-  error?: string;
 }
 
 /**
@@ -108,134 +76,71 @@ export interface ManagerStats {
 }
 
 /**
- * Kubernetes API client interface (minimal subset we need)
+ * Internal job tracking
  */
-export interface K8sClient {
-  /** Create a Job */
-  createJob(namespace: string, job: K8sJob): Promise<void>;
-
-  /** Get Job status */
-  getJob(namespace: string, name: string): Promise<K8sJobStatus | null>;
-
-  /** List Jobs with label selector */
-  listJobs(namespace: string, labelSelector: string): Promise<K8sJobStatus[]>;
-
-  /** Delete a Job */
-  deleteJob(namespace: string, name: string): Promise<void>;
+interface TrackedJob {
+  jobId: string;
+  runId: string;
+  status: JobStatus;
+  createdAt: Date;
 }
 
-/**
- * K8s Job spec (simplified)
- */
-export interface K8sJob {
-  metadata: {
-    name: string;
-    namespace: string;
-    labels: Record<string, string>;
-  };
-  spec: {
-    ttlSecondsAfterFinished?: number;
-    activeDeadlineSeconds?: number;
-    backoffLimit: number;
-    template: {
-      metadata: {
-        labels: Record<string, string>;
-      };
-      spec: {
-        restartPolicy: "Never" | "OnFailure";
-        serviceAccountName?: string;
-        containers: Array<{
-          name: string;
-          image: string;
-          imagePullPolicy?: string;
-          env?: Array<{ name: string; value?: string; valueFrom?: unknown }>;
-          envFrom?: Array<{ secretRef?: { name: string } }>;
-          resources?: {
-            requests?: { cpu?: string; memory?: string };
-            limits?: { cpu?: string; memory?: string };
-          };
-          command?: string[];
-          args?: string[];
-        }>;
-      };
-    };
-  };
-}
-
-/**
- * K8s Job status (simplified)
- */
-export interface K8sJobStatus {
-  metadata: {
-    name: string;
-    labels: Record<string, string>;
-    creationTimestamp: string;
-  };
-  status: {
-    active?: number;
-    succeeded?: number;
-    failed?: number;
-    startTime?: string;
-    completionTime?: string;
-    conditions?: Array<{
-      type: string;
-      status: string;
-      reason?: string;
-      message?: string;
-    }>;
-  };
-}
+/** Resolved config type with defaults applied */
+type ResolvedConfig = Required<Omit<WorkflowJobManagerConfig, "env">> & {
+  env?: Record<string, string>;
+};
 
 /**
  * Workflow Job Manager
  *
- * Orchestrates workflow execution via ephemeral K8s Jobs.
- * Each workflow runs in complete isolation - no shared state between tenants.
+ * Orchestrates workflow execution via pluggable job executors.
+ * Each workflow runs in complete isolation.
  *
- * @example
+ * @example K8s
  * ```typescript
+ * const executor = new K8sJobExecutor({
+ *   image: "my-app:latest",
+ *   namespace: "workflows",
+ * }, k8sClient);
+ *
  * const manager = new WorkflowJobManager({
  *   backend: redisBackend,
- *   k8sClient: new KubernetesClient(),
- *   image: "veryfront-renderer:latest",
- *   namespace: "veryfront-jobs",
+ *   executor,
  * });
  *
  * manager.start();
+ * ```
  *
- * // Later, to stop gracefully:
- * await manager.stop();
+ * @example Local Process
+ * ```typescript
+ * const executor = new ProcessJobExecutor({
+ *   entrypointPath: "./job-entrypoint.ts",
+ * });
+ *
+ * const manager = new WorkflowJobManager({
+ *   backend: redisBackend,
+ *   executor,
+ * });
+ *
+ * manager.start();
  * ```
  */
-/** Keys that remain optional even after defaults are applied */
-type OptionalConfigKeys = "resources" | "env" | "envFromSecrets" | "serviceAccount";
-
-/** Resolved config type with defaults applied */
-type ResolvedConfig =
-  & Required<Omit<WorkflowJobManagerConfig, OptionalConfigKeys>>
-  & Pick<WorkflowJobManagerConfig, OptionalConfigKeys>;
-
 export class WorkflowJobManager {
   private config: ResolvedConfig;
-  private k8sClient: K8sClient;
   private status: ManagerStatus = "idle";
   private pollTimeout?: ReturnType<typeof setTimeout>;
-  private activeJobs = new Map<string, JobInfo>();
+  private activeJobs = new Map<string, TrackedJob>();
   private stats: ManagerStats;
   private managerId: string;
 
-  constructor(config: WorkflowJobManagerConfig, k8sClient: K8sClient) {
-    this.k8sClient = k8sClient;
+  constructor(config: WorkflowJobManagerConfig) {
     this.managerId = generateId("mgr");
 
     this.config = {
-      namespace: "default",
-      imagePullPolicy: "IfNotPresent",
       pollInterval: 5000,
       maxConcurrentJobs: 10,
       jobTimeout: 30 * 60 * 1000, // 30 minutes
       stalledThreshold: 60000, // 60 seconds
-      ttlAfterFinished: 300, // 5 minutes
       debug: false,
       ...config,
     };
@@ -254,9 +159,14 @@ export class WorkflowJobManager {
   /**
    * Start the job manager
    */
-  start(): void {
+  async start(): Promise<void> {
     if (this.status === "running") {
       throw new Error("Job manager is already running");
+    }
+
+    // Initialize executor if needed
+    if (this.config.executor.initialize) {
+      await this.config.executor.initialize();
     }
 
     this.status = "running";
@@ -274,7 +184,7 @@ export class WorkflowJobManager {
   /**
    * Stop the job manager gracefully
    */
-  stop(): void {
+  async stop(): Promise<void> {
     if (this.status !== "running") {
       return;
     }
@@ -292,8 +202,10 @@ export class WorkflowJobManager {
       this.pollTimeout = undefined;
     }
 
-    // Note: We don't wait for active jobs - they continue running
-    // The manager just stops creating new jobs
+    // Cleanup executor if needed
+    if (this.config.executor.destroy) {
+      await this.config.executor.destroy();
+    }
 
     this.status = "stopped";
     this.stats.status = "stopped";
@@ -313,8 +225,15 @@ export class WorkflowJobManager {
   /**
    * Get active jobs
    */
-  getActiveJobs(): JobInfo[] {
+  getActiveJobs(): TrackedJob[] {
     return Array.from(this.activeJobs.values());
+  }
+
+  /**
+   * Get manager ID
+   */
+  getManagerId(): string {
+    return this.managerId;
   }
 
   /**
@@ -395,56 +314,45 @@ export class WorkflowJobManager {
         await this.createJobForWorkflow(run);
       }
     } catch (error) {
-      this.stats.lastErrorAt = new Date();
-      this.stats.lastError = error instanceof Error ? error.message : String(error);
+      this.recordError(error);
       logger.error(`[WorkflowJobManager] Poll error:`, error);
     }
   }
 
   /**
-   * Sync job statuses with K8s
+   * Sync job statuses with executor
    */
   private async syncJobStatuses(): Promise<void> {
-    const labelSelector = `veryfront.com/manager=${this.managerId}`;
-
     try {
-      const k8sJobs = await this.k8sClient.listJobs(this.config.namespace, labelSelector);
+      const jobs = await this.config.executor.listJobs(this.managerId);
 
-      for (const k8sJob of k8sJobs) {
-        const runId = k8sJob.metadata.labels["veryfront.com/run-id"];
-        const jobInfo = this.activeJobs.get(runId);
-
-        if (!jobInfo) {
+      for (const jobInfo of jobs) {
+        const tracked = this.activeJobs.get(jobInfo.runId);
+        if (!tracked) {
           continue;
         }
 
-        const newStatus = this.parseJobStatus(k8sJob);
-
-        if (newStatus === jobInfo.status) {
+        if (jobInfo.status === tracked.status) {
           continue;
         }
 
-        jobInfo.status = newStatus;
-
-        if (k8sJob.status.startTime) {
-          jobInfo.startedAt = new Date(k8sJob.status.startTime);
-        }
+        tracked.status = jobInfo.status;
 
         // Handle terminal states
-        const isTerminal = newStatus === "succeeded" || newStatus === "failed";
-        if (isTerminal) {
-          jobInfo.completedAt = new Date();
-          this.activeJobs.delete(runId);
+        if (jobInfo.status === "succeeded" || jobInfo.status === "failed") {
+          this.activeJobs.delete(jobInfo.runId);
 
-          if (newStatus === "succeeded") {
+          if (jobInfo.status === "succeeded") {
             this.stats.jobsCompleted++;
             if (this.config.debug) {
-              logger.info(`[WorkflowJobManager] Job completed: ${jobInfo.name}`);
+              logger.info(`[WorkflowJobManager] Job completed: ${jobInfo.jobId}`);
             }
           } else {
-            jobInfo.error = this.extractErrorFromJob(k8sJob);
             this.stats.jobsFailed++;
-            logger.error(`[WorkflowJobManager] Job failed: ${jobInfo.name}`, jobInfo.error);
+            logger.error(
+              `[WorkflowJobManager] Job failed: ${jobInfo.jobId}`,
+              jobInfo.error,
+            );
           }
         }
       }
@@ -454,105 +362,42 @@ export class WorkflowJobManager {
   }
 
   /**
-   * Build tenant environment variables from workflow run
-   */
-  private buildTenantEnv(run: WorkflowRun): Array<{ name: string; value: string }> {
-    if (!run._tenant) {
-      return [];
-    }
-
-    const { projectSlug, token, projectId, productionMode, releaseId } = run._tenant;
-    return [
-      { name: "TENANT_PROJECT_SLUG", value: projectSlug },
-      { name: "TENANT_TOKEN", value: token },
-      { name: "TENANT_PROJECT_ID", value: projectId ?? "" },
-      { name: "TENANT_PRODUCTION_MODE", value: productionMode ? "1" : "0" },
-      { name: "TENANT_RELEASE_ID", value: releaseId ?? "" },
-    ];
-  }
-
-  /**
-   * Create a K8s Job for a workflow run
+   * Create a job for a workflow run
    */
   private async createJobForWorkflow(run: WorkflowRun): Promise<void> {
-    const tenantSlug = run._tenant?.projectSlug ?? "unknown";
-    const jobName = `wf-${run.id.replace(/_/g, "-").toLowerCase()}`;
+    const jobId = generateId("job");
 
-    const job: K8sJob = {
-      metadata: {
-        name: jobName,
-        namespace: this.config.namespace,
-        labels: {
-          "veryfront.com/component": "workflow-job",
-          "veryfront.com/manager": this.managerId,
-          "veryfront.com/run-id": run.id,
-          "veryfront.com/workflow-id": run.workflowId,
-          "veryfront.com/tenant": tenantSlug,
-        },
-      },
-      spec: {
-        ttlSecondsAfterFinished: this.config.ttlAfterFinished,
-        activeDeadlineSeconds: Math.floor(this.config.jobTimeout / 1000),
-        backoffLimit: 0, // No retries - we handle retries at workflow level
-        template: {
-          metadata: {
-            labels: {
-              "veryfront.com/component": "workflow-job",
-              "veryfront.com/run-id": run.id,
-              "veryfront.com/tenant": tenantSlug,
-            },
-          },
-          spec: {
-            restartPolicy: "Never",
-            serviceAccountName: this.config.serviceAccount,
-            containers: [
-              {
-                name: "workflow",
-                image: this.config.image,
-                imagePullPolicy: this.config.imagePullPolicy,
-                env: [
-                  { name: "MODE", value: "job" },
-                  { name: "WORKFLOW_RUN_ID", value: run.id },
-                  ...this.buildTenantEnv(run),
-                  ...Object.entries(this.config.env ?? {}).map(([name, value]) => ({
-                    name,
-                    value,
-                  })),
-                ],
-                envFrom: this.config.envFromSecrets?.map((name) => ({
-                  secretRef: { name },
-                })),
-                resources: this.config.resources,
-              },
-            ],
-          },
-        },
-      },
+    const jobConfig: JobConfig = {
+      jobId,
+      run,
+      managerId: this.managerId,
+      timeout: this.config.jobTimeout,
+      env: this.config.env ?? {},
+      debug: this.config.debug,
     };
 
     try {
-      await this.k8sClient.createJob(this.config.namespace, job);
+      await this.config.executor.createJob(jobConfig);
 
-      const jobInfo: JobInfo = {
-        name: jobName,
+      const tracked: TrackedJob = {
+        jobId,
         runId: run.id,
-        tenantSlug,
         status: "pending",
         createdAt: new Date(),
       };
 
-      this.activeJobs.set(run.id, jobInfo);
+      this.activeJobs.set(run.id, tracked);
       this.stats.jobsCreated++;
 
       // Mark workflow as running
       await this.config.backend.updateRun(run.id, {
         status: "running",
         startedAt: new Date(),
-        workerId: `job:${jobName}`,
+        workerId: `job:${jobId}`,
       });
 
       if (this.config.debug) {
-        logger.info(`[WorkflowJobManager] Created job ${jobName} for workflow ${run.id}`);
+        logger.info(`[WorkflowJobManager] Created job ${jobId} for workflow ${run.id}`);
       }
     } catch (error) {
       logger.error(`[WorkflowJobManager] Failed to create job for ${run.id}:`, error);
@@ -561,10 +406,9 @@ export class WorkflowJobManager {
       await this.config.backend.updateRun(run.id, {
         status: "failed",
         error: {
-          message: `Failed to create execution job: ${
+          message: `JOB_CREATION_FAILED: Failed to create execution job: ${
             error instanceof Error ? error.message : String(error)
           }`,
-          code: "JOB_CREATION_FAILED",
         },
         completedAt: new Date(),
       });
@@ -572,34 +416,11 @@ export class WorkflowJobManager {
   }
 
   /**
-   * Parse job status from K8s status
+   * Record an error in stats
    */
-  private parseJobStatus(k8sJob: K8sJobStatus): JobStatus {
-    if (k8sJob.status.succeeded && k8sJob.status.succeeded > 0) {
-      return "succeeded";
-    }
-    if (k8sJob.status.failed && k8sJob.status.failed > 0) {
-      return "failed";
-    }
-    if (k8sJob.status.active && k8sJob.status.active > 0) {
-      return "running";
-    }
-    return "pending";
-  }
-
-  /**
-   * Extract error message from failed job
-   */
-  private extractErrorFromJob(k8sJob: K8sJobStatus): string {
-    const failedCondition = k8sJob.status.conditions?.find(
-      (c) => c.type === "Failed" && c.status === "True",
-    );
-
-    if (failedCondition) {
-      return failedCondition.message ?? failedCondition.reason ?? "Unknown error";
-    }
-
-    return "Job failed without error message";
+  private recordError(error: unknown): void {
+    this.stats.lastErrorAt = new Date();
+    this.stats.lastError = error instanceof Error ? error.message : String(error);
   }
 }
 
@@ -608,7 +429,6 @@ export class WorkflowJobManager {
  */
 export function createWorkflowJobManager(
   config: WorkflowJobManagerConfig,
-  k8sClient: K8sClient,
 ): WorkflowJobManager {
-  return new WorkflowJobManager(config, k8sClient);
+  return new WorkflowJobManager(config);
 }

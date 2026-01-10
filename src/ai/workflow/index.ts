@@ -217,21 +217,31 @@ export type {
   WorkflowWorkerConfig,
 } from "./worker/index.ts";
 
-// K8s Job-based execution (multi-tenant / untrusted code)
+// Job-based execution (multi-tenant / untrusted code)
 export { createWorkflowJobManager, WorkflowJobManager } from "./worker/index.ts";
 
 export type {
-  JobInfo,
-  JobStatus,
-  K8sClient,
-  K8sJob,
-  K8sJobStatus,
   ManagerStats,
   ManagerStatus,
   WorkflowJobManagerConfig,
 } from "./worker/index.ts";
 
-// Job entrypoint (runs inside ephemeral container)
+// Job Executors (pluggable runtime backends)
+export { isJobExecutor, K8sJobExecutor, ProcessJobExecutor } from "./worker/index.ts";
+
+export type {
+  JobConfig,
+  JobExecutor,
+  JobInfo,
+  JobStatus,
+  K8sClient,
+  K8sJobExecutorConfig,
+  K8sJobSpec,
+  K8sJobStatusResponse,
+  ProcessJobExecutorConfig,
+} from "./worker/index.ts";
+
+// Job entrypoint (runs inside ephemeral container/process)
 export { createJobEntrypoint, EXIT_CODES, runWorkflowJob } from "./worker/index.ts";
 
 export type { CreateJobEntrypointOptions, JobEntrypointConfig } from "./worker/index.ts";

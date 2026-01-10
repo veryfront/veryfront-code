@@ -3,17 +3,22 @@
  *
  * Provides distributed workflow execution support.
  *
- * Two modes available:
+ * Three modes available:
  *
  * 1. **WorkflowWorker** - In-process polling worker
  *    - Polls for stalled workflows and resumes them
  *    - Good for trusted code or single-tenant deployments
  *    - Simple setup, lower overhead
  *
- * 2. **WorkflowJobManager** - K8s Job-based execution
+ * 2. **WorkflowJobManager + K8sJobExecutor** - Kubernetes Job-based execution
  *    - Each workflow runs in an ephemeral container
  *    - Complete tenant isolation (no shared state)
  *    - Required for multi-tenant untrusted code execution
+ *
+ * 3. **WorkflowJobManager + ProcessJobExecutor** - Local process execution
+ *    - Spawns child processes for each workflow
+ *    - Good for local development without K8s/Docker
+ *    - Mirrors production behavior
  */
 
 // In-process worker (single-tenant / trusted code)
@@ -25,21 +30,32 @@ export {
   type WorkflowWorkerConfig,
 } from "./workflow-worker.ts";
 
-// K8s Job-based execution (multi-tenant / untrusted code)
+// Job-based execution (multi-tenant / untrusted code)
 export {
   createWorkflowJobManager,
   WorkflowJobManager,
-  type JobInfo,
-  type JobStatus,
-  type K8sClient,
-  type K8sJob,
-  type K8sJobStatus,
   type ManagerStats,
   type ManagerStatus,
   type WorkflowJobManagerConfig,
 } from "./job-manager.ts";
 
-// Job entrypoint (runs inside ephemeral container)
+// Job Executors (pluggable runtime backends)
+export {
+  isJobExecutor,
+  K8sJobExecutor,
+  ProcessJobExecutor,
+  type JobConfig,
+  type JobExecutor,
+  type JobInfo,
+  type JobStatus,
+  type K8sClient,
+  type K8sJobExecutorConfig,
+  type K8sJobSpec,
+  type K8sJobStatusResponse,
+  type ProcessJobExecutorConfig,
+} from "./executors/index.ts";
+
+// Job entrypoint (runs inside ephemeral container/process)
 export {
   createJobEntrypoint,
   type CreateJobEntrypointOptions,
