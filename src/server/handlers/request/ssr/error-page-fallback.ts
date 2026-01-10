@@ -54,7 +54,12 @@ export async function tryErrorPageFallback(
     }
 
     // Priority 1: Try specific error page (404.tsx, 500.tsx)
-    const specificPage = statusCode === 404 ? "404" : statusCode === 500 ? "500" : null;
+    let specificPage: ErrorPageType | null = null;
+    if (statusCode === 404) {
+      specificPage = "404";
+    } else if (statusCode === 500) {
+      specificPage = "500";
+    }
     if (specificPage) {
       const ErrorComponent = await tryLoadErrorPage(pagesDir, specificPage, ctx);
       if (ErrorComponent) {

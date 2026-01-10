@@ -44,9 +44,5 @@ function normalizeWeakEtag(hash: string): string {
  * ```
  */
 export function computeSSRETag(ssrHash: string | undefined, html: string): string {
-  if (ssrHash && ssrHash.length > 0) {
-    return normalizeWeakEtag(ssrHash);
-  }
-
-  return computeEtag(html);
+  return ssrHash ? normalizeWeakEtag(ssrHash) : computeEtag(html);
 }
