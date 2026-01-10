@@ -2,6 +2,8 @@
  * Token Storage Adapter Factory
  *
  * Creates the appropriate token storage adapter based on configuration.
+ * For auto-detection from environment variables, use getTokenStorageAdapter()
+ * from token/integration.ts instead.
  */
 
 import { logger } from "@veryfront/utils";
@@ -35,18 +37,14 @@ export async function createTokenStorageAdapter(
   logger.debug("[TokenAdapterFactory] Creating adapter", { type });
 
   if (type === "memory") {
-    const { MemoryTokenAdapter } = await import(
-      "./veryfront/memory-adapter.ts"
-    );
+    const { MemoryTokenAdapter } = await import("./veryfront/memory-adapter.ts");
     const adapter = new MemoryTokenAdapter();
     await adapter.initialize?.();
     return adapter;
   }
 
   if (type === "veryfront-api") {
-    const { VeryfrontTokenAdapter } = await import(
-      "./veryfront/adapter.ts"
-    );
+    const { VeryfrontTokenAdapter } = await import("./veryfront/adapter.ts");
     const adapter = new VeryfrontTokenAdapter(config);
     await adapter.initialize?.();
     return adapter;
@@ -59,50 +57,4 @@ export async function createTokenStorageAdapter(
         `Supported types: "memory", "veryfront-api".`,
     }),
   );
-}
-
-/**
- * Create token storage adapter from environment variables
- *
- * Automatically detects configuration from:
- * - VERYFRONT_API_TOKEN + VERYFRONT_PROJECT_SLUG → veryfront-api
- * - Otherwise → memory (development)
- */
-export function createTokenStorageAdapterFromEnv(): Promise<TokenStorageAdapter> {
-  const apiToken =
-    // deno-lint-ignore no-explicit-any
-    (globalThis as any).Deno?.env?.get("VERYFRONT_API_TOKEN") ||
-    (typeof process !== "undefined" ? process.env?.VERYFRONT_API_TOKEN : undefined);
-
-  const projectSlug =
-    // deno-lint-ignore no-explicit-any
-    (globalThis as any).Deno?.env?.get("VERYFRONT_PROJECT_SLUG") ||
-    (typeof process !== "undefined" ? process.env?.VERYFRONT_PROJECT_SLUG : undefined);
-
-  const baseUrl =
-    // deno-lint-ignore no-explicit-any
-    (globalThis as any).Deno?.env?.get("VERYFRONT_API_URL") ||
-    (typeof process !== "undefined" ? process.env?.VERYFRONT_API_URL : undefined);
-
-  if (apiToken && projectSlug) {
-    logger.info("[TokenAdapterFactory] Using Veryfront Cloud storage", {
-      projectSlug,
-    });
-
-    return createTokenStorageAdapter({
-      type: "veryfront-api",
-      veryfront: {
-        apiToken,
-        projectSlug,
-        baseUrl,
-      },
-    });
-  }
-
-  logger.warn(
-    "[TokenAdapterFactory] No Veryfront credentials found, using in-memory storage. " +
-      "Set VERYFRONT_API_TOKEN and VERYFRONT_PROJECT_SLUG for production.",
-  );
-
-  return createTokenStorageAdapter({ type: "memory" });
 }

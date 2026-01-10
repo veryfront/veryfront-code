@@ -11,7 +11,7 @@ export * from "./mock.ts";
 // Runtime adapters (re-export for backwards compatibility)
 export * from "./bun.ts";
 export * from "./node.ts";
-export { DenoAdapter, denoAdapter } from "./runtime/deno/index.ts";
+export * from "./deno.ts";
 
 // Security
 export * as security from "./security/index.ts";
@@ -52,7 +52,6 @@ export {
 // Token Storage
 export {
   createTokenStorageAdapter,
-  createTokenStorageAdapterFromEnv,
   getTokenStorageAdapter,
   getTokenStorageType,
   isTokenStorageConfigured,
