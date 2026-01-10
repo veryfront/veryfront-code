@@ -86,14 +86,14 @@ describe(
         });
 
         const server = await denoAdapter.serve(
-          (_req) => {
+          (_req: Request) => {
             throw new Error("boom");
           },
           {
             port: 0, // Use random available port
             hostname: "127.0.0.1", // Explicit IPv4 to match fetch
             signal: ac.signal,
-            onListen: (p) => {
+            onListen: (p: { port: number }) => {
               port = p.port;
               resolveReady();
             },

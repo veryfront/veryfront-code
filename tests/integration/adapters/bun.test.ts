@@ -1,7 +1,7 @@
 import { assertEquals, assertExists } from "std/assert/mod.ts";
 import { join } from "std/path/mod.ts";
 import { describe, it } from "std/testing/bdd.ts";
-import { BunAdapter } from "@veryfront/platform/adapters/runtime/bun";
+import { BunAdapter } from "@veryfront/platform/adapters/runtime/bun/index.ts";
 import { startUniversalServer } from "../../../src/server/production-server.ts";
 import { getFreePort } from "../../_helpers/utils.ts";
 
@@ -28,7 +28,7 @@ describe(
           const port = getFreePort();
 
           const server = await adapter.serve(
-            (_req) => {
+            (_req: Request) => {
               hit++;
               return new Response("ok");
             },
