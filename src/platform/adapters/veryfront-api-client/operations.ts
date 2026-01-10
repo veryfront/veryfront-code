@@ -2,7 +2,6 @@ import { logger } from "@veryfront/utils";
 import { requestWithRetry, type RetryConfig } from "./retry-handler.ts";
 import { VeryfrontAPIError } from "./types.ts";
 import {
-  GetComponentResponseSchema,
   GetFileContentResponseSchema,
   GetPublishedFileContentResponseSchema,
   type ListFilesResponse,
@@ -269,50 +268,6 @@ export class VeryfrontAPIOperations {
       // 404 means no project found for domain
       if (error instanceof Error && error.message.includes("404")) {
         logger.debug("[VeryfrontAPIClient] No project found for domain", { domain });
-        return null;
-      }
-      throw error;
-    }
-  }
-
-  /**
-   * Get component/entity info by UUID.
-   * Used to resolve layout/provider UUIDs to file paths.
-   * Note: This endpoint uses project slug, not project ID.
-   */
-  async getComponentByEntityId(
-    entityId: string,
-    projectSlug: string,
-  ): Promise<{ id: string; path: string; importPath: string; body?: string } | null> {
-    const url = `/projects/${projectSlug}/components/${entityId}`;
-
-    logger.info("[VeryfrontAPIClient] Getting component by entity ID", {
-      entityId,
-      projectSlug,
-      url,
-    });
-
-    try {
-      const raw = await this.request(url);
-      const response = GetComponentResponseSchema.parse(raw);
-
-      logger.info("[VeryfrontAPIClient] Component found", {
-        entityId,
-        importPath: response.importPath,
-        slug: response.slug,
-        hasBody: !!response.body,
-      });
-      // Map importPath to path for consistency with existing code
-      return {
-        id: response.id,
-        path: response.importPath,
-        importPath: response.importPath,
-        body: response.body,
-      };
-    } catch (error) {
-      // 404 means component not found
-      if (error instanceof Error && error.message.includes("404")) {
-        logger.debug("[VeryfrontAPIClient] Component not found", { entityId, projectSlug });
         return null;
       }
       throw error;

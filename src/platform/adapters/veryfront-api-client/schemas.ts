@@ -154,23 +154,6 @@ export const LookupDomainResponseSchema = z.object({
   releaseId: z.string().uuid().nullable(),
 });
 
-/**
- * GET /projects/:slug/components/:entityId
- * Get component/entity info by UUID.
- * Used to resolve layout/provider UUIDs to file paths.
- *
- * NOTE: This endpoint is NOT YET IMPLEMENTED in veryfront-api.
- * The renderer's getComponentByEntityId() will return null/404 until
- * the API adds this endpoint. See API comparison report for details.
- */
-export const GetComponentResponseSchema = z.object({
-  id: z.string().uuid(),
-  slug: z.string().optional(),
-  name: z.string().optional(),
-  importPath: z.string(),
-  body: z.string().optional(),
-});
-
 // =============================================================================
 // Type Exports (inferred from schemas)
 // =============================================================================
@@ -188,7 +171,6 @@ export type GetFileContentResponse = z.infer<typeof GetFileContentResponseSchema
 export type ListPublishedFilesResponse = z.infer<typeof ListPublishedFilesResponseSchema>;
 export type GetPublishedFileContentResponse = z.infer<typeof GetPublishedFileContentResponseSchema>;
 export type LookupDomainResponse = z.infer<typeof LookupDomainResponseSchema>;
-export type GetComponentResponse = z.infer<typeof GetComponentResponseSchema>;
 
 // =============================================================================
 // Endpoint Registry (for documentation/tooling)
@@ -240,12 +222,5 @@ export const API_ENDPOINTS = {
     path: "/lookup/domain/:domain",
     description: "Look up project info by custom domain",
     responseSchema: LookupDomainResponseSchema,
-  },
-  getComponent: {
-    method: "GET" as const,
-    path: "/projects/:slug/components/:entityId",
-    description: "Get component/entity info by UUID (NOT YET IMPLEMENTED IN API)",
-    responseSchema: GetComponentResponseSchema,
-    status: "pending" as const, // Endpoint needs to be added to veryfront-api
   },
 } as const;
