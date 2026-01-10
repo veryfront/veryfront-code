@@ -51,9 +51,7 @@ export class OptimizedFileWatcher {
 
     this.metrics.batchedOperations++;
     this.metrics.totalBatchSize += batchSize;
-    if (batchSize > this.metrics.largestBatch) {
-      this.metrics.largestBatch = batchSize;
-    }
+    this.metrics.largestBatch = Math.max(this.metrics.largestBatch, batchSize);
 
     this.changeQueue.clear();
 

@@ -160,14 +160,19 @@ class ConfigValidationError extends Error {
   }
 }
 
+const VIRTUAL_FS_ADAPTERS = new Set([
+  "VeryfrontFSAdapter",
+  "MultiProjectFSAdapter",
+  "GitHubFSAdapter",
+]);
+
 /**
  * Check if the adapter is using a virtual filesystem (e.g., Veryfront API, GitHub)
  */
 function isVirtualFilesystem(adapter: RuntimeAdapter): boolean {
   const wrappedAdapter = (adapter?.fs as { fsAdapter?: unknown })?.fsAdapter;
   const adapterName = (wrappedAdapter as { constructor?: { name?: string } })?.constructor?.name;
-  return adapterName === "VeryfrontFSAdapter" || adapterName === "MultiProjectFSAdapter" ||
-    adapterName === "GitHubFSAdapter";
+  return adapterName !== undefined && VIRTUAL_FS_ADAPTERS.has(adapterName);
 }
 
 /**
@@ -268,9 +273,8 @@ async function loadAndMergeConfig(
 }
 
 function isConfigError(error: unknown): boolean {
-  if (error instanceof ConfigValidationError) return true;
-  if (error instanceof Error && error.message.startsWith("Invalid veryfront.config")) return true;
-  return false;
+  return error instanceof ConfigValidationError ||
+    (error instanceof Error && error.message.startsWith("Invalid veryfront.config"));
 }
 
 export async function getConfig(

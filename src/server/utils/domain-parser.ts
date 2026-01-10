@@ -179,11 +179,8 @@ export function getEffectiveProjectSlug(
   host: string,
   configuredSlug: string,
 ): { slug: string; fromHost: boolean } {
-  const parsed = parseProjectDomain(host);
-
-  if (parsed.slug) {
-    return { slug: parsed.slug, fromHost: true };
-  }
-
-  return { slug: configuredSlug, fromHost: false };
+  const { slug } = parseProjectDomain(host);
+  return slug
+    ? { slug, fromHost: true }
+    : { slug: configuredSlug, fromHost: false };
 }
