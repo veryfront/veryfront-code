@@ -1,9 +1,3 @@
-/**
- * Rate Limiting Strategies
- *
- * Different algorithms for rate limiting
- */
-
 import type { RateLimitConfig, RateLimitStore } from "./types.ts";
 import { MemoryRateLimitStore } from "./memory-store.ts";
 
@@ -13,12 +7,7 @@ interface RateLimitResult {
   resetTime: number;
 }
 
-/**
- * Fixed Window Strategy
- *
- * Simple counter that resets at fixed intervals.
- * Fast but can allow bursts at window boundaries.
- */
+/** Fixed window strategy - simple counter that resets at fixed intervals */
 export async function fixedWindowStrategy(
   key: string,
   config: RateLimitConfig,
@@ -32,12 +21,7 @@ export async function fixedWindowStrategy(
   return { allowed, remaining, resetTime };
 }
 
-/**
- * Sliding Window Strategy
- *
- * More accurate than fixed window, prevents burst attacks.
- * Tracks individual request timestamps.
- */
+/** Sliding window strategy - tracks individual timestamps to prevent bursts */
 export async function slidingWindowStrategy(
   key: string,
   config: RateLimitConfig,
@@ -73,12 +57,7 @@ export async function slidingWindowStrategy(
   return { allowed, remaining, resetTime: state.resetTime };
 }
 
-/**
- * Token Bucket Strategy
- *
- * Allows burst traffic up to bucket capacity.
- * Tokens refill at a constant rate.
- */
+/** Token bucket strategy - allows bursts up to capacity with constant refill rate */
 export async function tokenBucketStrategy(
   key: string,
   config: RateLimitConfig,
