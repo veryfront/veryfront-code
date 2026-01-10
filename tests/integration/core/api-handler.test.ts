@@ -6,7 +6,7 @@ import { assert, assertEquals, assertExists } from "std/assert/mod.ts";
 // Import removed - no longer needed after migration to TestContext
 import { join } from "std/path/mod.ts";
 import { afterEach, beforeAll, describe, it } from "std/testing/bdd.ts";
-import { denoAdapter } from "@veryfront/platform/adapters/deno.ts";
+import { denoAdapter } from "@veryfront/platform/adapters/runtime/deno";
 import { APIRouteHandler } from "@veryfront/routing/api/index.ts";
 import { withTestContext } from "../../_helpers/context.ts";
 

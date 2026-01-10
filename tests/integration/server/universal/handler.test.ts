@@ -3,7 +3,7 @@ import { afterAll, describe, it } from "std/testing/bdd.ts";
 import "../../../_helpers/log-guard.ts";
 
 import { join } from "std/path/mod.ts";
-import { denoAdapter } from "@veryfront/platform/adapters/deno.ts";
+import { denoAdapter } from "@veryfront/platform/adapters/runtime/deno";
 import { createVeryfrontHandler } from "../../../../src/server/universal-handler/index.ts";
 import { type TestContext, withTestContext } from "../../../_helpers/context.ts";
 import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";

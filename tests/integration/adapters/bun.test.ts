@@ -1,7 +1,7 @@
 import { assertEquals, assertExists } from "std/assert/mod.ts";
 import { join } from "std/path/mod.ts";
 import { describe, it } from "std/testing/bdd.ts";
-import { BunAdapter } from "@veryfront/platform/adapters/bun.ts";
+import { BunAdapter } from "@veryfront/platform/adapters/runtime/bun";
 import { startUniversalServer } from "../../../src/server/production-server.ts";
 import { getFreePort } from "../../_helpers/utils.ts";
 

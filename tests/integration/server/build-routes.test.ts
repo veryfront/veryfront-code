@@ -23,7 +23,7 @@ import "../../_helpers/log-guard.ts";
 import { collectAppRoutes, collectPagesRoutes } from "../../../src/server/build-routes.ts";
 import type { AppRouteInfo, RouteInfo } from "../../../src/server/build-types.ts";
 import { withTestContext } from "../../_helpers/context.ts";
-import { denoAdapter } from "@veryfront/platform/adapters/deno.ts";
+import { denoAdapter } from "@veryfront/platform/adapters/runtime/deno";
 import { cleanupBundler } from "../../../src/rendering/cleanup.ts";
 
 describe("Route Discovery Tests", { sanitizeOps: false, sanitizeResources: false }, () => {

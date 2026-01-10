@@ -16,7 +16,7 @@ import { afterAll, describe, it } from "std/testing/bdd.ts";
 import { VeryfrontRenderer } from "../../../../src/rendering/orchestrator/ssr.ts";
 import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";
 import { withTestContext } from "../../../_helpers/context.ts";
-import { DenoAdapter } from "@veryfront/platform/adapters/deno.ts";
+import { DenoAdapter } from "@veryfront/platform/adapters/runtime/deno/index.ts";
 
 describe("Layout System Integration", { sanitizeOps: false, sanitizeResources: false }, () => {
   // Clean up bundler intervals to prevent resource leaks
