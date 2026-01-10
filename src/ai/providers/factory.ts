@@ -1,7 +1,3 @@
-/**
- * Provider factory and registry
- */
-
 import type { Provider, ProvidersConfig } from "../types/provider.ts";
 import { OpenAIProvider } from "./openai.ts";
 import { AnthropicProvider } from "./anthropic.ts";
@@ -10,13 +6,11 @@ import { agentLogger } from "../../core/utils/logger/logger.ts";
 import { createError, toError } from "../../core/errors/veryfront-error.ts";
 import { getEnv } from "../../platform/compat/process.ts";
 
-/** Provider registry - manages provider instances */
 class ProviderRegistry {
   private providers = new Map<string, Provider>();
   private config: ProvidersConfig = {};
   private autoInitialized = false;
 
-  /** Register a provider with error handling */
   private registerProvider(
     name: string,
     createProvider: () => Provider,
@@ -33,7 +27,6 @@ class ProviderRegistry {
     }
   }
 
-  /** Auto-initialize providers from environment variables (called lazily) */
   private autoInitializeFromEnv(): void {
     if (this.autoInitialized) return;
     this.autoInitialized = true;
@@ -63,7 +56,6 @@ class ProviderRegistry {
     }
   }
 
-  /** Initialize providers from configuration */
   initialize(config: ProvidersConfig): void {
     this.config = config;
 
@@ -78,7 +70,6 @@ class ProviderRegistry {
     }
   }
 
-  /** Get a provider by name */
   getProvider(name: string): Provider {
     // Auto-initialize from environment variables if not already done
     this.autoInitializeFromEnv();
@@ -97,7 +88,6 @@ class ProviderRegistry {
     return provider;
   }
 
-  /** Get provider from model string (format: "provider/model-name") */
   getProviderFromModel(modelString: string): {
     provider: Provider;
     model: string;
@@ -128,50 +118,41 @@ class ProviderRegistry {
     return { provider, model: modelName };
   }
 
-  /** Get default provider */
   getDefaultProvider(): Provider {
     const defaultName = this.config.default || "openai";
     return this.getProvider(defaultName);
   }
 
-  /** Check if a provider is available */
   hasProvider(name: string): boolean {
     this.autoInitializeFromEnv();
     return this.providers.has(name);
   }
 
-  /** Get all available provider names */
   getAvailableProviders(): string[] {
     this.autoInitializeFromEnv();
     return Array.from(this.providers.keys());
   }
 
-  /** Clear all providers (for testing) */
   clear(): void {
     this.providers.clear();
     this.config = {};
   }
 }
 
-// Singleton instance using globalThis to share across module contexts
-// This is necessary for esbuild-bundled API routes to access the same registry
 const PROVIDER_REGISTRY_KEY = "__veryfront_provider_registry__";
 // deno-lint-ignore no-explicit-any
 const _globalProvider = globalThis as any;
 export const providerRegistry: ProviderRegistry = _globalProvider[PROVIDER_REGISTRY_KEY] ||=
   new ProviderRegistry();
 
-/** Initialize providers with configuration */
 export function initializeProviders(config: ProvidersConfig): void {
   providerRegistry.initialize(config);
 }
 
-/** Get a provider by name */
 export function getProvider(name: string): Provider {
   return providerRegistry.getProvider(name);
 }
 
-/** Get provider from model string */
 export function getProviderFromModel(modelString: string): {
   provider: Provider;
   model: string;

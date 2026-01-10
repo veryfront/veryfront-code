@@ -1,13 +1,3 @@
-/**
- * Auto-discovery system for AI components
- *
- * Scans ai/ directories and automatically registers:
- * - Tools (ai/tools/)
- * - Agents (ai/agents/)
- * - Resources (ai/resources/)
- * - Prompts (ai/prompts/)
- */
-
 import { detectPlatform } from "../runtime/platform.ts";
 import type { Platform } from "../runtime/platform.ts";
 import { registerPrompt, registerResource, registerTool } from "../mcp/registry.ts";
@@ -27,27 +17,16 @@ import { ensureError } from "../../core/errors/veryfront-error.ts";
 
 interface FileDiscoveryContext {
   platform: Platform;
-  /** Optional filesystem adapter for cross-platform support */
   fsAdapter?: FileSystemAdapter;
-  /** Cached node dependencies (lazy loaded) */
   nodeDeps?: {
     fs: typeof import("node:fs");
     path: typeof import("node:path");
   };
-  /** Base directory for the project (needed for Node.js transpilation) */
   baseDir?: string;
 }
 
-/** Cache for transpiled modules to avoid re-transpiling the same file */
 const transpileCache = new Map<string, unknown>();
 
-/**
- * Create an esbuild plugin for loading files from fsAdapter (Veryfront Cloud).
- * This allows esbuild to properly resolve and bundle relative imports from remote storage.
- *
- * The plugin intercepts relative imports (./foo or ../foo), resolves them to absolute paths,
- * and loads the file content from the fsAdapter instead of the local filesystem.
- */
 function createFsAdapterPlugin(fsAdapter: FileSystemAdapter) {
   // Cache existence checks to avoid repeated remote calls
   const existsCache = new Map<string, boolean>();
@@ -145,12 +124,6 @@ function createFsAdapterPlugin(fsAdapter: FileSystemAdapter) {
   };
 }
 
-/**
- * Import a TypeScript module in a platform-aware way.
- * - Deno: Transpile to rewrite npm package imports, then import natively
- * - Node.js: Transpile with esbuild, then import
- * - Node.js + fsAdapter: Use esbuild plugin to load from remote storage
- */
 async function importModule(
   file: string,
   context: FileDiscoveryContext,
@@ -266,9 +239,6 @@ async function importModule(
   }
 }
 
-/**
- * Rewrite imports for Deno (use npm: specifiers and resolve relative imports)
- */
 function rewriteForDeno(code: string, fileDir: string): string {
   let transformed = code;
 
@@ -299,9 +269,6 @@ function rewriteForDeno(code: string, fileDir: string): string {
   return transformed;
 }
 
-/**
- * Rewrite external imports to absolute paths for Node.js compatibility
- */
 async function rewriteDiscoveryImports(
   code: string,
   projectDir: string,
@@ -434,28 +401,13 @@ async function rewriteDiscoveryImports(
 }
 
 export interface DiscoveryConfig {
-  /** Base directory (usually project root) */
   baseDir: string;
-
-  /** AI directory (relative to baseDir) */
   aiDir?: string;
-
-  /** Tool directories */
   toolDirs?: string[];
-
-  /** Agent directories */
   agentDirs?: string[];
-
-  /** Resource directories */
   resourceDirs?: string[];
-
-  /** Prompt directories */
   promptDirs?: string[];
-
-  /** Enable verbose logging */
   verbose?: boolean;
-
-  /** Optional filesystem adapter for cross-platform support (Cloudflare Workers, etc.) */
   fsAdapter?: FileSystemAdapter;
 }
 
@@ -467,9 +419,6 @@ export interface DiscoveryResult {
   errors: Array<{ file: string; error: Error }>;
 }
 
-/**
- * Discover and register all AI components
- */
 export async function discoverAll(
   config: DiscoveryConfig,
 ): Promise<DiscoveryResult> {
@@ -523,9 +472,6 @@ export async function discoverAll(
   return result;
 }
 
-/**
- * Discover tools in a directory
- */
 async function discoverTools(
   dir: string,
   result: DiscoveryResult,
@@ -571,9 +517,6 @@ async function discoverTools(
   }
 }
 
-/**
- * Discover agents in a directory
- */
 async function discoverAgents(
   dir: string,
   result: DiscoveryResult,
@@ -623,9 +566,6 @@ async function discoverAgents(
   }
 }
 
-/**
- * Discover resources in a directory
- */
 async function discoverResources(
   dir: string,
   result: DiscoveryResult,
@@ -672,9 +612,6 @@ async function discoverResources(
   }
 }
 
-/**
- * Discover prompts in a directory
- */
 async function discoverPrompts(
   dir: string,
   result: DiscoveryResult,
@@ -720,9 +657,6 @@ async function discoverPrompts(
   }
 }
 
-/**
- * Find all TypeScript files in a directory (recursively)
- */
 async function findTypeScriptFiles(
   dir: string,
   context: FileDiscoveryContext,
@@ -804,9 +738,6 @@ async function getNodeDeps(context: FileDiscoveryContext) {
   return context.nodeDeps;
 }
 
-/**
- * Convert filename to camelCase ID
- */
 function filenameToId(filePath: string): string {
   const filename = filePath.split("/").pop()?.replace(/\.(ts|tsx|js|jsx)$/, "") || "";
 
@@ -815,9 +746,6 @@ function filenameToId(filePath: string): string {
     .replace(/^[A-Z]/, (char) => char.toLowerCase());
 }
 
-/**
- * Convert file path to resource pattern
- */
 function filePathToPattern(filePath: string, baseDir: string): string {
   const cleanPath = filePath.replace("file://", "");
 
@@ -832,22 +760,8 @@ function filePathToPattern(filePath: string, baseDir: string): string {
   return pattern;
 }
 
-/**
- * Tracked agent file paths for index generation
- */
 const discoveredAgentPaths = new Map<string, string>();
 
-/**
- * Generate an index file that exports all discovered agents
- * This allows API routes to import agents from a known location
- *
- * @example
- * // Generated file: ai/.generated/agents.ts
- * export { default as assistant } from '../agents/assistant';
- *
- * // Usage in API route:
- * import { assistant } from '../../ai/.generated/agents';
- */
 export async function generateAgentIndex(
   baseDir: string,
   aiDir: string = "ai",
@@ -911,23 +825,14 @@ export async function generateAgentIndex(
   }
 }
 
-/**
- * Track agent file path during discovery
- */
 function trackAgentPath(id: string, filePath: string): void {
   discoveredAgentPaths.set(id, filePath);
 }
 
-/**
- * Clear tracked agent paths (for re-discovery)
- */
 export function clearTrackedAgents(): void {
   discoveredAgentPaths.clear();
 }
 
-/**
- * Clear the transpile cache (for HMR/development)
- */
 export function clearTranspileCache(): void {
   transpileCache.clear();
 }

@@ -8,10 +8,6 @@ export interface FilesystemCacheStoreOptions {
   baseDir: string;
 }
 
-/**
- * Filesystem cache store - always uses local filesystem regardless of FSAdapter
- * Cache files should be local for performance and to avoid remote write operations
- */
 export class FilesystemCacheStore implements CacheStore {
   private baseDir: string;
   private localAdapterPromise: Promise<RuntimeAdapter>;

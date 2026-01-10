@@ -1,8 +1,3 @@
-/**
- * Base provider implementation
- * All provider implementations extend this base class
- */
-
 import { createError, toError } from "../../core/errors/veryfront-error.ts";
 import type {
   CompletionRequest,
@@ -13,7 +8,6 @@ import type {
 import { agentLogger } from "../../core/utils/logger/logger.ts";
 import { z } from "zod";
 
-/** Map common finish reasons to standard format (used by OpenAI and Google) */
 export function mapFinishReason(reason: string): CompletionResponse["finishReason"] {
   switch (reason) {
     case "stop":
@@ -31,7 +25,6 @@ export function mapFinishReason(reason: string): CompletionResponse["finishReaso
   }
 }
 
-/** Schema for OpenAI streaming response chunks */
 const OpenAIStreamChunkSchema = z.object({
   choices: z.array(z.object({
     delta: z.object({
@@ -49,7 +42,6 @@ const OpenAIStreamChunkSchema = z.object({
   })).min(1),
 });
 
-/** Schema for OpenAI non-streaming completion response */
 const OpenAICompletionResponseSchema = z.object({
   id: z.string(),
   choices: z.array(z.object({
@@ -83,7 +75,6 @@ export abstract class BaseProvider implements Provider {
     this.validateConfig();
   }
 
-  /** Validate provider configuration */
   protected validateConfig(): void {
     if (!this.config.apiKey) {
       throw toError(createError({
@@ -93,23 +84,11 @@ export abstract class BaseProvider implements Provider {
     }
   }
 
-  /** Get headers for API requests */
   protected abstract getHeaders(): Record<string, string>;
-
-  /** Get API endpoint URL */
   protected abstract getEndpoint(path: string): string;
+  protected abstract transformRequest(request: CompletionRequest): Record<string, unknown>;
+  protected abstract transformResponse(response: unknown): CompletionResponse;
 
-  /** Transform request to provider-specific format */
-  protected abstract transformRequest(
-    request: CompletionRequest,
-  ): Record<string, unknown>;
-
-  /** Transform provider response to standard format */
-  protected abstract transformResponse(
-    response: unknown,
-  ): CompletionResponse;
-
-  /** Complete a prompt (non-streaming) */
   async complete(request: CompletionRequest): Promise<CompletionResponse> {
     const endpoint = this.getEndpoint("/chat/completions");
     const headers = this.getHeaders();
@@ -149,7 +128,6 @@ export abstract class BaseProvider implements Provider {
     return this.transformResponse(parseResult.data);
   }
 
-  /** Stream a completion */
   async stream(request: CompletionRequest): Promise<ReadableStream> {
     const endpoint = this.getEndpoint("/chat/completions");
     const headers = this.getHeaders();
@@ -182,10 +160,6 @@ export abstract class BaseProvider implements Provider {
     return this.transformStream(response.body);
   }
 
-  /**
-   * Transform provider stream to standard format.
-   * Emits JSON chunks: content, tool_call_start, tool_call_delta, finish.
-   */
   protected transformStream(stream: ReadableStream): ReadableStream {
     const reader = stream.getReader();
     const decoder = new TextDecoder();

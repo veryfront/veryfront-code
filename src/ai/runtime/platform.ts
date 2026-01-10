@@ -1,47 +1,16 @@
-/**
- * Platform Detection and Runtime Abstractions
- *
- * Detects the current JavaScript runtime and provides platform-specific
- * capabilities and constraints.
- *
- * Supported platforms:
- * - Deno
- * - Node.js
- * - Bun
- * - Cloudflare Workers
- */
-
 export type Platform = "deno" | "node" | "bun" | "cloudflare-workers" | "unknown";
 
 export interface PlatformCapabilities {
-  /** Can run MCP server (requires TCP server support) */
   canRunMCPServer: boolean;
-
-  /** Maximum agent steps before timeout risk */
   maxAgentSteps: number;
-
-  /** CPU time limit in milliseconds */
   cpuTimeLimit: number | null;
-
-  /** Memory limit in MB */
   memoryLimit: number | null;
-
-  /** Supports file system access */
   hasFileSystem: boolean;
-
-  /** Supports long-running tasks */
   supportsLongRunning: boolean;
-
-  /** Recommended for streaming */
   streamingRecommended: boolean;
-
-  /** Platform display name */
   displayName: string;
 }
 
-/**
- * Detects the current JavaScript runtime platform
- */
 export function detectPlatform(): Platform {
   // Check for Deno
   // @ts-ignore - Deno global may not exist
@@ -76,9 +45,6 @@ export function detectPlatform(): Platform {
   return "unknown";
 }
 
-/**
- * Gets platform capabilities for the current or specified platform
- */
 export function getPlatformCapabilities(platform?: Platform): PlatformCapabilities {
   const detectedPlatform = platform || detectPlatform();
 
@@ -145,9 +111,6 @@ export function getPlatformCapabilities(platform?: Platform): PlatformCapabiliti
   }
 }
 
-/**
- * Checks if the current platform supports a specific capability
- */
 export function supportsCapability(capability: keyof PlatformCapabilities): boolean {
   const capabilities = getPlatformCapabilities();
   const value = capabilities[capability];
@@ -165,9 +128,6 @@ export function supportsCapability(capability: keyof PlatformCapabilities): bool
   return false;
 }
 
-/**
- * Gets a warning message if the current platform has constraints
- */
 export function getPlatformWarnings(): string[] {
   const platform = detectPlatform();
   const capabilities = getPlatformCapabilities(platform);
