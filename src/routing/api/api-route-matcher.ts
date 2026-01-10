@@ -47,17 +47,10 @@ export class DynamicRouter {
       }
     }
 
-    regex = regex.replace(/\/?\[\[\.\.\.([^\]]+)\]\]/g, () => {
-      return "(?:/(.+))?";
-    });
-
-    regex = regex.replace(/\[\.\.\.([^\]]+)\]/g, () => {
-      return "(.+)";
-    });
-
-    regex = regex.replace(/\[([^\]]+)\]/g, () => {
-      return "([^/]+)";
-    });
+    regex = regex
+      .replace(/\/?\[\[\.\.\.([^\]]+)\]\]/g, "(?:/(.+))?")
+      .replace(/\[\.\.\.([^\]]+)\]/g, "(.+)")
+      .replace(/\[([^\]]+)\]/g, "([^/]+)");
 
     if (pattern !== "/" && pattern.endsWith("/")) {
       pattern = pattern.slice(0, -1);

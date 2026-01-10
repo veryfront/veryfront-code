@@ -17,7 +17,7 @@ export function formatBytes(bytes: number): string {
 }
 
 export function estimateSize(value: unknown): number {
-  if (value === null || value === undefined) return 8;
+  if (value == null) return 8;
 
   switch (typeof value) {
     case "boolean":

@@ -62,7 +62,7 @@ export function isReactElement(value: unknown): boolean {
  * from bundled React to return false for elements created by project React.
  */
 export function looksLikeReactElement(value: unknown): boolean {
-  if (value === null || value === undefined || typeof value !== "object") {
+  if (value == null || typeof value !== "object") {
     return false;
   }
 

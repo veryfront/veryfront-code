@@ -94,7 +94,7 @@ function serializeError(err: unknown): LogEntry["error"] | undefined {
       stack: err.stack,
     };
   }
-  if (err !== undefined && err !== null) {
+  if (err != null) {
     return {
       name: "UnknownError",
       message: String(err),

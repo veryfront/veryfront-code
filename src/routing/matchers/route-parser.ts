@@ -22,17 +22,10 @@ export function parseRoute(pattern: string, page: string): Route {
 
   let regexPattern = pattern;
 
-  regexPattern = regexPattern.replace(/\[\[\.\.\.(\w+)\]\]/g, () => {
-    return "___OPTIONAL_CATCHALL___";
-  });
-
-  regexPattern = regexPattern.replace(/\[\.\.\.(\w+)\]/g, () => {
-    return "___CATCHALL___";
-  });
-
-  regexPattern = regexPattern.replace(/\[(\w+)\]/g, () => {
-    return "___PARAM___";
-  });
+  regexPattern = regexPattern
+    .replace(/\[\[\.\.\.(\w+)\]\]/g, "___OPTIONAL_CATCHALL___")
+    .replace(/\[\.\.\.(\w+)\]/g, "___CATCHALL___")
+    .replace(/\[(\w+)\]/g, "___PARAM___");
 
   regexPattern = regexPattern.replace(/[-/\\^$*+?.()|[\]{}]/g, "\\$&");
 

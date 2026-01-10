@@ -116,7 +116,7 @@ function inspectChildren(
     children.forEach((child, i) => {
       deepInspectElement(child, `${path}.children[${i}]`, depth + 1, options);
     });
-  } else if (children !== null && children !== undefined) {
+  } else if (children != null) {
     deepInspectElement(children, `${path}.children`, depth + 1, options);
   }
 }
