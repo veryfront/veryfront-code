@@ -5,27 +5,27 @@
 import { HASH_SEED_DJB2 } from "@veryfront/utils";
 
 /**
- * Compute ETag for a string using DJB2 hash
+ * Compute DJB2 hash for content (string or bytes).
  */
-function hashString(text: string): number {
+function computeHash(content: string | Uint8Array): number {
   let hash = HASH_SEED_DJB2;
-  for (let i = 0; i < text.length; i++) {
-    hash = ((hash << 5) + hash) ^ text.charCodeAt(i);
-  }
-  return hash >>> 0;
-}
+  const length = content.length;
 
-function hashBytes(bytes: Uint8Array): number {
-  let hash = HASH_SEED_DJB2;
-  for (let i = 0; i < bytes.length; i++) {
-    hash = ((hash << 5) + hash) ^ bytes[i]!;
+  if (typeof content === "string") {
+    for (let i = 0; i < length; i++) {
+      hash = ((hash << 5) + hash) ^ content.charCodeAt(i);
+    }
+  } else {
+    for (let i = 0; i < length; i++) {
+      hash = ((hash << 5) + hash) ^ content[i]!;
+    }
   }
+
   return hash >>> 0;
 }
 
 export function computeEtag(content: string | Uint8Array): string {
-  const hash = typeof content === "string" ? hashString(content) : hashBytes(content);
-  return `W/"${hash.toString(16)}"`;
+  return `W/"${computeHash(content).toString(16)}"`;
 }
 
 /**
@@ -65,6 +65,5 @@ export function matchesAnyEtag(etag: string, ifNoneMatch: string | null): boolea
  * Generate strong ETag (without W/ prefix)
  */
 export function computeStrongEtag(content: string | Uint8Array): string {
-  const hash = typeof content === "string" ? hashString(content) : hashBytes(content);
-  return `"${hash.toString(16)}"`;
+  return `"${computeHash(content).toString(16)}"`;
 }

@@ -23,18 +23,17 @@ export class DataFetcher {
     context: DataContext,
     mode: "development" | "production" = "development",
   ): Promise<DataResult> {
-    if (!pageModule.getServerData && !pageModule.getStaticData) {
-      return { props: {} };
-    }
-
+    // In development, prefer server data for hot reloading
     if (mode === "development" && pageModule.getServerData) {
       return await this.serverFetcher.fetch(pageModule, context);
     }
 
+    // In production, prefer static data for caching
     if (pageModule.getStaticData) {
       return await this.staticFetcher.fetch(pageModule, context);
     }
 
+    // Fall back to server data if no static data
     if (pageModule.getServerData) {
       return await this.serverFetcher.fetch(pageModule, context);
     }
@@ -47,10 +46,6 @@ export class DataFetcher {
   }
 
   clearCache(pattern?: string): void {
-    if (pattern) {
-      this.cacheManager.clearPattern(pattern);
-    } else {
-      this.cacheManager.clear();
-    }
+    pattern ? this.cacheManager.clearPattern(pattern) : this.cacheManager.clear();
   }
 }

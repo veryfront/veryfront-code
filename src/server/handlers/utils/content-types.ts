@@ -122,26 +122,24 @@ export function getContentTypeForPath(path: string): string {
   return getContentType(ext);
 }
 
+/** Content type patterns that are compressible */
+const COMPRESSIBLE_PATTERNS = ["javascript", "json", "xml", "svg"];
+
+/** Content type patterns that are already compressed */
+const COMPRESSED_PATTERNS = ["gzip", "zip", "compressed", "jpeg", "jpg", "png", "webp", "avif"];
+
 /**
  * Check if content type is compressible
  */
 export function isCompressible(contentType: string): boolean {
   // Text-based formats are compressible
   if (contentType.startsWith("text/")) return true;
-  if (contentType.includes("javascript")) return true;
-  if (contentType.includes("json")) return true;
-  if (contentType.includes("xml")) return true;
-  if (contentType.includes("svg")) return true;
 
-  // Already compressed formats
-  if (contentType.includes("gzip")) return false;
-  if (contentType.includes("zip")) return false;
-  if (contentType.includes("compressed")) return false;
-  if (contentType.includes("jpeg")) return false;
-  if (contentType.includes("jpg")) return false;
-  if (contentType.includes("png")) return false;
-  if (contentType.includes("webp")) return false;
-  if (contentType.includes("avif")) return false;
+  // Check compressible patterns
+  if (COMPRESSIBLE_PATTERNS.some((p) => contentType.includes(p))) return true;
+
+  // Already compressed formats are not compressible
+  if (COMPRESSED_PATTERNS.some((p) => contentType.includes(p))) return false;
 
   return false;
 }
