@@ -140,9 +140,8 @@ import type {
 
 ## Version Compatibility
 
-This documentation covers Veryfront v0.1.0. For migration guides and version-specific changes, see:
+This documentation covers Veryfront v0.1.0. For version-specific changes, see:
 
-- [Migration from Next.js](/migration/)
 - [Changelog](/community/changelog.md)
 
 ## Getting Help

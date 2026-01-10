@@ -1,11 +1,24 @@
-export function getFreePort(start = 8000, end = 20000): number {
+/**
+ * Get a free port for testing.
+ *
+ * Uses a wide default range (10000-60000) to minimize collisions when running
+ * tests in parallel across multiple worktrees or repo clones.
+ *
+ * Override via environment variables:
+ *   TEST_PORT_MIN=15000 TEST_PORT_MAX=20000 deno task test
+ */
+export function getFreePort(start?: number, end?: number): number {
+  // Allow env var override for parallel worktree isolation
+  const minPort = start ?? parseInt(Deno.env.get("TEST_PORT_MIN") || "10000", 10);
+  const maxPort = end ?? parseInt(Deno.env.get("TEST_PORT_MAX") || "60000", 10);
+
   // Use random port selection to avoid sequential reuse before OS releases ports
   // This helps when tests run quickly in sequence - previously used ports may still be in TIME_WAIT
   const maxAttempts = 100;
 
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     // Random port in range
-    const port = Math.floor(Math.random() * (end - start + 1)) + start;
+    const port = Math.floor(Math.random() * (maxPort - minPort + 1)) + minPort;
 
     try {
       const listener = Deno.listen({ hostname: "127.0.0.1", port });
@@ -16,7 +29,7 @@ export function getFreePort(start = 8000, end = 20000): number {
     }
   }
 
-  throw new Error(`No free port found in range ${start}-${end} after ${maxAttempts} attempts`);
+  throw new Error(`No free port found in range ${minPort}-${maxPort} after ${maxAttempts} attempts`);
 }
 
 export function withEnv(vars: Record<string, string>): () => void {

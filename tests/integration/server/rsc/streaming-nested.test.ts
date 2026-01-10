@@ -39,7 +39,7 @@ describe("RSC Stream Nested Tests", { sanitizeOps: false, sanitizeResources: fal
           await Deno.writeTextFile(join(context.projectDir, "pages", "index.mdx"), "# Home");
 
           const { getFreePort } = await import("../../../_helpers/utils.ts");
-          const port = await getFreePort(9000, 12000);
+          const port = await getFreePort();
           h = await startProductionServer({
             projectDir: context.projectDir,
             port,

@@ -1,6 +1,10 @@
 /**
  * Authentication Handler
  * Handles Basic and Bearer authentication
+ *
+ * Auth can be configured via:
+ * 1. veryfront.config.js security.auth (preferred, allows test isolation)
+ * 2. Environment variables (legacy, causes issues in parallel tests)
  */
 
 import { BaseHandler } from "./base-handler.ts";
@@ -11,6 +15,7 @@ import type {
   HandlerPriority,
   HandlerResult,
 } from "@veryfront/types";
+import type { AuthConfig } from "./middleware/types.ts";
 
 function encodeBase64(value: string): string {
   if (typeof globalThis.btoa === "function") {
@@ -48,10 +53,11 @@ export class AuthHandler extends BaseHandler {
 
   private basicUser: string | null = null;
   private basicPass: string | null = null;
+  private basicRealm: string = "Secure Area";
   private bearerToken: string | null = null;
 
   handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
-    // Load auth config from environment
+    // Load auth config from config file or environment
     this.loadAuthConfig(ctx);
 
     // Skip auth for OPTIONS requests
@@ -75,6 +81,22 @@ export class AuthHandler extends BaseHandler {
   }
 
   private loadAuthConfig(ctx: HandlerContext): void {
+    // Priority 1: Config file security.auth (allows proper test isolation)
+    const authConfig = ctx.securityConfig?.auth as AuthConfig | undefined;
+
+    if (authConfig?.basic) {
+      this.basicUser = authConfig.basic.username;
+      this.basicPass = authConfig.basic.password;
+      this.basicRealm = authConfig.basic.realm || "Secure Area";
+      return;
+    }
+
+    if (authConfig?.bearer) {
+      this.bearerToken = authConfig.bearer.token;
+      return;
+    }
+
+    // Priority 2: Environment variables (legacy - causes parallel test issues)
     this.basicUser = ctx.adapter.env.get("VERYFRONT_BASIC_USER") || "";
     this.basicPass = ctx.adapter.env.get("VERYFRONT_BASIC_PASS") || "";
     this.bearerToken = ctx.adapter.env.get("VERYFRONT_BEARER_TOKEN") || "";
@@ -95,7 +117,7 @@ export class AuthHandler extends BaseHandler {
     if (auth !== expected) {
       const response = new Response("Unauthorized", {
         status: 401,
-        headers: { "WWW-Authenticate": 'Basic realm="Secure Area"' },
+        headers: { "WWW-Authenticate": `Basic realm="${this.basicRealm}"` },
       });
       return this.respond(response);
     }

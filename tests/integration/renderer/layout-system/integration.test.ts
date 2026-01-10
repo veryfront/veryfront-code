@@ -15,7 +15,7 @@ import { join } from "https://deno.land/std@0.220.0/path/mod.ts";
 import { afterAll, describe, it } from "std/testing/bdd.ts";
 import { VeryfrontRenderer } from "../../../../src/rendering/orchestrator/ssr.ts";
 import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";
-import { cleanupTestDir, createTestProjectDir } from "../../../_helpers/server.ts";
+import { withTestContext } from "../../../_helpers/context.ts";
 import { DenoAdapter } from "@veryfront/platform/adapters/deno.ts";
 
 describe("Layout System Integration", { sanitizeOps: false, sanitizeResources: false }, () => {
@@ -25,15 +25,13 @@ describe("Layout System Integration", { sanitizeOps: false, sanitizeResources: f
   });
 
   it("nested layouts with App Router", async () => {
-    const projectDir = await createTestProjectDir();
-
-    try {
+    await withTestContext("layout-nested-app-router", async (context) => {
       // Create App Router structure with nested layouts
-      await Deno.mkdir(join(projectDir, "app/blog"), { recursive: true });
+      await Deno.mkdir(join(context.projectDir, "app/blog"), { recursive: true });
 
       // Root layout
       await Deno.writeTextFile(
-        join(projectDir, "app/layout.tsx"),
+        join(context.projectDir, "app/layout.tsx"),
         `export default function RootLayout({ children }) {
   return <div id="root-layout">{children}</div>;
 }`,
@@ -41,7 +39,7 @@ describe("Layout System Integration", { sanitizeOps: false, sanitizeResources: f
 
       // Blog layout
       await Deno.writeTextFile(
-        join(projectDir, "app/blog/layout.tsx"),
+        join(context.projectDir, "app/blog/layout.tsx"),
         `export default function BlogLayout({ children }) {
   return <div id="blog-layout">{children}</div>;
 }`,
@@ -49,7 +47,7 @@ describe("Layout System Integration", { sanitizeOps: false, sanitizeResources: f
 
       // Page
       await Deno.writeTextFile(
-        join(projectDir, "app/blog/page.mdx"),
+        join(context.projectDir, "app/blog/page.mdx"),
         `---
 title: Blog Post
 ---
@@ -62,7 +60,7 @@ This is a test post.
 
       // Config
       await Deno.writeTextFile(
-        join(projectDir, "veryfront.config.ts"),
+        join(context.projectDir, "veryfront.config.ts"),
         `export default {
   router: 'app',
 };`,
@@ -70,7 +68,7 @@ This is a test post.
 
       const adapter = new DenoAdapter();
       const renderer = new VeryfrontRenderer({
-        projectDir,
+        projectDir: context.projectDir,
         mode: "development",
         adapter,
       });
@@ -84,28 +82,24 @@ This is a test post.
 
       // Clean up
       await renderer.destroy();
-    } finally {
-      await cleanupTestDir(projectDir);
-    }
+    });
   });
 
   it("named layout with providers", async () => {
-    const projectDir = await createTestProjectDir();
-
-    try {
+    await withTestContext("layout-named-providers", async (context) => {
       // Create named layout
-      await Deno.mkdir(join(projectDir, "layouts"), { recursive: true });
+      await Deno.mkdir(join(context.projectDir, "layouts"), { recursive: true });
       await Deno.writeTextFile(
-        join(projectDir, "layouts/main.mdx"),
+        join(context.projectDir, "layouts/main.mdx"),
         `# Main Layout
 
 <slot />`,
       );
 
       // Create provider
-      await Deno.mkdir(join(projectDir, "providers"), { recursive: true });
+      await Deno.mkdir(join(context.projectDir, "providers"), { recursive: true });
       await Deno.writeTextFile(
-        join(projectDir, "providers/theme.mdx"),
+        join(context.projectDir, "providers/theme.mdx"),
         `export default function ThemeProvider({ children }) {
   return <div className="theme-provider">{children}</div>;
 }`,
@@ -113,7 +107,7 @@ This is a test post.
 
       // Create page with layout
       await Deno.writeTextFile(
-        join(projectDir, "pages/test.mdx"),
+        join(context.projectDir, "pages/test.mdx"),
         `---
 title: Test Page
 layout: main
@@ -125,7 +119,7 @@ layout: main
 
       const adapter = new DenoAdapter();
       const renderer = new VeryfrontRenderer({
-        projectDir,
+        projectDir: context.projectDir,
         mode: "development",
         adapter,
       });
@@ -139,21 +133,17 @@ layout: main
 
       // Clean up
       await renderer.destroy();
-    } finally {
-      await cleanupTestDir(projectDir);
-    }
+    });
   });
 
   it("App Router reserved components", async () => {
-    const projectDir = await createTestProjectDir();
-
-    try {
+    await withTestContext("layout-reserved-components", async (context) => {
       // Create App Router structure
-      await Deno.mkdir(join(projectDir, "app/products"), { recursive: true });
+      await Deno.mkdir(join(context.projectDir, "app/products"), { recursive: true });
 
       // Loading component
       await Deno.writeTextFile(
-        join(projectDir, "app/products/loading.tsx"),
+        join(context.projectDir, "app/products/loading.tsx"),
         `export default function Loading() {
   return <div>Loading products...</div>;
 }`,
@@ -161,7 +151,7 @@ layout: main
 
       // Error component
       await Deno.writeTextFile(
-        join(projectDir, "app/products/error.tsx"),
+        join(context.projectDir, "app/products/error.tsx"),
         `export default function Error({ error }) {
   return <div>Error: {error?.message}</div>;
 }`,
@@ -169,7 +159,7 @@ layout: main
 
       // Page
       await Deno.writeTextFile(
-        join(projectDir, "app/products/page.mdx"),
+        join(context.projectDir, "app/products/page.mdx"),
         `---
 title: Products
 ---
@@ -180,7 +170,7 @@ title: Products
 
       // Config
       await Deno.writeTextFile(
-        join(projectDir, "veryfront.config.ts"),
+        join(context.projectDir, "veryfront.config.ts"),
         `export default {
   router: 'app',
 };`,
@@ -188,7 +178,7 @@ title: Products
 
       const adapter = new DenoAdapter();
       const renderer = new VeryfrontRenderer({
-        projectDir,
+        projectDir: context.projectDir,
         mode: "development",
         adapter,
       });
@@ -202,18 +192,14 @@ title: Products
 
       // Clean up
       await renderer.destroy();
-    } finally {
-      await cleanupTestDir(projectDir);
-    }
+    });
   });
 
   it("Pages Router with App component", async () => {
-    const projectDir = await createTestProjectDir();
-
-    try {
+    await withTestContext("layout-pages-router-app", async (context) => {
       // Create App component
       await Deno.writeTextFile(
-        join(projectDir, "components/app.tsx"),
+        join(context.projectDir, "components/app.tsx"),
         `export default function App({ children }) {
   return (
     <div id="app-wrapper">
@@ -227,7 +213,7 @@ title: Products
 
       // Create page
       await Deno.writeTextFile(
-        join(projectDir, "pages/index.mdx"),
+        join(context.projectDir, "pages/index.mdx"),
         `---
 title: Home
 ---
@@ -238,7 +224,7 @@ title: Home
 
       const adapter = new DenoAdapter();
       const renderer = new VeryfrontRenderer({
-        projectDir,
+        projectDir: context.projectDir,
         mode: "development",
         adapter,
       });
@@ -252,8 +238,6 @@ title: Home
 
       // Clean up
       await renderer.destroy();
-    } finally {
-      await cleanupTestDir(projectDir);
-    }
+    });
   });
 });

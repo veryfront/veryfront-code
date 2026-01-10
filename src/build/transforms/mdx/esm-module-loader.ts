@@ -2,6 +2,7 @@ import { rendererLogger as logger } from "@veryfront/utils";
 import { LRUCache } from "@veryfront/utils/lru-wrapper.ts";
 import React from "react";
 import { getCacheNamespace } from "@veryfront/utils/cache/keys/namespace.ts";
+import { getMdxEsmCacheDir } from "@veryfront/utils/cache-dir.ts";
 import {
   getDefaultImportMap,
   transformImportsWithMap,
@@ -234,7 +235,7 @@ export function hashString(input: string): string {
  * Called when files are updated via Studio to ensure fresh content is served.
  */
 export async function clearESMDiskCache(): Promise<void> {
-  const cacheDir = join(cwd(), ".cache", "veryfront-mdx-esm");
+  const cacheDir = getMdxEsmCacheDir();
   try {
     // Remove all cached module files
     for await (const entry of Deno.readDir(cacheDir)) {
@@ -508,7 +509,8 @@ export async function loadModuleESM(
     if (!context.esmCacheDir) {
       // Use persistent cache directory that survives server restarts
       // This dramatically improves first-request performance after initial warm-up
-      const persistentCacheDir = join(cwd(), ".cache", "veryfront-mdx-esm");
+      // VF_CACHE_DIR env var is respected for test isolation
+      const persistentCacheDir = getMdxEsmCacheDir();
       const localFs = getLocalFs();
       try {
         await localFs.mkdir(persistentCacheDir, { recursive: true });
@@ -516,13 +518,7 @@ export async function loadModuleESM(
         logger.info(`${LOG_PREFIX_MDX_LOADER} Using persistent cache dir: ${persistentCacheDir}`);
       } catch {
         // Fallback to temp dir if persistent cache fails
-        if (IS_TRUE_NODE) {
-          const projectCacheDir = join(cwd(), "node_modules", ".cache", "veryfront-mdx");
-          await localFs.mkdir(projectCacheDir, { recursive: true });
-          context.esmCacheDir = projectCacheDir;
-        } else {
-          context.esmCacheDir = await localFs.makeTempDir({ prefix: "veryfront-mdx-esm-" });
-        }
+        context.esmCacheDir = await localFs.makeTempDir({ prefix: "veryfront-mdx-esm-" });
       }
     }
 

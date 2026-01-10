@@ -19,7 +19,11 @@ export interface MDXRenderOptions {
 }
 
 export class MDXRenderer {
-  private esmCacheDir?: string;
+  // NOTE: We intentionally do NOT cache esmCacheDir here.
+  // Each call to loadModuleESM gets the cache dir fresh from getMdxEsmCacheDir()
+  // which uses AsyncLocalStorage for proper isolation in parallel tests.
+  // Caching it would cause race conditions where parallel tests corrupt each other's state.
+
   private moduleCache: LRUCache<string, MDXModule> = new LRUCache({
     maxEntries: MDX_RENDERER_MAX_ENTRIES,
     ttlMs: MDX_RENDERER_TTL_MS,
@@ -28,32 +32,26 @@ export class MDXRenderer {
   constructor() {
   }
 
-  async clearCache() {
+  clearCache() {
     this.moduleCache.destroy();
-
-    if (this.esmCacheDir) {
-      try {
-        const { getAdapter } = await import("@veryfront/platform/adapters/detect.ts");
-        const adapter = await getAdapter();
-        await adapter.fs.remove(this.esmCacheDir, { recursive: true });
-      } catch (_error) {
-        void _error;
-      }
-      this.esmCacheDir = undefined;
-    }
+    // Note: We don't track/cleanup esmCacheDir here anymore.
+    // Each test context manages its own cache dir via AsyncLocalStorage.
+    // The temp directories are cleaned up by the test context's cleanup().
   }
 
   async loadModuleESM(
     compiledProgramCode: string,
     adapter?: import("@veryfront/platform/adapters/base.ts").RuntimeAdapter,
   ): Promise<MDXModule> {
+    // Don't pass esmCacheDir - let loadModuleESM get it fresh from getMdxEsmCacheDir()
+    // which respects AsyncLocalStorage for proper test isolation
     const context: ESMLoaderContext = {
-      esmCacheDir: this.esmCacheDir,
+      esmCacheDir: undefined, // Always get fresh from getMdxEsmCacheDir()
       moduleCache: this.moduleCache,
       adapter,
     };
     const result = await loadModuleESM(compiledProgramCode, context);
-    this.esmCacheDir = context.esmCacheDir;
+    // Don't cache context.esmCacheDir - it may be for a different AsyncLocalStorage context
     return result;
   }
 
@@ -127,8 +125,8 @@ export const mdxRenderer = new Proxy({} as MDXRenderer, {
   },
 });
 
-export async function clearMDXRendererCache() {
-  await getMDXRendererInstance().clearCache();
+export function clearMDXRendererCache() {
+  getMDXRendererInstance().clearCache();
 }
 
 export {

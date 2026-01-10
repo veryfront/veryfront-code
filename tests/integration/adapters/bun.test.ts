@@ -25,7 +25,7 @@ describe(
         async () => {
           const adapter = new BunAdapter();
           let hit = 0;
-          const port = getFreePort(8900, 9000);
+          const port = getFreePort();
 
           const server = await adapter.serve(
             (_req) => {
@@ -64,7 +64,7 @@ describe(
             await Deno.mkdir(join(dir, "app"), { recursive: true });
             await Deno.writeTextFile(join(dir, "app", "page.mdx"), "# Home");
 
-            const port = getFreePort(9001, 9099);
+            const port = getFreePort();
             const server = await startUniversalServer({
               projectDir: dir,
               port,

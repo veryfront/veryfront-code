@@ -7,7 +7,7 @@
  */
 export async function cleanupBundler() {
   const { clearMDXRendererCache } = await import("@veryfront/transforms/mdx/index.ts");
-  await clearMDXRendererCache();
+  clearMDXRendererCache();
 
   const { clearMDXModuleCache } = await import("./ssr/index.ts");
   clearMDXModuleCache();
