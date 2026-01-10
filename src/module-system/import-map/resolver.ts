@@ -7,25 +7,14 @@ function extractEsmShPackage(url: string): string | null {
 
   try {
     const parsed = new URL(url);
-    let pathname = parsed.pathname.slice(1); // Remove leading /
-
-    // Remove version prefix like /v135/
-    pathname = pathname.replace(/^v\d+\//, "");
+    // Remove leading / and version prefix like /v135/
+    const pathname = parsed.pathname.slice(1).replace(/^v\d+\//, "");
 
     // Extract package name (before @version if present)
     // Handle scoped packages like @tanstack/react-query@5
-    let packageName: string;
-    if (pathname.startsWith("@")) {
-      // Scoped package: @scope/name@version
-      const parts = pathname.split("/");
-      const scopedName = parts.slice(0, 2).join("/"); // @scope/name
-      // Remove version suffix
-      packageName = scopedName.replace(/@[\d.]+.*$/, "");
-    } else {
-      // Regular package: name@version
-      const parts = pathname.split("@");
-      packageName = (parts[0] ?? "").split("/")[0] ?? "";
-    }
+    const packageName = pathname.startsWith("@")
+      ? pathname.split("/").slice(0, 2).join("/").replace(/@[\d.]+.*$/, "")
+      : (pathname.split("@")[0] ?? "").split("/")[0] ?? "";
 
     return packageName || null;
   } catch {

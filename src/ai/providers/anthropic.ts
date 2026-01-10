@@ -223,18 +223,13 @@ export class AnthropicProvider extends BaseProvider {
   }
 
   private mapStopReason(reason: string): CompletionResponse["finishReason"] {
-    switch (reason) {
-      case "end_turn":
-        return "stop";
-      case "max_tokens":
-        return "length";
-      case "tool_use":
-        return "tool_calls";
-      case "stop_sequence":
-        return "stop";
-      default:
-        return "stop";
-    }
+    const STOP_REASON_MAP: Record<string, CompletionResponse["finishReason"]> = {
+      end_turn: "stop",
+      max_tokens: "length",
+      tool_use: "tool_calls",
+      stop_sequence: "stop",
+    };
+    return STOP_REASON_MAP[reason] ?? "stop";
   }
 
   protected override transformStream(stream: ReadableStream): ReadableStream {
