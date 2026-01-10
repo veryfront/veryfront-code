@@ -8,7 +8,7 @@ import type { Plugin } from "esbuild";
 import type { BundleResult, BundlerOptions } from "../types/bundler-types.ts";
 import { extractImports } from "../utils/import-utils.ts";
 import { getEsbuildLoader } from "../../utils/file-types.ts";
-import { createError, toError } from "../../../core/errors/veryfront-error.ts";
+import { createError, ensureError, toError } from "../../../core/errors/veryfront-error.ts";
 import { createFileSystem } from "../../../platform/compat/fs.ts";
 
 interface BundleCodeOptions {
@@ -114,11 +114,11 @@ export async function bundleCode({
 
     if (error instanceof Error && "errors" in error) {
       const buildError = error as esbuild.BuildFailure;
-      buildError.errors.forEach((err) => {
+      for (const err of buildError.errors) {
         result.errors.push(new Error(formatEsbuildMessage(err)));
-      });
+      }
     } else {
-      result.errors.push(error as Error);
+      result.errors.push(ensureError(error));
     }
   }
 }

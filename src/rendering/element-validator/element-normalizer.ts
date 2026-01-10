@@ -9,6 +9,7 @@
 
 import * as React from "react";
 import { rendererLogger as logger } from "@veryfront/utils";
+import { ensureError } from "../../core/errors/veryfront-error.ts";
 import { normalizeChild } from "../utils/index.ts";
 import { deepInspectElement, type InspectionOptions } from "./element-inspector.ts";
 import { getElementTypeName, looksLikeReactElement } from "./primitive-checks.ts";
@@ -84,16 +85,15 @@ function performDeepInspection(
   try {
     deepInspectElement(element, "root", 0, inspectionOptions);
     logger.info(
-      "[VALIDATOR] ✓ Deep element tree inspection completed - no invalid objects found in props/children",
+      "[VALIDATOR] Deep element tree inspection completed - no invalid objects found in props/children",
     );
   } catch (error) {
-    const err = error as Error;
-    logger.error("[VALIDATOR] ❌ Deep inspection failed", {
+    const err = ensureError(error);
+    logger.error("[VALIDATOR] Deep inspection failed", {
       error: err.message,
       stack: err.stack,
     });
-    // Re-throw to prevent rendering invalid elements
-    throw error;
+    throw err;
   }
 }
 
