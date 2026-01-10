@@ -292,8 +292,9 @@ async function rewriteDiscoveryImports(
       try {
         const pkgJson = JSON.parse(await fs.readTextFile(packageJsonPath));
         const dotExport = pkgJson.exports?.["."];
-        const entryPoint = (typeof dotExport === "string" ? dotExport : dotExport?.import ?? dotExport?.default) ??
-          pkgJson.module ?? pkgJson.main ?? "index.js";
+        const entryPoint =
+          (typeof dotExport === "string" ? dotExport : dotExport?.import ?? dotExport?.default) ??
+            pkgJson.module ?? pkgJson.main ?? "index.js";
         const resolvedPath = pathHelper.join(packagePath, entryPoint);
         return pathToFileURL(resolvedPath).href;
       } catch {

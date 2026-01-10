@@ -32,7 +32,8 @@ export async function handlePlaygroundRequest(req: Request): Promise<Response> {
     const tools = toolRegistry.getToolsForProvider();
     const agents = Array.from(agentRegistry.getAll().values()).map((agent) => ({
       id: agent.id,
-      description: (agent.config as Record<string, unknown>).description ?? `Model: ${agent.config.model}`,
+      description: (agent.config as Record<string, unknown>).description ??
+        `Model: ${agent.config.model}`,
       model: agent.config.model,
     }));
 

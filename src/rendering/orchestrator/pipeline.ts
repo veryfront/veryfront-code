@@ -91,7 +91,10 @@ export class RenderPipeline {
         const resolved = resolver(path);
         // Replace the path portion while preserving the rest of the match structure
         const quote = pathIndex === 3 ? args[2] : args[1];
-        return match.replace(new RegExp(`${quote}${path.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}${quote}`), `${quote}${resolved}${quote}`);
+        return match.replace(
+          new RegExp(`${quote}${path.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}${quote}`),
+          `${quote}${resolved}${quote}`,
+        );
       });
     }
 

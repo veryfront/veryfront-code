@@ -349,7 +349,11 @@ export class StepExecutor {
     type: "agent" | "tool",
   ): T {
     if (!registry) {
-      throw new Error(`${type.charAt(0).toUpperCase() + type.slice(1)} registry not configured. Cannot resolve ${type} "${id}"`);
+      throw new Error(
+        `${
+          type.charAt(0).toUpperCase() + type.slice(1)
+        } registry not configured. Cannot resolve ${type} "${id}"`,
+      );
     }
 
     const item = registry.get(id);
@@ -358,7 +362,9 @@ export class StepExecutor {
       const suggestion = available.length > 0
         ? this.formatAvailableItems(available)
         : ` No ${type}s are registered.`;
-      throw new Error(`${type.charAt(0).toUpperCase() + type.slice(1)} not found: "${id}".${suggestion}`);
+      throw new Error(
+        `${type.charAt(0).toUpperCase() + type.slice(1)} not found: "${id}".${suggestion}`,
+      );
     }
 
     return item;
