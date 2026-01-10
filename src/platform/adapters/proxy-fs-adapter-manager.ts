@@ -152,8 +152,6 @@ export class ProxyFSAdapterManager {
         await projectAdapter.initializing;
         logger.debug("[ProxyFSAdapterManager] Adapter initialized", { cacheKey });
         this.adapters.set(cacheKey, projectAdapter);
-      } catch (error) {
-        throw error;
       } finally {
         projectAdapter.initializing = undefined;
         this.pendingAdapters.delete(cacheKey);

@@ -56,7 +56,7 @@ export async function loadHandlerModule(options: LoadModuleOptions): Promise<API
  * This allows the module to share the same runtime context as the dev server,
  * enabling auto-discovery features like agentRegistry to work.
  */
-async function loadTSModuleDirect(modulePath: string): Promise<APIRoute> {
+function loadTSModuleDirect(modulePath: string): Promise<APIRoute> {
   // Add cache buster for HMR
   const cacheBuster = `?v=${Date.now()}`;
   const url = modulePath.startsWith("file://")
@@ -64,11 +64,11 @@ async function loadTSModuleDirect(modulePath: string): Promise<APIRoute> {
     : `file://${modulePath}${cacheBuster}`;
 
   logger.debug(`[API] Direct import (Deno): ${url}`);
-  return await import(url);
+  return import(url);
 }
 
-async function loadJSModule(modulePath: string): Promise<APIRoute> {
-  return await import(`file://${modulePath}`);
+function loadJSModule(modulePath: string): Promise<APIRoute> {
+  return import(`file://${modulePath}`);
 }
 
 function createImportMapPlugin(

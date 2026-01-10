@@ -122,7 +122,7 @@ export abstract class BaseHandler implements Handler {
       isDev: ctx.mode === "development",
       cspUserHeader: ctx.cspUserHeader,
       adapter: ctx.adapter,
-      nonce, // Pass through the nonce if provided
+      nonce,
       studioEmbed: options?.studioEmbed,
     });
   }
