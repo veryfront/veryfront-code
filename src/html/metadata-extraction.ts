@@ -1,11 +1,21 @@
 import type { HTMLMetadata, MDXFrontmatter } from "@veryfront/transforms/mdx/types.ts";
 
+const RESERVED_KEYS = new Set([
+  "title",
+  "description",
+  "meta",
+  "links",
+  "scripts",
+  "styles",
+  "og",
+  "twitter",
+]);
+
 export function extractHTMLMetadata(
   pageFrontmatter: MDXFrontmatter,
   layoutFrontmatter?: MDXFrontmatter,
 ): HTMLMetadata {
-  const base = { ...(layoutFrontmatter || {}) };
-  const merged = { ...base, ...pageFrontmatter };
+  const merged = { ...(layoutFrontmatter || {}), ...pageFrontmatter };
 
   if (merged.metadata && typeof merged.metadata === "object") {
     Object.assign(merged, merged.metadata);
@@ -16,54 +26,30 @@ export function extractHTMLMetadata(
     description: merged.description || "",
     viewport: merged.viewport,
     themeColor: merged.themeColor,
-    meta: [],
-    links: [],
+    meta: Array.isArray(merged.meta) ? merged.meta : [],
+    links: Array.isArray(merged.links) ? merged.links : [],
     icons: merged.icons || [],
-    scripts: [],
-    styles: [],
+    scripts: Array.isArray(merged.scripts) ? merged.scripts : [],
+    styles: Array.isArray(merged.styles) ? merged.styles : [],
   };
 
-  if (merged.meta && Array.isArray(merged.meta)) {
-    metadata.meta = merged.meta;
-  }
-
   if (merged.og) {
-    Object.entries(merged.og).forEach(([key, value]) => {
-      metadata.meta?.push({
-        property: `og:${key}`,
-        content: String(value),
-      });
-    });
+    for (const [key, value] of Object.entries(merged.og)) {
+      metadata.meta?.push({ property: `og:${key}`, content: String(value) });
+    }
   }
 
   if (merged.twitter) {
-    Object.entries(merged.twitter).forEach(([key, value]) => {
-      metadata.meta?.push({
-        name: `twitter:${key}`,
-        content: String(value),
-      });
-    });
+    for (const [key, value] of Object.entries(merged.twitter)) {
+      metadata.meta?.push({ name: `twitter:${key}`, content: String(value) });
+    }
   }
 
-  if (merged.links && Array.isArray(merged.links)) {
-    metadata.links = merged.links;
-  }
-
-  if (merged.scripts && Array.isArray(merged.scripts)) {
-    metadata.scripts = merged.scripts;
-  }
-
-  if (merged.styles && Array.isArray(merged.styles)) {
-    metadata.styles = merged.styles;
-  }
-
-  Object.keys(merged).forEach((key) => {
-    if (
-      !["title", "description", "meta", "links", "scripts", "styles", "og", "twitter"].includes(key)
-    ) {
+  for (const key of Object.keys(merged)) {
+    if (!RESERVED_KEYS.has(key)) {
       metadata[key] = merged[key];
     }
-  });
+  }
 
   return metadata;
 }
