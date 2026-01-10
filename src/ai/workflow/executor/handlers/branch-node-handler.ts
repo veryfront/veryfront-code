@@ -1,10 +1,22 @@
-import type { BranchNodeConfig, NodeState, WorkflowNode, WorkflowNodeConfig } from "../../types.ts";
+import type {
+  BranchNodeConfig,
+  NodeState,
+  NodeStatus,
+  WorkflowNode,
+  WorkflowNodeConfig,
+} from "../../types.ts";
 import type { IDAGSubExecutor } from "./dag-executor-interface.ts";
 import {
   BaseNodeHandler,
   type NodeExecutionResult,
   type NodeHandlerContext,
 } from "./node-handler.ts";
+
+function deriveNodeStatus(completed: boolean, waiting: boolean): NodeStatus {
+  if (completed) return "completed";
+  if (waiting) return "running";
+  return "failed";
+}
 
 export interface BranchNodeCallbacks {
   onNodeComplete?: (nodeId: string, state: NodeState) => void;
@@ -72,7 +84,7 @@ export class BranchNodeHandler extends BaseNodeHandler<BranchNodeConfig> {
 
     const state: NodeState = {
       nodeId: node.id,
-      status: result.completed ? "completed" : (result.waiting ? "running" : "failed"),
+      status: deriveNodeStatus(result.completed, result.waiting),
       output: {
         branch: conditionResult ? "then" : "else",
         result: result.context,

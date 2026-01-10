@@ -11,6 +11,7 @@ import type {
   LoopNodeConfig,
   MapNodeConfig,
   NodeState,
+  NodeStatus,
   ParallelNodeConfig,
   SubWorkflowNodeConfig,
   WaitNodeConfig,
@@ -23,6 +24,15 @@ import type {
 import { generateId } from "../types.ts";
 import type { StepExecutor } from "./step-executor.ts";
 import type { CheckpointManager } from "./checkpoint-manager.ts";
+
+/**
+ * Derives NodeStatus from execution result flags
+ */
+function deriveNodeStatus(completed: boolean, waiting: boolean): NodeStatus {
+  if (completed) return "completed";
+  if (waiting) return "running";
+  return "failed";
+}
 
 /**
  * DAG executor configuration
@@ -418,7 +428,7 @@ export class DAGExecutor {
 
       const state: NodeState = {
         nodeId: node.id,
-        status: result.completed ? "completed" : (result.waiting ? "running" : "failed"),
+        status: deriveNodeStatus(result.completed, result.waiting),
         output: outputs,
         error: result.error,
         attempt: 1,
@@ -512,7 +522,7 @@ export class DAGExecutor {
 
     const state: NodeState = {
       nodeId: node.id,
-      status: result.completed ? "completed" : (result.waiting ? "running" : "failed"),
+      status: deriveNodeStatus(result.completed, result.waiting),
       output: finalOutput,
       error: result.error,
       attempt: 1,
@@ -796,7 +806,7 @@ export class DAGExecutor {
 
     const state: NodeState = {
       nodeId: node.id,
-      status: result.completed ? "completed" : (result.waiting ? "running" : "failed"),
+      status: deriveNodeStatus(result.completed, result.waiting),
       output: result.context,
       error: result.error,
       attempt: 1,
@@ -867,7 +877,7 @@ export class DAGExecutor {
 
     const state: NodeState = {
       nodeId: node.id,
-      status: result.completed ? "completed" : (result.waiting ? "running" : "failed"),
+      status: deriveNodeStatus(result.completed, result.waiting),
       output: {
         branch: conditionResult ? "then" : "else",
         result: result.context,

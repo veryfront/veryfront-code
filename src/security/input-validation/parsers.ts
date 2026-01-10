@@ -97,19 +97,17 @@ export function parseQueryParams<T>(
   const url = new URL(request.url);
   const params: Record<string, unknown> = {};
 
-  // Convert URLSearchParams to object
-  url.searchParams.forEach((value, key) => {
-    // Handle array parameters (e.g., ?tags=a&tags=b)
-    if (params[key]) {
-      if (Array.isArray(params[key])) {
-        (params[key] as unknown[]).push(value);
-      } else {
-        params[key] = [params[key], value];
-      }
-    } else {
+  // Convert URLSearchParams to object, handling array parameters (e.g., ?tags=a&tags=b)
+  for (const [key, value] of url.searchParams) {
+    const existing = params[key];
+    if (existing === undefined) {
       params[key] = value;
+    } else if (Array.isArray(existing)) {
+      existing.push(value);
+    } else {
+      params[key] = [existing, value];
     }
-  });
+  }
 
   try {
     return schema.parse(params);
