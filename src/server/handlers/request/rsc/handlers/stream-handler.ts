@@ -45,13 +45,13 @@ export class StreamHandler {
       async start(controller) {
         const encoder = new TextEncoder();
         try {
-          await streamSlot(controller, encoder, {
+          enqueueSlot(controller, encoder, {
             type: "slot",
             id: "root",
             html: "<p>Loading...</p>",
           });
 
-          await streamSlot(controller, encoder, {
+          enqueueSlot(controller, encoder, {
             type: "slot",
             id: "sidebar",
             html: "<p>Sidebar loading…</p>",
@@ -59,7 +59,7 @@ export class StreamHandler {
 
           await sleep(STREAM_DELAY_MS);
 
-          await streamSlot(controller, encoder, {
+          enqueueSlot(controller, encoder, {
             type: "slot",
             id: "sidebar",
             html: "<aside><ul><li>A</li><li>B</li></ul></aside>",
@@ -71,7 +71,7 @@ export class StreamHandler {
 
           await sleep(STREAM_DELAY_MS);
 
-          await streamSlot(controller, encoder, {
+          enqueueSlot(controller, encoder, {
             type: "slot",
             id: "root",
             html: finalHtml,
@@ -97,10 +97,10 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function streamSlot(
+function enqueueSlot(
   controller: ReadableStreamDefaultController<Uint8Array>,
   encoder: TextEncoder,
   slot: StreamSlot,
 ): void {
-  controller.enqueue(encoder.encode(`${JSON.stringify(slot)}\n`));
+  controller.enqueue(encoder.encode(JSON.stringify(slot) + "\n"));
 }

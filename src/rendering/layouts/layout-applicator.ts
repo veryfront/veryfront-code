@@ -148,51 +148,19 @@ export class LayoutApplicator {
     const useESMWrap = Boolean(this.config?.experimental?.esmLayouts);
 
     if (useESMWrap) {
-      return await this.applyLayoutsESMMode(
+      return await applyLayoutsESM(
         pageElement,
         layoutBundle,
         nestedLayouts,
         providerItems,
-        layoutDataMap,
-      );
-    } else {
-      return await this.applyLayoutsFunctionBodyMode(
-        pageElement,
-        layoutBundle,
-        nestedLayouts,
-        providerItems,
+        this.projectDir,
+        this.mergedComponents,
+        this.layoutCache,
+        this.adapter,
         layoutDataMap,
       );
     }
-  }
 
-  private async applyLayoutsESMMode(
-    pageElement: BundledReact.ReactElement,
-    layoutBundle: MdxBundle | undefined,
-    nestedLayouts: LayoutItem[],
-    providerItems: ProviderItem[],
-    layoutDataMap?: Map<string, Record<string, unknown>>,
-  ): Promise<BundledReact.ReactElement> {
-    return await applyLayoutsESM(
-      pageElement,
-      layoutBundle,
-      nestedLayouts,
-      providerItems,
-      this.projectDir,
-      this.mergedComponents,
-      this.layoutCache,
-      this.adapter,
-      layoutDataMap,
-    );
-  }
-
-  private async applyLayoutsFunctionBodyMode(
-    pageElement: BundledReact.ReactElement,
-    layoutBundle: MdxBundle | undefined,
-    nestedLayouts: LayoutItem[],
-    providerItems: ProviderItem[],
-    layoutDataMap?: Map<string, Record<string, unknown>>,
-  ): Promise<BundledReact.ReactElement> {
     return await applyLayoutsFunctionBody(
       pageElement,
       layoutBundle,

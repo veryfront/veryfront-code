@@ -1,5 +1,3 @@
-import { serverLogger as logger } from "@veryfront/utils";
-
 export class PageHandler {
   handle(pathname: string, searchParams: URLSearchParams): Response {
     const html = this.buildHtml(pathname, searchParams);
@@ -26,33 +24,30 @@ export class PageHandler {
   <script type="module">
     await import('/_veryfront/rsc/hydrate.js').catch(() => void 0);
 
+    async function fetchPayload(url) {
+      try {
+        const res = await fetch(url);
+        if (res.ok) return await res.json();
+      } catch {}
+      return null;
+    }
+
     (async () => {
       const renderUrl = '${renderUrl}';
-      let payload;
-      try {
-        const res = await fetch(renderUrl);
-        if (res.ok) {
-          payload = await res.json();
-        } else {
-          const demo = await fetch('/_veryfront/rsc/payload').catch(() => null);
-          payload = demo && demo.ok ? await demo.json() : { html: '<p>RSC unavailable</p>', clientRefs: [] };
-        }
-      } catch {
-        const demo = await fetch('/_veryfront/rsc/payload').catch(() => null);
-        payload = demo && demo.ok ? await demo.json() : { html: '<p>RSC unavailable</p>', clientRefs: [] };
+      const payload = await fetchPayload(renderUrl) ||
+        await fetchPayload('/_veryfront/rsc/payload') ||
+        { html: '<p>RSC unavailable</p>', clientRefs: [] };
+
+      document.getElementById('rsc-root').innerHTML = payload.html;
+      window.__RSC_CLIENT_REFS__ = payload.clientRefs;
+
+      if (window.VeryfrontHydrate?.run) {
+        return window.VeryfrontHydrate.run();
       }
-        document.getElementById('rsc-root').innerHTML = payload.html;
-
-        window.__RSC_CLIENT_REFS__ = payload.clientRefs;
-
-        if (window.VeryfrontHydrate && typeof window.VeryfrontHydrate.run === 'function') {
-          return window.VeryfrontHydrate.run();
-        }
-    })()
-      .catch(error => {
-        ${logger.toString()}.error('[RSC] Failed to load:', error);
-        document.getElementById('rsc-root').innerHTML = '<p>Failed to load RSC component</p>';
-      });
+    })().catch(error => {
+      console.error('[RSC] Failed to load:', error);
+      document.getElementById('rsc-root').innerHTML = '<p>Failed to load RSC component</p>';
+    });
   </script>
 </body>
 </html>`;
