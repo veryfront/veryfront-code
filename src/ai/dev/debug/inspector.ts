@@ -146,13 +146,11 @@ export function printInspectionReport(report: InspectionReport): void {
   );
   agentLogger.info(`  Called: ${report.tools.called.length}`);
 
-  if (report.tools.called.length > 0) {
-    report.tools.called.forEach((tool, i) => {
-      agentLogger.info(`    ${i + 1}. ${tool.name}(${JSON.stringify(tool.args)})`);
-      agentLogger.info(`       Status: ${tool.status}`);
-      agentLogger.info(`       Time: ${tool.executionTime}ms`);
-      agentLogger.info(`       Result: ${JSON.stringify(tool.result).substring(0, 100)}...`);
-    });
+  for (const [i, tool] of report.tools.called.entries()) {
+    agentLogger.info(`    ${i + 1}. ${tool.name}(${JSON.stringify(tool.args)})`);
+    agentLogger.info(`       Status: ${tool.status}`);
+    agentLogger.info(`       Time: ${tool.executionTime}ms`);
+    agentLogger.info(`       Result: ${JSON.stringify(tool.result).substring(0, 100)}...`);
   }
   agentLogger.info("");
 
@@ -208,20 +206,20 @@ export function printRegistryOverview(): void {
   agentLogger.info(`Total: ${overview.stats.total} items\n`);
 
   agentLogger.info(`Tools (${overview.stats.tools}):`);
-  overview.tools.forEach((t) => {
+  for (const t of overview.tools) {
     agentLogger.info(`  • ${t.id}: ${t.description}`);
-  });
+  }
   agentLogger.info("");
 
   agentLogger.info(`Resources (${overview.stats.resources}):`);
-  overview.resources.forEach((r) => {
+  for (const r of overview.resources) {
     agentLogger.info(`  • ${r.id} (${r.pattern}): ${r.description}`);
-  });
+  }
   agentLogger.info("");
 
   agentLogger.info(`Prompts (${overview.stats.prompts}):`);
-  overview.prompts.forEach((p) => {
+  for (const p of overview.prompts) {
     agentLogger.info(`  • ${p.id}: ${p.description}`);
-  });
+  }
   agentLogger.info("");
 }

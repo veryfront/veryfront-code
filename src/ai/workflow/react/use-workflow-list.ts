@@ -68,7 +68,9 @@ export function useWorkflowList(
         const statuses = Array.isArray(filterToUse.status)
           ? filterToUse.status
           : [filterToUse.status];
-        statuses.forEach((s) => params.append("status", s));
+        for (const s of statuses) {
+          params.append("status", s);
+        }
       }
 
       if (filterToUse.createdAfter) {
