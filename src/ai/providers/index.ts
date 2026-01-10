@@ -1,8 +1,4 @@
-/**
- * Provider integrations
- *
- * @module veryfront/ai/providers
- */
+/** Provider integrations */
 
 export * from "./base.ts";
 export * from "./openai.ts";

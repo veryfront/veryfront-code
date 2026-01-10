@@ -1,10 +1,6 @@
 /**
  * Data Endpoint Handler
- *
  * Handles requests for data JSON endpoints (/_veryfront/data/).
- * Serves page data for client-side router prefetch.
- *
- * @module server/handlers/request/module/data-endpoint-handler
  */
 
 import type { HandlerContext, HandlerResult } from "../../types.ts";
@@ -16,28 +12,6 @@ import type { createRenderer } from "@veryfront/rendering";
 /**
  * Handles data endpoint requests for client-side prefetch.
  * Returns JSON data containing frontmatter, headings, and HTML.
- *
- * @param req - Incoming HTTP request
- * @param pathname - Request pathname
- * @param ctx - Handler context with project configuration
- * @param rendererInit - Optional cached renderer promise
- * @param createResponseBuilder - Factory function to create response builder
- * @param respond - Function to wrap response in handler result
- * @param getErrorMessage - Error message extraction function
- * @returns Promise resolving to handler result
- *
- * @example
- * ```ts
- * const result = await handleDataEndpoint(
- *   req,
- *   pathname,
- *   ctx,
- *   this.rendererInit,
- *   this.createResponseBuilder.bind(this),
- *   this.respond.bind(this),
- *   this.getErrorMessage.bind(this)
- * );
- * ```
  */
 export async function handleDataEndpoint(
   req: Request,

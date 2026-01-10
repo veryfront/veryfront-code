@@ -1,11 +1,7 @@
 /**
  * Page Data Endpoint Handler
- *
  * Handles requests for SPA page data at /_veryfront/page-data/{slug}.json.
- * Returns structured JSON data for client-side rendering without pre-rendered HTML.
- * This enables true SPA navigation where layouts persist and only page content changes.
- *
- * @module server/handlers/request/module/page-data-endpoint-handler
+ * Returns structured JSON for client-side rendering without pre-rendered HTML.
  */
 
 import type { HandlerContext, HandlerResult } from "../../types.ts";
@@ -16,17 +12,7 @@ import type { createRenderer } from "@veryfront/rendering";
 
 /**
  * Handles SPA page data endpoint requests.
- * Returns JSON containing page path, layouts, providers, props, and params
- * for client-side dynamic import and rendering.
- *
- * @param req - Incoming HTTP request
- * @param pathname - Request pathname
- * @param ctx - Handler context with project configuration
- * @param rendererInit - Optional cached renderer promise
- * @param createResponseBuilder - Factory function to create response builder
- * @param respond - Function to wrap response in handler result
- * @param getErrorMessage - Error message extraction function
- * @returns Promise resolving to handler result
+ * Returns JSON with page path, layouts, providers, props, and params.
  */
 export async function handlePageDataEndpoint(
   req: Request,
