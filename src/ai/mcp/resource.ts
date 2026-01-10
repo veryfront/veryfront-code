@@ -119,26 +119,27 @@ class ResourceRegistryClass {
   }
 
   /**
-   * Check if URI matches pattern
-   * Uses regex-based pattern matching with named capture groups.
-   * Supports Express-style patterns like "/users/:userId/profile"
+   * Convert Express-style pattern to regex
+   * Example: "/users/:userId/profile" -> /^\/users\/(?<userId>[^/]+)\/profile$/
    */
-  private matchesPattern(uri: string, pattern: string): boolean {
-    const patternRegex = new RegExp(
+  private patternToRegex(pattern: string): RegExp {
+    return new RegExp(
       "^" + pattern.replace(/:(\w+)/g, "(?<$1>[^/]+)") + "$",
     );
-    return patternRegex.test(uri);
+  }
+
+  /**
+   * Check if URI matches pattern
+   */
+  private matchesPattern(uri: string, pattern: string): boolean {
+    return this.patternToRegex(pattern).test(uri);
   }
 
   /**
    * Extract params from URI using pattern
    */
   extractParams(uri: string, pattern: string): Record<string, string> {
-    const patternRegex = new RegExp(
-      "^" + pattern.replace(/:(\w+)/g, "(?<$1>[^/]+)") + "$",
-    );
-    const match = uri.match(patternRegex);
-
+    const match = uri.match(this.patternToRegex(pattern));
     return match?.groups || {};
   }
 
