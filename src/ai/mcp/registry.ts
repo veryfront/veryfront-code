@@ -50,13 +50,15 @@ export function getMCPStats(): {
   prompts: number;
   total: number;
 } {
-  const registry = getMCPRegistry();
+  const tools = toolRegistry.getAll().size;
+  const resources = resourceRegistry.getAll().size;
+  const prompts = promptRegistry.getAll().size;
 
   return {
-    tools: registry.tools.size,
-    resources: registry.resources.size,
-    prompts: registry.prompts.size,
-    total: registry.tools.size + registry.resources.size + registry.prompts.size,
+    tools,
+    resources,
+    prompts,
+    total: tools + resources + prompts,
   };
 }
 
