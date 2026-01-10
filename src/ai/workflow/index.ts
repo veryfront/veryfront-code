@@ -207,6 +207,8 @@ export type { CloudflareAdapterConfig } from "./backends/cloudflare.ts";
 // =============================================================================
 // Worker (for distributed execution)
 // =============================================================================
+
+// In-process worker (single-tenant / trusted code)
 export { createWorkflowWorker, WorkflowWorker } from "./worker/index.ts";
 
 export type {
@@ -214,6 +216,25 @@ export type {
   WorkerStatus,
   WorkflowWorkerConfig,
 } from "./worker/index.ts";
+
+// K8s Job-based execution (multi-tenant / untrusted code)
+export { createWorkflowJobManager, WorkflowJobManager } from "./worker/index.ts";
+
+export type {
+  JobInfo,
+  JobStatus,
+  K8sClient,
+  K8sJob,
+  K8sJobStatus,
+  ManagerStats,
+  ManagerStatus,
+  WorkflowJobManagerConfig,
+} from "./worker/index.ts";
+
+// Job entrypoint (runs inside ephemeral container)
+export { createJobEntrypoint, EXIT_CODES, runWorkflowJob } from "./worker/index.ts";
+
+export type { CreateJobEntrypointOptions, JobEntrypointConfig } from "./worker/index.ts";
 
 export { hasWorkerSupport } from "./backends/types.ts";
 
