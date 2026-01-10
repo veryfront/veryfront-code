@@ -106,6 +106,19 @@ export interface CompletionRequest {
 
   /** Tools available */
   tools?: ToolDefinition[];
+
+  /**
+   * Reasoning configuration for o-series models (o1, o3)
+   */
+  reasoning?: {
+    /**
+     * Reasoning effort level.
+     * - "low": Faster responses, less reasoning
+     * - "medium": Balanced (default)
+     * - "high": More thorough reasoning, slower
+     */
+    effort?: "low" | "medium" | "high";
+  };
 }
 
 /**
