@@ -122,8 +122,9 @@ export class CodeSplitter {
     entries: Map<string, ChunkInfo>,
     shared: Map<string, ChunkInfo>,
   ): number {
-    const entrySize = Array.from(entries.values()).reduce((sum, chunk) => sum + chunk.size, 0);
-    const sharedSize = Array.from(shared.values()).reduce((sum, chunk) => sum + chunk.size, 0);
-    return entrySize + sharedSize;
+    const sumChunkSizes = (chunks: Map<string, ChunkInfo>): number =>
+      Array.from(chunks.values()).reduce((sum, chunk) => sum + chunk.size, 0);
+
+    return sumChunkSizes(entries) + sumChunkSizes(shared);
   }
 }

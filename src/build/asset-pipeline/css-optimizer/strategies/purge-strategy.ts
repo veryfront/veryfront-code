@@ -28,10 +28,13 @@ export class PurgeStrategy implements CSSOptimizationStrategy {
   private usedSelectors: Set<string> = new Set();
 
   /**
-   * Check if this strategy can process the CSS
+   * Check if this strategy can process the CSS.
+   * Requires both optimization to be enabled and purge mode to be explicitly requested.
    */
   canProcess(options: CSSOptimizationOptions): boolean {
-    return options.enabled !== false && options.purge === true;
+    const isEnabled = options.enabled !== false;
+    const purgeRequested = options.purge === true;
+    return isEnabled && purgeRequested;
   }
 
   /**

@@ -21,11 +21,13 @@ export class MinificationStrategy implements CSSOptimizationStrategy {
   readonly priority = 10; // Low priority - used as fallback
 
   /**
-   * Check if this strategy can process the CSS
-   * This is always available as a fallback
+   * Check if this strategy can process the CSS.
+   * This is always available as a fallback when minification is not explicitly disabled.
    */
   canProcess(options: CSSOptimizationOptions): boolean {
-    return options.enabled !== false && options.minify !== false;
+    const isEnabled = options.enabled !== false;
+    const minifyEnabled = options.minify !== false;
+    return isEnabled && minifyEnabled;
   }
 
   /**
