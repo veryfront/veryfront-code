@@ -324,8 +324,25 @@ async function rewriteDiscoveryImports(
       }
     };
 
+    // Rewrite package imports to resolved file:// URLs
+    const rewritePackageImports = async (code: string, pkg: string): Promise<string> => {
+      const escapedPkg = pkg.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const staticImportRegex = new RegExp(`from\\s+["']${escapedPkg}["']`, "g");
+      const dynamicImportRegex = new RegExp(`import\\s*\\(\\s*["']${escapedPkg}["']\\s*\\)`, "g");
+
+      const needsRewrite = staticImportRegex.test(code) || dynamicImportRegex.test(code);
+      if (!needsRewrite) return code;
+
+      const resolvedUrl = await resolvePackageToFileUrl(pkg);
+      if (!resolvedUrl) return code;
+
+      return code
+        .replace(staticImportRegex, `from "${resolvedUrl}"`)
+        .replace(dynamicImportRegex, `import("${resolvedUrl}")`);
+    };
+
     // List of external packages that need to be resolved
-    const externalPackagesToResolve = [
+    const externalPackages = [
       "zod",
       "ai",
       "@ai-sdk/anthropic",
@@ -336,24 +353,8 @@ async function rewriteDiscoveryImports(
       "@ai-sdk/provider-utils",
     ];
 
-    for (const pkg of externalPackagesToResolve) {
-      const escapedPkg = pkg.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-
-      const staticImportRegex = new RegExp(`from\\s+["']${escapedPkg}["']`, "g");
-      if (staticImportRegex.test(transformed)) {
-        const resolvedUrl = await resolvePackageToFileUrl(pkg);
-        if (resolvedUrl) {
-          transformed = transformed.replace(staticImportRegex, `from "${resolvedUrl}"`);
-        }
-      }
-
-      const dynamicImportRegex = new RegExp(`import\\s*\\(\\s*["']${escapedPkg}["']\\s*\\)`, "g");
-      if (dynamicImportRegex.test(transformed)) {
-        const resolvedUrl = await resolvePackageToFileUrl(pkg);
-        if (resolvedUrl) {
-          transformed = transformed.replace(dynamicImportRegex, `import("${resolvedUrl}")`);
-        }
-      }
+    for (const pkg of externalPackages) {
+      transformed = await rewritePackageImports(transformed, pkg);
     }
 
     // Resolve veryfront imports

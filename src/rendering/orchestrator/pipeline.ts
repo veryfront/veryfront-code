@@ -60,6 +60,44 @@ export class RenderPipeline {
   // Cache of fetched esm.sh modules
   private esmCache = new Map<string, string>();
 
+  /**
+   * Rewrite import/export paths in esm.sh code.
+   * Transforms absolute paths to https://esm.sh URLs and relative paths to resolved URLs.
+   */
+  private rewriteEsmPaths(code: string, urlBase: string): string {
+    const resolveAbsolute = (path: string): string => `https://esm.sh${path}`;
+    const resolveRelative = (path: string): string => new URL(path, urlBase).href;
+
+    // Pattern configs: [pathPattern, pathGroupIndex, resolver]
+    type PathResolver = (path: string) => string;
+    const patterns: Array<[RegExp, number, PathResolver]> = [
+      // Absolute paths (like "/@radix-ui/..." or "/react@...")
+      [/import\s*(["'])(\/[^"']+)\1/g, 2, resolveAbsolute],
+      [/from\s*(["'])(\/[^"']+)\1/g, 2, resolveAbsolute],
+      [/export\s*\*\s*from\s*(["'])(\/[^"']+)\1/g, 2, resolveAbsolute],
+      [/export\s*\{([^}]+)\}\s*from\s*(["'])(\/[^"']+)\2/g, 3, resolveAbsolute],
+      // Relative paths (like "./dist/..." or "../utils/...")
+      [/import\s*(["'])(\.\.?\/[^"']+)\1/g, 2, resolveRelative],
+      [/from\s*(["'])(\.\.?\/[^"']+)\1/g, 2, resolveRelative],
+      [/export\s*\*\s*from\s*(["'])(\.\.?\/[^"']+)\1/g, 2, resolveRelative],
+      [/export\s*\{([^}]+)\}\s*from\s*(["'])(\.\.?\/[^"']+)\2/g, 3, resolveRelative],
+    ];
+
+    let result = code;
+    for (const [pattern, pathIndex, resolver] of patterns) {
+      result = result.replace(pattern, (...args) => {
+        const match = args[0] as string;
+        const path = args[pathIndex - 1] as string;
+        const resolved = resolver(path);
+        // Replace the path portion while preserving the rest of the match structure
+        const quote = pathIndex === 3 ? args[2] : args[1];
+        return match.replace(new RegExp(`${quote}${path.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}${quote}`), `${quote}${resolved}${quote}`);
+      });
+    }
+
+    return result;
+  }
+
   // Fetch and cache an esm.sh module
   private async fetchEsmModule(
     url: string,
@@ -81,48 +119,8 @@ export class RenderPipeline {
 
     // Transform relative esm.sh paths to absolute URLs
     // esm.sh code is often minified with no spaces (e.g., from"/@pkg/...")
-    // Also handle relative paths like "./dist/..." by resolving against the original URL
-
-    // Get the base URL for resolving relative paths
     const urlBase = url.substring(0, url.lastIndexOf("/") + 1);
-
-    // Handle absolute paths (like "/@radix-ui/..." or "/react@...")
-    code = code.replace(
-      /import\s*(["'])(\/[^"']+)\1/g,
-      (_match, quote, path) => `import${quote}https://esm.sh${path}${quote}`,
-    );
-    code = code.replace(
-      /from\s*(["'])(\/[^"']+)\1/g,
-      (_match, quote, path) => `from${quote}https://esm.sh${path}${quote}`,
-    );
-    code = code.replace(
-      /export\s*\*\s*from\s*(["'])(\/[^"']+)\1/g,
-      (_match, quote, path) => `export*from${quote}https://esm.sh${path}${quote}`,
-    );
-    code = code.replace(
-      /export\s*\{([^}]+)\}\s*from\s*(["'])(\/[^"']+)\2/g,
-      (_match, exports, quote, path) =>
-        `export{${exports}}from${quote}https://esm.sh${path}${quote}`,
-    );
-
-    // Handle relative paths (like "./dist/..." or "../utils/...")
-    code = code.replace(
-      /import\s*(["'])(\.\.?\/[^"']+)\1/g,
-      (_match, quote, path) => `import${quote}${new URL(path, urlBase).href}${quote}`,
-    );
-    code = code.replace(
-      /from\s*(["'])(\.\.?\/[^"']+)\1/g,
-      (_match, quote, path) => `from${quote}${new URL(path, urlBase).href}${quote}`,
-    );
-    code = code.replace(
-      /export\s*\*\s*from\s*(["'])(\.\.?\/[^"']+)\1/g,
-      (_match, quote, path) => `export*from${quote}${new URL(path, urlBase).href}${quote}`,
-    );
-    code = code.replace(
-      /export\s*\{([^}]+)\}\s*from\s*(["'])(\.\.?\/[^"']+)\2/g,
-      (_match, exports, quote, path) =>
-        `export{${exports}}from${quote}${new URL(path, urlBase).href}${quote}`,
-    );
+    code = this.rewriteEsmPaths(code, urlBase);
 
     // Find ALL esm.sh URLs in the code and fetch/replace them
     // Use a simple pattern to find all https://esm.sh URLs

@@ -335,52 +335,41 @@ export class StepExecutor {
     });
   }
 
-  /**
-   * Get agent from registry
-   */
-  private getAgent(id: string): Agent {
-    if (!this.config.agentRegistry) {
-      throw new Error(
-        `Agent registry not configured. Cannot resolve agent "${id}"`,
-      );
-    }
-
-    const agent = this.config.agentRegistry.get(id);
-    if (!agent) {
-      const available = this.config.agentRegistry.list?.() ?? [];
-      const suggestion = available.length > 0
-        ? ` Available agents: ${available.slice(0, 5).join(", ")}${
-          available.length > 5 ? "..." : ""
-        }`
-        : " No agents are registered.";
-      throw new Error(`Agent not found: "${id}".${suggestion}`);
-    }
-
-    return agent;
+  /** Format available items for error messages (shows first 5) */
+  private formatAvailableItems(items: string[]): string {
+    if (items.length === 0) return "";
+    const preview = items.slice(0, 5).join(", ");
+    return ` Available: ${preview}${items.length > 5 ? "..." : ""}`;
   }
 
-  /**
-   * Get tool from registry
-   */
-  private getTool(id: string): Tool {
-    if (!this.config.toolRegistry) {
-      throw new Error(
-        `Tool registry not configured. Cannot resolve tool "${id}"`,
-      );
+  /** Resolve an item from a registry with helpful error messages */
+  private resolveFromRegistry<T>(
+    id: string,
+    registry: { get(id: string): T | undefined; list?(): string[] } | undefined,
+    type: "agent" | "tool",
+  ): T {
+    if (!registry) {
+      throw new Error(`${type.charAt(0).toUpperCase() + type.slice(1)} registry not configured. Cannot resolve ${type} "${id}"`);
     }
 
-    const tool = this.config.toolRegistry.get(id);
-    if (!tool) {
-      const available = this.config.toolRegistry.list?.() ?? [];
+    const item = registry.get(id);
+    if (!item) {
+      const available = registry.list?.() ?? [];
       const suggestion = available.length > 0
-        ? ` Available tools: ${available.slice(0, 5).join(", ")}${
-          available.length > 5 ? "..." : ""
-        }`
-        : " No tools are registered.";
-      throw new Error(`Tool not found: "${id}".${suggestion}`);
+        ? this.formatAvailableItems(available)
+        : ` No ${type}s are registered.`;
+      throw new Error(`${type.charAt(0).toUpperCase() + type.slice(1)} not found: "${id}".${suggestion}`);
     }
 
-    return tool;
+    return item;
+  }
+
+  private getAgent(id: string): Agent {
+    return this.resolveFromRegistry(id, this.config.agentRegistry, "agent");
+  }
+
+  private getTool(id: string): Tool {
+    return this.resolveFromRegistry(id, this.config.toolRegistry, "tool");
   }
 
   /**
@@ -399,66 +388,22 @@ export class StepExecutor {
     return await config.skip(context);
   }
 
-  /**
-   * Create initial node state
-   */
   createInitialState(nodeId: string): NodeState {
-    return {
-      nodeId,
-      status: "pending",
-      attempt: 0,
-    };
+    return { nodeId, status: "pending", attempt: 0 };
   }
 
-  /**
-   * Update node state for running
-   */
   createRunningState(nodeId: string, input: unknown, attempt: number): NodeState {
-    return {
-      nodeId,
-      status: "running",
-      input,
-      attempt,
-      startedAt: new Date(),
-    };
+    return { nodeId, status: "running", input, attempt, startedAt: new Date() };
   }
 
-  /**
-   * Update node state for completion
-   *
-   * @param result - The step execution result
-   * @param previousState - The previous node state (contains nodeId)
-   */
-  createCompletedState(
-    result: StepResult,
-    previousState: NodeState,
-  ): NodeState {
-    if (result.success) {
-      return {
-        ...previousState,
-        status: "completed",
-        output: result.output,
-        completedAt: new Date(),
-      };
-    }
-
-    return {
-      ...previousState,
-      status: "failed",
-      error: result.error,
-      completedAt: new Date(),
-    };
+  createCompletedState(result: StepResult, previousState: NodeState): NodeState {
+    const completedAt = new Date();
+    return result.success
+      ? { ...previousState, status: "completed", output: result.output, completedAt }
+      : { ...previousState, status: "failed", error: result.error, completedAt };
   }
 
-  /**
-   * Update node state for skip
-   */
   createSkippedState(nodeId: string): NodeState {
-    return {
-      nodeId,
-      status: "skipped",
-      attempt: 0,
-      completedAt: new Date(),
-    };
+    return { nodeId, status: "skipped", attempt: 0, completedAt: new Date() };
   }
 }
