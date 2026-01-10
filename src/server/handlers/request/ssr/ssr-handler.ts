@@ -106,7 +106,21 @@ export class SSRHandler extends BaseHandler {
       const fsAdapter = ctx.adapter.fs;
 
       // For multi-project mode, use runWithContext (required for MultiProjectFSAdapter)
-      if (ctx.projectSlug && isMultiProjectAdapter(fsAdapter)) {
+      // Check for runWithContext method on the adapter (works with both FSAdapterWrapper and direct adapters)
+      const fsAdapterWithContext = fsAdapter as {
+        runWithContext?: <T>(
+          slug: string,
+          token: string,
+          fn: () => Promise<T>,
+          projectId?: string,
+          options?: { productionMode?: boolean; releaseId?: string | null },
+        ) => Promise<T>;
+        isMultiProjectMode?: () => boolean;
+      };
+      const hasMultiProjectSupport = typeof fsAdapterWithContext.runWithContext === "function" &&
+        (fsAdapterWithContext.isMultiProjectMode?.() ?? isMultiProjectAdapter(fsAdapter));
+
+      if (ctx.projectSlug && hasMultiProjectSupport) {
         const prodMode = isProductionMode(ctx);
 
         this.logDebug("Using multi-project context", {
@@ -114,7 +128,8 @@ export class SSRHandler extends BaseHandler {
           productionMode: prodMode,
         }, ctx);
 
-        return fsAdapter.runWithContext(
+        // runWithContext is guaranteed to exist at this point (checked in hasMultiProjectSupport)
+        return fsAdapterWithContext.runWithContext!(
           ctx.projectSlug,
           ctx.proxyToken || "",
           () => this.handleWithContext(req, ctx, slug, requestId, url),
