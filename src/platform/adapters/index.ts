@@ -1,13 +1,44 @@
+// Base types
 export * from "./base.ts";
-export * from "./bun.ts";
-export * from "./deno.ts";
+
+// Runtime detection
 export * from "./detect.ts";
-export * from "./mock.ts";
 export { getLocalAdapter, runtime } from "./registry.ts";
+
+// Mock adapter
+export * from "./mock.ts";
+
+// Runtime adapters (re-export for backwards compatibility)
+export * from "./bun.ts";
+export * from "./node.ts";
+export { DenoAdapter, denoAdapter } from "./runtime/deno/index.ts";
+
+// Security
 export * as security from "./security/index.ts";
 
-export type { DirectoryEntry, FSAdapter, FSAdapterConfig } from "./veryfront-fs-adapter/types.ts";
+// FS Adapters
+export {
+  createFSAdapter,
+  createFSAdapterFromConfig,
+  enhanceAdapterWithFS,
+  FSAdapterWrapper,
+  getFSAdapterType,
+  isFSAdapterConfigured,
+  NotSupportedError,
+  VeryfrontFSAdapter,
+  wrapFSAdapter,
+} from "./fs/index.ts";
 
+export type {
+  CacheStats,
+  DirectoryEntry,
+  FSAdapter,
+  FSAdapterConfig,
+  VeryfrontConfig,
+  VeryfrontFSState,
+} from "./fs/index.ts";
+
+// Veryfront API Client
 export {
   type ListFilesResponse,
   type ListProjectsResponse,
@@ -18,19 +49,24 @@ export {
   VeryfrontAPIError,
 } from "./veryfront-api-client/index.ts";
 
-export { VeryfrontFSAdapter } from "./veryfront-fs-adapter/index.ts";
-
-export { FSAdapterWrapper, NotSupportedError, wrapFSAdapter } from "./fs-adapter-wrapper.ts";
-
+// Token Storage
 export {
-  createFSAdapterFromConfig,
-  enhanceAdapterWithFS,
-  getFSAdapterType,
-  isFSAdapterConfigured,
-} from "./fs-integration.ts";
+  createTokenStorageAdapter,
+  createTokenStorageAdapterFromEnv,
+  getTokenStorageAdapter,
+  getTokenStorageType,
+  isTokenStorageConfigured,
+  MemoryTokenAdapter,
+  resetTokenStorageAdapter,
+  type TokenStorageAdapter,
+  type TokenStorageAdapterConfig,
+  TokenStorageAPIClient,
+  TokenStorageError,
+  VeryfrontTokenAdapter,
+  type VeryfrontTokenConfig,
+} from "./token/index.ts";
 
-export { createFSAdapter } from "./fs-adapter-factory.ts";
-
+// Fallback utilities
 export {
   type AsyncAdapterFallback,
   createAdapterFallback,
@@ -41,26 +77,3 @@ export {
   withFallback,
   withFallbackSync,
 } from "./fallback-wrapper.ts";
-
-// Token Storage Adapter
-export {
-  MemoryTokenAdapter,
-  type TokenStorageAdapter,
-  type TokenStorageAdapterConfig,
-  TokenStorageAPIClient,
-  TokenStorageError,
-  VeryfrontTokenAdapter,
-  type VeryfrontTokenConfig,
-} from "./veryfront-token-adapter/index.ts";
-
-export {
-  createTokenStorageAdapter,
-  createTokenStorageAdapterFromEnv,
-} from "./token-adapter-factory.ts";
-
-export {
-  getTokenStorageAdapter,
-  getTokenStorageType,
-  isTokenStorageConfigured,
-  resetTokenStorageAdapter,
-} from "./token-adapter-integration.ts";
