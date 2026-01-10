@@ -1,9 +1,12 @@
 import type { ImportMapConfig } from "./types.ts";
 
+/** Check if URL is an esm.sh URL */
+function isEsmShUrl(url: string): boolean {
+  return url.startsWith("https://esm.sh/") || url.startsWith("http://esm.sh/");
+}
+
 function extractEsmShPackage(url: string): string | null {
-  if (!url.startsWith("https://esm.sh/") && !url.startsWith("http://esm.sh/")) {
-    return null;
-  }
+  if (!isEsmShUrl(url)) return null;
 
   try {
     const parsed = new URL(url);
@@ -36,7 +39,7 @@ export function resolveImport(
   }
 
   // Handle esm.sh URLs - normalize package version but preserve subpath
-  if (specifier.startsWith("https://esm.sh/") || specifier.startsWith("http://esm.sh/")) {
+  if (isEsmShUrl(specifier)) {
     const esmShPackage = extractEsmShPackage(specifier);
     // Check scoped imports first, then global imports
     const scopedMapping = scope && esmShPackage && importMap.scopes?.[scope]?.[esmShPackage];

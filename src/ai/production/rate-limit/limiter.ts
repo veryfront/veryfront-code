@@ -183,28 +183,21 @@ export function createRateLimiter(config: RateLimitConfig) {
     ? new FixedWindowLimiter(config)
     : new TokenBucketLimiter(config); // token-bucket and sliding-window both use TokenBucketLimiter
 
+  const getIdentifier = (context?: Record<string, unknown>): string =>
+    config.identify?.(context!) ?? "default";
+
   return {
-    /**
-     * Check if request is allowed
-     */
+    /** Check if request is allowed */
     check(context?: Record<string, unknown>): RateLimitResult {
-      const identifier = config.identify ? config.identify(context!) : "default";
-
-      return limiter.check(identifier);
+      return limiter.check(getIdentifier(context));
     },
 
-    /**
-     * Reset rate limit for identifier
-     */
+    /** Reset rate limit for identifier */
     reset(context?: Record<string, unknown>): void {
-      const identifier = config.identify ? config.identify(context!) : "default";
-
-      limiter.reset(identifier);
+      limiter.reset(getIdentifier(context));
     },
 
-    /**
-     * Clear all rate limits
-     */
+    /** Clear all rate limits */
     clear(): void {
       limiter.clear();
     },
