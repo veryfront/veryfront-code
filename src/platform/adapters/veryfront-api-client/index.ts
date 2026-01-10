@@ -5,7 +5,6 @@ export type { RequestOptions, RetryConfig } from "./retry-handler.ts";
 
 // Types (re-exported from schemas via types.ts)
 export {
-  type GetComponentResponse,
   type GetFileContentResponse,
   type GetProjectResponse,
   type GetPublishedFileContentResponse,
@@ -23,7 +22,6 @@ export {
 // Schemas for validation and documentation
 export {
   API_ENDPOINTS,
-  GetComponentResponseSchema,
   GetFileContentResponseSchema,
   GetProjectResponseSchema,
   GetPublishedFileContentResponseSchema,

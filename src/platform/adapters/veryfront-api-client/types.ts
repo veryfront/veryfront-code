@@ -6,7 +6,6 @@
 
 // Re-export all types from schemas
 export type {
-  GetComponentResponse,
   GetFileContentResponse,
   GetProjectResponse,
   GetPublishedFileContentResponse,

@@ -244,12 +244,4 @@ export class VeryfrontAPIClient {
   async lookupProjectByDomain(domain: string) {
     return await this.operations.lookupProjectByDomain(domain);
   }
-
-  async getComponentByEntityId(entityId: string, projectSlug?: string) {
-    const slug = projectSlug || this.getProjectSlug();
-    if (!slug) {
-      throw new VeryfrontAPIError("No project slug available for component lookup", 400);
-    }
-    return await this.operations.getComponentByEntityId(entityId, slug);
-  }
 }
