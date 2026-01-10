@@ -1,7 +1,5 @@
 /**
- * Step Node Handler
- *
- * Handles execution of step nodes - the basic unit of workflow execution.
+ * Step Node Handler - basic unit of workflow execution
  */
 
 import type { NodeState, StepNodeConfig, WorkflowNode, WorkflowNodeConfig } from "../../types.ts";
@@ -12,19 +10,11 @@ import {
   type NodeHandlerContext,
 } from "./node-handler.ts";
 
-/**
- * Callbacks for step execution events
- */
 export interface StepNodeCallbacks {
   onNodeComplete?: (nodeId: string, state: NodeState) => void;
 }
 
-/**
- * Handler for step nodes.
- *
- * Step nodes are the basic building blocks of workflows.
- * They execute a single function with retry support.
- */
+/** Executes a single function with retry support */
 export class StepNodeHandler extends BaseNodeHandler<StepNodeConfig> {
   readonly nodeType = "step" as const;
 
@@ -67,9 +57,6 @@ export class StepNodeHandler extends BaseNodeHandler<StepNodeConfig> {
   }
 }
 
-/**
- * Create a step node handler.
- */
 export function createStepNodeHandler(
   stepExecutor: StepExecutor,
   callbacks?: StepNodeCallbacks,
