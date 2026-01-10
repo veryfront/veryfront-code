@@ -8,7 +8,7 @@
 import { assertEquals } from "jsr:@std/assert@1";
 import { join } from "https://deno.land/std@0.220.0/path/mod.ts";
 import { ProviderManager } from "../../../../src/rendering/layouts/provider-manager.ts";
-import { DenoAdapter } from "@veryfront/platform/adapters/deno.ts";
+import { DenoAdapter } from "@veryfront/platform/adapters/runtime/deno/index.ts";
 import type { MdxBundle } from "@veryfront/types";
 import type { EntityInfo } from "@veryfront/types";
 import { cleanupTestDir, createTestProjectDir } from "../../../_helpers/server.ts";

@@ -2,7 +2,7 @@ import * as React from "react";
 void React;
 import { assertEquals, assertExists } from "std/assert/mod.ts";
 import { describe, it } from "std/testing/bdd.ts";
-import { denoAdapter } from "@veryfront/platform/adapters/deno.ts";
+import { denoAdapter } from "@veryfront/platform/adapters/runtime/deno/index.ts";
 import { ComponentRegistry } from "@veryfront/modules/component-registry/index.ts";
 import { loadImportMap, transformImportsWithMap } from "@veryfront/modules/import-map/index.ts";
 import { withTestContext } from "../../_helpers/context.ts";
