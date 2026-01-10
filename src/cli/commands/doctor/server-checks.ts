@@ -19,16 +19,12 @@ async function safeCancelBody(response: Response | null | undefined): Promise<vo
 export async function checkRSCFlag(): Promise<DiagnosticResult> {
   try {
     const { getEnv } = await import("@veryfront/platform/compat/process.ts");
-    const rscFlag = getEnv("VERYFRONT_EXPERIMENTAL_RSC") === "1";
-    if (!rscFlag) {
-      return {
-        name: "RSC Flag",
-        status: "warn",
-        message: "VERYFRONT_EXPERIMENTAL_RSC not set",
-      };
-    } else {
-      return { name: "RSC Flag", status: "pass", message: "enabled" };
-    }
+    const isEnabled = getEnv("VERYFRONT_EXPERIMENTAL_RSC") === "1";
+    return {
+      name: "RSC Flag",
+      status: isEnabled ? "pass" : "warn",
+      message: isEnabled ? "enabled" : "VERYFRONT_EXPERIMENTAL_RSC not set",
+    };
   } catch (e) {
     return {
       name: "RSC Flag",
@@ -109,32 +105,28 @@ export async function checkRSCEndpoints(): Promise<DiagnosticResult[]> {
  * Check RSC counters snapshot (metrics endpoint)
  */
 export async function checkRSCCounters(): Promise<DiagnosticResult> {
-  let met: Response | null = null;
+  const base = new URL("http://127.0.0.1:3000/");
+  const response = await fetch(new URL("/_metrics", base)).catch(() => null);
+
   try {
-    const base = new URL("http://127.0.0.1:3000/");
-    met = await fetch(new URL("/_metrics", base)).catch(() => null);
-    if (met?.ok) {
-      const j = (await met.json().catch(() => null)) as any;
-      const c = j && (j as any).counters ? (j as any).counters : {};
-      const msg = `manifest:${c.rscManifest ?? 0} page:${c.rscPage ?? 0} stream:${
-        c.rscStream ?? 0
-      } action:${c.rscAction ?? 0} errors:${c.rscErrors ?? 0}`;
+    if (response?.ok) {
+      const json = (await response.json().catch(() => null)) as Record<string, unknown> | null;
+      const counters = (json?.counters as Record<string, number>) ?? {};
+      const msg = `manifest:${counters.rscManifest ?? 0} page:${counters.rscPage ?? 0} stream:${
+        counters.rscStream ?? 0
+      } action:${counters.rscAction ?? 0} errors:${counters.rscErrors ?? 0}`;
       return { name: "RSC Counters", status: "pass", message: msg };
-    } else {
-      await safeCancelBody(met);
-      return {
-        name: "RSC Counters",
-        status: "warn",
-        message: `${met?.status ?? "unreachable"}`,
-      };
     }
-  } catch (error) {
-    cliLogger.debug("Failed to check RSC counters:", error);
-    await safeCancelBody(met);
+
     return {
       name: "RSC Counters",
       status: "warn",
-      message: "probe failed",
+      message: `${response?.status ?? "unreachable"}`,
     };
+  } catch (error) {
+    cliLogger.debug("Failed to check RSC counters:", error);
+    return { name: "RSC Counters", status: "warn", message: "probe failed" };
+  } finally {
+    await safeCancelBody(response);
   }
 }
