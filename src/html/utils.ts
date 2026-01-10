@@ -161,19 +161,21 @@ function getSelfHostedImportMap(versions: DetectedVersions): Record<string, stri
   };
 }
 
+const CDN_IMPORT_MAP_FACTORIES: Record<
+  CdnProvider,
+  (versions: DetectedVersions) => Record<string, string>
+> = {
+  unpkg: getUnpkgImportMap,
+  jsdelivr: getJsdelivrImportMap,
+  "esm.sh": getEsmShImportMap,
+} as const;
+
 function getCdnImportMap(
   versions: DetectedVersions,
   provider: CdnProvider = "esm.sh",
 ): Record<string, string> {
-  switch (provider) {
-    case "unpkg":
-      return getUnpkgImportMap(versions);
-    case "jsdelivr":
-      return getJsdelivrImportMap(versions);
-    case "esm.sh":
-    default:
-      return getEsmShImportMap(versions);
-  }
+  const factory = CDN_IMPORT_MAP_FACTORIES[provider] ?? getEsmShImportMap;
+  return factory(versions);
 }
 
 function getDefaultHTMLImportMap(): Record<string, string> {

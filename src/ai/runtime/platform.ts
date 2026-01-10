@@ -45,70 +45,62 @@ export function detectPlatform(): Platform {
   return "unknown";
 }
 
+const PLATFORM_CAPABILITIES: Record<Platform, PlatformCapabilities> = {
+  deno: {
+    canRunMCPServer: true,
+    maxAgentSteps: Infinity,
+    cpuTimeLimit: null,
+    memoryLimit: null,
+    hasFileSystem: true,
+    supportsLongRunning: true,
+    streamingRecommended: false,
+    displayName: "Deno",
+  },
+  node: {
+    canRunMCPServer: true,
+    maxAgentSteps: Infinity,
+    cpuTimeLimit: null,
+    memoryLimit: null,
+    hasFileSystem: true,
+    supportsLongRunning: true,
+    streamingRecommended: false,
+    displayName: "Node.js",
+  },
+  bun: {
+    canRunMCPServer: true,
+    maxAgentSteps: Infinity,
+    cpuTimeLimit: null,
+    memoryLimit: null,
+    hasFileSystem: true,
+    supportsLongRunning: true,
+    streamingRecommended: false,
+    displayName: "Bun",
+  },
+  "cloudflare-workers": {
+    canRunMCPServer: false,
+    maxAgentSteps: 3,
+    cpuTimeLimit: 30000,
+    memoryLimit: 128,
+    hasFileSystem: false,
+    supportsLongRunning: false,
+    streamingRecommended: true,
+    displayName: "Cloudflare Workers",
+  },
+  unknown: {
+    canRunMCPServer: false,
+    maxAgentSteps: 5,
+    cpuTimeLimit: 60000,
+    memoryLimit: 512,
+    hasFileSystem: false,
+    supportsLongRunning: false,
+    streamingRecommended: true,
+    displayName: "Unknown Platform",
+  },
+} as const;
+
 export function getPlatformCapabilities(platform?: Platform): PlatformCapabilities {
   const detectedPlatform = platform || detectPlatform();
-
-  switch (detectedPlatform) {
-    case "deno":
-      return {
-        canRunMCPServer: true,
-        maxAgentSteps: Infinity,
-        cpuTimeLimit: null, // No hard limit
-        memoryLimit: null, // System dependent
-        hasFileSystem: true,
-        supportsLongRunning: true,
-        streamingRecommended: false,
-        displayName: "Deno",
-      };
-
-    case "node":
-      return {
-        canRunMCPServer: true,
-        maxAgentSteps: Infinity,
-        cpuTimeLimit: null,
-        memoryLimit: null,
-        hasFileSystem: true,
-        supportsLongRunning: true,
-        streamingRecommended: false,
-        displayName: "Node.js",
-      };
-
-    case "bun":
-      return {
-        canRunMCPServer: true,
-        maxAgentSteps: Infinity,
-        cpuTimeLimit: null,
-        memoryLimit: null,
-        hasFileSystem: true,
-        supportsLongRunning: true,
-        streamingRecommended: false,
-        displayName: "Bun",
-      };
-
-    case "cloudflare-workers":
-      return {
-        canRunMCPServer: false, // CF Workers cannot run TCP servers
-        maxAgentSteps: 3, // Conservative limit for 30s CPU time
-        cpuTimeLimit: 30000, // 30 seconds
-        memoryLimit: 128, // 128 MB
-        hasFileSystem: false,
-        supportsLongRunning: false,
-        streamingRecommended: true, // Required for good UX
-        displayName: "Cloudflare Workers",
-      };
-
-    default:
-      return {
-        canRunMCPServer: false,
-        maxAgentSteps: 5,
-        cpuTimeLimit: 60000,
-        memoryLimit: 512,
-        hasFileSystem: false,
-        supportsLongRunning: false,
-        streamingRecommended: true,
-        displayName: "Unknown Platform",
-      };
-  }
+  return PLATFORM_CAPABILITIES[detectedPlatform] ?? PLATFORM_CAPABILITIES.unknown;
 }
 
 export function supportsCapability(capability: keyof PlatformCapabilities): boolean {

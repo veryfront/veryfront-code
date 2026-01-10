@@ -57,16 +57,14 @@ export class ClientLogHandler extends BaseHandler {
     }
   }
 
+  private static readonly LOG_PREFIXES: Record<string, string> = {
+    error: "❌ [CLIENT]",
+    warn: "⚠️  [CLIENT]",
+    info: "ℹ️  [CLIENT]",
+  } as const;
+
   private getLogPrefix(level: string): string {
-    switch (level) {
-      case "error":
-        return "❌ [CLIENT]";
-      case "warn":
-        return "⚠️  [CLIENT]";
-      case "info":
-      default:
-        return "ℹ️  [CLIENT]";
-    }
+    return ClientLogHandler.LOG_PREFIXES[level] ?? ClientLogHandler.LOG_PREFIXES.info!;
   }
 
   private handleParseError(e: unknown, body: string): void {
