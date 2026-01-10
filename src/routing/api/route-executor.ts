@@ -15,6 +15,24 @@ import {
 } from "./method-validator.ts";
 import { handleAPIError } from "./error-handler.ts";
 
+/** Validates that a handler returned a Response instance */
+function validateResponse(response: unknown): asserts response is Response {
+  if (!(response instanceof Response)) {
+    throw toError(createError({
+      type: "api",
+      message: "API handler must return a Response",
+    }));
+  }
+}
+
+/** Creates a HEAD response from an existing response (body stripped) */
+function toHeadResponse(response: Response): Response {
+  return new Response(null, {
+    status: response.status,
+    headers: response.headers,
+  });
+}
+
 export async function executeAppRoute(
   handler: APIRoute,
   request: Request,
@@ -24,16 +42,13 @@ export async function executeAppRoute(
 ): Promise<Response> {
   const method = request.method.toUpperCase() as HTTPMethod;
   const handlerModule = handler as Record<string, unknown>;
-  const handlerFn = handlerModule[method] as PagesRouteHandler | AppRouteHandler | undefined;
-  const defaultFn = handlerModule.default as PagesRouteHandler | AppRouteHandler | undefined;
+  const handlerFn = handlerModule[method] as AppRouteHandler | undefined;
+  const defaultFn = handlerModule.default as AppRouteHandler | undefined;
   let resolvedFn = handlerFn || defaultFn;
-  const appContext: AppRouteContext = { params: normalizeParams(match.params) };
 
+  // HEAD requests can fall back to GET handler
   if (!resolvedFn && method === "HEAD") {
-    const getFn = handlerModule.GET as PagesRouteHandler | AppRouteHandler | undefined;
-    if (typeof getFn === "function") {
-      resolvedFn = getFn;
-    }
+    resolvedFn = handlerModule.GET as AppRouteHandler | undefined;
   }
 
   if (!resolvedFn) {
@@ -41,26 +56,10 @@ export async function executeAppRoute(
   }
 
   try {
-    const response: Response = await (resolvedFn as AppRouteHandler)(
-      request,
-      appContext,
-    );
-
-    if (!(response instanceof Response)) {
-      throw toError(createError({
-        type: "api",
-        message: "API handler must return a Response",
-      }));
-    }
-
-    if (method === "HEAD") {
-      return new Response(null, {
-        status: response.status,
-        headers: response.headers,
-      });
-    }
-
-    return response;
+    const appContext: AppRouteContext = { params: normalizeParams(match.params) };
+    const response = await resolvedFn(request, appContext);
+    validateResponse(response);
+    return method === "HEAD" ? toHeadResponse(response) : response;
   } catch (error) {
     return handleAPIError(error, pathname, adapter);
   }
@@ -73,7 +72,6 @@ export async function executePagesRoute(
   pathname: string,
   adapter: RuntimeAdapter,
 ): Promise<Response> {
-  const ctx = createContext(request, match, adapter.fs);
   const method = request.method as keyof APIRoute;
   const methodHandler = handler[method] || handler.default;
 
@@ -82,15 +80,9 @@ export async function executePagesRoute(
   }
 
   try {
+    const ctx = createContext(request, match, adapter.fs);
     const response = await (methodHandler as PagesRouteHandler)(ctx);
-
-    if (!(response instanceof Response)) {
-      throw toError(createError({
-        type: "api",
-        message: "API handler must return a Response",
-      }));
-    }
-
+    validateResponse(response);
     return response;
   } catch (error) {
     return handleAPIError(error, pathname, adapter);

@@ -3,56 +3,47 @@ import type { PathCandidates } from "./types.ts";
 
 const SUPPORTED_EXTENSIONS = [".mdx", ".tsx", ".jsx", ".ts", ".js"];
 
+/** Generates path candidates for a base path with all supported extensions */
+function withExtensions(basePath: string, filename: string): string[] {
+  return SUPPORTED_EXTENSIONS.map((ext) => `${basePath}/${filename}${ext}`);
+}
+
 export function generateAppRouterCandidates(
   projectDir: string,
   normalizedSlug: string,
 ): string[] {
-  const candidates: string[] = [];
+  const appBase = join(projectDir, "app");
 
-  if (normalizedSlug) {
-    const base = join(projectDir, "app", normalizedSlug);
-
-    for (const ext of SUPPORTED_EXTENSIONS) {
-      candidates.push(`${base}/page${ext}`);
-    }
-
-    for (const ext of SUPPORTED_EXTENSIONS) {
-      candidates.push(`${base}${ext}`);
-    }
-  } else {
-    const appBase = join(projectDir, "app");
-    for (const ext of SUPPORTED_EXTENSIONS) {
-      candidates.push(`${appBase}/page${ext}`);
-    }
+  if (!normalizedSlug) {
+    return withExtensions(appBase, "page");
   }
 
-  return candidates;
+  const slugBase = join(appBase, normalizedSlug);
+  return [
+    ...withExtensions(slugBase, "page"),
+    ...SUPPORTED_EXTENSIONS.map((ext) => `${slugBase}${ext}`),
+  ];
 }
 
 export function generatePagesRouterCandidates(
   projectDir: string,
   normalizedSlug: string,
 ): string[] {
-  const candidates: string[] = [];
+  const pagesBase = join(projectDir, "pages");
+  const isIndex = normalizedSlug === "" || normalizedSlug === "index";
 
-  if (normalizedSlug === "" || normalizedSlug === "index") {
-    for (const ext of SUPPORTED_EXTENSIONS) {
-      candidates.push(join(projectDir, "pages", `index${ext}`));
-      candidates.push(join(projectDir, `index${ext}`));
-    }
-  } else {
-    for (const ext of SUPPORTED_EXTENSIONS) {
-      candidates.push(join(projectDir, "pages", `${normalizedSlug}${ext}`));
-
-      candidates.push(
-        join(projectDir, "pages", normalizedSlug, `index${ext}`),
-      );
-
-      candidates.push(join(projectDir, `${normalizedSlug}${ext}`));
-    }
+  if (isIndex) {
+    return [
+      ...withExtensions(pagesBase, "index"),
+      ...withExtensions(projectDir, "index"),
+    ];
   }
 
-  return candidates;
+  return [
+    ...SUPPORTED_EXTENSIONS.map((ext) => join(pagesBase, `${normalizedSlug}${ext}`)),
+    ...withExtensions(join(pagesBase, normalizedSlug), "index"),
+    ...SUPPORTED_EXTENSIONS.map((ext) => join(projectDir, `${normalizedSlug}${ext}`)),
+  ];
 }
 
 export function getPathCandidates(

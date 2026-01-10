@@ -1,65 +1,20 @@
 import { logger } from "@veryfront/utils";
 import type { RuntimeAdapter, RuntimeId } from "./base.ts";
 import { createError, toError } from "../../core/errors/veryfront-error.ts";
+import { isBun, isCloudflare, isDeno, isNode } from "../compat/runtime.ts";
 
 // Re-export the registry for convenient access
 export { runtime } from "./registry.ts";
-
-interface DenoGlobal {
-  Deno: {
-    version: { deno: string };
-    [key: string]: unknown;
-  };
-}
-
-interface BunGlobal {
-  Bun: {
-    version: string;
-    [key: string]: unknown;
-  };
-}
-
-interface CloudflareGlobal {
-  caches: unknown;
-  WebSocketPair: unknown;
-}
-
-function isDeno(global: typeof globalThis): global is typeof globalThis & DenoGlobal {
-  return "Deno" in global &&
-    typeof (global as DenoGlobal).Deno === "object" &&
-    typeof (global as DenoGlobal).Deno.version === "object";
-}
-
-function isBun(global: typeof globalThis): global is typeof globalThis & BunGlobal {
-  return "Bun" in global && typeof (global as BunGlobal).Bun === "object";
-}
-
-function isCloudflare(global: typeof globalThis): global is typeof globalThis & CloudflareGlobal {
-  return "caches" in global && "WebSocketPair" in global;
-}
 
 /**
  * Detect the current runtime environment
  * @returns Runtime identifier
  */
 export function detectRuntime(): RuntimeId | "unknown" {
-  if (isDeno(globalThis)) {
-    return "deno";
-  }
-
-  if (isBun(globalThis)) {
-    return "bun";
-  }
-
-  const globalProcess = (globalThis as { process?: { versions?: { node?: string } } }).process;
-  if (globalProcess?.versions?.node) {
-    return "node";
-  }
-
-  if (isCloudflare(globalThis)) {
-    return "cloudflare";
-  }
-
+  if (isDeno) return "deno";
+  if (isBun) return "bun";
+  if (isNode) return "node";
+  if (isCloudflare) return "cloudflare";
   return "unknown";
 }
 
