@@ -154,6 +154,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Setup cluster access (kubectl + kubeconfig from 1Password)
+      - uses: ./.github/actions/setup-cluster-access
+        with:
+          op-service-account-token: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+          tailscale-oauth-client-id: ${{ secrets.TAILSCALE_OAUTH_CLIENT_ID }}
+          tailscale-oauth-secret: ${{ secrets.TAILSCALE_OAUTH_SECRET }}
+
+      - uses: azure/setup-helm@v4
+
       - name: Load secrets from 1Password
         uses: 1password/load-secrets-action@v2
         with:
@@ -169,9 +178,6 @@ jobs:
           REDIS_URL: op://VERYFRONT_CI/UPSTASH_REDIS_PRODUCTION/url
           # Observability
           OTEL_EXPORTER_OTLP_HEADERS: op://VERYFRONT_CI/GRAFANA/otlp_auth
-
-      - uses: azure/setup-kubectl@v4
-      - uses: azure/setup-helm@v4
 
       - name: Create/Update Kubernetes Secrets
         run: |
