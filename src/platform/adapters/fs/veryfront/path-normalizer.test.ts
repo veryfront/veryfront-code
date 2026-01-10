@@ -1,0 +1,64 @@
+import { assertEquals, assertExists } from "jsr:@std/assert@1";
+import { describe, it } from "jsr:@std/testing@1/bdd";
+import { PathNormalizer } from "./path-normalizer.ts";
+
+describe("PathNormalizer", () => {
+  describe("class", () => {
+    it("should export PathNormalizer class", () => {
+      assertExists(PathNormalizer);
+      assertEquals(typeof PathNormalizer, "function");
+    });
+
+    it("should be instantiable without projectDir", () => {
+      const normalizer = new PathNormalizer();
+      assertExists(normalizer);
+    });
+
+    it("should be instantiable with projectDir", () => {
+      const normalizer = new PathNormalizer("/project");
+      assertExists(normalizer);
+    });
+  });
+
+  describe("normalize", () => {
+    it("should remove leading slashes", () => {
+      const normalizer = new PathNormalizer();
+      assertEquals(normalizer.normalize("/path/to/file"), "path/to/file");
+    });
+
+    it("should remove trailing slashes", () => {
+      const normalizer = new PathNormalizer();
+      assertEquals(normalizer.normalize("path/to/file/"), "path/to/file");
+    });
+
+    it("should collapse multiple slashes", () => {
+      const normalizer = new PathNormalizer();
+      assertEquals(normalizer.normalize("path//to///file"), "path/to/file");
+    });
+
+    it("should strip projectDir prefix", () => {
+      const normalizer = new PathNormalizer("/project");
+      assertEquals(normalizer.normalize("/project/src/file.ts"), "src/file.ts");
+    });
+
+    it("should not modify path without projectDir prefix", () => {
+      const normalizer = new PathNormalizer("/project");
+      assertEquals(normalizer.normalize("/other/src/file.ts"), "other/src/file.ts");
+    });
+
+    it("should strip @/ path alias", () => {
+      const normalizer = new PathNormalizer();
+      assertEquals(normalizer.normalize("@/components/Button"), "components/Button");
+    });
+
+    it("should handle empty path", () => {
+      const normalizer = new PathNormalizer();
+      assertEquals(normalizer.normalize(""), "");
+    });
+
+    it("should handle simple filename", () => {
+      const normalizer = new PathNormalizer();
+      assertEquals(normalizer.normalize("file.ts"), "file.ts");
+    });
+  });
+});
