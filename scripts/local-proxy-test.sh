@@ -53,7 +53,7 @@ const config: VeryfrontConfig = {
     type: "veryfront-api",
     veryfront: {
       proxyMode: true,
-      apiBaseUrl: Deno.env.get("VERYFRONT_API_BASE_URL") || "https://api.veryfront.com/api",
+      apiBaseUrl: Deno.env.get("VERYFRONT_API_BASE_URL") || "https://api.veryfront.com",
       apiToken: "",  // Token provided per-request via x-token header
     },
   },

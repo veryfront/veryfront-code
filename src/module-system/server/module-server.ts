@@ -680,7 +680,7 @@ async function fetchCrossProjectSource(
 ): Promise<string | null> {
   const apiBaseUrl = Deno.env.get("VERYFRONT_API_BASE_URL") ||
     Deno.env.get("VERYFRONT_API_URL")?.replace("/graphql", "/api") ||
-    "http://api.lvh.me:4000/api";
+    "http://api.lvh.me:4000";
   const registryBaseUrl = apiBaseUrl.replace(/\/api\/?$/, "");
   const registryUrl = `${registryBaseUrl}/${projectRef}/@/${filePath}`;
 

@@ -28,7 +28,7 @@ export const resolveAliasesPlugin: TransformPlugin = {
     const apiBaseUrl = ctx.apiBaseUrl ||
       Deno.env.get("VERYFRONT_API_BASE_URL") ||
       Deno.env.get("VERYFRONT_API_URL")?.replace("/graphql", "/api") ||
-      "http://api.lvh.me:4000/api";
+      "http://api.lvh.me:4000";
 
     code = await resolveCrossProjectImports(code, {
       apiBaseUrl,
