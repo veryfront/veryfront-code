@@ -16,18 +16,10 @@ export async function analyzeComponent(
   const hasUseClient = detectDirective(content, "use client");
   const hasUseServer = detectDirective(content, "use server");
 
-  let type: ComponentType = "server";
-
-  if (hasUseClient) {
-    type = "client";
-  } else if (hasUseServer) {
-    type = "server";
-  } else if (filePath.includes(".client.")) {
-    // File naming convention
-    type = "client";
-  } else if (filePath.includes(".server.")) {
-    type = "server";
-  }
+  // Determine component type: directive takes precedence over file naming convention
+  const type: ComponentType = hasUseClient || filePath.includes(".client.")
+    ? "client"
+    : "server";
 
   const exports = extractExportNames(content);
   const id = generateComponentId(filePath);

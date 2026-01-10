@@ -29,18 +29,21 @@ export function parseMDXCode(compiledCode: string): ParsedMDX {
     }
   }
 
-  const cleanedCode = compiledCode
-    .replace(importRegex, "") // Remove top-level imports
-    .replace(/^\s*export\s+\{[\s\S]*?\};?\s*$/gm, "") // Remove named exports (including multi-line)
-    .replace(/^\s*export\s+default\s+function/gm, "function") // Convert default export function
-    .replace(/^\s*export\s+default\s+/gm, "") // Remove other default exports
-    .replace(/^\s*export\s+const\s+/gm, "const ") // Convert export const to const
-    .replace(/^\s*export\s+function\s+/gm, "function ") // Convert export function to function
-    .replace(/^\s*const\s+React\s*=.*?;?\s*$/gm, "") // Remove React declarations
-    .replace(/^\s*import\s+React\s+from.*?;?\s*$/gm, "") // Remove React imports
-    .replace(/^\s*const\s+(Fragment|Fragment2)\s*=.*?;?\s*$/gm, "") // Remove Fragment declarations
-    .replace(/^\s*const\s+(jsx|jsx2)\s*=.*?;?\s*$/gm, "") // Remove jsx declarations
-    .replace(/^\s*const\s+(jsxs|jsxs2)\s*=.*?;?\s*$/gm, ""); // Remove jsxs declarations
+  // Clean up imports, exports, and React runtime declarations
+  const cleanupPatterns: [RegExp, string][] = [
+    [importRegex, ""], // Remove top-level imports
+    [/^\s*export\s+\{[\s\S]*?\};?\s*$/gm, ""], // Remove named exports
+    [/^\s*export\s+default\s+function/gm, "function"], // Convert default export function
+    [/^\s*export\s+default\s+/gm, ""], // Remove other default exports
+    [/^\s*export\s+(const|function)\s+/gm, "$1 "], // Convert export const/function
+    [/^\s*import\s+React\s+from.*?;?\s*$/gm, ""], // Remove React imports
+    [/^\s*const\s+(React|Fragment|Fragment2|jsx|jsx2|jsxs|jsxs2)\s*=.*?;?\s*$/gm, ""], // Remove runtime declarations
+  ];
+
+  const cleanedCode = cleanupPatterns.reduce(
+    (code, [pattern, replacement]) => code.replace(pattern, replacement),
+    compiledCode,
+  );
 
   if (cleanedCode.includes("import React")) {
     logger.warn("Import React still in cleaned code");

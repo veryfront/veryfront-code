@@ -60,30 +60,29 @@ export function extractMetadata(moduleCode: string): Partial<MDXModule> {
 
     const value = match[1] as string;
 
-    switch (key) {
-      case "title":
-      case "description":
-      case "date":
-        exports[key] = value;
-        break;
+    // String fields: assign directly
+    if (key === "title" || key === "description" || key === "date") {
+      exports[key] = value;
+      continue;
+    }
 
-      case "layout":
-        exports[key] = parseLayoutValue(value);
-        break;
+    // Boolean field: parse as boolean
+    if (key === "draft") {
+      exports[key] = value === "true";
+      continue;
+    }
 
-      case "headings":
-      case "tags":
-      case "nested":
-        try {
-          exports[key] = parseJsonish(value) as never;
-        } catch (e) {
-          logger.warn(`Failed to parse ${key}`, e);
-        }
-        break;
+    // Layout field: parse as boolean or string
+    if (key === "layout") {
+      exports[key] = parseLayoutValue(value);
+      continue;
+    }
 
-      case "draft":
-        exports[key] = value === "true";
-        break;
+    // JSON-like fields: parse with jsonish parser
+    try {
+      exports[key] = parseJsonish(value) as never;
+    } catch (e) {
+      logger.warn(`Failed to parse ${key}`, e);
     }
   }
 

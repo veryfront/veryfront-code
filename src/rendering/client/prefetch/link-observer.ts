@@ -4,6 +4,12 @@ export interface LinkObserverOptions {
   onLinkVisible: (link: HTMLAnchorElement) => void;
 }
 
+function isAnchorElement(element: Element): element is HTMLAnchorElement {
+  return typeof HTMLAnchorElement !== "undefined"
+    ? element instanceof HTMLAnchorElement
+    : element.tagName === "A";
+}
+
 export class LinkObserver {
   private options: LinkObserverOptions;
   private intersectionObserver: IntersectionObserver | null = null;
@@ -33,37 +39,26 @@ export class LinkObserver {
 
   private handleIntersection(entries: IntersectionObserverEntry[]): void {
     for (const entry of entries) {
-      if (entry.isIntersecting) {
-        const target = entry.target;
-        let isAnchor = false;
-
-        if (typeof HTMLAnchorElement !== "undefined") {
-          isAnchor = target instanceof HTMLAnchorElement;
-        } else {
-          isAnchor = target.tagName === "A";
-        }
-
-        if (!isAnchor) {
-          continue;
-        }
-
-        const link = target as HTMLAnchorElement;
-
-        // Reset counter if it gets too high (prevents unbounded growth in long-running sessions)
-        if (this.timeoutCounter > 1_000_000) {
-          this.timeoutCounter = 0;
-        }
-        const timeoutKey = this.timeoutCounter++;
-
-        const timeoutId = setTimeout(() => {
-          this.pendingTimeouts.delete(timeoutKey);
-          this.elementTimeoutMap.delete(link);
-          this.options.onLinkVisible(link);
-        }, this.options.delay);
-
-        this.pendingTimeouts.set(timeoutKey, timeoutId);
-        this.elementTimeoutMap.set(link, timeoutKey);
+      if (!entry.isIntersecting || !isAnchorElement(entry.target)) {
+        continue;
       }
+
+      const link = entry.target;
+
+      // Reset counter if it gets too high (prevents unbounded growth in long-running sessions)
+      if (this.timeoutCounter > 1_000_000) {
+        this.timeoutCounter = 0;
+      }
+      const timeoutKey = this.timeoutCounter++;
+
+      const timeoutId = setTimeout(() => {
+        this.pendingTimeouts.delete(timeoutKey);
+        this.elementTimeoutMap.delete(link);
+        this.options.onLinkVisible(link);
+      }, this.options.delay);
+
+      this.pendingTimeouts.set(timeoutKey, timeoutId);
+      this.elementTimeoutMap.set(link, timeoutKey);
     }
   }
 
@@ -102,50 +97,35 @@ export class LinkObserver {
     });
   }
 
+  private clearTimeoutForElement(element: Element): void {
+    const timeoutKey = this.elementTimeoutMap.get(element);
+    if (timeoutKey === undefined) return;
+
+    const timeoutId = this.pendingTimeouts.get(timeoutKey);
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+      this.pendingTimeouts.delete(timeoutKey);
+    }
+    this.elementTimeoutMap.delete(element);
+  }
+
   private clearElementTimeouts(element: Element): void {
-    if (element.tagName === "A") {
-      const timeoutKey = this.elementTimeoutMap.get(element);
-      if (timeoutKey !== undefined) {
-        const timeoutId = this.pendingTimeouts.get(timeoutKey);
-        if (timeoutId) {
-          clearTimeout(timeoutId);
-          this.pendingTimeouts.delete(timeoutKey);
-        }
-        this.elementTimeoutMap.delete(element);
-      }
+    // Clear timeout for the element itself if it's an anchor
+    if (isAnchorElement(element)) {
+      this.clearTimeoutForElement(element);
     }
 
     // Clear timeouts for any child links
-    const links = element.querySelectorAll("a");
-    links.forEach((link) => {
-      const timeoutKey = this.elementTimeoutMap.get(link);
-      if (timeoutKey !== undefined) {
-        const timeoutId = this.pendingTimeouts.get(timeoutKey);
-        if (timeoutId) {
-          clearTimeout(timeoutId);
-          this.pendingTimeouts.delete(timeoutKey);
-        }
-        this.elementTimeoutMap.delete(link);
-      }
-    });
+    element.querySelectorAll("a").forEach((link) => this.clearTimeoutForElement(link));
   }
 
   private observeElement(element: Element): void {
-    const isAnchor = typeof HTMLAnchorElement !== "undefined"
-      ? element instanceof HTMLAnchorElement
-      : element.tagName === "A";
-
-    if (isAnchor && this.isValidLink(element as HTMLAnchorElement)) {
+    if (isAnchorElement(element) && this.isValidLink(element)) {
       this.intersectionObserver?.observe(element);
     }
 
-    const links = element.querySelectorAll('a[href^="/"], a[href^="./"]');
-    links.forEach((link) => {
-      const isLinkAnchor = typeof HTMLAnchorElement !== "undefined"
-        ? link instanceof HTMLAnchorElement
-        : link.tagName === "A";
-
-      if (isLinkAnchor && this.isValidLink(link as HTMLAnchorElement)) {
+    element.querySelectorAll('a[href^="/"], a[href^="./"]').forEach((link) => {
+      if (isAnchorElement(link) && this.isValidLink(link)) {
         this.intersectionObserver?.observe(link);
       }
     });
