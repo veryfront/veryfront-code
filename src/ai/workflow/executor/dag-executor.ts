@@ -21,7 +21,7 @@ import type {
   WorkflowNodeConfig,
   WorkflowRun,
 } from "../types.ts";
-import { generateId } from "../types.ts";
+import { generateId, parseDuration } from "../types.ts";
 import type { StepExecutor } from "./step-executor.ts";
 import type { CheckpointManager } from "./checkpoint-manager.ts";
 
@@ -646,7 +646,7 @@ export class DAGExecutor {
       if (config.delay && iteration < config.maxIterations - 1) {
         const delayMs = typeof config.delay === "number"
           ? config.delay
-          : this.parseDuration(config.delay);
+          : parseDuration(config.delay);
         await this.sleep(delayMs);
       }
 
@@ -702,34 +702,6 @@ export class DAGExecutor {
       },
       waiting: false,
     };
-  }
-
-  /**
-   * Parse duration string to milliseconds
-   */
-  private parseDuration(duration: string | number): number {
-    if (typeof duration === "number") return duration;
-
-    const match = duration.match(/^(\d+)(ms|s|m|h|d)$/);
-    if (!match) return 0;
-
-    const value = parseInt(match[1]!, 10);
-    const unit = match[2];
-
-    switch (unit) {
-      case "ms":
-        return value;
-      case "s":
-        return value * 1000;
-      case "m":
-        return value * 60 * 1000;
-      case "h":
-        return value * 60 * 60 * 1000;
-      case "d":
-        return value * 24 * 60 * 60 * 1000;
-      default:
-        return 0;
-    }
   }
 
   /**

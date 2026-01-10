@@ -41,10 +41,17 @@ export function parseRoute(pattern: string, page: string): Route {
   };
 }
 
+/** Segment patterns ordered from lowest to highest priority */
+const SEGMENT_PATTERNS: Array<{ pattern: string; score: number }> = [
+  { pattern: "[[...", score: 1 }, // Optional catch-all - lowest priority
+  { pattern: "[...", score: 2 }, // Catch-all
+  { pattern: "[", score: 3 }, // Dynamic segment
+];
+
 function getSegmentScore(segment: string): number {
-  if (segment.includes("[[...")) return 1; // Optional catch-all - lowest priority
-  if (segment.includes("[...")) return 2; // Catch-all
-  if (segment.includes("[")) return 3; // Dynamic segment
+  for (const { pattern, score } of SEGMENT_PATTERNS) {
+    if (segment.includes(pattern)) return score;
+  }
   return 4; // Static segment - highest priority
 }
 
