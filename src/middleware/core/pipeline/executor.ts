@@ -3,6 +3,9 @@ import { MiddlewareContext } from "../context.ts";
 import { HTTP_NOT_FOUND, HTTP_SERVER_ERROR } from "@veryfront/utils";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/index.ts";
 import { ensureError, getErrorMessage } from "../../../core/errors/veryfront-error.ts";
+import { serverLogger } from "../../../core/utils/logger/logger.ts";
+
+const NOT_FOUND_RESPONSE = (): Response => new Response("Not Found", { status: HTTP_NOT_FOUND });
 
 export async function executeMiddlewarePipeline(
   req: Request,
@@ -11,17 +14,12 @@ export async function executeMiddlewarePipeline(
   executionCtx?: ExecutionContext,
   adapter?: RuntimeAdapter,
 ): Promise<Response> {
-  const context = new MiddlewareContext(req, env || {}, executionCtx);
-
-  let response: Response | undefined;
+  const context = new MiddlewareContext(req, env ?? {}, executionCtx);
 
   try {
-    response = await composedMiddleware(
-      context,
-      () => Promise.resolve(new Response("Not Found", { status: HTTP_NOT_FOUND })),
-    );
+    const response = await composedMiddleware(context, () => Promise.resolve(NOT_FOUND_RESPONSE()));
+    return response ?? NOT_FOUND_RESPONSE();
   } catch (error) {
-    const { serverLogger } = await import("../../../core/utils/logger/logger.ts");
     const err = ensureError(error);
     serverLogger.error("Middleware pipeline error:", {
       url: req.url,
@@ -30,7 +28,7 @@ export async function executeMiddlewarePipeline(
       stack: err.stack,
     });
 
-    const nodeEnv = adapter?.env.get("NODE_ENV") || "production";
+    const nodeEnv = adapter?.env.get("NODE_ENV") ?? "production";
 
     return new Response(
       JSON.stringify({
@@ -39,7 +37,7 @@ export async function executeMiddlewarePipeline(
         url: req.url,
         ...(nodeEnv === "development" && {
           message: err.message,
-          stack: err.stack?.split("\n").slice(0, 10), // Limit stack trace length
+          stack: err.stack?.split("\n").slice(0, 10),
         }),
       }),
       {
@@ -48,6 +46,4 @@ export async function executeMiddlewarePipeline(
       },
     );
   }
-
-  return response || new Response("Not Found", { status: HTTP_NOT_FOUND });
 }

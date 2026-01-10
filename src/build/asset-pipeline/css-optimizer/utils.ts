@@ -87,19 +87,9 @@ export function extractSelectors(content: string): {
   const tags: string[] = [];
   const selectors = new Set<string>();
 
-  // Extract className attributes (JSX)
-  const classNameMatches = content.matchAll(/className=["']([^"']+)["']/g);
-  for (const match of classNameMatches) {
-    if (match[1]) {
-      const classNames = match[1].split(/\s+/);
-      classes.push(...classNames);
-      classNames.forEach((cn) => selectors.add(`.${cn}`));
-    }
-  }
-
-  // Extract class attributes (HTML)
-  const classMatches = content.matchAll(/class=["']([^"']+)["']/g);
-  for (const match of classMatches) {
+  // Extract className (JSX) and class (HTML) attributes
+  const classAttributeMatches = content.matchAll(/class(?:Name)?=["']([^"']+)["']/g);
+  for (const match of classAttributeMatches) {
     if (match[1]) {
       const classNames = match[1].split(/\s+/);
       classes.push(...classNames);
