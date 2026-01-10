@@ -22,7 +22,7 @@ import {
 import { ensureDir as _ensureDir } from "std/fs/mod.ts";
 import { join as _join } from "std/path/mod.ts";
 import { afterAll, describe, it } from "std/testing/bdd.ts";
-import { denoAdapter } from "@veryfront/platform/adapters/deno.ts";
+import { denoAdapter } from "@veryfront/platform/adapters/runtime/deno";
 import { createVeryfrontHandler } from "../../../../src/server/universal-handler/index.ts";
 import "../../../_helpers/log-guard.ts";
 import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";

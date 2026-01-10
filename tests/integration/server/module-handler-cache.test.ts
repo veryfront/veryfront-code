@@ -1,7 +1,7 @@
 import { assertEquals, assertMatch } from "std/assert/mod.ts";
 import { join } from "std/path/mod.ts";
 import type { HandlerContext } from "../../../src/server/handlers/types.ts";
-import { denoAdapter } from "@veryfront/platform/adapters/deno.ts";
+import { denoAdapter } from "@veryfront/platform/adapters/runtime/deno";
 import { ResponseBuilder } from "@veryfront/security/index.ts";
 import { createRenderer } from "../../../src/rendering/index.ts";
 import { cleanupBundler } from "../../../src/rendering/cleanup.ts";

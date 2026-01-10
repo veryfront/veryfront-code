@@ -7,7 +7,7 @@
 
 import { join } from "std/path/mod.ts";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
-import { denoAdapter } from "@veryfront/platform/adapters/deno.ts";
+import { denoAdapter } from "@veryfront/platform/adapters/runtime/deno";
 
 export interface FileDiscoveryOptions {
   /**
