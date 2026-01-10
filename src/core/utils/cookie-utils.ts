@@ -1,12 +1,4 @@
-/**
- * Cookie parsing utilities
- */
-
-/**
- * Parse a cookie header string into key-value pairs
- * @param cookieHeader - The raw Cookie header string
- * @returns Record of cookie names to decoded values
- */
+/** Parse a cookie header string into key-value pairs */
 export function parseCookies(cookieHeader: string): Record<string, string> {
   const cookies: Record<string, string> = {};
 
@@ -26,11 +18,7 @@ export function parseCookies(cookieHeader: string): Record<string, string> {
   return cookies;
 }
 
-/**
- * Parse cookies from request headers
- * @param headers - Request headers
- * @returns Record of cookie names to decoded values
- */
+/** Parse cookies from request headers */
 export function parseCookiesFromHeaders(headers: Headers): Record<string, string> {
   return parseCookies(headers.get("cookie") || "");
 }

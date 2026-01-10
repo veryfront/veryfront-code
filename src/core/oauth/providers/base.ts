@@ -1,9 +1,3 @@
-/**
- * Base OAuth Provider
- *
- * Generic OAuth 2.0 implementation that can be extended for specific providers.
- */
-
 import type {
   AuthorizationUrlOptions,
   OAuthProviderConfig,
@@ -16,25 +10,16 @@ import type {
 } from "../types.ts";
 import { getEnv } from "../../../platform/compat/process.ts";
 
-/**
- * Generate cryptographically secure random string
- */
 function generateRandomString(length: number): string {
   const array = new Uint8Array(length);
   crypto.getRandomValues(array);
   return Array.from(array, (byte) => byte.toString(16).padStart(2, "0")).join("").slice(0, length);
 }
 
-/**
- * Generate PKCE code verifier
- */
 function generateCodeVerifier(): string {
   return generateRandomString(64);
 }
 
-/**
- * Generate PKCE code challenge from verifier
- */
 async function generateCodeChallenge(verifier: string): Promise<string> {
   const encoder = new TextEncoder();
   const data = encoder.encode(verifier);
@@ -45,9 +30,6 @@ async function generateCodeChallenge(verifier: string): Promise<string> {
     .replace(/=+$/, "");
 }
 
-/**
- * Base OAuth provider class
- */
 export class OAuthProvider {
   protected config: OAuthProviderConfig;
 
@@ -55,30 +37,18 @@ export class OAuthProvider {
     this.config = config;
   }
 
-  /**
-   * Get client ID from environment
-   */
   getClientId(): string | null {
     return getEnv(this.config.clientIdEnvVar) || null;
   }
 
-  /**
-   * Get client secret from environment
-   */
   getClientSecret(): string | null {
     return getEnv(this.config.clientSecretEnvVar) || null;
   }
 
-  /**
-   * Check if provider is configured
-   */
   isConfigured(): boolean {
     return !!(this.getClientId() && this.getClientSecret());
   }
 
-  /**
-   * Create authorization URL
-   */
   async createAuthorizationUrl(
     options: AuthorizationUrlOptions & { defaultScopes?: string[] } = {},
   ): Promise<{ url: string; state: OAuthState }> {
@@ -128,9 +98,6 @@ export class OAuthProvider {
     };
   }
 
-  /**
-   * Exchange authorization code for tokens
-   */
   async exchangeCode(options: TokenExchangeOptions): Promise<TokenExchangeResult> {
     const clientId = this.getClientId();
     const clientSecret = this.getClientSecret();
@@ -207,9 +174,6 @@ export class OAuthProvider {
     }
   }
 
-  /**
-   * Refresh access token
-   */
   async refreshTokens(refreshToken: string): Promise<TokenExchangeResult> {
     const clientId = this.getClientId();
     const clientSecret = this.getClientSecret();
@@ -280,9 +244,6 @@ export class OAuthProvider {
     }
   }
 
-  /**
-   * Revoke tokens
-   */
   async revokeToken(token: string): Promise<boolean> {
     if (!this.config.revocationUrl) {
       return false;
@@ -304,9 +265,6 @@ export class OAuthProvider {
   }
 }
 
-/**
- * Service-specific OAuth handler
- */
 export class OAuthService extends OAuthProvider {
   protected serviceConfig: OAuthServiceConfig;
   protected tokenStore?: TokenStore;
@@ -317,23 +275,14 @@ export class OAuthService extends OAuthProvider {
     this.tokenStore = tokenStore;
   }
 
-  /**
-   * Get service ID
-   */
   get serviceId(): string {
     return this.serviceConfig.serviceId;
   }
 
-  /**
-   * Get API base URL
-   */
   get apiBaseUrl(): string {
     return this.serviceConfig.apiBaseUrl;
   }
 
-  /**
-   * Create authorization URL with service defaults
-   */
   override createAuthorizationUrl(
     options: AuthorizationUrlOptions = {},
   ): Promise<{ url: string; state: OAuthState }> {
@@ -343,9 +292,6 @@ export class OAuthService extends OAuthProvider {
     });
   }
 
-  /**
-   * Get valid access token (refreshing if needed)
-   */
   async getAccessToken(): Promise<string | null> {
     if (!this.tokenStore) {
       return null;
@@ -371,9 +317,6 @@ export class OAuthService extends OAuthProvider {
     return tokens.accessToken;
   }
 
-  /**
-   * Make authenticated API request
-   */
   async fetch<T>(
     endpoint: string,
     options: RequestInit = {},

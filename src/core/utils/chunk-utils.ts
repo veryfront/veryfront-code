@@ -1,15 +1,4 @@
-/**
- * Chunk path utilities for build and serving
- */
-
-/**
- * Normalize a chunk path for manifest processing.
- * Handles null/undefined values, http URLs, and relative paths.
- *
- * @param value - The chunk path value (may be null/undefined)
- * @param base - Base path prefix for relative paths
- * @returns Normalized path or null if input is invalid
- */
+/** Normalize a chunk path for manifest processing */
 export function normalizeChunkPath(
   value: string | null | undefined,
   base: string,
