@@ -34,7 +34,7 @@ describe("Runtime detection", () => {
       assertExists(adapter.name);
       assertExists(adapter.fs);
       assertExists(adapter.env);
-      assertExists(adapter.features);
+      assertExists(adapter.capabilities);
       assertExists(adapter.serve);
     });
   });
@@ -138,7 +138,7 @@ describe("Runtime detection", () => {
       assertEquals(denoAdapter.name, "deno");
       assertExists(denoAdapter.fs);
       assertExists(denoAdapter.env);
-      assertExists(denoAdapter.features);
+      assertExists(denoAdapter.capabilities);
       assertExists(denoAdapter.serve);
     });
   });
@@ -148,7 +148,7 @@ describe("Runtime detection", () => {
       assertEquals(bunAdapter.name, "bun");
       assertExists(bunAdapter.fs);
       assertExists(bunAdapter.env);
-      assertExists(bunAdapter.features);
+      assertExists(bunAdapter.capabilities);
       assertExists(bunAdapter.serve);
     });
   });
@@ -158,7 +158,7 @@ describe("Runtime detection", () => {
       assertEquals(nodeAdapter.name, "node");
       assertExists(nodeAdapter.fs);
       assertExists(nodeAdapter.env);
-      assertExists(nodeAdapter.features);
+      assertExists(nodeAdapter.capabilities);
       assertExists(nodeAdapter.serve);
     });
   });

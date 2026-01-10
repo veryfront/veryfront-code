@@ -31,16 +31,17 @@ function getVeryfrontFSAdapter(adapter: RuntimeAdapter): FSAdapterLike | null {
   const fs = adapter?.fs;
   if (!fs || typeof fs !== "object") return null;
 
-  const wrapped = (fs as { fsAdapter?: unknown }).fsAdapter;
-  if (!wrapped || typeof wrapped !== "object") return null;
+  // Use wrapper methods if available
+  const wrapper = "isVeryfrontAdapter" in fs && "getUnderlyingAdapter" in fs
+    ? (fs as unknown as { isVeryfrontAdapter: () => boolean; getUnderlyingAdapter: () => unknown })
+    : null;
 
-  const constructor = (wrapped as { constructor?: { name?: string } }).constructor;
-  const adapterName = constructor?.name;
-
-  // Support both VeryfrontFSAdapter (single-project) and MultiProjectFSAdapter (proxy mode)
-  if (adapterName !== "VeryfrontFSAdapter" && adapterName !== "MultiProjectFSAdapter") {
+  if (!wrapper?.isVeryfrontAdapter()) {
     return null;
   }
+
+  const wrapped = wrapper.getUnderlyingAdapter();
+  if (!wrapped || typeof wrapped !== "object") return null;
 
   const typedAdapter = wrapped as Partial<FSAdapterLike>;
   if (typeof typedAdapter.getProjectData !== "function") return null;

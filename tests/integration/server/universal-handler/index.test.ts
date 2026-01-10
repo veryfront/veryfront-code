@@ -27,26 +27,18 @@ import { createVeryfrontHandler } from "../../../../src/server/universal-handler
 import "../../../_helpers/log-guard.ts";
 import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";
 
-// Mock adapter for testing
-function createMockAdapter(envVars: Record<string, string> = {}): typeof denoAdapter {
+// Mock adapter for testing - returns RuntimeAdapter with custom env
+function createMockAdapter(envVars: Record<string, string> = {}) {
   const customEnv = {
     get: (key: string) => envVars[key] ?? Deno.env.get(key),
     set: denoAdapter.env.set,
     toObject: denoAdapter.env.toObject,
   };
 
-  return {
-    id: denoAdapter.id,
-    name: denoAdapter.name,
-    platform: denoAdapter.platform,
-    capabilities: denoAdapter.capabilities,
-    serve: denoAdapter.serve,
-    fs: denoAdapter.fs,
+  // Return a new adapter with overridden env
+  return Object.assign(Object.create(Object.getPrototypeOf(denoAdapter)), denoAdapter, {
     env: customEnv,
-    features: denoAdapter.features,
-    server: denoAdapter.server,
-    shell: denoAdapter.shell,
-  };
+  });
 }
 
 describe(

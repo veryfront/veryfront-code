@@ -30,17 +30,17 @@ describe(
         assertEquals(adapter.name, "node");
         assertExists(adapter.fs);
         assertExists(adapter.env);
-        assertExists(adapter.features);
+        assertExists(adapter.capabilities);
       });
 
       it("should have correct feature flags", () => {
         const adapter = new NodeAdapter();
 
-        assertEquals(adapter.features.websocket, true);
-        assertEquals(adapter.features.http2, true);
-        assertEquals(adapter.features.workers, true);
-        assertEquals(adapter.features.jsx, false);
-        assertEquals(adapter.features.typescript, false);
+        assertEquals(adapter.capabilities.websocket, true);
+        assertEquals(adapter.capabilities.http2, true);
+        assertEquals(adapter.capabilities.workers, true);
+        assertEquals(adapter.capabilities.jsx, false);
+        assertEquals(adapter.capabilities.typescript, false);
       });
 
       it("should implement RuntimeAdapter interface", () => {
@@ -49,7 +49,7 @@ describe(
         assertExists(adapter.name);
         assertExists(adapter.fs);
         assertExists(adapter.env);
-        assertExists(adapter.features);
+        assertExists(adapter.capabilities);
         assertExists(adapter.serve);
       });
     });
@@ -132,8 +132,12 @@ describe(
 
         assertExists(adapter.serve);
         assertEquals(typeof adapter.serve, "function");
-        // serve() is a regular function that returns Promise, not an async function
-        assertEquals(adapter.serve.constructor.name, "Function");
+        // serve() returns a Promise (may be async or regular function)
+        assert(
+          adapter.serve.constructor.name === "Function" ||
+            adapter.serve.constructor.name === "AsyncFunction",
+          `Expected Function or AsyncFunction, got ${adapter.serve.constructor.name}`,
+        );
         // Only required parameters count towards length (options has default value)
         assertEquals(adapter.serve.length, 1);
       });
@@ -251,11 +255,11 @@ describe(
     describe("Singleton instance", () => {
       it("should have same properties as new instance", () => {
         assertEquals(nodeAdapter.name, "node");
-        assertEquals(nodeAdapter.features.websocket, true);
-        assertEquals(nodeAdapter.features.http2, true);
-        assertEquals(nodeAdapter.features.workers, true);
-        assertEquals(nodeAdapter.features.jsx, false);
-        assertEquals(nodeAdapter.features.typescript, false);
+        assertEquals(nodeAdapter.capabilities.websocket, true);
+        assertEquals(nodeAdapter.capabilities.http2, true);
+        assertEquals(nodeAdapter.capabilities.workers, true);
+        assertEquals(nodeAdapter.capabilities.jsx, false);
+        assertEquals(nodeAdapter.capabilities.typescript, false);
 
         assertExists(nodeAdapter.fs);
         assertExists(nodeAdapter.env);

@@ -70,7 +70,13 @@ export async function withFallback<T>(
       if (logError) logFallbackSuccess(operationName);
       return result;
     } catch (fallbackError) {
-      handleFallbackFailure(operationName, primaryError, fallbackError, logError, rethrowOnFallbackFailure);
+      handleFallbackFailure(
+        operationName,
+        primaryError,
+        fallbackError,
+        logError,
+        rethrowOnFallbackFailure,
+      );
     }
   }
 }
@@ -92,7 +98,13 @@ export function withFallbackSync<T>(
       if (logError) logFallbackSuccess(operationName);
       return result;
     } catch (fallbackError) {
-      handleFallbackFailure(operationName, primaryError, fallbackError, logError, rethrowOnFallbackFailure);
+      handleFallbackFailure(
+        operationName,
+        primaryError,
+        fallbackError,
+        logError,
+        rethrowOnFallbackFailure,
+      );
     }
   }
 }

@@ -19,8 +19,19 @@ function _createMockAdapter(
   files: Map<string, { content: string; isFile: boolean; isDirectory: boolean }>,
 ): RuntimeAdapter {
   return {
+    id: "deno",
     name: "mock",
-    platform: "deno",
+    capabilities: {
+      typescript: true,
+      jsx: true,
+      http2: false,
+      websocket: false,
+      workers: false,
+      fileWatching: false,
+      shell: false,
+      kvStore: false,
+      writableFs: true,
+    },
     fs: {
       readFile(path: string): Promise<string> {
         const file = files.get(path);
@@ -75,15 +86,13 @@ function _createMockAdapter(
         return {};
       },
     },
-    features: {
-      websocket: false,
-      http2: false,
-      workers: false,
-      jsx: true,
-      typescript: true,
+    server: {
+      upgradeWebSocket() {
+        throw new Error("not implemented");
+      },
     },
     serve(_handler: any, _options: any): Promise<any> {
-      return Promise.resolve(null);
+      return Promise.resolve({ stop: async () => {}, addr: { hostname: "localhost", port: 0 } });
     },
   } as RuntimeAdapter;
 }

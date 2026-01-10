@@ -8,19 +8,31 @@ import type { ContextualFSAdapter, FSAdapter } from "./veryfront/types.ts";
  */
 function createMockFSAdapter(overrides: Partial<FSAdapter> = {}): FSAdapter {
   return {
-    readFile: async (path: string) => {
-      if (path === "/exists.txt") return "content";
-      throw new Error(`File not found: ${path}`);
+    readFile: (path: string) => {
+      if (path === "/exists.txt") return Promise.resolve("content");
+      return Promise.reject(new Error(`File not found: ${path}`));
     },
-    exists: async (path: string) => path === "/exists.txt" || path === "/dir",
-    stat: async (path: string) => {
+    exists: (path: string) => Promise.resolve(path === "/exists.txt" || path === "/dir"),
+    stat: (path: string) => {
       if (path === "/exists.txt") {
-        return { size: 7, isFile: true, isDirectory: false, isSymlink: false, mtime: new Date() };
+        return Promise.resolve({
+          size: 7,
+          isFile: true,
+          isDirectory: false,
+          isSymlink: false,
+          mtime: new Date(),
+        });
       }
       if (path === "/dir") {
-        return { size: 0, isFile: false, isDirectory: true, isSymlink: false, mtime: new Date() };
+        return Promise.resolve({
+          size: 0,
+          isFile: false,
+          isDirectory: true,
+          isSymlink: false,
+          mtime: new Date(),
+        });
       }
-      throw new Error(`Path not found: ${path}`);
+      return Promise.reject(new Error(`Path not found: ${path}`));
     },
     ...overrides,
   };
@@ -64,7 +76,7 @@ describe("FSAdapterWrapper", () => {
   describe("readFile", () => {
     it("should read file using readTextFile if available", async () => {
       const fsAdapter = createMockFSAdapter({
-        readTextFile: async () => "text content",
+        readTextFile: () => Promise.resolve("text content"),
       });
       const wrapper = new FSAdapterWrapper(fsAdapter);
 
@@ -74,7 +86,7 @@ describe("FSAdapterWrapper", () => {
 
     it("should read file using readFile and decode if readTextFile not available", async () => {
       const fsAdapter = createMockFSAdapter({
-        readFile: async () => new TextEncoder().encode("binary content"),
+        readFile: () => Promise.resolve(new TextEncoder().encode("binary content")),
       });
       const wrapper = new FSAdapterWrapper(fsAdapter);
 
@@ -84,7 +96,7 @@ describe("FSAdapterWrapper", () => {
 
     it("should return string directly if readFile returns string", async () => {
       const fsAdapter = createMockFSAdapter({
-        readFile: async () => "string content",
+        readFile: () => Promise.resolve("string content"),
       });
       const wrapper = new FSAdapterWrapper(fsAdapter);
 
@@ -97,7 +109,7 @@ describe("FSAdapterWrapper", () => {
     it("should return Uint8Array directly if readFile returns bytes", async () => {
       const bytes = new Uint8Array([1, 2, 3]);
       const fsAdapter = createMockFSAdapter({
-        readFile: async () => bytes,
+        readFile: () => Promise.resolve(bytes),
       });
       const wrapper = new FSAdapterWrapper(fsAdapter);
 
@@ -107,7 +119,7 @@ describe("FSAdapterWrapper", () => {
 
     it("should encode string to Uint8Array if readFile returns string", async () => {
       const fsAdapter = createMockFSAdapter({
-        readFile: async () => "hello",
+        readFile: () => Promise.resolve("hello"),
       });
       const wrapper = new FSAdapterWrapper(fsAdapter);
 
@@ -120,8 +132,9 @@ describe("FSAdapterWrapper", () => {
     it("should write file when writeFile is supported", async () => {
       let written: { path: string; content: string } | null = null;
       const fsAdapter = createMockFSAdapter({
-        writeFile: async (path: string, content: string) => {
+        writeFile: (path: string, content: string) => {
           written = { path, content };
+          return Promise.resolve();
         },
       });
       const wrapper = new FSAdapterWrapper(fsAdapter);
@@ -175,10 +188,23 @@ describe("FSAdapterWrapper", () => {
   describe("readDir", () => {
     it("should yield directory entries using readdir", async () => {
       const fsAdapter = createMockFSAdapter({
-        readdir: async () => [
-          { name: "file1.txt", path: "/dir/file1.txt", isFile: true, isDirectory: false, isSymlink: false },
-          { name: "subdir", path: "/dir/subdir", isFile: false, isDirectory: true, isSymlink: false },
-        ],
+        readdir: () =>
+          Promise.resolve([
+            {
+              name: "file1.txt",
+              path: "/dir/file1.txt",
+              isFile: true,
+              isDirectory: false,
+              isSymlink: false,
+            },
+            {
+              name: "subdir",
+              path: "/dir/subdir",
+              isFile: false,
+              isDirectory: true,
+              isSymlink: false,
+            },
+          ]),
       });
       const wrapper = new FSAdapterWrapper(fsAdapter);
 
@@ -195,7 +221,13 @@ describe("FSAdapterWrapper", () => {
     it("should yield directory entries using readDir if readdir not available", async () => {
       const fsAdapter = createMockFSAdapter({
         readDir: async function* () {
-          yield { name: "a.txt", path: "/dir/a.txt", isFile: true, isDirectory: false, isSymlink: false };
+          yield {
+            name: "a.txt",
+            path: "/dir/a.txt",
+            isFile: true,
+            isDirectory: false,
+            isSymlink: false,
+          };
         },
       });
       const wrapper = new FSAdapterWrapper(fsAdapter);
@@ -228,9 +260,16 @@ describe("FSAdapterWrapper", () => {
   describe("readdir", () => {
     it("should return array of directory entries", async () => {
       const fsAdapter = createMockFSAdapter({
-        readdir: async () => [
-          { name: "file.txt", path: "/dir/file.txt", isFile: true, isDirectory: false, isSymlink: false },
-        ],
+        readdir: () =>
+          Promise.resolve([
+            {
+              name: "file.txt",
+              path: "/dir/file.txt",
+              isFile: true,
+              isDirectory: false,
+              isSymlink: false,
+            },
+          ]),
       });
       const wrapper = new FSAdapterWrapper(fsAdapter);
 
@@ -244,8 +283,9 @@ describe("FSAdapterWrapper", () => {
     it("should create directory when supported", async () => {
       let created: { path: string; options?: { recursive?: boolean } } | null = null;
       const fsAdapter = createMockFSAdapter({
-        mkdir: async (path: string, options?: { recursive?: boolean }) => {
+        mkdir: (path: string, options?: { recursive?: boolean }) => {
           created = { path, options };
+          return Promise.resolve();
         },
       });
       const wrapper = new FSAdapterWrapper(fsAdapter);
@@ -269,8 +309,9 @@ describe("FSAdapterWrapper", () => {
     it("should remove when supported", async () => {
       let removed: string | null = null;
       const fsAdapter = createMockFSAdapter({
-        remove: async (path: string) => {
+        remove: (path: string) => {
           removed = path;
+          return Promise.resolve();
         },
       });
       const wrapper = new FSAdapterWrapper(fsAdapter);
@@ -293,7 +334,7 @@ describe("FSAdapterWrapper", () => {
   describe("resolveFile", () => {
     it("should delegate to fsAdapter.resolveFile when available", async () => {
       const fsAdapter = createMockFSAdapter({
-        resolveFile: async (basePath: string) => `${basePath}.tsx`,
+        resolveFile: (basePath: string) => Promise.resolve(`${basePath}.tsx`),
       });
       const wrapper = new FSAdapterWrapper(fsAdapter);
 
@@ -340,8 +381,9 @@ describe("FSAdapterWrapper", () => {
     it("should call fsAdapter.shutdown when available", async () => {
       let shutdownCalled = false;
       const fsAdapter = createMockFSAdapter({
-        shutdown: async () => {
+        shutdown: () => {
           shutdownCalled = true;
+          return Promise.resolve();
         },
       });
       const wrapper = new FSAdapterWrapper(fsAdapter);
@@ -362,7 +404,7 @@ describe("FSAdapterWrapper", () => {
   describe("contextual operations", () => {
     it("isMultiProjectMode should return true when runWithContext available", () => {
       const fsAdapter = createMockContextualAdapter({
-        runWithContext: async <T>(_slug: string, _token: string, fn: () => Promise<T>) => fn(),
+        runWithContext: <T>(_slug: string, _token: string, fn: () => Promise<T>) => fn(),
       });
       const wrapper = new FSAdapterWrapper(fsAdapter);
 
@@ -450,7 +492,7 @@ describe("FSAdapterWrapper", () => {
       const wrapper = new FSAdapterWrapper(fsAdapter);
 
       assertThrows(
-        () => wrapper.runWithContext("slug", "token", async () => "result"),
+        () => wrapper.runWithContext("slug", "token", () => Promise.resolve("result")),
         NotSupportedError,
       );
     });
@@ -471,14 +513,18 @@ describe("FSAdapterWrapper", () => {
     it("runWithContext should delegate when supported", async () => {
       let captured: { slug: string; token: string } | null = null;
       const fsAdapter = createMockContextualAdapter({
-        runWithContext: async <T>(slug: string, token: string, fn: () => Promise<T>) => {
+        runWithContext: <T>(slug: string, token: string, fn: () => Promise<T>) => {
           captured = { slug, token };
           return fn();
         },
       });
       const wrapper = new FSAdapterWrapper(fsAdapter);
 
-      const result = await wrapper.runWithContext("my-slug", "my-token", async () => "result");
+      const result = await wrapper.runWithContext(
+        "my-slug",
+        "my-token",
+        () => Promise.resolve("result"),
+      );
       assertEquals(captured, { slug: "my-slug", token: "my-token" });
       assertEquals(result, "result");
     });

@@ -13,7 +13,6 @@ const fs = createFileSystem();
 const adapter: RuntimeAdapter = {
   id: "node",
   name: "node-stub",
-  platform: "node",
   capabilities: {
     typescript: true,
     jsx: true,
@@ -24,13 +23,6 @@ const adapter: RuntimeAdapter = {
     shell: true,
     kvStore: false,
     writableFs: true,
-  },
-  features: {
-    websocket: true,
-    http2: true,
-    workers: true,
-    jsx: true,
-    typescript: true,
   },
   fs: {
     readFile: fs.readTextFile.bind(fs),

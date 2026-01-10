@@ -65,9 +65,14 @@ export function createRequestLoggerMiddleware() {
 }
 
 function isVirtualFilesystem(adapter: RuntimeAdapter): boolean {
-  const wrappedAdapter = (adapter?.fs as { fsAdapter?: unknown })?.fsAdapter;
-  const adapterName = (wrappedAdapter as { constructor?: { name?: string } })?.constructor?.name;
-  return adapterName === "VeryfrontFSAdapter";
+  const fs = adapter?.fs;
+  if (!fs || typeof fs !== "object") return false;
+
+  // Use wrapper methods if available
+  if ("isVeryfrontAdapter" in fs) {
+    return (fs as { isVeryfrontAdapter: () => boolean }).isVeryfrontAdapter();
+  }
+  return false;
 }
 
 async function loadMiddlewareFile(

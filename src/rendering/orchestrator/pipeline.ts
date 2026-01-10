@@ -746,15 +746,18 @@ export class RenderPipeline {
 
     // 10. Get project updatedAt if available from Veryfront API adapter
     let projectUpdatedAt: string | undefined;
-    const wrappedAdapter = (this.config.adapter?.fs as { fsAdapter?: unknown })?.fsAdapter;
-    if (
-      (wrappedAdapter as { constructor?: { name?: string } })?.constructor?.name ===
-        "VeryfrontFSAdapter"
-    ) {
-      const projectData =
-        (wrappedAdapter as { getProjectData?: () => { updatedAt?: string } | undefined })
-          ?.getProjectData?.();
-      projectUpdatedAt = projectData?.updatedAt;
+    const fs = this.config.adapter?.fs;
+    const wrapper = fs && "isVeryfrontAdapter" in fs && "getUnderlyingAdapter" in fs
+      ? (fs as unknown as {
+        isVeryfrontAdapter: () => boolean;
+        getUnderlyingAdapter: () => unknown;
+      })
+      : null;
+    if (wrapper?.isVeryfrontAdapter()) {
+      const wrappedAdapter = wrapper.getUnderlyingAdapter() as {
+        getProjectData?: () => { updatedAt?: string } | undefined;
+      };
+      projectUpdatedAt = wrappedAdapter.getProjectData?.()?.updatedAt;
     }
 
     // 11. Resolve app component path (contains QueryClientProvider, etc.)
