@@ -1,10 +1,4 @@
-import type {
-  RuntimeAdapter,
-  RuntimeCapabilities,
-  RuntimeFeatures,
-  ServeOptions,
-  Server,
-} from "../../base.ts";
+import type { RuntimeAdapter, RuntimeCapabilities, ServeOptions, Server } from "../../base.ts";
 import { BunFileSystemAdapter } from "./filesystem-adapter.ts";
 import { BunEnvironmentAdapter } from "./environment-adapter.ts";
 import { BunServerAdapter } from "./websocket-adapter.ts";
@@ -14,18 +8,15 @@ import { NodeBasedShellAdapter } from "../shared/node-based-shell-adapter.ts";
 export class BunAdapter implements RuntimeAdapter {
   readonly id = "bun" as const;
   readonly name = "bun";
-  /** @deprecated Use `id` instead */
-  readonly platform = "bun" as const;
-
-  fs = new BunFileSystemAdapter();
-  env = new BunEnvironmentAdapter();
-  server = new BunServerAdapter();
-  shell = new NodeBasedShellAdapter();
+  readonly fs = new BunFileSystemAdapter();
+  readonly env = new BunEnvironmentAdapter();
+  readonly server = new BunServerAdapter();
+  readonly shell = new NodeBasedShellAdapter();
 
   readonly capabilities: RuntimeCapabilities = {
     typescript: true,
     jsx: true,
-    http2: false, // Bun's HTTP/2 support is experimental
+    http2: false,
     websocket: true,
     workers: true,
     fileWatching: true,
@@ -34,20 +25,21 @@ export class BunAdapter implements RuntimeAdapter {
     writableFs: true,
   };
 
-  /** @deprecated Use `capabilities` instead */
-  readonly features: RuntimeFeatures = {
-    websocket: true,
-    http2: false,
-    workers: true,
-    jsx: true,
-    typescript: true,
-  };
+  private activeServer: Server | null = null;
 
-  serve(
+  async serve(
     handler: (request: Request) => Promise<Response> | Response,
     options: ServeOptions = {},
   ): Promise<Server> {
-    return createBunServer(handler, options);
+    this.activeServer = await createBunServer(handler, options);
+    return this.activeServer;
+  }
+
+  async shutdown(): Promise<void> {
+    if (this.activeServer) {
+      await this.activeServer.stop();
+      this.activeServer = null;
+    }
   }
 }
 

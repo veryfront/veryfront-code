@@ -47,7 +47,7 @@ export async function bootstrap(
 ): Promise<BootstrapResult> {
   logger.debug("[Bootstrap] Starting framework initialization", {
     projectDir,
-    runtime: adapter.platform,
+    runtime: adapter.id,
   });
 
   // Step 0: Load environment variables from .env files (if supported)
@@ -122,7 +122,7 @@ export async function bootstrap(
   const finalAdapter = fsAdapterInitialized ? enhancedAdapter : adapter;
   logger.debug("[Bootstrap] Framework initialized successfully", {
     projectDir,
-    runtime: adapter.platform,
+    runtime: adapter.id,
     fsAdapter: fsAdapterInitialized ? fsType : "local",
   });
 

@@ -85,6 +85,5 @@ export type {
   FileSystemAdapter,
   RuntimeAdapter,
   RuntimeCapabilities,
-  RuntimeFeatures,
   RuntimeId,
 } from "./base.ts";

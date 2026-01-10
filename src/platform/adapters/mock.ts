@@ -1,5 +1,5 @@
 import { createError, toError } from "../../core/errors/veryfront-error.ts";
-import type { RuntimeAdapter } from "./base.ts";
+import type { FileChangeEvent, FileWatcher, RuntimeAdapter, WatchOptions } from "./base.ts";
 
 export interface MockRuntimeAdapter extends RuntimeAdapter {
   fs: RuntimeAdapter["fs"] & {
@@ -39,8 +39,6 @@ export function createMockAdapter(): MockRuntimeAdapter {
   return {
     id: "memory" as const,
     name: "mock",
-    /** @deprecated Use `id` instead */
-    platform: "memory" as const,
     capabilities: {
       typescript: false,
       jsx: false,
@@ -50,7 +48,7 @@ export function createMockAdapter(): MockRuntimeAdapter {
       fileWatching: false,
       shell: false,
       kvStore: false,
-      writableFs: true, // In-memory writes work
+      writableFs: true,
     },
     serve: (_handler, _options) => {
       return Promise.resolve({
@@ -58,6 +56,7 @@ export function createMockAdapter(): MockRuntimeAdapter {
         addr: { hostname: "localhost", port: 8000 },
       });
     },
+    shutdown: () => Promise.resolve(),
     fs: {
       files,
       directories,
@@ -149,15 +148,18 @@ export function createMockAdapter(): MockRuntimeAdapter {
           }
         }
 
-        return Promise.reject(new Error(`Path not found: ${path}`));
+        throw toError(createError({
+          type: "file",
+          message: `Path not found: ${path}`,
+        }));
       },
       mkdir: (_path: string) => Promise.resolve(),
       remove: (_path: string) => Promise.resolve(),
       makeTempDir: (prefix: string) =>
         Promise.resolve(`/tmp/${prefix}-${Math.random().toString(36).slice(2)}`),
-      watch: () => ({
-        async *[Symbol.asyncIterator]() {
-          yield { kind: "any", paths: [] };
+      watch: (_paths: string | string[], _options?: WatchOptions): FileWatcher => ({
+        async *[Symbol.asyncIterator](): AsyncIterator<FileChangeEvent> {
+          // Mock watcher doesn't emit events
         },
         close: () => {},
       }),
@@ -169,20 +171,12 @@ export function createMockAdapter(): MockRuntimeAdapter {
     },
     server: {
       upgradeWebSocket: (_request) => {
-        throw new Error(
-          "WebSocket upgrade not available in mock adapter. " +
-            "The mock adapter is designed for unit testing filesystem and environment operations. " +
-            "For WebSocket testing, use integration tests with the actual Deno/Node/Bun adapter, " +
-            "or mock the WebSocket behavior at a higher level in your tests.",
-        );
+        throw toError(createError({
+          type: "not_supported",
+          message: "WebSocket upgrade not available in mock adapter. " +
+            "Use integration tests with actual runtime adapters for WebSocket testing.",
+        }));
       },
-    },
-    features: {
-      websocket: false,
-      http2: false,
-      workers: false,
-      jsx: false,
-      typescript: false,
     },
   };
 }

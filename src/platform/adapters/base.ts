@@ -16,14 +16,8 @@ export interface RuntimeAdapter {
   /** Human-readable name for logging */
   readonly name: string;
 
-  /** @deprecated Use `id` instead */
-  readonly platform: RuntimeId;
-
   /** Runtime capabilities for feature detection */
   readonly capabilities: RuntimeCapabilities;
-
-  /** @deprecated Use `capabilities` instead */
-  readonly features: RuntimeFeatures;
 
   // Core adapters (required)
   /** Filesystem operations */
@@ -149,14 +143,6 @@ export interface EnvironmentAdapter {
   toObject(): Record<string, string>;
 }
 
-export interface RuntimeFeatures {
-  websocket: boolean;
-  http2: boolean;
-  workers: boolean;
-  jsx: boolean;
-  typescript: boolean;
-}
-
 export interface WatchOptions {
   recursive?: boolean;
   signal?: AbortSignal;
@@ -194,22 +180,4 @@ export interface KVStoreAdapter {
  */
 export interface FileWatcherAdapter {
   watch(paths: string | string[], options?: WatchOptions): FileWatcher;
-}
-
-/**
- * Helper to convert RuntimeFeatures to RuntimeCapabilities
- * @deprecated For backward compatibility only
- */
-export function featuresToCapabilities(features: RuntimeFeatures): RuntimeCapabilities {
-  return {
-    typescript: features.typescript,
-    jsx: features.jsx,
-    http2: features.http2,
-    websocket: features.websocket,
-    workers: features.workers,
-    fileWatching: true, // Assume true for non-workers
-    shell: true, // Assume true for non-workers
-    kvStore: false, // Default false
-    writableFs: true, // Assume true for non-workers
-  };
 }
