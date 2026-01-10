@@ -6,7 +6,7 @@ Zero-config React meta-framework with AI-native capabilities. Contains both the 
 
 | Component | Container | Port | Runtime |
 |-----------|-----------|------|---------|
-| Proxy | `proxy` | 20000 | Deno (Bun) |
+| Proxy | `proxy` | 20000 | Deno |
 | Renderer | `renderer` | 20000 | Deno |
 
 ## Tech Stack
@@ -14,6 +14,7 @@ Zero-config React meta-framework with AI-native capabilities. Contains both the 
 - **Runtime**: Deno 2.6+
 - **Package Manager**: deno (native)
 - **Linter**: deno lint
+- **Formatter**: deno fmt
 - **Test Framework**: Deno test
 - **Build**: esbuild
 
@@ -24,17 +25,26 @@ veryfront-renderer/
 ├── proxy/                 # OAuth token proxy (separate service)
 │   ├── main.ts           # Entry point
 │   ├── token-manager.ts  # Token lifecycle
-│   ├── cache/            # Memory/Redis caching
-│   └── deno.json
+│   └── cache/            # Memory/Redis caching
 ├── src/                   # Main framework
+│   ├── ai/               # Agent runtime, MCP, workflows
+│   ├── build/            # Production builds, transforms
 │   ├── cli/              # CLI commands (dev, build)
-│   ├── server/           # Dev & production servers
+│   ├── core/             # Config, errors, types, utils, oauth
+│   ├── data/             # Data fetching
+│   ├── html/             # HTML utilities
+│   ├── middleware/       # Request middleware
+│   ├── module-system/    # Module resolution
+│   ├── observability/    # Tracing, logging
+│   ├── platform/         # Multi-runtime adapters
+│   ├── react/            # React components
 │   ├── rendering/        # SSR, RSC, client rendering
-│   ├── ai/               # Agent runtime, MCP
-│   ├── routing/          # File-based routing
-│   └── platform/         # Multi-runtime adapters
+│   ├── routing/          # File-based routing, API routes
+│   ├── security/         # Security utilities
+│   └── server/           # Dev & production servers
 ├── chart/                 # Helm chart (deploys both)
-├── deno.json             # Deno config
+├── tests/                 # Integration tests
+├── deno.json             # Main Deno config
 └── veryfront.config.ts   # Framework config
 ```
 
@@ -64,17 +74,19 @@ Client → Renderer → API
 
 ### Renderer (Deno)
 ```bash
-cd veryfront-renderer
 deno task dev              # Start dev server (HMR)
 deno task build            # Production build
-deno task test             # Run tests
+deno task test             # Run all tests
+deno task test:unit        # Run unit tests only
+deno task test:integration # Run integration tests only
 deno task lint             # Lint code
+deno task fmt              # Format code
 deno task typecheck        # Type check
 ```
 
 ### Proxy (Deno)
 ```bash
-cd veryfront-renderer/proxy
+cd proxy
 deno task start            # Production run
 deno task dev              # With file watching
 deno check main.ts         # Type check proxy only
@@ -177,5 +189,9 @@ logcli query '{namespace="veryfront-production", container="renderer"} |= "error
 | `proxy/token-manager.ts` | OAuth token lifecycle |
 | `src/server/production-server.ts` | Production server |
 | `src/server/dev-server.ts` | Development server with HMR |
+| `src/cli/main.ts` | CLI entry point |
+| `src/rendering/` | SSR/RSC rendering engine |
+| `src/routing/` | File-based routing |
+| `src/ai/` | AI agent runtime and MCP |
 | `veryfront.config.ts` | Framework configuration |
 | `chart/values.yaml` | Kubernetes deployment config |
