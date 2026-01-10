@@ -11,6 +11,7 @@ import type {
   WorkflowContext,
   WorkflowNode,
 } from "../types.ts";
+import { validateNodeId } from "./validation.ts";
 
 /**
  * Options for creating a wait-for-approval node
@@ -60,10 +61,7 @@ export function waitForApproval(
   id: string,
   options: WaitForApprovalOptions = {},
 ): WorkflowNode {
-  // Validate node ID
-  if (!id || typeof id !== "string" || id.trim() === "") {
-    throw new Error("Node ID must be a non-empty string");
-  }
+  validateNodeId(id);
 
   const config: WaitNodeConfig = {
     type: "wait",
@@ -122,10 +120,7 @@ export function waitForEvent(
   id: string,
   options: WaitForEventOptions,
 ): WorkflowNode {
-  // Validate node ID
-  if (!id || typeof id !== "string" || id.trim() === "") {
-    throw new Error("Node ID must be a non-empty string");
-  }
+  validateNodeId(id);
 
   if (!options.eventName) {
     throw new Error(`waitForEvent "${id}" must specify an eventName`);
@@ -158,10 +153,7 @@ export function waitForEvent(
  * ```
  */
 export function delay(id: string, duration: string | number): WorkflowNode {
-  // Validate node ID
-  if (!id || typeof id !== "string" || id.trim() === "") {
-    throw new Error("Node ID must be a non-empty string");
-  }
+  validateNodeId(id);
 
   const config: WaitNodeConfig = {
     type: "wait",

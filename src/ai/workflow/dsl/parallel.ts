@@ -11,6 +11,7 @@ import type {
   WorkflowContext,
   WorkflowNode,
 } from "../types.ts";
+import { validateNodeId } from "./validation.ts";
 
 /**
  * Options for creating a parallel node
@@ -58,10 +59,7 @@ export function parallel(
   nodes: WorkflowNode[],
   options: ParallelOptions = {},
 ): WorkflowNode {
-  // Validate node ID
-  if (!id || typeof id !== "string" || id.trim() === "") {
-    throw new Error("Node ID must be a non-empty string");
-  }
+  validateNodeId(id);
 
   if (!nodes || nodes.length === 0) {
     throw new Error(`Parallel node "${id}" must have at least one child node`);

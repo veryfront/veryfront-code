@@ -11,6 +11,7 @@ import type {
   WorkflowDefinition,
   WorkflowNode,
 } from "../types.ts";
+import { validateNodeId } from "./validation.ts";
 
 /**
  * Options for creating a sub-workflow node
@@ -42,10 +43,7 @@ export function subWorkflow(
   id: string,
   options: SubWorkflowOptions,
 ): WorkflowNode {
-  // Validate node ID
-  if (!id || typeof id !== "string" || id.trim() === "") {
-    throw new Error("Node ID must be a non-empty string");
-  }
+  validateNodeId(id);
 
   if (!options.workflow) {
     throw new Error(`SubWorkflow node "${id}" must have a 'workflow' configured`);

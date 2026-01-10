@@ -1,4 +1,5 @@
 import type { BaseNodeConfig, RetryConfig, WorkflowContext, WorkflowNode } from "../types.ts";
+import { validateNodeId } from "./validation.ts";
 
 export interface LoopContext {
   iteration: number;
@@ -47,10 +48,7 @@ export interface LoopNodeConfig {
  * Create a loop node for iterative execution.
  */
 export function loop(id: string, options: LoopOptions): WorkflowNode {
-  // Validate node ID
-  if (!id || typeof id !== "string" || id.trim() === "") {
-    throw new Error("Node ID must be a non-empty string");
-  }
+  validateNodeId(id);
 
   // Validate required options
   if (!options.while || typeof options.while !== "function") {

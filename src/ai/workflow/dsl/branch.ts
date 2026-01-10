@@ -11,6 +11,7 @@ import type {
   WorkflowContext,
   WorkflowNode,
 } from "../types.ts";
+import { validateNodeId } from "./validation.ts";
 
 /**
  * Options for creating a branch node
@@ -62,10 +63,7 @@ export interface BranchOptions extends Omit<BaseNodeConfig, "checkpoint"> {
  * ```
  */
 export function branch(id: string, options: BranchOptions): WorkflowNode {
-  // Validate node ID
-  if (!id || typeof id !== "string" || id.trim() === "") {
-    throw new Error("Node ID must be a non-empty string");
-  }
+  validateNodeId(id);
 
   if (!options.condition) {
     throw new Error(`Branch "${id}" must specify a condition`);

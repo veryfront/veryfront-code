@@ -6,6 +6,7 @@ import type {
   WorkflowDefinition,
   WorkflowNode,
 } from "../types.ts";
+import { validateNodeId } from "./validation.ts";
 
 export interface MapOptions extends Omit<BaseNodeConfig, "checkpoint"> {
   items: unknown[] | ((context: WorkflowContext) => unknown[] | Promise<unknown[]>);
@@ -24,10 +25,7 @@ export function map(
   id: string,
   options: MapOptions,
 ): WorkflowNode {
-  // Validate node ID
-  if (!id || typeof id !== "string" || id.trim() === "") {
-    throw new Error("Node ID must be a non-empty string");
-  }
+  validateNodeId(id);
 
   if (!options.items) {
     throw new Error(`Map node "${id}" must have 'items' configured`);
