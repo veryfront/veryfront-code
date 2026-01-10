@@ -68,39 +68,41 @@ export async function generateClientScripts(
   }
 }
 
+interface ManifestOptions {
+  adapter: RuntimeAdapter;
+  outputDir: string;
+  routes: RouteInfo[];
+  appRoutes: AppRouteInfo[];
+  stats: BuildStats;
+  enableSplitting: boolean;
+  enablePrefetch: boolean;
+  enableCompression: boolean;
+  chunkManifest: ChunkManifest | null;
+  dryRun: boolean;
+}
+
 /**
  * Generate manifest and service worker
  */
-export async function generateManifestAndServiceWorker(
-  adapter: RuntimeAdapter,
-  outputDir: string,
-  routes: RouteInfo[],
-  appRoutes: AppRouteInfo[],
-  stats: BuildStats,
-  enableSplitting: boolean,
-  enablePrefetch: boolean,
-  enableCompression: boolean,
-  chunkManifest: ChunkManifest | null,
-  dryRun: boolean,
-): Promise<void> {
+export async function generateManifestAndServiceWorker(options: ManifestOptions): Promise<void> {
   const manifest = generateManifest({
-    routes,
-    appRoutes,
-    stats,
-    enableSplitting,
-    enablePrefetch,
-    enableCompression,
-    chunkManifest,
+    routes: options.routes,
+    appRoutes: options.appRoutes,
+    stats: options.stats,
+    enableSplitting: options.enableSplitting,
+    enablePrefetch: options.enablePrefetch,
+    enableCompression: options.enableCompression,
+    chunkManifest: options.chunkManifest,
   });
 
-  if (!dryRun) {
-    await adapter.fs.writeFile(
-      join(outputDir, "_veryfront/manifest.json"),
+  if (!options.dryRun) {
+    await options.adapter.fs.writeFile(
+      join(options.outputDir, "_veryfront/manifest.json"),
       JSON.stringify(manifest, null, 2),
     );
 
     const sw = generateServiceWorker(manifest);
-    await adapter.fs.writeFile(join(outputDir, "sw.js"), sw);
+    await options.adapter.fs.writeFile(join(options.outputDir, "sw.js"), sw);
   }
 }
 
@@ -144,18 +146,18 @@ export async function generateAllOutputs(options: OutputGeneratorOptions): Promi
   options.stats.assets = assetStats.assets;
   options.stats.totalSize += assetStats.totalSize;
 
-  await generateManifestAndServiceWorker(
-    options.adapter,
-    options.outputDir,
-    options.routes,
-    options.appRoutes,
-    options.stats,
-    options.enableSplitting,
-    options.enablePrefetch,
-    options.enableCompression,
-    options.chunkManifest,
-    options.dryRun,
-  );
+  await generateManifestAndServiceWorker({
+    adapter: options.adapter,
+    outputDir: options.outputDir,
+    routes: options.routes,
+    appRoutes: options.appRoutes,
+    stats: options.stats,
+    enableSplitting: options.enableSplitting,
+    enablePrefetch: options.enablePrefetch,
+    enableCompression: options.enableCompression,
+    chunkManifest: options.chunkManifest,
+    dryRun: options.dryRun,
+  });
 
   await generateRedirectsFile(options.adapter, options.outputDir, options.dryRun);
 }
