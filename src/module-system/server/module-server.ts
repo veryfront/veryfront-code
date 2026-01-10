@@ -577,58 +577,22 @@ async function findSourceFile(
     }
   }
 
-  // FALLBACK: For lib/* imports not found in project, check framework lib directory
-  // This provides framework utilities like lib/Router, lib/Head, lib/usePageContext
-  if (basePathWithoutExt.startsWith("lib/")) {
-    for (const ext of extensions) {
-      const frameworkPath = join(FRAMEWORK_ROOT, basePathWithoutExt + ext);
-      try {
-        const stat = await Deno.stat(frameworkPath);
-        if (stat.isFile) {
-          serverLogger.debug("[ModuleServer] Found framework lib file (fallback)", {
-            basePath: basePathWithoutExt,
-            resolvedPath: frameworkPath,
-          });
-          return { path: frameworkPath, isFrameworkFile: true };
-        }
-      } catch {
-        // Continue trying other paths
-      }
-    }
-  }
+  // Framework file lookup configuration: [prefix, frameworkDir, logLabel]
+  const frameworkLookups: [string, string, string][] = [
+    ["lib/", FRAMEWORK_ROOT, "lib"],
+    ["exports/", join(FRAMEWORK_ROOT, "src"), "exports"],
+    ["react/", join(FRAMEWORK_ROOT, "src"), "react"],
+  ];
 
-  // FALLBACK: For exports/* imports, serve from framework exports directory
-  // This provides internal exports like veryfront/head, veryfront/router, etc.
-  // These are served from src/exports/ to ensure SSR and browser use the same code
-  if (basePathWithoutExt.startsWith("exports/")) {
-    for (const ext of extensions) {
-      // FRAMEWORK_ROOT is veryfront-renderer/, so add src/ prefix
-      const frameworkPath = join(FRAMEWORK_ROOT, "src", basePathWithoutExt + ext);
-      try {
-        const stat = await Deno.stat(frameworkPath);
-        if (stat.isFile) {
-          serverLogger.debug("[ModuleServer] Found framework exports file", {
-            basePath: basePathWithoutExt,
-            resolvedPath: frameworkPath,
-          });
-          return { path: frameworkPath, isFrameworkFile: true };
-        }
-      } catch {
-        // Continue trying other paths
-      }
-    }
-  }
+  for (const [prefix, frameworkDir, label] of frameworkLookups) {
+    if (!basePathWithoutExt.startsWith(prefix)) continue;
 
-  // FALLBACK: For react/* imports, serve from framework react components directory
-  // This handles relative imports from exports files (e.g., ../react/components/Head.tsx)
-  if (basePathWithoutExt.startsWith("react/")) {
     for (const ext of extensions) {
-      // FRAMEWORK_ROOT is veryfront-renderer/, so add src/ prefix
-      const frameworkPath = join(FRAMEWORK_ROOT, "src", basePathWithoutExt + ext);
+      const frameworkPath = join(frameworkDir, basePathWithoutExt + ext);
       try {
         const stat = await Deno.stat(frameworkPath);
         if (stat.isFile) {
-          serverLogger.debug("[ModuleServer] Found framework react file", {
+          serverLogger.debug(`[ModuleServer] Found framework ${label} file`, {
             basePath: basePathWithoutExt,
             resolvedPath: frameworkPath,
           });
