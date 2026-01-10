@@ -5,15 +5,19 @@ export function computeContentHash(content: string): Promise<string> {
   return shortHash(content);
 }
 
+const EXTENSION_LOADERS: Record<string, Loader> = {
+  ".tsx": "tsx",
+  ".ts": "ts",
+  ".jsx": "jsx",
+  ".js": "js",
+  ".mdx": "jsx", // MDX pre-compiled to JSX
+  ".css": "css",
+  ".json": "json",
+};
+
 export function getLoaderFromPath(filePath: string): Loader {
-  if (filePath.endsWith(".tsx")) return "tsx";
-  if (filePath.endsWith(".ts")) return "ts";
-  if (filePath.endsWith(".jsx")) return "jsx";
-  if (filePath.endsWith(".js")) return "js";
-  if (filePath.endsWith(".mdx")) return "jsx"; // MDX pre-compiled to JSX
-  if (filePath.endsWith(".css")) return "css";
-  if (filePath.endsWith(".json")) return "json";
-  return "tsx"; // Default
+  const ext = filePath.slice(filePath.lastIndexOf("."));
+  return EXTENSION_LOADERS[ext] ?? "tsx";
 }
 
 export function needsTransform(filePath: string): boolean {
