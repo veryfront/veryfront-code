@@ -11,23 +11,13 @@ function toProjectRelativePath(absolutePath: string, projectDir?: string): strin
   return resolveRelativePath(absolutePath.replace(/\\/g, "/"), projectDir);
 }
 
-function inferPageType(pagePath?: string): "mdx" | "tsx" | "jsx" | "ts" | "js" | undefined {
+const PAGE_TYPE_EXTENSIONS = new Set(["mdx", "tsx", "jsx", "ts", "js"] as const);
+type PageType = "mdx" | "tsx" | "jsx" | "ts" | "js";
+
+function inferPageType(pagePath?: string): PageType | undefined {
   if (!pagePath) return undefined;
   const ext = pagePath.split(".").pop()?.toLowerCase();
-  switch (ext) {
-    case "mdx":
-      return "mdx";
-    case "tsx":
-      return "tsx";
-    case "jsx":
-      return "jsx";
-    case "ts":
-      return "ts";
-    case "js":
-      return "js";
-    default:
-      return undefined;
-  }
+  return ext && PAGE_TYPE_EXTENSIONS.has(ext as PageType) ? (ext as PageType) : undefined;
 }
 
 export function generateHydrationData(

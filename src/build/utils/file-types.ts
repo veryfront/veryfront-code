@@ -88,29 +88,22 @@ export function isDocumentFile(filePath: string): boolean {
   return FILE_EXTENSIONS.DOCUMENT.includes(ext as any);
 }
 
+const IMAGE_FORMAT_MAP: Record<string, ImageFormat> = {
+  jpg: "jpeg",
+  jpeg: "jpeg",
+  png: "png",
+  webp: "webp",
+  avif: "avif",
+  gif: "gif",
+  svg: "svg",
+};
+
 /**
  * Get optimized image format based on input format
  */
 export function getOptimizedImageFormat(originalFormat: string): ImageFormat {
   const format = originalFormat.toLowerCase().replace(".", "");
-  switch (format) {
-    case "jpg":
-    case "jpeg":
-      return "jpeg";
-    case "png":
-      return "png";
-    case "webp":
-      return "webp";
-    case "avif":
-      return "avif";
-    case "gif":
-      return "gif";
-    case "svg":
-      return "svg";
-    default:
-      // Default to JPEG for unknown formats
-      return "jpeg";
-  }
+  return IMAGE_FORMAT_MAP[format] ?? "jpeg";
 }
 
 /**
