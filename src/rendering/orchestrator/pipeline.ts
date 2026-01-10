@@ -574,13 +574,7 @@ export class RenderPipeline {
     const cacheResult = await timeAsync(
       "check-cache",
       () =>
-        this.config.cacheCoordinator.checkCache(
-          slug,
-          pageInfo,
-          layoutResult.layoutBundle,
-          layoutResult.nestedLayouts,
-          providerResult.providerInfos,
-        ),
+        this.config.cacheCoordinator.checkCache(slug),
       "render-page",
     );
 
@@ -680,16 +674,7 @@ export class RenderPipeline {
     };
 
     if (cacheResult) {
-      await this.config.cacheCoordinator.persistResult(
-        result,
-        slug,
-        cacheResult.depAwareSlug,
-        cacheResult.moduleCacheKey,
-        pageInfo,
-        pageBundleResult.clientModuleCode,
-        pageBundleResult.pageModuleType,
-        cacheResult.cachedModule,
-      );
+      await this.config.cacheCoordinator.persistResult(result, slug);
     }
 
     logger.info("[renderPage] Returning result", {

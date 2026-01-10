@@ -54,21 +54,12 @@ export class RSCRenderer {
     this.clientRefs.clear();
 
     try {
-      // Render the component tree
       const tree = await renderTree(Component, props, this.clientManifest, this.clientRefs);
-
-      // Convert tree to HTML
       const html = await treeToHTML(tree);
-
-      // Collect client references
-      const clientRefs: Record<string, string> = {};
-      for (const [id, path] of this.clientRefs) {
-        clientRefs[id] = path;
-      }
 
       return {
         html,
-        clientRefs,
+        clientRefs: Object.fromEntries(this.clientRefs),
         tree: this.mode === "development" ? tree : undefined,
       };
     } catch (error) {

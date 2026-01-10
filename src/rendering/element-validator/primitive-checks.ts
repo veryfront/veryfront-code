@@ -31,6 +31,17 @@ export function hasReactSymbol(obj: Record<string, unknown>): boolean {
     (typeof obj.$$typeof === "symbol" || typeof obj.$$typeof === "number");
 }
 
+const REACT_SYMBOL_PREFIXES = [
+  "react.element",
+  "react.fragment",
+  "react.portal",
+  "react.forward_ref",
+  "react.memo",
+  "react.lazy",
+  "react.suspense",
+  "react.context",
+];
+
 /**
  * Symbol-agnostic check if a value looks like a React element.
  * This works across different React instances (bundled vs project)
@@ -47,27 +58,19 @@ export function looksLikeReactElement(value: unknown): boolean {
 
   const obj = value as Record<string, unknown>;
 
-  // Check for React element structure: $$typeof, type, props, key
   if (!("$$typeof" in obj)) {
     return false;
   }
 
-  // $$typeof should be a symbol (or number in some cases)
   const typeofSymbol = obj.$$typeof;
   if (typeof typeofSymbol !== "symbol" && typeof typeofSymbol !== "number") {
     return false;
   }
 
-  // Check for Symbol.for('react.element') or similar by description
-  // This handles both bundled and project React instances
+  // Check for React symbol by description (handles bundled vs project React)
   if (typeof typeofSymbol === "symbol") {
     const desc = typeofSymbol.description || String(typeofSymbol);
-    if (
-      desc.includes("react.element") || desc.includes("react.fragment") ||
-      desc.includes("react.portal") || desc.includes("react.forward_ref") ||
-      desc.includes("react.memo") || desc.includes("react.lazy") ||
-      desc.includes("react.suspense") || desc.includes("react.context")
-    ) {
+    if (REACT_SYMBOL_PREFIXES.some((prefix) => desc.includes(prefix))) {
       return true;
     }
   }

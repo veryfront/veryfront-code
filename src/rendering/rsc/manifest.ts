@@ -1,5 +1,6 @@
 import { getAdapter } from "@veryfront/platform/adapters/detect.ts";
 import { HASH_SEED_DJB2 } from "@veryfront/utils";
+import { extractExportNames } from "./export-extractor.ts";
 
 export interface GraphIds {
   client: { id: string; path: string; rel: string }[];
@@ -18,42 +19,6 @@ export interface Manifest {
   modules: ManifestModule[];
 }
 
-function extractNamedExportsFromSource(source: string): string[] {
-  const names = new Set<string>();
-  // export function Foo() {}
-  for (const m of source.matchAll(/export\s+function\s+([A-Za-z0-9_]+)/g)) {
-    names.add(m[1]!);
-  }
-  // export class Foo {}
-  for (const m of source.matchAll(/export\s+class\s+([A-Za-z0-9_]+)/g)) {
-    names.add(m[1]!);
-  }
-  // export const Foo =
-  for (const m of source.matchAll(/export\s+const\s+([A-Za-z0-9_]+)/g)) {
-    names.add(m[1]!);
-  }
-  // export let Foo =
-  for (const m of source.matchAll(/export\s+let\s+([A-Za-z0-9_]+)/g)) {
-    names.add(m[1]!);
-  }
-  // export { A, B as C }
-  for (const m of source.matchAll(/export\s*\{([^}]+)\}/g)) {
-    const inner = m[1]?.split(",") ?? [];
-    for (const seg of inner) {
-      const part = seg.trim();
-      if (!part) continue;
-      // Handle "Name as Alias" or just "Name"
-      const asMatch = part.match(/([A-Za-z0-9_]+)\s+as\s+([A-Za-z0-9_]+)/i);
-      if (asMatch) names.add(asMatch[2]!);
-      else {
-        const plain = part.match(/^([A-Za-z0-9_]+)/);
-        if (plain) names.add(plain[1]!);
-      }
-    }
-  }
-  return Array.from(names.values());
-}
-
 export async function buildRscModules(
   _projectDir: string,
   graphIds: GraphIds | undefined,
@@ -68,7 +33,7 @@ export async function buildRscModules(
     let exportsList: string[] = ["default"];
     try {
       const text = await adapter.fs.readFile(e.path);
-      const names = extractNamedExportsFromSource(text);
+      const names = extractExportNames(text);
       if (names.length > 0) exportsList = ["default", ...names];
     } catch {
       /* ignore */
@@ -85,7 +50,7 @@ export async function buildRscModules(
     let exportsList: string[] = ["default"];
     try {
       const text = await adapter.fs.readFile(e.path);
-      const names = extractNamedExportsFromSource(text);
+      const names = extractExportNames(text);
       if (names.length > 0) exportsList = ["default", ...names];
     } catch {
       // ignore read errors; default only

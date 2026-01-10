@@ -97,6 +97,9 @@ async function detectAppRouterImpl(
   return false; // If nothing is detectable, fall back to pages router to avoid false positives
 }
 
+const ROUTE_EXTENSIONS = [".mdx", ".tsx", ".jsx", ".ts", ".js"];
+const ROUTE_PATTERNS = ["page", "layout", "error", "loading", "not-found", "index"];
+
 /**
  * Check if a directory contains route files
  */
@@ -104,26 +107,16 @@ async function hasRouteFiles(
   dir: string,
   adapter: RuntimeAdapter,
 ): Promise<boolean> {
-  const routeExtensions = [".mdx", ".tsx", ".jsx", ".ts", ".js"];
-  const routePatterns = ["page", "layout", "error", "loading", "not-found"];
-
   const entries = await readDirWithFallback(dir, adapter);
+
   for (const entry of entries) {
     if (entry.isFile) {
       const name = entry.name.toLowerCase();
-      // Check if file matches a route pattern or is a valid route file
-      const hasRouteExtension = routeExtensions.some((ext) => name.endsWith(ext));
-      if (hasRouteExtension) {
-        const isRouteFile = routePatterns.some((pattern) => name.startsWith(pattern));
-        const isIndexFile = name.startsWith("index");
-        if (isRouteFile || isIndexFile) {
-          return true;
-        }
-      }
+      const isRouteFile = ROUTE_EXTENSIONS.some((ext) => name.endsWith(ext)) &&
+        ROUTE_PATTERNS.some((pattern) => name.startsWith(pattern));
+      if (isRouteFile) return true;
     } else if (entry.isDirectory) {
-      // Recursively check subdirectories
-      const hasNested = await hasRouteFiles(join(dir, entry.name), adapter);
-      if (hasNested) return true;
+      if (await hasRouteFiles(join(dir, entry.name), adapter)) return true;
     }
   }
 
