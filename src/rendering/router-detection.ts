@@ -36,14 +36,11 @@ export async function detectAppRouter(
   config: VeryfrontConfig,
   adapter: RuntimeAdapter,
 ): Promise<boolean> {
-  const forced = config?.router;
-  if (forced === "app") return true;
-  if (forced === "pages") return false;
+  if (config?.router === "app") return true;
+  if (config?.router === "pages") return false;
 
-  // Check cache first
-  if (routerDetectionCache.has(projectDir)) {
-    return routerDetectionCache.get(projectDir)!;
-  }
+  const cached = routerDetectionCache.get(projectDir);
+  if (cached !== undefined) return cached;
 
   const result = await detectAppRouterImpl(projectDir, config, adapter);
   routerDetectionCache.set(projectDir, result);

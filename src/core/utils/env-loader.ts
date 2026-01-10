@@ -22,21 +22,17 @@ function getFs(): FileSystem {
  * Check if an error is a "file not found" error across platforms
  */
 async function isNotFoundError(error: unknown, path: string): Promise<boolean> {
-  if (error instanceof Error) {
-    // Node.js error codes
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      return true;
-    }
-    // Deno error type
-    if (isDeno && error instanceof Deno.errors.NotFound) {
-      return true;
-    }
+  // Node.js error codes
+  if ((error as NodeJS.ErrnoException)?.code === "ENOENT") {
+    return true;
+  }
+  // Deno error type
+  if (isDeno && error instanceof Deno.errors.NotFound) {
+    return true;
   }
   // Fallback: check if the file actually exists using the filesystem API
   // This handles cases where the error object might not be standard
-  const fs = getFs();
-  const exists = await fs.exists(path);
-  return !exists;
+  return !(await getFs().exists(path));
 }
 
 /**
@@ -96,10 +92,8 @@ export async function loadEnv(options: {
         logger.debug(`[env] Loaded ${file}`);
       }
     } catch (error) {
-      // Ignore if file doesn't exist
-      if (await isNotFoundError(error, file)) {
-        // Silently ignore "file not found" errors
-      } else {
+      // Only warn for errors that aren't "file not found"
+      if (!(await isNotFoundError(error, file))) {
         logger.warn(`[env] Failed to load ${file}:`, error);
       }
     }
