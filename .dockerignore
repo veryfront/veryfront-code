@@ -1,0 +1,45 @@
+# Dependencies (Deno uses its own cache, not node_modules)
+node_modules/
+
+# Version control
+.git/
+.gitignore
+
+# IDE/Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Documentation
+*.md
+docs/
+
+# Tests
+tests/
+**/*.test.ts
+**/*.spec.ts
+coverage/
+
+# Local environment
+.env
+.env.*
+.env.local
+
+# Build artifacts
+dist/
+.deno/
+
+# CI/CD (not needed in container)
+.github/
+
+# Helm chart (not needed in container image)
+chart/
+
+# Scripts (not needed in container)
+scripts/
+
+# Misc
+.DS_Store
+Thumbs.db
+*.log
