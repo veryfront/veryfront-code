@@ -167,6 +167,14 @@ export function recordRSCStreamDuration(durationMs: number): void {
   });
 }
 
+type ObservabilityRSCKind = "manifest" | "page" | "stream" | "action";
+
+function recordObservabilityRSC(obsKind: ObservabilityRSCKind): void {
+  void getObservabilityMetrics().then((obs) => obs?.recordRSCRequest(obsKind)).catch(() => {
+    /* metrics recording failure - non-critical */
+  });
+}
+
 /**
  * Record RSC endpoint request
  *
@@ -182,33 +190,20 @@ export function recordRSC(kind: RSCRequestKind): void {
   switch (kind) {
     case "manifest":
       state.rscManifest++;
-      void getObservabilityMetrics().then((obs) => obs?.recordRSCRequest("manifest")).catch(() => {
-        /* metrics recording failure - non-critical */
-      });
+      recordObservabilityRSC("manifest");
       break;
     case "page":
-      state.rscPage++;
-      void getObservabilityMetrics().then((obs) => obs?.recordRSCRequest("page")).catch(() => {
-        /* metrics recording failure - non-critical */
-      });
-      break;
     case "flight_page":
       state.rscPage++;
-      void getObservabilityMetrics().then((obs) => obs?.recordRSCRequest("page")).catch(() => {
-        /* metrics recording failure - non-critical */
-      });
-      break; // Count flight_page as page
+      recordObservabilityRSC("page");
+      break;
     case "stream":
       state.rscStream++;
-      void getObservabilityMetrics().then((obs) => obs?.recordRSCRequest("stream")).catch(() => {
-        /* metrics recording failure - non-critical */
-      });
+      recordObservabilityRSC("stream");
       break;
     case "action":
       state.rscAction++;
-      void getObservabilityMetrics().then((obs) => obs?.recordRSCRequest("action")).catch(() => {
-        /* metrics recording failure - non-critical */
-      });
+      recordObservabilityRSC("action");
       break;
     case "error":
       state.rscErrors++;
