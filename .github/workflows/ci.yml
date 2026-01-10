@@ -103,7 +103,7 @@ jobs:
   build:
     needs: [format, lint, typecheck, unit-tests, integration-tests]
     if: github.ref == 'refs/heads/main'
-    runs-on: veryfront-k8s-runners
+    runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
