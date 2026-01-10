@@ -7,7 +7,7 @@
 
 import { assert, assertEquals } from "std/assert/mod.ts";
 import { describe, it } from "std/testing/bdd.ts";
-import { ProxyFSAdapterManager } from "@veryfront/platform/adapters/proxy-fs-adapter-manager.ts";
+import { ProxyFSAdapterManager } from "@veryfront/platform/adapters/fs/veryfront/proxy-manager.ts";
 
 describe("ProxyFSAdapterManager - Cache Isolation", () => {
   it("preview and production requests get separate adapters", () => {
