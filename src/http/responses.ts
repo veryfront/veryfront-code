@@ -167,6 +167,25 @@ export const noContent = (options?: ResponseOptions) =>
   new Response(null, { status: HttpStatus.NO_CONTENT, ...options });
 
 /**
+ * Creates a JSON error response with { ok: false, error: message } format.
+ * Commonly used for API error responses.
+ */
+export function jsonErrorResponse(
+  status: HttpStatusCode,
+  error: string,
+  options?: ResponseOptions,
+): Response {
+  const headers = new Headers(options?.headers);
+  headers.set("Content-Type", "application/json; charset=utf-8");
+
+  return new Response(JSON.stringify({ ok: false, error }), {
+    ...options,
+    status,
+    headers,
+  });
+}
+
+/**
  * Helper function to get human-readable status text.
  * Keeps the mapping simple and maintainable.
  */
