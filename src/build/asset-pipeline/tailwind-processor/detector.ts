@@ -48,9 +48,9 @@ export async function isTailwindV4File(
   try {
     // Use secure wrapper (replaces direct Deno access)
     const content = await secureFs.readFile(filePath);
-    // Tailwind v4 uses @import "tailwindcss" or @import 'tailwindcss'
-    return /@import\s+["']tailwindcss["']/.test(content) ||
-      /@import\s+["']tailwindcss\//.test(content);
+    // Tailwind v4 uses @import "tailwindcss" or @import 'tailwindcss' (with optional path suffix)
+    const tailwindV4ImportPattern = /@import\s+["']tailwindcss(?:\/[^"']*)?["']/;
+    return tailwindV4ImportPattern.test(content);
   } catch (error) {
     logger.debug(`Failed to check file for Tailwind CSS: ${filePath}`, error);
     return false;

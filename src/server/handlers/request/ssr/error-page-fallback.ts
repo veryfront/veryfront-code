@@ -197,9 +197,11 @@ async function renderErrorPage(
  * Generate a simple fallback HTML when rendering fails
  */
 function generateFallbackHtml(statusCode: number, pathname?: string): string {
-  const title = statusCode === 404 ? "Not Found" : "Server Error";
-  const message = statusCode === 404
-    ? `The page ${pathname ? `"${pathname}" ` : ""}could not be found.`
+  const isNotFound = statusCode === 404;
+  const title = isNotFound ? "Not Found" : "Server Error";
+  const pathDisplay = pathname ? `"${pathname}" ` : "";
+  const message = isNotFound
+    ? `The page ${pathDisplay}could not be found.`
     : "An unexpected error occurred.";
 
   return `<!DOCTYPE html>

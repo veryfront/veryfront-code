@@ -815,21 +815,17 @@ export class AgentRuntime {
   }
 
   /**
-   * Get max steps considering edge config and platform limits
+   * Get max steps considering edge config and platform limits.
+   * Priority: edge config > agent config > default (20).
    */
   private getMaxSteps(platformLimit: number): number {
-    // Edge config takes precedence
-    if (this.config.edge?.enabled && this.config.edge.maxSteps) {
-      return Math.min(this.config.edge.maxSteps, platformLimit);
-    }
+    const DEFAULT_MAX_STEPS = 20;
 
-    // Use agent config
-    if (this.config.maxSteps) {
-      return Math.min(this.config.maxSteps, platformLimit);
-    }
+    // Determine configured max steps with priority: edge > agent > default
+    const edgeMaxSteps = this.config.edge?.enabled ? this.config.edge.maxSteps : undefined;
+    const configuredMaxSteps = edgeMaxSteps ?? this.config.maxSteps ?? DEFAULT_MAX_STEPS;
 
-    // Default
-    return Math.min(20, platformLimit);
+    return Math.min(configuredMaxSteps, platformLimit);
   }
 
   /**
