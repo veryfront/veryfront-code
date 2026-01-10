@@ -147,3 +147,19 @@ export function logError(
   const context = "context" in error ? error.context || {} : {};
   log.error(`[${error.type}] ${error.message}`, context);
 }
+
+/**
+ * Extract error message from any error type
+ */
+export function getErrorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  return String(error);
+}
+
+/**
+ * Ensure error is an Error instance
+ */
+export function ensureError(error: unknown): Error {
+  if (error instanceof Error) return error;
+  return new Error(String(error));
+}

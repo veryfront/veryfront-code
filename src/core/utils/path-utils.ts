@@ -38,6 +38,23 @@ export function hasHashedFilename(path: string): boolean {
   return /\.[a-f0-9]{8,}\./.test(path);
 }
 
+/**
+ * Get esbuild loader type from file extension
+ */
+export function getEsbuildLoader(filePath: string): "tsx" | "jsx" | "ts" | "js" {
+  const ext = getExtension(filePath).toLowerCase();
+  switch (ext) {
+    case ".tsx":
+      return "tsx";
+    case ".jsx":
+      return "jsx";
+    case ".ts":
+      return "ts";
+    default:
+      return "js";
+  }
+}
+
 export function isAbsolutePath(path: string): boolean {
   return path.startsWith("/") || /^[A-Za-z]:[\\/]/.test(path);
 }

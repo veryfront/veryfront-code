@@ -9,7 +9,7 @@
 
 import type { HandlerContext } from "../../types.ts";
 import type { BuildResult } from "esbuild";
-import { getDirectory } from "@veryfront/utils/path-utils.ts";
+import { getDirectory, getEsbuildLoader } from "@veryfront/utils/path-utils.ts";
 import { createBareExternalPlugin, createRelativeFsPlugin } from "./esbuild-plugins.ts";
 
 /**
@@ -40,9 +40,6 @@ export async function bundleDevFile(
 ): Promise<string> {
   const { build } = await import("esbuild");
   const src = await ctx.adapter.fs.readFile(absPath);
-  const isTs = /\.(tsx?|mts|cts)$/i.test(absPath);
-  const isTsx = /\.tsx$/i.test(absPath);
-  const isJsx = /\.jsx$/i.test(absPath);
 
   const result: BuildResult = await build({
     bundle: true,
@@ -55,7 +52,7 @@ export async function bundleDevFile(
     external: ["react", "react-dom", "react/jsx-runtime", "react/jsx-dev-runtime"],
     stdin: {
       contents: src,
-      loader: isTs ? (isTsx ? "tsx" : "ts") : isJsx ? "jsx" : "js",
+      loader: getEsbuildLoader(absPath),
       resolveDir: getDirectory(absPath),
       sourcefile: absPath,
     },

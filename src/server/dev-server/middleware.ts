@@ -5,6 +5,7 @@ import type { VeryfrontConfig } from "@veryfront/config";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import { dirname, join } from "std/path/mod.ts";
 import { createFileSystem } from "../../platform/compat/fs.ts";
+import { getEsbuildLoader } from "../../core/utils/path-utils.ts";
 
 type MiddlewareFunction = (
   c: { req: Request; var: Record<string, unknown> },
@@ -109,8 +110,7 @@ async function loadMiddlewareFromVirtualFS(
   const content = await adapter.fs.readFile(middlewarePath);
   const source = typeof content === "string" ? content : new TextDecoder().decode(content);
 
-  const isTsx = middlewarePath.endsWith(".tsx");
-  const loader = isTsx ? "tsx" : middlewarePath.endsWith(".ts") ? "ts" : "js";
+  const loader = getEsbuildLoader(middlewarePath);
 
   const { build } = await import("esbuild");
 
