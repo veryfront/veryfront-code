@@ -24,8 +24,20 @@ function computeHash(content: string | Uint8Array): number {
   return hash >>> 0;
 }
 
-export function computeEtag(content: string | Uint8Array): string {
-  return `W/"${computeHash(content).toString(16)}"`;
+/**
+ * Generate ETag from content hash
+ * @param weak - If true, generates weak ETag with W/ prefix (default: true)
+ */
+export function computeEtag(content: string | Uint8Array, weak = true): string {
+  const hash = computeHash(content).toString(16);
+  return weak ? `W/"${hash}"` : `"${hash}"`;
+}
+
+/**
+ * Generate strong ETag (without W/ prefix)
+ */
+export function computeStrongEtag(content: string | Uint8Array): string {
+  return computeEtag(content, false);
 }
 
 /**
@@ -40,12 +52,7 @@ export function hasMatchingEtag(req: Request, etag: string): boolean {
  */
 export function parseIfNoneMatch(header: string | null): string[] {
   if (!header) return [];
-
-  // Split by comma, trim whitespace, remove quotes
-  return header
-    .split(",")
-    .map((tag) => tag.trim())
-    .filter((tag) => tag.length > 0);
+  return header.split(",").map((tag) => tag.trim()).filter(Boolean);
 }
 
 /**
@@ -53,17 +60,5 @@ export function parseIfNoneMatch(header: string | null): string[] {
  */
 export function matchesAnyEtag(etag: string, ifNoneMatch: string | null): boolean {
   const tags = parseIfNoneMatch(ifNoneMatch);
-
-  // Check for wildcard
-  if (tags.includes("*")) return true;
-
-  // Check for exact match
-  return tags.includes(etag);
-}
-
-/**
- * Generate strong ETag (without W/ prefix)
- */
-export function computeStrongEtag(content: string | Uint8Array): string {
-  return `"${computeHash(content).toString(16)}"`;
+  return tags.includes("*") || tags.includes(etag);
 }

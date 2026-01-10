@@ -42,12 +42,11 @@ function minifyCss(css: string): string {
   );
 }
 
+/**
+ * Process CSS imports (placeholder for future import resolution)
+ */
 export function processCssImports(css: string, _fromPath: string): string {
-  const importRegex = /@import\s+["']([^"']+)["'];?/g;
-
-  return css.replace(importRegex, (match, _importPath) => {
-    return match;
-  });
+  return css;
 }
 
 export function extractCssVariables(css: string): Record<string, string> {

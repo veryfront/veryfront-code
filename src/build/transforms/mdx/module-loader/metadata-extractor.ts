@@ -45,12 +45,18 @@ const METADATA_PATTERNS: MetadataPattern[] = [
   { regex: /(?:export\s+)?const\s+draft\s*=\s*(true|false)/, key: "draft" },
 ];
 
+function parseLayoutValue(value: string): boolean | string {
+  if (value === "true") return true;
+  if (value === "false") return false;
+  return String(value).replace(/^"|"$/g, "");
+}
+
 export function extractMetadata(moduleCode: string): Partial<MDXModule> {
   const exports: Partial<MDXModule> = {};
 
-  METADATA_PATTERNS.forEach(({ regex, key }) => {
+  for (const { regex, key } of METADATA_PATTERNS) {
     const match = moduleCode.match(regex);
-    if (!match) return;
+    if (!match) continue;
 
     const value = match[1] as string;
 
@@ -62,11 +68,7 @@ export function extractMetadata(moduleCode: string): Partial<MDXModule> {
         break;
 
       case "layout":
-        exports[key] = value === "true"
-          ? true
-          : value === "false"
-          ? false
-          : String(value).replace(/^"|"$/g, "");
+        exports[key] = parseLayoutValue(value);
         break;
 
       case "headings":
@@ -83,18 +85,20 @@ export function extractMetadata(moduleCode: string): Partial<MDXModule> {
         exports[key] = value === "true";
         break;
     }
-  });
+  }
 
   return exports;
 }
 
-export function mergeFrontmatter(result: MDXModule): void {
-  result.frontmatter = result.frontmatter || {};
+const FRONTMATTER_KEYS = ["title", "description", "layout", "headings", "tags", "date", "draft", "nested"];
 
-  const keys = ["title", "description", "layout", "headings", "tags", "date", "draft", "nested"];
-  for (const key of keys) {
-    if (result[key] !== undefined && result.frontmatter[key] === undefined) {
-      result.frontmatter[key] = result[key];
+export function mergeFrontmatter(result: MDXModule): void {
+  result.frontmatter = result.frontmatter ?? {};
+
+  for (const key of FRONTMATTER_KEYS) {
+    const value = result[key];
+    if (value !== undefined && result.frontmatter[key] === undefined) {
+      result.frontmatter[key] = value;
     }
   }
 }

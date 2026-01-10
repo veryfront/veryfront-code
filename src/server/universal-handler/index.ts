@@ -44,12 +44,12 @@ function isInternalHost(host: string): boolean {
   return false;
 }
 
+/** Monitoring paths that should skip domain lookup */
+const MONITORING_PATHS = new Set(["/healthz", "/readyz", "/_health", "/metrics"]);
+
 /** Check if request path is a monitoring endpoint that should skip domain lookup */
 function isMonitoringPath(pathname: string): boolean {
-  return pathname === "/healthz" ||
-    pathname === "/readyz" ||
-    pathname === "/_health" ||
-    pathname === "/metrics";
+  return MONITORING_PATHS.has(pathname);
 }
 
 import { RouteRegistry } from "@veryfront/routing/registry/index.ts";
@@ -115,19 +115,14 @@ export function createVeryfrontHandler(
   adapter: RuntimeAdapter,
   opts: UniversalHandlerOptions = { projectDir },
 ): ((req: Request) => Promise<Response>) & { ready?: Promise<void> } {
-  const logDebug = (message: string, extra?: Record<string, unknown>) => {
-    try {
-      const shouldDebug = opts.debug || adapter.env.get("VERYFRONT_DEBUG");
-      if (shouldDebug) {
-        if (extra && typeof extra === "object" && !Array.isArray(extra)) {
-          logger.debug(message, extra);
-        } else {
-          logger.debug(message);
-        }
-      }
-    } catch (err) {
-      // Silently ignore logging errors in non-deno hosts
-      logger.error("Debug logging failed:", err);
+  const isDebugEnabled = opts.debug || adapter.env.get("VERYFRONT_DEBUG");
+
+  const logDebug = (message: string, extra?: Record<string, unknown>): void => {
+    if (!isDebugEnabled) return;
+    if (extra) {
+      logger.debug(message, extra);
+    } else {
+      logger.debug(message);
     }
   };
 
