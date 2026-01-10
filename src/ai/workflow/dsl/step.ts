@@ -7,6 +7,7 @@ import type {
   WorkflowContext,
   WorkflowNode,
 } from "../types.ts";
+import { validateNodeId } from "./validation.ts";
 
 export interface StepOptions extends Omit<BaseNodeConfig, "checkpoint"> {
   agent?: string | Agent;
@@ -25,10 +26,7 @@ export interface StepOptions extends Omit<BaseNodeConfig, "checkpoint"> {
  * Create a step node for agent or tool execution.
  */
 export function step(id: string, options: StepOptions): WorkflowNode {
-  // Validate node ID
-  if (!id || typeof id !== "string" || id.trim() === "") {
-    throw new Error("Node ID must be a non-empty string");
-  }
+  validateNodeId(id);
 
   // Validate that either agent or tool is specified
   if (!options.agent && !options.tool) {
