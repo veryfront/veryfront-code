@@ -66,7 +66,7 @@ function interpolateVariables(
 ): string {
   return template.replace(/\{(\w+)\}/g, (match, key) => {
     const value = variables[key];
-    return value !== undefined ? String(value) : match;
+    return value !== undefined && value !== null ? String(value) : match;
   });
 }
 

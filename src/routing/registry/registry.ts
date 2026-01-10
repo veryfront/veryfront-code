@@ -27,7 +27,9 @@ export class RouteRegistry {
   }
 
   registerAll(handlers: Handler[]): this {
-    handlers.forEach((handler) => this.register(handler));
+    for (const handler of handlers) {
+      this.register(handler);
+    }
     return this;
   }
 
@@ -123,10 +125,10 @@ export class RouteRegistry {
       handlerNames: this.handlers.map((h) => h.metadata.name),
     };
 
-    this.handlers.forEach((handler) => {
+    for (const handler of this.handlers) {
       const priority = handler.metadata.priority.toString();
       stats.handlersByPriority[priority] = (stats.handlersByPriority[priority] || 0) + 1;
-    });
+    }
 
     return stats;
   }

@@ -114,7 +114,7 @@ export class VeryfrontAPIClient {
    * Resolve the effective branch - uses provided branch if defined, falls back to request branch.
    */
   private resolveBranch(branch?: string | null): string | null | undefined {
-    return branch !== undefined ? branch : this.requestBranch;
+    return branch ?? this.requestBranch;
   }
 
   /**

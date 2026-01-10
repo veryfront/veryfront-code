@@ -256,8 +256,9 @@ function reportViolations(
   violations: SecurityViolation[],
   onViolation?: (violation: SecurityViolation) => void,
 ): void {
-  if (onViolation) {
-    violations.forEach(onViolation);
+  if (!onViolation) return;
+  for (const violation of violations) {
+    onViolation(violation);
   }
 }
 

@@ -285,10 +285,6 @@ class DenoFileSystem implements FileSystem {
  * Note: For npm package, always uses Node.js fs APIs for cross-platform compatibility.
  */
 export function createFileSystem(): FileSystem {
-  if (isDeno) {
-    return new DenoFileSystem();
-  } else {
-    // Node.js or Bun
-    return new NodeFileSystem();
-  }
+  // Node.js or Bun falls through to NodeFileSystem
+  return isDeno ? new DenoFileSystem() : new NodeFileSystem();
 }

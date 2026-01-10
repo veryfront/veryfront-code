@@ -53,14 +53,14 @@ function updateMetaTag(
 }
 
 export function executeScripts(container: HTMLElement): void {
-  container.querySelectorAll("script").forEach((oldScript) => {
+  for (const oldScript of container.querySelectorAll("script")) {
     const newScript = document.createElement("script");
     for (const { name, value } of oldScript.attributes) {
       newScript.setAttribute(name, value);
     }
     newScript.textContent = oldScript.textContent;
     oldScript.parentNode?.replaceChild(newScript, oldScript);
-  });
+  }
 }
 
 export function applyHeadDirectives(container: HTMLElement): void {
@@ -69,29 +69,29 @@ export function applyHeadDirectives(container: HTMLElement): void {
     cleanManagedHeadTags();
   }
 
-  nodes.forEach((wrapper) => {
+  for (const wrapper of nodes) {
     const isTemplate = typeof HTMLTemplateElement !== "undefined" &&
       wrapper instanceof HTMLTemplateElement;
     const contentSource = isTemplate ? (wrapper as HTMLTemplateElement).content : wrapper;
     processHeadWrapper(contentSource);
     wrapper.parentElement?.removeChild(wrapper);
-  });
+  }
 }
 
 function cleanManagedHeadTags(): void {
-  document.head
-    .querySelectorAll('[data-veryfront-managed="1"]')
-    .forEach((element) => element.parentElement?.removeChild(element));
+  for (const element of document.head.querySelectorAll('[data-veryfront-managed="1"]')) {
+    element.parentElement?.removeChild(element);
+  }
 }
 
 function processHeadWrapper(wrapper: Element | DocumentFragment): void {
-  wrapper.childNodes.forEach((node) => {
-    if (!(node instanceof Element)) return;
+  for (const node of wrapper.childNodes) {
+    if (!(node instanceof Element)) continue;
 
     const tagName = node.tagName.toLowerCase();
     if (tagName === "title") {
       document.title = node.textContent || document.title;
-      return;
+      continue;
     }
 
     const clone = document.createElement(tagName);
@@ -103,7 +103,7 @@ function processHeadWrapper(wrapper: Element | DocumentFragment): void {
     }
     clone.setAttribute("data-veryfront-managed", "1");
     document.head.appendChild(clone);
-  });
+  }
 }
 
 export function manageFocus(container: HTMLElement): void {
