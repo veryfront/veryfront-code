@@ -17,6 +17,42 @@ export class FallbackExecutionError extends Error {
   }
 }
 
+function logPrimaryFailure(operationName: string, error: unknown): void {
+  logger.debug(
+    `[fallback-wrapper] Primary operation failed for ${operationName}, attempting fallback`,
+    error,
+  );
+}
+
+function logFallbackSuccess(operationName: string): void {
+  logger.debug(`[fallback-wrapper] Fallback succeeded for ${operationName}`);
+}
+
+function handleFallbackFailure(
+  operationName: string,
+  primaryError: unknown,
+  fallbackError: unknown,
+  logError: boolean,
+  rethrowOnFallbackFailure: boolean,
+): never {
+  if (logError) {
+    logger.error(
+      `[fallback-wrapper] Both primary and fallback failed for ${operationName}`,
+      { primaryError, fallbackError },
+    );
+  }
+
+  if (rethrowOnFallbackFailure) {
+    throw new FallbackExecutionError(
+      `Both primary and fallback operations failed for ${operationName}`,
+      primaryError,
+      fallbackError,
+    );
+  }
+
+  throw fallbackError;
+}
+
 export async function withFallback<T>(
   primary: () => Promise<T>,
   fallback: () => Promise<T>,
@@ -27,36 +63,14 @@ export async function withFallback<T>(
   try {
     return await primary();
   } catch (primaryError) {
-    if (logError) {
-      logger.debug(
-        `[fallback-wrapper] Primary operation failed for ${operationName}, attempting fallback`,
-        primaryError,
-      );
-    }
+    if (logError) logPrimaryFailure(operationName, primaryError);
 
     try {
       const result = await fallback();
-      if (logError) {
-        logger.debug(`[fallback-wrapper] Fallback succeeded for ${operationName}`);
-      }
+      if (logError) logFallbackSuccess(operationName);
       return result;
     } catch (fallbackError) {
-      if (logError) {
-        logger.error(
-          `[fallback-wrapper] Both primary and fallback failed for ${operationName}`,
-          { primaryError, fallbackError },
-        );
-      }
-
-      if (rethrowOnFallbackFailure) {
-        throw new FallbackExecutionError(
-          `Both primary and fallback operations failed for ${operationName}`,
-          primaryError,
-          fallbackError,
-        );
-      }
-
-      throw fallbackError;
+      handleFallbackFailure(operationName, primaryError, fallbackError, logError, rethrowOnFallbackFailure);
     }
   }
 }
@@ -71,36 +85,14 @@ export function withFallbackSync<T>(
   try {
     return primary();
   } catch (primaryError) {
-    if (logError) {
-      logger.debug(
-        `[fallback-wrapper] Primary operation failed for ${operationName}, attempting fallback`,
-        primaryError,
-      );
-    }
+    if (logError) logPrimaryFailure(operationName, primaryError);
 
     try {
       const result = fallback();
-      if (logError) {
-        logger.debug(`[fallback-wrapper] Fallback succeeded for ${operationName}`);
-      }
+      if (logError) logFallbackSuccess(operationName);
       return result;
     } catch (fallbackError) {
-      if (logError) {
-        logger.error(
-          `[fallback-wrapper] Both primary and fallback failed for ${operationName}`,
-          { primaryError, fallbackError },
-        );
-      }
-
-      if (rethrowOnFallbackFailure) {
-        throw new FallbackExecutionError(
-          `Both primary and fallback operations failed for ${operationName}`,
-          primaryError,
-          fallbackError,
-        );
-      }
-
-      throw fallbackError;
+      handleFallbackFailure(operationName, primaryError, fallbackError, logError, rethrowOnFallbackFailure);
     }
   }
 }

@@ -18,6 +18,7 @@
  */
 
 import type { RuntimeAdapter, RuntimeId } from "./base.ts";
+import { isBun, isDeno, isNode } from "../compat/runtime.ts";
 
 type AdapterLoader = () => Promise<RuntimeAdapter>;
 
@@ -136,22 +137,11 @@ class AdapterRegistry {
    * Detect current runtime
    */
   private detectRuntime(): RuntimeId {
-    // Deno
-    if (typeof Deno !== "undefined" && typeof Deno.version === "object") {
-      return "deno";
-    }
+    if (isDeno) return "deno";
+    if (isBun) return "bun";
+    if (isNode) return "node";
 
-    // Bun
-    if ("Bun" in globalThis) {
-      return "bun";
-    }
-
-    // Node.js
-    if (typeof process !== "undefined" && process.versions?.node) {
-      return "node";
-    }
-
-    // Cloudflare Workers (detected but requires manual init)
+    // Cloudflare Workers requires manual initialization
     if ("caches" in globalThis && "WebSocketPair" in globalThis) {
       throw new Error(
         "Cloudflare Workers detected but requires manual initialization. " +
