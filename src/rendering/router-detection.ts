@@ -160,6 +160,20 @@ async function statWithFallback(
   }
 }
 
+function normalizeEntry(entry: {
+  name: string;
+  isFile: boolean;
+  isDirectory: boolean;
+  isSymlink?: boolean;
+}): NormalizedDirEntry {
+  return {
+    name: entry.name,
+    isFile: entry.isFile,
+    isDirectory: entry.isDirectory,
+    isSymlink: entry.isSymlink ?? false,
+  };
+}
+
 async function readDirWithFallback(
   dir: string,
   adapter: RuntimeAdapter,
@@ -167,7 +181,7 @@ async function readDirWithFallback(
   try {
     const entries: NormalizedDirEntry[] = [];
     for await (const entry of adapter.fs.readDir(dir)) {
-      entries.push(entry as NormalizedDirEntry);
+      entries.push(normalizeEntry(entry));
     }
     return entries;
   } catch {
@@ -175,12 +189,7 @@ async function readDirWithFallback(
     try {
       const entries: NormalizedDirEntry[] = [];
       for await (const entry of fs.readDir(dir)) {
-        entries.push({
-          name: entry.name,
-          isFile: entry.isFile,
-          isDirectory: entry.isDirectory,
-          isSymlink: "isSymlink" in entry ? (entry as any).isSymlink : false,
-        });
+        entries.push(normalizeEntry(entry));
       }
       return entries;
     } catch {

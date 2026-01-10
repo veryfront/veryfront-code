@@ -117,7 +117,7 @@ export class PageResolver {
    * @returns Array of slugs for all pages
    */
   async getAllPages(): Promise<string[]> {
-    const pages: string[] = [];
+    const pages = new Set<string>();
     const pagesDirName = this.config?.directories?.pages || "pages";
 
     // Check pages directory
@@ -125,25 +125,22 @@ export class PageResolver {
     if (await this.adapter.fs.exists(pagesDir)) {
       for await (const entry of this.adapter.fs.readDir(pagesDir)) {
         if (entry.isFile && isPageFile(entry.name)) {
-          pages.push(fileToSlug(entry.name));
+          pages.add(fileToSlug(entry.name));
         }
       }
     }
 
-    // Also check root directory
+    // Also check root directory (Set handles deduplication)
     for await (const entry of this.adapter.fs.readDir(this.projectDir)) {
       if (entry.isFile && isPageFile(entry.name) && !entry.name.includes("config")) {
-        const slug = fileToSlug(entry.name);
-        // Deduplicate - don't add if already found in pages/
-        if (!pages.includes(slug)) {
-          pages.push(slug);
-        }
+        pages.add(fileToSlug(entry.name));
       }
     }
 
-    logger.debug("Discovered pages:", { count: pages.length, pages });
+    const result = Array.from(pages);
+    logger.debug("Discovered pages:", { count: result.length, pages: result });
 
-    return pages;
+    return result;
   }
 
   /**

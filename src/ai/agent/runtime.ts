@@ -425,20 +425,21 @@ export class AgentRuntime {
         }
       };
 
+      /** Check if a tool is dynamic (for SSE event formatting) */
+      const isDynamicTool = (name: string): boolean => toolRegistry.get(name)?.type === "dynamic";
+
       const recordToolError = async (toolCall: ToolCall, errorStr: string) => {
         toolCall.status = "error";
         toolCall.error = errorStr;
         toolCalls.push(toolCall);
 
         // Send tool-output-error event (AI SDK v5 UI Message Stream Protocol)
-        // Check if this is a dynamic tool
-        const errorTool = toolRegistry.get(toolCall.name);
-        const errorIsDynamic = errorTool?.type === "dynamic";
+        const dynamic = isDynamicTool(toolCall.name);
         sendSSE(controller, encoder, {
           type: "tool-output-error",
           toolCallId: toolCall.id,
           errorText: errorStr,
-          ...(errorIsDynamic && { dynamic: true }),
+          ...(dynamic && { dynamic: true }),
         });
 
         const errorMessage: Message = {
@@ -484,14 +485,12 @@ export class AgentRuntime {
               });
 
               // Send tool-input-start event (AI SDK v5 UI Message Stream Protocol)
-              // Check if this is a dynamic tool
-              const startTool = toolRegistry.get(event.toolCall.name);
-              const startIsDynamic = startTool?.type === "dynamic";
+              const dynamic = isDynamicTool(event.toolCall.name);
               sendSSE(controller, encoder, {
                 type: "tool-input-start",
                 toolCallId: event.toolCall.id,
                 toolName: event.toolCall.name,
-                ...(startIsDynamic && { dynamic: true }),
+                ...(dynamic && { dynamic: true }),
               });
             }
             break;
@@ -519,16 +518,14 @@ export class AgentRuntime {
               });
 
               // Send tool-input-available event (AI SDK v5 UI Message Stream Protocol)
-              // Check if this is a dynamic tool
-              const completeTool = toolRegistry.get(event.toolCall.name);
-              const completeIsDynamic = completeTool?.type === "dynamic";
+              const dynamic = isDynamicTool(event.toolCall.name);
               const { args } = parseStreamToolArgs(event.toolCall.arguments);
               sendSSE(controller, encoder, {
                 type: "tool-input-available",
                 toolCallId: event.toolCall.id,
                 toolName: event.toolCall.name,
                 input: args,
-                ...(completeIsDynamic && { dynamic: true }),
+                ...(dynamic && { dynamic: true }),
               });
             }
             break;
@@ -647,14 +644,12 @@ export class AgentRuntime {
               error: argError,
             });
             // Send tool-input-error event (AI SDK v5 UI Message Stream Protocol)
-            // Check if this is a dynamic tool
-            const inputErrorTool = toolRegistry.get(tc.name);
-            const inputErrorIsDynamic = inputErrorTool?.type === "dynamic";
+            const dynamic = isDynamicTool(tc.name);
             sendSSE(controller, encoder, {
               type: "tool-input-error",
               toolCallId: tc.id,
               errorText: `Invalid tool arguments: ${argError}`,
-              ...(inputErrorIsDynamic && { dynamic: true }),
+              ...(dynamic && { dynamic: true }),
             });
             await recordToolError(toolCall, `Invalid tool arguments: ${argError}`);
             continue;
@@ -682,14 +677,12 @@ export class AgentRuntime {
             toolCalls.push(toolCall);
 
             // Send tool-output-available event (AI SDK v5 UI Message Stream Protocol)
-            // Check if this is a dynamic tool
-            const outputTool = toolRegistry.get(tc.name);
-            const outputIsDynamic = outputTool?.type === "dynamic";
+            const dynamic = isDynamicTool(tc.name);
             sendSSE(controller, encoder, {
               type: "tool-output-available",
               toolCallId: toolCall.id,
               output: result,
-              ...(outputIsDynamic && { dynamic: true }),
+              ...(dynamic && { dynamic: true }),
             });
 
             const toolResultMessage: Message = {
