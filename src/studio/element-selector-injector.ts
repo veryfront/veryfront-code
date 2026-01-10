@@ -1,10 +1,3 @@
-/**
- * Element Selector Injector
- *
- * Post-processes SSR HTML to inject data-vf-selector attributes
- * for Studio Navigator integration.
- */
-
 const VOID_ELEMENTS = new Set([
   "area",
   "base",
@@ -42,14 +35,7 @@ interface InjectorOptions {
   rootSelector?: string;
 }
 
-/**
- * Inject data-vf-selector attributes into HTML elements
- * for Studio Navigator tree building.
- *
- * @param html - Raw HTML string
- * @param options - Injector options
- * @returns HTML with data-vf-selector attributes
- */
+/** Inject data-vf-selector attributes into HTML for Studio Navigator */
 export function injectElementSelectors(
   html: string,
   options: InjectorOptions = {},
@@ -134,9 +120,7 @@ export function injectElementSelectors(
   return result;
 }
 
-/**
- * Check if Studio embed mode is enabled from URL
- */
+/** Check if Studio embed mode is enabled from URL */
 export function isStudioEmbed(url: URL | string): boolean {
   const urlObj = typeof url === "string" ? new URL(url) : url;
   return urlObj.searchParams.get("studio_embed") === "true";

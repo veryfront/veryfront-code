@@ -1,7 +1,3 @@
-/**
- * Approval Manager - human-in-the-loop approval workflows
- */
-
 import type {
   ApprovalDecision,
   PendingApproval,

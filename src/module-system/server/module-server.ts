@@ -1,11 +1,4 @@
-/**
- * Module Server
- *
- * Serves transformed ESM modules at /_vf_modules/* URLs.
- * Used by client-side for granular module loading and HMR.
- *
- * Security: Uses secure filesystem wrapper to prevent path traversal attacks
- */
+/** Module Server - serves transformed ESM modules at /_vf_modules/* URLs */
 
 import { join } from "std/path/mod.ts";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
@@ -23,15 +16,7 @@ import { applySSRImportRewrites } from "./ssr-import-rewriter.ts";
 
 const DEV_MODULE_PREFIX = /^\/(?:_vf_modules|_veryfront\/modules)\//;
 const SNIPPET_MODULE_PREFIX = /^\/_vf_modules\/_snippets\/([a-f0-9]+)\.js/;
-/**
- * Cross-project import route patterns.
- * Versioned: /_vf_modules/_cross/<projectSlug>@<version>/@/<filePath>
- * Versionless: /_vf_modules/_cross/<projectSlug>/@/<filePath> (defaults to "latest")
- *
- * Examples:
- *   - /_vf_modules/_cross/demo@0.0/@/app.tsx
- *   - /_vf_modules/_cross/demo/@/app.tsx (latest)
- */
+// Cross-project import patterns: /_vf_modules/_cross/<slug>[@<version>]/@/<path>
 const CROSS_PROJECT_VERSIONED_PREFIX =
   /^\/_vf_modules\/_cross\/([a-z0-9-]+)@([\d^~x][\d.x^~-]*)\/\@\/(.+)$/;
 const CROSS_PROJECT_LATEST_PREFIX = /^\/_vf_modules\/_cross\/([a-z0-9-]+)\/\@\/(.+)$/;
@@ -55,24 +40,7 @@ export interface ModuleServerOptions {
   releaseId?: string | null;
 }
 
-/**
- * Serve module at /_vf_modules/* path
- *
- * Routes:
- * - /_vf_modules/components/app.js → components/app.tsx
- * - /_vf_modules/pages/index.js → pages/index.tsx
- * - /_vf_modules/lib/utils.js → lib/utils.ts
- *
- * Process:
- * 1. Map URL to file path
- * 2. Read source file
- * 3. Transform TS/JSX to ESM (cached)
- * 4. Return with application/javascript content type
- *
- * @param req - HTTP request
- * @param options - Module server options
- * @returns HTTP response with transformed module
- */
+/** Serve transformed module at /_vf_modules/* path */
 export async function serveModule(
   req: Request,
   options: ModuleServerOptions,

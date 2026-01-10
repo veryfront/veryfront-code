@@ -1,7 +1,3 @@
-/**
- * Step Node Handler - basic unit of workflow execution
- */
-
 import type { NodeState, StepNodeConfig, WorkflowNode, WorkflowNodeConfig } from "../../types.ts";
 import type { StepExecutor } from "../step-executor.ts";
 import {
