@@ -1,10 +1,11 @@
-import type { AgentContext, AgentResponse } from "../../types/agent.ts";
-import { createError, toError } from "../../../core/errors/veryfront-error.ts";
 /**
  * Input Validation and Output Filtering
  *
  * Security features to prevent prompt injection, data leakage, and harmful content.
  */
+
+import type { AgentContext, AgentResponse } from "../../types/agent.ts";
+import { createError, toError } from "../../../core/errors/veryfront-error.ts";
 
 export interface SecurityConfig {
   /** Input validation rules */

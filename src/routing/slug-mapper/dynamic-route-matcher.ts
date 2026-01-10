@@ -4,45 +4,44 @@ export function isDynamicRoute(pattern: string): boolean {
   return /\[[\w.]+\]/.test(pattern);
 }
 
+function isSpreadParam(part: string): boolean {
+  return part.startsWith("[...") && part.endsWith("]");
+}
+
+function isDynamicParam(part: string): boolean {
+  return part.startsWith("[") && part.endsWith("]");
+}
+
+function hasSpreadParam(parts: string[]): boolean {
+  return parts.some(isSpreadParam);
+}
+
 export function extractParams(
   pattern: string,
   slug: string,
 ): RouteParams | null {
   const patternParts = pattern.split("/").filter(Boolean);
   const slugParts = slug.split("/").filter(Boolean);
-
   const params: RouteParams = {};
 
-  let hasSpreadParam = false;
-  for (const part of patternParts) {
-    if (part.startsWith("[...") && part.endsWith("]")) {
-      hasSpreadParam = true;
-      break;
-    }
-  }
-
-  if (!hasSpreadParam && patternParts.length !== slugParts.length) {
+  if (!hasSpreadParam(patternParts) && patternParts.length !== slugParts.length) {
     return null;
   }
 
   let slugIndex = 0;
 
-  for (let i = 0; i < patternParts.length; i++) {
-    const patternPart = patternParts[i];
-    if (!patternPart) continue;
-
-    if (patternPart.startsWith("[...") && patternPart.endsWith("]")) {
+  for (const patternPart of patternParts) {
+    if (isSpreadParam(patternPart)) {
       const paramName = patternPart.slice(4, -1);
-      const remainingParts = slugParts.slice(slugIndex);
-      params[paramName] = remainingParts;
+      params[paramName] = slugParts.slice(slugIndex);
       return params;
     }
 
-    if (patternPart.startsWith("[") && patternPart.endsWith("]")) {
-      const paramName = patternPart.slice(1, -1);
+    if (isDynamicParam(patternPart)) {
       if (slugIndex >= slugParts.length) {
         return null;
       }
+      const paramName = patternPart.slice(1, -1);
       const slugPart = slugParts[slugIndex];
       if (slugPart !== undefined) {
         params[paramName] = slugPart;
