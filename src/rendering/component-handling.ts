@@ -7,7 +7,7 @@ import { ErrorCode, VeryfrontError } from "@veryfront/errors/index.ts";
 import * as BundledReact from "react";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import type { EntityInfo, PageBundle } from "@veryfront/types";
-import { createError, toError } from "../core/errors/veryfront-error.ts";
+import { createError, getErrorMessage, toError } from "../core/errors/veryfront-error.ts";
 import { getProjectReact } from "@veryfront/react";
 // DISABLED: Position injection temporarily disabled to fix hydration mismatch
 // import { injectNodePositions } from "../build/transforms/plugins/babel-node-positions.ts";
@@ -164,7 +164,7 @@ async function bundleComponentForClient(
     componentHydrationCache.set(cacheKey, transformed);
     return transformed;
   } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
+    const errorMessage = getErrorMessage(error);
     logger.error("Failed to transform component for client hydration", {
       filePath,
       error: errorMessage,

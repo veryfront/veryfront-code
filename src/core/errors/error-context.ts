@@ -7,6 +7,7 @@
  */
 
 import { serverLogger } from "@veryfront/utils/logger/logger.ts";
+import { getErrorMessage } from "./veryfront-error.ts";
 
 /**
  * Context information for error logging
@@ -33,16 +34,6 @@ export interface ErrorHandlingOptions<T> {
   logLevel?: LogLevel;
   /** Whether to include stack trace in logs */
   includeStack?: boolean;
-}
-
-/**
- * Extract error message from unknown error
- */
-function getErrorMessage(error: unknown): string {
-  if (error instanceof Error) {
-    return error.message;
-  }
-  return String(error);
 }
 
 /**

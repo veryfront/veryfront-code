@@ -19,6 +19,7 @@ import {
 import type { HandlerContext } from "../handlers/types.ts";
 import { parseProjectDomain } from "../utils/domain-parser.ts";
 import { getEnvironmentType, lookupProjectByDomain } from "../utils/domain-lookup.ts";
+import { getErrorMessage } from "../../core/errors/veryfront-error.ts";
 
 /** Check if host is a private/internal IP address */
 function isInternalHost(host: string): boolean {
@@ -145,7 +146,7 @@ export function createVeryfrontHandler(
       return c;
     }).catch((err) => {
       logger.warn("[universal] Failed to load config, using defaults", {
-        error: err instanceof Error ? err.message : String(err),
+        error: getErrorMessage(err),
       });
       return undefined;
     });
@@ -188,7 +189,7 @@ export function createVeryfrontHandler(
   // In proxy mode, skip eager initialization since there's no request context at startup
   const readyPromise = isProxyMode ? Promise.resolve() : apiHandler.initialize().catch((err) => {
     logger.error("[universal] API handler initialization failed", {
-      error: err instanceof Error ? err.message : String(err),
+      error: getErrorMessage(err),
       stack: err instanceof Error ? err.stack : undefined,
     });
     // Re-throw to prevent server from starting with broken API routing
