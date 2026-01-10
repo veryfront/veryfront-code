@@ -17,9 +17,8 @@ import {
   registerClientRef,
   type RSCComponent,
 } from "./component-detector.ts";
-import { renderAttributes } from "./html-generator.ts";
+import { renderAttributes, treeToHTML } from "./html-generator.ts";
 import { serializeProps } from "./prop-serializer.ts";
-import { treeToHTML } from "./html-generator.ts";
 
 /**
  * Recursively render a component tree
@@ -154,31 +153,21 @@ export async function processElement(
 
 /**
  * Render children elements
- *
- * @param children - React children to render
- * @param clientManifest - Map of registered client components
- * @param clientRefs - Map to store client references
- * @returns Array of RSC nodes
  */
-export async function renderChildren(
+export function renderChildren(
   children: React.ReactNode,
   clientManifest: Map<string, ClientComponentMeta>,
   clientRefs: Map<string, string>,
 ): Promise<RSCNode[]> {
-  if (!children) return [];
+  if (!children) return Promise.resolve([]);
 
   const childArray = React.Children.toArray(children);
 
-  // Parallelize child processing to avoid N+1 pattern
-  const results = await Promise.all(
-    childArray.map((child) => {
-      if (React.isValidElement(child)) {
-        return processElement(child, clientManifest, clientRefs);
-      } else {
-        return Promise.resolve({ type: "html", html: String(child) } as RSCNode);
-      }
-    }),
+  return Promise.all(
+    childArray.map((child) =>
+      React.isValidElement(child)
+        ? processElement(child, clientManifest, clientRefs)
+        : Promise.resolve({ type: "html", html: String(child) } as RSCNode)
+    ),
   );
-
-  return results;
 }

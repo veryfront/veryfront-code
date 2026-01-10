@@ -24,10 +24,6 @@ export type RSCComponent = React.ComponentType<any> & {
 
 /**
  * Check if a component is a client component
- *
- * @param Component - Component to check
- * @param clientManifest - Map of registered client components
- * @returns True if component is a client component
  */
 export function isClientComponent(
   Component: RSCComponent,
@@ -35,15 +31,16 @@ export function isClientComponent(
 ): boolean {
   if (!Component) return false;
 
-  // Check for explicit client component marker
-  if (Component.__rsc_client === true) return true;
-  if (Component.$$typeof === Symbol.for("react.client.reference")) {
+  // Check for explicit client component markers
+  if (
+    Component.__rsc_client === true ||
+    Component.$$typeof === Symbol.for("react.client.reference")
+  ) {
     return true;
   }
 
   // Check if component is in client manifest
-  const componentId = getComponentId(Component);
-  return clientManifest.has(componentId);
+  return clientManifest.has(getComponentId(Component));
 }
 
 /**
@@ -62,11 +59,6 @@ export function getComponentId(Component: RSCComponent): string {
 
 /**
  * Register a client component reference
- *
- * @param id - Component ID
- * @param Component - Component to register
- * @param clientManifest - Map of registered client components
- * @param clientRefs - Map to store client references
  */
 export function registerClientRef(
   id: string,
@@ -77,14 +69,6 @@ export function registerClientRef(
   if (clientRefs.has(id)) return;
 
   const meta = clientManifest.get(id);
-  if (meta) {
-    // Use path from manifest
-    clientRefs.set(id, meta.path);
-  } else if (Component.__rsc_path) {
-    // Use explicit path
-    clientRefs.set(id, Component.__rsc_path);
-  } else {
-    // Generate path based on component name
-    clientRefs.set(id, `/_veryfront/client/${id}.js`);
-  }
+  const path = meta?.path ?? Component.__rsc_path ?? `/_veryfront/client/${id}.js`;
+  clientRefs.set(id, path);
 }

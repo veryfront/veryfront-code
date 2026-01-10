@@ -20,10 +20,13 @@ export interface GlobalWithBun {
   };
 }
 
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
 export function hasDenoRuntime(global: unknown): global is GlobalWithDeno {
   return (
-    typeof global === "object" &&
-    global !== null &&
+    isObject(global) &&
     "Deno" in global &&
     typeof (global as GlobalWithDeno).Deno?.env?.get === "function"
   );
@@ -31,18 +34,12 @@ export function hasDenoRuntime(global: unknown): global is GlobalWithDeno {
 
 export function hasNodeProcess(global: unknown): global is GlobalWithProcess {
   return (
-    typeof global === "object" &&
-    global !== null &&
+    isObject(global) &&
     "process" in global &&
     typeof (global as GlobalWithProcess).process?.env === "object"
   );
 }
 
 export function hasBunRuntime(global: unknown): global is GlobalWithBun {
-  return (
-    typeof global === "object" &&
-    global !== null &&
-    "Bun" in global &&
-    typeof (global as GlobalWithBun).Bun !== "undefined"
-  );
+  return isObject(global) && "Bun" in global && (global as GlobalWithBun).Bun !== undefined;
 }
