@@ -15,6 +15,27 @@ import { agentLogger } from "../../core/utils/logger/logger.ts";
 import { z } from "zod";
 
 /**
+ * Map common finish reasons to standard format
+ * Used by OpenAI and Google providers
+ */
+export function mapFinishReason(reason: string): CompletionResponse["finishReason"] {
+  switch (reason) {
+    case "stop":
+      return "stop";
+    case "length":
+    case "max_tokens":
+      return "length";
+    case "tool_calls":
+    case "function_call":
+      return "tool_calls";
+    case "content_filter":
+      return "content_filter";
+    default:
+      return "stop";
+  }
+}
+
+/**
  * Schema for OpenAI streaming response chunks
  */
 const OpenAIStreamChunkSchema = z.object({

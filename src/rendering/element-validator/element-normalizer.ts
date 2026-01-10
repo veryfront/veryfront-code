@@ -12,7 +12,7 @@ import { rendererLogger as logger } from "@veryfront/utils";
 import { ensureError } from "../../core/errors/veryfront-error.ts";
 import { normalizeChild } from "../utils/index.ts";
 import { deepInspectElement, type InspectionOptions } from "./element-inspector.ts";
-import { getElementTypeName, looksLikeReactElement } from "./primitive-checks.ts";
+import { getElementTypeName, isReactElement } from "./primitive-checks.ts";
 
 /**
  * Options for element validation and normalization
@@ -51,9 +51,8 @@ export function ensureValidReactElement(
   // Normalize the child
   const finalChild = normalizeChild(pageElement);
 
-  // Use symbol-agnostic check for cross-instance compatibility
-  // This handles elements created by project React when running in bundled CLI
-  const finalIsElement = React.isValidElement(finalChild) || looksLikeReactElement(finalChild);
+  // Use cross-instance compatible check
+  const finalIsElement = isReactElement(finalChild);
 
   // Log final element check if debug mode is enabled
   if (options.debugMode) {
@@ -110,8 +109,7 @@ function logFinalElementCheck(
     "children" in finalChild
   );
 
-  // Use symbol-agnostic check for cross-instance compatibility
-  const isElement = React.isValidElement(finalChild) || looksLikeReactElement(finalChild);
+  const isElement = isReactElement(finalChild);
   const type = isElement ? getElementTypeName(finalChild as React.ReactElement) : typeof finalChild;
 
   logger.info("Final element check before SSR", {

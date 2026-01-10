@@ -43,6 +43,16 @@ const REACT_SYMBOL_PREFIXES = [
 ];
 
 /**
+ * Cross-instance React element check
+ *
+ * Combines React.isValidElement with symbol-agnostic fallback
+ * to handle elements created by different React instances.
+ */
+export function isReactElement(value: unknown): boolean {
+  return React.isValidElement(value) || looksLikeReactElement(value);
+}
+
+/**
  * Symbol-agnostic check if a value looks like a React element.
  * This works across different React instances (bundled vs project)
  * where Symbol.for('react.element') may have different values.

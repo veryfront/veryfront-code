@@ -3,7 +3,7 @@
  */
 
 import { z } from "zod";
-import { BaseProvider } from "./base.ts";
+import { BaseProvider, mapFinishReason } from "./base.ts";
 import { createError, toError } from "../../core/errors/veryfront-error.ts";
 import type { CompletionRequest, CompletionResponse, GoogleConfig } from "../types/provider.ts";
 
@@ -127,24 +127,7 @@ export class GoogleProvider extends BaseProvider {
         completionTokens: data.usage?.completion_tokens || 0,
         totalTokens: data.usage?.total_tokens || 0,
       },
-      finishReason: this.mapFinishReason(choice.finish_reason),
+      finishReason: mapFinishReason(choice.finish_reason),
     };
-  }
-
-  private mapFinishReason(reason: string): CompletionResponse["finishReason"] {
-    switch (reason) {
-      case "stop":
-        return "stop";
-      case "length":
-      case "max_tokens":
-        return "length";
-      case "tool_calls":
-      case "function_call":
-        return "tool_calls";
-      case "content_filter":
-        return "content_filter";
-      default:
-        return "stop";
-    }
   }
 }

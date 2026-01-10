@@ -92,9 +92,7 @@ export function useCompletion(
           }));
         }
 
-        if (options.onResponse) {
-          options.onResponse(response);
-        }
+        options.onResponse?.(response);
 
         // Handle streaming response
         if (response.body) {
@@ -112,9 +110,7 @@ export function useCompletion(
             setCompletion(accumulatedText);
           }
 
-          if (options.onFinish) {
-            options.onFinish(accumulatedText);
-          }
+          options.onFinish?.(accumulatedText);
         }
       } catch (err) {
         if (err instanceof Error && err.name === "AbortError") {
@@ -123,10 +119,7 @@ export function useCompletion(
 
         const error = err instanceof Error ? err : new Error(String(err));
         setError(error);
-
-        if (options.onError) {
-          options.onError(error);
-        }
+        options.onError?.(error);
       } finally {
         setIsLoading(false);
         abortControllerRef.current = null;
