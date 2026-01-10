@@ -200,7 +200,7 @@ export async function createTestDevServer(options: {
   enableHMR?: boolean;
   fileWatcherDebounceMs?: number;
 }): Promise<TestServer> {
-  const port = options.port ?? getFreePort(9000, 12000);
+  const port = options.port ?? getFreePort();
   const server = await createDevServer({
     projectDir: options.projectDir,
     port,
@@ -281,7 +281,7 @@ export async function createTestProductionServer(options: {
   port?: number;
   hostname?: string;
 }): Promise<TestServer> {
-  const port = options.port ?? getFreePort(9000, 12000);
+  const port = options.port ?? getFreePort();
   const server = await startProductionServer({
     projectDir: options.projectDir,
     port,

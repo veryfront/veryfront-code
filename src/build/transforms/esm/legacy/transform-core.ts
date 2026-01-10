@@ -16,8 +16,7 @@ import type { TransformOptions } from "./types.ts";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import { compileMDXRuntime } from "../mdx/compiler/mdx-compiler.ts";
 import { rendererLogger as logger } from "@veryfront/utils";
-import { cwd } from "../../../platform/compat/process.ts";
-import { join } from "std/path/mod.ts";
+import { getHttpBundleCacheDir } from "@veryfront/utils/cache-dir.ts";
 import {
   getDefaultImportMap,
   transformImportsWithMap,
@@ -169,8 +168,7 @@ export async function transformToESM(
     code = transformImportsWithMap(code, getDefaultImportMap(), undefined, { resolveBare: true });
 
     // SSR: Process remaining HTTP imports (ones not in import map)
-    const httpCacheDir = join(cwd(), ".cache", "veryfront-http-bundle");
-    code = bundleHttpImports(code, httpCacheDir, contentHash);
+    code = bundleHttpImports(code, getHttpBundleCacheDir(), contentHash);
   } else {
     // Browser: Rewrite imports to use module server (HTTP paths)
     code = await resolveRelativeImports(code, filePath, projectDir, moduleServerUrl);

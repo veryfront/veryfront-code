@@ -3,7 +3,7 @@
  *
  * Tests React Server Components (RSC) feature flag behavior:
  * - RSC endpoints are disabled by default
- * - RSC endpoints are enabled with VERYFRONT_EXPERIMENTAL_RSC flag
+ * - RSC endpoints are enabled with experimental.rsc config
  * - All RSC endpoints work correctly when enabled
  */
 
@@ -25,10 +25,11 @@ describe("RSC Config Tests", { sanitizeOps: false, sanitizeResources: false }, (
      * This ensures RSC is opt-in only
      */
     await withTestContext("rsc-disabled", async (context) => {
-      // Enable cache closing for tests
-      // NOTE: We explicitly DO NOT set VERYFRONT_EXPERIMENTAL_RSC here
-      // to test the "disabled by default" behavior
-      context.setEnv({ VF_CACHE_ALLOW_CLOSE: "1" });
+      // Explicitly disable RSC in config to ensure isolation from other tests
+      await Deno.writeTextFile(
+        join(context.projectDir, "veryfront.config.js"),
+        `export default { experimental: { rsc: false } };`,
+      );
 
       // Create minimal project structure
       await Deno.writeTextFile(join(context.projectDir, "pages", "index.mdx"), "# Home Page");
@@ -44,9 +45,9 @@ describe("RSC Config Tests", { sanitizeOps: false, sanitizeResources: false }, (
     });
   });
 
-  it("RSC - endpoints are enabled with feature flag", async () => {
+  it("RSC - endpoints are enabled with config flag", async () => {
     /**
-     * Verifies all RSC endpoints work when VERYFRONT_EXPERIMENTAL_RSC is set:
+     * Verifies all RSC endpoints work when experimental.rsc is enabled:
      * - /probe - health check
      * - /payload - multi-slot payload
      * - /manifest - route manifest
@@ -54,10 +55,12 @@ describe("RSC Config Tests", { sanitizeOps: false, sanitizeResources: false }, (
      * - /page - page shell
      */
     await withTestContext("rsc-enabled", async (context) => {
-      context.setEnv({
-        VERYFRONT_EXPERIMENTAL_RSC: "1",
-        VF_CACHE_ALLOW_CLOSE: "1",
-      });
+      // Enable RSC via config file (not env var - for parallel test isolation)
+      await Deno.writeTextFile(
+        join(context.projectDir, "veryfront.config.js"),
+        `export default { experimental: { rsc: true } };`,
+      );
+
       // Create App Router structure for RSC
       await Deno.writeTextFile(
         join(context.projectDir, "app", "layout.tsx"),

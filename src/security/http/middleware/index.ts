@@ -5,7 +5,14 @@
  */
 
 // Types
-export type { CORSConfig, CSPDirectives, SecurityConfig } from "./types.ts";
+export type {
+  AuthConfig,
+  BasicAuthConfig,
+  BearerAuthConfig,
+  CORSConfig,
+  CSPDirectives,
+  SecurityConfig,
+} from "./types.ts";
 
 // Config loader
 export { isValidSecurityConfig, loadSecurityConfig } from "./config-loader.ts";

@@ -26,7 +26,7 @@ describe("RSC Flight Smoke Tests", { sanitizeOps: false, sanitizeResources: fals
         let h: Awaited<ReturnType<typeof startProductionServer>> | null = null;
         try {
           const { getFreePort } = await import("../../_helpers/utils.ts");
-          const port = await getFreePort(9000, 12000);
+          const port = await getFreePort();
           h = await startProductionServer({
             projectDir: context.projectDir,
             port,

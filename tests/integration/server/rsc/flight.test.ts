@@ -31,7 +31,7 @@ describe("RSC Flight Tests", { sanitizeOps: false, sanitizeResources: false }, (
           await Deno.writeTextFile(`${context.projectDir}/pages/index.mdx`, "# Home");
 
           const { getFreePort } = await import("../../../_helpers/utils.ts");
-          const port = await getFreePort(9000, 12000);
+          const port = await getFreePort();
           h = await startProductionServer({
             projectDir: context.projectDir,
             port,

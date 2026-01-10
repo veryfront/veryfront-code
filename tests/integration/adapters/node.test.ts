@@ -141,7 +141,7 @@ describe(
       it("should create functional server", async () => {
         const adapter = new NodeAdapter();
         let hit = 0;
-        const port = getFreePort(8800, 8900);
+        const port = getFreePort();
 
         const server = await adapter.serve(
           (_req) => {
@@ -178,7 +178,7 @@ describe(
             `export async function POST(req: Request){ const d = await req.json(); return Response.json(d); }`,
           );
 
-          const port = getFreePort(8901, 8999);
+          const port = getFreePort();
           const adapter = new NodeAdapter();
           const server = await startUniversalServer({
             projectDir: dir,

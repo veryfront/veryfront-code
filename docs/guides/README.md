@@ -146,15 +146,6 @@ Secure your application:
 - **[CORS](/guides/middleware/README.md)** - Cross-Origin Resource Sharing
 - **[Rate Limiting](/guides/middleware/README.md)** - Protect your APIs
 
-## Migration
-
-Move to Veryfront:
-
-- **[From Next.js](/migration/)** - Migrate Next.js apps
-- **[From React](/migration/)** - Migrate Create React App
-- **[From Remix](/migration/)** - Migrate Remix apps
-- **[From Gatsby](/migration/)** - Migrate Gatsby sites
-
 ## Examples
 
 Learn by example - see the `/examples/` directory:

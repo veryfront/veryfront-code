@@ -35,11 +35,46 @@ export interface CORSConfig {
 export type CSPDirectives = Partial<Record<string, string | string[]>>;
 
 /**
+ * Basic Authentication Configuration
+ */
+export interface BasicAuthConfig {
+  /** Username for basic auth */
+  username: string;
+  /** Password for basic auth */
+  password: string;
+  /** Realm for WWW-Authenticate header */
+  realm?: string;
+}
+
+/**
+ * Bearer Authentication Configuration
+ */
+export interface BearerAuthConfig {
+  /** Token to validate against */
+  token: string;
+}
+
+/**
+ * Authentication Configuration
+ *
+ * Configures authentication for the application.
+ * Use either basic or bearer auth, not both.
+ */
+export interface AuthConfig {
+  /** Basic authentication (username/password) */
+  basic?: BasicAuthConfig;
+  /** Bearer token authentication */
+  bearer?: BearerAuthConfig;
+}
+
+/**
  * Security Configuration Interface
  *
  * Complete security configuration including CORS, CSP, and other security headers.
  */
 export interface SecurityConfig {
+  /** Authentication configuration - replaces env vars for clean test isolation */
+  auth?: AuthConfig;
   /** CORS configuration - boolean for default CORS or detailed config object */
   cors?: boolean | CORSConfig;
   /** Content Security Policy directives */
