@@ -42,14 +42,13 @@ export class Bundler {
   }
 
   private determineFileLoader(content: string, filePath: string): "tsx" | "ts" | "jsx" | "js" {
-    const hasTypeScript = /:\s*\w+|interface\s+|type\s+|<\w|Props>/.test(content) ||
-      filePath.endsWith(".ts") ||
-      filePath.endsWith(".tsx");
+    // Check extension first
+    const loader = getLoaderForPath(filePath);
+    if (loader !== "js") return loader;
 
-    if (hasTypeScript) {
-      return filePath.endsWith(".tsx") ? "tsx" : "ts";
-    }
-    return filePath.endsWith(".jsx") ? "jsx" : "js";
+    // For .js files, check if content contains TypeScript patterns
+    const hasTypeScript = /:\s*\w+|interface\s+|type\s+|<\w|Props>/.test(content);
+    return hasTypeScript ? "ts" : "js";
   }
 }
 

@@ -151,14 +151,10 @@ function normalizeMiddlewareExport(middlewareModule: unknown): MiddlewareFunctio
   const exported = (middlewareModule as { default?: unknown })?.default || middlewareModule;
 
   if (Array.isArray(exported)) {
-    return exported.filter((m) => typeof m === "function") as MiddlewareFunction[];
+    return exported.filter((m): m is MiddlewareFunction => typeof m === "function");
   }
 
-  if (typeof exported === "function") {
-    return [exported as MiddlewareFunction];
-  }
-
-  return [];
+  return typeof exported === "function" ? [exported as MiddlewareFunction] : [];
 }
 
 export async function setupMiddleware(

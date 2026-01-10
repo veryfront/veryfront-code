@@ -32,15 +32,10 @@ export function isClientComponent(
   if (!Component) return false;
 
   // Check for explicit client component markers
-  if (
-    Component.__rsc_client === true ||
-    Component.$$typeof === Symbol.for("react.client.reference")
-  ) {
-    return true;
-  }
+  const hasClientMarker = Component.__rsc_client === true ||
+    Component.$$typeof === Symbol.for("react.client.reference");
 
-  // Check if component is in client manifest
-  return clientManifest.has(getComponentId(Component));
+  return hasClientMarker || clientManifest.has(getComponentId(Component));
 }
 
 /**
