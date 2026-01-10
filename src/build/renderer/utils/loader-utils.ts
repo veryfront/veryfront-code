@@ -4,58 +4,39 @@
 
 import type * as esbuild from "esbuild";
 
+type FileType = "mdx" | "tsx" | "ts" | "jsx" | "js" | "css" | "json";
+
+/** Extension to file type mapping */
+const EXTENSION_MAP: Record<string, FileType> = {
+  mdx: "mdx",
+  tsx: "tsx",
+  ts: "ts",
+  jsx: "jsx",
+  js: "js",
+  mjs: "js",
+  css: "css",
+  json: "json",
+};
+
+/** Get file extension from path */
+function getExtension(path: string): string {
+  return path.split(".").pop()?.toLowerCase() ?? "";
+}
+
 /**
  * Get esbuild loader based on file extension
  */
 export function getLoaderFromPath(path: string): esbuild.Loader {
-  const ext = path.split(".").pop()?.toLowerCase();
-
-  switch (ext) {
-    case "ts":
-      return "ts";
-    case "tsx":
-      return "tsx";
-    case "js":
-    case "mjs":
-      return "js";
-    case "jsx":
-      return "jsx";
-    case "json":
-      return "json";
-    case "css":
-      return "css";
-    case "mdx":
-      return "tsx"; // MDX compiles to TSX
-    default:
-      return "default";
-  }
+  const fileType = getFileType(path);
+  // MDX compiles to TSX, others map directly
+  return fileType === "mdx" ? "tsx" : fileType;
 }
 
 /**
  * Get file type from path
  */
-export function getFileType(path: string): "mdx" | "tsx" | "ts" | "jsx" | "js" | "css" | "json" {
-  const ext = path.split(".").pop()?.toLowerCase();
-
-  switch (ext) {
-    case "mdx":
-      return "mdx";
-    case "tsx":
-      return "tsx";
-    case "ts":
-      return "ts";
-    case "jsx":
-      return "jsx";
-    case "js":
-    case "mjs":
-      return "js";
-    case "css":
-      return "css";
-    case "json":
-      return "json";
-    default:
-      return "js";
-  }
+export function getFileType(path: string): FileType {
+  return EXTENSION_MAP[getExtension(path)] ?? "js";
 }
 
 /**
