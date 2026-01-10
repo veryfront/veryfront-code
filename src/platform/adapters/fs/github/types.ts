@@ -1,7 +1,22 @@
+/**
+ * GitHub FS Adapter Types
+ *
+ * Re-exports API response types from schemas.ts and defines config types.
+ */
+
 import { createError, toError } from "../../../../core/errors/veryfront-error.ts";
 
 // Import and re-export from shared types to avoid circular dependencies
 export type { DirectoryEntry } from "../shared-types.ts";
+
+// Re-export API response types from schemas
+export type {
+  GitHubBlobResponse,
+  GitHubContentItem,
+  GitHubContentsResponse,
+  GitHubTreeEntry,
+  GitHubTreeResponse,
+} from "./schemas.ts";
 
 /**
  * GitHub repository configuration
@@ -52,51 +67,6 @@ export interface ResolvedGitHubConfig {
     initialDelay: number;
     maxDelay: number;
   };
-}
-
-/**
- * GitHub tree entry from Git Trees API
- */
-export interface GitHubTreeEntry {
-  path: string;
-  mode: string;
-  type: "blob" | "tree" | "commit";
-  sha: string;
-  size?: number;
-}
-
-/**
- * GitHub tree response
- */
-export interface GitHubTreeResponse {
-  sha: string;
-  url: string;
-  tree: GitHubTreeEntry[];
-  truncated: boolean;
-}
-
-/**
- * GitHub content item from Contents API
- */
-export interface GitHubContentItem {
-  type: "file" | "dir" | "symlink" | "submodule";
-  name: string;
-  path: string;
-  sha: string;
-  size: number;
-  content?: string;
-  encoding?: "base64";
-  download_url?: string | null;
-}
-
-/**
- * GitHub blob response
- */
-export interface GitHubBlobResponse {
-  sha: string;
-  size: number;
-  content: string;
-  encoding: "base64" | "utf-8";
 }
 
 /**
