@@ -34,28 +34,7 @@ export class CorsHandler extends BaseHandler {
     const pathname = url.pathname;
 
     // Try to resolve route.ts to compute Allow dynamically
-    let allowMethods = "GET,POST,PUT,PATCH,DELETE,OPTIONS";
-    try {
-      const match = await this.resolveAppRouteFile(pathname, ctx);
-      if (match) {
-        const mod = await import(`file://${match.file}`) as RouteHandlerModule;
-        const has = (name: string) => typeof mod[name] === "function";
-        const base: string[] = [];
-        for (const m of ["GET", "POST", "PUT", "PATCH", "DELETE"]) {
-          if (has(m)) base.push(m);
-        }
-        if (base.includes("GET") && !base.includes("HEAD")) {
-          base.unshift("HEAD");
-        }
-        // OPTIONS always allowed
-        base.push("OPTIONS");
-        if (base.length > 0) {
-          allowMethods = Array.from(new Set(base)).join(", ");
-        }
-      }
-    } catch (err) {
-      this.logDebug("Failed to resolve route for CORS", { error: err, pathname }, ctx);
-    }
+    const allowMethods = await this.resolveAllowedMethods(pathname, ctx);
 
     // Try async CORS config loading
     let corsConfig = ctx.securityConfig?.cors;
@@ -75,6 +54,36 @@ export class CorsHandler extends BaseHandler {
     });
 
     return this.respond(response);
+  }
+
+  /** Default allowed methods when route cannot be resolved */
+  private static readonly DEFAULT_METHODS = "GET,POST,PUT,PATCH,DELETE,OPTIONS";
+
+  /** HTTP methods to check for in route modules */
+  private static readonly HTTP_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE"] as const;
+
+  /**
+   * Resolve allowed HTTP methods for a route path.
+   */
+  private async resolveAllowedMethods(pathname: string, ctx: HandlerContext): Promise<string> {
+    try {
+      const match = await this.resolveAppRouteFile(pathname, ctx);
+      if (!match) return CorsHandler.DEFAULT_METHODS;
+
+      const mod = await import(`file://${match.file}`) as RouteHandlerModule;
+      const methods = CorsHandler.HTTP_METHODS.filter((m) => typeof mod[m] === "function");
+
+      // HEAD is implied by GET
+      if (methods.includes("GET") && !methods.includes("HEAD" as typeof methods[number])) {
+        methods.unshift("HEAD" as typeof methods[number]);
+      }
+      methods.push("OPTIONS" as typeof methods[number]);
+
+      return Array.from(new Set(methods)).join(", ");
+    } catch (err) {
+      this.logDebug("Failed to resolve route for CORS", { error: err, pathname }, ctx);
+      return CorsHandler.DEFAULT_METHODS;
+    }
   }
 
   /**

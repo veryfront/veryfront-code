@@ -81,13 +81,7 @@ function createRelativeFsPlugin(projectDir: string, shell: ShellAdapter): Plugin
       build.onLoad({ filter: /\.(tsx?|jsx?|mjs)$/ }, (args) => {
         try {
           const contents = shell.readFileSync(args.path);
-          const loader = args.path.endsWith(".tsx")
-            ? "tsx"
-            : args.path.endsWith(".ts")
-            ? "ts"
-            : args.path.endsWith(".jsx")
-            ? "jsx"
-            : "js";
+          const loader = getLoaderForPath(args.path);
           return { contents, loader } as const;
         } catch (error) {
           logger.debug("[DevBundler] Failed to read file contents", { path: args.path, error });
@@ -96,6 +90,16 @@ function createRelativeFsPlugin(projectDir: string, shell: ShellAdapter): Plugin
       });
     },
   };
+}
+
+/**
+ * Determine esbuild loader from file path extension.
+ */
+function getLoaderForPath(path: string): "tsx" | "ts" | "jsx" | "js" {
+  if (path.endsWith(".tsx")) return "tsx";
+  if (path.endsWith(".ts")) return "ts";
+  if (path.endsWith(".jsx")) return "jsx";
+  return "js";
 }
 
 function createBareExternalPlugin(): Plugin {
