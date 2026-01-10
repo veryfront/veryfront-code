@@ -88,35 +88,30 @@ export function extractSelectors(content: string): {
   const selectors = new Set<string>();
 
   // Extract className (JSX) and class (HTML) attributes
-  const classAttributeMatches = content.matchAll(/class(?:Name)?=["']([^"']+)["']/g);
-  for (const match of classAttributeMatches) {
-    if (match[1]) {
-      const classNames = match[1].split(/\s+/);
-      classes.push(...classNames);
-      for (const cn of classNames) {
-        selectors.add(`.${cn}`);
-      }
+  for (const match of content.matchAll(/class(?:Name)?=["']([^"']+)["']/g)) {
+    if (!match[1]) continue;
+    for (const cn of match[1].split(/\s+/)) {
+      classes.push(cn);
+      selectors.add(`.${cn}`);
     }
   }
 
   // Extract id attributes
-  const idMatches = content.matchAll(/id=["']([^"']+)["']/g);
-  for (const match of idMatches) {
-    if (match[1]) {
-      ids.push(match[1]);
-      selectors.add(`#${match[1]}`);
-    }
+  for (const match of content.matchAll(/id=["']([^"']+)["']/g)) {
+    if (!match[1]) continue;
+    ids.push(match[1]);
+    selectors.add(`#${match[1]}`);
   }
 
-  // Extract HTML tags
-  const tagMatches = content.matchAll(/<(\w+)[\s>]/g);
-  for (const match of tagMatches) {
-    if (match[1]) {
-      const tag = match[1].toLowerCase();
-      if (!tags.includes(tag)) {
-        tags.push(tag);
-        selectors.add(tag);
-      }
+  // Extract HTML tags (deduplicated)
+  const tagSet = new Set<string>();
+  for (const match of content.matchAll(/<(\w+)[\s>]/g)) {
+    if (!match[1]) continue;
+    const tag = match[1].toLowerCase();
+    if (!tagSet.has(tag)) {
+      tagSet.add(tag);
+      tags.push(tag);
+      selectors.add(tag);
     }
   }
 
@@ -128,19 +123,15 @@ export function extractSelectorsFromHTML(html: string): string[] {
   return Array.from(result.selectors);
 }
 
+const UNIVERSAL_SELECTORS = new Set(["*", ":root", "html", "body", "@"]);
+
 export function shouldKeepSelector(selector: string, usedSelectors: Set<string>): boolean {
   // Always keep universal rules
-  const universal = ["*", ":root", "html", "body", "@"];
-  if (universal.some((u) => selector.includes(u))) {
+  if ([...UNIVERSAL_SELECTORS].some((u) => selector.includes(u))) {
     return true;
   }
 
-  // Keep if exact match
-  if (usedSelectors.has(selector)) {
-    return true;
-  }
-
-  // Keep if any part of compound selector is used
+  // Keep if exact match or any part of compound selector is used
   const parts = selector.split(/[\s>+~]/).map((p) => p.trim());
   return parts.some((part) => usedSelectors.has(part));
 }

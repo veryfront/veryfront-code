@@ -6,35 +6,8 @@ import type {
   TransformTarget,
 } from "./types.ts";
 
-export async function createTransformContext(
-  source: string,
-  filePath: string,
-  projectDir: string,
-  options: TransformOptions,
-): Promise<TransformContext> {
-  const contentHash = await computeContentHash(source);
-  const target: TransformTarget = options.ssr ? "ssr" : "browser";
-
-  return {
-    code: source,
-    originalSource: source,
-    filePath,
-    projectDir,
-    projectId: options.projectId,
-    target,
-    dev: options.dev ?? true,
-    contentHash,
-    moduleServerUrl: options.moduleServerUrl,
-    vendorBundleHash: options.vendorBundleHash,
-    apiBaseUrl: options.apiBaseUrl,
-    jsxImportSource: options.jsxImportSource ?? "react",
-    timing: new Map(),
-    debug: false,
-    metadata: new Map(),
-  };
-}
-
-export function createTransformContextSync(
+/** Build a TransformContext from source, paths, hash, and options */
+function buildContext(
   source: string,
   filePath: string,
   projectDir: string,
@@ -60,6 +33,26 @@ export function createTransformContextSync(
     debug: false,
     metadata: new Map(),
   };
+}
+
+export async function createTransformContext(
+  source: string,
+  filePath: string,
+  projectDir: string,
+  options: TransformOptions,
+): Promise<TransformContext> {
+  const contentHash = await computeContentHash(source);
+  return buildContext(source, filePath, projectDir, contentHash, options);
+}
+
+export function createTransformContextSync(
+  source: string,
+  filePath: string,
+  projectDir: string,
+  contentHash: string,
+  options: TransformOptions,
+): TransformContext {
+  return buildContext(source, filePath, projectDir, contentHash, options);
 }
 
 export function recordStageTiming(
