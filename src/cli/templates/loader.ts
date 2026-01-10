@@ -143,11 +143,11 @@ export function getTemplateDirectory(templateName: string): string {
   // The bundled CLI ends up at dist/cli.js, with templates at dist/templates/
   if (isDeno) {
     return pathHelper.join(moduleDir, "files", templateName);
-  } else {
-    // In Node.js, the bundled code runs from dist/cli.js
-    // Templates are at dist/templates/<name>
-    return pathHelper.join(moduleDir, "templates", templateName);
   }
+
+  // In Node.js, the bundled code runs from dist/cli.js
+  // Templates are at dist/templates/<name>
+  return pathHelper.join(moduleDir, "templates", templateName);
 }
 
 /**

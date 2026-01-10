@@ -50,9 +50,9 @@ export class NodeHttpServer implements HttpServer {
 
           res.statusCode = response.status;
 
-          response.headers.forEach((value, name) => {
+          for (const [name, value] of response.headers) {
             res.setHeader(name, value);
-          });
+          }
 
           if (response.body) {
             const reader = response.body.getReader();

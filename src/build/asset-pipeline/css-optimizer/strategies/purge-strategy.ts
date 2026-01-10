@@ -54,7 +54,9 @@ export class PurgeStrategy implements CSSOptimizationStrategy {
           const result = extractSelectors(content);
 
           // Add all extracted selectors to the used set
-          result.selectors.forEach((selector: string) => this.usedSelectors.add(selector));
+          for (const selector of result.selectors) {
+            this.usedSelectors.add(selector);
+          }
         } catch (error) {
           logger.warn(`Failed to analyze ${file}`, {
             error: error instanceof Error ? error.message : String(error),

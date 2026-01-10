@@ -277,9 +277,9 @@ export function extractClassNames(htmlContent: string): Set<string> {
   let match: RegExpExecArray | null;
   while ((match = classPattern.exec(htmlContent)) !== null) {
     const classes = (match[1] || "").split(/\s+/);
-    classes.forEach((cls) => {
+    for (const cls of classes) {
       if (cls.trim()) classNames.add(cls.trim());
-    });
+    }
   }
 
   return classNames;

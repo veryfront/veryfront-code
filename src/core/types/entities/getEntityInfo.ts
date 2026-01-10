@@ -83,8 +83,8 @@ export async function getEntityInfo(
         );
         return null;
       }
-    } else {
-      if (!(await fs.exists(filePath))) return null;
+    } else if (!(await fs.exists(filePath))) {
+      return null;
     }
 
     const content = adapter
