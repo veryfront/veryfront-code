@@ -88,13 +88,13 @@ export function withHeaders<T extends FluentMethodsContext>(
   headers: HeadersInit | Record<string, string>,
 ): T {
   if (headers instanceof Headers) {
-    headers.forEach((value, key) => {
+    for (const [key, value] of headers) {
       this.headers.set(key, value);
-    });
+    }
   } else if (Array.isArray(headers)) {
-    headers.forEach(([key, value]) => {
+    for (const [key, value] of headers) {
       this.headers.set(key, value);
-    });
+    }
   } else {
     for (const [key, value] of Object.entries(headers)) {
       this.headers.set(key, value);

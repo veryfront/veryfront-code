@@ -108,11 +108,11 @@ export class PageRenderer {
 
     if (isComponentPage) {
       return { type: "component", extension: fileExtension };
-    } else if (isScriptPage) {
-      return { type: "script", extension: fileExtension };
-    } else {
-      return { type: "mdx", extension: fileExtension };
     }
+    if (isScriptPage) {
+      return { type: "script", extension: fileExtension };
+    }
+    return { type: "mdx", extension: fileExtension };
   }
 
   /**
