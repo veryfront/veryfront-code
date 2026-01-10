@@ -1,7 +1,25 @@
-/** OpenAI provider implementation */
+/**
+ * OpenAI provider implementation
+ *
+ * Supports both standard models and o-series reasoning models (o1, o3).
+ * O-series models have different parameter requirements:
+ * - Use max_completion_tokens instead of max_tokens
+ * - Don't support temperature parameter
+ * - Don't support parallel_tool_calls
+ * - Support reasoning_effort parameter
+ */
 
 import { z } from "zod";
-import { BaseProvider, mapFinishReason } from "./base.ts";
+
+/**
+ * Check if a model is an o-series reasoning model (o1, o3, etc.)
+ * These models have different API parameter requirements.
+ */
+function isOSeriesModel(model: string): boolean {
+  return model.startsWith("o1") || model.startsWith("o3");
+}
+
+import { BaseProvider } from "./base.ts";
 import { createError, toError } from "../../core/errors/veryfront-error.ts";
 import type { CompletionRequest, CompletionResponse, OpenAIConfig } from "../types/provider.ts";
 
@@ -31,115 +49,184 @@ const OpenAIResponseSchema = z.object({
 export class OpenAIProvider extends BaseProvider {
   name = "openai";
   private apiKey: string;
-  private baseURL: string;
-  private organizationId?: string;
+  private baseUrl: string;
+  private defaultModel: string;
+  private organization?: string;
 
   constructor(config: OpenAIConfig) {
-    super(config);
+    super();
     this.apiKey = config.apiKey;
-    this.baseURL = config.baseURL || "https://api.openai.com/v1";
-    this.organizationId = config.organizationId;
+    this.baseUrl = config.baseUrl || "https://api.openai.com/v1";
+    this.defaultModel = config.defaultModel || "gpt-4o";
+    this.organization = config.organization;
   }
 
-  protected getHeaders(): Record<string, string> {
-    const headers: Record<string, string> = {
-      "Authorization": `Bearer ${this.apiKey}`,
-    };
+  /**
+   * Build the request body for OpenAI API
+   * Handles o-series models differently than standard models
+   */
+  private buildRequestBody(request: CompletionRequest): Record<string, unknown> {
+    const model = request.model || this.defaultModel;
+    const isReasoning = isOSeriesModel(model);
 
-    if (this.organizationId) {
-      headers["OpenAI-Organization"] = this.organizationId;
-    }
-
-    return headers;
-  }
-
-  protected getEndpoint(path: string): string {
-    return `${this.baseURL}${path}`;
-  }
-
-  protected transformRequest(
-    request: CompletionRequest,
-  ): Record<string, unknown> {
+    // Base request body
     const body: Record<string, unknown> = {
-      model: request.model,
-      messages: request.messages,
+      model,
+      messages: this.formatMessages(request.messages),
       stream: request.stream || false,
     };
 
-    if (request.system) {
-      // Add system message at the beginning
-      body.messages = [
-        { role: "system", content: request.system },
-        ...request.messages,
-      ];
-    }
-
+    // Handle max tokens - o-series uses max_completion_tokens
     if (request.maxTokens) {
-      body.max_tokens = request.maxTokens;
+      if (isReasoning) {
+        body.max_completion_tokens = request.maxTokens;
+      } else {
+        body.max_tokens = request.maxTokens;
+      }
     }
 
-    if (request.temperature !== undefined) {
+    // Temperature - not supported by o-series models
+    if (!isReasoning && request.temperature !== undefined) {
       body.temperature = request.temperature;
     }
 
-    if (request.topP !== undefined) {
-      body.top_p = request.topP;
+    // Stop sequences
+    if (request.stopSequences?.length) {
+      body.stop = request.stopSequences;
     }
 
-    if (request.tools && request.tools.length > 0) {
+    // Tools - o-series doesn't support parallel_tool_calls
+    if (request.tools?.length) {
       body.tools = request.tools.map((tool) => ({
         type: "function",
         function: {
           name: tool.name,
           description: tool.description,
-          parameters: tool.parameters,
+          parameters: tool.inputSchema,
         },
       }));
-      // Disable parallel tool calls to avoid streaming JSON corruption
-      // when multiple tool calls are made simultaneously
-      body.parallel_tool_calls = false;
+
+      // Only add parallel_tool_calls for non-reasoning models
+      if (!isReasoning) {
+        body.parallel_tool_calls = false;
+      }
+    }
+
+    // Reasoning effort - only for o-series models
+    if (isReasoning && request.reasoningEffort) {
+      body.reasoning_effort = request.reasoningEffort;
     }
 
     return body;
   }
 
-  protected transformResponse(response: unknown): CompletionResponse {
-    const parsed = OpenAIResponseSchema.safeParse(response);
+  async complete(request: CompletionRequest): Promise<CompletionResponse> {
+    const body = this.buildRequestBody(request);
 
-    if (!parsed.success) {
-      throw toError(createError({
-        type: "agent",
-        message: `OpenAI: Invalid response format: ${parsed.error.message}`,
-      }));
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${this.apiKey}`,
+    };
+
+    if (this.organization) {
+      headers["OpenAI-Organization"] = this.organization;
     }
 
-    const data = parsed.data;
-    const choice = data.choices[0];
+    const response = await fetch(`${this.baseUrl}/chat/completions`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+    });
 
-    if (!choice) {
-      throw toError(createError({
-        type: "agent",
-        message: "OpenAI: No choices in response (unexpected)",
-      }));
+    if (!response.ok) {
+      const errorBody = await response.text();
+      throw toError(
+        createError({
+          type: "provider",
+          message: `OpenAI API error: ${response.status} ${response.statusText}`,
+          context: { body: errorBody },
+        }),
+      );
     }
 
-    const message = choice.message;
+    const data = await response.json();
+    const parsed = OpenAIResponseSchema.parse(data);
+    const choice = parsed.choices[0];
 
-    const toolCalls = message.tool_calls?.map((tc) => ({
+    // Extract tool calls if present
+    const toolCalls = choice.message.tool_calls?.map((tc) => ({
       id: tc.id,
       name: tc.function.name,
       arguments: JSON.parse(tc.function.arguments),
     }));
 
     return {
-      text: message.content || "",
+      content: choice.message.content || "",
       toolCalls,
-      usage: {
-        promptTokens: data.usage?.prompt_tokens || 0,
-        completionTokens: data.usage?.completion_tokens || 0,
-        totalTokens: data.usage?.total_tokens || 0,
-      },
-      finishReason: mapFinishReason(choice.finish_reason),
+      usage: parsed.usage ? {
+        promptTokens: parsed.usage.prompt_tokens,
+        completionTokens: parsed.usage.completion_tokens,
+        totalTokens: parsed.usage.total_tokens,
+      } : undefined,
+      finishReason: this.mapFinishReason(choice.finish_reason),
     };
+  }
+
+  private mapFinishReason(reason: string): CompletionResponse["finishReason"] {
+    switch (reason) {
+      case "stop":
+        return "stop";
+      case "length":
+        return "length";
+      case "tool_calls":
+        return "tool_use";
+      case "content_filter":
+        return "content_filter";
+      default:
+        return "stop";
+    }
+  }
+
+  private formatMessages(messages: CompletionRequest["messages"]) {
+    return messages.map((msg) => {
+      if (msg.role === "tool") {
+        return {
+          role: "tool",
+          tool_call_id: msg.toolCallId,
+          content: typeof msg.content === "string" ? msg.content : JSON.stringify(msg.content),
+        };
+      }
+
+      if (msg.role === "assistant" && msg.toolCalls) {
+        return {
+          role: "assistant",
+          content: msg.content || null,
+          tool_calls: msg.toolCalls.map((tc) => ({
+            id: tc.id,
+            type: "function",
+            function: {
+              name: tc.name,
+              arguments: JSON.stringify(tc.arguments),
+            },
+          })),
+        };
+      }
+
+      return {
+        role: msg.role,
+        content: msg.content,
+      };
+    });
+  }
+
+  async *stream(
+    _request: CompletionRequest,
+  ): AsyncGenerator<CompletionResponse, void, unknown> {
+    throw toError(
+      createError({
+        type: "provider",
+        message: "Streaming not yet implemented for OpenAI provider",
+      }),
+    );
   }
 }
