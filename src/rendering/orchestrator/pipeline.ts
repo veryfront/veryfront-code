@@ -9,6 +9,7 @@ import {
 import { join } from "../../platform/compat/path-helper.ts";
 import type { MdxBundle } from "@veryfront/types";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
+import { isExtendedFSAdapter } from "@veryfront/platform/adapters/fs/wrapper.ts";
 import { getLocalAdapter } from "@veryfront/platform/adapters/registry.ts";
 import type { CacheCoordinator } from "../cache/cache-coordinator.ts";
 import type { PageRenderer } from "../page-renderer.ts";
@@ -747,14 +748,8 @@ export class RenderPipeline {
     // 10. Get project updatedAt if available from Veryfront API adapter
     let projectUpdatedAt: string | undefined;
     const fs = this.config.adapter?.fs;
-    const wrapper = fs && "isVeryfrontAdapter" in fs && "getUnderlyingAdapter" in fs
-      ? (fs as unknown as {
-        isVeryfrontAdapter: () => boolean;
-        getUnderlyingAdapter: () => unknown;
-      })
-      : null;
-    if (wrapper?.isVeryfrontAdapter()) {
-      const wrappedAdapter = wrapper.getUnderlyingAdapter() as {
+    if (fs && isExtendedFSAdapter(fs) && fs.isVeryfrontAdapter()) {
+      const wrappedAdapter = fs.getUnderlyingAdapter() as {
         getProjectData?: () => { updatedAt?: string } | undefined;
       };
       projectUpdatedAt = wrappedAdapter.getProjectData?.()?.updatedAt;

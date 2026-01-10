@@ -1,6 +1,11 @@
 import { assertEquals, assertRejects, assertThrows } from "jsr:@std/assert@1";
 import { describe, it } from "jsr:@std/testing@1/bdd";
-import { FSAdapterWrapper, NotSupportedError, wrapFSAdapter } from "./wrapper.ts";
+import {
+  FSAdapterWrapper,
+  isExtendedFSAdapter,
+  NotSupportedError,
+  wrapFSAdapter,
+} from "./wrapper.ts";
 import type { ContextualFSAdapter, FSAdapter } from "./veryfront/types.ts";
 
 /**
@@ -69,6 +74,47 @@ describe("wrapFSAdapter", () => {
     const wrapper = wrapFSAdapter(fsAdapter);
 
     assertEquals(wrapper instanceof FSAdapterWrapper, true);
+  });
+});
+
+describe("isExtendedFSAdapter", () => {
+  it("should return true for FSAdapterWrapper", () => {
+    const fsAdapter = createMockFSAdapter();
+    const wrapper = new FSAdapterWrapper(fsAdapter);
+
+    assertEquals(isExtendedFSAdapter(wrapper), true);
+  });
+
+  it("should return false for plain objects", () => {
+    const plainFs = {
+      readFile: () => Promise.resolve(""),
+      writeFile: () => Promise.resolve(),
+      exists: () => Promise.resolve(true),
+      readDir: async function* () {},
+      stat: () =>
+        Promise.resolve({
+          size: 0,
+          isFile: true,
+          isDirectory: false,
+          isSymlink: false,
+          mtime: null,
+        }),
+      mkdir: () => Promise.resolve(),
+      remove: () => Promise.resolve(),
+      makeTempDir: () => Promise.resolve("/tmp"),
+      watch: () => ({ close: () => {}, [Symbol.asyncIterator]: async function* () {} }),
+    };
+
+    assertEquals(isExtendedFSAdapter(plainFs), false);
+  });
+
+  it("should return false for partial implementations", () => {
+    const partialFs = {
+      readFile: () => Promise.resolve(""),
+      isVeryfrontAdapter: () => false, // Has one method but not all
+    };
+
+    assertEquals(isExtendedFSAdapter(partialFs as any), false);
   });
 });
 

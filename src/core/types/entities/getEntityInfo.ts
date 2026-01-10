@@ -3,6 +3,7 @@ let extractYaml: ((content: string) => any) | undefined;
 let jsYamlModule: typeof import("js-yaml") | null = null;
 import { createFileSystem } from "../../../platform/compat/fs.ts";
 import * as pathHelper from "../../../platform/compat/path-helper.ts";
+import { isExtendedFSAdapter } from "../../../platform/adapters/fs/wrapper.ts";
 
 // Initialize extractYaml based on runtime
 // @ts-ignore - Deno global
@@ -122,17 +123,9 @@ export async function getEntityInfo(
     let entityId = filePath; // Default to file path
     if (adapter) {
       try {
-        // Use wrapper methods if available
         const fs = adapter.fs;
-        const wrapper = fs && "isVeryfrontAdapter" in fs && "getUnderlyingAdapter" in fs
-          ? (fs as unknown as {
-            isVeryfrontAdapter: () => boolean;
-            getUnderlyingAdapter: () => unknown;
-          })
-          : null;
-
-        if (wrapper?.isVeryfrontAdapter()) {
-          const underlyingAdapter = wrapper.getUnderlyingAdapter() as {
+        if (isExtendedFSAdapter(fs) && fs.isVeryfrontAdapter()) {
+          const underlyingAdapter = fs.getUnderlyingAdapter() as {
             getEntityIdForPath?: (path: string) => string | undefined;
           };
           if (underlyingAdapter?.getEntityIdForPath) {

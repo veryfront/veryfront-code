@@ -2,6 +2,72 @@ import type { DirEntry, FileInfo, FileSystemAdapter, FileWatcher, WatchOptions }
 import type { ContextualFSAdapter, DirectoryEntry, FSAdapter } from "./veryfront/types.ts";
 
 /**
+ * Extended FileSystemAdapter interface with wrapper-specific methods.
+ * Use this type when you need access to the wrapper's introspection and contextual methods.
+ */
+export interface ExtendedFileSystemAdapter extends FileSystemAdapter {
+  /** Get the underlying FSAdapter for adapter-specific functionality */
+  getUnderlyingAdapter(): FSAdapter;
+
+  /** Get the adapter type name (constructor name) for logging */
+  getAdapterType(): string;
+
+  /** Check if this is a Veryfront API adapter (single or multi-project) */
+  isVeryfrontAdapter(): boolean;
+
+  /** Check if the adapter supports multi-project mode */
+  isMultiProjectMode(): boolean;
+
+  /** Check if the adapter supports contextual operations (token, branch, etc.) */
+  isContextualMode(): boolean;
+
+  /** Set a per-request token for API calls */
+  setRequestToken(token: string): void;
+
+  /** Clear the per-request token */
+  clearRequestToken(): void;
+
+  /** Set a per-request branch for file fetching */
+  setRequestBranch(branch: string | null): void;
+
+  /** Get the current per-request branch */
+  getRequestBranch(): string | null;
+
+  /** Clear the per-request branch */
+  clearRequestBranch(): void;
+
+  /** Set production mode for the adapter */
+  setProductionMode(enabled: boolean, releaseId?: string | null): void;
+
+  /** Run a function with the specified project context */
+  runWithContext<T>(
+    projectSlug: string,
+    token: string,
+    fn: () => Promise<T>,
+    projectId?: string,
+    options?: { productionMode?: boolean; releaseId?: string | null },
+  ): Promise<T>;
+
+  /** Read raw bytes when binary-safe access is required */
+  readFileBytes(path: string): Promise<Uint8Array>;
+
+  /** Read directory entries as an array */
+  readdir(path: string): Promise<DirectoryEntry[]>;
+
+  /** Shutdown the adapter and release resources */
+  shutdown(): Promise<void>;
+}
+
+/**
+ * Type guard to check if a FileSystemAdapter is an ExtendedFileSystemAdapter.
+ */
+export function isExtendedFSAdapter(fs: FileSystemAdapter): fs is ExtendedFileSystemAdapter {
+  return "isVeryfrontAdapter" in fs &&
+    "getUnderlyingAdapter" in fs &&
+    "isMultiProjectMode" in fs;
+}
+
+/**
  * Error thrown when an operation is not supported by the underlying FSAdapter.
  */
 export class NotSupportedError extends Error {
@@ -22,10 +88,11 @@ function isContextualAdapter(adapter: FSAdapter): adapter is ContextualFSAdapter
 }
 
 /**
- * Wraps an FSAdapter to implement the FileSystemAdapter interface.
- * Provides a unified interface for all filesystem operations.
+ * Wraps an FSAdapter to implement the ExtendedFileSystemAdapter interface.
+ * Provides a unified interface for all filesystem operations with additional
+ * introspection and contextual methods.
  */
-export class FSAdapterWrapper implements FileSystemAdapter {
+export class FSAdapterWrapper implements ExtendedFileSystemAdapter {
   private readonly _fsAdapter: FSAdapter;
 
   constructor(fsAdapter: FSAdapter) {
@@ -271,8 +338,8 @@ export class FSAdapterWrapper implements FileSystemAdapter {
 }
 
 /**
- * Create a FileSystemAdapter wrapper for an FSAdapter.
+ * Create an ExtendedFileSystemAdapter wrapper for an FSAdapter.
  */
-export function wrapFSAdapter(fsAdapter: FSAdapter): FileSystemAdapter {
+export function wrapFSAdapter(fsAdapter: FSAdapter): ExtendedFileSystemAdapter {
   return new FSAdapterWrapper(fsAdapter);
 }

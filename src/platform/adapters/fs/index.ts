@@ -14,7 +14,13 @@ export type {
 
 // Factory and utilities
 export { createFSAdapter } from "./factory.ts";
-export { FSAdapterWrapper, NotSupportedError, wrapFSAdapter } from "./wrapper.ts";
+export {
+  FSAdapterWrapper,
+  isExtendedFSAdapter,
+  NotSupportedError,
+  wrapFSAdapter,
+} from "./wrapper.ts";
+export type { ExtendedFileSystemAdapter } from "./wrapper.ts";
 export {
   createFSAdapterFromConfig,
   enhanceAdapterWithFS,
