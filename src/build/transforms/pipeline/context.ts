@@ -71,11 +71,7 @@ export function recordStageTiming(
 }
 
 export function getTotalTiming(ctx: TransformContext): number {
-  let total = 0;
-  for (const ms of ctx.timing.values()) {
-    total += ms;
-  }
-  return total;
+  return [...ctx.timing.values()].reduce((sum, ms) => sum + ms, 0);
 }
 
 export function formatTimingLog(ctx: TransformContext): Record<string, string> {

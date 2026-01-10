@@ -133,9 +133,7 @@ class ConsoleLogger implements Logger {
     private format: LogFormat = resolveLogFormat(),
     boundContext?: Record<string, unknown>,
   ) {
-    if (boundContext) {
-      this.boundContext = boundContext;
-    }
+    this.boundContext = boundContext ?? {};
   }
 
   setLevel(level: LogLevel): void {

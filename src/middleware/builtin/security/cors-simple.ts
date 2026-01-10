@@ -11,7 +11,7 @@ export function corsSimple(options: CORSOptions | string = "*"): Middleware {
   return async (ctx, next) => {
     const req = getRequest(ctx);
 
-    if (req.method.toUpperCase() === "OPTIONS") {
+    if (req.method === "OPTIONS") {
       const validation = validateOriginSync(req.headers.get("origin"), { origin });
 
       return new Response(null, {
