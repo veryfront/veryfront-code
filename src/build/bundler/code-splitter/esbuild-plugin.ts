@@ -8,12 +8,7 @@ import type { OnLoadArgs, OnResolveArgs, Plugin, PluginBuild } from "esbuild/mod
 import { join } from "std/path/mod.ts";
 import { getReactImportMap, REACT_DEFAULT_VERSION } from "@veryfront/utils";
 
-/**
- * Creates an ESBuild plugin for veryfront code splitting
- *
- * @param projectDir - Project root directory for resolving paths
- * @returns ESBuild plugin configuration
- */
+/** Creates an ESBuild plugin for veryfront code splitting */
 export function createSplitterPlugin(projectDir: string): Plugin {
   return {
     name: "veryfront-splitter",

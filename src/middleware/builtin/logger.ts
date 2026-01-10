@@ -37,19 +37,15 @@ function getStatusColor(status: number): string {
   return colors.reset;
 }
 
+const methodColors: Record<string, string> = {
+  GET: colors.green,
+  POST: colors.cyan,
+  PUT: colors.yellow,
+  DELETE: colors.red,
+};
+
 function getMethodColor(method: string): string {
-  switch (method.toUpperCase()) {
-    case "GET":
-      return colors.green;
-    case "POST":
-      return colors.cyan;
-    case "PUT":
-      return colors.yellow;
-    case "DELETE":
-      return colors.red;
-    default:
-      return colors.reset;
-  }
+  return methodColors[method.toUpperCase()] ?? colors.reset;
 }
 
 function formatDuration(ms: number): string {

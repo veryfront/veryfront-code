@@ -11,12 +11,7 @@ import { createError, toError } from "../../../core/errors/veryfront-error.ts";
 
 const fs = createFileSystem();
 
-/**
- * Extracts entry name from entry point path
- *
- * @param entryPoint - Entry point path from metafile
- * @returns Extracted entry name without extension
- */
+/** Extracts entry name from entry point path */
 export function extractEntryName(entryPoint: string): string {
   const filename = entryPoint.split("/").pop();
   if (!filename) {
@@ -29,12 +24,7 @@ export function extractEntryName(entryPoint: string): string {
   return nameWithoutExt || "unknown";
 }
 
-/**
- * Extracts chunk name from file path
- *
- * @param file - File path
- * @returns Chunk name without extension
- */
+/** Extracts chunk name from file path */
 export function extractChunkName(file: string): string {
   const base = file.split("/").pop();
   if (!base) {
@@ -46,12 +36,7 @@ export function extractChunkName(file: string): string {
   return base.replace(/\.(js|css)$/, "");
 }
 
-/**
- * Calculates SHA-256 hash of file content
- *
- * @param content - File content as bytes
- * @returns First 8 characters of hex-encoded hash
- */
+/** Calculates SHA-256 hash of file content (returns first 8 hex chars) */
 export async function calculateFileHash(content: Uint8Array): Promise<string> {
   // Ensure proper BufferSource type for Deno 2 compatibility
   const buffer = new Uint8Array(content);
@@ -60,23 +45,12 @@ export async function calculateFileHash(content: Uint8Array): Promise<string> {
   return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("").substring(0, 8);
 }
 
-/**
- * Determines which imports are critical and should be preloaded
- *
- * @param path - Import path to check
- * @returns True if import is critical
- */
+/** Determines which imports are critical and should be preloaded */
 export function isCriticalImport(path: string): boolean {
   return path.includes("react") || path.includes("veryfront") || path.includes("router");
 }
 
-/**
- * Gets preload hints for critical imports
- *
- * @param output - Metafile output entry
- * @param outDir - Output directory for relative path calculation
- * @returns Array of critical import paths to preload
- */
+/** Gets preload hints for critical imports */
 export function getPreloadHints(output: MetafileOutput, outDir: string): string[] {
   if (!output.imports) return [];
 
@@ -85,14 +59,7 @@ export function getPreloadHints(output: MetafileOutput, outDir: string): string[
     .map((imp) => relative(outDir, imp.path));
 }
 
-/**
- * Extracts chunk information from metafile output
- *
- * @param file - Absolute file path
- * @param output - Metafile output entry
- * @param outDir - Output directory for relative path calculation
- * @returns Complete chunk information with metadata
- */
+/** Extracts chunk information from metafile output */
 export async function getChunkInfo(
   file: string,
   output: MetafileOutput,
@@ -111,15 +78,7 @@ export async function getChunkInfo(
   };
 }
 
-/**
- * Adds a route entry to the manifest
- *
- * @param manifest - Manifest to update
- * @param output - Metafile output entry
- * @param relativePath - Relative path to output file
- * @param routeMap - Map of entry names to route paths
- * @param outDir - Output directory for relative path calculation
- */
+/** Adds a route entry to the manifest */
 export function addRouteToManifest(
   manifest: ChunkManifest,
   output: MetafileOutput,
@@ -141,14 +100,7 @@ export function addRouteToManifest(
   };
 }
 
-/**
- * Builds complete chunk manifest from esbuild metafile
- *
- * @param metafile - ESBuild metafile with build outputs
- * @param routeMap - Map of entry names to route paths
- * @param outDir - Output directory for relative path calculation
- * @returns Complete chunk manifest
- */
+/** Builds complete chunk manifest from esbuild metafile */
 export async function buildManifest(
   metafile: Metafile,
   routeMap: Map<string, string>,
@@ -178,12 +130,7 @@ export async function buildManifest(
   return manifest;
 }
 
-/**
- * Writes manifest to disk as JSON
- *
- * @param manifest - Chunk manifest to write
- * @param outDir - Output directory for manifest.json
- */
+/** Writes manifest to disk as JSON */
 export async function writeManifest(manifest: ChunkManifest, outDir: string): Promise<void> {
   await fs.writeTextFile(
     join(outDir, "manifest.json"),
