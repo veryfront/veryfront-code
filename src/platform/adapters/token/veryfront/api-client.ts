@@ -134,7 +134,7 @@ export class TokenStorageAPIClient {
    */
   async list(prefix?: string): Promise<string[]> {
     const url = new URL(
-      `/api/v1/projects/${encodeURIComponent(this.config.projectSlug)}/tokens`,
+      `/v1/projects/${encodeURIComponent(this.config.projectSlug)}/tokens`,
       this.config.apiBaseUrl,
     );
 
@@ -187,7 +187,7 @@ export class TokenStorageAPIClient {
   }
 
   private buildUrl(key: string): string {
-    return `${this.config.apiBaseUrl}/api/v1/projects/${
+    return `${this.config.apiBaseUrl}/v1/projects/${
       encodeURIComponent(this.config.projectSlug)
     }/tokens/${encodeURIComponent(key)}`;
   }

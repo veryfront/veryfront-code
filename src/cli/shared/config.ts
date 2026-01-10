@@ -44,7 +44,7 @@ export interface ResolvedConfig {
 /**
  * Default API URL
  */
-const DEFAULT_API_URL = "https://api.veryfront.com/api";
+const DEFAULT_API_URL = "https://api.veryfront.com";
 
 /**
  * Read .veryfrontrc configuration file from the project directory

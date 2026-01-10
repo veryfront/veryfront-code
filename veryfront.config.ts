@@ -11,7 +11,7 @@
  */
 
 // Default URLs
-const DEFAULT_API_URL_LOCAL = "http://api.lvh.me:4000/api";
+const DEFAULT_API_URL_LOCAL = "http://api.lvh.me:4000";
 const DEFAULT_API_URL_PROD = "https://api.veryfront.com";
 const DEFAULT_CORS_ORIGIN_LOCAL = "http://api.lvh.me:4000";
 

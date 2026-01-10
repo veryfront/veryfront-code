@@ -32,7 +32,7 @@ export interface SSRModuleLoaderOptions {
   projectId: string;
   adapter: RuntimeAdapter;
   dev: boolean;
-  apiBaseUrl?: string; // Base URL for cross-project imports (e.g., http://api.lvh.me:4000/api)
+  apiBaseUrl?: string; // Base URL for cross-project imports (e.g., http://api.lvh.me:4000)
 }
 
 // Cache limits to prevent unbounded memory growth
@@ -403,7 +403,7 @@ export class SSRModuleLoader {
     const apiBaseUrl = this.options.apiBaseUrl ||
       Deno.env.get("VERYFRONT_API_BASE_URL") ||
       Deno.env.get("VERYFRONT_API_URL")?.replace("/graphql", "/api") ||
-      "http://api.lvh.me:4000/api";
+      "http://api.lvh.me:4000";
     // Remove trailing /api or /api/ if present
     return apiBaseUrl.replace(/\/api\/?$/, "");
   }

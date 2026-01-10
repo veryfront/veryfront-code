@@ -271,7 +271,7 @@ export function createVeryfrontHandler(
         const baseUrl =
           (config.fs.veryfront as { baseUrl?: string; apiBaseUrl?: string }).baseUrl ||
           config.fs.veryfront.apiBaseUrl ||
-          "https://api.veryfront.com/api";
+          "https://api.veryfront.com";
         const apiConfig = {
           apiBaseUrl: baseUrl,
           apiToken: effectiveToken,
