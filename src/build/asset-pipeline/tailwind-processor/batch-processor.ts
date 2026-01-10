@@ -6,11 +6,11 @@ import type { TailwindProcessorOptions, TailwindProcessResult } from "./types.ts
 import { TailwindProcessor } from "./processor.ts";
 import { isTailwindV4File } from "./detector.ts";
 
-export async function processTailwindCSS(
+export function processTailwindCSS(
   options: TailwindProcessorOptions,
 ): Promise<TailwindProcessResult> {
   const processor = new TailwindProcessor(options);
-  return await processor.process();
+  return processor.process();
 }
 
 export async function processTailwindCSSInDirectory(
