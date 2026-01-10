@@ -32,7 +32,7 @@ export interface SSRModuleLoaderOptions {
   projectId: string;
   adapter: RuntimeAdapter;
   dev: boolean;
-  apiBaseUrl?: string; // Base URL for cross-project imports (e.g., http://api.lvh.me:4000/api)
+  apiBaseUrl?: string; // Base URL for cross-project imports (e.g., http://api.lvh.me:4000)
 }
 
 // Cache limits to prevent unbounded memory growth
