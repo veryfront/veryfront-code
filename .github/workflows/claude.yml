@@ -40,6 +40,15 @@ concurrency:
 
 jobs:
   # ===========================================
+  # Status: Ensure workflow shows green when triggered but no jobs run
+  # ===========================================
+  status:
+    if: github.event_name == 'workflow_run'
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "CI completed - no action needed"
+
+  # ===========================================
   # Interactive: @claude mentions
   # ===========================================
   claude-mention:
