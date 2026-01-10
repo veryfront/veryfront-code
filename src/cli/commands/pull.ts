@@ -313,7 +313,7 @@ export async function pullCommand(options: PullOptions = {}): Promise<void> {
         );
       }
       config = {
-        apiUrl: configFile?.apiUrl ?? "https://api.veryfront.com/api",
+        apiUrl: configFile?.apiUrl ?? "https://api.veryfront.com",
         apiToken: token,
         projectSlug: "", // Will be overridden per-project
       };
