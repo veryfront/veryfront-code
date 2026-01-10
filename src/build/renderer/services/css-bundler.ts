@@ -3,6 +3,7 @@
  */
 
 import { bundlerLogger as logger } from "@veryfront/utils";
+import { ensureError } from "../../../core/errors/veryfront-error.ts";
 import type { BundleResult, BundlerOptions } from "../types/bundler-types.ts";
 
 /**
@@ -14,14 +15,8 @@ export function bundleCss(
   result: BundleResult,
 ): void {
   try {
-    let processedCss = source.content;
+    const processedCss = options.mode === "production" ? minifyCss(source.content) : source.content;
 
-    // In production, minify CSS
-    if (options.mode === "production") {
-      processedCss = minifyCss(processedCss);
-    }
-
-    // Add to outputs
     result.outputs.set(source.path, {
       path: source.path,
       content: processedCss,
@@ -31,7 +26,7 @@ export function bundleCss(
     logger.debug(`Bundled CSS: ${source.path}`);
   } catch (error) {
     logger.error(`Failed to bundle CSS ${source.path}`, error);
-    result.errors.push(error as Error);
+    result.errors.push(ensureError(error));
   }
 }
 
