@@ -1,9 +1,5 @@
 /**
- * Temporal Adapter
- *
- * Adapter for using Temporal as the workflow execution backend.
- * Temporal is ideal for enterprise-grade, long-running workflows.
- *
+ * Temporal Adapter - workflow execution backend for enterprise-grade, long-running workflows.
  * @see https://docs.temporal.io/
  */
 
@@ -17,9 +13,6 @@ import type {
 } from "../types.ts";
 import type { BackendConfig, WorkflowBackend } from "./types.ts";
 
-/**
- * Temporal adapter configuration
- */
 export interface TemporalAdapterConfig extends BackendConfig {
   /** Temporal server address */
   address?: string;
@@ -38,23 +31,7 @@ export interface TemporalAdapterConfig extends BackendConfig {
 }
 
 /**
- * Temporal Adapter
- *
- * Translates Veryfront workflow operations to Temporal workflows.
- *
- * @example
- * ```typescript
- * import { TemporalAdapter } from 'veryfront/ai/workflow/backends/temporal';
- *
- * const backend = new TemporalAdapter({
- *   address: 'localhost:7233',
- *   namespace: 'default',
- *   taskQueue: 'veryfront-workflows',
- * });
- * ```
- *
- * @note This is a stub implementation. Full implementation requires
- * the Temporal SDK and worker setup.
+ * Stub implementation - requires Temporal SDK and worker setup.
  */
 export class TemporalAdapter implements WorkflowBackend {
   private config: TemporalAdapterConfig;

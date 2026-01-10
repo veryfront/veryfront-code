@@ -1,9 +1,5 @@
 /**
- * Inngest Adapter
- *
- * Adapter for using Inngest as the workflow execution backend.
- * Inngest is ideal for serverless deployments (Vercel, Cloudflare, etc.)
- *
+ * Inngest Adapter - workflow backend for serverless deployments (Vercel, Cloudflare, etc.)
  * @see https://www.inngest.com/docs
  */
 
@@ -18,9 +14,6 @@ import type {
 import type { BackendConfig, WorkflowBackend } from "./types.ts";
 import { agentLogger as logger } from "@veryfront/utils";
 
-/**
- * Inngest adapter configuration
- */
 export interface InngestAdapterConfig extends BackendConfig {
   /** Inngest event key */
   eventKey?: string;
@@ -33,22 +26,7 @@ export interface InngestAdapterConfig extends BackendConfig {
 }
 
 /**
- * Inngest Adapter
- *
- * Translates Veryfront workflow operations to Inngest functions.
- *
- * @example
- * ```typescript
- * import { InngestAdapter } from 'veryfront/ai/workflow/backends/inngest';
- *
- * const backend = new InngestAdapter({
- *   eventKey: process.env.INNGEST_EVENT_KEY,
- *   signingKey: process.env.INNGEST_SIGNING_KEY,
- * });
- * ```
- *
- * @note This is a stub implementation. Full implementation requires
- * the Inngest SDK and server-side setup.
+ * Stub implementation - requires Inngest SDK and server-side setup.
  */
 export class InngestAdapter implements WorkflowBackend {
   private config: InngestAdapterConfig;

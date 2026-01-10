@@ -1,8 +1,5 @@
 /**
- * CORS Headers
- * Functions for applying CORS headers to responses
- *
- * @module core/cors/headers
+ * CORS Headers - apply CORS headers to responses
  */
 
 import type { CORSConfig, CORSHeaderOptions, CORSValidationResult } from "./types.ts";
@@ -51,40 +48,21 @@ function applyValidatedHeaders(
       headers,
     });
   }
-
-  return;
 }
 
-/**
- * Apply CORS headers to a response or headers object
- * Adds appropriate CORS headers based on configuration
- *
- * @param options - Header application options
- * @returns New Response with CORS headers or modified Headers object
- */
+/** Apply CORS headers to a response or headers object */
 export async function applyCORSHeaders(options: CORSHeaderOptions): Promise<Response | void> {
   const validation = await validateOrigin(options.request.headers.get("origin"), options.config);
   return applyValidatedHeaders(validation, options);
 }
 
-/**
- * Synchronous variant of applyCORSHeaders for contexts that require
- * immediate execution (e.g., fluent builder chains). Async origin validators
- * are not supported and will be ignored.
- */
+/** Synchronous variant for immediate execution (e.g., fluent builder chains) */
 export function applyCORSHeadersSync(options: CORSHeaderOptions): Response | void {
   const validation = validateOriginSync(options.request.headers.get("origin"), options.config);
   return applyValidatedHeaders(validation, options);
 }
 
-/**
- * Determine if CORS headers should be applied
- * Quick check without full validation
- *
- * @param request - The incoming request
- * @param config - CORS configuration
- * @returns True if CORS headers should be added
- */
+/** Quick check if CORS headers should be applied */
 export function shouldApplyCORS(request: Request, config?: boolean | CORSConfig): boolean {
   // No config = no CORS
   if (!config) {

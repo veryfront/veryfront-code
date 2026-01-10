@@ -1,7 +1,5 @@
 /**
- * Branch Node Handler
- *
- * Handles execution of branch nodes - conditional workflow branches.
+ * Branch Node Handler - conditional workflow branches
  */
 
 import type { BranchNodeConfig, NodeState, WorkflowNode, WorkflowNodeConfig } from "../../types.ts";
@@ -12,19 +10,11 @@ import {
   type NodeHandlerContext,
 } from "./node-handler.ts";
 
-/**
- * Callbacks for branch node events
- */
 export interface BranchNodeCallbacks {
   onNodeComplete?: (nodeId: string, state: NodeState) => void;
 }
 
-/**
- * Handler for branch nodes.
- *
- * Branch nodes evaluate a condition and execute either
- * the "then" or "else" branch based on the result.
- */
+/** Evaluates a condition and executes either "then" or "else" branch */
 export class BranchNodeHandler extends BaseNodeHandler<BranchNodeConfig> {
   readonly nodeType = "branch" as const;
 
@@ -107,9 +97,6 @@ export class BranchNodeHandler extends BaseNodeHandler<BranchNodeConfig> {
   }
 }
 
-/**
- * Create a branch node handler.
- */
 export function createBranchNodeHandler(
   subExecutor: IDAGSubExecutor,
   callbacks?: BranchNodeCallbacks,
