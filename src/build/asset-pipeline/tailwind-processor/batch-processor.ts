@@ -1,6 +1,6 @@
 import { join } from "std/path/mod.ts";
 import { logger } from "@veryfront/utils";
-import { denoAdapter } from "@veryfront/platform/adapters/runtime/deno";
+import { denoAdapter } from "../../../platform/adapters/runtime/deno/index.ts";
 import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
 import type { TailwindProcessorOptions, TailwindProcessResult } from "./types.ts";
 import { TailwindProcessor } from "./processor.ts";
