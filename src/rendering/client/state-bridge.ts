@@ -173,8 +173,7 @@ export function useBridgedState<T>(
   const { useState, useEffect, useCallback } = testReact || React;
   const bridge = getStateBridge();
 
-  const storedValue = bridge.get(key);
-  const initialState = storedValue !== undefined ? storedValue : initialValue;
+  const initialState = bridge.get(key) ?? initialValue;
 
   const [value, setValue] = useState<T>(initialState as T);
 

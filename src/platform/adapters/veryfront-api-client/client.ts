@@ -111,6 +111,13 @@ export class VeryfrontAPIClient {
   }
 
   /**
+   * Resolve the effective branch - uses provided branch if defined, falls back to request branch.
+   */
+  private resolveBranch(branch?: string | null): string | null | undefined {
+    return branch !== undefined ? branch : this.requestBranch;
+  }
+
+  /**
    * Get the current token being used.
    */
   getToken(): string {
@@ -195,55 +202,47 @@ export class VeryfrontAPIClient {
   }
 
   async listProjects() {
-    return await this.operations.listProjects();
+    return this.operations.listProjects();
   }
 
   async getProject(projectId: string) {
-    return await this.operations.getProject(projectId);
+    return this.operations.getProject(projectId);
   }
 
   async listFiles(projectId?: string, cursor?: string, limit = 100, branch?: string | null) {
-    // Use request branch if not explicitly provided
-    const effectiveBranch = branch !== undefined ? branch : this.requestBranch;
-    return await this.operations.listFiles(projectId, cursor, limit, effectiveBranch);
+    return this.operations.listFiles(projectId, cursor, limit, this.resolveBranch(branch));
   }
 
   async listAllFiles(projectId?: string, branch?: string | null) {
-    // Use request branch if not explicitly provided
-    const effectiveBranch = branch !== undefined ? branch : this.requestBranch;
-    return await this.operations.listAllFiles(projectId, effectiveBranch);
+    return this.operations.listAllFiles(projectId, this.resolveBranch(branch));
   }
 
   async searchFiles(pattern: string, projectId?: string, branch?: string | null) {
-    // Use request branch if not explicitly provided
-    const effectiveBranch = branch !== undefined ? branch : this.requestBranch;
-    return await this.operations.searchFiles(pattern, projectId, effectiveBranch);
+    return this.operations.searchFiles(pattern, projectId, this.resolveBranch(branch));
   }
 
   async getFileContent(path: string, projectId?: string, branch?: string | null) {
-    // Use request branch if not explicitly provided
-    const effectiveBranch = branch !== undefined ? branch : this.requestBranch;
-    return await this.operations.getFileContent(path, projectId, effectiveBranch);
+    return this.operations.getFileContent(path, projectId, this.resolveBranch(branch));
   }
 
   async getFileMetadata(path: string, projectId?: string) {
-    return await this.operations.getFileMetadata(path, projectId);
+    return this.operations.getFileMetadata(path, projectId);
   }
 
   async fileExists(path: string, projectId?: string) {
-    return await this.operations.fileExists(path, projectId);
+    return this.operations.fileExists(path, projectId);
   }
 
   async listPublishedFiles(projectId?: string, releaseId?: string) {
-    return await this.operations.listPublishedFiles(projectId, releaseId);
+    return this.operations.listPublishedFiles(projectId, releaseId);
   }
 
   async getPublishedFileContent(path: string, projectId?: string, releaseId?: string) {
-    return await this.operations.getPublishedFileContent(path, projectId, releaseId);
+    return this.operations.getPublishedFileContent(path, projectId, releaseId);
   }
 
   async lookupProjectByDomain(domain: string) {
-    return await this.operations.lookupProjectByDomain(domain);
+    return this.operations.lookupProjectByDomain(domain);
   }
 
   async getComponentByEntityId(entityId: string, projectSlug?: string) {
@@ -251,6 +250,6 @@ export class VeryfrontAPIClient {
     if (!slug) {
       throw new VeryfrontAPIError("No project slug available for component lookup", 400);
     }
-    return await this.operations.getComponentByEntityId(entityId, slug);
+    return this.operations.getComponentByEntityId(entityId, slug);
   }
 }

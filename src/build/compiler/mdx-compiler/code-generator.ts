@@ -1,9 +1,9 @@
 import type { MDXFrontmatter } from "./types.ts";
 
 export function generateModuleCode(frontmatter: MDXFrontmatter, mdxCode: string): string {
-  const title = frontmatter.title !== undefined ? frontmatter.title : "";
-  const description = frontmatter.description !== undefined ? frontmatter.description : "";
-  const layout = frontmatter.layout !== undefined ? frontmatter.layout : true;
+  const title = frontmatter.title ?? "";
+  const description = frontmatter.description ?? "";
+  const layout = frontmatter.layout ?? true;
 
   return `
 // Auto-generated MDX module with frontmatter

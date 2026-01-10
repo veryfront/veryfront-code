@@ -117,15 +117,15 @@ export class VeryfrontRenderer {
   }
 
   async renderPage(slug: string, options?: RenderOptions): Promise<RenderResult> {
-    return await this.renderPipeline.renderPage(slug, options);
+    return this.renderPipeline.renderPage(slug, options);
   }
 
   async resolvePageData(slug: string, options?: RenderOptions): Promise<PageDataResponse> {
-    return await this.renderPipeline.resolvePageData(slug, options);
+    return this.renderPipeline.resolvePageData(slug, options);
   }
 
   async getAllPages(): Promise<string[]> {
-    return await this.services.pageResolver.getAllPages();
+    return this.services.pageResolver.getAllPages();
   }
 
   clearCache(slug?: string): void {
@@ -155,7 +155,7 @@ export class VeryfrontRenderer {
     frontmatter?: Record<string, unknown>,
     filePath?: string,
   ): Promise<import("@veryfront/types").MdxBundle> {
-    return await this.mdxCompiler.compileMDX(content, frontmatter, filePath);
+    return this.mdxCompiler.compileMDX(content, frontmatter, filePath);
   }
 
   async destroy(): Promise<void> {
