@@ -1,9 +1,3 @@
-/**
- * Lock command for managing remote import lockfile
- *
- * @module cli/commands/lock
- */
-
 import { cliLogger } from "@veryfront/utils";
 import { createLockfileManager } from "@veryfront/utils/import-lockfile.ts";
 import { confirmPrompt, createSpinner, logSuccess, logWarning } from "../utils/index.ts";

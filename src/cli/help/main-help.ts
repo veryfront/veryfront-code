@@ -1,8 +1,3 @@
-/**
- * Main help screen display
- * @module
- */
-
 import { cyan, dim, yellow } from "@veryfront/compat/console";
 import { cliLogger } from "@veryfront/utils";
 import { COMMANDS } from "./command-definitions.ts";
@@ -15,9 +10,6 @@ import {
   formatSectionHeader,
 } from "./formatters.ts";
 
-/**
- * Displays the main help screen with all available commands
- */
 export function showMainHelp(): void {
   cliLogger.info(formatHeader());
   cliLogger.info("A Deno-first React framework with RSC support\n");
