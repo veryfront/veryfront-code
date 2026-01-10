@@ -88,7 +88,7 @@ export class LRUCacheAdapter implements CacheAdapter {
       this.currentSize += size;
     }
 
-    if (tags && tags.length > 0) {
+    if (tags?.length) {
       this.entryManager.updateTagIndex(tags, key, this.tagIndex);
     }
 

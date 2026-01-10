@@ -39,11 +39,7 @@ export function getTailwindCDNUrl(userConfig?: TailwindConfig): string {
   const baseUrl = "https://cdn.tailwindcss.com";
   const plugins = userConfig?.plugins;
 
-  if (plugins && plugins.length > 0) {
-    return `${baseUrl}?plugins=${plugins.join(",")}`;
-  }
-
-  return baseUrl;
+  return plugins?.length ? `${baseUrl}?plugins=${plugins.join(",")}` : baseUrl;
 }
 
 /**

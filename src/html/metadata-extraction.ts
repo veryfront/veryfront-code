@@ -45,9 +45,9 @@ export function extractHTMLMetadata(
     }
   }
 
-  for (const key of Object.keys(merged)) {
+  for (const [key, value] of Object.entries(merged)) {
     if (!RESERVED_KEYS.has(key)) {
-      metadata[key] = merged[key];
+      metadata[key] = value;
     }
   }
 

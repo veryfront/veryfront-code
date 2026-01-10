@@ -97,10 +97,9 @@ export async function buildVendorBundle(
   const hash = await computeHash(code);
 
   // Build export map
-  const exports: Record<string, string> = {};
-  for (const key of Object.keys({ ...reactImports, ...thirdPartyImports })) {
-    exports[key] = sanitizeExportName(key);
-  }
+  const exports = Object.fromEntries(
+    Object.keys({ ...reactImports, ...thirdPartyImports }).map((key) => [key, sanitizeExportName(key)]),
+  );
 
   return { code, hash, exports };
 }

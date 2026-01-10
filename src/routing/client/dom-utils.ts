@@ -53,12 +53,11 @@ function updateMetaTag(
 }
 
 export function executeScripts(container: HTMLElement): void {
-  const scripts = container.querySelectorAll("script");
-  scripts.forEach((oldScript) => {
+  container.querySelectorAll("script").forEach((oldScript) => {
     const newScript = document.createElement("script");
-    Array.from(oldScript.attributes).forEach((attribute) => {
-      newScript.setAttribute(attribute.name, attribute.value);
-    });
+    for (const { name, value } of oldScript.attributes) {
+      newScript.setAttribute(name, value);
+    }
     newScript.textContent = oldScript.textContent;
     oldScript.parentNode?.replaceChild(newScript, oldScript);
   });
@@ -96,8 +95,8 @@ function processHeadWrapper(wrapper: Element | DocumentFragment): void {
     }
 
     const clone = document.createElement(tagName);
-    for (const attribute of Array.from(node.attributes)) {
-      clone.setAttribute(attribute.name, attribute.value);
+    for (const { name, value } of node.attributes) {
+      clone.setAttribute(name, value);
     }
     if (node.textContent && !clone.hasAttribute("src")) {
       clone.textContent = node.textContent;

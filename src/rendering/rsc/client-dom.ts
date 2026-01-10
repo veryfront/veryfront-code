@@ -164,7 +164,7 @@ export function findClientBoundaries(
     if ((node as HTMLElement).dataset?.clientRef) {
       out.push(node as HTMLElement);
     }
-    for (const child of Array.from(node.children)) walker(child);
+    for (const child of node.children) walker(child);
   };
   walker(root);
   return out;

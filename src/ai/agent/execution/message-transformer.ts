@@ -59,7 +59,7 @@ export class MessageTransformer {
       timestamp: Date.now(),
     };
 
-    if (toolCalls && toolCalls.length > 0) {
+    if (toolCalls?.length) {
       message.toolCalls = toolCalls;
     }
 

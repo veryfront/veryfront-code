@@ -18,7 +18,7 @@ export function validateHTTPImports(source: string, allowedHosts: string[]): voi
       const u = new URL(fullUrl);
       const hostUrl = `${u.protocol}//${u.host}`;
 
-      if (allowedHosts && allowedHosts.length > 0) {
+      if (allowedHosts?.length) {
         const isAllowed = allowedHosts.some((h) => hostUrl.startsWith(h));
         if (!isAllowed) {
           const remediation =
