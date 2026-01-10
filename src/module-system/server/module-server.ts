@@ -18,7 +18,7 @@ import { getErrorMessage } from "../../core/errors/veryfront-error.ts";
 // DISABLED: Position injection temporarily disabled to fix hydration mismatch
 // import { injectNodePositions } from "../../build/transforms/plugins/babel-node-positions.ts";
 import { parseProjectDomain } from "../../server/utils/domain-parser.ts";
-import { REACT_VERSION } from "@veryfront/transforms/esm/package-registry.ts";
+import { applySSRImportRewrites } from "./ssr-import-rewriter.ts";
 // Note: React imports are kept as bare specifiers for SSR, resolved via deno.json to esm.sh
 
 const DEV_MODULE_PREFIX = /^\/(?:_vf_modules|_veryfront\/modules)\//;
@@ -166,63 +166,12 @@ export async function serveModule(
         { projectId, dev, ssr: isSSR },
       );
 
-      // Apply SSR-specific rewrites (same as regular modules)
-      // Leave React as bare specifiers - deno.json import map resolves to npm:react
-      // This ensures user code uses the same React instance as react-dom/server
+      // Apply SSR-specific rewrites using shared utility
       if (isSSR && transformedCode) {
-        const cacheBuster = Date.now();
-
-        // Transform non-React bare imports to esm.sh URLs
-        transformedCode = transformedCode.replace(
-          /from\s+["']([^"'./][^"']*)["']/g,
-          (_match, specifier) => {
-            if (
-              specifier.startsWith("npm:") ||
-              specifier.startsWith("http://") ||
-              specifier.startsWith("https://") ||
-              specifier.startsWith("file://") ||
-              specifier.startsWith("node:")
-            ) {
-              return `from "${specifier}"`;
-            }
-            if (specifier.startsWith("@/")) {
-              return `from "${specifier}"`;
-            }
-            // Keep React as bare specifiers - deno.json resolves to npm:react
-            // This ensures same React instance as react-dom/server
-            if (specifier === "react" || specifier.startsWith("react/")) {
-              return `from "${specifier}"`;
-            }
-            if (specifier === "react-dom" || specifier.startsWith("react-dom/")) {
-              return `from "${specifier}"`;
-            }
-            // Keep veryfront/* imports as bare specifiers for Deno to resolve via deno.json exports
-            if (specifier.startsWith("veryfront/")) {
-              return `from "${specifier}"`;
-            }
-            // Other packages go to esm.sh with ?deps to pin React version
-            // Using ?deps instead of ?external because Deno import maps don't apply to HTTP modules
-            return `from "https://esm.sh/${specifier}?deps=react@${REACT_VERSION},react-dom@${REACT_VERSION}&target=es2022"`;
-          },
-        );
-
-        // Transform @/ path aliases to absolute /_vf_modules/ URLs for SSR
-        // Include project slug and branch so module server can resolve files in the correct project/branch
-        const projectParam = snippetProjectSlug ? `&project=${snippetProjectSlug}` : "";
-        const branchParam = snippetBranch ? `&branch=${snippetBranch}` : "";
-        transformedCode = transformedCode.replace(
-          /from\s+["']@\/([^"']+)["']/g,
-          (_match, path) => {
-            const jsPath = path.endsWith(".js") ? path : `${path}.js`;
-            return `from "/_vf_modules/${jsPath}?ssr=true${projectParam}${branchParam}&v=${cacheBuster}"`;
-          },
-        );
-
-        // Add ?ssr=true, project param, branch param, and cache buster to relative imports
-        transformedCode = transformedCode.replace(
-          /from\s+["']((?:\.\.?\/|\/)[^"']+\.js)["']/g,
-          (_match, path) => `from "${path}?ssr=true${projectParam}${branchParam}&v=${cacheBuster}"`,
-        );
+        transformedCode = applySSRImportRewrites(transformedCode, {
+          projectSlug: snippetProjectSlug,
+          branch: snippetBranch,
+        });
       }
 
       logger.info("[ModuleServer] Snippet transformed", {
@@ -316,8 +265,7 @@ export async function serveModule(
       // SSR: Apply cross-project specific rewrites for @/ paths
       // @/ in cross-project code should resolve to the external project, not current
       if (isSSR && code) {
-        const cacheBuster = Date.now();
-        code = applySSRImportRewrites(code, { projectRef, cacheBuster });
+        code = applySSRImportRewrites(code, { crossProjectRef: projectRef });
       }
 
       return createModuleResponse(method, code, HTTP_OK, {
@@ -477,66 +425,12 @@ export async function serveModule(
       );
       timings.transform = performance.now() - transformStart;
 
-      // For SSR mode, transform imports for Deno compatibility
-      // Leave React as bare specifiers - deno.json import map resolves to npm:react
-      // This ensures user code uses the same React instance as react-dom/server
+      // Apply SSR-specific rewrites using shared utility
       if (isSSR && code) {
-        const cacheBuster = Date.now();
-
-        // Transform non-React bare imports to esm.sh URLs
-        code = code.replace(
-          /from\s+["']([^"'./][^"']*)["']/g,
-          (_match, specifier) => {
-            // Skip if already has protocol prefix
-            if (
-              specifier.startsWith("npm:") ||
-              specifier.startsWith("http://") ||
-              specifier.startsWith("https://") ||
-              specifier.startsWith("file://") ||
-              specifier.startsWith("node:")
-            ) {
-              return `from "${specifier}"`;
-            }
-            // Skip @/ path aliases - these are handled below
-            if (specifier.startsWith("@/")) {
-              return `from "${specifier}"`;
-            }
-            // Keep React as bare specifiers - deno.json resolves to npm:react
-            // This ensures same React instance as react-dom/server
-            if (specifier === "react" || specifier.startsWith("react/")) {
-              return `from "${specifier}"`;
-            }
-            if (specifier === "react-dom" || specifier.startsWith("react-dom/")) {
-              return `from "${specifier}"`;
-            }
-            // Keep veryfront/* imports as bare specifiers for Deno to resolve via deno.json exports
-            if (specifier.startsWith("veryfront/")) {
-              return `from "${specifier}"`;
-            }
-            // Other packages go to esm.sh with ?deps to pin React version
-            // Using ?deps instead of ?external because Deno import maps don't apply to HTTP modules
-            return `from "https://esm.sh/${specifier}?deps=react@${REACT_VERSION},react-dom@${REACT_VERSION}&target=es2022"`;
-          },
-        );
-
-        // Transform @/ path aliases to absolute /_vf_modules/ URLs for SSR
-        // @/shared/ui/Button → /_vf_modules/shared/ui/Button.js?ssr=true&project=...&branch=...&v=...
-        // Include project slug and branch so module server can resolve files in the correct project/branch
-        const projectParam = projectSlug ? `&project=${projectSlug}` : "";
-        const branchParam = branch ? `&branch=${branch}` : "";
-        code = code.replace(
-          /from\s+["']@\/([^"']+)["']/g,
-          (_match, path) => {
-            const jsPath = path.endsWith(".js") ? path : `${path}.js`;
-            return `from "/_vf_modules/${jsPath}?ssr=true${projectParam}${branchParam}&v=${cacheBuster}"`;
-          },
-        );
-
-        // Add ?ssr=true, project param, branch param, and cache buster to relative and absolute module imports
-        code = code.replace(
-          /from\s+["']((?:\.\.?\/|\/)[^"']+\.js)["']/g,
-          (_match, path) => `from "${path}?ssr=true${projectParam}${branchParam}&v=${cacheBuster}"`,
-        );
+        code = applySSRImportRewrites(code, {
+          projectSlug,
+          branch,
+        });
       }
     }
 
@@ -873,24 +767,4 @@ async function fetchCrossProjectSource(
     return null;
   }
   return response.text();
-}
-
-/**
- * Apply SSR-specific import rewrites for cross-project modules.
- * Handles @/ path aliases to resolve within the external project.
- */
-function applySSRImportRewrites(
-  code: string,
-  opts: { projectRef: string; cacheBuster: number },
-): string {
-  const { projectRef, cacheBuster } = opts;
-
-  // @/ paths in cross-project code resolve to the external project
-  return code.replace(
-    /from\s+["']@\/([^"']+)["']/g,
-    (_match, path) => {
-      const jsPath = path.endsWith(".js") ? path : `${path}.js`;
-      return `from "/_vf_modules/_cross/${projectRef}/@/${jsPath}?ssr=true&v=${cacheBuster}"`;
-    },
-  );
 }

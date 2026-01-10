@@ -1,34 +1,18 @@
 import type { ComponentProps } from "@veryfront/types";
 import type { HTMLGenerationOptions } from "../types.ts";
 import type { HydrationDataStructure } from "./types.ts";
+import { resolveRelativePath } from "../../module-system/react-loader/path-resolver.ts";
 
 /**
  * Convert absolute server paths to project-relative paths for client hydration.
- * E.g., /Users/.../veryfront-private/components/layouts/DefaultLayout.mdx -> layouts/DefaultLayout.mdx
- *       /Users/.../veryfront-private/pages/index.mdx -> pages/index.mdx
+ * Uses the shared resolveRelativePath utility.
  */
 function toProjectRelativePath(absolutePath: string, projectDir?: string): string {
   if (!absolutePath) return "";
-
-  let relativePath = absolutePath.replace(/\\/g, "/");
-
-  // Strip project directory prefix (must happen before removing leading slash)
-  if (projectDir) {
-    const normalizedProjectDir = projectDir.replace(/\\/g, "/").replace(/\/$/, "");
-    if (relativePath.startsWith(normalizedProjectDir + "/")) {
-      relativePath = relativePath.substring(normalizedProjectDir.length + 1);
-    } else if (relativePath.startsWith(normalizedProjectDir)) {
-      relativePath = relativePath.substring(normalizedProjectDir.length);
-    }
+  if (!projectDir) {
+    return absolutePath.replace(/\\/g, "/").replace(/^\//, "");
   }
-
-  // Remove leading slash (after project dir stripping)
-  relativePath = relativePath.replace(/^\//, "");
-
-  // Keep components/ prefix - required for module server security validation
-  // The module server validates that paths are within allowed directories
-
-  return relativePath;
+  return resolveRelativePath(absolutePath.replace(/\\/g, "/"), projectDir);
 }
 
 function inferPageType(pagePath?: string): "mdx" | "tsx" | "jsx" | "ts" | "js" | undefined {
