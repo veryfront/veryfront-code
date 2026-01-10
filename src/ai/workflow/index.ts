@@ -205,6 +205,19 @@ export { CloudflareAdapter } from "./backends/cloudflare.ts";
 export type { CloudflareAdapterConfig } from "./backends/cloudflare.ts";
 
 // =============================================================================
+// Worker (for distributed execution)
+// =============================================================================
+export { createWorkflowWorker, WorkflowWorker } from "./worker/index.ts";
+
+export type {
+  WorkerStats,
+  WorkerStatus,
+  WorkflowWorkerConfig,
+} from "./worker/index.ts";
+
+export { hasWorkerSupport } from "./backends/types.ts";
+
+// =============================================================================
 // React Hooks (re-exported for convenience)
 // Note: For tree-shaking, prefer importing from 'veryfront/ai/workflow/react'
 // =============================================================================

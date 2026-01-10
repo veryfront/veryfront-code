@@ -17,7 +17,7 @@ import type {
 } from "../types.ts";
 import { generateId, parseDuration } from "../types.ts";
 import { getCurrentRequestContext } from "../../../platform/adapters/fs/veryfront/multi-project-adapter.ts";
-import { hasLockSupport, type WorkflowBackend } from "../backends/types.ts";
+import { hasLockSupport, hasWorkerSupport, type WorkflowBackend } from "../backends/types.ts";
 import { DAGExecutor } from "./dag-executor.ts";
 import { CheckpointManager } from "./checkpoint-manager.ts";
 import { StepExecutor, type StepExecutorConfig } from "./step-executor.ts";
@@ -41,6 +41,10 @@ export interface WorkflowExecutorConfig {
   lockDuration?: number;
   /** Enable distributed locking (default: true if backend supports it) */
   enableLocking?: boolean;
+  /** Interval for heartbeat updates in milliseconds (default: 10000) */
+  heartbeatInterval?: number;
+  /** Worker ID for distributed execution (auto-generated if not provided) */
+  workerId?: string;
   /** Callback when workflow starts */
   onStart?: (run: WorkflowRun) => void;
   /** Callback when workflow completes */
@@ -84,14 +88,22 @@ export class WorkflowExecutor {
 
   /** Default lock duration: 30 seconds */
   private static readonly DEFAULT_LOCK_DURATION = 30000;
+  /** Default heartbeat interval: 10 seconds */
+  private static readonly DEFAULT_HEARTBEAT_INTERVAL = 10000;
+  /** Worker ID for this executor instance */
+  private workerId: string;
 
   constructor(config: WorkflowExecutorConfig) {
     this.config = {
       maxConcurrency: 10,
       debug: false,
       lockDuration: WorkflowExecutor.DEFAULT_LOCK_DURATION,
+      heartbeatInterval: WorkflowExecutor.DEFAULT_HEARTBEAT_INTERVAL,
       ...config,
     };
+
+    // Generate or use provided worker ID
+    this.workerId = config.workerId || generateId("executor");
 
     // Initialize components
     this.stepExecutor = new StepExecutor({
@@ -287,12 +299,37 @@ export class WorkflowExecutor {
       }
     }
 
+    // Start heartbeat interval if backend supports it
+    const useHeartbeat = hasWorkerSupport(this.config.backend);
+    let heartbeatInterval: ReturnType<typeof setInterval> | undefined;
+
     try {
-      // Update status to running
+      // Update status to running (include initial heartbeat and worker ID)
+      const now = new Date();
       await this.config.backend.updateRun(runId, {
         status: "running",
-        startedAt: run.startedAt || new Date(),
+        startedAt: run.startedAt || now,
+        lastHeartbeat: now,
+        workerId: this.workerId,
       });
+
+      // Start heartbeat interval
+      if (useHeartbeat) {
+        heartbeatInterval = setInterval(async () => {
+          try {
+            await this.config.backend.updateHeartbeat!(runId, this.workerId);
+          } catch (error) {
+            // Log but don't fail execution if heartbeat fails
+            if (this.config.debug) {
+              console.warn(`[WorkflowExecutor] Heartbeat failed for ${runId}:`, error);
+            }
+          }
+        }, this.config.heartbeatInterval!);
+
+        if (this.config.debug) {
+          console.log(`[WorkflowExecutor] Started heartbeat for run: ${runId}`);
+        }
+      }
 
       // Notify start
       const updatedRun = await this.config.backend.getRun(runId);
@@ -353,6 +390,15 @@ export class WorkflowExecutor {
 
       throw error;
     } finally {
+      // Clear heartbeat interval
+      if (heartbeatInterval) {
+        clearInterval(heartbeatInterval);
+
+        if (this.config.debug) {
+          console.log(`[WorkflowExecutor] Stopped heartbeat for run: ${runId}`);
+        }
+      }
+
       // Always release lock when done
       if (useLocking) {
         await this.config.backend.releaseLock!(runId);

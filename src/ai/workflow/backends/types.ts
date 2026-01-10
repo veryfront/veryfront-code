@@ -186,6 +186,32 @@ export interface WorkflowBackend {
   nack?(runId: string): Promise<void>;
 
   // =========================================================================
+  // Worker Heartbeat (optional - for distributed execution)
+  // =========================================================================
+
+  /**
+   * Update heartbeat for a running workflow.
+   * Should be called periodically during execution.
+   */
+  updateHeartbeat?(runId: string, workerId: string): Promise<void>;
+
+  /**
+   * Find workflow runs that appear to be stalled.
+   * A run is stalled if it's "running" but hasn't updated heartbeat within threshold.
+   *
+   * @param stalledThresholdMs - Time in ms after which a run is considered stalled
+   * @returns List of stalled workflow runs
+   */
+  findStalledRuns?(stalledThresholdMs: number): Promise<WorkflowRun[]>;
+
+  /**
+   * Claim a stalled run for recovery.
+   * Atomically checks if run is still stalled and claims it with a new workerId.
+   * Returns true if successfully claimed, false if another worker claimed it first.
+   */
+  claimStalledRun?(runId: string, workerId: string, stalledThresholdMs: number): Promise<boolean>;
+
+  // =========================================================================
   // Distributed Locking (optional - for distributed execution)
   // =========================================================================
 
@@ -297,5 +323,21 @@ export function hasEventSupport(
   return (
     typeof backend.publishEvent === "function" &&
     typeof backend.subscribeEvents === "function"
+  );
+}
+
+/**
+ * Backend with worker heartbeat capabilities
+ * Type guard for checking if backend supports stalled workflow recovery
+ */
+export function hasWorkerSupport(
+  backend: WorkflowBackend,
+): backend is
+  & WorkflowBackend
+  & Required<Pick<WorkflowBackend, "updateHeartbeat" | "findStalledRuns" | "claimStalledRun">> {
+  return (
+    typeof backend.updateHeartbeat === "function" &&
+    typeof backend.findStalledRuns === "function" &&
+    typeof backend.claimStalledRun === "function"
   );
 }

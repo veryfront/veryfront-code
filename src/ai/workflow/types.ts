@@ -439,6 +439,12 @@ export interface WorkflowRun<TInput = unknown, TOutput = unknown> {
   /** When execution completed */
   completedAt?: Date;
 
+  // Worker tracking (for distributed execution)
+  /** Last heartbeat timestamp - updated during execution */
+  lastHeartbeat?: Date;
+  /** ID of the worker currently executing this workflow */
+  workerId?: string;
+
   // Multi-tenant context
   /**
    * Captured tenant context for multi-project mode.

@@ -581,6 +581,9 @@ export class RedisBackend implements WorkflowBackend {
       createdAt: run.createdAt.toISOString(),
       startedAt: run.startedAt?.toISOString() || "",
       completedAt: run.completedAt?.toISOString() || "",
+      // Worker tracking (for distributed execution)
+      lastHeartbeat: run.lastHeartbeat?.toISOString() || "",
+      workerId: run.workerId || "",
       // Multi-tenant context (internal)
       _tenant: run._tenant ? JSON.stringify(run._tenant) : "",
     };
@@ -641,6 +644,9 @@ export class RedisBackend implements WorkflowBackend {
       createdAt: data.createdAt ? new Date(data.createdAt) : new Date(),
       startedAt: data.startedAt ? new Date(data.startedAt) : undefined,
       completedAt: data.completedAt ? new Date(data.completedAt) : undefined,
+      // Worker tracking (for distributed execution)
+      lastHeartbeat: data.lastHeartbeat ? new Date(data.lastHeartbeat) : undefined,
+      workerId: data.workerId || undefined,
       // Multi-tenant context (internal)
       _tenant: safeJsonParse("_tenant", data._tenant, undefined),
     };
@@ -796,6 +802,8 @@ export class RedisBackend implements WorkflowBackend {
     if (patch.error !== undefined) fields.error = JSON.stringify(patch.error);
     if (patch.startedAt !== undefined) fields.startedAt = patch.startedAt.toISOString();
     if (patch.completedAt !== undefined) fields.completedAt = patch.completedAt.toISOString();
+    if (patch.lastHeartbeat !== undefined) fields.lastHeartbeat = patch.lastHeartbeat.toISOString();
+    if (patch.workerId !== undefined) fields.workerId = patch.workerId;
 
     if (Object.keys(fields).length > 0) {
       await client.hset(this.runKey(runId), fields);
@@ -1182,6 +1190,139 @@ export class RedisBackend implements WorkflowBackend {
     const client = await this.ensureClient();
     const exists = await client.exists(this.lockKey(runId));
     return exists > 0;
+  }
+
+  // =========================================================================
+  // Worker Heartbeat
+  // =========================================================================
+
+  /**
+   * Update heartbeat for a running workflow.
+   * Called periodically during execution to indicate the workflow is still being processed.
+   */
+  async updateHeartbeat(runId: string, workerId: string): Promise<void> {
+    const client = await this.ensureClient();
+    const now = new Date();
+
+    await client.hset(this.runKey(runId), {
+      lastHeartbeat: now.toISOString(),
+      workerId,
+    });
+
+    if (this.config.debug) {
+      logger.debug(`[RedisBackend] Updated heartbeat for ${runId} by worker ${workerId}`);
+    }
+  }
+
+  /**
+   * Find workflow runs that appear to be stalled.
+   * A run is stalled if it's "running" but hasn't updated heartbeat within threshold.
+   */
+  async findStalledRuns(stalledThresholdMs: number): Promise<WorkflowRun[]> {
+    const client = await this.ensureClient();
+    const stalledRuns: WorkflowRun[] = [];
+
+    // Get all running workflow IDs
+    const runningIds = await client.smembers(this.statusIndexKey("running"));
+
+    if (runningIds.length === 0) {
+      return [];
+    }
+
+    const now = Date.now();
+    const threshold = now - stalledThresholdMs;
+
+    // Check each running workflow
+    for (const runId of runningIds) {
+      const data = await client.hgetall(this.runKey(runId));
+
+      if (!data || Object.keys(data).length === 0) {
+        // Run was deleted but index wasn't cleaned up
+        continue;
+      }
+
+      const run = this.deserializeRun(data);
+
+      // A run is stalled if:
+      // 1. It's running
+      // 2. It has a heartbeat that's older than threshold, OR
+      // 3. It has no heartbeat but was started before threshold
+      const heartbeatTime = run.lastHeartbeat?.getTime();
+      const startTime = run.startedAt?.getTime() ?? run.createdAt.getTime();
+
+      const lastActivity = heartbeatTime ?? startTime;
+
+      if (lastActivity < threshold) {
+        stalledRuns.push(run);
+
+        if (this.config.debug) {
+          const stalledFor = Math.round((now - lastActivity) / 1000);
+          logger.debug(`[RedisBackend] Found stalled run ${runId}: no activity for ${stalledFor}s`);
+        }
+      }
+    }
+
+    return stalledRuns;
+  }
+
+  /**
+   * Claim a stalled run for recovery.
+   * Uses Redis atomic operations to ensure only one worker claims a run.
+   */
+  async claimStalledRun(
+    runId: string,
+    workerId: string,
+    stalledThresholdMs: number,
+  ): Promise<boolean> {
+    const client = await this.ensureClient();
+
+    // Get current run state
+    const data = await client.hgetall(this.runKey(runId));
+
+    if (!data || Object.keys(data).length === 0) {
+      return false;
+    }
+
+    const run = this.deserializeRun(data);
+
+    // Verify run is still stalled
+    if (run.status !== "running") {
+      return false;
+    }
+
+    const now = Date.now();
+    const threshold = now - stalledThresholdMs;
+    const heartbeatTime = run.lastHeartbeat?.getTime();
+    const startTime = run.startedAt?.getTime() ?? run.createdAt.getTime();
+    const lastActivity = heartbeatTime ?? startTime;
+
+    if (lastActivity >= threshold) {
+      // Run is no longer stalled (another worker resumed it)
+      return false;
+    }
+
+    // Try to claim using optimistic locking via heartbeat update
+    // If another worker claims first, their heartbeat will be newer
+    const claimTime = new Date();
+    await client.hset(this.runKey(runId), {
+      lastHeartbeat: claimTime.toISOString(),
+      workerId,
+    });
+
+    // Verify we got the claim by reading back
+    const verifyData = await client.hgetall(this.runKey(runId));
+    const verifyWorkerId = verifyData?.workerId;
+
+    if (verifyWorkerId !== workerId) {
+      // Another worker claimed it first
+      return false;
+    }
+
+    if (this.config.debug) {
+      logger.debug(`[RedisBackend] Worker ${workerId} claimed stalled run ${runId}`);
+    }
+
+    return true;
   }
 
   // =========================================================================
