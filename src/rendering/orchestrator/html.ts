@@ -69,10 +69,7 @@ export class HTMLGenerator {
     return html;
   }
 
-  /**
-   * Generate HTML stream for streaming SSR
-   * Wraps the React stream with HTML shell parts
-   */
+  /** Generate HTML stream for streaming SSR by wrapping React stream with shell. */
   async generateHTMLStream(
     reactStream: ReadableStream,
     context: Omit<HTMLGenerationContext, "html">,
