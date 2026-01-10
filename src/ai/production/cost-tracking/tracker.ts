@@ -1,73 +1,43 @@
-/**
- * Cost Tracking System
- *
- * Track API usage and costs for monitoring and billing.
- */
-
 import type { AgentContext, AgentResponse } from "../../types/agent.ts";
 import { agentLogger } from "@veryfront/utils/logger/logger.ts";
 
 export interface CostConfig {
-  /** Provider pricing (per 1M tokens) */
+  /** Provider pricing (cost per 1M tokens) */
   pricing: {
     [provider: string]: {
-      input: number; // Cost per 1M input tokens
-      output: number; // Cost per 1M output tokens
+      input: number;
+      output: number;
     };
   };
-
-  /** Budget limits */
   limits?: {
     daily?: number;
     monthly?: number;
   };
-
-  /** Callback when limit exceeded */
   onLimitExceeded?: (usage: UsageSummary) => void;
 }
 
 export interface UsageRecord {
-  /** Timestamp */
   timestamp: number;
-
-  /** Agent ID */
   agentId: string;
-
-  /** Model used */
   model: string;
-
-  /** Provider */
   provider: string;
-
-  /** Token usage */
   tokens: {
     prompt: number;
     completion: number;
     total: number;
   };
-
-  /** Estimated cost */
   cost: number;
-
-  /** User/session identifier */
   userId?: string;
 }
 
 export interface UsageSummary {
-  /** Total requests */
   requests: number;
-
-  /** Total tokens */
   tokens: {
     prompt: number;
     completion: number;
     total: number;
   };
-
-  /** Total cost */
   cost: number;
-
-  /** Cost by provider */
   byProvider: Record<
     string,
     {
@@ -76,17 +46,12 @@ export interface UsageSummary {
       cost: number;
     }
   >;
-
-  /** Period */
   period: {
     start: number;
     end: number;
   };
 }
 
-/**
- * Cost Tracker
- */
 class CostTracker {
   private records: UsageRecord[] = [];
   private config: CostConfig;
@@ -101,9 +66,6 @@ class CostTracker {
     this.startPeriodicReset();
   }
 
-  /**
-   * Track an agent response
-   */
   track(
     agentId: string,
     model: string,
@@ -153,9 +115,6 @@ class CostTracker {
     return record;
   }
 
-  /**
-   * Calculate cost based on token usage
-   */
   private calculateCost(
     provider: string,
     inputTokens: number,
@@ -174,9 +133,6 @@ class CostTracker {
     return inputCost + outputCost;
   }
 
-  /**
-   * Get usage summary for a period
-   */
   getSummary(startTime?: number, endTime?: number): UsageSummary {
     const start = startTime || 0;
     const end = endTime || Date.now();
@@ -216,27 +172,18 @@ class CostTracker {
     return summary;
   }
 
-  /**
-   * Get daily summary
-   */
   getDailySummary(): UsageSummary {
     const now = Date.now();
     const dayStart = now - 24 * 60 * 60 * 1000;
     return this.getSummary(dayStart, now);
   }
 
-  /**
-   * Get monthly summary
-   */
   getMonthlySummary(): UsageSummary {
     const now = Date.now();
     const monthStart = now - 30 * 24 * 60 * 60 * 1000;
     return this.getSummary(monthStart, now);
   }
 
-  /**
-   * Check if limits are exceeded
-   */
   private checkLimits(): void {
     if (this.config.limits?.daily && this.dailyTotal > this.config.limits.daily) {
       if (this.config.onLimitExceeded) {
@@ -278,9 +225,6 @@ class CostTracker {
     this.records = [];
   }
 
-  /**
-   * Create empty record
-   */
   private createEmptyRecord(agentId: string, model: string): UsageRecord {
     return {
       timestamp: Date.now(),
@@ -292,16 +236,10 @@ class CostTracker {
     };
   }
 
-  /**
-   * Get all records
-   */
   getAllRecords(): UsageRecord[] {
     return [...this.records];
   }
 
-  /**
-   * Clear all records
-   */
   clear(): void {
     this.records = [];
     this.dailyTotal = 0;
@@ -309,65 +247,21 @@ class CostTracker {
   }
 }
 
-/**
- * Create a cost tracker
- */
 export function createCostTracker(config: CostConfig) {
   const tracker = new CostTracker(config);
 
   return {
-    /**
-     * Track agent response
-     */
-    track(
-      agentId: string,
-      model: string,
-      response: AgentResponse,
-      userId?: string,
-    ): UsageRecord {
-      return tracker.track(agentId, model, response, userId);
-    },
-
-    /**
-     * Get usage summary
-     */
-    getSummary(startTime?: number, endTime?: number): UsageSummary {
-      return tracker.getSummary(startTime, endTime);
-    },
-
-    /**
-     * Get daily summary
-     */
-    getDailySummary(): UsageSummary {
-      return tracker.getDailySummary();
-    },
-
-    /**
-     * Get monthly summary
-     */
-    getMonthlySummary(): UsageSummary {
-      return tracker.getMonthlySummary();
-    },
-
-    /**
-     * Get all records
-     */
-    getAllRecords(): UsageRecord[] {
-      return tracker.getAllRecords();
-    },
-
-    /**
-     * Clear all data
-     */
-    clear(): void {
-      tracker.clear();
-    },
+    track: (agentId: string, model: string, response: AgentResponse, userId?: string): UsageRecord =>
+      tracker.track(agentId, model, response, userId),
+    getSummary: (startTime?: number, endTime?: number): UsageSummary =>
+      tracker.getSummary(startTime, endTime),
+    getDailySummary: (): UsageSummary => tracker.getDailySummary(),
+    getMonthlySummary: (): UsageSummary => tracker.getMonthlySummary(),
+    getAllRecords: (): UsageRecord[] => tracker.getAllRecords(),
+    clear: (): void => tracker.clear(),
   };
 }
 
-/**
- * Cost tracking middleware for agents
- */
 export function costTrackingMiddleware(config: CostConfig) {
   const tracker = createCostTracker(config);
 
@@ -376,8 +270,6 @@ export function costTrackingMiddleware(config: CostConfig) {
     next: () => Promise<AgentResponse>,
   ): Promise<AgentResponse> => {
     const result = await next();
-
-    // Track cost
     tracker.track(
       context.agentId,
       context.model || "unknown",
