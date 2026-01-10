@@ -11,6 +11,7 @@
 
 import { BaseProvider, mapFinishReason } from "./base.ts";
 import type { CompletionRequest, CompletionResponse, OpenAIConfig } from "../types/provider.ts";
+import { createError, toError } from "../../core/errors/veryfront-error.ts";
 
 /**
  * Check if a model is an o-series reasoning model (o1, o3, etc.)
@@ -128,12 +129,21 @@ export class OpenAIProvider extends BaseProvider {
       throw new Error("OpenAI response missing choices");
     }
 
-    // Extract tool calls if present
-    const toolCalls = choice.message.tool_calls?.map((tc) => ({
-      id: tc.id,
-      name: tc.function.name,
-      arguments: JSON.parse(tc.function.arguments) as Record<string, unknown>,
-    }));
+    // Extract tool calls if present, with error handling for JSON parsing
+    const toolCalls = choice.message.tool_calls?.map((tc) => {
+      try {
+        return {
+          id: tc.id,
+          name: tc.function.name,
+          arguments: JSON.parse(tc.function.arguments) as Record<string, unknown>,
+        };
+      } catch (error) {
+        throw toError(createError({
+          type: "agent",
+          message: `OpenAI: Invalid tool call arguments JSON for ${tc.function.name}: ${error instanceof Error ? error.message : String(error)}`,
+        }));
+      }
+    });
 
     return {
       text: choice.message.content || "",
