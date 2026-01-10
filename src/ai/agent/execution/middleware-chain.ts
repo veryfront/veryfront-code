@@ -52,22 +52,13 @@ export class MiddlewareChain {
     context: AgentContext,
     finalHandler: () => Promise<AgentResponse>,
   ): Promise<AgentResponse> {
-    if (this.middleware.length === 0) {
-      return finalHandler();
-    }
-
     let index = 0;
 
     const dispatch = (): Promise<AgentResponse> => {
-      if (index >= this.middleware.length) {
-        return finalHandler();
-      }
-
       const currentMiddleware = this.middleware[index++];
       if (!currentMiddleware) {
         return finalHandler();
       }
-
       return currentMiddleware(context, dispatch);
     };
 

@@ -93,6 +93,25 @@ export class MessageTransformer {
   }
 
   /**
+   * Create a tool message (result or error).
+   */
+  private createToolMessage(
+    toolCallId: string,
+    content: string,
+    toolCall: ToolCall,
+    isError = false,
+  ): Message {
+    return {
+      id: `${isError ? "tool_error_" : "tool_"}${toolCallId}`,
+      role: "tool",
+      content,
+      toolCallId,
+      toolCall,
+      timestamp: Date.now(),
+    };
+  }
+
+  /**
    * Create a tool result message.
    */
   createToolResultMessage(
@@ -100,14 +119,7 @@ export class MessageTransformer {
     result: unknown,
     toolCall: ToolCall,
   ): Message {
-    return {
-      id: `tool_${toolCallId}`,
-      role: "tool",
-      content: JSON.stringify(result),
-      toolCallId,
-      toolCall,
-      timestamp: Date.now(),
-    };
+    return this.createToolMessage(toolCallId, JSON.stringify(result), toolCall);
   }
 
   /**
@@ -118,14 +130,7 @@ export class MessageTransformer {
     error: string,
     toolCall: ToolCall,
   ): Message {
-    return {
-      id: `tool_error_${toolCallId}`,
-      role: "tool",
-      content: `Error: ${error}`,
-      toolCallId,
-      toolCall,
-      timestamp: Date.now(),
-    };
+    return this.createToolMessage(toolCallId, `Error: ${error}`, toolCall, true);
   }
 
   /**
