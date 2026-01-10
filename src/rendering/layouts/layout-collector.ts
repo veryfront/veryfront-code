@@ -72,9 +72,8 @@ export class LayoutCollector {
       // Page has explicit frontmatter layout - use it INSTEAD of project-level layouts
       // This prevents double-wrapping (e.g., page's DocsLayoutV2 + project's DefaultLayout)
       // Include the frontmatter layout as a nestedLayout for client-side hydration
-      // Use layoutName (the actual file path with extension) to determine kind,
-      // not layoutPath which may be a UUID when using the API
-      const kind = getLayoutKind(layoutName || layoutPath);
+      // Use layoutPath (the resolved file path with extension) for kind detection
+      const kind = getLayoutKind(layoutPath);
       nestedLayouts = [{
         kind,
         bundle: kind === "mdx" ? layoutBundle : undefined,
@@ -100,8 +99,8 @@ export class LayoutCollector {
       // If we have a layoutBundle from config.defaultLayout, add it to nestedLayouts
       // so the client can apply the same layout during hydration
       if (layoutBundle && layoutPath) {
-        // Use layoutName (actual file path with extension) for kind detection
-        const kind = getLayoutKind(layoutName || layoutPath);
+        // Use layoutPath (the resolved file path with extension) for kind detection
+        const kind = getLayoutKind(layoutPath);
 
         // Prepend the defaultLayout to nestedLayouts (it wraps outermost)
         nestedLayouts = [{

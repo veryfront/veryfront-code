@@ -14,7 +14,7 @@ import {
   createPagesRouteMethodNotAllowed,
 } from "./method-validator.ts";
 import { handleAPIError } from "./error-handler.ts";
-import { join, isAbsolute } from "std/path/mod.ts";
+import { isAbsolute, join } from "std/path/mod.ts";
 
 /**
  * Creates a project-scoped filesystem adapter that resolves relative paths
@@ -28,14 +28,21 @@ function createProjectScopedFs(fs: FileSystemAdapter, projectDir: string): FileS
 
   return {
     readFile: (path: string) => fs.readFile(resolvePath(path)),
-    readFileBytes: fs.readFileBytes ? (path: string) => fs.readFileBytes!(resolvePath(path)) : undefined,
-    writeFile: fs.writeFile ? (path: string, content: string) => fs.writeFile!(resolvePath(path), content) : undefined,
+    readFileBytes: fs.readFileBytes
+      ? (path: string) => fs.readFileBytes!(resolvePath(path))
+      : undefined,
+    writeFile: fs.writeFile
+      ? (path: string, content: string) => fs.writeFile!(resolvePath(path), content)
+      : undefined,
     exists: (path: string) => fs.exists(resolvePath(path)),
     readDir: (path: string) => fs.readDir(resolvePath(path)),
-    readdir: fs.readdir ? (path: string) => fs.readdir!(resolvePath(path)) : undefined,
     stat: (path: string) => fs.stat(resolvePath(path)),
-    mkdir: fs.mkdir ? (path: string, options?: { recursive?: boolean }) => fs.mkdir!(resolvePath(path), options) : undefined,
-    remove: fs.remove ? (path: string, options?: { recursive?: boolean }) => fs.remove!(resolvePath(path), options) : undefined,
+    mkdir: fs.mkdir
+      ? (path: string, options?: { recursive?: boolean }) => fs.mkdir!(resolvePath(path), options)
+      : undefined,
+    remove: fs.remove
+      ? (path: string, options?: { recursive?: boolean }) => fs.remove!(resolvePath(path), options)
+      : undefined,
     makeTempDir: fs.makeTempDir,
     watch: fs.watch,
     resolveFile: fs.resolveFile ? (path: string) => fs.resolveFile!(resolvePath(path)) : undefined,

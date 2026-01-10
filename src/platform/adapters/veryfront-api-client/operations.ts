@@ -307,7 +307,10 @@ export class VeryfrontAPIOperations {
       return { path: response.path, content: response.content };
     } catch (error) {
       // 404 means file not found
-      if (error instanceof Error && (error.message.includes("404") || error.message.includes("NOT_FOUND"))) {
+      if (
+        error instanceof Error &&
+        (error.message.includes("404") || error.message.includes("NOT_FOUND"))
+      ) {
         logger.debug("[VeryfrontAPIClient] File not found by ID", { entityId });
         return null;
       }
