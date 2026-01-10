@@ -164,24 +164,23 @@ export class ProviderManager {
     // Stale-while-revalidate: if we have stale cache, return it and refresh in background
     if (cachedEntry && !this.refreshing.has(cacheKey)) {
       logger.info("[ProviderManager] Stale cache, refreshing in background", logCtx);
-      this.refreshInBackground(cacheKey, vfAdapter, projectData, route);
+      this.refreshInBackground(cacheKey, projectData, route);
       return cachedEntry.result;
     }
 
     // No cache or already refreshing - fetch synchronously
     logger.info("[ProviderManager] Cache miss", logCtx);
-    return this.fetchProviders(cacheKey, vfAdapter, projectData, route);
+    return this.fetchProviders(cacheKey, projectData, route);
   }
 
   private refreshInBackground(
     cacheKey: string,
-    vfAdapter: FSAdapterLike | null,
     projectData: ProjectData | undefined,
     route?: string,
   ): void {
     this.refreshing.add(cacheKey);
     const logCtx = this.getLogContext(projectData, route);
-    this.fetchProviders(cacheKey, vfAdapter, projectData, route)
+    this.fetchProviders(cacheKey, projectData, route)
       .catch((error) => {
         logger.error("[ProviderManager] Background refresh failed", { ...logCtx, error });
       })
@@ -192,7 +191,6 @@ export class ProviderManager {
 
   private async fetchProviders(
     cacheKey: string,
-    vfAdapter: FSAdapterLike | null,
     projectData: ProjectData | undefined,
     route?: string,
   ): Promise<ProviderCollectionResult> {

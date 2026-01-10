@@ -11,6 +11,7 @@ Provides unified abstractions for platform-specific APIs:
 - **Runtime Detection**: Automatic platform detection
 - **File Caching**: In-memory file caching layer
 - **Path Compatibility**: Cross-platform path handling
+- **Virtual Filesystems**: GitHub and Veryfront API adapters
 
 ## When to Use
 
@@ -21,6 +22,7 @@ Provides unified abstractions for platform-specific APIs:
 - Detecting runtime environment
 - Caching file contents
 - Normalizing file paths
+- Accessing remote filesystems (GitHub, Veryfront API)
 
 **Don't use for:**
 
@@ -44,11 +46,11 @@ const exists = await adapter.fs.exists("/path/to/check.txt");
 const stats = await adapter.fs.stat("/path/to/file.txt");
 
 // HTTP Server
-import { DenoHttpServer } from "@veryfront/platform/adapters/deno";
+import { createHttpServer } from "@veryfront/platform/compat/http";
 
-const server = new DenoHttpServer();
+const server = createHttpServer();
 await server.listen(3000, async (req) => {
-  return new Response("Hello from Deno!");
+  return new Response("Hello!");
 });
 
 // File watching
@@ -57,14 +59,12 @@ adapter.fs.watch("/src", (event, path) => {
 });
 
 // Cached filesystem (faster reads)
-import { createFileCacheAdapter } from "@veryfront/platform";
+import { createFileCacheAdapter } from "@veryfront/platform/adapters/fs/cache";
 
 const cachedFs = createFileCacheAdapter(adapter.fs, {
   maxSize: 100 * 1024 * 1024, // 100MB cache
   ttl: 5000, // 5 second TTL
 });
-
-const content = await cachedFs.readTextFile("config.json"); // Cached
 ```
 
 ## Structure
@@ -72,22 +72,40 @@ const content = await cachedFs.readTextFile("config.json"); // Cached
 ```
 platform/
 ├── adapters/
-│   ├── base.ts              # Base adapter interfaces
-│   ├── detect.ts            # Auto-detection
-│   ├── deno.ts              # Deno implementation
-│   ├── node/                # Node.js implementation
-│   ├── bun/                 # Bun implementation
-│   ├── file-cache/          # Caching layer
-│   └── veryfront-api-client/ # Veryfront Cloud API
-├── compat/                   # Compatibility layers
-│   ├── path/                # Path normalization
-│   ├── crypto.ts            # Crypto polyfills
-│   └── runtime.ts           # Runtime utilities
-└── security/                 # Security wrappers
-    └── sandbox.ts
+│   ├── base.ts                # Base adapter interfaces
+│   ├── detect.ts              # Auto-detection
+│   ├── registry.ts            # Adapter registry
+│   ├── mock.ts                # Mock adapter for testing
+│   ├── fallback-wrapper.ts    # Fallback wrapper utilities
+│   ├── fs/                    # Filesystem adapters
+│   │   ├── cache/             # In-memory caching layer
+│   │   ├── github/            # GitHub API filesystem
+│   │   └── veryfront/         # Veryfront API filesystem
+│   ├── runtime/               # Runtime-specific implementations
+│   │   ├── deno/              # Deno adapter
+│   │   ├── node/              # Node.js adapter
+│   │   ├── bun/               # Bun adapter
+│   │   ├── cloudflare/        # Cloudflare Workers adapter
+│   │   └── shared/            # Shared utilities
+│   ├── security/              # Security wrappers (sandbox)
+│   ├── token/                 # Token management
+│   │   └── veryfront/         # Veryfront OAuth tokens
+│   └── veryfront-api-client/  # Veryfront Cloud API client
+├── compat/                    # Compatibility layers
+│   ├── console/               # Console output compatibility
+│   ├── http/                  # HTTP server abstraction
+│   ├── kv/                    # Key-value store (memory/SQLite)
+│   ├── path/                  # Path operations
+│   ├── crypto.ts              # Crypto polyfills
+│   ├── fs.ts                  # Filesystem polyfills
+│   ├── runtime.ts             # Runtime detection utilities
+│   ├── process.ts             # Process polyfills
+│   ├── flags.ts               # Feature flags
+│   └── media-types.ts         # MIME type detection
+└── index.ts
 ```
 
-## 🔗 Dependencies
+## Dependencies
 
 **Depends on:**
 
@@ -100,9 +118,9 @@ platform/
 - `@veryfront/transforms` - Uses filesystem for compilation
 - All server-side code
 
-**Layer:** 🟡 INFRASTRUCTURE (Adapters)
+**Layer:** INFRASTRUCTURE (Adapters)
 
-## 📚 Key Concepts
+## Key Concepts
 
 ### Adapter Pattern
 
@@ -120,10 +138,28 @@ interface RuntimeAdapter {
 ### Platform Detection
 
 ```typescript
-import { detectRuntime } from "@veryfront/platform";
+import { detectRuntime } from "@veryfront/platform/compat/runtime";
 
 const runtime = detectRuntime();
 // Uses feature detection, not user agent
+```
+
+### Virtual Filesystems
+
+Access remote files as if they were local:
+
+```typescript
+// Veryfront API filesystem
+import { VeryfrontFSAdapter } from "@veryfront/platform/adapters/fs/veryfront";
+
+const vfAdapter = new VeryfrontFSAdapter(client);
+const content = await vfAdapter.readFile("pages/index.mdx");
+
+// GitHub filesystem
+import { GitHubFSAdapter } from "@veryfront/platform/adapters/fs/github";
+
+const ghAdapter = new GitHubFSAdapter({ owner, repo, token });
+const content = await ghAdapter.readFile("README.md");
 ```
 
 ### File Caching Strategy
@@ -133,12 +169,12 @@ const runtime = detectRuntime();
 - Automatic invalidation on write
 - Memory-efficient for large projects
 
-## 🔧 Platform-Specific Features
+## Platform-Specific Features
 
 ### Deno
 
 ```typescript
-import { DenoAdapter } from "@veryfront/platform/adapters/deno";
+import { DenoAdapter } from "@veryfront/platform/adapters/runtime/deno";
 
 const adapter = new DenoAdapter();
 // Native Deno.* APIs
@@ -149,7 +185,7 @@ const adapter = new DenoAdapter();
 ### Node.js
 
 ```typescript
-import { NodeAdapter } from "@veryfront/platform/adapters/node";
+import { NodeAdapter } from "@veryfront/platform/adapters/runtime/node";
 
 const adapter = await NodeAdapter.create();
 // Uses fs, path, http modules
@@ -160,7 +196,7 @@ const adapter = await NodeAdapter.create();
 ### Bun
 
 ```typescript
-import { BunAdapter } from "@veryfront/platform/adapters/bun";
+import { BunAdapter } from "@veryfront/platform/adapters/runtime/bun";
 
 const adapter = new BunAdapter();
 // Ultra-fast file operations
@@ -168,14 +204,14 @@ const adapter = new BunAdapter();
 // Web API compatibility
 ```
 
-## 🧪 Testing
+## Testing
 
 ```typescript
 import { assertEquals } from "std/assert/mod.ts";
-import { getAdapter } from "@veryfront/platform";
+import { MockAdapter } from "@veryfront/platform/adapters/mock";
 
 Deno.test("Filesystem operations", async () => {
-  const adapter = await getAdapter();
+  const adapter = new MockAdapter();
 
   await adapter.fs.writeTextFile("/tmp/test.txt", "Hello");
   const content = await adapter.fs.readTextFile("/tmp/test.txt");
@@ -184,12 +220,11 @@ Deno.test("Filesystem operations", async () => {
 });
 ```
 
-## 🔗 See Also
+## See Also
 
 - [@veryfront/runtime](../runtime/README.md) - Runtime engine
-- [Platform Adapters Guide](../../docs/platform-adapters.md)
-- [File Caching Guide](../../docs/file-caching.md)
+- [Veryfront API Client](./adapters/veryfront-api-client/README.md)
 
-## 📄 License
+## License
 
 Part of Veryfront framework
