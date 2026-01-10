@@ -54,7 +54,7 @@ export class OpenAIProvider extends BaseProvider {
     // Base request body
     const body: Record<string, unknown> = {
       model,
-      messages: this.formatMessages(request.messages),
+      messages: this.formatMessages(request.messages, request.system),
       stream: request.stream || false,
     };
 
@@ -179,8 +179,11 @@ export class OpenAIProvider extends BaseProvider {
     };
   }
 
-  private formatMessages(messages: CompletionRequest["messages"]) {
-    return messages.map((msg) => {
+  private formatMessages(
+    messages: CompletionRequest["messages"],
+    system?: string,
+  ) {
+    const formattedMessages = messages.map((msg) => {
       // Handle tool results
       if (msg.tool_call_id) {
         return {
@@ -211,5 +214,15 @@ export class OpenAIProvider extends BaseProvider {
         content: msg.content,
       };
     });
+
+    // Prepend system message if provided
+    if (system) {
+      return [
+        { role: "system", content: system },
+        ...formattedMessages,
+      ];
+    }
+
+    return formattedMessages;
   }
 }
