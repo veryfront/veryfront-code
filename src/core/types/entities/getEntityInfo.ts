@@ -41,7 +41,8 @@ import { createError, toError } from "../../../core/errors/veryfront-error.ts";
 import { createErrorScope } from "../../../core/errors/error-context.ts";
 import type { Entity, EntityInfo, Frontmatter } from "../entities.ts";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
-import { withFallback } from "@veryfront/platform/adapters/index.ts";
+// Import directly from source to avoid circular dependency through barrel
+import { withFallback } from "@veryfront/platform/adapters/fallback-wrapper.ts";
 
 const entityInfoScope = createErrorScope("getEntityInfo");
 

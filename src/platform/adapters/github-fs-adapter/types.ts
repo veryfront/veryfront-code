@@ -1,8 +1,7 @@
 import { createError, toError } from "../../../core/errors/veryfront-error.ts";
-import type { DirectoryEntry } from "../veryfront-fs-adapter/types.ts";
 
-// Re-export DirectoryEntry for convenience
-export type { DirectoryEntry };
+// Import and re-export from shared types to avoid circular dependencies
+export type { DirectoryEntry } from "../shared-types.ts";
 
 /**
  * GitHub repository configuration
