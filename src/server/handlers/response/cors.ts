@@ -71,13 +71,13 @@ export class CorsHandler extends BaseHandler {
       if (!match) return CorsHandler.DEFAULT_METHODS;
 
       const mod = await import(`file://${match.file}`) as RouteHandlerModule;
-      const methods = CorsHandler.HTTP_METHODS.filter((m) => typeof mod[m] === "function");
+      const foundMethods = CorsHandler.HTTP_METHODS.filter((m) => typeof mod[m] === "function");
 
-      // HEAD is implied by GET
-      if (methods.includes("GET") && !methods.includes("HEAD" as typeof methods[number])) {
-        methods.unshift("HEAD" as typeof methods[number]);
+      const methods: string[] = [...foundMethods];
+      if (foundMethods.includes("GET")) {
+        methods.unshift("HEAD");
       }
-      methods.push("OPTIONS" as typeof methods[number]);
+      methods.push("OPTIONS");
 
       return Array.from(new Set(methods)).join(", ");
     } catch (err) {
