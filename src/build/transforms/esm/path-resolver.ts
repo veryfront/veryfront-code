@@ -243,19 +243,16 @@ export function resolveRelativeImports(
 }
 
 function resolveRelativePath(currentDir: string, importPath: string): string {
-  const currentParts = currentDir.split("/").filter(Boolean);
-  const importParts = importPath.split("/").filter(Boolean);
+  return resolvePath(currentDir.split("/").filter(Boolean), importPath).join("/");
+}
 
-  const resolvedParts = [...currentParts];
-  for (const part of importParts) {
-    if (part === "..") {
-      resolvedParts.pop(); // Go up one directory
-    } else if (part !== ".") {
-      resolvedParts.push(part); // Add to path
-    }
+function resolvePath(baseParts: string[], relativePath: string): string[] {
+  const resolvedParts = [...baseParts];
+  for (const part of relativePath.split("/").filter(Boolean)) {
+    if (part === "..") resolvedParts.pop();
+    else if (part !== ".") resolvedParts.push(part);
   }
-
-  return resolvedParts.join("/");
+  return resolvedParts;
 }
 
 export async function resolveRelativeImportsToAbsolute(
@@ -343,17 +340,5 @@ export function resolveRelativeImportsForSSR(code: string): Promise<string> {
 }
 
 function resolveAbsolutePath(baseDir: string, relativePath: string): string {
-  const baseParts = baseDir.split("/").filter(Boolean);
-  const relativeParts = relativePath.split("/").filter(Boolean);
-
-  const resolvedParts = [...baseParts];
-  for (const part of relativeParts) {
-    if (part === "..") {
-      resolvedParts.pop();
-    } else if (part !== ".") {
-      resolvedParts.push(part);
-    }
-  }
-
-  return "/" + resolvedParts.join("/");
+  return "/" + resolvePath(baseDir.split("/").filter(Boolean), relativePath).join("/");
 }

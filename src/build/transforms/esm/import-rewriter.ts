@@ -63,79 +63,69 @@ function normalizeVersionedSpecifier(specifier: string): string {
   return specifier.replace(/@[\d^~x][\d.x^~-]*(?=\/|$)/, "");
 }
 
+// Packages kept as bare specifiers for HTML import map to resolve
+// These need consistent module instances, so HTML import map handles them
+const HTML_IMPORT_MAP_PACKAGES = [
+  "@tanstack/react-query",
+  "@tanstack/query-core",
+  "next-themes",
+  "framer-motion",
+];
+
+// Use ?target=es2022 to ensure identical builds between SSR (Deno) and browser
+// Without this, esm.sh auto-detects target and may serve different builds
+const REACT_IMPORT_MAP: Record<string, string> = {
+  "react": `https://esm.sh/react@${REACT_DEFAULT_VERSION}?target=es2022`,
+  "react-dom": `https://esm.sh/react-dom@${REACT_DEFAULT_VERSION}?target=es2022`,
+  "react-dom/client": `https://esm.sh/react-dom@${REACT_DEFAULT_VERSION}/client?target=es2022`,
+  "react-dom/server": `https://esm.sh/react-dom@${REACT_DEFAULT_VERSION}/server?target=es2022`,
+  "react/jsx-runtime": `https://esm.sh/react@${REACT_DEFAULT_VERSION}/jsx-runtime?target=es2022`,
+  "react/jsx-dev-runtime":
+    `https://esm.sh/react@${REACT_DEFAULT_VERSION}/jsx-dev-runtime?target=es2022`,
+};
+
+function shouldSkipRewrite(specifier: string): boolean {
+  return (
+    specifier.startsWith("http://") ||
+    specifier.startsWith("https://") ||
+    specifier.startsWith("./") ||
+    specifier.startsWith("../") ||
+    specifier.startsWith("/") ||
+    specifier.startsWith("@/") ||
+    specifier.startsWith("veryfront")
+  );
+}
+
+function isHtmlImportMapPackage(normalized: string): boolean {
+  return HTML_IMPORT_MAP_PACKAGES.some(
+    (pkg) => normalized === pkg || normalized.startsWith(`${pkg}/`),
+  );
+}
+
 export function rewriteBareImports(code: string, _moduleServerUrl?: string): Promise<string> {
-  // Always use esm.sh URLs for React packages in browser mode
-  // The _vendor/ path approach requires a handler to serve vendor modules,
-  // which is not implemented. Using esm.sh ensures React is loaded correctly.
-  // Packages that should be kept as bare specifiers for HTML import map to resolve
-  // These need consistent module instances, so HTML import map handles them
-  const htmlImportMapPackages = [
-    "@tanstack/react-query",
-    "@tanstack/query-core",
-    "next-themes",
-    "framer-motion",
-  ];
-
-  // Use ?target=es2022 to ensure identical builds between SSR (Deno) and browser
-  // Without this, esm.sh auto-detects target and may serve different builds, causing hydration mismatches
-  const importMap: Record<string, string> = {
-    "react": `https://esm.sh/react@${REACT_DEFAULT_VERSION}?target=es2022`,
-    "react-dom": `https://esm.sh/react-dom@${REACT_DEFAULT_VERSION}?target=es2022`,
-    "react-dom/client": `https://esm.sh/react-dom@${REACT_DEFAULT_VERSION}/client?target=es2022`,
-    "react-dom/server": `https://esm.sh/react-dom@${REACT_DEFAULT_VERSION}/server?target=es2022`,
-    "react/jsx-runtime": `https://esm.sh/react@${REACT_DEFAULT_VERSION}/jsx-runtime?target=es2022`,
-    "react/jsx-dev-runtime":
-      `https://esm.sh/react@${REACT_DEFAULT_VERSION}/jsx-dev-runtime?target=es2022`,
-    // NOTE: veryfront/ai/react is NOT rewritten here - it's handled by the HTML import map
-    // which points to /_veryfront/lib/ai/react.js served from the local package
-  };
-
   return Promise.resolve(replaceSpecifiers(code, (specifier) => {
     // Check known import map first
-    if (importMap[specifier]) {
-      return importMap[specifier]!;
-    }
+    const mapped = REACT_IMPORT_MAP[specifier];
+    if (mapped) return mapped;
 
     // Skip if already absolute URL, relative path, or local module path
-    if (
-      specifier.startsWith("http://") ||
-      specifier.startsWith("https://") ||
-      specifier.startsWith("./") ||
-      specifier.startsWith("../") ||
-      specifier.startsWith("/") ||
-      specifier.startsWith("@/") || // Project alias
-      specifier.startsWith("veryfront") // Veryfront packages
-    ) {
-      return null;
-    }
+    if (shouldSkipRewrite(specifier)) return null;
 
     // Normalize: strip inline version specifiers (e.g., tailwindcss@3.4.17 -> tailwindcss)
-    // This allows the import map in HTML to control the actual version
     const normalized = normalizeVersionedSpecifier(specifier);
 
-    // Check if this package should be kept as a bare specifier for HTML import map
-    // This ensures consistent module instances for context-dependent packages
-    const matchesImportMapPackage = htmlImportMapPackages.some(
-      (pkg) => normalized === pkg || normalized.startsWith(`${pkg}/`),
-    );
-    if (matchesImportMapPackage) {
-      return null; // Keep as bare specifier - HTML import map will resolve it
-    }
+    // Keep as bare specifier if HTML import map will resolve it
+    if (isHtmlImportMapPackage(normalized)) return null;
 
     // Pin tailwindcss to unified version to prevent multiple versions loading
     let finalSpecifier = normalized;
     if (normalized === "tailwindcss" || normalized.startsWith("tailwindcss/")) {
       finalSpecifier = normalized.replace(/^tailwindcss/, `tailwindcss@${TAILWIND_VERSION}`);
     } else if (!hasVersionSpecifier(specifier)) {
-      // Warn about unversioned imports for reproducibility
-      // Skip warning for known packages that we pin versions for
       warnUnversionedImport(specifier);
     }
 
-    // Convert remaining bare imports (npm packages) to esm.sh URLs
-    // Use ?external=react,react-dom so esm.sh does NOT bundle React inside packages.
-    // Instead, packages will import React from the browser's import map (shared instance).
-    // Use ?target=es2022 to ensure identical builds between SSR and browser.
+    // Convert remaining bare imports to esm.sh URLs with React externalized
     return `https://esm.sh/${finalSpecifier}?external=react,react-dom&target=es2022`;
   }));
 }
