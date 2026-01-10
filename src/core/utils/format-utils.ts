@@ -1,21 +1,19 @@
 import { logger } from "./logger/logger.ts";
 
+const BYTE_SIZES = ["Bytes", "KB", "MB", "GB", "TB"];
+
 export function formatBytes(bytes: number): string {
   if (bytes === 0) return "0 Bytes";
 
   const absBytes = Math.abs(bytes);
+  if (absBytes < 1) return `${absBytes} Bytes`;
 
-  if (absBytes < 1) {
-    return `${absBytes} Bytes`;
-  }
+  const i = Math.min(
+    Math.floor(Math.log(absBytes) / Math.log(1024)),
+    BYTE_SIZES.length - 1,
+  );
 
-  const k = 1024;
-  const sizes = ["Bytes", "KB", "MB", "GB", "TB"];
-  const i = Math.floor(Math.log(absBytes) / Math.log(k));
-
-  const index = Math.max(0, Math.min(i, sizes.length - 1));
-
-  return `${parseFloat((absBytes / Math.pow(k, index)).toFixed(2))} ${sizes[index]}`;
+  return `${parseFloat((absBytes / Math.pow(1024, i)).toFixed(2))} ${BYTE_SIZES[i]}`;
 }
 
 export function estimateSize(value: unknown): number {

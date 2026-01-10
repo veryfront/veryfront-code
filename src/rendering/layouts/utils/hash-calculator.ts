@@ -1,5 +1,4 @@
-import { rendererLogger as logger } from "@veryfront/utils";
-import { getContentHash } from "@veryfront/utils";
+import { getContentHash, rendererLogger as logger } from "@veryfront/utils";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import type { LayoutItem, MdxBundle } from "@veryfront/types";
 
