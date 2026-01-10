@@ -225,26 +225,22 @@ class TTLCache {
   }
 }
 
+/** Factory for creating cache instances by strategy */
+function createCacheByStrategy(config: CacheConfig): MemoryCache | LRUCache | TTLCache {
+  if (config.strategy === "lru") {
+    return new LRUCache(config.maxSize || 100);
+  }
+  if (config.strategy === "ttl") {
+    return new TTLCache(config.ttl || 300000);
+  }
+  return new MemoryCache();
+}
+
 /**
  * Create a cache instance
  */
 export function createCache(config: CacheConfig) {
-  let cache: MemoryCache | LRUCache | TTLCache;
-
-  switch (config.strategy) {
-    case "memory":
-      cache = new MemoryCache();
-      break;
-    case "lru":
-      cache = new LRUCache(config.maxSize || 100);
-      break;
-    case "ttl":
-      cache = new TTLCache(config.ttl || 300000);
-      break;
-    default:
-      cache = new MemoryCache();
-  }
-
+  const cache = createCacheByStrategy(config);
   const keyGenerator = config.keyGenerator || ((input: string) => `cache_${hashString(input)}`);
 
   return {

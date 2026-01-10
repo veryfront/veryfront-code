@@ -203,15 +203,11 @@ class CostTracker {
       summary.tokens.total += record.tokens.total;
       summary.cost += record.cost;
 
-      if (!summary.byProvider[record.provider]) {
-        summary.byProvider[record.provider] = {
-          requests: 0,
-          tokens: 0,
-          cost: 0,
-        };
-      }
-
-      const providerStats = summary.byProvider[record.provider]!;
+      const providerStats = summary.byProvider[record.provider] ??= {
+        requests: 0,
+        tokens: 0,
+        cost: 0,
+      };
       providerStats.requests++;
       providerStats.tokens += record.tokens.total;
       providerStats.cost += record.cost;

@@ -179,22 +179,9 @@ class TokenBucketLimiter {
  * Create a rate limiter
  */
 export function createRateLimiter(config: RateLimitConfig) {
-  let limiter: FixedWindowLimiter | TokenBucketLimiter;
-
-  switch (config.strategy) {
-    case "fixed-window":
-      limiter = new FixedWindowLimiter(config);
-      break;
-    case "token-bucket":
-      limiter = new TokenBucketLimiter(config);
-      break;
-    case "sliding-window":
-      // Use token bucket as approximation for sliding window
-      limiter = new TokenBucketLimiter(config);
-      break;
-    default:
-      limiter = new FixedWindowLimiter(config);
-  }
+  const limiter = config.strategy === "fixed-window"
+    ? new FixedWindowLimiter(config)
+    : new TokenBucketLimiter(config); // token-bucket and sliding-window both use TokenBucketLimiter
 
   return {
     /**

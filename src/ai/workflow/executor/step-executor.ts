@@ -207,26 +207,15 @@ export class StepExecutor {
     const initialDelay = config.initialDelay ?? 1000;
     const maxDelay = config.maxDelay ?? 30000;
 
-    let delay: number;
+    const backoffStrategies: Record<string, number> = {
+      exponential: initialDelay * Math.pow(2, attempt - 1),
+      linear: initialDelay * attempt,
+    };
+    const baseDelay = backoffStrategies[config.backoff ?? "fixed"] ?? initialDelay;
 
-    switch (config.backoff) {
-      case "exponential":
-        delay = initialDelay * Math.pow(2, attempt - 1);
-        break;
-      case "linear":
-        delay = initialDelay * attempt;
-        break;
-      case "fixed":
-      default:
-        delay = initialDelay;
-        break;
-    }
-
-    // Add jitter (±10%)
-    const jitter = delay * 0.1 * (Math.random() * 2 - 1);
-    delay = Math.min(delay + jitter, maxDelay);
-
-    return Math.floor(delay);
+    // Add jitter (±10%) and cap at maxDelay
+    const jitter = baseDelay * 0.1 * (Math.random() * 2 - 1);
+    return Math.floor(Math.min(baseDelay + jitter, maxDelay));
   }
 
   /**
