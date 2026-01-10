@@ -4,9 +4,11 @@
  * Executes individual workflow steps (agents and tools)
  */
 
+import { AsyncLocalStorage } from "node:async_hooks";
 import type { Agent, AgentResponse } from "../../types/agent.ts";
 import type { Tool } from "../../types/tool.ts";
 import type {
+  CapturedTenantContext,
   NodeState,
   RetryConfig,
   StepNodeConfig,
@@ -14,6 +16,24 @@ import type {
   WorkflowNode,
 } from "../types.ts";
 import { parseDuration } from "../types.ts";
+
+/**
+ * AsyncLocalStorage for workflow tenant context.
+ * This allows tools and framework utilities to access the current tenant
+ * without explicit parameter passing.
+ */
+const workflowTenantStorage = new AsyncLocalStorage<CapturedTenantContext>();
+
+/**
+ * Get the current workflow tenant context.
+ * Returns undefined if not executing within a workflow step.
+ *
+ * This is used by context-aware framework utilities (e.g., the api module)
+ * to automatically access project-scoped resources.
+ */
+export function getWorkflowTenant(): CapturedTenantContext | undefined {
+  return workflowTenantStorage.getStore();
+}
 
 /** Default retry configuration */
 const DEFAULT_RETRY: RetryConfig = {
@@ -97,8 +117,30 @@ export class StepExecutor {
 
   /**
    * Execute a step node with retry support
+   *
+   * @param node - The workflow node to execute
+   * @param context - The workflow context
+   * @param tenant - Optional tenant context for multi-project mode
    */
-  async execute(
+  execute(
+    node: WorkflowNode,
+    context: WorkflowContext,
+    tenant?: CapturedTenantContext,
+  ): Promise<StepResult> {
+    // Wrap execution with tenant context if available
+    // This makes the tenant accessible to tools via getWorkflowTenant()
+    if (tenant) {
+      return workflowTenantStorage.run(tenant, () =>
+        this.executeInternal(node, context)
+      );
+    }
+    return this.executeInternal(node, context);
+  }
+
+  /**
+   * Internal execution logic (extracted for tenant context wrapping)
+   */
+  private async executeInternal(
     node: WorkflowNode,
     context: WorkflowContext,
   ): Promise<StepResult> {

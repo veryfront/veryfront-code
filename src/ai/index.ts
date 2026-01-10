@@ -271,6 +271,25 @@ export type {
 } from "./workflow/index.ts";
 
 // ============================================================================
+// Public API - Context-Aware Utilities
+// ============================================================================
+
+/**
+ * Context-aware API for accessing project resources.
+ * Automatically uses the current tenant context (from request or workflow execution).
+ *
+ * @example
+ * ```typescript
+ * import { api } from 'veryfront/ai';
+ *
+ * // In a tool or workflow step:
+ * const content = await api.files.read("/pages/index.tsx");
+ * const slug = api.project.slug();
+ * ```
+ */
+export { api } from "./api.ts";
+
+// ============================================================================
 // Public API - Types
 // ============================================================================
 

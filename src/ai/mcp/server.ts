@@ -11,6 +11,7 @@ import { resourceRegistry } from "./resource.ts";
 import { promptRegistry } from "./prompt.ts";
 import type { MCPServerConfig } from "../types/mcp.ts";
 import { createError, toError } from "@veryfront/errors/veryfront-error.ts";
+import { runWithRequestContext } from "../../platform/adapters/fs/veryfront/multi-project-adapter.ts";
 
 /**
  * JSON-RPC 2.0 Params type
@@ -315,10 +316,18 @@ export class MCPServer {
         }
       }
 
+      // Extract tenant context from request headers (set by proxy)
+      const tenantContext = this.extractTenantFromRequest(request);
+
       // Parse JSON-RPC request
       try {
         const rpcRequest: JSONRPCRequest = await request.json();
-        const rpcResponse = await this.handleRequest(rpcRequest);
+
+        // Execute request within tenant context if available
+        // This enables tools to access project-scoped resources via the api module
+        const rpcResponse = tenantContext
+          ? await runWithRequestContext(tenantContext, () => this.handleRequest(rpcRequest))
+          : await this.handleRequest(rpcRequest);
 
         return new Response(JSON.stringify(rpcResponse), {
           headers: {
@@ -343,6 +352,38 @@ export class MCPServer {
           },
         );
       }
+    };
+  }
+
+  /**
+   * Extract tenant context from request headers
+   * Returns undefined if required headers are missing
+   */
+  private extractTenantFromRequest(request: Request): {
+    projectSlug: string;
+    token: string;
+    projectId?: string;
+    productionMode?: boolean;
+    releaseId?: string | null;
+  } | undefined {
+    const token = request.headers.get("x-token");
+    const projectSlug = request.headers.get("x-project-slug");
+
+    // Both token and project slug are required for tenant context
+    if (!token || !projectSlug) {
+      return undefined;
+    }
+
+    const projectId = request.headers.get("x-project-id") || undefined;
+    const environment = request.headers.get("x-environment");
+    const releaseId = request.headers.get("x-release-id") || null;
+
+    return {
+      projectSlug,
+      token,
+      projectId,
+      productionMode: environment === "production",
+      releaseId,
     };
   }
 

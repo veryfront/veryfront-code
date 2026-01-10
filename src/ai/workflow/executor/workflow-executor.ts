@@ -6,6 +6,7 @@
 
 import type {
   BlobResolver,
+  CapturedTenantContext,
   NodeState,
   StepBuilderContext,
   WorkflowContext,
@@ -15,6 +16,7 @@ import type {
   WorkflowStatus,
 } from "../types.ts";
 import { generateId, parseDuration } from "../types.ts";
+import { getCurrentRequestContext } from "../../../platform/adapters/fs/veryfront/multi-project-adapter.ts";
 import { hasLockSupport, type WorkflowBackend } from "../backends/types.ts";
 import { DAGExecutor } from "./dag-executor.ts";
 import { CheckpointManager } from "./checkpoint-manager.ts";
@@ -156,6 +158,18 @@ export class WorkflowExecutor {
       workflow.inputSchema.parse(input);
     }
 
+    // Auto-capture tenant context from current request (if running within a request)
+    const requestContext = getCurrentRequestContext();
+    const capturedTenant: CapturedTenantContext | undefined = requestContext
+      ? {
+        projectSlug: requestContext.projectSlug,
+        token: requestContext.token,
+        projectId: requestContext.projectId,
+        productionMode: requestContext.productionMode,
+        releaseId: requestContext.releaseId,
+      }
+      : undefined;
+
     // Create run
     const run: WorkflowRun<TInput, TOutput> = {
       id: options?.runId || generateId("run"),
@@ -169,6 +183,7 @@ export class WorkflowExecutor {
       checkpoints: [],
       pendingApprovals: [],
       createdAt: new Date(),
+      _tenant: capturedTenant,
     };
 
     // Persist run

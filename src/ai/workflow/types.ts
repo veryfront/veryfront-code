@@ -24,6 +24,29 @@ export type WorkflowStatus =
   | "failed" // Failed with error
   | "cancelled"; // Cancelled by user
 
+// ============================================================================
+// Tenant Context (Multi-Project Support)
+// ============================================================================
+
+/**
+ * Captured tenant context for multi-project workflow execution.
+ * This is captured automatically when a workflow starts within a request context
+ * and restored during step execution so tools can access project-scoped APIs.
+ * @internal
+ */
+export interface CapturedTenantContext {
+  /** Project slug identifying the tenant */
+  projectSlug: string;
+  /** OAuth token for API access */
+  token: string;
+  /** Optional project ID (UUID) */
+  projectId?: string;
+  /** Whether running in production mode */
+  productionMode: boolean;
+  /** Release ID for production deployments */
+  releaseId?: string | null;
+}
+
 /**
  * Status of a single node in the workflow
  */
@@ -415,6 +438,14 @@ export interface WorkflowRun<TInput = unknown, TOutput = unknown> {
   startedAt?: Date;
   /** When execution completed */
   completedAt?: Date;
+
+  // Multi-tenant context
+  /**
+   * Captured tenant context for multi-project mode.
+   * Automatically captured when workflow starts within a request context.
+   * @internal
+   */
+  _tenant?: CapturedTenantContext;
 }
 
 // ============================================================================

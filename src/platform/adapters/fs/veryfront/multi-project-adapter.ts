@@ -198,3 +198,33 @@ export class MultiProjectFSAdapter implements FSAdapter {
 export function isMultiProjectAdapter(adapter: unknown): adapter is MultiProjectFSAdapter {
   return adapter instanceof MultiProjectFSAdapter;
 }
+
+/**
+ * Get the current request context from AsyncLocalStorage.
+ * Used by context-aware utilities (e.g., workflow tenant capture, api module).
+ */
+export function getCurrentRequestContext(): RequestContext | undefined {
+  return asyncLocalStorage.getStore();
+}
+
+/**
+ * Run a function within a request context.
+ * This is a standalone version that doesn't require an adapter instance.
+ * Used by MCP server, agent runtime, and other components that need to establish context.
+ */
+export function runWithRequestContext<T>(
+  options: RunWithContextOptions,
+  fn: () => Promise<T>,
+): Promise<T> {
+  const context: RequestContext = {
+    projectSlug: options.projectSlug,
+    projectId: options.projectId,
+    token: options.token,
+    productionMode: options.productionMode ?? false,
+    releaseId: options.releaseId ?? null,
+  };
+
+  return asyncLocalStorage.run(context, fn);
+}
+
+export type { RequestContext, RunWithContextOptions };

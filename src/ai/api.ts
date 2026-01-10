@@ -1,0 +1,174 @@
+/**
+ * Context-Aware API Module
+ *
+ * Provides framework utilities that automatically use the current tenant context.
+ * Tools and workflows can import and use these without passing any context parameters.
+ *
+ * @example
+ * ```typescript
+ * import { api } from "veryfront/ai";
+ *
+ * const myTool = {
+ *   id: "fetch-file",
+ *   execute: async (input) => {
+ *     // Just use api - it automatically knows the current project
+ *     const content = await api.files.read(input.path);
+ *     return content;
+ *   },
+ * };
+ * ```
+ */
+
+import { getWorkflowTenant } from "./workflow/executor/step-executor.ts";
+import { getCurrentRequestContext } from "../platform/adapters/fs/veryfront/multi-project-adapter.ts";
+import { VeryfrontAPIClient } from "../platform/adapters/veryfront-api-client/client.ts";
+
+/**
+ * Get the current tenant context from either workflow execution or request context.
+ * @throws Error if no tenant context is available
+ */
+function getTenant() {
+  // Check workflow context first (for tool execution within workflows)
+  // Then fall back to request context (for direct API route calls)
+  const tenant = getWorkflowTenant() ?? getCurrentRequestContext();
+
+  if (!tenant) {
+    throw new Error(
+      "No tenant context available. " +
+        "This API must be called within a request or workflow execution. " +
+        "If you're calling this from a standalone script, you need to wrap " +
+        "your code with runWithContext() first.",
+    );
+  }
+
+  return tenant;
+}
+
+/**
+ * Create a VeryfrontAPIClient configured for the current tenant.
+ * Each call creates a new client instance configured with the current tenant's credentials.
+ */
+function getClient(): VeryfrontAPIClient {
+  const tenant = getTenant();
+
+  const client = new VeryfrontAPIClient({
+    apiBaseUrl: Deno.env.get("VERYFRONT_API_URL") || "https://api.veryfront.com",
+    proxyMode: true,
+    projectId: tenant.projectId,
+    projectSlug: tenant.projectSlug,
+  });
+
+  client.setRequestToken(tenant.token);
+  client.setProjectSlug(tenant.projectSlug);
+
+  return client;
+}
+
+/**
+ * Context-aware API that automatically uses the current tenant.
+ *
+ * All methods will throw an error if called outside of a request or workflow context.
+ */
+export const api = {
+  /**
+   * File operations for the current project
+   */
+  files: {
+    /**
+     * Read file content by path
+     * @param path - File path relative to project root (e.g., "/pages/index.tsx")
+     */
+    read: (path: string) => {
+      const tenant = getTenant();
+      return getClient().getFileContent(path, tenant.projectId);
+    },
+
+    /**
+     * List files in the project
+     * @param cursor - Pagination cursor
+     * @param limit - Maximum number of files to return
+     */
+    list: (cursor?: string, limit?: number) => {
+      const tenant = getTenant();
+      return getClient().listFiles(tenant.projectId, cursor, limit);
+    },
+
+    /**
+     * List all files in the project (handles pagination automatically)
+     */
+    listAll: () => {
+      const tenant = getTenant();
+      return getClient().listAllFiles(tenant.projectId);
+    },
+
+    /**
+     * Check if a file exists
+     * @param path - File path relative to project root
+     */
+    exists: (path: string) => {
+      const tenant = getTenant();
+      return getClient().fileExists(path, tenant.projectId);
+    },
+
+    /**
+     * Get file metadata
+     * @param path - File path relative to project root
+     */
+    metadata: (path: string) => {
+      const tenant = getTenant();
+      return getClient().getFileMetadata(path, tenant.projectId);
+    },
+
+    /**
+     * Search for files matching a pattern
+     * @param pattern - Search pattern (glob-like)
+     */
+    search: (pattern: string) => {
+      const tenant = getTenant();
+      return getClient().searchFiles(pattern, tenant.projectId);
+    },
+  },
+
+  /**
+   * Project operations
+   */
+  project: {
+    /**
+     * Get current project details
+     */
+    get: () => {
+      const tenant = getTenant();
+      if (!tenant.projectId) {
+        throw new Error("Project ID not available in current context");
+      }
+      return getClient().getProject(tenant.projectId);
+    },
+
+    /**
+     * Get the current project slug
+     */
+    slug: () => getTenant().projectSlug,
+
+    /**
+     * Get the current project ID (if available)
+     */
+    id: () => getTenant().projectId,
+
+    /**
+     * Check if running in production mode
+     */
+    isProduction: () => getTenant().productionMode,
+  },
+
+  /**
+   * Get the raw tenant context (for advanced use cases)
+   * @internal
+   */
+  _getTenant: getTenant,
+
+  /**
+   * Get a configured API client (for advanced use cases)
+   * @internal
+   */
+  _getClient: getClient,
+};

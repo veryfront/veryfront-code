@@ -581,6 +581,8 @@ export class RedisBackend implements WorkflowBackend {
       createdAt: run.createdAt.toISOString(),
       startedAt: run.startedAt?.toISOString() || "",
       completedAt: run.completedAt?.toISOString() || "",
+      // Multi-tenant context (internal)
+      _tenant: run._tenant ? JSON.stringify(run._tenant) : "",
     };
   }
 
@@ -639,6 +641,8 @@ export class RedisBackend implements WorkflowBackend {
       createdAt: data.createdAt ? new Date(data.createdAt) : new Date(),
       startedAt: data.startedAt ? new Date(data.startedAt) : undefined,
       completedAt: data.completedAt ? new Date(data.completedAt) : undefined,
+      // Multi-tenant context (internal)
+      _tenant: safeJsonParse("_tenant", data._tenant, undefined),
     };
   }
 

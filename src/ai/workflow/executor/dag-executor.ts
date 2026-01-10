@@ -6,6 +6,7 @@
 
 import type {
   BranchNodeConfig,
+  CapturedTenantContext,
   Checkpoint,
   LoopExecutionContext,
   LoopNodeConfig,
@@ -83,6 +84,8 @@ export interface DAGExecutionResult {
  */
 export class DAGExecutor {
   private config: DAGExecutorConfig;
+  /** Current run's tenant context (set during execute()) */
+  private currentTenant?: CapturedTenantContext;
 
   constructor(config: DAGExecutorConfig) {
     this.config = {
@@ -100,6 +103,9 @@ export class DAGExecutor {
     run: WorkflowRun,
     startFromNode?: string,
   ): Promise<DAGExecutionResult> {
+    // Store tenant context for step execution
+    this.currentTenant = run._tenant;
+
     const context = { ...run.context };
     const nodeStates = { ...run.nodeStates };
 
@@ -727,7 +733,8 @@ export class DAGExecutor {
     contextUpdates: Record<string, unknown>;
     waiting: boolean;
   }> {
-    const result = await this.config.stepExecutor.execute(node, context);
+    // Pass tenant context so tools can access it via getWorkflowTenant()
+    const result = await this.config.stepExecutor.execute(node, context, this.currentTenant);
 
     const state: NodeState = {
       nodeId: node.id,
