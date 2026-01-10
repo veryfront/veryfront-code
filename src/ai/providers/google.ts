@@ -1,6 +1,4 @@
-/**
- * Google AI provider implementation
- */
+/** Google AI provider implementation */
 
 import { z } from "zod";
 import { BaseProvider, mapFinishReason } from "./base.ts";

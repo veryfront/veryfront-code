@@ -7,9 +7,7 @@ import { createError, toError } from "../../core/errors/veryfront-error.ts";
 import type { AnthropicConfig, CompletionRequest, CompletionResponse } from "../types/provider.ts";
 import { agentLogger } from "../../core/utils/logger/logger.ts";
 
-/**
- * Anthropic content block types
- */
+/** Anthropic content block types */
 interface AnthropicTextContent {
   type: "text";
   text: string;
@@ -33,17 +31,13 @@ type AnthropicContentBlock =
   | AnthropicToolUseContent
   | AnthropicToolResultContent;
 
-/**
- * Anthropic message types
- */
+/** Anthropic message types */
 interface AnthropicMessage {
   role: "user" | "assistant";
   content: string | AnthropicContentBlock[];
 }
 
-/**
- * Anthropic API response
- */
+/** Anthropic API response */
 interface AnthropicResponse {
   content: AnthropicContentBlock[];
   usage?: {
@@ -248,9 +242,7 @@ export class AnthropicProvider extends BaseProvider {
     }
   }
 
-  /**
-   * Override stream transformation for Anthropic's specific format
-   */
+  /** Override stream transformation for Anthropic's specific format */
   protected override transformStream(stream: ReadableStream): ReadableStream {
     const reader = stream.getReader();
     const decoder = new TextDecoder();
