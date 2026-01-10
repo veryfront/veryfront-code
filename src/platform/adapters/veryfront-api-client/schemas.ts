@@ -36,7 +36,7 @@ export const ProjectSchema = z.object({
  * Note: API doesn't return mimeType or createdAt - only updatedAt.
  */
 export const ProjectFileSchema = z.object({
-  id: z.string().optional(), // Entity UUID - available when fetched from veryfront-api
+  id: z.string().uuid().optional(), // Entity UUID - available when fetched from veryfront-api
   path: z.string(),
   size: z.number(),
   type: z.enum(["page", "function", "component", "file"]),
@@ -61,7 +61,7 @@ export const PageInfoSchema = z.object({
 });
 
 export const EnvironmentSchema = z.object({
-  id: z.string(),
+  id: z.string().uuid(),
   name: z.string(),
 });
 
@@ -147,11 +147,11 @@ export const GetPublishedFileContentResponseSchema = z.object({
  * Used for JIT rendering of custom domain production sites.
  */
 export const LookupDomainResponseSchema = z.object({
-  projectId: z.string(),
+  projectId: z.string().uuid(),
   projectSlug: z.string(),
   projectName: z.string(),
   environment: EnvironmentSchema.nullable(),
-  releaseId: z.string().nullable(),
+  releaseId: z.string().uuid().nullable(),
 });
 
 /**
@@ -164,7 +164,7 @@ export const LookupDomainResponseSchema = z.object({
  * the API adds this endpoint. See API comparison report for details.
  */
 export const GetComponentResponseSchema = z.object({
-  id: z.string(),
+  id: z.string().uuid(),
   slug: z.string().optional(),
   name: z.string().optional(),
   importPath: z.string(),
