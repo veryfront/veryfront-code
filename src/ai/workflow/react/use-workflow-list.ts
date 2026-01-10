@@ -1,106 +1,31 @@
-/**
- * useWorkflowList Hook
- *
- * React hook for listing and filtering workflow runs.
- *
- * @example
- * ```tsx
- * import { useWorkflowList } from 'veryfront/ai/workflow/react';
- *
- * function WorkflowList() {
- *   const {
- *     runs,
- *     isLoading,
- *     hasMore,
- *     loadMore,
- *     setFilter,
- *   } = useWorkflowList({
- *     workflowId: 'content-pipeline',
- *     status: 'running',
- *   });
- *
- *   return (
- *     <div>
- *       {runs.map(run => (
- *         <div key={run.id}>
- *           {run.id} - {run.status}
- *         </div>
- *       ))}
- *       {hasMore && (
- *         <button onClick={loadMore}>Load More</button>
- *       )}
- *     </div>
- *   );
- * }
- * ```
- */
-
 import { useCallback, useEffect, useState } from "react";
 import type { RunFilter, WorkflowRun, WorkflowStatus } from "../types.ts";
 
-/**
- * Options for useWorkflowList hook
- */
 export interface UseWorkflowListOptions {
-  /** Filter by workflow ID */
   workflowId?: string;
-
-  /** Filter by status */
   status?: WorkflowStatus | WorkflowStatus[];
-
-  /** Filter runs created after this date */
   createdAfter?: Date;
-
-  /** Filter runs created before this date */
   createdBefore?: Date;
-
-  /** Page size (defaults to 20) */
   pageSize?: number;
-
-  /** API endpoint base (defaults to /api/workflows) */
   apiBase?: string;
-
-  /** Enable automatic refresh */
   autoRefresh?: boolean;
-
-  /** Refresh interval in ms (defaults to 5000) */
   refreshInterval?: number;
 }
 
-/**
- * Result from useWorkflowList hook
- */
 export interface UseWorkflowListResult {
-  /** List of workflow runs */
   runs: WorkflowRun[];
-
-  /** Total count (if available) */
   totalCount?: number;
-
-  /** Loading state */
   isLoading: boolean;
-
-  /** Error state */
   error: Error | null;
-
-  /** Whether there are more results */
   hasMore: boolean;
-
-  /** Load more results */
   loadMore: () => Promise<void>;
-
-  /** Refresh the list */
   refresh: () => Promise<void>;
-
-  /** Update the filter */
   setFilter: (filter: Partial<UseWorkflowListOptions>) => void;
-
-  /** Current filter */
   filter: RunFilter;
 }
 
 /**
- * useWorkflowList - List and filter workflow runs
+ * List and filter workflow runs.
  */
 export function useWorkflowList(
   options: UseWorkflowListOptions = {},
@@ -131,9 +56,6 @@ export function useWorkflowList(
     limit: pageSize,
   });
 
-  /**
-   * Build query string from filter
-   */
   const buildQueryString = useCallback(
     (filterToUse: RunFilter, cursorToUse?: string): string => {
       const params = new URLSearchParams();
@@ -170,9 +92,6 @@ export function useWorkflowList(
     [],
   );
 
-  /**
-   * Fetch runs
-   */
   const fetchRuns = useCallback(
     async (append: boolean = false) => {
       try {
@@ -206,9 +125,6 @@ export function useWorkflowList(
     [apiBase, filter, cursor, buildQueryString],
   );
 
-  /**
-   * Initial fetch
-   */
   useEffect(() => {
     const doFetch = async () => {
       setIsLoading(true);
@@ -217,11 +133,8 @@ export function useWorkflowList(
     };
 
     doFetch();
-  }, [filter]); // Re-fetch when filter changes
+  }, [filter]);
 
-  /**
-   * Auto-refresh setup
-   */
   useEffect(() => {
     if (!autoRefresh) return;
 
@@ -232,9 +145,6 @@ export function useWorkflowList(
     return () => clearInterval(intervalId);
   }, [autoRefresh, refreshInterval, fetchRuns]);
 
-  /**
-   * Load more results
-   */
   const loadMore = useCallback(async () => {
     if (!hasMore || isLoading) return;
     setIsLoading(true);
@@ -242,9 +152,6 @@ export function useWorkflowList(
     setIsLoading(false);
   }, [hasMore, isLoading, fetchRuns]);
 
-  /**
-   * Refresh the list
-   */
   const refresh = useCallback(async () => {
     setCursor(undefined);
     setIsLoading(true);
@@ -252,9 +159,6 @@ export function useWorkflowList(
     setIsLoading(false);
   }, [fetchRuns]);
 
-  /**
-   * Update filter
-   */
   const setFilter = useCallback(
     (newFilter: Partial<UseWorkflowListOptions>) => {
       setCursor(undefined); // Reset pagination
