@@ -157,8 +157,8 @@ export function createReactVersionSwitcher(projectDir: string): ReactVersionSwit
       logger.info(`Use --config deno.react${version}.json to run with React ${version}`);
     },
 
-    async getCurrentVersion(): Promise<ReactVersion | null> {
-      return await detectReactVersionFromConfig(projectDir);
+    getCurrentVersion(): Promise<ReactVersion | null> {
+      return detectReactVersionFromConfig(projectDir);
     },
 
     getAvailableVersions(): ReactVersion[] {

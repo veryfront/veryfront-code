@@ -58,14 +58,14 @@ export async function enhanceAdapterWithFS(
   }
 }
 
-export async function createFSAdapterFromConfig(
+export function createFSAdapterFromConfig(
   config: VeryfrontConfig,
 ): Promise<FSAdapter | null> {
   if (!config.fs || config.fs.type === "local" || !config.fs.type) {
-    return null;
+    return Promise.resolve(null);
   }
 
-  return await createFSAdapter(config.fs as FSAdapterConfig);
+  return createFSAdapter(config.fs as FSAdapterConfig);
 }
 
 export function isFSAdapterConfigured(config: VeryfrontConfig): boolean {

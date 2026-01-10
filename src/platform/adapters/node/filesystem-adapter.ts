@@ -6,7 +6,7 @@ import type { FileChangeEvent } from "../base.ts";
 export class NodeFileSystemAdapter implements FileSystemAdapter {
   async readFile(path: string): Promise<string> {
     const fs = await import("node:fs/promises");
-    return await fs.readFile(path, "utf-8");
+    return fs.readFile(path, "utf-8");
   }
 
   async readFileBytes(path: string): Promise<Uint8Array> {
@@ -72,7 +72,7 @@ export class NodeFileSystemAdapter implements FileSystemAdapter {
     const { mkdtemp } = await import("node:fs/promises");
     const { join } = await import("node:path");
     const { tmpdir } = await import("node:os");
-    return await mkdtemp(join(tmpdir(), prefix));
+    return mkdtemp(join(tmpdir(), prefix));
   }
 
   watch(paths: string | string[], options?: WatchOptions): FileWatcher {

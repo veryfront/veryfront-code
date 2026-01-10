@@ -41,7 +41,7 @@ export class DataFetcher {
     return { props: {} };
   }
 
-  async getStaticPaths(pageModule: PageWithData): Promise<StaticPathsResult | null> {
+  getStaticPaths(pageModule: PageWithData): Promise<StaticPathsResult | null> {
     return this.pathsFetcher.fetch(pageModule);
   }
 

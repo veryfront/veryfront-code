@@ -12,9 +12,9 @@ export { loadManifest as loadImageManifest } from "./manifest-manager.ts";
 import { ImageOptimizer } from "./optimizer-core.ts";
 import type { ImageOptimizationOptions, OptimizedImageMetadata } from "./types.ts";
 
-export async function optimizeImages(
+export function optimizeImages(
   options: ImageOptimizationOptions = {},
 ): Promise<Map<string, OptimizedImageMetadata>> {
   const optimizer = new ImageOptimizer(options);
-  return await optimizer.optimize();
+  return optimizer.optimize();
 }

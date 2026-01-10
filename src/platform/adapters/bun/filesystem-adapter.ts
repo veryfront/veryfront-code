@@ -17,7 +17,7 @@ import { serverLogger } from "@veryfront/utils";
 export class BunFileSystemAdapter implements FileSystemAdapter {
   async readFile(path: string): Promise<string> {
     const file = Bun.file(path);
-    return await file.text();
+    return file.text();
   }
 
   async readFileBytes(path: string): Promise<Uint8Array> {
@@ -33,7 +33,7 @@ export class BunFileSystemAdapter implements FileSystemAdapter {
 
   async exists(path: string): Promise<boolean> {
     const file = Bun.file(path);
-    return await file.exists();
+    return file.exists();
   }
 
   async *readDir(path: string): AsyncIterable<DirEntry> {
@@ -83,7 +83,7 @@ export class BunFileSystemAdapter implements FileSystemAdapter {
     const { mkdtemp } = await import("node:fs/promises");
     const { join } = await import("node:path");
     const { tmpdir } = await import("node:os");
-    return await mkdtemp(join(tmpdir(), prefix));
+    return mkdtemp(join(tmpdir(), prefix));
   }
 
   watch(paths: string | string[], options?: WatchOptions): FileWatcher {
