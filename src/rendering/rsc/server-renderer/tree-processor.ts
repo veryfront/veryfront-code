@@ -35,14 +35,9 @@ export async function renderTree(
   clientManifest: Map<string, ClientComponentMeta>,
   clientRefs: Map<string, string>,
 ): Promise<RSCNode> {
-  // Handle null/undefined
-  if (!Component) {
-    return { type: "html", html: "" };
-  }
-
-  // Handle strings and numbers
-  if (typeof Component === "string" || typeof Component === "number") {
-    return { type: "html", html: String(Component) };
+  // Handle null/undefined/strings/numbers as simple HTML nodes
+  if (!Component || typeof Component === "string" || typeof Component === "number") {
+    return { type: "html", html: Component ? String(Component) : "" };
   }
 
   // Check if this is a client component (only for function components)

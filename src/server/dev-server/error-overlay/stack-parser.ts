@@ -36,11 +36,7 @@ export function parseStackTrace(stack: string): ParsedStackFrame[] {
  * Formats stack trace for display
  */
 export function formatStackTrace(stack: string): string {
-  if (!stack) {
-    return "";
-  }
-
-  return stack;
+  return stack || "";
 }
 
 /**
