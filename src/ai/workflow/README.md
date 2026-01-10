@@ -276,6 +276,78 @@ const worker = new WorkflowWorker({
 worker.start();
 ```
 
+### Job Executors (Pluggable Runtimes)
+
+The `WorkflowJobManager` uses a pluggable `JobExecutor` interface, allowing workflows to run on different runtimes:
+
+```typescript
+import {
+  WorkflowJobManager,
+  K8sJobExecutor,
+  ProcessJobExecutor,
+  RedisBackend,
+} from "veryfront/ai/workflow";
+
+const backend = new RedisBackend({ url: process.env.REDIS_URL });
+
+// Production: Kubernetes Jobs
+const k8sExecutor = new K8sJobExecutor({
+  image: "my-app:latest",
+  namespace: "workflows",
+  resources: {
+    requests: { cpu: "100m", memory: "256Mi" },
+    limits: { cpu: "1", memory: "1Gi" },
+  },
+}, k8sClient);
+
+// Local development: Child processes
+const processExecutor = new ProcessJobExecutor({
+  entrypointPath: "./job-entrypoint.ts",
+  env: { REDIS_URL: process.env.REDIS_URL },
+});
+
+// Same manager interface for both
+const manager = new WorkflowJobManager({
+  backend,
+  executor: process.env.NODE_ENV === "production" ? k8sExecutor : processExecutor,
+  maxConcurrentJobs: 10,
+  jobTimeout: 30 * 60 * 1000, // 30 minutes
+});
+
+await manager.start();
+```
+
+**Available Executors:**
+
+| Executor | Use Case | Isolation |
+|----------|----------|-----------|
+| `K8sJobExecutor` | Production multi-tenant | Full container isolation |
+| `ProcessJobExecutor` | Local development | Process-level isolation |
+
+**Creating a Custom Executor:**
+
+```typescript
+import type { JobExecutor, JobConfig, JobInfo } from "veryfront/ai/workflow";
+
+class DockerJobExecutor implements JobExecutor {
+  async createJob(config: JobConfig): Promise<string> {
+    // Spawn a Docker container
+  }
+
+  async getJobStatus(jobId: string): Promise<JobInfo | null> {
+    // Check container status
+  }
+
+  async listJobs(managerId: string): Promise<JobInfo[]> {
+    // List containers with manager label
+  }
+
+  async deleteJob(jobId: string): Promise<void> {
+    // Remove container
+  }
+}
+```
+
 ## Multi-Tenant Support
 
 Tenant context is automatically captured and restored:
@@ -306,13 +378,14 @@ This works across:
 
 ## Deployment Modes Summary
 
-| Mode | Use Case | Code Trust | Isolation | Worker |
-|------|----------|------------|-----------|--------|
-| **Dev** | Local development | Your code | None needed | In-process |
-| **Self-hosted** | Single-tenant prod | Your code | Shared process OK | In-process |
-| **Cloud** | Multi-tenant SaaS | User code | Container per workflow | K8s Jobs |
+| Mode | Use Case | Code Trust | Isolation | Executor |
+|------|----------|------------|-----------|----------|
+| **Dev (simple)** | Local development | Your code | None needed | In-process (`WorkflowWorker`) |
+| **Dev (jobs)** | Local with job isolation | Your code | Process per workflow | `ProcessJobExecutor` |
+| **Self-hosted** | Single-tenant prod | Your code | Shared process OK | In-process (`WorkflowWorker`) |
+| **Cloud** | Multi-tenant SaaS | User code | Container per workflow | `K8sJobExecutor` |
 
-**Key decision:** If workflows execute untrusted user-defined code, use K8s Job isolation.
+**Key decision:** If workflows execute untrusted user-defined code, use `K8sJobExecutor` for container isolation. For local development that mirrors production behavior, use `ProcessJobExecutor`.
 
 ## Architecture Deep Dive
 
