@@ -46,6 +46,6 @@ services:
     environment:
       PORT: 20001
       PROXY_MODE: 1
-      VERYFRONT_API_BASE_URL: https://api.veryfront.com/api
+      VERYFRONT_API_BASE_URL: https://api.veryfront.com
       PRODUCTION_MODE: 0
       LOG_LEVEL: debug

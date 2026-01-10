@@ -100,7 +100,7 @@ export default {
   fs: {
     type: "veryfront-api",
     veryfront: {
-      baseUrl: "http://api.lvh.me:4000/api",
+      baseUrl: "http://api.lvh.me:4000",
       proxyMode: true,      // Use proxy headers
       cache: { enabled: true, ttl: 60000 },
     }
