@@ -327,19 +327,12 @@ export class StepExecutor {
     tool: string | Tool,
     input: unknown,
   ): Promise<unknown> {
-    // Resolve tool from registry if string
     const resolvedTool = typeof tool === "string" ? this.getTool(tool) : tool;
 
-    // Execute tool
-    const result = await resolvedTool.execute(
-      input as Record<string, unknown>,
-      {
-        agentId: "workflow",
-        blobStorage: this.config.blobStorage,
-      },
-    );
-
-    return result;
+    return resolvedTool.execute(input as Record<string, unknown>, {
+      agentId: "workflow",
+      blobStorage: this.config.blobStorage,
+    });
   }
 
   /**

@@ -487,13 +487,6 @@ export class LayoutCollector {
   ): Promise<LayoutItem[]> {
     const rootDir = useAppRouter ? join(this.projectDir, "app") : join(this.projectDir, "pages");
 
-    const nestedLayouts = await discoverNestedLayouts(
-      pageFilePath,
-      rootDir,
-      this.projectDir,
-      this.adapter,
-    );
-
-    return nestedLayouts;
+    return discoverNestedLayouts(pageFilePath, rootDir, this.projectDir, this.adapter);
   }
 }

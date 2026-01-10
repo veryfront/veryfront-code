@@ -76,9 +76,7 @@ async function ensureCacheDir(): Promise<void> {
  */
 async function readFromCache(url: string): Promise<string | null> {
   try {
-    const cachePath = getCachePath(url);
-    const content = await readFile(cachePath, "utf-8");
-    return content;
+    return await readFile(getCachePath(url), "utf-8");
   } catch {
     return null;
   }

@@ -35,9 +35,7 @@ export async function loadComponentsUnified(
     const entryCode = generateEntryPoint(transformedComponents);
     await adapter.fs.writeFile(join(tmpDir, "entry.js"), entryCode);
 
-    const components = await importUnifiedComponents(tmpDir, transformedComponents);
-
-    return components;
+    return importUnifiedComponents(tmpDir, transformedComponents);
   } finally {
     await cleanupTempDirectory(tmpDir, adapter);
   }
