@@ -139,6 +139,7 @@ jobs:
           context: .
           file: Dockerfile.base
           push: true
+          provenance: false
           tags: ${{ env.REGISTRY }}/veryfront/veryfront-renderer-base:${{ steps.tag.outputs.base }}
 
       - name: Build and push proxy
@@ -147,6 +148,7 @@ jobs:
           context: .
           file: Dockerfile.proxy
           push: true
+          provenance: false
           tags: |
             ${{ env.REGISTRY }}/veryfront/veryfront-proxy:${{ github.sha }}
             ${{ env.REGISTRY }}/veryfront/veryfront-proxy:latest
@@ -157,6 +159,7 @@ jobs:
           context: .
           file: Dockerfile.renderer
           push: true
+          provenance: false
           tags: |
             ${{ env.REGISTRY }}/veryfront/veryfront-renderer:${{ github.sha }}
             ${{ env.REGISTRY }}/veryfront/veryfront-renderer:latest
