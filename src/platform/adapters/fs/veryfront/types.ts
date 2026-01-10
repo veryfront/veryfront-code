@@ -47,6 +47,8 @@ export interface FSAdapterConfig {
     };
   };
   github?: GitHubConfig;
+  /** Callbacks for cache invalidation (injected from server layer) */
+  invalidationCallbacks?: InvalidationCallbacks;
 }
 
 export interface VeryfrontConfig {
@@ -84,6 +86,26 @@ export interface CacheStats {
     misses: number;
     hitRate: number;
   };
+}
+
+/**
+ * Callbacks for cache invalidation operations.
+ * These are injected to decouple the adapter from rendering/server internals.
+ * All callbacks are optional - no-ops are used when not provided.
+ */
+export interface InvalidationCallbacks {
+  /** Clear SSR module cache (full invalidation) */
+  clearSSRModuleCache?: () => void;
+  /** Clear router detection cache */
+  clearRouterDetectionCache?: () => void;
+  /** Clear module path resolution cache */
+  clearModulePathCache?: () => void;
+  /** Invalidate specific module paths (selective invalidation) */
+  invalidateModulePaths?: (changedPaths: string[]) => void;
+  /** Clear snippet rendering cache */
+  clearSnippetCache?: () => void;
+  /** Trigger browser reload notification */
+  triggerReload?: (changedPaths?: string[]) => void;
 }
 
 export function createVeryfrontConfig(config: FSAdapterConfig): VeryfrontConfig {

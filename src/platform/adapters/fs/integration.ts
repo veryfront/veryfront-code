@@ -1,13 +1,20 @@
 import type { RuntimeAdapter } from "../base.ts";
-import type { VeryfrontConfig } from "@veryfront/config";
 import type { FSAdapter, FSAdapterConfig } from "./veryfront/types.ts";
 import { createFSAdapter } from "./factory.ts";
 import { wrapFSAdapter } from "./wrapper.ts";
 import { logger } from "@veryfront/utils";
 
+/**
+ * Minimal config interface for FS integration.
+ * Defined locally to keep adapters module isolated from core/config.
+ */
+interface FSIntegrationConfig {
+  fs?: FSAdapterConfig;
+}
+
 export async function enhanceAdapterWithFS(
   adapter: RuntimeAdapter,
-  config: VeryfrontConfig,
+  config: FSIntegrationConfig,
   projectDir?: string,
 ): Promise<RuntimeAdapter> {
   if (!config.fs || config.fs.type === "local" || !config.fs.type) {
@@ -59,7 +66,7 @@ export async function enhanceAdapterWithFS(
 }
 
 export function createFSAdapterFromConfig(
-  config: VeryfrontConfig,
+  config: FSIntegrationConfig,
 ): Promise<FSAdapter | null> {
   if (!config.fs || config.fs.type === "local" || !config.fs.type) {
     return Promise.resolve(null);
@@ -68,7 +75,7 @@ export function createFSAdapterFromConfig(
   return createFSAdapter(config.fs as FSAdapterConfig);
 }
 
-export function isFSAdapterConfigured(config: VeryfrontConfig): boolean {
+export function isFSAdapterConfigured(config: FSIntegrationConfig): boolean {
   return !!(
     config.fs &&
     config.fs.type &&
@@ -76,6 +83,6 @@ export function isFSAdapterConfigured(config: VeryfrontConfig): boolean {
   );
 }
 
-export function getFSAdapterType(config: VeryfrontConfig): string {
+export function getFSAdapterType(config: FSIntegrationConfig): string {
   return config.fs?.type || "local";
 }

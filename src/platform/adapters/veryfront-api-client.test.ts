@@ -142,7 +142,7 @@ describe("VeryfrontAPIClient", () => {
             new Response(
               JSON.stringify({
                 data: [{
-                  id: "proj-1",
+                  id: "00000000-0000-0000-0000-000000000001",
                   name: "Test",
                   slug: "test-project",
                   createdAt: "2024-01-01",
@@ -164,14 +164,14 @@ describe("VeryfrontAPIClient", () => {
                     {
                       path: "file1.ts",
                       size: 100,
-                      type: "text/typescript",
+                      type: "file",
                       createdAt: "2024-01-01",
                       updatedAt: "2024-01-01",
                     },
                     {
                       path: "file2.ts",
                       size: 200,
-                      type: "text/typescript",
+                      type: "file",
                       createdAt: "2024-01-01",
                       updatedAt: "2024-01-01",
                     },
@@ -189,7 +189,7 @@ describe("VeryfrontAPIClient", () => {
                     {
                       path: "file3.ts",
                       size: 300,
-                      type: "text/typescript",
+                      type: "file",
                       createdAt: "2024-01-01",
                       updatedAt: "2024-01-01",
                     },
@@ -205,7 +205,7 @@ describe("VeryfrontAPIClient", () => {
         return Promise.resolve(
           new Response(
             JSON.stringify({
-              id: "proj-1",
+              id: "00000000-0000-0000-0000-000000000001",
               name: "Test",
               slug: "test-project",
               createdAt: "2024-01-01",
@@ -240,7 +240,7 @@ describe("VeryfrontAPIClient", () => {
             new Response(
               JSON.stringify({
                 data: [{
-                  id: "proj-1",
+                  id: "00000000-0000-0000-0000-000000000001",
                   name: "Test",
                   slug: "test-project",
                   createdAt: "2024-01-01",
@@ -278,7 +278,7 @@ describe("VeryfrontAPIClient", () => {
         return Promise.resolve(
           new Response(
             JSON.stringify({
-              id: "proj-1",
+              id: "00000000-0000-0000-0000-000000000001",
               name: "Test",
               slug: "test-project",
               createdAt: "2024-01-01",
