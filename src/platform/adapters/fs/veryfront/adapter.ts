@@ -513,14 +513,44 @@ export class VeryfrontFSAdapter implements FSAdapter {
   }
 
   /**
-   * Get the file path for a given entity ID (UUID).
-   * Async version for interface compatibility - delegates to sync cache lookup.
+   * Get the file path and body for a given entity ID (UUID).
+   * First checks cache, then falls back to API call for components.
+   * Returns the import path (e.g., "components/layout.tsx") and body content.
    */
   async getFilePathByEntityIdAsync(
     entityId: string,
-  ): Promise<{ path: string } | undefined> {
-    const path = this.getFilePathByEntityId(entityId);
-    return path ? { path } : undefined;
+  ): Promise<{ path: string; body?: string } | undefined> {
+    // First try sync cache lookup
+    const cachedPath = this.getFilePathByEntityId(entityId);
+    if (cachedPath) {
+      return { path: cachedPath };
+    }
+
+    // If not in cache, try fetching file by entity ID from API
+    // This is needed for layout UUIDs that may not be in the files list
+    logger.info("[VeryfrontFSAdapter] Fetching file by entity ID from API", { entityId });
+    try {
+      const file = await this.client.getFileById(entityId);
+      if (file) {
+        logger.info("[VeryfrontFSAdapter] File resolved from API", {
+          entityId,
+          path: file.path,
+          contentLength: file.content.length,
+        });
+
+        return {
+          path: file.path,
+          body: file.content,
+        };
+      }
+    } catch (error) {
+      logger.warn("[VeryfrontFSAdapter] Failed to fetch file by entity ID", {
+        entityId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+
+    return undefined;
   }
 
   /**
