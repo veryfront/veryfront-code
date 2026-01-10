@@ -179,15 +179,14 @@ hydrate('${slug}', {
   }
 
   function updateCSS(path) {
-    const links = document.querySelectorAll('link[rel="stylesheet"]');
-    links.forEach(link => {
+    for (const link of document.querySelectorAll('link[rel="stylesheet"]')) {
       const href = link.getAttribute('href');
       if (href && href.includes(path)) {
         const newHref = href.split('?')[0] + '?t=' + Date.now();
         link.setAttribute('href', newHref);
         console.log('[HMR Runtime] Updated CSS:', path);
       }
-    });
+    }
   }
 })();
     `.trim();
@@ -404,7 +403,7 @@ document.head.appendChild(errorScript);
 
   function updateCSS(path) {
     console.log('[Preview HMR] Updating CSS:', path);
-    document.querySelectorAll('link[rel="stylesheet"]').forEach((link) => {
+    for (const link of document.querySelectorAll('link[rel="stylesheet"]')) {
       try {
         const url = new URL(link.href);
         if (url.pathname === path || url.pathname.includes(path)) {
@@ -416,7 +415,7 @@ document.head.appendChild(errorScript);
       } catch (error) {
         console.error('[Preview HMR] Failed to update CSS link:', error);
       }
-    });
+    }
   }
 
   function updateJS(path) {

@@ -105,13 +105,13 @@ export function useAgent(options: UseAgentOptions): UseAgentResult {
 
         // Call callbacks for tool calls
         if (data.toolCalls) {
-          data.toolCalls.forEach((tc: ToolCall) => {
+          for (const tc of data.toolCalls as ToolCall[]) {
             options.onToolCall?.(tc);
 
             if (tc.result) {
               options.onToolResult?.(tc, tc.result);
             }
-          });
+          }
         }
       } catch (err) {
         if (err instanceof Error && err.name === "AbortError") {

@@ -64,29 +64,30 @@ export class LinkObserver {
 
   private observeLinks(): void {
     const links = document.querySelectorAll('a[href^="/"], a[href^="./"]');
-    links.forEach((link) => {
+    for (const link of links) {
       if (this.isValidLink(link as HTMLAnchorElement)) {
         this.intersectionObserver?.observe(link);
       }
-    });
+    }
   }
 
   private setupMutationObserver(): void {
     this.mutationObserver = new MutationObserver((mutations) => {
       for (const mutation of mutations) {
-        if (mutation.type === "childList") {
-          // Handle added nodes
-          mutation.addedNodes.forEach((node) => {
-            if (node.nodeType === Node.ELEMENT_NODE) {
-              this.observeElement(node as Element);
-            }
-          });
+        if (mutation.type !== "childList") continue;
 
-          mutation.removedNodes.forEach((node) => {
-            if (node.nodeType === Node.ELEMENT_NODE) {
-              this.clearElementTimeouts(node as Element);
-            }
-          });
+        // Handle added nodes
+        for (const node of mutation.addedNodes) {
+          if (node.nodeType === Node.ELEMENT_NODE) {
+            this.observeElement(node as Element);
+          }
+        }
+
+        // Handle removed nodes
+        for (const node of mutation.removedNodes) {
+          if (node.nodeType === Node.ELEMENT_NODE) {
+            this.clearElementTimeouts(node as Element);
+          }
         }
       }
     });
@@ -116,7 +117,9 @@ export class LinkObserver {
     }
 
     // Clear timeouts for any child links
-    element.querySelectorAll("a").forEach((link) => this.clearTimeoutForElement(link));
+    for (const link of element.querySelectorAll("a")) {
+      this.clearTimeoutForElement(link);
+    }
   }
 
   private observeElement(element: Element): void {
@@ -124,11 +127,11 @@ export class LinkObserver {
       this.intersectionObserver?.observe(element);
     }
 
-    element.querySelectorAll('a[href^="/"], a[href^="./"]').forEach((link) => {
+    for (const link of element.querySelectorAll('a[href^="/"], a[href^="./"]')) {
       if (isAnchorElement(link) && this.isValidLink(link)) {
         this.intersectionObserver?.observe(link);
       }
-    });
+    }
   }
 
   private isValidLink(link: HTMLAnchorElement): boolean {

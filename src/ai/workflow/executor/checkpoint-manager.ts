@@ -153,7 +153,9 @@ export class CheckpointManager {
 
     // Build node lookup
     const nodeIndex = new Map<string, number>();
-    nodes.forEach((node, index) => nodeIndex.set(node.id, index));
+    for (const [index, node] of nodes.entries()) {
+      nodeIndex.set(node.id, index);
+    }
 
     // Find the checkpoint node's position
     const checkpointIndex = nodeIndex.get(completedNodeId);
