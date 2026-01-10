@@ -216,21 +216,7 @@ export class ProviderManager {
       return result;
     }
 
-    // Priority 2: Check project data provider (legacy API)
-    const apiProviderItem = await this.collectAPIProviderWithData(vfAdapter, projectData);
-    if (apiProviderItem) {
-      providerItems.push(apiProviderItem);
-      const result = { providerBundles, providerItems, providerInfos };
-      this.cache.set(cacheKey, { result, timestamp: Date.now() });
-      logger.info("[ProviderManager] Fetched provider (API)", {
-        ...logCtx,
-        providerPath: apiProviderItem.componentPath,
-        durationMs: Date.now() - startTime,
-      });
-      return result;
-    }
-
-    // Priority 3: Default discovery from providers/ and components/ directories
+    // Priority 2: Default discovery from providers/ and components/ directories
     const discoveredInfos = await this.discoverProviders();
     const compiled = await this.compileProviders(discoveredInfos);
 
@@ -260,10 +246,6 @@ export class ProviderManager {
     return /\.(tsx|jsx|ts|js|mdx)$/.test(provider);
   }
 
-  private isUUID(value: string): boolean {
-    return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
-  }
-
   private async collectConfigProvider(): Promise<ProviderItem | null> {
     // Check both config.provider and config.app (app is an alias for provider/wrapper component)
     const configProvider = this.config?.provider || this.config?.app;
@@ -288,107 +270,6 @@ export class ProviderManager {
 
     return {
       kind: "tsx",
-      componentPath: providerPath,
-      path: providerPath,
-    };
-  }
-
-  private async collectAPIProviderWithData(
-    vfAdapter: FSAdapterLike | null,
-    projectData: ProjectData | undefined,
-  ): Promise<ProviderItem | null> {
-    if (!vfAdapter) {
-      logger.debug("[ProviderManager] No VeryfrontFSAdapter, skipping API provider");
-      return null;
-    }
-
-    logger.debug("[ProviderManager] Checking API provider", { projectData });
-
-    let providerValue = projectData?.provider;
-
-    // If provider is a UUID, try to resolve it to a file path via entity lookup
-    if (providerValue && this.isUUID(providerValue)) {
-      // getFilePathByEntityId may be async (MultiProjectFSAdapter) or sync (VeryfrontFSAdapter)
-      const resolvedPathResult = vfAdapter.getFilePathByEntityId?.(providerValue);
-      const resolvedPath = resolvedPathResult instanceof Promise
-        ? await resolvedPathResult
-        : resolvedPathResult;
-      if (resolvedPath) {
-        logger.info("[ProviderManager] Resolved provider UUID", {
-          uuid: providerValue,
-          path: resolvedPath,
-        });
-        providerValue = resolvedPath.replace(/^components\//, "");
-      } else {
-        logger.warn("[ProviderManager] Provider UUID specified but could not resolve to file", {
-          uuid: providerValue,
-        });
-      }
-    }
-
-    if (!providerValue || !this.isValidProviderPath(providerValue)) {
-      logger.debug("[ProviderManager] No valid API provider", {
-        provider: projectData?.provider,
-        resolved: providerValue,
-      });
-      return null;
-    }
-
-    // First try components/ directory (legacy convention)
-    let providerPath = join(this.projectDir, "components", providerValue);
-    let exists = await vfAdapter.exists(providerPath);
-
-    logger.debug("[ProviderManager] Checking provider path (components/)", {
-      providerPath,
-      exists,
-    });
-
-    // If not in components/, try project root (app.mdx convention)
-    if (!exists) {
-      providerPath = join(this.projectDir, providerValue);
-      exists = await vfAdapter.exists(providerPath);
-      logger.debug("[ProviderManager] Checking provider path (root)", {
-        providerPath,
-        exists,
-      });
-    }
-
-    if (!exists) {
-      return null;
-    }
-
-    // Determine kind based on file extension
-    const kind = providerPath.endsWith(".mdx") ? "mdx" : "tsx";
-
-    // For MDX providers, we need to compile them
-    if (kind === "mdx") {
-      try {
-        const content = await this.adapter.fs.readFile(providerPath);
-        const bundle = await this.compileMDX(
-          content as string,
-          { isProvider: true },
-          providerPath,
-        );
-        logger.debug("[ProviderManager] Compiled MDX provider", {
-          path: providerPath,
-        });
-        return {
-          kind,
-          componentPath: providerPath,
-          path: providerPath,
-          bundle,
-        };
-      } catch (error) {
-        logger.error("[ProviderManager] Failed to compile API MDX provider", {
-          path: providerPath,
-          error: error instanceof Error ? error.message : String(error),
-        });
-        return null;
-      }
-    }
-
-    return {
-      kind,
       componentPath: providerPath,
       path: providerPath,
     };

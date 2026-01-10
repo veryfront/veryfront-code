@@ -274,6 +274,47 @@ export class VeryfrontAPIOperations {
     }
   }
 
+  /**
+   * Get a file by its entity ID (UUID).
+   * Used to resolve layout UUIDs to file paths and content.
+   * Uses the files endpoint: /projects/{id}/files/{entityId}
+   */
+  async getFileById(
+    entityId: string,
+    projectId?: string,
+    branch?: string | null,
+  ): Promise<{ path: string; content: string } | null> {
+    const id = projectId || this.getProjectId();
+
+    // Build URL with optional branch query param
+    let url = `/projects/${id}/files/${entityId}`;
+    if (branch) {
+      url += `?branch=${encodeURIComponent(branch)}`;
+    }
+
+    logger.debug("[VeryfrontAPIClient] Getting file by ID", { url, entityId, projectId: id });
+
+    try {
+      const raw = await this.request(url);
+      const response = GetFileContentResponseSchema.parse(raw);
+
+      logger.debug("[VeryfrontAPIClient] File found by ID", {
+        entityId,
+        path: response.path,
+        contentLength: response.content.length,
+      });
+
+      return { path: response.path, content: response.content };
+    } catch (error) {
+      // 404 means file not found
+      if (error instanceof Error && (error.message.includes("404") || error.message.includes("NOT_FOUND"))) {
+        logger.debug("[VeryfrontAPIClient] File not found by ID", { entityId });
+        return null;
+      }
+      throw error;
+    }
+  }
+
   private async request(
     endpoint: string,
     options: { returnText?: boolean } = {},

@@ -16,14 +16,7 @@ function getLayoutKind(path: string): "mdx" | "tsx" {
 }
 
 /**
- * Check if a string is a UUID
- */
-function isUUID(value: string): boolean {
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
-}
-
-/**
- * Check if a layout value is a valid file path (not a UUID)
+ * Check if a layout value is a valid file path
  */
 function isValidLayoutPath(layout: string): boolean {
   return /\.(tsx|jsx|ts|js|mdx)$/.test(layout);
@@ -79,8 +72,9 @@ export class LayoutCollector {
       // Page has explicit frontmatter layout - use it INSTEAD of project-level layouts
       // This prevents double-wrapping (e.g., page's DocsLayoutV2 + project's DefaultLayout)
       // Include the frontmatter layout as a nestedLayout for client-side hydration
-      // Use layoutPath (full file path with extension) to determine kind
-      const kind = getLayoutKind(layoutPath);
+      // Use layoutName (the actual file path with extension) to determine kind,
+      // not layoutPath which may be a UUID when using the API
+      const kind = getLayoutKind(layoutName || layoutPath);
       nestedLayouts = [{
         kind,
         bundle: kind === "mdx" ? layoutBundle : undefined,
@@ -106,7 +100,8 @@ export class LayoutCollector {
       // If we have a layoutBundle from config.defaultLayout, add it to nestedLayouts
       // so the client can apply the same layout during hydration
       if (layoutBundle && layoutPath) {
-        const kind = getLayoutKind(layoutPath);
+        // Use layoutName (actual file path with extension) for kind detection
+        const kind = getLayoutKind(layoutName || layoutPath);
 
         // Prepend the defaultLayout to nestedLayouts (it wraps outermost)
         nestedLayouts = [{
@@ -219,8 +214,9 @@ export class LayoutCollector {
   private async collectAPILayoutConfiguration(wrappedAdapter: unknown): Promise<LayoutItem[]> {
     const nestedLayouts: LayoutItem[] = [];
 
-    // Priority 1: Check config.layout or config.defaultLayout from veryfront.config.ts
-    const configLayout = this.config?.layout || this.config?.defaultLayout;
+    // Priority 1: Check config.layout from veryfront.config.ts
+    // Note: config.defaultLayout is handled separately by collectNamedLayoutWithPath()
+    const configLayout = this.config?.layout;
     if (configLayout && isValidLayoutPath(configLayout)) {
       // Config layout can be absolute or relative to project
       const layoutPath = configLayout.startsWith("/") || configLayout.startsWith(this.projectDir)
@@ -264,199 +260,7 @@ export class LayoutCollector {
       }
     }
 
-    // Priority 2: Check project data (legacy, from API project settings)
-    // Note: getProjectData() may be sync (VeryfrontFSAdapter) or async (MultiProjectFSAdapter)
-    const getProjectDataFn = (wrappedAdapter as {
-      getProjectData?: () =>
-        | { provider?: string; layout?: string }
-        | Promise<{ provider?: string; layout?: string } | undefined>
-        | undefined;
-    }).getProjectData;
-
-    let projectData: { provider?: string; layout?: string } | undefined;
-    if (getProjectDataFn) {
-      const result = getProjectDataFn.call(wrappedAdapter);
-      // Handle both sync and async return values
-      projectData = result instanceof Promise ? await result : result;
-    }
-
-    logger.info("[LayoutCollector] Veryfront API project data", {
-      provider: projectData?.provider,
-      layout: projectData?.layout,
-    });
-
-    let layoutValue = projectData?.layout;
-
-    // If layout is a UUID, try to resolve it to a file path via entity lookup
-    // Also get the body content if available from components API
-    let componentBody: string | undefined;
-
-    if (layoutValue && isUUID(layoutValue)) {
-      const vfAdapter = wrappedAdapter as {
-        // VeryfrontFSAdapter: sync method returns string from cache
-        // MultiProjectFSAdapter: async method returns Promise<string>
-        getFilePathByEntityId?: (
-          entityId: string,
-        ) => string | Promise<string | undefined> | undefined;
-        // Only on VeryfrontFSAdapter - async method with body content
-        getFilePathByEntityIdAsync?: (
-          entityId: string,
-        ) => Promise<{ path: string; body?: string } | undefined>;
-      };
-
-      logger.info("[LayoutCollector] Attempting to resolve UUID layout", {
-        uuid: layoutValue,
-        hasSyncMethod: typeof vfAdapter.getFilePathByEntityId === "function",
-        hasAsyncMethod: typeof vfAdapter.getFilePathByEntityIdAsync === "function",
-      });
-
-      // Try to get file path - may be sync or async depending on adapter type
-      let resolvedPath: string | undefined;
-      if (vfAdapter.getFilePathByEntityId) {
-        const pathResult = vfAdapter.getFilePathByEntityId(layoutValue);
-        // Handle both sync (VeryfrontFSAdapter) and async (MultiProjectFSAdapter) results
-        resolvedPath = pathResult instanceof Promise ? await pathResult : pathResult;
-      }
-      logger.info("[LayoutCollector] File path lookup result", {
-        uuid: layoutValue,
-        resolvedPath: resolvedPath ?? "(not found)",
-      });
-
-      // If not found yet, try the async method with body content (only on VeryfrontFSAdapter)
-      if (!resolvedPath && vfAdapter.getFilePathByEntityIdAsync) {
-        logger.info("[LayoutCollector] Trying async API lookup with body", { uuid: layoutValue });
-        const result = await vfAdapter.getFilePathByEntityIdAsync(layoutValue);
-        if (result) {
-          resolvedPath = result.path;
-          componentBody = result.body;
-        }
-        logger.info("[LayoutCollector] Async API lookup result", {
-          uuid: layoutValue,
-          resolvedPath: resolvedPath ?? "(not found)",
-          hasBody: !!componentBody,
-        });
-      }
-
-      if (resolvedPath) {
-        logger.info("[LayoutCollector] Resolved UUID layout to path", {
-          uuid: layoutValue,
-          path: resolvedPath,
-          hasBody: !!componentBody,
-        });
-        layoutValue = resolvedPath;
-      } else {
-        logger.info("[LayoutCollector] Could not resolve UUID layout", {
-          uuid: layoutValue,
-        });
-      }
-    }
-
-    logger.info("[LayoutCollector] Validating layout path", {
-      layoutValue,
-      isValid: layoutValue ? isValidLayoutPath(layoutValue) : false,
-      hasComponentBody: !!componentBody,
-    });
-
-    if (layoutValue && isValidLayoutPath(layoutValue)) {
-      // Use absolute path for component path
-      const layoutPath = join(this.projectDir, layoutValue);
-
-      // Determine layout kind - check content for frontmatter even if extension is .tsx
-      // Component body from API may be MDX even with .tsx extension
-      // BUT: If the body is ONLY frontmatter metadata (no content after ---),
-      // treat it as TSX and load the actual file instead
-      const hasFrontmatter = componentBody?.trimStart().startsWith("---");
-      let hasContentAfterFrontmatter = false;
-      if (hasFrontmatter && componentBody) {
-        // Check if there's actual content after the frontmatter closing ---
-        const trimmed = componentBody.trimStart();
-        const firstClose = trimmed.indexOf("---", 3); // Find closing ---
-        if (firstClose !== -1) {
-          const afterFrontmatter = trimmed.slice(firstClose + 3).trim();
-          hasContentAfterFrontmatter = afterFrontmatter.length > 0;
-        }
-      }
-      // Only treat as MDX if there's actual content after frontmatter
-      const kind = (hasFrontmatter && hasContentAfterFrontmatter)
-        ? "mdx"
-        : getLayoutKind(layoutValue);
-
-      logger.info("[LayoutCollector] Content analysis", {
-        hasFrontmatter,
-        hasContentAfterFrontmatter,
-        bodyLength: componentBody?.length,
-        bodyPreview: componentBody?.substring(0, 200),
-      });
-
-      logger.info("[LayoutCollector] Determined layout kind", {
-        layoutPath,
-        kind,
-        hasFrontmatter,
-        extension: layoutValue.split(".").pop(),
-      });
-
-      // If we have body content from components API, use it directly
-      // Otherwise check if file exists and read it
-      let content: string | undefined = componentBody;
-      let layoutAvailable = !!componentBody;
-
-      if (!content) {
-        // For Veryfront API adapter, use relative path for exists check
-        const layoutExists =
-          await (wrappedAdapter as { exists: (path: string) => Promise<boolean> })
-            .exists(layoutValue);
-
-        logger.info("[LayoutCollector] Checking API layout file", {
-          layoutPath,
-          layoutValue,
-          exists: layoutExists,
-        });
-
-        if (layoutExists) {
-          layoutAvailable = true;
-          if (kind === "mdx") {
-            content = await this.adapter.fs.readFile(layoutValue);
-          }
-        }
-      } else {
-        logger.info("[LayoutCollector] Using component body from API", {
-          layoutPath,
-          bodyLength: content.length,
-        });
-      }
-
-      if (layoutAvailable) {
-        if (kind === "mdx" && content) {
-          // For MDX layouts, compile the content
-          const bundle = await this.compileMDX(content, { isLayout: true }, layoutPath);
-          nestedLayouts.push({
-            kind: "mdx",
-            bundle,
-            path: layoutPath,
-          });
-        } else {
-          nestedLayouts.push({
-            kind: "tsx",
-            component: undefined,
-            componentPath: layoutPath,
-            path: layoutPath,
-          });
-        }
-
-        logger.info("[LayoutCollector] Added API layout to nestedLayouts", {
-          layoutPath,
-          kind,
-          fromComponentBody: !!componentBody,
-        });
-      }
-    } else if (projectData?.layout) {
-      logger.debug("[LayoutCollector] Skipping invalid layout value (not a file path)", {
-        layout: projectData.layout,
-        resolved: layoutValue,
-      });
-    }
-
-    // Also try to auto-discover layout.tsx in components folder
+    // Priority 2: Convention fallback - auto-discover layout.tsx in components folder
     // This provides a fallback when layout is not explicitly configured
     if (nestedLayouts.length === 0) {
       const defaultLayoutPath = join(this.projectDir, "components", "layout.tsx");

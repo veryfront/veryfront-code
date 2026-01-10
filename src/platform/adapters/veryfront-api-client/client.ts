@@ -244,4 +244,8 @@ export class VeryfrontAPIClient {
   async lookupProjectByDomain(domain: string) {
     return await this.operations.lookupProjectByDomain(domain);
   }
+
+  async getFileById(entityId: string, projectId?: string, branch?: string | null) {
+    return await this.operations.getFileById(entityId, projectId, this.resolveBranch(branch));
+  }
 }
