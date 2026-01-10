@@ -1,7 +1,7 @@
 import { assert, assertEquals, assertStringIncludes } from "std/assert/mod.ts";
 import { afterAll, describe, it } from "std/testing/bdd.ts";
 import "../../../_helpers/log-guard.ts";
-import { denoAdapter } from "@veryfront/platform/adapters/runtime/deno";
+import { denoAdapter } from "@veryfront/platform/adapters/runtime/deno/index.ts";
 
 import { createVeryfrontHandler } from "../../../../src/server/universal-handler/index.ts";
 import { type TestContext, withTestContext } from "../../../_helpers/context.ts";

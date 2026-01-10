@@ -13,7 +13,7 @@ import {
   resolveImport,
   transformImportsWithMap,
 } from "@veryfront/modules/import-map/index.ts";
-import { denoAdapter } from "@veryfront/platform/adapters/runtime/deno";
+import { denoAdapter } from "@veryfront/platform/adapters/runtime/deno/index.ts";
 import { type TestContext, withTestContext } from "../../_helpers/context.ts";
 
 describe(
