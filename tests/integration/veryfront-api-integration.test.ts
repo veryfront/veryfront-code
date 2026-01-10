@@ -65,7 +65,7 @@ describe("Veryfront API Integration", { sanitizeResources: false, sanitizeOps: f
 
   describe("FSAdapterWrapper", () => {
     it("should wrap FSAdapter methods correctly", async () => {
-      const { wrapFSAdapter } = await import("@veryfront/platform/adapters/fs-adapter-wrapper.ts");
+      const { wrapFSAdapter } = await import("@veryfront/platform/adapters/fs/wrapper.ts");
 
       // Create mock FSAdapter
       const mockFSAdapter = {
@@ -130,7 +130,7 @@ describe("Veryfront API Integration", { sanitizeResources: false, sanitizeOps: f
 
     it("should throw NotSupportedError for unsupported operations", async () => {
       const { wrapFSAdapter, NotSupportedError } = await import(
-        "@veryfront/platform/adapters/fs-adapter-wrapper.ts"
+        "@veryfront/platform/adapters/fs/wrapper.ts"
       );
 
       const mockFSAdapter = {
@@ -172,7 +172,7 @@ describe("Veryfront API Integration", { sanitizeResources: false, sanitizeOps: f
   describe("configuration integration", () => {
     it("should detect FSAdapter configuration", async () => {
       const { isFSAdapterConfigured, getFSAdapterType } = await import(
-        "@veryfront/platform/adapters/fs-integration.ts"
+        "@veryfront/platform/adapters/fs/integration.ts"
       );
 
       const configWithFS: Partial<VeryfrontConfig> = {
