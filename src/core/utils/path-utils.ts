@@ -61,11 +61,10 @@ export function toBase64Url(s: string): string {
   return b64.replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "");
 }
 
+const BASE64_PADDING: Record<number, string> = { 2: "==", 3: "=" };
+
 function getBase64Padding(length: number): string {
-  const remainder = length % 4;
-  if (remainder === 2) return "==";
-  if (remainder === 3) return "=";
-  return "";
+  return BASE64_PADDING[length % 4] ?? "";
 }
 
 export function fromBase64Url(encoded: string): string {
