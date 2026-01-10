@@ -220,21 +220,13 @@ export class RenderPipeline {
     );
 
     // Find all @/ imports and transform them recursively
-    const aliasImportPattern = /from\s+["'](@\/[^"']+)["']/g;
-    const aliasImports: Array<{ full: string; path: string }> = [];
-    let match;
-    while ((match = aliasImportPattern.exec(transformedCode)) !== null) {
-      aliasImports.push({ full: match[0], path: match[1]! });
-    }
+    const aliasImports = [...transformedCode.matchAll(/from\s+["'](@\/[^"']+)["']/g)]
+      .map((m) => ({ full: m[0], path: m[1]! }));
 
     // Find and transform esm.sh URLs - fetch them and cache locally
     // Dynamic import from file:// URLs doesn't support https:// imports
-    const esmImportPattern = /from\s+(["'])(https:\/\/esm\.sh\/[^"']+)\1/g;
-    const esmImports: Array<{ full: string; url: string }> = [];
-    let esmMatch;
-    while ((esmMatch = esmImportPattern.exec(transformedCode)) !== null) {
-      esmImports.push({ full: esmMatch[0], url: esmMatch[2]! });
-    }
+    const esmImports = [...transformedCode.matchAll(/from\s+(["'])(https:\/\/esm\.sh\/[^"']+)\1/g)]
+      .map((m) => ({ full: m[0], url: m[2]! }));
 
     // Fetch and cache all esm.sh dependencies in parallel
     if (esmImports.length > 0) {
@@ -288,99 +280,71 @@ export class RenderPipeline {
     return tempFilePath;
   }
 
-  // Find local lib files (framework utilities in veryfront-private/lib)
-  private async findLocalLibFile(
-    relativePath: string,
-    localAdapter: RuntimeAdapter,
+  /** Build candidate paths for a base path with extensions (direct and index variants) */
+  private buildCandidatePaths(baseDir: string, fileName: string, extensions: string[]): string[] {
+    return [
+      ...extensions.map((ext) => `${baseDir}/${fileName}${ext}`),
+      ...extensions.map((ext) => `${baseDir}/${fileName}/index${ext}`),
+    ];
+  }
+
+  /** Find the first existing path from candidates using the provided stat function */
+  private async findFirstExisting(
+    candidates: string[],
+    statFn: (path: string) => Promise<unknown>,
   ): Promise<string | null> {
-    const extensions = [".tsx", ".ts", ".jsx", ".js"];
-    const libDir = this.getLocalLibDir();
-    // relativePath is "lib/Router" or "lib/usePageContext" - strip "lib/" since we already have libDir
-    const fileName = relativePath.replace(/^lib\//, "");
-
-    // Build all candidate paths to check in parallel
-    const candidates: string[] = [];
-    for (const ext of extensions) {
-      candidates.push(`${libDir}/${fileName}${ext}`);
-    }
-    for (const ext of extensions) {
-      candidates.push(`${libDir}/${fileName}/index${ext}`);
-    }
-
-    // Check all paths in parallel
     const results = await Promise.all(
       candidates.map(async (fullPath) => {
         try {
-          await localAdapter.fs.stat(fullPath);
+          await statFn(fullPath);
           return fullPath;
         } catch {
           return null;
         }
       }),
     );
+    return results.find((r) => r !== null) ?? null;
+  }
 
-    // Return the first existing path (maintains priority order)
-    for (const result of results) {
-      if (result) {
-        logger.debug("[RenderPipeline] Found local lib file:", result);
-        return result;
-      }
+  // Find local lib files (framework utilities in veryfront-private/lib)
+  private async findLocalLibFile(
+    relativePath: string,
+    localAdapter: RuntimeAdapter,
+  ): Promise<string | null> {
+    const libDir = this.getLocalLibDir();
+    // relativePath is "lib/Router" or "lib/usePageContext" - strip "lib/" since we already have libDir
+    const fileName = relativePath.replace(/^lib\//, "");
+    const candidates = this.buildCandidatePaths(libDir, fileName, [".tsx", ".ts", ".jsx", ".js"]);
+
+    const result = await this.findFirstExisting(candidates, (p) => localAdapter.fs.stat(p));
+    if (result) {
+      logger.debug("[RenderPipeline] Found local lib file:", result);
+    } else {
+      logger.debug("[RenderPipeline] Local lib file not found:", relativePath);
     }
-
-    logger.debug("[RenderPipeline] Local lib file not found:", relativePath);
-    return null;
+    return result;
   }
 
   private async findSourceFile(basePath: string): Promise<string | null> {
     const extensions = [".tsx", ".ts", ".jsx", ".js", ".mdx"];
     const projectDir = this.config.projectDir;
 
-    // Build all candidate paths to check in parallel
-    // Priority order: direct with ext > direct index > without components prefix > without components index
-    const candidates: string[] = [];
+    // Build candidates: Priority order: direct with ext > direct index > without components prefix
+    const candidates = this.buildCandidatePaths(projectDir, basePath, extensions);
 
-    // Priority 1: With components/ prefix (for @/ aliased imports)
-    for (const ext of extensions) {
-      candidates.push(`${projectDir}/${basePath}${ext}`);
-    }
-    // Priority 2: Index file with components/ prefix
-    for (const ext of extensions) {
-      candidates.push(`${projectDir}/${basePath}/index${ext}`);
-    }
-
-    // Priority 3 & 4: Without components/ prefix
+    // Add variants without components/ prefix
     const withoutComponents = basePath.replace(/^components\//, "");
     if (withoutComponents !== basePath) {
-      for (const ext of extensions) {
-        candidates.push(`${projectDir}/${withoutComponents}${ext}`);
-      }
-      for (const ext of extensions) {
-        candidates.push(`${projectDir}/${withoutComponents}/index${ext}`);
-      }
+      candidates.push(...this.buildCandidatePaths(projectDir, withoutComponents, extensions));
     }
 
-    // Check all paths in parallel
-    const results = await Promise.all(
-      candidates.map(async (fullPath) => {
-        try {
-          await this.config.adapter.fs.stat(fullPath);
-          return fullPath;
-        } catch {
-          return null;
-        }
-      }),
-    );
-
-    // Return the first existing path (maintains priority order)
-    for (const result of results) {
-      if (result) {
-        logger.debug("[RenderPipeline] Found file:", result);
-        return result;
-      }
+    const result = await this.findFirstExisting(candidates, (p) => this.config.adapter.fs.stat(p));
+    if (result) {
+      logger.debug("[RenderPipeline] Found file:", result);
+    } else {
+      logger.debug("[RenderPipeline] File not found:", basePath);
     }
-
-    logger.debug("[RenderPipeline] File not found:", basePath);
-    return null;
+    return result;
   }
 
   async renderPage(slug: string, options?: RenderOptions): Promise<RenderResult> {
