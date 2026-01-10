@@ -11,12 +11,12 @@ export interface RequestOptions {
   returnText?: boolean;
 }
 
-export async function requestWithRetry<T>(
+export async function requestWithRetry(
   url: string,
   apiToken: string,
   retryConfig: RetryConfig,
   options: RequestOptions = {},
-): Promise<T> {
+): Promise<unknown> {
   let lastError: Error | null = null;
 
   const { maxRetries, initialDelay, maxDelay } = retryConfig;
@@ -40,7 +40,7 @@ export async function requestWithRetry<T>(
       }
 
       if (options.returnText) {
-        return (await response.text()) as T;
+        return await response.text();
       }
 
       return await response.json();

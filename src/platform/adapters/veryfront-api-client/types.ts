@@ -1,3 +1,24 @@
+/**
+ * Veryfront API Client Types
+ *
+ * Re-exports types from schemas.ts and defines config/error types.
+ */
+
+// Re-export all types from schemas
+export type {
+  GetComponentResponse,
+  GetFileContentResponse,
+  GetProjectResponse,
+  GetPublishedFileContentResponse,
+  ListFilesResponse,
+  ListProjectsResponse,
+  ListPublishedFilesResponse,
+  LookupDomainResponse,
+  Pagination,
+  Project,
+  ProjectFile,
+} from "./schemas.ts";
+
 export interface VeryfrontAPIConfig {
   apiBaseUrl: string;
 
@@ -18,40 +39,6 @@ export interface VeryfrontAPIConfig {
     initialDelay?: number;
     maxDelay?: number;
   };
-}
-
-export interface Project {
-  id: string;
-  name: string;
-  slug: string;
-  description?: string;
-  createdAt: string;
-  updatedAt: string;
-  provider?: string;
-  layout?: string;
-  config?: string;
-}
-
-export interface ProjectFile {
-  id?: string; // Entity UUID - available when fetched from veryfront-api
-  path: string;
-  size: number;
-  type: string;
-  mimeType?: string;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface ListFilesResponse {
-  data: ProjectFile[];
-  pagination?: {
-    cursor?: string;
-    hasMore: boolean;
-  };
-}
-
-export interface ListProjectsResponse {
-  data: Project[];
 }
 
 export class VeryfrontAPIError extends Error {

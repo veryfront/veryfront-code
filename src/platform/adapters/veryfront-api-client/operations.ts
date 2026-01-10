@@ -1,12 +1,20 @@
 import { logger } from "@veryfront/utils";
 import { requestWithRetry, type RetryConfig } from "./retry-handler.ts";
+import { VeryfrontAPIError } from "./types.ts";
 import {
+  GetComponentResponseSchema,
+  GetFileContentResponseSchema,
+  GetPublishedFileContentResponseSchema,
   type ListFilesResponse,
-  type ListProjectsResponse,
+  ListFilesResponseSchema,
+  ListProjectsResponseSchema,
+  ListPublishedFilesResponseSchema,
+  type LookupDomainResponse,
+  LookupDomainResponseSchema,
   type Project,
   type ProjectFile,
-  VeryfrontAPIError,
-} from "./types.ts";
+  ProjectSchema,
+} from "./schemas.ts";
 
 /**
  * Token provider function - can return static token or dynamic per-request token.
@@ -58,12 +66,14 @@ export class VeryfrontAPIOperations {
   }
 
   async listProjects(): Promise<Project[]> {
-    const response = await this.request<ListProjectsResponse>("/projects");
+    const raw = await this.request("/projects");
+    const response = ListProjectsResponseSchema.parse(raw);
     return response.data;
   }
 
   async getProject(projectId: string): Promise<Project> {
-    return await this.request<Project>(`/projects/${projectId}`);
+    const raw = await this.request(`/projects/${projectId}`);
+    return ProjectSchema.parse(raw);
   }
 
   async listFiles(
@@ -93,12 +103,8 @@ export class VeryfrontAPIOperations {
       branch,
     });
 
-    // veryfront-api returns pageInfo, we need to map it to pagination
-    const response = await this.request<{
-      data: ProjectFile[];
-      pageInfo?: { hasNextPage: boolean; nextCursor: string | null };
-      pagination?: { cursor?: string; hasMore: boolean };
-    }>(url);
+    const raw = await this.request(url);
+    const response = ListFilesResponseSchema.parse(raw);
 
     // Map pageInfo to pagination format if needed
     const pagination = response.pagination || (response.pageInfo
@@ -147,10 +153,8 @@ export class VeryfrontAPIOperations {
     const url = `/projects/${id}/files?${params}`;
     logger.debug("[VeryfrontAPIClient] Searching files", { url, pattern, projectId: id, branch });
 
-    const response = await this.request<{
-      data: ProjectFile[];
-      pageInfo?: { hasNextPage: boolean; nextCursor: string | null };
-    }>(url);
+    const raw = await this.request(url);
+    const response = ListFilesResponseSchema.parse(raw);
 
     logger.debug("[VeryfrontAPIClient] Files search complete", {
       pattern,
@@ -170,16 +174,13 @@ export class VeryfrontAPIOperations {
       url += `?branch=${encodeURIComponent(branch)}`;
     }
 
-    // veryfront-api returns { path, content, size } as JSON
-    // We need to extract the content field
-    const response = await this.request<{ path: string; content: string; size: number } | string>(
-      url,
-    );
+    const raw = await this.request(url);
 
     // Handle both JSON response and raw text response
-    if (typeof response === "string") {
-      return response;
+    if (typeof raw === "string") {
+      return raw;
     }
+    const response = GetFileContentResponseSchema.parse(raw);
     return response.content;
   }
 
@@ -212,10 +213,8 @@ export class VeryfrontAPIOperations {
 
     logger.debug("[VeryfrontAPIClient] Listing published files", { url, projectId: id, releaseId });
 
-    const response = await this.request<{
-      data: ProjectFile[];
-      releaseId: string;
-    }>(url);
+    const raw = await this.request(url);
+    const response = ListPublishedFilesResponseSchema.parse(raw);
 
     return response.data || [];
   }
@@ -239,13 +238,8 @@ export class VeryfrontAPIOperations {
 
     logger.debug("[VeryfrontAPIClient] Getting published file content", { url, path, releaseId });
 
-    const response = await this.request<{
-      path: string;
-      content: string;
-      size: number;
-      versionId: string;
-      releaseId: string;
-    }>(url);
+    const raw = await this.request(url);
+    const response = GetPublishedFileContentResponseSchema.parse(raw);
 
     return response.content;
   }
@@ -254,28 +248,15 @@ export class VeryfrontAPIOperations {
    * Look up project info by custom domain.
    * Used for JIT rendering of custom domain production sites.
    */
-  async lookupProjectByDomain(domain: string): Promise<
-    {
-      projectId: string;
-      projectSlug: string;
-      projectName: string;
-      environment: { id: string; name: string } | null;
-      releaseId: string | null;
-    } | null
-  > {
+  async lookupProjectByDomain(domain: string): Promise<LookupDomainResponse | null> {
     const encodedDomain = encodeURIComponent(domain);
     const url = `/lookup/domain/${encodedDomain}`;
 
     logger.debug("[VeryfrontAPIClient] Looking up project by domain", { domain });
 
     try {
-      const response = await this.request<{
-        projectId: string;
-        projectSlug: string;
-        projectName: string;
-        environment: { id: string; name: string } | null;
-        releaseId: string | null;
-      }>(url);
+      const raw = await this.request(url);
+      const response = LookupDomainResponseSchema.parse(raw);
 
       logger.debug("[VeryfrontAPIClient] Domain lookup result", {
         domain,
@@ -312,13 +293,9 @@ export class VeryfrontAPIOperations {
     });
 
     try {
-      const response = await this.request<{
-        id: string;
-        slug: string;
-        name: string;
-        importPath: string;
-        body?: string;
-      }>(url);
+      const raw = await this.request(url);
+      const response = GetComponentResponseSchema.parse(raw);
+
       logger.info("[VeryfrontAPIClient] Component found", {
         entityId,
         importPath: response.importPath,
@@ -342,12 +319,12 @@ export class VeryfrontAPIOperations {
     }
   }
 
-  private async request<T>(
+  private async request(
     endpoint: string,
     options: { returnText?: boolean } = {},
-  ): Promise<T> {
+  ): Promise<unknown> {
     const url = `${this.apiBaseUrl}${endpoint}`;
     const token = this.tokenProvider();
-    return await requestWithRetry<T>(url, token, this.retryConfig, options);
+    return await requestWithRetry(url, token, this.retryConfig, options);
   }
 }
