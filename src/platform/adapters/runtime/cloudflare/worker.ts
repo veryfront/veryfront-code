@@ -1,5 +1,14 @@
-import type { ExecutionContext } from "@veryfront/middleware/core/types.ts";
 import type { CloudflareEnv } from "./types.ts";
+
+/**
+ * Cloudflare Workers execution context.
+ * Defined locally to keep adapters module isolated.
+ * @see https://developers.cloudflare.com/workers/runtime-apis/context
+ */
+export interface ExecutionContext {
+  waitUntil(promise: Promise<unknown>): void;
+  passThroughOnException(): void;
+}
 
 export function createWorker(
   setup: (

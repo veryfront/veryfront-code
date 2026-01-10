@@ -16,8 +16,10 @@ import type {
   WatchOptions,
   WebSocketUpgrade,
 } from "../../base.ts";
-import { DEFAULT_PORT } from "@veryfront/config";
 import { serverLogger } from "@veryfront/utils";
+
+/** Default server port. Defined locally to keep adapters module isolated. */
+const DEFAULT_PORT = 3000;
 
 class DenoFileSystemAdapter implements FileSystemAdapter {
   async readFile(path: string): Promise<string> {

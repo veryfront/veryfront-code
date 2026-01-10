@@ -11,25 +11,37 @@ import { z } from "zod";
 // Base Schemas
 // =============================================================================
 
+/**
+ * Project schema.
+ * Note: API returns layout_id/provider_id, renderer uses layout/provider aliases.
+ * Both field names are accepted for compatibility.
+ */
 export const ProjectSchema = z.object({
-  id: z.string(),
+  id: z.string().uuid(),
   name: z.string(),
   slug: z.string(),
   description: z.string().optional(),
-  createdAt: z.string(),
-  updatedAt: z.string(),
+  createdAt: z.string().optional(),
+  updatedAt: z.string().optional(),
+  // API returns layout_id/provider_id, renderer aliases as layout/provider
   provider: z.string().optional(),
+  provider_id: z.string().optional(),
   layout: z.string().optional(),
-  config: z.string().optional(),
+  layout_id: z.string().optional(),
+  config: z.union([z.string(), z.record(z.unknown())]).optional(),
 });
 
+/**
+ * Project file schema.
+ * Note: API doesn't return mimeType or createdAt - only updatedAt.
+ */
 export const ProjectFileSchema = z.object({
   id: z.string().optional(), // Entity UUID - available when fetched from veryfront-api
   path: z.string(),
   size: z.number(),
-  type: z.string(),
-  mimeType: z.string().optional(),
-  createdAt: z.string(),
+  type: z.enum(["page", "function", "component", "file"]),
+  mimeType: z.string().optional(), // Not returned by API, added by renderer
+  createdAt: z.string().optional(), // Not returned by API
   updatedAt: z.string(),
 });
 
@@ -38,9 +50,14 @@ export const PaginationSchema = z.object({
   hasMore: z.boolean(),
 });
 
+/**
+ * PageInfo schema - full API response structure.
+ */
 export const PageInfoSchema = z.object({
   hasNextPage: z.boolean(),
   nextCursor: z.string().nullable(),
+  hasPreviousPage: z.boolean().optional(),
+  previousCursor: z.string().nullable().optional(),
 });
 
 export const EnvironmentSchema = z.object({
@@ -106,7 +123,7 @@ export const GetFileContentResponseSchema = z.object({
  */
 export const ListPublishedFilesResponseSchema = z.object({
   data: z.array(ProjectFileSchema),
-  releaseId: z.string(),
+  releaseId: z.string().optional(),
 });
 
 /**
@@ -141,11 +158,15 @@ export const LookupDomainResponseSchema = z.object({
  * GET /projects/:slug/components/:entityId
  * Get component/entity info by UUID.
  * Used to resolve layout/provider UUIDs to file paths.
+ *
+ * NOTE: This endpoint is NOT YET IMPLEMENTED in veryfront-api.
+ * The renderer's getComponentByEntityId() will return null/404 until
+ * the API adds this endpoint. See API comparison report for details.
  */
 export const GetComponentResponseSchema = z.object({
   id: z.string(),
-  slug: z.string(),
-  name: z.string(),
+  slug: z.string().optional(),
+  name: z.string().optional(),
   importPath: z.string(),
   body: z.string().optional(),
 });
@@ -223,7 +244,8 @@ export const API_ENDPOINTS = {
   getComponent: {
     method: "GET" as const,
     path: "/projects/:slug/components/:entityId",
-    description: "Get component/entity info by UUID",
+    description: "Get component/entity info by UUID (NOT YET IMPLEMENTED IN API)",
     responseSchema: GetComponentResponseSchema,
+    status: "pending" as const, // Endpoint needs to be added to veryfront-api
   },
 } as const;

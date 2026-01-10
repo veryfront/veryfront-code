@@ -1,23 +1,21 @@
 import { logger } from "@veryfront/utils";
-import type { DirectoryEntry, FSAdapter, FSAdapterConfig } from "./types.ts";
+import type {
+  CacheStats,
+  DirectoryEntry,
+  FSAdapter,
+  FSAdapterConfig,
+  InvalidationCallbacks,
+} from "./types.ts";
+import { createVeryfrontConfig } from "./types.ts";
 import type { FileInfo } from "../../base.ts";
 import { VeryfrontAPIClient } from "../../veryfront-api-client/index.ts";
 import type { Project } from "../../veryfront-api-client/index.ts";
 import { FileCache } from "../cache/file-cache.ts";
 import type { FileCacheOptions } from "../cache/types.ts";
-import { type CacheStats, createVeryfrontConfig } from "./types.ts";
 import { PathNormalizer } from "./path-normalizer.ts";
 import { ReadOperations } from "./read-operations.ts";
 import { DirectoryOperations } from "./directory-operations.ts";
 import { StatOperations } from "./stat-operations.ts";
-import { clearSSRModuleCache } from "@veryfront/modules/react-loader/index.ts";
-import { clearRouterDetectionCache } from "../../../../rendering/router-detection.ts";
-import {
-  clearModulePathCache,
-  invalidateModulePaths,
-} from "../../../../build/transforms/mdx/esm-module-loader.ts";
-import { ReloadNotifier } from "../../../../server/reload-notifier.ts";
-import { clearSnippetCache } from "../../../../rendering/snippet-renderer.ts";
 
 const INVALIDATION_DEBOUNCE_MS = 100;
 const WS_RECONNECT_DELAY_MS = 5000;
@@ -45,8 +43,11 @@ export class VeryfrontFSAdapter implements FSAdapter {
   private requestBranch: string | null = null;
   private productionMode = false;
   private releaseId: string | null = null;
+  private invalidationCallbacks: InvalidationCallbacks;
 
   constructor(config: FSAdapterConfig) {
+    // Store invalidation callbacks with no-op defaults
+    this.invalidationCallbacks = config.invalidationCallbacks ?? {};
     const veryfrontConfig = createVeryfrontConfig(config);
 
     this.apiBaseUrl = veryfrontConfig.apiBaseUrl;
@@ -317,7 +318,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
     }
 
     // Invalidate only the changed module paths (not all modules)
-    invalidateModulePaths(changedPaths);
+    this.invalidationCallbacks.invalidateModulePaths?.(changedPaths);
 
     // Clear all files:all caches since file list may have changed
     this.cache.deleteByPrefix("files:all:");
@@ -334,7 +335,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
     }
 
     // Notify browser to reload with changed paths for smart HMR
-    ReloadNotifier.triggerReload(changedPaths);
+    this.invalidationCallbacks.triggerReload?.(changedPaths);
 
     const durationMs = Date.now() - startTime;
     logger.info("[VeryfrontFSAdapter] Selective invalidation complete", {
@@ -356,10 +357,10 @@ export class VeryfrontFSAdapter implements FSAdapter {
     const filesAllCount = this.cache.deleteByPrefix("files:all:");
     this.statOps.clearIndex();
     this.dirOps.clearTree();
-    clearSSRModuleCache();
-    clearRouterDetectionCache();
-    clearModulePathCache();
-    clearSnippetCache();
+    this.invalidationCallbacks.clearSSRModuleCache?.();
+    this.invalidationCallbacks.clearRouterDetectionCache?.();
+    this.invalidationCallbacks.clearModulePathCache?.();
+    this.invalidationCallbacks.clearSnippetCache?.();
 
     logger.info("[VeryfrontFSAdapter] ✅ CACHES CLEARED", {
       textCacheCleared: textCount,
@@ -386,7 +387,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
 
     // Step 3: Trigger reload - content is now guaranteed to be available
     logger.info("[VeryfrontFSAdapter] ✅ TRIGGERING BROWSER RELOAD via ReloadNotifier");
-    ReloadNotifier.triggerReload();
+    this.invalidationCallbacks.triggerReload?.();
 
     logger.info("[VeryfrontFSAdapter] ✅ CACHE INVALIDATION COMPLETE", {
       textCacheCleared: textCount,
