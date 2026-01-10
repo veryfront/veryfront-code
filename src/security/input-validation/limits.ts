@@ -42,9 +42,9 @@ function validateContentLength(request: Request, maxSize: number): void {
 function validateHeaderSize(request: Request, maxSize: number): void {
   let headerSize = 0;
 
-  request.headers.forEach((value, key) => {
+  for (const [key, value] of request.headers) {
     headerSize += key.length + value.length + 4; // ": " and "\r\n"
-  });
+  }
 
   if (headerSize > maxSize) {
     throw new ValidationError("Headers too large", {

@@ -204,7 +204,7 @@ export function printTestResults(suite: TestSuite): void {
   const passed = suite.results.filter((r) => r.passed).length;
   const total = suite.results.length;
 
-  suite.results.forEach((result, index) => {
+  for (const [index, result] of suite.results.entries()) {
     const icon = result.passed ? "✅" : "❌";
     console.log(`${icon} ${index + 1}. ${result.name}`);
 
@@ -217,7 +217,7 @@ export function printTestResults(suite: TestSuite): void {
     }
 
     console.log(`   Time: ${result.executionTime}ms\n`);
-  });
+  }
 
   console.log(`Results: ${passed}/${total} passed`);
   console.log(`Total time: ${suite.totalTime}ms`);

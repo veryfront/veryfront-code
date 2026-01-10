@@ -13,19 +13,17 @@ export function parseMDXCode(compiledCode: string): ParsedMDX {
   while ((match = importRegex.exec(compiledCode)) !== null) {
     if (match[1]) {
       const names = match[1].split(",").map((n: string) => n.trim());
-      names.forEach((name: string) => {
-        if (match?.[3]) {
+      for (const name of names) {
+        if (match[3]) {
           imports.set(name, { name, path: match[3], isDefault: false });
         }
-      });
-    } else if (match[2]) {
-      if (match[2] && match[3]) {
-        imports.set(match[2], {
-          name: match[2],
-          path: match[3],
-          isDefault: true,
-        });
       }
+    } else if (match[2] && match[3]) {
+      imports.set(match[2], {
+        name: match[2],
+        path: match[3],
+        isDefault: true,
+      });
     }
   }
 

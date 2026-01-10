@@ -54,7 +54,9 @@ class StateBridge implements StateStore {
   private notifyListeners(key: string, value: unknown): void {
     const callbacks = this.listeners.get(key);
     if (callbacks) {
-      callbacks.forEach((callback) => callback(value));
+      for (const callback of callbacks) {
+        callback(value);
+      }
     }
   }
 

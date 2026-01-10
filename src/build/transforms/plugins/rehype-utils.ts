@@ -9,13 +9,15 @@ export function rehypePreserveNodeIds() {
       }
 
       if (node.data && (node.data as Record<string, unknown>).hProperties) {
-        Object.entries(
-          (node.data as Record<string, unknown>).hProperties as Record<string, unknown>,
-        ).forEach(([key, value]) => {
+        for (
+          const [key, value] of Object.entries(
+            (node.data as Record<string, unknown>).hProperties as Record<string, unknown>,
+          )
+        ) {
           if (key.startsWith("data-node-")) {
             node.properties![key] = value as string;
           }
-        });
+        }
       }
     });
   };
