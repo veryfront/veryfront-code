@@ -737,11 +737,7 @@ function createModuleResponse(
   status: number,
   headers: Record<string, string>,
 ): Response {
-  if (method === "HEAD") {
-    return new Response(null, { status, headers });
-  }
-
-  return new Response(body, { status, headers });
+  return new Response(method === "HEAD" ? null : body, { status, headers });
 }
 
 /**
