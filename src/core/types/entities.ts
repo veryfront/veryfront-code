@@ -56,6 +56,23 @@ export interface EntityTypeInfo {
   isPage: boolean;
 }
 
+function detectFileKind(ext: string | undefined): "mdx" | "tsx" | undefined {
+  if (ext === "mdx") return "mdx";
+  if (ext === "tsx" || ext === "ts" || ext === "jsx" || ext === "js") return "tsx";
+  return undefined;
+}
+
+function detectEntityTypeFromFlags(
+  isLayout: boolean,
+  isProvider: boolean,
+  isComponent: boolean,
+): Entity["type"] {
+  if (isLayout) return "layout";
+  if (isProvider) return "provider";
+  if (isComponent) return "component";
+  return "page";
+}
+
 export function detectEntityType(
   fileName: string,
   frontmatter: Frontmatter = {},
@@ -63,13 +80,8 @@ export function detectEntityType(
   const baseName = fileName.replace(/\.[^.]+$/, "");
   const lowerBase = baseName.toLowerCase();
 
-  // Detect file extension to determine kind
   const ext = fileName.match(/\.([^.]+)$/)?.[1]?.toLowerCase();
-  const kind: "mdx" | "tsx" | undefined = ext === "mdx"
-    ? "mdx"
-    : (ext === "tsx" || ext === "ts" || ext === "jsx" || ext === "js")
-    ? "tsx"
-    : undefined;
+  const kind = detectFileKind(ext);
 
   const isLayout = lowerBase === "layout" || baseName.endsWith("Layout") ||
     lowerBase.includes("layout") || frontmatter.isLayout === true;
@@ -84,16 +96,8 @@ export function detectEntityType(
 
   const isPage = !isLayout && !isProvider && !isComponent;
 
-  const type: Entity["type"] = isLayout
-    ? "layout"
-    : isProvider
-    ? "provider"
-    : isComponent
-    ? "component"
-    : "page";
-
   return {
-    type,
+    type: detectEntityTypeFromFlags(isLayout, isProvider, isComponent),
     kind,
     isLayout,
     isProvider,

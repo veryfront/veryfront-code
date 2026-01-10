@@ -10,6 +10,12 @@ import { checkRSCCounters, checkRSCEndpoints, checkRSCFlag } from "./server-chec
 import { checkAIConfig } from "./ai-checks.ts";
 import { cliLogger } from "@veryfront/utils";
 
+const STATUS_TAGS: Record<DiagnosticResult["status"], string> = {
+  pass: "[PASS]",
+  warn: "[WARN]",
+  fail: "[FAIL]",
+};
+
 /**
  * Summarize diagnostic results
  */
@@ -44,8 +50,7 @@ export async function doctorCommand(projectDir: string, opts: { strict?: boolean
 
   // Print concise summary to stdout (non-interactive)
   for (const r of results) {
-    const tag = r.status === "pass" ? "[PASS]" : r.status === "warn" ? "[WARN]" : "[FAIL]";
-    cliLogger.info(`${tag} ${r.name}: ${r.message}`);
+    cliLogger.info(`${STATUS_TAGS[r.status]} ${r.name}: ${r.message}`);
   }
 
   const { warnCount, failCount } = summarizeResults(results);

@@ -4,16 +4,16 @@ export function parseCookies(cookieHeader: string): Record<string, string> {
 
   if (!cookieHeader) return cookies;
 
-  cookieHeader.split(";").forEach((cookie) => {
+  for (const cookie of cookieHeader.split(";")) {
     const trimmed = cookie.trim();
-    if (!trimmed) return;
+    if (!trimmed) continue;
     const separatorIndex = trimmed.indexOf("=");
-    if (separatorIndex <= 0) return;
+    if (separatorIndex <= 0) continue;
     const name = trimmed.slice(0, separatorIndex).trim();
+    if (!name) continue;
     const value = trimmed.slice(separatorIndex + 1);
-    if (!name) return;
     cookies[name] = decodeURIComponent(value);
-  });
+  }
 
   return cookies;
 }

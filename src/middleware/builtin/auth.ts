@@ -1,6 +1,13 @@
 import type { Context, MiddlewareHandler, Next } from "../core/types.ts";
 import { HTTP_UNAUTHORIZED } from "@veryfront/utils/constants/http.ts";
 
+function unauthorizedResponse(realm?: string): Response {
+  const headers: HeadersInit = realm
+    ? { "WWW-Authenticate": `Basic realm="${realm}"` }
+    : {};
+  return new Response("Unauthorized", { status: HTTP_UNAUTHORIZED, headers });
+}
+
 export function basicAuth(
   options: { username: string; password: string; realm?: string },
 ): MiddlewareHandler {
@@ -10,23 +17,13 @@ export function basicAuth(
   return (c: Context, next: Next) => {
     const authorization = c.req.headers.get("authorization");
 
-    if (!authorization || !authorization.startsWith("Basic ")) {
-      return new Response("Unauthorized", {
-        status: HTTP_UNAUTHORIZED,
-        headers: {
-          "WWW-Authenticate": `Basic realm="${realm}"`,
-        },
-      });
+    if (!authorization?.startsWith("Basic ")) {
+      return unauthorizedResponse(realm);
     }
 
     const credentials = authorization.slice(6);
     if (credentials !== expected) {
-      return new Response("Unauthorized", {
-        status: HTTP_UNAUTHORIZED,
-        headers: {
-          "WWW-Authenticate": `Basic realm="${realm}"`,
-        },
-      });
+      return unauthorizedResponse(realm);
     }
 
     return next();
@@ -42,21 +39,18 @@ export function bearerAuth(options: {
   return async (c: Context, next: Next) => {
     const authorization = c.req.headers.get("authorization");
 
-    if (!authorization || !authorization.startsWith("Bearer ")) {
-      return new Response("Unauthorized", { status: HTTP_UNAUTHORIZED });
+    if (!authorization?.startsWith("Bearer ")) {
+      return unauthorizedResponse();
     }
 
     const bearerToken = authorization.slice(7);
 
     if (token && bearerToken !== token) {
-      return new Response("Unauthorized", { status: HTTP_UNAUTHORIZED });
+      return unauthorizedResponse();
     }
 
-    if (verifyToken) {
-      const isValid = await verifyToken(bearerToken);
-      if (!isValid) {
-        return new Response("Unauthorized", { status: HTTP_UNAUTHORIZED });
-      }
+    if (verifyToken && !(await verifyToken(bearerToken))) {
+      return unauthorizedResponse();
     }
 
     c.var.token = bearerToken;

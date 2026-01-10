@@ -30,12 +30,12 @@ export function matchRoute(pathname: string, route: Route): RouteMatch | null {
   const catchAllParams = extractCatchAllParams(route.pattern);
   const params: Record<string, string | string[]> = {};
 
-  route.paramNames?.forEach((name, index) => {
+  for (const [index, name] of (route.paramNames ?? []).entries()) {
     const value = match[index + 1];
     params[name] = catchAllParams.has(name)
       ? decodeCatchAllValue(value)
       : decodeURIComponent(value || "");
-  });
+  }
 
   return { params, route };
 }

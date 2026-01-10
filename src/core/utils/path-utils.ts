@@ -61,11 +61,17 @@ export function toBase64Url(s: string): string {
   return b64.replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "");
 }
 
+function getBase64Padding(length: number): string {
+  const remainder = length % 4;
+  if (remainder === 2) return "==";
+  if (remainder === 3) return "=";
+  return "";
+}
+
 export function fromBase64Url(encoded: string): string {
   const b64 = encoded.replaceAll("-", "+").replaceAll("_", "/");
-  const pad = b64.length % 4 === 2 ? "==" : b64.length % 4 === 3 ? "=" : "";
   try {
-    return atob(b64 + pad);
+    return atob(b64 + getBase64Padding(b64.length));
   } catch (error) {
     logger.debug(`Failed to decode base64url string "${encoded}":`, error);
     return "";

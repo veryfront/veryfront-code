@@ -43,57 +43,46 @@ export class HealthHandler extends BaseHandler {
   }
 
   async handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
-    const url = new URL(req.url);
-    const pathname = url.pathname;
-
     if (!this.shouldHandle(req, ctx)) {
       return this.continue();
     }
 
-    const builder = this.createResponseBuilder(ctx);
+    const pathname = new URL(req.url).pathname;
+    const builder = this.createResponseBuilder(ctx)
+      .withCORS(req, ctx.securityConfig?.cors)
+      .withSecurity(ctx.securityConfig ?? undefined);
 
-    if (pathname === "/healthz") {
-      const response = builder
-        .withCORS(req, ctx.securityConfig?.cors)
-        .withSecurity(ctx.securityConfig ?? undefined)
-        .text("ok", HTTP_OK);
-      return this.respond(response);
-    }
+    switch (pathname) {
+      case "/healthz":
+        return this.respond(builder.text("ok", HTTP_OK));
 
-    if (pathname === "/readyz") {
-      const isReady = await this.checkReadiness(ctx);
-      const response = builder
-        .withCORS(req, ctx.securityConfig?.cors)
-        .withSecurity(ctx.securityConfig ?? undefined)
-        .text(isReady ? "ready" : "not-ready", isReady ? HTTP_OK : HTTP_UNAVAILABLE);
-      return this.respond(response);
-    }
-
-    if (pathname === "/_health") {
-      let hasStaticBuild = false;
-      try {
-        const st = await ctx.adapter.fs.stat(joinPath(ctx.projectDir, "dist"));
-        hasStaticBuild = !!st?.isDirectory;
-      } catch {
-        // ignore
+      case "/readyz": {
+        const isReady = await this.checkReadiness(ctx);
+        const status = isReady ? HTTP_OK : HTTP_UNAVAILABLE;
+        return this.respond(builder.text(isReady ? "ready" : "not-ready", status));
       }
 
-      const payload = {
-        status: "ok",
-        timestamp: new Date().toISOString(),
-        mode: hasStaticBuild ? "static+ssr" : "ssr",
-        version: "0.1.0",
-      };
+      case "/_health": {
+        let hasStaticBuild = false;
+        try {
+          const st = await ctx.adapter.fs.stat(joinPath(ctx.projectDir, "dist"));
+          hasStaticBuild = !!st?.isDirectory;
+        } catch {
+          // ignore
+        }
 
-      const response = builder
-        .withCORS(req, ctx.securityConfig?.cors)
-        .withSecurity(ctx.securityConfig ?? undefined)
-        .withCache("no-cache")
-        .json(payload, HTTP_OK);
+        const payload = {
+          status: "ok",
+          timestamp: new Date().toISOString(),
+          mode: hasStaticBuild ? "static+ssr" : "ssr",
+          version: "0.1.0",
+        };
 
-      return this.respond(response);
+        return this.respond(builder.withCache("no-cache").json(payload, HTTP_OK));
+      }
+
+      default:
+        return this.continue();
     }
-
-    return this.continue();
   }
 }
