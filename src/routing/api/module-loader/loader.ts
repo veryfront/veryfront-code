@@ -196,18 +196,13 @@ function createImportMapPlugin(
           }
 
           const ext = filePath.split(".").pop() || "";
-          let loader: "tsx" | "jsx" | "ts" | "js" | "json";
-          if (ext === "tsx") {
-            loader = "tsx";
-          } else if (ext === "jsx") {
-            loader = "jsx";
-          } else if (ext === "ts") {
-            loader = "ts";
-          } else if (ext === "json") {
-            loader = "json";
-          } else {
-            loader = "js";
-          }
+          const loaderMap: Record<string, "tsx" | "jsx" | "ts" | "js" | "json"> = {
+            tsx: "tsx",
+            jsx: "jsx",
+            ts: "ts",
+            json: "json",
+          };
+          const loader = loaderMap[ext] ?? "js";
 
           return {
             contents,

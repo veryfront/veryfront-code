@@ -227,13 +227,14 @@ class TTLCache {
 
 /** Factory for creating cache instances by strategy */
 function createCacheByStrategy(config: CacheConfig): MemoryCache | LRUCache | TTLCache {
-  if (config.strategy === "lru") {
-    return new LRUCache(config.maxSize || 100);
+  switch (config.strategy) {
+    case "lru":
+      return new LRUCache(config.maxSize ?? 100);
+    case "ttl":
+      return new TTLCache(config.ttl ?? 300000);
+    default:
+      return new MemoryCache();
   }
-  if (config.strategy === "ttl") {
-    return new TTLCache(config.ttl || 300000);
-  }
-  return new MemoryCache();
 }
 
 /**
