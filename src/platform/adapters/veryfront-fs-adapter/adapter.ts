@@ -1,8 +1,8 @@
 import { logger } from "@veryfront/utils";
 import type { DirectoryEntry, FSAdapter, FSAdapterConfig } from "./types.ts";
 import type { FileInfo } from "../base.ts";
-import { VeryfrontAPIClient } from "../veryfront-api-client.ts";
-import type { Project } from "../veryfront-api-client.ts";
+import { VeryfrontAPIClient } from "../veryfront-api-client/index.ts";
+import type { Project } from "../veryfront-api-client/index.ts";
 import { FileCache } from "../file-cache/file-cache.ts";
 import type { FileCacheOptions } from "../file-cache/types.ts";
 import { type CacheStats, createVeryfrontConfig } from "./types.ts";

@@ -16,9 +16,9 @@ export {
   VeryfrontAPIClient,
   type VeryfrontAPIConfig,
   VeryfrontAPIError,
-} from "./veryfront-api-client.ts";
+} from "./veryfront-api-client/index.ts";
 
-export { VeryfrontFSAdapter } from "./veryfront-fs-adapter.ts";
+export { VeryfrontFSAdapter } from "./veryfront-fs-adapter/index.ts";
 
 export { FSAdapterWrapper, NotSupportedError, wrapFSAdapter } from "./fs-adapter-wrapper.ts";
 

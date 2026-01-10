@@ -9,6 +9,7 @@ import { NodeFileSystemAdapter } from "./filesystem-adapter.ts";
 import { NodeEnvironmentAdapter } from "./environment-adapter.ts";
 import { NodeServerAdapter } from "./websocket-adapter.ts";
 import { createNodeServer } from "./http-server.ts";
+import { NodeBasedShellAdapter } from "../shared/node-based-shell-adapter.ts";
 
 export class NodeAdapter implements RuntimeAdapter {
   readonly id = "node" as const;
@@ -19,6 +20,7 @@ export class NodeAdapter implements RuntimeAdapter {
   fs = new NodeFileSystemAdapter();
   env = new NodeEnvironmentAdapter();
   server = new NodeServerAdapter();
+  shell = new NodeBasedShellAdapter();
 
   readonly capabilities: RuntimeCapabilities = {
     typescript: false, // Requires compilation
