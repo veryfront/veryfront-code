@@ -233,11 +233,7 @@ export class APIRouteHandler {
       this.corsConfig = config.security?.cors ?? null;
     } catch (error) {
       this.corsConfig = null;
-      try {
-        logger.warn("Failed to load CORS configuration", error);
-      } catch (logError) {
-        logger.error("Failed to log CORS config error:", logError);
-      }
+      logger.warn("Failed to load CORS configuration", error);
     } finally {
       this.corsConfigLoaded = true;
       this.corsConfigPromise = null;
@@ -257,11 +253,7 @@ export class APIRouteHandler {
       this.config = await getConfig(this.projectDir, adapter);
     } catch (error) {
       this.config = null;
-      try {
-        logger.warn("Failed to load config", error);
-      } catch (logError) {
-        logger.error("Failed to log config error:", logError);
-      }
+      logger.warn("Failed to load config", error);
     } finally {
       this.configPromise = null;
     }

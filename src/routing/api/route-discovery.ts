@@ -19,12 +19,7 @@ export async function discoverPagesRoutes(
     const relativePath = relative(dir, file.path);
     const routePath = `${prefix}/${relativePath.replace(/\.(ts|js|tsx|jsx)$/, "")}`;
 
-    let pattern = routePath.replace(/\/index$/, "");
-
-    if (pattern === prefix && file.name.replace(/\.(ts|js|tsx|jsx)$/, "") === "index") {
-      pattern = prefix;
-    }
-
+    const pattern = routePath.replace(/\/index$/, "") || prefix;
     router.addRoute(pattern, file.path);
   }
 }

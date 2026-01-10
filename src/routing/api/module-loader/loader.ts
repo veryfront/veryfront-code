@@ -196,17 +196,18 @@ function createImportMapPlugin(
           }
 
           const ext = filePath.split(".").pop() || "";
-          const loader = ext === "tsx"
-            ? "tsx"
-            : ext === "jsx"
-            ? "jsx"
-            : ext === "ts"
-            ? "ts"
-            : ext === "js"
-            ? "js"
-            : ext === "json"
-            ? "json"
-            : "js";
+          let loader: "tsx" | "jsx" | "ts" | "js" | "json";
+          if (ext === "tsx") {
+            loader = "tsx";
+          } else if (ext === "jsx") {
+            loader = "jsx";
+          } else if (ext === "ts") {
+            loader = "ts";
+          } else if (ext === "json") {
+            loader = "json";
+          } else {
+            loader = "js";
+          }
 
           return {
             contents,
@@ -551,24 +552,18 @@ async function rewriteExternalImports(
 }
 
 function extractAPIRouteHandlers(module: unknown): APIRoute {
-  const handler: APIRoute = {};
-
   if (!module || typeof module !== "object") {
-    return handler;
+    return {};
   }
 
   const mod = module as Record<string, unknown>;
+  const handler: APIRoute = {};
+  const methods = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS", "default"] as const;
 
-  if (typeof mod.GET === "function") handler.GET = mod.GET as APIRoute["GET"];
-  if (typeof mod.POST === "function") handler.POST = mod.POST as APIRoute["POST"];
-  if (typeof mod.PUT === "function") handler.PUT = mod.PUT as APIRoute["PUT"];
-  if (typeof mod.PATCH === "function") handler.PATCH = mod.PATCH as APIRoute["PATCH"];
-  if (typeof mod.DELETE === "function") handler.DELETE = mod.DELETE as APIRoute["DELETE"];
-  if (typeof mod.HEAD === "function") handler.HEAD = mod.HEAD as APIRoute["HEAD"];
-  if (typeof mod.OPTIONS === "function") handler.OPTIONS = mod.OPTIONS as APIRoute["OPTIONS"];
-
-  if (typeof mod.default === "function") {
-    handler.default = mod.default as APIRoute["default"];
+  for (const method of methods) {
+    if (typeof mod[method] === "function") {
+      handler[method] = mod[method] as APIRoute[typeof method];
+    }
   }
 
   return handler;

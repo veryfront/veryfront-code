@@ -59,12 +59,7 @@ export class APIServer {
       }
     }
 
-    // Handle user-defined API routes
-    if (pathname.startsWith("/api/")) {
-      // Pages Router API routes are handled in the main server via APIRouteHandler
-      return null;
-    }
-
+    // User-defined API routes starting with /api/ are handled by APIRouteHandler
     return null;
   }
 }
