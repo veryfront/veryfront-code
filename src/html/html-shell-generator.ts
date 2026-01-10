@@ -23,6 +23,7 @@ import {
   buildRootAttributes,
   shouldDisableLayout,
 } from "./utils.ts";
+import { resolveRelativePath } from "../module-system/react-loader/path-resolver.ts";
 
 /**
  * Extract head elements from React SSR content and return them separately.
@@ -79,18 +80,13 @@ function pathToModuleUrl(path: string): string {
 
 /**
  * Convert a full file path to a relative path from project root.
- * E.g., /Users/.../project/pages/index.tsx -> pages/index.tsx
+ * Uses the shared resolveRelativePath utility.
  */
 function getRelativePagePath(fullPath: string | undefined, projectDir: string | undefined): string {
   if (!fullPath) return "";
-  let relativePath = fullPath.replace(/\\/g, "/");
-  if (projectDir) {
-    const normalizedDir = projectDir.replace(/\\/g, "/").replace(/\/$/, "");
-    if (relativePath.startsWith(normalizedDir + "/")) {
-      relativePath = relativePath.substring(normalizedDir.length + 1);
-    }
-  }
-  return relativePath.replace(/^\//, "");
+  const normalized = fullPath.replace(/\\/g, "/");
+  if (!projectDir) return normalized.replace(/^\//, "");
+  return resolveRelativePath(normalized, projectDir);
 }
 
 /**
@@ -99,43 +95,27 @@ function getRelativePagePath(fullPath: string | undefined, projectDir: string | 
  */
 function generateModulePreloadHints(options: HTMLGenerationOptions): string {
   const hints: string[] = [];
+  const projectDir = options.projectDir || "";
 
-  // Preload page module
-  if (options.pagePath) {
-    const projectDir = options.projectDir || "";
-    let relativePath = options.pagePath.replace(/\\/g, "/");
-    if (projectDir) {
-      const normalizedDir = projectDir.replace(/\\/g, "/").replace(/\/$/, "");
-      if (relativePath.startsWith(normalizedDir + "/")) {
-        relativePath = relativePath.substring(normalizedDir.length + 1);
-      }
-    }
-    relativePath = relativePath.replace(/^\//, "");
-    // Keep components/ prefix - required for module server security validation
+  // Helper to add a preload hint for a path
+  function addPreloadHint(fullPath: string): void {
+    const relativePath = getRelativePagePath(fullPath, projectDir);
     const moduleUrl = pathToModuleUrl(relativePath);
     if (moduleUrl) {
       hints.push(`<link rel="modulepreload" href="${moduleUrl}">`);
     }
   }
 
+  // Preload page module
+  if (options.pagePath) {
+    addPreloadHint(options.pagePath);
+  }
+
   // Preload layout modules
   for (const layout of options.nestedLayouts || []) {
     const layoutPath = layout.path || layout.componentPath || "";
-    if (!layoutPath) continue;
-
-    const projectDir = options.projectDir || "";
-    let relativePath = layoutPath.replace(/\\/g, "/");
-    if (projectDir) {
-      const normalizedDir = projectDir.replace(/\\/g, "/").replace(/\/$/, "");
-      if (relativePath.startsWith(normalizedDir + "/")) {
-        relativePath = relativePath.substring(normalizedDir.length + 1);
-      }
-    }
-    relativePath = relativePath.replace(/^\//, "");
-    // Keep components/ prefix - required for module server security validation
-    const moduleUrl = pathToModuleUrl(relativePath);
-    if (moduleUrl) {
-      hints.push(`<link rel="modulepreload" href="${moduleUrl}">`);
+    if (layoutPath) {
+      addPreloadHint(layoutPath);
     }
   }
 

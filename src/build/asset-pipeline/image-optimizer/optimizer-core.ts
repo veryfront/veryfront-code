@@ -131,16 +131,12 @@ export class ImageOptimizer {
   }
 
   getImageMetadata(imagePath: string): OptimizedImageMetadata | null {
-    return this.imageManifest.get(imagePath) || null;
+    return this.imageManifest.get(imagePath) ?? null;
   }
 
   generateSrcSet(imagePath: string, format?: ImageFormat): string {
     const metadata = this.imageManifest.get(imagePath);
-    if (!metadata) {
-      return "";
-    }
-
-    return generateSrcSet(imagePath, metadata, this.options.outputDir, format);
+    return metadata ? generateSrcSet(imagePath, metadata, this.options.outputDir, format) : "";
   }
 
   private getTotalVariants(): number {
@@ -154,12 +150,11 @@ export class ImageOptimizer {
     const totalImages = this.imageManifest.size;
     const totalVariants = this.getTotalVariants();
 
-    let totalSize = 0;
-    for (const metadata of this.imageManifest.values()) {
-      for (const variant of metadata.variants) {
-        totalSize += variant.fileSize;
-      }
-    }
+    const totalSize = Array.from(this.imageManifest.values()).reduce(
+      (sum, metadata) =>
+        sum + metadata.variants.reduce((variantSum, variant) => variantSum + variant.fileSize, 0),
+      0,
+    );
 
     return {
       totalImages,

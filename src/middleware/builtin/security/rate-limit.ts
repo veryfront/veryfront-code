@@ -12,9 +12,6 @@ import { unrefTimer } from "@veryfront/platform/compat/process.ts";
 const DEFAULT_RATE_LIMIT_REQUESTS = 100;
 const DEFAULT_RATE_LIMIT_WINDOW_MS = MS_PER_MINUTE;
 
-/**
- * In-memory implementation of RateLimitStore
- */
 export class MemoryRateLimitStore implements RateLimitStore {
   private counts = new Map<string, RateLimitEntry>();
   private cleanupInterval: ReturnType<typeof setInterval> | undefined;
@@ -57,7 +54,6 @@ export class MemoryRateLimitStore implements RateLimitStore {
     return Promise.resolve();
   }
 
-  // Clean up resources (useful for testing)
   destroy(): void {
     if (this.cleanupInterval) {
       clearInterval(this.cleanupInterval);
@@ -72,22 +68,6 @@ export interface RateLimitOptions {
   keyGenerator?: (req: Request) => string;
 }
 
-/**
- * Rate limiting middleware
- *
- * @example
- * ```ts
- * // Default: 100 requests per minute, in-memory
- * app.use(rateLimit());
- *
- * // Custom: 50 requests per hour, Redis store
- * app.use(rateLimit({
- *   maxRequests: 50,
- *   windowMs: 60 * 60 * 1000,
- *   store: new RedisRateLimitStore(...)
- * }));
- * ```
- */
 export function rateLimit(
   optionsOrMaxRequests?: number | RateLimitOptions,
   windowMsArg?: number,

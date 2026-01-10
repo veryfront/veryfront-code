@@ -18,6 +18,7 @@ import type { VeryfrontConfig } from "@veryfront/config";
 import { logger } from "@veryfront/utils";
 import { loadEnv, supportsEnvFiles } from "../core/utils/env-loader.ts";
 import { isDebugEnabled } from "../core/utils/constants/env.ts";
+import { getErrorMessage } from "../core/errors/veryfront-error.ts";
 
 export interface BootstrapResult {
   /** Enhanced runtime adapter (with FSAdapter if configured) */
@@ -60,7 +61,7 @@ export async function bootstrap(
     } catch (error) {
       // Non-fatal error - log but continue
       logger.warn("[Bootstrap] Failed to load .env files", {
-        error: error instanceof Error ? error.message : String(error),
+        error: getErrorMessage(error),
       });
     }
   }
@@ -176,7 +177,7 @@ export async function bootstrapProd(
     return result;
   } catch (error) {
     logger.error("[Bootstrap:Prod] Initialization failed", {
-      error: error instanceof Error ? error.message : String(error),
+      error: getErrorMessage(error),
     });
 
     // In production, fail fast on bootstrap errors

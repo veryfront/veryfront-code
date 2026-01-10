@@ -357,6 +357,12 @@ export function disableSSRClientOnlyFetching(): void {
   ssrClientOnlyFetching = false;
 }
 
+/** Check if hostname matches project domain (including www variant) */
+function isProjectDomain(hostname: string): boolean {
+  if (!ssrProjectDomain) return false;
+  return hostname === ssrProjectDomain || hostname === `www.${ssrProjectDomain}`;
+}
+
 /**
  * Rewrite fetch URL for SSR.
  * - Handles relative URLs (starting with /) by prepending localhost
@@ -373,15 +379,8 @@ function rewriteFetchUrlForSSR(url: string): string {
 
   try {
     const parsed = new URL(url);
-
     // Rewrite if hostname matches the current project domain (set via setSSRProjectDomain)
-    // This handles all project domains dynamically without hardcoding specific domains
-    if (ssrProjectDomain && parsed.hostname === ssrProjectDomain) {
-      return `http://localhost:${ssrServerPort}${parsed.pathname}${parsed.search}`;
-    }
-
-    // Also check for www variant of the project domain
-    if (ssrProjectDomain && parsed.hostname === `www.${ssrProjectDomain}`) {
+    if (isProjectDomain(parsed.hostname)) {
       return `http://localhost:${ssrServerPort}${parsed.pathname}${parsed.search}`;
     }
   } catch {
@@ -389,6 +388,13 @@ function rewriteFetchUrlForSSR(url: string): string {
   }
 
   return url;
+}
+
+/** Extract URL string from fetch input */
+function extractUrl(input: RequestInfo | URL): string {
+  if (typeof input === "string") return input;
+  if (input instanceof URL) return input.toString();
+  return input.url;
 }
 
 /**
@@ -399,13 +405,10 @@ function isClientOnlyApiUrl(url: string): boolean {
   if (url.startsWith("/api/")) return true;
   try {
     const parsed = new URL(url);
-    if (parsed.hostname === "localhost" && parsed.pathname.startsWith("/api/")) {
-      return true;
-    }
+    return parsed.hostname === "localhost" && parsed.pathname.startsWith("/api/");
   } catch {
-    // Invalid URL
+    return false;
   }
-  return false;
 }
 
 /**
@@ -415,15 +418,7 @@ function isClientOnlyApiUrl(url: string): boolean {
  */
 function createSSRFetch(): typeof fetch {
   return (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
-    let url: string;
-    if (typeof input === "string") {
-      url = input;
-    } else if (input instanceof URL) {
-      url = input.toString();
-    } else {
-      url = input.url;
-    }
-
+    const url = extractUrl(input);
     const rewrittenUrl = rewriteFetchUrlForSSR(url);
 
     // In client-only mode, API fetches return empty responses during SSR.
@@ -444,10 +439,9 @@ function createSSRFetch(): typeof fetch {
       // Create new request with rewritten URL
       if (typeof input === "string" || input instanceof URL) {
         return originalFetch(rewrittenUrl, init);
-      } else {
-        // Clone request with new URL
-        return originalFetch(new Request(rewrittenUrl, input), init);
       }
+      // Clone request with new URL
+      return originalFetch(new Request(rewrittenUrl, input), init);
     }
 
     return originalFetch(input, init);

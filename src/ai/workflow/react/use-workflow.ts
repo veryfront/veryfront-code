@@ -274,9 +274,7 @@ export function useWorkflow(options: UseWorkflowOptions): UseWorkflowResult {
 
   // Calculate progress
   const calculateProgress = (): number => {
-    if (!run?.nodeStates) return 0;
-
-    const states = Object.values(run.nodeStates);
+    const states = Object.values(run?.nodeStates ?? {});
     if (states.length === 0) return 0;
 
     const completed = states.filter(

@@ -6,7 +6,7 @@
 
 import { useCallback, useRef, useState } from "react";
 import type { AgentStatus, Message, ToolCall } from "../../types/agent.ts";
-import { createError, toError } from "../../../core/errors/veryfront-error.ts";
+import { createError, ensureError, toError } from "../../../core/errors/veryfront-error.ts";
 
 export interface UseAgentOptions {
   /** Agent ID or endpoint */
@@ -105,26 +105,23 @@ export function useAgent(options: UseAgentOptions): UseAgentResult {
 
         // Call callbacks for tool calls
         if (data.toolCalls) {
-          data.toolCalls.forEach((tc: ToolCall) => {
+          for (const tc of data.toolCalls as ToolCall[]) {
             options.onToolCall?.(tc);
 
             if (tc.result) {
               options.onToolResult?.(tc, tc.result);
             }
-          });
+          }
         }
       } catch (err) {
         if (err instanceof Error && err.name === "AbortError") {
           return;
         }
 
-        const error = err instanceof Error ? err : new Error(String(err));
+        const error = ensureError(err);
         setError(error);
         setStatus("error");
-
-        if (options.onError) {
-          options.onError(error);
-        }
+        options.onError?.(error);
       } finally {
         setIsLoading(false);
         abortControllerRef.current = null;

@@ -70,47 +70,20 @@ export function createError(error: VeryfrontError): VeryfrontError {
   return error;
 }
 
-export function isBuildError(
-  error: VeryfrontError,
-): error is Extract<VeryfrontError, { type: "build" }> {
-  return error.type === "build";
+/** Type guard factory for VeryfrontError types */
+function isErrorType<T extends VeryfrontError["type"]>(
+  type: T,
+): (error: VeryfrontError) => error is Extract<VeryfrontError, { type: T }> {
+  return (error): error is Extract<VeryfrontError, { type: T }> => error.type === type;
 }
 
-export function isAPIError(
-  error: VeryfrontError,
-): error is Extract<VeryfrontError, { type: "api" }> {
-  return error.type === "api";
-}
-
-export function isRenderError(
-  error: VeryfrontError,
-): error is Extract<VeryfrontError, { type: "render" }> {
-  return error.type === "render";
-}
-
-export function isConfigError(
-  error: VeryfrontError,
-): error is Extract<VeryfrontError, { type: "config" }> {
-  return error.type === "config";
-}
-
-export function isAgentError(
-  error: VeryfrontError,
-): error is Extract<VeryfrontError, { type: "agent" }> {
-  return error.type === "agent";
-}
-
-export function isFileError(
-  error: VeryfrontError,
-): error is Extract<VeryfrontError, { type: "file" }> {
-  return error.type === "file";
-}
-
-export function isNetworkError(
-  error: VeryfrontError,
-): error is Extract<VeryfrontError, { type: "network" }> {
-  return error.type === "network";
-}
+export const isBuildError = isErrorType("build");
+export const isAPIError = isErrorType("api");
+export const isRenderError = isErrorType("render");
+export const isConfigError = isErrorType("config");
+export const isAgentError = isErrorType("agent");
+export const isFileError = isErrorType("file");
+export const isNetworkError = isErrorType("network");
 
 export function toError(veryfrontError: VeryfrontError): Error {
   const error = new Error(veryfrontError.message);
@@ -146,4 +119,20 @@ export function logError(
   const log = logger || console;
   const context = "context" in error ? error.context || {} : {};
   log.error(`[${error.type}] ${error.message}`, context);
+}
+
+/**
+ * Extract error message from any error type
+ */
+export function getErrorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  return String(error);
+}
+
+/**
+ * Ensure error is an Error instance
+ */
+export function ensureError(error: unknown): Error {
+  if (error instanceof Error) return error;
+  return new Error(String(error));
 }

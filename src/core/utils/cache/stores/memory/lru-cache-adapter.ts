@@ -5,7 +5,7 @@ import { EvictionManager } from "../../eviction/eviction-manager.ts";
 import { EntryManager } from "./entry-manager.ts";
 
 function defaultSizeEstimator(value: unknown): number {
-  if (value === null || value === undefined) return 0;
+  if (value == null) return 0;
   if (typeof value === "string") return value.length * 2;
   if (typeof value === "number" || typeof value === "bigint") return 8;
   if (typeof value === "boolean") return 4;
@@ -88,7 +88,7 @@ export class LRUCacheAdapter implements CacheAdapter {
       this.currentSize += size;
     }
 
-    if (tags && tags.length > 0) {
+    if (tags?.length) {
       this.entryManager.updateTagIndex(tags, key, this.tagIndex);
     }
 

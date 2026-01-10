@@ -3,9 +3,19 @@
  * @module rsc-endpoints/action-parser
  */
 
-import { HTTP_BAD_REQUEST } from "@veryfront/utils";
-import type { ActionBody } from "./types.ts";
 import { serverLogger } from "@veryfront/utils";
+import { HttpStatus, jsonErrorResponse } from "../../../../../http/responses.ts";
+import type { ActionBody } from "./types.ts";
+
+/** Validates action ID format to prevent traversal and malformed ids */
+const ACTION_ID_PATTERN = /^[A-Za-z0-9_/-]+(?:\/[A-Za-z0-9_/-]+)*$/;
+
+function isValidActionId(id: string): boolean {
+  return ACTION_ID_PATTERN.test(id) &&
+    !id.startsWith("/") &&
+    !id.includes("..") &&
+    !id.endsWith("/");
+}
 
 /**
  * Parse and validate action request body
@@ -19,8 +29,7 @@ export async function parseActionBody(
   let args: unknown[];
 
   try {
-    const zodModule = await import("zod");
-    const { z } = zodModule;
+    const { z } = await import("zod");
     const Payload = z.object({
       id: z.string().min(1),
       args: z.array(z.unknown()).max(50).optional().default([]),
@@ -35,10 +44,7 @@ export async function parseActionBody(
       { error: schemaError instanceof Error ? schemaError.message : String(schemaError) },
     );
     if (!body || typeof body !== "object") {
-      return new Response(JSON.stringify({ ok: false, error: "invalid request body" }), {
-        status: HTTP_BAD_REQUEST,
-        headers: { "content-type": "application/json" },
-      });
+      return jsonErrorResponse(HttpStatus.BAD_REQUEST, "invalid request body");
     }
     const bodyObj = body as Record<string, unknown>;
     id = typeof bodyObj.id === "string" ? bodyObj.id : "";
@@ -46,30 +52,11 @@ export async function parseActionBody(
   }
 
   if (!id) {
-    return new Response(JSON.stringify({ ok: false, error: "missing id" }), {
-      status: HTTP_BAD_REQUEST,
-      headers: { "content-type": "application/json" },
-    });
+    return jsonErrorResponse(HttpStatus.BAD_REQUEST, "missing id");
   }
 
-  if (!Array.isArray(args)) {
-    return new Response(JSON.stringify({ ok: false, error: "invalid args" }), {
-      status: HTTP_BAD_REQUEST,
-      headers: { "content-type": "application/json" },
-    });
-  }
-
-  // Basic input validation to prevent traversal and malformed ids
-  const isValidId = /^[A-Za-z0-9_/-]+(?:\/[A-Za-z0-9_/-]+)*$/.test(id) &&
-    !id.startsWith("/") &&
-    !id.includes("..") &&
-    !id.endsWith("/");
-
-  if (!isValidId) {
-    return new Response(JSON.stringify({ ok: false, error: "invalid id" }), {
-      status: HTTP_BAD_REQUEST,
-      headers: { "content-type": "application/json" },
-    });
+  if (!isValidActionId(id)) {
+    return jsonErrorResponse(HttpStatus.BAD_REQUEST, "invalid id");
   }
 
   return { id, args };

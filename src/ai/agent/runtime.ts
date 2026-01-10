@@ -30,11 +30,24 @@ import { addSpanEvent, setSpanAttributes, withSpan } from "../../observability/t
 import { AGENT_DEFAULTS, STREAMING_DEFAULTS } from "../config/defaults.ts";
 import { type AgentStreamEvent, AgentStreamEventSchema } from "./streaming/index.ts";
 import { convertMessageToProvider } from "./message-converter.ts";
+import { MiddlewareChain } from "./execution/middleware-chain.ts";
 
 // Use centralized defaults from config
 const DEFAULT_MAX_TOKENS = AGENT_DEFAULTS.maxTokens;
 const DEFAULT_TEMPERATURE = AGENT_DEFAULTS.temperature;
 const MAX_STREAM_BUFFER_SIZE = STREAMING_DEFAULTS.maxBufferSize;
+
+/**
+ * Encode and enqueue a Server-Sent Event (SSE) to the stream controller.
+ * Formats event as: data: {json}\n\n
+ */
+function sendSSE(
+  controller: ReadableStreamDefaultController,
+  encoder: TextEncoder,
+  event: Record<string, unknown>,
+): void {
+  controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+}
 
 export class AgentRuntime {
   private id: string;
@@ -81,22 +94,10 @@ export class AgentRuntime {
         platform: detectPlatform(),
       };
 
-      if (this.config.middleware && this.config.middleware.length > 0) {
-        return await this.executeMiddleware(agentContext, async () => {
-          return await this.executeAgentLoop(
-            provider,
-            model,
-            systemPrompt,
-            messages,
-          );
-        });
-      }
-
-      return await this.executeAgentLoop(
-        provider,
-        model,
-        systemPrompt,
-        messages,
+      const chain = new MiddlewareChain(this.config.middleware);
+      return await chain.execute(
+        agentContext,
+        () => this.executeAgentLoop(provider, model, systemPrompt, messages),
       );
     });
   }
@@ -141,15 +142,10 @@ export class AgentRuntime {
           const messageId = `msg-${Date.now().toString(36)}-${
             Math.random().toString(36).slice(2, 8)
           }`;
-          const startEvent = JSON.stringify({ type: "start", messageId });
-          controller.enqueue(encoder.encode(`data: ${startEvent}\n\n`));
+          sendSSE(controller, encoder, { type: "start", messageId });
 
           // Send text-start event with ID
-          const textStartEvent = JSON.stringify({
-            type: "text-start",
-            id: textPartId,
-          });
-          controller.enqueue(encoder.encode(`data: ${textStartEvent}\n\n`));
+          sendSSE(controller, encoder, { type: "text-start", id: textPartId });
 
           await this.executeAgentLoopStreaming(
             provider,
@@ -164,25 +160,19 @@ export class AgentRuntime {
           );
 
           // Send text-end event (UI Message Stream Protocol v5)
-          const textEndEvent = JSON.stringify({
-            type: "text-end",
-            id: textPartId,
-          });
-          controller.enqueue(encoder.encode(`data: ${textEndEvent}\n\n`));
+          sendSSE(controller, encoder, { type: "text-end", id: textPartId });
 
           // Send finish event (UI Message Stream Protocol v5)
-          const finishEvent = JSON.stringify({ type: "finish" });
-          controller.enqueue(encoder.encode(`data: ${finishEvent}\n\n`));
+          sendSSE(controller, encoder, { type: "finish" });
 
           controller.close();
         } catch (error) {
           this.status = "error";
 
-          const errorEvent = JSON.stringify({
+          sendSSE(controller, encoder, {
             type: "error",
             error: error instanceof Error ? error.message : String(error),
           });
-          controller.enqueue(encoder.encode(`data: ${errorEvent}\n\n`));
 
           controller.close();
         }
@@ -232,9 +222,7 @@ export class AgentRuntime {
           });
         });
 
-        totalUsage.promptTokens += response.usage.promptTokens;
-        totalUsage.completionTokens += response.usage.completionTokens;
-        totalUsage.totalTokens += response.usage.totalTokens;
+        this.accumulateUsage(totalUsage, response.usage);
 
         // Build parts array for v5 Message
         const assistantParts: MessagePart[] = [];
@@ -394,8 +382,7 @@ export class AgentRuntime {
 
     for (let step = 0; step < maxSteps; step++) {
       // Send start-step event (Veryfront extension, not part of standard AI SDK v5 protocol)
-      const startStepEvent = JSON.stringify({ type: "start-step" });
-      controller.enqueue(encoder.encode(`data: ${startStepEvent}\n\n`));
+      sendSSE(controller, encoder, { type: "start-step" });
 
       const tools = this.getAvailableTools();
 
@@ -436,22 +423,22 @@ export class AgentRuntime {
         }
       };
 
+      /** Check if a tool is dynamic (for SSE event formatting) */
+      const isDynamicTool = (name: string): boolean => toolRegistry.get(name)?.type === "dynamic";
+
       const recordToolError = async (toolCall: ToolCall, errorStr: string) => {
         toolCall.status = "error";
         toolCall.error = errorStr;
         toolCalls.push(toolCall);
 
         // Send tool-output-error event (AI SDK v5 UI Message Stream Protocol)
-        // Check if this is a dynamic tool
-        const errorTool = toolRegistry.get(toolCall.name);
-        const errorIsDynamic = errorTool?.type === "dynamic";
-        const errorData = JSON.stringify({
+        const dynamic = isDynamicTool(toolCall.name);
+        sendSSE(controller, encoder, {
           type: "tool-output-error",
           toolCallId: toolCall.id,
           errorText: errorStr,
-          ...(errorIsDynamic && { dynamic: true }),
+          ...(dynamic && { dynamic: true }),
         });
-        controller.enqueue(encoder.encode(`data: ${errorData}\n\n`));
 
         const errorMessage: Message = {
           id: `tool_error_${toolCall.id}`,
@@ -475,12 +462,11 @@ export class AgentRuntime {
             accumulatedText += event.content;
 
             // Use Vercel AI SDK UI Message Stream Protocol v5 format
-            const textDeltaEvent = JSON.stringify({
+            sendSSE(controller, encoder, {
               type: "text-delta",
               id: textPartId,
               delta: event.content,
             });
-            controller.enqueue(encoder.encode(`data: ${textDeltaEvent}\n\n`));
 
             if (callbacks?.onChunk) {
               callbacks.onChunk(event.content);
@@ -497,16 +483,13 @@ export class AgentRuntime {
               });
 
               // Send tool-input-start event (AI SDK v5 UI Message Stream Protocol)
-              // Check if this is a dynamic tool
-              const startTool = toolRegistry.get(event.toolCall.name);
-              const startIsDynamic = startTool?.type === "dynamic";
-              const toolStartEvent = JSON.stringify({
+              const dynamic = isDynamicTool(event.toolCall.name);
+              sendSSE(controller, encoder, {
                 type: "tool-input-start",
                 toolCallId: event.toolCall.id,
                 toolName: event.toolCall.name,
-                ...(startIsDynamic && { dynamic: true }),
+                ...(dynamic && { dynamic: true }),
               });
-              controller.enqueue(encoder.encode(`data: ${toolStartEvent}\n\n`));
             }
             break;
 
@@ -516,12 +499,11 @@ export class AgentRuntime {
               tc.arguments += event.arguments;
 
               // Send tool-input-delta event (AI SDK v5 UI Message Stream Protocol)
-              const toolDeltaEvent = JSON.stringify({
+              sendSSE(controller, encoder, {
                 type: "tool-input-delta",
                 toolCallId: event.id,
                 inputTextDelta: event.arguments,
               });
-              controller.enqueue(encoder.encode(`data: ${toolDeltaEvent}\n\n`));
             }
             break;
 
@@ -534,18 +516,15 @@ export class AgentRuntime {
               });
 
               // Send tool-input-available event (AI SDK v5 UI Message Stream Protocol)
-              // Check if this is a dynamic tool
-              const completeTool = toolRegistry.get(event.toolCall.name);
-              const completeIsDynamic = completeTool?.type === "dynamic";
+              const dynamic = isDynamicTool(event.toolCall.name);
               const { args } = parseStreamToolArgs(event.toolCall.arguments);
-              const toolCallEvent = JSON.stringify({
+              sendSSE(controller, encoder, {
                 type: "tool-input-available",
                 toolCallId: event.toolCall.id,
                 toolName: event.toolCall.name,
                 input: args,
-                ...(completeIsDynamic && { dynamic: true }),
+                ...(dynamic && { dynamic: true }),
               });
-              controller.enqueue(encoder.encode(`data: ${toolCallEvent}\n\n`));
             }
             break;
 
@@ -555,9 +534,7 @@ export class AgentRuntime {
 
           case "usage":
             if (event.usage) {
-              totalUsage.promptTokens += event.usage.promptTokens || 0;
-              totalUsage.completionTokens += event.usage.completionTokens || 0;
-              totalUsage.totalTokens += event.usage.totalTokens || 0;
+              this.accumulateUsage(totalUsage, event.usage);
             }
             break;
         }
@@ -663,16 +640,13 @@ export class AgentRuntime {
               error: argError,
             });
             // Send tool-input-error event (AI SDK v5 UI Message Stream Protocol)
-            // Check if this is a dynamic tool
-            const inputErrorTool = toolRegistry.get(tc.name);
-            const inputErrorIsDynamic = inputErrorTool?.type === "dynamic";
-            const inputErrorEvent = JSON.stringify({
+            const dynamic = isDynamicTool(tc.name);
+            sendSSE(controller, encoder, {
               type: "tool-input-error",
               toolCallId: tc.id,
               errorText: `Invalid tool arguments: ${argError}`,
-              ...(inputErrorIsDynamic && { dynamic: true }),
+              ...(dynamic && { dynamic: true }),
             });
-            controller.enqueue(encoder.encode(`data: ${inputErrorEvent}\n\n`));
             await recordToolError(toolCall, `Invalid tool arguments: ${argError}`);
             continue;
           }
@@ -699,16 +673,13 @@ export class AgentRuntime {
             toolCalls.push(toolCall);
 
             // Send tool-output-available event (AI SDK v5 UI Message Stream Protocol)
-            // Check if this is a dynamic tool
-            const outputTool = toolRegistry.get(tc.name);
-            const outputIsDynamic = outputTool?.type === "dynamic";
-            const toolResultEvent = JSON.stringify({
+            const dynamic = isDynamicTool(tc.name);
+            sendSSE(controller, encoder, {
               type: "tool-output-available",
               toolCallId: toolCall.id,
               output: result,
-              ...(outputIsDynamic && { dynamic: true }),
+              ...(dynamic && { dynamic: true }),
             });
-            controller.enqueue(encoder.encode(`data: ${toolResultEvent}\n\n`));
 
             const toolResultMessage: Message = {
               id: `tool_${tc.id}`,
@@ -730,16 +701,14 @@ export class AgentRuntime {
         }
 
         // Send finish-step event (Veryfront extension, not part of standard AI SDK v5 protocol)
-        const finishStepToolsEvent = JSON.stringify({ type: "finish-step" });
-        controller.enqueue(encoder.encode(`data: ${finishStepToolsEvent}\n\n`));
+        sendSSE(controller, encoder, { type: "finish-step" });
 
         this.status = "thinking";
         continue;
       }
 
       // Send finish-step event (Veryfront extension, not part of standard AI SDK v5 protocol)
-      const finishStepEvent = JSON.stringify({ type: "finish-step" });
-      controller.enqueue(encoder.encode(`data: ${finishStepEvent}\n\n`));
+      sendSSE(controller, encoder, { type: "finish-step" });
 
       break;
     }
@@ -754,74 +723,36 @@ export class AgentRuntime {
     };
   }
 
-  /**
-   * Execute middleware chain
-   */
-  private executeMiddleware(
-    context: AgentContext,
-    next: () => Promise<AgentResponse>,
-  ): Promise<AgentResponse> {
-    const middleware = this.config.middleware || [];
-
-    if (middleware.length === 0) {
-      return next();
-    }
-
-    let index = 0;
-    const dispatch = (): Promise<AgentResponse> => {
-      if (index >= middleware.length) {
-        return next();
-      }
-
-      const currentMiddleware = middleware[index++];
-      if (!currentMiddleware) {
-        return next();
-      }
-      return currentMiddleware(context, dispatch);
-    };
-
-    return dispatch();
-  }
-
   private getAvailableTools(): ToolDefinition[] {
-    if (!this.config.tools) {
-      return [];
-    }
-
-    const tools: ToolDefinition[] = [];
+    if (!this.config.tools) return [];
 
     // When tools === true, load ALL tools from the registry
     if (this.config.tools === true) {
       const allTools = toolRegistry.getAll();
       logger.debug(`[AGENT] Loading all ${allTools.size} tools from registry`);
-      for (const [name, tool] of allTools) {
+      return Array.from(allTools, ([name, tool]) => {
         const def = toolToProviderDefinition(tool);
         logger.debug(`[AGENT] Tool definition for "${name}":`, JSON.stringify(def, null, 2));
-        tools.push(def);
-      }
-      return tools;
+        return def;
+      });
     }
 
-    // Otherwise, load specific tools from the config
+    // Load specific tools from config
+    const tools: ToolDefinition[] = [];
     for (const [name, entry] of Object.entries(this.config.tools)) {
       if (entry === true) {
         const tool = toolRegistry.get(name);
-        if (tool) {
-          const def = toolToProviderDefinition(tool);
-          logger.debug(`[AGENT] Tool definition for "${name}":`, JSON.stringify(def, null, 2));
-          tools.push(def);
-        }
-        continue;
-      }
-
-      if (entry && typeof entry === "object") {
+        if (!tool) continue;
+        const def = toolToProviderDefinition(tool);
+        logger.debug(`[AGENT] Tool definition for "${name}":`, JSON.stringify(def, null, 2));
+        tools.push(def);
+      } else if (entry && typeof entry === "object") {
         const inlineTool = entry.id === name ? entry : { ...entry, id: name };
         const def = toolToProviderDefinition(inlineTool);
         logger.debug(`[AGENT] Tool definition for "${name}":`, JSON.stringify(def, null, 2));
         tools.push(def);
       }
     }
-
     return tools;
   }
 
@@ -829,16 +760,9 @@ export class AgentRuntime {
    * Resolve system prompt (handle string or function)
    */
   private async resolveSystemPrompt(): Promise<string> {
-    const system = this.config.system;
-
-    if (typeof system === "string") {
-      return system;
-    }
-
-    if (typeof system === "function") {
-      return await system();
-    }
-
+    const { system } = this.config;
+    if (typeof system === "string") return system;
+    if (typeof system === "function") return await system();
     return "You are a helpful AI assistant.";
   }
 
@@ -865,21 +789,25 @@ export class AgentRuntime {
   }
 
   /**
-   * Get max steps considering edge config and platform limits
+   * Accumulate usage statistics from a response into the total.
+   */
+  private accumulateUsage(
+    total: { promptTokens: number; completionTokens: number; totalTokens: number },
+    usage: { promptTokens?: number; completionTokens?: number; totalTokens?: number },
+  ): void {
+    total.promptTokens += usage.promptTokens ?? 0;
+    total.completionTokens += usage.completionTokens ?? 0;
+    total.totalTokens += usage.totalTokens ?? 0;
+  }
+
+  /**
+   * Get max steps considering edge config and platform limits.
+   * Priority: edge config > agent config > default (20).
    */
   private getMaxSteps(platformLimit: number): number {
-    // Edge config takes precedence
-    if (this.config.edge?.enabled && this.config.edge.maxSteps) {
-      return Math.min(this.config.edge.maxSteps, platformLimit);
-    }
-
-    // Use agent config
-    if (this.config.maxSteps) {
-      return Math.min(this.config.maxSteps, platformLimit);
-    }
-
-    // Default
-    return Math.min(20, platformLimit);
+    const edgeMaxSteps = this.config.edge?.enabled ? this.config.edge.maxSteps : undefined;
+    const configuredMaxSteps = edgeMaxSteps ?? this.config.maxSteps ?? 20;
+    return Math.min(configuredMaxSteps, platformLimit);
   }
 
   /**

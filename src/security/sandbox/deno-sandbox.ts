@@ -35,16 +35,15 @@ export function runInWorker<T = unknown>(code: string, options: SandboxOptions =
     const isNodeRuntime = typeof Deno === "undefined" &&
       typeof processGlobal?.versions?.node === "string";
 
-    if (isNodeRuntime) {
-      workerOptions.resourceLimits = {
-        ...workerOptions.resourceLimits,
-        maxOldGenerationSizeMb: Math.floor(limit),
-      };
-    } else {
+    if (!isNodeRuntime) {
       return Promise.reject(
         new Error("Sandbox memory limits are not supported in this runtime"),
       );
     }
+    workerOptions.resourceLimits = {
+      ...workerOptions.resourceLimits,
+      maxOldGenerationSizeMb: Math.floor(limit),
+    };
   }
 
   const workerCode = `self.onmessage = async (e) => {` +

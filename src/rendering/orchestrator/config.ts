@@ -13,7 +13,6 @@ export interface ConfigurationOptions {
   projectDir: string;
   mode: "development" | "production";
   adapter: RuntimeAdapter;
-  /** Pre-loaded config (avoids re-loading via FSAdapter) */
   config?: VeryfrontConfig;
 }
 

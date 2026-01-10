@@ -16,7 +16,6 @@ interface RedisClient {
 export interface RedisCacheStoreOptions {
   url?: string;
   keyPrefix?: string;
-  /** Enable fallback to memory cache when Redis is unavailable */
   enableFallback?: boolean;
 }
 

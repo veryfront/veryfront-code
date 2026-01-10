@@ -103,41 +103,33 @@ export class RequestHandler {
   }
 
   private normalizeDevEndpoint(pathname: string): string | null {
-    if (
-      pathname === DEV_SERVER_ENDPOINTS.HMR_RUNTIME ||
-      pathname === DEV_SERVER_ENDPOINTS.ERROR_OVERLAY
-    ) {
-      return pathname;
-    }
+    const validEndpoints: Set<string> = new Set([
+      DEV_SERVER_ENDPOINTS.HMR_RUNTIME,
+      DEV_SERVER_ENDPOINTS.ERROR_OVERLAY,
+    ]);
+
+    if (validEndpoints.has(pathname)) return pathname;
 
     if (pathname.startsWith("/__veryfront/")) {
       const rewritten = pathname.replace("/__veryfront/", "/_veryfront/");
-      if (
-        rewritten === DEV_SERVER_ENDPOINTS.HMR_RUNTIME ||
-        rewritten === DEV_SERVER_ENDPOINTS.ERROR_OVERLAY
-      ) {
-        return rewritten;
-      }
+      if (validEndpoints.has(rewritten)) return rewritten;
     }
 
     return null;
   }
 
   private getHMRRuntime(): string | null {
-    if (!this.hmrServer) {
-      return null;
-    }
+    if (!this.hmrServer) return null;
 
     const runtimeProvider = this.hmrServer as unknown as { getHMRRuntime?: () => string };
-    if (typeof runtimeProvider.getHMRRuntime === "function") {
-      try {
-        return runtimeProvider.getHMRRuntime();
-      } catch (error) {
-        logger.debug("[dev] failed to read HMR runtime from server", error);
-      }
-    }
+    if (typeof runtimeProvider.getHMRRuntime !== "function") return null;
 
-    return null;
+    try {
+      return runtimeProvider.getHMRRuntime();
+    } catch (error) {
+      logger.debug("[dev] failed to read HMR runtime from server", error);
+      return null;
+    }
   }
 
   private async handleApplicationRequest(req: Request): Promise<Response> {

@@ -20,12 +20,12 @@ Deno.test("Runtime Detection | isNode detects Node.js compatibility", () => {
   }
 });
 
-Deno.test("Runtime Detection | isNode checks for process.versions.node", () => {
-  const globalWithProcess = globalThis as { process?: { versions?: { node?: string } } };
-  const hasNodeVersion = typeof globalWithProcess.process !== "undefined" &&
-    globalWithProcess.process?.versions?.node !== undefined;
-
-  assertEquals(isNode, hasNodeVersion);
+Deno.test("Runtime Detection | isNode is false when Deno is detected", () => {
+  // Even though Deno has a process shim for Node.js compatibility,
+  // isNode should be false when running in Deno to avoid ambiguity
+  if (isDeno) {
+    assertEquals(isNode, false, "isNode should be false in Deno environment");
+  }
 });
 
 Deno.test("Runtime Detection | isBun is false in Deno environment", () => {

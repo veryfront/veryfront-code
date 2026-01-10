@@ -98,55 +98,52 @@ export const Message = React.forwardRef<HTMLDivElement, MessageProps>(
           {message.parts.map((part, index) => {
             const key = `${message.id}-part-${index}`;
 
-            switch (part.type) {
-              case "text":
-                return (
-                  <MessageContent key={key}>
-                    {part.text}
-                  </MessageContent>
-                );
-
-              case "reasoning":
-                if (renderReasoning) {
-                  return <React.Fragment key={key}>{renderReasoning(part)}</React.Fragment>;
-                }
-                return (
-                  <div key={key} className="text-sm italic opacity-70 my-2 pl-2 border-l-2">
-                    {part.text}
-                  </div>
-                );
-
-              case "dynamic-tool":
-                if (renderDynamicTool) {
-                  return <React.Fragment key={key}>{renderDynamicTool(part)}</React.Fragment>;
-                }
-                return (
-                  <div key={key} className="text-xs bg-blue-50 rounded p-2 my-2">
-                    <span className="font-mono">{part.toolName}</span>
-                    <span className="ml-2 text-blue-500">[dynamic: {part.state}]</span>
-                    {part.errorText && <div className="text-red-600 mt-1">{part.errorText}</div>}
-                  </div>
-                );
-
-              default:
-                // Handle tool-${toolName} pattern (AI SDK v5) - type starts with "tool-"
-                if (part.type.startsWith("tool-") && "toolCallId" in part) {
-                  const toolPart = part as ToolUIPart;
-                  if (renderToolCall) {
-                    return <React.Fragment key={key}>{renderToolCall(toolPart)}</React.Fragment>;
-                  }
-                  return (
-                    <div key={key} className="text-xs bg-gray-100 rounded p-2 my-2">
-                      <span className="font-mono">{toolPart.toolName}</span>
-                      <span className="ml-2 text-gray-500">[{toolPart.state}]</span>
-                      {toolPart.errorText && (
-                        <div className="text-red-600 mt-1">{toolPart.errorText}</div>
-                      )}
-                    </div>
-                  );
-                }
-                return null;
+            if (part.type === "text") {
+              return <MessageContent key={key}>{part.text}</MessageContent>;
             }
+
+            if (part.type === "reasoning") {
+              if (renderReasoning) {
+                return <React.Fragment key={key}>{renderReasoning(part)}</React.Fragment>;
+              }
+              return (
+                <div key={key} className="text-sm italic opacity-70 my-2 pl-2 border-l-2">
+                  {part.text}
+                </div>
+              );
+            }
+
+            if (part.type === "dynamic-tool") {
+              if (renderDynamicTool) {
+                return <React.Fragment key={key}>{renderDynamicTool(part)}</React.Fragment>;
+              }
+              return (
+                <div key={key} className="text-xs bg-blue-50 rounded p-2 my-2">
+                  <span className="font-mono">{part.toolName}</span>
+                  <span className="ml-2 text-blue-500">[dynamic: {part.state}]</span>
+                  {part.errorText && <div className="text-red-600 mt-1">{part.errorText}</div>}
+                </div>
+              );
+            }
+
+            // Handle tool-${toolName} pattern (AI SDK v5) - type starts with "tool-"
+            if (part.type.startsWith("tool-") && "toolCallId" in part) {
+              const toolPart = part as ToolUIPart;
+              if (renderToolCall) {
+                return <React.Fragment key={key}>{renderToolCall(toolPart)}</React.Fragment>;
+              }
+              return (
+                <div key={key} className="text-xs bg-gray-100 rounded p-2 my-2">
+                  <span className="font-mono">{toolPart.toolName}</span>
+                  <span className="ml-2 text-gray-500">[{toolPart.state}]</span>
+                  {toolPart.errorText && (
+                    <div className="text-red-600 mt-1">{toolPart.errorText}</div>
+                  )}
+                </div>
+              );
+            }
+
+            return null;
           })}
 
           {showTimestamp && message.createdAt && (

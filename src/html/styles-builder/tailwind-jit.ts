@@ -7,17 +7,14 @@
 // This extracts class names from HTML and generates corresponding CSS
 export function generateTailwindCSS(htmlContent: string): string {
   // Extract all class names from the HTML
-  const classPattern = /class="([^"]*)"/g;
   const classNames = new Set<string>();
 
-  let match;
-  while ((match = classPattern.exec(htmlContent)) !== null) {
-    const classAttr = match[1];
+  for (const [, classAttr] of htmlContent.matchAll(/class="([^"]*)"/g)) {
     if (!classAttr) continue;
-    const classes = classAttr.split(/\s+/);
-    classes.forEach((cls) => {
-      if (cls.trim()) classNames.add(cls.trim());
-    });
+    for (const cls of classAttr.split(/\s+/)) {
+      const trimmed = cls.trim();
+      if (trimmed) classNames.add(trimmed);
+    }
   }
 
   // For now, we'll use the manually defined Tailwind utilities

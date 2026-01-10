@@ -10,31 +10,15 @@ import { resolveAppRouteFile } from "./app-router-resolver.ts";
 import { applySecurityHeaders } from "./security-headers.ts";
 import { applyCORSHeaders } from "@veryfront/security";
 import { serverLogger } from "@veryfront/utils";
+import { methodNotAllowed } from "../../../../http/responses.ts";
+
+const HTTP_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"] as const;
 
 /**
  * Gets the list of allowed HTTP methods from a route module
- *
- * @param mod - The route handler module
- * @returns Comma-separated list of allowed methods
- *
- * @example
- * ```ts
- * const allow = getAllowedMethods(mod);
- * // Returns "GET, POST, PUT"
- * ```
  */
-function getAllowedMethods(mod: RouteHandlerModule): string {
-  const candidates = [
-    "GET",
-    "POST",
-    "PUT",
-    "PATCH",
-    "DELETE",
-    "HEAD",
-    "OPTIONS",
-  ];
-  const allowed = candidates.filter((m) => typeof mod[m] === "function");
-  return allowed.join(", ") || "GET,POST";
+function getAllowedMethods(mod: RouteHandlerModule): string[] {
+  return HTTP_METHODS.filter((m) => typeof mod[m] === "function");
 }
 
 /**
@@ -96,12 +80,7 @@ export async function handleAppRouter(
     const [fn, headShim] = resolveHandlerFunction(mod, method);
 
     if (!fn) {
-      // Method not allowed
-      const allow = getAllowedMethods(mod);
-      return new Response("Method Not Allowed", {
-        status: 405,
-        headers: { Allow: allow },
-      });
+      return methodNotAllowed(getAllowedMethods(mod));
     }
 
     // Execute the handler

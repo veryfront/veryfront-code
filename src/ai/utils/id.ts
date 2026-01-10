@@ -1,19 +1,7 @@
-/**
- * ID generation utilities following AI SDK best practices
- *
- * AI SDK uses nanoid internally with these defaults:
- * - 16 character alphanumeric string (a-zA-Z0-9)
- * - Dash separator for prefixed IDs
- *
- * @module veryfront/ai/utils/id
- */
+/** ID generation utilities (AI SDK compatible: 16-char alphanumeric with optional prefix) */
 
-// URL-safe alphabet matching nanoid default (no special chars for simplicity)
 const ALPHABET = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
 
-/**
- * Generate a random alphanumeric string
- */
 function randomString(length: number): string {
   const bytes = new Uint8Array(length);
   crypto.getRandomValues(bytes);
@@ -24,42 +12,13 @@ function randomString(length: number): string {
   return result;
 }
 
-/**
- * Generate a unique ID with optional prefix
- *
- * Follows AI SDK generateId pattern:
- * - 16 character alphanumeric string by default
- * - Optional prefix with dash separator (AI SDK default)
- *
- * @example
- * ```ts
- * generateId()           // "a1B2c3D4e5F6g7H8"
- * generateId("msg")      // "msg-a1B2c3D4e5F6g7H8"
- * generateId("text")     // "text-a1B2c3D4e5F6g7H8"
- * ```
- */
+/** Generate a unique ID with optional prefix (e.g., "msg-a1B2c3D4e5F6g7H8") */
 export function generateId(prefix?: string): string {
   const id = randomString(16);
-
-  if (prefix) {
-    return `${prefix}-${id}`;
-  }
-
-  return id;
+  return prefix ? `${prefix}-${id}` : id;
 }
 
-/**
- * Create an ID generator with a fixed prefix and optional configuration
- *
- * @example
- * ```ts
- * const generateMessageId = createIdGenerator({ prefix: "msg" });
- * generateMessageId() // "msg-a1B2c3D4e5F6g7H8"
- *
- * const generateShortId = createIdGenerator({ prefix: "user", size: 8 });
- * generateShortId() // "user-a1B2c3D4"
- * ```
- */
+/** Create an ID generator with fixed prefix and optional configuration */
 export function createIdGenerator(options: {
   prefix?: string;
   separator?: string;
@@ -69,9 +28,6 @@ export function createIdGenerator(options: {
 
   return () => {
     const id = randomString(size);
-    if (prefix) {
-      return `${prefix}${separator}${id}`;
-    }
-    return id;
+    return prefix ? `${prefix}${separator}${id}` : id;
   };
 }

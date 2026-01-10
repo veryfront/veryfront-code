@@ -95,9 +95,11 @@ export async function generateReactVersionConfig(
 }
 
 export async function generateAllReactConfigs(projectDir: string): Promise<void> {
-  for (const version of Object.keys(REACT_CONFIGS) as ReactVersion[]) {
-    await generateReactVersionConfig(projectDir, version);
-  }
+  await Promise.all(
+    (Object.keys(REACT_CONFIGS) as ReactVersion[]).map((version) =>
+      generateReactVersionConfig(projectDir, version)
+    ),
+  );
 }
 
 export function getReactImports(version: ReactVersion) {
@@ -157,8 +159,8 @@ export function createReactVersionSwitcher(projectDir: string): ReactVersionSwit
       logger.info(`Use --config deno.react${version}.json to run with React ${version}`);
     },
 
-    async getCurrentVersion(): Promise<ReactVersion | null> {
-      return await detectReactVersionFromConfig(projectDir);
+    getCurrentVersion(): Promise<ReactVersion | null> {
+      return detectReactVersionFromConfig(projectDir);
     },
 
     getAvailableVersions(): ReactVersion[] {

@@ -36,13 +36,13 @@ export function cwd(): string {
 export function chdir(directory: string): void {
   if (IS_DENO) {
     Deno.chdir(directory);
-  } else {
-    if (hasNodeProcess) {
-      nodeProcess!.chdir(directory);
-      return;
-    }
-    throw new Error("chdir() is not supported in this runtime");
+    return;
   }
+  if (hasNodeProcess) {
+    nodeProcess!.chdir(directory);
+    return;
+  }
+  throw new Error("chdir() is not supported in this runtime");
 }
 
 export function env(): Record<string, string> {
@@ -80,25 +80,25 @@ export function requireEnv(key: string): string {
 export function setEnv(key: string, value: string): void {
   if (IS_DENO) {
     Deno.env.set(key, value);
-  } else {
-    if (hasNodeProcess) {
-      nodeProcess!.env[key] = value;
-      return;
-    }
-    throw new Error("setEnv() is not supported in this runtime");
+    return;
   }
+  if (hasNodeProcess) {
+    nodeProcess!.env[key] = value;
+    return;
+  }
+  throw new Error("setEnv() is not supported in this runtime");
 }
 
 export function deleteEnv(key: string): void {
   if (IS_DENO) {
     Deno.env.delete(key);
-  } else {
-    if (hasNodeProcess) {
-      delete nodeProcess!.env[key];
-      return;
-    }
-    throw new Error("deleteEnv() is not supported in this runtime");
+    return;
   }
+  if (hasNodeProcess) {
+    delete nodeProcess!.env[key];
+    return;
+  }
+  throw new Error("deleteEnv() is not supported in this runtime");
 }
 
 export function pid(): number {

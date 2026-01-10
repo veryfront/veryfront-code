@@ -1,26 +1,19 @@
-import { HTTP_METHOD_NOT_ALLOWED } from "@veryfront/utils";
+import { methodNotAllowed } from "../../http/responses.ts";
 import type { HTTPMethod } from "./module-loader/types.ts";
+
+const HTTP_METHODS: HTTPMethod[] = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"];
 
 export function createAppRouteMethodNotAllowed(
   handlerModule: Record<string, unknown>,
 ): Response {
-  const candidates: HTTPMethod[] = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"];
-  const implemented = candidates.filter((m) => typeof handlerModule[m] === "function");
-  const allow = implemented.join(", ");
-  return new Response("Method not allowed", {
-    status: HTTP_METHOD_NOT_ALLOWED,
-    headers: { Allow: allow },
-  });
+  const allowed = HTTP_METHODS.filter((m) => typeof handlerModule[m] === "function");
+  return methodNotAllowed(allowed);
 }
 
 export function createPagesRouteMethodNotAllowed(
   handler: Record<string, unknown>,
 ): Response {
-  const allowedMethods = Object.keys(handler)
-    .filter((m) => m !== "default" && typeof handler[m] === "function")
-    .join(", ");
-  return new Response("Method not allowed", {
-    status: HTTP_METHOD_NOT_ALLOWED,
-    headers: { Allow: allowedMethods },
-  });
+  const allowed = Object.keys(handler)
+    .filter((m) => m !== "default" && typeof handler[m] === "function");
+  return methodNotAllowed(allowed);
 }

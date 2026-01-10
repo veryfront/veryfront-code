@@ -116,20 +116,16 @@ export class VeryfrontRenderer {
     });
   }
 
-  async renderPage(slug: string, options?: RenderOptions): Promise<RenderResult> {
-    return await this.renderPipeline.renderPage(slug, options);
+  renderPage(slug: string, options?: RenderOptions): Promise<RenderResult> {
+    return this.renderPipeline.renderPage(slug, options);
   }
 
-  /**
-   * Resolve page data for SPA client-side navigation.
-   * Returns structured data without rendering HTML.
-   */
-  async resolvePageData(slug: string, options?: RenderOptions): Promise<PageDataResponse> {
-    return await this.renderPipeline.resolvePageData(slug, options);
+  resolvePageData(slug: string, options?: RenderOptions): Promise<PageDataResponse> {
+    return this.renderPipeline.resolvePageData(slug, options);
   }
 
-  async getAllPages(): Promise<string[]> {
-    return await this.services.pageResolver.getAllPages();
+  getAllPages(): Promise<string[]> {
+    return this.services.pageResolver.getAllPages();
   }
 
   clearCache(slug?: string): void {
@@ -154,16 +150,16 @@ export class VeryfrontRenderer {
     await this.lifecycle.initializeComponents();
   }
 
-  async compileMDX(
+  compileMDX(
     content: string,
     frontmatter?: Record<string, unknown>,
     filePath?: string,
   ): Promise<import("@veryfront/types").MdxBundle> {
-    return await this.mdxCompiler.compileMDX(content, frontmatter, filePath);
+    return this.mdxCompiler.compileMDX(content, frontmatter, filePath);
   }
 
-  async destroy(): Promise<void> {
-    await this.lifecycle.destroy();
+  destroy(): Promise<void> {
+    return this.lifecycle.destroy();
   }
 }
 

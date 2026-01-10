@@ -45,56 +45,68 @@ const METADATA_PATTERNS: MetadataPattern[] = [
   { regex: /(?:export\s+)?const\s+draft\s*=\s*(true|false)/, key: "draft" },
 ];
 
+function parseLayoutValue(value: string): boolean | string {
+  if (value === "true") return true;
+  if (value === "false") return false;
+  return String(value).replace(/^"|"$/g, "");
+}
+
 export function extractMetadata(moduleCode: string): Partial<MDXModule> {
   const exports: Partial<MDXModule> = {};
 
-  METADATA_PATTERNS.forEach(({ regex, key }) => {
+  for (const { regex, key } of METADATA_PATTERNS) {
     const match = moduleCode.match(regex);
-    if (!match) return;
+    if (!match) continue;
 
     const value = match[1] as string;
 
-    switch (key) {
-      case "title":
-      case "description":
-      case "date":
-        exports[key] = value;
-        break;
-
-      case "layout":
-        exports[key] = value === "true"
-          ? true
-          : value === "false"
-          ? false
-          : String(value).replace(/^"|"$/g, "");
-        break;
-
-      case "headings":
-      case "tags":
-      case "nested":
-        try {
-          exports[key] = parseJsonish(value) as never;
-        } catch (e) {
-          logger.warn(`Failed to parse ${key}`, e);
-        }
-        break;
-
-      case "draft":
-        exports[key] = value === "true";
-        break;
+    // String fields: assign directly
+    if (key === "title" || key === "description" || key === "date") {
+      exports[key] = value;
+      continue;
     }
-  });
+
+    // Boolean field: parse as boolean
+    if (key === "draft") {
+      exports[key] = value === "true";
+      continue;
+    }
+
+    // Layout field: parse as boolean or string
+    if (key === "layout") {
+      exports[key] = parseLayoutValue(value);
+      continue;
+    }
+
+    // JSON-like fields: parse with jsonish parser
+    try {
+      exports[key] = parseJsonish(value) as never;
+    } catch (e) {
+      logger.warn(`Failed to parse ${key}`, e);
+    }
+  }
 
   return exports;
 }
 
-export function mergeFrontmatter(result: MDXModule): void {
-  result.frontmatter = result.frontmatter || {};
+const FRONTMATTER_KEYS = [
+  "title",
+  "description",
+  "layout",
+  "headings",
+  "tags",
+  "date",
+  "draft",
+  "nested",
+];
 
-  const keys = ["title", "description", "layout", "headings", "tags", "date", "draft", "nested"];
-  for (const key of keys) {
-    if (result[key] !== undefined && result.frontmatter[key] === undefined) {
-      result.frontmatter[key] = result[key];
+export function mergeFrontmatter(result: MDXModule): void {
+  result.frontmatter = result.frontmatter ?? {};
+
+  for (const key of FRONTMATTER_KEYS) {
+    const value = result[key];
+    if (value !== undefined && result.frontmatter[key] === undefined) {
+      result.frontmatter[key] = value;
     }
   }
 }

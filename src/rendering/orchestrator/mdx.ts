@@ -37,7 +37,7 @@ export class MDXCompiler {
       return cachedBundle;
     }
 
-    return await this.compileAndCache(content, frontmatter, filePath);
+    return this.compileAndCache(content, frontmatter, filePath);
   }
 
   private async compileAndCache(

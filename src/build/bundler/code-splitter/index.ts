@@ -36,22 +36,12 @@ import type { ChunkManifest, SplitOptions } from "./types.ts";
 import { CodeSplitter } from "./splitter.ts";
 import { createFileSystem } from "../../../platform/compat/fs.ts";
 
-/**
- * Creates a new code splitter instance
- *
- * @param options - Code splitting configuration
- * @returns CodeSplitter instance
- */
+/** Creates a new code splitter instance */
 export function createCodeSplitter(options: SplitOptions): CodeSplitter {
   return new CodeSplitter(options);
 }
 
-/**
- * Loads a chunk manifest from disk
- *
- * @param manifestPath - Path to manifest.json file
- * @returns Parsed chunk manifest
- */
+/** Loads a chunk manifest from disk */
 export async function loadChunkManifest(manifestPath: string): Promise<ChunkManifest> {
   const fs = createFileSystem();
   const content = await fs.readTextFile(manifestPath);
@@ -60,26 +50,16 @@ export async function loadChunkManifest(manifestPath: string): Promise<ChunkMani
 
 /**
  * Gets all chunks required for a specific route
- *
- * @param manifest - Chunk manifest
- * @param routePath - Route path to get chunks for
- * @returns Array of chunk paths (CSS, entry, and dependencies)
  */
 export function getChunksForRoute(manifest: ChunkManifest, routePath: string): string[] {
   const route = manifest.routes[routePath];
   if (!route) return [];
 
-  const cssFiles = route.css ? route.css : [];
-  return [...cssFiles, route.entry, ...route.chunks];
+  return [...(route.css ?? []), route.entry, ...route.chunks];
 }
 
 /**
  * Generates preload link tags for a route
- *
- * @param manifest - Chunk manifest
- * @param routePath - Route path to generate preloads for
- * @param baseUrl - Base URL for chunk paths (default: '')
- * @returns HTML string with preload link tags
  */
 export function generatePreloadLinks(
   manifest: ChunkManifest,
@@ -89,17 +69,16 @@ export function generatePreloadLinks(
   const route = manifest.routes[routePath];
   if (!route) return "";
 
-  const preloadLinks = route.preload
-    ? route.preload.map((chunk) => `<link rel="modulepreload" href="${baseUrl}/${chunk}">`)
-    : [];
-  const cssLinks = route.css
-    ? route.css.map((css) => `<link rel="preload" as="style" href="${baseUrl}/${css}">`)
-    : [];
-  const links = [
+  const preloadLinks = (route.preload ?? []).map(
+    (chunk) => `<link rel="modulepreload" href="${baseUrl}/${chunk}">`,
+  );
+  const cssLinks = (route.css ?? []).map(
+    (css) => `<link rel="preload" as="style" href="${baseUrl}/${css}">`,
+  );
+
+  return [
     `<link rel="modulepreload" href="${baseUrl}/${route.entry}">`,
     ...preloadLinks,
     ...cssLinks,
-  ];
-
-  return links.join("\n");
+  ].join("\n");
 }

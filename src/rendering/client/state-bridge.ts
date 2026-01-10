@@ -54,7 +54,9 @@ class StateBridge implements StateStore {
   private notifyListeners(key: string, value: unknown): void {
     const callbacks = this.listeners.get(key);
     if (callbacks) {
-      callbacks.forEach((callback) => callback(value));
+      for (const callback of callbacks) {
+        callback(value);
+      }
     }
   }
 
@@ -118,10 +120,10 @@ class StateBridge implements StateStore {
     const state = this.readPersistedState();
     if (!state) return;
 
-    Object.entries(state).forEach(([key, value]) => {
+    for (const [key, value] of Object.entries(state)) {
       this.state.set(key, value);
       this.persistKeys.add(key);
-    });
+    }
   }
 
   private readPersistedState(): Record<string, unknown> | null {
@@ -173,8 +175,7 @@ export function useBridgedState<T>(
   const { useState, useEffect, useCallback } = testReact || React;
   const bridge = getStateBridge();
 
-  const storedValue = bridge.get(key);
-  const initialState = storedValue !== undefined ? storedValue : initialValue;
+  const initialState = bridge.get(key) ?? initialValue;
 
   const [value, setValue] = useState<T>(initialState as T);
 

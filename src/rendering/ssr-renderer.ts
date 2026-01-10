@@ -17,6 +17,13 @@ import type * as React from "react";
 import { streamToString } from "./utils/index.ts";
 import { setupSSRGlobals } from "./ssr-globals.ts";
 
+/** Check if React version supports streaming/concurrent features (React 18+) */
+function supportsStreamingSSR(
+  versionInfo: ReturnType<typeof getReactVersionInfo>,
+): boolean {
+  return versionInfo.isReact18 || versionInfo.isReact19;
+}
+
 /**
  * Convert Node.js pipeable stream to string
  *
@@ -175,7 +182,7 @@ export class SSRRenderer {
     // Error: "Module not found: blob:null/..." in worker
     const useStreaming = !isCompiledBinary() &&
       (this.mode === "production" || options.wantsStream) &&
-      (versionInfo.isReact18 || versionInfo.isReact19);
+      supportsStreamingSSR(versionInfo);
 
     if (
       isCompiledBinary() &&
@@ -268,16 +275,16 @@ export class SSRRenderer {
     };
   } {
     const versionInfo = getReactVersionInfo();
-    const useStreaming = this.mode === "production" &&
-      (versionInfo.isReact18 || versionInfo.isReact19);
+    const hasStreamingSupport = supportsStreamingSSR(versionInfo);
+    const useStreaming = this.mode === "production" && hasStreamingSupport;
 
     return {
       method: useStreaming ? "streaming" : "string",
       reactVersion: versionInfo.version,
       features: {
-        streaming: versionInfo.isReact18 || versionInfo.isReact19,
-        suspense: versionInfo.isReact18 || versionInfo.isReact19,
-        concurrent: versionInfo.isReact18 || versionInfo.isReact19,
+        streaming: hasStreamingSupport,
+        suspense: hasStreamingSupport,
+        concurrent: hasStreamingSupport,
       },
     };
   }
@@ -286,7 +293,6 @@ export class SSRRenderer {
    * Check if streaming is supported and recommended
    */
   supportsStreaming(): boolean {
-    const versionInfo = getReactVersionInfo();
-    return versionInfo.isReact18 || versionInfo.isReact19;
+    return supportsStreamingSSR(getReactVersionInfo());
   }
 }

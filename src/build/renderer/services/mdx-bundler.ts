@@ -4,10 +4,11 @@
 
 import { compile as compileMdx } from "@mdx-js/mdx";
 import { bundlerLogger as logger } from "@veryfront/utils";
-import type { Pluggable, PluggableList } from "unified";
+import type { PluggableList } from "unified";
 import { extract } from "std/front_matter/yaml.ts";
 import { dirname, join } from "std/path/mod.ts";
 import { getRehypePlugins, getRemarkPlugins } from "@veryfront/transforms/plugins/plugin-loader.ts";
+import { ensureError } from "../../../core/errors/veryfront-error.ts";
 import { createFileSystem } from "../../../platform/compat/fs.ts";
 import type {
   BundleResult,
@@ -17,6 +18,7 @@ import type {
 } from "../types/bundler-types.ts";
 import { extractImports, processImports } from "../utils/import-utils.ts";
 import { getSlugFromPath } from "../utils/loader-utils.ts";
+import { normalizePlugins } from "../utils/plugin-utils.ts";
 
 const fs = createFileSystem();
 
@@ -40,8 +42,8 @@ export async function bundleMdx(
       frontmatter = extracted.attrs as Record<string, unknown>;
     }
 
-    const remarkPlugins = (await getRemarkPlugins(options.projectDir)) as unknown as PluggableList;
-    const rehypePlugins = (await getRehypePlugins(options.projectDir)) as unknown as PluggableList;
+    const remarkPlugins = await getRemarkPlugins(options.projectDir) as unknown as PluggableList;
+    const rehypePlugins = await getRehypePlugins(options.projectDir) as unknown as PluggableList;
 
     const processedContent = await processImports(
       body,
@@ -100,13 +102,6 @@ export async function bundleMdx(
       },
     );
 
-    const normalizePlugins = (plugins: PluggableList | undefined): Pluggable[] =>
-      plugins === undefined
-        ? []
-        : Array.isArray(plugins)
-        ? plugins.flat() as Pluggable[]
-        : [plugins as Pluggable];
-
     const compiled = await compileMdx(processedContent, {
       outputFormat: "function-body",
       development: options.mode === "development",
@@ -151,7 +146,7 @@ export const meta = ${
     logger.debug(`Bundled MDX: ${source.path} -> ${outputPath}`);
   } catch (error) {
     logger.error(`Failed to bundle MDX ${source.path}`, error);
-    result.errors.push(error as Error);
+    result.errors.push(ensureError(error));
   }
 }
 
@@ -182,20 +177,13 @@ export async function bundleMDXWithOptions(options: MDXBundleOptions): Promise<M
       frontmatter = extracted.attrs as Record<string, unknown>;
     }
 
-    const normalizePlugins = (plugins: PluggableList | undefined): Pluggable[] =>
-      plugins === undefined
-        ? []
-        : Array.isArray(plugins)
-        ? plugins.flat() as Pluggable[]
-        : [plugins as Pluggable];
-
-    const defaultRemarkPlugins = (await getRemarkPlugins(projectDir)) as unknown as PluggableList;
-    const defaultRehypePlugins = (await getRehypePlugins(projectDir)) as unknown as PluggableList;
-    const allRemarkPlugins: Pluggable[] = [
+    const defaultRemarkPlugins = await getRemarkPlugins(projectDir) as unknown as PluggableList;
+    const defaultRehypePlugins = await getRehypePlugins(projectDir) as unknown as PluggableList;
+    const allRemarkPlugins = [
       ...normalizePlugins(defaultRemarkPlugins),
       ...normalizePlugins(remarkPlugins as PluggableList),
     ];
-    const allRehypePlugins: Pluggable[] = [
+    const allRehypePlugins = [
       ...normalizePlugins(defaultRehypePlugins),
       ...normalizePlugins(rehypePlugins as PluggableList),
     ];
@@ -241,7 +229,7 @@ export const meta = ${JSON.stringify(frontmatter)};
       code: "",
       frontmatter: {},
       dependencies: [],
-      errors: [error as Error],
+      errors: [ensureError(error)],
     };
   }
 }

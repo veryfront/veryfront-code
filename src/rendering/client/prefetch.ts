@@ -2,8 +2,7 @@ import { prefetchLogger } from "./browser-logger.ts";
 import { LinkObserver } from "./prefetch/link-observer.ts";
 import { NetworkUtils } from "./prefetch/network-utils.ts";
 import { PrefetchQueue } from "./prefetch/prefetch-queue.ts";
-import type { ResourceHint } from "./prefetch/resource-hints.ts";
-import { ResourceHintsManager } from "./prefetch/resource-hints.ts";
+import { type ResourceHint, ResourceHintsManager } from "./prefetch/resource-hints.ts";
 import {
   PREFETCH_DEFAULT_DELAY_MS,
   PREFETCH_DEFAULT_TIMEOUT_MS,

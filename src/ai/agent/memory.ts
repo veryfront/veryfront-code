@@ -10,6 +10,18 @@
 import { getTextFromParts, type MemoryConfig, type Message } from "../types/agent.ts";
 
 /**
+ * Estimate token count for messages.
+ * Uses a rough estimation of ~4 characters per token.
+ */
+export function estimateTokens(messages: Message[]): number {
+  const totalChars = messages.reduce(
+    (sum, msg) => sum + getTextFromParts(msg.parts).length,
+    0,
+  );
+  return Math.ceil(totalChars / 4);
+}
+
+/**
  * Memory interface
  */
 export interface Memory {
@@ -88,7 +100,7 @@ export class ConversationMemory implements Memory {
   getStats(): Promise<MemoryStats> {
     return Promise.resolve({
       totalMessages: this.messages.length,
-      estimatedTokens: this.estimateTokens(this.messages),
+      estimatedTokens: estimateTokens(this.messages),
       type: "conversation",
     });
   }
@@ -96,7 +108,7 @@ export class ConversationMemory implements Memory {
   private trimToTokenLimit(): Promise<void> {
     if (!this.config.maxTokens) return Promise.resolve();
 
-    let tokenCount = this.estimateTokens(this.messages);
+    let tokenCount = estimateTokens(this.messages);
 
     // Remove oldest messages until under limit
     while (
@@ -104,18 +116,9 @@ export class ConversationMemory implements Memory {
       this.messages.length > 1
     ) {
       this.messages.shift();
-      tokenCount = this.estimateTokens(this.messages);
+      tokenCount = estimateTokens(this.messages);
     }
     return Promise.resolve();
-  }
-
-  private estimateTokens(messages: Message[]): number {
-    // Rough estimation: ~4 characters per token
-    const totalChars = messages.reduce(
-      (sum, msg) => sum + getTextFromParts(msg.parts).length,
-      0,
-    );
-    return Math.ceil(totalChars / 4);
   }
 }
 
@@ -154,17 +157,9 @@ export class BufferMemory implements Memory {
   getStats(): Promise<MemoryStats> {
     return Promise.resolve({
       totalMessages: this.messages.length,
-      estimatedTokens: this.estimateTokens(this.messages),
+      estimatedTokens: estimateTokens(this.messages),
       type: "buffer",
     });
-  }
-
-  private estimateTokens(messages: Message[]): number {
-    const totalChars = messages.reduce(
-      (sum, msg) => sum + getTextFromParts(msg.parts).length,
-      0,
-    );
-    return Math.ceil(totalChars / 4);
   }
 }
 
@@ -217,17 +212,21 @@ export class SummaryMemory implements Memory {
 
   async getStats(): Promise<MemoryStats> {
     const allMessages = await this.getMessages();
+    // Add summary length to token estimate
+    const baseTokens = estimateTokens(allMessages);
+    const summaryTokens = Math.ceil(this.summary.length / 4);
     return {
       totalMessages: allMessages.length,
-      estimatedTokens: this.estimateTokens(allMessages),
+      estimatedTokens: baseTokens + summaryTokens,
       type: "summary",
     };
   }
 
   private summarizeOldMessages(): Promise<void> {
     // Take first half of messages for summarization
-    const toSummarize = this.messages.slice(0, Math.floor(this.messages.length / 2));
-    const remaining = this.messages.slice(Math.floor(this.messages.length / 2));
+    const halfIndex = Math.floor(this.messages.length / 2);
+    const toSummarize = this.messages.slice(0, halfIndex);
+    const remaining = this.messages.slice(halfIndex);
 
     // Simple summarization (in production, use LLM)
     const topics = toSummarize
@@ -239,31 +238,20 @@ export class SummaryMemory implements Memory {
     this.messages = remaining;
     return Promise.resolve();
   }
-
-  private estimateTokens(messages: Message[]): number {
-    const totalChars = messages.reduce((sum, msg) => sum + getTextFromParts(msg.parts).length, 0) +
-      this.summary.length;
-    return Math.ceil(totalChars / 4);
-  }
 }
+
+const MEMORY_CONSTRUCTORS: Record<string, new (config: MemoryConfig) => Memory> = {
+  conversation: ConversationMemory,
+  buffer: BufferMemory,
+  summary: SummaryMemory,
+};
 
 /**
  * Create memory instance based on config
  */
 export function createMemory(config: MemoryConfig): Memory {
-  switch (config.type) {
-    case "conversation":
-      return new ConversationMemory(config);
-
-    case "buffer":
-      return new BufferMemory(config);
-
-    case "summary":
-      return new SummaryMemory(config);
-
-    default:
-      return new ConversationMemory(config);
-  }
+  const Constructor = MEMORY_CONSTRUCTORS[config.type] ?? ConversationMemory;
+  return new Constructor(config);
 }
 
 /**

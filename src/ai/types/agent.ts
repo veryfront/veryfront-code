@@ -227,15 +227,10 @@ export function hasInput(part: ToolCallPart): part is ToolCallPartWithInput {
  * Throws if neither field is present.
  */
 export function getToolArguments(part: ToolCallPart): Record<string, unknown> {
-  if ("args" in part && part.args !== undefined) {
-    return part.args;
-  }
-  if ("input" in part && part.input !== undefined) {
-    return part.input;
-  }
-  // Access properties before TypeScript narrows to never
-  const toolName = (part as ToolCallPartWithArgs).toolName;
-  const toolCallId = (part as ToolCallPartWithArgs).toolCallId;
+  if (hasArgs(part)) return part.args;
+  if (hasInput(part)) return part.input;
+  // After type guards, TypeScript narrows to never, so cast to access properties
+  const { toolName, toolCallId } = part as ToolCallPartWithArgs;
   throw new Error(
     `Tool call part for "${toolName}" (${toolCallId}) missing both 'args' and 'input' fields`,
   );

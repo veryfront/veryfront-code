@@ -106,7 +106,7 @@ export class FileWatchSetup {
     const startTime = performance.now();
 
     await handleErrorWithFallback(
-      async () => await this.routeDiscovery.discoverRoutes(),
+      () => this.routeDiscovery.discoverRoutes(),
       undefined,
       logger,
     );
@@ -133,7 +133,7 @@ export class FileWatchSetup {
 
   private async handleImmediateFileChange(paths: string[]): Promise<void> {
     await handleErrorWithFallback(
-      async () => await this.routeDiscovery.discoverRoutes(),
+      () => this.routeDiscovery.discoverRoutes(),
       undefined,
       logger,
     );

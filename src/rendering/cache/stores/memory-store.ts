@@ -44,8 +44,6 @@ export class MemoryCacheStore implements CacheStore {
 }
 
 function isLruIntervalDisabled(): boolean {
-  if ((globalThis as Record<string, unknown>).__vfDisableLruInterval === true) {
-    return true;
-  }
-  return getEnv("VF_DISABLE_LRU_INTERVAL") === "1";
+  return (globalThis as Record<string, unknown>).__vfDisableLruInterval === true ||
+    getEnv("VF_DISABLE_LRU_INTERVAL") === "1";
 }

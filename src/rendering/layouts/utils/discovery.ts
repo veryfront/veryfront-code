@@ -1,7 +1,10 @@
-import { rendererLogger as logger } from "@veryfront/utils";
+import {
+  memoizeAsync,
+  memoizeHash as simpleHash,
+  rendererLogger as logger,
+} from "@veryfront/utils";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import type { LayoutItem } from "@veryfront/types";
-import { memoizeAsync, memoizeHash as simpleHash } from "@veryfront/utils";
 import { dirname, extname, join } from "../../../platform/compat/path-helper.ts";
 
 async function discoverNestedLayoutsImpl(
@@ -74,10 +77,8 @@ async function resolveExistingFiles(
     const result = results[i];
     if (!result) continue;
 
-    if (result.status === "fulfilled") {
-      if (result.value.isFile) {
-        existing.push(candidates[i]!);
-      }
+    if (result.status === "fulfilled" && result.value.isFile) {
+      existing.push(candidates[i]!);
     } else if (result.status === "rejected") {
       logger.debug("[layout] stat layout candidate failed", result.reason as Error);
     }
@@ -141,16 +142,14 @@ async function addMissedAncestorLayouts(
       const cand = candidates[i];
       if (!result || !cand) continue;
 
-      if (result.status === "fulfilled") {
-        if (result.value.isFile) {
-          nestedLayouts.push({
-            kind: "tsx",
-            component: undefined,
-            componentPath: cand,
-            path: cand,
-          });
-          included.add(cand);
-        }
+      if (result.status === "fulfilled" && result.value.isFile) {
+        nestedLayouts.push({
+          kind: "tsx",
+          component: undefined,
+          componentPath: cand,
+          path: cand,
+        });
+        included.add(cand);
       } else if (result.status === "rejected") {
         logger.debug("[layout] stat nested tsx/jsx layout failed", result.reason as Error);
       }

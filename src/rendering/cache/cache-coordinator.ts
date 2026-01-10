@@ -28,13 +28,7 @@ export class CacheCoordinator {
       });
   }
 
-  async checkCache(
-    slug: string,
-    _pageInfo: unknown,
-    _layoutBundle: unknown,
-    _nestedLayouts: unknown,
-    _providerInfos: unknown,
-  ): Promise<CacheLookupResult> {
+  async checkCache(slug: string): Promise<CacheLookupResult> {
     const cached = await this.store.get(slug);
 
     if (cached && !this.isExpired(cached)) {
@@ -56,16 +50,7 @@ export class CacheCoordinator {
     };
   }
 
-  async persistResult(
-    result: RenderResult,
-    slug: string,
-    _depAwareSlug: string,
-    _moduleCacheKey: string,
-    _pageInfo: unknown,
-    _clientModuleCode: string | undefined,
-    _pageModuleType: unknown,
-    _cachedModule: RenderResult["pageModule"] | undefined,
-  ): Promise<void> {
+  async persistResult(result: RenderResult, slug: string): Promise<void> {
     if (!result || result.stream) {
       return;
     }

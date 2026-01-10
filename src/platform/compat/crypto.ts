@@ -34,10 +34,9 @@ class NodeCrypto implements CryptoCompat {
   }
 }
 
-export function createCrypto() {
+export function createCrypto(): CryptoCompat {
   if (isDeno) {
     return new DenoCrypto();
-  } else {
-    return new NodeCrypto();
   }
+  return new NodeCrypto();
 }

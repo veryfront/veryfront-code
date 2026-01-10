@@ -6,6 +6,7 @@
 
 import type {
   NodeState,
+  NodeStatus,
   ParallelNodeConfig,
   WorkflowNode,
   WorkflowNodeConfig,
@@ -16,6 +17,12 @@ import {
   type NodeExecutionResult,
   type NodeHandlerContext,
 } from "./node-handler.ts";
+
+function deriveNodeStatus(completed: boolean, waiting: boolean): NodeStatus {
+  if (completed) return "completed";
+  if (waiting) return "running";
+  return "failed";
+}
 
 /**
  * Callbacks for parallel node events
@@ -71,7 +78,7 @@ export class ParallelNodeHandler extends BaseNodeHandler<ParallelNodeConfig> {
 
     const state: NodeState = {
       nodeId: node.id,
-      status: result.completed ? "completed" : (result.waiting ? "running" : "failed"),
+      status: deriveNodeStatus(result.completed, result.waiting),
       output: result.context,
       error: result.error,
       attempt: 1,

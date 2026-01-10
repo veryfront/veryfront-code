@@ -94,7 +94,7 @@ function serializeError(err: unknown): LogEntry["error"] | undefined {
       stack: err.stack,
     };
   }
-  if (err !== undefined && err !== null) {
+  if (err != null) {
     return {
       name: "UnknownError",
       message: String(err),
@@ -133,9 +133,7 @@ class ConsoleLogger implements Logger {
     private format: LogFormat = resolveLogFormat(),
     boundContext?: Record<string, unknown>,
   ) {
-    if (boundContext) {
-      this.boundContext = boundContext;
-    }
+    this.boundContext = boundContext ?? {};
   }
 
   setLevel(level: LogLevel): void {
@@ -170,6 +168,7 @@ class ConsoleLogger implements Logger {
     args: unknown[],
   ): string {
     const { context, error } = extractContext(args);
+    const mergedContext = { ...this.boundContext, ...context };
 
     const entry: LogEntry = {
       timestamp: new Date().toISOString(),
@@ -178,30 +177,26 @@ class ConsoleLogger implements Logger {
       message,
     };
 
-    // Merge bound context with call-time context
-    const mergedContext = { ...this.boundContext, ...context };
-    if (Object.keys(mergedContext).length > 0) {
-      // Extract known fields to top level for easier Grafana filtering
-      if ("requestId" in mergedContext) {
-        entry.requestId = String(mergedContext.requestId);
-        delete mergedContext.requestId;
-      }
-      if ("traceId" in mergedContext) {
-        entry.traceId = String(mergedContext.traceId);
-        delete mergedContext.traceId;
-      }
-      if ("projectSlug" in mergedContext) {
-        entry.projectSlug = String(mergedContext.projectSlug);
-        delete mergedContext.projectSlug;
-      }
-      if ("durationMs" in mergedContext) {
-        entry.durationMs = Number(mergedContext.durationMs);
-        delete mergedContext.durationMs;
-      }
+    // Extract known fields to top level for easier Grafana filtering
+    if ("requestId" in mergedContext) {
+      entry.requestId = String(mergedContext.requestId);
+      delete mergedContext.requestId;
+    }
+    if ("traceId" in mergedContext) {
+      entry.traceId = String(mergedContext.traceId);
+      delete mergedContext.traceId;
+    }
+    if ("projectSlug" in mergedContext) {
+      entry.projectSlug = String(mergedContext.projectSlug);
+      delete mergedContext.projectSlug;
+    }
+    if ("durationMs" in mergedContext) {
+      entry.durationMs = Number(mergedContext.durationMs);
+      delete mergedContext.durationMs;
+    }
 
-      if (Object.keys(mergedContext).length > 0) {
-        entry.context = mergedContext;
-      }
+    if (Object.keys(mergedContext).length > 0) {
+      entry.context = mergedContext;
     }
 
     if (error) {
@@ -259,21 +254,16 @@ class ConsoleLogger implements Logger {
   }
 }
 
+const LOG_LEVEL_MAP: Record<string, LogLevel> = {
+  DEBUG: LogLevel.DEBUG,
+  INFO: LogLevel.INFO,
+  WARN: LogLevel.WARN,
+  ERROR: LogLevel.ERROR,
+};
+
 function parseLogLevel(levelString: string | undefined): LogLevel | undefined {
   if (!levelString) return undefined;
-  const upper = levelString.toUpperCase();
-  switch (upper) {
-    case "DEBUG":
-      return LogLevel.DEBUG;
-    case "WARN":
-      return LogLevel.WARN;
-    case "ERROR":
-      return LogLevel.ERROR;
-    case "INFO":
-      return LogLevel.INFO;
-    default:
-      return undefined;
-  }
+  return LOG_LEVEL_MAP[levelString.toUpperCase()];
 }
 
 const getDefaultLevel = (): LogLevel => {

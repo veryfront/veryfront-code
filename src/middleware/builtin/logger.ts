@@ -37,19 +37,15 @@ function getStatusColor(status: number): string {
   return colors.reset;
 }
 
+const methodColors: Record<string, string> = {
+  GET: colors.green,
+  POST: colors.cyan,
+  PUT: colors.yellow,
+  DELETE: colors.red,
+};
+
 function getMethodColor(method: string): string {
-  switch (method.toUpperCase()) {
-    case "GET":
-      return colors.green;
-    case "POST":
-      return colors.cyan;
-    case "PUT":
-      return colors.yellow;
-    case "DELETE":
-      return colors.red;
-    default:
-      return colors.reset;
-  }
+  return methodColors[method.toUpperCase()] ?? colors.reset;
 }
 
 function formatDuration(ms: number): string {
@@ -67,10 +63,6 @@ function getRemoteAddr(req: Request): string {
   return req.headers.get("x-forwarded-for") || req.headers.get("x-real-ip") || "-";
 }
 
-/**
- * HTTP log entry structure for JSON format.
- * Designed for easy Grafana/Loki filtering.
- */
 interface HttpLogEntry {
   timestamp: string;
   level: "info" | "warn" | "error";
@@ -85,10 +77,15 @@ interface HttpLogEntry {
     userAgent?: string;
     referer?: string;
   };
-  // Request context if available
   requestId?: string;
   traceId?: string;
   projectSlug?: string;
+}
+
+function getLogLevel(status: number): HttpLogEntry["level"] {
+  if (status >= HTTP_STATUS_SERVER_ERROR_MIN) return "error";
+  if (status >= HTTP_STATUS_CLIENT_ERROR_MIN) return "warn";
+  return "info";
 }
 
 function formatJsonLog(
@@ -99,18 +96,13 @@ function formatJsonLog(
   const url = new URL(req.url);
   const userAgent = req.headers.get("user-agent");
   const referer = req.headers.get("referer");
-
-  // Determine log level based on status code
-  let level: HttpLogEntry["level"] = "info";
-  if (status >= HTTP_STATUS_SERVER_ERROR_MIN) {
-    level = "error";
-  } else if (status >= HTTP_STATUS_CLIENT_ERROR_MIN) {
-    level = "warn";
-  }
+  const requestId = req.headers.get("x-request-id");
+  const traceId = req.headers.get("x-trace-id") ?? req.headers.get("traceparent");
+  const projectSlug = req.headers.get("x-project-slug");
 
   const entry: HttpLogEntry = {
     timestamp: new Date().toISOString(),
-    level,
+    level: getLogLevel(status),
     service: "server",
     message: `${req.method} ${url.pathname} ${status}`,
     http: {
@@ -119,24 +111,13 @@ function formatJsonLog(
       status,
       durationMs: Math.round(duration),
       remoteAddr: getRemoteAddr(req),
+      ...(userAgent && userAgent !== "-" && { userAgent }),
+      ...(referer && referer !== "-" && { referer }),
     },
+    ...(requestId && { requestId }),
+    ...(traceId && { traceId }),
+    ...(projectSlug && { projectSlug }),
   };
-
-  if (userAgent && userAgent !== "-") {
-    entry.http.userAgent = userAgent;
-  }
-  if (referer && referer !== "-") {
-    entry.http.referer = referer;
-  }
-
-  // Extract request context headers if present
-  const requestId = req.headers.get("x-request-id");
-  const traceId = req.headers.get("x-trace-id") || req.headers.get("traceparent");
-  const projectSlug = req.headers.get("x-project-slug");
-
-  if (requestId) entry.requestId = requestId;
-  if (traceId) entry.traceId = traceId;
-  if (projectSlug) entry.projectSlug = projectSlug;
 
   return JSON.stringify(entry);
 }
@@ -147,9 +128,8 @@ function formatLog(
   status: number,
   duration: number,
 ): string {
-  const url = new URL(req.url);
-  const method = req.method;
-  const pathname = url.pathname;
+  const { pathname } = new URL(req.url);
+  const { method } = req;
   const remoteAddr = getRemoteAddr(req);
   const timestamp = getTimestamp();
   const userAgent = req.headers.get("user-agent") || "-";
@@ -196,10 +176,14 @@ export function logger(options?: LoggerOptions): Middleware {
   const log = options?.log ??
     (isJson ? (msg: string) => console.log(msg) : (msg: string) => serverLogger.info(msg));
 
+  const logError = (message: string): void => {
+    log(isJson ? message : `${message} ${colors.red}[ERROR]${colors.reset}`);
+  };
+
   return async (ctx, next) => {
     const req = getRequest(ctx);
 
-    if (skip && skip(req)) {
+    if (skip?.(req)) {
       return next();
     }
 
@@ -207,33 +191,18 @@ export function logger(options?: LoggerOptions): Middleware {
 
     try {
       const response = await next();
-
       const duration = performance.now() - start;
 
       if (!response) {
-        const message = formatLog(format, req, HTTP_SERVER_ERROR, duration);
-        // Don't append color codes to JSON output
-        if (isJson) {
-          log(message);
-        } else {
-          log(`${message} ${colors.red}[ERROR]${colors.reset}`);
-        }
+        logError(formatLog(format, req, HTTP_SERVER_ERROR, duration));
         return response;
       }
 
-      const message = formatLog(format, req, response.status, duration);
-      log(message);
-
+      log(formatLog(format, req, response.status, duration));
       return response;
     } catch (error) {
       const duration = performance.now() - start;
-      const message = formatLog(format, req, HTTP_SERVER_ERROR, duration);
-      // Don't append color codes to JSON output
-      if (isJson) {
-        log(message);
-      } else {
-        log(`${message} ${colors.red}[ERROR]${colors.reset}`);
-      }
+      logError(formatLog(format, req, HTTP_SERVER_ERROR, duration));
       throw error;
     }
   };
@@ -243,10 +212,6 @@ export function devLogger(): Middleware {
   return logger({ format: "dev" });
 }
 
-/**
- * Production logger with JSON format for Grafana/Loki compatibility.
- * Outputs structured JSON logs with HTTP request details.
- */
 export function prodLogger(): Middleware {
   return logger({ format: "json" });
 }

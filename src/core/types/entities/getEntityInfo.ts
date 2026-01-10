@@ -83,8 +83,8 @@ export async function getEntityInfo(
         );
         return null;
       }
-    } else {
-      if (!(await fs.exists(filePath))) return null;
+    } else if (!(await fs.exists(filePath))) {
+      return null;
     }
 
     const content = adapter
@@ -420,24 +420,17 @@ export async function getProviderEntities(
     }
   }
 
-  return providers.sort((a, b) => {
-    const priorityA = typeof a.entity.frontmatter.priority === "number"
-      ? a.entity.frontmatter.priority
-      : 0;
-    const priorityB = typeof b.entity.frontmatter.priority === "number"
-      ? b.entity.frontmatter.priority
-      : 0;
-    return priorityA - priorityB;
-  });
+  const getPriority = (e: EntityInfo): number =>
+    typeof e.entity.frontmatter.priority === "number" ? e.entity.frontmatter.priority : 0;
+  return providers.sort((a, b) => getPriority(a) - getPriority(b));
 }
 
 function getSlugFromPath(filePath: string): string {
   const parts = filePath.split(pathHelper.sep);
-  const fileName = parts[parts.length - 1];
-  const slug = (fileName ?? "").replace(/\.(mdx?|tsx?|jsx?|ts)$/, "");
-  if (slug === "index") {
-    const parentDir = parts[parts.length - 2];
-    return parentDir === "pages" ? "" : parentDir || "";
-  }
-  return slug;
+  const fileName = parts[parts.length - 1] ?? "";
+  const slug = fileName.replace(/\.(mdx?|tsx?|jsx?|ts)$/, "");
+  if (slug !== "index") return slug;
+
+  const parentDir = parts[parts.length - 2];
+  return parentDir === "pages" ? "" : parentDir ?? "";
 }

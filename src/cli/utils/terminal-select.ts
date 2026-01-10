@@ -143,11 +143,7 @@ export async function multiSelect(
       } else if (key === "space") {
         const opt = options[cursorIndex];
         if (opt) {
-          if (selected.has(opt.value)) {
-            selected.delete(opt.value);
-          } else {
-            selected.add(opt.value);
-          }
+          selected.has(opt.value) ? selected.delete(opt.value) : selected.add(opt.value);
           clearOptions();
           renderOptions();
         }
@@ -185,9 +181,8 @@ type KeyHandler<T> = (key: string) => T | undefined;
 function readKeypress<T>(handler: KeyHandler<T>): Promise<T> {
   if (isDeno) {
     return readKeypressDeno(handler);
-  } else {
-    return readKeypressNode(handler);
   }
+  return readKeypressNode(handler);
 }
 
 /**

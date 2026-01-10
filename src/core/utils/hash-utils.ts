@@ -6,13 +6,11 @@ export async function computeHash(content: string): Promise<string> {
   return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-export function getContentHash(content: string): Promise<string> {
-  return computeHash(content);
-}
+/** @deprecated Use computeHash directly */
+export const getContentHash = computeHash;
 
-export function computeContentHash(content: string): Promise<string> {
-  return computeHash(content);
-}
+/** @deprecated Use computeHash directly */
+export const computeContentHash = computeHash;
 
 export interface BundleCode {
   code: string;
@@ -21,8 +19,7 @@ export interface BundleCode {
 }
 
 export function computeCodeHash(code: BundleCode): Promise<string> {
-  const combined = code.code + (code.css || "") + (code.sourceMap || "");
-  return computeHash(combined);
+  return computeHash(`${code.code}${code.css ?? ""}${code.sourceMap ?? ""}`);
 }
 
 export function simpleHash(str: string): number {

@@ -1,9 +1,3 @@
-/**
- * Base OAuth Provider
- *
- * Generic OAuth 2.0 implementation that can be extended for specific providers.
- */
-
 import type {
   AuthorizationUrlOptions,
   OAuthProviderConfig,
@@ -16,25 +10,16 @@ import type {
 } from "../types.ts";
 import { getEnv } from "../../../platform/compat/process.ts";
 
-/**
- * Generate cryptographically secure random string
- */
 function generateRandomString(length: number): string {
   const array = new Uint8Array(length);
   crypto.getRandomValues(array);
   return Array.from(array, (byte) => byte.toString(16).padStart(2, "0")).join("").slice(0, length);
 }
 
-/**
- * Generate PKCE code verifier
- */
 function generateCodeVerifier(): string {
   return generateRandomString(64);
 }
 
-/**
- * Generate PKCE code challenge from verifier
- */
 async function generateCodeChallenge(verifier: string): Promise<string> {
   const encoder = new TextEncoder();
   const data = encoder.encode(verifier);
@@ -45,9 +30,6 @@ async function generateCodeChallenge(verifier: string): Promise<string> {
     .replace(/=+$/, "");
 }
 
-/**
- * Base OAuth provider class
- */
 export class OAuthProvider {
   protected config: OAuthProviderConfig;
 
@@ -55,30 +37,18 @@ export class OAuthProvider {
     this.config = config;
   }
 
-  /**
-   * Get client ID from environment
-   */
   getClientId(): string | null {
     return getEnv(this.config.clientIdEnvVar) || null;
   }
 
-  /**
-   * Get client secret from environment
-   */
   getClientSecret(): string | null {
     return getEnv(this.config.clientSecretEnvVar) || null;
   }
 
-  /**
-   * Check if provider is configured
-   */
   isConfigured(): boolean {
     return !!(this.getClientId() && this.getClientSecret());
   }
 
-  /**
-   * Create authorization URL
-   */
   async createAuthorizationUrl(
     options: AuthorizationUrlOptions & { defaultScopes?: string[] } = {},
   ): Promise<{ url: string; state: OAuthState }> {
@@ -128,9 +98,43 @@ export class OAuthProvider {
     };
   }
 
-  /**
-   * Exchange authorization code for tokens
-   */
+  /** Build headers for token endpoint requests */
+  private buildTokenHeaders(clientId: string, clientSecret: string): Record<string, string> {
+    const headers: Record<string, string> = {
+      "Content-Type": "application/x-www-form-urlencoded",
+      Accept: "application/json",
+    };
+
+    if (this.config.useBasicAuth) {
+      headers.Authorization = `Basic ${btoa(`${clientId}:${clientSecret}`)}`;
+    }
+
+    return headers;
+  }
+
+  /** Parse token response data into OAuthTokens */
+  private parseTokenResponse(
+    data: Record<string, unknown>,
+    fallbackRefreshToken?: string,
+  ): OAuthTokens {
+    const mapping = this.config.tokenResponseMapping ?? {};
+    const tokens: OAuthTokens = {
+      accessToken: data[mapping.accessToken ?? "access_token"] as string,
+      refreshToken: (data[mapping.refreshToken ?? "refresh_token"] as string) ??
+        fallbackRefreshToken,
+      tokenType: data[mapping.tokenType ?? "token_type"] as string,
+      scope: data[mapping.scope ?? "scope"] as string,
+      idToken: data.id_token as string | undefined,
+    };
+
+    const expiresIn = data[mapping.expiresIn ?? "expires_in"] as number | undefined;
+    if (expiresIn) {
+      tokens.expiresAt = Date.now() + expiresIn * 1000;
+    }
+
+    return tokens;
+  }
+
   async exchangeCode(options: TokenExchangeOptions): Promise<TokenExchangeResult> {
     const clientId = this.getClientId();
     const clientSecret = this.getClientSecret();
@@ -156,20 +160,10 @@ export class OAuthProvider {
       ...this.config.additionalTokenParams,
     });
 
-    const headers: Record<string, string> = {
-      "Content-Type": "application/x-www-form-urlencoded",
-      Accept: "application/json",
-    };
-
-    if (this.config.useBasicAuth) {
-      const credentials = btoa(`${clientId}:${clientSecret}`);
-      headers.Authorization = `Basic ${credentials}`;
-    }
-
     try {
       const response = await fetch(this.config.tokenUrl, {
         method: "POST",
-        headers,
+        headers: this.buildTokenHeaders(clientId, clientSecret),
         body: body.toString(),
       });
 
@@ -183,21 +177,7 @@ export class OAuthProvider {
         };
       }
 
-      const mapping = this.config.tokenResponseMapping || {};
-      const tokens: OAuthTokens = {
-        accessToken: data[mapping.accessToken || "access_token"],
-        refreshToken: data[mapping.refreshToken || "refresh_token"],
-        tokenType: data[mapping.tokenType || "token_type"],
-        scope: data[mapping.scope || "scope"],
-        idToken: data.id_token,
-      };
-
-      const expiresIn = data[mapping.expiresIn || "expires_in"];
-      if (expiresIn) {
-        tokens.expiresAt = Date.now() + expiresIn * 1000;
-      }
-
-      return { success: true, tokens };
+      return { success: true, tokens: this.parseTokenResponse(data) };
     } catch (error) {
       return {
         success: false,
@@ -207,9 +187,6 @@ export class OAuthProvider {
     }
   }
 
-  /**
-   * Refresh access token
-   */
   async refreshTokens(refreshToken: string): Promise<TokenExchangeResult> {
     const clientId = this.getClientId();
     const clientSecret = this.getClientSecret();
@@ -230,20 +207,10 @@ export class OAuthProvider {
       }),
     });
 
-    const headers: Record<string, string> = {
-      "Content-Type": "application/x-www-form-urlencoded",
-      Accept: "application/json",
-    };
-
-    if (this.config.useBasicAuth) {
-      const credentials = btoa(`${clientId}:${clientSecret}`);
-      headers.Authorization = `Basic ${credentials}`;
-    }
-
     try {
       const response = await fetch(this.config.tokenUrl, {
         method: "POST",
-        headers,
+        headers: this.buildTokenHeaders(clientId, clientSecret),
         body: body.toString(),
       });
 
@@ -257,20 +224,7 @@ export class OAuthProvider {
         };
       }
 
-      const mapping = this.config.tokenResponseMapping || {};
-      const tokens: OAuthTokens = {
-        accessToken: data[mapping.accessToken || "access_token"],
-        refreshToken: data[mapping.refreshToken || "refresh_token"] || refreshToken,
-        tokenType: data[mapping.tokenType || "token_type"],
-        scope: data[mapping.scope || "scope"],
-      };
-
-      const expiresIn = data[mapping.expiresIn || "expires_in"];
-      if (expiresIn) {
-        tokens.expiresAt = Date.now() + expiresIn * 1000;
-      }
-
-      return { success: true, tokens };
+      return { success: true, tokens: this.parseTokenResponse(data, refreshToken) };
     } catch (error) {
       return {
         success: false,
@@ -280,9 +234,6 @@ export class OAuthProvider {
     }
   }
 
-  /**
-   * Revoke tokens
-   */
   async revokeToken(token: string): Promise<boolean> {
     if (!this.config.revocationUrl) {
       return false;
@@ -304,9 +255,6 @@ export class OAuthProvider {
   }
 }
 
-/**
- * Service-specific OAuth handler
- */
 export class OAuthService extends OAuthProvider {
   protected serviceConfig: OAuthServiceConfig;
   protected tokenStore?: TokenStore;
@@ -317,23 +265,14 @@ export class OAuthService extends OAuthProvider {
     this.tokenStore = tokenStore;
   }
 
-  /**
-   * Get service ID
-   */
   get serviceId(): string {
     return this.serviceConfig.serviceId;
   }
 
-  /**
-   * Get API base URL
-   */
   get apiBaseUrl(): string {
     return this.serviceConfig.apiBaseUrl;
   }
 
-  /**
-   * Create authorization URL with service defaults
-   */
   override createAuthorizationUrl(
     options: AuthorizationUrlOptions = {},
   ): Promise<{ url: string; state: OAuthState }> {
@@ -343,37 +282,23 @@ export class OAuthService extends OAuthProvider {
     });
   }
 
-  /**
-   * Get valid access token (refreshing if needed)
-   */
   async getAccessToken(): Promise<string | null> {
-    if (!this.tokenStore) {
-      return null;
-    }
-
-    const tokens = await this.tokenStore.getTokens(this.serviceId);
-    if (!tokens) {
-      return null;
-    }
+    const tokens = await this.tokenStore?.getTokens(this.serviceId);
+    if (!tokens) return null;
 
     // Check if token is expired (with 5 min buffer)
-    if (tokens.expiresAt && Date.now() > tokens.expiresAt - 300000) {
-      if (tokens.refreshToken) {
-        const result = await this.refreshTokens(tokens.refreshToken);
-        if (result.success && result.tokens) {
-          await this.tokenStore.setTokens(this.serviceId, result.tokens);
-          return result.tokens.accessToken;
-        }
-      }
-      return null;
-    }
+    const isExpired = tokens.expiresAt && Date.now() > tokens.expiresAt - 300000;
+    if (!isExpired) return tokens.accessToken;
 
-    return tokens.accessToken;
+    if (!tokens.refreshToken) return null;
+
+    const result = await this.refreshTokens(tokens.refreshToken);
+    if (!result.success || !result.tokens) return null;
+
+    await this.tokenStore!.setTokens(this.serviceId, result.tokens);
+    return result.tokens.accessToken;
   }
 
-  /**
-   * Make authenticated API request
-   */
   async fetch<T>(
     endpoint: string,
     options: RequestInit = {},

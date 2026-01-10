@@ -120,10 +120,9 @@ export class TailwindProcessor {
     // Auto-detect utilities used (simple heuristic)
     const detectedUtilities = countUtilities(processedCSS);
 
-    const contentFiles = content ? content : [];
     const result: TailwindProcessResult = {
       css: processedCSS,
-      processedFiles: [inputFile, ...contentFiles],
+      processedFiles: [inputFile, ...(content ?? [])],
       detectedUtilities,
     };
 

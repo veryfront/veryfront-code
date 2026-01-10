@@ -228,7 +228,7 @@ describe("React Version Detector", () => {
     it("sets correct version flags for detected version", () => {
       const info = getReactVersionInfo();
       const flags = [info.isReact17, info.isReact18, info.isReact19];
-      const trueCount = flags.filter((f) => f).length;
+      const trueCount = flags.filter(Boolean).length;
 
       assert(trueCount >= 1);
     });

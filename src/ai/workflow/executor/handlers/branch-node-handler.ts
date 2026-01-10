@@ -1,10 +1,10 @@
-/**
- * Branch Node Handler
- *
- * Handles execution of branch nodes - conditional workflow branches.
- */
-
-import type { BranchNodeConfig, NodeState, WorkflowNode, WorkflowNodeConfig } from "../../types.ts";
+import type {
+  BranchNodeConfig,
+  NodeState,
+  NodeStatus,
+  WorkflowNode,
+  WorkflowNodeConfig,
+} from "../../types.ts";
 import type { IDAGSubExecutor } from "./dag-executor-interface.ts";
 import {
   BaseNodeHandler,
@@ -12,19 +12,17 @@ import {
   type NodeHandlerContext,
 } from "./node-handler.ts";
 
-/**
- * Callbacks for branch node events
- */
+function deriveNodeStatus(completed: boolean, waiting: boolean): NodeStatus {
+  if (completed) return "completed";
+  if (waiting) return "running";
+  return "failed";
+}
+
 export interface BranchNodeCallbacks {
   onNodeComplete?: (nodeId: string, state: NodeState) => void;
 }
 
-/**
- * Handler for branch nodes.
- *
- * Branch nodes evaluate a condition and execute either
- * the "then" or "else" branch based on the result.
- */
+/** Evaluates a condition and executes either "then" or "else" branch */
 export class BranchNodeHandler extends BaseNodeHandler<BranchNodeConfig> {
   readonly nodeType = "branch" as const;
 
@@ -86,7 +84,7 @@ export class BranchNodeHandler extends BaseNodeHandler<BranchNodeConfig> {
 
     const state: NodeState = {
       nodeId: node.id,
-      status: result.completed ? "completed" : (result.waiting ? "running" : "failed"),
+      status: deriveNodeStatus(result.completed, result.waiting),
       output: {
         branch: conditionResult ? "then" : "else",
         result: result.context,
@@ -107,9 +105,6 @@ export class BranchNodeHandler extends BaseNodeHandler<BranchNodeConfig> {
   }
 }
 
-/**
- * Create a branch node handler.
- */
 export function createBranchNodeHandler(
   subExecutor: IDAGSubExecutor,
   callbacks?: BranchNodeCallbacks,

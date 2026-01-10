@@ -120,7 +120,7 @@ export async function promptForEnvVars(
   }
 
   if (interactive && envVars.length > 0) {
-    const filledCount = Object.values(values).filter((v) => v).length;
+    const filledCount = Object.values(values).filter(Boolean).length;
     if (filledCount === envVars.length) {
       logger.info(`\n${green("All environment variables configured!")}`);
     } else if (filledCount > 0) {

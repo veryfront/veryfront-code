@@ -11,11 +11,7 @@ export function securityHeaders(options?: SecurityHeadersOptions): Middleware {
       headers.set("X-Content-Type-Options", "nosniff");
     }
 
-    if (options?.frameOptions !== undefined) {
-      headers.set("X-Frame-Options", options.frameOptions);
-    } else {
-      headers.set("X-Frame-Options", "DENY");
-    }
+    headers.set("X-Frame-Options", options?.frameOptions ?? "DENY");
 
     const referrerPolicy = options?.referrerPolicy ?? "strict-origin-when-cross-origin";
     headers.set("Referrer-Policy", referrerPolicy);

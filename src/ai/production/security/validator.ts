@@ -1,10 +1,11 @@
-import type { AgentContext, AgentResponse } from "../../types/agent.ts";
-import { createError, toError } from "../../../core/errors/veryfront-error.ts";
 /**
  * Input Validation and Output Filtering
  *
  * Security features to prevent prompt injection, data leakage, and harmful content.
  */
+
+import type { AgentContext, AgentResponse } from "../../types/agent.ts";
+import { createError, toError } from "../../../core/errors/veryfront-error.ts";
 
 export interface SecurityConfig {
   /** Input validation rules */
@@ -91,14 +92,14 @@ export const COMMON_BLOCKED_PATTERNS = {
 };
 
 /**
- * PII patterns (email, phone, SSN, etc.)
+ * PII patterns with replacement labels
  */
-const PII_PATTERNS = {
-  email: /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi,
-  phone: /\b(\+\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b/g,
-  ssn: /\b\d{3}-\d{2}-\d{4}\b/g,
-  creditCard: /\b\d{4}[-\s]?\d{4}[-\s]?\d{4}[-\s]?\d{4}\b/g,
-};
+const PII_REPLACEMENTS: Array<{ pattern: RegExp; label: string }> = [
+  { pattern: /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, label: "[EMAIL]" },
+  { pattern: /\b(\+\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b/g, label: "[PHONE]" },
+  { pattern: /\b\d{3}-\d{2}-\d{4}\b/g, label: "[SSN]" },
+  { pattern: /\b\d{4}[-\s]?\d{4}[-\s]?\d{4}[-\s]?\d{4}\b/g, label: "[CREDIT_CARD]" },
+];
 
 /**
  * Input Validator
@@ -168,22 +169,21 @@ export class InputValidator {
     };
   }
 
+  /** Sanitization patterns to remove harmful content */
+  private static readonly SANITIZE_PATTERNS: RegExp[] = [
+    /<script[^>]*>.*?<\/script>/gi, // Script tags
+    /on\w+\s*=\s*["'][^"']*["']/gi, // Event handlers
+    /javascript:/gi, // JavaScript protocol
+  ];
+
   /**
    * Sanitize input (remove potentially harmful content)
    */
   private sanitizeInput(input: string): string {
-    let sanitized = input;
-
-    // Remove script tags
-    sanitized = sanitized.replace(/<script[^>]*>.*?<\/script>/gi, "");
-
-    // Remove event handlers
-    sanitized = sanitized.replace(/on\w+\s*=\s*["'][^"']*["']/gi, "");
-
-    // Remove javascript: protocol
-    sanitized = sanitized.replace(/javascript:/gi, "");
-
-    return sanitized;
+    return InputValidator.SANITIZE_PATTERNS.reduce(
+      (text, pattern) => text.replace(pattern, ""),
+      input,
+    );
   }
 }
 
@@ -241,21 +241,23 @@ export class OutputFilter {
    * Filter PII from output
    */
   private filterPII(output: string): string {
-    let filtered = output;
+    return PII_REPLACEMENTS.reduce(
+      (text, { pattern, label }) => text.replace(pattern, label),
+      output,
+    );
+  }
+}
 
-    // Replace email addresses
-    filtered = filtered.replace(PII_PATTERNS.email, "[EMAIL]");
-
-    // Replace phone numbers
-    filtered = filtered.replace(PII_PATTERNS.phone, "[PHONE]");
-
-    // Replace SSN
-    filtered = filtered.replace(PII_PATTERNS.ssn, "[SSN]");
-
-    // Replace credit card numbers
-    filtered = filtered.replace(PII_PATTERNS.creditCard, "[CREDIT_CARD]");
-
-    return filtered;
+/**
+ * Report violations to the configured handler
+ */
+function reportViolations(
+  violations: SecurityViolation[],
+  onViolation?: (violation: SecurityViolation) => void,
+): void {
+  if (!onViolation) return;
+  for (const violation of violations) {
+    onViolation(violation);
   }
 }
 
@@ -278,12 +280,7 @@ export function securityMiddleware(config: SecurityConfig) {
     const inputValidation = await inputValidator.validate(inputString);
 
     if (!inputValidation.valid) {
-      // Report violations
-      inputValidation.violations.forEach((v) => {
-        if (config.onViolation) {
-          config.onViolation(v);
-        }
-      });
+      reportViolations(inputValidation.violations, config.onViolation);
 
       const firstViolation = inputValidation.violations[0];
       throw toError(createError({
@@ -297,22 +294,12 @@ export function securityMiddleware(config: SecurityConfig) {
       context.input = inputValidation.sanitized;
     }
 
-    // Execute
     const result = await next();
 
     // Filter output
     const outputFiltering = await outputFilter.filter(result.text);
+    reportViolations(outputFiltering.violations, config.onViolation);
 
-    if (outputFiltering.violations.length > 0) {
-      // Report violations
-      outputFiltering.violations.forEach((v) => {
-        if (config.onViolation) {
-          config.onViolation(v);
-        }
-      });
-    }
-
-    // Return filtered result
     return {
       ...result,
       text: outputFiltering.filtered,

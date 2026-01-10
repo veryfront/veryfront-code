@@ -123,11 +123,8 @@ export async function buildProduction(options: BuildOptions): Promise<BuildStats
   // Cleanup
   await performCleanup(context.renderer);
 
-  // Add SSG paths to stats
-  interface StatsWithSSG extends BuildStats {
-    ssgPaths?: string[];
-  }
-  (context.stats as StatsWithSSG).ssgPaths = buildResult.ssgPaths;
+  // Add SSG paths to stats (BuildStats already has ssgPaths as optional field)
+  context.stats.ssgPaths = buildResult.ssgPaths;
 
   return context.stats;
 }

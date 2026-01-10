@@ -1,9 +1,3 @@
-/**
- * Approval Manager
- *
- * Handles human-in-the-loop approval workflows
- */
-
 import type {
   ApprovalDecision,
   PendingApproval,
@@ -15,17 +9,11 @@ import { generateId, parseDuration } from "../types.ts";
 import type { WorkflowBackend } from "../backends/types.ts";
 import type { WorkflowExecutor } from "../executor/workflow-executor.ts";
 
-/**
- * Approval notification callback
- */
 export type ApprovalNotifier = (
   approval: PendingApproval,
   run: WorkflowRun,
 ) => Promise<void>;
 
-/**
- * Approval manager configuration
- */
 export interface ApprovalManagerConfig {
   /** Backend for persistence */
   backend: WorkflowBackend;
@@ -39,9 +27,6 @@ export interface ApprovalManagerConfig {
   debug?: boolean;
 }
 
-/**
- * Approval request result
- */
 export interface ApprovalRequest {
   /** Approval ID */
   approvalId: string;
@@ -57,15 +42,7 @@ export interface ApprovalRequest {
   expiresAt?: Date;
 }
 
-/**
- * Approval Manager class
- *
- * Responsible for:
- * - Creating pending approvals
- * - Processing approval decisions
- * - Resuming workflows after approval
- * - Handling approval timeouts
- */
+/** Manages pending approvals, processing decisions, and resuming workflows */
 export class ApprovalManager {
   private config: ApprovalManagerConfig;
   private expirationTimer?: ReturnType<typeof setInterval>;
@@ -84,9 +61,7 @@ export class ApprovalManager {
     }
   }
 
-  /**
-   * Create a pending approval request
-   */
+  /** Create a pending approval request */
   async createApproval(
     run: WorkflowRun,
     nodeId: string,
@@ -140,9 +115,7 @@ export class ApprovalManager {
     };
   }
 
-  /**
-   * Get pending approval by ID
-   */
+  /** Get pending approval by ID */
   async getApproval(
     runId: string,
     approvalId: string,
@@ -156,16 +129,12 @@ export class ApprovalManager {
     return all.find((a) => a.id === approvalId) || null;
   }
 
-  /**
-   * Get all pending approvals for a run
-   */
+  /** Get all pending approvals for a run */
   getPendingApprovals(runId: string): Promise<PendingApproval[]> {
     return this.config.backend.getPendingApprovals(runId);
   }
 
-  /**
-   * Process an approval decision
-   */
+  /** Process an approval decision */
   async processDecision(
     runId: string,
     approvalId: string,
@@ -267,9 +236,7 @@ export class ApprovalManager {
     }
   }
 
-  /**
-   * Approve an approval request
-   */
+  /** Approve an approval request */
   async approve(
     runId: string,
     approvalId: string,
@@ -283,9 +250,7 @@ export class ApprovalManager {
     });
   }
 
-  /**
-   * Reject an approval request
-   */
+  /** Reject an approval request */
   async reject(
     runId: string,
     approvalId: string,
@@ -299,9 +264,7 @@ export class ApprovalManager {
     });
   }
 
-  /**
-   * List all pending approvals across workflows
-   */
+  /** List all pending approvals across workflows */
   listAllPending(filter?: {
     workflowId?: string;
     approver?: string;
@@ -320,9 +283,7 @@ export class ApprovalManager {
     return Promise.resolve([]);
   }
 
-  /**
-   * Check and expire stale approvals
-   */
+  /** Check and expire stale approvals */
   async checkExpiredApprovals(): Promise<void> {
     // Guard against post-stop execution
     if (this.destroyed) {
@@ -364,9 +325,6 @@ export class ApprovalManager {
     }
   }
 
-  /**
-   * Start the expiration checker timer
-   */
   private startExpirationChecker(): void {
     this.expirationTimer = setInterval(() => {
       this.checkExpiredApprovals().catch((error) => {
@@ -375,9 +333,7 @@ export class ApprovalManager {
     }, this.config.expirationCheckInterval);
   }
 
-  /**
-   * Stop the approval manager
-   */
+  /** Stop the approval manager */
   stop(): void {
     this.destroyed = true;
     if (this.expirationTimer) {

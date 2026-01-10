@@ -33,13 +33,14 @@ export function rehypeNodePositions(options: RehypeNodePositionsOptions = {}) {
     );
 
     // Log first few child types to understand structure
-    tree.children?.slice(0, 5).forEach((child, i) => {
+    const children = tree.children?.slice(0, 5) ?? [];
+    for (const [i, child] of children.entries()) {
       console.log(
         `[rehypeNodePositions] Child ${i}: type=${(child as any).type}, name=${
           (child as any).name || (child as any).tagName || "N/A"
         }`,
       );
-    });
+    }
 
     let elementCount = 0;
     let positionCount = 0;

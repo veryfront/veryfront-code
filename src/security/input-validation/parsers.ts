@@ -1,33 +1,10 @@
-/**
- * Request Parsers
- * Functions for parsing and validating different request body types
- */
-
 import { z } from "zod";
 import { ValidationError } from "./errors.ts";
 import { readBodyWithLimit, validateRequestLimits } from "./limits.ts";
 import { sanitizeData } from "./sanitizers.ts";
 import { DEFAULT_LIMITS, type ParseFormOptions, type ParseJsonOptions } from "./types.ts";
 
-/**
- * Parse and validate JSON body with schema
- *
- * @param request - Request object with JSON body
- * @param schema - Zod schema to validate against
- * @param options - Optional parsing configuration
- * @returns Validated and optionally sanitized data
- * @throws ValidationError if parsing or validation fails
- *
- * @example
- * ```ts
- * const userSchema = z.object({
- *   name: z.string(),
- *   email: z.string().email()
- * })
- *
- * const user = await parseJsonBody(request, userSchema, { sanitize: true })
- * ```
- */
+/** Parse and validate JSON body with Zod schema */
 export async function parseJsonBody<T>(
   request: Request,
   schema: z.ZodSchema<T>,
@@ -72,25 +49,7 @@ export async function parseJsonBody<T>(
   }
 }
 
-/**
- * Parse and validate form data
- *
- * @param request - Request object with form data body
- * @param schema - Zod schema to validate against
- * @param options - Optional parsing configuration
- * @returns Validated form data
- * @throws ValidationError if parsing or validation fails
- *
- * @example
- * ```ts
- * const uploadSchema = z.object({
- *   file: z.instanceof(File),
- *   description: z.string()
- * })
- *
- * const data = await parseFormData(request, uploadSchema)
- * ```
- */
+/** Parse and validate form data with Zod schema */
 export async function parseFormData<T>(
   request: Request,
   schema: z.ZodSchema<T>,
@@ -130,24 +89,7 @@ export async function parseFormData<T>(
   }
 }
 
-/**
- * Parse URL search params with validation
- *
- * @param request - Request object with URL search params
- * @param schema - Zod schema to validate against
- * @returns Validated query parameters
- * @throws ValidationError if validation fails
- *
- * @example
- * ```ts
- * const querySchema = z.object({
- *   page: z.coerce.number(),
- *   search: z.string().optional()
- * })
- *
- * const params = parseQueryParams(request, querySchema)
- * ```
- */
+/** Parse URL search params with Zod schema validation */
 export function parseQueryParams<T>(
   request: Request,
   schema: z.ZodSchema<T>,
@@ -155,19 +97,17 @@ export function parseQueryParams<T>(
   const url = new URL(request.url);
   const params: Record<string, unknown> = {};
 
-  // Convert URLSearchParams to object
-  url.searchParams.forEach((value, key) => {
-    // Handle array parameters (e.g., ?tags=a&tags=b)
-    if (params[key]) {
-      if (Array.isArray(params[key])) {
-        (params[key] as unknown[]).push(value);
-      } else {
-        params[key] = [params[key], value];
-      }
-    } else {
+  // Convert URLSearchParams to object, handling array parameters (e.g., ?tags=a&tags=b)
+  for (const [key, value] of url.searchParams) {
+    const existing = params[key];
+    if (existing === undefined) {
       params[key] = value;
+    } else if (Array.isArray(existing)) {
+      existing.push(value);
+    } else {
+      params[key] = [existing, value];
     }
-  });
+  }
 
   try {
     return schema.parse(params);

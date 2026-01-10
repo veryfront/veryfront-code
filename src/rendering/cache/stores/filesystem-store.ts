@@ -1,16 +1,13 @@
 import { dirname, join } from "../../../platform/compat/path-helper.ts";
 import { getLocalAdapter } from "@veryfront/platform/adapters/registry.ts";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
+import { getErrorMessage } from "../../../core/errors/veryfront-error.ts";
 import type { CachePayload, CacheStore } from "../types.ts";
 
 export interface FilesystemCacheStoreOptions {
   baseDir: string;
 }
 
-/**
- * Filesystem cache store - always uses local filesystem regardless of FSAdapter
- * Cache files should be local for performance and to avoid remote write operations
- */
 export class FilesystemCacheStore implements CacheStore {
   private baseDir: string;
   private localAdapterPromise: Promise<RuntimeAdapter>;
@@ -76,7 +73,7 @@ export class FilesystemCacheStore implements CacheStore {
       const fs = await this.getLocalFS();
       await fs.mkdir(path, { recursive: true });
     } catch (error) {
-      if ((error as Error).message?.includes("exists")) return;
+      if (getErrorMessage(error).includes("exists")) return;
     }
   }
 

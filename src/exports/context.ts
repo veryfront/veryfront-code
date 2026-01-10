@@ -35,11 +35,7 @@ export function PageContextProvider({ children, pageContext }: PageContextProvid
 }
 
 export function usePageContext(): PageContextValue {
-  const value = React.useContext(PageContextContext);
-  if (!value) {
-    return defaultPageContext;
-  }
-  return value;
+  return React.useContext(PageContextContext) ?? defaultPageContext;
 }
 
 export default usePageContext;

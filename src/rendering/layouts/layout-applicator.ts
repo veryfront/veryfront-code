@@ -71,13 +71,9 @@ export class LayoutApplicator {
 
     // Check if App was already applied as a provider to avoid double-wrapping
     // which causes duplicate <Head> content and hydration errors
-    const hasAppProvider = providerItems.some((p) =>
-      p.componentPath?.includes("/components/app.") ||
-      p.componentPath?.endsWith("/app.tsx") ||
-      p.componentPath?.endsWith("/app.ts") ||
-      p.componentPath?.endsWith("/app.jsx") ||
-      p.componentPath?.endsWith("/app.js")
-    );
+    const isAppPath = (path: string | undefined): boolean =>
+      !!path && (/\/components\/app\.[jt]sx?$/.test(path) || /\/app\.[jt]sx?$/.test(path));
+    const hasAppProvider = providerItems.some((p) => isAppPath(p.componentPath));
 
     if (!useAppRouter && !hasAppProvider) {
       wrappedElement = await this.wrapWithAppComponent(wrappedElement);
@@ -152,51 +148,19 @@ export class LayoutApplicator {
     const useESMWrap = Boolean(this.config?.experimental?.esmLayouts);
 
     if (useESMWrap) {
-      return await this.applyLayoutsESMMode(
+      return await applyLayoutsESM(
         pageElement,
         layoutBundle,
         nestedLayouts,
         providerItems,
-        layoutDataMap,
-      );
-    } else {
-      return await this.applyLayoutsFunctionBodyMode(
-        pageElement,
-        layoutBundle,
-        nestedLayouts,
-        providerItems,
+        this.projectDir,
+        this.mergedComponents,
+        this.layoutCache,
+        this.adapter,
         layoutDataMap,
       );
     }
-  }
 
-  private async applyLayoutsESMMode(
-    pageElement: BundledReact.ReactElement,
-    layoutBundle: MdxBundle | undefined,
-    nestedLayouts: LayoutItem[],
-    providerItems: ProviderItem[],
-    layoutDataMap?: Map<string, Record<string, unknown>>,
-  ): Promise<BundledReact.ReactElement> {
-    return await applyLayoutsESM(
-      pageElement,
-      layoutBundle,
-      nestedLayouts,
-      providerItems,
-      this.projectDir,
-      this.mergedComponents,
-      this.layoutCache,
-      this.adapter,
-      layoutDataMap,
-    );
-  }
-
-  private async applyLayoutsFunctionBodyMode(
-    pageElement: BundledReact.ReactElement,
-    layoutBundle: MdxBundle | undefined,
-    nestedLayouts: LayoutItem[],
-    providerItems: ProviderItem[],
-    layoutDataMap?: Map<string, Record<string, unknown>>,
-  ): Promise<BundledReact.ReactElement> {
     return await applyLayoutsFunctionBody(
       pageElement,
       layoutBundle,
@@ -253,20 +217,11 @@ export class LayoutApplicator {
       }
     }
 
-    // Priority 3: Default discovery - check components/app.tsx
-    const defaultAppPath = join(this.projectDir, "components/app.tsx");
-    const defaultExists = await this.adapter.fs.exists(defaultAppPath);
-    if (defaultExists) {
-      return defaultAppPath;
-    }
-
-    // Try other extensions
-    const extensions = ["jsx", "ts", "js"];
-    for (const ext of extensions) {
-      const altPath = join(this.projectDir, `components/app.${ext}`);
-      const exists = await this.adapter.fs.exists(altPath);
-      if (exists) {
-        return altPath;
+    // Priority 3: Default discovery - check components/app.{tsx,jsx,ts,js}
+    for (const ext of ["tsx", "jsx", "ts", "js"]) {
+      const appPath = join(this.projectDir, `components/app.${ext}`);
+      if (await this.adapter.fs.exists(appPath)) {
+        return appPath;
       }
     }
 
@@ -276,38 +231,31 @@ export class LayoutApplicator {
   private async wrapWithAppComponent(
     pageElement: BundledReact.ReactElement,
   ): Promise<BundledReact.ReactElement> {
-    const React = await getProjectReact();
+    const appPath = await this.resolveAppComponentPath();
+    if (!appPath) return pageElement;
+
     try {
-      const appPath = await this.resolveAppComponentPath();
-      if (!appPath) {
-        return pageElement;
-      }
-      const appExists = await this.adapter.fs.exists(appPath);
+      logger.info("Loading App component from", appPath);
+      const { loadComponentFromSource } = await import(
+        "@veryfront/modules/react-loader/index.ts"
+      );
+      const appSource = await this.adapter.fs.readFile(appPath);
+      const App = await loadComponentFromSource(
+        appSource,
+        appPath,
+        this.projectDir,
+        this.adapter,
+        {
+          projectId: this.projectDir,
+          dev: this.mode === "development",
+          moduleServerUrl: this.config?.dev?.moduleServerUrl,
+        },
+      );
 
-      if (appExists) {
-        logger.info("Loading App component from", appPath);
-        const { loadComponentFromSource } = await import(
-          "@veryfront/modules/react-loader/index.ts"
-        );
-        const appSource = await this.adapter.fs.readFile(appPath);
-        const App = await loadComponentFromSource(
-          appSource,
-          appPath,
-          this.projectDir,
-          this.adapter,
-          {
-            projectId: this.projectDir,
-            dev: this.mode === "development",
-            moduleServerUrl: this.config?.dev?.moduleServerUrl,
-          },
-        );
-
-        if (App) {
-          pageElement = React.createElement(App, {
-            children: pageElement,
-          }) as BundledReact.ReactElement;
-          logger.info("Wrapped page with App component");
-        }
+      if (App) {
+        const React = await getProjectReact();
+        logger.info("Wrapped page with App component");
+        return React.createElement(App, { children: pageElement }) as BundledReact.ReactElement;
       }
     } catch (error) {
       logger.warn("Failed to load App component:", error);

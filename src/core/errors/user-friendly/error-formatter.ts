@@ -20,18 +20,18 @@ export function formatUserError(error: Error): string {
 
     if (solution.steps && solution.steps.length > 0) {
       output.push(cyan("How to fix:"));
-      solution.steps.forEach((step, i) => {
+      for (const [i, step] of solution.steps.entries()) {
         output.push(`  ${dim(`${i + 1}.`)} ${step}`);
-      });
+      }
       output.push("");
     }
 
     if (solution.example) {
       output.push(cyan("Example:"));
       output.push("");
-      solution.example.split("\n").forEach((line) => {
+      for (const line of solution.example.split("\n")) {
         output.push(`  ${dim(line)}`);
-      });
+      }
       output.push("");
     }
 
@@ -39,19 +39,21 @@ export function formatUserError(error: Error): string {
       output.push(dim("Learn more: ") + cyan(solution.docs));
       output.push("");
     }
-  } else {
-    if (error.stack) {
-      output.push(yellow("Stack trace:"));
-      const stackLines = error.stack.split("\n").slice(1, 4);
-      stackLines.forEach((line) => {
-        output.push(dim(`  ${line.trim()}`));
-      });
-      output.push("");
-    }
 
-    output.push(dim("For help, run: ") + cyan("veryfront doctor"));
+    return output.join("\n");
+  }
+
+  if (error.stack) {
+    output.push(yellow("Stack trace:"));
+    const stackLines = error.stack.split("\n").slice(1, 4);
+    for (const line of stackLines) {
+      output.push(dim(`  ${line.trim()}`));
+    }
     output.push("");
   }
+
+  output.push(dim("For help, run: ") + cyan("veryfront doctor"));
+  output.push("");
 
   return output.join("\n");
 }

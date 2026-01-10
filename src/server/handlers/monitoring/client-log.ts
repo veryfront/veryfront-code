@@ -1,13 +1,9 @@
-/**
- * Client Logging Handler
- * Handles client-side logging in development mode
- */
-
 import { BaseHandler } from "../response/base.ts";
 import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } from "../types.ts";
 import { ResponseBuilder } from "@veryfront/security/index.ts";
 import { serverLogger } from "@veryfront/utils";
 import { HTTP_OK, PRIORITY_HIGH_CLIENT_LOG } from "@veryfront/core/constants/index.ts";
+import { getErrorMessage } from "../../../core/errors/veryfront-error.ts";
 
 export class ClientLogHandler extends BaseHandler {
   metadata: HandlerMetadata = {
@@ -32,20 +28,17 @@ export class ClientLogHandler extends BaseHandler {
       body = await req.text();
       const logData = JSON.parse(body);
 
-      // Validate log data structure
       const level = typeof logData?.level === "string" ? logData.level : "info";
       const message = typeof logData?.message === "string"
-        ? logData.message.slice(0, 5000) // Limit message length
+        ? logData.message.slice(0, 5000)
         : "[invalid message]";
       const details = logData?.details && typeof logData.details === "object"
         ? logData.details
         : undefined;
 
-      // Format and log
       const prefix = this.getLogPrefix(level);
       serverLogger.info(`${prefix} ${message}`, details);
 
-      // Return success response
       return this.respond(
         ResponseBuilder.json({ ok: true }, req, {
           corsConfig: ctx.securityConfig?.cors,
@@ -53,10 +46,8 @@ export class ClientLogHandler extends BaseHandler {
         }),
       );
     } catch (e) {
-      // Log parsing error details for debugging
       this.handleParseError(e, body);
 
-      // Still return OK to prevent client errors
       return this.respond(
         ResponseBuilder.json({ ok: true }, req, {
           corsConfig: ctx.securityConfig?.cors,
@@ -66,22 +57,20 @@ export class ClientLogHandler extends BaseHandler {
     }
   }
 
+  private static readonly LOG_PREFIXES: Record<string, string> = {
+    error: "❌ [CLIENT]",
+    warn: "⚠️  [CLIENT]",
+    info: "ℹ️  [CLIENT]",
+  } as const;
+
   private getLogPrefix(level: string): string {
-    switch (level) {
-      case "error":
-        return "❌ [CLIENT]";
-      case "warn":
-        return "⚠️  [CLIENT]";
-      case "info":
-      default:
-        return "ℹ️  [CLIENT]";
-    }
+    return ClientLogHandler.LOG_PREFIXES[level] ?? ClientLogHandler.LOG_PREFIXES.info!;
   }
 
   private handleParseError(e: unknown, body: string): void {
     serverLogger.error(
       "[ClientLogHandler] Failed to parse client log. Error:",
-      e instanceof Error ? e.message : String(e),
+      getErrorMessage(e),
     );
     serverLogger.error(
       "[ClientLogHandler] Raw body received (first 500 chars):",

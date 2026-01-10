@@ -6,6 +6,17 @@
 import { CACHE_DURATIONS } from "./constants.ts";
 import type { CacheStrategy } from "./types.ts";
 
+const CACHE_PRESETS: Record<string, string> = {
+  "no-cache": "no-cache, no-store, must-revalidate",
+  "no-store": "no-store",
+  "short": `public, max-age=${CACHE_DURATIONS.SHORT}`,
+  "medium": `public, max-age=${CACHE_DURATIONS.MEDIUM}`,
+  "long": `public, max-age=${CACHE_DURATIONS.LONG}`,
+  "immutable": `public, max-age=${CACHE_DURATIONS.LONG}, immutable`,
+  // "none" prevents all caching - used in development to avoid nonce mismatches
+  "none": "no-cache, no-store, must-revalidate",
+};
+
 /**
  * Build cache control header value from strategy
  *
@@ -13,43 +24,15 @@ import type { CacheStrategy } from "./types.ts";
  * @returns Cache-Control header value
  */
 export function buildCacheControl(strategy: CacheStrategy): string {
-  let cacheControl: string;
-
   if (typeof strategy === "string") {
-    switch (strategy) {
-      case "no-cache":
-        cacheControl = "no-cache, no-store, must-revalidate";
-        break;
-      case "no-store":
-        cacheControl = "no-store";
-        break;
-      case "short":
-        cacheControl = `public, max-age=${CACHE_DURATIONS.SHORT}`;
-        break;
-      case "medium":
-        cacheControl = `public, max-age=${CACHE_DURATIONS.MEDIUM}`;
-        break;
-      case "long":
-        cacheControl = `public, max-age=${CACHE_DURATIONS.LONG}`;
-        break;
-      case "immutable":
-        cacheControl = `public, max-age=${CACHE_DURATIONS.LONG}, immutable`;
-        break;
-      case "none":
-        // Prevent all caching - used in development to avoid nonce mismatches
-        cacheControl = "no-cache, no-store, must-revalidate";
-        break;
-      default:
-        cacheControl = "public, max-age=0";
-    }
-  } else {
-    const parts = [];
-    parts.push(strategy.public !== false ? "public" : "private");
-    parts.push(`max-age=${strategy.maxAge}`);
-    if (strategy.immutable) parts.push("immutable");
-    if (strategy.mustRevalidate) parts.push("must-revalidate");
-    cacheControl = parts.join(", ");
+    return CACHE_PRESETS[strategy] ?? "public, max-age=0";
   }
 
-  return cacheControl;
+  const parts = [
+    strategy.public !== false ? "public" : "private",
+    `max-age=${strategy.maxAge}`,
+  ];
+  if (strategy.immutable) parts.push("immutable");
+  if (strategy.mustRevalidate) parts.push("must-revalidate");
+  return parts.join(", ");
 }

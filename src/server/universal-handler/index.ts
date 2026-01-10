@@ -19,6 +19,7 @@ import {
 import type { HandlerContext } from "../handlers/types.ts";
 import { parseProjectDomain } from "../utils/domain-parser.ts";
 import { getEnvironmentType, lookupProjectByDomain } from "../utils/domain-lookup.ts";
+import { getErrorMessage } from "../../core/errors/veryfront-error.ts";
 
 /** Check if host is a private/internal IP address */
 function isInternalHost(host: string): boolean {
@@ -43,12 +44,12 @@ function isInternalHost(host: string): boolean {
   return false;
 }
 
+/** Monitoring paths that should skip domain lookup */
+const MONITORING_PATHS = new Set(["/healthz", "/readyz", "/_health", "/metrics"]);
+
 /** Check if request path is a monitoring endpoint that should skip domain lookup */
 function isMonitoringPath(pathname: string): boolean {
-  return pathname === "/healthz" ||
-    pathname === "/readyz" ||
-    pathname === "/_health" ||
-    pathname === "/metrics";
+  return MONITORING_PATHS.has(pathname);
 }
 
 import { RouteRegistry } from "@veryfront/routing/registry/index.ts";
@@ -114,19 +115,14 @@ export function createVeryfrontHandler(
   adapter: RuntimeAdapter,
   opts: UniversalHandlerOptions = { projectDir },
 ): ((req: Request) => Promise<Response>) & { ready?: Promise<void> } {
-  const logDebug = (message: string, extra?: Record<string, unknown>) => {
-    try {
-      const shouldDebug = opts.debug || adapter.env.get("VERYFRONT_DEBUG");
-      if (shouldDebug) {
-        if (extra && typeof extra === "object" && !Array.isArray(extra)) {
-          logger.debug(message, extra);
-        } else {
-          logger.debug(message);
-        }
-      }
-    } catch (err) {
-      // Silently ignore logging errors in non-deno hosts
-      logger.error("Debug logging failed:", err);
+  const isDebugEnabled = opts.debug || adapter.env.get("VERYFRONT_DEBUG");
+
+  const logDebug = (message: string, extra?: Record<string, unknown>): void => {
+    if (!isDebugEnabled) return;
+    if (extra) {
+      logger.debug(message, extra);
+    } else {
+      logger.debug(message);
     }
   };
 
@@ -145,7 +141,7 @@ export function createVeryfrontHandler(
       return c;
     }).catch((err) => {
       logger.warn("[universal] Failed to load config, using defaults", {
-        error: err instanceof Error ? err.message : String(err),
+        error: getErrorMessage(err),
       });
       return undefined;
     });
@@ -188,7 +184,7 @@ export function createVeryfrontHandler(
   // In proxy mode, skip eager initialization since there's no request context at startup
   const readyPromise = isProxyMode ? Promise.resolve() : apiHandler.initialize().catch((err) => {
     logger.error("[universal] API handler initialization failed", {
-      error: err instanceof Error ? err.message : String(err),
+      error: getErrorMessage(err),
       stack: err instanceof Error ? err.stack : undefined,
     });
     // Re-throw to prevent server from starting with broken API routing

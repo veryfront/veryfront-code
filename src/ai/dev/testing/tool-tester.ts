@@ -211,7 +211,7 @@ export function printToolTestResults(
   const passed = results.filter((r) => r.passed).length;
   const total = results.length;
 
-  results.forEach((result, index) => {
+  for (const [index, result] of results.entries()) {
     const icon = result.passed ? "✅" : "❌";
     console.log(`${icon} ${index + 1}. ${result.name}`);
 
@@ -224,7 +224,7 @@ export function printToolTestResults(
     }
 
     console.log(`   Time: ${result.executionTime}ms\n`);
-  });
+  }
 
   console.log(`Results: ${passed}/${total} passed`);
   console.log(`Status: ${passed === total ? "✅ ALL PASSED" : "❌ SOME FAILED"}\n`);

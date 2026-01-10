@@ -60,59 +60,6 @@ export class ModuleHandler extends BaseHandler {
     return getRendererForProject(ctx);
   }
 
-  private withProxyContext<T>(
-    ctx: HandlerContext,
-    fn: () => Promise<T>,
-  ): Promise<T> {
-    const fsWrapper = ctx.adapter.fs as {
-      setRequestToken?: (t: string) => void;
-      setRequestBranch?: (b: string | null) => void;
-      runWithContext?: <T>(
-        slug: string,
-        token: string,
-        fn: () => Promise<T>,
-        projectId?: string,
-        options?: { productionMode?: boolean; releaseId?: string | null },
-      ) => Promise<T>;
-    };
-
-    // Always set branch from parsed domain (for module resolution)
-    if (typeof fsWrapper.setRequestBranch === "function") {
-      const branch = ctx.parsedDomain?.branch ?? null;
-      fsWrapper.setRequestBranch(branch);
-    }
-
-    if (!ctx.proxyToken || !ctx.projectSlug) {
-      return fn();
-    }
-
-    // Multi-project mode: use runWithContext
-    if (typeof fsWrapper.runWithContext === "function") {
-      // Determine production mode based on domain type
-      let isProduction = false;
-      if (ctx.parsedDomain?.isVeryfrontDomain) {
-        isProduction = ctx.parsedDomain.isDraft === false;
-      } else {
-        isProduction = ctx.proxyEnvironment === "production";
-      }
-
-      return fsWrapper.runWithContext(
-        ctx.projectSlug,
-        ctx.proxyToken,
-        fn,
-        ctx.projectId,
-        { productionMode: isProduction, releaseId: ctx.releaseId },
-      );
-    }
-
-    // Single-project mode: use setRequestToken
-    if (typeof fsWrapper.setRequestToken === "function") {
-      fsWrapper.setRequestToken(ctx.proxyToken);
-    }
-
-    return fn();
-  }
-
   /**
    * Handles incoming requests by routing to appropriate handler.
    *
@@ -127,80 +74,102 @@ export class ModuleHandler extends BaseHandler {
     // Use pre-bound helpers to avoid repeated binding on each request
     const { createResponseBuilder, respond, logDebug, getErrorMessage } = this.helpers;
 
+    const proxyOptions = { requireToken: true };
+
     // Module server endpoint (including snippet modules - they need transformation)
     if (pathname.startsWith("/_vf_modules/")) {
-      return this.withProxyContext(ctx, () =>
-        handleModuleServer(
-          req,
-          ctx,
-          createResponseBuilder,
-          respond,
-          logDebug,
-          getErrorMessage,
-        ));
+      return this.withProxyContext(
+        ctx,
+        () =>
+          handleModuleServer(
+            req,
+            ctx,
+            createResponseBuilder,
+            respond,
+            logDebug,
+            getErrorMessage,
+          ),
+        proxyOptions,
+      );
     }
 
     // Virtual modules endpoint
     if (pathname.startsWith("/_veryfront/modules/")) {
-      return this.withProxyContext(ctx, () => {
-        const rendererInit = this.ensureRenderer(ctx);
-        return handleVirtualModule(
-          req,
-          ctx,
-          rendererInit,
-          createResponseBuilder,
-          respond,
-          getErrorMessage,
-        );
-      });
+      return this.withProxyContext(
+        ctx,
+        () => {
+          const rendererInit = this.ensureRenderer(ctx);
+          return handleVirtualModule(
+            req,
+            ctx,
+            rendererInit,
+            createResponseBuilder,
+            respond,
+            getErrorMessage,
+          );
+        },
+        proxyOptions,
+      );
     }
 
     // Generated page modules for client hydration
     if (pathname.startsWith("/_veryfront/pages/")) {
-      return this.withProxyContext(ctx, () => {
-        const rendererInit = this.ensureRenderer(ctx);
-        return handlePageModule(
-          req,
-          pathname,
-          ctx,
-          rendererInit,
-          createResponseBuilder,
-          respond,
-          getErrorMessage,
-        );
-      });
+      return this.withProxyContext(
+        ctx,
+        () => {
+          const rendererInit = this.ensureRenderer(ctx);
+          return handlePageModule(
+            req,
+            pathname,
+            ctx,
+            rendererInit,
+            createResponseBuilder,
+            respond,
+            getErrorMessage,
+          );
+        },
+        proxyOptions,
+      );
     }
 
     // Data JSON endpoint for client router prefetch (legacy HTML-based)
     if (pathname.startsWith("/_veryfront/data/")) {
-      return this.withProxyContext(ctx, () => {
-        const rendererInit = this.ensureRenderer(ctx);
-        return handleDataEndpoint(
-          req,
-          pathname,
-          ctx,
-          rendererInit,
-          createResponseBuilder,
-          respond,
-          getErrorMessage,
-        );
-      });
+      return this.withProxyContext(
+        ctx,
+        () => {
+          const rendererInit = this.ensureRenderer(ctx);
+          return handleDataEndpoint(
+            req,
+            pathname,
+            ctx,
+            rendererInit,
+            createResponseBuilder,
+            respond,
+            getErrorMessage,
+          );
+        },
+        proxyOptions,
+      );
     }
 
     // Page data endpoint for SPA client-side routing
     if (pathname.startsWith("/_veryfront/page-data/")) {
-      return this.withProxyContext(ctx, () => {
-        const rendererInit = this.ensureRenderer(ctx);
-        return handlePageDataEndpoint(
-          req,
-          pathname,
-          ctx,
-          rendererInit,
-          createResponseBuilder,
-          respond,
-          getErrorMessage,
-        );
-      });
+      return this.withProxyContext(
+        ctx,
+        () => {
+          const rendererInit = this.ensureRenderer(ctx);
+          return handlePageDataEndpoint(
+            req,
+            pathname,
+            ctx,
+            rendererInit,
+            createResponseBuilder,
+            respond,
+            getErrorMessage,
+          );
+        },
+        proxyOptions,
+      );
     }
 
     return Promise.resolve(this.continue());

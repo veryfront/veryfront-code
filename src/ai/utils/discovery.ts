@@ -1,13 +1,3 @@
-/**
- * Auto-discovery system for AI components
- *
- * Scans ai/ directories and automatically registers:
- * - Tools (ai/tools/)
- * - Agents (ai/agents/)
- * - Resources (ai/resources/)
- * - Prompts (ai/prompts/)
- */
-
 import { detectPlatform } from "../runtime/platform.ts";
 import type { Platform } from "../runtime/platform.ts";
 import { registerPrompt, registerResource, registerTool } from "../mcp/registry.ts";
@@ -22,38 +12,29 @@ import type { FileSystemAdapter } from "../../platform/adapters/base.ts";
 import { isDeno } from "../../platform/compat/runtime.ts";
 import { createFileSystem } from "../../platform/compat/fs.ts";
 import * as pathHelper from "../../platform/compat/path-helper.ts";
+import { getEsbuildLoader } from "../../core/utils/path-utils.ts";
+import { ensureError } from "../../core/errors/veryfront-error.ts";
 
 interface FileDiscoveryContext {
   platform: Platform;
-  /** Optional filesystem adapter for cross-platform support */
   fsAdapter?: FileSystemAdapter;
-  /** Cached node dependencies (lazy loaded) */
   nodeDeps?: {
     fs: typeof import("node:fs");
     path: typeof import("node:path");
   };
-  /** Base directory for the project (needed for Node.js transpilation) */
   baseDir?: string;
 }
 
-/** Cache for transpiled modules to avoid re-transpiling the same file */
 const transpileCache = new Map<string, unknown>();
 
-/**
- * Create an esbuild plugin for loading files from fsAdapter (Veryfront Cloud).
- * This allows esbuild to properly resolve and bundle relative imports from remote storage.
- *
- * The plugin intercepts relative imports (./foo or ../foo), resolves them to absolute paths,
- * and loads the file content from the fsAdapter instead of the local filesystem.
- */
 function createFsAdapterPlugin(fsAdapter: FileSystemAdapter) {
   // Cache existence checks to avoid repeated remote calls
   const existsCache = new Map<string, boolean>();
 
   async function checkExists(filePath: string): Promise<boolean> {
-    if (existsCache.has(filePath)) {
-      return existsCache.get(filePath)!;
-    }
+    const cached = existsCache.get(filePath);
+    if (cached !== undefined) return cached;
+
     const exists = await fsAdapter.exists(filePath);
     existsCache.set(filePath, exists);
     return exists;
@@ -125,19 +106,9 @@ function createFsAdapterPlugin(fsAdapter: FileSystemAdapter) {
         async (args: { path: string }) => {
           try {
             const content = await fsAdapter.readFile(args.path);
-            const ext = pathHelper.extname(args.path).toLowerCase();
-            const loader = ext === ".tsx"
-              ? "tsx"
-              : ext === ".jsx"
-              ? "jsx"
-              : ext === ".ts"
-              ? "ts"
-              : "js";
-
             return {
               contents: content,
-              loader,
-              // Set resolveDir for nested imports from this file
+              loader: getEsbuildLoader(args.path),
               resolveDir: pathHelper.dirname(args.path),
             };
           } catch (error) {
@@ -153,12 +124,6 @@ function createFsAdapterPlugin(fsAdapter: FileSystemAdapter) {
   };
 }
 
-/**
- * Import a TypeScript module in a platform-aware way.
- * - Deno: Transpile to rewrite npm package imports, then import natively
- * - Node.js: Transpile with esbuild, then import
- * - Node.js + fsAdapter: Use esbuild plugin to load from remote storage
- */
 async function importModule(
   file: string,
   context: FileDiscoveryContext,
@@ -184,10 +149,7 @@ async function importModule(
     throw new Error(`Failed to read file ${filePath}: ${error}`);
   }
 
-  // Determine loader based on file extension
-  const isTsx = filePath.endsWith(".tsx");
-  const isJsx = filePath.endsWith(".jsx");
-  const loader = isTsx ? "tsx" : isJsx ? "jsx" : filePath.endsWith(".ts") ? "ts" : "js";
+  const loader = getEsbuildLoader(filePath);
 
   // Transpile with esbuild
   const { build } = await import("esbuild");
@@ -197,16 +159,11 @@ async function importModule(
 
   // In Deno, esbuild runs as WASM which doesn't support plugins.
   // We mark relative imports as external and let Deno's native TS support handle them.
-  const relativeImports: string[] = [];
-  if (isDeno) {
-    const relativeImportPattern = /from\s+["'](\.\.[^"']+)["']/g;
-    let match;
-    while ((match = relativeImportPattern.exec(source)) !== null) {
-      if (match[1]) {
-        relativeImports.push(match[1]);
-      }
-    }
-  }
+  const relativeImports: string[] = isDeno
+    ? [...source.matchAll(/from\s+["'](\.\.[^"']+)["']/g)]
+      .map((m) => m[1])
+      .filter((p): p is string => p !== undefined)
+    : [];
 
   // In Node.js with fsAdapter, use plugin to load relative imports from remote storage.
   // This properly bundles all dependencies instead of marking them external.
@@ -277,23 +234,19 @@ async function importModule(
   }
 }
 
-/**
- * Rewrite imports for Deno (use npm: specifiers and resolve relative imports)
- */
 function rewriteForDeno(code: string, fileDir: string): string {
-  let transformed = code;
-
   // Rewrite external packages to npm: specifiers
-  const npmPackages = [
-    { pattern: /from\s+["']ai["']/g, replacement: 'from "npm:ai"' },
-    { pattern: /from\s+["']ai\/([^"']+)["']/g, replacement: 'from "npm:ai/$1"' },
-    { pattern: /from\s+["']@ai-sdk\/([^"']+)["']/g, replacement: 'from "npm:@ai-sdk/$1"' },
-    { pattern: /from\s+["']zod["']/g, replacement: 'from "npm:zod"' },
-    { pattern: /import\s*\(\s*["']ai["']\s*\)/g, replacement: 'import("npm:ai")' },
-    { pattern: /import\s*\(\s*["']zod["']\s*\)/g, replacement: 'import("npm:zod")' },
+  const npmReplacements: [RegExp, string][] = [
+    [/from\s+["']ai["']/g, 'from "npm:ai"'],
+    [/from\s+["']ai\/([^"']+)["']/g, 'from "npm:ai/$1"'],
+    [/from\s+["']@ai-sdk\/([^"']+)["']/g, 'from "npm:@ai-sdk/$1"'],
+    [/from\s+["']zod["']/g, 'from "npm:zod"'],
+    [/import\s*\(\s*["']ai["']\s*\)/g, 'import("npm:ai")'],
+    [/import\s*\(\s*["']zod["']\s*\)/g, 'import("npm:zod")'],
   ];
 
-  for (const { pattern, replacement } of npmPackages) {
+  let transformed = code;
+  for (const [pattern, replacement] of npmReplacements) {
     transformed = transformed.replace(pattern, replacement);
   }
 
@@ -310,9 +263,6 @@ function rewriteForDeno(code: string, fileDir: string): string {
   return transformed;
 }
 
-/**
- * Rewrite external imports to absolute paths for Node.js compatibility
- */
 async function rewriteDiscoveryImports(
   code: string,
   projectDir: string,
@@ -341,27 +291,10 @@ async function rewriteDiscoveryImports(
 
       try {
         const pkgJson = JSON.parse(await fs.readTextFile(packageJsonPath));
-        let entryPoint: string | undefined;
-
-        if (pkgJson.exports) {
-          const dotExport = pkgJson.exports["."];
-          if (typeof dotExport === "string") {
-            entryPoint = dotExport;
-          } else if (dotExport?.import) {
-            entryPoint = dotExport.import;
-          } else if (dotExport?.default) {
-            entryPoint = dotExport.default;
-          }
-        }
-
-        if (!entryPoint) {
-          entryPoint = pkgJson.module || pkgJson.main || "index.js";
-        }
-
-        if (!entryPoint) {
-          return null;
-        }
-
+        const dotExport = pkgJson.exports?.["."];
+        const entryPoint =
+          (typeof dotExport === "string" ? dotExport : dotExport?.import ?? dotExport?.default) ??
+            pkgJson.module ?? pkgJson.main ?? "index.js";
         const resolvedPath = pathHelper.join(packagePath, entryPoint);
         return pathToFileURL(resolvedPath).href;
       } catch {
@@ -369,8 +302,25 @@ async function rewriteDiscoveryImports(
       }
     };
 
+    // Rewrite package imports to resolved file:// URLs
+    const rewritePackageImports = async (code: string, pkg: string): Promise<string> => {
+      const escapedPkg = pkg.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const staticImportRegex = new RegExp(`from\\s+["']${escapedPkg}["']`, "g");
+      const dynamicImportRegex = new RegExp(`import\\s*\\(\\s*["']${escapedPkg}["']\\s*\\)`, "g");
+
+      const needsRewrite = staticImportRegex.test(code) || dynamicImportRegex.test(code);
+      if (!needsRewrite) return code;
+
+      const resolvedUrl = await resolvePackageToFileUrl(pkg);
+      if (!resolvedUrl) return code;
+
+      return code
+        .replace(staticImportRegex, `from "${resolvedUrl}"`)
+        .replace(dynamicImportRegex, `import("${resolvedUrl}")`);
+    };
+
     // List of external packages that need to be resolved
-    const externalPackagesToResolve = [
+    const externalPackages = [
       "zod",
       "ai",
       "@ai-sdk/anthropic",
@@ -381,24 +331,8 @@ async function rewriteDiscoveryImports(
       "@ai-sdk/provider-utils",
     ];
 
-    for (const pkg of externalPackagesToResolve) {
-      const escapedPkg = pkg.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-
-      const staticImportRegex = new RegExp(`from\\s+["']${escapedPkg}["']`, "g");
-      if (staticImportRegex.test(transformed)) {
-        const resolvedUrl = await resolvePackageToFileUrl(pkg);
-        if (resolvedUrl) {
-          transformed = transformed.replace(staticImportRegex, `from "${resolvedUrl}"`);
-        }
-      }
-
-      const dynamicImportRegex = new RegExp(`import\\s*\\(\\s*["']${escapedPkg}["']\\s*\\)`, "g");
-      if (dynamicImportRegex.test(transformed)) {
-        const resolvedUrl = await resolvePackageToFileUrl(pkg);
-        if (resolvedUrl) {
-          transformed = transformed.replace(dynamicImportRegex, `import("${resolvedUrl}")`);
-        }
-      }
+    for (const pkg of externalPackages) {
+      transformed = await rewritePackageImports(transformed, pkg);
     }
 
     // Resolve veryfront imports
@@ -445,28 +379,13 @@ async function rewriteDiscoveryImports(
 }
 
 export interface DiscoveryConfig {
-  /** Base directory (usually project root) */
   baseDir: string;
-
-  /** AI directory (relative to baseDir) */
   aiDir?: string;
-
-  /** Tool directories */
   toolDirs?: string[];
-
-  /** Agent directories */
   agentDirs?: string[];
-
-  /** Resource directories */
   resourceDirs?: string[];
-
-  /** Prompt directories */
   promptDirs?: string[];
-
-  /** Enable verbose logging */
   verbose?: boolean;
-
-  /** Optional filesystem adapter for cross-platform support (Cloudflare Workers, etc.) */
   fsAdapter?: FileSystemAdapter;
 }
 
@@ -478,9 +397,6 @@ export interface DiscoveryResult {
   errors: Array<{ file: string; error: Error }>;
 }
 
-/**
- * Discover and register all AI components
- */
 export async function discoverAll(
   config: DiscoveryConfig,
 ): Promise<DiscoveryResult> {
@@ -534,46 +450,48 @@ export async function discoverAll(
   return result;
 }
 
-/**
- * Discover tools in a directory
- */
-async function discoverTools(
+interface DiscoveryHandler<T> {
+  typeName: string;
+  validate: (item: unknown) => item is T;
+  getId: (item: T, file: string, dir: string) => string;
+  register: (id: string, item: T, file: string, dir: string) => T;
+  getResultMap: (result: DiscoveryResult) => Map<string, T>;
+}
+
+async function discoverItems<T>(
   dir: string,
   result: DiscoveryResult,
   context: FileDiscoveryContext,
+  handler: DiscoveryHandler<T>,
   verbose?: boolean,
 ): Promise<void> {
   const files = await findTypeScriptFiles(dir, context);
 
   if (verbose) {
-    agentLogger.info(`[Discovery] Found ${files.length} tool files in ${dir}`);
+    agentLogger.info(`[Discovery] Found ${files.length} ${handler.typeName} files in ${dir}`);
   }
 
   for (const file of files) {
     try {
       const module = await importModule(file, context);
-      const tool = (module as { default?: Tool }).default as Tool;
+      const item = (module as { default?: T }).default as T;
 
-      if (!tool || typeof tool.execute !== "function") {
+      if (!handler.validate(item)) {
         if (verbose) {
-          agentLogger.warn(`[Discovery] ${file} does not export a valid tool`);
+          agentLogger.warn(`[Discovery] ${file} does not export a valid ${handler.typeName}`);
         }
         continue;
       }
 
-      const id = filenameToId(file);
-      const toolWithId = { ...tool, id };
-      registerTool(id, toolWithId);
-      result.tools.set(id, toolWithId);
+      const id = handler.getId(item, file, dir);
+      const registered = handler.register(id, item, file, dir);
+      handler.getResultMap(result).set(id, registered);
 
       if (verbose) {
-        agentLogger.info(`[Discovery] Registered tool: ${id}`);
+        agentLogger.info(`[Discovery] Registered ${handler.typeName}: ${id}`);
       }
     } catch (error) {
-      result.errors.push({
-        file,
-        error: error instanceof Error ? error : new Error(String(error)),
-      });
+      result.errors.push({ file, error: ensureError(error) });
 
       if (verbose) {
         agentLogger.error(`[Discovery] Error loading ${file}:`, error);
@@ -582,158 +500,95 @@ async function discoverTools(
   }
 }
 
-/**
- * Discover agents in a directory
- */
-async function discoverAgents(
+const toolHandler: DiscoveryHandler<Tool> = {
+  typeName: "tool",
+  validate: (item): item is Tool =>
+    item !== null && typeof item === "object" && typeof (item as Tool).execute === "function",
+  getId: (_item, file) => filenameToId(file),
+  register: (id, tool) => {
+    const toolWithId = { ...tool, id };
+    registerTool(id, toolWithId);
+    return toolWithId;
+  },
+  getResultMap: (result) => result.tools,
+};
+
+const agentHandler: DiscoveryHandler<Agent> = {
+  typeName: "agent",
+  validate: (item): item is Agent =>
+    item !== null && typeof item === "object" && typeof (item as Agent).generate === "function",
+  getId: (agent, file) => agent.id || filenameToId(file),
+  register: (id, agent, file) => {
+    registerAgent(id, agent);
+    trackAgentPath(id, file);
+    return agent;
+  },
+  getResultMap: (result) => result.agents,
+};
+
+const resourceHandler: DiscoveryHandler<Resource> = {
+  typeName: "resource",
+  validate: (item): item is Resource =>
+    item !== null && typeof item === "object" && typeof (item as Resource).load === "function",
+  getId: (_item, file) => filenameToId(file),
+  register: (id, resource, file, dir) => {
+    const pattern = filePathToPattern(file, dir);
+    const resourceWithMeta = { ...resource, id, pattern };
+    registerResource(id, resourceWithMeta);
+    return resourceWithMeta;
+  },
+  getResultMap: (result) => result.resources,
+};
+
+const promptHandler: DiscoveryHandler<Prompt> = {
+  typeName: "prompt",
+  validate: (item): item is Prompt =>
+    item !== null && typeof item === "object" && typeof (item as Prompt).getContent === "function",
+  getId: (_item, file) => filenameToId(file),
+  register: (id, prompt) => {
+    const promptWithId = { ...prompt, id };
+    registerPrompt(id, promptWithId);
+    return promptWithId;
+  },
+  getResultMap: (result) => result.prompts,
+};
+
+function discoverTools(
   dir: string,
   result: DiscoveryResult,
   context: FileDiscoveryContext,
   verbose?: boolean,
 ): Promise<void> {
-  const files = await findTypeScriptFiles(dir, context);
-
-  if (verbose) {
-    agentLogger.info(`[Discovery] Found ${files.length} agent files in ${dir}`);
-  }
-
-  for (const file of files) {
-    try {
-      const module = await importModule(file, context);
-      const agent = (module as { default?: Agent }).default as Agent;
-
-      if (!agent || typeof agent.generate !== "function") {
-        if (verbose) {
-          agentLogger.warn(`[Discovery] ${file} does not export a valid agent`);
-        }
-        continue;
-      }
-
-      const id = agent.id || filenameToId(file);
-
-      // Register in the global agent registry
-      registerAgent(id, agent);
-      result.agents.set(id, agent);
-
-      // Track the file path for index generation
-      trackAgentPath(id, file);
-
-      if (verbose) {
-        agentLogger.info(`[Discovery] Registered agent: ${id}`);
-      }
-    } catch (error) {
-      result.errors.push({
-        file,
-        error: error instanceof Error ? error : new Error(String(error)),
-      });
-
-      if (verbose) {
-        agentLogger.error(`[Discovery] Error loading ${file}:`, error);
-      }
-    }
-  }
+  return discoverItems(dir, result, context, toolHandler, verbose);
 }
 
-/**
- * Discover resources in a directory
- */
-async function discoverResources(
+function discoverAgents(
   dir: string,
   result: DiscoveryResult,
   context: FileDiscoveryContext,
   verbose?: boolean,
 ): Promise<void> {
-  const files = await findTypeScriptFiles(dir, context);
-
-  if (verbose) {
-    agentLogger.info(`[Discovery] Found ${files.length} resource files in ${dir}`);
-  }
-
-  for (const file of files) {
-    try {
-      const module = await importModule(file, context);
-      const resource = (module as { default?: Resource }).default as Resource;
-
-      if (!resource || typeof resource.load !== "function") {
-        if (verbose) {
-          agentLogger.warn(`[Discovery] ${file} does not export a valid resource`);
-        }
-        continue;
-      }
-
-      const id = filenameToId(file);
-      const pattern = filePathToPattern(file, dir);
-      const resourceWithMeta = { ...resource, id, pattern };
-      registerResource(id, resourceWithMeta);
-      result.resources.set(id, resourceWithMeta);
-
-      if (verbose) {
-        agentLogger.info(`[Discovery] Registered resource: ${id} (${pattern})`);
-      }
-    } catch (error) {
-      result.errors.push({
-        file,
-        error: error instanceof Error ? error : new Error(String(error)),
-      });
-
-      if (verbose) {
-        agentLogger.error(`[Discovery] Error loading ${file}:`, error);
-      }
-    }
-  }
+  return discoverItems(dir, result, context, agentHandler, verbose);
 }
 
-/**
- * Discover prompts in a directory
- */
-async function discoverPrompts(
+function discoverResources(
   dir: string,
   result: DiscoveryResult,
   context: FileDiscoveryContext,
   verbose?: boolean,
 ): Promise<void> {
-  const files = await findTypeScriptFiles(dir, context);
-
-  if (verbose) {
-    agentLogger.info(`[Discovery] Found ${files.length} prompt files in ${dir}`);
-  }
-
-  for (const file of files) {
-    try {
-      const module = await importModule(file, context);
-      const promptInstance = (module as { default?: Prompt }).default as Prompt;
-
-      if (!promptInstance || typeof promptInstance.getContent !== "function") {
-        if (verbose) {
-          agentLogger.warn(`[Discovery] ${file} does not export a valid prompt`);
-        }
-        continue;
-      }
-
-      const id = filenameToId(file);
-      const promptWithId = { ...promptInstance, id };
-      registerPrompt(id, promptWithId);
-      result.prompts.set(id, promptWithId);
-
-      if (verbose) {
-        agentLogger.info(`[Discovery] Registered prompt: ${id}`);
-      }
-    } catch (error) {
-      result.errors.push({
-        file,
-        error: error instanceof Error ? error : new Error(String(error)),
-      });
-
-      if (verbose) {
-        agentLogger.error(`[Discovery] Error loading ${file}:`, error);
-      }
-    }
-  }
+  return discoverItems(dir, result, context, resourceHandler, verbose);
 }
 
-/**
- * Find all TypeScript files in a directory (recursively)
- */
+function discoverPrompts(
+  dir: string,
+  result: DiscoveryResult,
+  context: FileDiscoveryContext,
+  verbose?: boolean,
+): Promise<void> {
+  return discoverItems(dir, result, context, promptHandler, verbose);
+}
+
 async function findTypeScriptFiles(
   dir: string,
   context: FileDiscoveryContext,
@@ -815,20 +670,13 @@ async function getNodeDeps(context: FileDiscoveryContext) {
   return context.nodeDeps;
 }
 
-/**
- * Convert filename to camelCase ID
- */
 function filenameToId(filePath: string): string {
-  const filename = filePath.split("/").pop()?.replace(/\.(ts|tsx|js|jsx)$/, "") || "";
-
+  const filename = filePath.split("/").pop()?.replace(/\.(ts|tsx|js|jsx)$/, "") ?? "";
   return filename
     .replace(/[-_](.)/g, (_, char) => char.toUpperCase())
     .replace(/^[A-Z]/, (char) => char.toLowerCase());
 }
 
-/**
- * Convert file path to resource pattern
- */
 function filePathToPattern(filePath: string, baseDir: string): string {
   const cleanPath = filePath.replace("file://", "");
 
@@ -843,22 +691,8 @@ function filePathToPattern(filePath: string, baseDir: string): string {
   return pattern;
 }
 
-/**
- * Tracked agent file paths for index generation
- */
 const discoveredAgentPaths = new Map<string, string>();
 
-/**
- * Generate an index file that exports all discovered agents
- * This allows API routes to import agents from a known location
- *
- * @example
- * // Generated file: ai/.generated/agents.ts
- * export { default as assistant } from '../agents/assistant';
- *
- * // Usage in API route:
- * import { assistant } from '../../ai/.generated/agents';
- */
 export async function generateAgentIndex(
   baseDir: string,
   aiDir: string = "ai",
@@ -922,23 +756,14 @@ export async function generateAgentIndex(
   }
 }
 
-/**
- * Track agent file path during discovery
- */
 function trackAgentPath(id: string, filePath: string): void {
   discoveredAgentPaths.set(id, filePath);
 }
 
-/**
- * Clear tracked agent paths (for re-discovery)
- */
 export function clearTrackedAgents(): void {
   discoveredAgentPaths.clear();
 }
 
-/**
- * Clear the transpile cache (for HMR/development)
- */
 export function clearTranspileCache(): void {
   transpileCache.clear();
 }

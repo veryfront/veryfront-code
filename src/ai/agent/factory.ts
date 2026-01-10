@@ -11,6 +11,17 @@ import { agentLogger } from "../../core/utils/logger/logger.ts";
 import { createError, toError } from "../../core/errors/veryfront-error.ts";
 
 /**
+ * Standard headers for Vercel AI SDK compatible streaming responses
+ */
+const STREAMING_HEADERS: Record<string, string> = {
+  "Content-Type": "text/event-stream",
+  "Cache-Control": "no-cache",
+  "Connection": "keep-alive",
+  // Required header for Vercel AI SDK Data Stream Protocol v1
+  "x-vercel-ai-ui-message-stream": "v1",
+};
+
+/**
  * Result object returned by agent.stream()
  * Provides toDataStreamResponse() for Vercel AI SDK compatible streaming
  */
@@ -40,14 +51,7 @@ function createAgentStreamResult(stream: ReadableStream): AgentStreamResult {
       return new Response(stream, {
         status: options?.status ?? 200,
         statusText: options?.statusText,
-        headers: {
-          "Content-Type": "text/event-stream",
-          "Cache-Control": "no-cache",
-          "Connection": "keep-alive",
-          // Required header for Vercel AI SDK Data Stream Protocol v1
-          "x-vercel-ai-ui-message-stream": "v1",
-          ...options?.headers,
-        },
+        headers: { ...STREAMING_HEADERS, ...options?.headers },
       });
     },
   };
@@ -148,15 +152,7 @@ export function agent(config: AgentConfig): Agent {
       const messages = body.messages || [];
       const stream = await runtime.stream(messages, body.context);
 
-      return new Response(stream, {
-        headers: {
-          "Content-Type": "text/event-stream",
-          "Cache-Control": "no-cache",
-          "Connection": "keep-alive",
-          // Required header for Vercel AI SDK Data Stream Protocol v1
-          "x-vercel-ai-ui-message-stream": "v1",
-        },
-      });
+      return new Response(stream, { headers: STREAMING_HEADERS });
     },
 
     getMemory() {

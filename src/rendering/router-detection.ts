@@ -36,14 +36,11 @@ export async function detectAppRouter(
   config: VeryfrontConfig,
   adapter: RuntimeAdapter,
 ): Promise<boolean> {
-  const forced = config?.router;
-  if (forced === "app") return true;
-  if (forced === "pages") return false;
+  if (config?.router === "app") return true;
+  if (config?.router === "pages") return false;
 
-  // Check cache first
-  if (routerDetectionCache.has(projectDir)) {
-    return routerDetectionCache.get(projectDir)!;
-  }
+  const cached = routerDetectionCache.get(projectDir);
+  if (cached !== undefined) return cached;
 
   const result = await detectAppRouterImpl(projectDir, config, adapter);
   routerDetectionCache.set(projectDir, result);
@@ -97,6 +94,9 @@ async function detectAppRouterImpl(
   return false; // If nothing is detectable, fall back to pages router to avoid false positives
 }
 
+const ROUTE_EXTENSIONS = new Set([".mdx", ".tsx", ".jsx", ".ts", ".js"]);
+const ROUTE_PATTERNS = ["page", "layout", "error", "loading", "not-found", "index"];
+
 /**
  * Check if a directory contains route files
  */
@@ -104,26 +104,18 @@ async function hasRouteFiles(
   dir: string,
   adapter: RuntimeAdapter,
 ): Promise<boolean> {
-  const routeExtensions = [".mdx", ".tsx", ".jsx", ".ts", ".js"];
-  const routePatterns = ["page", "layout", "error", "loading", "not-found"];
-
   const entries = await readDirWithFallback(dir, adapter);
+
   for (const entry of entries) {
     if (entry.isFile) {
       const name = entry.name.toLowerCase();
-      // Check if file matches a route pattern or is a valid route file
-      const hasRouteExtension = routeExtensions.some((ext) => name.endsWith(ext));
-      if (hasRouteExtension) {
-        const isRouteFile = routePatterns.some((pattern) => name.startsWith(pattern));
-        const isIndexFile = name.startsWith("index");
-        if (isRouteFile || isIndexFile) {
-          return true;
-        }
-      }
+      const dotIndex = name.lastIndexOf(".");
+      const ext = dotIndex === -1 ? "" : name.slice(dotIndex);
+      const isRouteFile = ROUTE_EXTENSIONS.has(ext) &&
+        ROUTE_PATTERNS.some((pattern) => name.startsWith(pattern));
+      if (isRouteFile) return true;
     } else if (entry.isDirectory) {
-      // Recursively check subdirectories
-      const hasNested = await hasRouteFiles(join(dir, entry.name), adapter);
-      if (hasNested) return true;
+      if (await hasRouteFiles(join(dir, entry.name), adapter)) return true;
     }
   }
 
@@ -168,6 +160,20 @@ async function statWithFallback(
   }
 }
 
+function normalizeEntry(entry: {
+  name: string;
+  isFile: boolean;
+  isDirectory: boolean;
+  isSymlink?: boolean;
+}): NormalizedDirEntry {
+  return {
+    name: entry.name,
+    isFile: entry.isFile,
+    isDirectory: entry.isDirectory,
+    isSymlink: entry.isSymlink ?? false,
+  };
+}
+
 async function readDirWithFallback(
   dir: string,
   adapter: RuntimeAdapter,
@@ -175,7 +181,7 @@ async function readDirWithFallback(
   try {
     const entries: NormalizedDirEntry[] = [];
     for await (const entry of adapter.fs.readDir(dir)) {
-      entries.push(entry as NormalizedDirEntry);
+      entries.push(normalizeEntry(entry));
     }
     return entries;
   } catch {
@@ -183,12 +189,7 @@ async function readDirWithFallback(
     try {
       const entries: NormalizedDirEntry[] = [];
       for await (const entry of fs.readDir(dir)) {
-        entries.push({
-          name: entry.name,
-          isFile: entry.isFile,
-          isDirectory: entry.isDirectory,
-          isSymlink: "isSymlink" in entry ? (entry as any).isSymlink : false,
-        });
+        entries.push(normalizeEntry(entry));
       }
       return entries;
     } catch {
