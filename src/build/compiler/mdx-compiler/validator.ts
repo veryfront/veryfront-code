@@ -47,7 +47,7 @@ export async function validateFileExists(filePath: string, content: string): Pro
 
 export async function pathExists(path: string): Promise<boolean> {
   try {
-    return await fs.exists(path);
+    return fs.exists(path);
   } catch {
     return false;
   }

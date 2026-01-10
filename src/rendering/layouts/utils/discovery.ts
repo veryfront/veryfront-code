@@ -77,10 +77,8 @@ async function resolveExistingFiles(
     const result = results[i];
     if (!result) continue;
 
-    if (result.status === "fulfilled") {
-      if (result.value.isFile) {
-        existing.push(candidates[i]!);
-      }
+    if (result.status === "fulfilled" && result.value.isFile) {
+      existing.push(candidates[i]!);
     } else if (result.status === "rejected") {
       logger.debug("[layout] stat layout candidate failed", result.reason as Error);
     }
@@ -144,16 +142,14 @@ async function addMissedAncestorLayouts(
       const cand = candidates[i];
       if (!result || !cand) continue;
 
-      if (result.status === "fulfilled") {
-        if (result.value.isFile) {
-          nestedLayouts.push({
-            kind: "tsx",
-            component: undefined,
-            componentPath: cand,
-            path: cand,
-          });
-          included.add(cand);
-        }
+      if (result.status === "fulfilled" && result.value.isFile) {
+        nestedLayouts.push({
+          kind: "tsx",
+          component: undefined,
+          componentPath: cand,
+          path: cand,
+        });
+        included.add(cand);
       } else if (result.status === "rejected") {
         logger.debug("[layout] stat nested tsx/jsx layout failed", result.reason as Error);
       }
