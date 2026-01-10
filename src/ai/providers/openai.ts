@@ -160,7 +160,9 @@ export class OpenAIProvider extends BaseProvider {
       } catch (error) {
         throw toError(createError({
           type: "agent",
-          message: `OpenAI: Invalid tool call arguments JSON for ${tc.function.name}: ${error instanceof Error ? error.message : String(error)}`,
+          message: `OpenAI: Invalid tool call arguments JSON for ${tc.function.name}: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
         }));
       }
     });
