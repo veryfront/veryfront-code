@@ -15,7 +15,7 @@ import { createRenderer } from "@veryfront/rendering/index.ts";
 import { rendererLogger } from "@veryfront/utils";
 import { clearSSRModuleCacheForProject } from "../../module-system/react-loader/ssr-module-loader.ts";
 import { getHeapStats, registerCache } from "../../core/memory/index.ts";
-import { clearConfigCache, getConfig } from "@veryfront/config";
+import { clearConfigCache, getConfig, type VeryfrontConfig } from "@veryfront/config";
 
 type RendererInstance = Awaited<ReturnType<typeof createRenderer>>;
 type RendererPromise = Promise<RendererInstance>;
@@ -342,6 +342,24 @@ export async function getRendererForProject(ctx: HandlerContext): Promise<Render
     return existingInFlight;
   }
 
+  // Load project-specific config BEFORE creating the IIFE
+  // This must happen while still in the AsyncLocalStorage context from runWithContext()
+  // The IIFE pattern loses AsyncLocalStorage context across async boundaries
+  let projectConfig = ctx.config;
+  if (cacheKey !== "__single__" && ctx.projectSlug) {
+    rendererLogger.info("[RendererFactory] Loading project-specific config", {
+      projectSlug: cacheKey,
+      projectDir: ctx.projectDir,
+    });
+    clearConfigCache();
+    projectConfig = await getConfig(ctx.projectDir, ctx.adapter);
+    rendererLogger.info("[RendererFactory] Project config loaded", {
+      projectSlug: cacheKey,
+      hasDefaultLayout: !!projectConfig?.defaultLayout,
+      defaultLayout: projectConfig?.defaultLayout,
+    });
+  }
+
   // Create and register the in-flight promise SYNCHRONOUSLY before any await
   // This prevents race conditions where concurrent calls all pass the in-flight check
   const creationPromise = (async () => {
@@ -356,8 +374,8 @@ export async function getRendererForProject(ctx: HandlerContext): Promise<Render
       await evictLRU();
     }
 
-    // Create new renderer
-    const renderer = await createRendererInternal(ctx, cacheKey);
+    // Create new renderer with pre-loaded config
+    const renderer = await createRendererInternal(ctx, cacheKey, projectConfig);
 
     rendererCache.set(cacheKey, {
       renderer,
@@ -387,45 +405,30 @@ export async function getRendererForProject(ctx: HandlerContext): Promise<Render
 
 /**
  * Internal renderer creation with logging.
+ * The config parameter should be pre-loaded by the caller while still in a valid
+ * AsyncLocalStorage context. This avoids context loss issues with IIFE patterns.
  */
 async function createRendererInternal(
   ctx: HandlerContext,
   projectSlug: string,
+  config?: VeryfrontConfig,
 ): Promise<RendererInstance> {
   rendererLogger.info("[RendererFactory] Creating renderer", {
     projectSlug,
     mode: ctx.mode,
+    hasPreloadedConfig: !!config,
   });
 
   try {
-    // In multi-project mode (when projectSlug !== "__single__"), load config fresh
-    // This runs within runWithContext so FSAdapter reads from the correct project
-    // This is necessary because ctx.config from the universal handler is the startup config
-    // which doesn't have project-specific settings like defaultLayout
-    let config = ctx.config;
-    if (projectSlug !== "__single__" && ctx.projectSlug) {
-      rendererLogger.info("[RendererFactory] Loading project-specific config", {
-        projectSlug,
-        projectDir: ctx.projectDir,
-      });
-      // Clear config cache before loading - in proxy mode, projectDir is always /app
-      // but different projects have different configs. The cache is keyed by projectDir
-      // so we need to clear it to ensure we load the correct project's config.
-      clearConfigCache();
-      config = await getConfig(ctx.projectDir, ctx.adapter);
-      rendererLogger.info("[RendererFactory] Project config loaded", {
-        projectSlug,
-        hasDefaultLayout: !!config?.defaultLayout,
-        defaultLayout: config?.defaultLayout,
-      });
-    }
+    // Use the pre-loaded config if provided, otherwise fall back to ctx.config
+    const rendererConfig = config ?? ctx.config;
 
     const renderer = await createRenderer({
       projectDir: ctx.projectDir,
       mode: ctx.mode,
       adapter: ctx.adapter,
       moduleServerUrl: ctx.moduleServerUrl,
-      config,
+      config: rendererConfig,
     });
 
     rendererLogger.debug("[RendererFactory] Renderer created", { projectSlug });
