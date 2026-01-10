@@ -1,9 +1,5 @@
 import type { ImportMapConfig } from "./types.ts";
 
-/**
- * Extract package name from esm.sh URL.
- * E.g., "https://esm.sh/@tanstack/react-query@5?external=react" -> "@tanstack/react-query"
- */
 function extractEsmShPackage(url: string): string | null {
   if (!url.startsWith("https://esm.sh/") && !url.startsWith("http://esm.sh/")) {
     return null;
