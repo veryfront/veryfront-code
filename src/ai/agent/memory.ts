@@ -240,23 +240,18 @@ export class SummaryMemory implements Memory {
   }
 }
 
+const MEMORY_CONSTRUCTORS: Record<string, new (config: MemoryConfig) => Memory> = {
+  conversation: ConversationMemory,
+  buffer: BufferMemory,
+  summary: SummaryMemory,
+};
+
 /**
  * Create memory instance based on config
  */
 export function createMemory(config: MemoryConfig): Memory {
-  switch (config.type) {
-    case "conversation":
-      return new ConversationMemory(config);
-
-    case "buffer":
-      return new BufferMemory(config);
-
-    case "summary":
-      return new SummaryMemory(config);
-
-    default:
-      return new ConversationMemory(config);
-  }
+  const Constructor = MEMORY_CONSTRUCTORS[config.type] ?? ConversationMemory;
+  return new Constructor(config);
 }
 
 /**
