@@ -202,47 +202,47 @@ export class VeryfrontAPIClient {
   }
 
   async listProjects() {
-    return this.operations.listProjects();
+    return await this.operations.listProjects();
   }
 
   async getProject(projectId: string) {
-    return this.operations.getProject(projectId);
+    return await this.operations.getProject(projectId);
   }
 
   async listFiles(projectId?: string, cursor?: string, limit = 100, branch?: string | null) {
-    return this.operations.listFiles(projectId, cursor, limit, this.resolveBranch(branch));
+    return await this.operations.listFiles(projectId, cursor, limit, this.resolveBranch(branch));
   }
 
   async listAllFiles(projectId?: string, branch?: string | null) {
-    return this.operations.listAllFiles(projectId, this.resolveBranch(branch));
+    return await this.operations.listAllFiles(projectId, this.resolveBranch(branch));
   }
 
   async searchFiles(pattern: string, projectId?: string, branch?: string | null) {
-    return this.operations.searchFiles(pattern, projectId, this.resolveBranch(branch));
+    return await this.operations.searchFiles(pattern, projectId, this.resolveBranch(branch));
   }
 
   async getFileContent(path: string, projectId?: string, branch?: string | null) {
-    return this.operations.getFileContent(path, projectId, this.resolveBranch(branch));
+    return await this.operations.getFileContent(path, projectId, this.resolveBranch(branch));
   }
 
   async getFileMetadata(path: string, projectId?: string) {
-    return this.operations.getFileMetadata(path, projectId);
+    return await this.operations.getFileMetadata(path, projectId);
   }
 
   async fileExists(path: string, projectId?: string) {
-    return this.operations.fileExists(path, projectId);
+    return await this.operations.fileExists(path, projectId);
   }
 
   async listPublishedFiles(projectId?: string, releaseId?: string) {
-    return this.operations.listPublishedFiles(projectId, releaseId);
+    return await this.operations.listPublishedFiles(projectId, releaseId);
   }
 
   async getPublishedFileContent(path: string, projectId?: string, releaseId?: string) {
-    return this.operations.getPublishedFileContent(path, projectId, releaseId);
+    return await this.operations.getPublishedFileContent(path, projectId, releaseId);
   }
 
   async lookupProjectByDomain(domain: string) {
-    return this.operations.lookupProjectByDomain(domain);
+    return await this.operations.lookupProjectByDomain(domain);
   }
 
   async getComponentByEntityId(entityId: string, projectSlug?: string) {
@@ -250,6 +250,6 @@ export class VeryfrontAPIClient {
     if (!slug) {
       throw new VeryfrontAPIError("No project slug available for component lookup", 400);
     }
-    return this.operations.getComponentByEntityId(entityId, slug);
+    return await this.operations.getComponentByEntityId(entityId, slug);
   }
 }

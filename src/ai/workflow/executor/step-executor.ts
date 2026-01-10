@@ -329,7 +329,7 @@ export class StepExecutor {
   ): Promise<unknown> {
     const resolvedTool = typeof tool === "string" ? this.getTool(tool) : tool;
 
-    return resolvedTool.execute(input as Record<string, unknown>, {
+    return await resolvedTool.execute(input as Record<string, unknown>, {
       agentId: "workflow",
       blobStorage: this.config.blobStorage,
     });

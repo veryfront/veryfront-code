@@ -372,7 +372,7 @@ export async function executeTool(
     }));
   }
 
-  return tool.execute(input, context);
+  return await tool.execute(input, context);
 }
 
 export { zodToJsonSchema } from "./zod-json-schema.ts";

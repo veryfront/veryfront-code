@@ -63,7 +63,7 @@ export class VeryfrontAPIOperations {
   }
 
   async getProject(projectId: string): Promise<Project> {
-    return this.request<Project>(`/projects/${projectId}`);
+    return await this.request<Project>(`/projects/${projectId}`);
   }
 
   async listFiles(
@@ -348,6 +348,6 @@ export class VeryfrontAPIOperations {
   ): Promise<T> {
     const url = `${this.apiBaseUrl}${endpoint}`;
     const token = this.tokenProvider();
-    return requestWithRetry<T>(url, token, this.retryConfig, options);
+    return await requestWithRetry<T>(url, token, this.retryConfig, options);
   }
 }

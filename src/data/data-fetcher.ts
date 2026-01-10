@@ -25,17 +25,17 @@ export class DataFetcher {
   ): Promise<DataResult> {
     // In development, prefer server data for hot reloading
     if (mode === "development" && pageModule.getServerData) {
-      return this.serverFetcher.fetch(pageModule, context);
+      return await this.serverFetcher.fetch(pageModule, context);
     }
 
     // In production, prefer static data for caching
     if (pageModule.getStaticData) {
-      return this.staticFetcher.fetch(pageModule, context);
+      return await this.staticFetcher.fetch(pageModule, context);
     }
 
     // Fall back to server data if no static data
     if (pageModule.getServerData) {
-      return this.serverFetcher.fetch(pageModule, context);
+      return await this.serverFetcher.fetch(pageModule, context);
     }
 
     return { props: {} };
