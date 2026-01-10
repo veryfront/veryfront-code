@@ -25,24 +25,24 @@ export class DataFetcher {
   ): Promise<DataResult> {
     // In development, prefer server data for hot reloading
     if (mode === "development" && pageModule.getServerData) {
-      return await this.serverFetcher.fetch(pageModule, context);
+      return this.serverFetcher.fetch(pageModule, context);
     }
 
     // In production, prefer static data for caching
     if (pageModule.getStaticData) {
-      return await this.staticFetcher.fetch(pageModule, context);
+      return this.staticFetcher.fetch(pageModule, context);
     }
 
     // Fall back to server data if no static data
     if (pageModule.getServerData) {
-      return await this.serverFetcher.fetch(pageModule, context);
+      return this.serverFetcher.fetch(pageModule, context);
     }
 
     return { props: {} };
   }
 
   async getStaticPaths(pageModule: PageWithData): Promise<StaticPathsResult | null> {
-    return await this.pathsFetcher.fetch(pageModule);
+    return this.pathsFetcher.fetch(pageModule);
   }
 
   clearCache(pattern?: string): void {

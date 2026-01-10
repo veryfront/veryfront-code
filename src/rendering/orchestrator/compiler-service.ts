@@ -25,7 +25,7 @@ export class CompilerService {
         message: "CompilerService: compileMDX not initialized",
       }));
     }
-    return await this._compileMDX(content, frontmatter, filePath);
+    return this._compileMDX(content, frontmatter, filePath);
   }
 
   getCompileFunction(): CompileMDXFunction {
