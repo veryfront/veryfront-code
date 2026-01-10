@@ -7,7 +7,7 @@ export {
   NodeServer,
   NodeServerAdapter,
   NodeWebSocket,
-} from "./node/index.ts";
+} from "./runtime/node/index.ts";
 
 export type {
   NodeHttpServer,
@@ -15,4 +15,4 @@ export type {
   NodeServerResponse,
   WSMessageData,
   WSWebSocket,
-} from "./node/index.ts";
+} from "./runtime/node/index.ts";

@@ -24,7 +24,7 @@ import {
   copyStaticAssets,
   loadClientStyles,
 } from "../../../../src/build/production-build/index.ts";
-import { denoAdapter } from "@veryfront/platform/adapters/deno.ts";
+import { denoAdapter } from "@veryfront/platform/adapters/runtime/deno/index.ts";
 import { withTestContext } from "../../../_helpers/context.ts";
 import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";
 

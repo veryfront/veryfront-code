@@ -13,7 +13,7 @@
 
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import { clearConfigCache, getConfig } from "@veryfront/config";
-import { enhanceAdapterWithFS } from "@veryfront/platform/adapters/fs-integration.ts";
+import { enhanceAdapterWithFS } from "@veryfront/platform/adapters/fs/integration.ts";
 import type { VeryfrontConfig } from "@veryfront/config";
 import { logger } from "@veryfront/utils";
 import { loadEnv, supportsEnvFiles } from "../core/utils/env-loader.ts";

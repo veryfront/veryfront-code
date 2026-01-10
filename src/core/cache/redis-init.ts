@@ -11,7 +11,7 @@
 import { logger } from "../utils/logger/logger.ts";
 import { initializeRedisCache } from "../../build/transforms/esm/transform-cache.ts";
 import { initializeSSRRedisCache } from "../../module-system/react-loader/ssr-module-loader.ts";
-import { initializeFileCacheRedis } from "../../platform/adapters/file-cache/file-cache.ts";
+import { initializeFileCacheRedis } from "../../platform/adapters/fs/cache/file-cache.ts";
 import { isRedisConfigured } from "../utils/redis-client.ts";
 
 export interface RedisCacheStatus {

@@ -11,7 +11,7 @@
 import { assert, assertEquals } from "std/assert/mod.ts";
 import { join } from "std/path/mod.ts";
 import { describe, it } from "std/testing/bdd.ts";
-import { denoAdapter } from "@veryfront/platform/adapters/deno.ts";
+import { denoAdapter } from "@veryfront/platform/adapters/runtime/deno/index.ts";
 import { withTestContext } from "../../_helpers/context.ts";
 
 describe(
@@ -37,7 +37,7 @@ describe(
           const watchPromise = (async () => {
             for await (const event of watcher) {
               // Only capture events for our test file
-              if (event.paths.some((p) => p.includes("test.txt"))) {
+              if (event.paths.some((p: string) => p.includes("test.txt"))) {
                 events.push({ kind: event.kind, paths: event.paths });
                 break;
               }
