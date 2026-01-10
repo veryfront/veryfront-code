@@ -1,17 +1,8 @@
-/**
- * Error Context Utilities
- *
- * Provides structured error handling with logging for operations that
- * may fail silently. Helps debug production issues by logging context
- * even when errors are caught and handled.
- */
+/** Structured error handling with logging for silent failure operations */
 
 import { serverLogger } from "@veryfront/utils/logger/logger.ts";
 import { getErrorMessage } from "./veryfront-error.ts";
 
-/**
- * Context information for error logging
- */
 export interface ErrorContext {
   operation: string;
   path?: string;
@@ -19,14 +10,8 @@ export interface ErrorContext {
   details?: Record<string, unknown>;
 }
 
-/**
- * Log level for error context logging
- */
 export type LogLevel = "debug" | "warn" | "error";
 
-/**
- * Options for error handling behavior
- */
 export interface ErrorHandlingOptions<T> {
   /** Default value to return on error */
   fallback: T;
@@ -36,9 +21,6 @@ export interface ErrorHandlingOptions<T> {
   includeStack?: boolean;
 }
 
-/**
- * Extract stack trace from error if available
- */
 function getErrorStack(error: unknown): string | undefined {
   if (error instanceof Error) {
     return error.stack;
@@ -46,9 +28,6 @@ function getErrorStack(error: unknown): string | undefined {
   return undefined;
 }
 
-/**
- * Log an error with context information
- */
 function logError(
   error: unknown,
   context: ErrorContext,
@@ -81,19 +60,7 @@ function logError(
   }
 }
 
-/**
- * Execute an async operation with error logging and fallback.
- * Use this to wrap operations that may fail but shouldn't throw.
- *
- * @example
- * ```ts
- * const stat = await withErrorContext(
- *   () => adapter.fs.stat(path),
- *   { operation: "stat-file", path },
- *   { fallback: null }
- * );
- * ```
- */
+/** Execute async operation with error logging and fallback */
 export async function withErrorContext<T>(
   operation: () => Promise<T>,
   context: ErrorContext,
@@ -107,9 +74,7 @@ export async function withErrorContext<T>(
   }
 }
 
-/**
- * Execute a sync operation with error logging and fallback.
- */
+/** Execute sync operation with error logging and fallback */
 export function withErrorContextSync<T>(
   operation: () => T,
   context: ErrorContext,
@@ -123,9 +88,7 @@ export function withErrorContextSync<T>(
   }
 }
 
-/**
- * Type-safe wrapper for file stat operations with logging
- */
+/** Safe file stat with logging */
 export function safeFileStat(
   adapter: { fs: { stat: (path: string) => Promise<{ isFile: boolean; isDirectory: boolean }> } },
   path: string,
@@ -138,9 +101,7 @@ export function safeFileStat(
   );
 }
 
-/**
- * Type-safe wrapper for file read operations with logging
- */
+/** Safe file read with logging */
 export function safeFileRead(
   adapter: { fs: { readFile: (path: string) => Promise<string> } },
   path: string,
@@ -153,9 +114,7 @@ export function safeFileRead(
   );
 }
 
-/**
- * Type-safe wrapper for directory read operations with logging
- */
+/** Safe directory read with logging */
 export async function safeReadDir<T>(
   adapter: { fs: { readDir: (path: string) => AsyncIterable<T> } },
   path: string,
@@ -173,16 +132,7 @@ export async function safeReadDir<T>(
   }
 }
 
-/**
- * Create a scoped error context helper for a specific operation.
- * Useful when performing multiple related operations.
- *
- * @example
- * ```ts
- * const ctx = createErrorScope("resolve-page");
- * const stat = await ctx.run(() => adapter.fs.stat(path), { path }, null);
- * ```
- */
+/** Create a scoped error context helper for multiple related operations */
 export function createErrorScope(operationPrefix: string) {
   return {
     run<T>(

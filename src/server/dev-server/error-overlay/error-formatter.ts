@@ -1,8 +1,3 @@
-/**
- * Error Formatter
- * Formats error information and provides suggestions
- */
-
 export type ErrorType = "build" | "runtime" | "hydration";
 
 export interface ErrorInfo {
@@ -47,9 +42,7 @@ const ERROR_SUGGESTIONS: Array<{ patterns: string[]; suggestion: string }> = [
   },
 ];
 
-/**
- * Generates helpful suggestions based on error message
- */
+/** Get helpful suggestion based on error message */
 export function getSuggestion(error: Error): string | undefined {
   const message = error.message.toLowerCase();
 
@@ -62,9 +55,7 @@ export function getSuggestion(error: Error): string | undefined {
   return undefined;
 }
 
-/**
- * Formats error type for display
- */
+/** Format error type for display */
 export function formatErrorType(type: ErrorType): string {
   return type.charAt(0).toUpperCase() + type.slice(1);
 }
