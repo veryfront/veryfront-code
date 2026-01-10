@@ -213,6 +213,12 @@ async function handleModuleEndpoint({
   return new Response("Not Found", { status: 404 });
 }
 
+/** Extract name parameter with fallback to "World" */
+function getNameParam(searchParams: URLSearchParams): string {
+  const name = searchParams.get("name")?.trim();
+  return name && name.length > 0 ? name : "World";
+}
+
 async function handlePayloadEndpoint({
   handler,
   searchParams,
@@ -240,61 +246,47 @@ async function handlePayloadEndpoint({
     modules = ["__veryfront_rsc_root__"];
   }
 
-  const nameParam = searchParams.get("name")?.trim();
-  const name = nameParam && nameParam.length > 0 ? nameParam : "World";
-
+  const name = getNameParam(searchParams);
   const rootHtml = `<div data-slot="root">Hello ${escapeHtml(name)}</div>`;
-  const slots = {
-    root: rootHtml,
-  };
 
-  const body = {
-    html: rootHtml,
-    modules,
-    slots,
-  };
-
-  return new Response(JSON.stringify(body), {
-    status: 200,
-    headers: {
-      "content-type": "application/json",
-      "cache-control": "no-cache",
+  return new Response(
+    JSON.stringify({
+      html: rootHtml,
+      modules,
+      slots: { root: rootHtml },
+    }),
+    {
+      status: 200,
+      headers: {
+        "content-type": "application/json",
+        "cache-control": "no-cache",
+      },
     },
-  });
+  );
 }
 
 function handleStreamEndpoint(searchParams: URLSearchParams): Response {
-  const nameParam = searchParams.get("name")?.trim();
-  const name = nameParam && nameParam.length > 0 ? nameParam : "World";
+  const name = getNameParam(searchParams);
+  const escapedName = escapeHtml(name);
   const includeBadLine = searchParams.has("bad");
-  const lines: string[] = [];
-  lines.push(
-    JSON.stringify({ type: "slot", id: "root", html: `<div>Loading ${escapeHtml(name)}…</div>` }),
-  );
-  lines.push(
+
+  const lines = [
+    JSON.stringify({ type: "slot", id: "root", html: `<div>Loading ${escapedName}…</div>` }),
     JSON.stringify({
       type: "slot",
       id: "sidebar",
       html: `<aside data-state="loading">Sidebar loading…</aside>`,
     }),
-  );
-  if (includeBadLine) {
-    lines.push("{malformed json}");
-  }
-  lines.push(
-    JSON.stringify({ type: "slot", id: "root", html: `<div>Hello ${escapeHtml(name)}</div>` }),
-  );
-  lines.push(
+    ...(includeBadLine ? ["{malformed json}"] : []),
+    JSON.stringify({ type: "slot", id: "root", html: `<div>Hello ${escapedName}</div>` }),
     JSON.stringify({
       type: "slot",
       id: "sidebar",
-      html: `<aside><ul><li>${escapeHtml(name)} ready</li></ul></aside>`,
+      html: `<aside><ul><li>${escapedName} ready</li></ul></aside>`,
     }),
-  );
+  ];
 
-  const body = `${lines.join("\n")}\n`;
-
-  return new Response(body, {
+  return new Response(`${lines.join("\n")}\n`, {
     status: 200,
     headers: {
       "content-type": "application/x-ndjson",

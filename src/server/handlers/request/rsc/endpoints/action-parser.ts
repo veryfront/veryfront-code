@@ -7,6 +7,16 @@ import { serverLogger } from "@veryfront/utils";
 import { HttpStatus, jsonErrorResponse } from "../../../../../http/responses.ts";
 import type { ActionBody } from "./types.ts";
 
+/** Validates action ID format to prevent traversal and malformed ids */
+const ACTION_ID_PATTERN = /^[A-Za-z0-9_/-]+(?:\/[A-Za-z0-9_/-]+)*$/;
+
+function isValidActionId(id: string): boolean {
+  return ACTION_ID_PATTERN.test(id) &&
+    !id.startsWith("/") &&
+    !id.includes("..") &&
+    !id.endsWith("/");
+}
+
 /**
  * Parse and validate action request body
  * @param body - Raw request body
@@ -19,8 +29,7 @@ export async function parseActionBody(
   let args: unknown[];
 
   try {
-    const zodModule = await import("zod");
-    const { z } = zodModule;
+    const { z } = await import("zod");
     const Payload = z.object({
       id: z.string().min(1),
       args: z.array(z.unknown()).max(50).optional().default([]),
@@ -46,17 +55,7 @@ export async function parseActionBody(
     return jsonErrorResponse(HttpStatus.BAD_REQUEST, "missing id");
   }
 
-  if (!Array.isArray(args)) {
-    return jsonErrorResponse(HttpStatus.BAD_REQUEST, "invalid args");
-  }
-
-  // Basic input validation to prevent traversal and malformed ids
-  const isValidId = /^[A-Za-z0-9_/-]+(?:\/[A-Za-z0-9_/-]+)*$/.test(id) &&
-    !id.startsWith("/") &&
-    !id.includes("..") &&
-    !id.endsWith("/");
-
-  if (!isValidId) {
+  if (!isValidActionId(id)) {
     return jsonErrorResponse(HttpStatus.BAD_REQUEST, "invalid id");
   }
 
