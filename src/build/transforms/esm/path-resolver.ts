@@ -154,30 +154,40 @@ export function resolveVeryfrontImports(code: string): Promise<string> {
   }));
 }
 
+/**
+ * Get a file path relative to the project directory.
+ * Handles path normalization and edge cases for both SSR and browser modes.
+ */
+function getRelativeFilePath(filePath: string, normalizedProjectDir: string): string {
+  if (filePath.startsWith(normalizedProjectDir)) {
+    return filePath.substring(normalizedProjectDir.length + 1);
+  }
+
+  if (filePath.startsWith("/")) {
+    const pathParts = filePath.split("/");
+    const projectParts = normalizedProjectDir.split("/");
+    const lastProjectPart = projectParts[projectParts.length - 1];
+    const projectIndex = pathParts.indexOf(lastProjectPart!);
+    if (projectIndex >= 0) {
+      return pathParts.slice(projectIndex + 1).join("/");
+    }
+  }
+
+  return filePath;
+}
+
 export function resolvePathAliases(
   code: string,
   filePath: string,
   projectDir: string,
   ssr = false,
 ): Promise<string> {
-  const _normalizedProjectDir = projectDir.replace(/\\/g, "/").replace(/\/$/, "");
+  const normalizedProjectDir = projectDir.replace(/\\/g, "/").replace(/\/$/, "");
 
   // For both SSR and browser, we need to resolve @/ aliases to relative paths
   // SSR files are written to a temp directory with the same relative structure as the source
   // So @/components from pages/index.tsx becomes ../components (relative path)
-  let relativeFilePath = filePath;
-  if (filePath.startsWith(_normalizedProjectDir)) {
-    relativeFilePath = filePath.substring(_normalizedProjectDir.length + 1);
-  } else if (filePath.startsWith("/")) {
-    const pathParts = filePath.split("/");
-    const projectParts = _normalizedProjectDir.split("/");
-    const lastProjectPart = projectParts[projectParts.length - 1];
-    const projectIndex = pathParts.indexOf(lastProjectPart!);
-    if (projectIndex >= 0) {
-      relativeFilePath = pathParts.slice(projectIndex + 1).join("/");
-    }
-  }
-
+  const relativeFilePath = getRelativeFilePath(filePath, normalizedProjectDir);
   const fileDir = relativeFilePath.substring(0, relativeFilePath.lastIndexOf("/"));
   const depth = fileDir.split("/").filter(Boolean).length;
   const relativeToRoot = depth === 0 ? "." : "../".repeat(depth).slice(0, -1);
@@ -208,21 +218,8 @@ export function resolveRelativeImports(
   projectDir: string,
   moduleServerUrl?: string,
 ): Promise<string> {
-  const _normalizedProjectDir = projectDir.replace(/\\/g, "/").replace(/\/$/, "");
-
-  let relativeFilePath = filePath;
-  if (filePath.startsWith(_normalizedProjectDir)) {
-    relativeFilePath = filePath.substring(_normalizedProjectDir.length + 1);
-  } else if (filePath.startsWith("/")) {
-    const pathParts = filePath.split("/");
-    const projectParts = _normalizedProjectDir.split("/");
-    const lastProjectPart = projectParts[projectParts.length - 1];
-    const projectIndex = pathParts.indexOf(lastProjectPart!);
-    if (projectIndex >= 0) {
-      relativeFilePath = pathParts.slice(projectIndex + 1).join("/");
-    }
-  }
-
+  const normalizedProjectDir = projectDir.replace(/\\/g, "/").replace(/\/$/, "");
+  const relativeFilePath = getRelativeFilePath(filePath, normalizedProjectDir);
   const fileDir = relativeFilePath.substring(0, relativeFilePath.lastIndexOf("/"));
 
   return Promise.resolve(replaceSpecifiers(code, (specifier) => {

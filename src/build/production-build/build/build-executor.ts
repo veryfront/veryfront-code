@@ -47,22 +47,10 @@ export async function executeBuild(
   );
   logger.info("Building pages...");
 
-  const ssgOptions = {
-    adapter: options.adapter,
-    projectDir: options.projectDir,
-    outputDir: options.outputDir,
-    renderer: options.renderer,
-    config: options.config,
-    enablePrefetch: options.enablePrefetch,
-    chunkManifest: options.chunkManifest,
-    baseUrl: options.baseUrl,
-    dryRun: options.dryRun,
-  };
-
-  const pagesStats = await buildPagesRoutes(pagesRoutes, ssgOptions);
+  const pagesStats = await buildPagesRoutes(pagesRoutes, options);
   logger.info(`[BUILD] pagesStats: ${pagesStats.pages} pages built`);
 
-  const appStats = await buildAppRoutes(appRoutes, ssgOptions);
+  const appStats = await buildAppRoutes(appRoutes, options);
   logger.info(`[BUILD] appStats: ${appStats.pages} pages built`);
 
   return {
