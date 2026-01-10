@@ -29,19 +29,21 @@ export class OpenAIProvider extends BaseProvider {
   }
 
   protected getHeaders(): Record<string, string> {
+    const config = this.config as OpenAIConfig;
     const headers: Record<string, string> = {
-      Authorization: `Bearer ${this.config.apiKey}`,
+      Authorization: `Bearer ${config.apiKey}`,
     };
 
-    if (this.config.organizationId) {
-      headers["OpenAI-Organization"] = this.config.organizationId;
+    if (config.organizationId) {
+      headers["OpenAI-Organization"] = config.organizationId;
     }
 
     return headers;
   }
 
   protected getEndpoint(path: string): string {
-    const baseURL = this.config.baseURL || "https://api.openai.com/v1";
+    const config = this.config as OpenAIConfig;
+    const baseURL = config.baseURL || "https://api.openai.com/v1";
     return `${baseURL}${path}`;
   }
 
@@ -101,9 +103,17 @@ export class OpenAIProvider extends BaseProvider {
   }
 
   protected transformResponse(response: unknown): CompletionResponse {
+    // Basic validation to prevent crashes on malformed responses
+    if (!response || typeof response !== "object") {
+      throw toError(createError({
+        type: "agent",
+        message: "OpenAI: Invalid response format - expected object",
+      }));
+    }
+
     const data = response as {
-      choices: Array<{
-        message: {
+      choices?: Array<{
+        message?: {
           role: string;
           content: string | null;
           tool_calls?: Array<{
@@ -124,9 +134,19 @@ export class OpenAIProvider extends BaseProvider {
       };
     };
 
+    if (!data.choices || !Array.isArray(data.choices) || data.choices.length === 0) {
+      throw toError(createError({
+        type: "agent",
+        message: "OpenAI: Response missing choices array",
+      }));
+    }
+
     const choice = data.choices[0];
-    if (!choice) {
-      throw new Error("OpenAI response missing choices");
+    if (!choice || !choice.message) {
+      throw toError(createError({
+        type: "agent",
+        message: "OpenAI: Invalid choice or missing message in response",
+      }));
     }
 
     // Extract tool calls if present, with error handling for JSON parsing
