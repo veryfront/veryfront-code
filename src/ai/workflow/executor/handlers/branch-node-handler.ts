@@ -1,7 +1,3 @@
-/**
- * Branch Node Handler - conditional workflow branches
- */
-
 import type { BranchNodeConfig, NodeState, WorkflowNode, WorkflowNodeConfig } from "../../types.ts";
 import type { IDAGSubExecutor } from "./dag-executor-interface.ts";
 import {

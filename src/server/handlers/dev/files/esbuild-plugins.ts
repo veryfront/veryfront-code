@@ -1,9 +1,3 @@
-/**
- * ESBuild Plugins
- * Custom esbuild plugins for development file bundling.
- * Handles relative imports and bare module externalization.
- */
-
 import type { OnLoadArgs, OnResolveArgs, Plugin, PluginBuild } from "esbuild";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/index.ts";
 import { getDirectory, joinPath } from "@veryfront/utils/path-utils.ts";
@@ -31,11 +25,7 @@ function getLoaderForPath(path: string): EsbuildLoader {
   return "js";
 }
 
-/**
- * Create relative file system plugin.
- * Resolves relative imports (./foo, ../bar, /absolute) using the adapter's fs.
- * Tries exact path, then with extensions, then index files.
- */
+/** Create relative file system plugin for resolving imports via adapter's fs */
 export function createRelativeFsPlugin(projectDir: string, adapter: RuntimeAdapter): Plugin {
   return {
     name: "veryfront-rel-fs",
@@ -103,10 +93,7 @@ export interface BareExternalPluginOptions {
   strict?: boolean;
 }
 
-/**
- * Create bare module external plugin.
- * Rewrites bare module imports (npm packages) to esm.sh URLs for browser compatibility.
- */
+/** Create bare module external plugin that rewrites npm imports to esm.sh URLs */
 export function createBareExternalPlugin(
   options: BareExternalPluginOptions | boolean = false,
 ): Plugin {
