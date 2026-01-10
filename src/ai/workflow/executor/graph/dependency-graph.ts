@@ -72,12 +72,14 @@ export class DependencyGraph {
    * 2. Not already completed/running/failed
    */
   getReadyNodes(nodeStates: Record<string, NodeState>): string[] {
-    return [...this.inDegree.entries()]
-      .filter(([nodeId, degree]) => {
-        const state = nodeStates[nodeId];
-        return degree === 0 && (!state || state.status === "pending");
-      })
-      .map(([nodeId]) => nodeId);
+    const ready: string[] = [];
+    for (const [nodeId, degree] of this.inDegree) {
+      const state = nodeStates[nodeId];
+      if (degree === 0 && (!state || state.status === "pending")) {
+        ready.push(nodeId);
+      }
+    }
+    return ready;
   }
 
   /**
