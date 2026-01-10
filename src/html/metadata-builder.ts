@@ -1,12 +1,13 @@
 import type { RenderMetadata } from "@veryfront/types";
+// Import directly from source files to avoid circular dependency through barrel
+import { extractHTMLMetadata } from "./metadata-extraction.ts";
 import {
-  extractHTMLMetadata,
   generateLinkTags,
   generateMetaTags,
   generateScriptTags,
   generateStyleTags,
-  type HTMLMetadata,
-} from "./index.ts";
+} from "./tag-generators.ts";
+import type { HTMLMetadata } from "./types.ts";
 
 export interface ProcessedMetadata {
   metadata: HTMLMetadata;

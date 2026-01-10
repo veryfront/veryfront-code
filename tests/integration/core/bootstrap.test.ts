@@ -17,7 +17,7 @@ import { afterEach, describe, it } from "std/testing/bdd.ts";
 import { bootstrap, bootstrapDev, bootstrapProd } from "../../../src/server/bootstrap.ts";
 import { clearConfigCache } from "@veryfront/config";
 import { join } from "std/path/mod.ts";
-import { denoAdapter } from "@veryfront/platform/adapters/deno.ts";
+import { denoAdapter } from "@veryfront/platform/adapters/runtime/deno/index.ts";
 
 // ============================================================================
 // Test Helpers

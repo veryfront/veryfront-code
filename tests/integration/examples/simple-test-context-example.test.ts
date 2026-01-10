@@ -14,7 +14,8 @@ Deno.test("TestContext basic functionality", async () => {
     // Verify we can allocate a port
     const port = await context.allocatePort();
     assertEquals(typeof port, "number", "Should allocate a port number");
-    assertEquals(port >= 9000 && port <= 12000, true, "Port should be in valid range");
+    // Default range is 10000-60000, but can be overridden via TEST_PORT_MIN/MAX
+    assertEquals(port >= 1024 && port <= 65535, true, "Port should be in valid range");
 
     // Verify environment variable management
     context.setEnv({ TEST_VAR: "test_value" });

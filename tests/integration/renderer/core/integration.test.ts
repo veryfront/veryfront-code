@@ -10,8 +10,8 @@ import { assertEquals, assertExists } from "https://deno.land/std@0.220.0/assert
 import { join } from "https://deno.land/std@0.220.0/path/mod.ts";
 import { afterAll, describe, it } from "std/testing/bdd.ts";
 import { VeryfrontRenderer } from "../../../../src/rendering/orchestrator/ssr.ts";
-import { cleanupTestDir, createTestProjectDir } from "../../../_helpers/server.ts";
-import { DenoAdapter } from "@veryfront/platform/adapters/deno.ts";
+import { withTestContext } from "../../../_helpers/context.ts";
+import { DenoAdapter } from "@veryfront/platform/adapters/runtime/deno/index.ts";
 import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";
 
 describe("Core Integration Tests", { sanitizeOps: false, sanitizeResources: false }, () => {
@@ -21,12 +21,9 @@ describe("Core Integration Tests", { sanitizeOps: false, sanitizeResources: fals
   });
 
   it("Full rendering pipeline with new architecture", async () => {
-    const projectDir = await createTestProjectDir();
-
-    try {
-      await Deno.mkdir(join(projectDir, "pages"), { recursive: true });
+    await withTestContext("core-full-pipeline", async (context) => {
       await Deno.writeTextFile(
-        join(projectDir, "pages/test.mdx"),
+        join(context.projectDir, "pages/test.mdx"),
         `---
 title: Test Page
 ---
@@ -36,13 +33,13 @@ title: Test Page
 This is a test.`,
       );
       await Deno.writeTextFile(
-        join(projectDir, "veryfront.config.ts"),
+        join(context.projectDir, "veryfront.config.ts"),
         `export default { mode: "development" as const };`,
       );
 
       const adapter = new DenoAdapter();
       const renderer = new VeryfrontRenderer({
-        projectDir,
+        projectDir: context.projectDir,
         mode: "development",
         adapter,
       });
@@ -58,19 +55,14 @@ This is a test.`,
       assertEquals(result.frontmatter.title, "Test Page");
 
       await renderer.destroy();
-    } finally {
-      await cleanupTestDir(projectDir);
-    }
+    });
   });
 
   it("Configuration manager properly initialized", async () => {
-    const projectDir = await createTestProjectDir();
-
-    try {
-      await Deno.mkdir(join(projectDir, "pages"), { recursive: true });
-      await Deno.writeTextFile(join(projectDir, "pages/test.mdx"), "# Test");
+    await withTestContext("core-config-manager", async (context) => {
+      await Deno.writeTextFile(join(context.projectDir, "pages/test.mdx"), "# Test");
       await Deno.writeTextFile(
-        join(projectDir, "veryfront.config.ts"),
+        join(context.projectDir, "veryfront.config.ts"),
         `export default {
         mode: "development" as const,
         cache: { dir: ".test-cache" },
@@ -79,7 +71,7 @@ This is a test.`,
 
       const adapter = new DenoAdapter();
       const renderer = new VeryfrontRenderer({
-        projectDir,
+        projectDir: context.projectDir,
         mode: "development",
         adapter,
       });
@@ -92,20 +84,14 @@ This is a test.`,
       assertExists(result.html);
 
       await renderer.destroy();
-    } finally {
-      await cleanupTestDir(projectDir);
-    }
+    });
   });
 
   it("Lifecycle initialization of all services", async () => {
-    const projectDir = await createTestProjectDir();
-
-    try {
-      await Deno.mkdir(join(projectDir, "pages"), { recursive: true });
-      await Deno.mkdir(join(projectDir, "components"), { recursive: true });
-      await Deno.writeTextFile(join(projectDir, "pages/simple.mdx"), "# Simple");
+    await withTestContext("core-lifecycle-init", async (context) => {
+      await Deno.writeTextFile(join(context.projectDir, "pages/simple.mdx"), "# Simple");
       await Deno.writeTextFile(
-        join(projectDir, "components/Button.tsx"),
+        join(context.projectDir, "components/Button.tsx"),
         `export default function Button() {
         return <button>Click me</button>;
       }`,
@@ -113,7 +99,7 @@ This is a test.`,
 
       const adapter = new DenoAdapter();
       const renderer = new VeryfrontRenderer({
-        projectDir,
+        projectDir: context.projectDir,
         mode: "development",
         adapter,
       });
@@ -130,18 +116,13 @@ This is a test.`,
       assertExists(result.html);
 
       await renderer.destroy();
-    } finally {
-      await cleanupTestDir(projectDir);
-    }
+    });
   });
 
   it("Cache management through lifecycle", async () => {
-    const projectDir = await createTestProjectDir();
-
-    try {
-      await Deno.mkdir(join(projectDir, "pages"), { recursive: true });
+    await withTestContext("core-cache-management", async (context) => {
       await Deno.writeTextFile(
-        join(projectDir, "pages/cached.mdx"),
+        join(context.projectDir, "pages/cached.mdx"),
         `---
 title: Cached Page
 ---
@@ -151,7 +132,7 @@ title: Cached Page
 
       const adapter = new DenoAdapter();
       const renderer = new VeryfrontRenderer({
-        projectDir,
+        projectDir: context.projectDir,
         mode: "development",
         adapter,
       });
@@ -174,18 +155,13 @@ title: Cached Page
       renderer.clearAllState();
 
       await renderer.destroy();
-    } finally {
-      await cleanupTestDir(projectDir);
-    }
+    });
   });
 
   it("MDX compilation through new architecture", async () => {
-    const projectDir = await createTestProjectDir();
-
-    try {
-      await Deno.mkdir(join(projectDir, "pages"), { recursive: true });
+    await withTestContext("core-mdx-compilation", async (context) => {
       await Deno.writeTextFile(
-        join(projectDir, "pages/mdx-test.mdx"),
+        join(context.projectDir, "pages/mdx-test.mdx"),
         `---
 title: MDX Test
 description: Testing MDX compilation
@@ -204,7 +180,7 @@ More content.`,
 
       const adapter = new DenoAdapter();
       const renderer = new VeryfrontRenderer({
-        projectDir,
+        projectDir: context.projectDir,
         mode: "development",
         adapter,
       });
@@ -222,20 +198,14 @@ More content.`,
       assertExists(result.headings);
 
       await renderer.destroy();
-    } finally {
-      await cleanupTestDir(projectDir);
-    }
+    });
   });
 
   it("Component initialization", async () => {
-    const projectDir = await createTestProjectDir();
-
-    try {
-      await Deno.mkdir(join(projectDir, "pages"), { recursive: true });
-      await Deno.mkdir(join(projectDir, "components"), { recursive: true });
-      await Deno.writeTextFile(join(projectDir, "pages/test.mdx"), "# Test");
+    await withTestContext("core-component-init", async (context) => {
+      await Deno.writeTextFile(join(context.projectDir, "pages/test.mdx"), "# Test");
       await Deno.writeTextFile(
-        join(projectDir, "components/TestComponent.tsx"),
+        join(context.projectDir, "components/TestComponent.tsx"),
         `export default function TestComponent() {
         return <div>Test Component</div>;
       }`,
@@ -243,7 +213,7 @@ More content.`,
 
       const adapter = new DenoAdapter();
       const renderer = new VeryfrontRenderer({
-        projectDir,
+        projectDir: context.projectDir,
         mode: "development",
         adapter,
       });
@@ -255,21 +225,16 @@ More content.`,
       assertExists(result);
 
       await renderer.destroy();
-    } finally {
-      await cleanupTestDir(projectDir);
-    }
+    });
   });
 
   it("Proper cleanup with destroy()", async () => {
-    const projectDir = await createTestProjectDir();
-
-    try {
-      await Deno.mkdir(join(projectDir, "pages"), { recursive: true });
-      await Deno.writeTextFile(join(projectDir, "pages/cleanup.mdx"), "# Cleanup Test");
+    await withTestContext("core-cleanup-destroy", async (context) => {
+      await Deno.writeTextFile(join(context.projectDir, "pages/cleanup.mdx"), "# Cleanup Test");
 
       const adapter = new DenoAdapter();
       const renderer = new VeryfrontRenderer({
-        projectDir,
+        projectDir: context.projectDir,
         mode: "development",
         adapter,
       });
@@ -282,8 +247,6 @@ More content.`,
 
       // Should not throw after destroy
       await renderer.destroy();
-    } finally {
-      await cleanupTestDir(projectDir);
-    }
+    });
   });
 });

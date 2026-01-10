@@ -1,7 +1,7 @@
 import { assertEquals, assertExists } from "std/assert/mod.ts";
 import { join } from "std/path/mod.ts";
 import { describe, it } from "std/testing/bdd.ts";
-import { BunAdapter } from "@veryfront/platform/adapters/bun.ts";
+import { BunAdapter } from "@veryfront/platform/adapters/runtime/bun/index.ts";
 import { startUniversalServer } from "../../../src/server/production-server.ts";
 import { getFreePort } from "../../_helpers/utils.ts";
 
@@ -25,10 +25,10 @@ describe(
         async () => {
           const adapter = new BunAdapter();
           let hit = 0;
-          const port = getFreePort(8900, 9000);
+          const port = getFreePort();
 
           const server = await adapter.serve(
-            (_req) => {
+            (_req: Request) => {
               hit++;
               return new Response("ok");
             },
@@ -64,7 +64,7 @@ describe(
             await Deno.mkdir(join(dir, "app"), { recursive: true });
             await Deno.writeTextFile(join(dir, "app", "page.mdx"), "# Home");
 
-            const port = getFreePort(9001, 9099);
+            const port = getFreePort();
             const server = await startUniversalServer({
               projectDir: dir,
               port,

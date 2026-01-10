@@ -36,7 +36,7 @@ import {
 } from "@veryfront/core/constants/index.ts";
 import { generateNonce } from "@veryfront/security/http/response/security-handler.ts";
 import { getColorSchemeFromRequest } from "@veryfront/security/http/client-hints.ts";
-import { isMultiProjectAdapter } from "@veryfront/platform/adapters/multi-project-fs-adapter.ts";
+import { isMultiProjectAdapter } from "@veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
 
 /**
  * Determine if request should serve production (released) content.

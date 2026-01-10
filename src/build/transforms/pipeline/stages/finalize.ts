@@ -7,8 +7,7 @@
  */
 
 import { bundleHttpImports } from "../../esm/http-bundler.ts";
-import { cwd } from "../../../../platform/compat/process.ts";
-import { join } from "std/path/mod.ts";
+import { getHttpBundleCacheDir } from "@veryfront/utils/cache-dir.ts";
 import { isSSR } from "../context.ts";
 import { type TransformContext, type TransformPlugin, TransformStage } from "../types.ts";
 
@@ -25,8 +24,7 @@ export const finalizePlugin: TransformPlugin = {
     if (isSSR(ctx)) {
       // SSR: Process remaining HTTP imports (ones not in import map)
       // This bundles external esm.sh modules that couldn't be resolved via npm:
-      const httpCacheDir = join(cwd(), ".cache", "veryfront-http-bundle");
-      code = bundleHttpImports(code, httpCacheDir, ctx.contentHash);
+      code = bundleHttpImports(code, getHttpBundleCacheDir(), ctx.contentHash);
     }
 
     // Note: Caching is handled by the orchestrator after all stages complete

@@ -25,6 +25,7 @@ import { join } from "std/path/mod.ts";
 import { createDevServer } from "../../src/server/dev-server.ts";
 import { startProductionServer } from "../../src/server/production-server.ts";
 import { resetApiHandler } from "../../src/server/handlers/request/api/index.ts";
+import { runWithCacheDir } from "../../src/core/utils/cache-dir.ts";
 import type { TestServer } from "./server.ts";
 import { getFreePort } from "./utils.ts";
 
@@ -77,8 +78,15 @@ const _activeLruDisableContexts = 0;
 class PortAllocator {
   private static instance: PortAllocator;
   private usedPorts = new Set<number>();
-  private readonly MIN_PORT = 9000;
-  private readonly MAX_PORT = 12000;
+
+  // Wide default range for parallel worktree safety
+  // Override via TEST_PORT_MIN / TEST_PORT_MAX env vars
+  private get MIN_PORT(): number {
+    return parseInt(Deno.env.get("TEST_PORT_MIN") || "10000", 10);
+  }
+  private get MAX_PORT(): number {
+    return parseInt(Deno.env.get("TEST_PORT_MAX") || "60000", 10);
+  }
 
   static getInstance(): PortAllocator {
     if (!PortAllocator.instance) {
@@ -88,8 +96,8 @@ class PortAllocator {
   }
 
   allocate(): Promise<number> {
-    // Delegate to shared helper for consistency across tests
-    const port = getFreePort(this.MIN_PORT, this.MAX_PORT);
+    // Delegate to shared helper - it also respects TEST_PORT_MIN/MAX
+    const port = getFreePort();
     if (this.usedPorts.has(port)) {
       // Extremely unlikely, but ensure uniqueness within this process
       for (let p = this.MIN_PORT; p <= this.MAX_PORT; p++) {
@@ -110,12 +118,14 @@ class PortAllocator {
 export class TestContext {
   private readonly testName: string;
   private tempDir?: string;
+  private cacheDir?: string;
   private servers: TestServer[] = [];
   private serverControllers: AbortController[] = [];
   private allocatedPorts: number[] = [];
   private originalEnv: Map<string, string | undefined> = new Map();
   private originalDisableLru?: string;
   private originalDisableLruGlobal?: unknown;
+  private originalCacheDir?: string;
   private cleanupHandlers: Array<() => Promise<void>> = [];
 
   constructor(testName: string) {
@@ -140,6 +150,16 @@ export class TestContext {
     const prefix = `veryfront_test_${this.testName}_`;
     this.tempDir = await Deno.makeTempDir({ prefix });
 
+    // Create isolated cache directory for test isolation during parallel execution
+    // This prevents race conditions when multiple tests write to .cache/veryfront-mdx-esm
+    this.cacheDir = await Deno.makeTempDir({ prefix: `veryfront_cache_${this.testName}_` });
+
+    // NOTE: We intentionally do NOT set VF_CACHE_DIR env var here anymore.
+    // Setting a global env var causes race conditions in parallel tests.
+    // Instead, we rely entirely on AsyncLocalStorage via runWithCacheDir().
+    // Save original for any code that might read it (legacy behavior)
+    this.originalCacheDir = Deno.env.get("VF_CACHE_DIR");
+
     // Set up standard project structure
     await this.createProjectStructure();
   }
@@ -155,6 +175,16 @@ export class TestContext {
   }
 
   /**
+   * Gets the test cache directory (for AsyncLocalStorage isolation)
+   */
+  get testCacheDir(): string {
+    if (!this.cacheDir) {
+      throw new Error("TestContext not set up. Call setup() first.");
+    }
+    return this.cacheDir;
+  }
+
+  /**
    * Allocates a free port for testing
    */
   async allocatePort(): Promise<number> {
@@ -166,9 +196,9 @@ export class TestContext {
   /**
    * Sets environment variables with automatic cleanup
    *
-   * WARNING: Environment variables are global across all parallel test workers.
-   * Tests that modify env vars may experience race conditions when run with DENO_JOBS > 1.
-   * Use DENO_JOBS=1 or ensure tests with different env requirements don't run in parallel.
+   * Note: Environment variables are global across all parallel test workers.
+   * VF_CACHE_DIR is automatically isolated per test to prevent cache conflicts.
+   * For other env vars, ensure tests with different requirements don't conflict.
    */
   setEnv(vars: Record<string, string>): void {
     for (const [key, value] of Object.entries(vars)) {
@@ -372,6 +402,20 @@ export class TestContext {
         this.originalDisableLruGlobal;
     }
 
+    // Note: VF_CACHE_DIR is no longer set in setup() to avoid race conditions.
+    // We rely on AsyncLocalStorage (runWithCacheDir) for cache isolation instead.
+
+    // Remove cache directory
+    if (this.cacheDir) {
+      try {
+        await Deno.remove(this.cacheDir, { recursive: true });
+      } catch (error) {
+        if (!(error instanceof Deno.errors.NotFound)) {
+          errors.push(error as Error);
+        }
+      }
+    }
+
     // Remove temp directory
     if (this.tempDir) {
       try {
@@ -528,6 +572,8 @@ export class TestContext {
 
 /**
  * Test helper function that automatically manages context
+ * Uses AsyncLocalStorage to isolate cache directories per test,
+ * enabling safe parallel test execution.
  */
 export async function withTestContext<T>(
   testName: string,
@@ -537,7 +583,21 @@ export async function withTestContext<T>(
   await context.setup();
 
   try {
-    return await fn(context);
+    // Run with isolated cache directory using AsyncLocalStorage
+    // This ensures all cache operations within this test use the test's temp cache
+    return await runWithCacheDir(context.testCacheDir, async () => {
+      // Clear MDX renderer cache at the START of each test to ensure
+      // the singleton picks up this test's cache dir (via AsyncLocalStorage),
+      // not a stale cache dir from a previous test
+      try {
+        const { clearMDXRendererCache } = await import("../../src/build/transforms/mdx/index.ts");
+        clearMDXRendererCache();
+      } catch {
+        // May fail if module not loaded yet, which is fine
+      }
+
+      return await fn(context);
+    });
   } finally {
     await context.cleanup();
   }

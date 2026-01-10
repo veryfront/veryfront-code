@@ -70,7 +70,6 @@ This directory contains the complete Veryfront documentation organized for easy 
 - [Image Optimization](/guides/components/image.md) - OptimizedImage best practices
 - [Performance](/guides/performance/README.md) - Optimization techniques
 - [Deployment](/guides/deployment/README.md) - Deploy to production
-- [Migration](/migration/) - Migrate from Next.js/Remix
 
 #### **Cookbooks**
 - [RAG Chatbot](./cookbooks/rag-chatbot.md) - Build a knowledge-base bot
