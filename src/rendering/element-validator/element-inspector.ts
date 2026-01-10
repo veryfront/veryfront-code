@@ -90,7 +90,8 @@ function inspectElementProps(
     } else if (isReactElement(value)) {
       deepInspectElement(value, `${path}.props.${key}`, depth + 1, options);
     } else if (Array.isArray(value)) {
-      value.forEach((item, i) => {
+      for (let i = 0; i < value.length; i++) {
+        const item = value[i];
         if (isReactElement(item)) {
           deepInspectElement(
             item,
@@ -99,7 +100,7 @@ function inspectElementProps(
             options,
           );
         }
-      });
+      }
     }
   }
 }
@@ -111,9 +112,9 @@ function inspectChildren(
   options: InspectionOptions,
 ): void {
   if (Array.isArray(children)) {
-    children.forEach((child, i) => {
-      deepInspectElement(child, `${path}.children[${i}]`, depth + 1, options);
-    });
+    for (let i = 0; i < children.length; i++) {
+      deepInspectElement(children[i], `${path}.children[${i}]`, depth + 1, options);
+    }
   } else if (children != null) {
     deepInspectElement(children, `${path}.children`, depth + 1, options);
   }
@@ -131,9 +132,9 @@ function inspectArray(
       depth,
     });
   }
-  arr.forEach((item, i) => {
-    deepInspectElement(item, `${path}[${i}]`, depth + 1, options);
-  });
+  for (let i = 0; i < arr.length; i++) {
+    deepInspectElement(arr[i], `${path}[${i}]`, depth + 1, options);
+  }
 }
 
 function handleInvalidObject(
