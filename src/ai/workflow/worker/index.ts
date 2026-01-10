@@ -56,6 +56,7 @@ export {
 } from "./executors/index.ts";
 
 // Job entrypoint (runs inside ephemeral container/process)
+// Use this when workflows are pre-bundled in the container
 export {
   createJobEntrypoint,
   type CreateJobEntrypointOptions,
@@ -63,3 +64,13 @@ export {
   type JobEntrypointConfig,
   runWorkflowJob,
 } from "./job-entrypoint.ts";
+
+// Dynamic job entrypoint (discovers workflows at runtime)
+// Use this when workflows are stored in Veryfront API
+export {
+  createDynamicJobEntrypoint,
+  type CreateDynamicJobEntrypointOptions,
+  DYNAMIC_EXIT_CODES,
+  type DynamicJobEntrypointConfig,
+  runDynamicWorkflowJob,
+} from "./dynamic-job-entrypoint.ts";
