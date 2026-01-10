@@ -33,34 +33,10 @@ export interface RenderPipelineConfig {
 }
 
 /**
- * RenderPipeline orchestrates the complete page rendering process.
- *
- * ## Pipeline Stages
- *
- * The rendering process follows these stages in order:
- *
- * | Stage | Name | Description |
- * |-------|------|-------------|
- * | 1 | Page Resolution | Resolve slug to page file (pageInfo) |
- * | 2 | Layout & Provider Collection | Collect nested layouts and providers (parallel) |
- * | 3 | Route Params Extraction | Extract dynamic params from URL if not provided |
- * | 4 | Data Fetching | Execute getServerData/getStaticData for page and layouts (parallel) |
- * | 5 | Cache Check | Check if compiled modules are cached |
- * | 6 | Page Bundle Preparation | Compile MDX, load components, generate client module code |
- * | 7 | Layout Application | Wrap page element with layouts and providers |
- * | 8 | SSR Rendering | Perform React server-side rendering (streaming or string) |
- * | 9 | Result Assembly | Combine HTML, frontmatter, headings, stream into RenderResult |
- *
- * ## Performance Instrumentation
- *
- * Each stage is wrapped with `timeAsync()` for performance tracking.
- * Stage timings are logged under the "render-page" context.
- *
- * ## Error Handling
- *
- * - Data fetching can return `notFound` or `redirect` which throw VeryfrontError
- * - Bundle preparation failures throw VeryfrontError with RENDER_ERROR code
- * - All errors preserve the original slug for debugging
+ * Orchestrates the complete page rendering process through 9 stages:
+ * 1. Page Resolution - 2. Layout/Provider Collection - 3. Route Params
+ * 4. Data Fetching - 5. Cache Check - 6. Bundle Preparation
+ * 7. Layout Application - 8. SSR Rendering - 9. Result Assembly
  */
 export class RenderPipeline {
   private config: RenderPipelineConfig;
@@ -686,15 +662,7 @@ export class RenderPipeline {
     return result;
   }
 
-  /**
-   * Resolve page data for SPA client-side navigation.
-   * Returns structured data without rendering HTML, allowing the client
-   * to dynamically import and render the page component.
-   *
-   * @param slug - Page slug to resolve
-   * @param options - Render options (request, url, params)
-   * @returns Page data response for client-side rendering
-   */
+  /** Resolve page data for SPA client-side navigation without rendering HTML. */
   async resolvePageData(slug: string, options?: RenderOptions): Promise<PageDataResponse> {
     // Set up browser globals for any SSR-related checks
     setupSSRGlobals();

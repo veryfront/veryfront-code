@@ -120,10 +120,6 @@ export class VeryfrontRenderer {
     return await this.renderPipeline.renderPage(slug, options);
   }
 
-  /**
-   * Resolve page data for SPA client-side navigation.
-   * Returns structured data without rendering HTML.
-   */
   async resolvePageData(slug: string, options?: RenderOptions): Promise<PageDataResponse> {
     return await this.renderPipeline.resolvePageData(slug, options);
   }

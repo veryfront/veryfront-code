@@ -1,7 +1,3 @@
-/**
- * Default port for veryfront dev server.
- * This is the single source of truth for the default port.
- */
 export const DEFAULT_PORT = 3000;
 
 export const DEFAULT_TIMEOUT_MS = 5000;
