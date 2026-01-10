@@ -512,44 +512,38 @@ export function Loader({ className, size = 16 }: { className?: string; size?: nu
   );
 }
 
-/**
- * Tool call status badge component (AI Elements style)
- */
+/** Tool status configuration mapping state to label and icon */
+const TOOL_STATUS_CONFIG: Record<string, { label: string; icon: React.ReactNode }> = {
+  "input-streaming": { label: "Pending", icon: <CircleIcon className="size-3.5" /> },
+  "input-available": { label: "Running", icon: <ClockIcon className="size-3.5 animate-pulse" /> },
+  "approval-requested": {
+    label: "Awaiting Approval",
+    icon: <ClockIcon className="size-3.5 text-yellow-600" />,
+  },
+  "approval-responded": {
+    label: "Responded",
+    icon: <CheckCircleIcon className="size-3.5 text-blue-600" />,
+  },
+  "output-available": {
+    label: "Completed",
+    icon: <CheckCircleIcon className="size-3.5 text-green-600" />,
+  },
+  "output-error": { label: "Error", icon: <XCircleIcon className="size-3.5 text-red-600" /> },
+  "output-denied": { label: "Denied", icon: <XCircleIcon className="size-3.5 text-orange-600" /> },
+  // Legacy states
+  "call": { label: "Running", icon: <ClockIcon className="size-3.5 animate-pulse" /> },
+  "partial-call": { label: "Running", icon: <ClockIcon className="size-3.5 animate-pulse" /> },
+  "result": { label: "Completed", icon: <CheckCircleIcon className="size-3.5 text-green-600" /> },
+  "error": { label: "Error", icon: <XCircleIcon className="size-3.5 text-red-600" /> },
+};
+
+/** Tool call status badge component (AI Elements style) */
 function ToolStatusBadge({ state }: { state: string }) {
-  const labels: Record<string, string> = {
-    "input-streaming": "Pending",
-    "input-available": "Running",
-    "approval-requested": "Awaiting Approval",
-    "approval-responded": "Responded",
-    "output-available": "Completed",
-    "output-error": "Error",
-    "output-denied": "Denied",
-    // Legacy states
-    "call": "Running",
-    "partial-call": "Running",
-    "result": "Completed",
-    "error": "Error",
-  };
-
-  const icons: Record<string, React.ReactNode> = {
-    "input-streaming": <CircleIcon className="size-3.5" />,
-    "input-available": <ClockIcon className="size-3.5 animate-pulse" />,
-    "approval-requested": <ClockIcon className="size-3.5 text-yellow-600" />,
-    "approval-responded": <CheckCircleIcon className="size-3.5 text-blue-600" />,
-    "output-available": <CheckCircleIcon className="size-3.5 text-green-600" />,
-    "output-error": <XCircleIcon className="size-3.5 text-red-600" />,
-    "output-denied": <XCircleIcon className="size-3.5 text-orange-600" />,
-    // Legacy states
-    "call": <ClockIcon className="size-3.5 animate-pulse" />,
-    "partial-call": <ClockIcon className="size-3.5 animate-pulse" />,
-    "result": <CheckCircleIcon className="size-3.5 text-green-600" />,
-    "error": <XCircleIcon className="size-3.5 text-red-600" />,
-  };
-
+  const config = TOOL_STATUS_CONFIG[state];
   return (
     <span className="inline-flex items-center gap-1.5 rounded-full bg-secondary px-2.5 py-0.5 text-xs font-medium text-secondary-foreground border border-border">
-      {icons[state] || <CircleIcon className="size-3.5" />}
-      {labels[state] || state}
+      {config?.icon ?? <CircleIcon className="size-3.5" />}
+      {config?.label ?? state}
     </span>
   );
 }
@@ -698,9 +692,7 @@ function ToolCallCard({ tool }: { tool: ToolUIPart | DynamicToolUIPart }) {
   );
 }
 
-/**
- * Get text content from UIMessage parts
- */
+/** Get text content from UIMessage parts */
 function getTextContent(message: UIMessage): string {
   return message.parts
     .filter((p): p is UIMessagePart & { type: "text" } => p.type === "text")
@@ -720,17 +712,13 @@ function _getToolParts(message: UIMessage): (ToolUIPart | DynamicToolUIPart)[] {
   );
 }
 
-/**
- * Check if a part is a tool part
- */
+/** Check if a part is a tool part */
 function isToolPart(part: UIMessagePart): part is ToolUIPart | DynamicToolUIPart {
   return (part.type.startsWith("tool-") && part.type !== "tool-result") ||
     part.type === "dynamic-tool";
 }
 
-/**
- * Check if a part is a reasoning part
- */
+/** Check if a part is a reasoning part */
 function isReasoningPart(
   part: UIMessagePart,
 ): part is { type: "reasoning"; text: string; state?: string } {
@@ -753,36 +741,27 @@ function groupPartsInOrder(parts: UIMessagePart[]): PartGroup[] {
   const groups: PartGroup[] = [];
   let currentTextGroup: string[] = [];
 
+  const flushText = (): void => {
+    if (currentTextGroup.length > 0) {
+      groups.push({ type: "text", content: currentTextGroup.join("") });
+      currentTextGroup = [];
+    }
+  };
+
   for (const part of parts) {
     if (part.type === "text") {
       currentTextGroup.push(part.text);
     } else if (isToolPart(part)) {
-      // Flush any accumulated text
-      if (currentTextGroup.length > 0) {
-        groups.push({ type: "text", content: currentTextGroup.join("") });
-        currentTextGroup = [];
-      }
+      flushText();
       groups.push({ type: "tool", tool: part });
     } else if (isReasoningPart(part)) {
-      // Flush any accumulated text
-      if (currentTextGroup.length > 0) {
-        groups.push({ type: "text", content: currentTextGroup.join("") });
-        currentTextGroup = [];
-      }
-      groups.push({
-        type: "reasoning",
-        text: part.text,
-        isStreaming: part.state === "streaming",
-      });
+      flushText();
+      groups.push({ type: "reasoning", text: part.text, isStreaming: part.state === "streaming" });
     }
     // Skip tool-result and other non-renderable parts
   }
 
-  // Flush remaining text
-  if (currentTextGroup.length > 0) {
-    groups.push({ type: "text", content: currentTextGroup.join("") });
-  }
-
+  flushText();
   return groups;
 }
 

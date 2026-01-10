@@ -50,10 +50,7 @@ export class LRUCache<K, V> {
   }
 
   private toStringKey(key: K): string {
-    if (typeof key === "string") {
-      return key;
-    }
-    return String(key);
+    return typeof key === "string" ? key : String(key);
   }
 
   get size(): number {
@@ -102,9 +99,7 @@ export class LRUCache<K, V> {
 }
 
 function shouldDisableInterval(): boolean {
-  if ((globalThis as Record<string, unknown>).__vfDisableLruInterval === true) {
-    return true;
-  }
+  if ((globalThis as Record<string, unknown>).__vfDisableLruInterval === true) return true;
   try {
     return getEnv("VF_DISABLE_LRU_INTERVAL") === "1";
   } catch {

@@ -46,6 +46,10 @@ export class DataFetcher {
   }
 
   clearCache(pattern?: string): void {
-    pattern ? this.cacheManager.clearPattern(pattern) : this.cacheManager.clear();
+    if (pattern) {
+      this.cacheManager.clearPattern(pattern);
+    } else {
+      this.cacheManager.clear();
+    }
   }
 }

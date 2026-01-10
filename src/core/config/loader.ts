@@ -90,9 +90,9 @@ function validateCorsConfig(userConfig: unknown): void {
 
 function validateConfigShape(userConfig: unknown): void {
   validateVeryfrontConfig(userConfig);
-  const unknown = typeof userConfig === "object" && userConfig
-    ? findUnknownTopLevelKeys(userConfig as Record<string, unknown>)
-    : [];
+  if (typeof userConfig !== "object" || !userConfig) return;
+
+  const unknown = findUnknownTopLevelKeys(userConfig as Record<string, unknown>);
   if (unknown.length > 0) {
     serverLogger.warn(`Unknown config keys: ${unknown.join(", ")}. These will be ignored.`);
   }
@@ -273,8 +273,8 @@ async function loadAndMergeConfig(
 }
 
 function isConfigError(error: unknown): boolean {
-  return error instanceof ConfigValidationError ||
-    (error instanceof Error && error.message.startsWith("Invalid veryfront.config"));
+  if (error instanceof ConfigValidationError) return true;
+  return error instanceof Error && error.message.startsWith("Invalid veryfront.config");
 }
 
 export async function getConfig(
