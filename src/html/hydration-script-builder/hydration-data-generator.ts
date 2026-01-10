@@ -3,10 +3,6 @@ import type { HTMLGenerationOptions } from "../types.ts";
 import type { HydrationDataStructure } from "./types.ts";
 import { resolveRelativePath } from "../../module-system/react-loader/path-resolver.ts";
 
-/**
- * Convert absolute server paths to project-relative paths for client hydration.
- * Uses the shared resolveRelativePath utility.
- */
 function toProjectRelativePath(absolutePath: string, projectDir?: string): string {
   if (!absolutePath) return "";
   if (!projectDir) {
