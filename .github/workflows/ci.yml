@@ -97,6 +97,7 @@ jobs:
 
   # ============================================
   # BUILD (only on main, after all checks pass)
+  # Combined into single job to avoid cache contention
   # ============================================
 
   build:
@@ -108,16 +109,6 @@ jobs:
       packages: write
     outputs:
       image_tag: ${{ github.sha }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - component: proxy
-            dockerfile: Dockerfile.proxy
-            image: veryfront/veryfront-proxy
-          - component: renderer
-            dockerfile: Dockerfile.renderer
-            image: veryfront/veryfront-renderer
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
@@ -126,22 +117,30 @@ jobs:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.REGISTRY }}/${{ matrix.image }}
-          tags: |
-            type=raw,value=${{ github.sha }}
-            type=raw,value=latest
-      - uses: docker/build-push-action@v5
+
+      - name: Build and push proxy
+        uses: docker/build-push-action@v5
         with:
           context: .
-          file: ${{ matrix.dockerfile }}
+          file: Dockerfile.proxy
           push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          tags: |
+            ${{ env.REGISTRY }}/veryfront/veryfront-proxy:${{ github.sha }}
+            ${{ env.REGISTRY }}/veryfront/veryfront-proxy:latest
+          cache-from: type=registry,ref=${{ env.REGISTRY }}/veryfront/veryfront-proxy:buildcache
+          cache-to: type=registry,ref=${{ env.REGISTRY }}/veryfront/veryfront-proxy:buildcache,mode=max
+
+      - name: Build and push renderer
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile.renderer
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/veryfront/veryfront-renderer:${{ github.sha }}
+            ${{ env.REGISTRY }}/veryfront/veryfront-renderer:latest
+          cache-from: type=registry,ref=${{ env.REGISTRY }}/veryfront/veryfront-renderer:buildcache
+          cache-to: type=registry,ref=${{ env.REGISTRY }}/veryfront/veryfront-renderer:buildcache,mode=max
 
   # ============================================
   # DEPLOY (only after build succeeds)
