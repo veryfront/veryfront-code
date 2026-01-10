@@ -39,7 +39,7 @@ export async function computeDepsHash(
       }
     }
 
-    depsHash = depParts.length > 0 ? depParts.join(":") : "";
+    depsHash = depParts.join(":");
   } catch (e) {
     logger.debug("[layout] dep hash computation failed", e as Error);
   }

@@ -118,10 +118,10 @@ class StateBridge implements StateStore {
     const state = this.readPersistedState();
     if (!state) return;
 
-    Object.entries(state).forEach(([key, value]) => {
+    for (const [key, value] of Object.entries(state)) {
       this.state.set(key, value);
       this.persistKeys.add(key);
-    });
+    }
   }
 
   private readPersistedState(): Record<string, unknown> | null {

@@ -170,9 +170,6 @@ function toComponentName(slug: string) {
     .replace(/\W+/g, " ")
     .split(" ")
     .filter(Boolean)
-    .map((part) => {
-      if (!part || part.length === 0) return "";
-      return part[0]!.toUpperCase() + part.slice(1);
-    })
+    .map((part) => part[0]!.toUpperCase() + part.slice(1))
     .join("");
 }
