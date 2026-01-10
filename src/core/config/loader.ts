@@ -7,6 +7,8 @@ import { getReactImportMap, REACT_DEFAULT_VERSION } from "@veryfront/utils/const
 import { DEFAULT_CACHE_DIR } from "@veryfront/utils/constants/server.ts";
 import { DEFAULT_PORT } from "./defaults.ts";
 import { createFileSystem } from "../../platform/compat/fs.ts";
+import { getEsbuildLoader } from "../utils/path-utils.ts";
+import { getErrorMessage } from "../errors/veryfront-error.ts";
 
 export type { VeryfrontConfig } from "./types.ts";
 
@@ -184,9 +186,7 @@ async function loadConfigFromVirtualFS(
 
   serverLogger.debug(`[CONFIG] Loading config from virtual FS: ${configPath}`);
 
-  // Determine loader based on extension
-  const isTsx = configPath.endsWith(".tsx");
-  const loader = isTsx ? "tsx" : configPath.endsWith(".ts") ? "ts" : "js";
+  const loader = getEsbuildLoader(configPath);
 
   // Transpile TypeScript to JavaScript using esbuild
   const { build } = await import("esbuild");
@@ -249,34 +249,28 @@ async function loadAndMergeConfig(
   }
 
   // Local filesystem - use direct import
-  try {
-    const configUrl = `file://${configPath}?t=${Date.now()}-${crypto.randomUUID()}`;
-    const configModule = await import(configUrl);
-    const userConfig = configModule.default || configModule;
+  const configUrl = `file://${configPath}?t=${Date.now()}-${crypto.randomUUID()}`;
+  const configModule = await import(configUrl);
+  const userConfig = configModule.default || configModule;
 
-    if (userConfig === null || typeof userConfig !== "object" || Array.isArray(userConfig)) {
-      throw new ConfigValidationError(
-        `Expected object, received ${userConfig === null ? "null" : typeof userConfig}`,
-      );
-    }
-
-    validateCorsConfig(userConfig);
-    validateConfigShape(userConfig);
-
-    const merged = mergeConfigs(userConfig);
-    configCacheByProject.set(projectDir, { revision: cacheRevision, config: merged });
-    return merged;
-  } catch (error) {
-    if (error instanceof ConfigValidationError) {
-      throw error;
-    }
-
-    if (error instanceof Error && error.message.startsWith("Invalid veryfront.config")) {
-      throw error;
-    }
-
-    throw error;
+  if (userConfig === null || typeof userConfig !== "object" || Array.isArray(userConfig)) {
+    throw new ConfigValidationError(
+      `Expected object, received ${userConfig === null ? "null" : typeof userConfig}`,
+    );
   }
+
+  validateCorsConfig(userConfig);
+  validateConfigShape(userConfig);
+
+  const merged = mergeConfigs(userConfig);
+  configCacheByProject.set(projectDir, { revision: cacheRevision, config: merged });
+  return merged;
+}
+
+function isConfigError(error: unknown): boolean {
+  if (error instanceof ConfigValidationError) return true;
+  if (error instanceof Error && error.message.startsWith("Invalid veryfront.config")) return true;
+  return false;
 }
 
 export async function getConfig(
@@ -298,21 +292,12 @@ export async function getConfig(
       const merged = await loadAndMergeConfig(configPath, projectDir, adapter);
       if (merged) return merged;
     } catch (error) {
-      if (error instanceof ConfigValidationError) {
-        throw error;
-      }
+      if (isConfigError(error)) throw error;
 
-      if (error instanceof Error && error.message.startsWith("Invalid veryfront.config")) {
-        throw error;
-      }
-
-      // Only log at debug level - this is expected when .ts exists but .js is tried first
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      serverLogger.debug(`[CONFIG] Failed to load ${configFile}, trying next config file:`, {
-        error: errorMessage,
+      // Expected when .ts exists but .js is tried first
+      serverLogger.debug(`[CONFIG] Failed to load ${configFile}, trying next:`, {
+        error: getErrorMessage(error),
       });
-
-      continue;
     }
   }
 

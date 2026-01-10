@@ -22,6 +22,7 @@ import { type HTMLGenerationOptions, wrapInHTMLShell } from "@veryfront/html";
 import { extractHTMLMetadata, injectHTMLContent, isFullHTMLDocument } from "@veryfront/html";
 import { detectAppRouter } from "./router-detection.ts";
 import { createFileSystem } from "../platform/compat/fs.ts";
+import { getEsbuildLoader } from "../core/utils/path-utils.ts";
 
 /**
  * Handle plain TS/JS script pages - no React required
@@ -272,10 +273,7 @@ async function loadScriptModule(
 
   logger.debug(`[Script] Read ${source.length} bytes from adapter`);
 
-  // Determine file extension for esbuild loader
-  const isTsx = modulePath.endsWith(".tsx");
-  const isJsx = modulePath.endsWith(".jsx");
-  const loader = isTsx ? "tsx" : isJsx ? "jsx" : modulePath.endsWith(".ts") ? "ts" : "js";
+  const loader = getEsbuildLoader(modulePath);
 
   // Transpile with esbuild
   const { build } = await import("esbuild");

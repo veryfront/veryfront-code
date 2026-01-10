@@ -7,6 +7,7 @@ import { validateHTTPImports } from "./http-validator.ts";
 import { loadSecurityConfig } from "./security-config.ts";
 import type { APIRoute, LoadModuleOptions } from "./types.ts";
 import { createError, toError } from "../../../core/errors/veryfront-error.ts";
+import { getEsbuildLoader } from "../../../core/utils/path-utils.ts";
 import { createFileSystem, FileSystem } from "../../../platform/compat/fs.ts";
 import * as pathHelper from "../../../platform/compat/path-helper.ts";
 import { isDeno, isNode } from "../../../platform/compat/runtime.ts";
@@ -260,9 +261,7 @@ async function loadAndTranspileModule(
     }
   }
 
-  const isTsx = resolvedPath.endsWith(".tsx");
-  const isJsx = resolvedPath.endsWith(".jsx");
-  const loader = isTsx ? "tsx" : isJsx ? "jsx" : resolvedPath.endsWith(".ts") ? "ts" : "js";
+  const loader = getEsbuildLoader(resolvedPath);
 
   const allowedHosts = await loadSecurityConfig(projectDir, adapter);
   validateHTTPImports(source, allowedHosts);

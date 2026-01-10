@@ -19,6 +19,25 @@ class ProviderRegistry {
   private autoInitialized = false;
 
   /**
+   * Register a provider with error handling
+   */
+  private registerProvider(
+    name: string,
+    createProvider: () => Provider,
+    fromEnv = false,
+  ): void {
+    try {
+      this.providers.set(name, createProvider());
+      if (fromEnv) {
+        agentLogger.debug(`Auto-initialized ${name} provider from environment`);
+      }
+    } catch (error) {
+      const source = fromEnv ? "auto-initialize" : "initialize";
+      agentLogger.warn(`Failed to ${source} ${name} provider:`, error);
+    }
+  }
+
+  /**
    * Auto-initialize providers from environment variables
    * This is called lazily when a provider is first requested
    */
@@ -26,49 +45,28 @@ class ProviderRegistry {
     if (this.autoInitialized) return;
     this.autoInitialized = true;
 
-    // Initialize OpenAI from OPENAI_API_KEY
     const openaiKey = getEnv("OPENAI_API_KEY");
     if (openaiKey && !this.providers.has("openai")) {
-      try {
-        const provider = new OpenAIProvider({
+      this.registerProvider("openai", () =>
+        new OpenAIProvider({
           apiKey: openaiKey,
           baseURL: getEnv("OPENAI_BASE_URL"),
           organizationId: getEnv("OPENAI_ORGANIZATION_ID"),
-        });
-        this.providers.set("openai", provider);
-        agentLogger.debug("Auto-initialized OpenAI provider from environment");
-      } catch (error) {
-        agentLogger.warn("Failed to auto-initialize OpenAI provider:", error);
-      }
+        }), true);
     }
 
-    // Initialize Anthropic from ANTHROPIC_API_KEY
     const anthropicKey = getEnv("ANTHROPIC_API_KEY");
     if (anthropicKey && !this.providers.has("anthropic")) {
-      try {
-        const provider = new AnthropicProvider({
+      this.registerProvider("anthropic", () =>
+        new AnthropicProvider({
           apiKey: anthropicKey,
           baseURL: getEnv("ANTHROPIC_BASE_URL"),
-        });
-        this.providers.set("anthropic", provider);
-        agentLogger.debug("Auto-initialized Anthropic provider from environment");
-      } catch (error) {
-        agentLogger.warn("Failed to auto-initialize Anthropic provider:", error);
-      }
+        }), true);
     }
 
-    // Initialize Google from GOOGLE_API_KEY or GOOGLE_GENERATIVE_AI_API_KEY
     const googleKey = getEnv("GOOGLE_API_KEY") || getEnv("GOOGLE_GENERATIVE_AI_API_KEY");
     if (googleKey && !this.providers.has("google")) {
-      try {
-        const provider = new GoogleProvider({
-          apiKey: googleKey,
-        });
-        this.providers.set("google", provider);
-        agentLogger.debug("Auto-initialized Google provider from environment");
-      } catch (error) {
-        agentLogger.warn("Failed to auto-initialize Google provider:", error);
-      }
+      this.registerProvider("google", () => new GoogleProvider({ apiKey: googleKey }), true);
     }
   }
 
@@ -78,34 +76,14 @@ class ProviderRegistry {
   initialize(config: ProvidersConfig): void {
     this.config = config;
 
-    // Initialize OpenAI
     if (config.openai) {
-      try {
-        const provider = new OpenAIProvider(config.openai);
-        this.providers.set("openai", provider);
-      } catch (error) {
-        agentLogger.warn("Failed to initialize OpenAI provider:", error);
-      }
+      this.registerProvider("openai", () => new OpenAIProvider(config.openai!));
     }
-
-    // Initialize Anthropic
     if (config.anthropic) {
-      try {
-        const provider = new AnthropicProvider(config.anthropic);
-        this.providers.set("anthropic", provider);
-      } catch (error) {
-        agentLogger.warn("Failed to initialize Anthropic provider:", error);
-      }
+      this.registerProvider("anthropic", () => new AnthropicProvider(config.anthropic!));
     }
-
-    // Initialize Google
     if (config.google) {
-      try {
-        const provider = new GoogleProvider(config.google);
-        this.providers.set("google", provider);
-      } catch (error) {
-        agentLogger.warn("Failed to initialize Google provider:", error);
-      }
+      this.registerProvider("google", () => new GoogleProvider(config.google!));
     }
   }
 

@@ -22,6 +22,8 @@ import type { FileSystemAdapter } from "../../platform/adapters/base.ts";
 import { isDeno } from "../../platform/compat/runtime.ts";
 import { createFileSystem } from "../../platform/compat/fs.ts";
 import * as pathHelper from "../../platform/compat/path-helper.ts";
+import { getEsbuildLoader } from "../../core/utils/path-utils.ts";
+import { ensureError } from "../../core/errors/veryfront-error.ts";
 
 interface FileDiscoveryContext {
   platform: Platform;
@@ -125,19 +127,9 @@ function createFsAdapterPlugin(fsAdapter: FileSystemAdapter) {
         async (args: { path: string }) => {
           try {
             const content = await fsAdapter.readFile(args.path);
-            const ext = pathHelper.extname(args.path).toLowerCase();
-            const loader = ext === ".tsx"
-              ? "tsx"
-              : ext === ".jsx"
-              ? "jsx"
-              : ext === ".ts"
-              ? "ts"
-              : "js";
-
             return {
               contents: content,
-              loader,
-              // Set resolveDir for nested imports from this file
+              loader: getEsbuildLoader(args.path),
               resolveDir: pathHelper.dirname(args.path),
             };
           } catch (error) {
@@ -184,10 +176,7 @@ async function importModule(
     throw new Error(`Failed to read file ${filePath}: ${error}`);
   }
 
-  // Determine loader based on file extension
-  const isTsx = filePath.endsWith(".tsx");
-  const isJsx = filePath.endsWith(".jsx");
-  const loader = isTsx ? "tsx" : isJsx ? "jsx" : filePath.endsWith(".ts") ? "ts" : "js";
+  const loader = getEsbuildLoader(filePath);
 
   // Transpile with esbuild
   const { build } = await import("esbuild");
@@ -572,7 +561,7 @@ async function discoverTools(
     } catch (error) {
       result.errors.push({
         file,
-        error: error instanceof Error ? error : new Error(String(error)),
+        error: ensureError(error),
       });
 
       if (verbose) {
@@ -624,7 +613,7 @@ async function discoverAgents(
     } catch (error) {
       result.errors.push({
         file,
-        error: error instanceof Error ? error : new Error(String(error)),
+        error: ensureError(error),
       });
 
       if (verbose) {
@@ -673,7 +662,7 @@ async function discoverResources(
     } catch (error) {
       result.errors.push({
         file,
-        error: error instanceof Error ? error : new Error(String(error)),
+        error: ensureError(error),
       });
 
       if (verbose) {
@@ -721,7 +710,7 @@ async function discoverPrompts(
     } catch (error) {
       result.errors.push({
         file,
-        error: error instanceof Error ? error : new Error(String(error)),
+        error: ensureError(error),
       });
 
       if (verbose) {
