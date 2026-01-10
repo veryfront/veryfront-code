@@ -70,9 +70,8 @@ export async function loadCompiledMDXModule(
 
     if (isBrowser) {
       return await loadViaBlobURL(compiledCode, cacheKey, key);
-    } else {
-      return await loadViaTempFile(compiledCode, cacheKey, key);
     }
+    return await loadViaTempFile(compiledCode, cacheKey, key);
   } catch (error) {
     throw wrapError(error, `Failed to load compiled MDX module`, { cacheKey });
   }

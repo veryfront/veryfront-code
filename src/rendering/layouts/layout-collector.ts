@@ -212,9 +212,8 @@ export class LayoutCollector {
 
     if (isVeryfrontAPI) {
       return await this.collectAPILayoutConfiguration(wrappedAdapter);
-    } else {
-      return await this.collectFilesystemLayouts(pageFilePath, useAppRouter);
     }
+    return await this.collectFilesystemLayouts(pageFilePath, useAppRouter);
   }
 
   private async collectAPILayoutConfiguration(wrappedAdapter: unknown): Promise<LayoutItem[]> {

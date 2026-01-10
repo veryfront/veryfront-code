@@ -48,9 +48,9 @@ export function getRecommendedSSRMethod(): SSRMethod {
 
   if (info.isReact19 || (info.isReact18 && info.features.renderToReadableStream)) {
     return "readable-stream";
-  } else if (info.isReact18 && info.features.renderToPipeableStream) {
-    return "stream";
-  } else {
-    return "string";
   }
+  if (info.isReact18 && info.features.renderToPipeableStream) {
+    return "stream";
+  }
+  return "string";
 }

@@ -51,15 +51,14 @@ export function selectComponent(
       module._createMdxContent ||
       null
     );
-  } else {
-    return (
-      module.MDXContent ||
-      module._createMdxContent ||
-      module.MDXWrapper ||
-      module.default ||
-      module.MainLayout ||
-      module.MDXLayout ||
-      null
-    );
   }
+  return (
+    module.MDXContent ||
+    module._createMdxContent ||
+    module.MDXWrapper ||
+    module.default ||
+    module.MainLayout ||
+    module.MDXLayout ||
+    null
+  );
 }
