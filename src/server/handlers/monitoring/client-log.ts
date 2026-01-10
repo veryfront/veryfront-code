@@ -8,6 +8,7 @@ import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } 
 import { ResponseBuilder } from "@veryfront/security/index.ts";
 import { serverLogger } from "@veryfront/utils";
 import { HTTP_OK, PRIORITY_HIGH_CLIENT_LOG } from "@veryfront/core/constants/index.ts";
+import { getErrorMessage } from "../../../core/errors/veryfront-error.ts";
 
 export class ClientLogHandler extends BaseHandler {
   metadata: HandlerMetadata = {
@@ -81,7 +82,7 @@ export class ClientLogHandler extends BaseHandler {
   private handleParseError(e: unknown, body: string): void {
     serverLogger.error(
       "[ClientLogHandler] Failed to parse client log. Error:",
-      e instanceof Error ? e.message : String(e),
+      getErrorMessage(e),
     );
     serverLogger.error(
       "[ClientLogHandler] Raw body received (first 500 chars):",

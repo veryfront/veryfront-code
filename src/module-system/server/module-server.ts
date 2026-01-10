@@ -14,6 +14,7 @@ import { serverLogger, serverLogger as logger } from "@veryfront/utils";
 import { HTTP_NOT_FOUND, HTTP_OK, HTTP_SERVER_ERROR } from "@veryfront/utils";
 import { getContentTypeForPath } from "../../server/handlers/utils/content-types.ts";
 import { createSecureFs } from "@veryfront/security";
+import { getErrorMessage } from "../../core/errors/veryfront-error.ts";
 // DISABLED: Position injection temporarily disabled to fix hydration mismatch
 // import { injectNodePositions } from "../../build/transforms/plugins/babel-node-positions.ts";
 import { parseProjectDomain } from "../../server/utils/domain-parser.ts";
@@ -235,15 +236,14 @@ export async function serveModule(
         "Cache-Control": "no-cache",
       });
     } catch (error) {
+      const errorMsg = getErrorMessage(error);
       logger.error("[ModuleServer] Snippet transform error", {
         hash,
-        error: error instanceof Error ? error.message : String(error),
+        error: errorMsg,
       });
       return createModuleResponse(
         method,
-        `// Transform Error\nthrow new Error(${
-          JSON.stringify(error instanceof Error ? error.message : String(error))
-        });`,
+        `// Transform Error\nthrow new Error(${JSON.stringify(errorMsg)});`,
         HTTP_SERVER_ERROR,
         { "Content-Type": "application/javascript; charset=utf-8", "Cache-Control": "no-cache" },
       );
@@ -552,16 +552,14 @@ export async function serveModule(
     });
     return createModuleResponse(method, code ?? "", HTTP_OK, headers);
   } catch (error) {
+    const errorMsg = getErrorMessage(error);
     logger.error("Module transform error", {
       modulePath,
-      error: error instanceof Error ? error.message : String(error),
+      error: errorMsg,
     });
 
     const headers = getDevModuleHeaders(modulePath);
-    const errorBody = createDevModuleErrorBody(
-      modulePath,
-      error instanceof Error ? error.message : String(error),
-    );
+    const errorBody = createDevModuleErrorBody(modulePath, errorMsg);
 
     return createModuleResponse(method, errorBody, HTTP_SERVER_ERROR, headers);
   }

@@ -11,6 +11,7 @@ import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } 
 const PRIORITY_SNIPPET = 450;
 import { serverLogger as logger } from "@veryfront/utils";
 import { renderSnippet } from "@veryfront/rendering/snippet-renderer.ts";
+import { getErrorMessage } from "../../../core/errors/veryfront-error.ts";
 
 /**
  * SnippetHandler handles @/ and @components/ prefixed paths.
@@ -120,7 +121,7 @@ export class SnippetHandler extends BaseHandler {
       } catch (error) {
         logger.error("[SnippetHandler] Error rendering snippet", {
           filePath,
-          error: error instanceof Error ? error.message : String(error),
+          error: getErrorMessage(error),
           stack: error instanceof Error ? error.stack : undefined,
         });
         return this.continue();

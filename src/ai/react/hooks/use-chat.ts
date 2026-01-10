@@ -9,7 +9,7 @@
  */
 
 import { useCallback, useRef, useState } from "react";
-import { createError, toError } from "../../../core/errors/veryfront-error.ts";
+import { createError, ensureError, toError } from "../../../core/errors/veryfront-error.ts";
 
 /**
  * Text part - AI SDK v5 compatible
@@ -338,7 +338,7 @@ export function useChat(options: UseChatOptions): UseChatResult {
       } catch (err) {
         if (err instanceof Error && err.name === "AbortError") return;
 
-        const error = err instanceof Error ? err : new Error(String(err));
+        const error = ensureError(err);
         setError(error);
         options.onError?.(error);
       } finally {
