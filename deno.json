@@ -8,6 +8,7 @@
     "coverage/",
     "scripts/",
     "examples/",
+    "data/",
     "src/cli/templates/files/",
     "src/cli/templates/integrations/"
   ],
