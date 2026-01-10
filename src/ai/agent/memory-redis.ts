@@ -5,8 +5,8 @@
  * Enables conversation persistence across server restarts and horizontal scaling.
  */
 
-import { getTextFromParts, type MemoryConfig, type Message } from "../types/agent.ts";
-import type { Memory, MemoryStats } from "./memory.ts";
+import type { MemoryConfig, Message } from "../types/agent.ts";
+import { estimateTokens, type Memory, type MemoryStats } from "./memory.ts";
 
 /**
  * Redis client interface (compatible with ioredis and node-redis)
@@ -127,7 +127,7 @@ export class RedisMemory implements Memory {
     const messages = await this.getMessages();
     return {
       totalMessages: messages.length,
-      estimatedTokens: this.estimateTokens(messages),
+      estimatedTokens: estimateTokens(messages),
       type: "redis",
     };
   }
@@ -146,25 +146,14 @@ export class RedisMemory implements Memory {
   private trimToTokenLimit(messages: Message[]): Message[] {
     if (!this.config.maxTokens) return messages;
 
-    let tokenCount = this.estimateTokens(messages);
+    let tokenCount = estimateTokens(messages);
 
     while (tokenCount > this.config.maxTokens && messages.length > 1) {
       messages.shift();
-      tokenCount = this.estimateTokens(messages);
+      tokenCount = estimateTokens(messages);
     }
 
     return messages;
-  }
-
-  /**
-   * Estimate token count for messages
-   */
-  private estimateTokens(messages: Message[]): number {
-    const totalChars = messages.reduce(
-      (sum, msg) => sum + getTextFromParts(msg.parts).length,
-      0,
-    );
-    return Math.ceil(totalChars / 4);
   }
 }
 
