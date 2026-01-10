@@ -27,16 +27,20 @@ export async function collectAllRoutes(
   include?: string[],
   exclude?: string[],
 ): Promise<CollectedRoutes> {
-  const pages = ssg ? await collectPagesRoutes(adapter, projectDir, include, exclude) : [];
-  const app = ssg ? await collectAppRoutes(adapter, projectDir, include, exclude) : [];
+  if (!ssg) {
+    logger.info("[BUILD] SSG disabled, skipping route collection");
+    return { pages: [], app: [] };
+  }
+
+  const [pages, app] = await Promise.all([
+    collectPagesRoutes(adapter, projectDir, include, exclude),
+    collectAppRoutes(adapter, projectDir, include, exclude),
+  ]);
 
   logger.info(`[BUILD] Collected routes: ${pages.length} pages, ${app.length} app`);
   if (app.length > 0) {
     logger.info(`[BUILD] App routes: ${app.map((r) => r.path).join(", ")}`);
   }
 
-  return {
-    pages,
-    app,
-  };
+  return { pages, app };
 }

@@ -24,72 +24,49 @@ export class DevEndpointsHandler extends BaseHandler {
   };
 
   handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
-    const url = new URL(req.url);
-    const pathname = url.pathname;
-
     if (!this.shouldHandle(req, ctx)) {
       return Promise.resolve(this.continue());
     }
 
-    const builder = this.createResponseBuilder(ctx);
+    const url = new URL(req.url);
+    const pathname = url.pathname;
+    const script = this.getScriptForPath(pathname, url);
 
-    // HMR script (external module to avoid CSP issues)
-    if (pathname === "/_veryfront/hmr.js") {
-      const port = url.searchParams.get("port") || "3000";
-      const script = this.getHMRScript(parseInt(port, 10));
-      const response = builder
-        .withCache("no-cache")
-        .javascript(script, HTTP_OK);
-      return Promise.resolve(this.respond(response));
+    if (!script) {
+      return Promise.resolve(this.continue());
     }
 
-    // Hydrate script (external module to avoid CSP issues)
-    if (pathname === "/_veryfront/hydrate.js") {
-      const slug = url.searchParams.get("slug") || "";
-      const script = this.getHydrateScript(slug);
-      const response = builder
-        .withCache("no-cache")
-        .javascript(script, HTTP_OK);
-      return Promise.resolve(this.respond(response));
-    }
+    const response = this.createResponseBuilder(ctx)
+      .withCache("no-cache")
+      .javascript(script, HTTP_OK);
+    return Promise.resolve(this.respond(response));
+  }
 
-    // HMR runtime
-    if (pathname === "/_veryfront/hmr-runtime.js") {
-      const script = this.getHMRRuntime();
-      const response = builder
-        .withCache("no-cache")
-        .javascript(script, HTTP_OK);
-      return Promise.resolve(this.respond(response));
+  /**
+   * Get the script content for a given pathname.
+   * Returns null if pathname is not a known dev endpoint.
+   */
+  private getScriptForPath(pathname: string, url: URL): string | null {
+    switch (pathname) {
+      case "/_veryfront/hmr.js": {
+        const port = url.searchParams.get("port") || "3000";
+        return this.getHMRScript(parseInt(port, 10));
+      }
+      case "/_veryfront/hydrate.js": {
+        const slug = url.searchParams.get("slug") || "";
+        return this.getHydrateScript(slug);
+      }
+      case "/_veryfront/hmr-runtime.js":
+        return this.getHMRRuntime();
+      case "/_veryfront/error-overlay.js":
+        return this.getErrorOverlay();
+      case "/_veryfront/dev-loader.js":
+        return this.getDevLoader();
+      case "/_veryfront/preview-hmr.js":
+        return this.getPreviewHMRScript();
+      default:
+        return null;
     }
-
-    // Error overlay
-    if (pathname === "/_veryfront/error-overlay.js") {
-      const script = this.getErrorOverlay();
-      const response = builder
-        .withCache("no-cache")
-        .javascript(script, HTTP_OK);
-      return Promise.resolve(this.respond(response));
-    }
-
-    // Dev loader
-    if (pathname === "/_veryfront/dev-loader.js") {
-      const script = this.getDevLoader();
-      const response = builder
-        .withCache("no-cache")
-        .javascript(script, HTTP_OK);
-      return Promise.resolve(this.respond(response));
-    }
-
-    // Preview HMR script (for cloud preview mode - actually reloads)
-    if (pathname === "/_veryfront/preview-hmr.js") {
-      const script = this.getPreviewHMRScript();
-      const response = builder
-        .withCache("no-cache")
-        .javascript(script, HTTP_OK);
-      return Promise.resolve(this.respond(response));
-    }
-
-    return Promise.resolve(this.continue());
   }
 
   private getHMRScript(port: number): string {

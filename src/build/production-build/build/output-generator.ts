@@ -68,23 +68,10 @@ export async function generateClientScripts(
   }
 }
 
-interface ManifestOptions {
-  adapter: RuntimeAdapter;
-  outputDir: string;
-  routes: RouteInfo[];
-  appRoutes: AppRouteInfo[];
-  stats: BuildStats;
-  enableSplitting: boolean;
-  enablePrefetch: boolean;
-  enableCompression: boolean;
-  chunkManifest: ChunkManifest | null;
-  dryRun: boolean;
-}
-
 /**
  * Generate manifest and service worker
  */
-export async function generateManifestAndServiceWorker(options: ManifestOptions): Promise<void> {
+export async function generateManifestAndServiceWorker(options: OutputGeneratorOptions): Promise<void> {
   const manifest = generateManifest({
     routes: options.routes,
     appRoutes: options.appRoutes,
@@ -146,18 +133,7 @@ export async function generateAllOutputs(options: OutputGeneratorOptions): Promi
   options.stats.assets = assetStats.assets;
   options.stats.totalSize += assetStats.totalSize;
 
-  await generateManifestAndServiceWorker({
-    adapter: options.adapter,
-    outputDir: options.outputDir,
-    routes: options.routes,
-    appRoutes: options.appRoutes,
-    stats: options.stats,
-    enableSplitting: options.enableSplitting,
-    enablePrefetch: options.enablePrefetch,
-    enableCompression: options.enableCompression,
-    chunkManifest: options.chunkManifest,
-    dryRun: options.dryRun,
-  });
+  await generateManifestAndServiceWorker(options);
 
   await generateRedirectsFile(options.adapter, options.outputDir, options.dryRun);
 }

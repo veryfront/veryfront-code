@@ -30,6 +30,7 @@ import { addSpanEvent, setSpanAttributes, withSpan } from "../../observability/t
 import { AGENT_DEFAULTS, STREAMING_DEFAULTS } from "../config/defaults.ts";
 import { type AgentStreamEvent, AgentStreamEventSchema } from "./streaming/index.ts";
 import { convertMessageToProvider } from "./message-converter.ts";
+import { MiddlewareChain } from "./execution/middleware-chain.ts";
 
 // Use centralized defaults from config
 const DEFAULT_MAX_TOKENS = AGENT_DEFAULTS.maxTokens;
@@ -93,22 +94,9 @@ export class AgentRuntime {
         platform: detectPlatform(),
       };
 
-      if (this.config.middleware && this.config.middleware.length > 0) {
-        return await this.executeMiddleware(agentContext, async () => {
-          return await this.executeAgentLoop(
-            provider,
-            model,
-            systemPrompt,
-            messages,
-          );
-        });
-      }
-
-      return await this.executeAgentLoop(
-        provider,
-        model,
-        systemPrompt,
-        messages,
+      const chain = new MiddlewareChain(this.config.middleware);
+      return await chain.execute(agentContext, () =>
+        this.executeAgentLoop(provider, model, systemPrompt, messages)
       );
     });
   }
@@ -743,35 +731,6 @@ export class AgentRuntime {
       status: "completed",
       usage: totalUsage,
     };
-  }
-
-  /**
-   * Execute middleware chain
-   */
-  private executeMiddleware(
-    context: AgentContext,
-    next: () => Promise<AgentResponse>,
-  ): Promise<AgentResponse> {
-    const middleware = this.config.middleware || [];
-
-    if (middleware.length === 0) {
-      return next();
-    }
-
-    let index = 0;
-    const dispatch = (): Promise<AgentResponse> => {
-      if (index >= middleware.length) {
-        return next();
-      }
-
-      const currentMiddleware = middleware[index++];
-      if (!currentMiddleware) {
-        return next();
-      }
-      return currentMiddleware(context, dispatch);
-    };
-
-    return dispatch();
   }
 
   private getAvailableTools(): ToolDefinition[] {
