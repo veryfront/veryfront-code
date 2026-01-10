@@ -1,14 +1,9 @@
 import type { Project } from "../veryfront-api-client.ts";
 import { createError, toError } from "../../../core/errors/veryfront-error.ts";
 import type { GitHubConfig } from "../github-fs-adapter/types.ts";
-
-export interface DirectoryEntry {
-  name: string;
-  path: string;
-  isDirectory: boolean;
-  isFile: boolean;
-  isSymlink: boolean;
-}
+// Import and re-export from shared types to avoid circular dependencies
+import type { DirectoryEntry } from "../shared-types.ts";
+export type { DirectoryEntry };
 
 export interface FSAdapter {
   readFile(path: string): Promise<Uint8Array | string>;
