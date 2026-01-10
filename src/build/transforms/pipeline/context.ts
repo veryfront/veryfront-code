@@ -1,10 +1,3 @@
-/**
- * Transform context factory and utilities.
- *
- * Provides functions for creating and managing transform context
- * as it flows through the pipeline stages.
- */
-
 import { computeContentHash } from "../esm/transform-utils.ts";
 import type {
   TransformContext,
@@ -13,9 +6,6 @@ import type {
   TransformTarget,
 } from "./types.ts";
 
-/**
- * Create a new transform context from source and options.
- */
 export async function createTransformContext(
   source: string,
   filePath: string,
@@ -44,9 +34,6 @@ export async function createTransformContext(
   };
 }
 
-/**
- * Create context synchronously when content hash is already known.
- */
 export function createTransformContextSync(
   source: string,
   filePath: string,
@@ -75,9 +62,6 @@ export function createTransformContextSync(
   };
 }
 
-/**
- * Record timing for a stage.
- */
 export function recordStageTiming(
   ctx: TransformContext,
   stage: TransformStage,
@@ -86,9 +70,6 @@ export function recordStageTiming(
   ctx.timing.set(stage, performance.now() - startTime);
 }
 
-/**
- * Get total timing from context.
- */
 export function getTotalTiming(ctx: TransformContext): number {
   let total = 0;
   for (const ms of ctx.timing.values()) {
@@ -97,9 +78,6 @@ export function getTotalTiming(ctx: TransformContext): number {
   return total;
 }
 
-/**
- * Format timing data for logging.
- */
 export function formatTimingLog(ctx: TransformContext): Record<string, string> {
   const stageNames = [
     "parse",
@@ -126,37 +104,22 @@ export function formatTimingLog(ctx: TransformContext): Record<string, string> {
   return result;
 }
 
-/**
- * Check if context is for SSR.
- */
 export function isSSR(ctx: TransformContext): boolean {
   return ctx.target === "ssr";
 }
 
-/**
- * Check if context is for browser.
- */
 export function isBrowser(ctx: TransformContext): boolean {
   return ctx.target === "browser";
 }
 
-/**
- * Check if file is MDX.
- */
 export function isMDX(ctx: TransformContext): boolean {
   return ctx.filePath.endsWith(".mdx");
 }
 
-/**
- * Check if file is TypeScript.
- */
 export function isTypeScript(ctx: TransformContext): boolean {
   return ctx.filePath.endsWith(".ts") || ctx.filePath.endsWith(".tsx");
 }
 
-/**
- * Get file extension.
- */
 export function getExtension(ctx: TransformContext): string {
   const dot = ctx.filePath.lastIndexOf(".");
   return dot >= 0 ? ctx.filePath.slice(dot) : "";
