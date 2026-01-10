@@ -14,10 +14,10 @@ export function generateTailwindCSS(htmlContent: string): string {
   while ((match = classPattern.exec(htmlContent)) !== null) {
     const classAttr = match[1];
     if (!classAttr) continue;
-    const classes = classAttr.split(/\s+/);
-    classes.forEach((cls) => {
-      if (cls.trim()) classNames.add(cls.trim());
-    });
+    for (const cls of classAttr.split(/\s+/)) {
+      const trimmed = cls.trim();
+      if (trimmed) classNames.add(trimmed);
+    }
   }
 
   // For now, we'll use the manually defined Tailwind utilities

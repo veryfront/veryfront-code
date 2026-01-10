@@ -93,7 +93,9 @@ export function extractSelectors(content: string): {
     if (match[1]) {
       const classNames = match[1].split(/\s+/);
       classes.push(...classNames);
-      classNames.forEach((cn) => selectors.add(`.${cn}`));
+      for (const cn of classNames) {
+        selectors.add(`.${cn}`);
+      }
     }
   }
 
