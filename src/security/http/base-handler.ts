@@ -93,13 +93,15 @@ export abstract class BaseHandler implements Handler {
     if (typeof pattern.pattern === "string") {
       if (pattern.exact) {
         return pathname === pattern.pattern;
-      } else if (pattern.prefix) {
-        return pathname.startsWith(pattern.pattern);
-      } else {
-        // Default to exact match for strings
-        return pathname === pattern.pattern;
       }
-    } else if (pattern.pattern instanceof RegExp) {
+      if (pattern.prefix) {
+        return pathname.startsWith(pattern.pattern);
+      }
+      // Default to exact match for strings
+      return pathname === pattern.pattern;
+    }
+
+    if (pattern.pattern instanceof RegExp) {
       return pattern.pattern.test(pathname);
     }
 

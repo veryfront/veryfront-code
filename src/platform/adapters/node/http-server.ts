@@ -104,9 +104,9 @@ export async function createNodeServer(
       _res.statusCode = response.status;
       _res.statusMessage = response.statusText;
 
-      response.headers.forEach((value, key) => {
+      for (const [key, value] of response.headers) {
         _res.setHeader(key, value);
-      });
+      }
 
       if (response.body) {
         const reader = response.body.getReader();

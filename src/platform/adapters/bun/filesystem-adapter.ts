@@ -156,7 +156,7 @@ export class BunFileSystemAdapter implements FileSystemAdapter {
 
     const cleanup = () => {
       closed = true;
-      watchers.forEach((watcher) => {
+      for (const watcher of watchers) {
         try {
           if ("stop" in watcher && typeof watcher.stop === "function") {
             watcher.stop();
@@ -166,7 +166,7 @@ export class BunFileSystemAdapter implements FileSystemAdapter {
         } catch (error) {
           serverLogger.debug("Error closing Bun file watcher during cleanup:", error);
         }
-      });
+      }
       if (resolver) {
         resolver({ done: true, value: undefined });
         resolver = null;

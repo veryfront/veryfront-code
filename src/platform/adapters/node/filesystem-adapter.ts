@@ -116,13 +116,13 @@ export class NodeFileSystemAdapter implements FileSystemAdapter {
 
     const cleanup = () => {
       closed = true;
-      watchers.forEach((watcher) => {
+      for (const watcher of watchers) {
         try {
           watcher.close();
         } catch (error) {
           serverLogger.debug("Error closing file watcher during cleanup:", error);
         }
-      });
+      }
       if (resolver) {
         resolver({ done: true, value: undefined });
         resolver = null;
