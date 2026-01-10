@@ -78,13 +78,13 @@ export interface WorkerStats {
  * await worker.stop();
  * ```
  */
-/** Keys that are required (not optional) in the config */
-type RequiredConfigKeys = "backend" | "resumeFn";
+/** Keys that remain optional even after defaults are applied */
+type OptionalConfigKeys = "backend" | "resumeFn";
 
 /** Resolved config type with defaults applied */
 type ResolvedConfig =
-  & Required<Omit<WorkflowWorkerConfig, RequiredConfigKeys>>
-  & Pick<WorkflowWorkerConfig, RequiredConfigKeys>;
+  & Required<Omit<WorkflowWorkerConfig, OptionalConfigKeys>>
+  & Pick<WorkflowWorkerConfig, OptionalConfigKeys>;
 
 export class WorkflowWorker {
   private config: ResolvedConfig;
