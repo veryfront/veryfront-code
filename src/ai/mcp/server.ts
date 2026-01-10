@@ -18,6 +18,16 @@ import { createError, toError } from "../../core/errors/veryfront-error.ts";
 type JSONRPCParams = Record<string, unknown> | unknown[];
 
 /**
+ * Safely extract params as a record for methods that expect object params
+ */
+function asParamsRecord(params: JSONRPCParams | undefined): Record<string, unknown> {
+  if (!params || Array.isArray(params)) {
+    return {};
+  }
+  return params;
+}
+
+/**
  * JSON-RPC 2.0 Request
  */
 interface JSONRPCRequest {
@@ -159,8 +169,7 @@ export class MCPServer {
    * Call a tool
    */
   private async callTool(params: JSONRPCParams | undefined): Promise<Record<string, unknown>> {
-    const paramsObj = params as Record<string, unknown> | undefined;
-    const { name, arguments: args } = paramsObj || {};
+    const { name, arguments: args } = asParamsRecord(params);
 
     if (!name) {
       throw toError(createError({
@@ -204,8 +213,7 @@ export class MCPServer {
    * Read a resource
    */
   private async readResource(params: JSONRPCParams | undefined): Promise<Record<string, unknown>> {
-    const paramsObj = params as Record<string, unknown> | undefined;
-    const { uri } = paramsObj || {};
+    const { uri } = asParamsRecord(params);
 
     if (!uri) {
       throw toError(createError({
@@ -261,8 +269,7 @@ export class MCPServer {
    * Get a prompt
    */
   private async getPrompt(params: JSONRPCParams | undefined): Promise<Record<string, unknown>> {
-    const paramsObj = params as Record<string, unknown> | undefined;
-    const { name, arguments: args } = paramsObj || {};
+    const { name, arguments: args } = asParamsRecord(params);
 
     if (!name) {
       throw toError(createError({
