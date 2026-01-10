@@ -5,10 +5,14 @@ import type { GitHubConfig } from "../github/types.ts";
 import type { DirectoryEntry } from "../shared-types.ts";
 export type { DirectoryEntry };
 
+/**
+ * Base FSAdapter interface for filesystem operations.
+ * All methods that are optional should be checked before calling.
+ */
 export interface FSAdapter {
+  // Core read operations
   readFile(path: string): Promise<Uint8Array | string>;
   readTextFile?(path: string): Promise<string>;
-  writeFile?(path: string, content: string): Promise<void>;
   exists(path: string): Promise<boolean>;
   stat(path: string): Promise<{
     isFile: boolean;
@@ -17,12 +21,49 @@ export interface FSAdapter {
     size: number;
     mtime: Date | null;
   }>;
+
+  // Directory operations (optional - not all adapters support)
   readDir?(path: string): AsyncIterable<DirectoryEntry>;
   readdir?(path: string): AsyncIterable<DirectoryEntry> | Promise<DirectoryEntry[]>;
+
+  // Write operations (optional - read-only adapters don't support)
+  writeFile?(path: string, content: string): Promise<void>;
   mkdir?(path: string, options?: { recursive?: boolean }): Promise<void>;
   remove?(path: string, options?: { recursive?: boolean }): Promise<void>;
+
+  // Lifecycle
   initialize?(): Promise<void>;
+  shutdown?(): Promise<void>;
+
+  // File resolution (optional - for path extension fallbacks)
   resolveFile?(basePath: string): Promise<string | null>;
+}
+
+/**
+ * Extended FSAdapter interface for adapters that support per-request context.
+ * Used by VeryfrontFSAdapter and MultiProjectFSAdapter.
+ */
+export interface ContextualFSAdapter extends FSAdapter {
+  // Per-request token management
+  setRequestToken?(token: string): void;
+  clearRequestToken?(): void;
+
+  // Per-request branch management
+  setRequestBranch?(branch: string | null): void;
+  getRequestBranch?(): string | null;
+  clearRequestBranch?(): void;
+
+  // Production mode
+  setProductionMode?(enabled: boolean, releaseId?: string | null): void;
+
+  // Multi-project context (for proxy mode)
+  runWithContext?<T>(
+    projectSlug: string,
+    token: string,
+    fn: () => Promise<T>,
+    projectId?: string,
+    options?: { productionMode?: boolean; releaseId?: string | null },
+  ): Promise<T>;
 }
 
 export interface FSAdapterConfig {

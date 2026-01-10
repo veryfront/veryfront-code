@@ -2,7 +2,6 @@ import type {
   FileSystemAdapter,
   RuntimeAdapter,
   RuntimeCapabilities,
-  RuntimeFeatures,
   RuntimeId,
   ServeOptions,
   Server,
@@ -15,18 +14,11 @@ import type { CloudflareEnv, KVNamespace } from "./types.ts";
 
 export class CloudflareAdapter implements RuntimeAdapter {
   readonly id: RuntimeId = "cloudflare";
-
-  name = "cloudflare";
-
-  platform = "cloudflare" as const;
-
-  fs: FileSystemAdapter;
-
-  env: CloudflareEnvironmentAdapter;
-
-  server = new CloudflareServerAdapter();
-
-  shell = new CloudflareShellAdapter();
+  readonly name = "cloudflare";
+  readonly fs: FileSystemAdapter;
+  readonly env: CloudflareEnvironmentAdapter;
+  readonly server = new CloudflareServerAdapter();
+  readonly shell = new CloudflareShellAdapter();
 
   readonly capabilities: RuntimeCapabilities = {
     typescript: false,
@@ -40,14 +32,6 @@ export class CloudflareAdapter implements RuntimeAdapter {
     writableFs: false,
   };
 
-  features: RuntimeFeatures = {
-    websocket: true,
-    http2: true,
-    workers: false,
-    jsx: false,
-    typescript: false,
-  };
-
   constructor(env: CloudflareEnv, kvNamespace?: KVNamespace) {
     this.env = new CloudflareEnvironmentAdapter(env);
     this.fs = new CloudflareFileSystemAdapter(kvNamespace);
@@ -58,5 +42,9 @@ export class CloudflareAdapter implements RuntimeAdapter {
     _options: ServeOptions = {},
   ): Promise<Server> {
     return Promise.resolve(new CloudflareServer());
+  }
+
+  async shutdown(): Promise<void> {
+    // Cloudflare Workers don't have explicit shutdown - lifecycle managed by platform
   }
 }

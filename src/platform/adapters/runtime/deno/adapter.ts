@@ -8,7 +8,6 @@ import type {
   FileSystemAdapter,
   FileWatcher,
   RuntimeAdapter,
-  RuntimeFeatures,
   ServeOptions,
   Server,
   ServerAdapter,
@@ -238,13 +237,10 @@ class DenoServer implements Server {
 export class DenoAdapter implements RuntimeAdapter {
   readonly id = "deno" as const;
   readonly name = "deno";
-  /** @deprecated Use `id` instead */
-  readonly platform = "deno" as const;
-
-  fs = new DenoFileSystemAdapter();
-  env = new DenoEnvironmentAdapter();
-  server = new DenoServerAdapter();
-  shell = new DenoShellAdapter();
+  readonly fs = new DenoFileSystemAdapter();
+  readonly env = new DenoEnvironmentAdapter();
+  readonly server = new DenoServerAdapter();
+  readonly shell = new DenoShellAdapter();
 
   readonly capabilities = {
     typescript: true,
@@ -254,18 +250,11 @@ export class DenoAdapter implements RuntimeAdapter {
     workers: true,
     fileWatching: true,
     shell: true,
-    kvStore: true, // Deno KV available
+    kvStore: true,
     writableFs: true,
   };
 
-  /** @deprecated Use `capabilities` instead */
-  readonly features: RuntimeFeatures = {
-    websocket: true,
-    http2: true,
-    workers: true,
-    jsx: true,
-    typescript: true,
-  };
+  private activeServer: DenoServer | null = null;
 
   serve(
     handler: (request: Request) => Promise<Response> | Response,
@@ -284,7 +273,6 @@ export class DenoAdapter implements RuntimeAdapter {
         try {
           return await handler(request);
         } catch (error) {
-          const { serverLogger } = await import("@veryfront/utils");
           serverLogger.error("Request handler error:", error);
           return new Response("Internal Server Error", { status: 500 });
         }
@@ -295,7 +283,15 @@ export class DenoAdapter implements RuntimeAdapter {
     });
 
     const controllerToPass = options.signal ? undefined : controller;
-    return Promise.resolve(new DenoServer(server, hostname, port, controllerToPass));
+    this.activeServer = new DenoServer(server, hostname, port, controllerToPass);
+    return Promise.resolve(this.activeServer);
+  }
+
+  async shutdown(): Promise<void> {
+    if (this.activeServer) {
+      await this.activeServer.stop();
+      this.activeServer = null;
+    }
   }
 }
 

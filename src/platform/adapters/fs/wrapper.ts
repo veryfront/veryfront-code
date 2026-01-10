@@ -1,80 +1,103 @@
 import type { DirEntry, FileInfo, FileSystemAdapter, FileWatcher, WatchOptions } from "../base.ts";
-import type { DirectoryEntry, FSAdapter } from "./veryfront/types.ts";
+import type { ContextualFSAdapter, DirectoryEntry, FSAdapter } from "./veryfront/types.ts";
 
+/**
+ * Error thrown when an operation is not supported by the underlying FSAdapter.
+ */
+export class NotSupportedError extends Error {
+  constructor(operation: string, adapterType?: string) {
+    const message = adapterType
+      ? `Operation '${operation}' is not supported by ${adapterType}`
+      : `Operation '${operation}' is not supported by this FSAdapter`;
+    super(message);
+    this.name = "NotSupportedError";
+  }
+}
+
+/**
+ * Type guard to check if adapter supports contextual operations.
+ */
+function isContextualAdapter(adapter: FSAdapter): adapter is ContextualFSAdapter {
+  return "setRequestToken" in adapter || "runWithContext" in adapter;
+}
+
+/**
+ * Wraps an FSAdapter to implement the FileSystemAdapter interface.
+ * Provides a unified interface for all filesystem operations.
+ */
 export class FSAdapterWrapper implements FileSystemAdapter {
   constructor(public readonly fsAdapter: FSAdapter) {}
 
   /**
    * Set a per-request token for API calls.
-   * Only applies if the underlying FSAdapter supports it (e.g., VeryfrontFSAdapter).
+   * Only applies if the underlying FSAdapter supports it.
+   * @throws {NotSupportedError} if adapter doesn't support token management
    */
   setRequestToken(token: string): void {
-    const adapter = this.fsAdapter as unknown as { setRequestToken?: (t: string) => void };
-    if (typeof adapter.setRequestToken === "function") {
-      adapter.setRequestToken(token);
+    if (!isContextualAdapter(this.fsAdapter) || !this.fsAdapter.setRequestToken) {
+      throw new NotSupportedError("setRequestToken", this.fsAdapter.constructor.name);
     }
+    this.fsAdapter.setRequestToken(token);
   }
 
   /**
    * Clear the per-request token.
+   * @throws {NotSupportedError} if adapter doesn't support token management
    */
   clearRequestToken(): void {
-    const adapter = this.fsAdapter as unknown as { clearRequestToken?: () => void };
-    if (typeof adapter.clearRequestToken === "function") {
-      adapter.clearRequestToken();
+    if (!isContextualAdapter(this.fsAdapter) || !this.fsAdapter.clearRequestToken) {
+      throw new NotSupportedError("clearRequestToken", this.fsAdapter.constructor.name);
     }
+    this.fsAdapter.clearRequestToken();
   }
 
   /**
    * Set a per-request branch for file fetching.
-   * Only applies if the underlying FSAdapter supports it (e.g., VeryfrontFSAdapter).
+   * @throws {NotSupportedError} if adapter doesn't support branch management
    */
   setRequestBranch(branch: string | null): void {
-    const adapter = this.fsAdapter as unknown as { setRequestBranch?: (b: string | null) => void };
-    if (typeof adapter.setRequestBranch === "function") {
-      adapter.setRequestBranch(branch);
+    if (!isContextualAdapter(this.fsAdapter) || !this.fsAdapter.setRequestBranch) {
+      throw new NotSupportedError("setRequestBranch", this.fsAdapter.constructor.name);
     }
+    this.fsAdapter.setRequestBranch(branch);
   }
 
   /**
    * Get the current per-request branch.
+   * @throws {NotSupportedError} if adapter doesn't support branch management
    */
   getRequestBranch(): string | null {
-    const adapter = this.fsAdapter as unknown as { getRequestBranch?: () => string | null };
-    if (typeof adapter.getRequestBranch === "function") {
-      return adapter.getRequestBranch();
+    if (!isContextualAdapter(this.fsAdapter) || !this.fsAdapter.getRequestBranch) {
+      throw new NotSupportedError("getRequestBranch", this.fsAdapter.constructor.name);
     }
-    return null;
+    return this.fsAdapter.getRequestBranch();
   }
 
   /**
    * Clear the per-request branch.
+   * @throws {NotSupportedError} if adapter doesn't support branch management
    */
   clearRequestBranch(): void {
-    const adapter = this.fsAdapter as unknown as { clearRequestBranch?: () => void };
-    if (typeof adapter.clearRequestBranch === "function") {
-      adapter.clearRequestBranch();
+    if (!isContextualAdapter(this.fsAdapter) || !this.fsAdapter.clearRequestBranch) {
+      throw new NotSupportedError("clearRequestBranch", this.fsAdapter.constructor.name);
     }
+    this.fsAdapter.clearRequestBranch();
   }
 
   /**
    * Set production mode for the adapter.
-   * In production mode, adapters skip WebSocket connections and serve published content.
-   * Only applies if the underlying FSAdapter supports it.
+   * @throws {NotSupportedError} if adapter doesn't support production mode
    */
   setProductionMode(enabled: boolean, releaseId?: string | null): void {
-    const adapter = this.fsAdapter as unknown as {
-      setProductionMode?: (enabled: boolean, releaseId?: string | null) => void;
-    };
-    if (typeof adapter.setProductionMode === "function") {
-      adapter.setProductionMode(enabled, releaseId);
+    if (!isContextualAdapter(this.fsAdapter) || !this.fsAdapter.setProductionMode) {
+      throw new NotSupportedError("setProductionMode", this.fsAdapter.constructor.name);
     }
+    this.fsAdapter.setProductionMode(enabled, releaseId);
   }
 
   /**
    * Run a function with the specified project context.
-   * Only applies if the underlying FSAdapter supports it (e.g., MultiProjectFSAdapter).
-   * For adapters that don't support this, the function runs directly.
+   * @throws {NotSupportedError} if adapter doesn't support multi-project context
    */
   runWithContext<T>(
     projectSlug: string,
@@ -83,28 +106,25 @@ export class FSAdapterWrapper implements FileSystemAdapter {
     projectId?: string,
     options?: { productionMode?: boolean; releaseId?: string | null },
   ): Promise<T> {
-    const adapter = this.fsAdapter as unknown as {
-      runWithContext?: <T>(
-        slug: string,
-        token: string,
-        fn: () => Promise<T>,
-        projectId?: string,
-        options?: { productionMode?: boolean; releaseId?: string | null },
-      ) => Promise<T>;
-    };
-    if (typeof adapter.runWithContext === "function") {
-      return adapter.runWithContext(projectSlug, token, fn, projectId, options);
+    if (!isContextualAdapter(this.fsAdapter) || !this.fsAdapter.runWithContext) {
+      throw new NotSupportedError("runWithContext", this.fsAdapter.constructor.name);
     }
-    // Fallback: just run the function directly
-    return fn();
+    return this.fsAdapter.runWithContext(projectSlug, token, fn, projectId, options);
   }
 
   /**
    * Check if the adapter supports multi-project mode.
    */
   isMultiProjectMode(): boolean {
-    const adapter = this.fsAdapter as unknown as { runWithContext?: unknown };
-    return typeof adapter.runWithContext === "function";
+    return isContextualAdapter(this.fsAdapter) &&
+      typeof this.fsAdapter.runWithContext === "function";
+  }
+
+  /**
+   * Check if the adapter supports contextual operations (token, branch, etc.)
+   */
+  isContextualMode(): boolean {
+    return isContextualAdapter(this.fsAdapter);
   }
 
   async readFile(path: string): Promise<string> {
@@ -119,20 +139,13 @@ export class FSAdapterWrapper implements FileSystemAdapter {
   }
 
   async readFileBytes(path: string): Promise<Uint8Array> {
-    if (this.fsAdapter.readFile) {
-      const result = await this.fsAdapter.readFile(path);
-      return typeof result === "string" ? new TextEncoder().encode(result) : result;
-    }
-    if (this.fsAdapter.readTextFile) {
-      const text = await this.fsAdapter.readTextFile(path);
-      return new TextEncoder().encode(text);
-    }
-    throw new NotSupportedError("readFile/readTextFile not supported by this FSAdapter");
+    const result = await this.fsAdapter.readFile(path);
+    return typeof result === "string" ? new TextEncoder().encode(result) : result;
   }
 
   async writeFile(path: string, content: string): Promise<void> {
     if (!this.fsAdapter.writeFile) {
-      throw new NotSupportedError("writeFile not supported by this FSAdapter");
+      throw new NotSupportedError("writeFile", this.fsAdapter.constructor.name);
     }
     await this.fsAdapter.writeFile(path, content);
   }
@@ -143,7 +156,7 @@ export class FSAdapterWrapper implements FileSystemAdapter {
 
   async *readDir(path: string): AsyncIterable<DirEntry> {
     if (!this.fsAdapter.readdir && !this.fsAdapter.readDir) {
-      throw new NotSupportedError("readdir/readDir not supported by this FSAdapter");
+      throw new NotSupportedError("readDir", this.fsAdapter.constructor.name);
     }
 
     const entries = this.fsAdapter.readdir
@@ -166,9 +179,9 @@ export class FSAdapterWrapper implements FileSystemAdapter {
     }
   }
 
-  async readdir(path: string) {
+  async readdir(path: string): Promise<DirectoryEntry[]> {
     if (!this.fsAdapter.readdir && !this.fsAdapter.readDir) {
-      throw new NotSupportedError("readdir/readDir not supported by this FSAdapter");
+      throw new NotSupportedError("readdir", this.fsAdapter.constructor.name);
     }
 
     const entries = this.fsAdapter.readdir
@@ -184,7 +197,6 @@ export class FSAdapterWrapper implements FileSystemAdapter {
 
   async stat(path: string): Promise<FileInfo> {
     const info = await this.fsAdapter.stat(path);
-
     return {
       size: info.size,
       isFile: info.isFile,
@@ -195,45 +207,44 @@ export class FSAdapterWrapper implements FileSystemAdapter {
   }
 
   resolveFile(basePath: string): Promise<string | null> {
-    const adapter = this.fsAdapter as unknown as {
-      resolveFile?: (path: string) => Promise<string | null>;
-    };
-    if (typeof adapter.resolveFile === "function") {
-      return adapter.resolveFile(basePath);
+    if (!this.fsAdapter.resolveFile) {
+      throw new NotSupportedError("resolveFile", this.fsAdapter.constructor.name);
     }
-    return Promise.resolve(null);
+    return this.fsAdapter.resolveFile(basePath);
   }
 
   async mkdir(path: string, options?: { recursive?: boolean }): Promise<void> {
     if (!this.fsAdapter.mkdir) {
-      throw new NotSupportedError("mkdir not supported by this FSAdapter");
+      throw new NotSupportedError("mkdir", this.fsAdapter.constructor.name);
     }
     await this.fsAdapter.mkdir(path, options);
   }
 
   async remove(path: string, options?: { recursive?: boolean }): Promise<void> {
     if (!this.fsAdapter.remove) {
-      throw new NotSupportedError("remove not supported by this FSAdapter");
+      throw new NotSupportedError("remove", this.fsAdapter.constructor.name);
     }
     await this.fsAdapter.remove(path, options);
   }
 
   makeTempDir(_prefix: string): Promise<string> {
-    throw new NotSupportedError("makeTempDir not supported by FSAdapter (use local filesystem)");
+    throw new NotSupportedError("makeTempDir", this.fsAdapter.constructor.name);
   }
 
   watch(_paths: string | string[], _options?: WatchOptions): FileWatcher {
-    throw new NotSupportedError("watch not supported by FSAdapter (use local filesystem)");
+    throw new NotSupportedError("watch", this.fsAdapter.constructor.name);
+  }
+
+  async shutdown(): Promise<void> {
+    if (this.fsAdapter.shutdown) {
+      await this.fsAdapter.shutdown();
+    }
   }
 }
 
-export class NotSupportedError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "NotSupportedError";
-  }
-}
-
+/**
+ * Create a FileSystemAdapter wrapper for an FSAdapter.
+ */
 export function wrapFSAdapter(fsAdapter: FSAdapter): FileSystemAdapter {
   return new FSAdapterWrapper(fsAdapter);
 }
