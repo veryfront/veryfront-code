@@ -153,12 +153,21 @@ export class OpenAIProvider extends BaseProvider {
     const parsed = OpenAIResponseSchema.parse(data);
     const choice = parsed.choices[0];
 
-    // Extract tool calls if present
-    const toolCalls = choice.message.tool_calls?.map((tc) => ({
-      id: tc.id,
-      name: tc.function.name,
-      arguments: JSON.parse(tc.function.arguments),
-    }));
+    // Extract tool calls if present, with error handling for JSON parsing
+    const toolCalls = choice.message.tool_calls?.map((tc) => {
+      try {
+        return {
+          id: tc.id,
+          name: tc.function.name,
+          arguments: JSON.parse(tc.function.arguments),
+        };
+      } catch (error) {
+        throw toError(createError({
+          type: "agent",
+          message: `OpenAI: Invalid tool call arguments JSON for ${tc.function.name}: ${error instanceof Error ? error.message : String(error)}`,
+        }));
+      }
+    });
 
     return {
       content: choice.message.content || "",
