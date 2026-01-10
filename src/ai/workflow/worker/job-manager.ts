@@ -12,7 +12,7 @@
  */
 
 import { logger } from "@veryfront/utils";
-import type { WorkflowBackend } from "../backends/types.ts";
+import { hasWorkerSupport, type WorkflowBackend } from "../backends/types.ts";
 import type { WorkflowRun } from "../types.ts";
 import { generateId } from "../types.ts";
 
@@ -55,6 +55,9 @@ export interface WorkflowJobManagerConfig {
 
   /** Job timeout (ms) - kills job if it exceeds this */
   jobTimeout?: number;
+
+  /** Time after which a run is considered stalled (ms) - for crash recovery */
+  stalledThreshold?: number;
 
   /** Time to keep completed jobs for debugging (s) */
   ttlAfterFinished?: number;
@@ -230,6 +233,7 @@ export class WorkflowJobManager {
       pollInterval: 5000,
       maxConcurrentJobs: 10,
       jobTimeout: 30 * 60 * 1000, // 30 minutes
+      stalledThreshold: 60000, // 60 seconds
       ttlAfterFinished: 300, // 5 minutes
       debug: false,
       ...config,
@@ -353,10 +357,38 @@ export class WorkflowJobManager {
         limit: availableSlots,
       });
 
-      for (const run of pendingRuns) {
+      // Also check for stalled workflows (crashed jobs)
+      let stalledRuns: WorkflowRun[] = [];
+      if (hasWorkerSupport(this.config.backend)) {
+        stalledRuns = await this.config.backend.findStalledRuns(this.config.stalledThreshold);
+
+        if (stalledRuns.length > 0 && this.config.debug) {
+          logger.info(
+            `[WorkflowJobManager] Found ${stalledRuns.length} stalled runs to recover`,
+          );
+        }
+      }
+
+      // Combine pending and stalled runs
+      const runsToProcess = [...pendingRuns, ...stalledRuns].slice(0, availableSlots);
+
+      for (const run of runsToProcess) {
         // Skip if already has an active job
         if (this.activeJobs.has(run.id)) {
           continue;
+        }
+
+        // For stalled runs, try to claim first
+        if (run.status === "running" && hasWorkerSupport(this.config.backend)) {
+          const claimed = await this.config.backend.claimStalledRun(
+            run.id,
+            `mgr:${this.managerId}`,
+            this.config.stalledThreshold,
+          );
+          if (!claimed) {
+            // Another manager claimed it
+            continue;
+          }
         }
 
         await this.createJobForWorkflow(run);
