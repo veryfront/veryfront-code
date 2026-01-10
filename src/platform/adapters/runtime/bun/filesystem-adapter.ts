@@ -10,7 +10,11 @@ import type {
   WatchOptions,
 } from "../../base.ts";
 
-import { createFileWatcher, createWatcherIterator, enqueueWatchEvent } from "../shared/shared-watcher.ts";
+import {
+  createFileWatcher,
+  createWatcherIterator,
+  enqueueWatchEvent,
+} from "../shared/shared-watcher.ts";
 import type { BunFSWatcher, BunWatchEvent } from "./types.ts";
 import { serverLogger } from "@veryfront/utils";
 

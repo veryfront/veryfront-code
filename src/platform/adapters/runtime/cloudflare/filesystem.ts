@@ -1,5 +1,11 @@
 import { ConfigError, FileSystemError, NotSupportedError } from "@veryfront/errors";
-import type { DirEntry, FileInfo, FileSystemAdapter, FileWatcher, WatchOptions } from "../../base.ts";
+import type {
+  DirEntry,
+  FileInfo,
+  FileSystemAdapter,
+  FileWatcher,
+  WatchOptions,
+} from "../../base.ts";
 import type { KVNamespace } from "./types.ts";
 
 export class CloudflareFileSystemAdapter implements FileSystemAdapter {

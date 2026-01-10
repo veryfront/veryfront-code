@@ -6,10 +6,7 @@
 
 import { logger } from "@veryfront/utils";
 import { createError, toError } from "../../../core/errors/veryfront-error.ts";
-import type {
-  TokenStorageAdapter,
-  TokenStorageAdapterConfig,
-} from "./veryfront/types.ts";
+import type { TokenStorageAdapter, TokenStorageAdapterConfig } from "./veryfront/types.ts";
 
 /**
  * Create a token storage adapter based on configuration

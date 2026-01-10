@@ -10,10 +10,7 @@ export {
 } from "./veryfront/index.ts";
 
 // Factory and utilities
-export {
-  createTokenStorageAdapter,
-  createTokenStorageAdapterFromEnv,
-} from "./factory.ts";
+export { createTokenStorageAdapter, createTokenStorageAdapterFromEnv } from "./factory.ts";
 
 export {
   getTokenStorageAdapter,
