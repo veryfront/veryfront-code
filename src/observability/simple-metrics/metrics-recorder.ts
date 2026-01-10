@@ -175,6 +175,17 @@ function recordObservabilityRSC(obsKind: ObservabilityRSCKind): void {
   });
 }
 
+/** RSC kind to state property and observability kind mapping */
+const RSC_KIND_MAP: Record<RSCRequestKind, { prop: keyof typeof state; obs?: ObservabilityRSCKind }> =
+  {
+    manifest: { prop: "rscManifest", obs: "manifest" },
+    page: { prop: "rscPage", obs: "page" },
+    flight_page: { prop: "rscPage", obs: "page" },
+    stream: { prop: "rscStream", obs: "stream" },
+    action: { prop: "rscAction", obs: "action" },
+    error: { prop: "rscErrors" },
+  };
+
 /**
  * Record RSC endpoint request
  *
@@ -187,27 +198,10 @@ function recordObservabilityRSC(obsKind: ObservabilityRSCKind): void {
  * ```
  */
 export function recordRSC(kind: RSCRequestKind): void {
-  switch (kind) {
-    case "manifest":
-      state.rscManifest++;
-      recordObservabilityRSC("manifest");
-      break;
-    case "page":
-    case "flight_page":
-      state.rscPage++;
-      recordObservabilityRSC("page");
-      break;
-    case "stream":
-      state.rscStream++;
-      recordObservabilityRSC("stream");
-      break;
-    case "action":
-      state.rscAction++;
-      recordObservabilityRSC("action");
-      break;
-    case "error":
-      state.rscErrors++;
-      break;
+  const mapping = RSC_KIND_MAP[kind];
+  if (mapping) {
+    (state[mapping.prop] as number)++;
+    if (mapping.obs) recordObservabilityRSC(mapping.obs);
   }
 }
 
