@@ -1,12 +1,3 @@
-/**
- * Element Inspector
- *
- * Deep inspection logic for React element trees.
- * Recursively walks element trees to detect invalid objects that would cause React Error #31.
- *
- * @module
- */
-
 import * as React from "react";
 import { rendererLogger as logger } from "@veryfront/utils";
 import type { InvalidObjectDetails } from "./types.ts";
@@ -20,33 +11,18 @@ import {
   isValidPrimitive,
 } from "./primitive-checks.ts";
 
-/**
- * Options for element inspection
- */
 export interface InspectionOptions {
   maxDepth: number;
   debugMode: boolean;
 }
 
-/**
- * Deep inspection of React element tree to find invalid children
- *
- * Recursively walks the element tree and logs any invalid objects passed as children.
- * This is critical for preventing React Error #31 (invalid object as React child).
- *
- * @param element - The element to inspect
- * @param path - Current path in the tree (for debugging)
- * @param depth - Current depth in the tree
- * @param options - Inspection options
- * @throws Error if invalid object is found (would cause React Error #31)
- */
+/** Recursively inspects element tree for invalid children that would cause React Error #31 */
 export function deepInspectElement(
   element: unknown,
   path: string,
   depth: number,
   options: InspectionOptions,
 ): void {
-  // Prevent infinite recursion
   if (depth > options.maxDepth) {
     if (options.debugMode) {
       logger.debug(`[DEEP INSPECT] Max depth reached at ${path}`);
@@ -54,13 +30,11 @@ export function deepInspectElement(
     return;
   }
 
-  // Valid React elements (use cross-instance compatible check)
   if (isReactElement(element)) {
     inspectReactElement(element as React.ReactElement, path, depth, options);
     return;
   }
 
-  // Valid primitives
   if (isValidPrimitive(element)) {
     if (options.debugMode) {
       logger.debug(`[DEEP INSPECT] ✓ Valid primitive at ${path}`, {
@@ -71,21 +45,16 @@ export function deepInspectElement(
     return;
   }
 
-  // Arrays
   if (Array.isArray(element)) {
     inspectArray(element, path, depth, options);
     return;
   }
 
-  // Invalid object - this is what causes React Error #31
   if (element && typeof element === "object") {
     handleInvalidObject(element, path, depth);
   }
 }
 
-/**
- * Inspect a React element and its props/children
- */
 function inspectReactElement(
   element: React.ReactElement,
   path: string,
@@ -101,16 +70,12 @@ function inspectReactElement(
     });
   }
 
-  // Recursively inspect props
   const props = (element as React.ReactElement).props;
   if (props && typeof props === "object") {
     inspectElementProps(props as Record<string, unknown>, path, depth, options);
   }
 }
 
-/**
- * Inspect element props for nested elements
- */
 function inspectElementProps(
   props: Record<string, unknown>,
   path: string,
@@ -120,17 +85,13 @@ function inspectElementProps(
   for (const key of Object.keys(props)) {
     const value = props[key];
 
-    // Skip special props that don't need inspection
     if (key === "__self" || key === "__source") continue;
 
     if (key === "children") {
-      // Children prop - inspect each child
       inspectChildren(value, path, depth, options);
     } else if (isReactElement(value)) {
-      // Element prop
       deepInspectElement(value, `${path}.props.${key}`, depth + 1, options);
     } else if (Array.isArray(value)) {
-      // Array prop - check for elements
       value.forEach((item, i) => {
         if (isReactElement(item)) {
           deepInspectElement(
@@ -145,9 +106,6 @@ function inspectElementProps(
   }
 }
 
-/**
- * Inspect children prop (can be single child or array)
- */
 function inspectChildren(
   children: unknown,
   path: string,
@@ -163,9 +121,6 @@ function inspectChildren(
   }
 }
 
-/**
- * Inspect an array of elements
- */
 function inspectArray(
   arr: unknown[],
   path: string,
@@ -183,9 +138,6 @@ function inspectArray(
   });
 }
 
-/**
- * Handle invalid object that would cause React Error #31
- */
 function handleInvalidObject(
   element: unknown,
   path: string,
@@ -194,10 +146,7 @@ function handleInvalidObject(
   const obj = element as Record<string, unknown>;
   const keys = getObjectKeys(element);
 
-  // Double-check it's not a React element (should have been caught above)
   if (hasReactSymbol(obj)) {
-    // This is likely a React element that wasn't caught by React.isValidElement
-    // This shouldn't happen, but if it does, log and skip rather than throw
     logger.debug(`[DEEP INSPECT] ? Skipping object with React symbol at ${path}`, {
       keys,
       symbolValue: obj.$$typeof,

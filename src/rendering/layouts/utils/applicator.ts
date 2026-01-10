@@ -16,20 +16,15 @@ import { getElementTypeName } from "../../element-validator/primitive-checks.ts"
 import { getProjectReact } from "@veryfront/react";
 import { ensureValidChild } from "./ensure-valid-child.ts";
 
-// Check if running in Deno (not Node.js)
 const IS_DENO = typeof (globalThis as { Deno?: unknown }).Deno !== "undefined";
 
-/**
- * Transform bare npm imports to npm: specifiers for Deno SSR.
- * Bare imports are those that don't start with: . / http:// https:// npm: file:// node://
- */
+/** Transform bare npm imports to npm: specifiers for Deno SSR */
 function transformBareImportsToNpm(code: string): string {
   if (!IS_DENO) return code;
 
   return code.replace(
     /from\s+["']([^"'./][^"']*)["']/g,
     (_match, specifier) => {
-      // Skip if already has protocol prefix
       if (
         specifier.startsWith("npm:") ||
         specifier.startsWith("http://") ||
@@ -39,22 +34,16 @@ function transformBareImportsToNpm(code: string): string {
       ) {
         return `from "${specifier}"`;
       }
-      // Skip @/ path aliases - these are project-relative paths, not npm packages
       if (specifier.startsWith("@/")) {
         return `from "${specifier}"`;
       }
-      // Convert bare import to npm: specifier
       logger.debug("[applicator] Transforming bare import to npm:", { specifier });
       return `from "npm:${specifier}"`;
     },
   );
 }
 
-/**
- * Transform file:// local imports to module server URLs for Deno SSR.
- * These file:// paths don't have extensions and point to the wrong directory.
- * Convert them to module server URLs which can properly resolve and transform the files.
- */
+/** Transform file:// local imports to module server URLs for Deno SSR */
 function transformLocalFileImportsToModuleServer(code: string): string {
   if (!IS_DENO) return code;
 
@@ -62,25 +51,19 @@ function transformLocalFileImportsToModuleServer(code: string): string {
     .Deno?.env?.get("PORT") || "3001";
   const cacheBuster = Date.now();
 
-  // Match file:// imports that look like local project files (without extension)
-  // Pattern: file:///path/to/project/relative/path (no .js/.ts extension at end)
   return code.replace(
     /from\s+["'](file:\/\/[^"']+)["']/g,
     (_match, fileUrl) => {
-      // Skip if already has an extension
       if (/\.(js|ts|tsx|jsx|mjs|cjs)$/.test(fileUrl)) {
         return `from "${fileUrl}"`;
       }
 
-      // Extract the relative path from the file:// URL
-      // Look for common project path patterns like /shared/, /lib/, /components/, /features/, /app/
       const relativePath = fileUrl.replace(
         /file:\/\/.*?\/(?=shared\/|lib\/|components\/|features\/|app\/)/,
         "",
       );
 
       if (relativePath !== fileUrl) {
-        // Found a recognizable project path - use module server
         const moduleUrl =
           `http://localhost:${port}/_vf_modules/${relativePath}.js?ssr=true&v=${cacheBuster}`;
         logger.debug("[applicator] Transforming file:// to module server:", {
@@ -90,7 +73,6 @@ function transformLocalFileImportsToModuleServer(code: string): string {
         return `from "${moduleUrl}"`;
       }
 
-      // If no recognizable pattern, leave as-is
       return `from "${fileUrl}"`;
     },
   );
@@ -294,9 +276,7 @@ async function applyProviders(
           providerItem.bundle.compiledCode,
           providerImportMap,
         );
-        // Transform any remaining bare imports to npm: specifiers for Deno SSR
         providerCode = transformBareImportsToNpm(providerCode);
-        // Transform file:// local imports to module server URLs for Deno SSR
         providerCode = transformLocalFileImportsToModuleServer(providerCode);
         const providerModule = await mdxRenderer.loadModuleESM(providerCode, adapter);
         const providerMod = providerModule as MDXModule;
@@ -313,7 +293,6 @@ async function applyProviders(
           ) as BundledReact.ReactElement;
         }
       } else if (providerItem.kind === "tsx" && providerItem.componentPath) {
-        // TSX provider: load via TSX loader
         const ProviderComponent = await loadTSXComponent(
           providerItem.componentPath,
           projectDir,

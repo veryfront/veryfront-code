@@ -71,8 +71,6 @@ export function applyHeadDirectives(container: HTMLElement): void {
   }
 
   nodes.forEach((wrapper) => {
-    // Handle <template> elements - content is in .content DocumentFragment
-    // Guard HTMLTemplateElement check for SSR/test environments where it may not exist
     const isTemplate = typeof HTMLTemplateElement !== "undefined" &&
       wrapper instanceof HTMLTemplateElement;
     const contentSource = isTemplate ? (wrapper as HTMLTemplateElement).content : wrapper;
