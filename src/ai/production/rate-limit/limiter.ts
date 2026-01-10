@@ -175,13 +175,24 @@ class TokenBucketLimiter {
   }
 }
 
+/** Factory for creating rate limiter instances by strategy */
+function createLimiterByStrategy(
+  config: RateLimitConfig,
+): FixedWindowLimiter | TokenBucketLimiter {
+  switch (config.strategy) {
+    case "fixed-window":
+      return new FixedWindowLimiter(config);
+    default:
+      // token-bucket and sliding-window both use TokenBucketLimiter
+      return new TokenBucketLimiter(config);
+  }
+}
+
 /**
  * Create a rate limiter
  */
 export function createRateLimiter(config: RateLimitConfig) {
-  const limiter = config.strategy === "fixed-window"
-    ? new FixedWindowLimiter(config)
-    : new TokenBucketLimiter(config); // token-bucket and sliding-window both use TokenBucketLimiter
+  const limiter = createLimiterByStrategy(config);
 
   const getIdentifier = (context?: Record<string, unknown>): string =>
     config.identify?.(context!) ?? "default";

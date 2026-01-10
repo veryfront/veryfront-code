@@ -127,8 +127,8 @@ const UNIVERSAL_SELECTORS = new Set(["*", ":root", "html", "body", "@"]);
 
 export function shouldKeepSelector(selector: string, usedSelectors: Set<string>): boolean {
   // Always keep universal rules
-  if ([...UNIVERSAL_SELECTORS].some((u) => selector.includes(u))) {
-    return true;
+  for (const u of UNIVERSAL_SELECTORS) {
+    if (selector.includes(u)) return true;
   }
 
   // Keep if exact match or any part of compound selector is used
