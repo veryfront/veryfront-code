@@ -116,15 +116,15 @@ export class VeryfrontRenderer {
     });
   }
 
-  async renderPage(slug: string, options?: RenderOptions): Promise<RenderResult> {
+  renderPage(slug: string, options?: RenderOptions): Promise<RenderResult> {
     return this.renderPipeline.renderPage(slug, options);
   }
 
-  async resolvePageData(slug: string, options?: RenderOptions): Promise<PageDataResponse> {
+  resolvePageData(slug: string, options?: RenderOptions): Promise<PageDataResponse> {
     return this.renderPipeline.resolvePageData(slug, options);
   }
 
-  async getAllPages(): Promise<string[]> {
+  getAllPages(): Promise<string[]> {
     return this.services.pageResolver.getAllPages();
   }
 
@@ -150,7 +150,7 @@ export class VeryfrontRenderer {
     await this.lifecycle.initializeComponents();
   }
 
-  async compileMDX(
+  compileMDX(
     content: string,
     frontmatter?: Record<string, unknown>,
     filePath?: string,
@@ -158,8 +158,8 @@ export class VeryfrontRenderer {
     return this.mdxCompiler.compileMDX(content, frontmatter, filePath);
   }
 
-  async destroy(): Promise<void> {
-    await this.lifecycle.destroy();
+  destroy(): Promise<void> {
+    return this.lifecycle.destroy();
   }
 }
 

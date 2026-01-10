@@ -52,7 +52,7 @@ export class LayoutOrchestrator {
     return result;
   }
 
-  async collectProviders(route?: string): Promise<ProviderCollectionResult> {
+  collectProviders(route?: string): Promise<ProviderCollectionResult> {
     return this.config.providerManager.collectProviders(route);
   }
 
