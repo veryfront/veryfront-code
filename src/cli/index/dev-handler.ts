@@ -4,7 +4,7 @@
  * @module cli/index/dev-handler
  */
 
-import { join } from "std/path/mod.ts";
+import { isAbsolute, join } from "std/path/mod.ts";
 import { cliLogger, DEFAULT_DEV_SERVER_PORT } from "@veryfront/utils";
 import { devCommand } from "../commands/dev.ts";
 import { showLogo } from "../utils/index.ts";
@@ -13,11 +13,21 @@ import { cwd } from "../../platform/compat/process.ts";
 import { createFileSystem } from "../../platform/compat/fs.ts";
 
 /**
- * Detect the project directory by checking for config files
+ * Resolve project directory from CLI args or detect from config files
  *
+ * @param args - Parsed CLI arguments
  * @returns Project directory path
  */
-async function detectProjectDir(): Promise<string> {
+async function resolveProjectDir(args: ParsedArgs): Promise<string> {
+  // Check for --project flag (can be relative or absolute path)
+  const projectArg = args.project ? String(args.project) : undefined;
+  if (projectArg) {
+    const resolved = isAbsolute(projectArg) ? projectArg : join(cwd(), projectArg);
+    cliLogger.debug("Using project directory from --project flag", { projectDir: resolved });
+    return resolved;
+  }
+
+  // Fall back to detecting config in current directory
   const projectDir = cwd();
   const configPath = join(projectDir, "veryfront.config.ts");
   const altConfigPath = join(projectDir, "veryfront.config.js");
@@ -41,7 +51,7 @@ async function detectProjectDir(): Promise<string> {
 export async function handleDevCommand(args: ParsedArgs): Promise<void> {
   showLogo();
 
-  const projectDir = await detectProjectDir();
+  const projectDir = await resolveProjectDir(args);
 
   const port = typeof args.port === "number" ? args.port : DEFAULT_DEV_SERVER_PORT;
   await devCommand({

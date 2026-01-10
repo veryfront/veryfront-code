@@ -152,7 +152,7 @@ export class APIRouteHandler {
     const isAppRoute = /\/route\.(ts|js|tsx|jsx)$/.test(match.route.page);
     const response = isAppRoute
       ? await executeAppRoute(handler, request, match, pathname, adapter)
-      : await executePagesRoute(handler, request, match, pathname, adapter);
+      : await executePagesRoute(handler, request, match, pathname, adapter, this.projectDir);
 
     const corsResponse = await applyCORSHeaders({
       request,
