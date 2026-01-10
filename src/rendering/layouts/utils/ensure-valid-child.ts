@@ -5,10 +5,7 @@ import {
   getElementTypeName,
 } from "../../element-validator/primitive-checks.ts";
 
-/**
- * Validates and returns a React-compatible child node.
- * Returns the child unchanged if valid, or null if the child is invalid.
- */
+/** Returns the child unchanged if valid, or null if invalid */
 export function ensureValidChild(
   child: BundledReact.ReactNode,
   React: typeof BundledReact,

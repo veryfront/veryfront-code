@@ -1,12 +1,3 @@
-/**
- * HTML generation utilities for RSC renderer
- *
- * This module handles conversion of RSC trees to HTML strings,
- * including attribute rendering and HTML escaping.
- *
- * @module html-generator
- */
-
 import type { RSCNode } from "../types.ts";
 import { escapeHtml } from "../../../html/html-escape.ts";
 
@@ -14,9 +5,6 @@ export { escapeHtml };
 
 const SKIP_PROPS = new Set(["children", "key", "ref"]);
 
-/**
- * Render HTML attributes from props
- */
 export function renderAttributes(props: Record<string, unknown>): string {
   const attrs: string[] = [];
 
@@ -35,9 +23,6 @@ export function renderAttributes(props: Record<string, unknown>): string {
   return attrs.length > 0 ? ` ${attrs.join(" ")}` : "";
 }
 
-/**
- * Convert RSC tree to HTML
- */
 export async function treeToHTML(node: RSCNode): Promise<string> {
   switch (node.type) {
     case "html":

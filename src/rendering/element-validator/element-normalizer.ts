@@ -1,12 +1,3 @@
-/**
- * Element Normalizer
- *
- * Validates and normalizes React elements before rendering.
- * Ensures elements are valid React elements or converts them to valid ones.
- *
- * @module
- */
-
 import * as React from "react";
 import { rendererLogger as logger } from "@veryfront/utils";
 import { ensureError } from "../../core/errors/veryfront-error.ts";
@@ -14,65 +5,35 @@ import { normalizeChild } from "../utils/index.ts";
 import { deepInspectElement, type InspectionOptions } from "./element-inspector.ts";
 import { getElementTypeName, isReactElement } from "./primitive-checks.ts";
 
-/**
- * Options for element validation and normalization
- */
 export interface NormalizationOptions {
-  /** Whether to perform deep inspection (expensive) */
   inspectionEnabled?: boolean;
-
-  /** Debug mode for verbose logging */
   debugMode?: boolean;
-
-  /** Inspection configuration */
   inspectionOptions: InspectionOptions;
 }
 
-/**
- * Validate and normalize a React element before rendering
- *
- * Ensures the element is a valid React element or converts it to one.
- * Optionally performs deep inspection to find invalid children.
- *
- * @param pageElement - The element to validate
- * @param options - Normalization options
- * @returns Valid React element ready for rendering
- * @throws Error if deep inspection is enabled and invalid objects are found
- */
+/** Validates and normalizes a React element before rendering */
 export function ensureValidReactElement(
   pageElement: React.ReactNode,
   options: NormalizationOptions,
 ): React.ReactElement {
-  // Perform deep inspection if enabled
   if (options.inspectionEnabled) {
     performDeepInspection(pageElement, options.inspectionOptions);
   }
 
-  // Normalize the child
   const finalChild = normalizeChild(pageElement);
-
-  // Use cross-instance compatible check
   const finalIsElement = isReactElement(finalChild);
 
-  // Log final element check if debug mode is enabled
   if (options.debugMode) {
     logFinalElementCheck(finalChild, finalIsElement);
   }
 
-  // Return element directly if it looks like a valid React element
-  // Note: We pass it through directly even if created by project React,
-  // because the rendering pipeline (SSR) will use project's React DOM
   if (finalIsElement) {
     return finalChild as React.ReactElement;
   }
 
-  // Wrap non-elements in Fragment
   return React.createElement(React.Fragment, undefined, finalChild);
 }
 
-/**
- * Perform deep inspection of element tree
- */
 function performDeepInspection(
   element: React.ReactNode,
   inspectionOptions: InspectionOptions,
@@ -96,9 +57,6 @@ function performDeepInspection(
   }
 }
 
-/**
- * Log final element check for debugging
- */
 function logFinalElementCheck(
   finalChild: unknown,
   finalIsElement: boolean,
