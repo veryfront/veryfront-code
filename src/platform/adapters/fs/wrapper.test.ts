@@ -73,6 +73,86 @@ describe("wrapFSAdapter", () => {
 });
 
 describe("FSAdapterWrapper", () => {
+  describe("accessor methods", () => {
+    it("getUnderlyingAdapter should return the wrapped FSAdapter", () => {
+      const fsAdapter = createMockFSAdapter();
+      const wrapper = new FSAdapterWrapper(fsAdapter);
+
+      assertEquals(wrapper.getUnderlyingAdapter(), fsAdapter);
+    });
+
+    it("getAdapterType should return constructor name", () => {
+      const fsAdapter = createMockFSAdapter();
+      const wrapper = new FSAdapterWrapper(fsAdapter);
+
+      assertEquals(wrapper.getAdapterType(), "Object");
+    });
+
+    it("getAdapterType should return class name for class instances", () => {
+      class CustomAdapter {
+        readFile = () => Promise.resolve("content");
+        exists = () => Promise.resolve(true);
+        stat = () =>
+          Promise.resolve({
+            size: 0,
+            isFile: true,
+            isDirectory: false,
+            isSymlink: false,
+            mtime: new Date(),
+          });
+      }
+      const fsAdapter = new CustomAdapter() as unknown as FSAdapter;
+      const wrapper = new FSAdapterWrapper(fsAdapter);
+
+      assertEquals(wrapper.getAdapterType(), "CustomAdapter");
+    });
+
+    it("isVeryfrontAdapter should return false for non-Veryfront adapters", () => {
+      const fsAdapter = createMockFSAdapter();
+      const wrapper = new FSAdapterWrapper(fsAdapter);
+
+      assertEquals(wrapper.isVeryfrontAdapter(), false);
+    });
+
+    it("isVeryfrontAdapter should return true for VeryfrontFSAdapter", () => {
+      class VeryfrontFSAdapter {
+        readFile = () => Promise.resolve("content");
+        exists = () => Promise.resolve(true);
+        stat = () =>
+          Promise.resolve({
+            size: 0,
+            isFile: true,
+            isDirectory: false,
+            isSymlink: false,
+            mtime: new Date(),
+          });
+      }
+      const fsAdapter = new VeryfrontFSAdapter() as unknown as FSAdapter;
+      const wrapper = new FSAdapterWrapper(fsAdapter);
+
+      assertEquals(wrapper.isVeryfrontAdapter(), true);
+    });
+
+    it("isVeryfrontAdapter should return true for MultiProjectFSAdapter", () => {
+      class MultiProjectFSAdapter {
+        readFile = () => Promise.resolve("content");
+        exists = () => Promise.resolve(true);
+        stat = () =>
+          Promise.resolve({
+            size: 0,
+            isFile: true,
+            isDirectory: false,
+            isSymlink: false,
+            mtime: new Date(),
+          });
+      }
+      const fsAdapter = new MultiProjectFSAdapter() as unknown as FSAdapter;
+      const wrapper = new FSAdapterWrapper(fsAdapter);
+
+      assertEquals(wrapper.isVeryfrontAdapter(), true);
+    });
+  });
+
   describe("readFile", () => {
     it("should read file using readTextFile if available", async () => {
       const fsAdapter = createMockFSAdapter({
