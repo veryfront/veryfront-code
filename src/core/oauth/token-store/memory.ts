@@ -80,13 +80,9 @@ export class MemoryTokenStore implements TokenStore {
     const tokens = this.tokens.get(serviceId);
     if (!tokens) return false;
 
-    // Check if token is expired
-    if (tokens.expiresAt && Date.now() > tokens.expiresAt) {
-      // Token expired, but might be refreshable
-      return !!tokens.refreshToken;
-    }
-
-    return true;
+    // Token expired but might be refreshable
+    const isExpired = tokens.expiresAt && Date.now() > tokens.expiresAt;
+    return !isExpired || !!tokens.refreshToken;
   }
 
   /**
