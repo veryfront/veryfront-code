@@ -172,4 +172,3 @@ export async function applyMDXLayout(
   logger.warn("[applyMDXLayout] No LayoutFn found, returning element unchanged");
   return element;
 }
-

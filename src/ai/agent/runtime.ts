@@ -95,8 +95,9 @@ export class AgentRuntime {
       };
 
       const chain = new MiddlewareChain(this.config.middleware);
-      return await chain.execute(agentContext, () =>
-        this.executeAgentLoop(provider, model, systemPrompt, messages)
+      return await chain.execute(
+        agentContext,
+        () => this.executeAgentLoop(provider, model, systemPrompt, messages),
       );
     });
   }

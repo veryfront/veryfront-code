@@ -161,9 +161,10 @@ export function sequence(...nodes: WorkflowNode[]): WorkflowNode[] {
     if (index === 0) {
       return node;
     }
+    const prevNode = nodes[index - 1]!;
     return {
       ...node,
-      dependsOn: [nodes[index - 1].id],
+      dependsOn: [prevNode.id],
     };
   });
 }

@@ -23,13 +23,23 @@ function getExtension(path: string): string {
   return path.split(".").pop()?.toLowerCase() ?? "";
 }
 
+/** Extension to esbuild loader mapping */
+const LOADER_MAP: Record<string, esbuild.Loader> = {
+  mdx: "tsx", // MDX compiles to TSX
+  tsx: "tsx",
+  ts: "ts",
+  jsx: "jsx",
+  js: "js",
+  mjs: "js",
+  css: "css",
+  json: "json",
+};
+
 /**
  * Get esbuild loader based on file extension
  */
 export function getLoaderFromPath(path: string): esbuild.Loader {
-  const fileType = getFileType(path);
-  // MDX compiles to TSX, others map directly
-  return fileType === "mdx" ? "tsx" : fileType;
+  return LOADER_MAP[getExtension(path)] ?? "default";
 }
 
 /**

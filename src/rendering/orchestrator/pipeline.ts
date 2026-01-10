@@ -549,8 +549,7 @@ export class RenderPipeline {
     // ─────────────────────────────────────────────────────────────────────────
     const cacheResult = await timeAsync(
       "check-cache",
-      () =>
-        this.config.cacheCoordinator.checkCache(slug),
+      () => this.config.cacheCoordinator.checkCache(slug),
       "render-page",
     );
 

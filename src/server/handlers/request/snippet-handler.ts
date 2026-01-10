@@ -128,5 +128,4 @@ export class SnippetHandler extends BaseHandler {
       }
     });
   }
-
 }

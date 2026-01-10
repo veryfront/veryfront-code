@@ -89,7 +89,16 @@ export function extractMetadata(moduleCode: string): Partial<MDXModule> {
   return exports;
 }
 
-const FRONTMATTER_KEYS = ["title", "description", "layout", "headings", "tags", "date", "draft", "nested"];
+const FRONTMATTER_KEYS = [
+  "title",
+  "description",
+  "layout",
+  "headings",
+  "tags",
+  "date",
+  "draft",
+  "nested",
+];
 
 export function mergeFrontmatter(result: MDXModule): void {
   result.frontmatter = result.frontmatter ?? {};

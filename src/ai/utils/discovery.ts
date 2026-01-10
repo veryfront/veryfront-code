@@ -32,9 +32,9 @@ function createFsAdapterPlugin(fsAdapter: FileSystemAdapter) {
   const existsCache = new Map<string, boolean>();
 
   async function checkExists(filePath: string): Promise<boolean> {
-    if (existsCache.has(filePath)) {
-      return existsCache.get(filePath)!;
-    }
+    const cached = existsCache.get(filePath);
+    if (cached !== undefined) return cached;
+
     const exists = await fsAdapter.exists(filePath);
     existsCache.set(filePath, exists);
     return exists;
