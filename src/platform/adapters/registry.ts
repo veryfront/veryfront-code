@@ -17,8 +17,9 @@
  * ```
  */
 
+import { logger } from "@veryfront/utils";
 import type { RuntimeAdapter, RuntimeId } from "./base.ts";
-import { isBun, isDeno, isNode } from "../compat/runtime.ts";
+import { detectRuntime } from "./detect.ts";
 
 type AdapterLoader = () => Promise<RuntimeAdapter>;
 
@@ -28,6 +29,7 @@ type AdapterLoader = () => Promise<RuntimeAdapter>;
 class AdapterRegistry {
   private instance: RuntimeAdapter | null = null;
   private initialized = false;
+  private initializationPromise: Promise<RuntimeAdapter> | null = null;
   private loaders: Map<RuntimeId, AdapterLoader> = new Map();
 
   constructor() {
@@ -57,49 +59,116 @@ class AdapterRegistry {
   }
 
   /**
-   * Get the current adapter, auto-detecting if needed
+   * Get the current adapter, auto-detecting if needed.
+   * Thread-safe: concurrent calls return the same initialization promise.
    */
   async get(): Promise<RuntimeAdapter> {
-    if (this.instance) {
+    // Fast path: already initialized
+    if (this.instance && this.initialized) {
       return this.instance;
     }
 
-    // Auto-detect runtime
-    const runtimeId = this.detectRuntime();
-    const loader = this.loaders.get(runtimeId);
+    // Guard against concurrent initialization
+    if (this.initializationPromise) {
+      return this.initializationPromise;
+    }
 
-    if (!loader) {
+    // Start initialization
+    this.initializationPromise = this.doInitialize();
+
+    try {
+      return await this.initializationPromise;
+    } catch (error) {
+      // Clear promise on failure to allow retry
+      this.initializationPromise = null;
+      throw error;
+    }
+  }
+
+  /**
+   * Internal initialization logic
+   */
+  private async doInitialize(): Promise<RuntimeAdapter> {
+    const runtimeId = detectRuntime();
+
+    if (runtimeId === "unknown") {
       throw new Error(
-        `Unsupported runtime: ${runtimeId}. ` +
-          `Supported runtimes: ${[...this.loaders.keys()].join(", ")}. ` +
-          `For Cloudflare Workers, use runtime.set(createCloudflareAdapter(env)).`,
+        "Unsupported runtime detected. Supported runtimes: deno, node, bun. " +
+          "For Cloudflare Workers, call runtime.set(createCloudflareAdapter(env)).",
       );
     }
 
-    this.instance = await loader();
-    await this.initialize();
-    return this.instance;
+    if (runtimeId === "cloudflare") {
+      throw new Error(
+        "Cloudflare Workers detected but requires manual initialization. " +
+          "Use: await runtime.set(createCloudflareAdapter(env))",
+      );
+    }
+
+    const loader = this.loaders.get(runtimeId);
+    if (!loader) {
+      throw new Error(
+        `No loader registered for runtime: ${runtimeId}. ` +
+          `Registered runtimes: ${[...this.loaders.keys()].join(", ")}`,
+      );
+    }
+
+    try {
+      this.instance = await loader();
+      await this.instance.initialize?.();
+      this.initialized = true;
+      return this.instance;
+    } catch (error) {
+      // Clear state on failure to allow retry
+      this.instance = null;
+      this.initialized = false;
+      throw error;
+    }
   }
 
   /**
    * Manually set the adapter (for Cloudflare Workers, testing, etc.)
    */
   async set(adapter: RuntimeAdapter): Promise<void> {
-    // Shutdown existing adapter if any
-    if (this.instance && this.initialized) {
-      await this.instance.shutdown?.();
+    // Validate adapter has required properties
+    if (!adapter.id || !adapter.name || !adapter.fs || !adapter.env || !adapter.server) {
+      throw new Error(
+        "Invalid adapter: must implement RuntimeAdapter interface with id, name, fs, env, and server properties",
+      );
     }
 
+    const oldAdapter = this.instance && this.initialized ? this.instance : null;
+
+    // Set new adapter and initialize
     this.instance = adapter;
     this.initialized = false;
-    await this.initialize();
+    this.initializationPromise = null;
+
+    try {
+      await adapter.initialize?.();
+      this.initialized = true;
+
+      // Shutdown old adapter after new one is initialized
+      if (oldAdapter) {
+        try {
+          await oldAdapter.shutdown?.();
+        } catch (shutdownError) {
+          logger.warn("[Registry] Failed to shutdown old adapter", shutdownError);
+        }
+      }
+    } catch (error) {
+      // Restore old adapter on failure
+      this.instance = oldAdapter;
+      this.initialized = !!oldAdapter;
+      throw error;
+    }
   }
 
   /**
    * Get adapter synchronously (throws if not initialized)
    */
   getSync(): RuntimeAdapter {
-    if (!this.instance) {
+    if (!this.instance || !this.initialized) {
       throw new Error(
         "RuntimeAdapter not initialized. Call `await runtime.get()` first, " +
           "or use `await runtime.set(adapter)` to configure manually.",
@@ -120,51 +189,27 @@ class AdapterRegistry {
    */
   async reset(): Promise<void> {
     if (this.instance && this.initialized) {
-      await this.instance.shutdown?.();
+      try {
+        await this.instance.shutdown?.();
+      } catch (error) {
+        logger.warn("[Registry] Failed to shutdown adapter during reset", error);
+      }
     }
     this.instance = null;
     this.initialized = false;
+    this.initializationPromise = null;
   }
 
   /**
    * Register a custom adapter loader
    */
-  registerLoader(id: RuntimeId, loader: AdapterLoader): void {
-    this.loaders.set(id, loader);
-  }
-
-  /**
-   * Detect current runtime
-   */
-  private detectRuntime(): RuntimeId {
-    if (isDeno) return "deno";
-    if (isBun) return "bun";
-    if (isNode) return "node";
-
-    // Cloudflare Workers requires manual initialization
-    if ("caches" in globalThis && "WebSocketPair" in globalThis) {
+  registerLoader(id: RuntimeId, loader: AdapterLoader, options?: { overwrite?: boolean }): void {
+    if (this.loaders.has(id) && !options?.overwrite) {
       throw new Error(
-        "Cloudflare Workers detected but requires manual initialization. " +
-          "Use: await runtime.set(createCloudflareAdapter(env))",
+        `Loader for runtime '${id}' already registered. Use { overwrite: true } to replace.`,
       );
     }
-
-    throw new Error(
-      "Unsupported runtime detected. Supported runtimes: deno, node, bun. " +
-        "For Cloudflare Workers, call runtime.set(createCloudflareAdapter(env)).",
-    );
-  }
-
-  /**
-   * Initialize the adapter
-   */
-  private async initialize(): Promise<void> {
-    if (!this.instance || this.initialized) {
-      return;
-    }
-
-    await this.instance.initialize?.();
-    this.initialized = true;
+    this.loaders.set(id, loader);
   }
 }
 
@@ -184,15 +229,29 @@ class AdapterRegistry {
  */
 export const runtime = new AdapterRegistry();
 
+// Cached local registry to avoid memory leaks
+let localRegistry: AdapterRegistry | null = null;
+
 /**
  * Get the local runtime adapter (deno, node, bun).
  * Unlike runtime.get(), this always returns the base adapter without FSAdapter enhancement.
  * Use this for local-only operations like writing temp files or caching.
  */
 export function getLocalAdapter(): Promise<RuntimeAdapter> {
-  // Create a fresh registry instance to avoid getting the enhanced adapter
-  const localRegistry = new AdapterRegistry();
+  if (!localRegistry) {
+    localRegistry = new AdapterRegistry();
+  }
   return localRegistry.get();
+}
+
+/**
+ * Reset the local adapter registry (for testing)
+ */
+export async function resetLocalAdapter(): Promise<void> {
+  if (localRegistry) {
+    await localRegistry.reset();
+    localRegistry = null;
+  }
 }
 
 // Re-export for convenience

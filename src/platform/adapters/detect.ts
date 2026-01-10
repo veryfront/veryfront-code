@@ -21,7 +21,9 @@ export function detectRuntime(): RuntimeId | "unknown" {
 /**
  * Get the runtime adapter for the current environment
  *
- * @deprecated Use `runtime.get()` from `./registry.ts` instead for singleton management
+ * @deprecated Use `runtime.get()` from `./registry.ts` instead for singleton management.
+ * This function creates a new adapter instance each time, which can cause memory leaks
+ * and inconsistent state. The registry provides proper singleton management and lifecycle.
  *
  * @example
  * ```ts
@@ -32,6 +34,9 @@ export function detectRuntime(): RuntimeId | "unknown" {
  * import { runtime } from "@veryfront/platform/adapters/registry.ts";
  * const adapter = await runtime.get();
  * ```
+ *
+ * @returns A new RuntimeAdapter instance for the detected runtime
+ * @throws Error if the runtime is unsupported or requires manual initialization (Cloudflare)
  */
 export async function getAdapter(): Promise<RuntimeAdapter> {
   const runtimeId = detectRuntime();
