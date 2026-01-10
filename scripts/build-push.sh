@@ -4,7 +4,7 @@ set -e
 
 REGISTRY="ghcr.io/veryfront"
 TAG="${1:-latest}"
-BASE_TAG=$(sha256sum deno.lock | cut -c1-16)
+BASE_TAG=$(sha256sum deno.json | cut -c1-16)
 
 echo "Building with BASE_TAG=$BASE_TAG, TAG=$TAG"
 
