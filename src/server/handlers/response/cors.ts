@@ -66,7 +66,7 @@ export class CorsHandler extends BaseHandler {
       }
       methods.push("OPTIONS");
 
-      return Array.from(new Set(methods)).join(", ");
+      return [...new Set(methods)].join(", ");
     } catch (err) {
       this.logDebug("Failed to resolve route for CORS", { error: err, pathname }, ctx);
       return CorsHandler.DEFAULT_METHODS;
