@@ -82,6 +82,12 @@ interface HttpLogEntry {
   projectSlug?: string;
 }
 
+function getLogLevel(status: number): HttpLogEntry["level"] {
+  if (status >= HTTP_STATUS_SERVER_ERROR_MIN) return "error";
+  if (status >= HTTP_STATUS_CLIENT_ERROR_MIN) return "warn";
+  return "info";
+}
+
 function formatJsonLog(
   req: Request,
   status: number,
@@ -90,17 +96,13 @@ function formatJsonLog(
   const url = new URL(req.url);
   const userAgent = req.headers.get("user-agent");
   const referer = req.headers.get("referer");
-
-  let level: HttpLogEntry["level"] = "info";
-  if (status >= HTTP_STATUS_SERVER_ERROR_MIN) {
-    level = "error";
-  } else if (status >= HTTP_STATUS_CLIENT_ERROR_MIN) {
-    level = "warn";
-  }
+  const requestId = req.headers.get("x-request-id");
+  const traceId = req.headers.get("x-trace-id") ?? req.headers.get("traceparent");
+  const projectSlug = req.headers.get("x-project-slug");
 
   const entry: HttpLogEntry = {
     timestamp: new Date().toISOString(),
-    level,
+    level: getLogLevel(status),
     service: "server",
     message: `${req.method} ${url.pathname} ${status}`,
     http: {
@@ -109,23 +111,13 @@ function formatJsonLog(
       status,
       durationMs: Math.round(duration),
       remoteAddr: getRemoteAddr(req),
+      ...(userAgent && userAgent !== "-" && { userAgent }),
+      ...(referer && referer !== "-" && { referer }),
     },
+    ...(requestId && { requestId }),
+    ...(traceId && { traceId }),
+    ...(projectSlug && { projectSlug }),
   };
-
-  if (userAgent && userAgent !== "-") {
-    entry.http.userAgent = userAgent;
-  }
-  if (referer && referer !== "-") {
-    entry.http.referer = referer;
-  }
-
-  const requestId = req.headers.get("x-request-id");
-  const traceId = req.headers.get("x-trace-id") || req.headers.get("traceparent");
-  const projectSlug = req.headers.get("x-project-slug");
-
-  if (requestId) entry.requestId = requestId;
-  if (traceId) entry.traceId = traceId;
-  if (projectSlug) entry.projectSlug = projectSlug;
 
   return JSON.stringify(entry);
 }
@@ -184,10 +176,14 @@ export function logger(options?: LoggerOptions): Middleware {
   const log = options?.log ??
     (isJson ? (msg: string) => console.log(msg) : (msg: string) => serverLogger.info(msg));
 
+  const logError = (message: string): void => {
+    log(isJson ? message : `${message} ${colors.red}[ERROR]${colors.reset}`);
+  };
+
   return async (ctx, next) => {
     const req = getRequest(ctx);
 
-    if (skip && skip(req)) {
+    if (skip?.(req)) {
       return next();
     }
 
@@ -195,33 +191,18 @@ export function logger(options?: LoggerOptions): Middleware {
 
     try {
       const response = await next();
-
       const duration = performance.now() - start;
 
       if (!response) {
-        const message = formatLog(format, req, HTTP_SERVER_ERROR, duration);
-        // Don't append color codes to JSON output
-        if (isJson) {
-          log(message);
-        } else {
-          log(`${message} ${colors.red}[ERROR]${colors.reset}`);
-        }
+        logError(formatLog(format, req, HTTP_SERVER_ERROR, duration));
         return response;
       }
 
-      const message = formatLog(format, req, response.status, duration);
-      log(message);
-
+      log(formatLog(format, req, response.status, duration));
       return response;
     } catch (error) {
       const duration = performance.now() - start;
-      const message = formatLog(format, req, HTTP_SERVER_ERROR, duration);
-      // Don't append color codes to JSON output
-      if (isJson) {
-        log(message);
-      } else {
-        log(`${message} ${colors.red}[ERROR]${colors.reset}`);
-      }
+      logError(formatLog(format, req, HTTP_SERVER_ERROR, duration));
       throw error;
     }
   };

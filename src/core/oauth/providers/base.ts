@@ -98,6 +98,42 @@ export class OAuthProvider {
     };
   }
 
+  /** Build headers for token endpoint requests */
+  private buildTokenHeaders(clientId: string, clientSecret: string): Record<string, string> {
+    const headers: Record<string, string> = {
+      "Content-Type": "application/x-www-form-urlencoded",
+      Accept: "application/json",
+    };
+
+    if (this.config.useBasicAuth) {
+      headers.Authorization = `Basic ${btoa(`${clientId}:${clientSecret}`)}`;
+    }
+
+    return headers;
+  }
+
+  /** Parse token response data into OAuthTokens */
+  private parseTokenResponse(
+    data: Record<string, unknown>,
+    fallbackRefreshToken?: string,
+  ): OAuthTokens {
+    const mapping = this.config.tokenResponseMapping ?? {};
+    const tokens: OAuthTokens = {
+      accessToken: data[mapping.accessToken ?? "access_token"] as string,
+      refreshToken: (data[mapping.refreshToken ?? "refresh_token"] as string) ?? fallbackRefreshToken,
+      tokenType: data[mapping.tokenType ?? "token_type"] as string,
+      scope: data[mapping.scope ?? "scope"] as string,
+      idToken: data.id_token as string | undefined,
+    };
+
+    const expiresIn = data[mapping.expiresIn ?? "expires_in"] as number | undefined;
+    if (expiresIn) {
+      tokens.expiresAt = Date.now() + expiresIn * 1000;
+    }
+
+    return tokens;
+  }
+
   async exchangeCode(options: TokenExchangeOptions): Promise<TokenExchangeResult> {
     const clientId = this.getClientId();
     const clientSecret = this.getClientSecret();
@@ -123,20 +159,10 @@ export class OAuthProvider {
       ...this.config.additionalTokenParams,
     });
 
-    const headers: Record<string, string> = {
-      "Content-Type": "application/x-www-form-urlencoded",
-      Accept: "application/json",
-    };
-
-    if (this.config.useBasicAuth) {
-      const credentials = btoa(`${clientId}:${clientSecret}`);
-      headers.Authorization = `Basic ${credentials}`;
-    }
-
     try {
       const response = await fetch(this.config.tokenUrl, {
         method: "POST",
-        headers,
+        headers: this.buildTokenHeaders(clientId, clientSecret),
         body: body.toString(),
       });
 
@@ -150,21 +176,7 @@ export class OAuthProvider {
         };
       }
 
-      const mapping = this.config.tokenResponseMapping || {};
-      const tokens: OAuthTokens = {
-        accessToken: data[mapping.accessToken || "access_token"],
-        refreshToken: data[mapping.refreshToken || "refresh_token"],
-        tokenType: data[mapping.tokenType || "token_type"],
-        scope: data[mapping.scope || "scope"],
-        idToken: data.id_token,
-      };
-
-      const expiresIn = data[mapping.expiresIn || "expires_in"];
-      if (expiresIn) {
-        tokens.expiresAt = Date.now() + expiresIn * 1000;
-      }
-
-      return { success: true, tokens };
+      return { success: true, tokens: this.parseTokenResponse(data) };
     } catch (error) {
       return {
         success: false,
@@ -194,20 +206,10 @@ export class OAuthProvider {
       }),
     });
 
-    const headers: Record<string, string> = {
-      "Content-Type": "application/x-www-form-urlencoded",
-      Accept: "application/json",
-    };
-
-    if (this.config.useBasicAuth) {
-      const credentials = btoa(`${clientId}:${clientSecret}`);
-      headers.Authorization = `Basic ${credentials}`;
-    }
-
     try {
       const response = await fetch(this.config.tokenUrl, {
         method: "POST",
-        headers,
+        headers: this.buildTokenHeaders(clientId, clientSecret),
         body: body.toString(),
       });
 
@@ -221,20 +223,7 @@ export class OAuthProvider {
         };
       }
 
-      const mapping = this.config.tokenResponseMapping || {};
-      const tokens: OAuthTokens = {
-        accessToken: data[mapping.accessToken || "access_token"],
-        refreshToken: data[mapping.refreshToken || "refresh_token"] || refreshToken,
-        tokenType: data[mapping.tokenType || "token_type"],
-        scope: data[mapping.scope || "scope"],
-      };
-
-      const expiresIn = data[mapping.expiresIn || "expires_in"];
-      if (expiresIn) {
-        tokens.expiresAt = Date.now() + expiresIn * 1000;
-      }
-
-      return { success: true, tokens };
+      return { success: true, tokens: this.parseTokenResponse(data, refreshToken) };
     } catch (error) {
       return {
         success: false,
