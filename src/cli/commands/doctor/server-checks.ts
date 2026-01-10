@@ -1,6 +1,8 @@
 import type { DiagnosticResult } from "./types.ts";
 import { cliLogger } from "@veryfront/utils";
 
+const FETCH_TIMEOUT_MS = 2000;
+
 /**
  * Safely cancel response body to prevent resource leaks
  */
@@ -10,6 +12,24 @@ async function safeCancelBody(response: Response | null | undefined): Promise<vo
   } catch (error) {
     // Body cancellation can fail safely, just log for debugging
     cliLogger.debug("Failed to cancel response body:", error);
+  }
+}
+
+/**
+ * Fetch with timeout to prevent hanging on unresponsive servers
+ */
+async function fetchWithTimeout(
+  url: URL,
+  timeoutMs: number = FETCH_TIMEOUT_MS,
+): Promise<Response | null> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { signal: controller.signal });
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timeoutId);
   }
 }
 
@@ -43,7 +63,7 @@ export async function checkRSCEndpoints(): Promise<DiagnosticResult[]> {
   try {
     const base = new URL("http://127.0.0.1:3000/"); // assume default dev port
     const t0m = Date.now();
-    const manifest = await fetch(new URL("/_veryfront/rsc/manifest", base)).catch(() => null);
+    const manifest = await fetchWithTimeout(new URL("/_veryfront/rsc/manifest", base));
     const dm = Date.now() - t0m;
     if (manifest?.ok) {
       let msg = "200";
@@ -67,7 +87,7 @@ export async function checkRSCEndpoints(): Promise<DiagnosticResult[]> {
     await safeCancelBody(manifest);
 
     const t0s = Date.now();
-    const stream = await fetch(new URL("/_veryfront/rsc/stream", base)).catch(() => null);
+    const stream = await fetchWithTimeout(new URL("/_veryfront/rsc/stream", base));
     const ds = Date.now() - t0s;
     if (stream && stream.status === 200) {
       results.push({
@@ -106,7 +126,7 @@ export async function checkRSCEndpoints(): Promise<DiagnosticResult[]> {
  */
 export async function checkRSCCounters(): Promise<DiagnosticResult> {
   const base = new URL("http://127.0.0.1:3000/");
-  const response = await fetch(new URL("/_metrics", base)).catch(() => null);
+  const response = await fetchWithTimeout(new URL("/_metrics", base));
 
   try {
     if (response?.ok) {
