@@ -1,11 +1,14 @@
 import { createError, toError } from "../../../../core/errors/veryfront-error.ts";
 import { logger } from "@veryfront/utils";
-import type {
-  GitHubBlobResponse,
-  GitHubContentItem,
-  GitHubTreeResponse,
-  ResolvedGitHubConfig,
-} from "./types.ts";
+import type { ResolvedGitHubConfig } from "./types.ts";
+import {
+  type GitHubBlobResponse,
+  GitHubBlobResponseSchema,
+  type GitHubContentItem,
+  GitHubContentsResponseSchema,
+  type GitHubTreeResponse,
+  GitHubTreeResponseSchema,
+} from "./schemas.ts";
 
 const LOG_PREFIX = "[GitHubAPIClient]";
 
@@ -48,7 +51,8 @@ export class GitHubAPIClient {
 
     logger.debug(`${LOG_PREFIX} Fetching tree`, { ref: treeRef });
 
-    const response = await this.request<GitHubTreeResponse>(endpoint);
+    const raw = await this.request(endpoint);
+    const response = GitHubTreeResponseSchema.parse(raw);
 
     if (response.truncated) {
       logger.warn(
@@ -62,7 +66,7 @@ export class GitHubAPIClient {
   /**
    * Get file or directory contents
    */
-  getContents(
+  async getContents(
     path: string,
     ref?: string,
   ): Promise<GitHubContentItem | GitHubContentItem[]> {
@@ -73,18 +77,20 @@ export class GitHubAPIClient {
 
     logger.debug(`${LOG_PREFIX} Fetching contents`, { path: normalizedPath });
 
-    return this.request<GitHubContentItem | GitHubContentItem[]>(endpoint);
+    const raw = await this.request(endpoint);
+    return GitHubContentsResponseSchema.parse(raw);
   }
 
   /**
    * Get blob content by SHA (for files >1MB)
    */
-  getBlob(sha: string): Promise<GitHubBlobResponse> {
+  async getBlob(sha: string): Promise<GitHubBlobResponse> {
     const endpoint = `/repos/${this.config.owner}/${this.config.repo}/git/blobs/${sha}`;
 
     logger.debug(`${LOG_PREFIX} Fetching blob`, { sha });
 
-    return this.request<GitHubBlobResponse>(endpoint);
+    const raw = await this.request(endpoint);
+    return GitHubBlobResponseSchema.parse(raw);
   }
 
   /**
@@ -97,7 +103,7 @@ export class GitHubAPIClient {
   /**
    * Make an authenticated request to the GitHub API
    */
-  private async request<T>(endpoint: string): Promise<T> {
+  private async request(endpoint: string): Promise<unknown> {
     const url = `${this.baseUrl}${endpoint}`;
 
     let lastError: Error | null = null;
@@ -124,7 +130,7 @@ export class GitHubAPIClient {
           throw this.createAPIError(response.status, errorBody, endpoint);
         }
 
-        return (await response.json()) as T;
+        return await response.json();
       } catch (error) {
         lastError = error instanceof Error ? error : new Error(String(error));
 
