@@ -2,15 +2,10 @@ export function resolveRelativePath(
   filePath: string,
   projectDir: string,
 ): string {
-  let relativeFilePath = filePath;
-
-  const normalizedProjectDir = projectDir
-    .replace(/\\/g, "/")
-    .replace(/\/$/, "");
+  const normalizedProjectDir = projectDir.replace(/\\/g, "/").replace(/\/$/, "");
 
   if (filePath.startsWith(normalizedProjectDir)) {
-    relativeFilePath = filePath.substring(normalizedProjectDir.length + 1);
-    return relativeFilePath;
+    return filePath.substring(normalizedProjectDir.length + 1);
   }
 
   if (filePath.startsWith("/")) {
@@ -21,12 +16,12 @@ export function resolveRelativePath(
     if (lastProjectPart) {
       const projectIndex = pathParts.indexOf(lastProjectPart);
       if (projectIndex >= 0) {
-        relativeFilePath = pathParts.slice(projectIndex + 1).join("/");
+        return pathParts.slice(projectIndex + 1).join("/");
       }
     }
   }
 
-  return relativeFilePath;
+  return filePath;
 }
 
 export function normalizeModulePath(filePath: string): string {

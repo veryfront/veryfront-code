@@ -171,15 +171,15 @@ export function validatePlatformCompatibility(
   const errors: string[] = [];
   const warnings: string[] = [];
 
-  // Check max steps
-  if (config.maxSteps && config.maxSteps > capabilities.maxAgentSteps) {
-    if (capabilities.maxAgentSteps === Infinity) {
-      // No limit, all good
-    } else {
-      errors.push(
-        `Agent maxSteps (${config.maxSteps}) exceeds platform limit (${capabilities.maxAgentSteps})`,
-      );
-    }
+  // Check max steps (skip check if platform has no limit)
+  if (
+    config.maxSteps &&
+    capabilities.maxAgentSteps !== Infinity &&
+    config.maxSteps > capabilities.maxAgentSteps
+  ) {
+    errors.push(
+      `Agent maxSteps (${config.maxSteps}) exceeds platform limit (${capabilities.maxAgentSteps})`,
+    );
   }
 
   // Check file system requirement

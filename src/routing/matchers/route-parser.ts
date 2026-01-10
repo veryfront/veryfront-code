@@ -7,29 +7,22 @@ export function parseRoute(pattern: string, page: string): Route {
 
   for (const match of pattern.matchAll(/\[\[\.\.\.(\w+)\]\]|\[\.\.\.(\w+)\]|\[(\w+)\]/g)) {
     if (match[1]) {
-      const name = match[1];
-      orderedParamNames.push(name);
+      orderedParamNames.push(match[1]);
       isOptionalCatchAll = true;
       isCatchAll = true;
     } else if (match[2]) {
-      const name = match[2];
-      orderedParamNames.push(name);
+      orderedParamNames.push(match[2]);
       isCatchAll = true;
     } else if (match[3]) {
       orderedParamNames.push(match[3]);
     }
   }
 
-  let regexPattern = pattern;
-
-  regexPattern = regexPattern
+  let regexPattern = pattern
     .replace(/\[\[\.\.\.(\w+)\]\]/g, "___OPTIONAL_CATCHALL___")
     .replace(/\[\.\.\.(\w+)\]/g, "___CATCHALL___")
-    .replace(/\[(\w+)\]/g, "___PARAM___");
-
-  regexPattern = regexPattern.replace(/[-/\\^$*+?.()|[\]{}]/g, "\\$&");
-
-  regexPattern = regexPattern
+    .replace(/\[(\w+)\]/g, "___PARAM___")
+    .replace(/[-/\\^$*+?.()|[\]{}]/g, "\\$&")
     .replace(/___OPTIONAL_CATCHALL___/g, "(.*)")
     .replace(/___CATCHALL___/g, "(.+)")
     .replace(/___PARAM___/g, "([^/]+)");
