@@ -143,7 +143,7 @@ describe("VeryfrontFSAdapter", () => {
       assertEquals(typeof adapter.setRequestToken, "function");
     });
 
-    it("should have setProductionMode method", () => {
+    it("should have setContentContext method", () => {
       const adapter = new VeryfrontFSAdapter({
         veryfront: {
           baseUrl: "https://api.example.com",
@@ -152,13 +152,13 @@ describe("VeryfrontFSAdapter", () => {
           cache: { enabled: false },
         },
       });
-      assertExists(adapter.setProductionMode);
-      assertEquals(typeof adapter.setProductionMode, "function");
+      assertExists(adapter.setContentContext);
+      assertEquals(typeof adapter.setContentContext, "function");
     });
   });
 
-  describe("production mode", () => {
-    it("should default to non-production mode", () => {
+  describe("content context", () => {
+    it("should default to branch context", () => {
       const adapter = new VeryfrontFSAdapter({
         veryfront: {
           baseUrl: "https://api.example.com",
@@ -167,10 +167,11 @@ describe("VeryfrontFSAdapter", () => {
           cache: { enabled: false },
         },
       });
-      assertEquals(adapter.isProductionMode(), false);
+      // Context is null until initialize() is called
+      assertEquals(adapter.getContentContext(), null);
     });
 
-    it("should be able to set production mode", () => {
+    it("should be able to set environment context", () => {
       const adapter = new VeryfrontFSAdapter({
         veryfront: {
           baseUrl: "https://api.example.com",
@@ -179,12 +180,17 @@ describe("VeryfrontFSAdapter", () => {
           cache: { enabled: false },
         },
       });
-      adapter.setProductionMode(true, "release-123");
-      assertEquals(adapter.isProductionMode(), true);
-      assertEquals(adapter.getReleaseId(), "release-123");
+      adapter.setContentContext({
+        sourceType: "environment",
+        projectSlug: "test-project",
+        environmentName: "production",
+      });
+      const context = adapter.getContentContext();
+      assertEquals(context?.sourceType, "environment");
+      assertEquals(context?.environmentName, "production");
     });
 
-    it("should be able to clear production mode", () => {
+    it("should be able to set release context", () => {
       const adapter = new VeryfrontFSAdapter({
         veryfront: {
           baseUrl: "https://api.example.com",
@@ -193,10 +199,33 @@ describe("VeryfrontFSAdapter", () => {
           cache: { enabled: false },
         },
       });
-      adapter.setProductionMode(true, "release-123");
-      adapter.clearProductionMode();
-      assertEquals(adapter.isProductionMode(), false);
-      assertEquals(adapter.getReleaseId(), null);
+      adapter.setContentContext({
+        sourceType: "release",
+        projectSlug: "test-project",
+        releaseId: "release-123",
+      });
+      const context = adapter.getContentContext();
+      assertEquals(context?.sourceType, "release");
+      assertEquals(context?.releaseId, "release-123");
+    });
+
+    it("should be able to set branch context", () => {
+      const adapter = new VeryfrontFSAdapter({
+        veryfront: {
+          baseUrl: "https://api.example.com",
+          apiToken: "test-token",
+          projectSlug: "test-project",
+          cache: { enabled: false },
+        },
+      });
+      adapter.setContentContext({
+        sourceType: "branch",
+        projectSlug: "test-project",
+        branch: "main",
+      });
+      const context = adapter.getContentContext();
+      assertEquals(context?.sourceType, "branch");
+      assertEquals(context?.branch, "main");
     });
   });
 

@@ -28,12 +28,17 @@ describe("StatOperations", () => {
       assertExists(statOps);
     });
 
-    it("should be instantiable with production context", () => {
-      const productionContext = {
+    it("should be instantiable with content context provider", () => {
+      const contextProvider = {
         isProductionMode: () => false,
         getReleaseId: () => null,
+        getContentContext: () => ({
+          sourceType: "branch" as const,
+          projectSlug: "test",
+          branch: "main",
+        }),
       };
-      const statOps = new StatOperations(mockClient, cache, normalizer, productionContext);
+      const statOps = new StatOperations(mockClient, cache, normalizer, contextProvider);
       assertExists(statOps);
     });
 

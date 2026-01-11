@@ -30,6 +30,7 @@ export interface LoaderData {
 
 export interface Entity {
   id: string;
+  path: string;
   slug: string;
   type: "page" | "layout" | "provider" | "component";
   content: string;

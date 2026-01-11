@@ -147,6 +147,7 @@ export async function getEntityInfo(
 
     const entity: Entity = {
       id: entityId,
+      path: filePath,
       slug: getSlugFromPath(filePath),
       type,
       content: body,

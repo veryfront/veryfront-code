@@ -27,26 +27,36 @@ describe("ReadOperations", () => {
       assertExists(readOps);
     });
 
-    it("should be instantiable with production context", () => {
-      const productionContext = {
+    it("should be instantiable with content context provider", () => {
+      const contextProvider = {
         isProductionMode: () => false,
         getReleaseId: () => null,
+        getContentContext: () => ({
+          sourceType: "branch" as const,
+          projectSlug: "test",
+          branch: "main",
+        }),
       };
-      const readOps = new ReadOperations(mockClient, cache, normalizer, productionContext);
+      const readOps = new ReadOperations(mockClient, cache, normalizer, contextProvider);
       assertExists(readOps);
     });
 
     it("should be instantiable with path resolver", () => {
-      const productionContext = {
+      const contextProvider = {
         isProductionMode: () => false,
         getReleaseId: () => null,
+        getContentContext: () => ({
+          sourceType: "branch" as const,
+          projectSlug: "test",
+          branch: "main",
+        }),
       };
       const pathResolver = (path: string) => path;
       const readOps = new ReadOperations(
         mockClient,
         cache,
         normalizer,
-        productionContext,
+        contextProvider,
         pathResolver,
       );
       assertExists(readOps);

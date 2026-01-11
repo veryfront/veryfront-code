@@ -2,20 +2,52 @@
  * Veryfront API Schemas
  *
  * Zod schemas for runtime validation of API responses.
- * This file serves as documentation for all API endpoints.
+ *
+ * API uses flexible identifiers:
+ * - projectReference: UUID or slug (auto-detected)
+ * - environmentName: string like "production", "preview", "staging"
+ * - branchName: string like "main"
+ * - version: "latest" or specific version string
+ * - pathOrId: file path (e.g., "pages/index.tsx") or file UUID
  */
 
 import { z } from "zod";
 
 // =============================================================================
+// Shared Primitives
+// =============================================================================
+
+const FileTypeEnum = z.enum(["page", "function", "component", "file"]);
+
+// Links can be either a string URL or an object with href/method
+const LinkValueSchema = z.union([
+  z.string(),
+  z.object({
+    href: z.string(),
+    method: z.string().optional(),
+  }),
+]);
+
+const LinksSchema = z.object({
+  self: LinkValueSchema.optional(),
+  content: LinkValueSchema.optional(),
+  project: LinkValueSchema.optional(),
+  files: LinkValueSchema.optional(),
+}).passthrough();
+
+// Base fields shared by all file schemas
+const BaseFileFields = {
+  path: z.string(),
+  type: FileTypeEnum,
+  size: z.number(),
+  updatedAt: z.string(),
+  _links: LinksSchema.optional(),
+};
+
+// =============================================================================
 // Base Schemas
 // =============================================================================
 
-/**
- * Project schema.
- * Note: API returns layout_id/provider_id, renderer uses layout/provider aliases.
- * Both field names are accepted for compatibility.
- */
 export const ProjectSchema = z.object({
   id: z.string().uuid(),
   name: z.string(),
@@ -23,7 +55,6 @@ export const ProjectSchema = z.object({
   description: z.string().optional(),
   createdAt: z.string().optional(),
   updatedAt: z.string().optional(),
-  // API returns layout_id/provider_id, renderer aliases as layout/provider
   provider: z.string().optional(),
   provider_id: z.string().optional(),
   layout: z.string().optional(),
@@ -31,33 +62,21 @@ export const ProjectSchema = z.object({
   config: z.union([z.string(), z.record(z.unknown())]).optional(),
 });
 
-/**
- * Project file schema.
- * Note: API doesn't return mimeType or createdAt - only updatedAt.
- */
 export const ProjectFileSchema = z.object({
-  id: z.string().uuid().optional(), // Entity UUID - available when fetched from veryfront-api
+  id: z.string().optional(),
+  versionId: z.string().optional(),
   path: z.string(),
+  content: z.string().optional(),
   size: z.number(),
-  type: z.enum(["page", "function", "component", "file"]),
-  mimeType: z.string().optional(), // Not returned by API, added by renderer
-  createdAt: z.string().optional(), // Not returned by API
+  type: FileTypeEnum,
   updatedAt: z.string(),
 });
 
-export const PaginationSchema = z.object({
-  cursor: z.string().optional(),
-  hasMore: z.boolean(),
-});
-
-/**
- * PageInfo schema - full API response structure.
- */
 export const PageInfoSchema = z.object({
   hasNextPage: z.boolean(),
-  nextCursor: z.string().nullable(),
+  endCursor: z.string().nullable(),
   hasPreviousPage: z.boolean().optional(),
-  previousCursor: z.string().nullable().optional(),
+  startCursor: z.string().nullable().optional(),
 });
 
 export const EnvironmentSchema = z.object({
@@ -66,86 +85,108 @@ export const EnvironmentSchema = z.object({
 });
 
 // =============================================================================
-// API Endpoints
+// Branch Files
+// GET /projects/{projectRef}/branches/{branchName}/files[/{pathOrId}]
 // =============================================================================
 
-/**
- * GET /projects
- * List all projects accessible to the authenticated user.
- */
+export const BranchFileListItemSchema = z.object({
+  id: z.string().optional(),
+  content: z.string().optional(),
+  ...BaseFileFields,
+});
+
+export const ListBranchFilesResponseSchema = z.object({
+  data: z.array(BranchFileListItemSchema),
+  pageInfo: PageInfoSchema,
+  _links: LinksSchema.optional(),
+});
+
+export const BranchFileDetailSchema = z.object({
+  id: z.string().optional(),
+  content: z.string(),
+  ...BaseFileFields,
+});
+
+// =============================================================================
+// Environment Files
+// GET /projects/{projectRef}/environments/{environmentName}/files[/{pathOrId}]
+// =============================================================================
+
+// Shared fields for environment/release responses
+const VersionedFileFields = {
+  id: z.string(),
+  versionId: z.string(),
+};
+
+const ReleaseMetaFields = {
+  releaseId: z.string(),
+  releaseVersion: z.string().nullable(),
+};
+
+const EnvironmentMetaFields = {
+  environmentId: z.string(),
+  environmentName: z.string(),
+  ...ReleaseMetaFields,
+};
+
+export const EnvironmentFileListItemSchema = z.object({
+  ...VersionedFileFields,
+  content: z.string().optional(),
+  ...BaseFileFields,
+});
+
+export const ListEnvironmentFilesResponseSchema = z.object({
+  data: z.array(EnvironmentFileListItemSchema),
+  pageInfo: PageInfoSchema,
+  ...EnvironmentMetaFields,
+  _links: LinksSchema.optional(),
+});
+
+export const EnvironmentFileDetailSchema = z.object({
+  ...VersionedFileFields,
+  content: z.string(),
+  ...BaseFileFields,
+  ...EnvironmentMetaFields,
+});
+
+// =============================================================================
+// Release Files
+// GET /projects/{projectRef}/releases/{version}/files[/{pathOrId}]
+// =============================================================================
+
+export const ReleaseFileListItemSchema = z.object({
+  ...VersionedFileFields,
+  content: z.string().optional(),
+  ...BaseFileFields,
+});
+
+export const ListReleaseFilesResponseSchema = z.object({
+  data: z.array(ReleaseFileListItemSchema),
+  pageInfo: PageInfoSchema,
+  ...ReleaseMetaFields,
+  _links: LinksSchema.optional(),
+});
+
+export const ReleaseFileDetailSchema = z.object({
+  ...VersionedFileFields,
+  content: z.string(),
+  ...BaseFileFields,
+  ...ReleaseMetaFields,
+});
+
+// =============================================================================
+// Projects
+// =============================================================================
+
 export const ListProjectsResponseSchema = z.object({
   data: z.array(ProjectSchema),
 });
 
-/**
- * GET /projects/:id
- * Get a single project by ID.
- */
-export const GetProjectResponseSchema = ProjectSchema;
+// =============================================================================
+// Domain Lookup
+// GET /lookup/domain/{domain}
+// =============================================================================
 
-/**
- * GET /projects/:id/files
- * List files in a project (draft/working copy).
- *
- * Query params:
- * - limit: number (default 100)
- * - cursor: string (pagination)
- * - branch: string (git branch)
- * - pattern: string (search pattern)
- * - sortBy: "updatedAt" | "path"
- * - sortOrder: "asc" | "desc"
- */
-export const ListFilesResponseSchema = z.object({
-  data: z.array(ProjectFileSchema),
-  pageInfo: PageInfoSchema.optional(),
-  pagination: PaginationSchema.optional(),
-});
-
-/**
- * GET /projects/:id/files/:path
- * Get file content from draft/working copy.
- *
- * Query params:
- * - branch: string (git branch)
- */
-export const GetFileContentResponseSchema = z.object({
-  path: z.string(),
-  content: z.string(),
-  size: z.number(),
-});
-
-/**
- * GET /projects/:id/published/files
- * List published files from a release (production).
- *
- * Query params:
- * - releaseId: string (specific release, defaults to latest)
- */
-export const ListPublishedFilesResponseSchema = z.object({
-  data: z.array(ProjectFileSchema),
-  releaseId: z.string().optional(),
-});
-
-/**
- * GET /projects/:id/published/files/:path
- * Get published file content from a release.
- *
- * Query params:
- * - releaseId: string (specific release, defaults to latest)
- */
-export const GetPublishedFileContentResponseSchema = z.object({
-  path: z.string(),
-  content: z.string(),
-  size: z.number(),
-  versionId: z.string(),
-  releaseId: z.string(),
-});
-
-/**
- * GET /lookup/domain/:domain
- * Look up project info by custom domain.
- * Used for JIT rendering of custom domain production sites.
- */
 export const LookupDomainResponseSchema = z.object({
   projectId: z.string().uuid(),
   projectSlug: z.string(),
@@ -155,72 +196,76 @@ export const LookupDomainResponseSchema = z.object({
 });
 
 // =============================================================================
-// Type Exports (inferred from schemas)
+// Type Exports
 // =============================================================================
 
 export type Project = z.infer<typeof ProjectSchema>;
 export type ProjectFile = z.infer<typeof ProjectFileSchema>;
-export type Pagination = z.infer<typeof PaginationSchema>;
 export type PageInfo = z.infer<typeof PageInfoSchema>;
 export type Environment = z.infer<typeof EnvironmentSchema>;
 
-export type ListProjectsResponse = z.infer<typeof ListProjectsResponseSchema>;
-export type GetProjectResponse = z.infer<typeof GetProjectResponseSchema>;
-export type ListFilesResponse = z.infer<typeof ListFilesResponseSchema>;
-export type GetFileContentResponse = z.infer<typeof GetFileContentResponseSchema>;
-export type ListPublishedFilesResponse = z.infer<typeof ListPublishedFilesResponseSchema>;
-export type GetPublishedFileContentResponse = z.infer<typeof GetPublishedFileContentResponseSchema>;
+export type BranchFileListItem = z.infer<typeof BranchFileListItemSchema>;
+export type ListBranchFilesResponse = z.infer<typeof ListBranchFilesResponseSchema>;
+export type BranchFileDetail = z.infer<typeof BranchFileDetailSchema>;
+
+export type EnvironmentFileListItem = z.infer<typeof EnvironmentFileListItemSchema>;
+export type ListEnvironmentFilesResponse = z.infer<typeof ListEnvironmentFilesResponseSchema>;
+export type EnvironmentFileDetail = z.infer<typeof EnvironmentFileDetailSchema>;
+
+export type ReleaseFileListItem = z.infer<typeof ReleaseFileListItemSchema>;
+export type ListReleaseFilesResponse = z.infer<typeof ListReleaseFilesResponseSchema>;
+export type ReleaseFileDetail = z.infer<typeof ReleaseFileDetailSchema>;
+
 export type LookupDomainResponse = z.infer<typeof LookupDomainResponseSchema>;
 
 // =============================================================================
-// Endpoint Registry (for documentation/tooling)
+// Endpoint Registry
 // =============================================================================
 
 export const API_ENDPOINTS = {
   listProjects: {
     method: "GET" as const,
     path: "/projects",
-    description: "List all projects accessible to the authenticated user",
-    responseSchema: ListProjectsResponseSchema,
+    description: "List all accessible projects",
   },
   getProject: {
     method: "GET" as const,
-    path: "/projects/:id",
-    description: "Get a single project by ID",
-    responseSchema: GetProjectResponseSchema,
+    path: "/projects/{projectRef}",
+    description: "Get project by UUID or slug",
   },
-  listFiles: {
+  listBranchFiles: {
     method: "GET" as const,
-    path: "/projects/:id/files",
-    description: "List files in a project (draft/working copy)",
-    queryParams: ["limit", "cursor", "branch", "pattern", "sortBy", "sortOrder"],
-    responseSchema: ListFilesResponseSchema,
+    path: "/projects/{projectRef}/branches/{branchName}/files",
+    description: "List files in a branch (draft/working copy)",
   },
-  getFileContent: {
+  getBranchFile: {
     method: "GET" as const,
-    path: "/projects/:id/files/:path",
-    description: "Get file content from draft/working copy",
-    queryParams: ["branch"],
-    responseSchema: GetFileContentResponseSchema,
+    path: "/projects/{projectRef}/branches/{branchName}/files/{pathOrId}",
+    description: "Get file from a branch by path or UUID",
   },
-  listPublishedFiles: {
+  listEnvironmentFiles: {
     method: "GET" as const,
-    path: "/projects/:id/published/files",
-    description: "List published files from a release (production)",
-    queryParams: ["releaseId"],
-    responseSchema: ListPublishedFilesResponseSchema,
+    path: "/projects/{projectRef}/environments/{environmentName}/files",
+    description: "List files from an environment (deployed release)",
   },
-  getPublishedFileContent: {
+  getEnvironmentFile: {
     method: "GET" as const,
-    path: "/projects/:id/published/files/:path",
-    description: "Get published file content from a release",
-    queryParams: ["releaseId"],
-    responseSchema: GetPublishedFileContentResponseSchema,
+    path: "/projects/{projectRef}/environments/{environmentName}/files/{pathOrId}",
+    description: "Get file from an environment by path or UUID",
+  },
+  listReleaseFiles: {
+    method: "GET" as const,
+    path: "/projects/{projectRef}/releases/{version}/files",
+    description: "List files from a specific release",
+  },
+  getReleaseFile: {
+    method: "GET" as const,
+    path: "/projects/{projectRef}/releases/{version}/files/{pathOrId}",
+    description: "Get file from a release by path or UUID",
   },
   lookupDomain: {
     method: "GET" as const,
-    path: "/lookup/domain/:domain",
-    description: "Look up project info by custom domain",
-    responseSchema: LookupDomainResponseSchema,
+    path: "/lookup/domain/{domain}",
+    description: "Look up project by custom domain",
   },
 } as const;

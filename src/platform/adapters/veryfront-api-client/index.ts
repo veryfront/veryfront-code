@@ -1,34 +1,42 @@
-export { VeryfrontAPIClient } from "./client.ts";
-export { VeryfrontAPIOperations } from "./operations.ts";
-export { requestWithRetry } from "./retry-handler.ts";
-export type { RequestOptions, RetryConfig } from "./retry-handler.ts";
-
-// Types (re-exported from schemas via types.ts)
+// Client and Operations
+export { type FileContext, VeryfrontAPIClient } from "./client.ts";
 export {
-  type GetFileContentResponse,
-  type GetProjectResponse,
-  type GetPublishedFileContentResponse,
-  type ListFilesResponse,
-  type ListProjectsResponse,
-  type ListPublishedFilesResponse,
+  type FileDetail,
+  type FileListResult,
+  type ListFilesOptions,
+  VeryfrontAPIOperations,
+} from "./operations.ts";
+
+// Retry Handler
+export { type RequestOptions, requestWithRetry, type RetryConfig } from "./retry-handler.ts";
+
+// Types
+export {
+  type Environment,
   type LookupDomainResponse,
-  type Pagination,
+  type PageInfo,
   type Project,
   type ProjectFile,
   type VeryfrontAPIConfig,
   VeryfrontAPIError,
 } from "./types.ts";
 
-// Schemas for validation and documentation
+// Schemas
 export {
   API_ENDPOINTS,
-  GetFileContentResponseSchema,
-  GetProjectResponseSchema,
-  GetPublishedFileContentResponseSchema,
-  ListFilesResponseSchema,
+  BranchFileDetailSchema,
+  BranchFileListItemSchema,
+  EnvironmentFileDetailSchema,
+  EnvironmentFileListItemSchema,
+  EnvironmentSchema,
+  ListBranchFilesResponseSchema,
+  ListEnvironmentFilesResponseSchema,
   ListProjectsResponseSchema,
-  ListPublishedFilesResponseSchema,
+  ListReleaseFilesResponseSchema,
   LookupDomainResponseSchema,
+  PageInfoSchema,
   ProjectFileSchema,
   ProjectSchema,
+  ReleaseFileDetailSchema,
+  ReleaseFileListItemSchema,
 } from "./schemas.ts";

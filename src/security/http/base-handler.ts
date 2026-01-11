@@ -177,6 +177,7 @@ export abstract class BaseHandler implements Handler {
     const fsWrapper = ctx.adapter.fs as {
       setRequestToken?: (t: string) => void;
       setRequestBranch?: (b: string | null) => void;
+      isMultiProjectMode?: () => boolean;
       runWithContext?: <R>(
         slug: string,
         token: string,
@@ -202,7 +203,8 @@ export abstract class BaseHandler implements Handler {
     }
 
     // Multi-project mode: use runWithContext
-    if (typeof fsWrapper.runWithContext === "function") {
+    // Use isMultiProjectMode() to check support - the method exists on wrapper but throws if unsupported
+    if (typeof fsWrapper.isMultiProjectMode === "function" && fsWrapper.isMultiProjectMode()) {
       // Determine production mode based on domain type
       let isProduction = false;
       if (ctx.parsedDomain?.isVeryfrontDomain) {
@@ -217,7 +219,7 @@ export abstract class BaseHandler implements Handler {
         productionMode: isProduction,
       }, ctx);
 
-      return fsWrapper.runWithContext(
+      return fsWrapper.runWithContext!(
         ctx.projectSlug!,
         ctx.proxyToken || "",
         fn,

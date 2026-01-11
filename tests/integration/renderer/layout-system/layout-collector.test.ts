@@ -36,6 +36,7 @@ isLayout: true
     const pageInfo: EntityInfo = {
       entity: {
         id: join(projectDir, "pages/test.mdx"),
+        path: "pages/test.mdx",
         slug: "test",
         type: "page",
         content: "# Test Page",
@@ -92,6 +93,7 @@ Deno.test("LayoutCollector - collects nested directory layouts", async () => {
     const pageInfo: EntityInfo = {
       entity: {
         id: join(projectDir, "pages/blog/post.mdx"),
+        path: "pages/blog/post.mdx",
         slug: "blog/post",
         type: "page",
         content: "# Blog Post",
@@ -130,6 +132,7 @@ Deno.test("LayoutCollector - respects layout: false in frontmatter", async () =>
     const pageInfo: EntityInfo = {
       entity: {
         id: join(projectDir, "pages/test.mdx"),
+        path: "pages/test.mdx",
         slug: "test",
         type: "page",
         content: "# Test Page",
@@ -179,6 +182,7 @@ isLayout: true
     const pageInfo: EntityInfo = {
       entity: {
         id: join(projectDir, "pages/test.mdx"),
+        path: "pages/test.mdx",
         slug: "test",
         type: "page",
         content: "# Test Page",

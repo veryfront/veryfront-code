@@ -13,6 +13,8 @@ describe("VeryfrontAPIClient", () => {
 
   beforeEach(() => {
     client = new VeryfrontAPIClient(mockConfig);
+    // Use branch context for simpler mock responses
+    client.setContext({ type: "branch", name: "main" });
   });
 
   describe("initialization", () => {
@@ -154,29 +156,23 @@ describe("VeryfrontAPIClient", () => {
           );
         }
 
-        if (urlStr.includes("/files")) {
+        // Match branch files endpoint
+        if (urlStr.includes("/branches/") && urlStr.includes("/files")) {
           page++;
           if (page === 1) {
             return Promise.resolve(
               new Response(
                 JSON.stringify({
                   data: [
-                    {
-                      path: "file1.ts",
-                      size: 100,
-                      type: "file",
-                      createdAt: "2024-01-01",
-                      updatedAt: "2024-01-01",
-                    },
-                    {
-                      path: "file2.ts",
-                      size: 200,
-                      type: "file",
-                      createdAt: "2024-01-01",
-                      updatedAt: "2024-01-01",
-                    },
+                    { path: "file1.ts", size: 100, type: "file", updatedAt: "2024-01-01" },
+                    { path: "file2.ts", size: 200, type: "file", updatedAt: "2024-01-01" },
                   ],
-                  pagination: { cursor: "page2", hasMore: true },
+                  pageInfo: {
+                    hasNextPage: true,
+                    endCursor: "page2",
+                    hasPreviousPage: false,
+                    startCursor: null,
+                  },
                 }),
                 { status: 200, headers: { "Content-Type": "application/json" } },
               ),
@@ -186,15 +182,14 @@ describe("VeryfrontAPIClient", () => {
               new Response(
                 JSON.stringify({
                   data: [
-                    {
-                      path: "file3.ts",
-                      size: 300,
-                      type: "file",
-                      createdAt: "2024-01-01",
-                      updatedAt: "2024-01-01",
-                    },
+                    { path: "file3.ts", size: 300, type: "file", updatedAt: "2024-01-01" },
                   ],
-                  pagination: { hasMore: false },
+                  pageInfo: {
+                    hasNextPage: false,
+                    endCursor: null,
+                    hasPreviousPage: true,
+                    startCursor: "page1",
+                  },
                 }),
                 { status: 200, headers: { "Content-Type": "application/json" } },
               ),
@@ -252,24 +247,35 @@ describe("VeryfrontAPIClient", () => {
           );
         }
 
-        if (urlStr.includes("/files/")) {
-          // API returns JSON with { path, content, size } format
+        // Match branch file content endpoint
+        if (urlStr.includes("/branches/") && urlStr.includes("/files/")) {
           return Promise.resolve(
             new Response(
               JSON.stringify({
                 path: "test.ts",
                 content: 'console.log("Hello")',
                 size: 21,
+                type: "file",
+                updatedAt: "2024-01-01",
               }),
               { status: 200, headers: { "Content-Type": "application/json" } },
             ),
           );
         }
 
-        if (urlStr.includes("/files")) {
+        // Match branch files list endpoint
+        if (urlStr.includes("/branches/") && urlStr.includes("/files")) {
           return Promise.resolve(
             new Response(
-              JSON.stringify({ data: [], pagination: { hasMore: false } }),
+              JSON.stringify({
+                data: [],
+                pageInfo: {
+                  hasNextPage: false,
+                  endCursor: null,
+                  hasPreviousPage: false,
+                  startCursor: null,
+                },
+              }),
               { status: 200, headers: { "Content-Type": "application/json" } },
             ),
           );

@@ -177,14 +177,14 @@ export class LayoutCollector {
     const layoutBundle = await this.compileMDX(
       layoutInfo.entity.content,
       { ...layoutInfo.entity.frontmatter, isLayout: true },
-      layoutInfo.entity.id,
+      layoutInfo.entity.path,
     );
 
     logger.debug("Named Layout MDX compiled", {
       codeLength: layoutBundle.compiledCode?.length,
     });
 
-    return { layoutBundle, layoutPath: layoutInfo.entity.id, layoutName };
+    return { layoutBundle, layoutPath: layoutInfo.entity.path, layoutName };
   }
 
   private async collectNestedLayouts(pageInfo: EntityInfo): Promise<LayoutItem[]> {

@@ -114,6 +114,7 @@ Deno.test("LayoutCompiler - computes dependency hash", async () => {
       {
         entity: {
           id: join(projectDir, "providers/test.mdx"),
+          path: "providers/test.mdx",
           slug: "test",
           type: "provider",
           content: "# Provider",

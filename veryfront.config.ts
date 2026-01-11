@@ -35,10 +35,6 @@ try {
 // Check if running behind proxy (PROXY_MODE=1) or direct mode
 const proxyMode = Deno.env.get("PROXY_MODE") === "1";
 
-// Production mode for serving published content (not draft)
-// In production deployment, this should be true to fetch from releases
-const productionMode = Deno.env.get("PRODUCTION_MODE") === "1";
-
 // Get env var from Deno.env or .env.local
 const getEnv = (key: string, fallback = "") =>
   Deno.env.get(key) || env[key] || fallback;
@@ -47,7 +43,44 @@ const apiBaseUrl = getEnv("VERYFRONT_API_BASE_URL", DEFAULT_API_URL_LOCAL);
 const apiToken = getEnv("VERYFRONT_API_TOKEN");
 const projectSlug = getEnv("VERYFRONT_PROJECT_SLUG");
 const projectId = getEnv("VERYFRONT_PROJECT_ID");
-const releaseId = getEnv("VERYFRONT_RELEASE_ID");
+
+// Content source configuration
+// Type: "branch" (default), "environment", "domain", or "release"
+const contentSourceType = getEnv("VERYFRONT_CONTENT_SOURCE", "branch") as
+  | "branch"
+  | "environment"
+  | "domain"
+  | "release";
+const contentSourceBranch = getEnv("VERYFRONT_BRANCH", "main");
+const contentSourceEnv = getEnv("VERYFRONT_ENVIRONMENT", "production");
+const contentSourceDomain = getEnv("VERYFRONT_DOMAIN");
+const contentSourceReleaseId = getEnv("VERYFRONT_RELEASE_ID");
+
+// Build content source config
+type ContentSource =
+  | { type: "branch"; branch?: string }
+  | { type: "environment"; name: string }
+  | { type: "domain"; domain: string }
+  | { type: "release"; releaseId?: string };
+
+function buildContentSource(): ContentSource {
+  switch (contentSourceType) {
+    case "environment":
+      return { type: "environment", name: contentSourceEnv };
+    case "domain":
+      if (!contentSourceDomain) {
+        throw new ConfigError("VERYFRONT_DOMAIN is required when VERYFRONT_CONTENT_SOURCE=domain");
+      }
+      return { type: "domain", domain: contentSourceDomain };
+    case "release":
+      return { type: "release", releaseId: contentSourceReleaseId || "latest" };
+    case "branch":
+    default:
+      return { type: "branch", branch: contentSourceBranch };
+  }
+}
+
+const contentSource = buildContentSource();
 
 // In proxy mode, token comes from x-token header per-request
 // In direct mode, require token and slug from env
@@ -98,14 +131,15 @@ export default useGitHub ? {
       // In proxy mode, token from header takes precedence, but still provide
       // a fallback token from env for local dev when proxy doesn't have OAuth
       // In direct mode, use the configured values directly
-      apiToken: apiToken || undefined, // Fallback for both modes
+      apiToken: apiToken || undefined,
       projectSlug: proxyMode ? undefined : projectSlug,
-      projectId: proxyMode ? undefined : projectId || undefined, // Skip listProjects lookup if set
-      // Production mode fetches from releases (published content)
-      // instead of draft files and skips WebSocket connection
-      productionMode,
-      // Specific release ID to fetch (defaults to "latest" if not set)
-      releaseId: proxyMode ? undefined : releaseId || undefined,
+      projectId: proxyMode ? undefined : projectId || undefined,
+      // Content source configuration:
+      // - branch: Draft content from git branch (for dev)
+      // - environment: Published content from named environment (production, preview)
+      // - domain: Resolve environment via domain lookup API
+      // - release: Specific release by ID
+      contentSource: proxyMode ? undefined : contentSource,
       cache: {
         enabled: true, // WebSocket pokes invalidate cache on file changes
         ttl: 60000, // 60s TTL as safety net
@@ -122,7 +156,7 @@ export default useGitHub ? {
   dev: {
     port: 3001,
     host: "lvh.me",
-    hmr: true, // Enables browser auto-reload on cache invalidation
+    hmr: contentSource.type === "branch", // Only enable HMR for branch mode
   },
 
   // Security - allow requests from local API (in proxy mode) or production

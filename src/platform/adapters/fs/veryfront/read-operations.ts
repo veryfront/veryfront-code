@@ -2,10 +2,13 @@ import { logger } from "@veryfront/utils";
 import type { VeryfrontAPIClient } from "../../veryfront-api-client/index.ts";
 import { FileCache } from "../cache/file-cache.ts";
 import { PathNormalizer } from "./path-normalizer.ts";
+import type { ResolvedContentContext } from "./types.ts";
+import { buildFileCacheKeyPrefix } from "./cache-keys.ts";
 
-export interface ProductionModeContext {
+export interface ContentContextProvider {
   isProductionMode: () => boolean;
   getReleaseId: () => string | null;
+  getContentContext: () => ResolvedContentContext | null;
 }
 
 /**
@@ -21,10 +24,28 @@ export class ReadOperations {
     private readonly client: VeryfrontAPIClient,
     private readonly cache: FileCache,
     private readonly normalizer: PathNormalizer,
-    private readonly productionContext?: ProductionModeContext,
+    private readonly contextProvider?: ContentContextProvider,
     // Resolver for normalized paths -> original API paths (e.g., "pages/index.mdx" -> "pages/")
     private readonly getOriginalApiPath?: (path: string) => string,
+    // Getter for cached file list (to check for pre-fetched content)
+    private readonly getFileListCache?: () => Array<{ path: string; content?: string }> | undefined,
   ) {}
+
+  /**
+   * Check if content is available in the cached file list.
+   * This avoids redundant API calls when the file list already includes content.
+   */
+  private getContentFromFileList(normalizedPath: string): string | undefined {
+    const fileList = this.getFileListCache?.();
+    if (!fileList) return undefined;
+
+    const file = fileList.find((f) => f.path === normalizedPath);
+    if (file?.content) {
+      logger.debug("[ReadOperations] Found content in file list cache", { path: normalizedPath });
+      return file.content;
+    }
+    return undefined;
+  }
 
   async readFile(path: string): Promise<Uint8Array> {
     const normalizedPath = this.normalizer.normalize(path);
@@ -39,47 +60,50 @@ export class ReadOperations {
   }
 
   private fetchContent(normalizedPath: string): Promise<string> {
-    const isProduction = this.productionContext?.isProductionMode() ?? false;
-    const releaseId = this.productionContext?.getReleaseId() ?? null;
-    // Get the original API path for fetching (handles normalized paths like "pages/index.mdx" -> "pages/")
+    const ctx = this.contextProvider?.getContentContext();
     const apiPath = this.getOriginalApiPath?.(normalizedPath) ?? normalizedPath;
+    const cacheKeyPrefix = buildFileCacheKeyPrefix(ctx);
+    const cacheKey = `${cacheKeyPrefix}:${normalizedPath}`;
 
-    if (isProduction) {
-      return this.fetchPublishedContent(normalizedPath, apiPath, releaseId);
+    // Check cache first
+    const cached = this.cache.get<string>(cacheKey);
+    if (cached) {
+      logger.debug("[ReadOperations] Cache hit", { path: normalizedPath, cacheKey });
+      return Promise.resolve(cached);
     }
-    return this.fetchDraftContent(normalizedPath, apiPath);
+
+    // Check if content is available in the file list cache
+    const fileListContent = this.getContentFromFileList(normalizedPath);
+    if (fileListContent) {
+      this.cache.set(cacheKey, fileListContent);
+      return Promise.resolve(fileListContent);
+    }
+
+    // Fetch based on source type
+    const isPublished = ctx?.sourceType !== "branch";
+    if (isPublished) {
+      return this.fetchPublishedContent(normalizedPath, apiPath, cacheKey, ctx?.releaseId ?? null);
+    }
+    return this.fetchDraftContent(normalizedPath, apiPath, cacheKey);
   }
 
   private async fetchPublishedContent(
     normalizedPath: string,
     apiPath: string,
+    cacheKey: string,
     releaseId: string | null,
   ): Promise<string> {
-    const cacheKey = `file:published:${releaseId ?? "latest"}:${normalizedPath}`;
-
-    const cached = this.cache.get<string>(cacheKey);
-    if (cached) {
-      logger.debug("[ReadOperations] Cache hit (published)", { path: normalizedPath, releaseId });
-      return cached;
-    }
-
     logger.debug("[ReadOperations] Fetching published content", {
       path: normalizedPath,
       apiPath,
-      releaseId: releaseId ?? "latest",
+      cacheKey,
     });
     try {
-      // Use apiPath for the actual API call (handles normalized paths like "pages/index.mdx" -> "pages/")
-      const content = await this.client.getPublishedFileContent(
-        apiPath,
-        undefined,
-        releaseId ?? undefined,
-      );
+      const content = await this.client.getPublishedFileContent(apiPath);
       logger.debug("[ReadOperations] Fetched published content", {
         path: normalizedPath,
         contentLength: content.length,
       });
-      // Published content is immutable, cache for long time
       this.cache.set(cacheKey, content);
       return content;
     } catch (error) {
@@ -87,10 +111,8 @@ export class ReadOperations {
       const is404Error = errorMessage.includes("404") || errorMessage.includes("Not Found");
 
       // Try fallback extensions for 404 errors
-      // This handles API inconsistencies where file listing uses different extension
-      // than the entity slug (e.g., file renamed from .tsx to .mdx)
       if (is404Error) {
-        const fallbackContent = await this.tryFallbackExtensions(apiPath, releaseId, cacheKey);
+        const fallbackContent = await this.tryFallbackExtensions(apiPath, cacheKey);
         if (fallbackContent !== null) {
           return fallbackContent;
         }
@@ -98,7 +120,6 @@ export class ReadOperations {
         logger.debug("[ReadOperations] File not found (expected for optional files)", {
           path: normalizedPath,
           apiPath,
-          releaseId,
         });
       } else {
         logger.error("[ReadOperations] Failed to fetch published content", {
@@ -119,10 +140,8 @@ export class ReadOperations {
    */
   private async tryFallbackExtensions(
     apiPath: string,
-    releaseId: string | null,
     cacheKey: string,
   ): Promise<string | null> {
-    // Extract the base path without extension
     const extMatch = apiPath.match(/\.(tsx|ts|jsx|js|mdx|md)$/);
     if (!extMatch) {
       return null;
@@ -131,7 +150,6 @@ export class ReadOperations {
     const originalExt = extMatch[0];
     const basePath = apiPath.slice(0, -originalExt.length);
 
-    // Try each fallback extension (skip the original)
     for (const ext of FALLBACK_EXTENSIONS) {
       if (ext === originalExt) continue;
 
@@ -140,23 +158,16 @@ export class ReadOperations {
         logger.debug("[ReadOperations] Trying fallback extension", {
           originalPath: apiPath,
           fallbackPath,
-          releaseId,
         });
 
-        const content = await this.client.getPublishedFileContent(
-          fallbackPath,
-          undefined,
-          releaseId ?? undefined,
-        );
+        const content = await this.client.getPublishedFileContent(fallbackPath);
 
         logger.info("[ReadOperations] Fallback extension succeeded", {
           originalPath: apiPath,
           fallbackPath,
-          releaseId,
           contentLength: content.length,
         });
 
-        // Cache with original key so subsequent requests don't need fallback
         this.cache.set(cacheKey, content);
         return content;
       } catch {
@@ -167,18 +178,16 @@ export class ReadOperations {
     return null;
   }
 
-  private async fetchDraftContent(normalizedPath: string, apiPath: string): Promise<string> {
-    const branch = this.client.getRequestBranch() || "main";
-    const cacheKey = `file:text:${branch}:${normalizedPath}`;
-
-    const cached = this.cache.get<string>(cacheKey);
-    if (cached) {
-      logger.debug("[ReadOperations] Cache hit (draft)", { path: normalizedPath });
-      return cached;
-    }
-
-    logger.debug("[ReadOperations] Fetching draft content", { path: normalizedPath, apiPath });
-    // Use apiPath for the actual API call (handles normalized paths like "pages/index.mdx" -> "pages/")
+  private async fetchDraftContent(
+    normalizedPath: string,
+    apiPath: string,
+    cacheKey: string,
+  ): Promise<string> {
+    logger.debug("[ReadOperations] Fetching draft content", {
+      path: normalizedPath,
+      apiPath,
+      cacheKey,
+    });
     const content = await this.client.getFileContent(apiPath);
     this.cache.set(cacheKey, content);
     return content;

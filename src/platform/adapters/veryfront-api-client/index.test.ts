@@ -34,17 +34,19 @@ describe("veryfront-api-client/index.ts exports", () => {
 
   it("should export schema validators", async () => {
     const {
-      GetFileContentResponseSchema,
-      GetProjectResponseSchema,
-      ListFilesResponseSchema,
+      BranchFileDetailSchema,
+      EnvironmentFileDetailSchema,
+      ListBranchFilesResponseSchema,
+      ListEnvironmentFilesResponseSchema,
       ListProjectsResponseSchema,
       ProjectFileSchema,
       ProjectSchema,
     } = await import("./index.ts");
 
-    assertExists(GetFileContentResponseSchema);
-    assertExists(GetProjectResponseSchema);
-    assertExists(ListFilesResponseSchema);
+    assertExists(BranchFileDetailSchema);
+    assertExists(EnvironmentFileDetailSchema);
+    assertExists(ListBranchFilesResponseSchema);
+    assertExists(ListEnvironmentFilesResponseSchema);
     assertExists(ListProjectsResponseSchema);
     assertExists(ProjectFileSchema);
     assertExists(ProjectSchema);

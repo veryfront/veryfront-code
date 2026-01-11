@@ -197,6 +197,7 @@ async function tryLoadPageFile(
     return {
       entity: {
         id: file,
+        path: file,
         slug,
         type: "page",
         isPage: true,

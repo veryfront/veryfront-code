@@ -42,8 +42,11 @@ export type {
 
 // Veryfront API Client
 export {
-  type ListFilesResponse,
-  type ListProjectsResponse,
+  type FileContext,
+  type FileDetail,
+  type FileListResult,
+  type ListFilesOptions,
+  type LookupDomainResponse,
   type Project,
   type ProjectFile,
   VeryfrontAPIClient,
