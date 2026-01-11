@@ -194,7 +194,7 @@ jobs:
 
           kubectl create secret generic veryfront-renderer-secret \
             --namespace veryfront-production \
-            --from-literal=VERYFRONT_API_BASE_URL="https://api.veryfront.com/api" \
+            --from-literal=VERYFRONT_API_BASE_URL="https://api.veryfront.com" \
             --from-literal=REDIS_URL="$REDIS_URL" \
             --from-literal=OTEL_EXPORTER_OTLP_HEADERS="$OTEL_EXPORTER_OTLP_HEADERS" \
             --dry-run=client -o yaml | kubectl apply -f -
