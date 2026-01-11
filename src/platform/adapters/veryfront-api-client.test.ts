@@ -147,8 +147,8 @@ describe("VeryfrontAPIClient", () => {
                   id: "00000000-0000-0000-0000-000000000001",
                   name: "Test",
                   slug: "test-project",
-                  createdAt: "2024-01-01",
-                  updatedAt: "2024-01-01",
+                  created_at: "2024-01-01",
+                  updated_at: "2024-01-01",
                 }],
               }),
               { status: 200, headers: { "Content-Type": "application/json" } },
@@ -164,14 +164,14 @@ describe("VeryfrontAPIClient", () => {
               new Response(
                 JSON.stringify({
                   data: [
-                    { path: "file1.ts", size: 100, type: "file", updatedAt: "2024-01-01" },
-                    { path: "file2.ts", size: 200, type: "file", updatedAt: "2024-01-01" },
+                    { path: "file1.ts", size: 100, type: "file", updated_at: "2024-01-01" },
+                    { path: "file2.ts", size: 200, type: "file", updated_at: "2024-01-01" },
                   ],
-                  pageInfo: {
-                    hasNextPage: true,
-                    endCursor: "page2",
-                    hasPreviousPage: false,
-                    startCursor: null,
+                  page_info: {
+                    has_next_page: true,
+                    end_cursor: "page2",
+                    has_previous_page: false,
+                    start_cursor: null,
                   },
                 }),
                 { status: 200, headers: { "Content-Type": "application/json" } },
@@ -182,13 +182,13 @@ describe("VeryfrontAPIClient", () => {
               new Response(
                 JSON.stringify({
                   data: [
-                    { path: "file3.ts", size: 300, type: "file", updatedAt: "2024-01-01" },
+                    { path: "file3.ts", size: 300, type: "file", updated_at: "2024-01-01" },
                   ],
-                  pageInfo: {
-                    hasNextPage: false,
-                    endCursor: null,
-                    hasPreviousPage: true,
-                    startCursor: "page1",
+                  page_info: {
+                    has_next_page: false,
+                    end_cursor: null,
+                    has_previous_page: true,
+                    start_cursor: "page1",
                   },
                 }),
                 { status: 200, headers: { "Content-Type": "application/json" } },
@@ -203,8 +203,8 @@ describe("VeryfrontAPIClient", () => {
               id: "00000000-0000-0000-0000-000000000001",
               name: "Test",
               slug: "test-project",
-              createdAt: "2024-01-01",
-              updatedAt: "2024-01-01",
+              created_at: "2024-01-01",
+              updated_at: "2024-01-01",
             }),
             { status: 200, headers: { "Content-Type": "application/json" } },
           ),
@@ -238,8 +238,8 @@ describe("VeryfrontAPIClient", () => {
                   id: "00000000-0000-0000-0000-000000000001",
                   name: "Test",
                   slug: "test-project",
-                  createdAt: "2024-01-01",
-                  updatedAt: "2024-01-01",
+                  created_at: "2024-01-01",
+                  updated_at: "2024-01-01",
                 }],
               }),
               { status: 200, headers: { "Content-Type": "application/json" } },
@@ -256,7 +256,7 @@ describe("VeryfrontAPIClient", () => {
                 content: 'console.log("Hello")',
                 size: 21,
                 type: "file",
-                updatedAt: "2024-01-01",
+                updated_at: "2024-01-01",
               }),
               { status: 200, headers: { "Content-Type": "application/json" } },
             ),
@@ -269,11 +269,11 @@ describe("VeryfrontAPIClient", () => {
             new Response(
               JSON.stringify({
                 data: [],
-                pageInfo: {
-                  hasNextPage: false,
-                  endCursor: null,
-                  hasPreviousPage: false,
-                  startCursor: null,
+                page_info: {
+                  has_next_page: false,
+                  end_cursor: null,
+                  has_previous_page: false,
+                  start_cursor: null,
                 },
               }),
               { status: 200, headers: { "Content-Type": "application/json" } },
@@ -287,8 +287,8 @@ describe("VeryfrontAPIClient", () => {
               id: "00000000-0000-0000-0000-000000000001",
               name: "Test",
               slug: "test-project",
-              createdAt: "2024-01-01",
-              updatedAt: "2024-01-01",
+              created_at: "2024-01-01",
+              updated_at: "2024-01-01",
             }),
             { status: 200, headers: { "Content-Type": "application/json" } },
           ),

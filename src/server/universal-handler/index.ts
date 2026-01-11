@@ -294,16 +294,16 @@ export function createVeryfrontHandler(
           const lookupResult = await lookupProjectByDomain(lookupHost, apiConfig);
 
           if (lookupResult) {
-            projectSlug = lookupResult.projectSlug;
-            projectId = lookupResult.projectId;
-            releaseId = lookupResult.releaseId ?? undefined;
+            projectSlug = lookupResult.project_slug;
+            projectId = lookupResult.project_id;
+            releaseId = lookupResult.release_id ?? undefined;
             proxyEnv = getEnvironmentType(lookupResult);
             logger.info("[universal] Domain lookup successful", {
               domain: host,
-              projectSlug: lookupResult.projectSlug,
-              projectId: lookupResult.projectId,
+              projectSlug: lookupResult.project_slug,
+              projectId: lookupResult.project_id,
               environment: proxyEnv,
-              releaseId: lookupResult.releaseId,
+              releaseId: lookupResult.release_id,
             });
           } else {
             logger.warn("[universal] No project found for domain", { host: lookupHost });
@@ -341,9 +341,9 @@ export function createVeryfrontHandler(
             apiToken: effectiveToken,
           });
 
-          if (lookupResult?.releaseId) {
-            releaseId = lookupResult.releaseId;
-            projectId = projectId || lookupResult.projectId;
+          if (lookupResult?.release_id) {
+            releaseId = lookupResult.release_id;
+            projectId = projectId || lookupResult.project_id;
             proxyEnv = "production";
             logger.info("[universal] Veryfront domain release lookup successful", {
               projectSlug,
