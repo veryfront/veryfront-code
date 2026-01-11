@@ -2,17 +2,14 @@
 # This connects to the real production API but runs proxy + renderer locally
 #
 # Prerequisites:
-# 1. Get OAuth credentials from 1Password:
-#    export OAUTH_PREVIEW_CLIENT_ID=$(op read "op://Veryfront/Veryfront Proxy OAuth - Preview/client_id")
-#    export OAUTH_PREVIEW_CLIENT_SECRET=$(op read "op://Veryfront/Veryfront Proxy OAuth - Preview/client_secret")
-#    export OAUTH_CLIENT_ID=$(op read "op://Veryfront/Veryfront Proxy OAuth - Live/client_id")
-#    export OAUTH_CLIENT_SECRET=$(op read "op://Veryfront/Veryfront Proxy OAuth - Live/client_secret")
+#   cp .env.local.example .env.local
+#   # Fill in OAuth credentials from 1Password
 #
 # Usage:
-#    docker-compose -f docker-compose.local-prod.yml up --build
+#   docker-compose up --build
 #
 # Access:
-#    curl -H "Host: codersociety.veryfront.com" http://localhost:20000/
+#   curl -H "Host: codersociety.veryfront.com" http://localhost:20000/
 
 services:
   proxy:
@@ -21,19 +18,12 @@ services:
       dockerfile: Dockerfile.proxy
     ports:
       - "20000:20000"
+    env_file:
+      - .env.local
     environment:
+      # Override for Docker networking
       PORT: 20000
       RENDERER_URL: http://renderer:20001
-      # Production (live) credentials
-      OAUTH_CLIENT_ID: ${OAUTH_CLIENT_ID}
-      OAUTH_CLIENT_SECRET: ${OAUTH_CLIENT_SECRET}
-      # Preview (draft) credentials
-      OAUTH_PREVIEW_CLIENT_ID: ${OAUTH_PREVIEW_CLIENT_ID}
-      OAUTH_PREVIEW_CLIENT_SECRET: ${OAUTH_PREVIEW_CLIENT_SECRET}
-      # API URL (must be VERYFRONT_API_BASE_URL for proxy to recognize)
-      VERYFRONT_API_BASE_URL: https://api.veryfront.com
-      CACHE_TYPE: memory
-      LOG_LEVEL: debug
     depends_on:
       - renderer
 
@@ -43,9 +33,9 @@ services:
       dockerfile: Dockerfile.renderer
     ports:
       - "20001:20001"
+    env_file:
+      - .env.local
     environment:
+      # Override for Docker networking
       PORT: 20001
       PROXY_MODE: 1
-      VERYFRONT_API_BASE_URL: https://api.veryfront.com
-      PRODUCTION_MODE: 0
-      LOG_LEVEL: debug
