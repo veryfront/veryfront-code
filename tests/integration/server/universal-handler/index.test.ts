@@ -687,6 +687,92 @@ describe(
     );
 
     describe(
+      "Proxy Header Handling",
+      {},
+      () => {
+        it("uses x-forwarded-host for domain parsing when present", async () => {
+          const tempDir = await Deno.makeTempDir({ prefix: "vf_proxy_header_" });
+          try {
+            await Deno.mkdir(`${tempDir}/app`, { recursive: true });
+            await Deno.writeTextFile(`${tempDir}/app/page.tsx`, `export default function Page() { return <div>Test</div>; }`);
+
+            const adapter = createMockAdapter({});
+            const handler = createVeryfrontHandler(tempDir, adapter, {
+              projectDir: tempDir,
+              mode: "production",
+            });
+
+            // Request with x-forwarded-host (from proxy) but different Host header (internal service)
+            const res = await handler(
+              new Request("http://internal-service:80/healthz", {
+                headers: {
+                  "host": "internal-service:80",
+                  "x-forwarded-host": "test-project.veryfront.com",
+                },
+              }),
+            );
+
+            assertEquals(res.status, 200, "Should handle proxied request");
+          } finally {
+            await Deno.remove(tempDir, { recursive: true });
+          }
+        });
+
+        it("falls back to host header when x-forwarded-host is absent", async () => {
+          const tempDir = await Deno.makeTempDir({ prefix: "vf_no_proxy_header_" });
+          try {
+            const adapter = createMockAdapter({});
+            const handler = createVeryfrontHandler(tempDir, adapter, {
+              projectDir: tempDir,
+              mode: "production",
+            });
+
+            // Request without x-forwarded-host
+            const res = await handler(
+              new Request("http://localhost:8000/healthz", {
+                headers: {
+                  "host": "localhost:8000",
+                },
+              }),
+            );
+
+            assertEquals(res.status, 200, "Should handle direct request");
+          } finally {
+            await Deno.remove(tempDir, { recursive: true });
+          }
+        });
+
+        it("prefers x-forwarded-host over host header for Veryfront domain detection", async () => {
+          const tempDir = await Deno.makeTempDir({ prefix: "vf_proxy_vf_domain_" });
+          try {
+            await Deno.mkdir(`${tempDir}/app`, { recursive: true });
+            await Deno.writeTextFile(`${tempDir}/app/page.tsx`, `export default function Page() { return <div>Test</div>; }`);
+
+            const adapter = createMockAdapter({});
+            const handler = createVeryfrontHandler(tempDir, adapter, {
+              projectDir: tempDir,
+              mode: "production",
+            });
+
+            // Simulate proxy request: internal host but Veryfront domain in x-forwarded-host
+            const res = await handler(
+              new Request("http://veryfront-renderer:80/healthz", {
+                headers: {
+                  "host": "veryfront-renderer:80", // Internal service URL
+                  "x-forwarded-host": "my-project.veryfront.com", // Original Veryfront domain
+                },
+              }),
+            );
+
+            assertEquals(res.status, 200, "Should correctly parse Veryfront domain from x-forwarded-host");
+          } finally {
+            await Deno.remove(tempDir, { recursive: true });
+          }
+        });
+      },
+    );
+
+    describe(
       "Security - Rate Limiting & DoS Prevention",
       {},
       () => {
