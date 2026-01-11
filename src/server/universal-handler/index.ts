@@ -66,6 +66,7 @@ import { ClientLogHandler } from "../handlers/monitoring/client-log.ts";
 import { MemoryDebugHandler } from "../handlers/monitoring/memory.ts";
 import { DevEndpointsHandler } from "../handlers/dev/endpoints.ts";
 import { DevFileHandler } from "../handlers/dev/files/index.ts";
+import { DebugContextHandler } from "../handlers/dev/debug-context.ts";
 import { StudioEndpointsHandler } from "../handlers/studio/endpoints.ts";
 import { StaticHandler } from "../handlers/request/static.ts";
 import { SnippetHandler } from "../handlers/request/snippet-handler.ts";
@@ -165,6 +166,7 @@ export function createVeryfrontHandler(
     new MemoryDebugHandler(), // Priority: 100 (HIGH, memory profiling endpoints)
     new ClientLogHandler(), // Priority: 200 (HIGH, dev only)
     new DevEndpointsHandler(), // Priority: 300 (HIGH, dev only)
+    new DebugContextHandler(), // Priority: 300 (HIGH, dev only - context debugging)
     new StudioEndpointsHandler(), // Priority: 300 (HIGH, Studio iframe scripts)
     new DevFileHandler(), // Priority: 400 (dev only)
     new SnippetHandler(), // Priority: 450 (before static, handles @/ component previews)

@@ -49,6 +49,7 @@ export async function serveModule(
 ): Promise<Response> {
   const startTime = performance.now();
   const timings: Record<string, number> = {};
+  // Note: projectUUID and releaseId are passed but not used here - context is set by handler layer
   const { projectId, projectDir, adapter, dev = true, projectUUID: _projectUUID, releaseId: _releaseId } = options;
   const url = new URL(req.url);
   const method = req.method.toUpperCase();
