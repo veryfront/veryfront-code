@@ -290,3 +290,46 @@ export type {
   UseWorkflowStartOptions,
   UseWorkflowStartResult,
 } from "./react/index.ts";
+
+// =============================================================================
+// Claude Code SDK Integration
+// =============================================================================
+
+/**
+ * Claude Code agent for complex coding tasks.
+ * Provides agentic capabilities with bash, file editing, and iterative problem-solving.
+ *
+ * @example
+ * ```typescript
+ * import { claudeCodeTool } from 'veryfront/ai/workflow';
+ *
+ * export const migration = workflow({
+ *   id: 'migration',
+ *   steps: [
+ *     step('migrate', {
+ *       tool: 'claude-code',
+ *       input: { task: 'Migrate to React 19', mode: 'code' },
+ *     }),
+ *   ],
+ * });
+ * ```
+ */
+export {
+  bugFixTool,
+  claudeCodeAgent,
+  claudeCodeTool,
+  codeReviewTool,
+  createClaudeCodeTool,
+  defaultClaudeCodeAgent,
+  docsTool,
+  refactorTool,
+} from "./claude-code/index.ts";
+
+export type {
+  ClaudeCodeAgentConfig,
+  ClaudeCodeMode,
+  ClaudeCodeResult,
+  ClaudeCodeToolInput,
+  IterationResult,
+  SandboxMode,
+} from "./claude-code/index.ts";
