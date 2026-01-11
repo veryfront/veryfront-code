@@ -188,9 +188,14 @@ export abstract class BaseHandler implements Handler {
     };
 
     // Set branch context from parsed domain (for branch-aware file resolution)
+    // In multi-project mode, this may not be supported (branch is per-project via runWithContext)
     if (typeof fsWrapper.setRequestBranch === "function") {
-      const branch = ctx.parsedDomain?.branch ?? null;
-      fsWrapper.setRequestBranch(branch);
+      try {
+        const branch = ctx.parsedDomain?.branch ?? null;
+        fsWrapper.setRequestBranch(branch);
+      } catch {
+        // Ignore - multi-project mode uses runWithContext for branch context
+      }
     }
 
     // Check if we have required context for proxy mode
