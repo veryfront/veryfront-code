@@ -1,5 +1,5 @@
 import { rendererLogger as logger } from "@veryfront/utils";
-import { dirname, join } from "std/path/mod.ts";
+import { dirname, join } from "@veryfront/platform/compat/path/index.ts";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import { getConfig } from "@veryfront/config";
 import type { ImportMapConfig } from "./types.ts";

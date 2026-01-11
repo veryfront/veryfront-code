@@ -4,7 +4,11 @@ import { AnthropicProvider } from "./anthropic.ts";
 import { GoogleProvider } from "./google.ts";
 import { agentLogger } from "@veryfront/utils/logger/logger.ts";
 import { createError, toError } from "@veryfront/errors/veryfront-error.ts";
-import { getEnv } from "@veryfront/platform/compat/process.ts";
+import {
+  getAnthropicEnvConfig,
+  getGoogleGenAIEnvConfig,
+  getOpenAIEnvConfig,
+} from "@veryfront/core/config/env.ts";
 
 class ProviderRegistry {
   private providers = new Map<string, Provider>();
@@ -31,28 +35,32 @@ class ProviderRegistry {
     if (this.autoInitialized) return;
     this.autoInitialized = true;
 
-    const openaiKey = getEnv("OPENAI_API_KEY");
-    if (openaiKey && !this.providers.has("openai")) {
+    const openaiEnv = getOpenAIEnvConfig();
+    if (openaiEnv.apiKey && !this.providers.has("openai")) {
       this.registerProvider("openai", () =>
         new OpenAIProvider({
-          apiKey: openaiKey,
-          baseURL: getEnv("OPENAI_BASE_URL"),
-          organizationId: getEnv("OPENAI_ORGANIZATION_ID"),
+          apiKey: openaiEnv.apiKey!,
+          baseURL: openaiEnv.baseURL,
+          organizationId: openaiEnv.organizationId,
         }), true);
     }
 
-    const anthropicKey = getEnv("ANTHROPIC_API_KEY");
-    if (anthropicKey && !this.providers.has("anthropic")) {
+    const anthropicEnv = getAnthropicEnvConfig();
+    if (anthropicEnv.apiKey && !this.providers.has("anthropic")) {
       this.registerProvider("anthropic", () =>
         new AnthropicProvider({
-          apiKey: anthropicKey,
-          baseURL: getEnv("ANTHROPIC_BASE_URL"),
+          apiKey: anthropicEnv.apiKey!,
+          baseURL: anthropicEnv.baseURL,
         }), true);
     }
 
-    const googleKey = getEnv("GOOGLE_API_KEY") || getEnv("GOOGLE_GENERATIVE_AI_API_KEY");
-    if (googleKey && !this.providers.has("google")) {
-      this.registerProvider("google", () => new GoogleProvider({ apiKey: googleKey }), true);
+    const googleEnv = getGoogleGenAIEnvConfig();
+    if (googleEnv.apiKey && !this.providers.has("google")) {
+      this.registerProvider(
+        "google",
+        () => new GoogleProvider({ apiKey: googleEnv.apiKey! }),
+        true,
+      );
     }
   }
 

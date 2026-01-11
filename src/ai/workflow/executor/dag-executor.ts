@@ -387,7 +387,7 @@ export class DAGExecutor {
 
         // If it's a step node, ensure input receives the item
         if (processorConfig.type === "step") {
-          processorConfig.input = item;
+          processorConfig.input = item as Record<string, unknown>;
         }
 
         childNode = {

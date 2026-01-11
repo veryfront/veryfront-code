@@ -4,7 +4,7 @@ import { cors } from "@veryfront/security";
 import type { VeryfrontConfig } from "@veryfront/config";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import { isExtendedFSAdapter } from "@veryfront/platform/adapters/fs/wrapper.ts";
-import { dirname, join } from "std/path/mod.ts";
+import { dirname, join } from "@veryfront/platform/compat/path/index.ts";
 import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
 import { getEsbuildLoader } from "@veryfront/utils/path-utils.ts";
 

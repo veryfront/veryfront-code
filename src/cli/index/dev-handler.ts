@@ -4,7 +4,7 @@
  * @module cli/index/dev-handler
  */
 
-import { isAbsolute, join } from "std/path/mod.ts";
+import { isAbsolute, join } from "@veryfront/platform/compat/path/index.ts";
 import { cliLogger, DEFAULT_DEV_SERVER_PORT } from "@veryfront/utils";
 import { devCommand } from "../commands/dev.ts";
 import { showLogo } from "../utils/index.ts";

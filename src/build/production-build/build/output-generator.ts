@@ -10,7 +10,7 @@
  */
 
 import { serverLogger as logger } from "@veryfront/utils";
-import { join } from "node:path";
+import { join } from "@veryfront/platform/compat/path/index.ts";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/index.ts";
 import type { ChunkManifest } from "@veryfront/build/bundler/index.ts";
 import type { AppRouteInfo, BuildStats, RouteInfo } from "@veryfront/server/build-types.ts";

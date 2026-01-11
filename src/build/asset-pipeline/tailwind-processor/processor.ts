@@ -8,7 +8,7 @@
  * @module
  */
 
-import { dirname } from "std/path/mod.ts";
+import { dirname } from "@veryfront/platform/compat/path/index.ts";
 import { logger } from "@veryfront/utils";
 import type { TailwindProcessorOptions, TailwindProcessResult } from "./types.ts";
 import { autoDetectContentPaths, isTailwindV4File } from "./detector.ts";

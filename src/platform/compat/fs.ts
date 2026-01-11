@@ -23,7 +23,7 @@
 
 import type { FileInfo } from "@veryfront/platform/adapters/base.ts";
 import { createError, toError } from "../../core/errors/veryfront-error.ts";
-import { isDeno, isNode } from "./runtime.ts";
+import { isBun, isDeno, isNode } from "./runtime.ts";
 
 /**
  * Cross-platform filesystem interface for CLI commands and standalone utilities.
@@ -85,7 +85,8 @@ class NodeFileSystem implements FileSystem {
   private async ensureInitialized(): Promise<void> {
     if (this.initialized) return;
 
-    if (!isNode) {
+    // Bun supports Node.js fs modules, so allow both Node.js and Bun
+    if (!isNode && !isBun) {
       throw toError(createError({
         type: "not_supported",
         message: "Node.js fs modules not available",

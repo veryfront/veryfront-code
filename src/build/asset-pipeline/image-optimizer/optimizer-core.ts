@@ -1,4 +1,4 @@
-import { relative } from "std/path/mod.ts";
+import { relative } from "@veryfront/platform/compat/path/index.ts";
 import { logger } from "@veryfront/utils";
 import { DEFAULT_BUILD_CONCURRENCY } from "@veryfront/utils";
 import { createFileSystem } from "@veryfront/platform/compat/fs.ts";

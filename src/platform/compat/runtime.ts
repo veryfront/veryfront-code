@@ -31,11 +31,11 @@ function hasCloudflareGlobals(): boolean {
 /** True if running in Deno runtime */
 export const isDeno = hasDenoVersion();
 
-/** True if running in Node.js runtime */
-export const isNode = !isDeno && hasNodeProcess();
+/** True if running in Bun runtime (must check before Node since Bun has process.versions.node) */
+export const isBun = !isDeno && hasBunGlobal();
 
-/** True if running in Bun runtime */
-export const isBun = hasBunGlobal();
+/** True if running in Node.js runtime (exclude Bun which also has process.versions.node) */
+export const isNode = !isDeno && !isBun && hasNodeProcess();
 
 /** True if running in Cloudflare Workers runtime */
 export const isCloudflare = hasCloudflareGlobals();
@@ -46,5 +46,5 @@ export const isCloudflare = hasCloudflareGlobals();
  * at call time (e.g., when bundled with esbuild's __esm lazy initialization pattern).
  */
 export function isNodeRuntime(): boolean {
-  return !hasDenoVersion() && hasNodeProcess();
+  return !hasDenoVersion() && !hasBunGlobal() && hasNodeProcess();
 }

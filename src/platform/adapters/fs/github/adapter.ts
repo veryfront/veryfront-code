@@ -12,6 +12,7 @@ import {
   type GitHubConfig,
   type ResolvedGitHubConfig,
 } from "./types.ts";
+import { getGithubEnvConfig } from "@veryfront/core/config/env.ts";
 
 const LOG_PREFIX = "[GitHubFSAdapter]";
 
@@ -41,11 +42,12 @@ export class GitHubFSAdapter implements FSAdapter {
     this.projectDir = adapterConfig.projectDir || "";
 
     // Resolve config from raw config + environment
+    const envConfig = getGithubEnvConfig();
     const rawConfig: GitHubConfig = {
-      token: adapterConfig.github.token || Deno.env.get("GITHUB_TOKEN") || "",
-      owner: adapterConfig.github.owner || Deno.env.get("GITHUB_OWNER") || "",
-      repo: adapterConfig.github.repo || Deno.env.get("GITHUB_REPO") || "",
-      ref: adapterConfig.github.ref || Deno.env.get("GITHUB_REF") || "main",
+      token: adapterConfig.github.token || envConfig.token || "",
+      owner: adapterConfig.github.owner || envConfig.owner || "",
+      repo: adapterConfig.github.repo || envConfig.repo || "",
+      ref: adapterConfig.github.ref || envConfig.ref || "main",
       cache: adapterConfig.github.cache,
       retry: adapterConfig.github.retry,
     };

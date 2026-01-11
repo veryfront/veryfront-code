@@ -5,7 +5,7 @@
  * Supports Redis caching to share transformed modules across pods.
  */
 
-import { join } from "std/path/mod.ts";
+import { join } from "@veryfront/platform/compat/path/index.ts";
 import type * as React from "react";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import { transformToESM } from "@veryfront/transforms/esm/index.ts";
@@ -25,6 +25,7 @@ import {
   isRedisConfigured,
   type RedisClient,
 } from "@veryfront/utils/redis-client.ts";
+import { getApiBaseUrlEnv, getSsrMaxConcurrentTransformsEnv } from "@veryfront/core/config/env.ts";
 import { extractComponent } from "./extract-component.ts";
 
 export interface SSRModuleLoaderOptions {
@@ -103,7 +104,7 @@ const CIRCUIT_BREAKER_RESET_MS = 60 * 1000; // 1 minute reset window
 // Default: 3 (conservative, ~500MB per transform, fits in 2GB heap)
 // Increase if transforms are fast/small, decrease if seeing memory pressure
 const MAX_CONCURRENT_TRANSFORMS = parseInt(
-  Deno.env.get("SSR_MAX_CONCURRENT_TRANSFORMS") ?? "3",
+  String(getSsrMaxConcurrentTransformsEnv(3)),
   10,
 );
 
@@ -401,9 +402,7 @@ export class SSRModuleLoader {
    */
   private getRegistryBaseUrl(): string {
     const apiBaseUrl = this.options.apiBaseUrl ||
-      Deno.env.get("VERYFRONT_API_BASE_URL") ||
-      Deno.env.get("VERYFRONT_API_URL")?.replace("/graphql", "/api") ||
-      "http://api.lvh.me:4000";
+      getApiBaseUrlEnv();
     // Remove trailing /api or /api/ if present
     return apiBaseUrl.replace(/\/api\/?$/, "");
   }

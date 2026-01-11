@@ -4,7 +4,7 @@
  */
 
 import { cliLogger as logger } from "@veryfront/utils";
-import { join } from "std/path/mod.ts";
+import { join } from "@veryfront/platform/compat/path/index.ts";
 import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
 
 /**

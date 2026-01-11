@@ -1,4 +1,4 @@
-import { dirname, relative } from "std/path/mod.ts";
+import { dirname, relative } from "@veryfront/platform/compat/path/index.ts";
 import { logger } from "@veryfront/utils";
 import type {
   CSSBundle,

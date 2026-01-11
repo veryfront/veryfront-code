@@ -5,9 +5,10 @@
 
 import { cliLogger as logger } from "@veryfront/utils";
 import { cyan, dim, green, yellow } from "@veryfront/compat/console";
-import { getEnv, isInteractive as checkIsInteractive } from "@veryfront/platform/compat/process.ts";
+import { isInteractive as checkIsInteractive } from "@veryfront/platform/compat/process.ts";
 import type { EnvVarConfig } from "../templates/index.ts";
 import { promptUser } from "./index.ts";
+import { isCiEnv, isDenoTestingEnv } from "@veryfront/core/config/env.ts";
 
 export interface EnvPromptOptions {
   /** Whether to run in interactive mode (prompt for values) */
@@ -48,8 +49,8 @@ export async function promptForEnvVars(
 
   // Determine if we should prompt interactively
   const disablePrompt = options.skipPrompt ||
-    getEnv("CI") === "1" ||
-    getEnv("DENO_TESTING") === "1";
+    isCiEnv() ||
+    isDenoTestingEnv();
   const interactive = options.interactive ?? (!disablePrompt && checkIsInteractive());
 
   if (interactive && envVars.length > 0) {

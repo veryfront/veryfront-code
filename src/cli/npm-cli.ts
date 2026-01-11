@@ -1,8 +1,9 @@
 import { join } from "@veryfront/platform/compat/path/index.ts";
 import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
-import { cwd, exit, getArgs, getEnv } from "@veryfront/platform/compat/process.ts";
+import { cwd, exit, getArgs } from "@veryfront/platform/compat/process.ts";
+import { getVeryfrontVersion } from "@veryfront/core/config/env.ts";
 
-const VERSION = getEnv("VERYFRONT_VERSION") || "0.0.0-dev";
+const VERSION = getVeryfrontVersion() || "0.0.0-dev";
 
 /**
  * Simple argument parser

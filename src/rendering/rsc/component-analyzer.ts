@@ -1,4 +1,4 @@
-import { join, relative } from "std/path/mod.ts";
+import { join, relative } from "@veryfront/platform/compat/path/index.ts";
 import { serverLogger } from "@veryfront/utils";
 import { toBase64Url } from "@veryfront/utils/path-utils.ts";
 import { getAdapter } from "@veryfront/platform/adapters/detect.ts";

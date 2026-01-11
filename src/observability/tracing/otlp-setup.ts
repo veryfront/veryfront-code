@@ -10,6 +10,7 @@
  */
 
 import { serverLogger as logger } from "@veryfront/utils";
+import { getOtelTracingConfig } from "@veryfront/core/config/env.ts";
 
 let initialized = false;
 
@@ -43,11 +44,11 @@ function parseHeaders(headerString: string | undefined): Record<string, string> 
 }
 
 function getConfig(): OTLPConfig {
-  const enabled = Deno.env.get("OTEL_TRACES_ENABLED") === "true";
-  const serviceName = Deno.env.get("OTEL_SERVICE_NAME") || "veryfront";
-  const endpoint = Deno.env.get("OTEL_EXPORTER_OTLP_ENDPOINT") || "";
-  const headerString = Deno.env.get("OTEL_EXPORTER_OTLP_HEADERS");
-  const headers = parseHeaders(headerString);
+  const tracingConfig = getOtelTracingConfig();
+  const enabled = tracingConfig.enabledFlag === "true";
+  const serviceName = tracingConfig.serviceName || "veryfront";
+  const endpoint = tracingConfig.endpoint || "";
+  const headers = parseHeaders(tracingConfig.headers);
 
   return { enabled, serviceName, endpoint, headers };
 }
@@ -183,7 +184,8 @@ export function startServerSpan(
   parentContext?: unknown,
 ): { span: unknown; context: unknown } | null {
   if (!traceApi || !isOTLPEnabled()) return null;
-  const serviceName = Deno.env.get("OTEL_SERVICE_NAME") || "veryfront-renderer";
+  const tracingConfig = getOtelTracingConfig();
+  const serviceName = tracingConfig.serviceName || "veryfront-renderer";
   const tracer = traceApi.trace.getTracer(serviceName);
   const ctx = (parentContext || traceApi.context.active()) as import("@opentelemetry/api").Context;
   const span = tracer.startSpan(`${method} ${path}`, { kind: traceApi.SpanKind.SERVER }, ctx);

@@ -9,7 +9,8 @@ import { join } from "@std/path";
 import { cyan, dim, green } from "@veryfront/compat/console";
 import { cliLogger } from "@veryfront/utils";
 import { createFileSystem, type FileSystem } from "@veryfront/platform/compat/fs.ts";
-import { getEnv, isInteractive as checkIsInteractive } from "@veryfront/platform/compat/process.ts";
+import { isInteractive as checkIsInteractive } from "@veryfront/platform/compat/process.ts";
+import { isCiEnv, isDenoTestingEnv } from "@veryfront/core/config/env.ts";
 import { select } from "../../utils/terminal-select.ts";
 
 let fs: FileSystem;
@@ -48,7 +49,7 @@ interface IntegrationConfig {
  * Check if we're in an interactive terminal
  */
 function canRunPrompts(): boolean {
-  const disablePrompt = getEnv("CI") === "1" || getEnv("DENO_TESTING") === "1";
+  const disablePrompt = isCiEnv() || isDenoTestingEnv();
   return !disablePrompt && checkIsInteractive();
 }
 

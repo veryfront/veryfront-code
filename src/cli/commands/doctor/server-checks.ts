@@ -38,8 +38,8 @@ async function fetchWithTimeout(
  */
 export async function checkRSCFlag(): Promise<DiagnosticResult> {
   try {
-    const { getEnv } = await import("@veryfront/platform/compat/process.ts");
-    const isEnabled = getEnv("VERYFRONT_EXPERIMENTAL_RSC") === "1";
+    const { isRscExperimentalEnabled } = await import("@veryfront/core/config/env.ts");
+    const isEnabled = isRscExperimentalEnabled();
     return {
       name: "RSC Flag",
       status: isEnabled ? "pass" : "warn",

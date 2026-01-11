@@ -1,4 +1,4 @@
-import { join } from "std/path/mod.ts";
+import { join } from "@veryfront/platform/compat/path/index.ts";
 import { cwd } from "@veryfront/platform/compat/process.ts";
 
 let globalTmpDir: string | null = null;

@@ -3,7 +3,7 @@
  * Consolidates all environment variable access to reduce proliferation
  */
 
-import { getEnv } from "@veryfront/platform/compat/process.ts";
+import { getEnvironmentFromEnv } from "@veryfront/core/config/env.ts";
 
 export type Environment = "development" | "production" | "test";
 
@@ -13,21 +13,9 @@ export type Environment = "development" | "production" | "test";
  */
 export function getEnvironment(): Environment {
   // Check framework-specific env first (highest priority)
-  const veryfrontEnv = getEnv("VERYFRONT_ENV");
+  const veryfrontEnv = getEnvironmentFromEnv();
   if (veryfrontEnv === "production" || veryfrontEnv === "development" || veryfrontEnv === "test") {
     return veryfrontEnv as Environment;
-  }
-
-  // Check Node.js standard env
-  const nodeEnv = getEnv("NODE_ENV");
-  if (nodeEnv === "production" || nodeEnv === "development" || nodeEnv === "test") {
-    return nodeEnv as Environment;
-  }
-
-  // Check Deno env
-  const denoEnv = getEnv("DENO_ENV");
-  if (denoEnv === "production" || denoEnv === "development" || denoEnv === "test") {
-    return denoEnv as Environment;
   }
 
   // Default to development

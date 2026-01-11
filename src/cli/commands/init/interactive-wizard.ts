@@ -5,10 +5,11 @@
 
 import { cyan, dim, green } from "@veryfront/compat/console";
 import { cliLogger as logger } from "@veryfront/utils";
-import { getEnv, isInteractive as checkIsInteractive } from "@veryfront/platform/compat/process.ts";
+import { isInteractive as checkIsInteractive } from "@veryfront/platform/compat/process.ts";
 import { multiSelect, select } from "../../utils/terminal-select.ts";
 import type { IntegrationName } from "../../templates/types.ts";
 import type { InitTemplate } from "./types.ts";
+import { isCiEnv, isDenoTestingEnv } from "@veryfront/core/config/env.ts";
 
 export interface WizardResult {
   template: InitTemplate;
@@ -160,7 +161,7 @@ function getIntegrationChoices() {
  * Check if we're in an interactive terminal
  */
 function canRunWizard(): boolean {
-  const disablePrompt = getEnv("CI") === "1" || getEnv("DENO_TESTING") === "1";
+  const disablePrompt = isCiEnv() || isDenoTestingEnv();
   return !disablePrompt && checkIsInteractive();
 }
 

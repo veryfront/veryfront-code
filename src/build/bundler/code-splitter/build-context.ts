@@ -4,7 +4,7 @@
  */
 
 import { type BuildContext, context } from "esbuild/mod.js";
-import { join } from "std/path/mod.ts";
+import { join } from "@veryfront/platform/compat/path/index.ts";
 import { getReactImportMap, REACT_DEFAULT_VERSION } from "@veryfront/utils";
 import type { SplitOptions } from "./types.ts";
 import { createSplitterPlugin } from "./esbuild-plugin.ts";

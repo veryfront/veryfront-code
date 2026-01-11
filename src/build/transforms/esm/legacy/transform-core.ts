@@ -21,6 +21,7 @@ import {
   getDefaultImportMap,
   transformImportsWithMap,
 } from "@veryfront/modules/import-map/index.ts";
+import { getApiBaseUrlEnv } from "@veryfront/core/config/env.ts";
 
 export async function transformToESM(
   source: string,
@@ -134,9 +135,7 @@ export async function transformToESM(
   // Must be done before other import rewrites since it transforms to absolute URLs
   // Try to get API base URL from options, env var, or default
   const apiBaseUrl = options.apiBaseUrl ||
-    Deno.env.get("VERYFRONT_API_BASE_URL") ||
-    Deno.env.get("VERYFRONT_API_URL")?.replace("/graphql", "/api") ||
-    "http://api.lvh.me:4000";
+    getApiBaseUrlEnv();
 
   code = await resolveCrossProjectImports(code, {
     apiBaseUrl,

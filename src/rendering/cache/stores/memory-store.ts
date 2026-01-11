@@ -1,6 +1,6 @@
 import { LRUCache } from "@veryfront/utils/lru-wrapper.ts";
 import type { CachePayload, CacheStore } from "../types.ts";
-import { getEnv } from "@veryfront/platform/compat/process.ts";
+import { getDisableLruIntervalEnv } from "@veryfront/core/config/env.ts";
 
 export interface MemoryCacheStoreOptions {
   maxEntries?: number;
@@ -45,5 +45,5 @@ export class MemoryCacheStore implements CacheStore {
 
 function isLruIntervalDisabled(): boolean {
   return (globalThis as Record<string, unknown>).__vfDisableLruInterval === true ||
-    getEnv("VF_DISABLE_LRU_INTERVAL") === "1";
+    getDisableLruIntervalEnv();
 }

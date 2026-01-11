@@ -1,5 +1,5 @@
 import { bundlerLogger as logger } from "@veryfront/utils";
-import { join } from "std/path/mod.ts";
+import { join } from "@veryfront/platform/compat/path/index.ts";
 import type { CompileOptions, CompileResult } from "./types.ts";
 import { pathExists } from "./validator.ts";
 import { compileMDXFile } from "./compiler.ts";

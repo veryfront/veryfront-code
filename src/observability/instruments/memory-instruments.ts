@@ -8,16 +8,13 @@
 import type { Meter, ObservableGauge, ObservableResult } from "@opentelemetry/api";
 import { getMemoryUsage } from "../metrics/config.ts";
 import type { MetricsConfig } from "../metrics/types.ts";
+import { getV8FlagsEnv } from "@veryfront/core/config/env.ts";
 
 // V8 heap limit from DENO_V8_FLAGS or default
 const V8_HEAP_LIMIT_MB = (() => {
-  try {
-    const flags = Deno.env.get("DENO_V8_FLAGS") ?? "";
-    const match = flags.match(/--max-old-space-size=(\d+)/);
-    if (match?.[1]) return parseInt(match[1], 10);
-  } catch {
-    // Ignore
-  }
+  const flags = getV8FlagsEnv();
+  const match = flags.match(/--max-old-space-size=(\d+)/);
+  if (match?.[1]) return parseInt(match[1], 10);
   return 5120; // Default from values.yaml
 })();
 

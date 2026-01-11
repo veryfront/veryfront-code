@@ -5,7 +5,7 @@
  * for route discovery, build asset scanning, and module discovery.
  */
 
-import { join } from "std/path/mod.ts";
+import { join } from "@veryfront/platform/compat/path/index.ts";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import { denoAdapter } from "@veryfront/platform/adapters/runtime/deno/index.ts";
 

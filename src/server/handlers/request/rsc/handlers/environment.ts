@@ -1,7 +1,5 @@
-import { getEnv } from "@veryfront/platform/compat/process.ts";
+import { getEnvironment } from "@veryfront/build/config/environment.ts";
 
 export function isProductionMode(): boolean {
-  const denoEnv = getEnv("DENO_ENV");
-  const nodeEnv = getEnv("NODE_ENV");
-  return denoEnv === "production" || nodeEnv === "production";
+  return getEnvironment() === "production";
 }

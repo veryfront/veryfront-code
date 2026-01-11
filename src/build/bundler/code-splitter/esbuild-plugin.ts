@@ -5,7 +5,7 @@
 
 import { bundlerLogger as logger } from "@veryfront/utils";
 import type { OnLoadArgs, OnResolveArgs, Plugin, PluginBuild } from "esbuild/mod.js";
-import { join } from "std/path/mod.ts";
+import { join } from "@veryfront/platform/compat/path/index.ts";
 import { getReactImportMap, REACT_DEFAULT_VERSION } from "@veryfront/utils";
 
 /** Creates an ESBuild plugin for veryfront code splitting */
