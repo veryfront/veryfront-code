@@ -18,7 +18,11 @@ import {
 // Import handler system (from new location)
 import type { HandlerContext } from "../handlers/types.ts";
 import { parseProjectDomain } from "../utils/domain-parser.ts";
-import { getEnvironmentType, lookupProductionRelease, lookupProjectByDomain } from "../utils/domain-lookup.ts";
+import {
+  getEnvironmentType,
+  lookupProductionRelease,
+  lookupProjectByDomain,
+} from "../utils/domain-lookup.ts";
 import { getErrorMessage } from "@veryfront/errors/veryfront-error.ts";
 
 /** Check if host is a private/internal IP address */

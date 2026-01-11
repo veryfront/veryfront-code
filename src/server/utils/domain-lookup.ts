@@ -83,7 +83,9 @@ export async function lookupProductionRelease(
   projectSlug: string,
   config: DomainLookupConfig,
 ): Promise<{ releaseId: string; projectId: string } | null> {
-  const url = `${config.apiBaseUrl}/api/projects/${encodeURIComponent(projectSlug)}/releases/production`;
+  const url = `${config.apiBaseUrl}/api/projects/${
+    encodeURIComponent(projectSlug)
+  }/releases/production`;
 
   logger.debug("[DomainLookup] Looking up production release", { projectSlug, url });
 
