@@ -274,60 +274,15 @@ export async function serveModule(
     }
   }
 
-  // Helper function to run with optional proxy context
-  const runWithOptionalContext = <T>(fn: () => Promise<T>): Promise<T> => {
-    // Set branch context on FSAdapter if available (for branch-aware file resolution)
-    const fsWrapper = adapter.fs as {
-      runWithContext?: <T>(
-        slug: string,
-        token: string,
-        fn: () => Promise<T>,
-        projectId?: string,
-        options?: { productionMode?: boolean; releaseId?: string | null },
-      ) => Promise<T>;
-      setRequestBranch?: (b: string | null) => void;
-      isMultiProjectMode?: () => boolean;
-    };
-
-    if (typeof fsWrapper.setRequestBranch === "function") {
-      fsWrapper.setRequestBranch(branch);
-    }
-
-    if (!projectSlug) {
-      return fn();
-    }
-
-    // Try to use multi-project context if available
-    // Use isMultiProjectMode() to check support - the method exists on wrapper but throws if unsupported
-    if (typeof fsWrapper.isMultiProjectMode === "function" && fsWrapper.isMultiProjectMode()) {
-      // Determine production mode: check env query param or use non-dev mode
-      // In SSR context, modules are loaded from the server which runs in prod mode
-      const envParam = url.searchParams.get("env");
-      const isProduction = envParam === "production" || !dev;
-
-      logger.info("[ModuleServer] Using project context", {
-        projectSlug,
-        branch,
-        projectUUID,
-        productionMode: isProduction,
-        releaseId: releaseId ?? null,
-      });
-      return fsWrapper.runWithContext!(projectSlug, "", fn, projectUUID, {
-        productionMode: isProduction,
-        releaseId: releaseId ?? null,
-      });
-    }
-
-    return fn();
-  };
+  // NOTE: In multi-project mode, the context (including token) is already set by the caller
+  // (ModuleHandler.withProxyContext) via AsyncLocalStorage. File operations will automatically
+  // use the existing context, so we don't need to call runWithContext again here.
 
   try {
     // Find source file (try .tsx, .ts, .jsx, .js, .mdx)
     const findStart = performance.now();
 
-    const findResult = await runWithOptionalContext(() =>
-      findSourceFile(secureFs, projectDir, filePathWithoutExt)
-    );
+    const findResult = await findSourceFile(secureFs, projectDir, filePathWithoutExt);
     timings.findFile = performance.now() - findStart;
 
     if (!findResult) {
@@ -350,7 +305,7 @@ export async function serveModule(
       const platformFs = createFileSystem();
       const source = isFrameworkFile
         ? await platformFs.readTextFile(sourceFile)
-        : await runWithOptionalContext(() => secureFs.readFile(sourceFile));
+        : await secureFs.readFile(sourceFile);
       timings.readFile = performance.now() - readStart;
 
       // Check for SSR mode via query parameter or Deno User-Agent
@@ -457,6 +412,11 @@ async function findSourceFile(
   basePath: string,
 ): Promise<FindSourceFileResult | null> {
   const extensions = [".tsx", ".ts", ".jsx", ".js", ".mdx", ".md"];
+
+  serverLogger.debug("[ModuleServer] findSourceFile called", {
+    projectDir,
+    basePath,
+  });
 
   // Check if basePath already has a known extension (e.g., DocsLayout.mdx from DocsLayout.mdx.js)
   const hasKnownExt = extensions.some((ext) => basePath.endsWith(ext));
