@@ -224,6 +224,46 @@ describe(
         const stats = getRendererCacheStats();
         assertEquals(stats.projects, ["cache-key-latest:production:latest"]);
       });
+
+      it("should use production cache key for Veryfront domain when isDraft is false", async () => {
+        const ctx = {
+          ...createMockContext("vf-domain-prod"),
+          parsedDomain: {
+            slug: "vf-domain-prod",
+            branch: null,
+            environment: "production" as const,
+            isVeryfrontDomain: true,
+            isDraft: false,
+          },
+          releaseId: "release-456",
+        };
+
+        await getRendererForProject(ctx);
+
+        const stats = getRendererCacheStats();
+        assertEquals(stats.projects, ["vf-domain-prod:production:release-456"]);
+      });
+
+      it("should use preview cache key for Veryfront domain when isDraft is true", async () => {
+        const ctx = {
+          ...createMockContext("vf-domain-draft"),
+          parsedDomain: {
+            slug: "vf-domain-draft",
+            branch: null,
+            environment: "preview" as const,
+            isVeryfrontDomain: true,
+            isDraft: true,
+          },
+          proxyEnvironment: "production" as const, // Even with production env, isDraft wins
+          releaseId: "release-789",
+        };
+
+        await getRendererForProject(ctx);
+
+        const stats = getRendererCacheStats();
+        // isDraft=true means preview mode, ignoring proxyEnvironment
+        assertEquals(stats.projects, ["vf-domain-draft:preview"]);
+      });
     });
 
     describe("Cleanup", () => {
