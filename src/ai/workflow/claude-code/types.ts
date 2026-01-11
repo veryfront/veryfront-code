@@ -82,6 +82,16 @@ export interface IterationResult {
 }
 
 /**
+ * File change from workspace sync
+ */
+export interface FileChange {
+  path: string;
+  type: "created" | "modified" | "deleted";
+  originalChecksum?: string;
+  newChecksum?: string;
+}
+
+/**
  * Final result from Claude Code execution
  */
 export interface ClaudeCodeResult {
@@ -91,10 +101,12 @@ export interface ClaudeCodeResult {
   iterations: number;
   /** Final text response */
   response?: string;
-  /** Files modified */
+  /** Files modified (tracked by editor) */
   filesModified: string[];
   /** Commands executed */
   commandsExecuted: string[];
+  /** Detected file changes (from workspace sync) */
+  changes?: FileChange[];
   /** Error if failed */
   error?: string;
   /** Execution time in ms */
@@ -177,6 +189,23 @@ export interface ClaudeCodeToolInput {
 }
 
 /**
+ * Workspace sync interface (imported from workspace-sync.ts)
+ * Defined here to avoid circular imports
+ */
+export interface WorkspaceSyncInterface {
+  /** Local workspace directory */
+  workspaceDir: string;
+  /** Read a file from workspace */
+  readFile(path: string): Promise<string>;
+  /** Write a file to workspace */
+  writeFile(path: string, content: string): Promise<void>;
+  /** Delete a file from workspace */
+  deleteFile(path: string): Promise<void>;
+  /** Check if file exists */
+  fileExists(path: string): Promise<boolean>;
+}
+
+/**
  * Execution context for Claude Code
  */
 export interface ClaudeCodeContext {
@@ -188,6 +217,9 @@ export interface ClaudeCodeContext {
 
   /** Working directory (for bash) */
   workingDir: string;
+
+  /** Local workspace for file operations */
+  workspace?: WorkspaceSyncInterface;
 
   /** Files that have been modified */
   modifiedFiles: Set<string>;
@@ -208,6 +240,8 @@ export interface ClaudeCodeContext {
 export interface BashToolInput {
   command: string;
   restart?: boolean;
+  /** Timeout in milliseconds */
+  timeout?: number;
 }
 
 /**

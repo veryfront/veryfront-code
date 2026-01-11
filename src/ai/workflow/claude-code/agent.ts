@@ -3,12 +3,15 @@
  *
  * Wraps Anthropic's Claude Code SDK for use in Veryfront workflows.
  * Provides agentic coding capabilities with tenant-aware file operations.
+ *
+ * Architecture:
+ * 1. Downloads project files to local workspace before execution
+ * 2. Bash and text_editor operate on local files
+ * 3. Changes are detected and can be synced back to Veryfront API
  */
 
 import { logger } from "@veryfront/utils";
-import { api } from "../../api.ts";
 import { getWorkflowTenant } from "../executor/step-executor.ts";
-import type { Agent, AgentResponse } from "../../types/agent.ts";
 import type {
   AnthropicToolDefinition,
   BashToolInput,
@@ -18,9 +21,39 @@ import type {
   ClaudeCodeResult,
   ClaudeToolCall,
   ClaudeToolResult,
+  FileChange,
   IterationResult,
   TextEditorToolInput,
 } from "./types.ts";
+import { createWorkspaceSync } from "./workspace-sync.ts";
+
+/**
+ * Claude Code Agent interface (simplified from Agent for agentic tool use)
+ */
+export interface ClaudeCodeAgentInstance {
+  /** Agent ID */
+  id: string;
+  /** Model used */
+  model: string;
+  /** Generate a response */
+  generate(params: { input: string }): Promise<ClaudeCodeAgentResponse>;
+}
+
+/**
+ * Claude Code Agent response
+ */
+export interface ClaudeCodeAgentResponse {
+  /** Generated text */
+  text: string;
+  /** Agent status */
+  status: "completed" | "error";
+  /** Usage statistics */
+  usage?: {
+    promptTokens: number;
+    completionTokens: number;
+    totalTokens: number;
+  };
+}
 
 /** Default model for Claude Code */
 const DEFAULT_MODEL = "claude-sonnet-4-20250514";
@@ -83,31 +116,82 @@ function getToolsForMode(mode: ClaudeCodeMode): AnthropicToolDefinition[] {
 }
 
 /**
- * Execute bash tool
- * NOTE(#claude-code-sandbox): Bash sandbox execution to be implemented
+ * Execute bash tool against local workspace
  */
-function executeBash(
+async function executeBash(
   input: BashToolInput,
   context: ClaudeCodeContext,
   config: ClaudeCodeAgentConfig,
 ): Promise<{ output: string; isError: boolean }> {
   config.onToolCall?.("bash", input);
-
   context.executedCommands.push(input.command);
 
-  // Placeholder - actual sandbox execution to be implemented (#claude-code-sandbox)
-  const result = {
-    output: `[Bash execution not yet implemented]\nCommand: ${input.command}`,
-    isError: false,
-  };
+  if (!context.workspace) {
+    return {
+      output: "Error: Workspace not initialized",
+      isError: true,
+    };
+  }
 
-  config.onToolResult?.("bash", result.output, result.isError);
+  try {
+    // Execute command in workspace directory
+    const command = new Deno.Command("bash", {
+      args: ["-c", input.command],
+      cwd: context.workspace.workspaceDir,
+      stdout: "piped",
+      stderr: "piped",
+      env: {
+        ...Deno.env.toObject(),
+        // Set HOME to workspace for tools that use it
+        HOME: context.workspace.workspaceDir,
+        // Disable interactive prompts
+        DEBIAN_FRONTEND: "noninteractive",
+      },
+    });
 
-  return Promise.resolve(result);
+    // Apply timeout if configured
+    const timeout = input.timeout ?? 120000; // 2 minute default
+    const process = command.spawn();
+
+    // Create timeout promise
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      setTimeout(() => {
+        try {
+          process.kill("SIGTERM");
+        } catch {
+          // Process may have already exited
+        }
+        reject(new Error(`Command timed out after ${timeout}ms`));
+      }, timeout);
+    });
+
+    // Wait for process or timeout
+    const output = await Promise.race([process.output(), timeoutPromise]);
+
+    const stdout = new TextDecoder().decode(output.stdout);
+    const stderr = new TextDecoder().decode(output.stderr);
+
+    const isError = !output.success;
+    const result = isError ? stderr || stdout : stdout || stderr;
+
+    // Truncate if too long
+    const maxLength = 50000;
+    const truncated = result.length > maxLength
+      ? result.slice(0, maxLength) + "\n... (output truncated)"
+      : result;
+
+    config.onToolResult?.("bash", truncated, isError);
+
+    return { output: truncated, isError };
+  } catch (error) {
+    const output = `Error: ${error instanceof Error ? error.message : String(error)}`;
+    config.onToolResult?.("bash", output, true);
+    return { output, isError: true };
+  }
 }
 
 /**
- * Execute text editor tool using Veryfront's tenant-aware API
+ * Execute text editor tool against local workspace
  */
 async function executeTextEditor(
   input: TextEditorToolInput,
@@ -116,11 +200,18 @@ async function executeTextEditor(
 ): Promise<{ output: string; isError: boolean }> {
   config.onToolCall?.("str_replace_editor", input);
 
+  if (!context.workspace) {
+    return {
+      output: "Error: Workspace not initialized",
+      isError: true,
+    };
+  }
+
   try {
     switch (input.command) {
       case "view": {
-        // Use tenant-aware API to read file
-        const content = await api.files.read(input.path);
+        // Read from local workspace
+        const content = await context.workspace.readFile(input.path);
         const lines = content.split("\n");
 
         if (input.view_range) {
@@ -142,8 +233,11 @@ async function executeTextEditor(
         if (!input.file_text) {
           return { output: "Error: file_text required for create", isError: true };
         }
-        // NOTE(#claude-code-write): File creation via API to be implemented
+
+        // Write to local workspace
+        await context.workspace.writeFile(input.path, input.file_text);
         context.modifiedFiles.add(input.path);
+
         const output = `Created file: ${input.path}`;
         config.onToolResult?.("str_replace_editor", output, false);
         return { output, isError: false };
@@ -154,15 +248,18 @@ async function executeTextEditor(
           return { output: "Error: old_str and new_str required for str_replace", isError: true };
         }
 
-        const content = await api.files.read(input.path);
+        // Read, replace, write to local workspace
+        const content = await context.workspace.readFile(input.path);
         if (!content.includes(input.old_str)) {
           const output = `Error: old_str not found in ${input.path}`;
           config.onToolResult?.("str_replace_editor", output, true);
           return { output, isError: true };
         }
 
-        // NOTE(#claude-code-write): File write via API to be implemented
+        const newContent = content.replace(input.old_str, input.new_str);
+        await context.workspace.writeFile(input.path, newContent);
         context.modifiedFiles.add(input.path);
+
         const output = `Replaced in ${input.path}`;
         config.onToolResult?.("str_replace_editor", output, false);
         return { output, isError: false };
@@ -172,15 +269,22 @@ async function executeTextEditor(
         if (input.insert_line === undefined || input.new_str === undefined) {
           return { output: "Error: insert_line and new_str required for insert", isError: true };
         }
-        // NOTE(#claude-code-write): Insert via API to be implemented
+
+        // Read, insert, write to local workspace
+        const content = await context.workspace.readFile(input.path);
+        const lines = content.split("\n");
+        lines.splice(input.insert_line, 0, input.new_str);
+        const newContent = lines.join("\n");
+        await context.workspace.writeFile(input.path, newContent);
         context.modifiedFiles.add(input.path);
+
         const output = `Inserted at line ${input.insert_line} in ${input.path}`;
         config.onToolResult?.("str_replace_editor", output, false);
         return { output, isError: false };
       }
 
       case "undo_edit": {
-        // NOTE(#claude-code-undo): Undo tracking to be implemented
+        // NOTE(#claude-code-undo): Implement undo tracking via workspace history
         return { output: "Undo not yet implemented", isError: true };
       }
 
@@ -206,11 +310,11 @@ async function executeTool(
 
   switch (toolCall.name) {
     case "bash":
-      result = await executeBash(toolCall.input as BashToolInput, context, config);
+      result = await executeBash(toolCall.input as unknown as BashToolInput, context, config);
       break;
 
     case "str_replace_editor":
-      result = await executeTextEditor(toolCall.input as TextEditorToolInput, context, config);
+      result = await executeTextEditor(toolCall.input as unknown as TextEditorToolInput, context, config);
       break;
 
     case "computer":
@@ -291,7 +395,7 @@ async function runIteration(
 /**
  * Create a Claude Code agent
  */
-export function claudeCodeAgent(config: ClaudeCodeAgentConfig = {}): Agent {
+export function claudeCodeAgent(config: ClaudeCodeAgentConfig = {}): ClaudeCodeAgentInstance {
   const id = config.id || "claude-code";
   const mode = config.mode || "code";
   const maxIterations = config.maxIterations || DEFAULT_MAX_ITERATIONS;
@@ -301,8 +405,9 @@ export function claudeCodeAgent(config: ClaudeCodeAgentConfig = {}): Agent {
     id,
     model: config.model || DEFAULT_MODEL,
 
-    generate: async (params): Promise<AgentResponse> => {
+    generate: async (params): Promise<ClaudeCodeAgentResponse> => {
       const startTime = Date.now();
+      const runId = crypto.randomUUID();
 
       // Get tenant context
       const tenant = getWorkflowTenant();
@@ -313,28 +418,55 @@ export function claudeCodeAgent(config: ClaudeCodeAgentConfig = {}): Agent {
         );
       }
 
-      // Initialize execution context
-      const context: ClaudeCodeContext = {
-        projectSlug: tenant.projectSlug,
-        projectId: tenant.projectId,
-        workingDir: "/",
-        modifiedFiles: new Set(),
-        executedCommands: [],
-        iteration: 0,
-        startTime,
-      };
+      // Initialize workspace sync to download project files
+      const workspace = createWorkspaceSync({
+        runId,
+        tenant,
+        debug: config.debug,
+      });
 
-      // Get tools for mode
-      const tools = getToolsForMode(mode);
-
-      // Build initial messages
-      const messages: Array<{ role: string; content: unknown }> = [
-        { role: "user", content: params.input },
-      ];
-
-      const iterationHistory: IterationResult[] = [];
+      let workspaceInitialized = false;
+      let detectedChanges: FileChange[] = [];
 
       try {
+        // Download project files to local workspace
+        if (config.debug) {
+          logger.info("[ClaudeCode] Initializing workspace...");
+        }
+
+        const syncResult = await workspace.initialize();
+        workspaceInitialized = true;
+
+        if (config.debug) {
+          logger.info("[ClaudeCode] Workspace initialized", {
+            files: syncResult.filesDownloaded,
+            bytes: syncResult.bytesDownloaded,
+            dir: syncResult.workspaceDir,
+          });
+        }
+
+        // Initialize execution context with workspace
+        const context: ClaudeCodeContext = {
+          projectSlug: tenant.projectSlug,
+          projectId: tenant.projectId,
+          workingDir: workspace.workspaceDir,
+          workspace,
+          modifiedFiles: new Set(),
+          executedCommands: [],
+          iteration: 0,
+          startTime,
+        };
+
+        // Get tools for mode
+        const tools = getToolsForMode(mode);
+
+        // Build initial messages
+        const messages: Array<{ role: string; content: unknown }> = [
+          { role: "user", content: params.input },
+        ];
+
+        const iterationHistory: IterationResult[] = [];
+
         // Agentic loop
         while (context.iteration < maxIterations) {
           // Check total timeout
@@ -354,6 +486,18 @@ export function claudeCodeAgent(config: ClaudeCodeAgentConfig = {}): Agent {
 
           // If completed (no tool calls), we're done
           if (result.completed) {
+            // Detect changes in workspace
+            detectedChanges = await workspace.detectChanges();
+
+            if (config.debug) {
+              logger.info("[ClaudeCode] Detected changes", {
+                count: detectedChanges.length,
+                created: detectedChanges.filter((c) => c.type === "created").length,
+                modified: detectedChanges.filter((c) => c.type === "modified").length,
+                deleted: detectedChanges.filter((c) => c.type === "deleted").length,
+              });
+            }
+
             const finalResult: ClaudeCodeResult = {
               success: true,
               iterations: context.iteration,
@@ -362,6 +506,7 @@ export function claudeCodeAgent(config: ClaudeCodeAgentConfig = {}): Agent {
               commandsExecuted: context.executedCommands,
               executionTime: Date.now() - startTime,
               iterationHistory,
+              changes: detectedChanges,
             };
 
             config.onComplete?.(finalResult);
@@ -369,7 +514,7 @@ export function claudeCodeAgent(config: ClaudeCodeAgentConfig = {}): Agent {
             return {
               text: result.text || JSON.stringify(finalResult),
               status: "completed",
-              usage: { inputTokens: 0, outputTokens: 0 }, // NOTE(#claude-code-usage): Token tracking to be added
+              usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 }, // NOTE(#claude-code-usage): Token tracking to be added
             };
           }
 
@@ -390,7 +535,9 @@ export function claudeCodeAgent(config: ClaudeCodeAgentConfig = {}): Agent {
           });
         }
 
-        // Max iterations reached
+        // Max iterations reached - still detect changes
+        detectedChanges = await workspace.detectChanges();
+
         const finalResult: ClaudeCodeResult = {
           success: false,
           iterations: context.iteration,
@@ -399,6 +546,7 @@ export function claudeCodeAgent(config: ClaudeCodeAgentConfig = {}): Agent {
           commandsExecuted: context.executedCommands,
           executionTime: Date.now() - startTime,
           iterationHistory,
+          changes: detectedChanges,
         };
 
         config.onComplete?.(finalResult);
@@ -406,22 +554,44 @@ export function claudeCodeAgent(config: ClaudeCodeAgentConfig = {}): Agent {
         return {
           text: JSON.stringify(finalResult),
           status: "completed",
-          usage: { inputTokens: 0, outputTokens: 0 },
+          usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
         };
       } catch (error) {
+        // Try to detect changes even on error
+        if (workspaceInitialized) {
+          try {
+            detectedChanges = await workspace.detectChanges();
+          } catch {
+            // Ignore change detection errors during error handling
+          }
+        }
+
         const finalResult: ClaudeCodeResult = {
           success: false,
-          iterations: context.iteration,
+          iterations: 0,
           error: error instanceof Error ? error.message : String(error),
-          filesModified: [...context.modifiedFiles],
-          commandsExecuted: context.executedCommands,
+          filesModified: [],
+          commandsExecuted: [],
           executionTime: Date.now() - startTime,
-          iterationHistory,
+          iterationHistory: [],
+          changes: detectedChanges,
         };
 
         config.onComplete?.(finalResult);
 
         throw error;
+      } finally {
+        // Always cleanup workspace
+        if (workspaceInitialized) {
+          try {
+            await workspace.cleanup();
+            if (config.debug) {
+              logger.info("[ClaudeCode] Workspace cleaned up");
+            }
+          } catch (cleanupError) {
+            logger.error("[ClaudeCode] Workspace cleanup failed:", cleanupError);
+          }
+        }
       }
     },
   };

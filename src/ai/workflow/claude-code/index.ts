@@ -25,6 +25,7 @@
 
 // Agent (non-streaming)
 export { claudeCodeAgent, defaultClaudeCodeAgent } from "./agent.ts";
+export type { ClaudeCodeAgentInstance, ClaudeCodeAgentResponse } from "./agent.ts";
 
 // Agent (streaming)
 export { streamingClaudeCodeAgent } from "./streaming-agent.ts";
@@ -59,6 +60,20 @@ export {
 } from "./websocket-publisher.ts";
 
 export type { WebSocketPublisherConfig } from "./websocket-publisher.ts";
+
+// Workspace Sync (for Claude Code file operations)
+export {
+  createWorkspaceSync,
+  withWorkspace,
+  WorkspaceSync,
+} from "./workspace-sync.ts";
+
+export type {
+  FileChange,
+  UploadResult,
+  WorkspaceConfig,
+  WorkspaceSyncResult,
+} from "./workspace-sync.ts";
 
 // Types
 export type {
