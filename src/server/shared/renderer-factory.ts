@@ -268,10 +268,17 @@ async function evictExpired(): Promise<void> {
 
 /**
  * Get the cache key for a project.
+ * Includes environment and releaseId to ensure fresh content after deployments.
  */
 function getCacheKey(ctx: HandlerContext): string | null {
-  // In multi-project mode, use project slug as key
-  return ctx.projectSlug || null;
+  const projectSlug = ctx.projectSlug;
+  if (!projectSlug) return null;
+
+  // Include environment and releaseId to prevent stale cache after deployments
+  if (ctx.proxyEnvironment === "production") {
+    return `${projectSlug}:production:${ctx.releaseId ?? "latest"}`;
+  }
+  return `${projectSlug}:preview`;
 }
 
 /**
@@ -510,16 +517,36 @@ export async function cleanupRenderers(): Promise<void> {
 }
 
 /**
- * Evict a specific project's renderer from cache.
+ * Evict all renderers for a specific project from cache.
+ * This evicts both preview and production (all releases) entries.
  *
  * @param projectSlug - Project slug to evict
  */
 export async function evictProjectRenderer(projectSlug: string): Promise<void> {
-  const cached = rendererCache.get(projectSlug);
-  if (cached) {
-    rendererCache.delete(projectSlug);
-    await destroyRenderer(cached);
-    rendererLogger.info("[RendererFactory] Evicted project renderer", { projectSlug });
+  const prefix = `${projectSlug}:`;
+  const toEvict: string[] = [];
+
+  // Find all cache keys that belong to this project
+  for (const key of rendererCache.keys()) {
+    if (key.startsWith(prefix)) {
+      toEvict.push(key);
+    }
+  }
+
+  // Evict all matching entries
+  for (const key of toEvict) {
+    const cached = rendererCache.get(key);
+    if (cached) {
+      rendererCache.delete(key);
+      await destroyRenderer(cached);
+    }
+  }
+
+  if (toEvict.length > 0) {
+    rendererLogger.info("[RendererFactory] Evicted project renderers", {
+      projectSlug,
+      count: toEvict.length,
+    });
   }
 }
 
