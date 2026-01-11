@@ -371,11 +371,162 @@ export default {
 };
 ```
 
+## Streaming
+
+Real-time streaming of Claude Code execution is supported via Server-Sent Events (SSE).
+
+### Setting Up Streaming
+
+#### 1. Create SSE Endpoint
+
+```typescript
+// app/api/workflows/[runId]/stream/route.ts
+import type { APIContext } from "veryfront";
+import { RedisEventPublisher } from "veryfront/ai/workflow/claude-code";
+
+export async function GET(ctx: APIContext) {
+  const { runId } = ctx.params;
+
+  // Create Redis subscriber
+  const publisher = new RedisEventPublisher({
+    url: Deno.env.get("REDIS_URL")!,
+  });
+
+  // Create SSE stream
+  const stream = new ReadableStream({
+    async start(controller) {
+      const encoder = new TextEncoder();
+
+      const unsubscribe = await publisher.subscribe(runId, (event) => {
+        controller.enqueue(
+          encoder.encode(`data: ${JSON.stringify(event)}\n\n`)
+        );
+
+        if (event.type === "complete" || event.type === "error") {
+          controller.close();
+          unsubscribe();
+        }
+      });
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      "Connection": "keep-alive",
+    },
+  });
+}
+```
+
+#### 2. Configure Agent with Publisher
+
+```typescript
+import { streamingClaudeCodeAgent, RedisEventPublisher } from "veryfront/ai/workflow/claude-code";
+
+const publisher = new RedisEventPublisher({
+  url: Deno.env.get("REDIS_URL")!,
+});
+
+const agent = streamingClaudeCodeAgent({
+  streaming: {
+    enabled: true,
+    publisher,
+  },
+  runId: "my-run-id",
+});
+```
+
+#### 3. Consume in React
+
+```tsx
+import { useClaudeCodeStream } from "veryfront/ai/workflow/claude-code/react";
+
+function AgentViewer({ runId }: { runId: string }) {
+  const {
+    isRunning,
+    text,
+    currentTool,
+    toolCalls,
+    result,
+    error,
+    currentIteration,
+    maxIterations,
+  } = useClaudeCodeStream({
+    url: "/api/workflows/stream",
+    runId,
+  });
+
+  return (
+    <div>
+      {/* Progress indicator */}
+      {isRunning && (
+        <div>
+          Iteration {currentIteration}/{maxIterations}
+          {currentTool && ` - Running ${currentTool.name}...`}
+        </div>
+      )}
+
+      {/* Streaming text output */}
+      <pre className="whitespace-pre-wrap">{text}</pre>
+
+      {/* Tool calls */}
+      <div className="space-y-2">
+        {toolCalls.map((tc) => (
+          <div key={tc.id} className={tc.isError ? "text-red-500" : ""}>
+            <strong>{tc.name}</strong>
+            <pre>{JSON.stringify(tc.input, null, 2)}</pre>
+            {tc.output && <pre>{tc.output}</pre>}
+          </div>
+        ))}
+      </div>
+
+      {/* Error */}
+      {error && <div className="text-red-500">{error}</div>}
+
+      {/* Result */}
+      {result && (
+        <div>
+          <h3>Complete!</h3>
+          <p>Modified {result.filesModified.length} files</p>
+          <p>Executed {result.commandsExecuted.length} commands</p>
+        </div>
+      )}
+    </div>
+  );
+}
+```
+
+### Event Types
+
+| Event | Description |
+|-------|-------------|
+| `iteration_start` | New iteration beginning |
+| `text_delta` | Text chunk (streaming) |
+| `text_complete` | Full text response |
+| `tool_call_start` | Tool execution starting |
+| `tool_call_input` | Tool input streaming |
+| `tool_call_complete` | Tool input complete |
+| `tool_result` | Tool execution result |
+| `iteration_complete` | Iteration finished |
+| `complete` | Agent finished |
+| `error` | Error occurred |
+
+### Publisher Options
+
+| Type | Use Case |
+|------|----------|
+| `RedisEventPublisher` | Distributed deployments |
+| `MemoryEventPublisher` | Single-process / testing |
+| `SSEEventPublisher` | Direct HTTP streaming |
+| `CallbackEventPublisher` | Custom handling |
+
 ## Roadmap
 
 - [ ] Computer use integration for UI testing
 - [ ] Git operations as built-in tools
 - [ ] Diff preview before apply
 - [ ] Cost tracking and limits
-- [ ] Streaming progress updates
+- [x] Streaming progress updates
 - [ ] Multi-file atomic operations

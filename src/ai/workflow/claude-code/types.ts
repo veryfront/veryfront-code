@@ -137,6 +137,12 @@ export interface ClaudeCodeAgentConfig {
   /** Enable debug logging */
   debug?: boolean;
 
+  /** Streaming configuration */
+  streaming?: ClaudeCodeStreamingConfig;
+
+  /** Workflow run ID (for event context) */
+  runId?: string;
+
   /** Callbacks */
   onToolCall?: (tool: string, input: unknown) => void | Promise<void>;
   onToolResult?: (tool: string, result: unknown, error?: boolean) => void | Promise<void>;
@@ -259,4 +265,214 @@ export interface CommandExecution {
   stderr: string;
   timestamp: Date;
   duration: number;
+}
+
+// =============================================================================
+// Streaming Types
+// =============================================================================
+
+/**
+ * Event types for streaming Claude Code execution
+ */
+export type ClaudeCodeEventType =
+  | "iteration_start"
+  | "text_delta"
+  | "text_complete"
+  | "tool_call_start"
+  | "tool_call_input"
+  | "tool_call_complete"
+  | "tool_result"
+  | "iteration_complete"
+  | "thinking_start"
+  | "thinking_delta"
+  | "thinking_complete"
+  | "complete"
+  | "error";
+
+/**
+ * Base event interface
+ */
+export interface ClaudeCodeEventBase {
+  /** Event type */
+  type: ClaudeCodeEventType;
+  /** Timestamp */
+  timestamp: number;
+  /** Workflow run ID (if in workflow context) */
+  runId?: string;
+  /** Current iteration */
+  iteration?: number;
+}
+
+/**
+ * Iteration start event
+ */
+export interface IterationStartEvent extends ClaudeCodeEventBase {
+  type: "iteration_start";
+  iteration: number;
+  maxIterations: number;
+}
+
+/**
+ * Text delta event (streaming text chunk)
+ */
+export interface TextDeltaEvent extends ClaudeCodeEventBase {
+  type: "text_delta";
+  content: string;
+}
+
+/**
+ * Text complete event
+ */
+export interface TextCompleteEvent extends ClaudeCodeEventBase {
+  type: "text_complete";
+  content: string;
+}
+
+/**
+ * Tool call start event
+ */
+export interface ToolCallStartEvent extends ClaudeCodeEventBase {
+  type: "tool_call_start";
+  toolCallId: string;
+  toolName: string;
+}
+
+/**
+ * Tool call input delta (streaming input JSON)
+ */
+export interface ToolCallInputEvent extends ClaudeCodeEventBase {
+  type: "tool_call_input";
+  toolCallId: string;
+  inputDelta: string;
+}
+
+/**
+ * Tool call complete event
+ */
+export interface ToolCallCompleteEvent extends ClaudeCodeEventBase {
+  type: "tool_call_complete";
+  toolCallId: string;
+  toolName: string;
+  input: Record<string, unknown>;
+}
+
+/**
+ * Tool result event
+ */
+export interface ToolResultEvent extends ClaudeCodeEventBase {
+  type: "tool_result";
+  toolCallId: string;
+  toolName: string;
+  output: string;
+  isError: boolean;
+}
+
+/**
+ * Iteration complete event
+ */
+export interface IterationCompleteEvent extends ClaudeCodeEventBase {
+  type: "iteration_complete";
+  iteration: number;
+  toolCallCount: number;
+  hasMoreWork: boolean;
+}
+
+/**
+ * Thinking start event (extended thinking)
+ */
+export interface ThinkingStartEvent extends ClaudeCodeEventBase {
+  type: "thinking_start";
+}
+
+/**
+ * Thinking delta event
+ */
+export interface ThinkingDeltaEvent extends ClaudeCodeEventBase {
+  type: "thinking_delta";
+  content: string;
+}
+
+/**
+ * Thinking complete event
+ */
+export interface ThinkingCompleteEvent extends ClaudeCodeEventBase {
+  type: "thinking_complete";
+  content: string;
+}
+
+/**
+ * Complete event (agent finished)
+ */
+export interface CompleteEvent extends ClaudeCodeEventBase {
+  type: "complete";
+  result: ClaudeCodeResult;
+}
+
+/**
+ * Error event
+ */
+export interface ErrorEvent extends ClaudeCodeEventBase {
+  type: "error";
+  message: string;
+  code?: string;
+  recoverable: boolean;
+}
+
+/**
+ * Union of all event types
+ */
+export type ClaudeCodeEvent =
+  | IterationStartEvent
+  | TextDeltaEvent
+  | TextCompleteEvent
+  | ToolCallStartEvent
+  | ToolCallInputEvent
+  | ToolCallCompleteEvent
+  | ToolResultEvent
+  | IterationCompleteEvent
+  | ThinkingStartEvent
+  | ThinkingDeltaEvent
+  | ThinkingCompleteEvent
+  | CompleteEvent
+  | ErrorEvent;
+
+/**
+ * Event publisher interface for streaming events
+ */
+export interface ClaudeCodeEventPublisher {
+  /** Publish an event */
+  publish(event: ClaudeCodeEvent): void | Promise<void>;
+
+  /** Close the publisher */
+  close(): void | Promise<void>;
+}
+
+/**
+ * Event subscriber callback
+ */
+export type ClaudeCodeEventHandler = (event: ClaudeCodeEvent) => void | Promise<void>;
+
+/**
+ * Event subscriber interface for receiving events
+ */
+export interface ClaudeCodeEventSubscriber {
+  /** Subscribe to events for a run */
+  subscribe(runId: string, handler: ClaudeCodeEventHandler): Promise<() => void>;
+}
+
+/**
+ * Streaming configuration for Claude Code agent
+ */
+export interface ClaudeCodeStreamingConfig {
+  /** Enable streaming mode */
+  enabled: boolean;
+
+  /** Event publisher for streaming */
+  publisher?: ClaudeCodeEventPublisher;
+
+  /** Stream thinking tokens (if model supports) */
+  streamThinking?: boolean;
+
+  /** Debounce text deltas (ms) - combines rapid chunks */
+  textDeltaDebounce?: number;
 }
