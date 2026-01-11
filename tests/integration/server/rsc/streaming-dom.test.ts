@@ -82,6 +82,27 @@ describe("RSC Stream DOM Tests", { sanitizeOps: false, sanitizeResources: false 
             hostname: "127.0.0.1",
           });
 
+          // Wait for server to be ready before making RSC request
+          const start = Date.now();
+          let ready = false;
+          while (Date.now() - start < 5000) {
+            try {
+              const r = await fetch(`http://127.0.0.1:${server.port}/readyz`);
+              try {
+                if (r.status === 200) {
+                  ready = true;
+                  break;
+                }
+              } finally {
+                await closeResponse(r);
+              }
+            } catch (_e) {
+              // Server not ready yet
+            }
+            await new Promise((r) => setTimeout(r, 100));
+          }
+          if (!ready) throw new Error("Server did not become ready in time");
+
           const res = await fetch(`http://127.0.0.1:${server.port}/_veryfront/rsc/stream?name=Eve`);
           const doc = createDocument();
           try {
