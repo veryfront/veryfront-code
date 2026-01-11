@@ -522,6 +522,384 @@ function AgentViewer({ runId }: { runId: string }) {
 | `SSEEventPublisher` | Direct HTTP streaming |
 | `CallbackEventPublisher` | Custom handling |
 
+## Deployment Architecture
+
+Claude Code agents require long-running compute for agentic loops (1-30 minutes). This section covers deployment options.
+
+### Compute Requirements
+
+| Component | Duration | Serverless | Stateful |
+|-----------|----------|------------|----------|
+| SSE endpoint | Client lifetime | ⚠️ Limited | ✅ Ideal |
+| Agent execution | 1-30 minutes | ❌ Poor | ✅ Required |
+| Event publishing | Instant | ✅ Great | ✅ Great |
+
+**Why serverless is limited:**
+- Execution timeouts (Vercel: 10-300s, Lambda: 15min max)
+- Cold starts break SSE connections
+- Can't hold WebSocket/SSE open across requests
+
+### Recommended Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  Serverless (JIT) - Renderer                                │
+│  ┌───────────────────┐   ┌────────────────────────────────┐ │
+│  │ POST /api/start   │   │ GET /api/stream (SSE)          │ │
+│  │ - Validate input  │   │ - Subscribe to Redis           │ │
+│  │ - Enqueue job     │   │ - Forward events to client     │ │
+│  │ - Return runId    │   │ - Auto-close on complete       │ │
+│  └─────────┬─────────┘   └──────────────┬─────────────────┘ │
+└────────────│────────────────────────────│───────────────────┘
+             │                            │
+             ▼                            ▼
+       ┌──────────┐              ┌──────────────┐
+       │  Redis   │◄────────────►│   Redis      │
+       │  Queue   │              │   Pub/Sub    │
+       └────┬─────┘              └──────────────┘
+            │                            ▲
+            ▼                            │ publish events
+┌───────────────────────────────────────────────────────────────┐
+│  Stateful Worker - Agent Executor                             │
+│  ┌─────────────────────────────────────────────────────────┐  │
+│  │ Job Executor                                            │  │
+│  │ - Dequeue jobs from Redis                               │  │
+│  │ - Run Claude Code agent loop (1-30 min)                 │  │
+│  │ - Execute tools (bash, file editor)                     │  │
+│  │ - Publish events to Redis pub/sub                       │  │
+│  │ - Update job state on completion                        │  │
+│  └─────────────────────────────────────────────────────────┘  │
+└───────────────────────────────────────────────────────────────┘
+```
+
+**Key benefits:**
+- SSE endpoint is serverless-safe (just reads from Redis)
+- Agent execution runs on dedicated stateful worker
+- Redis provides durability across restarts
+- Scales worker independently from frontend
+
+### Alternative: Chunked Execution (Serverless-Only)
+
+If you must run fully serverless, break agent into iterations:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  Request 1: Start                                           │
+│  POST /api/agent/start                                      │
+│  → Initialize state in Redis                                │
+│  → Enqueue first iteration                                  │
+│  → Return runId                                             │
+└─────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────┐
+│  Request 2-N: Iterations (triggered by queue/cron)          │
+│  POST /api/agent/iterate?runId=xxx                          │
+│  → Load state from Redis                                    │
+│  → Single Anthropic API call                                │
+│  → Execute tools                                            │
+│  → Save state to Redis                                      │
+│  → Enqueue next iteration (if tool_use)                     │
+│  → Publish events to Redis                                  │
+└─────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────┐
+│  Polling/SSE: Client                                        │
+│  GET /api/agent/stream?runId=xxx                            │
+│  → Subscribe to Redis pub/sub                               │
+│  → Forward events until complete                            │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**Trade-offs:**
+- ✅ Works on serverless
+- ❌ Higher latency (cold starts between iterations)
+- ❌ More complex state management
+- ❌ Redis round-trips add overhead
+
+### Helm Chart Configuration
+
+Add agent worker to your deployment:
+
+```yaml
+# chart/values.yaml
+
+# Existing renderer (serverless JIT)
+renderer:
+  enabled: true
+  replicaCount: 2
+  # ... existing config
+
+# NEW: Agent worker for Claude Code execution
+worker:
+  enabled: true
+  replicaCount: 1
+
+  image:
+    repository: ghcr.io/veryfront/veryfront-renderer
+    pullPolicy: IfNotPresent
+    tag: ""
+
+  # Worker runs same image, different entrypoint
+  command: ["deno", "run", "-A", "src/ai/workflow/worker/main.ts"]
+
+  resources:
+    requests:
+      cpu: "500m"
+      memory: "1Gi"
+    limits:
+      cpu: "2000m"
+      memory: "2Gi"
+
+  env:
+    # Worker mode
+    WORKER_MODE: "1"
+    # Redis for job queue and events
+    REDIS_URL: "redis://redis:6379"
+    # Anthropic API
+    ANTHROPIC_API_KEY_FROM: "secret"
+    # Concurrency (jobs processed in parallel)
+    WORKER_CONCURRENCY: "2"
+    # Job timeout (30 minutes)
+    WORKER_JOB_TIMEOUT: "1800000"
+    # Logging
+    LOG_FORMAT: "json"
+    OTEL_SERVICE_NAME: "veryfront-worker"
+
+  envFrom:
+    - secretRef:
+        name: veryfront-worker-secret
+
+  # No external service needed (internal only)
+  service:
+    enabled: false
+
+  # Health check via Redis connectivity
+  readinessProbe:
+    exec:
+      command: ["deno", "eval", "await Deno.connect({hostname:'redis',port:6379})"]
+    periodSeconds: 30
+    timeoutSeconds: 10
+
+  # No HPA - workers scale based on queue depth (external metric)
+  autoscaling:
+    enabled: false
+```
+
+### Worker Implementation
+
+```typescript
+// src/ai/workflow/worker/main.ts
+import { JobExecutor } from "../executor/job-executor.ts";
+import { createRedisBackend } from "../backends/redis.ts";
+import {
+  streamingClaudeCodeAgent,
+  RedisEventPublisher,
+} from "../claude-code/index.ts";
+
+const REDIS_URL = Deno.env.get("REDIS_URL")!;
+const CONCURRENCY = parseInt(Deno.env.get("WORKER_CONCURRENCY") || "2");
+
+// Create Redis backend for job queue
+const backend = createRedisBackend({ url: REDIS_URL });
+
+// Create job executor
+const executor = new JobExecutor({
+  backend,
+  concurrency: CONCURRENCY,
+
+  // Handle Claude Code jobs
+  handlers: {
+    "claude-code": async (job) => {
+      const publisher = new RedisEventPublisher({ url: REDIS_URL });
+
+      try {
+        const agent = streamingClaudeCodeAgent({
+          mode: job.input.mode || "code",
+          maxIterations: job.input.maxIterations || 20,
+          streaming: {
+            enabled: true,
+            publisher,
+          },
+          runId: job.runId,
+        });
+
+        const result = await agent.generate({
+          input: job.input.task,
+          context: job.context || {},
+        });
+
+        return { success: true, result };
+      } finally {
+        await publisher.close();
+      }
+    },
+  },
+
+  // Error handling
+  onError: (job, error) => {
+    console.error(`[Worker] Job ${job.id} failed:`, error);
+  },
+});
+
+// Start processing
+console.log(`[Worker] Starting with concurrency ${CONCURRENCY}`);
+await executor.start();
+
+// Graceful shutdown
+Deno.addSignalListener("SIGTERM", async () => {
+  console.log("[Worker] Shutting down...");
+  await executor.stop();
+  Deno.exit(0);
+});
+```
+
+### API Routes
+
+```typescript
+// app/api/agent/start/route.ts
+import type { APIContext } from "veryfront";
+import { createRedisBackend } from "veryfront/ai/workflow/backends/redis";
+
+export async function POST(ctx: APIContext) {
+  const { task, mode, maxIterations } = await ctx.json();
+
+  const backend = createRedisBackend({
+    url: Deno.env.get("REDIS_URL")!,
+  });
+
+  // Enqueue job for worker
+  const runId = crypto.randomUUID();
+  await backend.enqueue({
+    id: runId,
+    type: "claude-code",
+    input: { task, mode, maxIterations },
+    context: {
+      projectSlug: ctx.projectSlug,
+      token: ctx.token,
+    },
+  });
+
+  return ctx.json({ runId });
+}
+```
+
+```typescript
+// app/api/agent/[runId]/stream/route.ts
+import type { APIContext } from "veryfront";
+import { RedisEventPublisher } from "veryfront/ai/workflow/claude-code";
+
+export async function GET(ctx: APIContext) {
+  const { runId } = ctx.params;
+
+  const publisher = new RedisEventPublisher({
+    url: Deno.env.get("REDIS_URL")!,
+  });
+
+  const stream = new ReadableStream({
+    async start(controller) {
+      const encoder = new TextEncoder();
+
+      // Send initial connection event
+      controller.enqueue(
+        encoder.encode(`data: ${JSON.stringify({ type: "connected", runId })}\n\n`)
+      );
+
+      const unsubscribe = await publisher.subscribe(runId, (event) => {
+        controller.enqueue(
+          encoder.encode(`data: ${JSON.stringify(event)}\n\n`)
+        );
+
+        if (event.type === "complete" || event.type === "error") {
+          controller.close();
+          unsubscribe();
+          publisher.close();
+        }
+      });
+    },
+    cancel() {
+      publisher.close();
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      "Connection": "keep-alive",
+    },
+  });
+}
+```
+
+### Scaling Considerations
+
+| Scenario | Worker Replicas | Notes |
+|----------|-----------------|-------|
+| Development | 0 (inline) | Run agent in-process for simplicity |
+| Low traffic | 1 | Single worker, 2 concurrent jobs |
+| Medium traffic | 2-3 | Scale based on queue depth |
+| High traffic | 3-5 + HPA | Use KEDA for queue-based autoscaling |
+
+**Queue-based autoscaling with KEDA:**
+
+```yaml
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: veryfront-worker-scaler
+spec:
+  scaleTargetRef:
+    name: veryfront-worker
+  minReplicaCount: 1
+  maxReplicaCount: 5
+  triggers:
+    - type: redis
+      metadata:
+        address: redis:6379
+        listName: veryfront:jobs:pending
+        listLength: "5"  # Scale up when > 5 pending jobs
+```
+
+### Monitoring
+
+**Key metrics to track:**
+
+```typescript
+// Worker metrics
+const metrics = {
+  // Job processing
+  "worker.jobs.started": Counter,
+  "worker.jobs.completed": Counter,
+  "worker.jobs.failed": Counter,
+  "worker.jobs.duration": Histogram,
+
+  // Agent metrics
+  "agent.iterations": Histogram,
+  "agent.tool_calls": Counter,
+  "agent.tokens.input": Counter,
+  "agent.tokens.output": Counter,
+
+  // Queue health
+  "queue.pending": Gauge,
+  "queue.processing": Gauge,
+};
+```
+
+**Grafana dashboard query examples:**
+
+```promql
+# Job processing rate
+rate(worker_jobs_completed_total[5m])
+
+# Average job duration
+histogram_quantile(0.95, rate(worker_jobs_duration_bucket[5m]))
+
+# Queue depth
+queue_pending
+```
+
 ## Roadmap
 
 - [ ] Computer use integration for UI testing
@@ -529,4 +907,6 @@ function AgentViewer({ runId }: { runId: string }) {
 - [ ] Diff preview before apply
 - [ ] Cost tracking and limits
 - [x] Streaming progress updates
+- [x] Deployment architecture documentation
 - [ ] Multi-file atomic operations
+- [ ] KEDA autoscaling integration
