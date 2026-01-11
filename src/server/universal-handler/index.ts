@@ -227,10 +227,6 @@ export function createVeryfrontHandler(
 
     // Execute request handling within span context
     const executeHandler = async (): Promise<Response> => {
-      // Parse domain from host header
-      const host = req.headers.get("host") || _url.host;
-      const parsedDomain = parseProjectDomain(host);
-
       // Check for proxy-provided headers (from Deno proxy)
       // For WebSocket requests, also check query params since custom headers aren't supported
       const proxyToken = req.headers.get("x-token") || undefined;
@@ -240,6 +236,11 @@ export function createVeryfrontHandler(
         req.headers.get("x-environment") || _url.searchParams.get("x-environment"),
       );
       const forwardedHost = req.headers.get("x-forwarded-host") || undefined;
+
+      // Parse domain from host header
+      // Prefer x-forwarded-host (original domain from proxy) over Host header (internal service URL)
+      const host = forwardedHost || req.headers.get("host") || _url.host;
+      const parsedDomain = parseProjectDomain(host);
 
       // Get project slug: proxy header > URL parsing > config
       const configuredSlug = config?.fs?.veryfront?.projectSlug;
