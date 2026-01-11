@@ -183,7 +183,9 @@ export async function runDynamicWorkflowJob(
         if (!workflow) {
           logger.error(`[DynamicJob] Workflow not found: ${run.workflowId}`);
           logger.error(
-            `[DynamicJob] Available workflows: ${discoveryResult.workflows.map((w) => w.id).join(", ")}`,
+            `[DynamicJob] Available workflows: ${
+              discoveryResult.workflows.map((w) => w.id).join(", ")
+            }`,
           );
           return DYNAMIC_EXIT_CODES.NOT_FOUND;
         }

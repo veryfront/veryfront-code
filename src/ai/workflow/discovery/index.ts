@@ -6,9 +6,9 @@
 
 export {
   createWorkflowRegistry,
+  type DiscoveredWorkflow,
   discoverWorkflows,
   findWorkflowById,
-  type DiscoveredWorkflow,
   type WorkflowDiscoveryOptions,
   type WorkflowDiscoveryResult,
 } from "./workflow-discovery.ts";

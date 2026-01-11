@@ -5,16 +5,16 @@
 // SSE (one-way)
 export {
   useClaudeCodeStream,
-  useClaudeCodeText,
   type UseClaudeCodeStreamOptions,
   type UseClaudeCodeStreamState,
+  useClaudeCodeText,
 } from "./use-claude-code-stream.ts";
 
 // WebSocket (bidirectional)
 export {
-  useClaudeCodeWebSocket,
   type PendingApproval,
   type PendingInput,
+  useClaudeCodeWebSocket,
   type UseClaudeCodeWebSocketActions,
   type UseClaudeCodeWebSocketOptions,
   type UseClaudeCodeWebSocketState,

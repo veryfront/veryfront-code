@@ -99,8 +99,7 @@ function buildPrompt(input: ClaudeCodeInput): string {
 export const claudeCodeTool: Tool<ClaudeCodeInput, ClaudeCodeResult> = {
   id: "claude-code",
   type: "function",
-  description:
-    "Run a Claude Code agent for complex coding tasks. " +
+  description: "Run a Claude Code agent for complex coding tasks. " +
     "Supports file editing, bash commands, and iterative problem-solving.",
   inputSchema: claudeCodeInputSchema,
   jsonSchema: {

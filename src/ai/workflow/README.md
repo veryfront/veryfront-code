@@ -12,7 +12,7 @@ Define workflows and use them in your API routes:
 
 ```typescript
 // app/workflows/content-pipeline.ts
-import { workflow, step, parallel } from "veryfront/ai/workflow";
+import { parallel, step, workflow } from "veryfront/ai/workflow";
 
 export const contentPipeline = workflow({
   id: "content-pipeline",
@@ -52,11 +52,7 @@ For automatic crash recovery during development, add Redis and a worker:
 
 ```typescript
 // app/lib/workflow-client.ts
-import {
-  WorkflowClient,
-  WorkflowWorker,
-  RedisBackend,
-} from "veryfront/ai/workflow";
+import { RedisBackend, WorkflowClient, WorkflowWorker } from "veryfront/ai/workflow";
 import { contentPipeline } from "../workflows/content-pipeline";
 
 // Shared Redis backend
@@ -82,6 +78,7 @@ if (process.env.WORKER_ENABLED !== "false") {
 ```
 
 Now if your dev server crashes mid-workflow:
+
 1. Restart `veryfront dev`
 2. Worker detects stalled workflows
 3. Resumes from last checkpoint
@@ -158,6 +155,7 @@ services:
 ```
 
 Each pod runs both HTTP server and workflow worker. Redis handles coordination:
+
 - Checkpoints stored in Redis
 - Heartbeats detect stalled workflows
 - Distributed locking prevents duplicate execution
@@ -219,6 +217,7 @@ Tenant B's workflow:
 ```
 
 **Security requirements:**
+
 - Complete process isolation between tenants
 - No shared memory or state (prevents data exfiltration)
 - Fresh container for each workflow (no persistent backdoors)
@@ -250,11 +249,7 @@ JOB_TIMEOUT=1800000                  # 30 minute timeout
 ### Programmatic Configuration
 
 ```typescript
-import {
-  WorkflowClient,
-  WorkflowWorker,
-  RedisBackend
-} from "veryfront/ai/workflow";
+import { RedisBackend, WorkflowClient, WorkflowWorker } from "veryfront/ai/workflow";
 
 // Backend
 const backend = new RedisBackend({
@@ -282,10 +277,10 @@ The `WorkflowJobManager` uses a pluggable `JobExecutor` interface, allowing work
 
 ```typescript
 import {
-  WorkflowJobManager,
   K8sJobExecutor,
   ProcessJobExecutor,
   RedisBackend,
+  WorkflowJobManager,
 } from "veryfront/ai/workflow";
 
 const backend = new RedisBackend({ url: process.env.REDIS_URL });
@@ -319,15 +314,15 @@ await manager.start();
 
 **Available Executors:**
 
-| Executor | Use Case | Isolation |
-|----------|----------|-----------|
-| `K8sJobExecutor` | Production multi-tenant | Full container isolation |
-| `ProcessJobExecutor` | Local development | Process-level isolation |
+| Executor             | Use Case                | Isolation                |
+| -------------------- | ----------------------- | ------------------------ |
+| `K8sJobExecutor`     | Production multi-tenant | Full container isolation |
+| `ProcessJobExecutor` | Local development       | Process-level isolation  |
 
 **Creating a Custom Executor:**
 
 ```typescript
-import type { JobExecutor, JobConfig, JobInfo } from "veryfront/ai/workflow";
+import type { JobConfig, JobExecutor, JobInfo } from "veryfront/ai/workflow";
 
 class DockerJobExecutor implements JobExecutor {
   async createJob(config: JobConfig): Promise<string> {
@@ -366,24 +361,26 @@ const fetchFileTool = {
 ```
 
 When a workflow starts within an HTTP request:
+
 1. Tenant context is captured from the request
 2. Context is stored with the workflow checkpoint
 3. When steps execute, context is restored
 4. `api` calls automatically use the correct tenant
 
 This works across:
+
 - Crash recovery (context restored from checkpoint)
 - Different pods (context in Redis)
 - Job pods (context passed via environment)
 
 ## Deployment Modes Summary
 
-| Mode | Use Case | Code Trust | Isolation | Executor |
-|------|----------|------------|-----------|----------|
-| **Dev (simple)** | Local development | Your code | None needed | In-process (`WorkflowWorker`) |
-| **Dev (jobs)** | Local with job isolation | Your code | Process per workflow | `ProcessJobExecutor` |
-| **Self-hosted** | Single-tenant prod | Your code | Shared process OK | In-process (`WorkflowWorker`) |
-| **Cloud** | Multi-tenant SaaS | User code | Container per workflow | `K8sJobExecutor` |
+| Mode             | Use Case                 | Code Trust | Isolation              | Executor                      |
+| ---------------- | ------------------------ | ---------- | ---------------------- | ----------------------------- |
+| **Dev (simple)** | Local development        | Your code  | None needed            | In-process (`WorkflowWorker`) |
+| **Dev (jobs)**   | Local with job isolation | Your code  | Process per workflow   | `ProcessJobExecutor`          |
+| **Self-hosted**  | Single-tenant prod       | Your code  | Shared process OK      | In-process (`WorkflowWorker`) |
+| **Cloud**        | Multi-tenant SaaS        | User code  | Container per workflow | `K8sJobExecutor`              |
 
 **Key decision:** If workflows execute untrusted user-defined code, use `K8sJobExecutor` for container isolation. For local development that mirrors production behavior, use `ProcessJobExecutor`.
 
@@ -403,6 +400,7 @@ Workflow: content-pipeline
 ```
 
 On recovery, the workflow resumes from the last checkpoint:
+
 - Completed steps are skipped
 - Failed steps can be retried
 - Waiting steps (approval) continue waiting

@@ -5,10 +5,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import type {
-  ClaudeCodeEvent,
-  ClaudeCodeResult,
-} from "../types.ts";
+import type { ClaudeCodeEvent, ClaudeCodeResult } from "../types.ts";
 
 /**
  * State for Claude Code streaming

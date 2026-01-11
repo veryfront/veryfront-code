@@ -24,34 +24,34 @@
 // In-process worker (single-tenant / trusted code)
 export {
   createWorkflowWorker,
-  WorkflowWorker,
   type WorkerStats,
   type WorkerStatus,
+  WorkflowWorker,
   type WorkflowWorkerConfig,
 } from "./workflow-worker.ts";
 
 // Job-based execution (multi-tenant / untrusted code)
 export {
   createWorkflowJobManager,
-  WorkflowJobManager,
   type ManagerStats,
   type ManagerStatus,
+  WorkflowJobManager,
   type WorkflowJobManagerConfig,
 } from "./job-manager.ts";
 
 // Job Executors (pluggable runtime backends)
 export {
   isJobExecutor,
-  K8sJobExecutor,
-  ProcessJobExecutor,
   type JobConfig,
   type JobExecutor,
   type JobInfo,
   type JobStatus,
   type K8sClient,
+  K8sJobExecutor,
   type K8sJobExecutorConfig,
   type K8sJobSpec,
   type K8sJobStatusResponse,
+  ProcessJobExecutor,
   type ProcessJobExecutorConfig,
 } from "./executors/index.ts";
 

@@ -357,7 +357,11 @@ async function executeTool(
       break;
 
     case "str_replace_editor":
-      result = await executeTextEditor(toolCall.input as unknown as TextEditorToolInput, context, config);
+      result = await executeTextEditor(
+        toolCall.input as unknown as TextEditorToolInput,
+        context,
+        config,
+      );
       break;
 
     case "computer":

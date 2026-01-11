@@ -130,9 +130,7 @@ export class StepExecutor {
     // Wrap execution with tenant context if available
     // This makes the tenant accessible to tools via getWorkflowTenant()
     if (tenant) {
-      return workflowTenantStorage.run(tenant, () =>
-        this.executeInternal(node, context)
-      );
+      return workflowTenantStorage.run(tenant, () => this.executeInternal(node, context));
     }
     return this.executeInternal(node, context);
   }

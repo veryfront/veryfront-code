@@ -123,11 +123,13 @@ export interface K8sJobStatusResponse {
  * Kubernetes Job Executor
  */
 export class K8sJobExecutor implements JobExecutor {
-  private config: Required<Omit<K8sJobExecutorConfig, "resources" | "serviceAccount" | "envFromSecrets">> & {
-    resources?: K8sJobExecutorConfig["resources"];
-    serviceAccount?: K8sJobExecutorConfig["serviceAccount"];
-    envFromSecrets?: K8sJobExecutorConfig["envFromSecrets"];
-  };
+  private config:
+    & Required<Omit<K8sJobExecutorConfig, "resources" | "serviceAccount" | "envFromSecrets">>
+    & {
+      resources?: K8sJobExecutorConfig["resources"];
+      serviceAccount?: K8sJobExecutorConfig["serviceAccount"];
+      envFromSecrets?: K8sJobExecutorConfig["envFromSecrets"];
+    };
   private k8sClient: K8sClient;
 
   constructor(config: K8sJobExecutorConfig, k8sClient: K8sClient) {

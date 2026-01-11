@@ -38,12 +38,12 @@ This module provides a harness for running Claude Code SDK agents within Veryfro
 
 ### 1. Built-in Tool Modes
 
-| Mode | Tools Enabled | Use Case |
-|------|---------------|----------|
-| `code` | bash, file editor | Code modifications, scripts |
-| `analysis` | file reader only | Code review, analysis |
-| `full` | bash, file, computer | Full automation |
-| `custom` | User-specified | Fine-grained control |
+| Mode       | Tools Enabled        | Use Case                    |
+| ---------- | -------------------- | --------------------------- |
+| `code`     | bash, file editor    | Code modifications, scripts |
+| `analysis` | file reader only     | Code review, analysis       |
+| `full`     | bash, file, computer | Full automation             |
+| `custom`   | User-specified       | Fine-grained control        |
 
 ### 2. Tenant-Aware File Operations
 
@@ -57,15 +57,16 @@ await agent.run("Read the package.json and update dependencies");
 
 ### 3. Sandbox Modes
 
-| Mode | Description | Use Case |
-|------|-------------|----------|
-| `strict` | Containerized, no network | Untrusted code |
-| `permissive` | Process isolation only | Trusted code |
-| `none` | Direct execution | Development only |
+| Mode         | Description               | Use Case         |
+| ------------ | ------------------------- | ---------------- |
+| `strict`     | Containerized, no network | Untrusted code   |
+| `permissive` | Process isolation only    | Trusted code     |
+| `none`       | Direct execution          | Development only |
 
 ### 4. Checkpointing
 
 Long-running agent tasks are checkpointed:
+
 - After each tool execution
 - On agentic loop iterations
 - Before human approval requests
@@ -75,7 +76,7 @@ Long-running agent tasks are checkpointed:
 ### Basic: As a Workflow Tool
 
 ```typescript
-import { workflow, step } from "veryfront/ai/workflow";
+import { step, workflow } from "veryfront/ai/workflow";
 
 export const codeFix = workflow({
   id: "code-fix",
@@ -218,30 +219,37 @@ interface ClaudeCodeToolInput {
 ### Built-in Tools
 
 #### `bash` (type: bash_20250124)
+
 Execute shell commands in sandbox.
 
 #### `file_editor` (type: text_editor_20250124)
+
 Edit files using str_replace operations.
 
 #### `file_reader`
+
 Read files from project (uses `api.files.read`).
 
 #### `computer` (type: computer_20250124)
+
 Computer use for UI automation (optional, requires setup).
 
 ## Security Considerations
 
 ### File Access
+
 - All file operations scoped to tenant project
 - Path traversal protection enabled
 - No access outside project root
 
 ### Shell Execution
+
 - Commands run in isolated container (strict mode)
 - Network access disabled by default
 - Resource limits enforced (CPU, memory, time)
 
 ### Secrets
+
 - Environment variables not passed to sandbox
 - API keys managed via Veryfront config
 - Tenant tokens never exposed to agent
@@ -399,7 +407,7 @@ export async function GET(ctx: APIContext) {
 
       const unsubscribe = await publisher.subscribe(runId, (event) => {
         controller.enqueue(
-          encoder.encode(`data: ${JSON.stringify(event)}\n\n`)
+          encoder.encode(`data: ${JSON.stringify(event)}\n\n`),
         );
 
         if (event.type === "complete" || event.type === "error") {
@@ -423,7 +431,7 @@ export async function GET(ctx: APIContext) {
 #### 2. Configure Agent with Publisher
 
 ```typescript
-import { streamingClaudeCodeAgent, RedisEventPublisher } from "veryfront/ai/workflow/claude-code";
+import { RedisEventPublisher, streamingClaudeCodeAgent } from "veryfront/ai/workflow/claude-code";
 
 const publisher = new RedisEventPublisher({
   url: Deno.env.get("REDIS_URL")!,
@@ -500,27 +508,27 @@ function AgentViewer({ runId }: { runId: string }) {
 
 ### Event Types
 
-| Event | Description |
-|-------|-------------|
-| `iteration_start` | New iteration beginning |
-| `text_delta` | Text chunk (streaming) |
-| `text_complete` | Full text response |
-| `tool_call_start` | Tool execution starting |
-| `tool_call_input` | Tool input streaming |
-| `tool_call_complete` | Tool input complete |
-| `tool_result` | Tool execution result |
-| `iteration_complete` | Iteration finished |
-| `complete` | Agent finished |
-| `error` | Error occurred |
+| Event                | Description             |
+| -------------------- | ----------------------- |
+| `iteration_start`    | New iteration beginning |
+| `text_delta`         | Text chunk (streaming)  |
+| `text_complete`      | Full text response      |
+| `tool_call_start`    | Tool execution starting |
+| `tool_call_input`    | Tool input streaming    |
+| `tool_call_complete` | Tool input complete     |
+| `tool_result`        | Tool execution result   |
+| `iteration_complete` | Iteration finished      |
+| `complete`           | Agent finished          |
+| `error`              | Error occurred          |
 
 ### Publisher Options
 
-| Type | Use Case |
-|------|----------|
-| `RedisEventPublisher` | Distributed deployments |
-| `MemoryEventPublisher` | Single-process / testing |
-| `SSEEventPublisher` | Direct HTTP streaming |
-| `CallbackEventPublisher` | Custom handling |
+| Type                     | Use Case                 |
+| ------------------------ | ------------------------ |
+| `RedisEventPublisher`    | Distributed deployments  |
+| `MemoryEventPublisher`   | Single-process / testing |
+| `SSEEventPublisher`      | Direct HTTP streaming    |
+| `CallbackEventPublisher` | Custom handling          |
 
 ## Bidirectional Streaming (WebSocket)
 
@@ -542,13 +550,13 @@ WebSocket (Bidirectional):
 └──────────┘                      └──────────┘
 ```
 
-| Feature | SSE | WebSocket |
-|---------|-----|-----------|
-| Events to client | ✅ | ✅ |
-| Cancel agent | ❌ (separate HTTP) | ✅ |
-| Approve tool calls | ❌ (separate HTTP) | ✅ |
-| User input mid-run | ❌ | ✅ |
-| Keepalive | Manual | Built-in ping/pong |
+| Feature            | SSE                | WebSocket          |
+| ------------------ | ------------------ | ------------------ |
+| Events to client   | ✅                 | ✅                 |
+| Cancel agent       | ❌ (separate HTTP) | ✅                 |
+| Approve tool calls | ❌ (separate HTTP) | ✅                 |
+| User input mid-run | ❌                 | ✅                 |
+| Keepalive          | Manual             | Built-in ping/pong |
 
 ### Setting Up WebSocket
 
@@ -720,22 +728,22 @@ function InteractiveAgent({ runId }: { runId: string }) {
 
 ### Client Commands
 
-| Command | Description |
-|---------|-------------|
-| `cancel` | Stop agent execution |
-| `approve` | Approve a pending tool call |
-| `reject` | Reject a pending tool call |
-| `input` | Send user input to agent |
-| `ping` | Keepalive (handled automatically) |
+| Command   | Description                       |
+| --------- | --------------------------------- |
+| `cancel`  | Stop agent execution              |
+| `approve` | Approve a pending tool call       |
+| `reject`  | Reject a pending tool call        |
+| `input`   | Send user input to agent          |
+| `ping`    | Keepalive (handled automatically) |
 
 ### Server Events (Extended)
 
-| Event | Description |
-|-------|-------------|
+| Event              | Description              |
+| ------------------ | ------------------------ |
 | `approval_request` | Tool needs user approval |
-| `input_request` | Agent needs user input |
-| `cancelled` | Agent was cancelled |
-| `pong` | Response to ping |
+| `input_request`    | Agent needs user input   |
+| `cancelled`        | Agent was cancelled      |
+| `pong`             | Response to ping         |
 
 ### Tool Approval Configuration
 
@@ -754,7 +762,7 @@ const agent = streamingClaudeCodeAgent({
       /npm\s+publish/,
     ],
     autoApproveTimeout: 30000, // Auto-approve after 30s
-    timeoutAction: "reject",   // Or "approve"
+    timeoutAction: "reject", // Or "approve"
   },
 });
 ```
@@ -765,13 +773,14 @@ Claude Code agents require long-running compute for agentic loops (1-30 minutes)
 
 ### Compute Requirements
 
-| Component | Duration | Serverless | Stateful |
-|-----------|----------|------------|----------|
-| SSE endpoint | Client lifetime | ⚠️ Limited | ✅ Ideal |
-| Agent execution | 1-30 minutes | ❌ Poor | ✅ Required |
-| Event publishing | Instant | ✅ Great | ✅ Great |
+| Component        | Duration        | Serverless | Stateful    |
+| ---------------- | --------------- | ---------- | ----------- |
+| SSE endpoint     | Client lifetime | ⚠️ Limited | ✅ Ideal    |
+| Agent execution  | 1-30 minutes    | ❌ Poor    | ✅ Required |
+| Event publishing | Instant         | ✅ Great   | ✅ Great    |
 
 **Why serverless is limited:**
+
 - Execution timeouts (Vercel: 10-300s, Lambda: 15min max)
 - Cold starts break SSE connections
 - Can't hold WebSocket/SSE open across requests
@@ -810,6 +819,7 @@ Claude Code agents require long-running compute for agentic loops (1-30 minutes)
 ```
 
 **Key benefits:**
+
 - SSE endpoint is serverless-safe (just reads from Redis)
 - Agent execution runs on dedicated stateful worker
 - Redis provides durability across restarts
@@ -850,6 +860,7 @@ If you must run fully serverless, break agent into iterations:
 ```
 
 **Trade-offs:**
+
 - ✅ Works on serverless
 - ❌ Higher latency (cold starts between iterations)
 - ❌ More complex state management
@@ -930,10 +941,7 @@ worker:
 // src/ai/workflow/worker/main.ts
 import { JobExecutor } from "../executor/job-executor.ts";
 import { createRedisBackend } from "../backends/redis.ts";
-import {
-  streamingClaudeCodeAgent,
-  RedisEventPublisher,
-} from "../claude-code/index.ts";
+import { RedisEventPublisher, streamingClaudeCodeAgent } from "../claude-code/index.ts";
 
 const REDIS_URL = Deno.env.get("REDIS_URL")!;
 const CONCURRENCY = parseInt(Deno.env.get("WORKER_CONCURRENCY") || "2");
@@ -1040,12 +1048,12 @@ export async function GET(ctx: APIContext) {
 
       // Send initial connection event
       controller.enqueue(
-        encoder.encode(`data: ${JSON.stringify({ type: "connected", runId })}\n\n`)
+        encoder.encode(`data: ${JSON.stringify({ type: "connected", runId })}\n\n`),
       );
 
       const unsubscribe = await publisher.subscribe(runId, (event) => {
         controller.enqueue(
-          encoder.encode(`data: ${JSON.stringify(event)}\n\n`)
+          encoder.encode(`data: ${JSON.stringify(event)}\n\n`),
         );
 
         if (event.type === "complete" || event.type === "error") {
@@ -1072,12 +1080,12 @@ export async function GET(ctx: APIContext) {
 
 ### Scaling Considerations
 
-| Scenario | Worker Replicas | Notes |
-|----------|-----------------|-------|
-| Development | 0 (inline) | Run agent in-process for simplicity |
-| Low traffic | 1 | Single worker, 2 concurrent jobs |
-| Medium traffic | 2-3 | Scale based on queue depth |
-| High traffic | 3-5 + HPA | Use KEDA for queue-based autoscaling |
+| Scenario       | Worker Replicas | Notes                                |
+| -------------- | --------------- | ------------------------------------ |
+| Development    | 0 (inline)      | Run agent in-process for simplicity  |
+| Low traffic    | 1               | Single worker, 2 concurrent jobs     |
+| Medium traffic | 2-3             | Scale based on queue depth           |
+| High traffic   | 3-5 + HPA       | Use KEDA for queue-based autoscaling |
 
 **Queue-based autoscaling with KEDA:**
 
@@ -1096,7 +1104,7 @@ spec:
       metadata:
         address: redis:6379
         listName: veryfront:jobs:pending
-        listLength: "5"  # Scale up when > 5 pending jobs
+        listLength: "5" # Scale up when > 5 pending jobs
 ```
 
 ### Monitoring

@@ -1319,7 +1319,9 @@ export class RedisBackend implements WorkflowBackend {
     if (claimed !== "OK") {
       // Another worker already claimed this run
       if (this.config.debug) {
-        logger.debug(`[RedisBackend] Worker ${workerId} failed to claim run ${runId} - already claimed`);
+        logger.debug(
+          `[RedisBackend] Worker ${workerId} failed to claim run ${runId} - already claimed`,
+        );
       }
       return false;
     }

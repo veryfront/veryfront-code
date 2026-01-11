@@ -336,7 +336,9 @@ async function runStreamingIteration(
             type: "tool_result",
             toolCallId: currentToolCallId,
             toolName: currentToolName,
-            output: typeof result.content === "string" ? result.content : JSON.stringify(result.content),
+            output: typeof result.content === "string"
+              ? result.content
+              : JSON.stringify(result.content),
             isError: result.is_error || false,
             iteration: context.iteration,
           });

@@ -211,20 +211,12 @@ export type { CloudflareAdapterConfig } from "./backends/cloudflare.ts";
 // In-process worker (single-tenant / trusted code)
 export { createWorkflowWorker, WorkflowWorker } from "./worker/index.ts";
 
-export type {
-  WorkerStats,
-  WorkerStatus,
-  WorkflowWorkerConfig,
-} from "./worker/index.ts";
+export type { WorkerStats, WorkerStatus, WorkflowWorkerConfig } from "./worker/index.ts";
 
 // Job-based execution (multi-tenant / untrusted code)
 export { createWorkflowJobManager, WorkflowJobManager } from "./worker/index.ts";
 
-export type {
-  ManagerStats,
-  ManagerStatus,
-  WorkflowJobManagerConfig,
-} from "./worker/index.ts";
+export type { ManagerStats, ManagerStatus, WorkflowJobManagerConfig } from "./worker/index.ts";
 
 // Job Executors (pluggable runtime backends)
 export { isJobExecutor, K8sJobExecutor, ProcessJobExecutor } from "./worker/index.ts";
@@ -260,11 +252,7 @@ export type {
 } from "./worker/index.ts";
 
 // Workflow Discovery (for runtime workflow loading)
-export {
-  createWorkflowRegistry,
-  discoverWorkflows,
-  findWorkflowById,
-} from "./discovery/index.ts";
+export { createWorkflowRegistry, discoverWorkflows, findWorkflowById } from "./discovery/index.ts";
 
 export type {
   DiscoveredWorkflow,
