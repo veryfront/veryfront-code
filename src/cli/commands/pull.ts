@@ -46,9 +46,9 @@ interface ProjectFile {
   path: string;
   size: number;
   type: string;
-  mimeType?: string;
-  createdAt: string;
-  updatedAt: string;
+  mime_type?: string;
+  created_at: string;
+  updated_at: string;
 }
 
 /**
@@ -58,7 +58,7 @@ interface ListFilesResponse {
   data: ProjectFile[];
   pagination?: {
     cursor?: string;
-    hasMore: boolean;
+    has_more: boolean;
   };
 }
 
@@ -84,8 +84,8 @@ async function listAllFiles(
   do {
     const params: Record<string, string> = {
       limit: "10000",
-      sortBy: "updatedAt",
-      sortOrder: "desc",
+      sort_by: "updatedAt",
+      sort_order: "desc",
     };
     if (cursor) params.cursor = cursor;
     if (branch) params.branch = branch;
@@ -96,7 +96,7 @@ async function listAllFiles(
     );
 
     allFiles.push(...response.data);
-    cursor = response.pagination?.hasMore ? response.pagination.cursor : undefined;
+    cursor = response.pagination?.has_more ? response.pagination.cursor : undefined;
   } while (cursor);
 
   return allFiles;

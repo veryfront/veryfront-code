@@ -199,7 +199,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
           sourceType: "environment",
           projectSlug: this.projectSlug,
           environmentName: this.contentSource.name,
-          releaseId: envResult.releaseId,
+          releaseId: envResult.release_id,
         };
       }
 
@@ -211,9 +211,9 @@ export class VeryfrontFSAdapter implements FSAdapter {
         }
         return {
           sourceType: "environment",
-          projectSlug: lookup.projectSlug,
+          projectSlug: lookup.project_slug,
           environmentName: lookup.environment?.name ?? "production",
-          releaseId: lookup.releaseId ?? undefined,
+          releaseId: lookup.release_id ?? undefined,
         };
       }
 

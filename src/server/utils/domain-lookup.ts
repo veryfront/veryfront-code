@@ -8,11 +8,11 @@
 import { logger } from "@veryfront/utils";
 
 export interface DomainLookupResult {
-  projectId: string;
-  projectSlug: string;
-  projectName: string;
+  project_id: string;
+  project_slug: string;
+  project_name: string;
   environment: { id: string; name: string } | null;
-  releaseId: string | null;
+  release_id: string | null;
 }
 
 export interface DomainLookupConfig {
@@ -61,7 +61,7 @@ export async function lookupProjectByDomain(
 
     logger.debug("[DomainLookup] Domain lookup result", {
       domain,
-      projectSlug: result.projectSlug,
+      projectSlug: result.project_slug,
       environment: result.environment?.name,
     });
 

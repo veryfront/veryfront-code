@@ -37,16 +37,16 @@ export interface ListFilesOptions {
  */
 export interface FileListResult {
   files: ProjectFile[];
-  pageInfo: {
-    hasNextPage: boolean;
-    endCursor: string | null;
-    hasPreviousPage?: boolean;
-    startCursor?: string | null;
+  page_info: {
+    has_next_page: boolean;
+    end_cursor: string | null;
+    has_previous_page?: boolean;
+    start_cursor?: string | null;
   };
-  releaseId?: string;
-  releaseVersion?: string | null;
-  environmentId?: string;
-  environmentName?: string;
+  release_id?: string;
+  release_version?: string | null;
+  environment_id?: string;
+  environment_name?: string;
 }
 
 /**
@@ -56,11 +56,11 @@ export interface FileDetail {
   path: string;
   content: string;
   id?: string;
-  versionId?: string;
+  version_id?: string;
   type?: string;
   size?: number;
-  releaseId?: string;
-  releaseVersion?: string | null;
+  release_id?: string;
+  release_version?: string | null;
 }
 
 // =============================================================================
@@ -69,7 +69,11 @@ export interface FileDetail {
 
 function buildListParams(options: ListFilesOptions): URLSearchParams {
   const { cursor, limit = 100, pattern, sortBy = "updatedAt", sortOrder = "desc" } = options;
-  const params = new URLSearchParams({ limit: String(limit), sortBy, sortOrder });
+  const params = new URLSearchParams({
+    limit: String(limit),
+    sort_by: sortBy,
+    sort_order: sortOrder,
+  });
   if (cursor) params.set("cursor", cursor);
   if (pattern) params.set("pattern", pattern);
   return params;
@@ -154,9 +158,9 @@ export class VeryfrontAPIOperations {
         content: f.content,
         type: f.type,
         size: f.size,
-        updatedAt: f.updatedAt,
+        updated_at: f.updated_at,
       })),
-      pageInfo: response.pageInfo,
+      page_info: response.page_info,
     };
   }
 
@@ -178,7 +182,9 @@ export class VeryfrontAPIOperations {
         limit: 10000,
       });
       allFiles.push(...result.files);
-      cursor = result.pageInfo.hasNextPage ? (result.pageInfo.endCursor ?? undefined) : undefined;
+      cursor = result.page_info.has_next_page
+        ? (result.page_info.end_cursor ?? undefined)
+        : undefined;
     } while (cursor);
 
     return allFiles;
@@ -238,18 +244,18 @@ export class VeryfrontAPIOperations {
     return {
       files: response.data.map((f) => ({
         id: f.id,
-        versionId: f.versionId,
+        version_id: f.version_id,
         path: f.path,
         content: f.content,
         type: f.type,
         size: f.size,
-        updatedAt: f.updatedAt,
+        updated_at: f.updated_at,
       })),
-      pageInfo: response.pageInfo,
-      releaseId: response.releaseId,
-      releaseVersion: response.releaseVersion,
-      environmentId: response.environmentId,
-      environmentName: response.environmentName,
+      page_info: response.page_info,
+      release_id: response.release_id,
+      release_version: response.release_version,
+      environment_id: response.environment_id,
+      environment_name: response.environment_name,
     };
   }
 
@@ -271,7 +277,9 @@ export class VeryfrontAPIOperations {
         limit: 10000,
       });
       allFiles.push(...result.files);
-      cursor = result.pageInfo.hasNextPage ? (result.pageInfo.endCursor ?? undefined) : undefined;
+      cursor = result.page_info.has_next_page
+        ? (result.page_info.end_cursor ?? undefined)
+        : undefined;
     } while (cursor);
 
     logger.debug("[API] listAllEnvironmentFiles", {
@@ -303,9 +311,9 @@ export class VeryfrontAPIOperations {
       path: response.path,
       content: response.content,
       id: response.id,
-      versionId: response.versionId,
-      releaseId: response.releaseId,
-      releaseVersion: response.releaseVersion,
+      version_id: response.version_id,
+      release_id: response.release_id,
+      release_version: response.release_version,
     };
   }
 
@@ -334,16 +342,16 @@ export class VeryfrontAPIOperations {
     return {
       files: response.data.map((f) => ({
         id: f.id,
-        versionId: f.versionId,
+        version_id: f.version_id,
         path: f.path,
         content: f.content,
         type: f.type,
         size: f.size,
-        updatedAt: f.updatedAt,
+        updated_at: f.updated_at,
       })),
-      pageInfo: response.pageInfo,
-      releaseId: response.releaseId,
-      releaseVersion: response.releaseVersion,
+      page_info: response.page_info,
+      release_id: response.release_id,
+      release_version: response.release_version,
     };
   }
 
@@ -365,7 +373,9 @@ export class VeryfrontAPIOperations {
         limit: 10000,
       });
       allFiles.push(...result.files);
-      cursor = result.pageInfo.hasNextPage ? (result.pageInfo.endCursor ?? undefined) : undefined;
+      cursor = result.page_info.has_next_page
+        ? (result.page_info.end_cursor ?? undefined)
+        : undefined;
     } while (cursor);
 
     return allFiles;
@@ -391,9 +401,9 @@ export class VeryfrontAPIOperations {
       path: response.path,
       content: response.content,
       id: response.id,
-      versionId: response.versionId,
-      releaseId: response.releaseId,
-      releaseVersion: response.releaseVersion,
+      version_id: response.version_id,
+      release_id: response.release_id,
+      release_version: response.release_version,
     };
   }
 
@@ -415,7 +425,7 @@ export class VeryfrontAPIOperations {
 
       logger.debug("[API] Domain lookup result", {
         domain,
-        projectSlug: response.projectSlug,
+        projectSlug: response.project_slug,
         environment: response.environment?.name,
       });
 

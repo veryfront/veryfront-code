@@ -750,9 +750,9 @@ export class RenderPipeline {
     const fs = this.config.adapter?.fs;
     if (fs && isExtendedFSAdapter(fs) && fs.isVeryfrontAdapter()) {
       const wrappedAdapter = fs.getUnderlyingAdapter() as {
-        getProjectData?: () => { updatedAt?: string } | undefined;
+        getProjectData?: () => { updated_at?: string } | undefined;
       };
-      projectUpdatedAt = wrappedAdapter.getProjectData?.()?.updatedAt;
+      projectUpdatedAt = wrappedAdapter.getProjectData?.()?.updated_at;
     }
 
     // 11. Resolve app component path (contains QueryClientProvider, etc.)
