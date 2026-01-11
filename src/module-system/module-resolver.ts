@@ -1,5 +1,11 @@
 import { serverLogger as logger } from "@veryfront/utils";
-import { dirname, isAbsolute, join, relative } from "@veryfront/platform/compat/path/index.ts";
+import {
+  dirname,
+  isAbsolute,
+  join,
+  normalize,
+  relative,
+} from "@veryfront/platform/compat/path/index.ts";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 
 export interface ResolvedModule {
@@ -66,7 +72,7 @@ export class ModuleResolver {
         ? (isAbsolute(referrer) ? referrer : join(this.options.projectDir, referrer))
         : null;
       const basePath = refPath ? dirname(refPath) : this.options.projectDir;
-      const fullPath = join(basePath, specifier);
+      const fullPath = normalize(join(basePath, specifier));
 
       const extensions = ["", ".ts", ".tsx", ".js", ".jsx", ".mjs"];
       for (const ext of extensions) {

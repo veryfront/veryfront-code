@@ -596,6 +596,26 @@ export async function withTestContext<T>(
         // May fail if module not loaded yet, which is fine
       }
 
+      // Reset React cache to prevent cross-test React instance conflicts
+      try {
+        const { resetReactCache } = await import(
+          "../../src/react/compat/ssr-adapter/server-loader.ts"
+        );
+        resetReactCache();
+      } catch {
+        // May fail if module not loaded yet, which is fine
+      }
+
+      // Reset compat hooks context to prevent React instance conflicts
+      try {
+        const { resetCompatHooksContext } = await import(
+          "../../src/react/compat/hooks-adapter.ts"
+        );
+        resetCompatHooksContext();
+      } catch {
+        // May fail if module not loaded yet, which is fine
+      }
+
       return await fn(context);
     });
   } finally {

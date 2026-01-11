@@ -161,16 +161,46 @@ export interface CompatHooks {
   useId: typeof useIdCompat;
 }
 
-export const CompatHooksContext = React.createContext<CompatHooks>({
-  useFormStatus: useFormStatusCompat,
-  useOptimistic: useOptimisticCompat,
-  useTransition: useTransitionCompat,
-  useDeferredValue: useDeferredValueCompat,
-  useId: useIdCompat,
-});
+// Lazy-initialized context to avoid module-level React.createContext() calls
+// that can fail during parallel test execution with inconsistent React instances
+let _compatHooksContext: React.Context<CompatHooks> | null = null;
+
+function getCompatHooksContext(): React.Context<CompatHooks> {
+  if (!_compatHooksContext) {
+    _compatHooksContext = React.createContext<CompatHooks>({
+      useFormStatus: useFormStatusCompat,
+      useOptimistic: useOptimisticCompat,
+      useTransition: useTransitionCompat,
+      useDeferredValue: useDeferredValueCompat,
+      useId: useIdCompat,
+    });
+  }
+  return _compatHooksContext;
+}
+
+/**
+ * Reset the compat hooks context for test isolation.
+ * Call this between tests to prevent React instance conflicts.
+ */
+export function resetCompatHooksContext(): void {
+  _compatHooksContext = null;
+}
+
+// Export getter for backward compatibility - callers should use the getter
+export const CompatHooksContext = {
+  get Provider() {
+    return getCompatHooksContext().Provider;
+  },
+  get Consumer() {
+    return getCompatHooksContext().Consumer;
+  },
+  get displayName() {
+    return getCompatHooksContext().displayName;
+  },
+};
 
 export function useCompatHooks() {
-  return React.useContext(CompatHooksContext);
+  return React.useContext(getCompatHooksContext());
 }
 
 export function CompatHooksProvider({ children }: { children: React.ReactNode }) {
@@ -182,7 +212,7 @@ export function CompatHooksProvider({ children }: { children: React.ReactNode })
     useId: useIdCompat,
   };
 
-  return React.createElement(CompatHooksContext.Provider, { value: hooks }, children);
+  return React.createElement(getCompatHooksContext().Provider, { value: hooks }, children);
 }
 
 export const compatHooks = {
