@@ -134,8 +134,10 @@ export class VeryfrontFSAdapter implements FSAdapter {
       layout: this.projectData.layout,
     });
 
-    // Resolve content source to content context
-    this.contentContext = await this.resolveContentSource();
+    // Resolve content source to content context (skip if already set by setContentContext)
+    if (!this.contentContext) {
+      this.contentContext = await this.resolveContentSource();
+    }
 
     logger.info("[VeryfrontFSAdapter] Content context resolved", {
       sourceType: this.contentContext.sourceType,
