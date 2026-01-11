@@ -6,8 +6,8 @@ import {
   computeCodeHash,
   computeContentHash,
   getBundleManifestStore,
-  getBundleManifestTTL,
 } from "@veryfront/utils";
+import { getBundleManifestTTL } from "@veryfront/utils/bundle-manifest-init.ts";
 import type { VeryfrontConfig } from "@veryfront/config";
 import type { MdxBundle } from "@veryfront/types";
 
