@@ -72,11 +72,13 @@ export const ProjectFileSchema = z.object({
   updated_at: z.string(),
 });
 
+// Pagination cursors per Zalando guidelines #248
 export const PageInfoSchema = z.object({
-  has_next_page: z.boolean(),
-  end_cursor: z.string().nullable(),
-  has_previous_page: z.boolean().optional(),
-  start_cursor: z.string().nullable().optional(),
+  self: z.string().optional(),
+  first: z.string().optional(),
+  prev: z.string().nullable().optional(),
+  next: z.string().nullable().optional(),
+  last: z.string().optional(),
 });
 
 export const EnvironmentSchema = z.object({
