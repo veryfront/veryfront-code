@@ -161,7 +161,68 @@ describe(
         const stats = getRendererCacheStats();
         assertEquals(stats.size, 2);
         assertEquals(stats.maxSize, 10); // MAX_RENDERER_CACHE_SIZE
-        assertEquals(stats.projects.sort(), ["stats-1", "stats-2"]);
+        // Cache keys now include environment: {projectSlug}:preview
+        assertEquals(stats.projects.sort(), ["stats-1:preview", "stats-2:preview"]);
+      });
+    });
+
+    describe("Cache Key Generation", () => {
+      it("should use preview cache key for non-production environment", async () => {
+        const ctx = createMockContext("cache-key-preview");
+
+        await getRendererForProject(ctx);
+
+        const stats = getRendererCacheStats();
+        assertEquals(stats.projects, ["cache-key-preview:preview"]);
+      });
+
+      it("should use production cache key with releaseId", async () => {
+        const ctx = {
+          ...createMockContext("cache-key-prod"),
+          proxyEnvironment: "production" as const,
+          releaseId: "release-123",
+        };
+
+        await getRendererForProject(ctx);
+
+        const stats = getRendererCacheStats();
+        assertEquals(stats.projects, ["cache-key-prod:production:release-123"]);
+      });
+
+      it("should use different cache keys for different releases", async () => {
+        const ctx1 = {
+          ...createMockContext("multi-release"),
+          proxyEnvironment: "production" as const,
+          releaseId: "release-v1",
+        };
+        const ctx2 = {
+          ...createMockContext("multi-release"),
+          proxyEnvironment: "production" as const,
+          releaseId: "release-v2",
+        };
+
+        await getRendererForProject(ctx1);
+        await getRendererForProject(ctx2);
+
+        const stats = getRendererCacheStats();
+        assertEquals(stats.size, 2);
+        assertEquals(stats.projects.sort(), [
+          "multi-release:production:release-v1",
+          "multi-release:production:release-v2",
+        ]);
+      });
+
+      it("should use 'latest' when production has no releaseId", async () => {
+        const ctx = {
+          ...createMockContext("cache-key-latest"),
+          proxyEnvironment: "production" as const,
+          // No releaseId set
+        };
+
+        await getRendererForProject(ctx);
+
+        const stats = getRendererCacheStats();
+        assertEquals(stats.projects, ["cache-key-latest:production:latest"]);
       });
     });
 
