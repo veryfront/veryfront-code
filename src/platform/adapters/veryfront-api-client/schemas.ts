@@ -40,7 +40,7 @@ const BaseFileFields = {
   path: z.string(),
   type: FileTypeEnum,
   size: z.number(),
-  updatedAt: z.string(),
+  updated_at: z.string(),
   _links: LinksSchema.optional(),
 };
 
@@ -53,8 +53,8 @@ export const ProjectSchema = z.object({
   name: z.string(),
   slug: z.string(),
   description: z.string().optional(),
-  createdAt: z.string().optional(),
-  updatedAt: z.string().optional(),
+  created_at: z.string().optional(),
+  updated_at: z.string().optional(),
   provider: z.string().optional(),
   provider_id: z.string().optional(),
   layout: z.string().optional(),
@@ -64,19 +64,19 @@ export const ProjectSchema = z.object({
 
 export const ProjectFileSchema = z.object({
   id: z.string().optional(),
-  versionId: z.string().optional(),
+  version_id: z.string().optional(),
   path: z.string(),
   content: z.string().optional(),
   size: z.number(),
   type: FileTypeEnum,
-  updatedAt: z.string(),
+  updated_at: z.string(),
 });
 
 export const PageInfoSchema = z.object({
-  hasNextPage: z.boolean(),
-  endCursor: z.string().nullable(),
-  hasPreviousPage: z.boolean().optional(),
-  startCursor: z.string().nullable().optional(),
+  has_next_page: z.boolean(),
+  end_cursor: z.string().nullable(),
+  has_previous_page: z.boolean().optional(),
+  start_cursor: z.string().nullable().optional(),
 });
 
 export const EnvironmentSchema = z.object({
@@ -97,7 +97,7 @@ export const BranchFileListItemSchema = z.object({
 
 export const ListBranchFilesResponseSchema = z.object({
   data: z.array(BranchFileListItemSchema),
-  pageInfo: PageInfoSchema,
+  page_info: PageInfoSchema,
   _links: LinksSchema.optional(),
 });
 
@@ -115,17 +115,17 @@ export const BranchFileDetailSchema = z.object({
 // Shared fields for environment/release responses
 const VersionedFileFields = {
   id: z.string(),
-  versionId: z.string(),
+  version_id: z.string(),
 };
 
 const ReleaseMetaFields = {
-  releaseId: z.string(),
-  releaseVersion: z.string().nullable(),
+  release_id: z.string(),
+  release_version: z.string().nullable(),
 };
 
 const EnvironmentMetaFields = {
-  environmentId: z.string(),
-  environmentName: z.string(),
+  environment_id: z.string(),
+  environment_name: z.string(),
   ...ReleaseMetaFields,
 };
 
@@ -137,7 +137,7 @@ export const EnvironmentFileListItemSchema = z.object({
 
 export const ListEnvironmentFilesResponseSchema = z.object({
   data: z.array(EnvironmentFileListItemSchema),
-  pageInfo: PageInfoSchema,
+  page_info: PageInfoSchema,
   ...EnvironmentMetaFields,
   _links: LinksSchema.optional(),
 });
@@ -162,7 +162,7 @@ export const ReleaseFileListItemSchema = z.object({
 
 export const ListReleaseFilesResponseSchema = z.object({
   data: z.array(ReleaseFileListItemSchema),
-  pageInfo: PageInfoSchema,
+  page_info: PageInfoSchema,
   ...ReleaseMetaFields,
   _links: LinksSchema.optional(),
 });
@@ -188,11 +188,11 @@ export const ListProjectsResponseSchema = z.object({
 // =============================================================================
 
 export const LookupDomainResponseSchema = z.object({
-  projectId: z.string().uuid(),
-  projectSlug: z.string(),
-  projectName: z.string(),
+  project_id: z.string().uuid(),
+  project_slug: z.string(),
+  project_name: z.string(),
   environment: EnvironmentSchema.nullable(),
-  releaseId: z.string().uuid().nullable(),
+  release_id: z.string().uuid().nullable(),
 });
 
 // =============================================================================
