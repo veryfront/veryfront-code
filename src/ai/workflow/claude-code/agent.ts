@@ -234,8 +234,9 @@ async function executeBash(
     const process = command.spawn();
 
     // Create timeout promise with proper process cleanup
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
     const timeoutPromise = new Promise<never>((_, reject) => {
-      setTimeout(async () => {
+      timeoutId = setTimeout(async () => {
         try {
           // First try graceful SIGTERM
           process.kill("SIGTERM");
@@ -254,24 +255,31 @@ async function executeBash(
       }, timeout);
     });
 
-    // Wait for process or timeout
-    const output = await Promise.race([process.output(), timeoutPromise]);
+    try {
+      // Wait for process or timeout
+      const output = await Promise.race([process.output(), timeoutPromise]);
 
-    const stdout = new TextDecoder().decode(output.stdout);
-    const stderr = new TextDecoder().decode(output.stderr);
+      const stdout = new TextDecoder().decode(output.stdout);
+      const stderr = new TextDecoder().decode(output.stderr);
 
-    const isError = !output.success;
-    const result = isError ? stderr || stdout : stdout || stderr;
+      const isError = !output.success;
+      const result = isError ? stderr || stdout : stdout || stderr;
 
-    // Truncate if too long
-    const maxLength = 50000;
-    const truncated = result.length > maxLength
-      ? result.slice(0, maxLength) + "\n... (output truncated)"
-      : result;
+      // Truncate if too long
+      const maxLength = 50000;
+      const truncated = result.length > maxLength
+        ? result.slice(0, maxLength) + "\n... (output truncated)"
+        : result;
 
-    config.onToolResult?.("bash", truncated, isError);
+      config.onToolResult?.("bash", truncated, isError);
 
-    return { output: truncated, isError };
+      return { output: truncated, isError };
+    } finally {
+      // Clear timeout to prevent timer leak
+      if (timeoutId !== undefined) {
+        clearTimeout(timeoutId);
+      }
+    }
   } catch (error) {
     const output = `Error: ${error instanceof Error ? error.message : String(error)}`;
     config.onToolResult?.("bash", output, true);
