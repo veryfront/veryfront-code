@@ -40,7 +40,7 @@ const BaseFileFields = {
   path: z.string(),
   type: FileTypeEnum,
   size: z.number(),
-  updated_at: z.string(),
+  updated_at: z.string().optional(),
   _links: LinksSchema.optional(),
 };
 
@@ -69,12 +69,12 @@ export const ProjectFileSchema = z.object({
   content: z.string().optional(),
   size: z.number(),
   type: FileTypeEnum,
-  updated_at: z.string(),
+  updated_at: z.string().optional(),
 });
 
 export const PageInfoSchema = z.object({
-  has_next_page: z.boolean(),
-  end_cursor: z.string().nullable(),
+  has_next_page: z.boolean().optional().default(false),
+  end_cursor: z.string().nullable().optional().default(null),
   has_previous_page: z.boolean().optional(),
   start_cursor: z.string().nullable().optional(),
 });
@@ -97,7 +97,7 @@ export const BranchFileListItemSchema = z.object({
 
 export const ListBranchFilesResponseSchema = z.object({
   data: z.array(BranchFileListItemSchema),
-  page_info: PageInfoSchema,
+  page_info: PageInfoSchema.optional(),
   _links: LinksSchema.optional(),
 });
 
@@ -137,7 +137,7 @@ export const EnvironmentFileListItemSchema = z.object({
 
 export const ListEnvironmentFilesResponseSchema = z.object({
   data: z.array(EnvironmentFileListItemSchema),
-  page_info: PageInfoSchema,
+  page_info: PageInfoSchema.optional(),
   ...EnvironmentMetaFields,
   _links: LinksSchema.optional(),
 });
@@ -162,7 +162,7 @@ export const ReleaseFileListItemSchema = z.object({
 
 export const ListReleaseFilesResponseSchema = z.object({
   data: z.array(ReleaseFileListItemSchema),
-  page_info: PageInfoSchema,
+  page_info: PageInfoSchema.optional(),
   ...ReleaseMetaFields,
   _links: LinksSchema.optional(),
 });

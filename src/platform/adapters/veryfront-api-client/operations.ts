@@ -37,7 +37,7 @@ export interface ListFilesOptions {
  */
 export interface FileListResult {
   files: ProjectFile[];
-  page_info: {
+  page_info?: {
     has_next_page: boolean;
     end_cursor: string | null;
     has_previous_page?: boolean;
@@ -182,7 +182,7 @@ export class VeryfrontAPIOperations {
         limit: 10000,
       });
       allFiles.push(...result.files);
-      cursor = result.page_info.has_next_page
+      cursor = result.page_info?.has_next_page
         ? (result.page_info.end_cursor ?? undefined)
         : undefined;
     } while (cursor);
@@ -277,7 +277,7 @@ export class VeryfrontAPIOperations {
         limit: 10000,
       });
       allFiles.push(...result.files);
-      cursor = result.page_info.has_next_page
+      cursor = result.page_info?.has_next_page
         ? (result.page_info.end_cursor ?? undefined)
         : undefined;
     } while (cursor);
@@ -373,7 +373,7 @@ export class VeryfrontAPIOperations {
         limit: 10000,
       });
       allFiles.push(...result.files);
-      cursor = result.page_info.has_next_page
+      cursor = result.page_info?.has_next_page
         ? (result.page_info.end_cursor ?? undefined)
         : undefined;
     } while (cursor);
