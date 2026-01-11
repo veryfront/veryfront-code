@@ -8,7 +8,7 @@
  *   deno task proxy
  *
  * Prerequisites:
- *   Copy proxy.env.example to proxy.env and fill in OAuth credentials
+ *   Copy .env.local.example to .env.local and fill in OAuth credentials
  *
  * Test:
  *   curl http://codersociety.lvh.me:8080/
@@ -33,13 +33,13 @@ function log(prefix: string, color: string, message: string) {
   console.log(`${color}[${prefix}]${colors.reset} ${message}`);
 }
 
-// Check for proxy.env file
-const envFile = "proxy.env";
+// Check for .env.local file
+const envFile = ".env.local";
 try {
   await Deno.stat(envFile);
 } catch {
   log("ERROR", colors.red, `Missing ${envFile} file`);
-  log("ERROR", colors.red, "Copy proxy.env.example to proxy.env and fill in OAuth credentials");
+  log("ERROR", colors.red, "Copy .env.local.example to .env.local and fill in credentials");
   Deno.exit(1);
 }
 

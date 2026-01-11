@@ -161,15 +161,16 @@ renderer:
 
 ## Debugging
 
-### Local Proxy Mode Setup
+### Local Setup
 ```bash
 # 1. Copy config template
-cp proxy.env.example proxy.env
+cp .env.local.example .env.local
 
 # 2. Fill in OAuth credentials (from 1Password: "Veryfront OAuth Credentials")
 
-# 3. Start both services
-deno task proxy
+# 3. Run in either mode:
+deno task dev    # Direct mode (single project)
+deno task proxy  # Proxy mode (multi-project)
 ```
 
 ### Debug Endpoints
@@ -210,7 +211,7 @@ logcli query '{namespace="veryfront-production", container="renderer"} |= "error
 
 | File | Purpose |
 |------|---------|
-| `proxy.env.example` | Template for local proxy mode config |
+| `.env.local.example` | Template for local development config |
 | `scripts/dev-proxy.ts` | Launcher for `deno task proxy` |
 | `proxy/main.ts` | Proxy entry point |
 | `proxy/token-manager.ts` | OAuth token lifecycle |
