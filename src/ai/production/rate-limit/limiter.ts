@@ -5,7 +5,7 @@
  * Supports multiple strategies: fixed window, sliding window, token bucket.
  */
 
-import { createError, toError } from "../../../core/errors/veryfront-error.ts";
+import { createError, toError } from "@veryfront/errors/veryfront-error.ts";
 
 export interface RateLimitConfig {
   /** Strategy type */

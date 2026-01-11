@@ -4,7 +4,7 @@
  */
 
 import { cyan, dim, green } from "@veryfront/compat/console";
-import { isDeno } from "../../platform/compat/runtime.ts";
+import { isDeno } from "@veryfront/platform/compat/runtime.ts";
 
 export interface SelectOption {
   value: string;

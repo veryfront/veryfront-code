@@ -19,7 +19,7 @@ import {
 import type { HandlerContext } from "../handlers/types.ts";
 import { parseProjectDomain } from "../utils/domain-parser.ts";
 import { getEnvironmentType, lookupProjectByDomain } from "../utils/domain-lookup.ts";
-import { getErrorMessage } from "../../core/errors/veryfront-error.ts";
+import { getErrorMessage } from "@veryfront/errors/veryfront-error.ts";
 
 /** Check if host is a private/internal IP address */
 function isInternalHost(host: string): boolean {

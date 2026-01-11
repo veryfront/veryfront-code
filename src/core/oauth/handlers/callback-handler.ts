@@ -7,7 +7,7 @@
 import { OAuthService } from "../providers/base.ts";
 import type { OAuthServiceConfig, TokenStore } from "../types.ts";
 import { memoryTokenStore } from "../token-store/memory.ts";
-import { getEnv } from "../../../platform/compat/process.ts";
+import { getEnv } from "@veryfront/platform/compat/process.ts";
 
 export interface OAuthCallbackHandlerOptions {
   /** Token store to use (defaults to memory store) */

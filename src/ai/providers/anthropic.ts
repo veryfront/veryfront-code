@@ -1,9 +1,9 @@
 /** Anthropic provider implementation */
 
 import { BaseProvider } from "./base.ts";
-import { createError, toError } from "../../core/errors/veryfront-error.ts";
+import { createError, toError } from "@veryfront/errors/veryfront-error.ts";
 import type { AnthropicConfig, CompletionRequest, CompletionResponse } from "../types/provider.ts";
-import { agentLogger } from "../../core/utils/logger/logger.ts";
+import { agentLogger } from "@veryfront/utils/logger/logger.ts";
 
 interface AnthropicTextContent {
   type: "text";

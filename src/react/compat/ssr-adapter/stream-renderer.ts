@@ -4,9 +4,9 @@ import { getReactVersionInfo, hasFeature } from "../version-detector/index.ts";
 import { getReactDOMServer } from "./server-loader.ts";
 import { renderToStringAdapter } from "./string-renderer.ts";
 import type { SSROptions, SSRResult } from "./types.ts";
-import { createError, toError } from "../../../core/errors/veryfront-error.ts";
-import { getEnv } from "../../../platform/compat/process.ts";
-import { isTruthyEnvValue } from "../../../core/utils/constants/env.ts";
+import { createError, toError } from "@veryfront/errors/veryfront-error.ts";
+import { getEnv } from "@veryfront/platform/compat/process.ts";
+import { isTruthyEnvValue } from "@veryfront/utils/constants/env.ts";
 
 interface VeryfrontGlobal {
   __VERYFRONT_DEBUG__?: boolean;

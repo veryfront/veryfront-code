@@ -9,9 +9,9 @@
  */
 
 import { logger } from "../utils/logger/logger.ts";
-import { initializeRedisCache } from "../../build/transforms/esm/transform-cache.ts";
-import { initializeSSRRedisCache } from "../../module-system/react-loader/ssr-module-loader.ts";
-import { initializeFileCacheRedis } from "../../platform/adapters/fs/cache/file-cache.ts";
+import { initializeRedisCache } from "@veryfront/build/transforms/esm/transform-cache.ts";
+import { initializeSSRRedisCache } from "@veryfront/modules/react-loader/ssr-module-loader.ts";
+import { initializeFileCacheRedis } from "@veryfront/platform/adapters/fs/cache/file-cache.ts";
 import { isRedisConfigured } from "../utils/redis-client.ts";
 
 export interface RedisCacheStatus {

@@ -1,4 +1,4 @@
-import { join } from "../../platform/compat/path-helper.ts";
+import { join } from "@veryfront/platform/compat/path-helper.ts";
 import { rendererLogger as logger } from "@veryfront/utils";
 import { MDXCacheAdapter } from "@veryfront/transforms/mdx/index.ts";
 import { isCompiledBinary } from "@veryfront/utils";
@@ -6,7 +6,7 @@ import { DEFAULT_CACHE_DIR } from "@veryfront/utils/constants/server.ts";
 import { ComponentRegistry } from "../ssr/component-registry.ts";
 import { VirtualModuleSystem } from "../virtual-module-system.ts";
 import { CacheCoordinator } from "../cache/index.ts";
-import { createError, toError } from "../../core/errors/veryfront-error.ts";
+import { createError, toError } from "@veryfront/errors/veryfront-error.ts";
 import {
   FilesystemCacheStore,
   KVCacheStore,

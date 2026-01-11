@@ -1,7 +1,7 @@
 import { rendererLogger as logger } from "@veryfront/utils";
 import type { MDXModule } from "./types.ts";
 import { isESMModule, loadESMModule } from "./esm-loader.ts";
-import { createError, toError } from "../../../../core/errors/veryfront-error.ts";
+import { createError, toError } from "@veryfront/errors/veryfront-error.ts";
 
 export async function loadMDXModule(
   modulePath: string,

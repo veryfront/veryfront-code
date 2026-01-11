@@ -3,7 +3,7 @@ import { getContentHash, TSX_LAYOUT_MAX_ENTRIES } from "@veryfront/utils";
 import * as BundledReact from "react";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import type { LayoutItem, MdxBundle, MDXComponents, MDXModule } from "@veryfront/types";
-import { createError, toError } from "../../../core/errors/veryfront-error.ts";
+import { createError, toError } from "@veryfront/errors/veryfront-error.ts";
 import { loadImportMap, transformImportsWithMap } from "@veryfront/modules/import-map/index.ts";
 import { mdxRenderer } from "@veryfront/transforms/mdx/index.ts";
 import { loadComponentFromSource } from "@veryfront/modules/react-loader/component-loader.ts";

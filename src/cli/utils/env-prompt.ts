@@ -5,7 +5,7 @@
 
 import { cliLogger as logger } from "@veryfront/utils";
 import { cyan, dim, green, yellow } from "@veryfront/compat/console";
-import { getEnv, isInteractive as checkIsInteractive } from "../../platform/compat/process.ts";
+import { getEnv, isInteractive as checkIsInteractive } from "@veryfront/platform/compat/process.ts";
 import type { EnvVarConfig } from "../templates/index.ts";
 import { promptUser } from "./index.ts";
 

@@ -1,6 +1,6 @@
 import { CONTENT_TYPES } from "./constants.ts";
 import type { CacheStrategy, CORSConfig, SecurityConfig } from "./types.ts";
-import { createError, toError } from "../../../core/errors/veryfront-error.ts";
+import { createError, toError } from "@veryfront/errors/veryfront-error.ts";
 
 interface ResponseBuilderConstructor {
   new (config?: {

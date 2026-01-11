@@ -13,8 +13,8 @@
  * - Edge cases: tracing disabled, null spans, missing API
  */
 
-import { assert, assertEquals, assertExists } from "std/assert/mod.ts";
-import { afterEach, beforeEach, describe, it } from "std/testing/bdd.ts";
+import { assert, assertEquals, assertExists } from "jsr:@std/assert@1";
+import { afterEach, beforeEach, describe, it } from "jsr:@std/testing@1/bdd";
 
 // Mock OpenTelemetry API
 const mockSpan = {

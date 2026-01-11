@@ -1,5 +1,5 @@
 import { join, resolve } from "std/path/mod.ts";
-import { createFileSystem } from "../../../platform/compat/fs.ts";
+import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
 import type { CompileOptions } from "./types.ts";
 
 const fs = createFileSystem();

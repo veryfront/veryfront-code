@@ -5,7 +5,7 @@
 
 import { cyan, dim, green } from "@veryfront/compat/console";
 import { cliLogger as logger } from "@veryfront/utils";
-import { getEnv, isInteractive as checkIsInteractive } from "../../../platform/compat/process.ts";
+import { getEnv, isInteractive as checkIsInteractive } from "@veryfront/platform/compat/process.ts";
 import { multiSelect, select } from "../../utils/terminal-select.ts";
 import type { IntegrationName } from "../../templates/types.ts";
 import type { InitTemplate } from "./types.ts";

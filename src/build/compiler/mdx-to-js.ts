@@ -4,9 +4,9 @@ import * as esbuild from "esbuild/mod.js"; // Native esbuild
 import { extract } from "std/front_matter/yaml.ts";
 import { dirname, join } from "std/path/mod.ts";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
-import { createFileSystem } from "../../platform/compat/fs.ts";
+import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
 import { createSecureFs } from "@veryfront/security";
-import { createError, toError } from "../../core/errors/veryfront-error.ts";
+import { createError, toError } from "@veryfront/errors/veryfront-error.ts";
 
 export interface MDXFrontmatter {
   title?: string;

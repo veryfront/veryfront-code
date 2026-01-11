@@ -22,7 +22,7 @@ import {
   getCacheStats,
   getHeapStats,
   getMemorySnapshot,
-} from "../../../core/memory/index.ts";
+} from "@veryfront/core/memory/index.ts";
 import { rendererLogger as logger } from "@veryfront/utils";
 
 export class MemoryDebugHandler extends BaseHandler {

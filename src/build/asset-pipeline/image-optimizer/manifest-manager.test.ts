@@ -1,4 +1,4 @@
-import { assertEquals } from "std/assert/mod.ts";
+import { assertEquals } from "jsr:@std/assert@1";
 import { join } from "std/path/mod.ts";
 import { loadManifest, writeManifest } from "./manifest-manager.ts";
 import type { OptimizedImageMetadata } from "./types.ts";

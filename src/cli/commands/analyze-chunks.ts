@@ -3,8 +3,8 @@ import {
   generateChunkManifest,
 } from "@veryfront/rendering/chunk-optimizer.ts";
 import { cliLogger } from "@veryfront/utils";
-import { createFileSystem } from "../../platform/compat/fs.ts";
-import { exit } from "../../platform/compat/process.ts";
+import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
+import { exit } from "@veryfront/platform/compat/process.ts";
 
 export interface AnalyzeChunksOptions {
   projectDir: string;

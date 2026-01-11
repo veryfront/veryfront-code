@@ -13,8 +13,8 @@
 import type { HandlerContext } from "../handlers/types.ts";
 import { createRenderer } from "@veryfront/rendering/index.ts";
 import { rendererLogger } from "@veryfront/utils";
-import { clearSSRModuleCacheForProject } from "../../module-system/react-loader/ssr-module-loader.ts";
-import { getHeapStats, registerCache } from "../../core/memory/index.ts";
+import { clearSSRModuleCacheForProject } from "@veryfront/module-system/react-loader/ssr-module-loader.ts";
+import { getHeapStats, registerCache } from "@veryfront/core/memory/index.ts";
 import { clearConfigCache, getConfig, type VeryfrontConfig } from "@veryfront/config";
 
 type RendererInstance = Awaited<ReturnType<typeof createRenderer>>;

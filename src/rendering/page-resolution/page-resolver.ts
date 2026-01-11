@@ -11,13 +11,13 @@
  * to use for a given URL slug and handles both routing modes.
  */
 
-import { join } from "../../platform/compat/path-helper.ts";
+import { join } from "@veryfront/platform/compat/path-helper.ts";
 import { rendererLogger as logger } from "@veryfront/utils";
 import { ErrorCode, VeryfrontError } from "@veryfront/errors/index.ts";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "@veryfront/config";
 import type { EntityInfo } from "@veryfront/types";
-import { getEntityBySlug } from "../../core/types/entities/getEntityInfo.ts";
+import { getEntityBySlug } from "@veryfront/types/entities/getEntityInfo.ts";
 import { detectAppRouter, getAppRouteEntity } from "../router-detection.ts";
 
 /** Supported page file extensions */

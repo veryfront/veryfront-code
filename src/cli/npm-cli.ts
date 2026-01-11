@@ -1,6 +1,6 @@
-import { join } from "../platform/compat/path/index.ts";
-import { createFileSystem } from "../platform/compat/fs.ts";
-import { cwd, exit, getArgs, getEnv } from "../platform/compat/process.ts";
+import { join } from "@veryfront/platform/compat/path/index.ts";
+import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
+import { cwd, exit, getArgs, getEnv } from "@veryfront/platform/compat/process.ts";
 
 const VERSION = getEnv("VERYFRONT_VERSION") || "0.0.0-dev";
 

@@ -1,4 +1,4 @@
-import type { VeryfrontConfig } from "../../core/config/types.ts";
+import type { VeryfrontConfig } from "@veryfront/config/types.ts";
 
 type TailwindConfig = VeryfrontConfig["tailwind"];
 

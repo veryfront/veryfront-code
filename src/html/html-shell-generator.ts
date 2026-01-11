@@ -23,7 +23,7 @@ import {
   buildRootAttributes,
   shouldDisableLayout,
 } from "./utils.ts";
-import { resolveRelativePath } from "../module-system/react-loader/path-resolver.ts";
+import { resolveRelativePath } from "@veryfront/modules/react-loader/path-resolver.ts";
 
 /**
  * Extract head elements from React SSR content and return them separately.

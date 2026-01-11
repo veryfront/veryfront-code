@@ -1,5 +1,5 @@
-import { assert, assertEquals, assertThrows } from "std/assert/mod.ts";
-import { describe, it } from "std/testing/bdd.ts";
+import { assert, assertEquals, assertThrows } from "jsr:@std/assert@1";
+import { describe, it } from "jsr:@std/testing@1/bdd";
 import {
   __resetReactVersionCacheForTests,
   checkVersionCompatibility,

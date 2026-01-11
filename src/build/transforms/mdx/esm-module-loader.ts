@@ -9,11 +9,11 @@ import {
 } from "@veryfront/modules/import-map/index.ts";
 import type { MDXFrontmatter, MDXModule } from "./types.ts";
 import { join, posix } from "https://deno.land/std@0.220.0/path/mod.ts";
-import { isDeno, isNode } from "../../../platform/compat/runtime.ts";
-import { cwd } from "../../../platform/compat/process.ts";
-import { createFileSystem, type FileSystem } from "../../../platform/compat/fs.ts";
+import { isDeno, isNode } from "@veryfront/platform/compat/runtime.ts";
+import { cwd } from "@veryfront/platform/compat/process.ts";
+import { createFileSystem, type FileSystem } from "@veryfront/platform/compat/fs.ts";
 import { transformToESM } from "../esm-transform.ts";
-import type { RuntimeAdapter } from "../../../platform/adapters/base.ts";
+import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import {
   createHTTPPlugin,
   getReactAliases,
@@ -217,7 +217,7 @@ export interface ESMLoaderContext {
   esmCacheDir?: string;
   moduleCache: LRUCache<string, MDXModule>;
   /** Optional adapter to use for file operations. If not provided, uses getAdapter() */
-  adapter?: import("../../../platform/adapters/base.ts").RuntimeAdapter;
+  adapter?: import("@veryfront/platform/adapters/base.ts").RuntimeAdapter;
 }
 
 export function hashString(input: string): string {

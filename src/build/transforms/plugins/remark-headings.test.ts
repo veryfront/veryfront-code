@@ -1,4 +1,4 @@
-import { assertEquals, assertExists } from "std/assert/mod.ts";
+import { assertEquals, assertExists } from "jsr:@std/assert@1";
 import { remarkMdxHeadings } from "./remark-headings.ts";
 import type { Heading, Root } from "mdast";
 

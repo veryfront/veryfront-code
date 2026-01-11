@@ -1,5 +1,5 @@
 import type { DiagnosticResult } from "./types.ts";
-import { getRuntimeVersion } from "../../../platform/compat/process.ts";
+import { getRuntimeVersion } from "@veryfront/platform/compat/process.ts";
 
 /**
  * Create a diagnostic result for runtime version
@@ -53,7 +53,7 @@ export function checkDenoVersion(): Promise<DiagnosticResult> {
 export async function checkReactCompatibility(): Promise<DiagnosticResult> {
   try {
     const { getReactVersionInfo } = await import(
-      "../../../react/compat/version-detector/index.ts"
+      "@veryfront/react/compat/version-detector/index.ts"
     );
     const reactInfo = getReactVersionInfo();
     return {

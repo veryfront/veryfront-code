@@ -6,7 +6,7 @@ import type { TransformOptions } from "@veryfront/transforms/esm/types.ts";
 import { getGlobalTmpDir } from "./temp-directory.ts";
 import { normalizeModulePath, resolveRelativePath } from "./path-resolver.ts";
 import type { LoadComponentOptions } from "./types.ts";
-import { createFileSystem } from "../../platform/compat/fs.ts";
+import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
 import { SSRModuleLoader } from "./ssr-module-loader.ts";
 import { extractComponent } from "./extract-component.ts";
 

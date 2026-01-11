@@ -1,4 +1,4 @@
-import { assertEquals, assertExists } from "std/testing/asserts.ts";
+import { assertEquals, assertExists } from "jsr:@std/assert@1";
 import {
   checkVersionCompatibility,
   detectReactVersion,

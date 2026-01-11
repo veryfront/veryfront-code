@@ -1,5 +1,5 @@
 import { join } from "std/path/mod.ts";
-import { createFileSystem } from "../../../platform/compat/fs.ts";
+import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
 import { logger } from "@veryfront/utils";
 import { BYTES_PER_KB } from "@veryfront/utils";
 import type { CSSBundle } from "@veryfront/types";

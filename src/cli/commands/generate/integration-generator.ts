@@ -8,8 +8,8 @@
 import { join } from "@std/path";
 import { cyan, dim, green } from "@veryfront/compat/console";
 import { cliLogger } from "@veryfront/utils";
-import { createFileSystem, type FileSystem } from "../../../platform/compat/fs.ts";
-import { getEnv, isInteractive as checkIsInteractive } from "../../../platform/compat/process.ts";
+import { createFileSystem, type FileSystem } from "@veryfront/platform/compat/fs.ts";
+import { getEnv, isInteractive as checkIsInteractive } from "@veryfront/platform/compat/process.ts";
 import { select } from "../../utils/terminal-select.ts";
 
 let fs: FileSystem;

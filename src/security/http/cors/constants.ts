@@ -6,7 +6,7 @@
  */
 
 import { DEV_LOCALHOST_ORIGINS } from "@veryfront/config";
-import { getEnv } from "../../../platform/compat/process.ts";
+import { getEnv } from "@veryfront/platform/compat/process.ts";
 
 /**
  * Default allowed HTTP methods for CORS

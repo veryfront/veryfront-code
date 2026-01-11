@@ -1,5 +1,5 @@
-import { assertEquals, assertExists } from "std/assert/mod.ts";
-import { describe } from "std/testing/bdd.ts";
+import { assertEquals, assertExists } from "jsr:@std/assert@1";
+import { describe } from "jsr:@std/testing@1/bdd";
 import { ComponentRegistry } from "./index.ts";
 import { createMockAdapter } from "@veryfront/platform/adapters/mock.ts";
 

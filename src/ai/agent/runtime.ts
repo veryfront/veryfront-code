@@ -26,7 +26,11 @@ import { executeTool, generateId, toolRegistry, toolToProviderDefinition } from 
 import { detectPlatform, getPlatformCapabilities } from "../runtime/platform.ts";
 import { createMemory, type Memory } from "./memory.ts";
 import { serverLogger as logger } from "@veryfront/utils";
-import { addSpanEvent, setSpanAttributes, withSpan } from "../../observability/tracing/index.ts";
+import {
+  addSpanEvent,
+  setSpanAttributes,
+  withSpan,
+} from "@veryfront/observability/tracing/index.ts";
 import { AGENT_DEFAULTS, STREAMING_DEFAULTS } from "../config/defaults.ts";
 import { type AgentStreamEvent, AgentStreamEventSchema } from "./streaming/index.ts";
 import { convertMessageToProvider } from "./message-converter.ts";

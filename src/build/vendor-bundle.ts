@@ -6,7 +6,7 @@
  */
 
 import * as esbuild from "esbuild/mod.js"; // Native esbuild
-import { createError, toError } from "../core/errors/veryfront-error.ts";
+import { createError, toError } from "@veryfront/errors/veryfront-error.ts";
 
 export interface VendorBundleConfig {
   /** Project identifier for cache isolation */

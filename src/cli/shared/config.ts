@@ -6,9 +6,9 @@
  */
 
 import { join } from "std/path/mod.ts";
-import { cwd } from "../../platform/compat/process.ts";
-import { createFileSystem } from "../../platform/compat/fs.ts";
-import { isDeno } from "../../platform/compat/runtime.ts";
+import { cwd } from "@veryfront/platform/compat/process.ts";
+import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
+import { isDeno } from "@veryfront/platform/compat/runtime.ts";
 
 /**
  * Get environment variable cross-platform

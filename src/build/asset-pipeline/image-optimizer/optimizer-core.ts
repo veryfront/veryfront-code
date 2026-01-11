@@ -1,14 +1,14 @@
 import { relative } from "std/path/mod.ts";
 import { logger } from "@veryfront/utils";
 import { DEFAULT_BUILD_CONCURRENCY } from "@veryfront/utils";
-import { createFileSystem } from "../../../platform/compat/fs.ts";
+import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
 import { DEFAULT_OPTIONS } from "./constants.ts";
 import { loadSharp } from "./sharp-loader.ts";
 import { findImages } from "./image-finder.ts";
 import { generateImageVariants } from "./variant-generator.ts";
 import { writeManifest } from "./manifest-manager.ts";
 import { calculateAspectRatio, generateSrcSet } from "../../utils/asset-utils.ts";
-import { createError, toError } from "../../../core/errors/veryfront-error.ts";
+import { createError, toError } from "@veryfront/errors/veryfront-error.ts";
 import type {
   ImageFormat,
   ImageOptimizationOptions,

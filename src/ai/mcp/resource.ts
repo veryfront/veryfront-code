@@ -3,8 +3,8 @@
  */
 
 import type { Resource, ResourceConfig } from "../types/mcp.ts";
-import { agentLogger } from "../../core/utils/logger/logger.ts";
-import { createError, toError } from "../../core/errors/veryfront-error.ts";
+import { agentLogger } from "@veryfront/utils/logger/logger.ts";
+import { createError, toError } from "@veryfront/errors/veryfront-error.ts";
 
 /**
  * Create an MCP resource

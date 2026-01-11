@@ -4,7 +4,7 @@
  */
 
 import { serverLogger } from "@veryfront/utils";
-import { HttpStatus, jsonErrorResponse } from "../../../../../http/responses.ts";
+import { HttpStatus, jsonErrorResponse } from "@veryfront/http/responses.ts";
 import type { ActionBody } from "./types.ts";
 
 /** Validates action ID format to prevent traversal and malformed ids */

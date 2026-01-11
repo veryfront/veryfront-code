@@ -7,8 +7,8 @@ import { AgentRuntime } from "./runtime.ts";
 import { detectPlatform, validatePlatformCompatibility } from "../runtime/platform.ts";
 import { registerTool } from "../mcp/registry.ts";
 import { agentRegistry } from "./composition.ts";
-import { agentLogger } from "../../core/utils/logger/logger.ts";
-import { createError, toError } from "../../core/errors/veryfront-error.ts";
+import { agentLogger } from "@veryfront/utils/logger/logger.ts";
+import { createError, toError } from "@veryfront/errors/veryfront-error.ts";
 
 /**
  * Standard headers for Vercel AI SDK compatible streaming responses

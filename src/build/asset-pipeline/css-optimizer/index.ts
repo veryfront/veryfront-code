@@ -32,7 +32,7 @@ export * as CSSUtils from "./utils.ts";
 import type { CriticalCSSResult, CSSBundle, CSSOptimizationOptions } from "@veryfront/types";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import { getAdapter } from "@veryfront/platform/adapters/detect.ts";
-import { cwd } from "../../../platform/compat/process.ts";
+import { cwd } from "@veryfront/platform/compat/process.ts";
 import { CSSOptimizerService } from "./optimizer-service.ts";
 import { extractCriticalCSS as extractCriticalCSSImpl } from "./critical-css.ts";
 

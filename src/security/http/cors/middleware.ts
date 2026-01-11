@@ -10,7 +10,7 @@ import type { CORSConfig } from "./types.ts";
 import { handleCORSPreflight, isPreflightRequest } from "./preflight.ts";
 import { applyCORSHeaders } from "./headers.ts";
 import { validateCORSConfig } from "./validators.ts";
-import { createError, toError } from "../../../core/errors/veryfront-error.ts";
+import { createError, toError } from "@veryfront/errors/veryfront-error.ts";
 
 /**
  * Create CORS middleware

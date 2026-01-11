@@ -16,9 +16,9 @@ import { clearConfigCache, getConfig } from "@veryfront/config";
 import { enhanceAdapterWithFS } from "@veryfront/platform/adapters/fs/integration.ts";
 import type { VeryfrontConfig } from "@veryfront/config";
 import { logger } from "@veryfront/utils";
-import { loadEnv, supportsEnvFiles } from "../core/utils/env-loader.ts";
-import { isDebugEnabled } from "../core/utils/constants/env.ts";
-import { getErrorMessage } from "../core/errors/veryfront-error.ts";
+import { loadEnv, supportsEnvFiles } from "@veryfront/utils/env-loader.ts";
+import { isDebugEnabled } from "@veryfront/utils/constants/env.ts";
+import { getErrorMessage } from "@veryfront/errors/veryfront-error.ts";
 
 export interface BootstrapResult {
   /** Enhanced runtime adapter (with FSAdapter if configured) */

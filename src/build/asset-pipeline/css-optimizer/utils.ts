@@ -2,8 +2,8 @@ import { dirname, join, relative, SEPARATOR } from "std/path/mod.ts";
 import { walk } from "std/fs/mod.ts";
 import { logger } from "@veryfront/utils";
 import type { BrowserTargets } from "@veryfront/types";
-import { createError, toError } from "../../../core/errors/veryfront-error.ts";
-import { cwd } from "../../../platform/compat/process.ts";
+import { createError, toError } from "@veryfront/errors/veryfront-error.ts";
+import { cwd } from "@veryfront/platform/compat/process.ts";
 
 export async function findCSSFiles(dir: string): Promise<string[]> {
   const cssFiles: string[] = [];

@@ -5,12 +5,12 @@ import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import { type TransformOptions, transformToESM } from "@veryfront/transforms/esm-transform.ts";
 import { serverLogger, serverLogger as logger } from "@veryfront/utils";
 import { HTTP_NOT_FOUND, HTTP_OK, HTTP_SERVER_ERROR } from "@veryfront/utils";
-import { getContentTypeForPath } from "../../server/handlers/utils/content-types.ts";
+import { getContentTypeForPath } from "@veryfront/server/handlers/utils/content-types.ts";
 import { createSecureFs } from "@veryfront/security";
-import { getErrorMessage } from "../../core/errors/veryfront-error.ts";
+import { getErrorMessage } from "@veryfront/errors/veryfront-error.ts";
 // DISABLED: Position injection temporarily disabled to fix hydration mismatch
-// import { injectNodePositions } from "../../build/transforms/plugins/babel-node-positions.ts";
-import { parseProjectDomain } from "../../server/utils/domain-parser.ts";
+// import { injectNodePositions } from "@veryfront/transforms/plugins/babel-node-positions.ts";
+import { parseProjectDomain } from "@veryfront/server/utils/domain-parser.ts";
 import { applySSRImportRewrites } from "./ssr-import-rewriter.ts";
 // Note: React imports are kept as bare specifiers for SSR, resolved via deno.json to esm.sh
 

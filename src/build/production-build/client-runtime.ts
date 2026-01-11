@@ -8,8 +8,8 @@ import { fromFileUrl } from "@std/path";
 import { serverLogger as logger } from "@veryfront/utils";
 import type { OnResolveArgs, Plugin } from "esbuild";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
-import { createError, toError } from "../../core/errors/veryfront-error.ts";
-import { createFileSystem } from "../../platform/compat/fs.ts";
+import { createError, toError } from "@veryfront/errors/veryfront-error.ts";
+import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
 
 // Try to import pre-bundled client scripts (available in npm builds)
 let CLIENT_ROUTER_BUNDLE: string | undefined;

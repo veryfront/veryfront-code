@@ -1,6 +1,6 @@
 import { rendererLogger as logger } from "@veryfront/utils";
 import { join } from "std/path/mod.ts";
-import { createError, toError } from "../../core/errors/veryfront-error.ts";
+import { createError, toError } from "@veryfront/errors/veryfront-error.ts";
 import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
 
 export type ReactVersion = "17" | "18" | "19";

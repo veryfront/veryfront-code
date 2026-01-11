@@ -5,15 +5,15 @@ import type { Tool } from "../types/tool.ts";
 import type { Prompt, Resource } from "../types/mcp.ts";
 import type { Agent } from "../types/agent.ts";
 import { registerAgent } from "../agent/composition.ts";
-import { agentLogger } from "../../core/utils/logger/logger.ts";
-import { getConfig } from "../../core/config/loader.ts";
-import { createMockAdapter } from "../../platform/adapters/mock.ts";
-import type { FileSystemAdapter } from "../../platform/adapters/base.ts";
-import { isDeno } from "../../platform/compat/runtime.ts";
-import { createFileSystem } from "../../platform/compat/fs.ts";
-import * as pathHelper from "../../platform/compat/path-helper.ts";
-import { getEsbuildLoader } from "../../core/utils/path-utils.ts";
-import { ensureError } from "../../core/errors/veryfront-error.ts";
+import { agentLogger } from "@veryfront/utils/logger/logger.ts";
+import { getConfig } from "@veryfront/config/loader.ts";
+import { createMockAdapter } from "@veryfront/platform/adapters/mock.ts";
+import type { FileSystemAdapter } from "@veryfront/platform/adapters/base.ts";
+import { isDeno } from "@veryfront/platform/compat/runtime.ts";
+import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
+import * as pathHelper from "@veryfront/platform/compat/path-helper.ts";
+import { getEsbuildLoader } from "@veryfront/utils/path-utils.ts";
+import { ensureError } from "@veryfront/errors/veryfront-error.ts";
 
 interface FileDiscoveryContext {
   platform: Platform;

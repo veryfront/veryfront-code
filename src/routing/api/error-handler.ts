@@ -1,6 +1,6 @@
 import { isDevelopmentEnvironment, serverLogger as logger } from "@veryfront/utils";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
-import { HttpStatus, internalServerError, jsonResponse } from "../../http/responses.ts";
+import { HttpStatus, internalServerError, jsonResponse } from "@veryfront/http/responses.ts";
 
 /**
  * Checks if the environment is development mode.

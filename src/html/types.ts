@@ -36,7 +36,7 @@ export interface HTMLGenerationOptions {
   proxyEnvironment?: "preview" | "production";
 }
 
-export type { ImportMapConfig } from "../module-system/import-map/types.ts";
+export type { ImportMapConfig } from "@veryfront/modules/import-map/types.ts";
 
 export interface HydrationData {
   slug: string;

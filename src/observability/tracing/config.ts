@@ -1,6 +1,6 @@
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import type { TracingConfig } from "./types.ts";
-import { getEnv } from "../../platform/compat/process.ts";
+import { getEnv } from "@veryfront/platform/compat/process.ts";
 
 const DEFAULT_CONFIG: TracingConfig = {
   enabled: false,

@@ -18,7 +18,7 @@ import {
   enableSSRClientOnlyFetching,
   enableSSRFetchInterception,
   setSSRServerPort,
-} from "../../rendering/ssr-globals.ts";
+} from "@veryfront/rendering/ssr-globals.ts";
 
 export class DevServer {
   private router: DynamicRouter;

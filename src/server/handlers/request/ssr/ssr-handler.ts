@@ -21,7 +21,7 @@ import {
   getRendererForProject,
   shouldRejectDueToMemory,
 } from "../../../shared/renderer-factory.ts";
-import { getHeapStats } from "../../../../core/memory/index.ts";
+import { getHeapStats } from "@veryfront/core/memory/index.ts";
 import { serverLogger as _logger } from "@veryfront/utils";
 import { endRequest, startRequest, timeAsync } from "@veryfront/utils";
 import { computeSSRETag } from "./etag-handler.ts";

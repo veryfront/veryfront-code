@@ -3,8 +3,8 @@
  * Tests network connection detection and prefetch eligibility based on network conditions
  */
 
-import { assertEquals, assertExists } from "std/assert/mod.ts";
-import { describe, it } from "std/testing/bdd.ts";
+import { assertEquals, assertExists } from "jsr:@std/assert@1";
+import { describe, it } from "jsr:@std/testing@1/bdd";
 import { NetworkInfo, NetworkUtils } from "./network-utils.ts";
 
 // Navigator type extension for network connection

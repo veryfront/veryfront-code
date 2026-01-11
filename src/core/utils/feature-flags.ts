@@ -1,4 +1,4 @@
-import { getEnv } from "../../platform/compat/process.ts";
+import { getEnv } from "@veryfront/platform/compat/process.ts";
 
 /** Checks if RSC is enabled via config or VERYFRONT_EXPERIMENTAL_RSC env */
 export function isRSCEnabled(config?: { experimental?: { rsc?: boolean } }): boolean {

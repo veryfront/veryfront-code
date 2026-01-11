@@ -1,8 +1,8 @@
 import * as React from "react";
 import { rendererLogger as logger } from "@veryfront/utils";
 import { getReactVersionInfo } from "../version-detector/index.ts";
-import { isDeno, isNode } from "../../../platform/compat/runtime.ts";
-import { cwd } from "../../../platform/compat/process.ts";
+import { isDeno, isNode } from "@veryfront/platform/compat/runtime.ts";
+import { cwd } from "@veryfront/platform/compat/process.ts";
 
 // True Node.js runtime (not Deno with Node.js compat)
 const IS_TRUE_NODE = isNode && !isDeno;

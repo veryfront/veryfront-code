@@ -1,9 +1,5 @@
-import {
-  assertEquals,
-  assertExists,
-  assertRejects as _assertRejects,
-} from "std/testing/asserts.ts";
-import { describe, it } from "std/testing/bdd.ts";
+import { assertEquals, assertExists, assertRejects as _assertRejects } from "jsr:@std/assert@1";
+import { describe, it } from "jsr:@std/testing@1/bdd";
 import {
   type Permission,
   type PermissionRequest,

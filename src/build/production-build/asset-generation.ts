@@ -8,7 +8,7 @@ import { dirname, join, relative } from "node:path";
 import { walk } from "std/fs/mod.ts";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import { CLIENT_STYLES } from "./templates.ts";
-import { createFileSystem } from "../../platform/compat/fs.ts";
+import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
 
 export interface AssetStats {
   assets: number;

@@ -1,5 +1,5 @@
 import type { RSCNode } from "../types.ts";
-import { escapeHtml } from "../../../html/html-escape.ts";
+import { escapeHtml } from "@veryfront/html/html-escape.ts";
 
 export { escapeHtml };
 

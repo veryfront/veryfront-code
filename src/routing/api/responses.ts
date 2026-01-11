@@ -13,4 +13,4 @@ export {
   notFound,
   redirectResponse as redirect,
   unauthorized,
-} from "../../http/responses.ts";
+} from "@veryfront/http/responses.ts";
