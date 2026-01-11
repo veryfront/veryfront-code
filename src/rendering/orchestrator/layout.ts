@@ -79,8 +79,9 @@ export class LayoutOrchestrator {
       requestUrl,
     });
 
+    const pageType = pageElement?.type;
     logger.info("[LayoutOrchestrator] Before applyLayouts", {
-      pageElementType: (pageElement as any)?.type?.name || typeof (pageElement as any)?.type,
+      pageElementType: typeof pageType === "function" ? pageType.name : typeof pageType,
     });
     const result = await layoutApplicator.applyLayouts(
       pageElement,
@@ -90,8 +91,9 @@ export class LayoutOrchestrator {
       providerItems,
       layoutDataMap,
     );
+    const resultType = result?.type;
     logger.info("[LayoutOrchestrator] After applyLayouts", {
-      resultType: (result as any)?.type?.name || typeof (result as any)?.type,
+      resultType: typeof resultType === "function" ? resultType.name : typeof resultType,
       isSameElement: result === pageElement,
     });
     return result;

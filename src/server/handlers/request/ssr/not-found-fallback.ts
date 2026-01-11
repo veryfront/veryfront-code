@@ -76,7 +76,7 @@ export async function tryNotFoundFallback(
       const element = React.createElement(NotFoundComp, {});
       let inner = "";
       try {
-        inner = await renderToStringAdapter(element as any);
+        inner = await renderToStringAdapter(element);
       } catch {
         // Fallback: extract minimal text content
         inner = (await extractNotFoundText(dirs, ctx)) || "<p>Not Found</p>";

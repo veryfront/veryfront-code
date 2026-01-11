@@ -32,7 +32,7 @@ export async function routesCommand(projectDir: string, options: { json?: boolea
   }
 
   const pages: Array<{ pattern: string; file: string }> = [];
-  for (const [pattern, { route }] of (router as any).routes) {
+  for (const [pattern, { route }] of router.routes) {
     pages.push({ pattern, file: route.page });
   }
 

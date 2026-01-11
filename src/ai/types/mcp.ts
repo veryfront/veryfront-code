@@ -7,7 +7,7 @@ import type { z } from "zod";
 /**
  * MCP resource configuration
  */
-export interface ResourceConfig<TParams = any, TData = any> {
+export interface ResourceConfig<TParams = unknown, TData = unknown> {
   /** Resource path pattern (e.g., "/users/:userId/profile") */
   pattern?: string;
 
@@ -40,7 +40,7 @@ export interface ResourceConfig<TParams = any, TData = any> {
 /**
  * MCP resource instance
  */
-export interface Resource<TParams = any, TData = any> {
+export interface Resource<TParams = unknown, TData = unknown> {
   /** Resource ID */
   id: string;
 

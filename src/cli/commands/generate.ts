@@ -38,7 +38,7 @@ export async function generateCommand(projectDir: string, type: string, name: st
 
     const adapter = await getAdapter();
     const cfg = await getConfig(projectDir, adapter);
-    const pref = (cfg as any)?.generate?.preferredRouter || cfg?.router;
+    const pref = cfg?.generate?.preferredRouter || cfg?.router;
     if (pref === "app-router" || pref === "pages-router") preferred = pref;
   } catch {
     cliLogger.debug("Could not load config for generate command, using defaults");

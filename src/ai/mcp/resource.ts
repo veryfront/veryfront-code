@@ -26,7 +26,7 @@ import { createError, toError } from "@veryfront/errors/veryfront-error.ts";
  * });
  * ```
  */
-export function resource<TParams = any, TData = any>(
+export function resource<TParams = unknown, TData = unknown>(
   config: ResourceConfig<TParams, TData>,
 ): Resource<TParams, TData> {
   // Generate pattern if not provided

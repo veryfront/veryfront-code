@@ -8,6 +8,7 @@ import type { JsonSchema } from "./json-schema.ts";
 /**
  * Tool configuration options
  */
+// deno-lint-ignore no-explicit-any
 export interface ToolConfig<TInput = any, TOutput = any> {
   /** Tool identifier (optional, inferred from filename) */
   id?: string;
@@ -63,6 +64,7 @@ export type ToolType = "function" | "dynamic";
 /**
  * Tool instance (returned by tool() function)
  */
+// deno-lint-ignore no-explicit-any
 export interface Tool<TInput = any, TOutput = any> {
   /** Tool ID */
   id: string;

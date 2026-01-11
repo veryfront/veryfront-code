@@ -350,7 +350,8 @@ export class DAGExecutor {
     const childNodes: WorkflowNode[] = [];
 
     // Check if processor is a WorkflowDefinition or a single node
-    const isWorkflowDef = (p: any): p is WorkflowDefinition => !!p.steps;
+    const isWorkflowDef = (p: unknown): p is WorkflowDefinition =>
+      typeof p === "object" && p !== null && "steps" in p;
 
     // We'll map each item to a set of nodes
     // For simplicity in this implementation, if processor is a single node, we clone it.
@@ -379,7 +380,10 @@ export class DAGExecutor {
       } else {
         // Clone the single processor node
         // We must override the input to be the current item
-        const processorConfig = { ...config.processor.config } as any;
+        // config.processor is narrowed to WorkflowNode here (not WorkflowDefinition)
+        const processorConfig = {
+          ...(config.processor as WorkflowNode).config,
+        } as WorkflowNodeConfig;
 
         // If it's a step node, ensure input receives the item
         if (processorConfig.type === "step") {
@@ -513,11 +517,12 @@ export class DAGExecutor {
     });
 
     // 5. Process result
-    let finalOutput = result.context; // Default output is the final context
+    // Type is unknown since config.output can return any type
+    let finalOutput: unknown = result.context; // Default output is the final context
 
     // If sub-workflow has explicit output transformation
     if (result.completed && config.output) {
-      finalOutput = config.output(result.context) as any;
+      finalOutput = config.output(result.context);
     }
 
     const state: NodeState = {

@@ -10,6 +10,13 @@ import { isDeno, isNode } from "@veryfront/platform/compat/runtime.ts";
 
 export type PackageManager = "npm" | "yarn" | "pnpm" | "bun";
 
+/** Global interface for Node.js process */
+interface GlobalWithProcess {
+  process?: {
+    platform?: string;
+  };
+}
+
 /**
  * Check if running on Windows
  */
@@ -19,8 +26,7 @@ function isWindows(): boolean {
     return Deno.build.os === "windows";
   }
   if (isNode) {
-    // deno-lint-ignore no-explicit-any
-    const nodeProcess = (globalThis as any).process;
+    const nodeProcess = (globalThis as unknown as GlobalWithProcess).process;
     return nodeProcess?.platform === "win32";
   }
   return false;

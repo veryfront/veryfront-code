@@ -7,9 +7,18 @@ import type { MetricsInstruments, RuntimeState } from "./types.ts";
 
 export class MetricsRecorder {
   constructor(
-    private instruments: MetricsInstruments,
+    private _instruments: MetricsInstruments,
     private runtimeState: RuntimeState,
   ) {}
+
+  /** Update instruments after late initialization */
+  set instruments(instruments: MetricsInstruments) {
+    this._instruments = instruments;
+  }
+
+  get instruments(): MetricsInstruments {
+    return this._instruments;
+  }
 
   recordHttpRequest(attributes?: Record<string, string>): void {
     this.instruments.httpRequestCounter?.add(1, attributes);

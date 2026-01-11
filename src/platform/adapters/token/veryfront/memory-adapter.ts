@@ -9,16 +9,22 @@ import { logger } from "@veryfront/utils";
 import type { TokenStorageAdapter } from "./types.ts";
 
 // Use globalThis to share across esbuild bundles
-const STORAGE_KEY = "__veryfront_token_storage__";
-// deno-lint-ignore no-explicit-any
-const globalStore = globalThis as any;
+const STORAGE_KEY = "__veryfront_token_storage__" as const;
+
+/** Global interface for shared token storage */
+interface GlobalWithTokenStorage {
+  __veryfront_token_storage__?: Map<string, string>;
+}
+
+const globalStore = globalThis as unknown as GlobalWithTokenStorage;
 
 export class MemoryTokenAdapter implements TokenStorageAdapter {
   private storage: Map<string, string>;
 
   constructor() {
     // Share storage across bundles
-    this.storage = globalStore[STORAGE_KEY] ||= new Map<string, string>();
+    globalStore[STORAGE_KEY] ||= new Map<string, string>();
+    this.storage = globalStore[STORAGE_KEY];
 
     logger.warn(
       "[MemoryTokenAdapter] Using in-memory storage. " +

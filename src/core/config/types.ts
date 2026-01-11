@@ -208,6 +208,11 @@ export interface VeryfrontConfig {
       versions?: "auto" | { react?: string; veryfront?: string };
     };
   };
+  /** CLI generate command preferences */
+  generate?: {
+    /** Preferred router for generated pages */
+    preferredRouter?: "app-router" | "pages-router";
+  };
   tailwind?: {
     /** Enable built-in Tailwind CDN plugins (forms, typography, aspect-ratio, container-queries) */
     plugins?: Array<"forms" | "typography" | "aspect-ratio" | "container-queries">;

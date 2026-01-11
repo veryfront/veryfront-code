@@ -17,6 +17,11 @@ declare global {
   }
 }
 
+/** Global interface for prefetch manager */
+interface GlobalWithPrefetch {
+  veryFrontPrefetch?: PrefetchManager;
+}
+
 export interface PrefetchOptions {
   rootMargin?: string;
   delay?: number;
@@ -130,5 +135,5 @@ if (typeof window !== "undefined") {
     prefetchManager.init();
   }
 
-  (globalThis as any).veryFrontPrefetch = prefetchManager;
+  (globalThis as unknown as GlobalWithPrefetch).veryFrontPrefetch = prefetchManager;
 }

@@ -4,17 +4,17 @@ import { LRUCache } from "@veryfront/utils/lru-wrapper.ts";
 
 export type { Route, RouteMatch };
 
+/** Route entry with compiled regex and metadata */
+export interface RouteEntry {
+  regex: RegExp;
+  route: Route;
+  paramNames: string[];
+  isOptionalCatchAll: boolean;
+  isCatchAll: boolean;
+}
+
 export class DynamicRouter {
-  private routes: Map<
-    string,
-    {
-      regex: RegExp;
-      route: Route;
-      paramNames: string[];
-      isOptionalCatchAll: boolean;
-      isCatchAll: boolean;
-    }
-  > = new Map();
+  private _routes: Map<string, RouteEntry> = new Map();
   private routeCache: LRUCache<string, RouteMatch | null>;
 
   constructor() {
@@ -23,6 +23,11 @@ export class DynamicRouter {
       maxEntries: 500,
       ttlMs: disableIntervals ? undefined : 5 * 60 * 1000,
     });
+  }
+
+  /** Public accessor for route entries */
+  get routes(): Map<string, RouteEntry> {
+    return this._routes;
   }
 
   addRoute(pattern: string, page: string): void {
@@ -60,7 +65,7 @@ export class DynamicRouter {
     }
 
     const route: Route = { pattern, page };
-    this.routes.set(pattern, {
+    this._routes.set(pattern, {
       regex: new RegExp(`^${regex}$`),
       route,
       paramNames,
@@ -73,19 +78,8 @@ export class DynamicRouter {
     return path !== "/" && path.endsWith("/") ? path.slice(0, -1) : path;
   }
 
-  private sortRoutesByPriority(): Array<
-    [
-      string,
-      {
-        regex: RegExp;
-        route: Route;
-        paramNames: string[];
-        isOptionalCatchAll: boolean;
-        isCatchAll: boolean;
-      },
-    ]
-  > {
-    return Array.from(this.routes.entries()).sort(([patternA], [patternB]) => {
+  private sortRoutesByPriority(): Array<[string, RouteEntry]> {
+    return Array.from(this._routes.entries()).sort(([patternA], [patternB]) => {
       const hasParamsA = patternA.includes("[");
       const hasParamsB = patternB.includes("[");
       const isCatchAllA = patternA.includes("[...");
@@ -161,11 +155,11 @@ export class DynamicRouter {
   }
 
   listRoutes(): Route[] {
-    return Array.from(this.routes.values()).map(({ route }) => route);
+    return Array.from(this._routes.values()).map(({ route }) => route);
   }
 
   clear(): void {
-    this.routes.clear();
+    this._routes.clear();
     this.routeCache.destroy();
   }
 

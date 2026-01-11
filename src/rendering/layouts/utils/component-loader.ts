@@ -150,22 +150,26 @@ export async function applyMDXLayout(
     "[applyMDXLayout] LayoutFn found:",
     !!LayoutFn,
     "LayoutFn.name:",
-    (LayoutFn as any)?.name,
+    LayoutFn?.name,
   );
   if (LayoutFn) {
     const child = ensureValidChild(element, React);
+    const childType = typeof child === "object" && child !== null && "type" in child
+      ? child.type
+      : undefined;
     logger.info(
       "[applyMDXLayout] Creating element with layout, childType:",
-      (child as any)?.type?.name || typeof (child as any)?.type,
+      typeof childType === "function" ? childType.name : typeof childType,
     );
     const wrappedElement = React.createElement(
       LayoutFn,
       { components: mergedComponents },
       child,
     ) as BundledReact.ReactElement;
+    const wrappedType = wrappedElement?.type;
     logger.info(
       "[applyMDXLayout] Created element, wrappedType:",
-      (wrappedElement as any)?.type?.name || typeof (wrappedElement as any)?.type,
+      typeof wrappedType === "function" ? wrappedType.name : typeof wrappedType,
     );
     return wrappedElement;
   }
