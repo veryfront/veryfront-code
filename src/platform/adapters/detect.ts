@@ -1,22 +1,13 @@
 import { logger } from "@veryfront/utils";
-import type { RuntimeAdapter, RuntimeId } from "./base.ts";
+import type { RuntimeAdapter } from "./base.ts";
 import { createError, toError } from "../../core/errors/veryfront-error.ts";
-import { isBun, isCloudflare, isDeno, isNode } from "../compat/runtime.ts";
+import { detectRuntime } from "./runtime-detection.ts";
+
+// Re-export from standalone module to avoid circular dependency
+export { detectRuntime } from "./runtime-detection.ts";
 
 // Re-export the registry for convenient access
 export { runtime } from "./registry.ts";
-
-/**
- * Detect the current runtime environment
- * @returns Runtime identifier
- */
-export function detectRuntime(): RuntimeId | "unknown" {
-  if (isDeno) return "deno";
-  if (isBun) return "bun";
-  if (isNode) return "node";
-  if (isCloudflare) return "cloudflare";
-  return "unknown";
-}
 
 /**
  * Get the runtime adapter for the current environment

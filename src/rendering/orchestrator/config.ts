@@ -4,7 +4,7 @@ import { createError, toError } from "@veryfront/errors/veryfront-error.ts";
 import { handleErrorWithFallback } from "@veryfront/errors/index.ts";
 import { getContentHash } from "../utils/index.ts";
 import { getConfig } from "@veryfront/config";
-import { initializeBundleManifest } from "@veryfront/utils";
+import { initializeBundleManifest } from "@veryfront/utils/bundle-manifest-init.ts";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "@veryfront/config";
 import { isAnyDebugEnabled } from "@veryfront/utils/constants/env.ts";

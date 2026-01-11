@@ -19,7 +19,7 @@
 
 import { logger } from "@veryfront/utils";
 import type { RuntimeAdapter, RuntimeId } from "./base.ts";
-import { detectRuntime } from "./detect.ts";
+import { detectRuntime } from "./runtime-detection.ts";
 
 type AdapterLoader = () => Promise<RuntimeAdapter>;
 

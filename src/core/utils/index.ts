@@ -30,7 +30,8 @@ export * from "./path-utils.ts";
 export * from "./format-utils.ts";
 
 export * from "./bundle-manifest.ts";
-export * from "./bundle-manifest-init.ts";
+// Note: bundle-manifest-init.ts not exported here to avoid circular dependency
+// Import directly: import { initializeBundleManifest } from "@veryfront/utils/bundle-manifest-init.ts"
 
 export * from "./feature-flags.ts";
 
