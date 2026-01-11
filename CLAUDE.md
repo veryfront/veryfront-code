@@ -74,7 +74,8 @@ Client → Renderer → API
 
 ### Renderer (Deno)
 ```bash
-deno task dev              # Start dev server (HMR)
+deno task dev              # Start dev server (HMR) - direct mode
+deno task proxy            # Start proxy + renderer together (proxy mode)
 deno task build            # Production build
 deno task test             # Run all tests
 deno task test:unit        # Run unit tests only
@@ -160,14 +161,38 @@ renderer:
 
 ## Debugging
 
+### Local Proxy Mode Setup
 ```bash
-# Check proxy health
-curl http://localhost:20000/_proxy/health
+# 1. Copy config template
+cp proxy.env.example proxy.env
 
-# Check renderer
-curl http://localhost:3001/
+# 2. Fill in OAuth credentials (from 1Password: "Veryfront OAuth Credentials")
 
-# View logs
+# 3. Start both services
+deno task proxy
+```
+
+### Debug Endpoints
+```bash
+# Proxy health & stats
+curl http://localhost:8080/_proxy/health
+curl http://localhost:8080/_proxy/stats
+
+# Renderer context (dev only) - shows token propagation
+curl http://codersociety.lvh.me:8080/_vf_debug/context
+
+# Test module serving
+curl http://codersociety.lvh.me:8080/_vf_modules/pages/index.js
+```
+
+### Debugging Token Issues
+If modules return 404 or API calls fail:
+1. Check `/_proxy/stats` - is token being fetched?
+2. Check `/_vf_debug/context` - did token reach renderer?
+3. Compare token lengths to isolate where it's lost
+
+### View Logs
+```bash
 deno task dev 2>&1 | tee dev.log
 ```
 
@@ -185,6 +210,8 @@ logcli query '{namespace="veryfront-production", container="renderer"} |= "error
 
 | File | Purpose |
 |------|---------|
+| `proxy.env.example` | Template for local proxy mode config |
+| `scripts/dev-proxy.ts` | Launcher for `deno task proxy` |
 | `proxy/main.ts` | Proxy entry point |
 | `proxy/token-manager.ts` | OAuth token lifecycle |
 | `src/server/production-server.ts` | Production server |
