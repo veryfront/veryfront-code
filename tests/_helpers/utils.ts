@@ -29,7 +29,9 @@ export function getFreePort(start?: number, end?: number): number {
     }
   }
 
-  throw new Error(`No free port found in range ${minPort}-${maxPort} after ${maxAttempts} attempts`);
+  throw new Error(
+    `No free port found in range ${minPort}-${maxPort} after ${maxAttempts} attempts`,
+  );
 }
 
 export function withEnv(vars: Record<string, string>): () => void {

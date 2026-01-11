@@ -1,7 +1,7 @@
 import * as React from "https://esm.sh/react@18.3.1";
 import { assert, assertEquals } from "std/assert/mod.ts";
 import { describe, it } from "std/testing/bdd.ts";
-import { mdxRenderer, clearMDXRendererCache } from "@veryfront/transforms/mdx/index.ts";
+import { clearMDXRendererCache, mdxRenderer } from "@veryfront/transforms/mdx/index.ts";
 import { runWithCacheDir } from "@veryfront/utils/cache-dir.ts";
 
 // Each test runs with its own isolated cache directory via AsyncLocalStorage.
