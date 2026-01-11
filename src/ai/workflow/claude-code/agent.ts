@@ -68,6 +68,49 @@ const _DEFAULT_ITERATION_TIMEOUT = 5 * 60 * 1000;
 const DEFAULT_TOTAL_TIMEOUT = 30 * 60 * 1000;
 
 /**
+ * Validate bash command for dangerous patterns
+ * SECURITY: Prevents high-risk operations that could harm the system or exfiltrate data
+ */
+function validateBashCommand(command: string): void {
+  // Remove comments and normalize whitespace for analysis
+  const normalized = command.replace(/#.*$/gm, "").replace(/\s+/g, " ").trim();
+
+  const dangerousPatterns = [
+    // Destructive operations
+    { pattern: /\brm\s+.*-[rf].*\s+\//i, message: "Recursive delete of root or system directories" },
+    { pattern: /\bdd\s+if=/i, message: "Direct disk operations with dd" },
+    { pattern: /\bmkfs/i, message: "Filesystem formatting" },
+    { pattern: /:\(\)\{.*:\|:&\};:/i, message: "Fork bomb detected" },
+
+    // Network exfiltration - block curl/wget entirely (too many bypass techniques)
+    { pattern: /\bcurl\b/i, message: "Network request via curl (blocked for security)" },
+    { pattern: /\bwget\b/i, message: "Network request via wget (blocked for security)" },
+    { pattern: /\bnc\b|\bnetcat\b/i, message: "Netcat network tool" },
+
+    // Privilege escalation
+    { pattern: /\bsudo\b/i, message: "Sudo command" },
+    { pattern: /\bsu\s/i, message: "User switching" },
+    { pattern: /\bdoas\b/i, message: "Doas command" },
+
+    // System modification
+    { pattern: /\bchroot\b/i, message: "Chroot operation" },
+    { pattern: /\bmount\b/i, message: "Mount operation" },
+    { pattern: /\biptables\b/i, message: "Firewall modification" },
+    { pattern: /\bsystemctl\b/i, message: "System service control" },
+
+    // Command substitution and chaining (to prevent bypasses)
+    { pattern: /\$\(.*(?:curl|wget|nc)\b.*\)/i, message: "Command substitution with network tools" },
+    { pattern: /`.*(?:curl|wget|nc)\b.*`/i, message: "Backtick substitution with network tools" },
+  ];
+
+  for (const { pattern, message } of dangerousPatterns) {
+    if (pattern.test(normalized)) {
+      throw new Error(`Blocked dangerous command: ${message}`);
+    }
+  }
+}
+
+/**
  * Safe environment variables to pass to bash commands.
  * SECURITY: Do NOT add sensitive vars like API keys, tokens, or secrets.
  */
@@ -173,6 +216,9 @@ async function executeBash(
   }
 
   try {
+    // SECURITY: Validate command for dangerous patterns
+    validateBashCommand(input.command);
+
     // Execute command in workspace directory
     // SECURITY: Use allowlisted env vars only to prevent credential leakage
     const command = new Deno.Command("bash", {

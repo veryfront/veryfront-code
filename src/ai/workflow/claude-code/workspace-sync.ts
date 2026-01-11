@@ -12,6 +12,7 @@
 
 import { api } from "../../api.ts";
 import type { CapturedTenantContext } from "../types.ts";
+import { join, resolve, relative } from "jsr:@std/path@^0.220.0";
 
 /**
  * Workspace configuration
@@ -139,6 +140,13 @@ export class WorkspaceSync {
   private initialized = false;
 
   constructor(config: WorkspaceConfig) {
+    // SECURITY: Validate runId to prevent path traversal
+    if (!/^[a-zA-Z0-9_-]+$/.test(config.runId)) {
+      throw new Error(
+        `Invalid runId: must contain only alphanumeric, underscore, or hyphen characters`,
+      );
+    }
+
     this.config = {
       baseDir: "/tmp/veryfront-workspaces",
       maxFileSize: 10 * 1024 * 1024, // 10MB
@@ -212,8 +220,8 @@ export class WorkspaceSync {
         const hash = await checksum(content);
         this.fileChecksums.set(path, hash);
 
-        // Write to local filesystem
-        const localPath = `${this.workspaceDir}${path}`;
+        // Write to local filesystem (use safe path resolution)
+        const localPath = this.resolveSafePath(path);
         const dir = localPath.substring(0, localPath.lastIndexOf("/"));
         await Deno.mkdir(dir, { recursive: true });
         await Deno.writeTextFile(localPath, content);
@@ -274,8 +282,8 @@ export class WorkspaceSync {
 
     // Check for deleted files
     for (const [path, originalHash] of this.fileChecksums) {
-      const localPath = `${this.workspaceDir}${path}`;
       try {
+        const localPath = this.resolveSafePath(path);
         await Deno.stat(localPath);
       } catch {
         // File was deleted
@@ -400,11 +408,29 @@ export class WorkspaceSync {
   }
 
   /**
+   * Safely resolve a path within the workspace, preventing path traversal attacks
+   */
+  private resolveSafePath(path: string): string {
+    // Normalize the input path
+    const normalizedPath = path.startsWith("/") ? path.slice(1) : path;
+
+    // Resolve the full path
+    const fullPath = resolve(join(this.workspaceDir, normalizedPath));
+
+    // Verify the resolved path is within the workspace
+    const relativePath = relative(this.workspaceDir, fullPath);
+    if (relativePath.startsWith("..") || !relativePath || relativePath === "..") {
+      throw new Error(`Path traversal detected: ${path}`);
+    }
+
+    return fullPath;
+  }
+
+  /**
    * Read a file from the workspace
    */
   async readFile(path: string): Promise<string> {
-    const normalizedPath = path.startsWith("/") ? path : `/${path}`;
-    const localPath = `${this.workspaceDir}${normalizedPath}`;
+    const localPath = this.resolveSafePath(path);
     return await Deno.readTextFile(localPath);
   }
 
@@ -412,8 +438,7 @@ export class WorkspaceSync {
    * Write a file to the workspace
    */
   async writeFile(path: string, content: string): Promise<void> {
-    const normalizedPath = path.startsWith("/") ? path : `/${path}`;
-    const localPath = `${this.workspaceDir}${normalizedPath}`;
+    const localPath = this.resolveSafePath(path);
 
     // Ensure directory exists
     const dir = localPath.substring(0, localPath.lastIndexOf("/"));
@@ -426,8 +451,7 @@ export class WorkspaceSync {
    * Delete a file from the workspace
    */
   async deleteFile(path: string): Promise<void> {
-    const normalizedPath = path.startsWith("/") ? path : `/${path}`;
-    const localPath = `${this.workspaceDir}${normalizedPath}`;
+    const localPath = this.resolveSafePath(path);
     await Deno.remove(localPath);
   }
 
@@ -435,9 +459,8 @@ export class WorkspaceSync {
    * Check if a file exists in the workspace
    */
   async fileExists(path: string): Promise<boolean> {
-    const normalizedPath = path.startsWith("/") ? path : `/${path}`;
-    const localPath = `${this.workspaceDir}${normalizedPath}`;
     try {
+      const localPath = this.resolveSafePath(path);
       await Deno.stat(localPath);
       return true;
     } catch {
