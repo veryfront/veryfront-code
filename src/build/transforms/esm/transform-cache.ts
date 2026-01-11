@@ -130,15 +130,19 @@ export function isRedisCacheEnabled(): boolean {
   return redisEnabled && redisClient !== null;
 }
 
+/**
+ * Generate a content-addressable cache key for transforms.
+ * Content hash provides automatic invalidation and cross-project deduplication.
+ *
+ * Key format: {filePath}:{contentHash}:{ssr|browser}
+ */
 export function generateCacheKey(
-  projectId: string | undefined,
   filePath: string,
   contentHash: string,
   ssr: boolean = false,
 ): string {
-  const projectKey = projectId?.trim() || "default";
   const ssrKey = ssr ? "ssr" : "browser";
-  return `${projectKey}:${filePath}:${contentHash}:${ssrKey}`;
+  return `${filePath}:${contentHash}:${ssrKey}`;
 }
 
 function redisKey(key: string): string {

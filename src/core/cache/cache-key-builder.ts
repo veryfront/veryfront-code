@@ -1,0 +1,275 @@
+/**
+ * Cache Key Builder
+ *
+ * Two cache key strategies:
+ *
+ * 1. CONTENT-ADDRESSABLE (transforms, modules):
+ *    Key: {prefix}:{filePath}:{contentHash}
+ *    - Same content = same cache entry (efficient deduplication)
+ *    - Automatic invalidation on content change
+ *
+ * 2. PROJECT-SCOPED (data fetching, provider config):
+ *    Key: {prefix}:{projectId}:{mode}:{versionId}:{resourceKey}
+ *    - Isolated per project/release/branch
+ *    - For resources without content hash (API responses, config)
+ */
+
+import { AsyncLocalStorage } from "node:async_hooks";
+import { z } from "zod";
+import type { HandlerContext } from "../types/server.ts";
+import {
+  getCurrentRequestContext,
+  type RequestContext as MultiProjectRequestContextType,
+} from "@veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
+
+// ============================================================================
+// ZOD SCHEMAS FOR VALIDATION
+// ============================================================================
+
+/**
+ * Schema for cache key context validation.
+ * Ensures context is properly structured before use.
+ */
+const CacheKeyContextSchema = z.object({
+  projectId: z.string().min(1, "projectId cannot be empty"),
+  mode: z.enum(["production", "preview"]),
+  versionId: z.string().min(1, "versionId cannot be empty"),
+});
+
+/**
+ * Validate and normalize a CacheKeyContext.
+ * Throws if the context is invalid.
+ */
+function validateCacheKeyContext(ctx: CacheKeyContext): CacheKeyContext {
+  return CacheKeyContextSchema.parse(ctx);
+}
+
+// ============================================================================
+// CONTENT-ADDRESSABLE KEYS (for transforms, modules)
+// ============================================================================
+
+/**
+ * Build a content-addressable cache key.
+ * Use for caches where same content = same output (transforms, modules).
+ *
+ * @param prefix - Cache type prefix (e.g., "veryfront:transform")
+ * @param filePath - File path being cached
+ * @param contentHash - Hash of the file content
+ * @param suffix - Optional suffix (e.g., "ssr" or "browser")
+ * @returns Cache key
+ *
+ * @example
+ * getContentHashKey("veryfront:transform", "pages/index.tsx", "abc123", "ssr")
+ * // → "veryfront:transform:pages/index.tsx:abc123:ssr"
+ */
+export function getContentHashKey(
+  prefix: string,
+  filePath: string,
+  contentHash: string,
+  suffix?: string,
+): string {
+  const base = `${prefix}:${filePath}:${contentHash}`;
+  return suffix ? `${base}:${suffix}` : base;
+}
+
+// ============================================================================
+// PROJECT-SCOPED KEYS (for data fetching, provider config)
+// ============================================================================
+
+/**
+ * Context for project-scoped cache keys.
+ */
+export interface CacheKeyContext {
+  /** Project identifier (slug or ID) */
+  projectId: string;
+  /** Rendering mode: production (releases) or preview (branches) */
+  mode: "production" | "preview";
+  /**
+   * Version identifier - mutually exclusive:
+   * - Production mode: releaseId (e.g., "rel_abc123")
+   * - Preview mode: branch name (e.g., "feature-login", "main")
+   */
+  versionId: string;
+}
+
+// AsyncLocalStorage for request-scoped cache context
+const cacheKeyContextStorage = new AsyncLocalStorage<CacheKeyContext>();
+
+/**
+ * Run a function with cache key context.
+ * All project-scoped cache operations within the callback will use this context.
+ *
+ * @throws ZodError if context is invalid (programming error - fail fast)
+ */
+export function runWithCacheKeyContext<T>(ctx: CacheKeyContext, fn: () => T): T {
+  const validatedCtx = validateCacheKeyContext(ctx);
+  return cacheKeyContextStorage.run(validatedCtx, fn);
+}
+
+/**
+ * Get the current cache key context.
+ * @throws Error if no context is set
+ */
+export function getCurrentCacheKeyContext(): CacheKeyContext {
+  const ctx = cacheKeyContextStorage.getStore();
+  if (!ctx) {
+    throw new Error(
+      "[CacheKeyBuilder] No cache context available. " +
+        "Ensure runWithCacheKeyContext() was called at request entry.",
+    );
+  }
+  return ctx;
+}
+
+/**
+ * Try to get the current cache key context.
+ * Checks in order: 1) explicit cache context, 2) multi-project adapter context
+ * @returns Context or null if not set
+ */
+export function tryGetCacheKeyContext(): CacheKeyContext | null {
+  // First, check if explicit cache context is set
+  const explicitCtx = cacheKeyContextStorage.getStore();
+  if (explicitCtx) return explicitCtx;
+
+  // Fallback: try to get context from multi-project adapter
+  const reqCtx = getCurrentRequestContext();
+  if (reqCtx) {
+    return extractCacheKeyContextFromMultiProjectContext(reqCtx);
+  }
+
+  return null;
+}
+
+/**
+ * Extract CacheKeyContext from multi-project adapter's RequestContext.
+ */
+function extractCacheKeyContextFromMultiProjectContext(
+  reqCtx: MultiProjectRequestContextType,
+): CacheKeyContext {
+  const projectId = reqCtx.projectSlug || reqCtx.projectId || "default";
+  const mode = reqCtx.productionMode ? "production" : "preview";
+  const versionId = reqCtx.productionMode
+    ? (reqCtx.releaseId || "latest")
+    : (reqCtx.branch || "main");
+
+  return { projectId, mode, versionId };
+}
+
+/**
+ * Build a project-scoped cache key.
+ * Use for caches that need project/version isolation (data fetching, config).
+ *
+ * Returns null in preview mode (no caching without content hash).
+ *
+ * @param prefix - Cache type prefix (e.g., "veryfront:data")
+ * @param resourceKey - Resource identifier
+ * @returns Cache key or null if preview mode
+ *
+ * @example
+ * getProjectScopedKey("veryfront:data", "/api/users::{}");
+ * // → "veryfront:data:my-project:production:rel_abc:/api/users::{}"
+ * // → null (in preview mode - don't cache without content hash)
+ */
+export function getProjectScopedKey(
+  prefix: string,
+  resourceKey: string,
+): string | null {
+  const ctx = tryGetCacheKeyContext();
+  if (!ctx) return null;
+
+  // Only cache in production mode
+  // Preview mode without content hash would serve stale content on file changes
+  if (ctx.mode === "preview") {
+    return null;
+  }
+
+  return `${prefix}:${ctx.projectId}:${ctx.mode}:${ctx.versionId}:${resourceKey}`;
+}
+
+/**
+ * Build a project-scoped cache key (always, even in preview).
+ * Use only when you have a separate invalidation mechanism.
+ */
+export function getProjectScopedKeyAlways(
+  prefix: string,
+  resourceKey: string,
+): string | null {
+  const ctx = tryGetCacheKeyContext();
+  if (!ctx) return null;
+  return `${prefix}:${ctx.projectId}:${ctx.mode}:${ctx.versionId}:${resourceKey}`;
+}
+
+// ============================================================================
+// CONTEXT EXTRACTION HELPERS
+// ============================================================================
+
+/**
+ * Extract CacheKeyContext from HandlerContext.
+ */
+export function extractCacheKeyContext(handlerCtx: HandlerContext): CacheKeyContext {
+  const projectId = handlerCtx.projectSlug || handlerCtx.projectId || "default";
+
+  const isProduction = handlerCtx.proxyEnvironment === "production" ||
+    (handlerCtx.parsedDomain?.isDraft === false && handlerCtx.parsedDomain?.isVeryfrontDomain);
+
+  const mode = isProduction ? "production" : "preview";
+
+  // Version: releaseId (production) or branch (preview)
+  const versionId = isProduction
+    ? (handlerCtx.releaseId || "latest")
+    : (handlerCtx.parsedDomain?.branch || "main");
+
+  return { projectId, mode, versionId };
+}
+
+/**
+ * Re-export the RequestContext type from multi-project adapter for external use.
+ */
+export type { MultiProjectRequestContextType as MultiProjectRequestContext };
+
+/**
+ * Extract CacheKeyContext from MultiProjectRequestContext.
+ * @deprecated Use tryGetCacheKeyContext() which auto-detects context
+ */
+export function extractCacheKeyContextFromRequestContext(
+  reqCtx: MultiProjectRequestContextType,
+): CacheKeyContext {
+  return extractCacheKeyContextFromMultiProjectContext(reqCtx);
+}
+
+// ============================================================================
+// CACHE KEY UTILITIES
+// ============================================================================
+
+/**
+ * Check if a key matches a project.
+ */
+export function isKeyForProject(key: string, projectId: string): boolean {
+  // Project-scoped format: prefix:projectId:mode:versionId:resource
+  const parts = key.split(":");
+  return parts.length >= 4 && parts[1] === projectId;
+}
+
+/**
+ * Create a filter for clearing cache entries.
+ */
+export function createCacheKeyFilter(options: {
+  projectId?: string;
+  mode?: "production" | "preview";
+  versionId?: string;
+  prefix?: string;
+}): (key: string) => boolean {
+  return (key: string) => {
+    const parts = key.split(":");
+    if (parts.length < 4) return false;
+
+    const [keyPrefix, keyProjectId, keyMode, keyVersionId] = parts;
+
+    if (options.prefix && keyPrefix !== options.prefix) return false;
+    if (options.projectId && keyProjectId !== options.projectId) return false;
+    if (options.mode && keyMode !== options.mode) return false;
+    if (options.versionId && keyVersionId !== options.versionId) return false;
+
+    return true;
+  };
+}

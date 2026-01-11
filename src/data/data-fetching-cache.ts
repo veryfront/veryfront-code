@@ -5,6 +5,7 @@ import {
 } from "@veryfront/utils/constants/cache.ts";
 import type { CacheEntry, DataContext } from "./types.ts";
 import { getDisableLruIntervalEnv } from "@veryfront/core/config/env.ts";
+import { getProjectScopedKey } from "@veryfront/core/cache/cache-key-builder.ts";
 
 function isLruIntervalDisabled(): boolean {
   if ((globalThis as Record<string, unknown>).__vfDisableLruInterval === true) {
@@ -61,9 +62,18 @@ export class CacheManager {
     return false;
   }
 
-  createCacheKey(context: DataContext): string {
+  /**
+   * Create a project-scoped cache key for data fetching.
+   *
+   * Returns null in preview mode (no caching without content hash).
+   * In production mode, returns a key scoped by project and release.
+   */
+  createCacheKey(context: DataContext): string | null {
     const params = JSON.stringify(context.params);
     const pathname = context.url.pathname;
-    return `${pathname}::${params}`;
+    const resourceKey = `${pathname}::${params}`;
+
+    // Use project-scoped key (returns null in preview mode)
+    return getProjectScopedKey("veryfront:data", resourceKey);
   }
 }

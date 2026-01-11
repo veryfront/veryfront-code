@@ -17,6 +17,12 @@ export class StaticDataFetcher {
     }
 
     const cacheKey = this.cacheManager.createCacheKey(context);
+
+    // No caching in preview mode (cacheKey is null)
+    if (!cacheKey) {
+      return await this.fetchFreshNoCache(pageModule, context);
+    }
+
     const cached = this.cacheManager.get(cacheKey);
 
     if (!cached) {
@@ -33,6 +39,21 @@ export class StaticDataFetcher {
     }
 
     return cached.data;
+  }
+
+  private async fetchFreshNoCache(
+    pageModule: PageWithData,
+    context: DataContext,
+  ): Promise<DataResult> {
+    try {
+      return await pageModule.getStaticData!({
+        params: context.params,
+        url: context.url,
+      });
+    } catch (error) {
+      this.logError("Error in getStaticData:", error);
+      throw error;
+    }
   }
 
   private async fetchFresh(

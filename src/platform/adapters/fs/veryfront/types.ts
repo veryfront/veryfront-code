@@ -57,12 +57,15 @@ export interface ContextualFSAdapter extends FSAdapter {
   setProductionMode?(enabled: boolean, releaseId?: string | null): void;
 
   // Multi-project context (for proxy mode)
+  // Note: releaseId and branch are mutually exclusive
+  // - productionMode=true → use releaseId
+  // - productionMode=false → use branch
   runWithContext?<T>(
     projectSlug: string,
     token: string,
     fn: () => Promise<T>,
     projectId?: string,
-    options?: { productionMode?: boolean; releaseId?: string | null },
+    options?: { productionMode?: boolean; releaseId?: string | null; branch?: string | null },
   ): Promise<T>;
 }
 

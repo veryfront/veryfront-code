@@ -10,7 +10,10 @@ interface RequestContext {
   projectId?: string;
   token: string;
   productionMode: boolean;
+  /** Release ID for production mode (mutually exclusive with branch) */
   releaseId?: string | null;
+  /** Branch name for preview mode (mutually exclusive with releaseId) */
+  branch?: string | null;
 }
 
 interface RunWithContextOptions {
@@ -18,7 +21,10 @@ interface RunWithContextOptions {
   token: string;
   projectId?: string;
   productionMode?: boolean;
+  /** Release ID for production mode (mutually exclusive with branch) */
   releaseId?: string | null;
+  /** Branch name for preview mode (mutually exclusive with releaseId) */
+  branch?: string | null;
 }
 
 const asyncLocalStorage = new AsyncLocalStorage<RequestContext>();
@@ -45,24 +51,31 @@ export class MultiProjectFSAdapter implements FSAdapter {
     token: string,
     fn: () => Promise<T>,
     projectId?: string,
-    options?: { productionMode?: boolean; releaseId?: string | null },
+    options?: { productionMode?: boolean; releaseId?: string | null; branch?: string | null },
   ): Promise<T> {
     const productionMode = options?.productionMode ?? false;
     const releaseId = options?.releaseId ?? null;
+    const branch = options?.branch ?? null;
 
     logger.debug("[MultiProjectFSAdapter] runWithContext", {
       projectSlug,
       hasToken: !!token,
       productionMode,
+      releaseId: productionMode ? releaseId : undefined,
+      branch: !productionMode ? branch : undefined,
     });
 
-    // Store production mode in context so getAdapter can use it
+    // Store context for this request
+    // Note: releaseId and branch are mutually exclusive
+    // - productionMode=true → use releaseId
+    // - productionMode=false → use branch
     const context: RequestContext = {
       projectSlug,
       projectId,
       token,
       productionMode,
-      releaseId,
+      releaseId: productionMode ? releaseId : null,
+      branch: productionMode ? null : branch,
     };
 
     return asyncLocalStorage.run(context, fn);
@@ -198,3 +211,16 @@ export class MultiProjectFSAdapter implements FSAdapter {
 export function isMultiProjectAdapter(adapter: unknown): adapter is MultiProjectFSAdapter {
   return adapter instanceof MultiProjectFSAdapter;
 }
+
+/**
+ * Get the current request context from AsyncLocalStorage.
+ * Returns null if not in a multi-project request context.
+ */
+export function getCurrentRequestContext(): RequestContext | null {
+  return asyncLocalStorage.getStore() ?? null;
+}
+
+/**
+ * Re-export RequestContext type for use in cache-key-builder.
+ */
+export type { RequestContext };

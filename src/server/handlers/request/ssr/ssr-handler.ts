@@ -111,10 +111,13 @@ export class SSRHandler extends BaseHandler {
 
       if (ctx.projectSlug && hasMultiProjectSupport) {
         const prodMode = isProductionMode(ctx);
+        const branch = ctx.parsedDomain?.branch ?? null;
 
         this.logDebug("Using multi-project context", {
           projectSlug: ctx.projectSlug,
           productionMode: prodMode,
+          releaseId: prodMode ? ctx.releaseId : undefined,
+          branch: !prodMode ? branch : undefined,
         }, ctx);
 
         return fsAdapter.runWithContext(
@@ -122,7 +125,11 @@ export class SSRHandler extends BaseHandler {
           ctx.proxyToken || "",
           () => this.handleWithContext(req, ctx, slug, requestId, url),
           ctx.projectId,
-          { productionMode: prodMode, releaseId: ctx.releaseId },
+          {
+            productionMode: prodMode,
+            releaseId: ctx.releaseId,
+            branch,
+          },
         );
       }
 
