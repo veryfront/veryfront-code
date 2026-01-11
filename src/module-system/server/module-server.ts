@@ -49,7 +49,7 @@ export async function serveModule(
 ): Promise<Response> {
   const startTime = performance.now();
   const timings: Record<string, number> = {};
-  const { projectId, projectDir, adapter, dev = true, projectUUID, releaseId } = options;
+  const { projectId, projectDir, adapter, dev = true, projectUUID: _projectUUID, releaseId: _releaseId } = options;
   const url = new URL(req.url);
   const method = req.method.toUpperCase();
   const isHeadRequest = method === "HEAD";
