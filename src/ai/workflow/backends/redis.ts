@@ -1266,8 +1266,15 @@ export class RedisBackend implements WorkflowBackend {
   }
 
   /**
+   * Key for claim lock (separate from execution lock)
+   */
+  private claimLockKey(runId: string): string {
+    return `${this.config.prefix}claim:${runId}`;
+  }
+
+  /**
    * Claim a stalled run for recovery.
-   * Uses Redis atomic operations to ensure only one worker claims a run.
+   * Uses Redis SET NX for atomic claim acquisition to prevent race conditions.
    */
   async claimStalledRun(
     runId: string,
@@ -1301,22 +1308,28 @@ export class RedisBackend implements WorkflowBackend {
       return false;
     }
 
-    // Try to claim using optimistic locking via heartbeat update
-    // If another worker claims first, their heartbeat will be newer
+    // Use SET NX for atomic claim acquisition
+    // The claim lock has a TTL to prevent permanent locks if worker crashes
+    const claimLockTtl = Math.max(300, Math.ceil(stalledThresholdMs / 1000)); // At least 5 minutes
+    const claimed = await client.set(this.claimLockKey(runId), workerId, {
+      nx: true, // Only set if not exists
+      ex: claimLockTtl, // TTL in seconds
+    });
+
+    if (claimed !== "OK") {
+      // Another worker already claimed this run
+      if (this.config.debug) {
+        logger.debug(`[RedisBackend] Worker ${workerId} failed to claim run ${runId} - already claimed`);
+      }
+      return false;
+    }
+
+    // Successfully acquired claim lock, now update the run
     const claimTime = new Date();
     await client.hset(this.runKey(runId), {
       lastHeartbeat: claimTime.toISOString(),
       workerId,
     });
-
-    // Verify we got the claim by reading back
-    const verifyData = await client.hgetall(this.runKey(runId));
-    const verifyWorkerId = verifyData?.workerId;
-
-    if (verifyWorkerId !== workerId) {
-      // Another worker claimed it first
-      return false;
-    }
 
     if (this.config.debug) {
       logger.debug(`[RedisBackend] Worker ${workerId} claimed stalled run ${runId}`);

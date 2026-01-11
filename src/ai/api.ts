@@ -24,8 +24,31 @@ import { getCurrentRequestContext } from "../platform/adapters/fs/veryfront/mult
 import { VeryfrontAPIClient } from "../platform/adapters/veryfront-api-client/client.ts";
 
 /**
+ * Validate that a project slug is safe and well-formed.
+ * Prevents path traversal and injection attacks.
+ *
+ * Valid slugs: alphanumeric characters, hyphens, underscores
+ * Max length: 128 characters
+ */
+function isValidProjectSlug(slug: string): boolean {
+  if (!slug || typeof slug !== "string") {
+    return false;
+  }
+
+  // Check length
+  if (slug.length > 128) {
+    return false;
+  }
+
+  // Only allow alphanumeric, hyphens, and underscores
+  // Must start with alphanumeric
+  const validSlugPattern = /^[a-zA-Z0-9][a-zA-Z0-9_-]*$/;
+  return validSlugPattern.test(slug);
+}
+
+/**
  * Get the current tenant context from either workflow execution or request context.
- * @throws Error if no tenant context is available
+ * @throws Error if no tenant context is available or if validation fails
  */
 function getTenant() {
   // Check workflow context first (for tool execution within workflows)
@@ -38,6 +61,15 @@ function getTenant() {
         "This API must be called within a request or workflow execution. " +
         "If you're calling this from a standalone script, you need to wrap " +
         "your code with runWithContext() first.",
+    );
+  }
+
+  // Validate tenant fields to prevent injection attacks
+  if (!isValidProjectSlug(tenant.projectSlug)) {
+    throw new Error(
+      `Invalid project slug: "${tenant.projectSlug}". ` +
+        "Project slugs must be 1-128 characters, start with alphanumeric, " +
+        "and contain only alphanumeric characters, hyphens, or underscores.",
     );
   }
 

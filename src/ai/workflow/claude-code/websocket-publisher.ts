@@ -80,6 +80,10 @@ export class WebSocketPublisher implements BidirectionalPublisher {
       if (this.config.debug) {
         console.error("[WebSocketPublisher] Socket error:", error);
       }
+      // Stop ping interval on error to prevent resource leak
+      // The socket may or may not close after an error, but we should
+      // proactively clean up in case the close event doesn't fire
+      this.stopPingInterval();
     };
   }
 
@@ -118,14 +122,19 @@ export class WebSocketPublisher implements BidirectionalPublisher {
   private startPingInterval(): void {
     if (this.config.pingInterval > 0) {
       this.pingTimer = globalThis.setInterval(() => {
-        // Server-side ping to keep connection alive
-        if (this.config.socket.readyState === WebSocket.OPEN) {
-          this.send({
-            type: "pong",
-            timestamp: Date.now(),
-            runId: this.config.runId,
-          } as PongEvent);
+        // Stop interval if socket is no longer usable (prevents resource leak)
+        const { socket } = this.config;
+        if (this.closed || socket.readyState !== WebSocket.OPEN) {
+          this.stopPingInterval();
+          return;
         }
+
+        // Server-side ping to keep connection alive
+        this.send({
+          type: "pong",
+          timestamp: Date.now(),
+          runId: this.config.runId,
+        } as PongEvent);
       }, this.config.pingInterval);
     }
   }

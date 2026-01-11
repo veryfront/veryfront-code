@@ -68,6 +68,45 @@ const _DEFAULT_ITERATION_TIMEOUT = 5 * 60 * 1000;
 const DEFAULT_TOTAL_TIMEOUT = 30 * 60 * 1000;
 
 /**
+ * Safe environment variables to pass to bash commands.
+ * SECURITY: Do NOT add sensitive vars like API keys, tokens, or secrets.
+ */
+const SAFE_ENV_VARS = [
+  "PATH",
+  "SHELL",
+  "LANG",
+  "LC_ALL",
+  "LC_CTYPE",
+  "TERM",
+  "USER",
+  "LOGNAME",
+  "TZ",
+  "TMPDIR",
+] as const;
+
+/**
+ * Get safe environment variables for bash execution.
+ * Only includes allowlisted variables to prevent credential leakage.
+ */
+function getSafeEnv(workspaceDir: string): Record<string, string> {
+  const safeEnv: Record<string, string> = {};
+
+  for (const key of SAFE_ENV_VARS) {
+    const value = Deno.env.get(key);
+    if (value) {
+      safeEnv[key] = value;
+    }
+  }
+
+  // Override HOME to workspace directory
+  safeEnv.HOME = workspaceDir;
+  // Disable interactive prompts
+  safeEnv.DEBIAN_FRONTEND = "noninteractive";
+
+  return safeEnv;
+}
+
+/**
  * Default system prompt for Claude Code agent
  */
 const DEFAULT_SYSTEM = `You are an expert software engineer working on a codebase.
@@ -135,29 +174,33 @@ async function executeBash(
 
   try {
     // Execute command in workspace directory
+    // SECURITY: Use allowlisted env vars only to prevent credential leakage
     const command = new Deno.Command("bash", {
       args: ["-c", input.command],
       cwd: context.workspace.workspaceDir,
       stdout: "piped",
       stderr: "piped",
-      env: {
-        ...Deno.env.toObject(),
-        // Set HOME to workspace for tools that use it
-        HOME: context.workspace.workspaceDir,
-        // Disable interactive prompts
-        DEBIAN_FRONTEND: "noninteractive",
-      },
+      env: getSafeEnv(context.workspace.workspaceDir),
     });
 
     // Apply timeout if configured
     const timeout = input.timeout ?? 120000; // 2 minute default
     const process = command.spawn();
 
-    // Create timeout promise
+    // Create timeout promise with proper process cleanup
     const timeoutPromise = new Promise<never>((_, reject) => {
-      setTimeout(() => {
+      setTimeout(async () => {
         try {
+          // First try graceful SIGTERM
           process.kill("SIGTERM");
+          // Wait 2 seconds for graceful shutdown
+          await new Promise((resolve) => setTimeout(resolve, 2000));
+          // Force kill if still running
+          try {
+            process.kill("SIGKILL");
+          } catch {
+            // Process already exited from SIGTERM
+          }
         } catch {
           // Process may have already exited
         }
@@ -581,14 +624,18 @@ export function claudeCodeAgent(config: ClaudeCodeAgentConfig = {}): ClaudeCodeA
 
         throw error;
       } finally {
-        // Always cleanup workspace
-        if (workspaceInitialized) {
-          try {
-            await workspace.cleanup();
-            if (config.debug) {
-              logger.info("[ClaudeCode] Workspace cleaned up");
-            }
-          } catch (cleanupError) {
+        // Always try to cleanup workspace, even if initialization failed partially
+        // This ensures we don't leave behind temp directories if initialize() created
+        // the directory but then failed during file download
+        try {
+          await workspace.cleanup();
+          if (config.debug) {
+            logger.info("[ClaudeCode] Workspace cleaned up");
+          }
+        } catch (cleanupError) {
+          // Only log if workspace was actually initialized - otherwise cleanup
+          // failure is expected (directory doesn't exist)
+          if (workspaceInitialized) {
             logger.error("[ClaudeCode] Workspace cleanup failed:", cleanupError);
           }
         }
