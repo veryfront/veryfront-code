@@ -5,10 +5,23 @@ export function resolve(...paths: string[]): string {
     return nodePath!.resolve(...paths);
   }
 
-  const cwd = globalThis.Deno?.cwd() || "/";
-  const combined = [cwd, ...paths].join("/");
-  const parts = combined.split("/").filter((p) => p.length > 0);
+  // Start with cwd
+  let resolvedPath = globalThis.Deno?.cwd() || "/";
 
+  // Process each path segment - absolute paths reset the resolved path
+  for (const path of paths) {
+    if (!path) continue;
+    if (path.startsWith("/")) {
+      // Absolute path resets
+      resolvedPath = path;
+    } else {
+      // Relative path appends
+      resolvedPath = resolvedPath + "/" + path;
+    }
+  }
+
+  // Normalize the result
+  const parts = resolvedPath.split("/").filter((p) => p.length > 0);
   const resolved: string[] = [];
   for (const part of parts) {
     if (part === "..") {

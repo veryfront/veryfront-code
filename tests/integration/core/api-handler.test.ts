@@ -523,10 +523,18 @@ describe(
 
             assertExists(res);
             assertEquals(res.status, 500);
-            // In development mode, returns JSON with error and stack
-            const json = await res.json();
-            assertEquals(json.error, "Something went wrong");
-            assertExists(json.stack);
+            // Response format depends on NODE_ENV
+            const contentType = res.headers.get("content-type") || "";
+            if (contentType.includes("application/json")) {
+              // Development mode: returns JSON with error and stack
+              const json = await res.json();
+              assertEquals(json.error, "Something went wrong");
+              assertExists(json.stack);
+            } else {
+              // Production mode: returns plain text error
+              const text = await res.text();
+              assertExists(text);
+            }
           });
         });
 

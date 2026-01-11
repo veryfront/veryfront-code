@@ -19,6 +19,18 @@ export interface ReactDOMServer {
 
 let projectReactCache: typeof React | null = null;
 let useProjectReact: boolean | null = null;
+let reactDOMServerCache: ReactDOMServer | null = null;
+
+/**
+ * Reset all cached React and ReactDOM instances.
+ * This is critical for test isolation when running parallel tests
+ * with different project directories.
+ */
+export function resetReactCache(): void {
+  projectReactCache = null;
+  useProjectReact = null;
+  reactDOMServerCache = null;
+}
 
 /**
  * Check if both react and react-dom can be resolved from the project.
@@ -167,6 +179,11 @@ async function importReactDOMServerFromProject(): Promise<
 }
 
 export async function getReactDOMServer(): Promise<ReactDOMServer> {
+  // Return cached instance if available for consistency
+  if (reactDOMServerCache) {
+    return reactDOMServerCache;
+  }
+
   const versionInfo = getReactVersionInfo();
 
   const { renderToString, renderToStaticMarkup } = await importReactDOMServerFromProject();
@@ -186,10 +203,12 @@ export async function getReactDOMServer(): Promise<ReactDOMServer> {
     }
   }
 
-  return {
+  reactDOMServerCache = {
     renderToString,
     renderToStaticMarkup,
     renderToPipeableStream,
     renderToReadableStream,
   };
+
+  return reactDOMServerCache;
 }
