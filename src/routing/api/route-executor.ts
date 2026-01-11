@@ -14,7 +14,7 @@ import {
   createPagesRouteMethodNotAllowed,
 } from "./method-validator.ts";
 import { handleAPIError } from "./error-handler.ts";
-import { isAbsolute, join } from "std/path/mod.ts";
+import { isAbsolute, join } from "@veryfront/platform/compat/path/index.ts";
 
 /**
  * Creates a project-scoped filesystem adapter that resolves relative paths

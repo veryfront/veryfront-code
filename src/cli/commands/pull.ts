@@ -7,7 +7,7 @@
  * @module cli/commands/pull
  */
 
-import { dirname, join } from "std/path/mod.ts";
+import { dirname, join } from "@veryfront/platform/compat/path/index.ts";
 import { cliLogger } from "@veryfront/utils";
 import { cwd } from "@veryfront/platform/compat/process.ts";
 import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
@@ -18,6 +18,7 @@ import {
   type ResolvedConfig,
 } from "../shared/config.ts";
 import { confirmPrompt, createSpinner, logInfo, logSuccess, logWarning } from "../utils/index.ts";
+import { getApiTokenEnv } from "@veryfront/core/config/env.ts";
 
 /**
  * Pull command options
@@ -303,9 +304,7 @@ export async function pullCommand(options: PullOptions = {}): Promise<void> {
     // If projects list is provided (CLI or config), we don't need the local config's projectSlug
     if (projects && projects.length > 0) {
       // Create a minimal config with just the API token from env or config file
-      const apiToken = typeof Deno !== "undefined"
-        ? Deno.env.get("VERYFRONT_API_TOKEN")
-        : process?.env?.VERYFRONT_API_TOKEN;
+      const apiToken = getApiTokenEnv();
       const token = apiToken ?? configFile?.apiToken;
       if (!token) {
         throw new Error(

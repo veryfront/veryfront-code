@@ -1,4 +1,4 @@
-import { relative } from "std/path/mod.ts";
+import { relative } from "@veryfront/platform/compat/path/index.ts";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import type { DynamicRouter } from "./api-route-matcher.ts";
 import { discoverFiles } from "@veryfront/core/utils/file-discovery.ts";

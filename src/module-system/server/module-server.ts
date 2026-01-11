@@ -1,13 +1,15 @@
 /** Module Server - serves transformed ESM modules at /_vf_modules/* URLs */
 
-import { join } from "std/path/mod.ts";
+import { join } from "@veryfront/platform/compat/path/index.ts";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
+import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
 import { type TransformOptions, transformToESM } from "@veryfront/transforms/esm-transform.ts";
 import { serverLogger, serverLogger as logger } from "@veryfront/utils";
 import { HTTP_NOT_FOUND, HTTP_OK, HTTP_SERVER_ERROR } from "@veryfront/utils";
 import { getContentTypeForPath } from "@veryfront/server/handlers/utils/content-types.ts";
 import { createSecureFs } from "@veryfront/security";
 import { getErrorMessage } from "@veryfront/errors/veryfront-error.ts";
+import { getApiBaseUrlEnv } from "@veryfront/core/config/env.ts";
 // DISABLED: Position injection temporarily disabled to fix hydration mismatch
 // import { injectNodePositions } from "@veryfront/transforms/plugins/babel-node-positions.ts";
 import { parseProjectDomain } from "@veryfront/server/utils/domain-parser.ts";
@@ -343,8 +345,9 @@ export async function serveModule(
       // For framework lib files, read directly from filesystem instead of through adapter
       // isFrameworkFile flag is set by findSourceFile when file is from framework lib
       const readStart = performance.now();
+      const platformFs = createFileSystem();
       const source = isFrameworkFile
-        ? await Deno.readTextFile(sourceFile)
+        ? await platformFs.readTextFile(sourceFile)
         : await runWithOptionalContext(() => secureFs.readFile(sourceFile));
       timings.readFile = performance.now() - readStart;
 
@@ -584,13 +587,14 @@ async function findSourceFile(
     ["react/", join(FRAMEWORK_ROOT, "src"), "react"],
   ];
 
+  const platformFs = createFileSystem();
   for (const [prefix, frameworkDir, label] of frameworkLookups) {
     if (!basePathWithoutExt.startsWith(prefix)) continue;
 
     for (const ext of extensions) {
       const frameworkPath = join(frameworkDir, basePathWithoutExt + ext);
       try {
-        const stat = await Deno.stat(frameworkPath);
+        const stat = await platformFs.stat(frameworkPath);
         if (stat.isFile) {
           serverLogger.debug(`[ModuleServer] Found framework ${label} file`, {
             basePath: basePathWithoutExt,
@@ -678,9 +682,7 @@ async function fetchCrossProjectSource(
   projectRef: string,
   filePath: string,
 ): Promise<string | null> {
-  const apiBaseUrl = Deno.env.get("VERYFRONT_API_BASE_URL") ||
-    Deno.env.get("VERYFRONT_API_URL")?.replace("/graphql", "/api") ||
-    "http://api.lvh.me:4000";
+  const apiBaseUrl = getApiBaseUrlEnv();
   const registryBaseUrl = apiBaseUrl.replace(/\/api\/?$/, "");
   const registryUrl = `${registryBaseUrl}/${projectRef}/@/${filePath}`;
 

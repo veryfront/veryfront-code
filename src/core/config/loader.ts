@@ -1,6 +1,6 @@
 import type { VeryfrontConfig } from "./types.ts";
 import { findUnknownTopLevelKeys, validateVeryfrontConfig } from "./schema.ts";
-import { dirname, join } from "std/path/mod.ts";
+import { dirname, join } from "@veryfront/platform/compat/path/index.ts";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import { isExtendedFSAdapter } from "@veryfront/platform/adapters/fs/wrapper.ts";
 import { serverLogger } from "@veryfront/utils/logger/logger.ts";

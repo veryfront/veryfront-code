@@ -1,4 +1,4 @@
-import { join } from "node:path";
+import { join } from "@veryfront/platform/compat/path/index.ts";
 import { getAdapter } from "@veryfront/platform/adapters/index.ts";
 import { getConfig } from "@veryfront/config";
 import { createRenderer, type VeryfrontRenderer } from "@veryfront/rendering/index.ts";

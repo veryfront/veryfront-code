@@ -1,7 +1,8 @@
 import { LRUCacheAdapter } from "./cache/stores/memory/lru-cache-adapter.ts";
 import type { LRUCacheOptions } from "./cache/stores/memory/types.ts";
 import { DEFAULT_LRU_MAX_ENTRIES } from "@veryfront/utils";
-import { getEnv } from "@veryfront/platform/compat/process.ts";
+import { unrefTimer } from "@veryfront/platform/compat/process.ts";
+import { getDisableLruIntervalEnv } from "@veryfront/core/config/env.ts";
 
 export interface LRUOptions {
   maxEntries?: number;
@@ -44,9 +45,7 @@ export class LRUCache<K, V> {
     this.cleanupTimer = timer;
 
     // Unref the timer so it doesn't prevent process exit or cause test leaks
-    if (typeof Deno !== "undefined" && "unrefTimer" in Deno) {
-      Deno.unrefTimer(timer);
-    }
+    unrefTimer(timer);
   }
 
   private toStringKey(key: K): string {
@@ -103,7 +102,7 @@ function shouldDisableInterval(): boolean {
     return true;
   }
   try {
-    return getEnv("VF_DISABLE_LRU_INTERVAL") === "1";
+    return getDisableLruIntervalEnv();
   } catch {
     return false;
   }

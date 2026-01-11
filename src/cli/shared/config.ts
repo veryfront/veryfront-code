@@ -5,21 +5,9 @@
  * @module cli/shared/config
  */
 
-import { join } from "std/path/mod.ts";
-import { cwd } from "@veryfront/platform/compat/process.ts";
+import { join } from "@veryfront/platform/compat/path/index.ts";
+import { cwd, getEnv } from "@veryfront/platform/compat/process.ts";
 import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
-import { isDeno } from "@veryfront/platform/compat/runtime.ts";
-
-/**
- * Get environment variable cross-platform
- */
-function getEnv(name: string): string | undefined {
-  if (isDeno) {
-    // @ts-ignore - Deno global
-    return Deno.env?.get?.(name);
-  }
-  return process?.env?.[name];
-}
 
 /**
  * Configuration file structure (.veryfrontrc)

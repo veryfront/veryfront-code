@@ -5,10 +5,10 @@
  * Enable with VERYFRONT_PERF=1 environment variable.
  */
 
+import { isPerfEnabledEnv } from "@veryfront/core/config/env.ts";
+
 function isPerfEnabled(): boolean {
-  if (typeof Deno !== "undefined") return Deno.env.get("VERYFRONT_PERF") === "1";
-  if (typeof process !== "undefined") return process.env?.VERYFRONT_PERF === "1";
-  return false;
+  return isPerfEnabledEnv();
 }
 
 const enabled = isPerfEnabled();

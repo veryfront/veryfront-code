@@ -177,6 +177,8 @@
     "lint:ban-internal-root-imports": "deno run --allow-read scripts/ban-internal-root-imports.ts",
     "lint:check-awaits": "deno run --allow-read scripts/check-unawaited-promises.ts",
     "lint:platform": "deno run --allow-read scripts/lint-platform-agnostic.ts",
+    "test:smoke": "deno run --allow-all src/platform/compat/smoke-test.ts",
+    "test:cross-runtime": "deno run --allow-all src/platform/compat/cross-runtime.test.ts",
     "check:circular": "deno run -A jsr:@cunarist/deno-circular-deps src/index.ts"
   },
   "lint": {

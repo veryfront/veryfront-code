@@ -1,4 +1,4 @@
-import { join } from "std/path/mod.ts";
+import { join } from "@veryfront/platform/compat/path/index.ts";
 import { HASH_SEED_DJB2 } from "@veryfront/utils";
 
 export function computeStableId(relPath: string): string {

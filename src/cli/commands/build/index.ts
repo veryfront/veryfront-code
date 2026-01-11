@@ -8,7 +8,7 @@
  * - Error handling
  */
 
-import { join } from "std/path/mod.ts";
+import { join } from "@veryfront/platform/compat/path/index.ts";
 import { getAdapter } from "@veryfront/platform/adapters/index.ts";
 import { getConfig } from "@veryfront/config";
 import { buildProduction } from "@veryfront/build/production-build/index.ts";

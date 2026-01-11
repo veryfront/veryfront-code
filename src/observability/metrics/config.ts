@@ -5,7 +5,8 @@
 
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import type { MetricsConfig } from "./types.ts";
-import { getEnv, memoryUsage as platformMemoryUsage } from "@veryfront/platform/compat/process.ts";
+import { memoryUsage as platformMemoryUsage } from "@veryfront/platform/compat/process.ts";
+import { getOtelMetricsConfig } from "@veryfront/core/config/env.ts";
 
 /**
  * Default metrics collect interval in milliseconds (60 seconds)
@@ -60,13 +61,14 @@ export function loadConfig(
   } else {
     // Fallback to platform getEnv for cross-platform compatibility
     try {
-      finalConfig.enabled = getEnv("OTEL_METRICS_ENABLED") === "true" ||
-        getEnv("VERYFRONT_OTEL") === "1" ||
+      const metricsConfig = getOtelMetricsConfig();
+      finalConfig.enabled = metricsConfig.enabledFlag === "true" ||
+        metricsConfig.veryfrontFlag === "1" ||
         finalConfig.enabled;
-      finalConfig.endpoint = getEnv("OTEL_EXPORTER_OTLP_ENDPOINT") ||
-        getEnv("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT") ||
+      finalConfig.endpoint = metricsConfig.endpoint ||
+        metricsConfig.metricsEndpoint ||
         finalConfig.endpoint;
-      const exporterType = getEnv("OTEL_METRICS_EXPORTER");
+      const exporterType = metricsConfig.exporter;
       if (
         exporterType === "prometheus" || exporterType === "otlp" ||
         exporterType === "console"

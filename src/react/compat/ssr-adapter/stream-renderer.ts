@@ -5,8 +5,7 @@ import { getReactDOMServer } from "./server-loader.ts";
 import { renderToStringAdapter } from "./string-renderer.ts";
 import type { SSROptions, SSRResult } from "./types.ts";
 import { createError, toError } from "@veryfront/errors/veryfront-error.ts";
-import { getEnv } from "@veryfront/platform/compat/process.ts";
-import { isTruthyEnvValue } from "@veryfront/utils/constants/env.ts";
+import { isDebugEnvEnabled } from "@veryfront/core/config/env.ts";
 
 interface VeryfrontGlobal {
   __VERYFRONT_DEBUG__?: boolean;
@@ -19,7 +18,7 @@ async function renderToReadableStreamImpl(
 ): Promise<SSRResult> {
   const debug = Boolean(
     (globalThis as VeryfrontGlobal).__VERYFRONT_DEBUG__ ||
-      isTruthyEnvValue(getEnv("VERYFRONT_DEBUG")),
+      isDebugEnvEnabled(),
   );
 
   if (!server.renderToReadableStream) {
@@ -140,7 +139,7 @@ export async function renderToStreamAdapter(
 ): Promise<SSRResult> {
   const debug = Boolean(
     (globalThis as VeryfrontGlobal).__VERYFRONT_DEBUG__ ||
-      isTruthyEnvValue(getEnv("VERYFRONT_DEBUG")),
+      isDebugEnvEnabled(),
   );
 
   const versionInfo = getReactVersionInfo();

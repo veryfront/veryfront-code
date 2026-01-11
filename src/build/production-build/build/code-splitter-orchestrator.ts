@@ -8,7 +8,7 @@
  */
 
 import { serverLogger as logger } from "@veryfront/utils";
-import { join } from "node:path";
+import { join } from "@veryfront/platform/compat/path/index.ts";
 import { type ChunkManifest, createCodeSplitter } from "@veryfront/build/bundler/index.ts";
 import type { RouteInfo } from "@veryfront/server/build-types.ts";
 

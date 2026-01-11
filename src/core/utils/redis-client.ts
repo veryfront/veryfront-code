@@ -6,6 +6,7 @@
  */
 
 import { logger } from "./logger/logger.ts";
+import { getRedisUrlEnv } from "@veryfront/core/config/env.ts";
 
 export interface RedisClient {
   connect(): Promise<void>;
@@ -125,14 +126,7 @@ async function createClient(options: RedisClientOptions): Promise<RedisClient> {
  * Get Redis URL from environment.
  */
 function getEnvRedisUrl(): string | undefined {
-  try {
-    if (typeof Deno !== "undefined" && Deno.env) {
-      return Deno.env.get("REDIS_URL");
-    }
-  } catch {
-    // Ignore env access errors
-  }
-  return undefined;
+  return getRedisUrlEnv();
 }
 
 /**

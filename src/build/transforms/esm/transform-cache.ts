@@ -13,6 +13,8 @@ import {
   isRedisConfigured,
   type RedisClient,
 } from "@veryfront/utils/redis-client.ts";
+import { unrefTimer } from "@veryfront/platform/compat/process.ts";
+import { getDisableLruIntervalEnv } from "@veryfront/core/config/env.ts";
 
 const DEFAULT_TTL_MS = 5 * 60 * 1000; // 5 minutes
 const DEFAULT_TTL_SECONDS = 300; // 5 minutes for Redis
@@ -51,14 +53,7 @@ function shouldDisableInterval(): boolean {
   if ((globalThis as Record<string, unknown>).__vfDisableLruInterval === true) {
     return true;
   }
-  try {
-    if (typeof Deno !== "undefined" && Deno.env) {
-      return Deno.env.get("VF_DISABLE_LRU_INTERVAL") === "1";
-    }
-  } catch {
-    // Ignore env access errors
-  }
-  return false;
+  return getDisableLruIntervalEnv();
 }
 
 function startPeriodicCleanup(): void {
@@ -77,9 +72,7 @@ function startPeriodicCleanup(): void {
   }, CLEANUP_INTERVAL_MS);
 
   // Unref the timer so it doesn't prevent process exit or cause test leaks
-  if (typeof Deno !== "undefined" && "unrefTimer" in Deno) {
-    Deno.unrefTimer(cleanupInterval);
-  }
+  unrefTimer(cleanupInterval);
 }
 
 // Start cleanup on module load

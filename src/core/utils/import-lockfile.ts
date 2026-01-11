@@ -21,6 +21,7 @@
 
 import { computeHash } from "./hash-utils.ts";
 import { serverLogger as logger } from "./logger/index.ts";
+import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
 
 export interface LockfileEntry {
   resolved: string;
@@ -70,46 +71,26 @@ export type FSAdapter = {
   remove?(path: string): Promise<void>;
 };
 
-function createNodeFSAdapter(): FSAdapter {
-  const fs = globalThis.Deno ? null : require("fs/promises");
+function createPlatformFSAdapter(): FSAdapter {
+  const fs = createFileSystem();
   return {
     readFile(path: string): Promise<string> {
-      if (globalThis.Deno) {
-        return Deno.readTextFile(path);
-      }
-      return fs.readFile(path, "utf-8");
+      return fs.readTextFile(path);
     },
-    async writeFile(path: string, content: string): Promise<void> {
-      if (globalThis.Deno) {
-        await Deno.writeTextFile(path, content);
-        return;
-      }
-      await fs.writeFile(path, content, "utf-8");
+    writeFile(path: string, content: string): Promise<void> {
+      return fs.writeTextFile(path, content);
     },
-    async exists(path: string): Promise<boolean> {
-      try {
-        if (globalThis.Deno) {
-          await Deno.stat(path);
-          return true;
-        }
-        await fs.access(path);
-        return true;
-      } catch {
-        return false;
-      }
+    exists(path: string): Promise<boolean> {
+      return fs.exists(path);
     },
-    async remove(path: string): Promise<void> {
-      if (globalThis.Deno) {
-        await Deno.remove(path);
-        return;
-      }
-      await fs.unlink(path);
+    remove(path: string): Promise<void> {
+      return fs.remove(path);
     },
   };
 }
 
 export function createLockfileManager(projectDir: string, fsAdapter?: FSAdapter): LockfileManager {
-  const fs = fsAdapter || createNodeFSAdapter();
+  const fs = fsAdapter || createPlatformFSAdapter();
   const lockfilePath = `${projectDir}/${LOCKFILE_NAME}`;
   let cache: LockfileData | null = null;
   let dirty = false;

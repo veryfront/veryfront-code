@@ -3,7 +3,7 @@
  */
 
 import { serverLogger as logger } from "@veryfront/utils";
-import { join } from "std/path/mod.ts";
+import { join } from "@veryfront/platform/compat/path/index.ts";
 import * as React from "react";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import { getProjectReact, renderToStringAdapter } from "@veryfront/react";

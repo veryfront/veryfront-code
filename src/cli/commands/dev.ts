@@ -6,7 +6,7 @@ import { compileAllMDX, watchMDX } from "@veryfront/build/compiler/mdx-compiler/
 import { ErrorCode, VeryfrontError } from "@veryfront/errors/index.ts";
 import { LOCALHOST } from "@veryfront/config";
 import { bold, cyan, dim, green } from "@veryfront/compat/console";
-import { join } from "std/path/mod.ts";
+import { join } from "@veryfront/platform/compat/path/index.ts";
 import { getAdapter } from "@veryfront/platform/adapters/detect.ts";
 import { cliLogger } from "@veryfront/utils";
 import { getConfig } from "@veryfront/config";

@@ -3,7 +3,7 @@
  * Merges CSS, Image, and Tailwind processor utilities
  */
 
-import { basename, dirname, extname, join } from "std/path/mod.ts";
+import { basename, dirname, extname, join } from "@veryfront/platform/compat/path/index.ts";
 import { walk } from "std/fs/mod.ts";
 import { logger } from "@veryfront/utils";
 import type { OptimizedImageMetadata } from "../asset-pipeline/image-optimizer/types.ts";

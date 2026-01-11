@@ -1,7 +1,7 @@
 import { bundlerLogger as logger } from "@veryfront/utils";
 import { createError, toError } from "@veryfront/errors/veryfront-error.ts";
 import * as esbuild from "esbuild/mod.js";
-import { join } from "std/path/mod.ts";
+import { join } from "@veryfront/platform/compat/path/index.ts";
 import { compileMDXToJS } from "../compiler/index.ts";
 import { denoAdapter } from "@veryfront/platform/adapters/runtime/deno/index.ts";
 import type { EmbeddedBundleManifest } from "../renderer/types/bundler-types.ts";

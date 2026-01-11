@@ -46,7 +46,11 @@ interface DenoRedisClient {
   keys(pattern: string): Promise<string[]>;
   exists(...keys: string[]): Promise<number>;
   expire(key: string, seconds: number): Promise<number>;
-  set(key: string, value: string, options?: { nx?: boolean; px?: number; ex?: number }): Promise<string | null>;
+  set(
+    key: string,
+    value: string,
+    options?: { nx?: boolean; px?: number; ex?: number },
+  ): Promise<string | null>;
   get(key: string): Promise<string | null>;
   close(): Promise<void>;
 }
@@ -73,18 +77,29 @@ interface NodeRedisClient {
   lSet(key: string, index: number, value: string): Promise<string | "OK">;
   lLen(key: string): Promise<number>;
   xAdd(key: string, id: string, fields: Record<string, string>): Promise<string>;
-  xGroupCreate(key: string, group: string, id: string, options?: { MKSTREAM?: boolean }): Promise<string>;
+  xGroupCreate(
+    key: string,
+    group: string,
+    id: string,
+    options?: { MKSTREAM?: boolean },
+  ): Promise<string>;
   xReadGroup(
     group: string,
     consumer: string,
     streams: Array<{ key: string; id: string }>,
     options?: { BLOCK?: number; COUNT?: number },
-  ): Promise<Array<{ name: string; messages: Array<{ id: string; message: Record<string, string> }> }> | null>;
+  ): Promise<
+    Array<{ name: string; messages: Array<{ id: string; message: Record<string, string> }> }> | null
+  >;
   xAck(key: string, group: string, ids: string[]): Promise<number>;
   keys(pattern: string): Promise<string[]>;
   exists(keys: string[]): Promise<number>;
   expire(key: string, seconds: number): Promise<number>;
-  set(key: string, value: string, options?: { NX?: boolean; PX?: number; EX?: number }): Promise<string | null>;
+  set(
+    key: string,
+    value: string,
+    options?: { NX?: boolean; PX?: number; EX?: number },
+  ): Promise<string | null>;
   get(key: string): Promise<string | null>;
   quit(): Promise<void>;
   disconnect(): Promise<void>;
@@ -101,7 +116,9 @@ let NodeRedis: NodeRedisModule | null = null;
  * NOTE: We construct module names dynamically to prevent Deno's static analyzer
  * from pre-fetching these optional dependencies during lint/check tasks.
  */
-async function getRedisModule(): Promise<{ DenoRedis: DenoRedisModule | null; NodeRedis: NodeRedisModule | null }> {
+async function getRedisModule(): Promise<
+  { DenoRedis: DenoRedisModule | null; NodeRedis: NodeRedisModule | null }
+> {
   // Return cached modules if already loaded
   if (DenoRedis || NodeRedis) {
     return { DenoRedis, NodeRedis };
@@ -638,7 +655,12 @@ export class RedisBackend implements WorkflowBackend {
     // Use existing connection promise to prevent race conditions
     // Multiple concurrent calls will share the same connection promise
     if (!this.connectionPromise) {
-      this.connectionPromise = this.createConnection();
+      this.connectionPromise = this.createConnection().catch((error) => {
+        // Clear cached promise/client so future calls can retry after a transient failure
+        this.connectionPromise = null;
+        this.client = null;
+        throw error;
+      });
     }
 
     return this.connectionPromise;

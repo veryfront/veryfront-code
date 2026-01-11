@@ -1,4 +1,4 @@
-import { join } from "std/path/mod.ts";
+import { join } from "@veryfront/platform/compat/path/index.ts";
 import { bundlerLogger as logger } from "@veryfront/utils";
 import { createFileSystem } from "../platform/compat/fs.ts";
 

@@ -19,6 +19,7 @@ import {
   enableSSRFetchInterception,
   setSSRServerPort,
 } from "@veryfront/rendering/ssr-globals.ts";
+import { setEnv } from "@veryfront/platform/compat/process.ts";
 
 export class DevServer {
   private router: DynamicRouter;
@@ -91,7 +92,7 @@ export class DevServer {
 
     // Set VERYFRONT_DEV_PORT for ESM module loader HTTP fallback
     // This ensures the correct port is used when fetching modules via localhost
-    Deno.env.set("VERYFRONT_DEV_PORT", String(this.options.port));
+    setEnv("VERYFRONT_DEV_PORT", String(this.options.port));
 
     // Enable SSR fetch interception for local development
     // This rewrites fetch URLs from project domains to localhost

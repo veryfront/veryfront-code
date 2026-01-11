@@ -1,4 +1,4 @@
-import { dirname, join, relative, SEPARATOR } from "std/path/mod.ts";
+import { dirname, join, relative, SEPARATOR } from "@veryfront/platform/compat/path/index.ts";
 import { walk } from "std/fs/mod.ts";
 import { logger } from "@veryfront/utils";
 import type { BrowserTargets } from "@veryfront/types";

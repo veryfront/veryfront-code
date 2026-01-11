@@ -27,7 +27,8 @@ export function dirname(path: string): string {
 
 export function basename(path: string, ext?: string): string {
   if (!isDeno && hasNodePath) {
-    return nodePath!.basename(path, ext);
+    // Only pass ext if defined - Bun is strict about this parameter
+    return ext !== undefined ? nodePath!.basename(path, ext) : nodePath!.basename(path);
   }
 
   const lastSlash = path.lastIndexOf("/");

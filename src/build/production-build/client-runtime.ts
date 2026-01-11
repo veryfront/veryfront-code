@@ -3,8 +3,14 @@
  * Handles generation of client-side router and prefetch scripts
  */
 
-import { dirname, extname, isAbsolute, join, resolve } from "node:path";
-import { fromFileUrl } from "@std/path";
+import {
+  dirname,
+  extname,
+  fromFileUrl,
+  isAbsolute,
+  join,
+  resolve,
+} from "@veryfront/platform/compat/path/index.ts";
 import { serverLogger as logger } from "@veryfront/utils";
 import type { OnResolveArgs, Plugin } from "esbuild";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";

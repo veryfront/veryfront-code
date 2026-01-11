@@ -1,4 +1,4 @@
-import { join } from "std/path/mod.ts";
+import { join } from "@veryfront/platform/compat/path/index.ts";
 import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
 import { logger } from "@veryfront/utils";
 import { BYTES_PER_KB } from "@veryfront/utils";

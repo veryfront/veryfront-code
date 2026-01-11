@@ -3,7 +3,7 @@
  */
 
 import { existsSync } from "std/fs/mod.ts";
-import { dirname, join, resolve } from "std/path/mod.ts";
+import { dirname, join, resolve } from "@veryfront/platform/compat/path/index.ts";
 
 /**
  * Extract import statements from code

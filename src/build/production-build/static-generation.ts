@@ -4,8 +4,7 @@
  */
 
 import { serverLogger as logger } from "@veryfront/utils";
-import { mkdir } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { dirname, join } from "@veryfront/platform/compat/path/index.ts";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import type { VeryfrontRenderer } from "../../rendering/orchestrator/ssr.ts";
 import type { VeryfrontConfig } from "@veryfront/config";
@@ -128,7 +127,7 @@ ${clientStyles}
       const outputPath = getOutputPath(outputDir, route.slug);
 
       // Ensure directory exists
-      await mkdir(dirname(outputPath), { recursive: true });
+      await adapter.fs.mkdir(dirname(outputPath), { recursive: true });
 
       // Write HTML
       if (!dryRun) {
@@ -152,13 +151,13 @@ ${clientStyles}
 
       if (!dryRun) {
         const dataPath = join(outputDir, "_veryfront/data", `${route.slug}.json`);
-        await mkdir(dirname(dataPath), { recursive: true });
+        await adapter.fs.mkdir(dirname(dataPath), { recursive: true });
         await traceStep(`data:${route.slug}`, () =>
           adapter.fs.writeFile(dataPath, JSON.stringify(pageData)));
 
         if (result.pageModule?.code) {
           const modulePath = join(outputDir, "_veryfront/pages", `${route.slug}.js`);
-          await mkdir(dirname(modulePath), { recursive: true });
+          await adapter.fs.mkdir(dirname(modulePath), { recursive: true });
           await traceStep(`module:${route.slug}`, () =>
             adapter.fs.writeFile(modulePath, result.pageModule!.code));
         }
@@ -213,7 +212,7 @@ export async function buildAppRoutes(
       const outputPath = getAppRouteOutputPath(outputDir, route.path);
 
       if (!dryRun) {
-        await mkdir(dirname(outputPath), { recursive: true });
+        await adapter.fs.mkdir(dirname(outputPath), { recursive: true });
         await traceStep(`write:${route.path}`, () => adapter.fs.writeFile(outputPath, html));
       }
 

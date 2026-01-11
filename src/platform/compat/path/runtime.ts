@@ -5,14 +5,29 @@ const hasNodeApis = !!globalProcess?.versions?.node || "Bun" in globalThis;
 
 export const isDeno = typeof Deno !== "undefined";
 
-export let nodePath: NodePathModule | null = null;
+// Try to load node:path synchronously (works in Node.js CJS and Bun)
+let _nodePath: NodePathModule | null = null;
 
 if (hasNodeApis) {
-  nodePath = await import("node:path") as NodePathModule;
+  try {
+    // In Node.js CJS or Bun, require is available globally
+    const nodeRequire = typeof require !== "undefined" ? require : null;
+    if (nodeRequire) {
+      _nodePath = nodeRequire("node:path") as NodePathModule;
+    }
+  } catch {
+    // Fallback to pure JS implementations
+  }
 }
 
-export const sep = nodePath ? nodePath.sep : "/";
+// Re-export for consumers
+export const nodePath: NodePathModule | null = _nodePath;
 
-export const delimiter = nodePath ? nodePath.delimiter : ":";
+// Platform-specific path separator
+export const sep = _nodePath?.sep ?? "/";
 
-export const hasNodePath = nodePath !== null;
+// Platform-specific path delimiter (: on Unix, ; on Windows)
+export const delimiter = _nodePath?.delimiter ?? ":";
+
+// Whether node:path was successfully loaded
+export const hasNodePath = _nodePath !== null;

@@ -3,7 +3,7 @@
  * Uses secure filesystem wrapper to prevent path traversal attacks.
  */
 
-import { join } from "std/path/mod.ts";
+import { join } from "@veryfront/platform/compat/path/index.ts";
 import { logger } from "@veryfront/utils";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import { createSecureFs } from "@veryfront/security";

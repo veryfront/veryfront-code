@@ -8,7 +8,7 @@
 import { LRUCache } from "@veryfront/utils/lru-wrapper.ts";
 import type { VendorBundleResult } from "./vendor-bundle.ts";
 import { getBuildConfig } from "./config/environment.ts";
-import { getEnv } from "../platform/compat/process.ts";
+import { getDisableLruIntervalEnv } from "@veryfront/core/config/env.ts";
 
 interface VendorCacheEntry {
   bundle: VendorBundleResult;
@@ -117,7 +117,7 @@ function isLruIntervalDisabled(): boolean {
   if ((globalThis as Record<string, unknown>).__vfDisableLruInterval === true) {
     return true;
   }
-  return getEnv("VF_DISABLE_LRU_INTERVAL") === "1";
+  return getDisableLruIntervalEnv();
 }
 
 // Default singleton instance for backward compatibility

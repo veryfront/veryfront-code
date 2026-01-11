@@ -6,6 +6,7 @@
  */
 
 import { rendererLogger as logger } from "@veryfront/utils";
+import { getArgs, getEnv, memoryUsage } from "@veryfront/platform/compat/process.ts";
 
 // Registry of all tracked caches for memory monitoring
 const cacheRegistry = new Map<string, () => CacheStats>();
@@ -64,8 +65,8 @@ export function unregisterCache(name: string): void {
  * Get current heap statistics
  */
 export function getHeapStats(): HeapStats {
-  // Deno uses V8, access memory info via Deno.memoryUsage()
-  const mem = Deno.memoryUsage();
+  // Get memory info via platform-agnostic memoryUsage()
+  const mem = memoryUsage();
 
   const usedHeapSizeMB = mem.heapUsed / (1024 * 1024);
   const totalHeapSizeMB = mem.heapTotal / (1024 * 1024);
@@ -90,10 +91,10 @@ export function getHeapStats(): HeapStats {
  * Get configured heap limit from V8 flags or environment
  */
 function getConfiguredHeapLimit(): number {
-  // Check for --max-old-space-size in Deno.args or environment
-  const args = Deno.args.join(" ");
-  const envHeapSize = Deno.env.get("V8_MAX_OLD_SPACE_SIZE");
-  const denoV8Flags = Deno.env.get("DENO_V8_FLAGS");
+  // Check for --max-old-space-size in command args or environment
+  const args = getArgs().join(" ");
+  const envHeapSize = getEnv("V8_MAX_OLD_SPACE_SIZE");
+  const denoV8Flags = getEnv("DENO_V8_FLAGS");
 
   // Parse from args: --v8-flags=--max-old-space-size=2800
   const v8FlagsMatch = args.match(/--max-old-space-size=(\d+)/);

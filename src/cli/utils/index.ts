@@ -3,6 +3,7 @@ import { bold, cyan, dim, yellow } from "@veryfront/compat/console";
 import { cliLogger } from "@veryfront/utils";
 import { exit } from "@veryfront/platform/compat/process.ts";
 import { isDeno } from "@veryfront/platform/compat/runtime.ts";
+import { getForceColorEnv, getNoColorEnv } from "@veryfront/core/config/env.ts";
 
 // ============================================================================
 // TTY and Color Detection (clig.dev compliance)
@@ -48,30 +49,19 @@ export function shouldUseColor(forceColor?: boolean): boolean {
   }
 
   // Check NO_COLOR environment variable (https://no-color.org/)
-  const noColor = getEnv("NO_COLOR");
+  const noColor = getNoColorEnv();
   if (noColor !== undefined && noColor !== "") {
     return false;
   }
 
   // Check FORCE_COLOR environment variable
-  const forceColorEnv = getEnv("FORCE_COLOR");
+  const forceColorEnv = getForceColorEnv();
   if (forceColorEnv !== undefined && forceColorEnv !== "0") {
     return true;
   }
 
   // Default: use color only if stdout is a TTY
   return isTTY();
-}
-
-/**
- * Get environment variable cross-platform
- */
-function getEnv(name: string): string | undefined {
-  if (isDeno) {
-    // @ts-ignore - Deno global
-    return Deno.env?.get?.(name);
-  }
-  return process?.env?.[name];
 }
 
 // Global color state - can be set by CLI flags
