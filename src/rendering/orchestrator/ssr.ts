@@ -25,6 +25,7 @@ export class VeryfrontRenderer {
   private projectDir: string;
   private mode: "development" | "production";
   private preloadedConfig?: VeryfrontConfig;
+  private projectId?: string;
   private mdxCompiler!: MDXCompiler;
   private layoutOrchestrator!: LayoutOrchestrator;
   private htmlGenerator!: HTMLGenerator;
@@ -38,6 +39,7 @@ export class VeryfrontRenderer {
     this.port = options.port || DEFAULT_DASHBOARD_PORT;
     this.moduleServerUrl = options.moduleServerUrl;
     this.preloadedConfig = options.config;
+    this.projectId = options.projectId;
   }
 
   async initialize(): Promise<void> {
@@ -60,6 +62,7 @@ export class VeryfrontRenderer {
       configManager: this.configManager,
       port: this.port,
       moduleServerUrl: this.moduleServerUrl,
+      projectId: this.projectId,
     });
     this.services = await this.lifecycle.initialize();
 

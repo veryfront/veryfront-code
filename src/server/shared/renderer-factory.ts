@@ -443,6 +443,8 @@ async function createRendererInternal(
       adapter: ctx.adapter,
       moduleServerUrl: ctx.moduleServerUrl,
       config: rendererConfig,
+      // Pass projectId (UUID) for SSR cache isolation in multi-project mode
+      projectId: ctx.projectId,
     });
 
     rendererLogger.debug("[RendererFactory] Renderer created", { projectSlug });

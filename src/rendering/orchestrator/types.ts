@@ -10,6 +10,8 @@ export interface RendererOptions {
   adapter?: RuntimeAdapter;
   moduleServerUrl?: string;
   config?: VeryfrontConfig;
+  /** Project ID (UUID) for SSR cache isolation in multi-project mode */
+  projectId?: string;
   directories?: {
     app?: string;
     pages?: string;

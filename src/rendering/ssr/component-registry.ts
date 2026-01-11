@@ -110,6 +110,8 @@ export class ComponentRegistry {
   private adapter?: RuntimeAdapter;
   private moduleServerUrl?: string;
   private vendorBundleHash?: string;
+  /** Project ID (UUID) for SSR cache isolation in multi-project mode */
+  private projectId?: string;
 
   /**
    * Creates a new component registry.
@@ -119,6 +121,7 @@ export class ComponentRegistry {
    * @param adapter - Runtime adapter for file system operations
    * @param moduleServerUrl - Optional URL for module server
    * @param vendorBundleHash - Optional hash for vendor bundle versioning
+   * @param projectId - Project ID (UUID) for SSR cache isolation in multi-project mode
    */
   constructor(
     virtualModules?: VirtualModuleSystem,
@@ -126,12 +129,14 @@ export class ComponentRegistry {
     adapter?: RuntimeAdapter,
     moduleServerUrl?: string,
     vendorBundleHash?: string,
+    projectId?: string,
   ) {
     this.virtualModules = virtualModules || new VirtualModuleSystem();
     this.serverPort = serverPort;
     this.adapter = adapter;
     this.moduleServerUrl = moduleServerUrl;
     this.vendorBundleHash = vendorBundleHash;
+    this.projectId = projectId;
   }
 
   /**
@@ -323,7 +328,10 @@ export class ComponentRegistry {
 
   private getLoaderOptions(projectRoot: string) {
     return {
-      projectId: projectRoot,
+      // Use the actual project ID (UUID) for SSR cache isolation in multi-project mode
+      // This ensures each project has its own SSR cache directory
+      // Falls back to projectRoot for single-project/local dev mode
+      projectId: this.projectId || projectRoot,
       dev: true,
       moduleServerUrl: this.moduleServerUrl,
       vendorBundleHash: this.vendorBundleHash,
