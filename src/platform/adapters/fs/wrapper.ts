@@ -45,7 +45,7 @@ export interface ExtendedFileSystemAdapter extends FileSystemAdapter {
     token: string,
     fn: () => Promise<T>,
     projectId?: string,
-    options?: { productionMode?: boolean; releaseId?: string | null },
+    options?: { productionMode?: boolean; releaseId?: string | null; branch?: string | null },
   ): Promise<T>;
 
   /** Read raw bytes when binary-safe access is required */
@@ -199,7 +199,7 @@ export class FSAdapterWrapper implements ExtendedFileSystemAdapter {
     token: string,
     fn: () => Promise<T>,
     projectId?: string,
-    options?: { productionMode?: boolean; releaseId?: string | null },
+    options?: { productionMode?: boolean; releaseId?: string | null; branch?: string | null },
   ): Promise<T> {
     if (!isContextualAdapter(this._fsAdapter) || !this._fsAdapter.runWithContext) {
       throw new NotSupportedError("runWithContext", this._fsAdapter.constructor.name);

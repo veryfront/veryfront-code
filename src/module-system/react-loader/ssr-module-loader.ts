@@ -390,10 +390,11 @@ export class SSRModuleLoader {
   }
 
   /**
-   * Create a cache key that includes projectId to isolate between projects
+   * Create a content-addressable cache key.
+   * Content hash provides automatic invalidation and cross-project deduplication.
    */
   private getCacheKey(filePath: string): string {
-    return `${this.options.projectId}:${filePath}`;
+    return filePath;
   }
 
   /**

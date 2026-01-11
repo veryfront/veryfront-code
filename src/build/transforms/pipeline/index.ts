@@ -84,9 +84,8 @@ export async function runPipeline(
   const ctx = await createTransformContext(source, filePath, projectDir, options);
   ctx.debug = config?.debug ?? false;
 
-  // Generate cache key and check cache
+  // Generate cache key and check cache (content-addressable)
   const cacheKey = generateCacheKey(
-    options.projectId,
     filePath,
     ctx.contentHash,
     options.ssr ?? false,

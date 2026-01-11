@@ -35,7 +35,6 @@ export async function transformToESM(
 
   const {
     dev = true,
-    projectId,
     jsxImportSource = "react",
     moduleServerUrl,
     vendorBundleHash,
@@ -46,7 +45,7 @@ export async function transformToESM(
   const contentHash = await computeContentHash(source);
   timings.hash = performance.now() - hashStart;
 
-  const cacheKey = generateCacheKey(projectId, filePath, contentHash, ssr);
+  const cacheKey = generateCacheKey(filePath, contentHash, ssr);
 
   const cached = getCachedTransform(cacheKey);
   if (cached) {

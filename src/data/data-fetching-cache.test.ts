@@ -2,6 +2,15 @@ import { assertEquals, assertExists } from "jsr:@std/assert@1";
 import { describe, it } from "jsr:@std/testing@1/bdd";
 import { CacheManager } from "./data-fetching-cache.ts";
 import type { CacheEntry, DataContext } from "./types.ts";
+import { runWithCacheKeyContext } from "@veryfront/core/cache/cache-key-builder.ts";
+
+// Helper to run tests with production mode cache context
+function withProductionContext<T>(fn: () => T): T {
+  return runWithCacheKeyContext(
+    { projectId: "test-project", mode: "production", versionId: "rel_123" },
+    fn,
+  );
+}
 
 describe("CacheManager", () => {
   describe("constructor", () => {
@@ -213,7 +222,7 @@ describe("CacheManager", () => {
   });
 
   describe("createCacheKey", () => {
-    it("should create key from pathname and params", () => {
+    it("should return null when no context is set", () => {
       const cache = new CacheManager();
       const context: DataContext = {
         params: { id: "123" },
@@ -224,10 +233,43 @@ describe("CacheManager", () => {
 
       const key = cache.createCacheKey(context);
 
-      assertEquals(key, '/posts/123::{"id":"123"}');
+      assertEquals(key, null);
     });
 
-    it("should create key with empty params", () => {
+    it("should return null in preview mode", () => {
+      const cache = new CacheManager();
+      const context: DataContext = {
+        params: { id: "123" },
+        query: new URLSearchParams(),
+        request: new Request("http://localhost/posts/123"),
+        url: new URL("http://localhost/posts/123"),
+      };
+
+      const key = runWithCacheKeyContext(
+        { projectId: "test", mode: "preview", versionId: "main" },
+        () => cache.createCacheKey(context),
+      );
+
+      assertEquals(key, null);
+    });
+
+    it("should create key from pathname and params in production mode", () => {
+      const cache = new CacheManager();
+      const context: DataContext = {
+        params: { id: "123" },
+        query: new URLSearchParams(),
+        request: new Request("http://localhost/posts/123"),
+        url: new URL("http://localhost/posts/123"),
+      };
+
+      const key = withProductionContext(() => cache.createCacheKey(context));
+
+      assertExists(key);
+      assertEquals(key.includes('/posts/123::{"id":"123"}'), true);
+      assertEquals(key.includes("test-project"), true);
+    });
+
+    it("should create key with empty params in production mode", () => {
       const cache = new CacheManager();
       const context: DataContext = {
         params: {},
@@ -236,9 +278,10 @@ describe("CacheManager", () => {
         url: new URL("http://localhost/about"),
       };
 
-      const key = cache.createCacheKey(context);
+      const key = withProductionContext(() => cache.createCacheKey(context));
 
-      assertEquals(key, "/about::{}");
+      assertExists(key);
+      assertEquals(key.includes("/about::{}"), true);
     });
 
     it("should create unique keys for different params", () => {
@@ -256,9 +299,11 @@ describe("CacheManager", () => {
         url: new URL("http://localhost/posts/2"),
       };
 
-      const key1 = cache.createCacheKey(context1);
-      const key2 = cache.createCacheKey(context2);
+      const key1 = withProductionContext(() => cache.createCacheKey(context1));
+      const key2 = withProductionContext(() => cache.createCacheKey(context2));
 
+      assertExists(key1);
+      assertExists(key2);
       assertEquals(key1 !== key2, true);
     });
 
@@ -271,8 +316,9 @@ describe("CacheManager", () => {
         url: new URL("http://localhost/docs/getting-started"),
       };
 
-      const key = cache.createCacheKey(context);
+      const key = withProductionContext(() => cache.createCacheKey(context));
 
+      assertExists(key);
       assertEquals(key.includes("docs"), true);
       assertEquals(key.includes("getting-started"), true);
     });

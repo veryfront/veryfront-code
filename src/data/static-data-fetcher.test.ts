@@ -3,6 +3,15 @@ import { describe, it } from "jsr:@std/testing@1/bdd";
 import { StaticDataFetcher } from "./static-data-fetcher.ts";
 import { CacheManager } from "./data-fetching-cache.ts";
 import type { DataContext, PageWithData } from "./types.ts";
+import { runWithCacheKeyContext } from "@veryfront/core/cache/cache-key-builder.ts";
+
+// Helper to run tests with production mode cache context
+function withProductionContext<T>(fn: () => T): T {
+  return runWithCacheKeyContext(
+    { projectId: "test-project", mode: "production", versionId: "rel_123" },
+    fn,
+  );
+}
 
 describe("StaticDataFetcher", () => {
   const createContext = (overrides: Partial<DataContext> = {}): DataContext => ({
@@ -108,59 +117,63 @@ describe("StaticDataFetcher", () => {
       assertEquals((result.props as { title: string })?.title, "Static Title");
     });
 
-    it("should cache result after fetch", async () => {
-      const cache = new CacheManager();
-      const fetcher = new StaticDataFetcher(cache);
-      let callCount = 0;
+    it("should cache result after fetch in production mode", async () => {
+      await withProductionContext(async () => {
+        const cache = new CacheManager();
+        const fetcher = new StaticDataFetcher(cache);
+        let callCount = 0;
 
-      const pageModule: PageWithData<{ count: number }> = {
-        default: () => null,
-        getStaticData: () => {
-          callCount++;
-          return { props: { count: callCount } };
-        },
-      };
+        const pageModule: PageWithData<{ count: number }> = {
+          default: () => null,
+          getStaticData: () => {
+            callCount++;
+            return { props: { count: callCount } };
+          },
+        };
 
-      const context = createContext({
-        url: new URL("http://localhost/cached-page"),
+        const context = createContext({
+          url: new URL("http://localhost/cached-page"),
+        });
+
+        // First fetch should call getStaticData
+        const result1 = await fetcher.fetch(pageModule, context);
+        assertEquals((result1.props as { count: number })?.count, 1);
+
+        // Second fetch should use cache
+        const result2 = await fetcher.fetch(pageModule, context);
+        assertEquals((result2.props as { count: number })?.count, 1);
+        assertEquals(callCount, 1); // Only called once
       });
-
-      // First fetch should call getStaticData
-      const result1 = await fetcher.fetch(pageModule, context);
-      assertEquals((result1.props as { count: number })?.count, 1);
-
-      // Second fetch should use cache
-      const result2 = await fetcher.fetch(pageModule, context);
-      assertEquals((result2.props as { count: number })?.count, 1);
-      assertEquals(callCount, 1); // Only called once
     });
 
-    it("should create unique cache keys per path", async () => {
-      const cache = new CacheManager();
-      const fetcher = new StaticDataFetcher(cache);
-      let callCount = 0;
+    it("should create unique cache keys per path in production mode", async () => {
+      await withProductionContext(async () => {
+        const cache = new CacheManager();
+        const fetcher = new StaticDataFetcher(cache);
+        let callCount = 0;
 
-      const pageModule: PageWithData = {
-        default: () => null,
-        getStaticData: (ctx) => {
-          callCount++;
-          return { props: { path: ctx.url.pathname } };
-        },
-      };
+        const pageModule: PageWithData = {
+          default: () => null,
+          getStaticData: (ctx) => {
+            callCount++;
+            return { props: { path: ctx.url.pathname } };
+          },
+        };
 
-      const context1 = createContext({
-        params: { id: "1" },
-        url: new URL("http://localhost/posts/1"),
+        const context1 = createContext({
+          params: { id: "1" },
+          url: new URL("http://localhost/posts/1"),
+        });
+        const context2 = createContext({
+          params: { id: "2" },
+          url: new URL("http://localhost/posts/2"),
+        });
+
+        await fetcher.fetch(pageModule, context1);
+        await fetcher.fetch(pageModule, context2);
+
+        assertEquals(callCount, 2); // Called for each unique path
       });
-      const context2 = createContext({
-        params: { id: "2" },
-        url: new URL("http://localhost/posts/2"),
-      });
-
-      await fetcher.fetch(pageModule, context1);
-      await fetcher.fetch(pageModule, context2);
-
-      assertEquals(callCount, 2); // Called for each unique path
     });
 
     it("should handle redirect result", async () => {
@@ -226,59 +239,96 @@ describe("StaticDataFetcher", () => {
       assertEquals((result.props as { sync: boolean })?.sync, true);
     });
 
-    it("should cache with revalidate time", async () => {
-      const cache = new CacheManager();
-      const fetcher = new StaticDataFetcher(cache);
-      const pageModule: PageWithData = {
-        default: () => null,
-        getStaticData: () => ({
-          props: { data: "cached" },
-          revalidate: 60,
-        }),
-      };
+    it("should cache with revalidate time in production mode", async () => {
+      await withProductionContext(async () => {
+        const cache = new CacheManager();
+        const fetcher = new StaticDataFetcher(cache);
+        const pageModule: PageWithData = {
+          default: () => null,
+          getStaticData: () => ({
+            props: { data: "cached" },
+            revalidate: 60,
+          }),
+        };
 
-      const context = createContext({
-        url: new URL("http://localhost/isr-page"),
+        const context = createContext({
+          url: new URL("http://localhost/isr-page"),
+        });
+
+        await fetcher.fetch(pageModule, context);
+
+        // Verify cache entry has revalidate
+        const cacheKey = cache.createCacheKey(context);
+        assertExists(cacheKey);
+        const entry = cache.get(cacheKey);
+
+        assertExists(entry);
+        assertEquals(entry.revalidate, 60);
       });
-
-      await fetcher.fetch(pageModule, context);
-
-      // Verify cache entry has revalidate
-      const cacheKey = cache.createCacheKey(context);
-      const entry = cache.get(cacheKey);
-
-      assertExists(entry);
-      assertEquals(entry.revalidate, 60);
     });
 
-    it("should return cached data when fresh", async () => {
-      const cache = new CacheManager();
-      const fetcher = new StaticDataFetcher(cache);
-      let callCount = 0;
+    it("should not cache in preview mode", async () => {
+      await runWithCacheKeyContext(
+        { projectId: "test", mode: "preview", versionId: "main" },
+        async () => {
+          const cache = new CacheManager();
+          const fetcher = new StaticDataFetcher(cache);
+          let callCount = 0;
 
-      const pageModule: PageWithData<{ version: number }> = {
-        default: () => null,
-        getStaticData: () => {
-          callCount++;
-          return {
-            props: { version: callCount },
-            revalidate: 3600, // 1 hour
+          const pageModule: PageWithData<{ count: number }> = {
+            default: () => null,
+            getStaticData: () => {
+              callCount++;
+              return { props: { count: callCount } };
+            },
           };
+
+          const context = createContext({
+            url: new URL("http://localhost/preview-page"),
+          });
+
+          // First fetch
+          const result1 = await fetcher.fetch(pageModule, context);
+          assertEquals((result1.props as { count: number })?.count, 1);
+
+          // Second fetch should call again (no caching in preview)
+          const result2 = await fetcher.fetch(pageModule, context);
+          assertEquals((result2.props as { count: number })?.count, 2);
+          assertEquals(callCount, 2);
         },
-      };
+      );
+    });
 
-      const context = createContext({
-        url: new URL("http://localhost/fresh-page"),
+    it("should return cached data when fresh in production mode", async () => {
+      await withProductionContext(async () => {
+        const cache = new CacheManager();
+        const fetcher = new StaticDataFetcher(cache);
+        let callCount = 0;
+
+        const pageModule: PageWithData<{ version: number }> = {
+          default: () => null,
+          getStaticData: () => {
+            callCount++;
+            return {
+              props: { version: callCount },
+              revalidate: 3600, // 1 hour
+            };
+          },
+        };
+
+        const context = createContext({
+          url: new URL("http://localhost/fresh-page"),
+        });
+
+        // First fetch
+        const result1 = await fetcher.fetch(pageModule, context);
+        assertEquals((result1.props as { version: number })?.version, 1);
+
+        // Second fetch should use cache (still fresh)
+        const result2 = await fetcher.fetch(pageModule, context);
+        assertEquals((result2.props as { version: number })?.version, 1);
+        assertEquals(callCount, 1);
       });
-
-      // First fetch
-      const result1 = await fetcher.fetch(pageModule, context);
-      assertEquals((result1.props as { version: number })?.version, 1);
-
-      // Second fetch should use cache (still fresh)
-      const result2 = await fetcher.fetch(pageModule, context);
-      assertEquals((result2.props as { version: number })?.version, 1);
-      assertEquals(callCount, 1);
     });
   });
 });
