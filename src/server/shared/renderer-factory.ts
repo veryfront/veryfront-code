@@ -16,6 +16,7 @@ import { rendererLogger } from "@veryfront/utils";
 import { clearSSRModuleCacheForProject } from "@veryfront/module-system/react-loader/ssr-module-loader.ts";
 import { getHeapStats, registerCache } from "@veryfront/core/memory/index.ts";
 import { clearConfigCache, getConfig, type VeryfrontConfig } from "@veryfront/config";
+import { isProductionMode } from "../handlers/request/ssr/ssr-handler.ts";
 
 type RendererInstance = Awaited<ReturnType<typeof createRenderer>>;
 type RendererPromise = Promise<RendererInstance>;
@@ -269,13 +270,18 @@ async function evictExpired(): Promise<void> {
 /**
  * Get the cache key for a project.
  * Includes environment and releaseId to ensure fresh content after deployments.
+ *
+ * IMPORTANT: This must use the same production mode logic as the SSR handler
+ * to ensure consistency between renderer cache keys and adapter content contexts.
  */
 function getCacheKey(ctx: HandlerContext): string | null {
   const projectSlug = ctx.projectSlug;
   if (!projectSlug) return null;
 
-  // Include environment and releaseId to prevent stale cache after deployments
-  if (ctx.proxyEnvironment === "production") {
+  // Use isProductionMode for consistency with SSR handler's runWithContext() call.
+  // This ensures the renderer cache key matches the adapter's content context.
+  const isProduction = isProductionMode(ctx);
+  if (isProduction) {
     return `${projectSlug}:production:${ctx.releaseId ?? "latest"}`;
   }
   return `${projectSlug}:preview`;
