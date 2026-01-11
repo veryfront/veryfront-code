@@ -1,4 +1,4 @@
-import { assertEquals, assertExists } from "std/assert/mod.ts";
+import { assertEquals, assertExists } from "jsr:@std/assert@1";
 import { remarkAddNodeId } from "./remark-node-id.ts";
 import type { Heading, Paragraph, Root } from "mdast";
 

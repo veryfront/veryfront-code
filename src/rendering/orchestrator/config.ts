@@ -1,13 +1,13 @@
-import { isAbsolute, join } from "../../platform/compat/path-helper.ts";
+import { isAbsolute, join } from "@veryfront/platform/compat/path-helper.ts";
 import { rendererLogger as logger } from "@veryfront/utils";
-import { createError, toError } from "../../core/errors/veryfront-error.ts";
+import { createError, toError } from "@veryfront/errors/veryfront-error.ts";
 import { handleErrorWithFallback } from "@veryfront/errors/index.ts";
 import { getContentHash } from "../utils/index.ts";
 import { getConfig } from "@veryfront/config";
 import { initializeBundleManifest } from "@veryfront/utils";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "@veryfront/config";
-import { isAnyDebugEnabled } from "../../core/utils/constants/env.ts";
+import { isAnyDebugEnabled } from "@veryfront/utils/constants/env.ts";
 
 export interface ConfigurationOptions {
   projectDir: string;

@@ -1,6 +1,6 @@
 import { rendererLogger as logger, timeAsync } from "@veryfront/utils";
 import type * as React from "react";
-import { createError, toError } from "../../core/errors/veryfront-error.ts";
+import { createError, toError } from "@veryfront/errors/veryfront-error.ts";
 import type { ElementValidator } from "../element-validator/index.ts";
 import type { SSRRenderer } from "../ssr-renderer.ts";
 import { getContentHash } from "../utils/index.ts";

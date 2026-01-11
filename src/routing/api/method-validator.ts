@@ -1,4 +1,4 @@
-import { methodNotAllowed } from "../../http/responses.ts";
+import { methodNotAllowed } from "@veryfront/http/responses.ts";
 import type { HTTPMethod } from "./module-loader/types.ts";
 
 const HTTP_METHODS: HTTPMethod[] = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"];

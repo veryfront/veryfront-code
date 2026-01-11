@@ -3,8 +3,8 @@
  * @module rsc-endpoints/action-handler
  */
 
-import { createError, toError } from "../../../../../core/errors/veryfront-error.ts";
-import { HttpStatus, jsonErrorResponse } from "../../../../../http/responses.ts";
+import { createError, toError } from "@veryfront/errors/veryfront-error.ts";
+import { HttpStatus, jsonErrorResponse } from "@veryfront/http/responses.ts";
 import { serverLogger } from "@veryfront/utils";
 import { parseActionBody } from "./action-parser.ts";
 import type { ActionRequestParams } from "./types.ts";

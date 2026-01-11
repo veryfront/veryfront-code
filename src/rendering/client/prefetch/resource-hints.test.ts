@@ -3,8 +3,8 @@
  * Tests resource hint generation and application (preload, prefetch, dns-prefetch)
  */
 
-import { assertEquals, assertExists } from "std/assert/mod.ts";
-import { describe, it } from "std/testing/bdd.ts";
+import { assertEquals, assertExists } from "jsr:@std/assert@1";
+import { describe, it } from "jsr:@std/testing@1/bdd";
 import { ResourceHint, ResourceHintsManager } from "./resource-hints.ts";
 
 // Mock DOMParser

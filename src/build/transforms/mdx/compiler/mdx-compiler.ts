@@ -4,7 +4,7 @@ import { getRehypePlugins, getRemarkPlugins } from "../../plugins/plugin-loader.
 import { extractFrontmatter } from "./frontmatter-extractor.ts";
 import { rewriteBodyImports, rewriteCompiledImports } from "./import-rewriter.ts";
 import type { CompilationMode, CompilationTarget, MdxRuntimeBundle } from "./types.ts";
-import { createError, toError } from "../../../../core/errors/veryfront-error.ts";
+import { createError, toError } from "@veryfront/errors/veryfront-error.ts";
 import { rehypeNodePositions as _rehypeNodePositions } from "../../plugins/rehype-node-positions.ts";
 
 type PluggableList = Pluggable[];

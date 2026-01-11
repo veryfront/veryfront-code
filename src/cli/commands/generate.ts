@@ -1,8 +1,8 @@
 import { join } from "@std/path";
 import { getConfig } from "@veryfront/config";
 import { cliLogger } from "@veryfront/utils";
-import { createError, toError } from "../../core/errors/veryfront-error.ts";
-import { createFileSystem, type FileSystem } from "../../platform/compat/fs.ts";
+import { createError, toError } from "@veryfront/errors/veryfront-error.ts";
+import { createFileSystem, type FileSystem } from "@veryfront/platform/compat/fs.ts";
 import { generateIntegration } from "./generate/integration-generator.ts";
 
 let fs: FileSystem;

@@ -15,16 +15,16 @@ import {
   type MissingImport,
   parseLocalImports,
 } from "@veryfront/transforms/esm/import-parser.ts";
-import { createFileSystem } from "../../platform/compat/fs.ts";
-import { createError, toError } from "../../core/errors/veryfront-error.ts";
+import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
+import { createError, toError } from "@veryfront/errors/veryfront-error.ts";
 import { rendererLogger as logger } from "@veryfront/utils";
-import { LRUCache } from "../../core/utils/lru-wrapper.ts";
-import { registerCache } from "../../core/memory/index.ts";
+import { LRUCache } from "@veryfront/utils/lru-wrapper.ts";
+import { registerCache } from "@veryfront/core/memory/index.ts";
 import {
   getRedisClient,
   isRedisConfigured,
   type RedisClient,
-} from "../../core/utils/redis-client.ts";
+} from "@veryfront/utils/redis-client.ts";
 import { extractComponent } from "./extract-component.ts";
 
 export interface SSRModuleLoaderOptions {

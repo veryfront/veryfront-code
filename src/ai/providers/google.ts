@@ -2,7 +2,7 @@
 
 import { z } from "zod";
 import { BaseProvider, mapFinishReason } from "./base.ts";
-import { createError, toError } from "../../core/errors/veryfront-error.ts";
+import { createError, toError } from "@veryfront/errors/veryfront-error.ts";
 import type { CompletionRequest, CompletionResponse, GoogleConfig } from "../types/provider.ts";
 
 const GoogleToolCallSchema = z.object({

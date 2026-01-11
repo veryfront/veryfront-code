@@ -7,7 +7,7 @@ import { basename, dirname, extname, join } from "std/path/mod.ts";
 import { walk } from "std/fs/mod.ts";
 import { logger } from "@veryfront/utils";
 import type { OptimizedImageMetadata } from "../asset-pipeline/image-optimizer/types.ts";
-import { createError, toError } from "../../core/errors/veryfront-error.ts";
+import { createError, toError } from "@veryfront/errors/veryfront-error.ts";
 import {
   getOptimizedImageFormat,
   type ImageFormat,

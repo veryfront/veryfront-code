@@ -1,8 +1,8 @@
 import { VERSION } from "@veryfront/utils";
 import { bold, cyan, dim, yellow } from "@veryfront/compat/console";
 import { cliLogger } from "@veryfront/utils";
-import { exit } from "../../platform/compat/process.ts";
-import { isDeno } from "../../platform/compat/runtime.ts";
+import { exit } from "@veryfront/platform/compat/process.ts";
+import { isDeno } from "@veryfront/platform/compat/runtime.ts";
 
 // ============================================================================
 // TTY and Color Detection (clig.dev compliance)

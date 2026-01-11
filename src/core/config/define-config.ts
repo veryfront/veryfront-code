@@ -1,6 +1,6 @@
 import type { VeryfrontConfig } from "./types.ts";
-import { createError, toError } from "../../core/errors/veryfront-error.ts";
-import { getEnv } from "../../platform/compat/process.ts";
+import { createError, toError } from "@veryfront/errors/veryfront-error.ts";
+import { getEnv } from "@veryfront/platform/compat/process.ts";
 
 export function defineConfig(config: VeryfrontConfig): VeryfrontConfig {
   return config;

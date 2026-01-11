@@ -9,8 +9,8 @@
 
 import { dirname, join } from "std/path/mod.ts";
 import { cliLogger } from "@veryfront/utils";
-import { cwd } from "../../platform/compat/process.ts";
-import { createFileSystem } from "../../platform/compat/fs.ts";
+import { cwd } from "@veryfront/platform/compat/process.ts";
+import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
 import {
   createApiClient,
   readConfigFile,

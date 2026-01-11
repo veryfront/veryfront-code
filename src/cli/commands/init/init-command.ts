@@ -9,10 +9,10 @@ import { cyan, green, yellow } from "@veryfront/compat/console";
 import { ensureDir } from "std/fs/mod.ts";
 import { join } from "std/path/mod.ts";
 import { createPackageJson } from "./config-generator.ts";
-import { createError, toError } from "../../../core/errors/veryfront-error.ts";
+import { createError, toError } from "@veryfront/errors/veryfront-error.ts";
 import type { InitOptions, InitTemplate } from "./types.ts";
-import { cwd } from "../../../platform/compat/process.ts";
-import { createFileSystem } from "../../../platform/compat/fs.ts";
+import { cwd } from "@veryfront/platform/compat/process.ts";
+import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
 import {
   detectPackageManager,
   getInstallCommand,

@@ -1,9 +1,9 @@
 // Conditional imports for front_matter (path is handled via path-helper)
 let extractYaml: ((content: string) => any) | undefined;
 let jsYamlModule: typeof import("js-yaml") | null = null;
-import { createFileSystem } from "../../../platform/compat/fs.ts";
-import * as pathHelper from "../../../platform/compat/path-helper.ts";
-import { isExtendedFSAdapter } from "../../../platform/adapters/fs/wrapper.ts";
+import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
+import * as pathHelper from "@veryfront/platform/compat/path-helper.ts";
+import { isExtendedFSAdapter } from "@veryfront/platform/adapters/fs/wrapper.ts";
 
 // Initialize extractYaml based on runtime
 // @ts-ignore - Deno global
@@ -38,8 +38,8 @@ if (typeof Deno === "undefined") {
 }
 
 import { detectEntityType } from "../entities.ts";
-import { createError, toError } from "../../../core/errors/veryfront-error.ts";
-import { createErrorScope } from "../../../core/errors/error-context.ts";
+import { createError, toError } from "@veryfront/errors/veryfront-error.ts";
+import { createErrorScope } from "@veryfront/errors/error-context.ts";
 import type { Entity, EntityInfo, Frontmatter } from "../entities.ts";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 // Import directly from source to avoid circular dependency through barrel

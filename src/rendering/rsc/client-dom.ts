@@ -1,4 +1,4 @@
-import { validateTrustedHtml } from "../../security/client/html-sanitizer.ts";
+import { validateTrustedHtml } from "@veryfront/security/client/html-sanitizer.ts";
 import { rscLogger } from "../client/browser-logger.ts";
 import { RSC_ROOT_ID } from "./constants.ts";
 

@@ -4,8 +4,8 @@
  * Tests the allowed modules whitelist and module path resolution logic.
  */
 
-import { assertEquals, assertExists } from "std/assert/mod.ts";
-import { describe, it } from "std/testing/bdd.ts";
+import { assertEquals, assertExists } from "jsr:@std/assert@1";
+import { describe, it } from "jsr:@std/testing@1/bdd";
 import { LibModulesHandler } from "./lib-modules-handler.ts";
 
 /** Helper to get pattern as RegExp (throws if not RegExp) */

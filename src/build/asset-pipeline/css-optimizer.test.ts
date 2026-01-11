@@ -2,7 +2,7 @@
  * Tests for CSS Optimizer
  */
 
-import { assert, assertEquals, assertExists, assertStringIncludes } from "std/assert/mod.ts";
+import { assert, assertEquals, assertExists, assertStringIncludes } from "jsr:@std/assert@1";
 import { join } from "std/path/mod.ts";
 import { ensureDir } from "std/fs/mod.ts";
 import {

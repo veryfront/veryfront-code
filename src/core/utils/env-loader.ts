@@ -5,9 +5,9 @@
  */
 
 import { serverLogger as logger } from "@veryfront/utils";
-import { cwd as getCwd, getEnv, setEnv } from "../../platform/compat/process.ts";
-import { createFileSystem, type FileSystem } from "../../platform/compat/fs.ts";
-import { isDeno } from "../../platform/compat/runtime.ts";
+import { cwd as getCwd, getEnv, setEnv } from "@veryfront/platform/compat/process.ts";
+import { createFileSystem, type FileSystem } from "@veryfront/platform/compat/fs.ts";
+import { isDeno } from "@veryfront/platform/compat/runtime.ts";
 
 // Lazy-initialized filesystem for cross-platform support
 let _fs: FileSystem | null = null;

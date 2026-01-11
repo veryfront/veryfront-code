@@ -3,10 +3,10 @@
  * @module cli/utils/package-manager
  */
 
-import { join } from "../../platform/compat/path/index.ts";
+import { join } from "@veryfront/platform/compat/path/index.ts";
 import { cliLogger as logger } from "@veryfront/utils";
-import { createFileSystem } from "../../platform/compat/fs.ts";
-import { isDeno, isNode } from "../../platform/compat/runtime.ts";
+import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
+import { isDeno, isNode } from "@veryfront/platform/compat/runtime.ts";
 
 export type PackageManager = "npm" | "yarn" | "pnpm" | "bun";
 

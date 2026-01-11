@@ -6,8 +6,8 @@ import { toolRegistry } from "./tool.ts";
 import { registerAgent } from "../agent/composition.ts";
 import { registerPrompt, registerResource } from "../mcp/registry.ts";
 import { toAISDKTools } from "../adapters/ai-sdk.ts";
-import { cwd } from "../../platform/compat/process.ts";
-import { createFileSystem } from "../../platform/compat/fs.ts";
+import { cwd } from "@veryfront/platform/compat/process.ts";
+import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
 import { cliLogger as logger } from "@veryfront/utils";
 
 const fs = createFileSystem();

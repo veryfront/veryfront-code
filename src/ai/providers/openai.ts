@@ -11,7 +11,7 @@
 
 import { BaseProvider, mapFinishReason } from "./base.ts";
 import type { CompletionRequest, CompletionResponse, OpenAIConfig } from "../types/provider.ts";
-import { createError, toError } from "../../core/errors/veryfront-error.ts";
+import { createError, toError } from "@veryfront/errors/veryfront-error.ts";
 
 /**
  * Check if a model is an o-series reasoning model (o1, o3, etc.)

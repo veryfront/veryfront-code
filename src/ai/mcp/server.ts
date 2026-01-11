@@ -10,7 +10,7 @@ import { executeTool, zodToJsonSchema } from "../utils/tool.ts";
 import { resourceRegistry } from "./resource.ts";
 import { promptRegistry } from "./prompt.ts";
 import type { MCPServerConfig } from "../types/mcp.ts";
-import { createError, toError } from "../../core/errors/veryfront-error.ts";
+import { createError, toError } from "@veryfront/errors/veryfront-error.ts";
 
 /**
  * JSON-RPC 2.0 Params type

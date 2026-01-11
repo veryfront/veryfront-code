@@ -10,7 +10,7 @@ import { resolveAppRouteFile } from "./app-router-resolver.ts";
 import { applySecurityHeaders } from "./security-headers.ts";
 import { applyCORSHeaders } from "@veryfront/security";
 import { serverLogger } from "@veryfront/utils";
-import { methodNotAllowed } from "../../../../http/responses.ts";
+import { methodNotAllowed } from "@veryfront/http/responses.ts";
 
 const HTTP_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"] as const;
 

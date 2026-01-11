@@ -7,7 +7,7 @@ import { serverLogger } from "@veryfront/utils/logger/logger.ts";
 import { getReactImportMap, REACT_DEFAULT_VERSION } from "@veryfront/utils/constants/cdn.ts";
 import { DEFAULT_CACHE_DIR } from "@veryfront/utils/constants/server.ts";
 import { DEFAULT_PORT } from "./defaults.ts";
-import { createFileSystem } from "../../platform/compat/fs.ts";
+import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
 import { getEsbuildLoader } from "../utils/path-utils.ts";
 import { getErrorMessage } from "../errors/veryfront-error.ts";
 

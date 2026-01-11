@@ -9,7 +9,7 @@
  */
 
 import { useCallback, useRef, useState } from "react";
-import { createError, ensureError, toError } from "../../../core/errors/veryfront-error.ts";
+import { createError, ensureError, toError } from "@veryfront/errors/veryfront-error.ts";
 
 /**
  * Text part - AI SDK v5 compatible

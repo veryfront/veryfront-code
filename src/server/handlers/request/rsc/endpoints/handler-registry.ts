@@ -4,8 +4,8 @@
  */
 
 import { RSCDevServerHandler } from "../handlers/index.ts";
-import { LRUCache } from "../../../../../core/utils/lru-wrapper.ts";
-import { registerCache } from "../../../../../core/memory/index.ts";
+import { LRUCache } from "@veryfront/utils/lru-wrapper.ts";
+import { registerCache } from "@veryfront/core/memory/index.ts";
 
 // Limit to prevent unbounded memory growth in multi-tenant environments
 const RSC_HANDLERS_MAX_ENTRIES = 50;

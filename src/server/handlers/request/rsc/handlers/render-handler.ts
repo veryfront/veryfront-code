@@ -6,7 +6,7 @@ import type { RSCPayload } from "@veryfront/rendering/rsc/types.ts";
 import { extractParams, resolveComponentPath } from "./component-resolver.ts";
 import { isProductionMode } from "./environment.ts";
 import type { RenderProps } from "./types.ts";
-import { createError, toError } from "../../../../../core/errors/veryfront-error.ts";
+import { createError, toError } from "@veryfront/errors/veryfront-error.ts";
 
 export class RenderHandler {
   constructor(

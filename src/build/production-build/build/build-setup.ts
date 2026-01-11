@@ -2,7 +2,7 @@ import { serverLogger as logger } from "@veryfront/utils";
 import { join } from "node:path";
 import { handleErrorWithFallback } from "@veryfront/errors/index.ts";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/index.ts";
-import { createFileSystem } from "../../../platform/compat/fs.ts";
+import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
 
 export async function setupBuildDirectories(
   adapter: RuntimeAdapter,

@@ -5,7 +5,7 @@ import { getAdapter } from "@veryfront/platform/adapters/detect.ts";
 import { createVeryfrontHandler } from "./universal-handler/index.ts";
 import { bootstrapProd } from "./bootstrap.ts";
 import { cwd, onGlobalError, onSignal } from "@veryfront/platform/compat/process.ts";
-import { isDebugEnabled } from "../core/utils/constants/env.ts";
+import { isDebugEnabled } from "@veryfront/utils/constants/env.ts";
 import {
   initializeOTLPWithApis,
   shutdownOTLP,
@@ -14,8 +14,8 @@ import {
   getMemorySnapshot,
   startMemoryMonitoring,
   stopMemoryMonitoring,
-} from "../core/memory/index.ts";
-import { initializeRedisCaches } from "../core/cache/redis-init.ts";
+} from "@veryfront/core/memory/index.ts";
+import { initializeRedisCaches } from "@veryfront/core/cache/redis-init.ts";
 import { setServerInitialized } from "./handlers/monitoring/health.ts";
 import { startPeriodicMemoryCheck, stopPeriodicMemoryCheck } from "./shared/renderer-factory.ts";
 import {

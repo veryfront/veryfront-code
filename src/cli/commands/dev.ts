@@ -11,9 +11,9 @@ import { getAdapter } from "@veryfront/platform/adapters/detect.ts";
 import { cliLogger } from "@veryfront/utils";
 import { getConfig } from "@veryfront/config";
 import { createDevServer } from "@veryfront/server/dev-server.ts";
-import { getNetworkInterfaces } from "../../platform/compat/process.ts";
-import { runAIConfigValidation } from "../../ai/utils/config-validator.ts";
-import { discoverAll } from "../../ai/utils/discovery.ts";
+import { getNetworkInterfaces } from "@veryfront/platform/compat/process.ts";
+import { runAIConfigValidation } from "@veryfront/ai/utils/config-validator.ts";
+import { discoverAll } from "@veryfront/ai/utils/discovery.ts";
 import { exitProcess, registerTerminationSignals } from "../utils/index.ts";
 
 export interface DevOptions {

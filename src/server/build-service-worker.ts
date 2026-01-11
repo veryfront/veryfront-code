@@ -3,7 +3,7 @@
  */
 
 import type { BuildManifest } from "../build/production-build/manifest.ts";
-import { normalizeChunkPath } from "../core/utils/chunk-utils.ts";
+import { normalizeChunkPath } from "@veryfront/utils/chunk-utils.ts";
 
 function sanitizeCacheKey(value: string): string {
   return value.replace(/[^a-zA-Z0-9._-]/g, "");

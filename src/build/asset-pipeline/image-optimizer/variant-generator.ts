@@ -1,6 +1,6 @@
 import { dirname, relative } from "std/path/mod.ts";
 import { logger } from "@veryfront/utils";
-import { createFileSystem } from "../../../platform/compat/fs.ts";
+import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
 import { processFormat } from "./format-processor.ts";
 import { calculateAspectRatio, getVariantPath } from "../../utils/asset-utils.ts";
 import type {

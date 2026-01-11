@@ -1,4 +1,4 @@
-import { getEnv } from "../../../../../platform/compat/process.ts";
+import { getEnv } from "@veryfront/platform/compat/process.ts";
 
 export function isProductionMode(): boolean {
   const denoEnv = getEnv("DENO_ENV");

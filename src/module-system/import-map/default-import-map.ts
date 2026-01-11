@@ -2,7 +2,7 @@ import type { ImportMapConfig } from "./types.ts";
 import {
   CONTEXT_PACKAGE_NAMES,
   getContextPackageUrlSSR,
-} from "../../build/transforms/esm/package-registry.ts";
+} from "@veryfront/transforms/esm/package-registry.ts";
 
 /**
  * Get veryfront/* import mappings for SSR.

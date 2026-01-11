@@ -1,4 +1,4 @@
-import { createError, toError } from "../../../core/errors/veryfront-error.ts";
+import { createError, toError } from "@veryfront/errors/veryfront-error.ts";
 import { serverLogger as logger } from "@veryfront/utils";
 import type { RateLimitEntry, RateLimitStore } from "./types.ts";
 

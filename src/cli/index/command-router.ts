@@ -30,9 +30,9 @@ import { handleGenerateCommand } from "./generate-handler.ts";
 import type { ParsedArgs } from "./types.ts";
 import type { InitTemplate } from "../commands/init/types.ts";
 import type { IntegrationName } from "../templates/types.ts";
-import { cwd } from "../../platform/compat/process.ts";
-import { createFileSystem } from "../../platform/compat/fs.ts";
-import { join } from "../../platform/compat/path/index.ts";
+import { cwd } from "@veryfront/platform/compat/process.ts";
+import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
+import { join } from "@veryfront/platform/compat/path/index.ts";
 import { COMMANDS } from "../help/command-definitions.ts";
 import {
   calculateMaxLength,
@@ -221,7 +221,7 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
         {
           const { getAdapter } = await import("@veryfront/platform/adapters/detect.ts");
           const adapter = await getAdapter();
-          const { startUniversalServer } = await import("../../server/production-server.ts");
+          const { startUniversalServer } = await import("@veryfront/server/production-server.ts");
 
           const projectDir = cwd();
           const port = args.port ?? DEFAULT_DEV_SERVER_PORT;

@@ -1,4 +1,4 @@
-import { dirname, join } from "../../platform/compat/path-helper.ts";
+import { dirname, join } from "@veryfront/platform/compat/path-helper.ts";
 import { rendererLogger as logger } from "@veryfront/utils";
 import * as BundledReact from "react";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
@@ -15,8 +15,8 @@ import {
 } from "../app-reserved.ts";
 import { detectAppRouter } from "../router-detection.ts";
 import { getProjectReact } from "@veryfront/react";
-import { RouterProvider } from "../../exports/router.ts";
-import { PageContextProvider } from "../../exports/context.ts";
+import { RouterProvider } from "@veryfront/exports/router.ts";
+import { PageContextProvider } from "@veryfront/exports/context.ts";
 
 export interface LayoutApplicationOptions {
   projectDir: string;

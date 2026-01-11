@@ -6,13 +6,13 @@
  * - Redis cache (shared across pods, reduces duplicate transforms)
  */
 
-import { registerCache } from "../../../core/memory/index.ts";
-import { logger } from "../../../core/utils/logger/logger.ts";
+import { registerCache } from "@veryfront/core/memory/index.ts";
+import { logger } from "@veryfront/utils/logger/logger.ts";
 import {
   getRedisClient,
   isRedisConfigured,
   type RedisClient,
-} from "../../../core/utils/redis-client.ts";
+} from "@veryfront/utils/redis-client.ts";
 
 const DEFAULT_TTL_MS = 5 * 60 * 1000; // 5 minutes
 const DEFAULT_TTL_SECONDS = 300; // 5 minutes for Redis

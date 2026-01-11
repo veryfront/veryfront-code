@@ -6,9 +6,9 @@
 import { serverLogger as logger } from "@veryfront/utils";
 import { HTTP_NOT_FOUND, HTTP_NOT_IMPLEMENTED, HTTP_SERVER_ERROR } from "@veryfront/utils";
 import { HMR_MAX_MESSAGE_SIZE_BYTES, HMR_MAX_MESSAGES_PER_MINUTE } from "@veryfront/utils";
-import { createError, toError } from "../../core/errors/veryfront-error.ts";
+import { createError, toError } from "@veryfront/errors/veryfront-error.ts";
 import type { HMRServerOptions, HMRUpdate } from "./hmr-types.ts";
-import type { Server } from "../../platform/adapters/base.ts";
+import type { Server } from "@veryfront/platform/adapters/base.ts";
 import {
   closeAllConnections,
   RateLimiter,

@@ -1,4 +1,4 @@
-import { join } from "../../platform/compat/path-helper.ts";
+import { join } from "@veryfront/platform/compat/path-helper.ts";
 import type { VeryfrontConfig } from "@veryfront/config";
 import type { HTMLGenerationOptions } from "@veryfront/html";
 import {
@@ -20,8 +20,8 @@ import type {
 import { DEFAULT_DASHBOARD_PORT, rendererLogger as logger } from "@veryfront/utils";
 import { detectAppRouter } from "../router-detection.ts";
 import type { RenderOptions } from "./types.ts";
-import { injectElementSelectors } from "../../studio/element-selector-injector.ts";
-import { computeSourceHash } from "../../studio/hash-utils.ts";
+import { injectElementSelectors } from "@veryfront/studio/element-selector-injector.ts";
+import { computeSourceHash } from "@veryfront/studio/hash-utils.ts";
 import { extractRelativePath } from "@veryfront/core/utils/route-path-utils.ts";
 
 export interface HTMLGeneratorConfig {

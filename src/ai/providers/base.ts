@@ -1,11 +1,11 @@
-import { createError, toError } from "../../core/errors/veryfront-error.ts";
+import { createError, toError } from "@veryfront/errors/veryfront-error.ts";
 import type {
   CompletionRequest,
   CompletionResponse,
   Provider,
   ProviderConfig,
 } from "../types/provider.ts";
-import { agentLogger } from "../../core/utils/logger/logger.ts";
+import { agentLogger } from "@veryfront/utils/logger/logger.ts";
 import { z } from "zod";
 
 const FINISH_REASON_MAP: Record<string, CompletionResponse["finishReason"]> = {

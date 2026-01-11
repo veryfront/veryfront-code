@@ -2,7 +2,7 @@ import { assertEquals, assertMatch } from "std/assert/mod.ts";
 import { join } from "std/path/mod.ts";
 import { loadHandlerModule } from "./loader.ts";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
-import { createFileSystem } from "../../../platform/compat/fs.ts";
+import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
 
 /**
  * Minimal adapter stub that reads files from the real fs via compat,

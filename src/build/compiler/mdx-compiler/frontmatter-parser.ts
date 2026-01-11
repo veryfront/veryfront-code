@@ -1,7 +1,7 @@
 import { extract } from "std/front_matter/yaml.ts";
 import { bundlerLogger as logger } from "@veryfront/utils";
 import type { MDXFrontmatter } from "./types.ts";
-import { createError, toError } from "../../../core/errors/veryfront-error.ts";
+import { createError, toError } from "@veryfront/errors/veryfront-error.ts";
 
 export interface ParsedContent {
   frontmatter: MDXFrontmatter;

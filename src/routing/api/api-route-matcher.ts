@@ -1,5 +1,5 @@
 import type { Route, RouteMatch } from "@veryfront/routing/matchers/types.ts";
-import { getEnv } from "../../platform/compat/process.ts";
+import { getEnv } from "@veryfront/platform/compat/process.ts";
 import { LRUCache } from "@veryfront/utils/lru-wrapper.ts";
 
 export type { Route, RouteMatch };

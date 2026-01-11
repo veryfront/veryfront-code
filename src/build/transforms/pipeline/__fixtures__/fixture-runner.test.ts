@@ -8,7 +8,7 @@
  * - Relative imports
  */
 
-import { assertEquals, assertStringIncludes } from "std/assert/mod.ts";
+import { assertEquals, assertStringIncludes } from "jsr:@std/assert@1";
 import { runPipeline } from "../index.ts";
 import {
   getContextPackageUrlBrowser,

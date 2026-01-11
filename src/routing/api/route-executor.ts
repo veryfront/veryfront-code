@@ -1,7 +1,7 @@
 import type { FileSystemAdapter, RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import { createContext, normalizeParams } from "./context-builder.ts";
 import type { RouteMatch } from "./api-route-matcher.ts";
-import { createError, toError } from "../../core/errors/veryfront-error.ts";
+import { createError, toError } from "@veryfront/errors/veryfront-error.ts";
 import type {
   APIRoute,
   AppRouteContext,

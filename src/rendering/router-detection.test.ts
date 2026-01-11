@@ -1,4 +1,4 @@
-import { assertEquals } from "std/assert/mod.ts";
+import { assertEquals } from "jsr:@std/assert@1";
 import { join } from "std/path/mod.ts";
 import { detectAppRouter } from "./router-detection.ts";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";

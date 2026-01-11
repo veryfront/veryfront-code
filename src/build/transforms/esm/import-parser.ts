@@ -1,6 +1,6 @@
 import * as esbuild from "esbuild/mod.js"; // Native esbuild
 import { parseImports } from "./lexer.ts";
-import { createFileSystem } from "../../../platform/compat/fs.ts";
+import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
 import { getLoaderFromPath } from "./transform-utils.ts";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import { isCrossProjectImport, parseCrossProjectImport } from "./path-resolver.ts";

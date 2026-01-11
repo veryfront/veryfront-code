@@ -3,7 +3,7 @@
  * Consolidates all environment variable access to reduce proliferation
  */
 
-import { getEnv } from "../../platform/compat/process.ts";
+import { getEnv } from "@veryfront/platform/compat/process.ts";
 
 export type Environment = "development" | "production" | "test";
 

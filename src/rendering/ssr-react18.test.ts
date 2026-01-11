@@ -4,7 +4,7 @@
  */
 
 import * as React from "react";
-import { assertEquals, assertStringIncludes } from "std/assert/mod.ts";
+import { assertEquals, assertStringIncludes } from "jsr:@std/assert@1";
 
 const { Component, Suspense } = React as any;
 

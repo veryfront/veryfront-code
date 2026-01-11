@@ -3,8 +3,8 @@
  * Tests client-server state synchronization and persistence
  */
 
-import { assertEquals, assertExists } from "std/assert/mod.ts";
-import { afterEach, beforeEach, describe, it } from "std/testing/bdd.ts";
+import { assertEquals, assertExists } from "jsr:@std/assert@1";
+import { afterEach, beforeEach, describe, it } from "jsr:@std/testing@1/bdd";
 import type { DependencyList, Dispatch, EffectCallback, SetStateAction } from "react";
 import {
   __resetBridgeForTesting,

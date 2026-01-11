@@ -8,7 +8,7 @@
 import type { Message, ToolCall } from "../../types/agent.ts";
 import { executeTool } from "../../utils/tool.ts";
 import type { Memory } from "../memory.ts";
-import { createError, toError } from "../../../core/errors/veryfront-error.ts";
+import { createError, toError } from "@veryfront/errors/veryfront-error.ts";
 
 /**
  * Provider tool call format

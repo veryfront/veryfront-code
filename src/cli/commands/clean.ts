@@ -11,7 +11,7 @@ import {
   RedisCacheStore,
 } from "@veryfront/rendering/cache/stores/index.ts";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
-import { createFileSystem } from "../../platform/compat/fs.ts";
+import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
 import { confirmPrompt, createSpinner, logSuccess, logWarning } from "../utils/index.ts";
 
 interface RenderCacheConfig {

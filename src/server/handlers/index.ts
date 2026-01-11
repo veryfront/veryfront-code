@@ -35,4 +35,4 @@ export * from "./monitoring/index.ts";
 export { getContentType } from "./utils/content-types.ts";
 
 // Routing (re-export from new location for backward compatibility)
-export * from "../../routing/registry/index.ts";
+export * from "@veryfront/routing/registry/index.ts";

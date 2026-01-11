@@ -8,7 +8,7 @@ import type {
   TokenExchangeResult,
   TokenStore,
 } from "../types.ts";
-import { getEnv } from "../../../platform/compat/process.ts";
+import { getEnv } from "@veryfront/platform/compat/process.ts";
 
 function generateRandomString(length: number): string {
   const array = new Uint8Array(length);

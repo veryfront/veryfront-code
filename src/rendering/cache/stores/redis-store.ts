@@ -1,6 +1,6 @@
 import type { CachePayload, CacheStore } from "../types.ts";
 import { rendererLogger as logger } from "@veryfront/utils";
-import { createError, toError } from "../../../core/errors/veryfront-error.ts";
+import { createError, toError } from "@veryfront/errors/veryfront-error.ts";
 import { MemoryCacheStore } from "./memory-store.ts";
 
 interface RedisClient {

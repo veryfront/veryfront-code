@@ -1,7 +1,7 @@
 import type React from "react";
 import { createContext, useContext } from "react";
 import type { MDXFrontmatter, PageContext as TypedPageContext } from "@veryfront/types";
-import { createError, toError } from "../../../core/errors/veryfront-error.ts";
+import { createError, toError } from "@veryfront/errors/veryfront-error.ts";
 
 interface PageContext extends Omit<TypedPageContext, "frontmatter"> {
   frontmatter?: MDXFrontmatter;

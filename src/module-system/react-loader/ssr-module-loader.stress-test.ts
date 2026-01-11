@@ -7,8 +7,8 @@
  * Run with: deno test --allow-all src/module-system/react-loader/ssr-module-loader.stress-test.ts
  */
 
-import { assertEquals } from "std/assert/mod.ts";
-import { join } from "std/path/mod.ts";
+import { assertEquals } from "jsr:@std/assert@1";
+import { join } from "jsr:@std/path@1";
 import { clearSSRModuleCache, SSRModuleLoader } from "./ssr-module-loader.ts";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 

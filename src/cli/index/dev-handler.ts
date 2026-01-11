@@ -9,8 +9,8 @@ import { cliLogger, DEFAULT_DEV_SERVER_PORT } from "@veryfront/utils";
 import { devCommand } from "../commands/dev.ts";
 import { showLogo } from "../utils/index.ts";
 import type { ParsedArgs } from "./types.ts";
-import { cwd } from "../../platform/compat/process.ts";
-import { createFileSystem } from "../../platform/compat/fs.ts";
+import { cwd } from "@veryfront/platform/compat/process.ts";
+import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
 
 /**
  * Resolve project directory from CLI args or detect from config files

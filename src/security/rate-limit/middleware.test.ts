@@ -2,8 +2,8 @@
  * Rate Limiting Middleware Tests
  */
 
-import { assertEquals, assertExists } from "https://deno.land/std@0.220.0/assert/mod.ts";
-import { describe, it } from "https://deno.land/std@0.220.0/testing/bdd.ts";
+import { assertEquals, assertExists } from "jsr:@std/assert@1";
+import { describe, it } from "jsr:@std/testing@1/bdd";
 import { createRateLimiter, RateLimitPresets } from "./middleware.ts";
 import { MemoryRateLimitStore } from "./memory-store.ts";
 

@@ -5,8 +5,7 @@
 
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import type { MetricsConfig } from "./types.ts";
-import { getEnv } from "../../platform/compat/process.ts";
-import { memoryUsage as platformMemoryUsage } from "../../platform/compat/process.ts";
+import { getEnv, memoryUsage as platformMemoryUsage } from "@veryfront/platform/compat/process.ts";
 
 /**
  * Default metrics collect interval in milliseconds (60 seconds)

@@ -4,7 +4,7 @@ import {
   HMR_CLOSE_NORMAL,
   HMR_CLOSE_RATE_LIMIT,
 } from "@veryfront/utils";
-import type { WebSocketContext } from "../../server/dev-server/hmr-types.ts";
+import type { WebSocketContext } from "@veryfront/server/dev-server/hmr-types.ts";
 
 export function setupWebSocketHandlers(
   socket: WebSocket,

@@ -5,7 +5,7 @@
  */
 
 import type { AgentContext, AgentResponse } from "../../types/agent.ts";
-import { createError, toError } from "../../../core/errors/veryfront-error.ts";
+import { createError, toError } from "@veryfront/errors/veryfront-error.ts";
 
 export interface SecurityConfig {
   /** Input validation rules */

@@ -8,8 +8,8 @@ import type { PluggableList } from "unified";
 import { extract } from "std/front_matter/yaml.ts";
 import { dirname, join } from "std/path/mod.ts";
 import { getRehypePlugins, getRemarkPlugins } from "@veryfront/transforms/plugins/plugin-loader.ts";
-import { ensureError } from "../../../core/errors/veryfront-error.ts";
-import { createFileSystem } from "../../../platform/compat/fs.ts";
+import { ensureError } from "@veryfront/errors/veryfront-error.ts";
+import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
 import type {
   BundleResult,
   BundlerOptions,

@@ -6,7 +6,7 @@ import {
   buildRootAttributes,
   shouldDisableLayout,
 } from "./utils.ts";
-import { getDefaultImportMap } from "../module-system/import-map/default-import-map.ts";
+import { getDefaultImportMap } from "@veryfront/modules/import-map/default-import-map.ts";
 
 describe("html-generation/utils", () => {
   describe("buildRootAttributes", () => {

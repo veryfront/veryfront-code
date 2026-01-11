@@ -5,9 +5,9 @@
 
 import type { Metafile } from "esbuild/mod.js";
 import { join, relative } from "std/path/mod.ts";
-import { createFileSystem } from "../../../platform/compat/fs.ts";
+import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
 import type { ChunkInfo, ChunkManifest, MetafileOutput } from "./types.ts";
-import { createError, toError } from "../../../core/errors/veryfront-error.ts";
+import { createError, toError } from "@veryfront/errors/veryfront-error.ts";
 
 const fs = createFileSystem();
 

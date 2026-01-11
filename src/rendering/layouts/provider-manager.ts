@@ -4,8 +4,8 @@ import { isExtendedFSAdapter } from "@veryfront/platform/adapters/fs/wrapper.ts"
 import type { MdxBundle, ProviderItem } from "@veryfront/types";
 import type { EntityInfo } from "@veryfront/types";
 import type { VeryfrontConfig } from "@veryfront/config";
-import { getProviderEntities } from "../../core/types/entities/getEntityInfo.ts";
-import { join } from "../../platform/compat/path-helper.ts";
+import { getProviderEntities } from "@veryfront/types/entities/getEntityInfo.ts";
+import { join } from "@veryfront/platform/compat/path-helper.ts";
 
 interface ProjectData {
   id?: string;

@@ -8,7 +8,7 @@ import { join } from "std/path/mod.ts";
 import { getReactImportMap, REACT_DEFAULT_VERSION } from "@veryfront/utils";
 import type { SplitOptions } from "./types.ts";
 import { createSplitterPlugin } from "./esbuild-plugin.ts";
-import { createFileSystem } from "../../../platform/compat/fs.ts";
+import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
 
 /** Veryfront AI modules that may be externalized based on moduleResolution setting */
 const VERYFRONT_AI_MODULES = [

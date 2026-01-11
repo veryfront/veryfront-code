@@ -5,7 +5,7 @@
 
 import { cliLogger as logger } from "@veryfront/utils";
 import { join } from "std/path/mod.ts";
-import { createFileSystem } from "../../../platform/compat/fs.ts";
+import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
 
 /**
  * Creates a package.json file with ES module support

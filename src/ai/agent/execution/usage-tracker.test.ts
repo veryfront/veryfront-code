@@ -4,7 +4,7 @@
  * Tests the token usage tracking functionality across multiple LLM provider calls.
  */
 
-import { assertEquals } from "std/assert/mod.ts";
+import { assertEquals } from "jsr:@std/assert@1";
 import { createUsageTracker, type ProviderUsage, UsageTracker } from "./usage-tracker.ts";
 
 Deno.test("UsageTracker - initial state has all counters at zero", () => {

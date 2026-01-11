@@ -12,8 +12,8 @@
  * - Edge cases and error scenarios
  */
 
-import { assertEquals, assertExists } from "std/assert/mod.ts";
-import { beforeEach, describe, it } from "std/testing/bdd.ts";
+import { assertEquals, assertExists } from "jsr:@std/assert@1";
+import { beforeEach, describe, it } from "jsr:@std/testing@1/bdd";
 
 // Import the module once (no cache-busting needed!)
 import {

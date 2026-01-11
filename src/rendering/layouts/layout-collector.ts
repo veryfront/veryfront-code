@@ -1,11 +1,11 @@
-import { join } from "../../platform/compat/path-helper.ts";
+import { join } from "@veryfront/platform/compat/path-helper.ts";
 import { rendererLogger as logger, timeAsync } from "@veryfront/utils";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import { isExtendedFSAdapter } from "@veryfront/platform/adapters/fs/wrapper.ts";
 import type { EntityInfo } from "@veryfront/types";
 import type { LayoutItem, MdxBundle } from "@veryfront/types";
 import type { VeryfrontConfig } from "@veryfront/config";
-import { getLayoutEntity } from "../../core/types/entities/getEntityInfo.ts";
+import { getLayoutEntity } from "@veryfront/types/entities/getEntityInfo.ts";
 import { discoverNestedLayouts } from "./utils/discovery.ts";
 import { detectAppRouter } from "../router-detection.ts";
 

@@ -6,7 +6,7 @@ import {
   HTTP_NOT_FOUND,
   PRIORITY_FALLBACK,
 } from "@veryfront/core/constants/index.ts";
-import { escapeHtml } from "../../../html/html-escape.ts";
+import { escapeHtml } from "@veryfront/html/html-escape.ts";
 
 export class NotFoundHandler extends BaseHandler {
   metadata: HandlerMetadata = {
