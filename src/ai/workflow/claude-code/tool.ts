@@ -101,8 +101,9 @@ export const claudeCodeTool: Tool<ClaudeCodeInput, ClaudeCodeResult> = {
   type: "function",
   description: "Run a Claude Code agent for complex coding tasks. " +
     "Supports file editing, bash commands, and iterative problem-solving.",
-  inputSchema: claudeCodeInputSchema,
-  jsonSchema: {
+  // Cast needed because Zod's .default() makes input optional but output required
+  inputSchema: claudeCodeInputSchema as unknown as z.ZodSchema<ClaudeCodeInput>,
+  inputSchemaJson: {
     type: "object",
     properties: {
       task: { type: "string", description: "The task for the agent" },
@@ -136,7 +137,6 @@ export const claudeCodeTool: Tool<ClaudeCodeInput, ClaudeCodeResult> = {
 
     const response = await agent.generate({
       input: prompt,
-      context: {},
     });
 
     // Parse result from response

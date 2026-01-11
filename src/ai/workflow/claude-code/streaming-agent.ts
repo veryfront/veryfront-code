@@ -8,7 +8,7 @@
 import { logger } from "@veryfront/utils";
 import { api } from "../../api.ts";
 import { getWorkflowTenant } from "../executor/step-executor.ts";
-import type { Agent, AgentResponse } from "../../types/agent.ts";
+import type { ClaudeCodeAgentInstance, ClaudeCodeAgentResponse } from "./agent.ts";
 import type {
   AnthropicToolDefinition,
   BashToolInput,
@@ -84,7 +84,7 @@ function createEventPublisher(
   runId: string | undefined,
 ) {
   return {
-    publish: (event: Omit<ClaudeCodeEvent, "timestamp" | "runId">) => {
+    publish: (event: { type: string; [key: string]: unknown }) => {
       if (!publisher) return;
       publisher.publish({
         ...event,
@@ -209,10 +209,14 @@ async function executeTool(
 
   switch (toolCall.name) {
     case "bash":
-      result = await executeBash(toolCall.input as BashToolInput, context, config);
+      result = await executeBash(toolCall.input as unknown as BashToolInput, context, config);
       break;
     case "str_replace_editor":
-      result = await executeTextEditor(toolCall.input as TextEditorToolInput, context, config);
+      result = await executeTextEditor(
+        toolCall.input as unknown as TextEditorToolInput,
+        context,
+        config,
+      );
       break;
     case "computer":
       result = { output: "Computer use not yet implemented", isError: true };
@@ -389,7 +393,9 @@ async function runStreamingIteration(
 /**
  * Create a streaming Claude Code agent
  */
-export function streamingClaudeCodeAgent(config: ClaudeCodeAgentConfig = {}): Agent {
+export function streamingClaudeCodeAgent(
+  config: ClaudeCodeAgentConfig = {},
+): ClaudeCodeAgentInstance {
   const id = config.id || "claude-code-streaming";
   const mode = config.mode || "code";
   const maxIterations = config.maxIterations || DEFAULT_MAX_ITERATIONS;
@@ -399,7 +405,7 @@ export function streamingClaudeCodeAgent(config: ClaudeCodeAgentConfig = {}): Ag
     id,
     model: config.model || DEFAULT_MODEL,
 
-    generate: async (params): Promise<AgentResponse> => {
+    generate: async (params): Promise<ClaudeCodeAgentResponse> => {
       const startTime = Date.now();
 
       // Get tenant context
@@ -481,7 +487,7 @@ export function streamingClaudeCodeAgent(config: ClaudeCodeAgentConfig = {}): Ag
             return {
               text: result.text || JSON.stringify(finalResult),
               status: "completed",
-              usage: { inputTokens: 0, outputTokens: 0 },
+              usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
             };
           }
 
@@ -523,7 +529,7 @@ export function streamingClaudeCodeAgent(config: ClaudeCodeAgentConfig = {}): Ag
         return {
           text: JSON.stringify(finalResult),
           status: "completed",
-          usage: { inputTokens: 0, outputTokens: 0 },
+          usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
         };
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);

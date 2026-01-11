@@ -598,9 +598,23 @@ export type ClientCommand =
 export type ClientCommandHandler = (command: ClientCommand) => void | Promise<void>;
 
 /**
+ * Base interface for extended events (bidirectional communication)
+ */
+export interface ClaudeCodeEventBaseExtended {
+  /** Event type */
+  type: ClaudeCodeEventTypeExtended;
+  /** Timestamp */
+  timestamp: number;
+  /** Workflow run ID (if in workflow context) */
+  runId?: string;
+  /** Current iteration */
+  iteration?: number;
+}
+
+/**
  * Approval request event (sent to client when tool needs approval)
  */
-export interface ApprovalRequestEvent extends ClaudeCodeEventBase {
+export interface ApprovalRequestEvent extends ClaudeCodeEventBaseExtended {
   type: "approval_request";
   /** Tool call awaiting approval */
   toolCallId: string;
@@ -617,7 +631,7 @@ export interface ApprovalRequestEvent extends ClaudeCodeEventBase {
 /**
  * Input request event (sent to client when agent needs user input)
  */
-export interface InputRequestEvent extends ClaudeCodeEventBase {
+export interface InputRequestEvent extends ClaudeCodeEventBaseExtended {
   type: "input_request";
   /** Prompt for the user */
   prompt: string;
@@ -630,14 +644,14 @@ export interface InputRequestEvent extends ClaudeCodeEventBase {
 /**
  * Pong response to ping
  */
-export interface PongEvent extends ClaudeCodeEventBase {
+export interface PongEvent extends ClaudeCodeEventBaseExtended {
   type: "pong";
 }
 
 /**
  * Cancelled event
  */
-export interface CancelledEvent extends ClaudeCodeEventBase {
+export interface CancelledEvent extends ClaudeCodeEventBaseExtended {
   type: "cancelled";
   /** Reason for cancellation */
   reason?: string;
