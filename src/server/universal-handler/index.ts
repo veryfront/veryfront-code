@@ -18,11 +18,7 @@ import {
 // Import handler system (from new location)
 import type { HandlerContext } from "../handlers/types.ts";
 import { parseProjectDomain } from "../utils/domain-parser.ts";
-import {
-  getEnvironmentType,
-  lookupProductionRelease,
-  lookupProjectByDomain,
-} from "../utils/domain-lookup.ts";
+import { getEnvironmentType, lookupProjectByDomain } from "../utils/domain-lookup.ts";
 import { getErrorMessage } from "@veryfront/errors/veryfront-error.ts";
 
 /** Check if host is a private/internal IP address */
@@ -323,6 +319,7 @@ export function createVeryfrontHandler(
 
       // For Veryfront production domains, look up the current release ID for cache keying
       // This ensures cache invalidation when new releases are published
+      // Use the same domain lookup API that works for custom domains
       if (
         parsedDomain.isVeryfrontDomain &&
         parsedDomain.isDraft === false &&
@@ -338,14 +335,15 @@ export function createVeryfrontHandler(
           "https://api.veryfront.com";
 
         if (effectiveToken) {
-          const releaseResult = await lookupProductionRelease(projectSlug, {
+          // Use the domain lookup API with the Veryfront domain
+          const lookupResult = await lookupProjectByDomain(host, {
             apiBaseUrl: baseUrl,
             apiToken: effectiveToken,
           });
 
-          if (releaseResult) {
-            releaseId = releaseResult.releaseId;
-            projectId = projectId || releaseResult.projectId;
+          if (lookupResult?.releaseId) {
+            releaseId = lookupResult.releaseId;
+            projectId = projectId || lookupResult.projectId;
             proxyEnv = "production";
             logger.info("[universal] Veryfront domain release lookup successful", {
               projectSlug,

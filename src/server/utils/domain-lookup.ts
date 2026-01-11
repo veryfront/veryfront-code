@@ -76,60 +76,6 @@ export async function lookupProjectByDomain(
 }
 
 /**
- * Look up the current production release for a project by slug.
- * Used for Veryfront domains to get the release ID for cache keying.
- */
-export async function lookupProductionRelease(
-  projectSlug: string,
-  config: DomainLookupConfig,
-): Promise<{ releaseId: string; projectId: string } | null> {
-  const url = `${config.apiBaseUrl}/api/projects/${
-    encodeURIComponent(projectSlug)
-  }/releases/production`;
-
-  logger.debug("[DomainLookup] Looking up production release", { projectSlug, url });
-
-  try {
-    const response = await fetch(url, {
-      headers: {
-        Authorization: `Bearer ${config.apiToken}`,
-        Accept: "application/json",
-      },
-    });
-
-    if (response.status === 404) {
-      logger.debug("[DomainLookup] No production release found", { projectSlug });
-      return null;
-    }
-
-    if (!response.ok) {
-      logger.error("[DomainLookup] API error looking up release", {
-        projectSlug,
-        status: response.status,
-        statusText: response.statusText,
-      });
-      return null;
-    }
-
-    const result = await response.json() as { id: string; projectId: string };
-
-    logger.debug("[DomainLookup] Production release lookup result", {
-      projectSlug,
-      releaseId: result.id,
-      projectId: result.projectId,
-    });
-
-    return { releaseId: result.id, projectId: result.projectId };
-  } catch (error) {
-    logger.error("[DomainLookup] Failed to lookup production release", {
-      projectSlug,
-      error: error instanceof Error ? error.message : String(error),
-    });
-    return null;
-  }
-}
-
-/**
  * Determine the environment type from the lookup result.
  */
 export function getEnvironmentType(
