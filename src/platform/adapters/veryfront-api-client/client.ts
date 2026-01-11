@@ -1,6 +1,23 @@
 import { logger } from "@veryfront/utils";
-import { type TokenProvider, VeryfrontAPIOperations } from "./operations.ts";
+import {
+  type FileDetail,
+  type FileListResult,
+  type ListFilesOptions,
+  type TokenProvider,
+  VeryfrontAPIOperations,
+} from "./operations.ts";
 import { type VeryfrontAPIConfig, VeryfrontAPIError } from "./types.ts";
+
+/**
+ * File context for API operations.
+ * - branch: Draft/working copy from a specific branch
+ * - environment: Deployed content from an environment (production, preview, staging)
+ * - release: Specific release version
+ */
+export type FileContext =
+  | { type: "branch"; name: string }
+  | { type: "environment"; name: string }
+  | { type: "release"; version: string };
 
 export class VeryfrontAPIClient {
   private config: VeryfrontAPIConfig & {
@@ -9,6 +26,7 @@ export class VeryfrontAPIClient {
   private operations: VeryfrontAPIOperations;
   private requestToken?: string;
   private requestProjectSlug?: string;
+  private requestContext?: FileContext;
   private requestBranch?: string | null;
   private initialized = false;
   private initializingPromise?: Promise<void>;
@@ -20,20 +38,11 @@ export class VeryfrontAPIClient {
       maxDelay: config.retry?.maxDelay ?? 10000,
     };
 
-    this.config = {
-      ...config,
-      retry: retryConfig,
-    };
+    this.config = { ...config, retry: retryConfig };
 
-    // Create token provider that supports both static config token and per-request token
     const tokenProvider: TokenProvider = () => {
-      // Priority: per-request token > config token
-      if (this.requestToken) {
-        return this.requestToken;
-      }
-      if (this.config.apiToken) {
-        return this.config.apiToken;
-      }
+      if (this.requestToken) return this.requestToken;
+      if (this.config.apiToken) return this.config.apiToken;
       throw new VeryfrontAPIError("No API token available", 401);
     };
 
@@ -44,102 +53,80 @@ export class VeryfrontAPIClient {
     );
   }
 
-  /**
-   * Check if running in proxy mode (per-request tokens/slugs).
-   */
+  // =============================================================================
+  // Configuration
+  // =============================================================================
+
   isProxyMode(): boolean {
     return this.config.proxyMode === true;
   }
 
-  /**
-   * Set a per-request token from proxy headers.
-   * This token takes priority over the config token.
-   */
   setRequestToken(token: string): void {
     this.requestToken = token;
   }
 
-  /**
-   * Clear the per-request token, reverting to config token.
-   */
   clearRequestToken(): void {
     this.requestToken = undefined;
   }
 
-  /**
-   * Set a per-request project slug from proxy headers.
-   * Used in proxy mode for multi-project handling.
-   */
   setProjectSlug(slug: string): void {
     this.requestProjectSlug = slug;
   }
 
-  /**
-   * Get the current project slug (per-request or config).
-   */
   getProjectSlug(): string | undefined {
     return this.requestProjectSlug || this.config.projectSlug;
   }
 
-  /**
-   * Clear the per-request project slug.
-   */
   clearProjectSlug(): void {
     this.requestProjectSlug = undefined;
   }
 
-  /**
-   * Set a per-request branch from URL parsing.
-   * When set, file content will be fetched from this branch instead of main.
-   */
-  setRequestBranch(branch: string | null): void {
-    this.requestBranch = branch;
+  setContext(context: FileContext): void {
+    this.requestContext = context;
   }
 
-  /**
-   * Get the current per-request branch.
-   */
-  getRequestBranch(): string | null | undefined {
-    return this.requestBranch;
+  getContext(): FileContext {
+    return this.requestContext ?? { type: "branch", name: "main" };
   }
 
-  /**
-   * Clear the per-request branch, reverting to main branch.
-   */
-  clearRequestBranch(): void {
-    this.requestBranch = undefined;
+  clearContext(): void {
+    this.requestContext = undefined;
   }
 
-  /**
-   * Resolve the effective branch - uses provided branch if defined, falls back to request branch.
-   */
-  private resolveBranch(branch?: string | null): string | null | undefined {
-    return branch ?? this.requestBranch;
-  }
-
-  /**
-   * Get the current token being used.
-   */
   getToken(): string {
     return this.operations.getToken();
   }
 
-  /**
-   * Check if the client is initialized.
-   */
   isInitialized(): boolean {
     return this.initialized;
   }
 
-  async initialize(): Promise<void> {
-    // Handle concurrent initialization requests
-    if (this.initializingPromise) {
-      return this.initializingPromise;
+  // Branch-related setters for backward compatibility with adapter
+  setRequestBranch(branch: string | null): void {
+    this.requestBranch = branch;
+    if (branch) {
+      this.setContext({ type: "branch", name: branch });
+    } else {
+      this.clearContext();
     }
+  }
 
-    if (this.initialized) {
-      return;
-    }
+  getRequestBranch(): string | null | undefined {
+    return this.requestBranch;
+  }
+
+  clearRequestBranch(): void {
+    this.requestBranch = undefined;
+    this.clearContext();
+  }
+
+  // =============================================================================
+  // Initialization
+  // =============================================================================
+
+  async initialize(): Promise<void> {
+    if (this.initializingPromise) return this.initializingPromise;
+    if (this.initialized) return;
 
     this.initializingPromise = this.doInitialize();
     try {
@@ -155,7 +142,6 @@ export class VeryfrontAPIClient {
       throw new VeryfrontAPIError("No project slug available for initialization", 400);
     }
 
-    // If projectId is already known (e.g., from domain lookup), use it directly
     if (this.config.projectId) {
       logger.info("[VeryfrontAPIClient] Initializing with known projectId", {
         slug,
@@ -166,9 +152,7 @@ export class VeryfrontAPIClient {
       return;
     }
 
-    // Otherwise, look up project by slug via listProjects
     logger.debug("[VeryfrontAPIClient] Initializing via listProjects", { slug });
-
     const projects = await this.operations.listProjects();
     const project = projects.find((p) => p.slug === slug);
 
@@ -188,9 +172,6 @@ export class VeryfrontAPIClient {
     });
   }
 
-  /**
-   * Reset initialization state (for proxy mode project switching).
-   */
   reset(): void {
     this.initialized = false;
     this.initializingPromise = undefined;
@@ -201,51 +182,155 @@ export class VeryfrontAPIClient {
     return this.operations.getProjectId();
   }
 
-  async listProjects() {
-    return await this.operations.listProjects();
+  // =============================================================================
+  // Project Operations
+  // =============================================================================
+
+  listProjects() {
+    return this.operations.listProjects();
   }
 
-  async getProject(projectId: string) {
-    return await this.operations.getProject(projectId);
+  getProject(projectRef?: string) {
+    return this.operations.getProject(projectRef ?? this.getProjectSlug()!);
   }
 
-  async listFiles(projectId?: string, cursor?: string, limit = 100, branch?: string | null) {
-    return await this.operations.listFiles(projectId, cursor, limit, this.resolveBranch(branch));
+  // =============================================================================
+  // File Operations (context-aware)
+  // =============================================================================
+
+  listFiles(options: ListFilesOptions = {}): Promise<FileListResult> {
+    const projectRef = this.getProjectSlug()!;
+    const context = this.getContext();
+
+    switch (context.type) {
+      case "branch":
+        return this.operations.listBranchFiles(projectRef, context.name, options);
+      case "environment":
+        return this.operations.listEnvironmentFiles(projectRef, context.name, options);
+      case "release":
+        return this.operations.listReleaseFiles(projectRef, context.version, options);
+    }
   }
 
-  async listAllFiles(projectId?: string, branch?: string | null) {
-    return await this.operations.listAllFiles(projectId, this.resolveBranch(branch));
+  listAllFiles(options: Omit<ListFilesOptions, "cursor"> = {}) {
+    const projectRef = this.getProjectSlug()!;
+    const context = this.getContext();
+
+    switch (context.type) {
+      case "branch":
+        return this.operations.listAllBranchFiles(projectRef, context.name, options);
+      case "environment":
+        return this.operations.listAllEnvironmentFiles(projectRef, context.name, options);
+      case "release":
+        return this.operations.listAllReleaseFiles(projectRef, context.version, options);
+    }
   }
 
-  async searchFiles(pattern: string, projectId?: string, branch?: string | null) {
-    return await this.operations.searchFiles(pattern, projectId, this.resolveBranch(branch));
+  getFile(pathOrId: string): Promise<FileDetail> {
+    const projectRef = this.getProjectSlug()!;
+    const context = this.getContext();
+
+    switch (context.type) {
+      case "branch":
+        return this.operations.getBranchFile(projectRef, context.name, pathOrId);
+      case "environment":
+        return this.operations.getEnvironmentFile(projectRef, context.name, pathOrId);
+      case "release":
+        return this.operations.getReleaseFile(projectRef, context.version, pathOrId);
+    }
   }
 
-  async getFileContent(path: string, projectId?: string, branch?: string | null) {
-    return await this.operations.getFileContent(path, projectId, this.resolveBranch(branch));
+  async getFileContent(pathOrId: string): Promise<string> {
+    const file = await this.getFile(pathOrId);
+    return file.content;
   }
 
-  async getFileMetadata(path: string, projectId?: string) {
-    return await this.operations.getFileMetadata(path, projectId);
+  // =============================================================================
+  // Branch-specific Operations
+  // =============================================================================
+
+  listBranchFiles(branchName = "main", options: ListFilesOptions = {}) {
+    return this.operations.listBranchFiles(this.getProjectSlug()!, branchName, options);
   }
 
-  async fileExists(path: string, projectId?: string) {
-    return await this.operations.fileExists(path, projectId);
+  getBranchFile(branchName: string, pathOrId: string) {
+    return this.operations.getBranchFile(this.getProjectSlug()!, branchName, pathOrId);
   }
 
-  async listPublishedFiles(projectId?: string, releaseId?: string) {
-    return await this.operations.listPublishedFiles(projectId, releaseId);
+  // =============================================================================
+  // Environment-specific Operations
+  // =============================================================================
+
+  listEnvironmentFiles(environmentName = "production", options: ListFilesOptions = {}) {
+    return this.operations.listEnvironmentFiles(this.getProjectSlug()!, environmentName, options);
   }
 
-  async getPublishedFileContent(path: string, projectId?: string, releaseId?: string) {
-    return await this.operations.getPublishedFileContent(path, projectId, releaseId);
+  listAllEnvironmentFiles(
+    environmentName = "production",
+    options: Omit<ListFilesOptions, "cursor"> = {},
+  ) {
+    return this.operations.listAllEnvironmentFiles(
+      this.getProjectSlug()!,
+      environmentName,
+      options,
+    );
   }
 
-  async lookupProjectByDomain(domain: string) {
-    return await this.operations.lookupProjectByDomain(domain);
+  getEnvironmentFile(environmentName: string, pathOrId: string) {
+    return this.operations.getEnvironmentFile(this.getProjectSlug()!, environmentName, pathOrId);
   }
 
-  async getFileById(entityId: string, projectId?: string, branch?: string | null) {
-    return await this.operations.getFileById(entityId, projectId, this.resolveBranch(branch));
+  // =============================================================================
+  // Release-specific Operations
+  // =============================================================================
+
+  listReleaseFiles(version = "latest", options: ListFilesOptions = {}) {
+    return this.operations.listReleaseFiles(this.getProjectSlug()!, version, options);
+  }
+
+  getReleaseFile(version: string, pathOrId: string) {
+    return this.operations.getReleaseFile(this.getProjectSlug()!, version, pathOrId);
+  }
+
+  // =============================================================================
+  // Domain Lookup
+  // =============================================================================
+
+  lookupProjectByDomain(domain: string) {
+    return this.operations.lookupProjectByDomain(domain);
+  }
+
+  // =============================================================================
+  // Adapter Convenience Methods
+  // =============================================================================
+
+  async getFileById(entityId: string): Promise<{ path: string; content: string } | null> {
+    try {
+      const file = await this.getFile(entityId);
+      return { path: file.path, content: file.content };
+    } catch (error) {
+      if (error instanceof Error && error.message.includes("404")) {
+        return null;
+      }
+      throw error;
+    }
+  }
+
+  async searchFiles(pattern: string): Promise<{ id?: string; path: string }[]> {
+    const result = await this.listFiles({ pattern, limit: 100 });
+    return result.files.map((f) => ({ id: f.id, path: f.path }));
+  }
+
+  listPublishedFiles(_projectId?: string, _releaseId?: string) {
+    return this.operations.listAllEnvironmentFiles(this.getProjectSlug()!, "production");
+  }
+
+  async getPublishedFileContent(path: string): Promise<string> {
+    const result = await this.operations.getEnvironmentFile(
+      this.getProjectSlug()!,
+      "production",
+      path,
+    );
+    return result.content;
   }
 }

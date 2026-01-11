@@ -84,8 +84,9 @@ export class ApiHandlerWrapper extends BaseHandler {
       projectSlug: ctx.projectSlug,
     }, ctx);
 
-    // Check if adapter supports multi-project mode via runWithContext
+    // Check if adapter supports multi-project mode via isMultiProjectMode
     const fsWrapper = ctx.adapter.fs as {
+      isMultiProjectMode?: () => boolean;
       runWithContext?: <T>(
         slug: string,
         token: string,
@@ -97,7 +98,11 @@ export class ApiHandlerWrapper extends BaseHandler {
 
     // For multi-project mode, use runWithContext (required for MultiProjectFSAdapter)
     // This ensures API route discovery and handling uses the correct project context
-    if (ctx.projectSlug && typeof fsWrapper.runWithContext === "function") {
+    // Use isMultiProjectMode() to check support - the method exists on wrapper but throws if unsupported
+    if (
+      ctx.projectSlug && typeof fsWrapper.isMultiProjectMode === "function" &&
+      fsWrapper.isMultiProjectMode()
+    ) {
       // Determine production mode based on domain type
       let isProduction = false;
       if (ctx.parsedDomain?.isVeryfrontDomain) {
@@ -113,7 +118,7 @@ export class ApiHandlerWrapper extends BaseHandler {
         productionMode: isProduction,
       }, ctx);
 
-      return await fsWrapper.runWithContext(
+      return await fsWrapper.runWithContext!(
         ctx.projectSlug,
         ctx.proxyToken || "",
         () => this.handleWithContext(req, ctx, pathname),

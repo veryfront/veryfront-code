@@ -4,7 +4,8 @@ import type { ProjectFile, VeryfrontAPIClient } from "../../veryfront-api-client
 import { FileCache } from "../cache/file-cache.ts";
 import { PathNormalizer } from "./path-normalizer.ts";
 import { createError, toError } from "../../../../core/errors/veryfront-error.ts";
-import type { ProductionModeContext } from "./read-operations.ts";
+import type { ContentContextProvider } from "./read-operations.ts";
+import { buildFileListCacheKey, buildStatCacheKeyPrefix } from "./cache-keys.ts";
 
 const EXTENSION_PRIORITY = [".mdx", ".md", ".tsx", ".jsx", ".ts", ".js"] as const;
 
@@ -19,19 +20,15 @@ export class StatOperations {
     private readonly client: VeryfrontAPIClient,
     private readonly cache: FileCache,
     private readonly normalizer: PathNormalizer,
-    private readonly productionContext?: ProductionModeContext,
+    private readonly contextProvider?: ContentContextProvider,
   ) {}
 
   async stat(path: string): Promise<FileInfo> {
     const normalizedPath = this.normalizer.normalize(path);
-    const isProduction = this.productionContext?.isProductionMode() ?? false;
-    const releaseId = this.productionContext?.getReleaseId() ?? null;
-    // Use production-aware cache key
-    const cacheKey = isProduction
-      ? `file:stat:published:${releaseId ?? "latest"}:${normalizedPath}`
-      : `file:stat:${this.client.getRequestBranch() || "main"}:${normalizedPath}`;
+    const ctx = this.contextProvider?.getContentContext();
+    const cacheKey = `${buildStatCacheKeyPrefix(ctx)}:${normalizedPath}`;
 
-    logger.debug("[StatOperations] stat called", { path, normalizedPath, isProduction, releaseId });
+    logger.debug("[StatOperations] stat called", { path, normalizedPath, cacheKey });
 
     const cached = this.cache.get<FileInfo>(cacheKey);
     if (cached) {
@@ -83,10 +80,11 @@ export class StatOperations {
     // Include sample of available files to diagnose path mismatches
     const availableFiles = Array.from(fileIdx.keys()).slice(0, 20);
     const hasComponentsDir = availableFiles.some((f) => f.startsWith("components/"));
+    const isPublished = ctx?.sourceType !== "branch";
     logger.info("[StatOperations] stat file not found", {
       path,
       normalizedPath,
-      isProduction,
+      isPublished,
       indexSize: fileIdx.size,
       hasComponentsDir,
       sampleFiles: availableFiles,
@@ -172,33 +170,28 @@ export class StatOperations {
   }
 
   private async getAllFilesRaw(): Promise<ProjectFile[]> {
-    const isProduction = this.productionContext?.isProductionMode() ?? false;
-    const releaseId = this.productionContext?.getReleaseId() ?? null;
+    const ctx = this.contextProvider?.getContentContext();
+    const cacheKey = buildFileListCacheKey(ctx);
 
-    // In production mode, use the published files cache
-    if (isProduction) {
-      const cacheKey = `files:published:${releaseId ?? "latest"}`;
-      const cached = this.cache.get<ProjectFile[]>(cacheKey);
-      if (cached) {
-        return cached;
-      }
-      // If not cached, fetch published files
-      logger.debug("[StatOperations] Fetching published files from API", { releaseId });
-      const files = await this.client.listPublishedFiles(undefined, releaseId ?? undefined);
-      this.cache.set(cacheKey, files);
-      return files;
-    }
-
-    // In development mode, use draft files
-    const branch = this.client.getRequestBranch() || "main";
-    const cacheKey = `files:all:${branch}`;
     const cached = this.cache.get<ProjectFile[]>(cacheKey);
     if (cached) {
       return cached;
     }
 
-    logger.debug("[StatOperations] Fetching all files from API", { branch });
-    const files = await this.client.listAllFiles();
+    // Fetch based on source type
+    const isPublished = ctx?.sourceType !== "branch";
+    logger.debug("[StatOperations] Fetching files from API", {
+      sourceType: ctx?.sourceType,
+      cacheKey,
+    });
+
+    let files: ProjectFile[];
+    if (isPublished) {
+      files = await this.client.listPublishedFiles(undefined, ctx?.releaseId ?? undefined);
+    } else {
+      files = await this.client.listAllFiles();
+    }
+
     this.cache.set(cacheKey, files);
     return files;
   }
@@ -215,18 +208,12 @@ export class StatOperations {
 
   async resolveFile(basePath: string): Promise<string | null> {
     const normalizedPath = this.normalizer.normalize(basePath);
-    const isProduction = this.productionContext?.isProductionMode() ?? false;
-    const releaseId = this.productionContext?.getReleaseId() ?? null;
-    // Use production-aware cache key
-    const cacheKey = isProduction
-      ? `file:resolve:published:${releaseId ?? "latest"}:${normalizedPath}`
-      : `file:resolve:${this.client.getRequestBranch() || "main"}:${normalizedPath}`;
+    const ctx = this.contextProvider?.getContentContext();
+    const cacheKey = `${buildStatCacheKeyPrefix(ctx)}:resolve:${normalizedPath}`;
 
     logger.debug("[StatOperations] resolveFile called", {
       basePath,
       normalizedPath,
-      isProduction,
-      releaseId,
       cacheKey,
     });
 
@@ -300,9 +287,10 @@ export class StatOperations {
       }
     }
 
-    // 5. If not in cache, search via API pattern (only in development mode)
+    // 6. If not in cache, search via API pattern (only in development mode)
     // In production mode, we only have published files, so skip the search
-    if (!isProduction) {
+    const isPublished = ctx?.sourceType !== "branch";
+    if (!isPublished) {
       const searchPattern = `${pathWithoutExt}.*`;
       logger.debug("[StatOperations] Searching for file pattern (dev mode)", {
         pattern: searchPattern,

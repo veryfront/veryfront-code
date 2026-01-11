@@ -2,23 +2,78 @@ import { logger } from "@veryfront/utils";
 import { requestWithRetry, type RetryConfig } from "./retry-handler.ts";
 import { VeryfrontAPIError } from "./types.ts";
 import {
-  GetFileContentResponseSchema,
-  GetPublishedFileContentResponseSchema,
-  type ListFilesResponse,
-  ListFilesResponseSchema,
+  BranchFileDetailSchema,
+  EnvironmentFileDetailSchema,
+  ListBranchFilesResponseSchema,
+  ListEnvironmentFilesResponseSchema,
   ListProjectsResponseSchema,
-  ListPublishedFilesResponseSchema,
+  ListReleaseFilesResponseSchema,
   type LookupDomainResponse,
   LookupDomainResponseSchema,
   type Project,
   type ProjectFile,
   ProjectSchema,
+  ReleaseFileDetailSchema,
 } from "./schemas.ts";
 
 /**
  * Token provider function - can return static token or dynamic per-request token.
  */
 export type TokenProvider = () => string;
+
+/**
+ * Options for listing files.
+ */
+export interface ListFilesOptions {
+  cursor?: string;
+  limit?: number;
+  pattern?: string;
+  sortBy?: "path" | "updatedAt";
+  sortOrder?: "asc" | "desc";
+}
+
+/**
+ * Result of listing files with pagination info.
+ */
+export interface FileListResult {
+  files: ProjectFile[];
+  pageInfo: {
+    hasNextPage: boolean;
+    endCursor: string | null;
+    hasPreviousPage?: boolean;
+    startCursor?: string | null;
+  };
+  releaseId?: string;
+  releaseVersion?: string | null;
+  environmentId?: string;
+  environmentName?: string;
+}
+
+/**
+ * File detail with content.
+ */
+export interface FileDetail {
+  path: string;
+  content: string;
+  id?: string;
+  versionId?: string;
+  type?: string;
+  size?: number;
+  releaseId?: string;
+  releaseVersion?: string | null;
+}
+
+// =============================================================================
+// Internal Helpers
+// =============================================================================
+
+function buildListParams(options: ListFilesOptions): URLSearchParams {
+  const { cursor, limit = 100, pattern, sortBy = "updatedAt", sortOrder = "desc" } = options;
+  const params = new URLSearchParams({ limit: String(limit), sortBy, sortOrder });
+  if (cursor) params.set("cursor", cursor);
+  if (pattern) params.set("pattern", pattern);
+  return params;
+}
 
 export class VeryfrontAPIOperations {
   private tokenProvider: TokenProvider;
@@ -29,23 +84,15 @@ export class VeryfrontAPIOperations {
     private retryConfig: RetryConfig,
     private projectId?: string,
   ) {
-    // Support both static token string and dynamic token provider
     this.tokenProvider = typeof tokenOrProvider === "string"
       ? () => tokenOrProvider
       : tokenOrProvider;
   }
 
-  /**
-   * Update the token provider for dynamic token resolution.
-   * Used when proxy provides per-request tokens via headers.
-   */
   setTokenProvider(provider: TokenProvider): void {
     this.tokenProvider = provider;
   }
 
-  /**
-   * Get the current token.
-   */
   getToken(): string {
     return this.tokenProvider();
   }
@@ -56,13 +103,16 @@ export class VeryfrontAPIOperations {
 
   getProjectId(): string {
     if (!this.projectId) {
-      const errorMsg =
-        "Veryfront API client not initialized. Call initialize() with a project ID first.";
-      logger.error("[Veryfront API]", errorMsg);
-      throw new VeryfrontAPIError(errorMsg);
+      throw new VeryfrontAPIError(
+        "Veryfront API client not initialized. Call initialize() with a project ID first.",
+      );
     }
     return this.projectId;
   }
+
+  // =============================================================================
+  // Project Operations
+  // =============================================================================
 
   async listProjects(): Promise<Project[]> {
     const raw = await this.request("/projects");
@@ -70,194 +120,300 @@ export class VeryfrontAPIOperations {
     return response.data;
   }
 
-  async getProject(projectId: string): Promise<Project> {
-    const raw = await this.request(`/projects/${projectId}`);
+  async getProject(projectRef: string): Promise<Project> {
+    const raw = await this.request(`/projects/${encodeURIComponent(projectRef)}`);
     return ProjectSchema.parse(raw);
   }
 
-  async listFiles(
-    projectId?: string,
-    cursor?: string,
-    limit = 100,
-    branch?: string | null,
-  ): Promise<ListFilesResponse> {
-    const id = projectId || this.getProjectId();
-    const params = new URLSearchParams({
-      limit: String(limit),
-      sortBy: "updatedAt",
-      sortOrder: "desc",
-    });
-    if (cursor) {
-      params.set("cursor", cursor);
-    }
-    if (branch) {
-      params.set("branch", branch);
-    }
-    const url = `/projects/${id}/files?${params}`;
-    logger.debug("[VeryfrontAPIClient] Listing files", {
-      url,
-      projectId: id,
-      limit,
-      cursor,
-      branch,
-    });
+  // =============================================================================
+  // Branch Files (draft/working copy for Studio editing)
+  // Endpoint: /projects/{projectRef}/branches/{branchName}/files[/{pathOrId}]
+  // =============================================================================
+
+  /**
+   * List files from a branch (draft/working copy).
+   */
+  async listBranchFiles(
+    projectRef: string,
+    branchName = "main",
+    options: ListFilesOptions = {},
+  ): Promise<FileListResult> {
+    const params = buildListParams(options);
+    const url = `/projects/${encodeURIComponent(projectRef)}/branches/${
+      encodeURIComponent(branchName)
+    }/files?${params}`;
+    logger.debug("[API] listBranchFiles", { projectRef, branchName, pattern: options.pattern });
 
     const raw = await this.request(url);
-    const response = ListFilesResponseSchema.parse(raw);
+    const response = ListBranchFilesResponseSchema.parse(raw);
 
-    // Map pageInfo to pagination format if needed
-    const pagination = response.pagination || (response.pageInfo
-      ? {
-        cursor: response.pageInfo.nextCursor || undefined,
-        hasMore: response.pageInfo.hasNextPage,
-      }
-      : undefined);
-
-    logger.debug("[VeryfrontAPIClient] Files listed", {
-      count: response.data?.length || 0,
-      hasMore: pagination?.hasMore,
-    });
-
-    return { data: response.data, pagination };
+    return {
+      files: response.data.map((f) => ({
+        id: f.id,
+        path: f.path,
+        content: f.content,
+        type: f.type,
+        size: f.size,
+        updatedAt: f.updatedAt,
+      })),
+      pageInfo: response.pageInfo,
+    };
   }
 
-  async listAllFiles(projectId?: string, branch?: string | null): Promise<ProjectFile[]> {
-    const id = projectId || this.getProjectId();
+  /**
+   * List all files from a branch using pagination.
+   */
+  async listAllBranchFiles(
+    projectRef: string,
+    branchName = "main",
+    options: Omit<ListFilesOptions, "cursor"> = {},
+  ): Promise<ProjectFile[]> {
     const allFiles: ProjectFile[] = [];
     let cursor: string | undefined;
 
-    // Use high limit (10000) to minimize API calls for large projects
     do {
-      const response = await this.listFiles(id, cursor, 10000, branch);
-      allFiles.push(...response.data);
-      cursor = response.pagination?.hasMore ? response.pagination.cursor : undefined;
+      const result = await this.listBranchFiles(projectRef, branchName, {
+        ...options,
+        cursor,
+        limit: 10000,
+      });
+      allFiles.push(...result.files);
+      cursor = result.pageInfo.hasNextPage ? (result.pageInfo.endCursor ?? undefined) : undefined;
     } while (cursor);
 
     return allFiles;
   }
 
-  async searchFiles(
-    pattern: string,
-    projectId?: string,
-    branch?: string | null,
-  ): Promise<ProjectFile[]> {
-    const id = projectId || this.getProjectId();
-    const params = new URLSearchParams({
-      pattern,
-      limit: "100",
-    });
-    if (branch) {
-      params.set("branch", branch);
-    }
-    const url = `/projects/${id}/files?${params}`;
-    logger.debug("[VeryfrontAPIClient] Searching files", { url, pattern, projectId: id, branch });
+  /**
+   * Get a file from a branch by path or UUID.
+   */
+  async getBranchFile(
+    projectRef: string,
+    branchName: string,
+    pathOrId: string,
+  ): Promise<FileDetail> {
+    const url = `/projects/${encodeURIComponent(projectRef)}/branches/${
+      encodeURIComponent(branchName)
+    }/files/${encodeURIComponent(pathOrId)}`;
+    logger.debug("[API] getBranchFile", { projectRef, branchName, pathOrId });
 
     const raw = await this.request(url);
-    const response = ListFilesResponseSchema.parse(raw);
+    const response = BranchFileDetailSchema.parse(raw);
 
-    logger.debug("[VeryfrontAPIClient] Files search complete", {
-      pattern,
-      count: response.data?.length || 0,
+    return {
+      path: response.path,
+      content: response.content,
+      id: response.id,
+      type: response.type,
+      size: response.size,
+    };
+  }
+
+  // =============================================================================
+  // Environment Files (deployed content - production, preview, staging)
+  // Endpoint: /projects/{projectRef}/environments/{environmentName}/files[/{pathOrId}]
+  // =============================================================================
+
+  /**
+   * List files from an environment (deployed release).
+   */
+  async listEnvironmentFiles(
+    projectRef: string,
+    environmentName = "production",
+    options: ListFilesOptions = {},
+  ): Promise<FileListResult> {
+    const params = buildListParams(options);
+    const url = `/projects/${encodeURIComponent(projectRef)}/environments/${
+      encodeURIComponent(environmentName)
+    }/files?${params}`;
+    logger.debug("[API] listEnvironmentFiles", {
+      projectRef,
+      environmentName,
+      pattern: options.pattern,
     });
 
-    return response.data || [];
-  }
-
-  async getFileContent(path: string, projectId?: string, branch?: string | null): Promise<string> {
-    const id = projectId || this.getProjectId();
-    const encodedPath = encodeURIComponent(path);
-
-    // Build URL with optional branch query param
-    let url = `/projects/${id}/files/${encodedPath}`;
-    if (branch) {
-      url += `?branch=${encodeURIComponent(branch)}`;
-    }
-
     const raw = await this.request(url);
+    const response = ListEnvironmentFilesResponseSchema.parse(raw);
 
-    // Handle both JSON response and raw text response
-    if (typeof raw === "string") {
-      return raw;
-    }
-    const response = GetFileContentResponseSchema.parse(raw);
-    return response.content;
-  }
-
-  async getFileMetadata(path: string, projectId?: string): Promise<ProjectFile | null> {
-    const id = projectId || this.getProjectId();
-
-    const files = await this.listAllFiles(id);
-    return files.find((f) => f.path === path) || null;
-  }
-
-  async fileExists(path: string, projectId?: string): Promise<boolean> {
-    const metadata = await this.getFileMetadata(path, projectId);
-    return metadata !== null;
+    return {
+      files: response.data.map((f) => ({
+        id: f.id,
+        versionId: f.versionId,
+        path: f.path,
+        content: f.content,
+        type: f.type,
+        size: f.size,
+        updatedAt: f.updatedAt,
+      })),
+      pageInfo: response.pageInfo,
+      releaseId: response.releaseId,
+      releaseVersion: response.releaseVersion,
+      environmentId: response.environmentId,
+      environmentName: response.environmentName,
+    };
   }
 
   /**
-   * List all published files from a release.
-   * Used for production rendering (JIT mode).
+   * List all files from an environment using pagination.
    */
-  async listPublishedFiles(
-    projectId?: string,
-    releaseId?: string,
+  async listAllEnvironmentFiles(
+    projectRef: string,
+    environmentName = "production",
+    options: Omit<ListFilesOptions, "cursor"> = {},
   ): Promise<ProjectFile[]> {
-    const id = projectId || this.getProjectId();
+    const allFiles: ProjectFile[] = [];
+    let cursor: string | undefined;
 
-    let url = `/projects/${id}/published/files`;
-    if (releaseId) {
-      url += `?releaseId=${encodeURIComponent(releaseId)}`;
-    }
+    do {
+      const result = await this.listEnvironmentFiles(projectRef, environmentName, {
+        ...options,
+        cursor,
+        limit: 10000,
+      });
+      allFiles.push(...result.files);
+      cursor = result.pageInfo.hasNextPage ? (result.pageInfo.endCursor ?? undefined) : undefined;
+    } while (cursor);
 
-    logger.debug("[VeryfrontAPIClient] Listing published files", { url, projectId: id, releaseId });
+    logger.debug("[API] listAllEnvironmentFiles", {
+      projectRef,
+      environmentName,
+      totalFiles: allFiles.length,
+    });
 
-    const raw = await this.request(url);
-    const response = ListPublishedFilesResponseSchema.parse(raw);
-
-    return response.data || [];
+    return allFiles;
   }
 
   /**
-   * Get published file content from a release.
-   * Used for production rendering (JIT mode).
+   * Get a file from an environment by path or UUID.
    */
-  async getPublishedFileContent(
-    path: string,
-    projectId?: string,
-    releaseId?: string,
-  ): Promise<string> {
-    const id = projectId || this.getProjectId();
-    const encodedPath = encodeURIComponent(path);
-
-    let url = `/projects/${id}/published/files/${encodedPath}`;
-    if (releaseId) {
-      url += `?releaseId=${encodeURIComponent(releaseId)}`;
-    }
-
-    logger.debug("[VeryfrontAPIClient] Getting published file content", { url, path, releaseId });
+  async getEnvironmentFile(
+    projectRef: string,
+    environmentName: string,
+    pathOrId: string,
+  ): Promise<FileDetail> {
+    const url = `/projects/${encodeURIComponent(projectRef)}/environments/${
+      encodeURIComponent(environmentName)
+    }/files/${encodeURIComponent(pathOrId)}`;
+    logger.debug("[API] getEnvironmentFile", { projectRef, environmentName, pathOrId });
 
     const raw = await this.request(url);
-    const response = GetPublishedFileContentResponseSchema.parse(raw);
+    const response = EnvironmentFileDetailSchema.parse(raw);
 
-    return response.content;
+    return {
+      path: response.path,
+      content: response.content,
+      id: response.id,
+      versionId: response.versionId,
+      releaseId: response.releaseId,
+      releaseVersion: response.releaseVersion,
+    };
   }
+
+  // =============================================================================
+  // Release Files (specific version for rollbacks/comparisons)
+  // Endpoint: /projects/{projectRef}/releases/{version}/files[/{pathOrId}]
+  // =============================================================================
+
+  /**
+   * List files from a specific release.
+   */
+  async listReleaseFiles(
+    projectRef: string,
+    version = "latest",
+    options: ListFilesOptions = {},
+  ): Promise<FileListResult> {
+    const params = buildListParams(options);
+    const url = `/projects/${encodeURIComponent(projectRef)}/releases/${
+      encodeURIComponent(version)
+    }/files?${params}`;
+    logger.debug("[API] listReleaseFiles", { projectRef, version, pattern: options.pattern });
+
+    const raw = await this.request(url);
+    const response = ListReleaseFilesResponseSchema.parse(raw);
+
+    return {
+      files: response.data.map((f) => ({
+        id: f.id,
+        versionId: f.versionId,
+        path: f.path,
+        content: f.content,
+        type: f.type,
+        size: f.size,
+        updatedAt: f.updatedAt,
+      })),
+      pageInfo: response.pageInfo,
+      releaseId: response.releaseId,
+      releaseVersion: response.releaseVersion,
+    };
+  }
+
+  /**
+   * List all files from a release using pagination.
+   */
+  async listAllReleaseFiles(
+    projectRef: string,
+    version = "latest",
+    options: Omit<ListFilesOptions, "cursor"> = {},
+  ): Promise<ProjectFile[]> {
+    const allFiles: ProjectFile[] = [];
+    let cursor: string | undefined;
+
+    do {
+      const result = await this.listReleaseFiles(projectRef, version, {
+        ...options,
+        cursor,
+        limit: 10000,
+      });
+      allFiles.push(...result.files);
+      cursor = result.pageInfo.hasNextPage ? (result.pageInfo.endCursor ?? undefined) : undefined;
+    } while (cursor);
+
+    return allFiles;
+  }
+
+  /**
+   * Get a file from a release by path or UUID.
+   */
+  async getReleaseFile(
+    projectRef: string,
+    version: string,
+    pathOrId: string,
+  ): Promise<FileDetail> {
+    const url = `/projects/${encodeURIComponent(projectRef)}/releases/${
+      encodeURIComponent(version)
+    }/files/${encodeURIComponent(pathOrId)}`;
+    logger.debug("[API] getReleaseFile", { projectRef, version, pathOrId });
+
+    const raw = await this.request(url);
+    const response = ReleaseFileDetailSchema.parse(raw);
+
+    return {
+      path: response.path,
+      content: response.content,
+      id: response.id,
+      versionId: response.versionId,
+      releaseId: response.releaseId,
+      releaseVersion: response.releaseVersion,
+    };
+  }
+
+  // =============================================================================
+  // Domain Lookup
+  // =============================================================================
 
   /**
    * Look up project info by custom domain.
-   * Used for JIT rendering of custom domain production sites.
+   * Returns project details and environment info for routing.
    */
   async lookupProjectByDomain(domain: string): Promise<LookupDomainResponse | null> {
-    const encodedDomain = encodeURIComponent(domain);
-    const url = `/lookup/domain/${encodedDomain}`;
-
-    logger.debug("[VeryfrontAPIClient] Looking up project by domain", { domain });
+    const url = `/lookup/domain/${encodeURIComponent(domain)}`;
+    logger.debug("[API] lookupProjectByDomain", { domain });
 
     try {
       const raw = await this.request(url);
       const response = LookupDomainResponseSchema.parse(raw);
 
-      logger.debug("[VeryfrontAPIClient] Domain lookup result", {
+      logger.debug("[API] Domain lookup result", {
         domain,
         projectSlug: response.projectSlug,
         environment: response.environment?.name,
@@ -265,65 +421,21 @@ export class VeryfrontAPIOperations {
 
       return response;
     } catch (error) {
-      // 404 means no project found for domain
       if (error instanceof Error && error.message.includes("404")) {
-        logger.debug("[VeryfrontAPIClient] No project found for domain", { domain });
+        logger.debug("[API] No project found for domain", { domain });
         return null;
       }
       throw error;
     }
   }
 
-  /**
-   * Get a file by its entity ID (UUID).
-   * Used to resolve layout UUIDs to file paths and content.
-   * Uses the files endpoint: /projects/{id}/files/{entityId}
-   */
-  async getFileById(
-    entityId: string,
-    projectId?: string,
-    branch?: string | null,
-  ): Promise<{ path: string; content: string } | null> {
-    const id = projectId || this.getProjectId();
+  // =============================================================================
+  // Internal
+  // =============================================================================
 
-    // Build URL with optional branch query param
-    let url = `/projects/${id}/files/${entityId}`;
-    if (branch) {
-      url += `?branch=${encodeURIComponent(branch)}`;
-    }
-
-    logger.debug("[VeryfrontAPIClient] Getting file by ID", { url, entityId, projectId: id });
-
-    try {
-      const raw = await this.request(url);
-      const response = GetFileContentResponseSchema.parse(raw);
-
-      logger.debug("[VeryfrontAPIClient] File found by ID", {
-        entityId,
-        path: response.path,
-        contentLength: response.content.length,
-      });
-
-      return { path: response.path, content: response.content };
-    } catch (error) {
-      // 404 means file not found
-      if (
-        error instanceof Error &&
-        (error.message.includes("404") || error.message.includes("NOT_FOUND"))
-      ) {
-        logger.debug("[VeryfrontAPIClient] File not found by ID", { entityId });
-        return null;
-      }
-      throw error;
-    }
-  }
-
-  private async request(
-    endpoint: string,
-    options: { returnText?: boolean } = {},
-  ): Promise<unknown> {
+  private async request(endpoint: string): Promise<unknown> {
     const url = `${this.apiBaseUrl}${endpoint}`;
     const token = this.tokenProvider();
-    return await requestWithRetry(url, token, this.retryConfig, options);
+    return await requestWithRetry(url, token, this.retryConfig);
   }
 }

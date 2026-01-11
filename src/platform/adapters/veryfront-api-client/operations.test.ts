@@ -112,34 +112,64 @@ describe("VeryfrontAPIOperations", () => {
       assertEquals(typeof ops.getProject, "function");
     });
 
-    it("should have listFiles method", () => {
+    it("should have listBranchFiles method", () => {
       const ops = new VeryfrontAPIOperations(
         "https://api.example.com",
         "token",
         { maxRetries: 3, initialDelay: 100, maxDelay: 1000 },
       );
-      assertExists(ops.listFiles);
-      assertEquals(typeof ops.listFiles, "function");
+      assertExists(ops.listBranchFiles);
+      assertEquals(typeof ops.listBranchFiles, "function");
     });
 
-    it("should have getFileContent method", () => {
+    it("should have getBranchFile method", () => {
       const ops = new VeryfrontAPIOperations(
         "https://api.example.com",
         "token",
         { maxRetries: 3, initialDelay: 100, maxDelay: 1000 },
       );
-      assertExists(ops.getFileContent);
-      assertEquals(typeof ops.getFileContent, "function");
+      assertExists(ops.getBranchFile);
+      assertEquals(typeof ops.getBranchFile, "function");
     });
 
-    it("should have listPublishedFiles method", () => {
+    it("should have listEnvironmentFiles method", () => {
       const ops = new VeryfrontAPIOperations(
         "https://api.example.com",
         "token",
         { maxRetries: 3, initialDelay: 100, maxDelay: 1000 },
       );
-      assertExists(ops.listPublishedFiles);
-      assertEquals(typeof ops.listPublishedFiles, "function");
+      assertExists(ops.listEnvironmentFiles);
+      assertEquals(typeof ops.listEnvironmentFiles, "function");
+    });
+
+    it("should have getEnvironmentFile method", () => {
+      const ops = new VeryfrontAPIOperations(
+        "https://api.example.com",
+        "token",
+        { maxRetries: 3, initialDelay: 100, maxDelay: 1000 },
+      );
+      assertExists(ops.getEnvironmentFile);
+      assertEquals(typeof ops.getEnvironmentFile, "function");
+    });
+
+    it("should have listReleaseFiles method", () => {
+      const ops = new VeryfrontAPIOperations(
+        "https://api.example.com",
+        "token",
+        { maxRetries: 3, initialDelay: 100, maxDelay: 1000 },
+      );
+      assertExists(ops.listReleaseFiles);
+      assertEquals(typeof ops.listReleaseFiles, "function");
+    });
+
+    it("should have getReleaseFile method", () => {
+      const ops = new VeryfrontAPIOperations(
+        "https://api.example.com",
+        "token",
+        { maxRetries: 3, initialDelay: 100, maxDelay: 1000 },
+      );
+      assertExists(ops.getReleaseFile);
+      assertEquals(typeof ops.getReleaseFile, "function");
     });
 
     it("should have lookupProjectByDomain method", () => {

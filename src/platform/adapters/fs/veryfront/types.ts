@@ -66,6 +66,32 @@ export interface ContextualFSAdapter extends FSAdapter {
   ): Promise<T>;
 }
 
+/**
+ * Content source configuration for determining where to fetch files from.
+ *
+ * - branch: Draft content from a git branch (default: "main")
+ * - environment: Published content from a named environment ("production", "preview", "staging")
+ * - domain: Resolve environment via domain lookup API
+ * - release: Specific release by ID or "latest"
+ */
+export type ContentSource =
+  | { type: "branch"; branch?: string }
+  | { type: "environment"; name: string }
+  | { type: "domain"; domain: string }
+  | { type: "release"; releaseId?: string };
+
+/**
+ * Resolved content context after initialization.
+ * Used for cache keys and API calls.
+ */
+export interface ResolvedContentContext {
+  sourceType: "branch" | "environment" | "release";
+  projectSlug: string;
+  branch?: string;
+  environmentName?: string;
+  releaseId?: string;
+}
+
 export interface FSAdapterConfig {
   type?: "local" | "veryfront-api" | "memory" | "github";
   projectDir?: string;
@@ -76,8 +102,14 @@ export interface FSAdapterConfig {
     projectId?: string;
     baseUrl?: string;
     proxyMode?: boolean;
-    productionMode?: boolean;
-    releaseId?: string;
+    /**
+     * Content source configuration.
+     * - { type: "branch", branch: "main" } - Draft content (default)
+     * - { type: "environment", name: "production" } - Published to environment
+     * - { type: "domain", domain: "example.veryfront.com" } - Resolve via domain lookup
+     * - { type: "release", releaseId: "uuid" } - Specific release
+     */
+    contentSource?: ContentSource;
     cache?: {
       enabled?: boolean;
       ttl?: number;
@@ -98,8 +130,8 @@ export interface VeryfrontConfig {
   projectSlug: string;
   projectId?: string;
   proxyMode?: boolean;
-  productionMode?: boolean;
-  releaseId?: string;
+  /** Content source configuration */
+  contentSource: ContentSource;
   cache: {
     enabled: boolean;
     ttl: number;
@@ -149,6 +181,14 @@ export interface InvalidationCallbacks {
   triggerReload?: (changedPaths?: string[]) => void;
 }
 
+/**
+ * Resolve content source from config.
+ */
+function resolveContentSource(veryfront: NonNullable<FSAdapterConfig["veryfront"]>): ContentSource {
+  // Return configured content source or default to branch mode
+  return veryfront.contentSource ?? { type: "branch", branch: "main" };
+}
+
 export function createVeryfrontConfig(config: FSAdapterConfig): VeryfrontConfig {
   if (!config.veryfront) {
     throw toError(createError({
@@ -163,8 +203,7 @@ export function createVeryfrontConfig(config: FSAdapterConfig): VeryfrontConfig 
     projectSlug: config.veryfront.projectSlug || "",
     projectId: config.veryfront.projectId,
     proxyMode: config.veryfront.proxyMode,
-    productionMode: config.veryfront.productionMode,
-    releaseId: config.veryfront.releaseId,
+    contentSource: resolveContentSource(config.veryfront),
     cache: {
       enabled: true,
       ttl: 60_000,

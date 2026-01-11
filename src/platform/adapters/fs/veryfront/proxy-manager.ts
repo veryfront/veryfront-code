@@ -1,6 +1,6 @@
 import { logger } from "@veryfront/utils";
 import { VeryfrontFSAdapter } from "./index.ts";
-import type { CacheStats, FSAdapterConfig } from "./types.ts";
+import type { CacheStats, FSAdapterConfig, ResolvedContentContext } from "./types.ts";
 
 interface ProjectAdapter {
   adapter: VeryfrontFSAdapter;
@@ -135,10 +135,13 @@ export class ProxyFSAdapterManager {
 
     const adapter = new VeryfrontFSAdapter(config);
 
-    // Apply production mode before initialization
-    if (productionMode) {
-      adapter.setProductionMode(productionMode, releaseId ?? undefined);
-    }
+    // Set content context based on production mode before initialization
+    const context: ResolvedContentContext = productionMode
+      ? releaseId
+        ? { sourceType: "release", projectSlug, releaseId }
+        : { sourceType: "environment", projectSlug, environmentName: "production" }
+      : { sourceType: "branch", projectSlug, branch: "main" };
+    adapter.setContentContext(context);
 
     const projectAdapter: ProjectAdapter = {
       adapter,

@@ -4,16 +4,10 @@
  * Re-exports types from schemas.ts and defines config/error types.
  */
 
-// Re-export all types from schemas
 export type {
-  GetFileContentResponse,
-  GetProjectResponse,
-  GetPublishedFileContentResponse,
-  ListFilesResponse,
-  ListProjectsResponse,
-  ListPublishedFilesResponse,
+  Environment,
   LookupDomainResponse,
-  Pagination,
+  PageInfo,
   Project,
   ProjectFile,
 } from "./schemas.ts";

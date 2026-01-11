@@ -1,10 +1,12 @@
 import { logger } from "@veryfront/utils";
 import type {
   CacheStats,
+  ContentSource,
   DirectoryEntry,
   FSAdapter,
   FSAdapterConfig,
   InvalidationCallbacks,
+  ResolvedContentContext,
 } from "./types.ts";
 import { createVeryfrontConfig } from "./types.ts";
 import type { FileInfo } from "../../base.ts";
@@ -16,6 +18,7 @@ import { PathNormalizer } from "./path-normalizer.ts";
 import { ReadOperations } from "./read-operations.ts";
 import { DirectoryOperations } from "./directory-operations.ts";
 import { StatOperations } from "./stat-operations.ts";
+import { buildFileListCacheKey } from "./cache-keys.ts";
 
 const INVALIDATION_DEBOUNCE_MS = 100;
 const WS_RECONNECT_DELAY_MS = 5000;
@@ -40,10 +43,15 @@ export class VeryfrontFSAdapter implements FSAdapter {
   private pendingChangedPaths: Set<string> = new Set();
   private apiBaseUrl: string;
   private apiToken: string;
-  private requestBranch: string | null = null;
-  private productionMode = false;
-  private releaseId: string | null = null;
+  private projectSlug: string;
   private invalidationCallbacks: InvalidationCallbacks;
+  /** Per-request branch override (for branch preview URLs) */
+  private requestBranch: string | null = null;
+
+  /** Content source configuration from config */
+  private contentSource: ContentSource;
+  /** Resolved content context after initialization (includes resolved releaseId for env/domain) */
+  private contentContext: ResolvedContentContext | null = null;
 
   constructor(config: FSAdapterConfig) {
     // Store invalidation callbacks with no-op defaults
@@ -52,8 +60,8 @@ export class VeryfrontFSAdapter implements FSAdapter {
 
     this.apiBaseUrl = veryfrontConfig.apiBaseUrl;
     this.apiToken = veryfrontConfig.apiToken;
-    this.productionMode = veryfrontConfig.productionMode ?? false;
-    this.releaseId = veryfrontConfig.releaseId ?? null;
+    this.projectSlug = veryfrontConfig.projectSlug;
+    this.contentSource = veryfrontConfig.contentSource;
 
     this.client = new VeryfrontAPIClient({
       apiBaseUrl: veryfrontConfig.apiBaseUrl,
@@ -66,31 +74,47 @@ export class VeryfrontFSAdapter implements FSAdapter {
 
     this.cache = new FileCache(veryfrontConfig.cache as FileCacheOptions);
     this.normalizer = new PathNormalizer(config.projectDir);
-    const productionContext = {
-      isProductionMode: () => this.productionMode,
-      getReleaseId: () => this.releaseId,
+
+    // Create content context getter for operations (resolved lazily during init)
+    const contentContextGetter = {
+      isProductionMode: () => this.contentContext?.sourceType !== "branch",
+      getReleaseId: () => this.contentContext?.releaseId ?? null,
+      getContentContext: () => this.contentContext,
     };
+
     // Create statOps first so readOps can use its getOriginalApiPath method
-    this.statOps = new StatOperations(this.client, this.cache, this.normalizer, productionContext);
+    this.statOps = new StatOperations(
+      this.client,
+      this.cache,
+      this.normalizer,
+      contentContextGetter,
+    );
     this.readOps = new ReadOperations(
       this.client,
       this.cache,
       this.normalizer,
-      productionContext,
+      contentContextGetter,
       // Pass path resolver for normalized paths like "pages/index.mdx" -> "pages/"
       (path) => this.statOps.getOriginalApiPath(path),
+      // Pass file list cache getter to avoid redundant API calls when content is already fetched
+      () => {
+        if (!this.contentContext) return undefined;
+        const cacheKey = buildFileListCacheKey(this.contentContext);
+        return this.cache.get(cacheKey) as Array<{ path: string; content?: string }> | undefined;
+      },
     );
     this.dirOps = new DirectoryOperations(
       this.client,
       this.cache,
       this.normalizer,
-      productionContext,
+      contentContextGetter,
     );
 
     logger.info("[VeryfrontFSAdapter] Created", {
       apiBaseUrl: veryfrontConfig.apiBaseUrl,
       projectSlug: veryfrontConfig.projectSlug,
       projectDir: config.projectDir,
+      contentSource: this.contentSource,
       cacheEnabled: veryfrontConfig.cache.enabled,
     });
   }
@@ -98,7 +122,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
   async initialize(): Promise<void> {
     if (this.initialized) return;
 
-    logger.debug("[VeryfrontFSAdapter] Initializing...");
+    logger.debug("[VeryfrontFSAdapter] Initializing...", { contentSource: this.contentSource });
 
     await this.client.initialize();
 
@@ -110,46 +134,117 @@ export class VeryfrontFSAdapter implements FSAdapter {
       layout: this.projectData.layout,
     });
 
-    // In production mode, skip draft file fetching and WebSocket connection
-    // Published content is immutable and doesn't need real-time updates
-    if (this.productionMode) {
-      logger.debug("[VeryfrontFSAdapter] Production mode - skipping WebSocket and draft files");
-      const cacheKey = `files:published:${this.releaseId ?? "latest"}`;
-      const files = await this.client.listPublishedFiles(undefined, this.releaseId ?? undefined);
-      this.cache.set(cacheKey, files);
-      logger.debug("[VeryfrontFSAdapter] Fetched published files", {
-        count: files.length,
-        releaseId: this.releaseId ?? "latest",
-      });
+    // Resolve content source to content context
+    this.contentContext = await this.resolveContentSource();
 
-      this.initialized = true;
-      logger.info("[VeryfrontFSAdapter] Initialized (production mode)", {
-        projectId: this.client.getProjectId(),
-        files: files.length,
-        releaseId: this.releaseId ?? "latest",
-      });
-      return;
-    }
+    logger.info("[VeryfrontFSAdapter] Content context resolved", {
+      sourceType: this.contentContext.sourceType,
+      projectSlug: this.contentContext.projectSlug,
+      branch: this.contentContext.branch,
+      environmentName: this.contentContext.environmentName,
+      releaseId: this.contentContext.releaseId,
+    });
 
-    // Preview/development mode: fetch draft files and connect WebSocket
-    const branch = this.requestBranch || "main";
-    const cacheKey = `files:all:${branch}`;
-    logger.debug("[VeryfrontFSAdapter] Fetching all files from API", { branch });
-    const files = await this.client.listAllFiles();
+    // Fetch file list based on content source type
+    const cacheKey = buildFileListCacheKey(this.contentContext);
+    const files = await this.fetchFileList();
     this.cache.set(cacheKey, files);
+
     logger.debug("[VeryfrontFSAdapter] Fetched files during initialization", {
       count: files.length,
-      branch,
+      cacheKey,
     });
 
     this.initialized = true;
-    logger.info("[VeryfrontFSAdapter] Initialized", {
-      projectId: this.client.getProjectId(),
-      files: files.length,
-    });
 
-    // Connect to WebSocket for real-time cache invalidation (preview mode only)
-    this.connectWebSocket(projectId);
+    // Connect to WebSocket for real-time cache invalidation (branch mode only)
+    // Environment/release/domain modes serve immutable published content
+    if (this.contentContext.sourceType === "branch") {
+      logger.info("[VeryfrontFSAdapter] Initialized (branch mode)", {
+        projectId: this.client.getProjectId(),
+        files: files.length,
+        branch: this.contentContext.branch,
+      });
+      this.connectWebSocket(projectId);
+    } else {
+      logger.info("[VeryfrontFSAdapter] Initialized (published mode)", {
+        projectId: this.client.getProjectId(),
+        files: files.length,
+        sourceType: this.contentContext.sourceType,
+        environmentName: this.contentContext.environmentName,
+        releaseId: this.contentContext.releaseId,
+      });
+    }
+  }
+
+  /**
+   * Resolve content source config to a concrete content context.
+   * For domain/environment types, this may involve API calls.
+   */
+  private async resolveContentSource(): Promise<ResolvedContentContext> {
+    switch (this.contentSource.type) {
+      case "branch":
+        return {
+          sourceType: "branch",
+          projectSlug: this.projectSlug,
+          branch: this.contentSource.branch ?? "main",
+        };
+
+      case "environment": {
+        // Fetch from environment to get the deployed release ID
+        const envResult = await this.client.listEnvironmentFiles(this.contentSource.name);
+        return {
+          sourceType: "environment",
+          projectSlug: this.projectSlug,
+          environmentName: this.contentSource.name,
+          releaseId: envResult.releaseId,
+        };
+      }
+
+      case "domain": {
+        // Lookup domain to resolve project + environment + release
+        const lookup = await this.client.lookupProjectByDomain(this.contentSource.domain);
+        if (!lookup) {
+          throw new Error(`Domain lookup failed for: ${this.contentSource.domain}`);
+        }
+        return {
+          sourceType: "environment",
+          projectSlug: lookup.projectSlug,
+          environmentName: lookup.environment?.name ?? "production",
+          releaseId: lookup.releaseId ?? undefined,
+        };
+      }
+
+      case "release":
+        return {
+          sourceType: "release",
+          projectSlug: this.projectSlug,
+          releaseId: this.contentSource.releaseId ?? "latest",
+        };
+    }
+  }
+
+  /**
+   * Fetch file list based on current content context.
+   */
+  private async fetchFileList(): Promise<Array<{ path: string; content?: string }>> {
+    if (!this.contentContext) {
+      throw new Error("Content context not resolved");
+    }
+
+    switch (this.contentContext.sourceType) {
+      case "branch":
+        return await this.client.listAllFiles();
+
+      case "environment": {
+        // Use listAllEnvironmentFiles to paginate through ALL files
+        // listEnvironmentFiles only returns a single page (default 100)
+        return await this.client.listAllEnvironmentFiles(this.contentContext.environmentName!);
+      }
+
+      case "release":
+        return await this.client.listPublishedFiles(undefined, this.contentContext.releaseId);
+    }
   }
 
   private connectWebSocket(projectId: string): void {
@@ -320,18 +415,18 @@ export class VeryfrontFSAdapter implements FSAdapter {
     // Invalidate only the changed module paths (not all modules)
     this.invalidationCallbacks.invalidateModulePaths?.(changedPaths);
 
-    // Clear all files:all caches since file list may have changed
-    this.cache.deleteByPrefix("files:all:");
-
-    // Fetch fresh file list from API for current branch
-    const branch = this.requestBranch || "main";
-    try {
-      const files = await this.client.listAllFiles();
-      this.cache.set(`files:all:${branch}`, files);
-    } catch (error) {
-      logger.warn("[VeryfrontFSAdapter] Failed to fetch files during selective invalidation", {
-        error,
-      });
+    // Clear file list cache and refetch (only for branch mode)
+    if (this.contentContext?.sourceType === "branch") {
+      this.cache.deleteByPrefix("files:branch:");
+      try {
+        const files = await this.client.listAllFiles();
+        const cacheKey = buildFileListCacheKey(this.contentContext);
+        this.cache.set(cacheKey, files);
+      } catch (error) {
+        logger.warn("[VeryfrontFSAdapter] Failed to fetch files during selective invalidation", {
+          error,
+        });
+      }
     }
 
     // Notify browser to reload with changed paths for smart HMR
@@ -354,7 +449,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
     const contentCount = this.cache.deleteByPrefix("file:content:");
     const statCount = this.cache.deleteByPrefix("file:stat:");
     const dirCount = this.cache.deleteByPrefix("dir:entries:");
-    const filesAllCount = this.cache.deleteByPrefix("files:all:");
+    const filesListCount = this.cache.deleteByPrefix("files:");
     this.statOps.clearIndex();
     this.dirOps.clearTree();
     this.invalidationCallbacks.clearSSRModuleCache?.();
@@ -367,22 +462,24 @@ export class VeryfrontFSAdapter implements FSAdapter {
       contentCacheCleared: contentCount,
       statCacheCleared: statCount,
       dirCacheCleared: dirCount,
-      filesAllCacheCleared: filesAllCount,
+      filesListCacheCleared: filesListCount,
     });
 
     // Step 2: Fetch fresh file list from API - this blocks until API has committed changes
-    // This guarantees content is ready before we trigger reload
-    const branch = this.requestBranch || "main";
-    try {
-      const files = await this.client.listAllFiles();
-      this.cache.set(`files:all:${branch}`, files);
-      logger.info("[VeryfrontFSAdapter] ✅ FRESH FILES FETCHED", {
-        branch,
-        fileCount: files.length,
-      });
-    } catch (error) {
-      logger.warn("[VeryfrontFSAdapter] Failed to fetch files during invalidation", { error });
-      // Still trigger reload - browser will fetch fresh content
+    // This guarantees content is ready before we trigger reload (only for branch mode)
+    if (this.contentContext?.sourceType === "branch") {
+      try {
+        const files = await this.client.listAllFiles();
+        const cacheKey = buildFileListCacheKey(this.contentContext);
+        this.cache.set(cacheKey, files);
+        logger.info("[VeryfrontFSAdapter] ✅ FRESH FILES FETCHED", {
+          cacheKey,
+          fileCount: files.length,
+        });
+      } catch (error) {
+        logger.warn("[VeryfrontFSAdapter] Failed to fetch files during invalidation", { error });
+        // Still trigger reload - browser will fetch fresh content
+      }
     }
 
     // Step 3: Trigger reload - content is now guaranteed to be available
@@ -469,9 +566,11 @@ export class VeryfrontFSAdapter implements FSAdapter {
    * Returns undefined if the entity ID is not available.
    */
   getEntityIdForPath(path: string): string | undefined {
+    if (!this.contentContext) return undefined;
+
     const normalizedPath = this.normalizer.normalize(path);
-    const branch = this.requestBranch || "main";
-    const cachedFiles = this.cache.get(`files:all:${branch}`) as
+    const cacheKey = buildFileListCacheKey(this.contentContext);
+    const cachedFiles = this.cache.get(cacheKey) as
       | Array<{ id?: string; path: string }>
       | undefined;
     if (!cachedFiles) return undefined;
@@ -487,21 +586,10 @@ export class VeryfrontFSAdapter implements FSAdapter {
    * Synchronous version - only checks cache.
    */
   getFilePathByEntityId(entityId: string): string | undefined {
-    // In production mode, check published files cache
-    if (this.productionMode) {
-      const cacheKey = `files:published:${this.releaseId ?? "latest"}`;
-      const publishedFiles = this.cache.get(cacheKey) as
-        | Array<{ id?: string; path: string }>
-        | undefined;
-      if (publishedFiles) {
-        const file = publishedFiles.find((f) => f.id === entityId);
-        if (file?.path) return file.path;
-      }
-    }
+    if (!this.contentContext) return undefined;
 
-    // Check draft files cache (development mode or fallback)
-    const branch = this.requestBranch || "main";
-    const cachedFiles = this.cache.get(`files:all:${branch}`) as
+    const cacheKey = buildFileListCacheKey(this.contentContext);
+    const cachedFiles = this.cache.get(cacheKey) as
       | Array<{ id?: string; path: string }>
       | undefined;
     if (cachedFiles) {
@@ -597,62 +685,31 @@ export class VeryfrontFSAdapter implements FSAdapter {
   }
 
   /**
-   * Enable production mode for JIT rendering.
-   * In production mode, files are fetched from published releases instead of drafts.
+   * Set content context directly (used by proxy for per-request context switching).
    */
-  setProductionMode(enabled: boolean, releaseId?: string | null): void {
-    const oldProductionMode = this.productionMode;
-    const oldReleaseId = this.releaseId;
-    const newReleaseId = releaseId ?? null;
+  setContentContext(context: ResolvedContentContext): void {
+    const oldContext = this.contentContext;
+    this.contentContext = context;
 
-    this.productionMode = enabled;
-    this.releaseId = newReleaseId;
-
-    // Clear index when productionMode or releaseId changes to force re-fetch
-    // This is critical for JIT rendering where the same adapter may be used for
-    // both preview (draft) and production (published) requests
-    const modeChanged = oldProductionMode !== enabled;
-    const releaseChanged = oldReleaseId !== newReleaseId;
-
-    if (modeChanged || releaseChanged) {
+    // Clear index when context changes to force re-fetch
+    const contextChanged = JSON.stringify(oldContext) !== JSON.stringify(context);
+    if (contextChanged) {
       this.statOps.clearIndex();
       this.dirOps.clearTree();
-      logger.info("[VeryfrontFSAdapter] Cleared index and dirTree due to mode change", {
-        oldProductionMode,
-        newProductionMode: enabled,
-        oldReleaseId: oldReleaseId ?? "null",
-        newReleaseId: newReleaseId ?? "null",
-        modeChanged,
-        releaseChanged,
+      logger.info("[VeryfrontFSAdapter] Cleared index and dirTree due to context change", {
+        oldContext,
+        newContext: context,
       });
     }
 
-    logger.info("[VeryfrontFSAdapter] Production mode set", {
-      enabled,
-      releaseId: newReleaseId ?? "latest",
-    });
+    logger.info("[VeryfrontFSAdapter] Content context set", context);
   }
 
   /**
-   * Check if production mode is enabled.
+   * Get the current content context.
    */
-  isProductionMode(): boolean {
-    return this.productionMode;
-  }
-
-  /**
-   * Get the release ID used in production mode.
-   */
-  getReleaseId(): string | null {
-    return this.releaseId;
-  }
-
-  /**
-   * Clear production mode, reverting to draft content.
-   */
-  clearProductionMode(): void {
-    this.productionMode = false;
-    this.releaseId = null;
+  getContentContext(): ResolvedContentContext | null {
+    return this.contentContext;
   }
 
   /**

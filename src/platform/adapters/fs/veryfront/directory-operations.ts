@@ -3,7 +3,8 @@ import type { DirectoryEntry } from "./types.ts";
 import type { ProjectFile, VeryfrontAPIClient } from "../../veryfront-api-client/index.ts";
 import { FileCache } from "../cache/file-cache.ts";
 import { PathNormalizer } from "./path-normalizer.ts";
-import type { ProductionModeContext } from "./read-operations.ts";
+import type { ContentContextProvider } from "./read-operations.ts";
+import { buildDirCacheKeyPrefix, buildFileListCacheKey } from "./cache-keys.ts";
 
 interface DirNode {
   files: Map<string, ProjectFile>;
@@ -18,17 +19,13 @@ export class DirectoryOperations {
     private readonly client: VeryfrontAPIClient,
     private readonly cache: FileCache,
     private readonly normalizer: PathNormalizer,
-    private readonly productionContext?: ProductionModeContext,
+    private readonly contextProvider?: ContentContextProvider,
   ) {}
 
   async readdir(path: string): Promise<DirectoryEntry[]> {
     const normalizedPath = this.normalizer.normalize(path);
-    const branch = this.client.getRequestBranch() || "main";
-    const isProduction = this.productionContext?.isProductionMode() ?? false;
-    const releaseId = this.productionContext?.getReleaseId() ?? null;
-    // Include production context in cache key to prevent mixing preview/production entries
-    const mode = isProduction ? `production:${releaseId ?? "latest"}` : `preview:${branch}`;
-    const cacheKey = `dir:entries:${mode}:${normalizedPath}`;
+    const ctx = this.contextProvider?.getContentContext();
+    const cacheKey = `${buildDirCacheKeyPrefix(ctx)}:${normalizedPath}`;
 
     const cached = this.cache.get<DirectoryEntry[]>(cacheKey);
     if (cached) {
@@ -155,36 +152,28 @@ export class DirectoryOperations {
   }
 
   private async getAllFilesRaw(): Promise<ProjectFile[]> {
-    const isProduction = this.productionContext?.isProductionMode() ?? false;
-    const releaseId = this.productionContext?.getReleaseId() ?? null;
+    const ctx = this.contextProvider?.getContentContext();
+    const cacheKey = buildFileListCacheKey(ctx);
 
-    // In production mode, use the published files cache
-    if (isProduction) {
-      const cacheKey = `files:published:${releaseId ?? "latest"}`;
-      logger.debug("[DirectoryOperations] Production mode - checking published files cache", {
-        cacheKey,
-      });
-      const cached = this.cache.get<ProjectFile[]>(cacheKey);
-      if (cached) {
-        return cached;
-      }
-      // If not cached, fetch published files
-      logger.debug("[DirectoryOperations] Fetching published files from API", { releaseId });
-      const files = await this.client.listPublishedFiles(undefined, releaseId ?? undefined);
-      this.cache.set(cacheKey, files);
-      return files;
-    }
-
-    // In development mode, use draft files
-    const branch = this.client.getRequestBranch() || "main";
-    const cacheKey = `files:all:${branch}`;
     const cached = this.cache.get<ProjectFile[]>(cacheKey);
     if (cached) {
       return cached;
     }
 
-    logger.debug("[DirectoryOperations] Fetching all files from API", { branch });
-    const files = await this.client.listAllFiles();
+    // Fetch based on source type
+    const isPublished = ctx?.sourceType !== "branch";
+    logger.debug("[DirectoryOperations] Fetching files from API", {
+      sourceType: ctx?.sourceType,
+      cacheKey,
+    });
+
+    let files: ProjectFile[];
+    if (isPublished) {
+      files = await this.client.listPublishedFiles(undefined, ctx?.releaseId ?? undefined);
+    } else {
+      files = await this.client.listAllFiles();
+    }
+
     this.cache.set(cacheKey, files);
     return files;
   }

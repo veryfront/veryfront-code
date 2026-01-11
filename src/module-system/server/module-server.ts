@@ -286,6 +286,7 @@ export async function serveModule(
         options?: { productionMode?: boolean; releaseId?: string | null },
       ) => Promise<T>;
       setRequestBranch?: (b: string | null) => void;
+      isMultiProjectMode?: () => boolean;
     };
 
     if (typeof fsWrapper.setRequestBranch === "function") {
@@ -297,7 +298,8 @@ export async function serveModule(
     }
 
     // Try to use multi-project context if available
-    if (typeof fsWrapper.runWithContext === "function") {
+    // Use isMultiProjectMode() to check support - the method exists on wrapper but throws if unsupported
+    if (typeof fsWrapper.isMultiProjectMode === "function" && fsWrapper.isMultiProjectMode()) {
       // Determine production mode: check env query param or use non-dev mode
       // In SSR context, modules are loaded from the server which runs in prod mode
       const envParam = url.searchParams.get("env");
@@ -310,7 +312,7 @@ export async function serveModule(
         productionMode: isProduction,
         releaseId: releaseId ?? null,
       });
-      return fsWrapper.runWithContext(projectSlug, "", fn, projectUUID, {
+      return fsWrapper.runWithContext!(projectSlug, "", fn, projectUUID, {
         productionMode: isProduction,
         releaseId: releaseId ?? null,
       });
@@ -483,36 +485,20 @@ async function findSourceFile(
 
   // Try the basePath with different extensions (PROJECT FILES FIRST)
   // This ensures user code takes precedence over framework lib files
-  const triedPaths: string[] = [];
   for (const ext of extensions) {
     const fullPath = join(projectDir, basePathWithoutExt + ext);
-    triedPaths.push(basePathWithoutExt + ext);
 
     try {
       // Use secure filesystem wrapper (automatic path validation)
       const stat = await secureFs.stat(fullPath);
       if (stat.isFile) {
-        serverLogger.info("[ModuleServer] Found file with extension", {
-          basePath,
-          resolvedPath: fullPath,
-          triedPaths,
-        });
+        serverLogger.debug("[ModuleServer] Found file", { basePath, resolvedPath: fullPath });
         return { path: fullPath, isFrameworkFile: false };
       }
-    } catch (error) {
-      // Log the error for debugging - important to understand why files aren't being found
-      serverLogger.info("[ModuleServer] stat failed for extension", {
-        fullPath,
-        error: error instanceof Error ? error.message : String(error),
-      });
+    } catch {
       // Continue trying next extension
     }
   }
-  serverLogger.info("[ModuleServer] Extension resolution failed", {
-    basePath,
-    basePathWithoutExt,
-    triedPaths,
-  });
 
   // For paths starting with common directory prefixes (components/, pages/, etc.),
   // also try without the prefix since API files may be stored at root level
