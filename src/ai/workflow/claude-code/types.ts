@@ -476,3 +476,183 @@ export interface ClaudeCodeStreamingConfig {
   /** Debounce text deltas (ms) - combines rapid chunks */
   textDeltaDebounce?: number;
 }
+
+// =============================================================================
+// Bidirectional Communication Types (WebSocket)
+// =============================================================================
+
+/**
+ * Client command types for WebSocket communication
+ */
+export type ClientCommandType =
+  | "cancel"
+  | "approve"
+  | "reject"
+  | "input"
+  | "ping";
+
+/**
+ * Base client command interface
+ */
+export interface ClientCommandBase {
+  /** Command type */
+  type: ClientCommandType;
+  /** Timestamp */
+  timestamp: number;
+  /** Run ID */
+  runId: string;
+}
+
+/**
+ * Cancel the running agent
+ */
+export interface CancelCommand extends ClientCommandBase {
+  type: "cancel";
+  /** Optional reason for cancellation */
+  reason?: string;
+}
+
+/**
+ * Approve a pending tool call
+ */
+export interface ApproveCommand extends ClientCommandBase {
+  type: "approve";
+  /** Tool call ID to approve */
+  toolCallId: string;
+}
+
+/**
+ * Reject a pending tool call
+ */
+export interface RejectCommand extends ClientCommandBase {
+  type: "reject";
+  /** Tool call ID to reject */
+  toolCallId: string;
+  /** Reason for rejection */
+  reason?: string;
+}
+
+/**
+ * Send user input to the agent
+ */
+export interface InputCommand extends ClientCommandBase {
+  type: "input";
+  /** User input content */
+  content: string;
+}
+
+/**
+ * Keepalive ping
+ */
+export interface PingCommand extends ClientCommandBase {
+  type: "ping";
+}
+
+/**
+ * Union of all client commands
+ */
+export type ClientCommand =
+  | CancelCommand
+  | ApproveCommand
+  | RejectCommand
+  | InputCommand
+  | PingCommand;
+
+/**
+ * Handler for client commands
+ */
+export type ClientCommandHandler = (command: ClientCommand) => void | Promise<void>;
+
+/**
+ * Approval request event (sent to client when tool needs approval)
+ */
+export interface ApprovalRequestEvent extends ClaudeCodeEventBase {
+  type: "approval_request";
+  /** Tool call awaiting approval */
+  toolCallId: string;
+  /** Tool name */
+  toolName: string;
+  /** Tool input */
+  input: Record<string, unknown>;
+  /** Why approval is needed */
+  reason: string;
+  /** Timeout for approval (ms) */
+  timeout?: number;
+}
+
+/**
+ * Input request event (sent to client when agent needs user input)
+ */
+export interface InputRequestEvent extends ClaudeCodeEventBase {
+  type: "input_request";
+  /** Prompt for the user */
+  prompt: string;
+  /** Optional default value */
+  defaultValue?: string;
+  /** Timeout for input (ms) */
+  timeout?: number;
+}
+
+/**
+ * Pong response to ping
+ */
+export interface PongEvent extends ClaudeCodeEventBase {
+  type: "pong";
+}
+
+/**
+ * Cancelled event
+ */
+export interface CancelledEvent extends ClaudeCodeEventBase {
+  type: "cancelled";
+  /** Reason for cancellation */
+  reason?: string;
+}
+
+/**
+ * Extended event type including bidirectional events
+ */
+export type ClaudeCodeEventTypeExtended =
+  | ClaudeCodeEventType
+  | "approval_request"
+  | "input_request"
+  | "pong"
+  | "cancelled";
+
+/**
+ * Extended event union including bidirectional events
+ */
+export type ClaudeCodeEventExtended =
+  | ClaudeCodeEvent
+  | ApprovalRequestEvent
+  | InputRequestEvent
+  | PongEvent
+  | CancelledEvent;
+
+/**
+ * Bidirectional publisher interface (WebSocket)
+ */
+export interface BidirectionalPublisher extends ClaudeCodeEventPublisher {
+  /** Subscribe to client commands */
+  onCommand(handler: ClientCommandHandler): () => void;
+
+  /** Send an event to the client */
+  send(event: ClaudeCodeEventExtended): void | Promise<void>;
+}
+
+/**
+ * Tool approval configuration
+ */
+export interface ToolApprovalConfig {
+  /** Tools that require approval before execution */
+  requireApproval?: string[];
+
+  /** Patterns for commands that require approval (for bash) */
+  dangerousPatterns?: RegExp[];
+
+  /** Auto-approve after timeout (ms), or reject if undefined */
+  autoApproveTimeout?: number;
+
+  /** Default action on timeout: 'approve' | 'reject' */
+  timeoutAction?: "approve" | "reject";
+}

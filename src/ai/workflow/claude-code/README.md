@@ -522,6 +522,243 @@ function AgentViewer({ runId }: { runId: string }) {
 | `SSEEventPublisher` | Direct HTTP streaming |
 | `CallbackEventPublisher` | Custom handling |
 
+## Bidirectional Streaming (WebSocket)
+
+For interactive features like cancellation, approval flows, and user input, use WebSocket instead of SSE.
+
+### SSE vs WebSocket
+
+```
+SSE (One-way):
+┌──────────┐                    ┌──────────┐
+│  Client  │◄────── events ─────│  Server  │
+│  (React) │                    │  (SSE)   │
+└──────────┘                    └──────────┘
+
+WebSocket (Bidirectional):
+┌──────────┐◄────────────────────►┌──────────┐
+│  Client  │    events + commands │  Server  │
+│  (React) │◄────────────────────►│  (WS)    │
+└──────────┘                      └──────────┘
+```
+
+| Feature | SSE | WebSocket |
+|---------|-----|-----------|
+| Events to client | ✅ | ✅ |
+| Cancel agent | ❌ (separate HTTP) | ✅ |
+| Approve tool calls | ❌ (separate HTTP) | ✅ |
+| User input mid-run | ❌ | ✅ |
+| Keepalive | Manual | Built-in ping/pong |
+
+### Setting Up WebSocket
+
+#### 1. Create WebSocket Endpoint
+
+```typescript
+// app/api/agent/ws/route.ts
+import {
+  AgentController,
+  createWebSocketHandler,
+  RedisEventPublisher,
+  streamingClaudeCodeAgent,
+} from "veryfront/ai/workflow/claude-code";
+
+export const GET = createWebSocketHandler({
+  getRunId: (req) => new URL(req.url).searchParams.get("runId"),
+
+  onConnection: async (publisher, runId) => {
+    // Create agent controller for handling commands
+    const controller = new AgentController(publisher, {
+      approvalTimeout: 60000,
+      onCancel: (reason) => {
+        console.log(`Agent cancelled: ${reason}`);
+        // Cleanup logic here
+      },
+    });
+
+    // Subscribe to Redis events (from worker)
+    const redisPublisher = new RedisEventPublisher({
+      url: Deno.env.get("REDIS_URL")!,
+    });
+
+    await redisPublisher.subscribe(runId, (event) => {
+      publisher.send(event);
+    });
+
+    // Forward commands to worker via Redis
+    publisher.onCommand(async (command) => {
+      await redisPublisher.publish({
+        type: "command",
+        command,
+        runId,
+        timestamp: Date.now(),
+      });
+    });
+  },
+
+  onClose: (runId) => {
+    console.log(`Client disconnected: ${runId}`);
+  },
+});
+```
+
+#### 2. Consume in React with Bidirectional Hook
+
+```tsx
+import { useClaudeCodeWebSocket } from "veryfront/ai/workflow/claude-code/react";
+
+function InteractiveAgent({ runId }: { runId: string }) {
+  const {
+    isRunning,
+    isCancelled,
+    text,
+    currentTool,
+    toolCalls,
+    pendingApprovals,
+    pendingInput,
+    result,
+    error,
+    // Actions
+    cancel,
+    approve,
+    reject,
+    sendInput,
+  } = useClaudeCodeWebSocket({
+    url: "/api/agent/ws",
+    runId,
+  });
+
+  return (
+    <div>
+      {/* Streaming output */}
+      <pre className="whitespace-pre-wrap">{text}</pre>
+
+      {/* Current tool */}
+      {currentTool && (
+        <div className="animate-pulse">
+          Running: {currentTool.name}...
+        </div>
+      )}
+
+      {/* Approval requests */}
+      {pendingApprovals.map((pa) => (
+        <div key={pa.toolCallId} className="border p-4 rounded">
+          <p className="font-bold">Approve {pa.toolName}?</p>
+          <p className="text-sm text-gray-600">{pa.reason}</p>
+          <pre className="text-xs bg-gray-100 p-2 my-2">
+            {JSON.stringify(pa.input, null, 2)}
+          </pre>
+          <div className="flex gap-2">
+            <button
+              onClick={() => approve(pa.toolCallId)}
+              className="bg-green-500 text-white px-4 py-2 rounded"
+            >
+              Approve
+            </button>
+            <button
+              onClick={() => reject(pa.toolCallId, "User rejected")}
+              className="bg-red-500 text-white px-4 py-2 rounded"
+            >
+              Reject
+            </button>
+          </div>
+        </div>
+      ))}
+
+      {/* Input request */}
+      {pendingInput && (
+        <div className="border p-4 rounded">
+          <p>{pendingInput.prompt}</p>
+          <input
+            type="text"
+            defaultValue={pendingInput.defaultValue}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                sendInput(e.currentTarget.value);
+              }
+            }}
+            className="border p-2 w-full"
+          />
+        </div>
+      )}
+
+      {/* Cancel button */}
+      {isRunning && !isCancelled && (
+        <button
+          onClick={() => cancel("User cancelled")}
+          className="bg-red-500 text-white px-4 py-2 rounded mt-4"
+        >
+          Cancel
+        </button>
+      )}
+
+      {/* Result */}
+      {result && (
+        <div className="bg-green-100 p-4 rounded mt-4">
+          <h3>Complete!</h3>
+          <p>Modified {result.filesModified.length} files</p>
+        </div>
+      )}
+
+      {/* Error */}
+      {error && (
+        <div className="bg-red-100 text-red-700 p-4 rounded mt-4">
+          {error}
+        </div>
+      )}
+
+      {/* Cancelled */}
+      {isCancelled && (
+        <div className="bg-yellow-100 p-4 rounded mt-4">
+          Agent was cancelled
+        </div>
+      )}
+    </div>
+  );
+}
+```
+
+### Client Commands
+
+| Command | Description |
+|---------|-------------|
+| `cancel` | Stop agent execution |
+| `approve` | Approve a pending tool call |
+| `reject` | Reject a pending tool call |
+| `input` | Send user input to agent |
+| `ping` | Keepalive (handled automatically) |
+
+### Server Events (Extended)
+
+| Event | Description |
+|-------|-------------|
+| `approval_request` | Tool needs user approval |
+| `input_request` | Agent needs user input |
+| `cancelled` | Agent was cancelled |
+| `pong` | Response to ping |
+
+### Tool Approval Configuration
+
+Require approval for dangerous operations:
+
+```typescript
+const agent = streamingClaudeCodeAgent({
+  mode: "code",
+  streaming: { enabled: true, publisher },
+  // Require approval for these tools
+  approval: {
+    requireApproval: ["bash"],
+    dangerousPatterns: [
+      /rm\s+-rf/,
+      /git\s+push/,
+      /npm\s+publish/,
+    ],
+    autoApproveTimeout: 30000, // Auto-approve after 30s
+    timeoutAction: "reject",   // Or "approve"
+  },
+});
+```
+
 ## Deployment Architecture
 
 Claude Code agents require long-running compute for agentic loops (1-30 minutes). This section covers deployment options.
@@ -906,7 +1143,8 @@ queue_pending
 - [ ] Git operations as built-in tools
 - [ ] Diff preview before apply
 - [ ] Cost tracking and limits
-- [x] Streaming progress updates
+- [x] Streaming progress updates (SSE)
+- [x] Bidirectional streaming (WebSocket)
 - [x] Deployment architecture documentation
 - [ ] Multi-file atomic operations
 - [ ] KEDA autoscaling integration

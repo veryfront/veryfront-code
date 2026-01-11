@@ -39,7 +39,7 @@ export {
   refactorTool,
 } from "./tool.ts";
 
-// Event Publishers
+// Event Publishers (one-way)
 export {
   CallbackEventPublisher,
   createEventPublisher,
@@ -50,6 +50,15 @@ export {
 } from "./event-publisher.ts";
 
 export type { RedisEventPublisherConfig } from "./event-publisher.ts";
+
+// WebSocket Publisher (bidirectional)
+export {
+  AgentController,
+  createWebSocketHandler,
+  WebSocketPublisher,
+} from "./websocket-publisher.ts";
+
+export type { WebSocketPublisherConfig } from "./websocket-publisher.ts";
 
 // Types
 export type {
@@ -90,4 +99,17 @@ export type {
   ToolCallInputEvent,
   ToolCallStartEvent,
   ToolResultEvent,
+  // Bidirectional types
+  ApprovalRequestEvent,
+  BidirectionalPublisher,
+  CancelCommand,
+  CancelledEvent,
+  ClientCommand,
+  ClientCommandHandler,
+  ClientCommandType,
+  InputCommand,
+  InputRequestEvent,
+  PingCommand,
+  PongEvent,
+  ToolApprovalConfig,
 } from "./types.ts";
