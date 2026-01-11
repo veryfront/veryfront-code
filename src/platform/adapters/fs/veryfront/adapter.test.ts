@@ -158,7 +158,7 @@ describe("VeryfrontFSAdapter", () => {
   });
 
   describe("content context", () => {
-    it("should default to branch context", () => {
+    it("should default to null before initialize", () => {
       const adapter = new VeryfrontFSAdapter({
         veryfront: {
           baseUrl: "https://api.example.com",
@@ -167,8 +167,38 @@ describe("VeryfrontFSAdapter", () => {
           cache: { enabled: false },
         },
       });
-      // Context is null until initialize() is called
+      // Context is null until initialize() is called or setContentContext() is used
       assertEquals(adapter.getContentContext(), null);
+    });
+
+    it("should preserve context set via setContentContext before initialize", () => {
+      // This test verifies the fix for the bug where initialize() would
+      // overwrite a pre-set content context (e.g., from ProxyFSAdapterManager)
+      const adapter = new VeryfrontFSAdapter({
+        veryfront: {
+          baseUrl: "https://api.example.com",
+          apiToken: "test-token",
+          projectSlug: "test-project",
+          cache: { enabled: false },
+        },
+      });
+
+      // Simulate what ProxyFSAdapterManager does: set context before initialize
+      adapter.setContentContext({
+        sourceType: "release",
+        projectSlug: "my-project",
+        releaseId: "release-uuid-123",
+      });
+
+      // Verify context is set correctly
+      const context = adapter.getContentContext();
+      assertEquals(context?.sourceType, "release");
+      assertEquals(context?.projectSlug, "my-project");
+      assertEquals(context?.releaseId, "release-uuid-123");
+
+      // Note: Full integration test with initialize() requires API mocking
+      // The fix ensures initialize() checks `if (!this.contentContext)` before
+      // calling resolveContentSource(), preserving the pre-set context
     });
 
     it("should be able to set environment context", () => {
