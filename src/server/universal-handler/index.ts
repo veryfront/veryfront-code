@@ -18,7 +18,7 @@ import {
 // Import handler system (from new location)
 import type { HandlerContext } from "../handlers/types.ts";
 import { parseProjectDomain } from "../utils/domain-parser.ts";
-import { getEnvironmentType, lookupProjectByDomain } from "../utils/domain-lookup.ts";
+import { getEnvironmentType, lookupProductionRelease, lookupProjectByDomain } from "../utils/domain-lookup.ts";
 import { getErrorMessage } from "@veryfront/errors/veryfront-error.ts";
 
 /** Check if host is a private/internal IP address */
@@ -314,6 +314,41 @@ export function createVeryfrontHandler(
             hasProxyToken: !!proxyToken,
             hasConfigToken: !!config?.fs?.veryfront?.apiToken,
           });
+        }
+      }
+
+      // For Veryfront production domains, look up the current release ID for cache keying
+      // This ensures cache invalidation when new releases are published
+      if (
+        parsedDomain.isVeryfrontDomain &&
+        parsedDomain.isDraft === false &&
+        projectSlug &&
+        !releaseId &&
+        config?.fs?.veryfront &&
+        !shouldSkipDomainLookup
+      ) {
+        const effectiveToken = proxyToken || config.fs.veryfront.apiToken || "";
+        const baseUrl =
+          (config.fs.veryfront as { baseUrl?: string; apiBaseUrl?: string }).baseUrl ||
+          config.fs.veryfront.apiBaseUrl ||
+          "https://api.veryfront.com";
+
+        if (effectiveToken) {
+          const releaseResult = await lookupProductionRelease(projectSlug, {
+            apiBaseUrl: baseUrl,
+            apiToken: effectiveToken,
+          });
+
+          if (releaseResult) {
+            releaseId = releaseResult.releaseId;
+            projectId = projectId || releaseResult.projectId;
+            proxyEnv = "production";
+            logger.info("[universal] Veryfront domain release lookup successful", {
+              projectSlug,
+              releaseId,
+              projectId,
+            });
+          }
         }
       }
 
