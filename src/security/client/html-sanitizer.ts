@@ -36,11 +36,20 @@ const SUSPICIOUS_PATTERNS = [
   { pattern: /data:\s*text\/html/gi, name: "data: HTML URL" },
 ];
 
+/** Global interface for Veryfront runtime flags */
+interface GlobalWithVeryfrontEnv {
+  __VERYFRONT_DEV__?: boolean;
+  Deno?: {
+    env?: {
+      get?: (name: string) => string | undefined;
+    };
+  };
+}
+
 // Check if we're in development mode
 function isDevMode(): boolean {
   if (typeof globalThis !== "undefined") {
-    // deno-lint-ignore no-explicit-any
-    const g = globalThis as any;
+    const g = globalThis as unknown as GlobalWithVeryfrontEnv;
     return g.__VERYFRONT_DEV__ === true || g.Deno?.env?.get?.("VERYFRONT_ENV") === "development";
   }
   return false;

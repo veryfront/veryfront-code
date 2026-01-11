@@ -87,11 +87,19 @@ function buildAdapterConfigFromEnv(): TokenStorageAdapterConfig {
   return { type: "memory" };
 }
 
+/** Global interface for Deno environment access */
+interface GlobalWithDenoEnv {
+  Deno?: {
+    env?: {
+      get(name: string): string | undefined;
+    };
+  };
+}
+
 /**
  * Get environment variable (works in both Deno and Node)
  */
 function getEnvVar(name: string): string | undefined {
-  // deno-lint-ignore no-explicit-any
-  return (globalThis as any).Deno?.env?.get(name) ||
+  return (globalThis as unknown as GlobalWithDenoEnv).Deno?.env?.get(name) ||
     (typeof process !== "undefined" ? process.env?.[name] : undefined);
 }

@@ -12,7 +12,13 @@
 import { serverLogger as logger } from "@veryfront/utils";
 
 let initialized = false;
-let tracerProvider: unknown = null;
+
+// Interface for tracer provider with shutdown capability
+interface ShutdownableProvider {
+  shutdown(): Promise<void>;
+}
+
+let tracerProvider: ShutdownableProvider | null = null;
 
 export interface OTLPConfig {
   serviceName: string;
@@ -111,9 +117,9 @@ export async function initializeOTLP(): Promise<void> {
 }
 
 export async function shutdownOTLP(): Promise<void> {
-  if (tracerProvider && typeof (tracerProvider as any).shutdown === "function") {
+  if (tracerProvider) {
     try {
-      await (tracerProvider as any).shutdown();
+      await tracerProvider.shutdown();
       logger.info("[otel] Tracer provider shutdown complete");
     } catch (error) {
       logger.warn("[otel] Error during tracer shutdown", { error });

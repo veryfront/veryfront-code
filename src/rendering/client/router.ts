@@ -21,6 +21,11 @@ declare global {
   var __VERYFRONT_SPA_MODE__: boolean | undefined;
 }
 
+/** Global interface for router */
+interface GlobalWithRouter {
+  veryFrontRouter?: VeryfrontRouter;
+}
+
 export type { RouteData, SpaPageData };
 
 export interface RouterOptions {
@@ -263,5 +268,5 @@ if (typeof window !== "undefined" && globalThis.document) {
     router.init();
   }
 
-  (globalThis as any).veryFrontRouter = router;
+  (globalThis as unknown as GlobalWithRouter).veryFrontRouter = router;
 }

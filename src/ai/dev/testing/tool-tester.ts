@@ -11,13 +11,13 @@ export interface ToolTestCase {
   name: string;
 
   /** Tool input */
-  input: any;
+  input: unknown;
 
   /** Expected output (partial match) */
-  expectedOutput?: any;
+  expectedOutput?: unknown;
 
   /** Custom validator */
-  validate?: (result: any) => boolean | Promise<boolean>;
+  validate?: (result: unknown) => boolean | Promise<boolean>;
 
   /** Should throw error */
   shouldThrow?: boolean;
@@ -34,7 +34,7 @@ export interface ToolTestResult {
   passed: boolean;
 
   /** Tool result */
-  result?: any;
+  result?: unknown;
 
   /** Error if test failed */
   error?: string;
@@ -178,16 +178,19 @@ async function runToolTest(
 /**
  * Deep match for partial object comparison
  */
-function deepMatch(actual: any, expected: any): boolean {
+function deepMatch(actual: unknown, expected: unknown): boolean {
   if (expected === actual) return true;
   if (typeof expected !== "object" || expected === null) return false;
   if (typeof actual !== "object" || actual === null) return false;
 
-  for (const key in expected) {
-    if (!(key in actual)) return false;
+  const expectedObj = expected as Record<string, unknown>;
+  const actualObj = actual as Record<string, unknown>;
 
-    const expectedValue = expected[key];
-    const actualValue = actual[key];
+  for (const key in expectedObj) {
+    if (!(key in actualObj)) return false;
+
+    const expectedValue = expectedObj[key];
+    const actualValue = actualObj[key];
 
     if (typeof expectedValue === "object" && expectedValue !== null) {
       if (!deepMatch(actualValue, expectedValue)) return false;

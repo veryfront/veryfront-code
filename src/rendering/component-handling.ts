@@ -26,10 +26,10 @@ export async function handleComponentPage(
   pageInfo: EntityInfo,
   slug: string,
   projectDir: string,
-  _componentRegistry: any,
+  _componentRegistry: unknown,
   adapter: RuntimeAdapter,
   options?: {
-    props?: Record<string, any>;
+    props?: Record<string, unknown>;
     cachedClientModule?: string;
     moduleServerUrl?: string;
     /** Project ID for multi-project SSR module isolation */

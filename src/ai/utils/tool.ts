@@ -1,5 +1,6 @@
 import type { Tool, ToolConfig, ToolDefinition, ToolExecutionContext } from "../types/tool.ts";
 import type { JsonSchema } from "../types/json-schema.ts";
+import type { z } from "zod";
 import { zodToJsonSchema } from "./zod-json-schema.ts";
 import { agentLogger } from "@veryfront/utils/logger/logger.ts";
 import { createError, toError } from "@veryfront/errors/veryfront-error.ts";
@@ -134,7 +135,7 @@ function convertSchemaToJson(
  * });
  * ```
  */
-export function tool<TInput = any, TOutput = any>(
+export function tool<TInput = unknown, TOutput = unknown>(
   config: ToolConfig<TInput, TOutput>,
 ): Tool<TInput, TOutput> {
   const id = config.id || generateToolId();
@@ -248,7 +249,8 @@ export function dynamicTool(config: DynamicToolConfig): Tool<unknown, unknown> {
     id,
     type: "dynamic" as const,
     description: config.description,
-    inputSchema: config.inputSchema as any,
+    // Dynamic tools accept unknown schemas - cast to satisfy Tool interface
+    inputSchema: config.inputSchema as z.ZodSchema<unknown>,
     inputSchemaJson,
     execute: async (input: unknown, context?: ToolExecutionContext) => {
       // For dynamic tools, we skip input validation entirely.
@@ -332,8 +334,12 @@ class ToolRegistryClass {
 // Singleton instance using globalThis to share across module contexts
 // This is necessary for esbuild-bundled API routes to access the same registry
 const TOOL_REGISTRY_KEY = "__veryfront_tool_registry__";
-// deno-lint-ignore no-explicit-any
-const _globalTool = globalThis as any;
+
+interface GlobalToolRegistry {
+  [TOOL_REGISTRY_KEY]?: ToolRegistryClass;
+}
+
+const _globalTool = globalThis as unknown as GlobalToolRegistry;
 export const toolRegistry: ToolRegistryClass = _globalTool[TOOL_REGISTRY_KEY] ||=
   new ToolRegistryClass();
 

@@ -1319,18 +1319,11 @@ ${namedExports}
           bundleError,
         );
       } finally {
-        // Clean up temp file (use unlink since rm may not exist on all adapters)
+        // Clean up temp file using standard remove method
         try {
-          // deno-lint-ignore no-explicit-any
-          const fsAny = adapter.fs as any;
-          if (typeof fsAny.rm === "function") {
-            await fsAny.rm(tempSourcePath);
-          } else if (typeof fsAny.unlink === "function") {
-            await fsAny.unlink(tempSourcePath);
-          }
-          // If neither exists, just leave the temp file (it's in a cache dir anyway)
+          await adapter.fs.remove(tempSourcePath);
         } catch {
-          // Ignore cleanup errors
+          // Ignore cleanup errors - temp file is in cache dir anyway
         }
       }
     }

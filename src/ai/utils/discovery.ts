@@ -1,5 +1,6 @@
 import { detectPlatform } from "../runtime/platform.ts";
 import type { Platform } from "../runtime/platform.ts";
+import type { Plugin, PluginBuild } from "esbuild";
 import { registerPrompt, registerResource, registerTool } from "../mcp/registry.ts";
 import type { Tool } from "../types/tool.ts";
 import type { Prompt, Resource } from "../types/mcp.ts";
@@ -27,7 +28,7 @@ interface FileDiscoveryContext {
 
 const transpileCache = new Map<string, unknown>();
 
-function createFsAdapterPlugin(fsAdapter: FileSystemAdapter) {
+function createFsAdapterPlugin(fsAdapter: FileSystemAdapter): Plugin {
   // Cache existence checks to avoid repeated remote calls
   const existsCache = new Map<string, boolean>();
 
@@ -72,8 +73,7 @@ function createFsAdapterPlugin(fsAdapter: FileSystemAdapter) {
 
   return {
     name: "veryfront-fsadapter",
-    // deno-lint-ignore no-explicit-any
-    setup(build: any) {
+    setup(build: PluginBuild) {
       // Intercept relative imports (./foo or ../foo)
       build.onResolve(
         { filter: /^\.\.?\// },

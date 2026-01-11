@@ -2,7 +2,7 @@
  * Service Worker Generation
  */
 
-import type { BuildManifest } from "../build/production-build/manifest.ts";
+import type { BuildManifest, ManifestChunkInfo } from "../build/production-build/manifest.ts";
 import { normalizeChunkPath } from "@veryfront/utils/chunk-utils.ts";
 
 function sanitizeCacheKey(value: string): string {
@@ -31,8 +31,7 @@ function buildManifestAssets(manifest: BuildManifest): string[] {
   };
 
   if (manifest.chunks) {
-    for (const chunkInfo of Object.values(manifest.chunks.chunks || {})) {
-      const chunk = chunkInfo as any;
+    for (const chunk of Object.values(manifest.chunks.chunks || {}) as ManifestChunkInfo[]) {
       addAsset(normalizeChunkPath(chunk.file, "/_veryfront"));
       if (chunk.css) {
         addAsset(normalizeChunkPath(chunk.css, "/_veryfront"));

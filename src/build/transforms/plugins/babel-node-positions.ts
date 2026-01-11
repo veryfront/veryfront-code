@@ -10,17 +10,29 @@ import * as traverseModule from "@babel/traverse";
 import * as generateModule from "@babel/generator";
 import * as t from "@babel/types";
 
+// Types for ESM/CJS interop
+type TraverseFunction = typeof traverseModule.default;
+type GenerateFunction = typeof generateModule.default;
+
+interface ModuleWithDefault<T> {
+  default: T | { default: T };
+}
+
 // ESM/CJS interop for Deno - Babel packages export default as .default.default in some cases
-const traverse = typeof (traverseModule as any).default === "function"
-  ? (traverseModule as any).default
-  : typeof (traverseModule as any).default?.default === "function"
-  ? (traverseModule as any).default.default
-  : traverseModule;
-const generate = typeof (generateModule as any).default === "function"
-  ? (generateModule as any).default
-  : typeof (generateModule as any).default?.default === "function"
-  ? (generateModule as any).default.default
-  : generateModule;
+// Final fallback to the module object itself handles CJS where function is the module
+const traverseMod = traverseModule as unknown as ModuleWithDefault<TraverseFunction>;
+const traverse: TraverseFunction = typeof traverseMod.default === "function"
+  ? traverseMod.default
+  : typeof (traverseMod.default as { default?: TraverseFunction }).default === "function"
+  ? (traverseMod.default as { default: TraverseFunction }).default
+  : (traverseModule as unknown as TraverseFunction);
+
+const generateMod = generateModule as unknown as ModuleWithDefault<GenerateFunction>;
+const generate: GenerateFunction = typeof generateMod.default === "function"
+  ? generateMod.default
+  : typeof (generateMod.default as { default?: GenerateFunction }).default === "function"
+  ? (generateMod.default as { default: GenerateFunction }).default
+  : (generateModule as unknown as GenerateFunction);
 
 type NodePath<T> = traverseModule.NodePath<T>;
 

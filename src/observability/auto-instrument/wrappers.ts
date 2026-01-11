@@ -2,7 +2,7 @@ import type { Span } from "@opentelemetry/api";
 import { endSpan, setSpanAttributes, type SpanOptions, startSpan } from "../tracing/index.ts";
 import type { BatchOptions, InstrumentOptions } from "./types.ts";
 
-export function instrument<T extends (...args: any[]) => Promise<any>>(
+export function instrument<T extends (...args: unknown[]) => Promise<unknown>>(
   fn: T,
   spanName: string,
   options?: InstrumentOptions,
@@ -23,7 +23,7 @@ export function instrument<T extends (...args: any[]) => Promise<any>>(
   }) as T;
 }
 
-export function instrumentSync<T extends (...args: any[]) => any>(
+export function instrumentSync<T extends (...args: unknown[]) => unknown>(
   fn: T,
   spanName: string,
   options?: InstrumentOptions,

@@ -103,7 +103,7 @@ class MetricsManager {
       // Update recorder with initialized instruments
       // Recorder was already created in constructor, just update its instruments reference
       if (this.recorder) {
-        (this.recorder as any).instruments = this.instruments;
+        this.recorder.instruments = this.instruments;
       }
 
       this.initialized = true;

@@ -11,6 +11,15 @@ export interface PlatformCapabilities {
   displayName: string;
 }
 
+/** Global interface for Node.js process in platform detection */
+interface GlobalWithNodeProcess {
+  process?: {
+    versions?: {
+      node?: string;
+    };
+  };
+}
+
 export function detectPlatform(): Platform {
   // Check for Deno
   // @ts-ignore - Deno global may not exist
@@ -34,7 +43,7 @@ export function detectPlatform(): Platform {
   }
 
   // Check for Node.js
-  const globalProcess = (globalThis as any).process;
+  const globalProcess = (globalThis as unknown as GlobalWithNodeProcess).process;
   if (
     typeof globalProcess !== "undefined" &&
     globalProcess.versions?.node

@@ -167,8 +167,9 @@ export class S3BlobStorage implements BlobStorage {
 
     try {
       await client.send(putCommand);
-    } catch (e: any) {
-      if (e.name === "NoSuchBucket" && this.config.autoCreateBucket) {
+    } catch (e: unknown) {
+      const error = e as { name?: string };
+      if (error.name === "NoSuchBucket" && this.config.autoCreateBucket) {
         // Bucket doesn't exist, try to create it
         try {
           await client.send(new CreateBucketCommand({ Bucket: this.config.bucket }));

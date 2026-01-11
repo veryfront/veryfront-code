@@ -56,12 +56,22 @@ export const ESBUILD_LOADERS = {
   ".html": "text",
 } as const;
 
+// Type-safe array includes check
+type ImageExtension = (typeof FILE_EXTENSIONS.IMAGE)[number];
+type ScriptExtension = (typeof FILE_EXTENSIONS.SCRIPT)[number];
+type StyleExtension = (typeof FILE_EXTENSIONS.STYLE)[number];
+type DocumentExtension = (typeof FILE_EXTENSIONS.DOCUMENT)[number];
+
+function isInArray<T extends string>(arr: readonly T[], value: string): value is T {
+  return (arr as readonly string[]).includes(value);
+}
+
 /**
  * Check if file is an image based on extension
  */
 export function isImageFile(filePath: string): boolean {
   const ext = extname(filePath).toLowerCase();
-  return FILE_EXTENSIONS.IMAGE.includes(ext as any);
+  return isInArray<ImageExtension>(FILE_EXTENSIONS.IMAGE, ext);
 }
 
 /**
@@ -69,7 +79,7 @@ export function isImageFile(filePath: string): boolean {
  */
 export function isScriptFile(filePath: string): boolean {
   const ext = extname(filePath).toLowerCase();
-  return FILE_EXTENSIONS.SCRIPT.includes(ext as any);
+  return isInArray<ScriptExtension>(FILE_EXTENSIONS.SCRIPT, ext);
 }
 
 /**
@@ -77,7 +87,7 @@ export function isScriptFile(filePath: string): boolean {
  */
 export function isStyleFile(filePath: string): boolean {
   const ext = extname(filePath).toLowerCase();
-  return FILE_EXTENSIONS.STYLE.includes(ext as any);
+  return isInArray<StyleExtension>(FILE_EXTENSIONS.STYLE, ext);
 }
 
 /**
@@ -85,7 +95,7 @@ export function isStyleFile(filePath: string): boolean {
  */
 export function isDocumentFile(filePath: string): boolean {
   const ext = extname(filePath).toLowerCase();
-  return FILE_EXTENSIONS.DOCUMENT.includes(ext as any);
+  return isInArray<DocumentExtension>(FILE_EXTENSIONS.DOCUMENT, ext);
 }
 
 const IMAGE_FORMAT_MAP: Record<string, ImageFormat> = {

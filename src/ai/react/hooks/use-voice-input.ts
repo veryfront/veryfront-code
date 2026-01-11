@@ -97,11 +97,10 @@ interface SpeechRecognition extends EventTarget {
   abort(): void;
 }
 
-declare global {
-  interface Window {
-    SpeechRecognition?: new () => SpeechRecognition;
-    webkitSpeechRecognition?: new () => SpeechRecognition;
-  }
+// Global type augmentation for SpeechRecognition API
+interface GlobalWithSpeechRecognition {
+  SpeechRecognition?: new () => SpeechRecognition;
+  webkitSpeechRecognition?: new () => SpeechRecognition;
 }
 
 /**
@@ -146,8 +145,7 @@ export function useVoiceInput(
   // Check browser support
   const isSupported = React.useMemo(() => {
     if (typeof globalThis === "undefined") return false;
-    // deno-lint-ignore no-explicit-any
-    const g = globalThis as any;
+    const g = globalThis as unknown as GlobalWithSpeechRecognition;
     return !!(g.SpeechRecognition || g.webkitSpeechRecognition);
   }, []);
 
@@ -155,8 +153,7 @@ export function useVoiceInput(
   React.useEffect(() => {
     if (!isSupported) return;
 
-    // deno-lint-ignore no-explicit-any
-    const g = globalThis as any;
+    const g = globalThis as unknown as GlobalWithSpeechRecognition;
     const SpeechRecognitionAPI = g.SpeechRecognition || g.webkitSpeechRecognition;
 
     if (!SpeechRecognitionAPI) return;

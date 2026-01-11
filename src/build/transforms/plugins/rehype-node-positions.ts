@@ -14,12 +14,17 @@ export interface RehypeNodePositionsOptions {
 }
 
 // Node types that can have attributes
-type JsxNode = Element | {
+interface MdxJsxNode {
   type: string;
   name?: string;
+  tagName?: string;
   attributes?: Array<{ type: string; name: string; value: unknown }>;
-  position?: { start: { line: number; column: number }; end: { line: number; column: number } };
-};
+  properties?: Record<string, unknown>;
+  position?: { start: { line: number; column: number }; end?: { line: number; column: number } };
+}
+
+// Union type for all possible nodes in the tree
+type TreeNode = Element | MdxJsxNode;
 
 export function rehypeNodePositions(options: RehypeNodePositionsOptions = {}) {
   console.log("[rehypeNodePositions] Plugin called with options:", options);
@@ -35,9 +40,10 @@ export function rehypeNodePositions(options: RehypeNodePositionsOptions = {}) {
     // Log first few child types to understand structure
     const children = tree.children?.slice(0, 5) ?? [];
     for (const [i, child] of children.entries()) {
+      const childNode = child as MdxJsxNode;
       console.log(
-        `[rehypeNodePositions] Child ${i}: type=${(child as any).type}, name=${
-          (child as any).name || (child as any).tagName || "N/A"
+        `[rehypeNodePositions] Child ${i}: type=${childNode.type}, name=${
+          childNode.name || childNode.tagName || "N/A"
         }`,
       );
     }
@@ -46,9 +52,10 @@ export function rehypeNodePositions(options: RehypeNodePositionsOptions = {}) {
     let positionCount = 0;
 
     // Visit all node types and filter for JSX elements
-    visit(tree, (node: any) => {
+    visit(tree, (visitedNode) => {
       // Handle standard hast elements
-      if (node.type === "element") {
+      if (visitedNode.type === "element") {
+        const node = visitedNode as Element;
         elementCount++;
         if (node.position) {
           positionCount++;
@@ -56,6 +63,8 @@ export function rehypeNodePositions(options: RehypeNodePositionsOptions = {}) {
         }
         return;
       }
+
+      const node = visitedNode as MdxJsxNode;
 
       // Handle MDX JSX elements
       if (node.type === "mdxJsxFlowElement" || node.type === "mdxJsxTextElement") {

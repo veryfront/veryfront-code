@@ -6,11 +6,18 @@
 import type { AppRouteInfo, BuildStats, RouteInfo } from "../../server/build-types.ts";
 import { bundlerLogger } from "@veryfront/utils";
 
-// Stub type for deleted ChunkManifest module
+/** Chunk info for service worker and manifest generation */
+export interface ManifestChunkInfo {
+  file: string;
+  css?: string;
+  imports?: string[];
+}
+
+// Stub type for ChunkManifest - mirrors code-splitter/types.ts
 interface ChunkManifest {
   version: string;
   routes: Record<string, { chunks: string[] }>;
-  chunks: Record<string, unknown>;
+  chunks: Record<string, ManifestChunkInfo>;
   shared: string[];
 }
 
