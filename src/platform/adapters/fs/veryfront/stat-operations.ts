@@ -54,7 +54,7 @@ export class StatOperations {
       logger.debug("[StatOperations] stat found file", { normalizedPath });
       const info: FileInfo = {
         size: file.size,
-        mtime: new Date(file.updated_at),
+        mtime: file.updated_at ? new Date(file.updated_at) : new Date(),
         isDirectory: false,
         isFile: true,
         isSymlink: false,
