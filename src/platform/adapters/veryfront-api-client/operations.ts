@@ -69,7 +69,11 @@ export interface FileDetail {
 
 function buildListParams(options: ListFilesOptions): URLSearchParams {
   const { cursor, limit = 100, pattern, sortBy = "updatedAt", sortOrder = "desc" } = options;
-  const params = new URLSearchParams({ limit: String(limit), sort_by: sortBy, sort_order: sortOrder });
+  const params = new URLSearchParams({
+    limit: String(limit),
+    sort_by: sortBy,
+    sort_order: sortOrder,
+  });
   if (cursor) params.set("cursor", cursor);
   if (pattern) params.set("pattern", pattern);
   return params;
@@ -178,7 +182,9 @@ export class VeryfrontAPIOperations {
         limit: 10000,
       });
       allFiles.push(...result.files);
-      cursor = result.page_info.has_next_page ? (result.page_info.end_cursor ?? undefined) : undefined;
+      cursor = result.page_info.has_next_page
+        ? (result.page_info.end_cursor ?? undefined)
+        : undefined;
     } while (cursor);
 
     return allFiles;
@@ -271,7 +277,9 @@ export class VeryfrontAPIOperations {
         limit: 10000,
       });
       allFiles.push(...result.files);
-      cursor = result.page_info.has_next_page ? (result.page_info.end_cursor ?? undefined) : undefined;
+      cursor = result.page_info.has_next_page
+        ? (result.page_info.end_cursor ?? undefined)
+        : undefined;
     } while (cursor);
 
     logger.debug("[API] listAllEnvironmentFiles", {
@@ -365,7 +373,9 @@ export class VeryfrontAPIOperations {
         limit: 10000,
       });
       allFiles.push(...result.files);
-      cursor = result.page_info.has_next_page ? (result.page_info.end_cursor ?? undefined) : undefined;
+      cursor = result.page_info.has_next_page
+        ? (result.page_info.end_cursor ?? undefined)
+        : undefined;
     } while (cursor);
 
     return allFiles;
