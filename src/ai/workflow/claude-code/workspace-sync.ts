@@ -378,7 +378,7 @@ export class WorkspaceSync {
       }
 
       try {
-        const localPath = `${this.workspaceDir}${change.path}`;
+        const localPath = this.resolveSafePath(change.path);
         const content = await Deno.readTextFile(localPath);
 
         if (options.onUpload) {
