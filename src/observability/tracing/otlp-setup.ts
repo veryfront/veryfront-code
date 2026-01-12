@@ -32,6 +32,20 @@ function parseHeaders(headerString: string | undefined): Record<string, string> 
   if (!headerString) return {};
 
   const headers: Record<string, string> = {};
+
+  // Handle "Basic xxx" format (Grafana Cloud style - auth token directly)
+  if (headerString.startsWith("Basic ")) {
+    headers["Authorization"] = headerString;
+    return headers;
+  }
+
+  // Handle "Authorization=Basic xxx" format
+  if (headerString.startsWith("Authorization=")) {
+    const value = headerString.substring("Authorization=".length);
+    headers["Authorization"] = value;
+    return headers;
+  }
+
   // Headers are comma-separated key=value pairs
   const parts = headerString.split(",");
   for (const part of parts) {
