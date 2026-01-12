@@ -292,12 +292,18 @@ export class StatOperations {
     // (e.g., lib/, utils/, hooks/ directories). The search result is cached, so this only
     // incurs overhead on the first request for each missing file.
     const searchPattern = `${pathWithoutExt}.*`;
-    logger.debug("[StatOperations] Searching for file pattern", {
+    logger.info("[StatOperations] Searching for file via API", {
       pattern: searchPattern,
+      normalizedPath,
     });
 
     try {
       const matches = await this.client.searchFiles(searchPattern);
+      logger.info("[StatOperations] API search result", {
+        pattern: searchPattern,
+        matchCount: matches.length,
+        matches: matches.map((m) => m.path).slice(0, 5),
+      });
       if (matches.length > 0) {
         // Sort by extension priority
         const sorted = matches.sort((a, b) => {
@@ -307,16 +313,16 @@ export class StatOperations {
         });
         const first = sorted[0];
         if (first) {
-          logger.debug("[StatOperations] resolveFile found via search", { path: first.path });
+          logger.info("[StatOperations] resolveFile found via API search", { path: first.path });
           this.cache.set(cacheKey, first.path);
           return first.path;
         }
       }
     } catch (error) {
-      logger.debug("[StatOperations] Pattern search failed", { pattern: searchPattern, error });
+      logger.error("[StatOperations] API pattern search failed", { pattern: searchPattern, error });
     }
 
-    logger.debug("[StatOperations] resolveFile not found", { normalizedPath, pathWithoutExt });
+    logger.info("[StatOperations] resolveFile not found after API search", { normalizedPath, pathWithoutExt });
     // Don't cache null/not-found results - files may be published later
     return null;
   }
