@@ -72,11 +72,16 @@ export const ProjectFileSchema = z.object({
   updated_at: z.string(),
 });
 
+/**
+ * PageInfo for paginated responses.
+ * Follows Zalando RESTful API Guidelines #248 with cursor-based pagination.
+ * @see https://opensource.zalando.com/restful-api-guidelines/#248
+ */
 export const PageInfoSchema = z.object({
-  has_next_page: z.boolean(),
-  end_cursor: z.string().nullable(),
-  has_previous_page: z.boolean().optional(),
-  start_cursor: z.string().nullable().optional(),
+  self: z.string().nullable(),
+  first: z.null(),
+  next: z.string().nullable(),
+  prev: z.string().nullable(),
 });
 
 export const EnvironmentSchema = z.object({
