@@ -15,6 +15,10 @@ spec:
     metadata:
       labels:
         {{- include "veryfront-renderer.renderer.selectorLabels" . | nindent 8 }}
+      {{- with .Values.renderer.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
     spec:
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
@@ -39,6 +43,10 @@ spec:
           {{- end }}
           {{- with .Values.renderer.readinessProbe }}
           readinessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.renderer.livenessProbe }}
+          livenessProbe:
             {{- toYaml . | nindent 12 }}
           {{- end }}
           {{- with .Values.renderer.startupProbe }}
