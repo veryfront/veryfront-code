@@ -532,6 +532,10 @@ export class SSRModuleLoader {
       // LRU cache handles TTL refresh on access
       // Also store under filePathCacheKey for lookup by filePath
       globalModuleCache.set(filePathCacheKey, cachedEntry);
+      // IMPORTANT: Still process dependencies even on cache hit!
+      // The transform output is cached, but dependencies may not have been created
+      // (e.g., if previous transform had missing deps that are now resolvable)
+      await this.ensureDependenciesExist(code, filePath);
       return;
     }
 
@@ -549,6 +553,8 @@ export class SSRModuleLoader {
         globalModuleCache.set(contentCacheKey, entry);
         globalModuleCache.set(filePathCacheKey, entry);
         logger.debug("[SSR-MODULE-LOADER] Redis cache hit", { file: filePath.slice(-40) });
+        // IMPORTANT: Still process dependencies even on Redis cache hit!
+        await this.ensureDependenciesExist(code, filePath);
         return;
       }
     }
@@ -706,6 +712,68 @@ export class SSRModuleLoader {
     } finally {
       globalInProgress.delete(inProgressKey);
     }
+  }
+
+  /**
+   * Ensure all dependencies of a module exist (are transformed and cached).
+   * Called on cache hits to ensure deps from previous failed transforms are now created.
+   */
+  private async ensureDependenciesExist(
+    code: string,
+    filePath: string,
+  ): Promise<void> {
+    // Parse imports to find dependencies
+    const parseResult = await parseLocalImports(
+      code,
+      filePath,
+      this.options.projectDir,
+      this.options.adapter,
+    );
+
+    // Track missing dependencies
+    if (parseResult.missing.length > 0) {
+      this.missingDependencies.push(...parseResult.missing);
+    }
+
+    // Local filesystem for framework lib files
+    const localFs = createFileSystem();
+
+    // Transform all resolved dependencies (recursively)
+    await Promise.all([
+      ...parseResult.imports.map(async (imp) => {
+        try {
+          let depSource: string;
+          if (imp.absolutePath.startsWith("/")) {
+            depSource = await localFs.readTextFile(imp.absolutePath);
+          } else {
+            depSource = await this.options.adapter.fs.readFile(imp.absolutePath);
+          }
+          await this.transformWithDependencies(imp.absolutePath, depSource);
+        } catch (error) {
+          this.missingDependencies.push({
+            specifier: imp.specifier,
+            fromFile: filePath,
+            reason: `Failed to read file: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          });
+        }
+      }),
+      // Handle cross-project imports
+      ...parseResult.crossProjectImports.map(async (crossImport) => {
+        try {
+          await this.transformCrossProjectImport(crossImport);
+        } catch (error) {
+          this.missingDependencies.push({
+            specifier: crossImport.specifier,
+            fromFile: filePath,
+            reason: `Failed to fetch cross-project import: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          });
+        }
+      }),
+    ]);
   }
 
   private hashCode(str: string): string {
