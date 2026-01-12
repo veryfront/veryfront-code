@@ -3,7 +3,7 @@
  */
 
 import type { Agent, AgentConfig, AgentResponse, Message, ToolCall } from "../types/agent.ts";
-import { AgentRuntime } from "./runtime.ts";
+import { AgentRuntime } from "./runtime/index.ts";
 import { detectPlatform, validatePlatformCompatibility } from "../runtime/platform.ts";
 import { registerTool } from "../mcp/registry.ts";
 import { agentRegistry } from "./composition.ts";

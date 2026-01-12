@@ -7,6 +7,8 @@
  * - Streaming responses
  * - Memory management
  * - Middleware execution
+ *
+ * @module ai/agent/runtime
  */
 
 import {
@@ -18,40 +20,48 @@ import {
   type Message,
   type MessagePart,
   type ToolCall,
-} from "../types/agent.ts";
-import type { ToolDefinition } from "../types/tool.ts";
-import type { Provider } from "../types/provider.ts";
-import { getProviderFromModel } from "../providers/factory.ts";
-import { executeTool, generateId, toolRegistry, toolToProviderDefinition } from "../utils/index.ts";
-import { detectPlatform, getPlatformCapabilities } from "../runtime/platform.ts";
-import { createMemory, type Memory } from "./memory.ts";
+} from "../../types/agent.ts";
+import type { Provider } from "../../types/provider.ts";
+import { getProviderFromModel } from "../../providers/factory.ts";
+import { executeTool, generateId } from "../../utils/index.ts";
+import { detectPlatform, getPlatformCapabilities } from "../../runtime/platform.ts";
+import { createMemory, type Memory } from "../memory.ts";
 import { serverLogger as logger } from "@veryfront/utils";
 import {
   addSpanEvent,
   setSpanAttributes,
   withSpan,
 } from "@veryfront/observability/tracing/index.ts";
-import { AGENT_DEFAULTS, STREAMING_DEFAULTS } from "../config/defaults.ts";
-import { type AgentStreamEvent, AgentStreamEventSchema } from "./streaming/index.ts";
-import { convertMessageToProvider } from "./message-converter.ts";
-import { MiddlewareChain } from "./execution/middleware-chain.ts";
+import { convertMessageToProvider } from "../message-converter.ts";
+import { MiddlewareChain } from "../execution/middleware-chain.ts";
 
-// Use centralized defaults from config
-const DEFAULT_MAX_TOKENS = AGENT_DEFAULTS.maxTokens;
-const DEFAULT_TEMPERATURE = AGENT_DEFAULTS.temperature;
-const MAX_STREAM_BUFFER_SIZE = STREAMING_DEFAULTS.maxBufferSize;
+// Re-export from submodules
+export { sendSSE, generateMessageId } from "./sse-utils.ts";
+export { parseToolArgs, isDynamicTool, getAvailableTools } from "./tool-helpers.ts";
+export type { ParsedToolArgs, ToolConfigEntry } from "./tool-helpers.ts";
+export { normalizeInput, accumulateUsage, getMaxSteps } from "./input-utils.ts";
+export {
+  createStreamState,
+  handleStreamEvent,
+  processStreamData,
+} from "./stream-handler.ts";
+export type { StreamingToolCall, StreamState, StreamCallbacks } from "./stream-handler.ts";
+export {
+  DEFAULT_MAX_TOKENS,
+  DEFAULT_TEMPERATURE,
+  MAX_STREAM_BUFFER_SIZE,
+  DEFAULT_MAX_STEPS,
+} from "./constants.ts";
 
-/**
- * Encode and enqueue a Server-Sent Event (SSE) to the stream controller.
- * Formats event as: data: {json}\n\n
- */
-function sendSSE(
-  controller: ReadableStreamDefaultController,
-  encoder: TextEncoder,
-  event: Record<string, unknown>,
-): void {
-  controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
-}
+// Import helpers
+import { DEFAULT_MAX_TOKENS, DEFAULT_TEMPERATURE } from "./constants.ts";
+import { sendSSE, generateMessageId } from "./sse-utils.ts";
+import { getAvailableTools, isDynamicTool, parseToolArgs } from "./tool-helpers.ts";
+import { normalizeInput, accumulateUsage, getMaxSteps } from "./input-utils.ts";
+import {
+  createStreamState,
+  processStreamData,
+} from "./stream-handler.ts";
 
 export class AgentRuntime {
   private id: string;
@@ -80,7 +90,7 @@ export class AgentRuntime {
         "agent.model": this.config.model,
       });
 
-      const inputMessages = this.normalizeInput(input);
+      const inputMessages = normalizeInput(input);
 
       for (const msg of inputMessages) {
         await this.memory.add(msg);
@@ -143,9 +153,7 @@ export class AgentRuntime {
           this.status = "streaming";
 
           // Send start event (UI Message Stream Protocol v5)
-          const messageId = `msg-${Date.now().toString(36)}-${
-            Math.random().toString(36).slice(2, 8)
-          }`;
+          const messageId = generateMessageId();
           sendSSE(controller, encoder, { type: "start", messageId });
 
           // Send text-start event with ID
@@ -195,7 +203,7 @@ export class AgentRuntime {
   ): Promise<AgentResponse> {
     return await withSpan("agent.execution_loop", async (loopSpan) => {
       const capabilities = getPlatformCapabilities();
-      const maxSteps = this.getMaxSteps(capabilities.maxAgentSteps);
+      const maxSteps = this.computeMaxSteps(capabilities.maxAgentSteps);
 
       const toolCalls: ToolCall[] = [];
       const currentMessages = [...messages];
@@ -209,7 +217,7 @@ export class AgentRuntime {
         this.status = "thinking";
         addSpanEvent(loopSpan, "step_start", { step });
 
-        const tools = this.getAvailableTools();
+        const tools = getAvailableTools(this.config.tools);
 
         const response = await withSpan("agent.provider_complete", async (span) => {
           setSpanAttributes(span, {
@@ -226,7 +234,7 @@ export class AgentRuntime {
           });
         });
 
-        this.accumulateUsage(totalUsage, response.usage);
+        accumulateUsage(totalUsage, response.usage);
 
         // Build parts array for v5 Message
         const assistantParts: MessagePart[] = [];
@@ -374,7 +382,7 @@ export class AgentRuntime {
     toolContext?: Record<string, unknown>,
   ): Promise<AgentResponse> {
     const capabilities = getPlatformCapabilities();
-    const maxSteps = this.getMaxSteps(capabilities.maxAgentSteps);
+    const maxSteps = this.computeMaxSteps(capabilities.maxAgentSteps);
 
     const toolCalls: ToolCall[] = [];
     const currentMessages = [...messages];
@@ -388,7 +396,7 @@ export class AgentRuntime {
       // Send start-step event (Veryfront extension, not part of standard AI SDK v5 protocol)
       sendSSE(controller, encoder, { type: "start-step" });
 
-      const tools = this.getAvailableTools();
+      const tools = getAvailableTools(this.config.tools);
 
       const stream = await provider.stream({
         model,
@@ -399,207 +407,28 @@ export class AgentRuntime {
         temperature: DEFAULT_TEMPERATURE,
       });
 
-      const reader = stream.getReader();
-      const decoder = new TextDecoder();
-      let accumulatedText = "";
-      let finishReason: string | null = null;
+      // Create stream state and process the stream
+      const state = createStreamState();
+      await processStreamData(
+        stream,
+        state,
+        controller,
+        encoder,
+        textPartId,
+        {
+          onChunk: callbacks?.onChunk,
+          onUsage: (usage) => accumulateUsage(totalUsage, usage),
+        },
+      );
 
-      const streamToolCalls = new Map<string, {
-        id: string;
-        name: string;
-        arguments: string;
-      }>();
-
-      const parseStreamToolArgs = (
-        rawArgs: string | Record<string, unknown>,
-      ): { args: Record<string, unknown>; error?: string } => {
-        try {
-          const parsed = typeof rawArgs === "string" ? JSON.parse(rawArgs) : rawArgs;
-          if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-            return { args: parsed as Record<string, unknown> };
-          }
-          return { args: {}, error: "Tool call arguments must be a JSON object" };
-        } catch (error) {
-          return {
-            args: {},
-            error: error instanceof Error ? error.message : String(error),
-          };
-        }
-      };
-
-      /** Check if a tool is dynamic (for SSE event formatting) */
-      const isDynamicTool = (name: string): boolean => toolRegistry.get(name)?.type === "dynamic";
-
-      const recordToolError = async (toolCall: ToolCall, errorStr: string) => {
-        toolCall.status = "error";
-        toolCall.error = errorStr;
-        toolCalls.push(toolCall);
-
-        // Send tool-output-error event (AI SDK v5 UI Message Stream Protocol)
-        const dynamic = isDynamicTool(toolCall.name);
-        sendSSE(controller, encoder, {
-          type: "tool-output-error",
-          toolCallId: toolCall.id,
-          errorText: errorStr,
-          ...(dynamic && { dynamic: true }),
-        });
-
-        const errorMessage: Message = {
-          id: `tool_error_${toolCall.id}`,
-          role: "tool",
-          parts: [{
-            type: "tool-result",
-            toolCallId: toolCall.id,
-            toolName: toolCall.name,
-            result: { error: errorStr },
-          }],
-          timestamp: Date.now(),
-        };
-        currentMessages.push(errorMessage);
-        await this.memory.add(errorMessage);
-      };
-
-      // Vercel AI SDK Data Stream Protocol event handler
-      const handleEvent = (event: AgentStreamEvent) => {
-        switch (event.type) {
-          case "content": {
-            accumulatedText += event.content;
-
-            // Use Vercel AI SDK UI Message Stream Protocol v5 format
-            sendSSE(controller, encoder, {
-              type: "text-delta",
-              id: textPartId,
-              delta: event.content,
-            });
-
-            if (callbacks?.onChunk) {
-              callbacks.onChunk(event.content);
-            }
-            break;
-          }
-
-          case "tool_call_start":
-            if (event.toolCall?.id) {
-              streamToolCalls.set(event.toolCall.id, {
-                id: event.toolCall.id,
-                name: event.toolCall.name,
-                arguments: "",
-              });
-
-              // Send tool-input-start event (AI SDK v5 UI Message Stream Protocol)
-              const dynamic = isDynamicTool(event.toolCall.name);
-              sendSSE(controller, encoder, {
-                type: "tool-input-start",
-                toolCallId: event.toolCall.id,
-                toolName: event.toolCall.name,
-                ...(dynamic && { dynamic: true }),
-              });
-            }
-            break;
-
-          case "tool_call_delta":
-            if (event.id && streamToolCalls.has(event.id)) {
-              const tc = streamToolCalls.get(event.id)!;
-              tc.arguments += event.arguments;
-
-              // Send tool-input-delta event (AI SDK v5 UI Message Stream Protocol)
-              sendSSE(controller, encoder, {
-                type: "tool-input-delta",
-                toolCallId: event.id,
-                inputTextDelta: event.arguments,
-              });
-            }
-            break;
-
-          case "tool_call_complete":
-            if (event.toolCall?.id) {
-              streamToolCalls.set(event.toolCall.id, {
-                id: event.toolCall.id,
-                name: event.toolCall.name,
-                arguments: event.toolCall.arguments,
-              });
-
-              // Send tool-input-available event (AI SDK v5 UI Message Stream Protocol)
-              const dynamic = isDynamicTool(event.toolCall.name);
-              const { args } = parseStreamToolArgs(event.toolCall.arguments);
-              sendSSE(controller, encoder, {
-                type: "tool-input-available",
-                toolCallId: event.toolCall.id,
-                toolName: event.toolCall.name,
-                input: args,
-                ...(dynamic && { dynamic: true }),
-              });
-            }
-            break;
-
-          case "finish":
-            finishReason = event.finishReason;
-            break;
-
-          case "usage":
-            if (event.usage) {
-              this.accumulateUsage(totalUsage, event.usage);
-            }
-            break;
-        }
-      };
-
-      let partial = "";
-
-      while (true) {
-        const { done, value } = await reader.read();
-
-        if (done) break;
-
-        partial += decoder.decode(value, { stream: true });
-
-        // Prevent unbounded buffer growth
-        if (partial.length > MAX_STREAM_BUFFER_SIZE) {
-          logger.warn("[AGENT] Stream buffer exceeded max size, truncating");
-          partial = partial.slice(-MAX_STREAM_BUFFER_SIZE / 2);
-        }
-
-        const segments = partial.split("\n");
-        partial = segments.pop() ?? "";
-        const lines = segments.filter((line) => line.trim());
-
-        for (const line of lines) {
-          try {
-            const rawEvent = JSON.parse(line);
-            const parseResult = AgentStreamEventSchema.safeParse(rawEvent);
-
-            if (parseResult.success) {
-              handleEvent(parseResult.data);
-            } else {
-              logger.warn("[AGENT] Invalid stream event received:", parseResult.error);
-            }
-          } catch (e) {
-            logger.warn("[AGENT] Failed to parse stream line:", e);
-            continue;
-          }
-        }
-      }
-
-      if (partial.trim()) {
-        try {
-          const rawEvent = JSON.parse(partial);
-          const parseResult = AgentStreamEventSchema.safeParse(rawEvent);
-          if (parseResult.success) {
-            handleEvent(parseResult.data);
-          }
-        } catch {
-          // Ignore trailing partial
-        }
-      }
-
-      // Build v5 parts array
+      // Build v5 parts array from accumulated state
       const streamParts: MessagePart[] = [];
-      if (accumulatedText) {
-        streamParts.push({ type: "text", text: accumulatedText });
+      if (state.accumulatedText) {
+        streamParts.push({ type: "text", text: state.accumulatedText });
       }
-      if (streamToolCalls.size > 0) {
-        for (const tc of streamToolCalls.values()) {
-          const { args, error } = parseStreamToolArgs(tc.arguments);
+      if (state.toolCalls.size > 0) {
+        for (const tc of state.toolCalls.values()) {
+          const { args, error } = parseToolArgs(tc.arguments);
           if (error) {
             logger.warn("[AGENT] Failed to parse streamed tool arguments", {
               toolCallId: tc.id,
@@ -626,11 +455,11 @@ export class AgentRuntime {
       currentMessages.push(assistantMessage);
       await this.memory.add(assistantMessage);
 
-      if (finishReason === "tool_calls" && streamToolCalls.size > 0) {
+      if (state.finishReason === "tool_calls" && state.toolCalls.size > 0) {
         this.status = "tool_execution";
 
-        for (const tc of streamToolCalls.values()) {
-          const { args, error: argError } = parseStreamToolArgs(tc.arguments);
+        for (const tc of state.toolCalls.values()) {
+          const { args, error: argError } = parseToolArgs(tc.arguments);
           const toolCall: ToolCall = {
             id: tc.id,
             name: tc.name,
@@ -651,7 +480,14 @@ export class AgentRuntime {
               errorText: `Invalid tool arguments: ${argError}`,
               ...(dynamic && { dynamic: true }),
             });
-            await recordToolError(toolCall, `Invalid tool arguments: ${argError}`);
+            await this.recordToolError(
+              toolCall,
+              `Invalid tool arguments: ${argError}`,
+              controller,
+              encoder,
+              currentMessages,
+              toolCalls,
+            );
             continue;
           }
 
@@ -700,7 +536,14 @@ export class AgentRuntime {
             await this.memory.add(toolResultMessage);
           } catch (error) {
             const errorStr = error instanceof Error ? error.message : String(error);
-            await recordToolError(toolCall, errorStr);
+            await this.recordToolError(
+              toolCall,
+              errorStr,
+              controller,
+              encoder,
+              currentMessages,
+              toolCalls,
+            );
           }
         }
 
@@ -727,37 +570,43 @@ export class AgentRuntime {
     };
   }
 
-  private getAvailableTools(): ToolDefinition[] {
-    if (!this.config.tools) return [];
+  /**
+   * Record a tool error and send SSE event.
+   */
+  private async recordToolError(
+    toolCall: ToolCall,
+    errorStr: string,
+    controller: ReadableStreamDefaultController,
+    encoder: TextEncoder,
+    currentMessages: Message[],
+    toolCalls: ToolCall[],
+  ): Promise<void> {
+    toolCall.status = "error";
+    toolCall.error = errorStr;
+    toolCalls.push(toolCall);
 
-    // When tools === true, load ALL tools from the registry
-    if (this.config.tools === true) {
-      const allTools = toolRegistry.getAll();
-      logger.debug(`[AGENT] Loading all ${allTools.size} tools from registry`);
-      return Array.from(allTools, ([name, tool]) => {
-        const def = toolToProviderDefinition(tool);
-        logger.debug(`[AGENT] Tool definition for "${name}":`, JSON.stringify(def, null, 2));
-        return def;
-      });
-    }
+    // Send tool-output-error event (AI SDK v5 UI Message Stream Protocol)
+    const dynamic = isDynamicTool(toolCall.name);
+    sendSSE(controller, encoder, {
+      type: "tool-output-error",
+      toolCallId: toolCall.id,
+      errorText: errorStr,
+      ...(dynamic && { dynamic: true }),
+    });
 
-    // Load specific tools from config
-    const tools: ToolDefinition[] = [];
-    for (const [name, entry] of Object.entries(this.config.tools)) {
-      if (entry === true) {
-        const tool = toolRegistry.get(name);
-        if (!tool) continue;
-        const def = toolToProviderDefinition(tool);
-        logger.debug(`[AGENT] Tool definition for "${name}":`, JSON.stringify(def, null, 2));
-        tools.push(def);
-      } else if (entry && typeof entry === "object") {
-        const inlineTool = entry.id === name ? entry : { ...entry, id: name };
-        const def = toolToProviderDefinition(inlineTool);
-        logger.debug(`[AGENT] Tool definition for "${name}":`, JSON.stringify(def, null, 2));
-        tools.push(def);
-      }
-    }
-    return tools;
+    const errorMessage: Message = {
+      id: `tool_error_${toolCall.id}`,
+      role: "tool",
+      parts: [{
+        type: "tool-result",
+        toolCallId: toolCall.id,
+        toolName: toolCall.name,
+        result: { error: errorStr },
+      }],
+      timestamp: Date.now(),
+    };
+    currentMessages.push(errorMessage);
+    await this.memory.add(errorMessage);
   }
 
   /**
@@ -771,47 +620,11 @@ export class AgentRuntime {
   }
 
   /**
-   * Normalize input to messages array (v5 format with parts)
+   * Compute max steps considering edge config and platform limits.
    */
-  private normalizeInput(input: string | Message[]): Message[] {
-    if (typeof input === "string") {
-      return [
-        {
-          id: `msg_${Date.now()}`,
-          role: "user",
-          parts: [{ type: "text", text: input }],
-          timestamp: Date.now(),
-        },
-      ];
-    }
-
-    return input.map((msg) => ({
-      ...msg,
-      id: msg.id || `msg_${Date.now()}`,
-      timestamp: msg.timestamp || Date.now(),
-    }));
-  }
-
-  /**
-   * Accumulate usage statistics from a response into the total.
-   */
-  private accumulateUsage(
-    total: { promptTokens: number; completionTokens: number; totalTokens: number },
-    usage: { promptTokens?: number; completionTokens?: number; totalTokens?: number },
-  ): void {
-    total.promptTokens += usage.promptTokens ?? 0;
-    total.completionTokens += usage.completionTokens ?? 0;
-    total.totalTokens += usage.totalTokens ?? 0;
-  }
-
-  /**
-   * Get max steps considering edge config and platform limits.
-   * Priority: edge config > agent config > default (20).
-   */
-  private getMaxSteps(platformLimit: number): number {
+  private computeMaxSteps(platformLimit: number): number {
     const edgeMaxSteps = this.config.edge?.enabled ? this.config.edge.maxSteps : undefined;
-    const configuredMaxSteps = edgeMaxSteps ?? this.config.maxSteps ?? 20;
-    return Math.min(configuredMaxSteps, platformLimit);
+    return getMaxSteps(this.config.maxSteps, edgeMaxSteps, platformLimit);
   }
 
   /**
