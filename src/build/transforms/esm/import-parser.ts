@@ -189,6 +189,22 @@ async function resolveAliasImportPath(
   // Normalize the path - remove any leading slashes for consistency
   const normalizedPath = basePath.replace(/^\/+/, "");
 
+  // Use adapter's resolveFile if available - it's more robust and handles:
+  // 1. Multiple extensions (.tsx, .ts, .jsx, .js, .mdx, .md)
+  // 2. Index files (e.g., lib/utils/index.ts)
+  // 3. API search as fallback (finds files not in initial file list)
+  if (adapter?.fs.resolveFile) {
+    try {
+      const resolved = await adapter.fs.resolveFile(normalizedPath);
+      if (resolved) {
+        return resolved;
+      }
+    } catch {
+      // Fall through to manual resolution
+    }
+  }
+
+  // Manual resolution fallback (for adapters without resolveFile)
   // Check if path already has extension
   if (/\.(tsx?|jsx?|mjs|cjs|mdx)$/.test(normalizedPath)) {
     if (await checkFileExists(normalizedPath, adapter)) {
