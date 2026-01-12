@@ -3,7 +3,7 @@
  *
  * Helper functions for Redis adapters.
  *
- * @module ai/workflow/backends/redis/adapters/utils
+ * @module platform/adapters/redis/utils
  */
 
 /**

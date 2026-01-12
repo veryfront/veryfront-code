@@ -3,10 +3,10 @@
  *
  * Adapter for the Node.js 'redis' package.
  *
- * @module ai/workflow/backends/redis/adapters/node
+ * @module platform/adapters/redis/node
  */
 
-import type { NodeRedisClient } from "../types.ts";
+import type { NodeRedisClient } from "./types.ts";
 import type { RedisAdapter } from "./interface.ts";
 
 /**
@@ -77,10 +77,6 @@ export class NodeRedisAdapter implements RedisAdapter {
   ): Promise<
     Array<{ key: string; messages: Array<{ id: string; data: Record<string, string> }> }>
   > {
-    // Node redis format: { key: string, messages: Array<{ id: string, message: Record<string, string> }> }
-    // OR if single stream: Array<{ id: string, message: Record<string, string> }> ??
-    // The node-redis v4 API is slightly different.
-    // Assuming commandOptions style:
     const result = await this.client.xReadGroup(
       options.group,
       options.consumer,

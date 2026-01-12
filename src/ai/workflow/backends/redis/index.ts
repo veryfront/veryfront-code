@@ -19,15 +19,20 @@ import type {
 import type { WorkflowBackend } from "../types.ts";
 import { agentLogger as logger } from "@veryfront/utils";
 
+// Import from platform adapters
+import type { RedisAdapter } from "@veryfront/platform/adapters/redis/index.ts";
+import {
+  DenoRedisAdapter,
+  getRedisModule,
+  NodeRedisAdapter,
+} from "@veryfront/platform/adapters/redis/index.ts";
+
 // Re-export types
-export type { RedisAdapter } from "./adapters/interface.ts";
+export type { RedisAdapter } from "@veryfront/platform/adapters/redis/index.ts";
 export type { RedisBackendConfig } from "./types.ts";
 
-// Import internal types and utilities
-import type { RedisAdapter } from "./adapters/interface.ts";
+// Import internal types
 import type { RedisBackendConfig, RedisBackendInternalConfig } from "./types.ts";
-import { getRedisModule } from "./modules.ts";
-import { DenoRedisAdapter, NodeRedisAdapter } from "./adapters/index.ts";
 
 /**
  * Redis Workflow Backend
@@ -526,7 +531,6 @@ export class RedisBackend implements WorkflowBackend {
     data.comment = decision.comment;
 
     // Use LSET to atomically update the specific index
-    // This is more atomic than del + rpush as it only modifies one element
     await client.lset(key, targetIndex, JSON.stringify(data));
   }
 
@@ -619,7 +623,6 @@ export class RedisBackend implements WorkflowBackend {
       return null;
     }
 
-    // Now streams is strongly typed due to Adapter
     const stream = streams[0];
     if (!stream || !stream.messages || stream.messages.length === 0) {
       return null;
@@ -642,8 +645,6 @@ export class RedisBackend implements WorkflowBackend {
   }
 
   acknowledge(runId: string): Promise<void> {
-    // Note: In a full implementation, we'd need to track the message ID
-    // For now, this is a placeholder
     if (this.config.debug) {
       logger.debug(`[RedisBackend] Acknowledged: ${runId}`);
     }
