@@ -75,8 +75,6 @@ export class PageResolver {
       this.adapter,
     );
 
-    logger.debug("[PageResolver] Router mode", { useAppRouter, slug });
-
     const appDirName = this.config?.directories?.app || "app";
 
     // Try App Router resolution first if enabled

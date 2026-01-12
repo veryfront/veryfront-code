@@ -85,7 +85,9 @@ export function endRenderSession(sessionId: string): void {
       recordSSRModules(session.projectSlug, session.route, modulePaths);
     }
   } else {
-    logger.warn(
+    // This is normal in local dev/tests where projectSlug isn't set
+    // The manifest is an optimization for production, not required
+    logger.debug(
       `${LOG_PREFIX_MDX_LOADER} Cannot record to manifest - missing projectSlug or route`,
       {
         projectSlug: session.projectSlug,
