@@ -22,11 +22,74 @@ import { getLocalFs, getModulePathCache, saveModulePathCache } from "../cache/in
 import { hashString } from "../utils/hash.ts";
 import { createStubModule } from "../utils/stub-module.ts";
 import { resolveModuleFile } from "../resolution/file-finder.ts";
+import { recordSSRModules } from "../../../../../module-system/manifest/route-module-manifest.ts";
 
 /**
  * In-flight tracking to prevent duplicate parallel fetches.
  */
 const inFlight = new Map<string, Promise<string | null>>();
+
+/**
+ * Track modules loaded during current render for manifest recording.
+ * Key: renderSessionId, Value: Set of normalized module paths
+ */
+const renderSessions = new Map<string, {
+  modules: Set<string>;
+  projectSlug?: string;
+  route?: string;
+}>();
+
+/**
+ * Start a render session to track module loading.
+ * Call this before rendering a page.
+ */
+export function startRenderSession(
+  sessionId: string,
+  projectSlug?: string,
+  route?: string,
+): void {
+  renderSessions.set(sessionId, {
+    modules: new Set(),
+    projectSlug,
+    route,
+  });
+}
+
+/**
+ * End a render session and record loaded modules to the manifest.
+ */
+export function endRenderSession(sessionId: string): void {
+  const session = renderSessions.get(sessionId);
+  if (!session) return;
+
+  // Record to manifest
+  if (session.projectSlug !== undefined && session.route !== undefined) {
+    const modulePaths = Array.from(session.modules);
+    if (modulePaths.length > 0) {
+      recordSSRModules(session.projectSlug, session.route, modulePaths);
+      logger.debug(`${LOG_PREFIX_MDX_LOADER} Recorded ${modulePaths.length} modules to manifest`, {
+        route: session.route,
+        projectSlug: session.projectSlug,
+      });
+    }
+  }
+
+  renderSessions.delete(sessionId);
+}
+
+/**
+ * Get the current active render session (if any).
+ * Used to record modules during fetch.
+ */
+function getCurrentSession():
+  | { modules: Set<string>; projectSlug?: string; route?: string }
+  | null {
+  // Return the most recent session (there should only be one per request)
+  for (const session of renderSessions.values()) {
+    return session;
+  }
+  return null;
+}
 
 /**
  * Normalize a module path, resolving relative paths if a parent is provided.
@@ -163,6 +226,17 @@ async function cacheModule(
   pathCache.set(normalizedPath, cachePath);
   await saveModulePathCache(esmCacheDir);
   logger.debug(`${LOG_PREFIX_MDX_LOADER} Cached vf_module: ${normalizedPath} -> ${cachePath}`);
+
+  // Record this module to the current render session for manifest tracking
+  const session = getCurrentSession();
+  if (session) {
+    // Normalize path to module URL format (e.g., "pages/index.js")
+    const moduleUrlPath = normalizedPath
+      .replace(/^_vf_modules\//, "")
+      .replace(/\.(tsx|ts|jsx|mdx)$/, ".js");
+    session.modules.add(moduleUrlPath);
+  }
+
   return cachePath;
 }
 

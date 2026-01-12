@@ -37,6 +37,10 @@ import {
 import { generateNonce } from "@veryfront/security/http/response/security-handler.ts";
 import { getColorSchemeFromRequest } from "@veryfront/security/http/client-hints.ts";
 import { isExtendedFSAdapter } from "@veryfront/platform/adapters/fs/wrapper.ts";
+import {
+  endRenderSession,
+  startRenderSession,
+} from "@veryfront/build/transforms/mdx/esm-module-loader/module-fetcher/index.ts";
 
 /**
  * Determine if request should serve production (released) content.
@@ -251,6 +255,10 @@ export class SSRHandler extends BaseHandler {
         });
       }
 
+      // Start tracking modules for manifest (used for expanded modulepreload hints)
+      const renderSessionId = `${ctx.projectSlug || "default"}-${slug || "index"}-${Date.now()}`;
+      startRenderSession(renderSessionId, ctx.projectSlug, slug);
+
       const result = await timeAsync("render-page", () =>
         renderer.renderPage(slug, {
           delivery: "stream",
@@ -264,6 +272,10 @@ export class SSRHandler extends BaseHandler {
           colorScheme,
           proxyEnvironment: ctx.proxyEnvironment,
         }));
+
+      // End tracking and record to manifest for future requests
+      endRenderSession(renderSessionId);
+
       this.logDebug("SSR successful", { slug, params }, ctx);
       endRequest(requestId);
 

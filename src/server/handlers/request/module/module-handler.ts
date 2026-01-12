@@ -20,6 +20,7 @@ import { handlePageModule } from "./page-module-handler.ts";
 import { handleDataEndpoint } from "./data-endpoint-handler.ts";
 import { handlePageDataEndpoint } from "./page-data-endpoint-handler.ts";
 import { handleVirtualModule } from "./virtual-module-handler.ts";
+import { handleBatchModuleEndpoint } from "./batch-module-handler.ts";
 import { PRIORITY_MEDIUM } from "@veryfront/core/constants/index.ts";
 
 /**
@@ -75,6 +76,22 @@ export class ModuleHandler extends BaseHandler {
     const { createResponseBuilder, respond, logDebug, getErrorMessage } = this.helpers;
 
     const proxyOptions = { requireToken: true };
+
+    // Module batch endpoint - coalesce multiple module requests into one
+    // Must be checked BEFORE general /_vf_modules/ handler
+    if (pathname === "/_vf_modules/_batch") {
+      return this.withProxyContext(
+        ctx,
+        () =>
+          handleBatchModuleEndpoint(
+            req,
+            ctx,
+            createResponseBuilder,
+            respond,
+          ),
+        proxyOptions,
+      );
+    }
 
     // Module server endpoint (including snippet modules - they need transformation)
     if (pathname.startsWith("/_vf_modules/")) {
