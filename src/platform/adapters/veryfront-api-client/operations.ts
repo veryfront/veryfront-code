@@ -29,7 +29,7 @@ export interface ListFilesOptions {
   cursor?: string;
   limit?: number;
   pattern?: string;
-  sortBy?: "path" | "updatedAt";
+  sortBy?: "path" | "updated_at";
   sortOrder?: "asc" | "desc";
 }
 
@@ -65,7 +65,7 @@ export interface FileDetail {
 // =============================================================================
 
 function buildListParams(options: ListFilesOptions): URLSearchParams {
-  const { cursor, limit = 100, pattern, sortBy = "updatedAt", sortOrder = "desc" } = options;
+  const { cursor, limit = 100, pattern, sortBy = "updated_at", sortOrder = "desc" } = options;
   const params = new URLSearchParams({
     limit: String(limit),
     sort_by: sortBy,
