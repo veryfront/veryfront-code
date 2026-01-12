@@ -11,7 +11,7 @@ import type {
   ToolUIPart,
   UIMessage,
   UIMessagePart,
-} from "../../src/ai/react/hooks/use-chat.ts";
+} from "../../src/ai/react/hooks/use-chat/index.ts";
 
 /**
  * Internal tool tracking during streaming (mirrors implementation)
