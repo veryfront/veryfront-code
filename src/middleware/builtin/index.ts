@@ -19,3 +19,7 @@ export type { RateLimitStore } from "./security/types.ts";
 export { devLogger, logger, prodLogger } from "./logger.ts";
 
 export type { LogFormat, LoggerOptions } from "./logger.ts";
+
+export { getTimeoutFromEnv, timeout, timeoutFromEnv } from "./timeout.ts";
+
+export type { TimeoutOptions } from "./timeout.ts";

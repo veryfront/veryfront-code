@@ -8,6 +8,7 @@ import { ContextPropagation } from "./context-propagation.ts";
 class TracingManager {
   private state: TracingState = {
     initialized: false,
+    degraded: false,
     tracer: null,
     api: null,
     propagator: null,
@@ -40,8 +41,12 @@ class TracingManager {
         endpoint: finalConfig.endpoint,
       });
     } catch (error) {
-      logger.warn("[tracing] Failed to initialize OpenTelemetry tracing", error);
+      logger.error(
+        "[tracing] Failed to initialize OpenTelemetry tracing - running in degraded mode",
+        error,
+      );
       this.state.initialized = true;
+      this.state.degraded = true;
     }
   }
 
@@ -67,6 +72,10 @@ class TracingManager {
 
   isEnabled(): boolean {
     return this.state.initialized && this.state.tracer !== null;
+  }
+
+  isDegraded(): boolean {
+    return this.state.degraded;
   }
 
   getSpanOperations(): SpanOperations | null {

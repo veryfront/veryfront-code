@@ -138,6 +138,60 @@ describe("sanitizeData", () => {
       assertEquals(result["key-with-hyphens"], "value3");
       assertEquals(result["keywithspecial"], "value4");
     });
+
+    it("should block uppercase __PROTO__ keys", () => {
+      const malicious = { __PROTO__: { polluted: true } };
+      const result = sanitizeData(malicious) as Record<string, unknown>;
+      assertEquals(Object.hasOwn(result, "__PROTO__"), false);
+    });
+
+    it("should block uppercase CONSTRUCTOR keys", () => {
+      const malicious = { CONSTRUCTOR: { value: "bad" } };
+      const result = sanitizeData(malicious) as Record<string, unknown>;
+      assertEquals(Object.hasOwn(result, "CONSTRUCTOR"), false);
+    });
+
+    it("should block keys containing __proto__ as substring", () => {
+      const malicious = {
+        "__proto__polluted": "bad",
+        "x__proto__": "bad",
+        "foo__proto__bar": "bad",
+      };
+      const result = sanitizeData(malicious) as Record<string, unknown>;
+      assertEquals(Object.hasOwn(result, "__proto__polluted"), false);
+      assertEquals(Object.hasOwn(result, "x__proto__"), false);
+      assertEquals(Object.hasOwn(result, "foo__proto__bar"), false);
+    });
+
+    it("should block keys containing constructor as substring", () => {
+      const malicious = {
+        "constructorPolluted": "bad",
+        "myConstructor": "bad",
+      };
+      const result = sanitizeData(malicious) as Record<string, unknown>;
+      assertEquals(Object.hasOwn(result, "constructorPolluted"), false);
+      assertEquals(Object.hasOwn(result, "myConstructor"), false);
+    });
+
+    it("should block keys containing prototype as substring", () => {
+      const malicious = {
+        "prototypeChain": "bad",
+        "myPrototype": "bad",
+      };
+      const result = sanitizeData(malicious) as Record<string, unknown>;
+      assertEquals(Object.hasOwn(result, "prototypeChain"), false);
+      assertEquals(Object.hasOwn(result, "myPrototype"), false);
+    });
+
+    it("should block mixed case variations", () => {
+      const malicious = {
+        "__PrOtO__": { polluted: true },
+        "ConsTRUCtor": { value: "bad" },
+        "PROTOtype": { value: "bad" },
+      };
+      const result = sanitizeData(malicious) as Record<string, unknown>;
+      assertEquals(Object.keys(result).length, 0);
+    });
   });
 
   describe("primitive passthrough", () => {
