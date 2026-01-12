@@ -205,6 +205,9 @@ async function resolveAliasImportPath(
   }
 
   // Manual resolution fallback (for adapters without resolveFile)
+  // Note: This section runs even when adapter.fs.resolveFile returns null
+  console.debug("[import-parser] Manual resolution for", { normalizedPath, hasAdapter: !!adapter });
+
   // Check if path already has extension
   if (/\.(tsx?|jsx?|mjs|cjs|mdx)$/.test(normalizedPath)) {
     if (await checkFileExists(normalizedPath, adapter)) {
@@ -232,18 +235,30 @@ async function resolveAliasImportPath(
   // FALLBACK: For lib/* imports not found in project, check framework lib directory
   // This provides framework utilities like lib/Head, lib/Router, lib/usePageContext
   if (normalizedPath.startsWith("lib/")) {
+    console.info("[import-parser] Framework lib fallback triggered", {
+      normalizedPath,
+      FRAMEWORK_ROOT,
+    });
     const fs = createFileSystem();
     for (const ext of EXTENSIONS) {
       const frameworkPath = join(FRAMEWORK_ROOT, normalizedPath + ext);
       try {
         const stat = await fs.stat(frameworkPath);
         if (stat.isFile) {
+          console.info("[import-parser] Found framework lib file", {
+            normalizedPath,
+            frameworkPath,
+          });
           return frameworkPath;
         }
       } catch {
         // Continue trying other paths
       }
     }
+    console.warn("[import-parser] Framework lib file NOT found", {
+      normalizedPath,
+      triedPaths: EXTENSIONS.map((ext) => join(FRAMEWORK_ROOT, normalizedPath + ext)),
+    });
   }
 
   return null;
