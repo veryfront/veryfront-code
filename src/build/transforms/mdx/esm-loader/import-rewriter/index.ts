@@ -7,3 +7,5 @@
  */
 
 export { transformReactImportsToAbsolute } from "./react.ts";
+export { transformProjectAliasImports } from "./project-alias.ts";
+export { transformModuleServerImports } from "./module-server.ts";

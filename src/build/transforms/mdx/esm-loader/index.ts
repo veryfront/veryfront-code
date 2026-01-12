@@ -34,3 +34,22 @@ export {
   REACT_IMPORT_PATTERN,
   SOURCE_EXTENSIONS,
 } from "./constants.ts";
+
+// Re-export types
+export type { FSAdapter, ModuleFetchContext } from "./types.ts";
+
+// Re-export cache utilities
+export { getModulePathCache, saveModulePathCache } from "./cache/persistent.ts";
+
+// Re-export import rewriters
+export {
+  transformModuleServerImports,
+  transformProjectAliasImports,
+  transformReactImportsToAbsolute,
+} from "./import-rewriter/index.ts";
+
+// Re-export fetcher utilities
+export { fetchAndCacheModule, normalizeModulePath, resolveModuleSource } from "./fetcher/index.ts";
+
+// Re-export processor utilities
+export { createStubModule, extractNamedExports } from "./processor/stubs.ts";
