@@ -15,8 +15,10 @@ import {
 } from "../app-reserved.ts";
 import { detectAppRouter } from "../router-detection.ts";
 import { getProjectReact } from "@veryfront/react";
-import { RouterProvider } from "@veryfront/exports/router.ts";
-import { PageContextProvider } from "@veryfront/exports/context.ts";
+// Import using bare specifiers that match user code imports
+// This ensures SSR and client use the same module instance (same React context)
+import { RouterProvider } from "veryfront/router";
+import { PageContextProvider } from "veryfront/context";
 
 export interface LayoutApplicationOptions {
   projectDir: string;

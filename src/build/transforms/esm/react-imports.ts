@@ -42,18 +42,17 @@ function getVeryfrontExportPath(name: string): string {
 // deno-lint-ignore require-await
 export async function resolveReactImports(code: string, forSSR: boolean = false): Promise<string> {
   if (forSSR) {
-    // SSR: Only resolve veryfront-specific imports to file:// URLs
-    // Leave React imports as bare specifiers for deno.json import map to resolve
+    // SSR: Only resolve veryfront AI imports to file:// URLs
+    // Framework exports (veryfront/head, veryfront/router, etc.) are left as bare specifiers
+    // so they get resolved by deno.json import map - this ensures the same module instance
+    // is used by both framework code and user code (avoiding React context mismatch issues)
     const ssrImports: Record<string, string> = {
-      // AI modules - file:// URLs for local resolution
+      // AI modules - file:// URLs for local resolution (these don't have context issues)
       "veryfront/ai/react": getVeryfrontAIReactPath(),
       "veryfront/ai/components": getVeryfrontAIReactPath("components/index.ts"),
       "veryfront/ai/primitives": getVeryfrontAIReactPath("primitives/index.ts"),
-      // Framework exports - file:// URLs for local resolution
-      "veryfront/head": getVeryfrontExportPath("head"),
-      "veryfront/router": getVeryfrontExportPath("router"),
-      "veryfront/context": getVeryfrontExportPath("context"),
-      "veryfront/fonts": getVeryfrontExportPath("fonts"),
+      // Framework exports are NOT transformed here - they stay as bare specifiers
+      // and get resolved by deno.json import map to ensure single module instance
     };
 
     return replaceSpecifiers(code, (specifier) => {
