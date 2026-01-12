@@ -321,6 +321,110 @@ export class VeryfrontAPIClient {
     return result.files.map((f) => ({ id: f.id, path: f.path }));
   }
 
+  /**
+   * Search for files matching a pattern and return them with content.
+   * Useful for batch-loading files without knowing exact extensions.
+   *
+   * Example: searchFilesWithContent("components/Button.*") returns all files
+   * like Button.tsx, Button.ts, Button.jsx etc. with their content.
+   *
+   * @param pattern - Glob pattern to match files (e.g., "path/file.*" or "pages/_error.*")
+   * @returns Array of files with path and content
+   */
+  async searchFilesWithContent(
+    pattern: string,
+  ): Promise<Array<{ path: string; content: string }>> {
+    const projectRef = this.getProjectSlug()!;
+    const context = this.getContext();
+
+    // Use listFiles with pattern - the API returns files matching the glob
+    let result;
+    switch (context.type) {
+      case "branch":
+        result = await this.operations.listBranchFiles(projectRef, context.name, {
+          pattern,
+          limit: 20,
+        });
+        break;
+      case "environment":
+        result = await this.operations.listEnvironmentFiles(projectRef, context.name, {
+          pattern,
+          limit: 20,
+        });
+        break;
+      case "release":
+        result = await this.operations.listReleaseFiles(projectRef, context.version, {
+          pattern,
+          limit: 20,
+        });
+        break;
+    }
+
+    // Filter to only files that have content (some list endpoints include content)
+    // If content not included, we need to fetch individually but in parallel
+    const filesWithContent: Array<{ path: string; content: string }> = [];
+    const filesNeedingContent: string[] = [];
+
+    for (const file of result.files) {
+      if (file.content) {
+        filesWithContent.push({ path: file.path, content: file.content });
+      } else {
+        filesNeedingContent.push(file.path);
+      }
+    }
+
+    // Fetch missing content in parallel (if any files didn't include content)
+    if (filesNeedingContent.length > 0) {
+      const contentFetches = filesNeedingContent.map(async (path) => {
+        try {
+          const content = await this.getFileContent(path);
+          return { path, content };
+        } catch {
+          return null;
+        }
+      });
+
+      const fetched = await Promise.all(contentFetches);
+      for (const item of fetched) {
+        if (item) {
+          filesWithContent.push(item);
+        }
+      }
+    }
+
+    return filesWithContent;
+  }
+
+  /**
+   * Resolve a file path without extension by searching for all possible extensions.
+   * Returns the first match based on extension priority.
+   *
+   * @param basePath - Path without extension (e.g., "components/Button")
+   * @param extensionPriority - Preferred extension order (default: .tsx, .ts, .jsx, .js, .mdx, .md)
+   * @returns The resolved file with content, or null if not found
+   */
+  async resolveFileWithExtension(
+    basePath: string,
+    extensionPriority = [".tsx", ".ts", ".jsx", ".js", ".mdx", ".md"],
+  ): Promise<{ path: string; content: string } | null> {
+    // Search for all files matching basePath with any extension
+    const pattern = `${basePath}.*`;
+    const matches = await this.searchFilesWithContent(pattern);
+
+    if (matches.length === 0) {
+      return null;
+    }
+
+    // Sort by extension priority and return the first match
+    const sorted = matches.sort((a, b) => {
+      const extA = extensionPriority.findIndex((ext) => a.path.endsWith(ext));
+      const extB = extensionPriority.findIndex((ext) => b.path.endsWith(ext));
+      return (extA === -1 ? 99 : extA) - (extB === -1 ? 99 : extB);
+    });
+
+    return sorted[0] ?? null;
+  }
+
   listPublishedFiles(_projectId?: string, _releaseId?: string) {
     return this.operations.listAllEnvironmentFiles(this.getProjectSlug()!, "production");
   }

@@ -25,7 +25,7 @@ import {
 } from "../../esm/http-bundler.ts";
 import { setupSSRGlobals } from "../../../../rendering/ssr-globals.ts";
 import type { MDXFrontmatter, MDXModule } from "../types.ts";
-import type { ESMLoaderContext, JSXTransform } from "./types.ts";
+import type { ESMLoaderContext } from "./types.ts";
 import {
   ESBUILD_JSX_FACTORY,
   ESBUILD_JSX_FRAGMENT,
@@ -172,6 +172,7 @@ async function processVfModuleImports(
 
 /**
  * Transform JSX/TSX imports using esbuild.
+ * Optimized to process all imports in parallel batches for better performance.
  */
 async function transformJsxImports(
   code: string,
@@ -179,54 +180,111 @@ async function transformJsxImports(
   esmCacheDir: string,
 ): Promise<string> {
   const { transform } = await import("esbuild/mod.js");
-  const jsxTransforms: JSXTransform[] = [];
+
+  // First, collect all JSX imports to process
+  const importsToProcess: Array<{
+    fullMatch: string;
+    importClause: string;
+    filePath: string;
+    ext: string;
+  }> = [];
 
   let jsxMatch;
   while ((jsxMatch = JSX_IMPORT_PATTERN.exec(code)) !== null) {
     const [fullMatch, importClause, filePath, ext] = jsxMatch;
 
-    if (!filePath) {
-      logger.warn(`${LOG_PREFIX_MDX_LOADER} Skipping JSX import with undefined file path`, {
+    if (!filePath || !importClause || !ext) {
+      logger.warn(`${LOG_PREFIX_MDX_LOADER} Skipping JSX import with undefined fields`, {
         fullMatch,
+        hasFilePath: !!filePath,
+        hasImportClause: !!importClause,
+        hasExt: !!ext,
       });
       continue;
     }
 
-    try {
-      const jsxCode = await adapter!.fs.readFile(filePath);
-      const result = await transform(jsxCode as string, {
-        loader: ext === "tsx" ? "tsx" : "jsx",
-        jsx: "transform",
-        jsxFactory: ESBUILD_JSX_FACTORY,
-        jsxFragment: ESBUILD_JSX_FRAGMENT,
-        format: "esm",
-      });
-
-      let transformed = result.code;
-      if (!REACT_IMPORT_PATTERN.test(transformed)) {
-        transformed = `import React from 'react';\n${transformed}`;
-      }
-
-      const transformedFileName = `jsx-${hashString(filePath)}.mjs`;
-      const transformedPath = join(esmCacheDir, transformedFileName);
-      await getLocalFs().writeTextFile(transformedPath, transformed);
-
-      jsxTransforms.push({
-        original: fullMatch,
-        transformed: `import ${importClause} from "file://${transformedPath}";`,
-      });
-
-      logger.info(
-        `${LOG_PREFIX_MDX_LOADER} Transformed JSX import using esbuild: ${filePath} -> ${transformedPath}`,
-      );
-    } catch (error) {
-      logger.warn(`${LOG_PREFIX_MDX_LOADER} Failed to transform JSX import: ${filePath}`, error);
-    }
+    importsToProcess.push({ fullMatch, importClause, filePath, ext });
   }
 
+  if (importsToProcess.length === 0) {
+    return code;
+  }
+
+  const transformStart = performance.now();
+  logger.info(
+    `${LOG_PREFIX_MDX_LOADER} Transforming ${importsToProcess.length} JSX imports in parallel`,
+  );
+
+  // Process all imports in parallel
+  const transformResults = await Promise.all(
+    importsToProcess.map(async ({ fullMatch, importClause, filePath, ext }) => {
+      try {
+        // Check if already cached
+        const transformedFileName = `jsx-${hashString(filePath)}.mjs`;
+        const transformedPath = join(esmCacheDir, transformedFileName);
+
+        // Try to use cached version first
+        try {
+          const localFs = getLocalFs();
+          const stat = await localFs.stat(transformedPath);
+          if (stat?.isFile) {
+            return {
+              original: fullMatch,
+              transformed: `import ${importClause} from "file://${transformedPath}";`,
+              cached: true,
+            };
+          }
+        } catch {
+          // Not cached, proceed with transform
+        }
+
+        // Read and transform
+        const jsxCode = await adapter!.fs.readFile(filePath);
+        const result = await transform(jsxCode as string, {
+          loader: ext === "tsx" ? "tsx" : "jsx",
+          jsx: "transform",
+          jsxFactory: ESBUILD_JSX_FACTORY,
+          jsxFragment: ESBUILD_JSX_FRAGMENT,
+          format: "esm",
+        });
+
+        let transformed = result.code;
+        if (!REACT_IMPORT_PATTERN.test(transformed)) {
+          transformed = `import React from 'react';\n${transformed}`;
+        }
+
+        // Write to cache
+        await getLocalFs().writeTextFile(transformedPath, transformed);
+
+        return {
+          original: fullMatch,
+          transformed: `import ${importClause} from "file://${transformedPath}";`,
+          cached: false,
+        };
+      } catch (error) {
+        logger.warn(`${LOG_PREFIX_MDX_LOADER} Failed to transform JSX import: ${filePath}`, error);
+        return null;
+      }
+    }),
+  );
+
+  const transformEnd = performance.now();
+  const successCount = transformResults.filter((r) => r !== null).length;
+  const cachedCount = transformResults.filter((r) => r?.cached).length;
+
+  logger.info(`${LOG_PREFIX_MDX_LOADER} JSX transform phase completed`, {
+    total: importsToProcess.length,
+    success: successCount,
+    cached: cachedCount,
+    durationMs: (transformEnd - transformStart).toFixed(1),
+  });
+
+  // Apply all transformations
   let result = code;
-  for (const { original, transformed } of jsxTransforms) {
-    result = result.replace(original, transformed);
+  for (const transform of transformResults) {
+    if (transform) {
+      result = result.replace(transform.original, transform.transformed);
+    }
   }
 
   return result;

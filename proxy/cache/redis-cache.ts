@@ -20,6 +20,13 @@ const RESP_INTEGER = ":";
 const RESP_BULK_STRING = "$";
 const RESP_ARRAY = "*";
 const RESP_NULL_LENGTH = -1;
+// RESP3 types (for Upstash compatibility)
+const RESP3_MAP = "%";
+const RESP3_NULL = "_";
+const RESP3_DOUBLE = ",";
+const RESP3_BOOLEAN = "#";
+const RESP3_SET = "~";
+const RESP3_VERBATIM = "=";
 
 class RedisClient {
   private conn: Deno.TcpConn | Deno.TlsConn | null = null;
@@ -76,8 +83,12 @@ class RedisClient {
       clearTimeout(timeoutId!);
       this.conn = conn;
 
+      // Force RESP2 protocol (Upstash defaults to RESP3 which we don't support)
+      // HELLO 2 AUTH <password> switches to RESP2 and authenticates in one command
       if (this.password) {
-        await this.sendCommand("AUTH", this.password);
+        await this.sendCommand("HELLO", "2", "AUTH", "default", this.password);
+      } else {
+        await this.sendCommand("HELLO", "2");
       }
     } catch (error) {
       clearTimeout(timeoutId!);
@@ -167,6 +178,7 @@ class RedisClient {
     const type = this.decoder.decode(typeByte);
 
     switch (type) {
+      // RESP2 types
       case RESP_SIMPLE_STRING:
         return await this.readLine();
       case RESP_ERROR:
@@ -177,9 +189,50 @@ class RedisClient {
         return await this.readBulkString();
       case RESP_ARRAY:
         return await this.readArray();
+      // RESP3 types (for Upstash compatibility)
+      case RESP3_MAP:
+        return await this.readMap();
+      case RESP3_NULL:
+        await this.readLine(); // consume CRLF
+        return null;
+      case RESP3_DOUBLE:
+        return parseFloat(await this.readLine());
+      case RESP3_BOOLEAN:
+        return (await this.readLine()) === "t";
+      case RESP3_SET:
+        return await this.readArray(); // Sets are arrays in our case
+      case RESP3_VERBATIM:
+        return await this.readVerbatimString();
       default:
         throw new Error(`Unknown RESP type: ${type}`);
     }
+  }
+
+  private async readMap(): Promise<Record<string, unknown>> {
+    const count = parseInt(await this.readLine(), 10);
+    if (count === RESP_NULL_LENGTH) return {};
+
+    const result: Record<string, unknown> = {};
+    for (let i = 0; i < count; i++) {
+      const key = await this.readResponse();
+      const value = await this.readResponse();
+      if (typeof key === "string" || typeof key === "number") {
+        result[String(key)] = value;
+      }
+    }
+    return result;
+  }
+
+  private async readVerbatimString(): Promise<string | null> {
+    const len = parseInt(await this.readLine(), 10);
+    if (len === RESP_NULL_LENGTH) return null;
+
+    const data = await this.readBytes(len);
+    await this.readBytes(CRLF_LENGTH);
+    // Verbatim string has format "txt:actual content" - skip the type prefix
+    const str = this.decoder.decode(data);
+    const colonIdx = str.indexOf(":");
+    return colonIdx >= 0 ? str.slice(colonIdx + 1) : str;
   }
 
   private async readBytes(n: number): Promise<Uint8Array> {
