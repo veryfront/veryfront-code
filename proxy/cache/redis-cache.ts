@@ -256,8 +256,10 @@ export class RedisCache implements TokenCache {
       return entry;
     } catch (error) {
       console.error("[RedisCache] Get error:", error);
+      // Reset connection state so next operation will attempt to reconnect
+      this.connected = false;
       this.misses++;
-      return null;
+      throw error; // Propagate error so ResilientCache can handle fallback
     }
   }
 
@@ -269,6 +271,8 @@ export class RedisCache implements TokenCache {
       await this.client.set(this.key(key), JSON.stringify(entry), ttlSeconds);
     } catch (error) {
       console.error("[RedisCache] Set error:", error);
+      this.connected = false;
+      throw error; // Propagate error so ResilientCache can handle fallback
     }
   }
 
@@ -278,6 +282,8 @@ export class RedisCache implements TokenCache {
       await this.client.del(this.key(key));
     } catch (error) {
       console.error("[RedisCache] Delete error:", error);
+      this.connected = false;
+      throw error; // Propagate error so ResilientCache can handle fallback
     }
   }
 
@@ -306,6 +312,8 @@ export class RedisCache implements TokenCache {
       this.misses = 0;
     } catch (error) {
       console.error("[RedisCache] Clear error:", error);
+      this.connected = false;
+      throw error; // Propagate error so ResilientCache can handle fallback
     }
   }
 
@@ -315,7 +323,8 @@ export class RedisCache implements TokenCache {
       return await this.client.exists(this.key(key));
     } catch (error) {
       console.error("[RedisCache] Has error:", error);
-      return false;
+      this.connected = false;
+      throw error; // Propagate error so ResilientCache can handle fallback
     }
   }
 
@@ -324,8 +333,10 @@ export class RedisCache implements TokenCache {
     try {
       await this.ensureConnected();
       size = await this.client.dbsize();
-    } catch {
-      // Ignore stats errors
+    } catch (error) {
+      // Reset connection state but don't throw for stats
+      this.connected = false;
+      console.warn("[RedisCache] Stats error:", error);
     }
 
     return { hits: this.hits, misses: this.misses, size, type: "redis" };
