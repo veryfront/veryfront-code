@@ -3,7 +3,12 @@
  * @module ai/react/components/chat/utils/message-parts
  */
 
-import type { DynamicToolUIPart, ToolUIPart, UIMessage, UIMessagePart } from "../../../hooks/use-chat.ts";
+import type {
+  DynamicToolUIPart,
+  ToolUIPart,
+  UIMessage,
+  UIMessagePart,
+} from "../../../hooks/use-chat.ts";
 
 /** Get text content from UIMessage parts */
 export function getTextContent(message: UIMessage): string {
