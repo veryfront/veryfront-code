@@ -175,7 +175,6 @@ async function tryLoadErrorPage(
   return null;
 }
 
-
 /**
  * Load a component from a file path
  */
