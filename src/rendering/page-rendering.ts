@@ -35,7 +35,7 @@ export async function handleMDXPage(
   const fmArg = pageInfo.entity.frontmatter && Object.keys(pageInfo.entity.frontmatter).length > 0
     ? pageInfo.entity.frontmatter
     : undefined;
-  const pageBundle = await compileMDX(pageInfo.entity.content, fmArg, pageInfo.entity.id);
+  const pageBundle = await compileMDX(pageInfo.entity.content, fmArg, pageInfo.entity.path);
 
   let collectedMetadata: Record<string, unknown> = {};
 
@@ -62,7 +62,7 @@ export async function handleMDXPage(
         projectDir,
         contentWithPositions,
         fmArg,
-        pageInfo.entity.id,
+        pageInfo.entity.path,
         "browser", // Use browser target for client module
       );
       moduleCode = browserBundle.compiledCode;
@@ -97,7 +97,7 @@ export async function handleMDXPage(
             ) as Record<string, string>)
             : {},
           slug,
-          path: pageInfo.entity.id,
+          path: pageInfo.entity.path,
           frontmatter: pageInfo.entity.frontmatter || {},
         });
         if (gen && typeof gen === "object") {

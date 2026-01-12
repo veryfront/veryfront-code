@@ -41,10 +41,10 @@ export async function handleScriptPage(
   },
 ): Promise<RenderResult> {
   try {
-    logger.info(`[Script] Loading TS/JS page module: ${pageInfo.entity.id}`);
+    logger.info(`[Script] Loading TS/JS page module: ${pageInfo.entity.path}`);
 
     // Load the module - check if file exists locally first
-    const mod = await loadScriptModule(pageInfo.entity.id, options.projectDir, options.adapter);
+    const mod = await loadScriptModule(pageInfo.entity.path, options.projectDir, options.adapter);
 
     // Build a minimal context
     const ctx: PageContext = {
@@ -54,7 +54,7 @@ export async function handleScriptPage(
         ) as Record<string, string>)
         : {},
       slug,
-      path: pageInfo.entity.id,
+      path: pageInfo.entity.path,
       frontmatter: pageInfo.entity.frontmatter || {},
     };
 

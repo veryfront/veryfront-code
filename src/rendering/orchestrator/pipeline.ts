@@ -389,9 +389,9 @@ export class RenderPipeline {
     let dataFetchingProps: Record<string, unknown> | undefined;
     const layoutDataMap = new Map<string, Record<string, unknown>>();
 
-    const fileExtension = pageInfo.entity.id.split(".").pop()?.toLowerCase() || "";
+    const fileExtension = pageInfo.entity.path.split(".").pop()!.toLowerCase();
     const isComponentPage = ["tsx", "jsx", "ts", "js"].includes(fileExtension);
-    const isInPagesDir = pageInfo.entity.id.includes("/pages/");
+    const isInPagesDir = pageInfo.entity.path.includes("/pages/");
 
     // ─────────────────────────────────────────────────────────────────────────
     // Stage 3: Route Params Extraction
@@ -402,10 +402,10 @@ export class RenderPipeline {
         if (!options.params || Object.keys(options.params).length === 0) {
           logger.debug("[renderPage] Extracting route params", {
             slug,
-            pageId: pageInfo.entity.id,
+            pagePath: pageInfo.entity.path,
           });
 
-          const extracted = extractRouteParamsShared(pageInfo.entity.id, slug);
+          const extracted = extractRouteParamsShared(pageInfo.entity.path, slug);
           if (extracted.matched) {
             options.params = extracted.params;
             logger.debug("[renderPage] Extracted route params", {
@@ -429,9 +429,9 @@ export class RenderPipeline {
         if (isComponentPage && isInPagesDir) {
           jobs.push({
             type: "page",
-            id: pageInfo.entity.id,
+            id: pageInfo.entity.path,
             run: async () => {
-              const mod = await this.loadModule(pageInfo.entity.id);
+              const mod = await this.loadModule(pageInfo.entity.path);
               if (mod && (mod.getServerData || mod.getStaticData)) {
                 return this.dataFetcher.fetchData(mod, dataContext, this.config.mode);
               }
@@ -658,11 +658,11 @@ export class RenderPipeline {
     ]);
 
     // 3. Extract page path and type
-    const pagePath = extractRelativePathShared(pageInfo.entity.id, this.config.projectDir);
-    const fileExtension = pageInfo.entity.id.split(".").pop()?.toLowerCase() || "tsx";
+    const pagePath = extractRelativePathShared(pageInfo.entity.path, this.config.projectDir);
+    const fileExtension = pageInfo.entity.path.split(".").pop()!.toLowerCase();
     const pageType = fileExtension as PageDataResponse["pageType"];
     const isComponentPage = ["tsx", "jsx", "ts", "js"].includes(fileExtension);
-    const isInPagesDir = pageInfo.entity.id.includes("/pages/");
+    const isInPagesDir = pageInfo.entity.path.includes("/pages/");
 
     // 4. Initialize data structures
     let pageProps: Record<string, unknown> = {};
@@ -671,7 +671,7 @@ export class RenderPipeline {
 
     // 5. Extract route params if not provided
     if (options?.request && options?.url && Object.keys(params).length === 0) {
-      const extracted = extractRouteParamsShared(pageInfo.entity.id, slug);
+      const extracted = extractRouteParamsShared(pageInfo.entity.path, slug);
       if (extracted.matched) {
         params = extracted.params;
       }
@@ -688,7 +688,7 @@ export class RenderPipeline {
 
       // Fetch page data
       if (isComponentPage && isInPagesDir) {
-        const mod = await this.loadModule(pageInfo.entity.id);
+        const mod = await this.loadModule(pageInfo.entity.path);
         if (mod && (mod.getServerData || mod.getStaticData)) {
           const result = await this.dataFetcher.fetchData(mod, dataContext, this.config.mode);
           if (result?.props) {

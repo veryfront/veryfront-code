@@ -68,7 +68,7 @@ export class LayoutApplicator {
     );
 
     const useAppRouter = await detectAppRouter(this.projectDir, this.config, this.adapter);
-    const pageFilePath = pageInfo.entity.id;
+    const pageFilePath = pageInfo.entity.path;
 
     // Check if App was already applied as a provider to avoid double-wrapping
     // which causes duplicate <Head> content and hydration errors

@@ -194,7 +194,7 @@ export async function devCommand(options: DevOptions) {
   const localIP = await getLocalIP();
   cliLogger.info(`  ${bold("Local:")}    ${cyan(`http://${LOCALHOST.HOSTNAME}:${finalPort}`)}`);
   cliLogger.info(`  ${bold("Network:")}  ${cyan(`http://${localIP}:${finalPort}`)}`);
-  cliLogger.info(`  ${bold("HMR:")}      ${dim(`ws://${LOCALHOST.HOSTNAME}:${finalPort}/_ws`)}\n`);
+  cliLogger.info(`  ${bold("HMR:")}      ${dim(`ws://${LOCALHOST.HOSTNAME}:${finalPort + 1}/`)}\n`);
 
   cliLogger.info(dim("  Press ") + bold("Ctrl+C") + dim(" to stop the server\n"));
 }

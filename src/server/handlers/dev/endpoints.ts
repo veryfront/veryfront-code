@@ -69,8 +69,9 @@ export class DevEndpointsHandler extends BaseHandler {
     }
   }
 
-  private getHMRScript(port: number): string {
-    // Use the port parameter passed from the HTML (same port as server - no offset)
+  private getHMRScript(_port: number): string {
+    // HMR port is detected at runtime: dev server port + 1
+    // This ensures correct port regardless of project config differences
     return `
 // Veryfront HMR WebSocket Client
 
@@ -85,12 +86,14 @@ if (window.parent !== window) {
   } catch (e) { /* postMessage may fail in cross-origin iframes - expected */ }
 }
 
-// HMR WebSocket runs on same port as server
+// HMR WebSocket server runs on dev server port + 1
+// Detect at runtime to handle projects with different config.dev.port values
 // NOTE: This script only handles Studio notifications. Actual HMR reloads
 // are handled by the inline HMR runtime (templates.ts) to avoid duplicate reloads.
-const hmrPort = ${port};
+const devPort = parseInt(window.location.port, 10) || 3001;
+const hmrPort = devPort + 1;
 const host = window.location.hostname || 'localhost';
-const ws = new WebSocket('ws://' + host + ':' + hmrPort + '/_ws');
+const ws = new WebSocket('ws://' + host + ':' + hmrPort + '/');
 let wasConnected = false;
 
 ws.onopen = () => {
@@ -131,9 +134,10 @@ hydrate('${slug}', {
 // NOTE: This runtime only handles CSS updates. Full page reloads are handled
 // by the inline HMR runtime (templates.ts) to avoid duplicate reloads.
 (function() {
-  const hmrPort = parseInt(window.location.port, 10) || 3000;
+  const devPort = parseInt(window.location.port, 10) || 3001;
+  const hmrPort = devPort + 1;
   const host = window.location.hostname || 'localhost';
-  const ws = new WebSocket('ws://' + host + ':' + hmrPort + '/_ws');
+  const ws = new WebSocket('ws://' + host + ':' + hmrPort + '/');
   let wasConnected = false;
 
   ws.onopen = () => {
