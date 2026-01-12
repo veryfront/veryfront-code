@@ -12,12 +12,10 @@ export interface ContentContextProvider {
 }
 
 /**
- * Alternative extensions to try when a file fetch fails with 404.
- * This handles API inconsistencies where the file listing returns a different
- * extension than what the entity slug uses (e.g., file renamed from .tsx to .mdx
- * but entity slug still uses old extension).
+ * Extension priority for file resolution.
+ * Used when searching for files without a known extension.
  */
-const FALLBACK_EXTENSIONS = [".tsx", ".ts", ".jsx", ".js", ".mdx", ".md"];
+const EXTENSION_PRIORITY = [".tsx", ".ts", ".jsx", ".js", ".mdx", ".md"] as const;
 
 export class ReadOperations {
   constructor(
@@ -134,9 +132,9 @@ export class ReadOperations {
   }
 
   /**
-   * Try fetching file content with alternative extensions.
-   * This is a workaround for API data inconsistencies where the file listing
-   * returns a different extension than what the entity slug uses.
+   * Try fetching file content with alternative extensions using pattern search.
+   * Uses a single API call with pattern matching instead of sequential requests.
+   * This optimizes the 404 fallback from 6 sequential HTTP calls to 1.
    */
   private async tryFallbackExtensions(
     apiPath: string,
@@ -150,19 +148,61 @@ export class ReadOperations {
     const originalExt = extMatch[0];
     const basePath = apiPath.slice(0, -originalExt.length);
 
-    for (const ext of FALLBACK_EXTENSIONS) {
+    logger.debug("[ReadOperations] Searching for file with pattern", {
+      originalPath: apiPath,
+      pattern: `${basePath}.*`,
+    });
+
+    try {
+      // Use pattern search to find all matching files in ONE API call
+      const result = await this.client.resolveFileWithExtension(
+        basePath,
+        EXTENSION_PRIORITY as unknown as string[],
+      );
+
+      if (result) {
+        logger.info("[ReadOperations] Pattern search found file", {
+          originalPath: apiPath,
+          foundPath: result.path,
+          contentLength: result.content.length,
+        });
+
+        this.cache.set(cacheKey, result.content);
+        return result.content;
+      }
+    } catch (error) {
+      logger.debug("[ReadOperations] Pattern search failed, trying sequential fallback", {
+        originalPath: apiPath,
+        error: error instanceof Error ? error.message : String(error),
+      });
+
+      // Fallback to sequential approach if pattern search fails
+      // (e.g., if the API doesn't support the pattern endpoint)
+      return this.tryFallbackExtensionsSequential(apiPath, originalExt, basePath, cacheKey);
+    }
+
+    return null;
+  }
+
+  /**
+   * Sequential fallback for extension resolution.
+   * Used as backup if pattern search is unavailable.
+   * @deprecated Prefer pattern-based resolution via tryFallbackExtensions
+   */
+  private async tryFallbackExtensionsSequential(
+    apiPath: string,
+    originalExt: string,
+    basePath: string,
+    cacheKey: string,
+  ): Promise<string | null> {
+    for (const ext of EXTENSION_PRIORITY) {
       if (ext === originalExt) continue;
 
       const fallbackPath = basePath + ext;
       try {
-        logger.debug("[ReadOperations] Trying fallback extension", {
-          originalPath: apiPath,
-          fallbackPath,
-        });
-
         const content = await this.client.getPublishedFileContent(fallbackPath);
 
-        logger.info("[ReadOperations] Fallback extension succeeded", {
+        logger.info("[ReadOperations] Sequential fallback succeeded", {
           originalPath: apiPath,
           fallbackPath,
           contentLength: content.length,

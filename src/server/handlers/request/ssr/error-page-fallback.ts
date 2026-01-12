@@ -97,38 +97,120 @@ export async function tryErrorPageFallback(
   return null;
 }
 
+/** Extension priority for error pages */
+const ERROR_PAGE_EXTENSIONS = [".tsx", ".jsx", ".ts", ".js"] as const;
+
+/** Cache for resolved error page paths to avoid repeated lookups */
+const errorPagePathCache = new Map<string, string | null>();
+
 /**
- * Try to load an error page component from the pages directory
+ * Try to load an error page component from the pages directory.
+ * Optimized to use pattern-based file resolution when available.
  */
 async function tryLoadErrorPage(
   pagesDir: string,
   pageType: ErrorPageType,
   ctx: HandlerContext,
 ): Promise<React.ComponentType<unknown> | null> {
-  const extensions = [".tsx", ".jsx", ".ts", ".js"];
+  const cacheKey = `${ctx.projectDir}:${pageType}`;
 
-  for (const ext of extensions) {
-    const filePath = joinPath(pagesDir, `${pageType}${ext}`);
+  // Check if we've already resolved (or failed to resolve) this error page
+  if (errorPagePathCache.has(cacheKey)) {
+    const cachedPath = errorPagePathCache.get(cacheKey);
+    if (!cachedPath) {
+      return null; // Previously failed to find this error page
+    }
+    // Try to load from cached path
     try {
-      const src = await ctx.adapter.fs.readFile(filePath);
-      const { loadComponentFromSource } = await import(
-        "@veryfront/modules/react-loader/component-loader.ts"
-      );
-      const Component = await loadComponentFromSource(
-        src,
-        filePath,
-        ctx.projectDir,
-        ctx.adapter,
-        { projectId: ctx.projectDir, dev: ctx.mode === "development" },
-      );
-      if (typeof Component === "function") {
-        return Component as React.ComponentType<unknown>;
-      }
+      return await loadErrorComponent(cachedPath, ctx);
     } catch {
-      // Component not found with this extension, try next
+      // Cache might be stale, clear and try fresh resolution
+      errorPagePathCache.delete(cacheKey);
     }
   }
 
+  // Try to resolve the error page file using the adapter's resolveFile if available
+  // This uses the optimized pattern-based search under the hood
+  const basePath = `pages/${pageType}`;
+
+  // First, try using stat operations to resolve the file (uses pattern search internally)
+  try {
+    const resolvedPath = await tryResolveErrorPagePath(basePath, ctx);
+    if (resolvedPath) {
+      const fullPath = joinPath(ctx.projectDir, resolvedPath);
+      const component = await loadErrorComponent(fullPath, ctx);
+      if (component) {
+        errorPagePathCache.set(cacheKey, fullPath);
+        return component;
+      }
+    }
+  } catch {
+    // Resolution failed, fall through to sequential approach
+  }
+
+  // Fallback: Try extensions sequentially (for environments without pattern support)
+  for (const ext of ERROR_PAGE_EXTENSIONS) {
+    const filePath = joinPath(pagesDir, `${pageType}${ext}`);
+    try {
+      const component = await loadErrorComponent(filePath, ctx);
+      if (component) {
+        errorPagePathCache.set(cacheKey, filePath);
+        return component;
+      }
+    } catch {
+      // Continue to next extension
+    }
+  }
+
+  // Cache negative result to avoid repeated lookups
+  errorPagePathCache.set(cacheKey, null);
+  return null;
+}
+
+/**
+ * Try to resolve error page path using stat operations (pattern-based when available)
+ */
+async function tryResolveErrorPagePath(
+  basePath: string,
+  ctx: HandlerContext,
+): Promise<string | null> {
+  // Try each extension and check if file exists using stat
+  // The stat operation uses the cached file index which is built once
+  for (const ext of ERROR_PAGE_EXTENSIONS) {
+    const pathWithExt = basePath + ext;
+    try {
+      const stat = await ctx.adapter.fs.stat(joinPath(ctx.projectDir, pathWithExt));
+      if (stat.isFile) {
+        return pathWithExt;
+      }
+    } catch {
+      // File doesn't exist with this extension
+    }
+  }
+  return null;
+}
+
+/**
+ * Load a component from a file path
+ */
+async function loadErrorComponent(
+  filePath: string,
+  ctx: HandlerContext,
+): Promise<React.ComponentType<unknown> | null> {
+  const src = await ctx.adapter.fs.readFile(filePath);
+  const { loadComponentFromSource } = await import(
+    "@veryfront/modules/react-loader/component-loader.ts"
+  );
+  const Component = await loadComponentFromSource(
+    src,
+    filePath,
+    ctx.projectDir,
+    ctx.adapter,
+    { projectId: ctx.projectDir, dev: ctx.mode === "development" },
+  );
+  if (typeof Component === "function") {
+    return Component as React.ComponentType<unknown>;
+  }
   return null;
 }
 
