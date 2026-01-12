@@ -33,10 +33,11 @@ export interface DAGExecutorConfig {
 /**
  * Internal config type with required defaults
  */
-export type DAGExecutorInternalConfig = Required<
-  Pick<DAGExecutorConfig, "maxConcurrency" | "debug">
-> &
-  DAGExecutorConfig;
+export type DAGExecutorInternalConfig =
+  & Required<
+    Pick<DAGExecutorConfig, "maxConcurrency" | "debug">
+  >
+  & DAGExecutorConfig;
 
 /**
  * Result of DAG execution

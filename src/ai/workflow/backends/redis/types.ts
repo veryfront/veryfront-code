@@ -47,7 +47,8 @@ export interface RedisBackendConfig extends BackendConfig {
 /**
  * Internal config type with required defaults
  */
-export type RedisBackendInternalConfig = Required<
-  Pick<RedisBackendConfig, "prefix" | "streamKey" | "groupName" | "consumerName" | "debug">
-> &
-  RedisBackendConfig;
+export type RedisBackendInternalConfig =
+  & Required<
+    Pick<RedisBackendConfig, "prefix" | "streamKey" | "groupName" | "consumerName" | "debug">
+  >
+  & RedisBackendConfig;

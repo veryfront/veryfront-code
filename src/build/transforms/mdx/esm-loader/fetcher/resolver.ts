@@ -74,9 +74,7 @@ export async function resolveFileWithExtensions(
   }
 
   // Strip any existing extension before adding new ones
-  const pathWithoutExt = hasKnownExt
-    ? basePath.replace(/\.(tsx|ts|jsx|js|mdx)$/, "")
-    : basePath;
+  const pathWithoutExt = hasKnownExt ? basePath.replace(/\.(tsx|ts|jsx|js|mdx)$/, "") : basePath;
 
   const triedPaths: string[] = [];
 
@@ -119,9 +117,7 @@ export async function resolveWithStrippedPrefixes(
   fs: FSAdapter,
 ): Promise<ResolvedFile | null> {
   const hasKnownExt = SOURCE_EXTENSIONS.some((ext) => basePath.endsWith(ext));
-  const pathWithoutExt = hasKnownExt
-    ? basePath.replace(/\.(tsx|ts|jsx|js|mdx)$/, "")
-    : basePath;
+  const pathWithoutExt = hasKnownExt ? basePath.replace(/\.(tsx|ts|jsx|js|mdx)$/, "") : basePath;
 
   for (const stripPrefix of PREFIXES_TO_STRIP) {
     if (pathWithoutExt.startsWith(stripPrefix)) {
@@ -156,9 +152,7 @@ export async function resolveIndexFile(
   fs: FSAdapter,
 ): Promise<ResolvedFile | null> {
   const hasKnownExt = SOURCE_EXTENSIONS.some((ext) => basePath.endsWith(ext));
-  const pathForIndex = hasKnownExt
-    ? basePath.replace(/\.(tsx|ts|jsx|js|mdx)$/, "")
-    : basePath;
+  const pathForIndex = hasKnownExt ? basePath.replace(/\.(tsx|ts|jsx|js|mdx)$/, "") : basePath;
 
   for (const prefix of DIRECTORY_PREFIXES) {
     for (const ext of SOURCE_EXTENSIONS) {

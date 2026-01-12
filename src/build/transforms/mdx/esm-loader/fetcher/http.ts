@@ -57,7 +57,10 @@ export async function fetchModuleViaHttp(
  */
 export function extractNestedImports(
   moduleCode: string,
-): { vfModules: Array<{ original: string; path: string }>; relative: Array<{ original: string; path: string }> } {
+): {
+  vfModules: Array<{ original: string; path: string }>;
+  relative: Array<{ original: string; path: string }>;
+} {
   const vfModulePattern = /from\s+["'](\/?_vf_modules\/[^"'?]+)(?:\?[^"']*)?["']/g;
   const relativePattern = /from\s+["'](\.\.?\/[^"'?]+)(?:\?[^"']*)?["']/g;
 
