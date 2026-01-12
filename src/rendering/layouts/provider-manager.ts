@@ -301,25 +301,25 @@ export class ProviderManager {
           providerItems.push({
             kind: "mdx",
             bundle,
-            componentPath: providerInfo.entity.id,
-            path: providerInfo.entity.id,
+            componentPath: providerInfo.entity.path,
+            path: providerInfo.entity.path,
             entityInfo: providerInfo,
           });
         } else {
           logger.debug("[ProviderManager] Skipping MDX compilation for TSX provider", {
-            providerId: providerInfo.entity.id,
+            providerPath: providerInfo.entity.path,
           });
 
           providerItems.push({
             kind: "tsx",
-            componentPath: providerInfo.entity.id,
-            path: providerInfo.entity.id,
+            componentPath: providerInfo.entity.path,
+            path: providerInfo.entity.path,
             entityInfo: providerInfo,
           });
         }
       } catch (error) {
         logger.error("[ProviderManager] Failed to compile provider", {
-          providerId: providerInfo.entity.id,
+          providerPath: providerInfo.entity.path,
           error,
         });
         throw error;
@@ -331,18 +331,18 @@ export class ProviderManager {
 
   private async compileProvider(providerInfo: EntityInfo): Promise<MdxBundle> {
     logger.debug("[ProviderManager] Compiling MDX provider", {
-      providerId: providerInfo.entity.id,
+      providerPath: providerInfo.entity.path,
       contentLength: providerInfo.entity.content.length,
     });
 
     const bundle = await this.compileMDX(
       providerInfo.entity.content,
       { ...providerInfo.entity.frontmatter, isProvider: true },
-      providerInfo.entity.id,
+      providerInfo.entity.path,
     );
 
     logger.debug("[ProviderManager] MDX provider compiled", {
-      providerId: providerInfo.entity.id,
+      providerPath: providerInfo.entity.path,
       codeLength: bundle.compiledCode?.length,
     });
 

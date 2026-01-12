@@ -6,7 +6,6 @@ import {
   generateStyleTags,
 } from "./tag-generators.ts";
 import { getDevScripts, getDevStyles, getProdScripts, getStudioScripts } from "./dev-scripts.ts";
-import { DEFAULT_DASHBOARD_PORT } from "@veryfront/utils/constants/server.ts";
 
 export interface InjectHTMLContentOptions {
   mode: string;
@@ -75,10 +74,11 @@ export function injectHTMLContent(
   let devScriptsInjected = false;
 
   if (options.mode === "development") {
+    // HMR port is detected at runtime in the hmr.js script
     if (/{{\s*devScripts\s*}}/i.test(html)) {
       html = html.replace(
         /{{\s*devScripts\s*}}/gi,
-        getDevScripts(options.devPort || DEFAULT_DASHBOARD_PORT),
+        getDevScripts(),
       );
       devScriptsInjected = true;
     }
@@ -86,7 +86,7 @@ export function injectHTMLContent(
 
     // If no placeholder was found, inject scripts before </body>
     if (!devScriptsInjected && /<\/body>/i.test(html)) {
-      const devScripts = getDevScripts(options.devPort || DEFAULT_DASHBOARD_PORT);
+      const devScripts = getDevScripts();
       const devStyles = getDevStyles();
       html = html.replace(
         /<\/body>/i,

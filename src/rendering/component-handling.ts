@@ -37,9 +37,9 @@ export async function handleComponentPage(
   },
 ): Promise<ComponentPageResult> {
   try {
-    logger.debug(`Loading TSX/JSX file: ${pageInfo.entity.id}`);
+    logger.debug(`Loading TSX/JSX file: ${pageInfo.entity.path}`);
 
-    const rawFileContent = await adapter.fs.readFile(pageInfo.entity.id);
+    const rawFileContent = await adapter.fs.readFile(pageInfo.entity.path);
 
     // DISABLED: Position injection for Studio Navigator
     // This was adding data-node-line, data-node-column, etc. to JSX elements.
@@ -56,7 +56,7 @@ export async function handleComponentPage(
     if (!clientModuleCode) {
       clientModuleCode = await bundleComponentForClient(
         fileContent,
-        pageInfo.entity.id,
+        pageInfo.entity.path,
         projectDir,
         adapter,
         options?.moduleServerUrl,
@@ -69,7 +69,7 @@ export async function handleComponentPage(
     );
     const PageComponent = await loadComponentFromSource(
       fileContent,
-      pageInfo.entity.id,
+      pageInfo.entity.path,
       projectDir,
       adapter,
       {
@@ -83,7 +83,7 @@ export async function handleComponentPage(
     if (!PageComponent) {
       throw toError(createError({
         type: "render",
-        message: `Component does not export a default: ${pageInfo.entity.id}`,
+        message: `Component does not export a default: ${pageInfo.entity.path}`,
       }));
     }
 
@@ -111,7 +111,7 @@ export async function handleComponentPage(
 
     return { pageElement, pageBundle };
   } catch (error) {
-    logger.error(`Failed to import TSX/JSX file: ${pageInfo.entity.id}`, error);
+    logger.error(`Failed to import TSX/JSX file: ${pageInfo.entity.path}`, error);
     throw new VeryfrontError(
       `Failed to load TSX/JSX component: ${(error as Error).message}`,
       ErrorCode.RENDER_ERROR,

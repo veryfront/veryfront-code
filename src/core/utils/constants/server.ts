@@ -8,8 +8,8 @@
 // Re-export DEFAULT_PORT from config/defaults.ts (the single source of truth)
 export { DEFAULT_PORT } from "@veryfront/config/defaults.ts";
 
-/** Default port for development dashboard */
-export const DEFAULT_DASHBOARD_PORT = 3002;
+/** Default port for development dashboard (matches veryfront.config.ts default) */
+export const DEFAULT_DASHBOARD_PORT = 3001;
 
 /** Internal URL prefix for all veryfront endpoints */
 export const INTERNAL_PREFIX = "/_veryfront" as const;

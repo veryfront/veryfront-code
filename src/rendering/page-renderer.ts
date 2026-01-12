@@ -98,10 +98,9 @@ export class PageRenderer {
     type: "mdx" | "component" | "script";
     extension: string;
   } {
-    // More explicit array access - handles edge cases safely
-    const parts = pageInfo.entity.id.split(".");
-    const lastPart = parts[parts.length - 1];
-    const fileExtension = parts.length > 1 && lastPart ? lastPart.toLowerCase() : "";
+    // File paths always have extensions - extract from entity.path
+    const parts = pageInfo.entity.path.split(".");
+    const fileExtension = parts.pop()!.toLowerCase();
 
     const isComponentPage = fileExtension === "tsx" || fileExtension === "jsx";
     const isScriptPage = fileExtension === "ts" || fileExtension === "js";
@@ -135,7 +134,7 @@ export class PageRenderer {
     const pageType = this.detectPageType(pageInfo);
 
     logger.debug(`Page file info:`, {
-      id: pageInfo.entity.id,
+      path: pageInfo.entity.path,
       extension: pageType.extension,
       type: pageType.type,
       slug,
@@ -154,7 +153,7 @@ export class PageRenderer {
         // Extract params from path if not provided (fallback extraction)
         let params = options?.params;
         if (!params || Object.keys(params).length === 0) {
-          const extracted = extractRouteParams(pageInfo.entity.id, slug);
+          const extracted = extractRouteParams(pageInfo.entity.path, slug);
           params = extracted.matched ? extracted.params : undefined;
         }
 

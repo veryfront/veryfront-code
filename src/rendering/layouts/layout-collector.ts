@@ -144,7 +144,7 @@ export class LayoutCollector {
     const layoutValue = pageInfo.entity.frontmatter.layout;
 
     logger.info("[LayoutCollector] collectNamedLayoutWithPath called", {
-      pageId: pageInfo.entity.id,
+      pagePath: pageInfo.entity.path,
       layoutValue,
       frontmatterKeys: Object.keys(pageInfo.entity.frontmatter),
       defaultLayout: this.config?.defaultLayout,
@@ -188,7 +188,7 @@ export class LayoutCollector {
   }
 
   private async collectNestedLayouts(pageInfo: EntityInfo): Promise<LayoutItem[]> {
-    const pageFilePath = pageInfo.entity.id;
+    const pageFilePath = pageInfo.entity.path;
     const useAppRouter = await detectAppRouter(this.projectDir, this.config, this.adapter);
 
     // Check if using Veryfront API adapter via wrapper methods

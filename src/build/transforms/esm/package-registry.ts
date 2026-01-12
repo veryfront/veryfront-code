@@ -150,9 +150,11 @@ export function getContextPackageImportMap(): Record<string, string> {
  */
 export function getTailwindImportMap(): Record<string, string> {
   const tw = TAILWIND_VERSION;
+  // Note: We don't use "tailwindcss/" prefix entry because import map spec requires
+  // URLs to end with "/" when keys end with "/", but query params prevent that.
+  // Instead, we explicitly map all known subpaths.
   return {
     tailwindcss: `https://esm.sh/tailwindcss@${tw}?target=es2022`,
-    "tailwindcss/": `https://esm.sh/tailwindcss@${tw}/?target=es2022`,
     "tailwindcss/plugin": `https://esm.sh/tailwindcss@${tw}/plugin?target=es2022`,
     "tailwindcss/colors": `https://esm.sh/tailwindcss@${tw}/colors?target=es2022`,
     "tailwindcss/defaultTheme": `https://esm.sh/tailwindcss@${tw}/defaultTheme?target=es2022`,

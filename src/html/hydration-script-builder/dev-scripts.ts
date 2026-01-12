@@ -1,6 +1,5 @@
 import type { ComponentProps } from "@veryfront/types";
 import type { VeryfrontConfig } from "@veryfront/config";
-import { DEFAULT_DASHBOARD_PORT } from "@veryfront/utils/constants/server.ts";
 import { generateDevErrorLoggerScript } from "./dev-error-logger.ts";
 import { generateDevComponentManifestScript } from "./dev-component-manifest.ts";
 import { generateDevClientRendererScript } from "./dev-client-renderer.ts";
@@ -9,12 +8,10 @@ function generateHMRScript(config: VeryfrontConfig, nonce?: string): string {
   if (!config.dev?.hmr) {
     return "";
   }
-  const port = config.dev?.port ?? DEFAULT_DASHBOARD_PORT;
-  // HMR WebSocket server runs on port + 1 by default (see dev-server/server.ts)
-  // Use hmrPort from config if explicitly set, otherwise use port + 1
-  const hmrPort = config.dev?.hmrPort ?? port + 1;
+  // HMR script detects port at runtime (window.location.port + 1)
+  // The port param is kept for backward compatibility but is ignored
   const nonceAttr = nonce ? ` nonce="${nonce}"` : "";
-  return `<script type="module" src="/_veryfront/hmr.js?port=${hmrPort}"${nonceAttr}></script>`;
+  return `<script type="module" src="/_veryfront/hmr.js"${nonceAttr}></script>`;
 }
 
 export function getDevScripts(

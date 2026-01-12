@@ -162,7 +162,7 @@ export class HTMLGenerator {
 
     // Detect if the page has 'use client' directive for hydration
     let isClientPage = false;
-    const pagePath = context.pageInfo.entity.id;
+    const pagePath = context.pageInfo.entity.path;
     try {
       const pageContent = await this.config.adapter.fs.readFile(pagePath);
       // Match 'use client' or "use client" at start of line
@@ -258,7 +258,7 @@ export class HTMLGenerator {
     const globalCSS = await this.loadProjectFile("globals.css");
     const tailwindConfigJs = await this.loadProjectFile("tailwind.config.js");
 
-    const pagePath = extractRelativePath(context.pageInfo.entity.id, this.config.projectDir);
+    const pagePath = extractRelativePath(context.pageInfo.entity.path, this.config.projectDir);
     const sourceHash = context.options?.studioEmbed && context.pageInfo.entity.content
       ? computeSourceHash(context.pageInfo.entity.content)
       : undefined;
@@ -272,7 +272,7 @@ export class HTMLGenerator {
         path: l.path,
         componentPath: l.componentPath,
       })),
-      providerPaths: context.providerInfos.map((p) => p.entity.id),
+      providerPaths: context.providerInfos.map((p) => p.entity.path),
       appPath: appComponentPath,
       pagePath,
       nonce: context.options?.nonce,
