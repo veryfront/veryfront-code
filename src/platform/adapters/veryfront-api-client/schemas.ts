@@ -79,7 +79,7 @@ export const ProjectFileSchema = z.object({
  */
 export const PageInfoSchema = z.object({
   self: z.string().nullable(),
-  first: z.null(),
+  first: z.literal(null),
   next: z.string().nullable(),
   prev: z.string().nullable(),
 });
