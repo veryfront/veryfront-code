@@ -84,7 +84,7 @@ async function listAllFiles(
   do {
     const params: Record<string, string> = {
       limit: "10000",
-      sort_by: "updatedAt",
+      sort_by: "updated_at",
       sort_order: "desc",
     };
     if (cursor) params.cursor = cursor;
