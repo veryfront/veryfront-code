@@ -96,7 +96,8 @@ export const EnvironmentSchema = z.object({
 
 export const BranchFileListItemSchema = z.object({
   id: z.string().optional(),
-  content: z.string().optional(),
+  version_id: z.string().optional(), // Draft files may not have version_id
+  content: z.string(), // API always includes content per Zalando #157
   ...BaseFileFields,
 });
 
@@ -108,6 +109,7 @@ export const ListBranchFilesResponseSchema = z.object({
 
 export const BranchFileDetailSchema = z.object({
   id: z.string().optional(),
+  version_id: z.string().optional(), // Draft files may not have version_id
   content: z.string(),
   ...BaseFileFields,
 });
@@ -136,7 +138,7 @@ const EnvironmentMetaFields = {
 
 export const EnvironmentFileListItemSchema = z.object({
   ...VersionedFileFields,
-  content: z.string().optional(),
+  content: z.string(), // API always includes content per Zalando #157
   ...BaseFileFields,
 });
 
@@ -161,7 +163,7 @@ export const EnvironmentFileDetailSchema = z.object({
 
 export const ReleaseFileListItemSchema = z.object({
   ...VersionedFileFields,
-  content: z.string().optional(),
+  content: z.string(), // API always includes content per Zalando #157
   ...BaseFileFields,
 });
 

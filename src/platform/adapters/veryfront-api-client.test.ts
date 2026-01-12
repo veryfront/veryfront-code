@@ -164,8 +164,8 @@ describe("VeryfrontAPIClient", () => {
               new Response(
                 JSON.stringify({
                   data: [
-                    { path: "file1.ts", size: 100, type: "file", updated_at: "2024-01-01" },
-                    { path: "file2.ts", size: 200, type: "file", updated_at: "2024-01-01" },
+                    { path: "file1.ts", content: "// file1", size: 100, type: "file", updated_at: "2024-01-01" },
+                    { path: "file2.ts", content: "// file2", size: 200, type: "file", updated_at: "2024-01-01" },
                   ],
                   page_info: {
                     self: null,
@@ -182,7 +182,7 @@ describe("VeryfrontAPIClient", () => {
               new Response(
                 JSON.stringify({
                   data: [
-                    { path: "file3.ts", size: 300, type: "file", updated_at: "2024-01-01" },
+                    { path: "file3.ts", content: "// file3", size: 300, type: "file", updated_at: "2024-01-01" },
                   ],
                   page_info: {
                     self: "page2",
