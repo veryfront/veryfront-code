@@ -152,17 +152,10 @@ export class VeryfrontAPIClient {
       return;
     }
 
-    logger.debug("[VeryfrontAPIClient] Initializing via listProjects", { slug });
-    const projects = await this.operations.listProjects();
-    const project = projects.find((p) => p.slug === slug);
-
-    if (!project) {
-      throw new VeryfrontAPIError(
-        `Project not found with slug: ${slug}`,
-        404,
-        { slug, availableProjects: projects.map((p) => p.slug) },
-      );
-    }
+    // Use getProject directly instead of listProjects - more efficient and works
+    // with tokens that have project access but not list access
+    logger.debug("[VeryfrontAPIClient] Initializing via getProject", { slug });
+    const project = await this.operations.getProject(slug);
 
     this.operations.setProjectId(project.id);
     this.initialized = true;
