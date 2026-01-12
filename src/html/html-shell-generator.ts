@@ -214,8 +214,10 @@ export async function generateHTMLShellParts(
 
   const nonce = options.nonce || "";
 
+  // Skip dev HMR script (hmr.js) when preview-hmr.js will be used instead
+  const skipDevHMR = options.proxyEnvironment === "preview";
   const modeScripts = options.mode === "development"
-    ? getDevScripts(meta.slug || "", options.config, params, props, nonce)
+    ? getDevScripts(meta.slug || "", options.config, params, props, nonce, { skipDevHMR })
     : getProdScripts(meta.slug || "", params, props, nonce);
 
   const modeStyles = options.mode === "development"
