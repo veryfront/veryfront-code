@@ -25,22 +25,17 @@ import type {
 import { generateId, parseDuration } from "../../types.ts";
 
 // Re-export types
-export type { DAGExecutorConfig, DAGExecutionResult, NodeExecutionResult } from "./types.ts";
+export type { DAGExecutionResult, DAGExecutorConfig, NodeExecutionResult } from "./types.ts";
 
 // Import internal types and utilities
 import type {
-  DAGExecutorConfig,
   DAGExecutionResult,
+  DAGExecutorConfig,
   DAGExecutorInternalConfig,
   NodeExecutionResult,
 } from "./types.ts";
 import { deriveNodeStatus, shouldCheckpoint, sleep } from "./utils.ts";
-import {
-  buildGraph,
-  getReadyNodes,
-  hasCycle,
-  updateInDegreesForCompletedNodes,
-} from "./graph.ts";
+import { buildGraph, getReadyNodes, hasCycle, updateInDegreesForCompletedNodes } from "./graph.ts";
 
 /**
  * DAG Executor class
