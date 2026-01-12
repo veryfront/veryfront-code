@@ -1,6 +1,22 @@
 import type { HTMLMetadata } from "@veryfront/transforms/mdx/types.ts";
 import { buildAttributes, escapeHTML } from "./html-escape.ts";
 
+function filterAttrs(
+  obj: Record<string, unknown>,
+  excludeKeys: string[],
+): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(obj).filter(([key]) => !excludeKeys.includes(key)),
+  ) as Record<string, string>;
+}
+
+function addNonceIfPresent(
+  attrs: Record<string, string>,
+  nonce?: string,
+): Record<string, string> {
+  return nonce ? { ...attrs, nonce } : attrs;
+}
+
 export function generateMetaTags(metadata: HTMLMetadata): string {
   const tags: string[] = ['<meta charset="UTF-8">'];
 
@@ -47,24 +63,12 @@ export function generateScriptTags(metadata: HTMLMetadata, nonce?: string): stri
   const tags: string[] = [];
 
   for (const script of metadata.scripts || []) {
-    const filteredAttrs = Object.fromEntries(
-      Object.entries(script).filter(([key]) => key !== "content"),
-    );
-
     if (script.src) {
-      tags.push(`<script ${buildAttributes(filteredAttrs as Record<string, string>)}></script>`);
+      const attrs = filterAttrs(script, ["content"]);
+      tags.push(`<script ${buildAttributes(attrs)}></script>`);
     } else if (script.content) {
-      const attrsWithNonce = {
-        ...Object.fromEntries(
-          Object.entries(filteredAttrs).filter(([key]) => key !== "src"),
-        ),
-        ...(nonce ? { nonce } : {}),
-      };
-      tags.push(
-        `<script ${
-          buildAttributes(attrsWithNonce as Record<string, string>)
-        }>${script.content}</script>`,
-      );
+      const attrs = addNonceIfPresent(filterAttrs(script, ["content", "src"]), nonce);
+      tags.push(`<script ${buildAttributes(attrs)}>${script.content}</script>`);
     }
   }
 
@@ -75,26 +79,12 @@ export function generateStyleTags(metadata: HTMLMetadata, nonce?: string): strin
   const tags: string[] = [];
 
   for (const style of metadata.styles || []) {
-    const filteredAttrs = Object.fromEntries(
-      Object.entries(style).filter(([key]) => key !== "content"),
-    );
-
     if (style.href) {
-      tags.push(
-        `<link rel="stylesheet" ${buildAttributes(filteredAttrs as Record<string, string>)}>`,
-      );
+      const attrs = filterAttrs(style, ["content"]);
+      tags.push(`<link rel="stylesheet" ${buildAttributes(attrs)}>`);
     } else if (style.content) {
-      const attrsWithNonce = {
-        ...Object.fromEntries(
-          Object.entries(filteredAttrs).filter(([key]) => key !== "href"),
-        ),
-        ...(nonce ? { nonce } : {}),
-      };
-      tags.push(
-        `<style ${
-          buildAttributes(attrsWithNonce as Record<string, string>)
-        }>${style.content}</style>`,
-      );
+      const attrs = addNonceIfPresent(filterAttrs(style, ["content", "href"]), nonce);
+      tags.push(`<style ${buildAttributes(attrs)}>${style.content}</style>`);
     }
   }
 

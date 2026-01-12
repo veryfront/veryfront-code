@@ -24,7 +24,7 @@ export class DebugContextHandler extends BaseHandler {
       return Promise.resolve(this.continue());
     }
 
-    // Gather context information for debugging
+    const token = req.headers.get("x-token");
     const debugInfo = {
       timestamp: new Date().toISOString(),
       request: {
@@ -32,9 +32,7 @@ export class DebugContextHandler extends BaseHandler {
         host: new URL(req.url).host,
         headers: {
           "x-project-slug": req.headers.get("x-project-slug"),
-          "x-token": req.headers.get("x-token")
-            ? `[${req.headers.get("x-token")?.length} chars]`
-            : null,
+          "x-token": token ? `[${token.length} chars]` : null,
           "x-environment": req.headers.get("x-environment"),
           "x-release-id": req.headers.get("x-release-id"),
           "x-project-id": req.headers.get("x-project-id"),

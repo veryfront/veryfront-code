@@ -2,69 +2,36 @@ import { parseImports, replaceSpecifiers, rewriteImports } from "./lexer.ts";
 import { REACT_DEFAULT_VERSION, TAILWIND_VERSION } from "@veryfront/utils/constants/cdn.ts";
 import { rendererLogger as logger } from "@veryfront/utils";
 
-/**
- * Track unversioned imports to warn users about reproducibility.
- * Imports without explicit versions may break when packages update.
- */
+/** Track unversioned imports to warn only once per specifier */
 const unversionedImportsWarned = new Set<string>();
 
-/**
- * Check if a specifier has an inline version specifier.
- * Returns true for: pkg@1.2.3, pkg@^1.2.3, @scope/pkg@1.2.3
- */
+/** Check if specifier has inline version: pkg@1.2.3, @scope/pkg@1.2.3 */
 function hasVersionSpecifier(specifier: string): boolean {
-  // Match @version patterns: @1.2.3, @^1.2.3, @~1.2.3, @1.x
   return /@[\d^~x][\d.x^~-]*(?=\/|$)/.test(specifier);
 }
 
-/**
- * Warn about unversioned npm imports for reproducibility.
- * These imports can break when packages update on esm.sh.
- */
+/** Warn about unversioned npm imports for reproducibility */
 function warnUnversionedImport(specifier: string): void {
-  // Only warn once per specifier to avoid spam
-  if (unversionedImportsWarned.has(specifier)) {
-    return;
-  }
+  if (unversionedImportsWarned.has(specifier)) return;
   unversionedImportsWarned.add(specifier);
 
-  // Suggest a versioned import
-  const suggestedVersion = "x.y.z"; // User needs to find actual version
-  const packageName = specifier.split("/")[0];
   const isScoped = specifier.startsWith("@");
-  const scopedPackage = isScoped ? specifier.split("/").slice(0, 2).join("/") : packageName;
-  const subpath = isScoped
-    ? specifier.split("/").slice(2).join("/")
-    : specifier.split("/").slice(1).join("/");
-  const versionedSpecifier = subpath
-    ? `${scopedPackage}@${suggestedVersion}/${subpath}`
-    : `${scopedPackage}@${suggestedVersion}`;
+  const parts = specifier.split("/");
+  const packageName = isScoped ? parts.slice(0, 2).join("/") : parts[0]!;
 
   logger.warn("[ESM] Unversioned import may cause reproducibility issues", {
     import: specifier,
-    suggestion: `Pin version: import '${versionedSpecifier}'`,
-    help: "Run 'npm info " + (isScoped ? scopedPackage : packageName!) +
-      " version' to find current version",
+    suggestion: `Pin version: import '${packageName}@x.y.z'`,
+    help: `Run 'npm info ${packageName} version' to find current version`,
   });
 }
 
-/**
- * Normalize package specifier by stripping inline version specifiers.
- * This ensures all imports of a package use the same version from the import map.
- *
- * Examples:
- *   "tailwindcss@3.4.17/plugin" -> "tailwindcss/plugin"
- *   "tailwindcss@^4.1.17/colors" -> "tailwindcss/colors"
- *   "@tailwindcss/typography@0.5.16" -> "@tailwindcss/typography"
- */
+/** Strip inline version specifiers: tailwindcss@3.4.17/plugin -> tailwindcss/plugin */
 function normalizeVersionedSpecifier(specifier: string): string {
-  // Match package@version patterns and strip the version
-  // Handles: pkg@1.2.3, pkg@^1.2.3, pkg@~1.2.3, pkg@1.x, @scope/pkg@1.2.3
   return specifier.replace(/@[\d^~x][\d.x^~-]*(?=\/|$)/, "");
 }
 
-// Packages kept as bare specifiers for HTML import map to resolve
-// These need consistent module instances, so HTML import map handles them
+/** Packages kept as bare specifiers for HTML import map to resolve */
 const HTML_IMPORT_MAP_PACKAGES = [
   "@tanstack/react-query",
   "@tanstack/query-core",
@@ -72,8 +39,7 @@ const HTML_IMPORT_MAP_PACKAGES = [
   "framer-motion",
 ];
 
-// Use ?target=es2022 to ensure identical builds between SSR (Deno) and browser
-// Without this, esm.sh auto-detects target and may serve different builds
+/** React import map with consistent es2022 target for SSR/browser parity */
 const REACT_IMPORT_MAP: Record<string, string> = {
   "react": `https://esm.sh/react@${REACT_DEFAULT_VERSION}?target=es2022`,
   "react-dom": `https://esm.sh/react-dom@${REACT_DEFAULT_VERSION}?target=es2022`,

@@ -44,12 +44,12 @@ export function checkVersionCompatibility(
 }
 
 export function getRecommendedSSRMethod(): SSRMethod {
-  const info = getReactVersionInfo();
+  const { isReact18, isReact19, features } = getReactVersionInfo();
 
-  if (info.isReact19 || (info.isReact18 && info.features.renderToReadableStream)) {
+  if (isReact19 || (isReact18 && features.renderToReadableStream)) {
     return "readable-stream";
   }
-  if (info.isReact18 && info.features.renderToPipeableStream) {
+  if (isReact18 && features.renderToPipeableStream) {
     return "stream";
   }
   return "string";

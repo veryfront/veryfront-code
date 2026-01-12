@@ -58,31 +58,31 @@ export class HealthHandler extends BaseHandler {
 
       case "/readyz": {
         const isReady = await this.checkReadiness(ctx);
-        const status = isReady ? HTTP_OK : HTTP_UNAVAILABLE;
-        return this.respond(builder.text(isReady ? "ready" : "not-ready", status));
+        return this.respond(builder.text(isReady ? "ready" : "not-ready", isReady ? HTTP_OK : HTTP_UNAVAILABLE));
       }
 
       case "/_health": {
-        let hasStaticBuild = false;
-        try {
-          const st = await ctx.adapter.fs.stat(joinPath(ctx.projectDir, "dist"));
-          hasStaticBuild = !!st?.isDirectory;
-        } catch {
-          // ignore
-        }
-
+        const hasStaticBuild = await this.hasDistDirectory(ctx);
         const payload = {
           status: "ok",
           timestamp: new Date().toISOString(),
           mode: hasStaticBuild ? "static+ssr" : "ssr",
           version: "0.1.0",
         };
-
         return this.respond(builder.withCache("no-cache").json(payload, HTTP_OK));
       }
 
       default:
         return this.continue();
+    }
+  }
+
+  private async hasDistDirectory(ctx: HandlerContext): Promise<boolean> {
+    try {
+      const st = await ctx.adapter.fs.stat(joinPath(ctx.projectDir, "dist"));
+      return !!st?.isDirectory;
+    } catch {
+      return false;
     }
   }
 }

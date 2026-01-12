@@ -25,9 +25,7 @@ export class CorsHandler extends BaseHandler {
       return this.continue();
     }
 
-    const url = new URL(req.url);
-    const pathname = url.pathname;
-
+    const pathname = new URL(req.url).pathname;
     const allowMethods = await this.resolveAllowedMethods(pathname, ctx);
 
     let corsConfig = ctx.securityConfig?.cors;
@@ -51,6 +49,7 @@ export class CorsHandler extends BaseHandler {
 
   private static readonly DEFAULT_METHODS = "GET,POST,PUT,PATCH,DELETE,OPTIONS";
   private static readonly HTTP_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE"] as const;
+  private static readonly ROUTE_FILE_NAMES = ["route.tsx", "route.ts", "route.jsx", "route.js"] as const;
 
   private async resolveAllowedMethods(pathname: string, ctx: HandlerContext): Promise<string> {
     try {
@@ -133,14 +132,11 @@ export class CorsHandler extends BaseHandler {
       return null;
     }
 
-    const candidates = ["route.tsx", "route.ts", "route.jsx", "route.js"].map((n) =>
-      joinPath(current, n)
-    );
-
-    for (const f of candidates) {
+    for (const name of CorsHandler.ROUTE_FILE_NAMES) {
+      const filePath = joinPath(current, name);
       try {
-        const st = await ctx.adapter.fs.stat(f);
-        if (st.isFile) return { file: f, params };
+        const st = await ctx.adapter.fs.stat(filePath);
+        if (st.isFile) return { file: filePath, params };
       } catch {
         continue;
       }

@@ -8,12 +8,13 @@ export function detectFeatures(
   minor: number,
   isReact19Flag: boolean,
 ): ReactFeatures {
+  const isReact18Plus = major >= 18;
   return {
-    suspense: major >= 18,
-    streaming: major >= 18,
-    automaticBatching: major >= 18,
-    transitions: major >= 18,
-    serverComponents: major >= 18 && minor >= 3,
+    suspense: isReact18Plus,
+    streaming: isReact18Plus,
+    automaticBatching: isReact18Plus,
+    transitions: isReact18Plus,
+    serverComponents: isReact18Plus && minor >= 3,
 
     useFormStatus: isReact19Flag,
     useOptimistic: isReact19Flag,
@@ -24,34 +25,31 @@ export function detectFeatures(
     renderToString: true,
     renderToStaticMarkup: true,
     renderToNodeStream: true,
-    renderToPipeableStream: major >= 18,
-    renderToReadableStream: major >= 18,
+    renderToPipeableStream: isReact18Plus,
+    renderToReadableStream: isReact18Plus,
   };
 }
 
-export function detectReactVersion(): ReactVersionInfo {
-  const version = React.version;
+function buildVersionInfo(version: string): ReactVersionInfo {
   const { major, minor, patch } = parseVersion(version);
-
-  const react17 = isReact17(major);
-  const react18 = isReact18(major);
   const react19 = isReact19(major, version);
-
   const features = detectFeatures(major, minor, react19);
 
-  const info: ReactVersionInfo = {
+  return {
     version,
     major,
     minor,
     patch,
-    isReact17: react17,
-    isReact18: react18,
+    isReact17: isReact17(major),
+    isReact18: isReact18(major),
     isReact19: react19,
     features,
   };
+}
 
+export function detectReactVersion(): ReactVersionInfo {
+  const info = buildVersionInfo(React.version);
   logger.debug("Detected React version", info);
-
   return info;
 }
 
@@ -61,10 +59,9 @@ export function detectReactVersion(): ReactVersionInfo {
  * may have a different React version installed.
  */
 export async function detectReactVersionFromProject(projectDir: string): Promise<ReactVersionInfo> {
-  let version: string;
+  let version = React.version;
 
   try {
-    // Try to read React version from project's package.json dependencies
     const packageJsonPath = `${projectDir}/package.json`;
     const packageJson = JSON.parse(await Deno.readTextFile(packageJsonPath));
     const reactDep = packageJson.dependencies?.react ||
@@ -72,43 +69,19 @@ export async function detectReactVersionFromProject(projectDir: string): Promise
       packageJson.peerDependencies?.react;
 
     if (reactDep) {
-      // Strip version prefixes like ^, ~, >= etc
       version = reactDep.replace(/^[\^~>=<]+/, "");
       logger.debug("Detected React version from package.json", { projectDir, version });
     } else {
-      // Fallback to bundled React version
-      version = React.version;
       logger.debug("No React in package.json, using bundled version", { projectDir, version });
     }
   } catch {
-    // If package.json doesn't exist or can't be read, use bundled React
-    version = React.version;
     logger.debug("Could not read package.json, using bundled React version", {
       projectDir,
       version,
     });
   }
 
-  const { major, minor, patch } = parseVersion(version);
-
-  const react17 = isReact17(major);
-  const react18 = isReact18(major);
-  const react19 = isReact19(major, version);
-
-  const features = detectFeatures(major, minor, react19);
-
-  const info: ReactVersionInfo = {
-    version,
-    major,
-    minor,
-    patch,
-    isReact17: react17,
-    isReact18: react18,
-    isReact19: react19,
-    features,
-  };
-
+  const info = buildVersionInfo(version);
   logger.debug("Detected React version for project", { projectDir, ...info });
-
   return info;
 }

@@ -40,7 +40,7 @@ async function discoverNestedLayoutsImpl(
     const existing = await resolveExistingFiles(candidates.reverse(), adapter);
 
     logger.info("Found layout files:", existing);
-    addLayoutsFromFiles(existing, nestedLayouts, extname);
+    addLayoutsFromFiles(existing, nestedLayouts);
 
     await addMissedAncestorLayouts(
       pageFilePath,
@@ -48,8 +48,6 @@ async function discoverNestedLayoutsImpl(
       existing,
       nestedLayouts,
       adapter,
-      join,
-      dirname,
     );
   } catch (e) {
     logger.warn("Nested layout discovery failed", e);
@@ -86,11 +84,7 @@ async function resolveExistingFiles(
   return existing;
 }
 
-function addLayoutsFromFiles(
-  files: string[],
-  nestedLayouts: LayoutItem[],
-  extname: (path: string) => string,
-): void {
+function addLayoutsFromFiles(files: string[], nestedLayouts: LayoutItem[]): void {
   for (const file of files) {
     const ext = extname(file).toLowerCase();
     if (ext === ".mdx") {
@@ -113,8 +107,6 @@ async function addMissedAncestorLayouts(
   existing: string[],
   nestedLayouts: LayoutItem[],
   adapter: RuntimeAdapter,
-  pathJoin: (a: string, b: string) => string,
-  dirname: (path: string) => string,
 ): Promise<void> {
   try {
     const included = new Set(existing);
@@ -122,8 +114,8 @@ async function addMissedAncestorLayouts(
     let dir = dirname(pageFilePath);
 
     while (dir.startsWith(rootDir)) {
-      const tsx = pathJoin(dir, "layout.tsx");
-      const jsx = pathJoin(dir, "layout.jsx");
+      const tsx = join(dir, "layout.tsx");
+      const jsx = join(dir, "layout.jsx");
 
       if (!included.has(tsx)) candidates.push(tsx);
       if (!included.has(jsx)) candidates.push(jsx);

@@ -19,8 +19,7 @@ export class MetricsHandler extends BaseHandler {
   };
 
   handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
-    const url = new URL(req.url);
-    const pathname = url.pathname;
+    const pathname = new URL(req.url).pathname;
 
     if (pathname !== "/_metrics") {
       return Promise.resolve(this.continue());
@@ -28,7 +27,6 @@ export class MetricsHandler extends BaseHandler {
 
     try {
       const snap = metrics.snapshot();
-
       const memory = this.safeCall(memoryUsage);
       const uptimeValue = this.safeCall(uptime);
 
@@ -44,11 +42,8 @@ export class MetricsHandler extends BaseHandler {
 
       return Promise.resolve(this.respond(response));
     } catch (e) {
-      this.logDebug("metrics failed", {
-        error: this.getErrorMessage(e),
-      }, ctx);
+      this.logDebug("metrics failed", { error: this.getErrorMessage(e) }, ctx);
 
-      // Return error response
       const response = ResponseBuilder.error(
         HTTP_INTERNAL_SERVER_ERROR,
         "Failed to gather metrics",

@@ -11,15 +11,18 @@ interface VeryfrontGlobal {
   __VERYFRONT_DEBUG__?: boolean;
 }
 
+function isDebugMode(): boolean {
+  return Boolean(
+    (globalThis as VeryfrontGlobal).__VERYFRONT_DEBUG__ || isDebugEnvEnabled(),
+  );
+}
+
 async function renderToReadableStreamImpl(
   element: React.ReactNode,
   options: SSROptions,
   server: Awaited<ReturnType<typeof getReactDOMServer>>,
 ): Promise<SSRResult> {
-  const debug = Boolean(
-    (globalThis as VeryfrontGlobal).__VERYFRONT_DEBUG__ ||
-      isDebugEnvEnabled(),
-  );
+  const debug = isDebugMode();
 
   if (!server.renderToReadableStream) {
     throw toError(createError({
@@ -137,12 +140,7 @@ export async function renderToStreamAdapter(
   element: React.ReactNode,
   options: SSROptions = {},
 ): Promise<SSRResult> {
-  const debug = Boolean(
-    (globalThis as VeryfrontGlobal).__VERYFRONT_DEBUG__ ||
-      isDebugEnvEnabled(),
-  );
-
-  const versionInfo = getReactVersionInfo();
+  const debug = isDebugMode();
   const server = await getReactDOMServer();
 
   if (hasFeature("renderToReadableStream") && server.renderToReadableStream) {
@@ -155,7 +153,8 @@ export async function renderToStreamAdapter(
     return renderToPipeableStreamImpl(element, options, server);
   }
 
-  if (debug) logger.info("[stream-renderer] Using string rendering for React", versionInfo.version);
+  const { version } = getReactVersionInfo();
+  if (debug) logger.info("[stream-renderer] Using string rendering for React", version);
   try {
     const html = await renderToStringAdapter(element, options);
     return { html };

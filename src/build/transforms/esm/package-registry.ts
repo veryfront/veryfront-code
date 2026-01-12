@@ -65,32 +65,19 @@ export function getEsmShUrl(pkg: string, version: string, external?: readonly st
 }
 
 /**
- * Get URL for a context package - SSR version.
- * Uses esm.sh URLs (same as browser) to ensure identical module instances.
- * This prevents hydration errors from module instance mismatch.
- */
-export function getContextPackageUrlSSR(pkg: keyof typeof CONTEXT_PACKAGES): string {
-  const config = CONTEXT_PACKAGES[pkg];
-  // Use esm.sh for SSR to match browser modules exactly
-  return getEsmShUrl(pkg, config.version, config.external);
-}
-
-/**
- * Get URL for a context package - Browser version (esm.sh URL).
- */
-export function getContextPackageUrlBrowser(pkg: keyof typeof CONTEXT_PACKAGES): string {
-  const config = CONTEXT_PACKAGES[pkg];
-  return getEsmShUrl(pkg, config.version, config.external);
-}
-
-/**
- * Get the unified esm.sh URL for a context-dependent package.
- * @deprecated Use getContextPackageUrlSSR or getContextPackageUrlBrowser instead
+ * Get esm.sh URL for a context package.
+ * Both SSR and browser use the same URL to ensure identical module instances.
  */
 export function getContextPackageUrl(pkg: keyof typeof CONTEXT_PACKAGES): string {
-  // Default to browser URL for backwards compatibility
-  return getContextPackageUrlBrowser(pkg);
+  const config = CONTEXT_PACKAGES[pkg];
+  return getEsmShUrl(pkg, config.version, config.external);
 }
+
+/** @deprecated Alias for getContextPackageUrl - SSR and browser use same URLs */
+export const getContextPackageUrlSSR = getContextPackageUrl;
+
+/** @deprecated Alias for getContextPackageUrl - SSR and browser use same URLs */
+export const getContextPackageUrlBrowser = getContextPackageUrl;
 
 /**
  * Check if a package name is a context-dependent package.

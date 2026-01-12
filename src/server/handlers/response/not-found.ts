@@ -16,8 +16,7 @@ export class NotFoundHandler extends BaseHandler {
   };
 
   handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
-    const url = new URL(req.url);
-    const pathname = url.pathname;
+    const pathname = new URL(req.url).pathname;
 
     try {
       const html = this.generate404Html(pathname);
@@ -30,11 +29,8 @@ export class NotFoundHandler extends BaseHandler {
 
       return Promise.resolve(this.respond(response));
     } catch (e) {
-      this.logDebug("404 fallback error", {
-        error: this.getErrorMessage(e),
-      }, ctx);
+      this.logDebug("404 fallback error", { error: this.getErrorMessage(e) }, ctx);
 
-      // Last resort error response
       return Promise.resolve(this.respond(
         ResponseBuilder.error(HTTP_INTERNAL_SERVER_ERROR, "Internal Server Error", req, {
           securityConfig: ctx.securityConfig ?? undefined,

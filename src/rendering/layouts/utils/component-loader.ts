@@ -101,14 +101,9 @@ export async function loadMDXLayout(
 ): Promise<BundledReact.ComponentType<{ components?: MDXComponents }> | undefined> {
   const map = await loadImportMap(projectDir, adapter);
   const code = transformImportsWithMap(bundle.compiledCode, map);
-  logger.info("[loadMDXLayout] Loading module, code length:", code.length);
+  logger.debug("[loadMDXLayout] Loading module", { codeLength: code.length });
   const mod = (await mdxRenderer.loadModuleESM(code, adapter)) as MDXModule;
-  logger.info("[loadMDXLayout] Module exports:", {
-    hasMDXLayout: !!mod.MDXLayout,
-    hasMainLayout: !!mod.MainLayout,
-    hasDefault: !!mod.default,
-    exportKeys: Object.keys(mod),
-  });
+  logger.debug("[loadMDXLayout] Module loaded", { exports: Object.keys(mod) });
   return mod.MDXLayout || mod.MainLayout || mod.default;
 }
 
@@ -143,36 +138,18 @@ export async function applyMDXLayout(
   mergedComponents: MDXComponents,
   adapter: RuntimeAdapter,
 ): Promise<BundledReact.ReactElement> {
-  logger.info("[applyMDXLayout] Starting...");
   const React = await getProjectReact();
   const LayoutFn = await loadMDXLayout(bundle, projectDir, adapter);
-  logger.info(
-    "[applyMDXLayout] LayoutFn found:",
-    !!LayoutFn,
-    "LayoutFn.name:",
-    LayoutFn?.name,
-  );
-  if (LayoutFn) {
-    const child = ensureValidChild(element, React);
-    const childType = typeof child === "object" && child !== null && "type" in child
-      ? child.type
-      : undefined;
-    logger.info(
-      "[applyMDXLayout] Creating element with layout, childType:",
-      typeof childType === "function" ? childType.name : typeof childType,
-    );
-    const wrappedElement = React.createElement(
-      LayoutFn,
-      { components: mergedComponents },
-      child,
-    ) as BundledReact.ReactElement;
-    const wrappedType = wrappedElement?.type;
-    logger.info(
-      "[applyMDXLayout] Created element, wrappedType:",
-      typeof wrappedType === "function" ? wrappedType.name : typeof wrappedType,
-    );
-    return wrappedElement;
+
+  if (!LayoutFn) {
+    logger.debug("[applyMDXLayout] No layout function found");
+    return element;
   }
-  logger.warn("[applyMDXLayout] No LayoutFn found, returning element unchanged");
-  return element;
+
+  const child = ensureValidChild(element, React);
+  return React.createElement(
+    LayoutFn,
+    { components: mergedComponents },
+    child,
+  ) as BundledReact.ReactElement;
 }

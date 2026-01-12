@@ -24,45 +24,27 @@ export async function buildRscModules(
   graphIds: GraphIds | undefined,
 ): Promise<ManifestModule[]> {
   if (!graphIds) return [];
-  const modules: ManifestModule[] = [];
 
   const adapter = await getAdapter();
+  const allEntries = [...graphIds.client, ...graphIds.server];
 
-  // Emit client components with their own refs (use client)
-  for (const e of graphIds.client) {
-    let exportsList: string[] = ["default"];
-    try {
-      const text = await adapter.fs.readFile(e.path);
-      const names = extractExportNames(text);
-      if (names.length > 0) exportsList = ["default", ...names];
-    } catch {
-      /* ignore */
-    }
-    modules.push({
-      id: e.id,
-      clientRef: `/app${e.rel}#default`,
-      exports: exportsList,
-    });
-  }
-
-  // Emit server modules with placeholder clientRef (to be mapped to boundaries later)
-  for (const e of graphIds.server) {
-    let exportsList: string[] = ["default"];
-    try {
-      const text = await adapter.fs.readFile(e.path);
-      const names = extractExportNames(text);
-      if (names.length > 0) exportsList = ["default", ...names];
-    } catch {
-      // ignore read errors; default only
-    }
-    modules.push({
-      id: e.id,
-      clientRef: `/app${e.rel}#default`,
-      exports: exportsList,
-    });
-  }
-  // In the future, client components could also be emitted with their own ids if needed
-  return modules;
+  return Promise.all(
+    allEntries.map(async (e) => {
+      let exportsList: string[] = ["default"];
+      try {
+        const text = await adapter.fs.readFile(e.path);
+        const names = extractExportNames(text);
+        if (names.length > 0) exportsList = ["default", ...names];
+      } catch {
+        // ignore read errors; use default only
+      }
+      return {
+        id: e.id,
+        clientRef: `/app${e.rel}#default`,
+        exports: exportsList,
+      };
+    }),
+  );
 }
 
 export async function buildVersionedManifest(
