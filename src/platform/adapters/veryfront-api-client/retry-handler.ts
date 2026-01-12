@@ -32,6 +32,13 @@ export async function requestWithRetry(
 
       if (!response.ok) {
         const text = await response.text();
+        // Log detailed error info for debugging
+        logger.error("[VeryfrontAPIClient] Request failed", {
+          url: url.replace(/token=[^&]+/, "token=***"),
+          status: response.status,
+          statusText: response.statusText,
+          responseText: text.slice(0, 500),
+        });
         throw new VeryfrontAPIError(
           `API request failed: ${response.status} ${response.statusText}`,
           response.status,
