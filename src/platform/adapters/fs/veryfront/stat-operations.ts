@@ -287,34 +287,33 @@ export class StatOperations {
       }
     }
 
-    // 6. If not in cache, search via API pattern (only in development mode)
-    // In production mode, we only have published files, so skip the search
-    const isPublished = ctx?.sourceType !== "branch";
-    if (!isPublished) {
-      const searchPattern = `${pathWithoutExt}.*`;
-      logger.debug("[StatOperations] Searching for file pattern (dev mode)", {
-        pattern: searchPattern,
-      });
+    // 6. If not in cache, search via API pattern
+    // This fallback is needed because listPublishedFiles() may not include all project files
+    // (e.g., lib/, utils/, hooks/ directories). The search result is cached, so this only
+    // incurs overhead on the first request for each missing file.
+    const searchPattern = `${pathWithoutExt}.*`;
+    logger.debug("[StatOperations] Searching for file pattern", {
+      pattern: searchPattern,
+    });
 
-      try {
-        const matches = await this.client.searchFiles(searchPattern);
-        if (matches.length > 0) {
-          // Sort by extension priority
-          const sorted = matches.sort((a, b) => {
-            const extA = EXTENSION_PRIORITY.findIndex((ext) => a.path.endsWith(ext));
-            const extB = EXTENSION_PRIORITY.findIndex((ext) => b.path.endsWith(ext));
-            return (extA === -1 ? 99 : extA) - (extB === -1 ? 99 : extB);
-          });
-          const first = sorted[0];
-          if (first) {
-            logger.debug("[StatOperations] resolveFile found via search", { path: first.path });
-            this.cache.set(cacheKey, first.path);
-            return first.path;
-          }
+    try {
+      const matches = await this.client.searchFiles(searchPattern);
+      if (matches.length > 0) {
+        // Sort by extension priority
+        const sorted = matches.sort((a, b) => {
+          const extA = EXTENSION_PRIORITY.findIndex((ext) => a.path.endsWith(ext));
+          const extB = EXTENSION_PRIORITY.findIndex((ext) => b.path.endsWith(ext));
+          return (extA === -1 ? 99 : extA) - (extB === -1 ? 99 : extB);
+        });
+        const first = sorted[0];
+        if (first) {
+          logger.debug("[StatOperations] resolveFile found via search", { path: first.path });
+          this.cache.set(cacheKey, first.path);
+          return first.path;
         }
-      } catch (error) {
-        logger.debug("[StatOperations] Pattern search failed", { pattern: searchPattern, error });
       }
+    } catch (error) {
+      logger.debug("[StatOperations] Pattern search failed", { pattern: searchPattern, error });
     }
 
     logger.debug("[StatOperations] resolveFile not found", { normalizedPath, pathWithoutExt });
