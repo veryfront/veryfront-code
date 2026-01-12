@@ -40,6 +40,10 @@
     "./fonts": "./src/exports/fonts.ts"
   },
   "imports": {
+    "veryfront/head": "./src/exports/head.ts",
+    "veryfront/router": "./src/exports/router.ts",
+    "veryfront/context": "./src/exports/context.ts",
+    "veryfront/fonts": "./src/exports/fonts.ts",
     "@veryfront": "./src/index.ts",
     "@veryfront/": "./src/",
     "@veryfront/ai": "./src/ai/index.ts",

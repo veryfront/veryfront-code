@@ -1,69 +1,21 @@
-import React from "react";
+/**
+ * Re-export router from veryfront/router for backward compatibility.
+ *
+ * This file exists to support legacy imports like `import { useRouter } from "@/lib/Router"`.
+ * All functionality is provided by the veryfront/router package.
+ *
+ * IMPORTANT: Do not add RouterContext or useRouter implementations here!
+ * Doing so creates a separate React context that won't receive values from
+ * the framework's RouterProvider, causing SSR/hydration mismatches.
+ */
 
-export interface Router {
-  domain: string;
-  path: string;
-  pathname: string;
-  params: Record<string, string>;
-  query: Record<string, string>;
-  isPreview: boolean;
-  isMounted: boolean;
-  navigate: (path: string | PathObject, options?: NavigateOptions) => Promise<void>;
-  push: (path: string | PathObject, options?: NavigateOptions) => Promise<void>;
-  replace: (path: string | PathObject, options?: NavigateOptions) => Promise<void>;
-  reload: () => Promise<void>;
-}
+// Re-export all runtime exports
+export { RouterProvider, Router, useRouter } from "veryfront/router";
 
-type PathObject = {
-  pathname: string;
-  query?: Record<string, string>;
-  search?: Record<string, string>;
-};
+// Re-export types - RouterValue is the new name for the Router type
+export type { RouterValue, RouterProviderProps } from "veryfront/router";
 
-type NavigateOptions = {
-  keepScrollPosition?: boolean;
-  overwriteLastHistoryEntry?: boolean;
-};
-
-// SSR-safe default router - used when no provider is present
-// This ensures useContext(RouterContext) never returns null, even during SSR
-const defaultRouter: Router = {
-  domain: "",
-  path: "/",
-  pathname: "/",
-  params: {},
-  query: {},
-  isPreview: false,
-  isMounted: false,
-  navigate: async () => {},
-  push: async () => {},
-  replace: async () => {},
-  reload: async () => {},
-};
-
-// Initialize context with defaultRouter instead of null
-// This prevents "Cannot read properties of null" errors when user code
-// accesses the context directly (without using useRouter hook) during SSR
-const RouterContext = React.createContext<Router>(defaultRouter);
-
-export function RouterProvider({
-  children,
-  router,
-}: {
-  children: React.ReactNode;
-  router?: Router;
-}) {
-  return (
-    <RouterContext.Provider value={router || defaultRouter}>
-      {children}
-    </RouterContext.Provider>
-  );
-}
-
-export function useRouter(): Router {
-  // Context is initialized with defaultRouter, so this never returns null
-  return React.useContext(RouterContext);
-}
-
-// Re-export RouterProvider as Router for backward compatibility
-export { RouterProvider as Router };
+// Backward compatibility: export RouterValue as Router type for old code
+// that imports `import type { Router } from "@/lib/Router"`
+import type { RouterValue } from "veryfront/router";
+export type Router = RouterValue;
