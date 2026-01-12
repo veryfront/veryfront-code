@@ -4,10 +4,9 @@
  * @module cli/index/command-router
  */
 
-import { VERSION } from "@veryfront/utils";
 import { handleError } from "@veryfront/errors";
 import { formatUserError } from "@veryfront/errors/user-friendly/index.ts";
-import { cliLogger, DEFAULT_DEV_SERVER_PORT } from "@veryfront/utils";
+import { cliLogger, DEFAULT_DEV_SERVER_PORT, VERSION } from "@veryfront/utils";
 import { analyzeChunksCommand } from "../commands/analyze-chunks.ts";
 import { cleanCommand } from "../commands/clean.ts";
 import { doctorCommand } from "../commands/doctor/index.ts";
@@ -33,72 +32,16 @@ import type { IntegrationName } from "../templates/types.ts";
 import { cwd } from "@veryfront/platform/compat/process.ts";
 import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
 import { join } from "@veryfront/platform/compat/path/index.ts";
-import { COMMANDS } from "../help/command-definitions.ts";
-import {
-  calculateMaxLength,
-  formatCommandHeader,
-  formatExample,
-  formatOption,
-  formatSectionHeader,
-  formatUsage,
-} from "../help/formatters.ts";
-import { dim } from "@veryfront/compat/console";
+import { showCommandHelp, showMainHelp } from "../help/index.ts";
 
 /**
- * Show basic help information
+ * Show help for a specific command or main help
  */
-function showBasicHelp(command?: string): void {
-  if (command && COMMANDS[command]) {
-    const cmd = COMMANDS[command];
-
-    // Header
-    cliLogger.info(formatCommandHeader(cmd.name));
-    cliLogger.info(`${cmd.description}\n`);
-
-    // Usage
-    cliLogger.info(formatUsage(cmd.usage));
-
-    // Options
-    if (cmd.options && cmd.options.length > 0) {
-      cliLogger.info(`\n${formatSectionHeader("Options")}`);
-      const maxFlagLength = calculateMaxLength(cmd.options.map((o) => ({ length: o.flag.length })));
-      for (const option of cmd.options) {
-        cliLogger.info(formatOption(option, maxFlagLength));
-      }
-    }
-
-    // Examples
-    if (cmd.examples && cmd.examples.length > 0) {
-      cliLogger.info(`\n${formatSectionHeader("Examples")}`);
-      for (const example of cmd.examples) {
-        cliLogger.info(formatExample(example));
-      }
-    }
-
-    // Notes
-    if (cmd.notes && cmd.notes.length > 0) {
-      cliLogger.info(`\n${formatSectionHeader("Notes")}`);
-      for (const note of cmd.notes) {
-        cliLogger.info(`  ${dim("-")} ${note}`);
-      }
-    }
-
-    cliLogger.info("");
-  } else if (command) {
-    cliLogger.info(`Unknown command: ${command}`);
-    cliLogger.info(`Use 'veryfront --help' to see available commands.`);
+function showHelp(command?: string): void {
+  if (command) {
+    showCommandHelp(command);
   } else {
-    // Dynamically generate command list from COMMANDS registry
-    const maxLen = Math.max(...Object.values(COMMANDS).map((c) => c.name.length)) + 2;
-    const commandList = Object.values(COMMANDS)
-      .map((cmd) => `  ${cmd.name.padEnd(maxLen)}${cmd.description}`)
-      .join("\n");
-    cliLogger.info(`Veryfront CLI v${VERSION}
-
-Available commands:
-${commandList}
-
-Use 'veryfront <command> --help' for command-specific help.`);
+    showMainHelp();
   }
 }
 
@@ -134,7 +77,7 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
 
   // Handle help flag
   if (args.help || args.h) {
-    showBasicHelp(command);
+    showHelp(command);
     exitProcess(0);
     return;
   }
@@ -366,18 +309,18 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
         break;
 
       case "help":
-        showBasicHelp();
+        showHelp();
         exitProcess(0);
         return;
 
       case undefined:
-        showBasicHelp();
+        showHelp();
         exitProcess(0);
         return;
 
       default:
         cliLogger.error(`Unknown command: ${command}\n`);
-        showBasicHelp();
+        showHelp();
         exitProcess(1);
         return;
     }

@@ -121,18 +121,13 @@ export function resolveCrossProjectImports(
 }
 
 /**
- * Pass-through function for SSR mode.
- *
- * External URL imports (esm.sh, etc.) are left as-is. The esm-module-loader's
- * esbuild bundling handles HTTP imports properly by fetching and bundling them.
- *
- * This function exists for interface compatibility but doesn't transform anything.
+ * Pass-through function for SSR mode (no-op).
+ * External URL imports are handled by esbuild in esm-module-loader.
  */
 export function blockExternalUrlImports(
   code: string,
   _filePath: string,
 ): Promise<BlockExternalUrlResult> {
-  // No transformation - let esbuild bundle HTTP imports in esm-module-loader
   return Promise.resolve({ code, blockedUrls: [] });
 }
 

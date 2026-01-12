@@ -1,69 +1,40 @@
 /**
- * SSR HTTP Stub Stage
- *
- * Replaces static HTTP URL imports with SSR-safe stubs during server-side rendering.
- * Browser-only modules (like video.js) fail when imported during SSR because they
- * access browser globals (document, window) at module-level.
- *
- * This stage:
- * 1. Detects static imports from HTTP URLs (esm.sh, unpkg, etc.)
- * 2. Replaces them with null/empty stubs during SSR
- * 3. Leaves browser transforms unchanged
- *
- * The client-side code keeps the original imports, ensuring proper hydration.
+ * SSR HTTP Stub Stage - replaces browser-only HTTP imports with stubs during SSR.
+ * Modules like video.js access browser globals at import time and fail in SSR.
  */
 
 import type { TransformPlugin } from "../types.ts";
 import { TransformStage } from "../types.ts";
 import { parseImports, rewriteImports } from "../../esm/lexer.ts";
 
-/**
- * Check if a specifier is an HTTP URL import
- */
+/** Known browser-only packages that need SSR stubbing */
+const BROWSER_ONLY_PATTERNS = [
+  "video.js",
+  "video-js",
+  "videojs",
+  "gsap",
+  "three",
+  "mapbox",
+  "leaflet",
+];
+
 function isHttpImport(specifier: string | undefined): boolean {
-  if (!specifier) return false;
-  return specifier.startsWith("http://") || specifier.startsWith("https://");
+  return !!specifier && (specifier.startsWith("http://") || specifier.startsWith("https://"));
 }
 
-/**
- * Check if a specifier is likely a browser-only module that needs stubbing
- * These are modules that have side effects or access browser globals at import time
- */
 function isBrowserOnlyModule(specifier: string): boolean {
-  // video.js and similar media libraries
-  if (specifier.includes("video.js") || specifier.includes("video-js")) return true;
-  if (specifier.includes("videojs")) return true;
-
-  // Other known browser-only packages
-  if (specifier.includes("gsap")) return true;
-  if (specifier.includes("three")) return true;
-  if (specifier.includes("mapbox")) return true;
-  if (specifier.includes("leaflet")) return true;
-
-  // Default: Don't stub - most packages work fine in SSR
-  return false;
+  return BROWSER_ONLY_PATTERNS.some((pattern) => specifier.includes(pattern));
 }
 
-/**
- * Generate a stub for a given import statement
- */
+/** Generate a stub for a given import statement */
 function generateStub(imp: {
   n: string | undefined;
   ss: number;
   se: number;
   d: number;
 }, statement: string): string | null {
-  if (!imp.n || !isHttpImport(imp.n)) return null;
-  if (!isBrowserOnlyModule(imp.n)) return null;
-
-  // Don't stub dynamic imports - they're already deferred
-  if (imp.d > -1) return null;
-
-  // Parse the import clause to understand what's being imported
-  // import X from 'url'
-  // import { X, Y } from 'url'
-  // import * as X from 'url'
-  // import 'url' (side-effect)
+  if (!imp.n || !isHttpImport(imp.n) || !isBrowserOnlyModule(imp.n)) return null;
+  if (imp.d > -1) return null; // Skip dynamic imports
 
   const trimmed = statement.trim();
 

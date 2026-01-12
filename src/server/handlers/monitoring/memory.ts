@@ -35,16 +35,13 @@ export class MemoryDebugHandler extends BaseHandler {
   };
 
   async handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
-    const url = new URL(req.url);
-    const pathname = url.pathname;
+    const pathname = new URL(req.url).pathname;
 
-    // Only handle /_debug/memory paths
     if (!pathname.startsWith("/_debug/memory")) {
       return this.continue();
     }
 
     try {
-      // Route to specific handlers based on pathname
       switch (pathname) {
         case "/_debug/memory":
         case "/_debug/memory/":

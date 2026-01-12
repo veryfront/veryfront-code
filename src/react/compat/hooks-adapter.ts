@@ -83,9 +83,9 @@ export function useOptimisticCompat<State, OptimisticState = State>(
 }
 
 export function useTransitionCompat() {
-  const _versionInfo = getReactVersionInfo();
+  const versionInfo = getReactVersionInfo();
 
-  if (_versionInfo.isReact18 || _versionInfo.isReact19) {
+  if (versionInfo.isReact18 || versionInfo.isReact19) {
     try {
       return React.useTransition();
     } catch (_error) {
