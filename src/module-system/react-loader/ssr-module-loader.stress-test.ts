@@ -9,7 +9,7 @@
 
 import { assertEquals } from "jsr:@std/assert@1";
 import { join } from "jsr:@std/path@1";
-import { clearSSRModuleCache, SSRModuleLoader } from "./ssr-module-loader.ts";
+import { clearSSRModuleCache, SSRModuleLoader } from "./ssr-module-loader/index.ts";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 
 // Create a real temp directory for tests

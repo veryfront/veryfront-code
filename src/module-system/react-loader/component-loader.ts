@@ -7,7 +7,7 @@ import { getGlobalTmpDir } from "./temp-directory.ts";
 import { normalizeModulePath, resolveRelativePath } from "./path-resolver.ts";
 import type { LoadComponentOptions } from "./types.ts";
 import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
-import { SSRModuleLoader } from "./ssr-module-loader.ts";
+import { SSRModuleLoader } from "./ssr-module-loader/index.ts";
 import { extractComponent } from "./extract-component.ts";
 
 export async function loadComponentFromSource(

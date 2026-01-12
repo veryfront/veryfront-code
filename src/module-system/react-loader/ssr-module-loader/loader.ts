@@ -1,13 +1,13 @@
 /**
- * SSR Module Loader with Redis Support
+ * SSR Module Loader Class
  *
  * Loads and transforms React components for server-side rendering.
- * Supports Redis caching to share transformed modules across pods.
+ *
+ * @module module-system/react-loader/ssr-module-loader/loader
  */
 
 import { join } from "@veryfront/platform/compat/path/index.ts";
 import type * as React from "react";
-import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import { transformToESM } from "@veryfront/transforms/esm/index.ts";
 import type { TransformOptions } from "@veryfront/transforms/esm/types.ts";
 import {
@@ -18,290 +18,38 @@ import {
 import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
 import { createError, toError } from "@veryfront/errors/veryfront-error.ts";
 import { rendererLogger as logger } from "@veryfront/utils";
-import { LRUCache } from "@veryfront/utils/lru-wrapper.ts";
-import { registerCache } from "@veryfront/core/memory/index.ts";
+import { getApiBaseUrlEnv } from "@veryfront/core/config/env.ts";
+import { extractComponent } from "../extract-component.ts";
+import { CIRCUIT_BREAKER_RESET_MS, CIRCUIT_BREAKER_THRESHOLD } from "./constants.ts";
 import {
-  getRedisClient,
-  isRedisConfigured,
-  type RedisClient,
-} from "@veryfront/utils/redis-client.ts";
-import { getApiBaseUrlEnv, getSsrMaxConcurrentTransformsEnv } from "@veryfront/core/config/env.ts";
-import { extractComponent } from "./extract-component.ts";
-
-export interface SSRModuleLoaderOptions {
-  projectDir: string;
-  projectId: string;
-  adapter: RuntimeAdapter;
-  dev: boolean;
-  apiBaseUrl?: string; // Base URL for cross-project imports (e.g., http://api.lvh.me:4000)
-}
-
-// Cache limits to prevent unbounded memory growth
-const SSR_MODULE_CACHE_MAX_ENTRIES = 2000;
-const SSR_MODULE_CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutes
-const SSR_TMP_DIRS_MAX_ENTRIES = 100;
-const REDIS_KEY_PREFIX = "veryfront:ssr-module:";
-const REDIS_TTL_SECONDS = 1800; // 30 minutes
-
-// Shared cache across all SSRModuleLoader instances (persists across requests)
-// Keys include projectId to isolate caches between different projects
-// Using LRU cache to prevent unbounded memory growth
-interface ModuleCacheEntry {
-  tempPath: string;
-  contentHash: string;
-}
-
-const globalModuleCache = new LRUCache<string, ModuleCacheEntry>({
-  maxEntries: SSR_MODULE_CACHE_MAX_ENTRIES,
-  ttlMs: SSR_MODULE_CACHE_TTL_MS,
-  cleanupIntervalMs: 60000,
-}); // projectId:absolutePath -> { tempPath, contentHash }
-
-// Cache for cross-project imports (shared across requests)
-// Key format: projectSlug@version/@/path -> tempPath
-const globalCrossProjectCache = new LRUCache<string, ModuleCacheEntry>({
-  maxEntries: SSR_MODULE_CACHE_MAX_ENTRIES,
-  ttlMs: SSR_MODULE_CACHE_TTL_MS,
-  cleanupIntervalMs: 60000,
-});
-
-// Map of in-progress transforms to their completion promises
-// This allows concurrent requests for the same file to wait for the first transform
-// instead of returning early and failing on import
-const globalInProgress = new Map<string, Promise<void>>(); // projectId:absolutePath -> completion promise
-const globalTmpDirs = new LRUCache<string, string>({
-  maxEntries: SSR_TMP_DIRS_MAX_ENTRIES,
-  ttlMs: 60 * 60 * 1000, // 1 hour
-}); // projectDir:projectId -> tmpDir
-
-// Redis state
-let redisEnabled = false;
-let redisClient: RedisClient | null = null;
-let redisInitialized = false;
-let redisInitPromise: Promise<void> | null = null;
-
-// Register caches with memory profiler
-registerCache("ssr-module-cache", () => ({
-  name: "ssr-module-cache",
-  entries: globalModuleCache.size,
-  maxEntries: SSR_MODULE_CACHE_MAX_ENTRIES,
-  redisEnabled,
-}));
-
-registerCache("ssr-tmp-dirs", () => ({
-  name: "ssr-tmp-dirs",
-  entries: globalTmpDirs.size,
-  maxEntries: SSR_TMP_DIRS_MAX_ENTRIES,
-}));
-
-// Track failed components to implement circuit breaker
-const failedComponents = new Map<string, { count: number; lastFailure: number }>();
-const CIRCUIT_BREAKER_THRESHOLD = 3; // Failures before circuit opens
-const CIRCUIT_BREAKER_RESET_MS = 60 * 1000; // 1 minute reset window
-
-// Concurrency limiter to prevent OOM from too many parallel compilations
-// Configurable via SSR_MAX_CONCURRENT_TRANSFORMS env var
-// Default: 3 (conservative, ~500MB per transform, fits in 2GB heap)
-// Increase if transforms are fast/small, decrease if seeing memory pressure
-const MAX_CONCURRENT_TRANSFORMS = parseInt(
-  String(getSsrMaxConcurrentTransformsEnv(3)),
-  10,
-);
+  failedComponents,
+  getFromRedis,
+  getRedisClientInstance,
+  getRedisEnabled,
+  globalCrossProjectCache,
+  globalInProgress,
+  globalModuleCache,
+  globalTmpDirs,
+  setInRedis,
+  transformSemaphore,
+} from "./cache/index.ts";
+import type { ModuleCacheEntry, SSRModuleLoaderOptions } from "./types.ts";
 
 /**
- * Simple semaphore for limiting concurrent operations.
- * Prevents memory spikes from too many parallel ESM transformations.
- */
-class Semaphore {
-  private permits: number;
-  private waitQueue: Array<() => void> = [];
-
-  constructor(permits: number) {
-    this.permits = permits;
-  }
-
-  acquire(): Promise<void> {
-    if (this.permits > 0) {
-      this.permits--;
-      return Promise.resolve();
-    }
-    return new Promise<void>((resolve) => {
-      this.waitQueue.push(resolve);
-    });
-  }
-
-  release(): void {
-    const next = this.waitQueue.shift();
-    if (next) {
-      next();
-    } else {
-      this.permits++;
-    }
-  }
-
-  get available(): number {
-    return this.permits;
-  }
-
-  get waiting(): number {
-    return this.waitQueue.length;
-  }
-}
-
-// Global semaphore shared across all SSRModuleLoader instances
-const transformSemaphore = new Semaphore(MAX_CONCURRENT_TRANSFORMS);
-
-// Register semaphore stats with memory profiler
-registerCache("ssr-transform-semaphore", () => ({
-  name: "ssr-transform-semaphore",
-  entries: MAX_CONCURRENT_TRANSFORMS - transformSemaphore.available,
-  maxEntries: MAX_CONCURRENT_TRANSFORMS,
-  waiting: transformSemaphore.waiting,
-}));
-
-/**
- * Initialize Redis for SSR module cache.
- * Call this at startup if you want to enable Redis caching.
- */
-export async function initializeSSRRedisCache(): Promise<boolean> {
-  if (redisInitialized) {
-    return redisEnabled;
-  }
-
-  if (redisInitPromise) {
-    await redisInitPromise;
-    return redisEnabled;
-  }
-
-  redisInitPromise = (async () => {
-    if (!isRedisConfigured()) {
-      logger.debug("[SSR-MODULE-LOADER] Redis not configured, using memory cache");
-      redisInitialized = true;
-      return;
-    }
-
-    try {
-      redisClient = await getRedisClient();
-      redisEnabled = true;
-      redisInitialized = true;
-      logger.info("[SSR-MODULE-LOADER] Redis cache enabled");
-    } catch (error) {
-      logger.warn("[SSR-MODULE-LOADER] Redis unavailable, falling back to memory cache", { error });
-      redisEnabled = false;
-      redisInitialized = true;
-    }
-  })();
-
-  await redisInitPromise;
-  redisInitPromise = null;
-  return redisEnabled;
-}
-
-/**
- * Check if Redis caching is enabled for SSR modules.
- */
-export function isSSRRedisCacheEnabled(): boolean {
-  return redisEnabled && redisClient !== null;
-}
-
-/**
- * Clear the global SSR module cache.
- * This should be called when file contents change and modules need to be re-transformed.
- */
-export function clearSSRModuleCache(): void {
-  globalModuleCache.clear();
-  // Note: Don't clear globalInProgress - let in-flight transforms complete
-  // Clearing would cause waiting requests to hang forever
-  failedComponents.clear();
-  logger.info("[SSR-MODULE-LOADER] Cache cleared");
-}
-
-/**
- * Clear SSR module cache entries for a specific project.
- * This should be called when a project's renderer is evicted to free memory.
+ * SSR Module Loader with Redis Support.
  *
- * @param projectId - The project ID to clear cache entries for
+ * Loads and transforms React components for server-side rendering.
+ * Supports Redis caching to share transformed modules across pods.
  */
-export function clearSSRModuleCacheForProject(projectId: string): void {
-  const prefix = `${projectId}:`;
-  let cleared = 0;
-
-  // Clear module cache entries for this project
-  for (const key of globalModuleCache.keys()) {
-    if (typeof key === "string" && key.startsWith(prefix)) {
-      globalModuleCache.delete(key);
-      cleared++;
-    }
-  }
-
-  // Clear in-progress entries for this project
-  for (const key of globalInProgress.keys()) {
-    if (key.startsWith(prefix)) {
-      globalInProgress.delete(key);
-    }
-  }
-
-  // Clear failed components for this project
-  for (const key of failedComponents.keys()) {
-    if (key.startsWith(prefix)) {
-      failedComponents.delete(key);
-    }
-  }
-
-  // Clear tmp dir cache for this project
-  for (const key of globalTmpDirs.keys()) {
-    if (typeof key === "string" && key.includes(`:${projectId}`)) {
-      globalTmpDirs.delete(key);
-    }
-  }
-
-  if (cleared > 0) {
-    logger.info("[SSR-MODULE-LOADER] Project cache cleared", {
-      projectId,
-      entriesCleared: cleared,
-    });
-  }
-}
-
-function redisKey(key: string): string {
-  return `${REDIS_KEY_PREFIX}${key}`;
-}
-
-/**
- * Get transformed code from Redis.
- */
-async function getFromRedis(cacheKey: string): Promise<string | null> {
-  if (!redisEnabled || !redisClient) return null;
-
-  try {
-    return await redisClient.get(redisKey(cacheKey));
-  } catch (error) {
-    logger.debug("[SSR-MODULE-LOADER] Redis get failed", { key: cacheKey, error });
-    return null;
-  }
-}
-
-/**
- * Store transformed code in Redis.
- */
-async function setInRedis(cacheKey: string, code: string): Promise<void> {
-  if (!redisEnabled || !redisClient) return;
-
-  try {
-    await redisClient.set(redisKey(cacheKey), code, { EX: REDIS_TTL_SECONDS });
-  } catch (error) {
-    logger.debug("[SSR-MODULE-LOADER] Redis set failed", { key: cacheKey, error });
-  }
-}
-
-// Note: LRU cache handles cleanup automatically via TTL and max entries
-
 export class SSRModuleLoader {
   private fs = createFileSystem();
   private missingDependencies: MissingImport[] = [];
 
   constructor(private options: SSRModuleLoaderOptions) {}
 
+  /**
+   * Load and transform a module for SSR.
+   */
   async loadModule(
     filePath: string,
     source: string,
@@ -369,9 +117,6 @@ export class SSRModuleLoader {
         }));
       }
 
-      // Use content hash as cache buster instead of Date.now()
-      // This prevents Deno's ESM cache from growing unbounded
-      // Same content = same URL = cache hit, different content = new URL
       const mod = await import(`file://${cacheEntry.tempPath}?v=${cacheEntry.contentHash}`);
 
       // Success - reset failure count
@@ -389,28 +134,17 @@ export class SSRModuleLoader {
     }
   }
 
-  /**
-   * Create a content-addressable cache key.
-   * Content hash provides automatic invalidation and cross-project deduplication.
-   */
   private getCacheKey(filePath: string): string {
     return filePath;
   }
 
-  /**
-   * Get the registry base URL for cross-project imports.
-   * Removes /api suffix if present since registry is mounted at root.
-   */
   private getRegistryBaseUrl(): string {
-    const apiBaseUrl = this.options.apiBaseUrl ||
-      getApiBaseUrlEnv();
-    // Remove trailing /api or /api/ if present
+    const apiBaseUrl = this.options.apiBaseUrl || getApiBaseUrlEnv();
     return apiBaseUrl.replace(/\/api\/?$/, "");
   }
 
   /**
    * Fetch and transform a cross-project import.
-   * Returns the temp file path where the transformed module was written.
    */
   private async transformCrossProjectImport(
     crossProjectImport: CrossProjectImport,
@@ -418,13 +152,11 @@ export class SSRModuleLoader {
     const { specifier, projectSlug, version, path } = crossProjectImport;
     const cacheKey = specifier;
 
-    // Check cache first
     const cachedEntry = globalCrossProjectCache.get(cacheKey);
     if (cachedEntry) {
       return cachedEntry.tempPath;
     }
 
-    // Fetch from registry API
     const registryBaseUrl = this.getRegistryBaseUrl();
     const projectRef = `${projectSlug}@${version}`;
     const registryUrl = `${registryBaseUrl}/${projectRef}/@/${path}`;
@@ -440,9 +172,7 @@ export class SSRModuleLoader {
     try {
       const response = await fetch(registryUrl, {
         signal: controller.signal,
-        headers: {
-          "Accept": "text/plain, application/javascript, */*",
-        },
+        headers: { Accept: "text/plain, application/javascript, */*" },
       });
       clearTimeout(timeout);
 
@@ -455,17 +185,14 @@ export class SSRModuleLoader {
       const sourceCode = await response.text();
       const contentHash = this.hashCode(sourceCode);
 
-      // Determine file extension for temp path
       const extMatch = path.match(/\.(tsx?|jsx?|mdx)$/);
       const ext = extMatch?.[0] ?? ".tsx";
 
-      // Create a synthetic file path for the cross-project module
       const syntheticFilePath = `cross-project/${projectRef}/@/${path}`;
       const tempPath = await this.getTempPath(syntheticFilePath);
       const tempDir = tempPath.substring(0, tempPath.lastIndexOf("/"));
       await this.fs.mkdir(tempDir, { recursive: true });
 
-      // Transform the source code
       await transformSemaphore.acquire();
       try {
         const transformOpts: TransformOptions = {
@@ -475,7 +202,6 @@ export class SSRModuleLoader {
           apiBaseUrl: this.options.apiBaseUrl,
         };
 
-        // Use the synthetic path with correct extension for esbuild loader detection
         const filePathWithExt = syntheticFilePath.endsWith(ext)
           ? syntheticFilePath
           : syntheticFilePath + ext;
@@ -490,7 +216,6 @@ export class SSRModuleLoader {
 
         await this.fs.writeTextFile(tempPath, transformed);
 
-        // Cache the result
         const entry: ModuleCacheEntry = { tempPath, contentHash };
         globalCrossProjectCache.set(cacheKey, entry);
 
@@ -521,7 +246,6 @@ export class SSRModuleLoader {
     const code = source ?? await this.options.adapter.fs.readFile(filePath);
 
     const contentHash = this.hashCode(code);
-    // Include projectId in cache keys to isolate between projects
     const contentCacheKey = this.getCacheKey(`${filePath}:${contentHash}`);
     const filePathCacheKey = this.getCacheKey(filePath);
     const inProgressKey = this.getCacheKey(filePath);
@@ -529,21 +253,17 @@ export class SSRModuleLoader {
     // Check memory cache first
     const cachedEntry = globalModuleCache.get(contentCacheKey);
     if (cachedEntry) {
-      // LRU cache handles TTL refresh on access
-      // Also store under filePathCacheKey for lookup by filePath
       globalModuleCache.set(filePathCacheKey, cachedEntry);
-      // IMPORTANT: Still process dependencies even on cache hit!
-      // The transform output is cached, but dependencies may not have been created
-      // (e.g., if previous transform had missing deps that are now resolvable)
       await this.ensureDependenciesExist(code, filePath);
       return;
     }
 
-    // Check Redis cache (if enabled)
+    // Check Redis cache
+    const redisEnabled = getRedisEnabled();
+    const redisClient = getRedisClientInstance();
     if (redisEnabled && redisClient) {
       const redisCode = await getFromRedis(contentCacheKey);
       if (redisCode) {
-        // Write to local temp and update memory cache
         const tempPath = await this.getTempPath(filePath);
         const tempDir = tempPath.substring(0, tempPath.lastIndexOf("/"));
         await this.fs.mkdir(tempDir, { recursive: true });
@@ -553,20 +273,19 @@ export class SSRModuleLoader {
         globalModuleCache.set(contentCacheKey, entry);
         globalModuleCache.set(filePathCacheKey, entry);
         logger.debug("[SSR-MODULE-LOADER] Redis cache hit", { file: filePath.slice(-40) });
-        // IMPORTANT: Still process dependencies even on Redis cache hit!
         await this.ensureDependenciesExist(code, filePath);
         return;
       }
     }
 
-    // If another request is already transforming this file, wait for it
+    // Wait for in-progress transform
     const existingTransform = globalInProgress.get(inProgressKey);
     if (existingTransform) {
       await existingTransform;
       return;
     }
 
-    // Create a promise that other requests can wait on
+    // Create completion promise
     let resolveTransform: () => void;
     let rejectTransform: (err: Error) => void;
     const transformPromise = new Promise<void>((resolve, reject) => {
@@ -576,7 +295,6 @@ export class SSRModuleLoader {
     globalInProgress.set(inProgressKey, transformPromise);
 
     try {
-      // Parse imports (lightweight, no semaphore needed)
       const parseResult = await parseLocalImports(
         code,
         filePath,
@@ -584,27 +302,16 @@ export class SSRModuleLoader {
         this.options.adapter,
       );
 
-      // Track missing dependencies
       if (parseResult.missing.length > 0) {
         this.missingDependencies.push(...parseResult.missing);
       }
 
-      // Transform all resolved dependencies in parallel BEFORE acquiring semaphore
-      // This prevents deadlock: if we held the semaphore while waiting for children,
-      // and children need the semaphore, we'd deadlock on deep dependency trees
-
-      // Build a mapping of cross-project imports to their temp file paths
       const crossProjectPaths = new Map<string, string>();
-
-      // Local filesystem for framework lib files
       const localFs = createFileSystem();
 
       await Promise.all([
-        // Transform local imports
         ...parseResult.imports.map(async (imp) => {
           try {
-            // Framework lib files have absolute local paths (start with /)
-            // Read them directly from local filesystem, not through adapter
             let depSource: string;
             if (imp.absolutePath.startsWith("/")) {
               depSource = await localFs.readTextFile(imp.absolutePath);
@@ -613,7 +320,6 @@ export class SSRModuleLoader {
             }
             await this.transformWithDependencies(imp.absolutePath, depSource);
           } catch (error) {
-            // Track failed dependency reads
             this.missingDependencies.push({
               specifier: imp.specifier,
               fromFile: filePath,
@@ -623,13 +329,11 @@ export class SSRModuleLoader {
             });
           }
         }),
-        // Transform cross-project imports
         ...parseResult.crossProjectImports.map(async (crossImport) => {
           try {
             const tempPath = await this.transformCrossProjectImport(crossImport);
             crossProjectPaths.set(crossImport.specifier, tempPath);
           } catch (error) {
-            // Track failed cross-project imports
             this.missingDependencies.push({
               specifier: crossImport.specifier,
               fromFile: filePath,
@@ -641,8 +345,6 @@ export class SSRModuleLoader {
         }),
       ]);
 
-      // NOW acquire semaphore for the CPU-intensive transform
-      // This limits concurrent ESM transforms to prevent OOM
       await transformSemaphore.acquire();
 
       try {
@@ -661,17 +363,12 @@ export class SSRModuleLoader {
           transformOpts,
         );
 
-        // Post-process: Rewrite cross-project imports to file:// paths
-        // The transformed code still has cross-project import specifiers that need
-        // to be rewritten to the temp file paths we pre-fetched
+        // Rewrite cross-project imports to file:// paths
         for (const [specifier, tempPath] of crossProjectPaths.entries()) {
-          // Match import patterns like: from "demo@0.0/@/app.tsx" or from 'demo@0.0/@/app.tsx'
-          // Also handle .js extension that may have been added during transform
           const jsSpecifier = specifier.replace(/\.(tsx?|jsx|mdx)$/, ".js");
           const escapedSpecifier = specifier.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
           const escapedJsSpecifier = jsSpecifier.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-          // Replace both original and .js variants
           const pattern = new RegExp(
             `from\\s+["'](${escapedSpecifier}|${escapedJsSpecifier})["']`,
             "g",
@@ -679,23 +376,15 @@ export class SSRModuleLoader {
           transformed = transformed.replace(pattern, `from "file://${tempPath}"`);
         }
 
-        // Write to temp path without content hash in filename
-        // The imports are resolved to plain .js paths (e.g., ../components/Welcome.js)
-        // so the file must be written with matching name (no hash suffix)
-        // Cache busting is handled by the ?t=<timestamp> query string on import
         const tempPath = await this.getTempPath(filePath);
         const tempDir = tempPath.substring(0, tempPath.lastIndexOf("/"));
         await this.fs.mkdir(tempDir, { recursive: true });
         await this.fs.writeTextFile(tempPath, transformed);
 
-        // Store in Redis for cross-pod sharing
         if (redisEnabled && redisClient) {
-          // Fire and forget - don't block on Redis write
           setInRedis(contentCacheKey, transformed).catch(() => {});
         }
 
-        // Store both the content-keyed and filePath-keyed entries
-        // LRU cache stores entry with tempPath and contentHash for stable cache busting
         const entry: ModuleCacheEntry = { tempPath, contentHash };
         globalModuleCache.set(contentCacheKey, entry);
         globalModuleCache.set(filePathCacheKey, entry);
@@ -703,10 +392,8 @@ export class SSRModuleLoader {
         transformSemaphore.release();
       }
 
-      // Signal completion to any waiting requests
       resolveTransform!();
     } catch (err) {
-      // Signal failure to any waiting requests
       rejectTransform!(err instanceof Error ? err : new Error(String(err)));
       throw err;
     } finally {
@@ -714,15 +401,10 @@ export class SSRModuleLoader {
     }
   }
 
-  /**
-   * Ensure all dependencies of a module exist (are transformed and cached).
-   * Called on cache hits to ensure deps from previous failed transforms are now created.
-   */
   private async ensureDependenciesExist(
     code: string,
     filePath: string,
   ): Promise<void> {
-    // Parse imports to find dependencies
     const parseResult = await parseLocalImports(
       code,
       filePath,
@@ -730,15 +412,12 @@ export class SSRModuleLoader {
       this.options.adapter,
     );
 
-    // Track missing dependencies
     if (parseResult.missing.length > 0) {
       this.missingDependencies.push(...parseResult.missing);
     }
 
-    // Local filesystem for framework lib files
     const localFs = createFileSystem();
 
-    // Transform all resolved dependencies (recursively)
     await Promise.all([
       ...parseResult.imports.map(async (imp) => {
         try {
@@ -759,7 +438,6 @@ export class SSRModuleLoader {
           });
         }
       }),
-      // Handle cross-project imports
       ...parseResult.crossProjectImports.map(async (crossImport) => {
         try {
           await this.transformCrossProjectImport(crossImport);
@@ -795,10 +473,6 @@ export class SSRModuleLoader {
       relativePath = filePath.substring(projectDir.length);
     }
 
-    // Don't include content hash in filename - it breaks import resolution
-    // between transformed modules. The content-based cache keys in
-    // globalModuleCache handle correctness, and the query param cache buster
-    // on loadModule handles Deno's module cache.
     const jsPath = relativePath.replace(/\.(tsx?|jsx|mdx)$/, ".js");
     return join(tmpDir, jsPath);
   }
@@ -807,20 +481,13 @@ export class SSRModuleLoader {
     const projectDir = this.options.projectDir;
     const projectId = this.options.projectId;
 
-    // Include projectId in cache key to isolate between projects
     const cacheKey = `${projectDir}:${projectId}`;
 
-    // Check global cache first (shared across loader instances for same project)
     const existingDir = globalTmpDirs.get(cacheKey);
     if (existingDir) {
       return existingDir;
     }
 
-    // Use .cache/ at project root (outside node_modules) for SSR temp files
-    // This is critical for Deno: files in node_modules use Node.js compat mode
-    // which doesn't support https:// imports. Files outside node_modules
-    // use Deno's native module resolution which supports HTTP imports natively.
-    // For Node/Bun support, we'll use esbuild to bundle HTTP imports.
     const tmpDir = join(
       projectDir,
       ".cache",
@@ -832,21 +499,4 @@ export class SSRModuleLoader {
     globalTmpDirs.set(cacheKey, tmpDir);
     return tmpDir;
   }
-}
-
-/**
- * Get SSR module cache statistics.
- */
-export function getSSRModuleCacheStats(): {
-  memoryEntries: number;
-  maxEntries: number;
-  tmpDirs: number;
-  redisEnabled: boolean;
-} {
-  return {
-    memoryEntries: globalModuleCache.size,
-    maxEntries: SSR_MODULE_CACHE_MAX_ENTRIES,
-    tmpDirs: globalTmpDirs.size,
-    redisEnabled,
-  };
 }
