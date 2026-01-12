@@ -86,7 +86,7 @@ describe("AgentRuntime streaming JSON buffering", () => {
         }
       }
     }
-    const { AgentRuntime } = await import("../../src/ai/agent/runtime.ts");
+    const { AgentRuntime } = await import("../../src/ai/agent/runtime/index.ts");
 
     const baseConfig: AgentConfig = {
       id: "test-agent",
