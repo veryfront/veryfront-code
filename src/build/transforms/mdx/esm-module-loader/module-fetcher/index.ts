@@ -53,6 +53,11 @@ export function startRenderSession(
     projectSlug,
     route,
   });
+  logger.debug(`${LOG_PREFIX_MDX_LOADER} Started render session`, {
+    sessionId,
+    projectSlug,
+    route,
+  });
 }
 
 /**
@@ -60,18 +65,33 @@ export function startRenderSession(
  */
 export function endRenderSession(sessionId: string): void {
   const session = renderSessions.get(sessionId);
-  if (!session) return;
+  if (!session) {
+    logger.warn(`${LOG_PREFIX_MDX_LOADER} End session called but no session found`, { sessionId });
+    return;
+  }
+
+  const modulePaths = Array.from(session.modules);
+  logger.info(`${LOG_PREFIX_MDX_LOADER} End render session`, {
+    sessionId,
+    moduleCount: modulePaths.length,
+    projectSlug: session.projectSlug,
+    route: session.route,
+    sampleModules: modulePaths.slice(0, 5),
+  });
 
   // Record to manifest
   if (session.projectSlug !== undefined && session.route !== undefined) {
-    const modulePaths = Array.from(session.modules);
     if (modulePaths.length > 0) {
       recordSSRModules(session.projectSlug, session.route, modulePaths);
-      logger.debug(`${LOG_PREFIX_MDX_LOADER} Recorded ${modulePaths.length} modules to manifest`, {
-        route: session.route,
-        projectSlug: session.projectSlug,
-      });
     }
+  } else {
+    logger.warn(
+      `${LOG_PREFIX_MDX_LOADER} Cannot record to manifest - missing projectSlug or route`,
+      {
+        projectSlug: session.projectSlug,
+        route: session.route,
+      },
+    );
   }
 
   renderSessions.delete(sessionId);
@@ -353,6 +373,15 @@ export async function fetchAndCacheModule(
         const localFs = getLocalFs();
         const stat = await localFs.stat(cachedPath);
         if (stat?.isFile) {
+          // Record to session even when returning from cache
+          // This ensures manifest tracks all modules loaded per render
+          const session = getCurrentSession();
+          if (session) {
+            const moduleUrlPath = normalizedPath
+              .replace(/^_vf_modules\//, "")
+              .replace(/\.(tsx|ts|jsx|mdx)$/, ".js");
+            session.modules.add(moduleUrlPath);
+          }
           return cachedPath;
         }
       } catch {

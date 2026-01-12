@@ -1,8 +1,8 @@
 /**
  * File Finder
  *
- * Resolves module paths to actual file paths by trying various extensions
- * and directory prefixes.
+ * Resolves module paths to actual file paths using the adapter's file index
+ * for fast extension resolution without API calls.
  *
  * @module build/transforms/mdx/esm-module-loader/resolution/file-finder
  */
@@ -15,7 +15,6 @@ import {
   FRAMEWORK_ROOT,
   LOG_PREFIX_MDX_LOADER,
   MODULE_EXTENSIONS,
-  PREFIXES_TO_STRIP,
 } from "../constants.ts";
 import { getLocalFs } from "../cache/index.ts";
 
@@ -30,73 +29,9 @@ export interface FileResolutionResult {
 }
 
 /**
- * Try to read a file from the adapter's filesystem.
- * Returns the content as a string if successful, null otherwise.
- */
-async function tryReadFile(
-  adapter: RuntimeAdapter,
-  path: string,
-): Promise<string | null> {
-  try {
-    const content = await adapter.fs.readFile(path);
-    return typeof content === "string" ? content : new TextDecoder().decode(content as Uint8Array);
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Build all candidate paths for a module.
- * Returns paths in priority order (first match wins).
- */
-function buildCandidatePaths(
-  filePathWithoutExt: string,
-  filePathWithoutJs: string,
-  hasKnownExt: boolean,
-): string[] {
-  const candidates: string[] = [];
-
-  // If path already has extension, try it directly first
-  if (hasKnownExt) {
-    for (const prefix of DIRECTORY_PREFIXES) {
-      candidates.push(prefix + filePathWithoutJs);
-    }
-  }
-
-  // Try with different extensions
-  for (const prefix of DIRECTORY_PREFIXES) {
-    for (const ext of MODULE_EXTENSIONS) {
-      candidates.push(prefix + filePathWithoutExt + ext);
-    }
-  }
-
-  // Try stripping common directory prefixes
-  for (const stripPrefix of PREFIXES_TO_STRIP) {
-    if (filePathWithoutExt.startsWith(stripPrefix)) {
-      const strippedPath = filePathWithoutExt.slice(stripPrefix.length);
-      for (const ext of MODULE_EXTENSIONS) {
-        candidates.push(strippedPath + ext);
-      }
-    }
-  }
-
-  // Try index files
-  const basePath = hasKnownExt
-    ? filePathWithoutJs.replace(/\.(tsx|ts|jsx|js|mdx)$/, "")
-    : filePathWithoutJs;
-
-  for (const prefix of DIRECTORY_PREFIXES) {
-    for (const ext of MODULE_EXTENSIONS) {
-      candidates.push(`${prefix}${basePath}/index${ext}`);
-    }
-  }
-
-  return candidates;
-}
-
-/**
  * Resolve a module path to its actual file.
- * Optimized to check candidates in parallel batches.
+ * Uses the adapter's resolveFile() method which checks the in-memory file index
+ * instead of making individual API calls for each extension.
  *
  * @param normalizedPath - The normalized module path (e.g., "_vf_modules/components/Button")
  * @param adapter - The runtime adapter for file operations
@@ -114,45 +49,97 @@ export async function resolveModuleFile(
   // Check if path already has a known extension
   const hasKnownExt = MODULE_EXTENSIONS.some((ext) => filePathWithoutJs.endsWith(ext));
 
-  // Strip any existing extension before adding new ones
+  // Strip any existing extension before trying resolution
   const filePathWithoutExt = hasKnownExt
     ? filePathWithoutJs.replace(/\.(tsx|ts|jsx|js|mdx)$/, "")
     : filePathWithoutJs;
 
-  // Build all candidate paths in priority order
-  const candidates = buildCandidatePaths(filePathWithoutExt, filePathWithoutJs, hasKnownExt);
+  // Use the adapter's resolveFile() method if available (uses in-memory file index)
+  // This is MUCH faster than trying each extension via readFile API calls
+  if (adapter.fs.resolveFile) {
+    // Try each directory prefix with the index-based resolution
+    for (const prefix of DIRECTORY_PREFIXES) {
+      const basePath = prefix + filePathWithoutExt;
+      const resolvedPath = await adapter.fs.resolveFile(basePath);
 
-  // Try candidates in parallel batches (to avoid overwhelming the API)
-  // Process in batches of 6 (one batch per extension type)
-  const BATCH_SIZE = 6;
+      if (resolvedPath) {
+        try {
+          const content = await adapter.fs.readFile(resolvedPath);
+          const sourceCode = typeof content === "string"
+            ? content
+            : new TextDecoder().decode(content as Uint8Array);
 
-  for (let i = 0; i < candidates.length; i += BATCH_SIZE) {
-    const batch = candidates.slice(i, i + BATCH_SIZE);
+          logger.debug(`${LOG_PREFIX_MDX_LOADER} Found file via index`, {
+            normalizedPath,
+            basePath,
+            resolvedPath,
+          });
 
-    // Try batch in parallel
-    const results = await Promise.all(
-      batch.map(async (tryPath) => {
-        const content = await tryReadFile(adapter, tryPath);
-        return content !== null ? { content, path: tryPath } : null;
-      }),
-    );
-
-    // Return first successful result (maintains priority order within batch)
-    const found = results.find((r) => r !== null);
-    if (found) {
-      logger.debug(`${LOG_PREFIX_MDX_LOADER} Found file`, {
-        normalizedPath,
-        resolvedPath: found.path,
-      });
-      return { sourceCode: found.content, actualFilePath: found.path };
+          return { sourceCode, actualFilePath: resolvedPath };
+        } catch (error) {
+          logger.warn(`${LOG_PREFIX_MDX_LOADER} Failed to read resolved file`, {
+            resolvedPath,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
     }
-  }
 
-  logger.debug(`${LOG_PREFIX_MDX_LOADER} Extension resolution failed`, {
-    normalizedPath,
-    filePathWithoutExt,
-    candidateCount: candidates.length,
-  });
+    logger.debug(`${LOG_PREFIX_MDX_LOADER} Extension resolution failed via index`, {
+      normalizedPath,
+      filePathWithoutExt,
+    });
+  } else {
+    // Fallback for adapters without resolveFile (e.g., local filesystem)
+    // Try direct readFile for each extension
+    for (const prefix of DIRECTORY_PREFIXES) {
+      // If path has extension, try it directly first
+      if (hasKnownExt) {
+        try {
+          const content = await adapter.fs.readFile(prefix + filePathWithoutJs);
+          const sourceCode = typeof content === "string"
+            ? content
+            : new TextDecoder().decode(content as Uint8Array);
+          return { sourceCode, actualFilePath: prefix + filePathWithoutJs };
+        } catch {
+          // Continue to next option
+        }
+      }
+
+      // Try each extension
+      for (const ext of MODULE_EXTENSIONS) {
+        try {
+          const tryPath = prefix + filePathWithoutExt + ext;
+          const content = await adapter.fs.readFile(tryPath);
+          const sourceCode = typeof content === "string"
+            ? content
+            : new TextDecoder().decode(content as Uint8Array);
+          return { sourceCode, actualFilePath: tryPath };
+        } catch {
+          // Continue to next extension
+        }
+      }
+
+      // Try index file
+      for (const ext of MODULE_EXTENSIONS) {
+        try {
+          const indexPath = `${prefix}${filePathWithoutExt}/index${ext}`;
+          const content = await adapter.fs.readFile(indexPath);
+          const sourceCode = typeof content === "string"
+            ? content
+            : new TextDecoder().decode(content as Uint8Array);
+          return { sourceCode, actualFilePath: indexPath };
+        } catch {
+          // Continue to next extension
+        }
+      }
+    }
+
+    logger.debug(`${LOG_PREFIX_MDX_LOADER} Extension resolution failed (no resolveFile)`, {
+      normalizedPath,
+      filePathWithoutExt,
+    });
+  }
 
   // FALLBACK: For lib/* imports not found in project, check framework lib directory
   // This provides framework utilities like lib/Router, lib/Head, lib/usePageContext

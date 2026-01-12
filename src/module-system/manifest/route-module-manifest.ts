@@ -157,7 +157,14 @@ export function getRouteManifest(
   route: string,
 ): RouteManifest | null {
   const key = buildKey(projectSlug, route);
-  return manifestStore.get(key) ?? null;
+  const manifest = manifestStore.get(key);
+  logger.debug("[RouteModuleManifest] Get manifest", {
+    key,
+    found: !!manifest,
+    moduleCount: manifest?.moduleCount ?? 0,
+    renderCount: manifest?.renderCount ?? 0,
+  });
+  return manifest ?? null;
 }
 
 /**
@@ -210,6 +217,7 @@ export function recordSSRModules(
   const existingPaths = new Set(existing?.modules.map((m) => m.path) ?? []);
   const newModules: ModuleEntry[] = existing?.modules ?? [];
   let loadOrder = newModules.length;
+  let addedCount = 0;
 
   for (const path of modules) {
     const normalizedPath = path.replace(/^_vf_modules\//, "");
@@ -220,6 +228,7 @@ export function recordSSRModules(
         loadOrder: loadOrder++,
       });
       existingPaths.add(normalizedPath);
+      addedCount++;
     }
   }
 
@@ -228,10 +237,18 @@ export function recordSSRModules(
     modules: newModules,
     moduleCount: newModules.length,
     updatedAt: Date.now(),
-    renderCount: existing?.renderCount ?? 1,
+    renderCount: (existing?.renderCount ?? 0) + 1,
   };
 
   manifestStore.set(key, manifest);
+
+  logger.info("[RouteModuleManifest] Recorded SSR modules", {
+    key,
+    inputModules: modules.length,
+    newModulesAdded: addedCount,
+    totalModules: manifest.moduleCount,
+    renderCount: manifest.renderCount,
+  });
 }
 
 /**

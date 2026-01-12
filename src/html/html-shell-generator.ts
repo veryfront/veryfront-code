@@ -105,14 +105,19 @@ function generateModulePreloadHints(options: HTMLGenerationOptions): string {
   const projectDir = options.projectDir || "";
   const addedPaths = new Set<string>();
 
-  // Helper to add a preload hint for a path
-  function addPreloadHint(fullPath: string): void {
-    const relativePath = getRelativePagePath(fullPath, projectDir);
-    const moduleUrl = pathToModuleUrl(relativePath);
+  // Helper to add a preload hint for a module URL
+  function addPreloadHintUrl(moduleUrl: string): void {
     if (moduleUrl && !addedPaths.has(moduleUrl)) {
       hints.push(`<link rel="modulepreload" href="${moduleUrl}">`);
       addedPaths.add(moduleUrl);
     }
+  }
+
+  // Helper to add a preload hint for a path
+  function addPreloadHint(fullPath: string): void {
+    const relativePath = getRelativePagePath(fullPath, projectDir);
+    const moduleUrl = pathToModuleUrl(relativePath);
+    addPreloadHintUrl(moduleUrl);
   }
 
   // Preload page module (always first - most critical)
