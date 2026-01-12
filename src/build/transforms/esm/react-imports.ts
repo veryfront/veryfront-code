@@ -19,14 +19,6 @@ function getVeryfrontAIReactPath(subpath: string = ""): string {
 }
 
 /**
- * Get the absolute path to a veryfront export module for SSR.
- * Exports are located at: src/exports/{name}.ts
- */
-function getVeryfrontExportPath(name: string): string {
-  return `file://${getSrcDir()}/exports/${name}.ts`;
-}
-
-/**
  * Resolve React imports based on target environment.
  *
  * SSR: Leave React as bare specifiers so Deno's import map (deno.json) resolves
