@@ -476,7 +476,7 @@ export const getRouterScript = () => `
       // Build page context for usePageContext() hook
       const pageContext = {
         slug: pageData.slug || '',
-        path: pageData.pagePath || targetPath,
+        path: pageData.pagePath || window.location.pathname,
         params: pageData.params || {},
         query: Object.fromEntries(new URLSearchParams(window.location.search)),
         frontmatter: pageData.frontmatter || {},
