@@ -24,6 +24,10 @@ import {
   shouldDisableLayout,
 } from "./utils.ts";
 import { resolveRelativePath } from "@veryfront/modules/react-loader/path-resolver.ts";
+import {
+  generateModulePreloadHintsFromManifest,
+  getRouteManifest,
+} from "../module-system/manifest/route-module-manifest.ts";
 
 /**
  * Extract head elements from React SSR content and return them separately.
@@ -92,21 +96,26 @@ function getRelativePagePath(fullPath: string | undefined, projectDir: string | 
 /**
  * Generate modulepreload hints for page and layout modules.
  * These tell the browser to start loading modules immediately, in parallel.
+ *
+ * Enhanced to use the route module manifest when available, which includes
+ * all dependencies discovered during previous renders (not just page/layout).
  */
 function generateModulePreloadHints(options: HTMLGenerationOptions): string {
   const hints: string[] = [];
   const projectDir = options.projectDir || "";
+  const addedPaths = new Set<string>();
 
   // Helper to add a preload hint for a path
   function addPreloadHint(fullPath: string): void {
     const relativePath = getRelativePagePath(fullPath, projectDir);
     const moduleUrl = pathToModuleUrl(relativePath);
-    if (moduleUrl) {
+    if (moduleUrl && !addedPaths.has(moduleUrl)) {
       hints.push(`<link rel="modulepreload" href="${moduleUrl}">`);
+      addedPaths.add(moduleUrl);
     }
   }
 
-  // Preload page module
+  // Preload page module (always first - most critical)
   if (options.pagePath) {
     addPreloadHint(options.pagePath);
   }
@@ -116,6 +125,31 @@ function generateModulePreloadHints(options: HTMLGenerationOptions): string {
     const layoutPath = layout.path || layout.componentPath || "";
     if (layoutPath) {
       addPreloadHint(layoutPath);
+    }
+  }
+
+  // ENHANCED: Use manifest to preload all known dependencies for this route
+  // This significantly reduces waterfall loading by preloading dependencies
+  // discovered during previous renders of this route.
+  const projectSlug = options.projectId;
+  const route = options.pagePath
+    ? getRelativePagePath(options.pagePath, projectDir)
+      .replace(/\.(tsx|ts|jsx|mdx)$/, "")
+      .replace(/^pages\//, "")
+    : "";
+
+  const manifest = getRouteManifest(projectSlug, route);
+  if (manifest && manifest.renderCount > 0) {
+    // Get expanded hints from manifest (up to 50 modules)
+    const manifestHints = generateModulePreloadHintsFromManifest(projectSlug, route, 50);
+    for (const hint of manifestHints) {
+      // Extract href from hint to check for duplicates
+      const hrefMatch = hint.match(/href="([^"]+)"/);
+      const href = hrefMatch?.[1];
+      if (href && !addedPaths.has(href)) {
+        hints.push(hint);
+        addedPaths.add(href);
+      }
     }
   }
 

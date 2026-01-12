@@ -46,8 +46,57 @@ async function tryReadFile(
 }
 
 /**
+ * Build all candidate paths for a module.
+ * Returns paths in priority order (first match wins).
+ */
+function buildCandidatePaths(
+  filePathWithoutExt: string,
+  filePathWithoutJs: string,
+  hasKnownExt: boolean,
+): string[] {
+  const candidates: string[] = [];
+
+  // If path already has extension, try it directly first
+  if (hasKnownExt) {
+    for (const prefix of DIRECTORY_PREFIXES) {
+      candidates.push(prefix + filePathWithoutJs);
+    }
+  }
+
+  // Try with different extensions
+  for (const prefix of DIRECTORY_PREFIXES) {
+    for (const ext of MODULE_EXTENSIONS) {
+      candidates.push(prefix + filePathWithoutExt + ext);
+    }
+  }
+
+  // Try stripping common directory prefixes
+  for (const stripPrefix of PREFIXES_TO_STRIP) {
+    if (filePathWithoutExt.startsWith(stripPrefix)) {
+      const strippedPath = filePathWithoutExt.slice(stripPrefix.length);
+      for (const ext of MODULE_EXTENSIONS) {
+        candidates.push(strippedPath + ext);
+      }
+    }
+  }
+
+  // Try index files
+  const basePath = hasKnownExt
+    ? filePathWithoutJs.replace(/\.(tsx|ts|jsx|js|mdx)$/, "")
+    : filePathWithoutJs;
+
+  for (const prefix of DIRECTORY_PREFIXES) {
+    for (const ext of MODULE_EXTENSIONS) {
+      candidates.push(`${prefix}${basePath}/index${ext}`);
+    }
+  }
+
+  return candidates;
+}
+
+/**
  * Resolve a module path to its actual file.
- * Tries various extensions and prefixes to find the file.
+ * Optimized to check candidates in parallel batches.
  *
  * @param normalizedPath - The normalized module path (e.g., "_vf_modules/components/Button")
  * @param adapter - The runtime adapter for file operations
@@ -62,82 +111,48 @@ export async function resolveModuleFile(
     .replace(/^_vf_modules\//, "")
     .replace(/\.js$/, "");
 
-  // Check if path already has a known extension (e.g., DocsLayout.mdx from DocsLayout.mdx.js)
+  // Check if path already has a known extension
   const hasKnownExt = MODULE_EXTENSIONS.some((ext) => filePathWithoutJs.endsWith(ext));
-
-  // If path already has extension, try it directly first
-  if (hasKnownExt) {
-    for (const prefix of DIRECTORY_PREFIXES) {
-      const tryPath = prefix + filePathWithoutJs;
-      const content = await tryReadFile(adapter, tryPath);
-      if (content !== null) {
-        return { sourceCode: content, actualFilePath: tryPath };
-      }
-    }
-  }
 
   // Strip any existing extension before adding new ones
   const filePathWithoutExt = hasKnownExt
     ? filePathWithoutJs.replace(/\.(tsx|ts|jsx|js|mdx)$/, "")
     : filePathWithoutJs;
 
-  // Try adding extensions
-  const triedPaths: string[] = [];
-  for (const prefix of DIRECTORY_PREFIXES) {
-    for (const ext of MODULE_EXTENSIONS) {
-      const tryPath = prefix + filePathWithoutExt + ext;
-      triedPaths.push(tryPath);
-      const content = await tryReadFile(adapter, tryPath);
-      if (content !== null) {
-        logger.debug(`${LOG_PREFIX_MDX_LOADER} Found file with extension`, {
-          normalizedPath,
-          tryPath,
-        });
-        return { sourceCode: content, actualFilePath: tryPath };
-      }
+  // Build all candidate paths in priority order
+  const candidates = buildCandidatePaths(filePathWithoutExt, filePathWithoutJs, hasKnownExt);
+
+  // Try candidates in parallel batches (to avoid overwhelming the API)
+  // Process in batches of 6 (one batch per extension type)
+  const BATCH_SIZE = 6;
+
+  for (let i = 0; i < candidates.length; i += BATCH_SIZE) {
+    const batch = candidates.slice(i, i + BATCH_SIZE);
+
+    // Try batch in parallel
+    const results = await Promise.all(
+      batch.map(async (tryPath) => {
+        const content = await tryReadFile(adapter, tryPath);
+        return content !== null ? { content, path: tryPath } : null;
+      }),
+    );
+
+    // Return first successful result (maintains priority order within batch)
+    const found = results.find((r) => r !== null);
+    if (found) {
+      logger.debug(`${LOG_PREFIX_MDX_LOADER} Found file`, {
+        normalizedPath,
+        resolvedPath: found.path,
+      });
+      return { sourceCode: found.content, actualFilePath: found.path };
     }
   }
 
   logger.debug(`${LOG_PREFIX_MDX_LOADER} Extension resolution failed`, {
     normalizedPath,
     filePathWithoutExt,
-    triedPaths,
+    candidateCount: candidates.length,
   });
-
-  // Try stripping common directory prefixes
-  // This handles cases where API stores files at root level (e.g., "VideoPlayer.tsx")
-  // but code imports them as "components/VideoPlayer"
-  for (const stripPrefix of PREFIXES_TO_STRIP) {
-    if (filePathWithoutExt.startsWith(stripPrefix)) {
-      const strippedPath = filePathWithoutExt.slice(stripPrefix.length);
-      for (const ext of MODULE_EXTENSIONS) {
-        const tryPath = strippedPath + ext;
-        const content = await tryReadFile(adapter, tryPath);
-        if (content !== null) {
-          logger.debug(`${LOG_PREFIX_MDX_LOADER} Found file after stripping prefix`, {
-            originalPath: filePathWithoutJs,
-            strippedPath: tryPath,
-          });
-          return { sourceCode: content, actualFilePath: tryPath };
-        }
-      }
-    }
-  }
-
-  // Try index files
-  const basePath = hasKnownExt
-    ? filePathWithoutJs.replace(/\.(tsx|ts|jsx|js|mdx)$/, "")
-    : filePathWithoutJs;
-
-  for (const prefix of DIRECTORY_PREFIXES) {
-    for (const ext of MODULE_EXTENSIONS) {
-      const tryPath = `${prefix}${basePath}/index${ext}`;
-      const content = await tryReadFile(adapter, tryPath);
-      if (content !== null) {
-        return { sourceCode: content, actualFilePath: tryPath };
-      }
-    }
-  }
 
   // FALLBACK: For lib/* imports not found in project, check framework lib directory
   // This provides framework utilities like lib/Router, lib/Head, lib/usePageContext
