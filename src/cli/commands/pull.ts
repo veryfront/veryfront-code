@@ -83,7 +83,7 @@ async function listAllFiles(
 
   do {
     const params: Record<string, string> = {
-      limit: "10000",
+      limit: "100",
       sort_by: "updated_at",
       sort_order: "desc",
     };
