@@ -41,7 +41,8 @@ export class StatOperations {
 
     logger.debug("[StatOperations] stat called", { path, normalizedPath, cacheKey });
 
-    const cached = this.cache.get<FileInfo>(cacheKey);
+    // Check cache first (memory + Redis)
+    const cached = await this.cache.getAsync<FileInfo>(cacheKey);
     if (cached) {
       logger.debug("[StatOperations] stat cache hit", { normalizedPath });
       return cached;
@@ -184,7 +185,8 @@ export class StatOperations {
     const ctx = this.contextProvider?.getContentContext();
     const cacheKey = buildFileListCacheKey(ctx);
 
-    const cached = this.cache.get<ProjectFile[]>(cacheKey);
+    // Check cache first (memory + Redis)
+    const cached = await this.cache.getAsync<ProjectFile[]>(cacheKey);
     if (cached) {
       return cached;
     }
@@ -228,7 +230,8 @@ export class StatOperations {
       cacheKey,
     });
 
-    const cached = this.cache.get<string>(cacheKey);
+    // Check cache first (memory + Redis)
+    const cached = await this.cache.getAsync<string>(cacheKey);
     if (cached === NOT_FOUND_SENTINEL) {
       logger.debug("[StatOperations] resolveFile cache hit (not found)", { normalizedPath });
       return null;

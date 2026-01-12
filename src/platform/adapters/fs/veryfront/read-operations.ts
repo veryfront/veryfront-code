@@ -59,24 +59,24 @@ export class ReadOperations {
     return this.fetchContent(normalizedPath);
   }
 
-  private fetchContent(normalizedPath: string): Promise<string> {
+  private async fetchContent(normalizedPath: string): Promise<string> {
     const ctx = this.contextProvider?.getContentContext();
     const apiPath = this.getOriginalApiPath?.(normalizedPath) ?? normalizedPath;
     const cacheKeyPrefix = buildFileCacheKeyPrefix(ctx);
     const cacheKey = `${cacheKeyPrefix}:${normalizedPath}`;
 
-    // Check cache first
-    const cached = this.cache.get<string>(cacheKey);
+    // Check cache first (memory + Redis)
+    const cached = await this.cache.getAsync<string>(cacheKey);
     if (cached) {
       logger.debug("[ReadOperations] Cache hit", { path: normalizedPath, cacheKey });
-      return Promise.resolve(cached);
+      return cached;
     }
 
     // Check if content is available in the file list cache
     const fileListContent = this.getContentFromFileList(normalizedPath);
     if (fileListContent) {
       this.cache.set(cacheKey, fileListContent);
-      return Promise.resolve(fileListContent);
+      return fileListContent;
     }
 
     // Fetch based on source type
