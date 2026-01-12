@@ -213,19 +213,18 @@ export function recordSSRModules(
 ): void {
   const key = buildKey(projectSlug, route);
   const existing = manifestStore.get(key);
+  const existingModules = existing?.modules ?? [];
+  const existingPaths = new Set(existingModules.map((m) => m.path));
 
-  const existingPaths = new Set(existing?.modules.map((m) => m.path) ?? []);
-  const newModules: ModuleEntry[] = existing?.modules ?? [];
-  let loadOrder = newModules.length;
+  // Add new modules that don't already exist
   let addedCount = 0;
-
   for (const path of modules) {
     const normalizedPath = path.replace(/^_vf_modules\//, "");
     if (!existingPaths.has(normalizedPath)) {
-      newModules.push({
+      existingModules.push({
         path: normalizedPath,
         critical: false,
-        loadOrder: loadOrder++,
+        loadOrder: existingModules.length,
       });
       existingPaths.add(normalizedPath);
       addedCount++;
@@ -234,8 +233,8 @@ export function recordSSRModules(
 
   const manifest: RouteManifest = {
     route,
-    modules: newModules,
-    moduleCount: newModules.length,
+    modules: existingModules,
+    moduleCount: existingModules.length,
     updatedAt: Date.now(),
     renderCount: (existing?.renderCount ?? 0) + 1,
   };

@@ -106,11 +106,9 @@ export function endRenderSession(sessionId: string): void {
 function getCurrentSession():
   | { modules: Set<string>; projectSlug?: string; route?: string }
   | null {
-  // Return the most recent session (there should only be one per request)
-  for (const session of renderSessions.values()) {
-    return session;
-  }
-  return null;
+  // Return the first session (there should only be one per request)
+  const firstSession = renderSessions.values().next();
+  return firstSession.done ? null : firstSession.value;
 }
 
 /**
@@ -299,29 +297,20 @@ async function fetchModuleViaHTTP(
   // Find and recursively process nested imports
   const { vfModules, relative } = findNestedImports(moduleCode);
 
-  // Process nested imports in parallel
-  const nestedResults = await Promise.all(
-    vfModules.map(async ({ original, path }) => {
+  // Process all nested imports in parallel (both vf_modules and relative)
+  const allImports = [
+    ...vfModules.map(({ original, path }) => ({ original, path, key: "nestedPath" as const })),
+    ...relative.map(({ original, path }) => ({ original, path, key: "relativePath" as const })),
+  ];
+
+  const results = await Promise.all(
+    allImports.map(async ({ original, path, key }) => {
       const nestedFilePath = await fetchAndCacheModuleFn(path, normalizedPath);
-      return { original, nestedFilePath, nestedPath: path };
+      return { original, nestedFilePath, [key]: path };
     }),
   );
 
-  for (const { original, nestedFilePath } of nestedResults) {
-    if (nestedFilePath) {
-      moduleCode = moduleCode.replace(original, `from "file://${nestedFilePath}"`);
-    }
-  }
-
-  // Process relative imports in parallel
-  const relativeResults = await Promise.all(
-    relative.map(async ({ original, path }) => {
-      const nestedFilePath = await fetchAndCacheModuleFn(path, normalizedPath);
-      return { original, nestedFilePath, relativePath: path };
-    }),
-  );
-
-  for (const { original, nestedFilePath } of relativeResults) {
+  for (const { original, nestedFilePath } of results) {
     if (nestedFilePath) {
       moduleCode = moduleCode.replace(original, `from "file://${nestedFilePath}"`);
     }

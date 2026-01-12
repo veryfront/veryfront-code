@@ -103,37 +103,32 @@ function getRelativePagePath(fullPath: string | undefined, projectDir: string | 
 function generateModulePreloadHints(options: HTMLGenerationOptions): string {
   const hints: string[] = [];
   const projectDir = options.projectDir || "";
-  const addedPaths = new Set<string>();
+  const addedUrls = new Set<string>();
 
-  // Helper to add a preload hint for a module URL
-  function addPreloadHintUrl(moduleUrl: string): void {
-    if (moduleUrl && !addedPaths.has(moduleUrl)) {
+  // Helper to add a preload hint, deduplicating by URL
+  function addHint(moduleUrl: string): void {
+    if (moduleUrl && !addedUrls.has(moduleUrl)) {
       hints.push(`<link rel="modulepreload" href="${moduleUrl}">`);
-      addedPaths.add(moduleUrl);
+      addedUrls.add(moduleUrl);
     }
-  }
-
-  // Helper to add a preload hint for a path
-  function addPreloadHint(fullPath: string): void {
-    const relativePath = getRelativePagePath(fullPath, projectDir);
-    const moduleUrl = pathToModuleUrl(relativePath);
-    addPreloadHintUrl(moduleUrl);
   }
 
   // Preload page module (always first - most critical)
   if (options.pagePath) {
-    addPreloadHint(options.pagePath);
+    const relativePath = getRelativePagePath(options.pagePath, projectDir);
+    addHint(pathToModuleUrl(relativePath));
   }
 
   // Preload layout modules
   for (const layout of options.nestedLayouts || []) {
     const layoutPath = layout.path || layout.componentPath || "";
     if (layoutPath) {
-      addPreloadHint(layoutPath);
+      const relativePath = getRelativePagePath(layoutPath, projectDir);
+      addHint(pathToModuleUrl(relativePath));
     }
   }
 
-  // ENHANCED: Use manifest to preload all known dependencies for this route
+  // Use manifest to preload all known dependencies for this route
   // This significantly reduces waterfall loading by preloading dependencies
   // discovered during previous renders of this route.
   const projectSlug = options.projectId;
@@ -146,14 +141,13 @@ function generateModulePreloadHints(options: HTMLGenerationOptions): string {
   const manifest = getRouteManifest(projectSlug, route);
   if (manifest && manifest.renderCount > 0) {
     // Get expanded hints from manifest (up to 50 modules)
-    const manifestHints = generateModulePreloadHintsFromManifest(projectSlug, route, 50);
-    for (const hint of manifestHints) {
+    for (const hint of generateModulePreloadHintsFromManifest(projectSlug, route, 50)) {
       // Extract href from hint to check for duplicates
       const hrefMatch = hint.match(/href="([^"]+)"/);
       const href = hrefMatch?.[1];
-      if (href && !addedPaths.has(href)) {
+      if (href && !addedUrls.has(href)) {
         hints.push(hint);
-        addedPaths.add(href);
+        addedUrls.add(href);
       }
     }
   }

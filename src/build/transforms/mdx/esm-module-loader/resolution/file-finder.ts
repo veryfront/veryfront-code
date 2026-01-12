@@ -29,6 +29,28 @@ export interface FileResolutionResult {
 }
 
 /**
+ * Decode file content to string.
+ */
+function decodeContent(content: string | Uint8Array): string {
+  return typeof content === "string" ? content : new TextDecoder().decode(content);
+}
+
+/**
+ * Try reading a file path and return the result or null.
+ */
+async function tryReadFile(
+  path: string,
+  readFile: (path: string) => Promise<string | Uint8Array>,
+): Promise<FileResolutionResult | null> {
+  try {
+    const content = await readFile(path);
+    return { sourceCode: decodeContent(content), actualFilePath: path };
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Resolve a module path to its actual file.
  * Uses the adapter's resolveFile() method which checks the in-memory file index
  * instead of making individual API calls for each extension.
@@ -65,17 +87,12 @@ export async function resolveModuleFile(
       if (resolvedPath) {
         try {
           const content = await adapter.fs.readFile(resolvedPath);
-          const sourceCode = typeof content === "string"
-            ? content
-            : new TextDecoder().decode(content as Uint8Array);
-
           logger.debug(`${LOG_PREFIX_MDX_LOADER} Found file via index`, {
             normalizedPath,
             basePath,
             resolvedPath,
           });
-
-          return { sourceCode, actualFilePath: resolvedPath };
+          return { sourceCode: decodeContent(content), actualFilePath: resolvedPath };
         } catch (error) {
           logger.warn(`${LOG_PREFIX_MDX_LOADER} Failed to read resolved file`, {
             resolvedPath,
@@ -92,46 +109,25 @@ export async function resolveModuleFile(
   } else {
     // Fallback for adapters without resolveFile (e.g., local filesystem)
     // Try direct readFile for each extension
+    const readFile = adapter.fs.readFile.bind(adapter.fs);
+
     for (const prefix of DIRECTORY_PREFIXES) {
       // If path has extension, try it directly first
       if (hasKnownExt) {
-        try {
-          const content = await adapter.fs.readFile(prefix + filePathWithoutJs);
-          const sourceCode = typeof content === "string"
-            ? content
-            : new TextDecoder().decode(content as Uint8Array);
-          return { sourceCode, actualFilePath: prefix + filePathWithoutJs };
-        } catch {
-          // Continue to next option
-        }
+        const result = await tryReadFile(prefix + filePathWithoutJs, readFile);
+        if (result) return result;
       }
 
       // Try each extension
       for (const ext of MODULE_EXTENSIONS) {
-        try {
-          const tryPath = prefix + filePathWithoutExt + ext;
-          const content = await adapter.fs.readFile(tryPath);
-          const sourceCode = typeof content === "string"
-            ? content
-            : new TextDecoder().decode(content as Uint8Array);
-          return { sourceCode, actualFilePath: tryPath };
-        } catch {
-          // Continue to next extension
-        }
+        const result = await tryReadFile(prefix + filePathWithoutExt + ext, readFile);
+        if (result) return result;
       }
 
       // Try index file
       for (const ext of MODULE_EXTENSIONS) {
-        try {
-          const indexPath = `${prefix}${filePathWithoutExt}/index${ext}`;
-          const content = await adapter.fs.readFile(indexPath);
-          const sourceCode = typeof content === "string"
-            ? content
-            : new TextDecoder().decode(content as Uint8Array);
-          return { sourceCode, actualFilePath: indexPath };
-        } catch {
-          // Continue to next extension
-        }
+        const result = await tryReadFile(`${prefix}${filePathWithoutExt}/index${ext}`, readFile);
+        if (result) return result;
       }
     }
 
