@@ -6,7 +6,7 @@
  * @module veryfront/ai/react
  */
 
-export { useChat } from "./use-chat.ts";
+export { useChat } from "./use-chat/index.ts";
 export type {
   DynamicToolUIPart,
   OnToolCallArg,
@@ -21,7 +21,7 @@ export type {
   UIMessagePart,
   UseChatOptions,
   UseChatResult,
-} from "./use-chat.ts";
+} from "./use-chat/index.ts";
 
 export { useAgent } from "./use-agent.ts";
 export type { UseAgentOptions, UseAgentResult } from "./use-agent.ts";

@@ -13,7 +13,7 @@ import {
   WrenchIcon,
   XCircleIcon,
 } from "../../icons/index.ts";
-import type { DynamicToolUIPart, ToolUIPart } from "../../../hooks/use-chat.ts";
+import type { DynamicToolUIPart, ToolUIPart } from "../../../hooks/use-chat/index.ts";
 
 /** Tool status configuration mapping state to label and icon */
 const TOOL_STATUS_CONFIG: Record<string, { label: string; icon: React.ReactNode }> = {

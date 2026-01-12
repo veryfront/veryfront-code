@@ -16,7 +16,7 @@ import {
   SubmitButton,
 } from "../../primitives/index.ts";
 import { useVoiceInput } from "../../hooks/use-voice-input.ts";
-import type { DynamicToolUIPart, ToolUIPart, UIMessage } from "../../hooks/use-chat.ts";
+import type { DynamicToolUIPart, ToolUIPart, UIMessage } from "../../hooks/use-chat/index.ts";
 import { type ChatTheme, cn, defaultChatTheme, mergeThemes } from "../theme.ts";
 import { Markdown } from "../markdown.tsx";
 import { MessageSquareIcon, RefreshCwIcon } from "../icons/index.ts";

@@ -8,7 +8,7 @@ import type {
   ToolUIPart,
   UIMessage,
   UIMessagePart,
-} from "../../../hooks/use-chat.ts";
+} from "../../../hooks/use-chat/index.ts";
 
 /** Get text content from UIMessage parts */
 export function getTextContent(message: UIMessage): string {
