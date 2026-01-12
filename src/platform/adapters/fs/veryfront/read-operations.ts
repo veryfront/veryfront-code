@@ -27,7 +27,9 @@ export class ReadOperations {
     private readonly getOriginalApiPath?: (path: string) => string,
     // Getter for cached file list (to check for pre-fetched content)
     // Now async to support Redis cache lookup across pods
-    private readonly getFileListCache?: () => Promise<Array<{ path: string; content?: string }> | undefined>,
+    private readonly getFileListCache?: () => Promise<
+      Array<{ path: string; content?: string }> | undefined
+    >,
   ) {}
 
   /**
