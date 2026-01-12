@@ -322,7 +322,10 @@ export class StatOperations {
       logger.error("[StatOperations] API pattern search failed", { pattern: searchPattern, error });
     }
 
-    logger.info("[StatOperations] resolveFile not found after API search", { normalizedPath, pathWithoutExt });
+    logger.info("[StatOperations] resolveFile not found after API search", {
+      normalizedPath,
+      pathWithoutExt,
+    });
     // Don't cache null/not-found results - files may be published later
     return null;
   }
