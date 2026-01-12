@@ -150,9 +150,10 @@ export function getContextPackageImportMap(): Record<string, string> {
  */
 export function getTailwindImportMap(): Record<string, string> {
   const tw = TAILWIND_VERSION;
+  // Map specific subpaths explicitly. No prefix fallback - unmapped subpaths
+  // should fail explicitly rather than resolve without ?target=es2022.
   return {
     tailwindcss: `https://esm.sh/tailwindcss@${tw}?target=es2022`,
-    "tailwindcss/": `https://esm.sh/tailwindcss@${tw}/?target=es2022`,
     "tailwindcss/plugin": `https://esm.sh/tailwindcss@${tw}/plugin?target=es2022`,
     "tailwindcss/colors": `https://esm.sh/tailwindcss@${tw}/colors?target=es2022`,
     "tailwindcss/defaultTheme": `https://esm.sh/tailwindcss@${tw}/defaultTheme?target=es2022`,

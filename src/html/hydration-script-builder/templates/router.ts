@@ -299,6 +299,14 @@ export const getRouterScript = () => `
     // SPA navigation handler
     // ============================================
     async function navigateSPA(href, pushState = true, restoreScroll = false) {
+      // If React hasn't hydrated yet, fall back to full page navigation
+      const container = document.getElementById('veryfront-content');
+      if (!container || !container.__reactRoot) {
+        log('React not hydrated yet, using full page navigation');
+        window.location.href = href;
+        return;
+      }
+
       // Cancel any pending navigation
       if (currentAbortController) {
         currentAbortController.abort();
@@ -342,8 +350,15 @@ export const getRouterScript = () => `
 
         // Load and render the new page
         perfStart('nav:render:' + href);
-        await renderPageFromData(pageData);
+        const rendered = await renderPageFromData(pageData);
         perfEnd('nav:render:' + href);
+
+        // If render failed (React root gone), fall back to full page navigation
+        if (!rendered) {
+          log('React root unavailable, using full page navigation');
+          window.location.href = href;
+          return;
+        }
 
         currentPath = targetPath;
         window.__veryfrontRouter.pathname = targetPath;
@@ -480,9 +495,9 @@ export const getRouterScript = () => `
         container.__reactRoot.render(tree);
         perfEnd('render:reactRender');
         log('Page re-rendered via SPA');
-      } else {
-        throw new Error('React root not found');
+        return true;
       }
+      return false;
     }
 
     // ============================================
@@ -565,20 +580,19 @@ export const getRouterScript = () => `
       if (e.state?.pageData) {
         // Use cached page data from history state
         showNavigationProgress();
-        try {
-          await renderPageFromData(e.state.pageData);
-          currentPath = path;
-          window.__veryfrontRouter.pathname = path;
-          window.__veryfrontRouter.query = Object.fromEntries(new URLSearchParams(window.location.search));
-
-          // Restore scroll position
-          restoreScrollPosition(path);
-          hideNavigationProgress(true);
-        } catch (error) {
+        const rendered = await renderPageFromData(e.state.pageData);
+        if (!rendered) {
           hideNavigationProgress(false);
-          logError('Popstate render failed:', error.message);
           window.location.reload();
+          return;
         }
+        currentPath = path;
+        window.__veryfrontRouter.pathname = path;
+        window.__veryfrontRouter.query = Object.fromEntries(new URLSearchParams(window.location.search));
+
+        // Restore scroll position
+        restoreScrollPosition(path);
+        hideNavigationProgress(true);
       } else {
         // Fetch fresh data with scroll restoration
         await navigateSPA(path, false, true);
