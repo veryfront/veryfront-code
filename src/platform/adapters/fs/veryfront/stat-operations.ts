@@ -42,10 +42,17 @@ export class StatOperations {
     logger.debug("[StatOperations] stat called", { path, normalizedPath, cacheKey });
 
     // Check cache first (memory + Redis)
-    const cached = await this.cache.getAsync<FileInfo>(cacheKey);
+    const cached = await this.cache.getAsync<FileInfo | string>(cacheKey);
     if (cached) {
+      // Check for negative cache (file not found)
+      if (cached === NOT_FOUND_SENTINEL) {
+        throw toError(createError({
+          type: "file",
+          message: `File not found: ${normalizedPath}`,
+        }));
+      }
       logger.debug("[StatOperations] stat cache hit", { normalizedPath });
-      return cached;
+      return cached as FileInfo;
     }
 
     await this.ensureIndexBuilt();
@@ -88,18 +95,14 @@ export class StatOperations {
       return info;
     }
 
-    // Log at info level for debugging production issues
-    // Include sample of available files to diagnose path mismatches
-    const availableFiles = Array.from(fileIdx.keys()).slice(0, 20);
-    const hasComponentsDir = availableFiles.some((f) => f.startsWith("components/"));
-    const isPublished = ctx?.sourceType !== "branch";
-    logger.info("[StatOperations] stat file not found", {
+    // Cache negative result to avoid repeated lookups (uses default TTL)
+    this.cache.set(cacheKey, NOT_FOUND_SENTINEL);
+
+    // Log at debug level to reduce noise - only log details for unexpected misses
+    logger.debug("[StatOperations] stat file not found", {
       path,
       normalizedPath,
-      isPublished,
       indexSize: fileIdx.size,
-      hasComponentsDir,
-      sampleFiles: availableFiles,
     });
     throw toError(createError({
       type: "file",

@@ -23,11 +23,21 @@ export async function requestWithRetry(
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
+      const startTime = performance.now();
       const response = await fetch(url, {
         headers: {
           "Authorization": `Bearer ${apiToken}`,
           "Content-Type": "application/json",
         },
+      });
+      const duration = performance.now() - startTime;
+
+      // Log API timing for performance analysis
+      const urlPath = new URL(url).pathname;
+      logger.info("[API] Request completed", {
+        path: urlPath,
+        status: response.status,
+        durationMs: Math.round(duration),
       });
 
       if (!response.ok) {

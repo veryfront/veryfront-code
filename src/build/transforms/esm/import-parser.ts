@@ -189,6 +189,24 @@ async function resolveAliasImportPath(
   // Normalize the path - remove any leading slashes for consistency
   const normalizedPath = basePath.replace(/^\/+/, "");
 
+  // FAST PATH: For lib/* imports, check framework directory FIRST
+  // This avoids expensive project file lookups for framework utilities
+  if (normalizedPath.startsWith("lib/")) {
+    const fs = createFileSystem();
+    for (const ext of EXTENSIONS) {
+      const frameworkPath = join(FRAMEWORK_ROOT, normalizedPath + ext);
+      try {
+        const stat = await fs.stat(frameworkPath);
+        if (stat.isFile) {
+          return frameworkPath;
+        }
+      } catch {
+        // Continue trying other extensions
+      }
+    }
+    // If not in framework, fall through to project lookup
+  }
+
   // Use adapter's resolveFile if available - it's more robust and handles:
   // 1. Multiple extensions (.tsx, .ts, .jsx, .js, .mdx, .md)
   // 2. Index files (e.g., lib/utils/index.ts)
@@ -232,7 +250,7 @@ async function resolveAliasImportPath(
     }
   }
 
-  // FALLBACK: For lib/* imports not found in project, check framework lib directory
+  // Legacy fallback: For lib/* imports not found in project, check framework lib directory
   // This provides framework utilities like lib/Head, lib/Router, lib/usePageContext
   if (normalizedPath.startsWith("lib/")) {
     console.info("[import-parser] Framework lib fallback triggered", {
