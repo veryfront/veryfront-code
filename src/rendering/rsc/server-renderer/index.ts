@@ -18,7 +18,7 @@ export {
   type RSCComponent,
 } from "./component-detector.ts";
 
-export { serializeProps } from "./prop-serializer.ts";
+export { serializeProps, stringifyProps } from "./prop-serializer.ts";
 
 export { escapeHtml, renderAttributes, treeToHTML } from "./html-generator.ts";
 

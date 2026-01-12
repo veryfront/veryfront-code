@@ -19,6 +19,10 @@ export function isTracingEnabled(): boolean {
   return tracingManager.isEnabled();
 }
 
+export function isTracingDegraded(): boolean {
+  return tracingManager.isDegraded();
+}
+
 export function shutdownTracing(): void {
   tracingManager.shutdown();
 }

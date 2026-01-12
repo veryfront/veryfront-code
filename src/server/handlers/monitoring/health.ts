@@ -2,6 +2,7 @@ import { BaseHandler } from "../response/base.ts";
 import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } from "../types.ts";
 import { joinPath } from "@veryfront/utils/path-utils.ts";
 import { HTTP_OK, HTTP_UNAVAILABLE, PRIORITY_HIGH } from "@veryfront/core/constants/index.ts";
+import { isTracingDegraded, isTracingEnabled } from "../../../observability/tracing/index.ts";
 
 let serverInitialized = false;
 
@@ -65,11 +66,16 @@ export class HealthHandler extends BaseHandler {
 
       case "/_health": {
         const hasStaticBuild = await this.hasDistDirectory(ctx);
+        const tracingDegraded = isTracingDegraded();
         const payload = {
-          status: "ok",
+          status: tracingDegraded ? "degraded" : "ok",
           timestamp: new Date().toISOString(),
           mode: hasStaticBuild ? "static+ssr" : "ssr",
           version: "0.1.0",
+          tracing: {
+            enabled: isTracingEnabled(),
+            degraded: tracingDegraded,
+          },
         };
         return this.respond(builder.withCache("no-cache").json(payload, HTTP_OK));
       }

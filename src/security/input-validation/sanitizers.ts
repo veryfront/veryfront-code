@@ -44,5 +44,8 @@ function sanitizeKey(key: string): string {
 }
 
 function isAllowedKey(key: string): boolean {
-  return key !== "__proto__" && key !== "constructor" && key !== "prototype";
+  const lower = key.toLowerCase();
+  return !lower.includes("__proto__") &&
+    !lower.includes("constructor") &&
+    !lower.includes("prototype");
 }

@@ -14,6 +14,7 @@ import {
   startServerSpan,
   withContext,
 } from "@veryfront/observability/tracing/otlp-setup.ts";
+import { getTimeoutFromEnv } from "../../middleware/builtin/timeout.ts";
 
 // Import handler system (from new location)
 import type { HandlerContext } from "../handlers/types.ts";
@@ -46,6 +47,15 @@ function isInternalHost(host: string): boolean {
 
 /** Monitoring paths that should skip domain lookup */
 const MONITORING_PATHS = new Set(["/healthz", "/readyz", "/_health", "/metrics"]);
+
+/** Request timeout in milliseconds (configurable via REQUEST_TIMEOUT_MS env var) */
+const REQUEST_TIMEOUT_MS = getTimeoutFromEnv();
+
+/** HTTP 504 Gateway Timeout status code */
+const HTTP_GATEWAY_TIMEOUT = 504;
+
+/** Sentinel value for timeout detection (avoids string comparison) */
+const TIMEOUT_SENTINEL = Symbol("request_timeout");
 
 /** Check if request path is a monitoring endpoint that should skip domain lookup */
 function isMonitoringPath(pathname: string): boolean {
@@ -419,15 +429,46 @@ export function createVeryfrontHandler(
     let response: Response;
     let error: Error | undefined;
 
+    // Skip timeout for monitoring endpoints
+    const shouldApplyTimeout = !isMonitoringPath(_url.pathname);
+
     try {
-      if (spanInfo?.context) {
-        response = await withContext(spanInfo.context, executeHandler);
+      const executeWithContext = spanInfo?.context
+        ? () => withContext(spanInfo.context, executeHandler)
+        : executeHandler;
+
+      if (shouldApplyTimeout) {
+        response = await Promise.race([
+          executeWithContext(),
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(TIMEOUT_SENTINEL), REQUEST_TIMEOUT_MS)
+          ),
+        ]);
       } else {
-        response = await executeHandler();
+        response = await executeWithContext();
       }
     } catch (e) {
-      error = e instanceof Error ? e : new Error(String(e));
-      response = new Response("Internal Server Error", { status: 500 });
+      if (e === TIMEOUT_SENTINEL) {
+        logger.warn("[universal] Request timed out", {
+          path: _url.pathname,
+          method: req.method,
+          timeoutMs: REQUEST_TIMEOUT_MS,
+        });
+        response = new Response(
+          JSON.stringify({
+            error: "Request timeout",
+            timeoutMs: REQUEST_TIMEOUT_MS,
+            path: _url.pathname,
+          }),
+          {
+            status: HTTP_GATEWAY_TIMEOUT,
+            headers: { "Content-Type": "application/json" },
+          },
+        );
+      } else {
+        error = e instanceof Error ? e : new Error(String(e));
+        response = new Response("Internal Server Error", { status: 500 });
+      }
     }
 
     // End the span with status

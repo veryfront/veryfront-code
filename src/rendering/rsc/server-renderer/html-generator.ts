@@ -1,5 +1,6 @@
 import type { RSCNode } from "../types.ts";
 import { escapeHtml } from "@veryfront/html/html-escape.ts";
+import { stringifyProps } from "./prop-serializer.ts";
 
 export { escapeHtml };
 
@@ -30,7 +31,7 @@ export async function treeToHTML(node: RSCNode): Promise<string> {
 
     case "client": {
       const instanceId = `rsc-${crypto.randomUUID()}`;
-      const propsJson = escapeHtml(JSON.stringify(node.props || {}));
+      const propsJson = escapeHtml(stringifyProps(node.props || {}));
       return `<div data-rsc-component="${node.component}" data-rsc-props='${propsJson}' data-rsc-id="${instanceId}"></div>`;
     }
 

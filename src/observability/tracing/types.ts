@@ -38,6 +38,7 @@ export interface OpenTelemetryAPI {
 
 export interface TracingState {
   initialized: boolean;
+  degraded: boolean;
   tracer: Tracer | null;
   api: OpenTelemetryAPI | null;
   propagator: TextMapPropagator | null;
