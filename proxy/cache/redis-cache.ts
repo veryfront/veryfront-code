@@ -22,20 +22,23 @@ const RESP_ARRAY = "*";
 const RESP_NULL_LENGTH = -1;
 
 class RedisClient {
-  private conn: Deno.TcpConn | null = null;
+  private conn: Deno.TcpConn | Deno.TlsConn | null = null;
   private encoder = new TextEncoder();
   private decoder = new TextDecoder();
   private host: string;
   private port: number;
   private password?: string;
   private connectTimeout: number;
+  private useTls: boolean;
 
   constructor(url: string, options: { connectTimeout?: number } = {}) {
     const parsed = new URL(url);
     this.host = parsed.hostname;
     this.port = parseInt(parsed.port) || DEFAULT_REDIS_PORT;
-    this.password = parsed.password || undefined;
+    this.password = parsed.password ? decodeURIComponent(parsed.password) : undefined;
     this.connectTimeout = options.connectTimeout ?? DEFAULT_CONNECT_TIMEOUT;
+    // rediss:// = TLS, redis:// = plain TCP
+    this.useTls = parsed.protocol === "rediss:";
   }
 
   async connect(): Promise<void> {
@@ -44,7 +47,6 @@ class RedisClient {
     let timedOut = false;
     let timeoutId: ReturnType<typeof setTimeout>;
 
-    const connectPromise = Deno.connect({ hostname: this.host, port: this.port });
     const timeoutPromise = new Promise<never>((_, reject) => {
       timeoutId = setTimeout(() => {
         timedOut = true;
@@ -53,17 +55,32 @@ class RedisClient {
     });
 
     try {
-      this.conn = await Promise.race([connectPromise, timeoutPromise]);
+      let conn: Deno.TcpConn | Deno.TlsConn;
+
+      if (this.useTls) {
+        // TLS connection for rediss://
+        const connectPromise = Deno.connectTls({
+          hostname: this.host,
+          port: this.port,
+        });
+        conn = await Promise.race([connectPromise, timeoutPromise]);
+      } else {
+        // Plain TCP for redis://
+        const connectPromise = Deno.connect({
+          hostname: this.host,
+          port: this.port,
+        });
+        conn = await Promise.race([connectPromise, timeoutPromise]);
+      }
+
       clearTimeout(timeoutId!);
+      this.conn = conn;
+
       if (this.password) {
         await this.sendCommand("AUTH", this.password);
       }
     } catch (error) {
       clearTimeout(timeoutId!);
-      // If timed out, clean up late connection when it resolves
-      if (timedOut) {
-        connectPromise.then((conn) => conn.close()).catch(() => {});
-      }
       this.conn = null;
       throw error;
     }
