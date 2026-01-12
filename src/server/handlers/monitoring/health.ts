@@ -58,7 +58,9 @@ export class HealthHandler extends BaseHandler {
 
       case "/readyz": {
         const isReady = await this.checkReadiness(ctx);
-        return this.respond(builder.text(isReady ? "ready" : "not-ready", isReady ? HTTP_OK : HTTP_UNAVAILABLE));
+        return this.respond(
+          builder.text(isReady ? "ready" : "not-ready", isReady ? HTTP_OK : HTTP_UNAVAILABLE),
+        );
       }
 
       case "/_health": {

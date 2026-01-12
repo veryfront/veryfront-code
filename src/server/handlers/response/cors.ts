@@ -49,7 +49,12 @@ export class CorsHandler extends BaseHandler {
 
   private static readonly DEFAULT_METHODS = "GET,POST,PUT,PATCH,DELETE,OPTIONS";
   private static readonly HTTP_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE"] as const;
-  private static readonly ROUTE_FILE_NAMES = ["route.tsx", "route.ts", "route.jsx", "route.js"] as const;
+  private static readonly ROUTE_FILE_NAMES = [
+    "route.tsx",
+    "route.ts",
+    "route.jsx",
+    "route.js",
+  ] as const;
 
   private async resolveAllowedMethods(pathname: string, ctx: HandlerContext): Promise<string> {
     try {
