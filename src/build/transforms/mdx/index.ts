@@ -2,7 +2,7 @@ import { rendererLogger as logger } from "@veryfront/utils";
 import { LRUCache } from "@veryfront/utils/lru-wrapper.ts";
 import React from "react";
 import { MDX_RENDERER_MAX_ENTRIES, MDX_RENDERER_TTL_MS } from "@veryfront/utils/constants/cache.ts";
-import { type ESMLoaderContext, loadModuleESM } from "./esm-module-loader.ts";
+import { type ESMLoaderContext, loadModuleESM } from "./esm-module-loader/index.ts";
 import {
   executeModule as _executeModule,
   selectComponent as _selectComponent,
