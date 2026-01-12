@@ -176,7 +176,7 @@ export class VeryfrontAPIOperations {
       const result = await this.listBranchFiles(projectRef, branchName, {
         ...options,
         cursor,
-        limit: 10000,
+        limit: 100,
       });
       allFiles.push(...result.files);
       cursor = result.page_info.next ?? undefined;
@@ -269,7 +269,7 @@ export class VeryfrontAPIOperations {
       const result = await this.listEnvironmentFiles(projectRef, environmentName, {
         ...options,
         cursor,
-        limit: 10000,
+        limit: 100,
       });
       allFiles.push(...result.files);
       cursor = result.page_info.next ?? undefined;
@@ -363,7 +363,7 @@ export class VeryfrontAPIOperations {
       const result = await this.listReleaseFiles(projectRef, version, {
         ...options,
         cursor,
-        limit: 10000,
+        limit: 100,
       });
       allFiles.push(...result.files);
       cursor = result.page_info.next ?? undefined;
