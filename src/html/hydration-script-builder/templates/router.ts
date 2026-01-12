@@ -433,7 +433,8 @@ export const getRouterScript = () => `
       const LayoutComponents = rest;
 
       if (!PageComponent) {
-        throw new Error('Failed to load page component: ' + pageData.pagePath);
+        logError('Failed to load page component:', pageData.pagePath);
+        return false;
       }
 
       // Update document title
@@ -580,19 +581,25 @@ export const getRouterScript = () => `
       if (e.state?.pageData) {
         // Use cached page data from history state
         showNavigationProgress();
-        const rendered = await renderPageFromData(e.state.pageData);
-        if (!rendered) {
-          hideNavigationProgress(false);
-          window.location.reload();
-          return;
-        }
-        currentPath = path;
-        window.__veryfrontRouter.pathname = path;
-        window.__veryfrontRouter.query = Object.fromEntries(new URLSearchParams(window.location.search));
+        try {
+          const rendered = await renderPageFromData(e.state.pageData);
+          if (!rendered) {
+            hideNavigationProgress(false);
+            window.location.reload();
+            return;
+          }
+          currentPath = path;
+          window.__veryfrontRouter.pathname = path;
+          window.__veryfrontRouter.query = Object.fromEntries(new URLSearchParams(window.location.search));
 
-        // Restore scroll position
-        restoreScrollPosition(path);
-        hideNavigationProgress(true);
+          // Restore scroll position
+          restoreScrollPosition(path);
+          hideNavigationProgress(true);
+        } catch (error) {
+          hideNavigationProgress(false);
+          logError('Popstate render failed:', error.message);
+          window.location.reload();
+        }
       } else {
         // Fetch fresh data with scroll restoration
         await navigateSPA(path, false, true);

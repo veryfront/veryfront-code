@@ -1,4 +1,4 @@
-import { assertEquals, assert } from "jsr:@std/assert@1";
+import { assert, assertEquals } from "jsr:@std/assert@1";
 import { describe, it } from "jsr:@std/testing@1/bdd";
 import { getTailwindImportMap } from "./package-registry.ts";
 
@@ -16,7 +16,7 @@ describe("package-registry", () => {
       for (const key of Object.keys(map)) {
         assert(
           !key.endsWith("/"),
-          `Found prefix mapping "${key}" - use explicit subpath mappings instead`
+          `Found prefix mapping "${key}" - use explicit subpath mappings instead`,
         );
       }
     });
@@ -26,7 +26,7 @@ describe("package-registry", () => {
       for (const [key, address] of Object.entries(map)) {
         assert(
           address.includes("?target=es2022"),
-          `Entry "${key}" missing ?target=es2022: ${address}`
+          `Entry "${key}" missing ?target=es2022: ${address}`,
         );
       }
     });

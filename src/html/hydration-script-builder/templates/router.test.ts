@@ -9,14 +9,14 @@ describe("router template", () => {
     it("should check for React root before SPA navigation", () => {
       assertStringIncludes(
         script,
-        "if (!container || !container.__reactRoot)"
+        "if (!container || !container.__reactRoot)",
       );
     });
 
     it("should fall back to full page navigation if not hydrated", () => {
       assertStringIncludes(
         script,
-        "React not hydrated yet, using full page navigation"
+        "React not hydrated yet, using full page navigation",
       );
       assertStringIncludes(script, "window.location.href = href");
     });
@@ -35,7 +35,7 @@ describe("router template", () => {
       // The old code threw: throw new Error('React root not found')
       // Verify this is no longer present in the render function
       const renderFnMatch = script.match(
-        /async function renderPageFromData[\s\S]*?^\s{4}\}/m
+        /async function renderPageFromData[\s\S]*?^\s{4}\}/m,
       );
       if (renderFnMatch) {
         const renderFn = renderFnMatch[0];
@@ -43,7 +43,7 @@ describe("router template", () => {
         const hasThrow = renderFn.includes("throw new Error('React root");
         if (hasThrow) {
           throw new Error(
-            "renderPageFromData should not throw React root error"
+            "renderPageFromData should not throw React root error",
           );
         }
       }
@@ -55,7 +55,7 @@ describe("router template", () => {
       assertStringIncludes(script, "const rendered = await renderPageFromData");
       assertStringIncludes(
         script,
-        "React root unavailable, using full page navigation"
+        "React root unavailable, using full page navigation",
       );
     });
   });
@@ -65,7 +65,7 @@ describe("router template", () => {
       // Popstate should check rendered result
       assertStringIncludes(
         script,
-        "const rendered = await renderPageFromData(e.state.pageData)"
+        "const rendered = await renderPageFromData(e.state.pageData)",
       );
     });
   });
