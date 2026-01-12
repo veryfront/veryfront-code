@@ -1,0 +1,201 @@
+/**
+ * File Finder
+ *
+ * Resolves module paths to actual file paths by trying various extensions
+ * and directory prefixes.
+ *
+ * @module build/transforms/mdx/esm-module-loader/resolution/file-finder
+ */
+
+import { join } from "https://deno.land/std@0.220.0/path/mod.ts";
+import { rendererLogger as logger } from "@veryfront/utils";
+import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
+import {
+  DIRECTORY_PREFIXES,
+  FRAMEWORK_ROOT,
+  LOG_PREFIX_MDX_LOADER,
+  MODULE_EXTENSIONS,
+  PREFIXES_TO_STRIP,
+} from "../constants.ts";
+import { getLocalFs } from "../cache/index.ts";
+
+/**
+ * Result of file resolution.
+ */
+export interface FileResolutionResult {
+  /** The source code content */
+  sourceCode: string;
+  /** The actual file path that was resolved */
+  actualFilePath: string;
+}
+
+/**
+ * Try to read a file from the adapter's filesystem.
+ * Returns the content as a string if successful, null otherwise.
+ */
+async function tryReadFile(
+  adapter: RuntimeAdapter,
+  path: string,
+): Promise<string | null> {
+  try {
+    const content = await adapter.fs.readFile(path);
+    return typeof content === "string" ? content : new TextDecoder().decode(content as Uint8Array);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Resolve a module path to its actual file.
+ * Tries various extensions and prefixes to find the file.
+ *
+ * @param normalizedPath - The normalized module path (e.g., "_vf_modules/components/Button")
+ * @param adapter - The runtime adapter for file operations
+ * @returns The file content and actual path, or null if not found
+ */
+export async function resolveModuleFile(
+  normalizedPath: string,
+  adapter: RuntimeAdapter,
+): Promise<FileResolutionResult | null> {
+  // Extract file path from module path (remove _vf_modules/ prefix)
+  const filePathWithoutJs = normalizedPath
+    .replace(/^_vf_modules\//, "")
+    .replace(/\.js$/, "");
+
+  // Check if path already has a known extension (e.g., DocsLayout.mdx from DocsLayout.mdx.js)
+  const hasKnownExt = MODULE_EXTENSIONS.some((ext) => filePathWithoutJs.endsWith(ext));
+
+  // If path already has extension, try it directly first
+  if (hasKnownExt) {
+    for (const prefix of DIRECTORY_PREFIXES) {
+      const tryPath = prefix + filePathWithoutJs;
+      const content = await tryReadFile(adapter, tryPath);
+      if (content !== null) {
+        return { sourceCode: content, actualFilePath: tryPath };
+      }
+    }
+  }
+
+  // Strip any existing extension before adding new ones
+  const filePathWithoutExt = hasKnownExt
+    ? filePathWithoutJs.replace(/\.(tsx|ts|jsx|js|mdx)$/, "")
+    : filePathWithoutJs;
+
+  // Try adding extensions
+  const triedPaths: string[] = [];
+  for (const prefix of DIRECTORY_PREFIXES) {
+    for (const ext of MODULE_EXTENSIONS) {
+      const tryPath = prefix + filePathWithoutExt + ext;
+      triedPaths.push(tryPath);
+      const content = await tryReadFile(adapter, tryPath);
+      if (content !== null) {
+        logger.debug(`${LOG_PREFIX_MDX_LOADER} Found file with extension`, {
+          normalizedPath,
+          tryPath,
+        });
+        return { sourceCode: content, actualFilePath: tryPath };
+      }
+    }
+  }
+
+  logger.debug(`${LOG_PREFIX_MDX_LOADER} Extension resolution failed`, {
+    normalizedPath,
+    filePathWithoutExt,
+    triedPaths,
+  });
+
+  // Try stripping common directory prefixes
+  // This handles cases where API stores files at root level (e.g., "VideoPlayer.tsx")
+  // but code imports them as "components/VideoPlayer"
+  for (const stripPrefix of PREFIXES_TO_STRIP) {
+    if (filePathWithoutExt.startsWith(stripPrefix)) {
+      const strippedPath = filePathWithoutExt.slice(stripPrefix.length);
+      for (const ext of MODULE_EXTENSIONS) {
+        const tryPath = strippedPath + ext;
+        const content = await tryReadFile(adapter, tryPath);
+        if (content !== null) {
+          logger.debug(`${LOG_PREFIX_MDX_LOADER} Found file after stripping prefix`, {
+            originalPath: filePathWithoutJs,
+            strippedPath: tryPath,
+          });
+          return { sourceCode: content, actualFilePath: tryPath };
+        }
+      }
+    }
+  }
+
+  // Try index files
+  const basePath = hasKnownExt
+    ? filePathWithoutJs.replace(/\.(tsx|ts|jsx|js|mdx)$/, "")
+    : filePathWithoutJs;
+
+  for (const prefix of DIRECTORY_PREFIXES) {
+    for (const ext of MODULE_EXTENSIONS) {
+      const tryPath = `${prefix}${basePath}/index${ext}`;
+      const content = await tryReadFile(adapter, tryPath);
+      if (content !== null) {
+        return { sourceCode: content, actualFilePath: tryPath };
+      }
+    }
+  }
+
+  // FALLBACK: For lib/* imports not found in project, check framework lib directory
+  // This provides framework utilities like lib/Router, lib/Head, lib/usePageContext
+  if (filePathWithoutJs.startsWith("lib/")) {
+    const localFs = getLocalFs();
+    for (const ext of MODULE_EXTENSIONS) {
+      const frameworkPath = join(FRAMEWORK_ROOT, filePathWithoutJs + ext);
+      try {
+        const stat = await localFs.stat(frameworkPath);
+        if (stat?.isFile) {
+          const content = await localFs.readTextFile(frameworkPath);
+          logger.debug(`${LOG_PREFIX_MDX_LOADER} Found framework lib file (fallback)`, {
+            basePath: filePathWithoutJs,
+            resolvedPath: frameworkPath,
+          });
+          return { sourceCode: content, actualFilePath: frameworkPath };
+        }
+      } catch {
+        // Continue trying other extensions
+      }
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Resolve a file path with extension.
+ * Used for @/ alias and /_vf_modules/ import transforms.
+ *
+ * @param relativePath - The path relative to the project root
+ * @param readFile - Function to read file content
+ * @returns The file content, resolved path, and extension, or null if not found
+ */
+export async function resolveFileWithExtension(
+  relativePath: string,
+  readFile: (path: string) => Promise<string | null>,
+): Promise<{ content: string; resolvedPath: string; extension: string } | null> {
+  // Try common extensions
+  const extensions = ["", ".tsx", ".ts", ".jsx", ".js", ".mdx"];
+
+  for (const tryExt of extensions) {
+    const tryPath = relativePath + tryExt;
+    const content = await readFile(tryPath);
+    if (content !== null) {
+      const ext = tryExt || tryPath.split(".").pop() || "";
+      return { content, resolvedPath: tryPath, extension: ext };
+    }
+  }
+
+  // Also try index files
+  for (const tryExt of [".tsx", ".ts", ".jsx", ".js", ".mdx"]) {
+    const tryPath = `${relativePath}/index${tryExt}`;
+    const content = await readFile(tryPath);
+    if (content !== null) {
+      return { content, resolvedPath: tryPath, extension: tryExt };
+    }
+  }
+
+  return null;
+}

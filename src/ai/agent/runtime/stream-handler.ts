@@ -36,7 +36,9 @@ export interface StreamState {
  */
 export interface StreamCallbacks {
   onChunk?: (chunk: string) => void;
-  onUsage?: (usage: { promptTokens?: number; completionTokens?: number; totalTokens?: number }) => void;
+  onUsage?: (
+    usage: { promptTokens?: number; completionTokens?: number; totalTokens?: number },
+  ) => void;
 }
 
 /**

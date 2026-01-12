@@ -44,7 +44,7 @@ export { Semaphore } from "./concurrency/index.ts";
 
 // Stats function
 import { SSR_MODULE_CACHE_MAX_ENTRIES } from "./constants.ts";
-import { globalModuleCache, globalTmpDirs, getRedisEnabled } from "./cache/index.ts";
+import { getRedisEnabled, globalModuleCache, globalTmpDirs } from "./cache/index.ts";
 import type { SSRModuleCacheStats } from "./types.ts";
 
 /**
