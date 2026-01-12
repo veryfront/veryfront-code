@@ -35,13 +35,25 @@ export class ReadOperations {
    */
   private getContentFromFileList(normalizedPath: string): string | undefined {
     const fileList = this.getFileListCache?.();
-    if (!fileList) return undefined;
+    if (!fileList) {
+      logger.debug("[ReadOperations] No file list cache available");
+      return undefined;
+    }
 
     const file = fileList.find((f) => f.path === normalizedPath);
     if (file?.content) {
-      logger.debug("[ReadOperations] Found content in file list cache", { path: normalizedPath });
+      logger.info("[ReadOperations] Found content in file list cache", {
+        path: normalizedPath,
+        contentLength: file.content.length,
+      });
       return file.content;
     }
+    logger.debug("[ReadOperations] Content not in file list cache", {
+      path: normalizedPath,
+      fileFound: !!file,
+      hasContent: !!file?.content,
+      fileListSize: fileList.length,
+    });
     return undefined;
   }
 
