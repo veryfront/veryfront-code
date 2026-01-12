@@ -3,6 +3,33 @@ export const getRouterScript = () => `
     const MODULE_SERVER_URL = window.location.origin + '/_vf_modules';
 
     // ============================================
+    // Hydration state tracking
+    // ============================================
+    // Track when initial hydration completes to prevent race conditions with SPA navigation
+    let hydrationResolve;
+    let hydrationReject;
+    const hydrationPromise = new Promise((resolve, reject) => {
+      hydrationResolve = resolve;
+      hydrationReject = reject;
+    });
+    let hydrationCompleted = false;
+    let hydrationFailed = false;
+
+    // Called by renderer.ts after successful hydration
+    window.__veryfrontHydrationComplete = () => {
+      hydrationCompleted = true;
+      hydrationResolve();
+      log('Hydration complete signal received');
+    };
+
+    // Called by renderer.ts if hydration fails
+    window.__veryfrontHydrationFailed = (error) => {
+      hydrationFailed = true;
+      hydrationReject(error);
+      logError('Hydration failed signal received:', error);
+    };
+
+    // ============================================
     // Configuration
     // ============================================
     // Enable debug via: ?vf_debug=1 or window.__VERYFRONT_DEBUG__ = true
@@ -475,11 +502,30 @@ export const getRouterScript = () => `
 
       // Get the container and render
       const container = document.getElementById('veryfront-content');
+
+      // Wait for hydration if it hasn't completed yet
+      if (!hydrationCompleted && !hydrationFailed) {
+        log('Waiting for hydration to complete before SPA render...');
+        try {
+          // Wait up to 10 seconds for hydration
+          await Promise.race([
+            hydrationPromise,
+            new Promise((_, reject) => setTimeout(() => reject(new Error('Hydration timeout')), 10000))
+          ]);
+        } catch (waitError) {
+          log('Hydration wait failed:', waitError.message);
+          // Fall through to check container.__reactRoot below
+        }
+      }
+
       if (container && container.__reactRoot) {
         perfStart('render:reactRender');
         container.__reactRoot.render(tree);
         perfEnd('render:reactRender');
         log('Page re-rendered via SPA');
+      } else if (hydrationFailed) {
+        // Hydration failed, fall back to full page navigation
+        throw new Error('React root not found - hydration failed, falling back to full page navigation');
       } else {
         throw new Error('React root not found');
       }

@@ -122,6 +122,10 @@ export const getRendererScript = () => `
             const root = hydrateRoot(container, tree, options);
             container.__reactRoot = root;
             log('Client-side React app hydrated successfully');
+            // Signal hydration complete for SPA navigation
+            if (window.__veryfrontHydrationComplete) {
+              window.__veryfrontHydrationComplete();
+            }
           } else {
             container.__reactRoot.render(tree);
             log('Page re-rendered');
@@ -129,6 +133,10 @@ export const getRendererScript = () => `
         }
       } catch (error) {
         logError('Client initialization error:', error);
+        // Signal hydration failed for SPA navigation fallback
+        if (window.__veryfrontHydrationFailed) {
+          window.__veryfrontHydrationFailed(error);
+        }
       }
     }
 
