@@ -3,6 +3,7 @@
  *
  * Provides configurable caching for OAuth tokens.
  * Supports in-memory (single instance) and Redis (distributed) backends.
+ * Redis cache includes automatic fallback to memory when Redis is unavailable.
  */
 
 export type {
@@ -15,10 +16,12 @@ export type {
 } from "./types.ts";
 export { MemoryCache } from "./memory-cache.ts";
 export { RedisCache } from "./redis-cache.ts";
+export { ResilientCache } from "./resilient-cache.ts";
 
 import type { CacheOptions, TokenCache } from "./types.ts";
 import { MemoryCache } from "./memory-cache.ts";
 import { RedisCache } from "./redis-cache.ts";
+import { ResilientCache } from "./resilient-cache.ts";
 
 /**
  * Create a token cache based on configuration.
@@ -52,6 +55,9 @@ export function createCache(options: CacheOptions): TokenCache {
  * - CACHE_TYPE: "memory" or "redis" (default: "memory")
  * - REDIS_URL: Redis connection URL (required if CACHE_TYPE=redis)
  * - REDIS_PREFIX: Key prefix (default: "vf:token:")
+ *
+ * When CACHE_TYPE=redis, automatically wraps with ResilientCache for
+ * graceful fallback to memory when Redis is unavailable.
  */
 export function createCacheFromEnv(): TokenCache {
   const cacheType = Deno.env.get("CACHE_TYPE") || "memory";
@@ -63,10 +69,15 @@ export function createCacheFromEnv(): TokenCache {
       return new MemoryCache();
     }
 
-    return new RedisCache({
+    const redisCache = new RedisCache({
       url,
       prefix: Deno.env.get("REDIS_PREFIX") || "vf:token:",
     });
+
+    // Wrap Redis with resilient fallback to memory cache
+    // This ensures the proxy continues to function when Redis is unavailable
+    console.log("[Cache] Using Redis with memory fallback (ResilientCache)");
+    return new ResilientCache(redisCache, new MemoryCache());
   }
 
   return new MemoryCache();
