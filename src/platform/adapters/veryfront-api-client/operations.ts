@@ -10,6 +10,7 @@ import {
   ListReleaseFilesResponseSchema,
   type LookupDomainResponse,
   LookupDomainResponseSchema,
+  type PageInfo,
   type Project,
   type ProjectFile,
   ProjectSchema,
@@ -34,15 +35,11 @@ export interface ListFilesOptions {
 
 /**
  * Result of listing files with pagination info.
+ * Uses Zalando-compliant cursor-based pagination.
  */
 export interface FileListResult {
   files: ProjectFile[];
-  page_info: {
-    has_next_page: boolean;
-    end_cursor: string | null;
-    has_previous_page?: boolean;
-    start_cursor?: string | null;
-  };
+  page_info: PageInfo;
   release_id?: string;
   release_version?: string | null;
   environment_id?: string;
@@ -182,9 +179,7 @@ export class VeryfrontAPIOperations {
         limit: 10000,
       });
       allFiles.push(...result.files);
-      cursor = result.page_info.has_next_page
-        ? (result.page_info.end_cursor ?? undefined)
-        : undefined;
+      cursor = result.page_info.next ?? undefined;
     } while (cursor);
 
     return allFiles;
@@ -277,9 +272,7 @@ export class VeryfrontAPIOperations {
         limit: 10000,
       });
       allFiles.push(...result.files);
-      cursor = result.page_info.has_next_page
-        ? (result.page_info.end_cursor ?? undefined)
-        : undefined;
+      cursor = result.page_info.next ?? undefined;
     } while (cursor);
 
     logger.debug("[API] listAllEnvironmentFiles", {
@@ -373,9 +366,7 @@ export class VeryfrontAPIOperations {
         limit: 10000,
       });
       allFiles.push(...result.files);
-      cursor = result.page_info.has_next_page
-        ? (result.page_info.end_cursor ?? undefined)
-        : undefined;
+      cursor = result.page_info.next ?? undefined;
     } while (cursor);
 
     return allFiles;
