@@ -97,10 +97,11 @@ export class VeryfrontFSAdapter implements FSAdapter {
       // Pass path resolver for normalized paths like "pages/index.mdx" -> "pages/"
       (path) => this.statOps.getOriginalApiPath(path),
       // Pass file list cache getter to avoid redundant API calls when content is already fetched
-      () => {
+      // Now async to support Redis cache lookup across pods
+      async () => {
         if (!this.contentContext) return undefined;
         const cacheKey = buildFileListCacheKey(this.contentContext);
-        return this.cache.get(cacheKey) as Array<{ path: string; content?: string }> | undefined;
+        return await this.cache.getAsync<Array<{ path: string; content?: string }>>(cacheKey);
       },
     );
     this.dirOps = new DirectoryOperations(

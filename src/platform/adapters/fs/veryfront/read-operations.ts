@@ -26,15 +26,17 @@ export class ReadOperations {
     // Resolver for normalized paths -> original API paths (e.g., "pages/index.mdx" -> "pages/")
     private readonly getOriginalApiPath?: (path: string) => string,
     // Getter for cached file list (to check for pre-fetched content)
-    private readonly getFileListCache?: () => Array<{ path: string; content?: string }> | undefined,
+    // Now async to support Redis cache lookup across pods
+    private readonly getFileListCache?: () => Promise<Array<{ path: string; content?: string }> | undefined>,
   ) {}
 
   /**
    * Check if content is available in the cached file list.
    * This avoids redundant API calls when the file list already includes content.
+   * Now async to support Redis cache lookup across pods.
    */
-  private getContentFromFileList(normalizedPath: string): string | undefined {
-    const fileList = this.getFileListCache?.();
+  private async getContentFromFileList(normalizedPath: string): Promise<string | undefined> {
+    const fileList = await this.getFileListCache?.();
     if (!fileList) {
       logger.debug("[ReadOperations] No file list cache available");
       return undefined;
@@ -82,8 +84,8 @@ export class ReadOperations {
       return cached;
     }
 
-    // Check if content is available in the file list cache
-    const fileListContent = this.getContentFromFileList(normalizedPath);
+    // Check if content is available in the file list cache (memory + Redis)
+    const fileListContent = await this.getContentFromFileList(normalizedPath);
     if (fileListContent) {
       this.cache.set(cacheKey, fileListContent);
       return fileListContent;
