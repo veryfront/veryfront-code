@@ -88,31 +88,145 @@ if (window.parent !== window) {
 
 // HMR WebSocket server runs on dev server port + 1
 // Detect at runtime to handle projects with different config.dev.port values
-// NOTE: This script only handles Studio notifications. Actual HMR reloads
-// are handled by the inline HMR runtime (templates.ts) to avoid duplicate reloads.
 const devPort = parseInt(window.location.port, 10) || 3001;
 const hmrPort = devPort + 1;
 const host = window.location.hostname || 'localhost';
 const ws = new WebSocket('ws://' + host + ':' + hmrPort + '/');
 let wasConnected = false;
+let reconnectTimeoutId = null;
 
 ws.onopen = () => {
   wasConnected = true;
+  if (reconnectTimeoutId !== null) {
+    clearTimeout(reconnectTimeoutId);
+    reconnectTimeoutId = null;
+  }
+  console.log('[HMR] Connected to port ' + hmrPort);
 };
+
 ws.onmessage = (event) => {
-  // Don't reload here - the inline HMR runtime handles reloads.
-  // This script just maintains the connection for Studio notifications.
-  const data = JSON.parse(event.data);
-  if (data.type === 'reload' || data.type === 'update') {
-    console.log('[HMR] Update received (handled by inline runtime):', data.type);
+  try {
+    const data = JSON.parse(event.data);
+    switch (data.type) {
+      case 'connected':
+        console.log('[HMR] Server acknowledged connection');
+        break;
+      case 'reload':
+        console.log('[HMR] Reload requested');
+        notifyStudioAndReload();
+        break;
+      case 'update':
+        console.log('[HMR] Update received for:', data.path);
+        handleUpdate(data);
+        break;
+      default:
+        console.log('[HMR] Unknown message type:', data.type);
+    }
+  } catch (e) {
+    console.error('[HMR] Failed to parse message', e);
   }
 };
+
 ws.onclose = () => {
   if (!wasConnected) {
     console.log('[HMR] Connection failed - HMR server may not be running');
+  } else {
+    // Reconnect after delay if connection was established
+    console.log('[HMR] Connection closed, will reload in 2s...');
+    reconnectTimeoutId = setTimeout(() => window.location.reload(), 2000);
   }
-  // Don't reload on close - let the inline HMR runtime handle reconnection
 };
+
+ws.onerror = (error) => {
+  console.error('[HMR] WebSocket error:', error);
+};
+
+window.addEventListener('beforeunload', () => {
+  if (reconnectTimeoutId !== null) {
+    clearTimeout(reconnectTimeoutId);
+    reconnectTimeoutId = null;
+  }
+  ws.close();
+});
+
+function handleUpdate(update) {
+  if (!update.path) {
+    console.warn('[HMR] Update message missing path');
+    return;
+  }
+  if (update.path.endsWith('.css')) {
+    updateCSS(update.path);
+    return;
+  }
+  updateJS(update.path);
+}
+
+function updateCSS(path) {
+  console.log('[HMR] Updating CSS:', path);
+  document.querySelectorAll('link[rel="stylesheet"]').forEach((link) => {
+    try {
+      const url = new URL(link.href);
+      if (url.pathname === path || url.pathname.includes(path)) {
+        const newUrl = new URL(link.href);
+        newUrl.searchParams.set('t', Date.now().toString());
+        link.href = newUrl.toString();
+        console.log('[HMR] CSS updated:', path);
+      }
+    } catch (error) {
+      console.error('[HMR] Failed to update CSS link:', error);
+    }
+  });
+  notifyStudio();
+}
+
+function updateJS(path) {
+  console.log('[HMR] Updating JS module:', path);
+  try {
+    const cacheBusted = path + (path.includes('?') ? '&' : '?') + 't=' + Date.now();
+    const script = document.createElement('script');
+    script.type = 'module';
+    script.crossOrigin = 'anonymous';
+    script.onload = () => {
+      // Clear component cache to ensure fresh components are loaded
+      if (window.__veryfrontClearComponentCache) {
+        window.__veryfrontClearComponentCache();
+        console.log('[HMR] Component cache cleared');
+      }
+      // Re-render the page with fresh components
+      if (window.__veryfrontRenderPage) {
+        console.log('[HMR] Re-rendering page');
+        window.__veryfrontRenderPage(window.location.pathname);
+        notifyStudio();
+      } else {
+        // Fall back to full reload if re-render function not available
+        console.log('[HMR] No __veryfrontRenderPage, falling back to reload');
+        notifyStudioAndReload();
+      }
+    };
+    script.onerror = () => {
+      console.log('[HMR] Module load failed, falling back to reload');
+      notifyStudioAndReload();
+    };
+    script.src = cacheBusted;
+    document.head.appendChild(script);
+  } catch (error) {
+    console.error('[HMR] Failed to update JS module:', error);
+    notifyStudioAndReload();
+  }
+}
+
+function notifyStudio() {
+  if (window.parent !== window) {
+    try {
+      window.parent.postMessage({ action: 'appUpdated', url: window.location.href }, '*');
+    } catch (e) { /* ignore */ }
+  }
+}
+
+function notifyStudioAndReload() {
+  notifyStudio();
+  setTimeout(() => window.location.reload(), 100);
+}
 
 window.__veryfrontHMRWebSocket = ws;
     `.trim();
