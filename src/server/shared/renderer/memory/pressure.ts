@@ -8,7 +8,7 @@
 
 import { rendererLogger } from "@veryfront/utils";
 import { getHeapStats } from "@veryfront/core/memory/index.ts";
-import { clearSSRModuleCacheForProject } from "@veryfront/module-system/react-loader/ssr-module-loader.ts";
+import { clearSSRModuleCacheForProject } from "@veryfront/module-system/react-loader/ssr-module-loader/index.ts";
 import { MEMORY_PRESSURE_CRITICAL, MEMORY_PRESSURE_WARNING } from "../constants.ts";
 import { rendererCache, setSingleProjectRenderer, singleProjectRenderer } from "../state.ts";
 import { destroyRenderer } from "../lifecycle/cleanup.ts";

@@ -7,7 +7,7 @@
  */
 
 import { rendererLogger } from "@veryfront/utils";
-import { clearSSRModuleCacheForProject } from "@veryfront/module-system/react-loader/ssr-module-loader.ts";
+import { clearSSRModuleCacheForProject } from "@veryfront/module-system/react-loader/ssr-module-loader/index.ts";
 import type { CachedRenderer } from "../types.ts";
 import {
   inFlightCreations,
