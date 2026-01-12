@@ -11,10 +11,10 @@
 export {
   clearESMDiskCache,
   clearModulePathCache,
+  type ESMLoaderContext,
   hashString,
   invalidateModulePaths,
   loadModuleESM,
-  type ESMLoaderContext,
 } from "../esm-module-loader.ts";
 
 // Re-export extracted utilities

@@ -22,7 +22,8 @@ export const LOG_PREFIX_MDX_LOADER = "[mdx-loader]";
 export const LOG_PREFIX_MDX_RENDERER = "[mdx-renderer]";
 
 /** Pattern for JSX/TSX file imports */
-export const JSX_IMPORT_PATTERN = /import\s+([^'"]+)\s+from\s+['"]file:\/\/([^'"]+\.(jsx|tsx))['"];?/g;
+export const JSX_IMPORT_PATTERN =
+  /import\s+([^'"]+)\s+from\s+['"]file:\/\/([^'"]+\.(jsx|tsx))['"];?/g;
 
 /** Pattern for React imports */
 export const REACT_IMPORT_PATTERN = /import\s+.*React.*\s+from\s+['"]react['"]/;

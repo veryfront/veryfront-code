@@ -15,11 +15,7 @@ import { clearConfigCache, getConfig } from "@veryfront/config";
 import type { HandlerContext } from "../../handlers/types.ts";
 import type { RendererInstance, RendererPromise } from "./types.ts";
 import { MAX_RENDERER_CACHE_SIZE } from "./constants.ts";
-import {
-  rendererCache,
-  setSingleProjectRenderer,
-  singleProjectRenderer,
-} from "./state.ts";
+import { rendererCache, setSingleProjectRenderer, singleProjectRenderer } from "./state.ts";
 import { getCacheKey } from "./cache/key-generation.ts";
 import {
   clearInFlightCreation,

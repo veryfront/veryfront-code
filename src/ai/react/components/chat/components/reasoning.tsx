@@ -13,7 +13,9 @@ import { Shimmer } from "./animations.tsx";
  * Reasoning card component - displays AI thinking/reasoning process
  * Styled to match AI Elements (https://ai-sdk.dev/elements)
  */
-export function ReasoningCard({ text, isStreaming = false }: { text: string; isStreaming?: boolean }) {
+export function ReasoningCard(
+  { text, isStreaming = false }: { text: string; isStreaming?: boolean },
+) {
   const [isOpen, setIsOpen] = React.useState(true);
 
   // Auto-close after streaming ends
