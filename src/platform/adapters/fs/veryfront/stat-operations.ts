@@ -9,12 +9,23 @@ import { buildFileListCacheKey, buildStatCacheKeyPrefix } from "./cache-keys.ts"
 
 const EXTENSION_PRIORITY = [".mdx", ".md", ".tsx", ".jsx", ".ts", ".js"] as const;
 
+// Sentinel value for caching negative results (file not found)
+const NOT_FOUND_SENTINEL = "__NOT_FOUND__";
+
+// Framework prefixes that should not trigger API searches
+// These files are resolved by import-parser.ts from FRAMEWORK_ROOT (/app/)
+const FRAMEWORK_PREFIXES = ["lib/", "exports/", "react/", "veryfront/"];
+
 export class StatOperations {
   private fileIndex: Map<string, ProjectFile> | null = null;
   private directoryIndex: Set<string> | null = null;
   private buildingIndex: Promise<void> | null = null;
   // Map normalized paths to original API paths (for trailing slash files)
   private pathMapping: Map<string, string> = new Map();
+
+  // Circuit breaker for API searches
+  private apiSearchFailures = 0;
+  private apiSearchDisabledUntil = 0;
 
   constructor(
     private readonly client: VeryfrontAPIClient,
@@ -217,7 +228,11 @@ export class StatOperations {
       cacheKey,
     });
 
-    const cached = this.cache.get<string | null>(cacheKey);
+    const cached = this.cache.get<string>(cacheKey);
+    if (cached === NOT_FOUND_SENTINEL) {
+      logger.debug("[StatOperations] resolveFile cache hit (not found)", { normalizedPath });
+      return null;
+    }
     if (cached !== undefined) {
       logger.debug("[StatOperations] resolveFile cache hit", { normalizedPath, cached });
       return cached;
@@ -287,7 +302,22 @@ export class StatOperations {
       }
     }
 
-    // 6. If not in cache, search via API pattern
+    // 6. Skip API search for framework paths - these are resolved by import-parser.ts
+    // from FRAMEWORK_ROOT (/app/). No need to search the user's project API.
+    if (FRAMEWORK_PREFIXES.some((prefix) => normalizedPath.startsWith(prefix))) {
+      logger.debug("[StatOperations] Skipping API search for framework path", { normalizedPath });
+      this.cache.set(cacheKey, NOT_FOUND_SENTINEL);
+      return null;
+    }
+
+    // 7. Check circuit breaker before API search
+    if (Date.now() < this.apiSearchDisabledUntil) {
+      logger.warn("[StatOperations] API search circuit breaker open, skipping", { normalizedPath });
+      this.cache.set(cacheKey, NOT_FOUND_SENTINEL);
+      return null;
+    }
+
+    // 8. If not in cache, search via API pattern
     // This fallback is needed because listPublishedFiles() may not include all project files
     // (e.g., lib/, utils/, hooks/ directories). The search result is cached, so this only
     // incurs overhead on the first request for each missing file.
@@ -299,6 +329,8 @@ export class StatOperations {
 
     try {
       const matches = await this.client.searchFiles(searchPattern);
+      // Reset circuit breaker on success
+      this.apiSearchFailures = 0;
       logger.info("[StatOperations] API search result", {
         pattern: searchPattern,
         matchCount: matches.length,
@@ -319,6 +351,13 @@ export class StatOperations {
         }
       }
     } catch (error) {
+      // Increment circuit breaker on failure
+      this.apiSearchFailures++;
+      if (this.apiSearchFailures >= 5) {
+        this.apiSearchDisabledUntil = Date.now() + 30000; // 30s cooldown
+        this.apiSearchFailures = 0;
+        logger.warn("[StatOperations] API search circuit breaker tripped", { failures: 5 });
+      }
       logger.error("[StatOperations] API pattern search failed", { pattern: searchPattern, error });
     }
 
@@ -326,7 +365,9 @@ export class StatOperations {
       normalizedPath,
       pathWithoutExt,
     });
-    // Don't cache null/not-found results - files may be published later
+    // Cache negative results to prevent repeated slow API searches
+    // Files may be published later, but cache TTL (60s) handles refresh
+    this.cache.set(cacheKey, NOT_FOUND_SENTINEL);
     return null;
   }
 }
