@@ -3,19 +3,19 @@
  *
  * Lazy-loading of Redis client modules for Deno and Node.js runtimes.
  *
- * @module ai/workflow/backends/redis/modules
+ * @module platform/adapters/redis/modules
  */
 
 import { isDeno } from "@veryfront/platform/compat/runtime.ts";
 import type { DenoRedisModule, NodeRedisModule } from "./types.ts";
 
-// Cached Redis client modules (loaded only when Redis backend is used)
+// Cached Redis client modules (loaded only when Redis is used)
 let DenoRedis: DenoRedisModule | null = null;
 let NodeRedis: NodeRedisModule | null = null;
 
 /**
  * Lazily load the Redis module for the current runtime.
- * This ensures the redis package is only required when the Redis backend is actually used.
+ * This ensures the redis package is only required when Redis is actually used.
  *
  * NOTE: We construct module names dynamically to prevent Deno's static analyzer
  * from pre-fetching these optional dependencies during lint/check tasks.

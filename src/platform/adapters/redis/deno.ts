@@ -3,10 +3,10 @@
  *
  * Adapter for the Deno 'redis' module.
  *
- * @module ai/workflow/backends/redis/adapters/deno
+ * @module platform/adapters/redis/deno
  */
 
-import type { DenoRedisClient } from "../types.ts";
+import type { DenoRedisClient } from "./types.ts";
 import type { RedisAdapter } from "./interface.ts";
 import { arrayToObject } from "./utils.ts";
 

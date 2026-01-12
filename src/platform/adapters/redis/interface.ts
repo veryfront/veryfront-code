@@ -3,7 +3,7 @@
  *
  * Standardized interface that normalizes differences between Deno and Node Redis clients.
  *
- * @module ai/workflow/backends/redis/adapters/interface
+ * @module platform/adapters/redis/interface
  */
 
 /**

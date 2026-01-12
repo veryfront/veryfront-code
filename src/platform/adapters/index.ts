@@ -81,3 +81,17 @@ export {
   withFallback,
   withFallbackSync,
 } from "./fallback-wrapper.ts";
+
+// Redis Adapters
+export {
+  arrayToObject,
+  clearModuleCache,
+  DenoRedisAdapter,
+  getRedisModule,
+  NodeRedisAdapter,
+  type DenoRedisClient,
+  type DenoRedisModule,
+  type NodeRedisClient,
+  type NodeRedisModule,
+  type RedisAdapter,
+} from "./redis/index.ts";
