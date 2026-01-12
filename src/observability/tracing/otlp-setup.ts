@@ -103,8 +103,10 @@ export async function initializeOTLP(): Promise<void> {
     });
 
     // Create OTLP exporter
+    // Strip trailing slash to avoid double-slash in URL
+    const endpointBase = config.endpoint.replace(/\/$/, "");
     const exporter = new OTLPTraceExporter({
-      url: `${config.endpoint}/v1/traces`,
+      url: `${endpointBase}/v1/traces`,
       headers: config.headers,
     });
 
