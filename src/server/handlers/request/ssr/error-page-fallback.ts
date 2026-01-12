@@ -105,7 +105,7 @@ const errorPagePathCache = new Map<string, string | null>();
 
 /**
  * Try to load an error page component from the pages directory.
- * Optimized to use pattern-based file resolution when available.
+ * Uses resolveFile for fast pattern-based file resolution when available.
  */
 async function tryLoadErrorPage(
   pagesDir: string,
@@ -129,36 +129,44 @@ async function tryLoadErrorPage(
     }
   }
 
-  // Try to resolve the error page file using the adapter's resolveFile if available
-  // This uses the optimized pattern-based search under the hood
-  const basePath = `pages/${pageType}`;
+  const basePath = joinPath(ctx.projectDir, "pages", pageType);
 
-  // First, try using stat operations to resolve the file (uses pattern search internally)
-  try {
-    const resolvedPath = await tryResolveErrorPagePath(basePath, ctx);
-    if (resolvedPath) {
-      const fullPath = joinPath(ctx.projectDir, resolvedPath);
-      const component = await loadErrorComponent(fullPath, ctx);
-      if (component) {
-        errorPagePathCache.set(cacheKey, fullPath);
-        return component;
+  // Use resolveFile if available - this uses the file index and avoids sequential API calls
+  if (ctx.adapter.fs.resolveFile) {
+    try {
+      const resolvedPath = await ctx.adapter.fs.resolveFile(basePath);
+      if (resolvedPath) {
+        const fullPath = joinPath(ctx.projectDir, resolvedPath);
+        const component = await loadErrorComponent(fullPath, ctx);
+        if (component) {
+          errorPagePathCache.set(cacheKey, fullPath);
+          return component;
+        }
       }
+    } catch {
+      // resolveFile not supported or failed, fall through
     }
-  } catch {
-    // Resolution failed, fall through to sequential approach
+
+    // If resolveFile returned null, the file doesn't exist - cache and return
+    errorPagePathCache.set(cacheKey, null);
+    return null;
   }
 
-  // Fallback: Try extensions sequentially (for environments without pattern support)
+  // Fallback for local filesystem: check with stat first, then readFile
+  // This avoids slow API calls by using the index when available
   for (const ext of ERROR_PAGE_EXTENSIONS) {
     const filePath = joinPath(pagesDir, `${pageType}${ext}`);
     try {
-      const component = await loadErrorComponent(filePath, ctx);
-      if (component) {
-        errorPagePathCache.set(cacheKey, filePath);
-        return component;
+      const stat = await ctx.adapter.fs.stat(filePath);
+      if (stat.isFile) {
+        const component = await loadErrorComponent(filePath, ctx);
+        if (component) {
+          errorPagePathCache.set(cacheKey, filePath);
+          return component;
+        }
       }
     } catch {
-      // Continue to next extension
+      // File doesn't exist with this extension
     }
   }
 
@@ -167,28 +175,6 @@ async function tryLoadErrorPage(
   return null;
 }
 
-/**
- * Try to resolve error page path using stat operations (pattern-based when available)
- */
-async function tryResolveErrorPagePath(
-  basePath: string,
-  ctx: HandlerContext,
-): Promise<string | null> {
-  // Try each extension and check if file exists using stat
-  // The stat operation uses the cached file index which is built once
-  for (const ext of ERROR_PAGE_EXTENSIONS) {
-    const pathWithExt = basePath + ext;
-    try {
-      const stat = await ctx.adapter.fs.stat(joinPath(ctx.projectDir, pathWithExt));
-      if (stat.isFile) {
-        return pathWithExt;
-      }
-    } catch {
-      // File doesn't exist with this extension
-    }
-  }
-  return null;
-}
 
 /**
  * Load a component from a file path
