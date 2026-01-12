@@ -5,6 +5,7 @@ import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import type { HMRServer } from "./hmr-server.ts";
 import { OptimizedFileWatcher } from "./file-watcher.ts";
 import type { RouteDiscovery } from "./route-discovery.ts";
+import { ReloadNotifier } from "../reload-notifier.ts";
 
 // Log metrics every N batches (deterministic instead of random sampling)
 const METRICS_LOG_INTERVAL = 10;
@@ -123,6 +124,10 @@ export class FileWatchSetup {
 
     this.hmrServer.sendUpdate({ type: "reload", timestamp: Date.now() });
 
+    // Also trigger ReloadNotifier for /_ws WebSocket clients (preview HMR)
+    // This enables HMR for proxy mode where browsers connect via /_ws
+    ReloadNotifier.triggerReload(changes);
+
     // Log metrics every METRICS_LOG_INTERVAL batches (deterministic)
     this.batchCount++;
     if (this.optimizedWatcher && this.batchCount % METRICS_LOG_INTERVAL === 0) {
@@ -145,6 +150,9 @@ export class FileWatchSetup {
     logger.info(`[HMR] file change`, { files: display });
 
     this.hmrServer.sendUpdate({ type: "reload", timestamp: Date.now() });
+
+    // Also trigger ReloadNotifier for /_ws WebSocket clients (preview HMR)
+    ReloadNotifier.triggerReload(paths);
   }
 
   getMetrics() {

@@ -6,6 +6,7 @@
  *
  * Usage:
  *   deno task proxy
+ *   deno task proxy --project data/projects/codersociety
  *
  * Prerequisites:
  *   Copy .env.local.example to .env.local and fill in OAuth credentials
@@ -16,8 +17,11 @@
  */
 
 const PROXY_PORT = 8080;
-const RENDERER_PORT = 3001;
+const RENDERER_PORT = 3003; // Match common project config (veryfront.config.ts dev.port)
 const PROXY_STARTUP_DELAY_MS = 2000;
+
+// Pass through CLI args to renderer (e.g., --project)
+const cliArgs = Deno.args;
 
 // Colors for terminal output
 const colors = {
@@ -53,13 +57,15 @@ const proxyProcess = new Deno.Command("deno", {
   env: {
     ...Deno.env.toObject(),
     PORT: String(PROXY_PORT),
+    RENDERER_URL: `http://localhost:${RENDERER_PORT}`,
   },
 }).spawn();
 
 // Wait for proxy to start
 await new Promise((r) => setTimeout(r, PROXY_STARTUP_DELAY_MS));
 
-log("RENDERER", colors.green, `Starting renderer on port ${RENDERER_PORT} (PROXY_MODE=1)...`);
+const projectArg = cliArgs.includes("--project") ? ` with ${cliArgs.join(" ")}` : "";
+log("RENDERER", colors.green, `Starting renderer on port ${RENDERER_PORT} (PROXY_MODE=1)${projectArg}...`);
 
 const rendererProcess = new Deno.Command("deno", {
   args: [
@@ -70,6 +76,7 @@ const rendererProcess = new Deno.Command("deno", {
     "--unstable-worker-options",
     "src/cli/main.ts",
     "dev",
+    ...cliArgs, // Pass through CLI args (e.g., --project)
   ],
   stdout: "inherit",
   stderr: "inherit",
@@ -85,7 +92,7 @@ log("READY", colors.yellow, "=".repeat(60));
 log("READY", colors.yellow, "Local proxy mode ready!");
 log("READY", colors.yellow, "");
 log("READY", colors.yellow, `  Proxy:    http://localhost:${PROXY_PORT}`);
-log("READY", colors.yellow, `  Renderer: http://localhost:${RENDERER_PORT}`);
+log("READY", colors.yellow, `  Renderer: http://localhost:${RENDERER_PORT} (proxy forwards to this)`);
 log("READY", colors.yellow, "");
 log("READY", colors.yellow, "Test URLs:");
 log("READY", colors.yellow, `  http://codersociety.lvh.me:${PROXY_PORT}/`);
