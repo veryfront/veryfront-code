@@ -20,8 +20,7 @@ import { rendererLogger as logger } from "@veryfront/utils";
 export function addHMRTimestamps(code: string, timestamp: string | number): Promise<string> {
   return replaceSpecifiers(code, (specifier: string) => {
     // Only add timestamp to local imports (relative paths and alias paths)
-    const isLocalImport =
-      specifier.startsWith("./") ||
+    const isLocalImport = specifier.startsWith("./") ||
       specifier.startsWith("../") ||
       specifier.startsWith("/") ||
       specifier.startsWith("@/");
