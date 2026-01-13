@@ -1,5 +1,6 @@
 import type { FSAdapter, FSAdapterConfig } from "./veryfront/types.ts";
 import { createError, toError } from "../../../core/errors/veryfront-error.ts";
+import { ReloadNotifier } from "../../../server/reload-notifier.ts";
 
 export async function createFSAdapter(config: FSAdapterConfig): Promise<FSAdapter> {
   const type = config.type || "local";
@@ -19,17 +20,28 @@ export async function createFSAdapter(config: FSAdapterConfig): Promise<FSAdapte
   }
 
   if (type === "veryfront-api") {
+    // Inject invalidationCallbacks to wire up HMR notifications
+    // When FSAdapter receives poke from API, it calls triggerReload
+    // which notifies HMRHandler to broadcast to connected browsers
+    const configWithCallbacks: FSAdapterConfig = {
+      ...config,
+      invalidationCallbacks: {
+        ...config.invalidationCallbacks,
+        triggerReload: (changedPaths) => ReloadNotifier.triggerReload(changedPaths),
+      },
+    };
+
     // Check if proxy mode is enabled (multi-project per-request handling)
     if (config.veryfront?.proxyMode) {
       const { MultiProjectFSAdapter } = await import("./veryfront/multi-project-adapter.ts");
-      const adapter = new MultiProjectFSAdapter(config);
+      const adapter = new MultiProjectFSAdapter(configWithCallbacks);
       await adapter.initialize?.();
       return adapter;
     }
 
     // Single-project mode (direct API access)
     const { VeryfrontFSAdapter } = await import("./veryfront/index.ts");
-    const adapter = new VeryfrontFSAdapter(config);
+    const adapter = new VeryfrontFSAdapter(configWithCallbacks);
     await adapter.initialize?.();
     return adapter;
   }

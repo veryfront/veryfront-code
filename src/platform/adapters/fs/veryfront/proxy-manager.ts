@@ -1,6 +1,7 @@
 import { logger } from "@veryfront/utils";
 import { VeryfrontFSAdapter } from "./index.ts";
 import type { CacheStats, FSAdapterConfig, ResolvedContentContext } from "./types.ts";
+import { ReloadNotifier } from "../../../../server/reload-notifier.ts";
 
 interface ProjectAdapter {
   adapter: VeryfrontFSAdapter;
@@ -130,6 +131,12 @@ export class ProxyFSAdapterManager {
         projectSlug,
         projectId,
         apiToken: effectiveToken,
+      },
+      // Inject invalidationCallbacks to wire up HMR notifications
+      // When FSAdapter receives poke from API, it calls triggerReload
+      // which notifies HMRHandler to broadcast to connected browsers
+      invalidationCallbacks: {
+        triggerReload: (changedPaths) => ReloadNotifier.triggerReload(changedPaths),
       },
     };
 
