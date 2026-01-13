@@ -51,6 +51,8 @@ export interface TransformOptions {
   ssr?: boolean;
   /** API base URL for cross-project imports */
   apiBaseUrl?: string;
+  /** Enable node position injection for Studio Navigator */
+  studioEmbed?: boolean;
 }
 
 /**
@@ -88,6 +90,8 @@ export interface TransformContext {
   debug: boolean;
   /** Metadata set by stages (e.g., MDX frontmatter) */
   metadata: Map<string, unknown>;
+  /** Enable node position injection for Studio Navigator */
+  studioEmbed?: boolean;
 }
 
 /**

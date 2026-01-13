@@ -89,6 +89,7 @@ export async function runPipeline(
     filePath,
     ctx.contentHash,
     options.ssr ?? false,
+    options.studioEmbed ?? false,
   );
   const cached = getCachedTransform(cacheKey);
 

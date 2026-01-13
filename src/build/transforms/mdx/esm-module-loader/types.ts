@@ -20,6 +20,8 @@ export interface ESMLoaderContext {
   moduleCache: LRUCache<string, MDXModule>;
   /** Optional adapter for file operations. If not provided, uses getAdapter() */
   adapter?: RuntimeAdapter;
+  /** Project identifier for cache isolation */
+  projectId?: string;
 }
 
 /**

@@ -32,6 +32,7 @@ function buildContext(
     timing: new Map(),
     debug: false,
     metadata: new Map(),
+    studioEmbed: options.studioEmbed,
   };
 }
 

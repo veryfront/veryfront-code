@@ -26,6 +26,11 @@ export interface ModuleLoaderConfig {
   esmCache: Map<string, string>;
 }
 
+function getModuleCacheKey(filePath: string, projectId?: string, projectDir?: string): string {
+  const prefix = projectId ?? projectDir ?? "default";
+  return `${prefix}:${filePath}`;
+}
+
 /**
  * Transform a module and all its @/ dependencies.
  *
@@ -44,10 +49,11 @@ export async function transformModuleWithDeps(
   useLocalAdapter = false,
 ): Promise<string> {
   const { moduleCache, esmCache, projectDir, projectId, adapter, mode } = config;
+  const cacheKey = getModuleCacheKey(filePath, projectId, projectDir);
 
   // Check if already transformed
-  if (moduleCache.has(filePath)) {
-    return moduleCache.get(filePath)!;
+  if (moduleCache.has(cacheKey)) {
+    return moduleCache.get(cacheKey)!;
   }
 
   // Use local adapter for local lib files, project adapter for user project files
@@ -125,7 +131,7 @@ export async function transformModuleWithDeps(
   const tempFilePath = `${tmpDir}/mod-${hash}.js`;
   await localAdapter.fs.writeFile(tempFilePath, transformedCode);
 
-  moduleCache.set(filePath, tempFilePath);
+  moduleCache.set(cacheKey, tempFilePath);
   return tempFilePath;
 }
 

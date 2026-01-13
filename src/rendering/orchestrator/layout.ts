@@ -7,11 +7,12 @@ import { LayoutApplicator } from "../layouts/index.ts";
 import { createDefaultMDXComponents } from "../utils/index.ts";
 import type { LayoutCollector, LayoutCompiler, ProviderManager } from "../layouts/index.ts";
 import type { LayoutComponentCache } from "../layouts/utils/component-loader.ts";
-import { clearSSRModuleCache } from "@veryfront/modules/react-loader/index.ts";
+import { clearSSRModuleCacheForProject } from "@veryfront/modules/react-loader/index.ts";
 import { rendererLogger as logger } from "@veryfront/utils";
 
 export interface LayoutOrchestratorConfig {
   projectDir: string;
+  projectId?: string;
   adapter: RuntimeAdapter;
   config: VeryfrontConfig;
   mode: "development" | "production";
@@ -43,7 +44,7 @@ export class LayoutOrchestrator {
 
   clearCache(): void {
     this.config.layoutCache.clear();
-    clearSSRModuleCache();
+    clearSSRModuleCacheForProject(this.config.projectId ?? this.config.projectDir);
   }
 
   async collectLayouts(pageInfo: EntityInfo): Promise<LayoutCollectionResult> {
@@ -72,6 +73,7 @@ export class LayoutOrchestrator {
 
     const layoutApplicator = new LayoutApplicator({
       projectDir: this.config.projectDir,
+      projectId: this.config.projectId,
       adapter: this.config.adapter,
       config: this.config.config,
       layoutCache: this.config.layoutCache,

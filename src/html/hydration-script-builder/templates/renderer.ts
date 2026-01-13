@@ -18,13 +18,18 @@ export const getRendererScript = () => `
 
       log('Hydration data:', data);
 
+      // Set studioEmbed flag for module loading (affects query params)
+      if (data.studioEmbed && window.__veryfrontSetStudioEmbed) {
+        window.__veryfrontSetStudioEmbed(true);
+      }
+
       try {
         let pagePath;
         let pageModule;
 
         if (data.pagePath) {
           // Use the server-provided page path
-          const moduleUrl = pathToModuleUrl(data.pagePath);
+          const moduleUrl = pathToModuleUrl(data.pagePath, data.studioEmbed);
           log('Loading page from hydration data:', moduleUrl);
           try {
             pageModule = await import(moduleUrl);

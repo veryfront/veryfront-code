@@ -22,6 +22,7 @@ import { PageContextProvider } from "veryfront/context";
 
 export interface LayoutApplicationOptions {
   projectDir: string;
+  projectId?: string;
   adapter: RuntimeAdapter;
   config: VeryfrontConfig;
   layoutCache: LayoutComponentCache;
@@ -47,9 +48,11 @@ export class LayoutApplicator {
   private requestUrl?: URL;
   private frontmatter?: Record<string, unknown>;
   private headings?: Array<{ id: string; text: string; level: number }>;
+  private projectId?: string;
 
   constructor(options: LayoutApplicationOptions) {
     this.projectDir = options.projectDir;
+    this.projectId = options.projectId;
     this.adapter = options.adapter;
     this.config = options.config;
     this.layoutCache = options.layoutCache;
@@ -180,6 +183,7 @@ export class LayoutApplicator {
         this.layoutCache,
         this.adapter,
         layoutDataMap,
+        this.projectId,
       );
     }
 
@@ -193,6 +197,7 @@ export class LayoutApplicator {
       this.projectDir,
       this.adapter,
       layoutDataMap,
+      this.projectId,
     );
   }
 
@@ -265,7 +270,7 @@ export class LayoutApplicator {
         this.projectDir,
         this.adapter,
         {
-          projectId: this.projectDir,
+          projectId: this.projectId ?? this.projectDir,
           dev: this.mode === "development",
           moduleServerUrl: this.config?.dev?.moduleServerUrl,
         },
@@ -299,6 +304,7 @@ export class LayoutApplicator {
         this.projectDir,
         this.mode,
         this.adapter,
+        this.projectId,
       );
 
       const errorComp = await tryLoadReservedInDirs(
@@ -307,6 +313,7 @@ export class LayoutApplicator {
         this.projectDir,
         this.mode,
         this.adapter,
+        this.projectId,
       );
 
       if (loadingComp) {

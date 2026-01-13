@@ -26,6 +26,8 @@ export interface PageRenderOptions {
   nonce?: string;
   /** Project ID for multi-project SSR module isolation */
   projectId?: string;
+  /** Enable node position injection for Studio Navigator */
+  studioEmbed?: boolean;
 }
 
 export interface PageBundleResult {
@@ -174,6 +176,7 @@ export class PageRenderer {
             cachedClientModule: cachedModule?.type === "component" ? cachedModule.code : undefined,
             moduleServerUrl: this.moduleServerUrl,
             projectId: options?.projectId,
+            studioEmbed: options?.studioEmbed,
           },
         );
         pageElement = result.pageElement;
@@ -212,8 +215,11 @@ export class PageRenderer {
           {
             params: options?.params,
             precompiledModule: cachedModule?.type === "mdx" ? cachedModule.code : undefined,
+            projectId: options?.projectId,
+            studioEmbed: options?.studioEmbed,
           },
         );
+
         pageElement = mdxResult.pageElement;
         pageBundle = mdxResult.pageBundle;
         collectedMetadata = mdxResult.collectedMetadata;

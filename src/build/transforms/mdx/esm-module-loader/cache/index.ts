@@ -27,46 +27,56 @@ export function getLocalFs(): FileSystem {
 }
 
 // Persistent module path cache - survives across requests
-// Maps normalized module paths to their disk cache file paths
-let _modulePathCache: Map<string, string> | null = null;
-let _modulePathCacheLoaded = false;
+// Maps normalized module paths to their disk cache file paths (per cacheDir)
+const modulePathCaches = new Map<string, Map<string, string>>();
+const modulePathCacheLoaded = new Set<string>();
+
+function getCacheKey(cacheDir: string): string {
+  return cacheDir;
+}
 
 /**
  * Get or load the module path cache.
  * The cache maps normalized module paths to their disk cache file paths.
  */
 export async function getModulePathCache(cacheDir: string): Promise<Map<string, string>> {
-  if (_modulePathCache && _modulePathCacheLoaded) {
-    return _modulePathCache;
+  const cacheKey = getCacheKey(cacheDir);
+  const existing = modulePathCaches.get(cacheKey);
+  if (existing && modulePathCacheLoaded.has(cacheKey)) {
+    return existing;
   }
 
-  _modulePathCache = new Map();
+  const cache = existing ?? new Map<string, string>();
+  modulePathCaches.set(cacheKey, cache);
+
   const indexPath = join(cacheDir, "_index.json");
 
   try {
     const content = await getLocalFs().readTextFile(indexPath);
     const index = JSON.parse(content) as Record<string, string>;
     for (const [path, cachePath] of Object.entries(index)) {
-      _modulePathCache.set(path, cachePath);
+      cache.set(path, cachePath);
     }
-    logger.debug(`${LOG_PREFIX_MDX_LOADER} Loaded module index: ${_modulePathCache.size} entries`);
+    logger.debug(`${LOG_PREFIX_MDX_LOADER} Loaded module index: ${cache.size} entries`);
   } catch {
     // Index doesn't exist yet
   }
 
-  _modulePathCacheLoaded = true;
-  return _modulePathCache;
+  modulePathCacheLoaded.add(cacheKey);
+  return cache;
 }
 
 /**
  * Save the module path cache to disk.
  */
 export async function saveModulePathCache(cacheDir: string): Promise<void> {
-  if (!_modulePathCache) return;
+  const cacheKey = getCacheKey(cacheDir);
+  const cache = modulePathCaches.get(cacheKey);
+  if (!cache) return;
 
   const indexPath = join(cacheDir, "_index.json");
   const index: Record<string, string> = {};
-  for (const [path, cachePath] of _modulePathCache.entries()) {
+  for (const [path, cachePath] of cache.entries()) {
     index[path] = cachePath;
   }
 
@@ -82,8 +92,8 @@ export async function saveModulePathCache(cacheDir: string): Promise<void> {
  * Called on invalidation to force re-checking disk cache.
  */
 export function clearModulePathCache(): void {
-  _modulePathCache = null;
-  _modulePathCacheLoaded = false;
+  modulePathCaches.clear();
+  modulePathCacheLoaded.clear();
   logger.info(`${LOG_PREFIX_MDX_LOADER} Cleared module path cache`);
 }
 
@@ -93,7 +103,7 @@ export function clearModulePathCache(): void {
  * This is much faster than clearing the entire cache.
  */
 export function invalidateModulePaths(changedPaths: string[]): void {
-  if (!_modulePathCache) return;
+  if (modulePathCaches.size === 0) return;
 
   let invalidatedCount = 0;
 
@@ -101,21 +111,23 @@ export function invalidateModulePaths(changedPaths: string[]): void {
     // Normalize the path for matching
     const normalizedChanged = changedPath.replace(/^\/+/, "").replace(/\.(tsx?|jsx?|mdx)$/, "");
 
-    // Find and remove all cache entries that match or depend on this file
-    for (const [cachedPath] of _modulePathCache.entries()) {
-      const normalizedCached = cachedPath
-        .replace(/^_vf_modules\//, "")
-        .replace(/\.js$/, "");
+    for (const cache of modulePathCaches.values()) {
+      // Find and remove all cache entries that match or depend on this file
+      for (const [cachedPath] of cache.entries()) {
+        const normalizedCached = cachedPath
+          .replace(/^_vf_modules\//, "")
+          .replace(/\.js$/, "");
 
-      // Check if the cached module matches the changed file
-      if (
-        normalizedCached === normalizedChanged ||
-        normalizedCached.endsWith(`/${normalizedChanged}`) ||
-        normalizedChanged.endsWith(`/${normalizedCached}`)
-      ) {
-        _modulePathCache.delete(cachedPath);
-        invalidatedCount++;
-        logger.debug(`${LOG_PREFIX_MDX_LOADER} Invalidated module: ${cachedPath}`);
+        // Check if the cached module matches the changed file
+        if (
+          normalizedCached === normalizedChanged ||
+          normalizedCached.endsWith(`/${normalizedChanged}`) ||
+          normalizedChanged.endsWith(`/${normalizedCached}`)
+        ) {
+          cache.delete(cachedPath);
+          invalidatedCount++;
+          logger.debug(`${LOG_PREFIX_MDX_LOADER} Invalidated module: ${cachedPath}`);
+        }
       }
     }
   }

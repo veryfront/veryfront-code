@@ -57,6 +57,7 @@ export async function handleComponentPage(
         projectDir,
         adapter,
         options?.moduleServerUrl,
+        options?.projectId,
       ) ?? undefined;
     }
 
@@ -132,9 +133,10 @@ async function bundleComponentForClient(
   projectDir: string,
   adapter: RuntimeAdapter,
   moduleServerUrl?: string,
+  projectId?: string,
 ): Promise<string | null> {
   try {
-    const cacheKey = `${filePath}:${await generateContentHash(source)}`;
+    const cacheKey = `${projectId ?? projectDir}:${filePath}:${await generateContentHash(source)}`;
     const cached = componentHydrationCache.get(cacheKey);
     if (cached) {
       return cached;
@@ -151,7 +153,7 @@ async function bundleComponentForClient(
       projectDir,
       adapter,
       {
-        projectId: projectDir,
+        projectId: projectId ?? projectDir,
         dev: true,
         jsxImportSource: "react",
         moduleServerUrl,

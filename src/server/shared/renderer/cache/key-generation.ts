@@ -17,14 +17,14 @@ import { isProductionMode } from "../../../handlers/request/ssr/ssr-handler.ts";
  * to ensure consistency between renderer cache keys and adapter content contexts.
  */
 export function getCacheKey(ctx: HandlerContext): string | null {
-  const projectSlug = ctx.projectSlug;
-  if (!projectSlug) return null;
+  const projectKey = ctx.projectId ?? ctx.projectSlug;
+  if (!projectKey) return null;
 
   // Use isProductionMode for consistency with SSR handler's runWithContext() call.
   // This ensures the renderer cache key matches the adapter's content context.
   const isProduction = isProductionMode(ctx);
   if (isProduction) {
-    return `${projectSlug}:production:${ctx.releaseId ?? "latest"}`;
+    return `${projectKey}:production:${ctx.releaseId ?? "latest"}`;
   }
-  return `${projectSlug}:preview`;
+  return `${projectKey}:preview`;
 }

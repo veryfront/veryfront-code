@@ -34,6 +34,7 @@ export interface BatchHandlerOptions {
   projectDir: string;
   adapter: RuntimeAdapter;
   projectSlug?: string;
+  projectId?: string;
   branch?: string | null;
   dev?: boolean;
 }
@@ -81,7 +82,8 @@ export async function handleModuleBatch(
     });
   }
 
-  const { projectDir, adapter, projectSlug, branch, dev = false } = options;
+  const { projectDir, adapter, projectSlug, projectId, branch, dev = false } = options;
+  const projectKey = projectId || projectSlug || "default";
 
   // Detect SSR mode
   const userAgent = req.headers.get("user-agent") || "";
@@ -105,7 +107,7 @@ export async function handleModuleBatch(
   const results = await Promise.all(
     paths.map(async (modulePath) => {
       const moduleStart = performance.now();
-      const cacheKey = `${projectSlug}:${modulePath}:${isSSR}`;
+      const cacheKey = `${projectKey}:${modulePath}:${isSSR}`;
 
       // Check cache first
       if (transformCache.has(cacheKey)) {
@@ -123,7 +125,7 @@ export async function handleModuleBatch(
           projectDir,
           adapter,
           secureFs,
-          { dev, ssr: isSSR, projectSlug, branch },
+          { dev, ssr: isSSR, projectSlug, branch, projectId },
         );
 
         const transformDurationMs = performance.now() - moduleStart;
@@ -210,7 +212,13 @@ async function loadAndTransformModule(
   projectDir: string,
   adapter: RuntimeAdapter,
   secureFs: ReturnType<typeof createSecureFs>,
-  options: { dev: boolean; ssr: boolean; projectSlug?: string; branch?: string | null },
+  options: {
+    dev: boolean;
+    ssr: boolean;
+    projectSlug?: string;
+    branch?: string | null;
+    projectId?: string;
+  },
 ): Promise<string | null> {
   // Remove .js extension for lookup
   const basePath = modulePath.replace(/\.js$/, "");
@@ -265,7 +273,7 @@ async function loadAndTransformModule(
     sourceFile,
     projectDir,
     adapter,
-    { projectId: projectDir, dev: options.dev, ssr: options.ssr },
+    { projectId: options.projectId ?? projectDir, dev: options.dev, ssr: options.ssr },
   );
 
   // Apply SSR-specific rewrites

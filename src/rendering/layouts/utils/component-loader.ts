@@ -63,6 +63,7 @@ export async function loadTSXComponent(
   projectDir: string,
   cache: LayoutComponentCache,
   adapter: RuntimeAdapter,
+  projectId?: string,
 ): Promise<BundledReact.ComponentType> {
   const source = await adapter.fs.readFile(componentPath);
   const hash = await getContentHash(source);
@@ -75,7 +76,7 @@ export async function loadTSXComponent(
       componentPath,
       projectDir,
       adapter,
-      { dev: true, projectId: projectDir, ssr: true },
+      { dev: true, projectId: projectId ?? projectDir, ssr: true },
     );
 
     if (loadedComponent) {
@@ -98,11 +99,12 @@ export async function loadMDXLayout(
   bundle: MdxBundle,
   projectDir: string,
   adapter: RuntimeAdapter,
+  projectId?: string,
 ): Promise<BundledReact.ComponentType<{ components?: MDXComponents }> | undefined> {
   const map = await loadImportMap(projectDir, adapter);
   const code = transformImportsWithMap(bundle.compiledCode, map);
   logger.debug("[loadMDXLayout] Loading module", { codeLength: code.length });
-  const mod = (await mdxRenderer.loadModuleESM(code, adapter)) as MDXModule;
+  const mod = (await mdxRenderer.loadModuleESM(code, adapter, projectId)) as MDXModule;
   logger.debug("[loadMDXLayout] Module loaded", { exports: Object.keys(mod) });
   return mod.MDXLayout || mod.MainLayout || mod.default;
 }
@@ -114,6 +116,7 @@ export async function applyTSXLayout(
   projectDir: string,
   adapter: RuntimeAdapter,
   props?: Record<string, unknown>,
+  projectId?: string,
 ): Promise<BundledReact.ReactElement> {
   const React = await getProjectReact();
   try {
@@ -122,6 +125,7 @@ export async function applyTSXLayout(
       projectDir,
       tsxLayoutModuleCache,
       adapter,
+      projectId,
     );
     return React.createElement(LayoutComponent, props || {}, element) as BundledReact.ReactElement;
   } catch (e) {
@@ -137,9 +141,10 @@ export async function applyMDXLayout(
   projectDir: string,
   mergedComponents: MDXComponents,
   adapter: RuntimeAdapter,
+  projectId?: string,
 ): Promise<BundledReact.ReactElement> {
   const React = await getProjectReact();
-  const LayoutFn = await loadMDXLayout(bundle, projectDir, adapter);
+  const LayoutFn = await loadMDXLayout(bundle, projectDir, adapter, projectId);
 
   if (!LayoutFn) {
     logger.debug("[applyMDXLayout] No layout function found");

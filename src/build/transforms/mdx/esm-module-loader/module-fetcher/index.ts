@@ -29,6 +29,10 @@ import { recordSSRModules } from "../../../../../module-system/manifest/route-mo
  */
 const inFlight = new Map<string, Promise<string | null>>();
 
+function getPathCacheKey(projectId: string, normalizedPath: string): string {
+  return `${encodeURIComponent(projectId)}:${normalizedPath}`;
+}
+
 /**
  * Track modules loaded during current render for manifest recording.
  * Key: renderSessionId, Value: Set of normalized module paths
@@ -329,9 +333,10 @@ export async function fetchAndCacheModule(
   parentModulePath?: string,
 ): Promise<string | null> {
   const normalizedPath = normalizePath(modulePath, parentModulePath);
+  const cacheKey = getPathCacheKey(context.projectId, normalizedPath);
 
   // Check if this module is already being fetched (prevent race conditions)
-  const existingFetch = inFlight.get(normalizedPath);
+  const existingFetch = inFlight.get(cacheKey);
   if (existingFetch) {
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Waiting for in-flight fetch: ${normalizedPath}`);
     return existingFetch;
@@ -344,7 +349,7 @@ export async function fetchAndCacheModule(
   });
 
   // Register BEFORE starting fetch to prevent race conditions
-  inFlight.set(normalizedPath, fetchPromise);
+  inFlight.set(cacheKey, fetchPromise);
 
   // Recursive fetch function for nested imports
   const fetchAndCacheModuleFn = (path: string, parent?: string): Promise<string | null> => {
@@ -447,7 +452,7 @@ export async function fetchAndCacheModule(
 
   // Resolve the deferred promise and clean up
   resolveDeferred!(result);
-  inFlight.delete(normalizedPath);
+  inFlight.delete(cacheKey);
   return result;
 }
 

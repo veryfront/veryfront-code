@@ -45,7 +45,7 @@ export async function handleModuleServer(
   try {
     const { serveModule } = await import("@veryfront/modules/server/index.ts");
     const moduleResponse = await serveModule(req, {
-      projectId: ctx.projectDir,
+      projectId: ctx.projectId ?? ctx.projectDir,
       projectDir: ctx.projectDir,
       adapter: ctx.adapter,
       dev: ctx.mode === "development",
