@@ -735,10 +735,28 @@ export class VeryfrontFSAdapter implements FSAdapter {
 
   /**
    * Set content context directly (used by proxy for per-request context switching).
+   * Also syncs context to the API client to ensure correct endpoint is used.
    */
   setContentContext(context: ResolvedContentContext): void {
     const oldContext = this.contentContext;
     this.contentContext = context;
+
+    // Sync context to API client to ensure correct endpoint is used
+    // This is critical for preview vs production content serving
+    switch (context.sourceType) {
+      case "branch":
+        this.client.setContext({ type: "branch", name: context.branch ?? "main" });
+        break;
+      case "environment":
+        this.client.setContext({
+          type: "environment",
+          name: context.environmentName ?? "production",
+        });
+        break;
+      case "release":
+        this.client.setContext({ type: "release", version: context.releaseId ?? "" });
+        break;
+    }
 
     // Clear index when context changes to force re-fetch
     const contextChanged = JSON.stringify(oldContext) !== JSON.stringify(context);
