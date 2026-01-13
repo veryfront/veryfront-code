@@ -529,13 +529,9 @@ document.head.appendChild(errorScript);
       return;
     }
 
-    // For preview mode, always do a full page reload
-    // This is more reliable than smart HMR because:
-    // 1. Server cache is already cleared (Redis + memory)
-    // 2. Full reload gets fresh SSR content
-    // 3. Browser ES module cache is bypassed
-    console.log('[Preview HMR] Triggering full page reload for:', update.path);
-    notifyStudioAndReload();
+    // Use smart HMR: clear component cache and re-render without full reload
+    // This is faster than full page reload and preserves client-side state
+    await updateJS(update.path);
   }
 
   function updateCSS(path) {
