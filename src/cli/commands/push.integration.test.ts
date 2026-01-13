@@ -10,43 +10,24 @@
 
 import { assertExists } from "jsr:@std/assert@1";
 import { afterAll, beforeAll, describe, it } from "jsr:@std/testing@1/bdd";
-import { type ApiClient, createApiClient, resolveConfig } from "../shared/config.ts";
-import { createVCRClient, isRecording } from "../test-utils/vcr.ts";
+import { initVCRTest, isRecording, type VCRTestContext } from "../test-utils/vcr.ts";
 import { createBranch } from "./push.ts";
 
 describe("push command integration", () => {
-  let client: ApiClient;
-  let projectSlug: string;
-  let saveVCR: () => Promise<void>;
+  let ctx: VCRTestContext;
 
   beforeAll(async () => {
-    if (isRecording()) {
-      const slug = Deno.env.get("VERYFRONT_PROJECT_SLUG");
-      if (!slug) {
-        throw new Error("VCR=record requires VERYFRONT_PROJECT_SLUG");
-      }
-      const config = await resolveConfig(Deno.cwd());
-      const realClient = createApiClient(config);
-      const vcr = await createVCRClient("push", realClient, slug);
-      client = vcr.client;
-      projectSlug = vcr.projectSlug;
-      saveVCR = vcr.save;
-    } else {
-      const vcr = await createVCRClient("push");
-      client = vcr.client;
-      projectSlug = vcr.projectSlug;
-      saveVCR = vcr.save;
-    }
+    ctx = await initVCRTest("push");
   });
 
   afterAll(async () => {
-    await saveVCR();
+    await ctx.save();
   });
 
   describe("createBranch", () => {
     it("should create a new branch", async () => {
       const branchName = isRecording() ? `test-push-${Date.now()}` : "test-push-vcr";
-      const branch = await createBranch(client, projectSlug, branchName);
+      const branch = await createBranch(ctx.client, ctx.projectSlug, branchName);
 
       assertExists(branch);
       assertExists(branch.id);
@@ -55,7 +36,7 @@ describe("push command integration", () => {
 
     it("should create branch with special characters in name", async () => {
       const branchName = isRecording() ? `test/feature-${Date.now()}` : "test/feature-vcr";
-      const branch = await createBranch(client, projectSlug, branchName);
+      const branch = await createBranch(ctx.client, ctx.projectSlug, branchName);
 
       assertExists(branch);
       assertExists(branch.id);

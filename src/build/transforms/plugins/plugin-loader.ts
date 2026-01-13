@@ -21,7 +21,7 @@ export type PluginFunction = (
 ) => void | Promise<void> | ((tree: MdastRoot | HastRoot, file?: unknown) => void);
 
 // Placeholder for user-defined plugins from veryfront.config.ts
-// TODO(@veryfront): Implement loading custom remark/rehype plugins from config
+// TODO(#custom-plugins): Implement loading custom remark/rehype plugins from config
 function loadUserPlugins(
   _projectDir: string,
   _adapter: RuntimeAdapter,

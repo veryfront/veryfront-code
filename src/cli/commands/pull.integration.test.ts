@@ -10,43 +10,24 @@
 
 import { assertEquals, assertExists } from "jsr:@std/assert@1";
 import { afterAll, beforeAll, describe, it } from "jsr:@std/testing@1/bdd";
-import { type ApiClient, createApiClient, resolveConfig } from "../shared/config.ts";
-import { createVCRClient, isRecording } from "../test-utils/vcr.ts";
+import { initVCRTest, type VCRTestContext } from "../test-utils/vcr.ts";
 import { getFileContent, listAllFiles, type PullSource } from "./pull.ts";
 
 describe("pull command integration", () => {
-  let client: ApiClient;
-  let projectSlug: string;
-  let saveVCR: () => Promise<void>;
+  let ctx: VCRTestContext;
 
   beforeAll(async () => {
-    if (isRecording()) {
-      const slug = Deno.env.get("VERYFRONT_PROJECT_SLUG");
-      if (!slug) {
-        throw new Error("VCR=record requires VERYFRONT_PROJECT_SLUG");
-      }
-      const config = await resolveConfig(Deno.cwd());
-      const realClient = createApiClient(config);
-      const vcr = await createVCRClient("pull", realClient, slug);
-      client = vcr.client;
-      projectSlug = vcr.projectSlug;
-      saveVCR = vcr.save;
-    } else {
-      const vcr = await createVCRClient("pull");
-      client = vcr.client;
-      projectSlug = vcr.projectSlug;
-      saveVCR = vcr.save;
-    }
+    ctx = await initVCRTest("pull");
   });
 
   afterAll(async () => {
-    await saveVCR();
+    await ctx.save();
   });
 
   describe("listAllFiles", () => {
     it("should list files from main", async () => {
       const source: PullSource = { type: "main" };
-      const files = await listAllFiles(client, projectSlug, source);
+      const files = await listAllFiles(ctx.client, ctx.projectSlug, source);
 
       assertExists(files);
       assertEquals(Array.isArray(files), true);
@@ -59,7 +40,7 @@ describe("pull command integration", () => {
 
     it("should handle empty project gracefully", async () => {
       const source: PullSource = { type: "main" };
-      const files = await listAllFiles(client, projectSlug, source);
+      const files = await listAllFiles(ctx.client, ctx.projectSlug, source);
 
       assertEquals(Array.isArray(files), true);
     });
@@ -68,14 +49,14 @@ describe("pull command integration", () => {
   describe("getFileContent", () => {
     it("should get file content from main", async () => {
       const source: PullSource = { type: "main" };
-      const files = await listAllFiles(client, projectSlug, source);
+      const files = await listAllFiles(ctx.client, ctx.projectSlug, source);
 
       if (files.length === 0) {
         console.log("Skipping: no files in project");
         return;
       }
 
-      const content = await getFileContent(client, projectSlug, files[0]!.path, source);
+      const content = await getFileContent(ctx.client, ctx.projectSlug, files[0]!.path, source);
 
       assertExists(content);
       assertEquals(typeof content, "string");

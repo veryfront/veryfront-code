@@ -160,3 +160,65 @@ export async function createVCRClient(
 export function isRecording(): boolean {
   return Deno.env.get("VCR") === "record";
 }
+
+/**
+ * Test context for VCR-based integration tests
+ */
+export interface VCRTestContext {
+  client: ApiClient;
+  projectSlug: string;
+  save: () => Promise<void>;
+}
+
+/**
+ * Initialize VCR test context for integration tests
+ *
+ * Call this in beforeAll to set up the VCR client. Returns context that
+ * should be used throughout the test suite.
+ *
+ * Usage:
+ * ```ts
+ * import { initVCRTest, isRecording, type VCRTestContext } from "../test-utils/vcr.ts";
+ *
+ * describe("my command integration", () => {
+ *   let ctx: VCRTestContext;
+ *
+ *   beforeAll(async () => {
+ *     ctx = await initVCRTest("my-cassette");
+ *   });
+ *
+ *   afterAll(async () => {
+ *     await ctx.save();
+ *   });
+ *
+ *   it("should do something", async () => {
+ *     const result = await myFunction(ctx.client, ctx.projectSlug);
+ *   });
+ * });
+ * ```
+ */
+export async function initVCRTest(cassetteName: string): Promise<VCRTestContext> {
+  if (isRecording()) {
+    const slug = Deno.env.get("VERYFRONT_PROJECT_SLUG");
+    if (!slug) {
+      throw new Error("VCR=record requires VERYFRONT_PROJECT_SLUG");
+    }
+    // Dynamic import to avoid loading config module in playback mode
+    const { createApiClient, resolveConfig } = await import("../shared/config.ts");
+    const config = await resolveConfig(Deno.cwd());
+    const realClient = createApiClient(config);
+    const vcr = await createVCRClient(cassetteName, realClient, slug);
+    return {
+      client: vcr.client,
+      projectSlug: vcr.projectSlug,
+      save: vcr.save,
+    };
+  } else {
+    const vcr = await createVCRClient(cassetteName);
+    return {
+      client: vcr.client,
+      projectSlug: vcr.projectSlug,
+      save: vcr.save,
+    };
+  }
+}
