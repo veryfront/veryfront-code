@@ -19,6 +19,7 @@ import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
 import { createError, toError } from "@veryfront/errors/veryfront-error.ts";
 import { rendererLogger as logger } from "@veryfront/utils";
 import { getApiBaseUrlEnv } from "@veryfront/core/config/env.ts";
+import { injectContext } from "@veryfront/observability/tracing/otlp-setup.ts";
 import { extractComponent } from "../extract-component.ts";
 import { CIRCUIT_BREAKER_RESET_MS, CIRCUIT_BREAKER_THRESHOLD } from "./constants.ts";
 import {
@@ -69,7 +70,11 @@ export class SSRModuleLoader {
             `Component ${filePath} is temporarily blocked due to repeated failures. Will retry in ${
               Math.ceil((CIRCUIT_BREAKER_RESET_MS - timeSinceFailure) / 1000)
             }s.`,
-          context: { file: filePath, phase: "circuit-breaker", failures: failureRecord.count },
+          context: {
+            file: filePath,
+            phase: "circuit-breaker",
+            failures: failureRecord.count,
+          },
         }));
       }
       // Reset circuit breaker if enough time has passed
@@ -117,7 +122,9 @@ export class SSRModuleLoader {
         }));
       }
 
-      const mod = await import(`file://${cacheEntry.tempPath}?v=${cacheEntry.contentHash}`);
+      const mod = await import(
+        `file://${cacheEntry.tempPath}?v=${cacheEntry.contentHash}`
+      );
 
       // Success - reset failure count
       failedComponents.delete(circuitKey);
@@ -170,9 +177,13 @@ export class SSRModuleLoader {
     const timeout = setTimeout(() => controller.abort(), 30000);
 
     try {
+      const headers = new Headers({
+        Accept: "text/plain, application/javascript, */*",
+      });
+      injectContext(headers);
       const response = await fetch(registryUrl, {
         signal: controller.signal,
-        headers: { Accept: "text/plain, application/javascript, */*" },
+        headers,
       });
       clearTimeout(timeout);
 
@@ -272,7 +283,9 @@ export class SSRModuleLoader {
         const entry: ModuleCacheEntry = { tempPath, contentHash };
         globalModuleCache.set(contentCacheKey, entry);
         globalModuleCache.set(filePathCacheKey, entry);
-        logger.debug("[SSR-MODULE-LOADER] Redis cache hit", { file: filePath.slice(-40) });
+        logger.debug("[SSR-MODULE-LOADER] Redis cache hit", {
+          file: filePath.slice(-40),
+        });
         await this.ensureDependenciesExist(code, filePath);
         return;
       }
@@ -316,7 +329,9 @@ export class SSRModuleLoader {
             if (imp.absolutePath.startsWith("/")) {
               depSource = await localFs.readTextFile(imp.absolutePath);
             } else {
-              depSource = await this.options.adapter.fs.readFile(imp.absolutePath);
+              depSource = await this.options.adapter.fs.readFile(
+                imp.absolutePath,
+              );
             }
             await this.transformWithDependencies(imp.absolutePath, depSource);
           } catch (error) {
@@ -331,7 +346,9 @@ export class SSRModuleLoader {
         }),
         ...parseResult.crossProjectImports.map(async (crossImport) => {
           try {
-            const tempPath = await this.transformCrossProjectImport(crossImport);
+            const tempPath = await this.transformCrossProjectImport(
+              crossImport,
+            );
             crossProjectPaths.set(crossImport.specifier, tempPath);
           } catch (error) {
             this.missingDependencies.push({
@@ -366,14 +383,23 @@ export class SSRModuleLoader {
         // Rewrite cross-project imports to file:// paths
         for (const [specifier, tempPath] of crossProjectPaths.entries()) {
           const jsSpecifier = specifier.replace(/\.(tsx?|jsx|mdx)$/, ".js");
-          const escapedSpecifier = specifier.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-          const escapedJsSpecifier = jsSpecifier.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+          const escapedSpecifier = specifier.replace(
+            /[.*+?^${}()|[\]\\]/g,
+            "\\$&",
+          );
+          const escapedJsSpecifier = jsSpecifier.replace(
+            /[.*+?^${}()|[\]\\]/g,
+            "\\$&",
+          );
 
           const pattern = new RegExp(
             `from\\s+["'](${escapedSpecifier}|${escapedJsSpecifier})["']`,
             "g",
           );
-          transformed = transformed.replace(pattern, `from "file://${tempPath}"`);
+          transformed = transformed.replace(
+            pattern,
+            `from "file://${tempPath}"`,
+          );
         }
 
         const tempPath = await this.getTempPath(filePath);
@@ -425,7 +451,9 @@ export class SSRModuleLoader {
           if (imp.absolutePath.startsWith("/")) {
             depSource = await localFs.readTextFile(imp.absolutePath);
           } else {
-            depSource = await this.options.adapter.fs.readFile(imp.absolutePath);
+            depSource = await this.options.adapter.fs.readFile(
+              imp.absolutePath,
+            );
           }
           await this.transformWithDependencies(imp.absolutePath, depSource);
         } catch (error) {
@@ -464,7 +492,10 @@ export class SSRModuleLoader {
     return Math.abs(hash).toString(16);
   }
 
-  private async getTempPath(filePath: string, _contentHash?: string): Promise<string> {
+  private async getTempPath(
+    filePath: string,
+    _contentHash?: string,
+  ): Promise<string> {
     const tmpDir = await this.ensureTmpDir();
 
     let relativePath = filePath;
