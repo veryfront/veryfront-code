@@ -77,14 +77,26 @@ export class ProxyFSAdapterManager {
 
     // Cache key includes productionMode and releaseId to prevent race conditions
     const cacheKey = buildCacheKey(projectSlug, effectiveProductionMode, effectiveReleaseId);
+
+    // Log adapter retrieval for debugging HMR/preview issues
+    logger.info("[ProxyFSAdapterManager] getAdapter called", {
+      projectSlug,
+      productionMode: effectiveProductionMode,
+      releaseId: effectiveReleaseId,
+      cacheKey,
+      hasExisting: this.adapters.has(cacheKey),
+      totalCachedAdapters: this.adapters.size,
+    });
+
     const existing = this.adapters.get(cacheKey);
 
     if (existing) {
       existing.lastAccessed = Date.now();
       existing.adapter.setRequestToken(effectiveToken);
 
-      logger.debug("[ProxyFSAdapterManager] Reusing cached adapter", {
+      logger.info("[ProxyFSAdapterManager] Reusing cached adapter", {
         cacheKey,
+        contentContext: existing.adapter.getContentContext(),
       });
 
       if (existing.initializing) {
@@ -126,9 +138,12 @@ export class ProxyFSAdapterManager {
   ): Promise<VeryfrontFSAdapter> {
     const effectiveToken = token || this.baseConfig.veryfront?.apiToken;
 
-    logger.debug("[ProxyFSAdapterManager] Creating adapter", {
+    logger.info("[ProxyFSAdapterManager] Creating NEW adapter", {
       cacheKey,
       projectSlug,
+      productionMode,
+      releaseId,
+      totalCachedAdapters: this.adapters.size,
     });
 
     const config: FSAdapterConfig = {
