@@ -18,13 +18,14 @@ export const finalizePlugin: TransformPlugin = {
   name: "finalize",
   stage: TransformStage.FINALIZE,
 
-  transform(ctx: TransformContext): string {
+  async transform(ctx: TransformContext): Promise<string> {
     let code = ctx.code;
 
     if (isSSR(ctx)) {
-      // SSR: Process remaining HTTP imports (ones not in import map)
-      // This bundles external esm.sh modules that couldn't be resolved via npm:
-      code = bundleHttpImports(code, getHttpBundleCacheDir(), ctx.contentHash);
+      // SSR: Convert esm.sh URLs to npm: specifiers
+      // Deno resolves npm: consistently, avoiding multi-instance issues
+      const result = bundleHttpImports(code, getHttpBundleCacheDir(), ctx.contentHash);
+      code = result instanceof Promise ? await result : result;
     }
 
     // Note: Caching is handled by the orchestrator after all stages complete

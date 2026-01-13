@@ -84,7 +84,7 @@ function generateEntryPoint(
   const exports = components.map((comp) => comp.name).join(", ");
 
   return `
-    import * as React from 'https://esm.sh/react@18.3.1'
+    import * as React from 'https://esm.sh/react@18.3.1?target=es2022'
     ${imports}
 
     export { ${exports} }

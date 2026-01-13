@@ -24,10 +24,10 @@ export const TAILWIND_VERSION = "4.1.8";
  * ensuring all packages share the same React instance.
  */
 export const CONTEXT_PACKAGES = {
-  "@tanstack/react-query": { version: "5", external: ["react"] },
+  "@tanstack/react-query": { version: "5", external: ["react", "react-dom"] },
   "@tanstack/query-core": { version: "5", external: [] },
-  "next-themes": { version: "0.4", external: ["react"] },
-  "framer-motion": { version: "11", external: ["react"] },
+  "next-themes": { version: "0.4", external: ["react", "react-dom"] },
+  "framer-motion": { version: "11", external: ["react", "react-dom"] },
   "react-hook-form": { version: "7", external: ["react", "react-dom"] },
 } as const;
 
