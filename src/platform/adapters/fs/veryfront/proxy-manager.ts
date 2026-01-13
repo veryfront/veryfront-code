@@ -2,6 +2,13 @@ import { logger } from "@veryfront/utils";
 import { VeryfrontFSAdapter } from "./index.ts";
 import type { CacheStats, FSAdapterConfig, ResolvedContentContext } from "./types.ts";
 import { ReloadNotifier } from "../../../../server/reload-notifier.ts";
+import { clearSSRModuleCache } from "../../../../module-system/react-loader/ssr-module-loader/cache/index.ts";
+import { clearRouterDetectionCache } from "../../../../rendering/router-detection.ts";
+import {
+  clearModulePathCache,
+  invalidateModulePaths,
+} from "../../../../build/transforms/mdx/esm-module-loader/cache/index.ts";
+import { clearSnippetCache } from "../../../../rendering/snippet-renderer.ts";
 
 interface ProjectAdapter {
   adapter: VeryfrontFSAdapter;
@@ -132,10 +139,16 @@ export class ProxyFSAdapterManager {
         projectId,
         apiToken: effectiveToken,
       },
-      // Inject invalidationCallbacks to wire up HMR notifications
-      // When FSAdapter receives poke from API, it calls triggerReload
-      // which notifies HMRHandler to broadcast to connected browsers
+      // Inject invalidationCallbacks to wire up cache clearing and HMR notifications
+      // When FSAdapter receives poke from API:
+      // 1. Clear all server-side caches (SSR modules, router detection, etc.)
+      // 2. Trigger browser reload via ReloadNotifier → HMRHandler → WebSocket
       invalidationCallbacks: {
+        clearSSRModuleCache,
+        clearRouterDetectionCache,
+        clearModulePathCache,
+        invalidateModulePaths,
+        clearSnippetCache,
         triggerReload: (changedPaths) => ReloadNotifier.triggerReload(changedPaths),
       },
     };
