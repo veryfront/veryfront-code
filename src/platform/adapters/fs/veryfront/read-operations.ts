@@ -79,6 +79,18 @@ export class ReadOperations {
     const cacheKeyPrefix = buildFileCacheKeyPrefix(ctx);
     const cacheKey = `${cacheKeyPrefix}:${normalizedPath}`;
 
+    // Log context for debugging preview issues
+    logger.info("[ReadOperations] fetchContent context", {
+      path: normalizedPath,
+      hasContextProvider: !!this.contextProvider,
+      hasContext: !!ctx,
+      sourceType: ctx?.sourceType,
+      projectSlug: ctx?.projectSlug,
+      branch: ctx?.branch,
+      releaseId: ctx?.releaseId,
+      cacheKeyPrefix,
+    });
+
     // Check cache first (memory + Redis)
     const cached = await this.cache.getAsync<string>(cacheKey);
     if (cached) {
@@ -95,6 +107,15 @@ export class ReadOperations {
 
     // Fetch based on source type
     const isPublished = ctx?.sourceType !== "branch";
+
+    // Log decision for debugging HMR/preview issues
+    logger.info("[ReadOperations] fetchContent decision", {
+      path: normalizedPath,
+      isPublished,
+      willFetch: isPublished ? "published (environment)" : "draft (branch)",
+      sourceType: ctx?.sourceType ?? "null/undefined",
+    });
+
     if (isPublished) {
       return this.fetchPublishedContent(normalizedPath, apiPath, cacheKey, ctx?.releaseId ?? null);
     }

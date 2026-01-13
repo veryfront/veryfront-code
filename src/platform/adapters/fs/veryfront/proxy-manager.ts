@@ -176,6 +176,15 @@ export class ProxyFSAdapterManager {
         ? { sourceType: "release", projectSlug, releaseId }
         : { sourceType: "environment", projectSlug, environmentName: "production" }
       : { sourceType: "branch", projectSlug, branch: "main" };
+
+    logger.info("[ProxyFSAdapterManager] Setting content context for new adapter", {
+      cacheKey,
+      projectSlug,
+      productionMode,
+      releaseId,
+      context,
+    });
+
     adapter.setContentContext(context);
 
     const projectAdapter: ProjectAdapter = {

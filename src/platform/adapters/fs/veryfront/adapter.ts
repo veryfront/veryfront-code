@@ -815,6 +815,14 @@ export class VeryfrontFSAdapter implements FSAdapter {
    * Get the current content context.
    */
   getContentContext(): ResolvedContentContext | null {
+    // Log when context is accessed for debugging preview issues
+    if (!this.contentContext) {
+      logger.warn("[VeryfrontFSAdapter] getContentContext returning null", {
+        projectSlug: this.projectSlug,
+        initialized: this.initialized,
+        hasClient: !!this.client,
+      });
+    }
     return this.contentContext;
   }
 

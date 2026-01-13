@@ -190,7 +190,7 @@ export abstract class BaseHandler implements Handler {
         token: string,
         fn: () => Promise<R>,
         projectId?: string,
-        options?: { productionMode?: boolean; releaseId?: string | null },
+        options?: { productionMode?: boolean; releaseId?: string | null; branch?: string | null },
       ) => Promise<R>;
     };
 
@@ -225,6 +225,9 @@ export abstract class BaseHandler implements Handler {
         isProduction = ctx.proxyEnvironment === "production";
       }
 
+      // Extract branch from parsed domain (for preview URLs like slug--branch.preview.veryfront.com)
+      const branch = ctx.parsedDomain?.branch ?? null;
+
       // Log detailed context for debugging HMR/preview issues
       this.logInfo("[withProxyContext] Setting up multi-project context", {
         projectSlug: ctx.projectSlug,
@@ -234,6 +237,7 @@ export abstract class BaseHandler implements Handler {
         isVeryfrontDomain: ctx.parsedDomain?.isVeryfrontDomain,
         isDraft: ctx.parsedDomain?.isDraft,
         releaseId: ctx.releaseId,
+        branch,
       }, ctx);
 
       return fsWrapper.runWithContext!(
@@ -241,7 +245,7 @@ export abstract class BaseHandler implements Handler {
         ctx.proxyToken || "",
         fn,
         ctx.projectId,
-        { productionMode: isProduction, releaseId: ctx.releaseId },
+        { productionMode: isProduction, releaseId: ctx.releaseId, branch },
       );
     }
 
