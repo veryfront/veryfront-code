@@ -21,6 +21,12 @@ class ReloadNotifierImpl {
   private invalidateListeners = new Set<InvalidateListener>();
   private debounceTimer: ReturnType<typeof setTimeout> | null = null;
   private pendingChangedPaths: Set<string> = new Set();
+  /** Metrics for observability */
+  private metrics = {
+    triggerCalls: 0,
+    broadcastsSent: 0,
+    lastTriggerTime: 0,
+  };
 
   /**
    * Subscribe to reload notifications (debounced, for browser refresh)
@@ -44,10 +50,18 @@ class ReloadNotifierImpl {
    * @param changedPaths - Optional array of changed file paths for smart HMR
    */
   triggerReload(changedPaths?: string[]): void {
+    const timeSinceLastTrigger = this.metrics.lastTriggerTime > 0
+      ? Date.now() - this.metrics.lastTriggerTime
+      : null;
+    this.metrics.triggerCalls++;
+    this.metrics.lastTriggerTime = Date.now();
+
     console.log("[ReloadNotifier] ✅ triggerReload called", {
       invalidateListeners: this.invalidateListeners.size,
       reloadListeners: this.listeners.size,
       changedPaths: changedPaths?.length ?? 0,
+      totalTriggerCalls: this.metrics.triggerCalls,
+      timeSinceLastTriggerMs: timeSinceLastTrigger,
     });
 
     // Accumulate changed paths for batching
@@ -93,9 +107,11 @@ class ReloadNotifierImpl {
   }
 
   private notifyListeners(changedPaths?: string[]): void {
+    this.metrics.broadcastsSent++;
     console.log("[ReloadNotifier] ✅ Notifying reload listeners", {
       count: this.listeners.size,
       changedPaths: changedPaths?.length ?? 0,
+      totalBroadcasts: this.metrics.broadcastsSent,
     });
     for (const listener of this.listeners) {
       try {
@@ -119,6 +135,23 @@ class ReloadNotifierImpl {
    */
   getInvalidateListenerCount(): number {
     return this.invalidateListeners.size;
+  }
+
+  /**
+   * Get metrics for observability
+   */
+  getMetrics(): {
+    triggerCalls: number;
+    broadcastsSent: number;
+    lastTriggerTime: number;
+    activeReloadListeners: number;
+    activeInvalidateListeners: number;
+  } {
+    return {
+      ...this.metrics,
+      activeReloadListeners: this.listeners.size,
+      activeInvalidateListeners: this.invalidateListeners.size,
+    };
   }
 }
 

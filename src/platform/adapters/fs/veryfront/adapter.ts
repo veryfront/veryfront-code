@@ -47,6 +47,14 @@ export class VeryfrontFSAdapter implements FSAdapter {
   private invalidationCallbacks: InvalidationCallbacks;
   /** Per-request branch override (for branch preview URLs) */
   private requestBranch: string | null = null;
+  /** WebSocket connection identity for observability */
+  private wsConnectionId: string | null = null;
+  /** Poke notification metrics for observability */
+  private pokeMetrics = {
+    received: 0,
+    invalidationsTriggered: 0,
+    lastPokeTime: 0,
+  };
 
   /** Content source configuration from config */
   private contentSource: ContentSource;
@@ -266,9 +274,16 @@ export class VeryfrontFSAdapter implements FSAdapter {
 
     try {
       this.ws = new WebSocket(url);
+      // Generate connection ID for observability
+      this.wsConnectionId = crypto.randomUUID().slice(0, 8);
 
       this.ws.onopen = () => {
-        logger.info("[VeryfrontFSAdapter] WebSocket connected");
+        logger.info("[VeryfrontFSAdapter] WebSocket connected to events channel", {
+          projectId,
+          connectionId: this.wsConnectionId,
+          contentSource: this.contentSource,
+          branch: this.contentContext?.branch,
+        });
         this.wsLastPong = Date.now();
         this.startHeartbeat(projectId);
       };
@@ -283,6 +298,12 @@ export class VeryfrontFSAdapter implements FSAdapter {
           // Handle both legacy "poke" messages and new "entity_updated" messages from API
           const isPoke = data.type === "poke" || data.type === "entity_updated";
           if (isPoke) {
+            const timeSinceLastPoke = this.pokeMetrics.lastPokeTime > 0
+              ? Date.now() - this.pokeMetrics.lastPokeTime
+              : null;
+            this.pokeMetrics.received++;
+            this.pokeMetrics.lastPokeTime = Date.now();
+
             logger.info("[VeryfrontFSAdapter] 🔄 POKE RECEIVED - triggering cache invalidation", {
               type: data.type,
               source: data.data?.source,
@@ -291,6 +312,9 @@ export class VeryfrontFSAdapter implements FSAdapter {
               action: data.data?.action,
               changedPathsCount: changedPaths?.length || 0,
               changedPaths: changedPaths || [],
+              connectionId: this.wsConnectionId,
+              totalPokesReceived: this.pokeMetrics.received,
+              timeSinceLastPokeMs: timeSinceLastPoke,
             });
             // Use selective invalidation if we know which files changed
             if (changedPaths?.length) {
@@ -311,7 +335,10 @@ export class VeryfrontFSAdapter implements FSAdapter {
       this.ws.onclose = () => {
         logger.info("[VeryfrontFSAdapter] WebSocket closed, reconnecting", {
           delayMs: WS_RECONNECT_DELAY_MS,
+          connectionId: this.wsConnectionId,
+          totalPokesReceived: this.pokeMetrics.received,
         });
+        this.wsConnectionId = null;
         this.cleanupWebSocketTimers();
         this.wsReconnectTimer = setTimeout(() => {
           this.connectWebSocket(projectId);
@@ -433,12 +460,14 @@ export class VeryfrontFSAdapter implements FSAdapter {
     }
 
     // Notify browser to reload with changed paths for smart HMR
+    this.pokeMetrics.invalidationsTriggered++;
     this.invalidationCallbacks.triggerReload?.(changedPaths);
 
     const durationMs = Date.now() - startTime;
     logger.info("[VeryfrontFSAdapter] Selective invalidation complete", {
       changedPaths: changedPaths.length,
       durationMs,
+      totalInvalidations: this.pokeMetrics.invalidationsTriggered,
     });
   }
 
@@ -486,6 +515,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
     }
 
     // Step 3: Trigger reload - content is now guaranteed to be available
+    this.pokeMetrics.invalidationsTriggered++;
     logger.info("[VeryfrontFSAdapter] ✅ TRIGGERING BROWSER RELOAD via ReloadNotifier");
     this.invalidationCallbacks.triggerReload?.();
 
@@ -493,7 +523,23 @@ export class VeryfrontFSAdapter implements FSAdapter {
       textCacheCleared: textCount,
       contentCacheCleared: contentCount,
       durationMs: Date.now() - startTime,
+      totalInvalidations: this.pokeMetrics.invalidationsTriggered,
     });
+  }
+
+  /**
+   * Get poke notification metrics for observability.
+   */
+  getPokeMetrics(): {
+    received: number;
+    invalidationsTriggered: number;
+    lastPokeTime: number;
+    connectionId: string | null;
+  } {
+    return {
+      ...this.pokeMetrics,
+      connectionId: this.wsConnectionId,
+    };
   }
 
   async readFile(path: string): Promise<string> {
