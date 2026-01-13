@@ -539,8 +539,12 @@ document.head.appendChild(errorScript);
   function updateJS(path) {
     console.log('[Preview HMR] Updating JS module:', path);
     try {
-      // Load the changed module with cache busting to get fresh code
-      const cacheBusted = path + (path.includes('?') ? '&' : '?') + 't=' + Date.now();
+      // Convert source path to module URL:
+      // "components/sections/HeroSection.tsx" -> "/_vf_modules/components/sections/HeroSection.js"
+      // Handles: .ts, .tsx, .js, .jsx, .md, .mdx
+      const modulePath = '/_vf_modules/' + path.replace(/\\.(tsx?|jsx?|mdx?)$/i, '.js');
+      const cacheBusted = modulePath + '?t=' + Date.now();
+
       const script = document.createElement('script');
       script.type = 'module';
       script.crossOrigin = 'anonymous';
