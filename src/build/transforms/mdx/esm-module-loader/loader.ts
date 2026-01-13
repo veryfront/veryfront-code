@@ -18,8 +18,8 @@ import {
 } from "@veryfront/modules/import-map/index.ts";
 import { cwd } from "@veryfront/platform/compat/process.ts";
 import {
+  bundleHttpImports as processEsmShImports,
   createHTTPPlugin,
-  getReactAliases,
   hasHttpImports,
   stripDenoShim,
 } from "../../esm/http-bundler.ts";
@@ -293,6 +293,10 @@ async function transformJsxImports(
 
 /**
  * Bundle HTTP imports via esbuild.
+ *
+ * IMPORTANT: React is NOT aliased to esm.sh - it's kept as bare specifiers.
+ * This ensures Deno's import map resolves React to npm:react@18.3.1,
+ * the same instance used by react-dom-server (preventing multi-instance issues).
  */
 async function bundleHttpImports(
   code: string,
@@ -310,7 +314,6 @@ async function bundleHttpImports(
   await getLocalFs().writeTextFile(tempSourcePath, code);
 
   try {
-    const reactAliases = getReactAliases() as Record<string, string>;
     const result = await build({
       entryPoints: [tempSourcePath],
       bundle: true,
@@ -319,9 +322,17 @@ async function bundleHttpImports(
       target: "es2020",
       write: false,
       plugins: [createHTTPPlugin()],
-      alias: reactAliases,
+      // NO alias for React - keep as bare specifiers so Deno's import map
+      // resolves them to npm:react (same as react-dom-server)
       external: [
-        ...Object.values(reactAliases),
+        // React bare specifiers - Deno resolves via import map to npm:react
+        "react",
+        "react/jsx-runtime",
+        "react/jsx-dev-runtime",
+        "react-dom",
+        "react-dom/server",
+        "react-dom/client",
+        // Other externals
         "file://*",
         "veryfront/*",
       ],
@@ -330,7 +341,10 @@ async function bundleHttpImports(
     const bundledCode = result.outputFiles?.[0]?.text;
     if (bundledCode) {
       logger.info(`${LOG_PREFIX_MDX_LOADER} Successfully bundled HTTP imports`);
-      return bundledCode;
+      // Process esm.sh URLs to add target=es2022 and external=react,react-dom
+      // This ensures all esm.sh packages use the same React instance
+      const processedCode = processEsmShImports(bundledCode, esmCacheDir, hashString(bundledCode));
+      return typeof processedCode === "string" ? processedCode : await processedCode;
     }
     return code;
   } catch (bundleError) {

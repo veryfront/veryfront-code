@@ -31,6 +31,7 @@ import { DataFetcher } from "@veryfront/data/index.ts";
 import type { DataContext } from "@veryfront/data/types.ts";
 import { clearSSRModuleCacheForProject } from "@veryfront/modules/react-loader/index.ts";
 import { setupSSRGlobals } from "../ssr-globals.ts";
+import { LAYOUT_EXTENSIONS } from "../layouts/types.ts";
 
 // Import extracted modules
 import { createEsmCache, createModuleCache, loadModule } from "./module-loader/index.ts";
@@ -506,8 +507,8 @@ export class RenderPipeline {
 
     // 11. Resolve app component path (contains QueryClientProvider, etc.)
     let appPath: string | undefined;
-    const appExtensions = ["tsx", "jsx", "ts", "js"];
-    for (const ext of appExtensions) {
+    // Uses LAYOUT_EXTENSIONS for consistency with html.ts resolveAppComponentPath()
+    for (const ext of LAYOUT_EXTENSIONS) {
       const candidatePath = join(this.config.projectDir, `components/app.${ext}`);
       const exists = await this.config.adapter.fs.exists(candidatePath);
       if (exists) {

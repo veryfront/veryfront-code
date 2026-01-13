@@ -6,6 +6,7 @@ import {
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import type { LayoutItem } from "@veryfront/types";
 import { dirname, extname, join } from "@veryfront/platform/compat/path-helper.ts";
+import { LAYOUT_EXTENSIONS } from "../types.ts";
 
 async function discoverNestedLayoutsImpl(
   pageFilePath: string,
@@ -20,21 +21,18 @@ async function discoverNestedLayoutsImpl(
     const candidates: string[] = [];
 
     while (currentDir.startsWith(rootDir)) {
-      const mdxCandidate = join(currentDir, "layout.mdx");
-      const tsxCandidate = join(currentDir, "layout.tsx");
-      const jsxCandidate = join(currentDir, "layout.jsx");
-      candidates.push(mdxCandidate, tsxCandidate, jsxCandidate);
+      for (const ext of LAYOUT_EXTENSIONS) {
+        candidates.push(join(currentDir, `layout.${ext}`));
+      }
       const parent = dirname(currentDir);
       if (parent === currentDir || currentDir === rootDir) break;
       currentDir = parent;
     }
 
     if (!candidates.includes(join(rootDir, "layout.mdx"))) {
-      candidates.push(
-        join(rootDir, "layout.mdx"),
-        join(rootDir, "layout.tsx"),
-        join(rootDir, "layout.jsx"),
-      );
+      for (const ext of LAYOUT_EXTENSIONS) {
+        candidates.push(join(rootDir, `layout.${ext}`));
+      }
     }
 
     const existing = await resolveExistingFiles(candidates.reverse(), adapter);
@@ -87,9 +85,9 @@ async function resolveExistingFiles(
 function addLayoutsFromFiles(files: string[], nestedLayouts: LayoutItem[]): void {
   for (const file of files) {
     const ext = extname(file).toLowerCase();
-    if (ext === ".mdx") {
+    if (ext === ".mdx" || ext === ".md") {
       nestedLayouts.push({ kind: "mdx", path: file });
-    } else if (ext === ".tsx" || ext === ".jsx") {
+    } else if (ext === ".tsx" || ext === ".jsx" || ext === ".ts" || ext === ".js") {
       logger.info("Adding TSX layout:", file);
       nestedLayouts.push({
         kind: "tsx",
@@ -114,11 +112,10 @@ async function addMissedAncestorLayouts(
     let dir = dirname(pageFilePath);
 
     while (dir.startsWith(rootDir)) {
-      const tsx = join(dir, "layout.tsx");
-      const jsx = join(dir, "layout.jsx");
-
-      if (!included.has(tsx)) candidates.push(tsx);
-      if (!included.has(jsx)) candidates.push(jsx);
+      for (const ext of LAYOUT_EXTENSIONS) {
+        const candidate = join(dir, `layout.${ext}`);
+        if (!included.has(candidate)) candidates.push(candidate);
+      }
 
       const parent = dirname(dir);
       if (parent === dir) break;
@@ -135,12 +132,18 @@ async function addMissedAncestorLayouts(
       if (!result || !cand) continue;
 
       if (result.status === "fulfilled" && result.value.isFile) {
-        nestedLayouts.push({
-          kind: "tsx",
-          component: undefined,
-          componentPath: cand,
-          path: cand,
-        });
+        const ext = extname(cand).toLowerCase();
+        const kind = (ext === ".mdx" || ext === ".md") ? "mdx" : "tsx";
+        if (kind === "mdx") {
+          nestedLayouts.push({ kind: "mdx", path: cand });
+        } else {
+          nestedLayouts.push({
+            kind: "tsx",
+            component: undefined,
+            componentPath: cand,
+            path: cand,
+          });
+        }
         included.add(cand);
       } else if (result.status === "rejected") {
         logger.debug("[layout] stat nested tsx/jsx layout failed", result.reason as Error);

@@ -8,19 +8,21 @@ import type { VeryfrontConfig } from "@veryfront/config";
 import { getLayoutEntity } from "@veryfront/types/entities/getEntityInfo.ts";
 import { discoverNestedLayouts } from "./utils/discovery.ts";
 import { detectAppRouter } from "../router-detection.ts";
+import { LAYOUT_EXTENSIONS } from "./types.ts";
 
 /**
- * Determine layout kind based on file extension
+ * Determine layout kind based on file extension.
+ * MDX/MD files use MDX rendering, all others use TSX component loading.
  */
 function getLayoutKind(path: string): "mdx" | "tsx" {
-  return path.endsWith(".mdx") ? "mdx" : "tsx";
+  return path.endsWith(".mdx") || path.endsWith(".md") ? "mdx" : "tsx";
 }
 
 /**
  * Check if a layout value is a valid file path
  */
 function isValidLayoutPath(layout: string): boolean {
-  return /\.(tsx|jsx|ts|js|mdx)$/.test(layout);
+  return /\.(tsx|jsx|ts|js|mdx|md)$/.test(layout);
 }
 
 export interface LayoutCollectionResult {
@@ -257,25 +259,29 @@ export class LayoutCollector {
       }
     }
 
-    // Priority 2: Convention fallback - auto-discover layout.tsx in components folder
+    // Priority 2: Convention fallback - auto-discover layout.* in components folder
     // This provides a fallback when layout is not explicitly configured
     if (nestedLayouts.length === 0) {
-      const defaultLayoutPath = join(this.projectDir, "components", "layout.tsx");
-      const defaultLayoutExists =
-        await (wrappedAdapter as { exists: (path: string) => Promise<boolean> })
-          .exists(defaultLayoutPath);
+      for (const ext of LAYOUT_EXTENSIONS) {
+        const defaultLayoutPath = join(this.projectDir, "components", `layout.${ext}`);
+        const defaultLayoutExists =
+          await (wrappedAdapter as { exists: (path: string) => Promise<boolean> })
+            .exists(defaultLayoutPath);
 
-      if (defaultLayoutExists) {
-        nestedLayouts.push({
-          kind: "tsx",
-          component: undefined,
-          componentPath: defaultLayoutPath,
-          path: defaultLayoutPath,
-        });
+        if (defaultLayoutExists) {
+          const kind = getLayoutKind(defaultLayoutPath);
+          nestedLayouts.push({
+            kind,
+            component: undefined,
+            componentPath: defaultLayoutPath,
+            path: defaultLayoutPath,
+          });
 
-        logger.debug("[LayoutCollector] Added default components/layout.tsx", {
-          layoutPath: defaultLayoutPath,
-        });
+          logger.debug(`[LayoutCollector] Added default components/layout.${ext}`, {
+            layoutPath: defaultLayoutPath,
+          });
+          break; // Use first found
+        }
       }
     }
 

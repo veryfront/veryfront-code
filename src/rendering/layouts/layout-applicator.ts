@@ -15,6 +15,7 @@ import {
 } from "../app-reserved.ts";
 import { detectAppRouter } from "../router-detection.ts";
 import { getProjectReact } from "@veryfront/react";
+import { LAYOUT_EXTENSIONS } from "./types.ts";
 // Import using bare specifiers that match user code imports
 // This ensures SSR and client use the same module instance (same React context)
 import { RouterProvider } from "veryfront/router";
@@ -202,7 +203,7 @@ export class LayoutApplicator {
   }
 
   private isValidComponentPath(path: string): boolean {
-    return /\.(tsx|jsx|ts|js)$/.test(path);
+    return /\.(tsx|jsx|ts|js|mdx|md)$/.test(path);
   }
 
   private async resolveAppComponentPath(): Promise<string | null> {
@@ -241,8 +242,8 @@ export class LayoutApplicator {
       }
     }
 
-    // Priority 3: Default discovery - check components/app.{tsx,jsx,ts,js,mdx,md}
-    for (const ext of ["tsx", "jsx", "ts", "js", "mdx", "md"]) {
+    // Priority 3: Default discovery - check components/app.{ext} for all layout extensions
+    for (const ext of LAYOUT_EXTENSIONS) {
       const appPath = join(this.projectDir, `components/app.${ext}`);
       if (await this.adapter.fs.exists(appPath)) {
         logger.info("[LayoutApplicator] Found app component", { path: appPath });
@@ -284,7 +285,7 @@ export class LayoutApplicator {
             dev: this.mode === "development",
             moduleServerUrl: this.config?.dev?.moduleServerUrl,
           },
-        );
+        ) as React.ComponentType<{ children: React.ReactNode }> | null;
       }
 
       if (App) {
@@ -321,13 +322,14 @@ export class LayoutApplicator {
       const rehypePlugins = await getRehypePlugins(this.projectDir);
 
       // Compile MDX to JavaScript
+      // deno-lint-ignore no-explicit-any
       const compiled = await compile(body, {
         jsx: true,
         jsxRuntime: "automatic",
         jsxImportSource: "react",
         development: this.mode === "development",
-        remarkPlugins: remarkPlugins as unknown[],
-        rehypePlugins: rehypePlugins as unknown[],
+        remarkPlugins: remarkPlugins as any[],
+        rehypePlugins: rehypePlugins as any[],
       });
 
       const jsCode = String(compiled);
@@ -347,7 +349,7 @@ export class LayoutApplicator {
           dev: this.mode === "development",
           moduleServerUrl: this.config?.dev?.moduleServerUrl,
         },
-      );
+      ) as React.ComponentType<{ children: React.ReactNode }> | null;
     } catch (error) {
       logger.error("[LayoutApplicator] Failed to compile MDX app component:", error);
       return null;
