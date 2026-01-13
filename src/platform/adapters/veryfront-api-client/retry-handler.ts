@@ -1,4 +1,5 @@
 import { logger } from "@veryfront/utils";
+import { injectContext } from "@veryfront/observability/tracing/otlp-setup.ts";
 import { VeryfrontAPIError } from "./types.ts";
 
 export interface RetryConfig {
@@ -24,12 +25,14 @@ export async function requestWithRetry(
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
       const startTime = performance.now();
-      const response = await fetch(url, {
-        headers: {
-          "Authorization": `Bearer ${apiToken}`,
-          "Content-Type": "application/json",
-        },
+
+      const headers = new Headers({
+        "Authorization": `Bearer ${apiToken}`,
+        "Content-Type": "application/json",
       });
+      injectContext(headers); // Propagate trace context to API
+
+      const response = await fetch(url, { headers });
       const duration = performance.now() - startTime;
 
       // Log API timing for performance analysis
@@ -68,7 +71,8 @@ export async function requestWithRetry(
       // - 401: Can be transient rate limiting from concurrent requests
       // - 429: Explicit rate limiting
       if (
-        error instanceof VeryfrontAPIError && error.status && error.status >= 400 &&
+        error instanceof VeryfrontAPIError && error.status &&
+        error.status >= 400 &&
         error.status < 500 && error.status !== 401 && error.status !== 429
       ) {
         throw error;

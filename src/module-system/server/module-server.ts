@@ -10,6 +10,7 @@ import { getContentTypeForPath } from "@veryfront/server/handlers/utils/content-
 import { createSecureFs } from "@veryfront/security";
 import { getErrorMessage } from "@veryfront/errors/veryfront-error.ts";
 import { getApiBaseUrlEnv } from "@veryfront/core/config/env.ts";
+import { injectContext } from "@veryfront/observability/tracing/otlp-setup.ts";
 import { injectNodePositions } from "@veryfront/transforms/plugins/babel-node-positions.ts";
 import { parseProjectDomain } from "@veryfront/server/utils/domain-parser.ts";
 import { applySSRImportRewrites } from "./ssr-import-rewriter.ts";
@@ -99,12 +100,19 @@ export async function serveModule(
   if (snippetMatch) {
     const hash = snippetMatch[1];
     if (!hash) {
-      return createModuleResponse(method, "Missing snippet hash", HTTP_NOT_FOUND, {
-        "Content-Type": "text/plain; charset=utf-8",
-        "Cache-Control": "no-cache",
-      });
+      return createModuleResponse(
+        method,
+        "Missing snippet hash",
+        HTTP_NOT_FOUND,
+        {
+          "Content-Type": "text/plain; charset=utf-8",
+          "Cache-Control": "no-cache",
+        },
+      );
     }
-    const { getCompiledSnippet } = await import("@veryfront/rendering/snippet-renderer.ts");
+    const { getCompiledSnippet } = await import(
+      "@veryfront/rendering/snippet-renderer.ts"
+    );
     const snippetCode = getCompiledSnippet(hash);
 
     if (!snippetCode) {
@@ -171,7 +179,10 @@ export async function serveModule(
         method,
         `// Transform Error\nthrow new Error(${JSON.stringify(errorMsg)});`,
         HTTP_SERVER_ERROR,
-        { "Content-Type": "application/javascript; charset=utf-8", "Cache-Control": "no-cache" },
+        {
+          "Content-Type": "application/javascript; charset=utf-8",
+          "Cache-Control": "no-cache",
+        },
       );
     }
   }
@@ -196,10 +207,15 @@ export async function serveModule(
     }
 
     if (!crossProjectSlug || !crossPath) {
-      return createModuleResponse(method, "Invalid cross-project import path", HTTP_NOT_FOUND, {
-        "Content-Type": "text/plain; charset=utf-8",
-        "Cache-Control": "no-cache",
-      });
+      return createModuleResponse(
+        method,
+        "Invalid cross-project import path",
+        HTTP_NOT_FOUND,
+        {
+          "Content-Type": "text/plain; charset=utf-8",
+          "Cache-Control": "no-cache",
+        },
+      );
     }
 
     // Build projectRef - omit version for versionless (API resolves to latest release)
@@ -229,7 +245,8 @@ export async function serveModule(
 
       // Detect SSR mode
       const userAgent = req.headers.get("user-agent") || "";
-      const isSSR = url.searchParams.get("ssr") === "true" || userAgent.startsWith("Deno/");
+      const isSSR = url.searchParams.get("ssr") === "true" ||
+        userAgent.startsWith("Deno/");
 
       // Transform using same pipeline as internal modules
       let code = await transformToESM(source, crossPath, projectDir, adapter, {
@@ -250,11 +267,19 @@ export async function serveModule(
         "Cache-Control": "no-cache",
       });
     } catch (error) {
-      logger.error("[ModuleServer] Cross-project error", { projectRef, error: String(error) });
-      return createModuleResponse(method, `// Error: ${String(error)}`, HTTP_SERVER_ERROR, {
-        "Content-Type": "application/javascript; charset=utf-8",
-        "Cache-Control": "no-cache",
+      logger.error("[ModuleServer] Cross-project error", {
+        projectRef,
+        error: String(error),
       });
+      return createModuleResponse(
+        method,
+        `// Error: ${String(error)}`,
+        HTTP_SERVER_ERROR,
+        {
+          "Content-Type": "application/javascript; charset=utf-8",
+          "Cache-Control": "no-cache",
+        },
+      );
     }
   }
 
@@ -291,11 +316,20 @@ export async function serveModule(
     // Find source file (try .tsx, .ts, .jsx, .js, .mdx)
     const findStart = performance.now();
 
-    const findResult = await findSourceFile(secureFs, projectDir, filePathWithoutExt);
+    const findResult = await findSourceFile(
+      secureFs,
+      projectDir,
+      filePathWithoutExt,
+    );
     timings.findFile = performance.now() - findStart;
 
     if (!findResult) {
-      logger.warn("Module not found", { modulePath, filePathWithoutExt, projectSlug, projectDir });
+      logger.warn("Module not found", {
+        modulePath,
+        filePathWithoutExt,
+        projectSlug,
+        projectDir,
+      });
       return new Response("Module not found", {
         status: HTTP_NOT_FOUND,
         headers: { "Content-Type": "text/plain" },
@@ -450,10 +484,13 @@ async function findSourceFile(
     try {
       const stat = await secureFs.stat(fullPath);
       if (stat?.isFile) {
-        serverLogger.debug("[ModuleServer] Found file with existing extension", {
-          basePath,
-          resolvedPath: fullPath,
-        });
+        serverLogger.debug(
+          "[ModuleServer] Found file with existing extension",
+          {
+            basePath,
+            resolvedPath: fullPath,
+          },
+        );
         return { path: fullPath, isFrameworkFile: false };
       }
     } catch {
@@ -475,7 +512,10 @@ async function findSourceFile(
       // Use secure filesystem wrapper (automatic path validation)
       const stat = await secureFs.stat(fullPath);
       if (stat.isFile) {
-        serverLogger.debug("[ModuleServer] Found file", { basePath, resolvedPath: fullPath });
+        serverLogger.debug("[ModuleServer] Found file", {
+          basePath,
+          resolvedPath: fullPath,
+        });
         return { path: fullPath, isFrameworkFile: false };
       }
     } catch {
@@ -494,11 +534,14 @@ async function findSourceFile(
         try {
           const stat = await secureFs.stat(fullPath);
           if (stat.isFile) {
-            serverLogger.debug("[ModuleServer] Found file after stripping prefix", {
-              originalPath: basePathWithoutExt,
-              strippedPath,
-              resolvedPath: fullPath,
-            });
+            serverLogger.debug(
+              "[ModuleServer] Found file after stripping prefix",
+              {
+                originalPath: basePathWithoutExt,
+                strippedPath,
+                resolvedPath: fullPath,
+              },
+            );
             return { path: fullPath, isFrameworkFile: false };
           }
         } catch {
@@ -624,7 +667,10 @@ function getDevModuleContentType(modulePath: string): string {
   return detected ?? "application/javascript; charset=utf-8";
 }
 
-function createDevModuleErrorBody(modulePath: string, errorMessage: string): string {
+function createDevModuleErrorBody(
+  modulePath: string,
+  errorMessage: string,
+): string {
   const normalizedPath = modulePath.toLowerCase();
 
   if (normalizedPath.endsWith(".css")) {
@@ -660,7 +706,9 @@ async function fetchCrossProjectSource(
   const registryBaseUrl = apiBaseUrl.replace(/\/api\/?$/, "");
   const registryUrl = `${registryBaseUrl}/${projectRef}/@/${filePath}`;
 
-  const response = await fetch(registryUrl);
+  const headers = new Headers();
+  injectContext(headers);
+  const response = await fetch(registryUrl, { headers });
   if (!response.ok) {
     logger.warn("[ModuleServer] Cross-project fetch failed", {
       registryUrl,

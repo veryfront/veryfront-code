@@ -6,6 +6,7 @@
  */
 
 import { logger } from "@veryfront/utils";
+import { injectContext } from "@veryfront/observability/tracing/otlp-setup.ts";
 
 export interface DomainLookupResult {
   project_id: string;
@@ -36,12 +37,13 @@ export async function lookupProjectByDomain(
   logger.debug("[DomainLookup] Looking up project by domain", { domain, url });
 
   try {
-    const response = await fetch(url, {
-      headers: {
-        Authorization: `Bearer ${config.apiToken}`,
-        Accept: "application/json",
-      },
+    const headers = new Headers({
+      Authorization: `Bearer ${config.apiToken}`,
+      Accept: "application/json",
     });
+    injectContext(headers);
+
+    const response = await fetch(url, { headers });
 
     if (response.status === 404) {
       logger.debug("[DomainLookup] No project found for domain", { domain });
@@ -94,7 +96,8 @@ export function getEnvironmentType(
 
   // Preview/staging environments
   if (
-    envName.includes("preview") || envName.includes("staging") || envName.includes("development")
+    envName.includes("preview") || envName.includes("staging") ||
+    envName.includes("development")
   ) {
     return "preview";
   }
