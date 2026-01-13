@@ -459,7 +459,13 @@ export class VeryfrontFSAdapter implements FSAdapter {
       try {
         const files = await this.client.listAllFiles();
         const cacheKey = buildFileListCacheKey(this.contentContext);
-        this.cache.set(cacheKey, files);
+        // Use setAsync to ensure Redis has fresh data before browser refresh
+        // This prevents race conditions where other pods read stale Redis cache
+        await this.cache.setAsync(cacheKey, files);
+        logger.info("[VeryfrontFSAdapter] Fresh files cached (memory + Redis)", {
+          cacheKey,
+          fileCount: files.length,
+        });
       } catch (error) {
         logger.warn("[VeryfrontFSAdapter] Failed to fetch files during selective invalidation", {
           error,
@@ -511,7 +517,9 @@ export class VeryfrontFSAdapter implements FSAdapter {
       try {
         const files = await this.client.listAllFiles();
         const cacheKey = buildFileListCacheKey(this.contentContext);
-        this.cache.set(cacheKey, files);
+        // Use setAsync to ensure Redis has fresh data before browser refresh
+        // This prevents race conditions where other pods read stale Redis cache
+        await this.cache.setAsync(cacheKey, files);
         logger.info("[VeryfrontFSAdapter] ✅ FRESH FILES FETCHED", {
           cacheKey,
           fileCount: files.length,

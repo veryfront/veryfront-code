@@ -107,6 +107,45 @@ async function setInRedis<T>(key: string, entry: CacheEntry<T>): Promise<void> {
   }
 }
 
+/**
+ * Delete keys matching a pattern from Redis using SCAN.
+ * Uses SCAN to avoid blocking Redis with KEYS command on large datasets.
+ */
+async function deleteFromRedisByPattern(pattern: string): Promise<number> {
+  if (!redisEnabled || !redisClient) return 0;
+
+  try {
+    const fullPattern = redisKey(pattern);
+    let cursor = 0;
+    let deletedCount = 0;
+    const keysToDelete: string[] = [];
+
+    // Use SCAN to find matching keys (non-blocking)
+    do {
+      const result = await redisClient.scan(cursor, { MATCH: fullPattern, COUNT: 100 });
+      cursor = result.cursor;
+      if (result.keys.length > 0) {
+        keysToDelete.push(...result.keys);
+      }
+    } while (cursor !== 0);
+
+    // Delete found keys in batches
+    if (keysToDelete.length > 0) {
+      await redisClient.del(keysToDelete);
+      deletedCount = keysToDelete.length;
+      logger.debug("[FileCache] Deleted keys from Redis by pattern", {
+        pattern: fullPattern,
+        count: deletedCount,
+      });
+    }
+
+    return deletedCount;
+  } catch (error) {
+    logger.warn("[FileCache] Redis delete by pattern failed", { pattern, error });
+    return 0;
+  }
+}
+
 export class FileCache {
   private cache: Map<string, CacheEntry<unknown>>;
   private lruTracker: LRUTracker;
@@ -327,8 +366,16 @@ export class FileCache {
       }
     }
     if (count > 0) {
-      logger.debug("[FileCache] Deleted by prefix", { prefix, count });
+      logger.debug("[FileCache] Deleted by prefix (memory)", { prefix, count });
     }
+
+    // Fire-and-forget Redis deletion for cross-pod consistency
+    if (redisEnabled && redisClient) {
+      deleteFromRedisByPattern(`${prefix}*`).catch((error) => {
+        logger.warn("[FileCache] Redis deleteByPrefix failed", { prefix, error });
+      });
+    }
+
     return count;
   }
 
@@ -342,8 +389,17 @@ export class FileCache {
       }
     }
     if (count > 0) {
-      logger.debug("[FileCache] Deleted by prefix+suffix", { prefix, suffix, count });
+      logger.debug("[FileCache] Deleted by prefix+suffix (memory)", { prefix, suffix, count });
     }
+
+    // Fire-and-forget Redis deletion for cross-pod consistency
+    // Pattern: prefix*:suffix (e.g., file:content:*:components/sections/HeroSection.tsx)
+    if (redisEnabled && redisClient) {
+      deleteFromRedisByPattern(`${prefix}*:${suffix}`).catch((error) => {
+        logger.warn("[FileCache] Redis deleteByPrefixAndSuffix failed", { prefix, suffix, error });
+      });
+    }
+
     return count;
   }
 
