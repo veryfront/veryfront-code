@@ -435,12 +435,15 @@ export class VeryfrontFSAdapter implements FSAdapter {
     });
 
     // Only invalidate file content cache for changed files (all branch variants)
+    // Await Redis deletions to prevent stale data race conditions
+    const deletionPromises: Promise<number>[] = [];
     for (const path of changedPaths) {
       // Delete all branch variants by matching prefix and path suffix
-      this.cache.deleteByPrefixAndSuffix("file:content:", path);
-      this.cache.deleteByPrefixAndSuffix("file:text:", path);
-      this.cache.deleteByPrefixAndSuffix("file:stat:", path);
+      deletionPromises.push(this.cache.deleteByPrefixAndSuffixAsync("file:content:", path));
+      deletionPromises.push(this.cache.deleteByPrefixAndSuffixAsync("file:text:", path));
+      deletionPromises.push(this.cache.deleteByPrefixAndSuffixAsync("file:stat:", path));
     }
+    await Promise.all(deletionPromises);
 
     // Invalidate only the changed module paths (not all modules)
     this.invalidationCallbacks.invalidateModulePaths?.(changedPaths);
@@ -455,7 +458,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
 
     // Clear file list cache and refetch (only for branch mode)
     if (this.contentContext?.sourceType === "branch") {
-      this.cache.deleteByPrefix("files:branch:");
+      await this.cache.deleteByPrefixAsync("files:branch:");
       try {
         const files = await this.client.listAllFiles();
         const cacheKey = buildFileListCacheKey(this.contentContext);
@@ -490,12 +493,15 @@ export class VeryfrontFSAdapter implements FSAdapter {
 
     logger.info("[VeryfrontFSAdapter] ✅ CACHE INVALIDATION STARTED - clearing all caches");
 
-    // Step 1: Clear all caches and indexes
-    const textCount = this.cache.deleteByPrefix("file:text:");
-    const contentCount = this.cache.deleteByPrefix("file:content:");
-    const statCount = this.cache.deleteByPrefix("file:stat:");
-    const dirCount = this.cache.deleteByPrefix("dir:entries:");
-    const filesListCount = this.cache.deleteByPrefix("files:");
+    // Step 1: Clear all caches and indexes (await Redis deletion to prevent stale data race)
+    // Use Promise.all to run Redis deletions in parallel for better performance
+    const [textCount, contentCount, statCount, dirCount, filesListCount] = await Promise.all([
+      this.cache.deleteByPrefixAsync("file:text:"),
+      this.cache.deleteByPrefixAsync("file:content:"),
+      this.cache.deleteByPrefixAsync("file:stat:"),
+      this.cache.deleteByPrefixAsync("dir:entries:"),
+      this.cache.deleteByPrefixAsync("files:"),
+    ]);
     this.statOps.clearIndex();
     this.dirOps.clearTree();
     this.invalidationCallbacks.clearSSRModuleCache?.();
@@ -503,7 +509,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
     this.invalidationCallbacks.clearModulePathCache?.();
     this.invalidationCallbacks.clearSnippetCache?.();
 
-    logger.info("[VeryfrontFSAdapter] ✅ CACHES CLEARED", {
+    logger.info("[VeryfrontFSAdapter] ✅ CACHES CLEARED (memory + Redis)", {
       textCacheCleared: textCount,
       contentCacheCleared: contentCount,
       statCacheCleared: statCount,
