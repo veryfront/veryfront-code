@@ -2,7 +2,6 @@ import type { Root as HastRoot } from "hast";
 import type { Root as MdastRoot } from "mdast";
 import type { Pluggable } from "npm:unified@11";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
-import { serverLogger } from "@veryfront/utils";
 import { rehypeAddClasses, rehypeMdxComponents, rehypePreserveNodeIds } from "./rehype-utils.ts";
 import { remarkMdxHeadings } from "./remark-headings.ts";
 import {
@@ -22,7 +21,7 @@ export type PluginFunction = (
 ) => void | Promise<void> | ((tree: MdastRoot | HastRoot, file?: unknown) => void);
 
 // Placeholder for user-defined plugins from veryfront.config.ts
-// TODO: Implement loading custom remark/rehype plugins from config
+// TODO(@veryfront): Implement loading custom remark/rehype plugins from config
 function loadUserPlugins(
   _projectDir: string,
   _adapter: RuntimeAdapter,
@@ -31,10 +30,10 @@ function loadUserPlugins(
   return [];
 }
 
-export async function getRemarkPlugins(
+export function getRemarkPlugins(
   projectDir: string,
   adapter?: RuntimeAdapter,
-): Promise<Pluggable[]> {
+): Pluggable[] {
   // DISABLED: remarkAddNodeId temporarily disabled to fix hydration mismatch.
   // This was adding data-node-id, data-node-line, etc. to MDX elements.
   // Browser modules (via module server) no longer inject positions, so SSR
@@ -59,10 +58,10 @@ export async function getRemarkPlugins(
   return defaultPlugins;
 }
 
-export async function getRehypePlugins(
+export function getRehypePlugins(
   projectDir: string,
   adapter?: RuntimeAdapter,
-): Promise<Pluggable[]> {
+): Pluggable[] {
   const defaultPlugins: Pluggable[] = [
     rehypeMermaid, // Must run before rehypeHighlight
     rehypeHighlight,
