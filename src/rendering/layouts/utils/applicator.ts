@@ -88,6 +88,7 @@ export async function applyLayoutsESM(
   tsxLayoutModuleCache: LayoutComponentCache,
   adapter: RuntimeAdapter,
   layoutDataMap?: Map<string, Record<string, unknown>>,
+  projectId?: string,
 ): Promise<BundledReact.ReactElement> {
   let element = pageElement;
 
@@ -103,6 +104,7 @@ export async function applyLayoutsESM(
             projectDir,
             mergedComponents,
             adapter,
+            projectId,
           );
         } else if (item.kind === "tsx") {
           const props = item.componentPath ? layoutDataMap?.get(item.componentPath) : undefined;
@@ -113,6 +115,7 @@ export async function applyLayoutsESM(
             projectDir,
             adapter,
             props,
+            projectId,
           );
         }
       } catch (e) {
@@ -124,7 +127,14 @@ export async function applyLayoutsESM(
 
   if (layoutBundle) {
     logger.info("[applyLayoutsESM] Applying named layoutBundle (frontmatter layout)");
-    element = await applyMDXLayout(element, layoutBundle, projectDir, mergedComponents, adapter);
+    element = await applyMDXLayout(
+      element,
+      layoutBundle,
+      projectDir,
+      mergedComponents,
+      adapter,
+      projectId,
+    );
     logger.info("[applyLayoutsESM] Named layoutBundle applied successfully");
   } else {
     logger.info("[applyLayoutsESM] No layoutBundle to apply");
@@ -138,6 +148,7 @@ export async function applyLayoutsESM(
       mergedComponents,
       tsxLayoutModuleCache,
       adapter,
+      projectId,
     );
   }
 
@@ -154,6 +165,7 @@ export async function applyLayoutsFunctionBody(
   projectDir: string,
   adapter: RuntimeAdapter,
   layoutDataMap?: Map<string, Record<string, unknown>>,
+  projectId?: string,
 ): Promise<BundledReact.ReactElement> {
   const React = await getProjectReact();
   let element = pageElement;
@@ -188,6 +200,7 @@ export async function applyLayoutsFunctionBody(
             projectDir,
             tsxLayoutModuleCache,
             adapter,
+            projectId,
           );
           const child = ensureValidChild(element, React);
           logger.info("Applying TSX layout:", {
@@ -234,6 +247,7 @@ export async function applyLayoutsFunctionBody(
             projectDir,
             tsxLayoutModuleCache,
             adapter,
+            projectId,
           );
           const child = ensureValidChild(element, React);
           logger.info("Applying TSX provider:", {
@@ -265,6 +279,7 @@ async function applyProviders(
   mergedComponents: MDXComponents,
   tsxLayoutModuleCache: LayoutComponentCache,
   adapter: RuntimeAdapter,
+  projectId?: string,
 ): Promise<BundledReact.ReactElement> {
   const React = await getProjectReact();
   let result = element;
@@ -278,7 +293,11 @@ async function applyProviders(
         );
         providerCode = transformBareImportsToNpm(providerCode);
         providerCode = transformLocalFileImportsToModuleServer(providerCode);
-        const providerModule = await mdxRenderer.loadModuleESM(providerCode, adapter);
+        const providerModule = await mdxRenderer.loadModuleESM(
+          providerCode,
+          adapter,
+          projectId,
+        );
         const providerMod = providerModule as MDXModule;
         const ProviderFn = providerMod.MDXLayout || providerMod.default;
         if (ProviderFn) {
@@ -298,6 +317,7 @@ async function applyProviders(
           projectDir,
           tsxLayoutModuleCache,
           adapter,
+          projectId,
         );
         const child = ensureValidChild(result, React);
         logger.info("Applying TSX provider", {

@@ -7,7 +7,6 @@ import { mdxRenderer } from "@veryfront/transforms/mdx/index.ts";
 import { getProjectReact } from "@veryfront/react";
 import { compileMDXRuntime } from "@veryfront/transforms/mdx/compiler/index.ts";
 import { ensureError, getErrorMessage } from "../core/errors/veryfront-error.ts";
-import { injectNodePositions } from "../build/transforms/plugins/babel-node-positions.ts";
 
 export interface MDXPageResult {
   pageElement: BundledReact.ReactElement;
@@ -20,7 +19,7 @@ export async function handleMDXPage(
   slug: string,
   projectDir: string,
   mergedComponents: MDXComponents,
-  compileMDX: (
+  _compileMDX: (
     content: string,
     frontmatter?: Record<string, unknown>,
     filePath?: string,
@@ -29,6 +28,8 @@ export async function handleMDXPage(
   options?: {
     params?: Record<string, string | string[]>;
     precompiledModule?: string;
+    /** Project ID for cache isolation */
+    projectId?: string;
     /** Enable node position injection for Studio Navigator */
     studioEmbed?: boolean;
   },
@@ -36,7 +37,18 @@ export async function handleMDXPage(
   const fmArg = pageInfo.entity.frontmatter && Object.keys(pageInfo.entity.frontmatter).length > 0
     ? pageInfo.entity.frontmatter
     : undefined;
-  const pageBundle = await compileMDX(pageInfo.entity.content, fmArg, pageInfo.entity.path);
+
+  const ssrBundle = await compileMDXRuntime(
+    "development",
+    projectDir,
+    pageInfo.entity.content,
+    fmArg,
+    pageInfo.entity.path,
+    "server",
+    undefined,
+    { studioEmbed: options?.studioEmbed },
+  );
+  const pageBundle = ssrBundle as MdxBundle;
 
   let collectedMetadata: Record<string, unknown> = {};
 
@@ -46,22 +58,15 @@ export async function handleMDXPage(
       moduleCode = options.precompiledModule;
       (pageBundle as PageBundle).clientModuleCode = moduleCode;
     } else {
-      // Recompile MDX with browser target for client-side hydration
-      // The original compilation uses server target with file:// URLs that browsers can't resolve
-      //
-      // Inject node positions for Studio Navigator (edit-in-place support)
-      // Only enabled when studioEmbed is true (page embedded in Studio iframe)
-      const contentWithPositions = options?.studioEmbed
-        ? injectNodePositions(pageInfo.entity.content, { filePath: pageInfo.entity.path })
-        : pageInfo.entity.content;
-
       const browserBundle = await compileMDXRuntime(
         "development",
         projectDir,
-        contentWithPositions,
+        pageInfo.entity.content,
         fmArg,
         pageInfo.entity.path,
         "browser", // Use browser target for client module
+        undefined, // baseUrl
+        { studioEmbed: options?.studioEmbed },
       );
       moduleCode = browserBundle.compiledCode;
       (pageBundle as PageBundle).clientModuleCode = moduleCode;
@@ -74,7 +79,11 @@ export async function handleMDXPage(
         ErrorCode.RENDER_ERROR,
       );
     }
-    const mod = (await mdxRenderer.loadModuleESM(clientModuleCode, adapter)) as MDXModule;
+    const mod = (await mdxRenderer.loadModuleESM(
+      clientModuleCode,
+      adapter,
+      options?.projectId,
+    )) as MDXModule;
     const MDXComp = mod.MDXContent || mod.default;
     if (!MDXComp) {
       throw new VeryfrontError("Compiled MDX module has no content export", ErrorCode.RENDER_ERROR);

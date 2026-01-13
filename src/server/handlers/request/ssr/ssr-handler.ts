@@ -237,7 +237,8 @@ export class SSRHandler extends BaseHandler {
       const nonce = generateNonce();
       this.logDebug(`[NONCE-TRACE] Generated nonce for SSR: ${nonce}`, { slug }, ctx);
 
-      const projectId = ctx.projectId || url.searchParams.get("project_id") || ctx.projectSlug || undefined;
+      const projectId = ctx.projectId || url.searchParams.get("project_id") || ctx.projectSlug ||
+        undefined;
       const pageId = url.searchParams.get("page_id") || undefined;
 
       // Extract color scheme from client hints (Sec-CH-Prefers-Color-Scheme header)

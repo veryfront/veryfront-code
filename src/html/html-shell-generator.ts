@@ -70,16 +70,23 @@ export function extractHeadElements(
  * Convert a source path to a module URL for preloading.
  * E.g., pages/index.mdx -> /_vf_modules/pages/index.js
  * E.g., _snippets/abc123 -> /_vf_modules/_snippets/abc123.js
+ *
+ * @param path - Source file path
+ * @param studioEmbed - If true, add ?studio_embed=true query param
  */
-function pathToModuleUrl(path: string): string {
+function pathToModuleUrl(path: string, studioEmbed?: boolean): string {
   if (!path) return "";
-  // Replace known source extensions with .js
   const withExtReplaced = path.replace(/\.(tsx|ts|jsx|mdx)$/, ".js");
-  // If no extension was replaced and path doesn't end with .js, add .js
+  let url: string;
   if (withExtReplaced === path && !path.endsWith(".js")) {
-    return "/_vf_modules/" + path + ".js";
+    url = "/_vf_modules/" + path + ".js";
+  } else {
+    url = "/_vf_modules/" + withExtReplaced;
   }
-  return "/_vf_modules/" + withExtReplaced;
+  if (studioEmbed) {
+    url += "?studio_embed=true";
+  }
+  return url;
 }
 
 /**
@@ -104,6 +111,7 @@ function generateModulePreloadHints(options: HTMLGenerationOptions): string {
   const hints: string[] = [];
   const projectDir = options.projectDir || "";
   const addedUrls = new Set<string>();
+  const studioEmbed = options.studioEmbed;
 
   // Helper to add a preload hint, deduplicating by URL
   function addHint(moduleUrl: string): void {
@@ -116,7 +124,7 @@ function generateModulePreloadHints(options: HTMLGenerationOptions): string {
   // Preload page module (always first - most critical)
   if (options.pagePath) {
     const relativePath = getRelativePagePath(options.pagePath, projectDir);
-    addHint(pathToModuleUrl(relativePath));
+    addHint(pathToModuleUrl(relativePath, studioEmbed));
   }
 
   // Preload layout modules
@@ -124,7 +132,7 @@ function generateModulePreloadHints(options: HTMLGenerationOptions): string {
     const layoutPath = layout.path || layout.componentPath || "";
     if (layoutPath) {
       const relativePath = getRelativePagePath(layoutPath, projectDir);
-      addHint(pathToModuleUrl(relativePath));
+      addHint(pathToModuleUrl(relativePath, studioEmbed));
     }
   }
 

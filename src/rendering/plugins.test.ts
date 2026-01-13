@@ -195,14 +195,22 @@ Deno.test("remarkMdxHeadings extracts and injects headings export", () => {
   assertEquals(tree.children[0].type, "mdxjsEsm");
 });
 
-Deno.test("remarkMdxRemoveParagraphs unwraps MDX JSX", () => {
+Deno.test("remarkMdxRemoveParagraphs unwraps paragraph inside JSX component", () => {
+  // Plugin leaves root-level paragraphs alone but unwraps paragraphs inside JSX components
   const para: any = {
     type: "paragraph",
-    children: [{ type: "mdxJsxTextElement", name: "X" }],
+    children: [{ type: "text", value: "Hello" }],
   };
-  const tree: any = { type: "root", children: [para] };
+  const jsxComponent: any = {
+    type: "mdxJsxFlowElement",
+    name: "Button",
+    children: [para],
+  };
+  const tree: any = { type: "root", children: [jsxComponent] };
   runRemark(tree, {}, [remarkMdxRemoveParagraphs]);
-  assertEquals(tree.children[0].type, "mdxJsxTextElement");
+  // Paragraph should be unwrapped inside the Button component
+  assertEquals(jsxComponent.children[0].type, "text");
+  assertEquals(jsxComponent.children[0].value, "Hello");
 });
 
 Deno.test("remarkCodeBlocks annotates language and meta", () => {

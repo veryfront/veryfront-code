@@ -39,6 +39,7 @@ export async function handleBatchModuleEndpoint(
     projectDir: ctx.projectDir,
     adapter: ctx.adapter,
     projectSlug: ctx.projectSlug,
+    projectId: ctx.projectId,
     branch: ctx.parsedDomain?.branch ?? null,
     dev: ctx.mode === "development",
   });

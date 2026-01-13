@@ -22,4 +22,6 @@ export interface HydrationDataStructure {
   dev?: boolean;
   /** Headings extracted from MDX for sidebar/TOC navigation */
   headings?: Array<{ id: string; text: string; level: number }>;
+  /** Whether page is embedded in Studio iframe (enables node position data) */
+  studioEmbed?: boolean;
 }

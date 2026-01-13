@@ -8,6 +8,7 @@ export interface TransformOptions {
   vendorBundleHash?: string;
   ssr?: boolean; // If true, don't rewrite imports for module server (for server-side execution)
   apiBaseUrl?: string; // Base URL for API (used for cross-project imports)
+  studioEmbed?: boolean;
 }
 
 export interface TransformContext {

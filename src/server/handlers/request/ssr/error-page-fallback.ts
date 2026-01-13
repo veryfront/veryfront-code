@@ -112,7 +112,7 @@ async function tryLoadErrorPage(
   pageType: ErrorPageType,
   ctx: HandlerContext,
 ): Promise<React.ComponentType<unknown> | null> {
-  const cacheKey = `${ctx.projectDir}:${pageType}`;
+  const cacheKey = `${ctx.projectId ?? ctx.projectDir}:${pageType}`;
 
   // Check if we've already resolved (or failed to resolve) this error page
   if (errorPagePathCache.has(cacheKey)) {
@@ -191,7 +191,7 @@ async function loadErrorComponent(
     filePath,
     ctx.projectDir,
     ctx.adapter,
-    { projectId: ctx.projectDir, dev: ctx.mode === "development" },
+    { projectId: ctx.projectId ?? ctx.projectDir, dev: ctx.mode === "development" },
   );
   if (typeof Component === "function") {
     return Component as React.ComponentType<unknown>;

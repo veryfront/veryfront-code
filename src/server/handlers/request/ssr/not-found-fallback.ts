@@ -65,6 +65,7 @@ export async function tryNotFoundFallback(
       ctx.projectDir,
       "production",
       ctx.adapter,
+      ctx.projectId,
     );
 
     if (NotFoundComp) {

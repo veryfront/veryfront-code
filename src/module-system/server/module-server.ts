@@ -54,9 +54,10 @@ export async function serveModule(
     projectDir,
     adapter,
     dev = true,
-    projectUUID: _projectUUID,
+    projectUUID,
     releaseId: _releaseId,
   } = options;
+  const effectiveProjectId = projectUUID ?? projectId;
   const url = new URL(req.url);
   const method = req.method.toUpperCase();
   const isHeadRequest = method === "HEAD";
@@ -138,7 +139,7 @@ export async function serveModule(
         `_snippets/${hash}.tsx`, // Use .tsx to apply import rewrites without MDX compilation
         projectDir,
         adapter,
-        { projectId, dev, ssr: isSSR },
+        { projectId: effectiveProjectId, dev, ssr: isSSR },
       );
 
       // Apply SSR-specific rewrites using shared utility
@@ -231,7 +232,7 @@ export async function serveModule(
 
       // Transform using same pipeline as internal modules
       let code = await transformToESM(source, crossPath, projectDir, adapter, {
-        projectId: projectDir,
+        projectId: effectiveProjectId,
         dev,
         ssr: isSSR,
         moduleServerUrl: `http://${url.host}`,
@@ -323,8 +324,6 @@ export async function serveModule(
       const hasSSRParam = url.searchParams.get("ssr") === "true";
       const isSSR = hasSSRParam || isDenoRequest;
 
-      // Inject node positions for Studio Navigator (edit-in-place support)
-      // Only enabled when studio_embed query param is true (page embedded in Studio iframe)
       const studioEmbed = url.searchParams.get("studio_embed") === "true";
       const isJsxFile = /\.(tsx|jsx)$/i.test(sourceFile);
       if (studioEmbed && !isFrameworkFile && isJsxFile) {
@@ -341,7 +340,12 @@ export async function serveModule(
 
       // Transform to ESM
       const transformStart = performance.now();
-      const transformOpts: TransformOptions = { projectId, dev, ssr: isSSR };
+      const transformOpts: TransformOptions = {
+        projectId: effectiveProjectId,
+        dev,
+        ssr: isSSR,
+        studioEmbed,
+      };
       code = await transformToESM(
         source,
         sourceFile, // Pass actual source file path (with .mdx extension)

@@ -54,6 +54,7 @@ export function generateHydrationData(
     // hydration mismatches from compilation differences between SSR and client
     dev: options.mode === "development",
     headings: options.headings,
+    studioEmbed: options.studioEmbed,
   };
 
   return JSON.stringify(data, null, 2);

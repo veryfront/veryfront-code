@@ -50,9 +50,10 @@ async function initializeCacheDir(context: ESMLoaderContext): Promise<string> {
     return context.esmCacheDir;
   }
 
-  // Use persistent cache directory that survives server restarts
-  const persistentCacheDir = getMdxEsmCacheDir();
   const localFs = getLocalFs();
+  const baseCacheDir = getMdxEsmCacheDir();
+  const projectKey = context.projectId ? encodeURIComponent(context.projectId) : "default";
+  const persistentCacheDir = join(baseCacheDir, projectKey);
 
   try {
     await localFs.mkdir(persistentCacheDir, { recursive: true });
@@ -61,7 +62,7 @@ async function initializeCacheDir(context: ESMLoaderContext): Promise<string> {
     return persistentCacheDir;
   } catch {
     // Fallback to temp dir if persistent cache fails
-    const tempDir = await localFs.makeTempDir({ prefix: "veryfront-mdx-esm-" });
+    const tempDir = await localFs.makeTempDir({ prefix: `veryfront-mdx-esm-${projectKey}-` });
     context.esmCacheDir = tempDir;
     return tempDir;
   }
@@ -135,7 +136,7 @@ async function processVfModuleImports(
     context.esmCacheDir!,
     adapter,
     projectDir,
-    "default",
+    context.projectId ?? "default",
   );
 
   const fetchStart = performance.now();
@@ -403,8 +404,9 @@ export async function loadModuleESM(
 
     // Step 6: Check cache and load module
     const codeHash = hashString(rewritten);
-    const namespace = getCacheNamespace() || "default";
-    const compositeKey = `${namespace}:${codeHash}`;
+    const namespace = context.projectId || getCacheNamespace() || "default";
+    const namespaceKey = encodeURIComponent(namespace);
+    const compositeKey = `${namespaceKey}:${codeHash}`;
 
     const cached = context.moduleCache.get(compositeKey);
     if (cached) return cached as MDXModule;
@@ -422,7 +424,7 @@ export async function loadModuleESM(
     }
 
     // Write module to disk and import
-    const nsDir = join(esmCacheDir, namespace);
+    const nsDir = join(esmCacheDir, namespaceKey);
     const localFs = getLocalFs();
 
     try {

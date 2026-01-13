@@ -81,6 +81,7 @@ export class VeryfrontRenderer {
 
     this.layoutOrchestrator = new LayoutOrchestrator({
       projectDir: this.configManager.getProjectDir(),
+      projectId: this.projectId,
       adapter: this.configManager.getAdapter(),
       config: this.configManager.getConfig(),
       mode: this.configManager.getMode(),

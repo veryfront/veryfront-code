@@ -16,6 +16,11 @@ export const getSpaRendererScript = () => `
 
       log('Initial page data:', initialData);
 
+      // Set studioEmbed flag for module loading (affects query params)
+      if (initialData.studioEmbed && window.__veryfrontSetStudioEmbed) {
+        window.__veryfrontSetStudioEmbed(true);
+      }
+
       try {
         // Preload the initial page component
         const pageComponent = await loadComponent(initialData.pagePath);

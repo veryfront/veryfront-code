@@ -1,7 +1,6 @@
 import { wrapError } from "@veryfront/errors/index.ts";
 import type { MdxBundle } from "@veryfront/types";
 import type { MDXCacheAdapter } from "@veryfront/transforms/mdx/index.ts";
-import { injectNodePositions } from "../../build/transforms/plugins/babel-node-positions.ts";
 
 export interface MDXCompilerConfig {
   projectDir: string;
@@ -54,18 +53,17 @@ export class MDXCompiler {
     const { compileMDXRuntime } = await import("@veryfront/transforms/mdx/compiler/index.ts");
 
     try {
-      // Inject node positions for Studio Navigator (edit-in-place support)
-      // Only enabled when studioEmbed is true (page embedded in Studio iframe)
-      const contentWithPositions = filePath && this.config.studioEmbed
-        ? injectNodePositions(content, { filePath })
-        : content;
-
+      // Node positions for Studio Navigator are injected via rehype plugin
+      // inside compileMDXRuntime when studioEmbed is true
       const bundle = await compileMDXRuntime(
         this.config.mode,
         this.config.projectDir,
-        contentWithPositions,
+        content,
         frontmatter,
         filePath,
+        "server", // SSR target
+        undefined, // baseUrl
+        { studioEmbed: this.config.studioEmbed },
       );
 
       await this.config.mdxCacheAdapter.setCachedBundle(content, bundle as MdxBundle, filePath);

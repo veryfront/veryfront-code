@@ -5,7 +5,7 @@ import { extractFrontmatter } from "./frontmatter-extractor.ts";
 import { rewriteBodyImports, rewriteCompiledImports } from "./import-rewriter.ts";
 import type { CompilationMode, CompilationTarget, MdxRuntimeBundle } from "./types.ts";
 import { createError, toError } from "@veryfront/errors/veryfront-error.ts";
-import { rehypeNodePositions as _rehypeNodePositions } from "../../plugins/rehype-node-positions.ts";
+import { rehypeNodePositions } from "../../plugins/rehype-node-positions.ts";
 
 type PluggableList = Pluggable[];
 
@@ -17,6 +17,10 @@ export async function compileMDXRuntime(
   filePath?: string,
   target: CompilationTarget = "server",
   baseUrl?: string,
+  options?: {
+    /** Enable node position injection for Studio Navigator */
+    studioEmbed?: boolean;
+  },
 ): Promise<MdxRuntimeBundle> {
   try {
     const { compile } = await import("@mdx-js/mdx");
@@ -32,16 +36,11 @@ export async function compileMDXRuntime(
       body = rewriteBodyImports(body, { filePath, target, baseUrl, projectDir });
     }
 
-    // DISABLED: Rehype plugin to inject node position data for Studio Navigator
-    // This was adding data-node-line, data-node-column, etc. to MDX elements.
-    // CRITICAL: Disabled to prevent hydration mismatch.
-    // Browser modules (via module server) no longer inject positions, so SSR
-    // must not inject them either for hydration to succeed.
-    // TODO(#studio-navigator): Re-enable with proper SSR/browser synchronization when Studio Navigator
-    // is implemented with edit-in-place support.
     const allRehypePlugins: PluggableList = [
       ...rehypePlugins,
-      // [rehypeNodePositions, { filePath }],
+      ...(options?.studioEmbed && filePath
+        ? [[rehypeNodePositions, { filePath }] as Pluggable]
+        : []),
     ];
 
     // Always use production JSX mode for SSR stability.

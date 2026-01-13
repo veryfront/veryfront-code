@@ -31,6 +31,7 @@ export const parsePlugin: TransformPlugin = {
       ctx.filePath,
       mdxTarget,
       mdxBaseUrl,
+      { studioEmbed: ctx.studioEmbed },
     );
 
     // Store frontmatter in metadata for later stages

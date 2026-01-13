@@ -19,7 +19,7 @@ export const getLoaderScript = () => `
     }
     window.__veryfrontClearComponentCache = clearComponentCache;
 
-    function pathToModuleUrl(path) {
+    function pathToModuleUrl(path, studioEmbed) {
       const pattern = /(pages|components|app|lib|layouts|shared|features)\\/(.+)\\.(tsx|ts|jsx|mdx)$/;
 
       // Try absolute path format (legacy): /project/dir/pages/foo.tsx
@@ -30,18 +30,31 @@ export const getLoaderScript = () => `
         match = path.match(new RegExp('^' + pattern.source));
       }
 
+      let url;
       if (!match) {
         // Direct path fallback - replace extension or add .js if no known extension
         const hasKnownExt = /\\.(tsx|ts|jsx|mdx|js|mjs)$/.test(path);
         if (hasKnownExt) {
-          return MODULE_SERVER_URL + '/' + path.replace(/\\.(tsx|ts|jsx|mdx)$/, '.js');
+          url = MODULE_SERVER_URL + '/' + path.replace(/\\.(tsx|ts|jsx|mdx)$/, '.js');
+        } else {
+          // No extension - add .js (e.g., _snippets/abc123 -> _snippets/abc123.js)
+          url = MODULE_SERVER_URL + '/' + path + '.js';
         }
-        // No extension - add .js (e.g., _snippets/abc123 -> _snippets/abc123.js)
-        return MODULE_SERVER_URL + '/' + path + '.js';
+      } else {
+        url = MODULE_SERVER_URL + '/' + match[1] + '/' + match[2] + '.js';
       }
 
-      return MODULE_SERVER_URL + '/' + match[1] + '/' + match[2] + '.js';
+      if (studioEmbed) {
+        url += (url.includes('?') ? '&' : '?') + 'studio_embed=true';
+      }
+
+      return url;
     }
+
+    // Global studioEmbed state set by renderer after parsing hydration data
+    let __studioEmbed = false;
+    function setStudioEmbed(value) { __studioEmbed = value; }
+    window.__veryfrontSetStudioEmbed = setStudioEmbed;
 
     async function loadComponent(path) {
       if (!path) return null;
@@ -59,7 +72,7 @@ export const getLoaderScript = () => `
 
       const loadPromise = (async () => {
         try {
-          const moduleUrl = pathToModuleUrl(path);
+          const moduleUrl = pathToModuleUrl(path, __studioEmbed);
           const start = DEBUG ? performance.now() : 0;
           log('Loading component:', moduleUrl);
           const module = await import(moduleUrl);
