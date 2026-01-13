@@ -7,7 +7,7 @@
  * @module cli/commands/pull
  */
 
-import { dirname, join } from "@veryfront/platform/compat/path/index.ts";
+import { dirname, join, normalize, resolve } from "@veryfront/platform/compat/path/index.ts";
 import { cliLogger } from "@veryfront/utils";
 import { cwd } from "@veryfront/platform/compat/process.ts";
 import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
@@ -98,6 +98,40 @@ interface ListFilesResponse {
 interface WriteOp {
   path: string;
   relativePath: string;
+}
+
+/**
+ * Validate and sanitize file path to prevent path traversal attacks.
+ * Ensures the resolved path is within the project directory.
+ *
+ * @param filePath - The file path from API to validate
+ * @param projectDir - The project directory base path
+ * @returns Sanitized absolute path
+ * @throws Error if path attempts to escape project directory
+ */
+function validateFilePath(filePath: string, projectDir: string): string {
+  // Normalize the file path to remove any ".." or "." segments
+  const normalizedPath = normalize(filePath);
+
+  // Check for absolute paths or paths starting with ".."
+  if (normalizedPath.startsWith("/") || normalizedPath.startsWith("..")) {
+    throw new Error(
+      `Invalid file path: "${filePath}" - paths must be relative and cannot escape project directory`,
+    );
+  }
+
+  // Resolve the full path
+  const fullPath = resolve(projectDir, normalizedPath);
+
+  // Ensure the resolved path is still within projectDir
+  const resolvedProjectDir = resolve(projectDir);
+  if (!fullPath.startsWith(resolvedProjectDir + "/") && fullPath !== resolvedProjectDir) {
+    throw new Error(
+      `Invalid file path: "${filePath}" - resolved path escapes project directory`,
+    );
+  }
+
+  return fullPath;
 }
 
 /**
@@ -311,11 +345,18 @@ async function pullSingleProject(
     return { written: 0, skipped: 0 };
   }
 
-  // Convert to write operations using path from API directly
-  const writeOps: WriteOp[] = files.map((file) => ({
-    path: join(projectDir, file.path),
-    relativePath: file.path,
-  }));
+  // Convert to write operations using validated paths to prevent path traversal
+  const writeOps: WriteOp[] = files.map((file) => {
+    try {
+      return {
+        path: validateFilePath(file.path, projectDir),
+        relativePath: file.path,
+      };
+    } catch (error) {
+      cliLogger.warn(`Skipping invalid file path: ${file.path}`, error);
+      return null;
+    }
+  }).filter((op): op is WriteOp => op !== null);
 
   cliLogger.info(
     `\nFound ${files.length} files to ${dryRun ? "pull" : "write"} from ${projectSlug}.`,
