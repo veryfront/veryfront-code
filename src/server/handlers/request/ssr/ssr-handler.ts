@@ -53,7 +53,7 @@ export function isProductionMode(ctx: HandlerContext, url?: URL): boolean {
   // Studio embed: ALWAYS use preview/draft mode for Studio previews
   // This allows custom domains to show draft content in Studio's iframe
   const studioEmbed = url?.searchParams.get("studio_embed");
-  _logger.debug("[isProductionMode] Checking production mode", {
+  _logger.info("[isProductionMode] Checking production mode", {
     hasUrl: !!url,
     fullUrl: url?.toString(),
     studioEmbed,
