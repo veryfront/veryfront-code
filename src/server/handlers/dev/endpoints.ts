@@ -9,12 +9,36 @@ import { HTTP_OK, PRIORITY_HIGH_DEV } from "@veryfront/core/constants/index.ts";
 
 /**
  * Shared HMR JS update logic used by both local dev and preview HMR scripts.
- * Sets refresh timestamp, clears caches, re-renders, then cleans up.
+ *
+ * LIMITATION: ES modules cache by full URL including query string.
+ * When a component like HeroSection.tsx changes:
+ * 1. Page is imported with ?t=timestamp (fresh)
+ * 2. BUT page's internal imports (import HeroSection from '...') don't have timestamp
+ * 3. Browser returns cached HeroSection = STALE!
+ *
+ * For pages/layouts (directly imported), smart HMR works.
+ * For components (nested imports), we must do full reload.
+ *
+ * TODO: Implement Vite-style import rewriting to add timestamps to ALL imports.
  */
 function getUpdateJSFunction(logPrefix: string): string {
   return `
   async function updateJS(path) {
     console.log('${logPrefix} Updating JS module:', path);
+
+    // Check if this is a page/layout (can use smart HMR) or component (needs reload)
+    const isPage = path.startsWith('pages/') || path.includes('/pages/');
+    const isLayout = path.startsWith('layouts/') || path.includes('/layouts/') || path.includes('layout.');
+    const isApp = path.includes('app.') || path.includes('_app.');
+
+    if (!isPage && !isLayout && !isApp) {
+      // Component change - nested imports won't get cache-busted
+      // Must do full reload to get fresh content
+      console.log('${logPrefix} Component change detected, doing full reload:', path);
+      notifyStudioAndReload();
+      return;
+    }
+
     try {
       const timestamp = Date.now();
 
