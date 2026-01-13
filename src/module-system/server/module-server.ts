@@ -13,6 +13,7 @@ import { getApiBaseUrlEnv } from "@veryfront/core/config/env.ts";
 import { injectNodePositions } from "@veryfront/transforms/plugins/babel-node-positions.ts";
 import { parseProjectDomain } from "@veryfront/server/utils/domain-parser.ts";
 import { applySSRImportRewrites } from "./ssr-import-rewriter.ts";
+import { addHMRTimestamps } from "@veryfront/transforms/esm/import-rewriter.ts";
 // Note: React imports are kept as bare specifiers for SSR, resolved via deno.json to esm.sh
 
 const DEV_MODULE_PREFIX = /^\/(?:_vf_modules|_veryfront\/modules)\//;
@@ -360,6 +361,21 @@ export async function serveModule(
         code = applySSRImportRewrites(code, {
           projectSlug,
           branch,
+        });
+      }
+
+      // Add HMR timestamps to all local imports for cache busting
+      // This is crucial for HMR to work - without it, nested imports
+      // would return cached versions even after file changes
+      const hmrTimestamp = url.searchParams.get("t");
+      if (hmrTimestamp && code) {
+        const hmrStart = performance.now();
+        code = await addHMRTimestamps(code, hmrTimestamp);
+        timings.hmrTimestamps = performance.now() - hmrStart;
+        logger.debug("[ModuleServer] Added HMR timestamps to imports", {
+          path: modulePath,
+          timestamp: hmrTimestamp,
+          durationMs: timings.hmrTimestamps?.toFixed(1),
         });
       }
     }
