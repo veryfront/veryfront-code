@@ -324,10 +324,10 @@ export async function serveModule(
       const isSSR = hasSSRParam || isDenoRequest;
 
       // Inject node positions for Studio Navigator (edit-in-place support)
-      // This adds data-node-line, data-node-column, etc. to JSX elements
-      // IMPORTANT: Must be enabled in both SSR and module-server for hydration to match
+      // Only enabled when studio_embed query param is true (page embedded in Studio iframe)
+      const studioEmbed = url.searchParams.get("studio_embed") === "true";
       const isJsxFile = /\.(tsx|jsx)$/i.test(sourceFile);
-      if (!isFrameworkFile && isJsxFile) {
+      if (studioEmbed && !isFrameworkFile && isJsxFile) {
         const injectStart = performance.now();
         source = injectNodePositions(source, { filePath: sourceFile });
         timings.injectPositions = performance.now() - injectStart;

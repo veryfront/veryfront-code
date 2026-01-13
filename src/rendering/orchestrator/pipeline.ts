@@ -29,7 +29,7 @@ import type { SSROrchestrator } from "./ssr-orchestrator.ts";
 import type { PageDataResponse, RenderOptions, RenderResult } from "./types.ts";
 import { DataFetcher } from "@veryfront/data/index.ts";
 import type { DataContext } from "@veryfront/data/types.ts";
-import { clearSSRModuleCache } from "@veryfront/modules/react-loader/index.ts";
+import { clearSSRModuleCacheForProject } from "@veryfront/modules/react-loader/index.ts";
 import { setupSSRGlobals } from "../ssr-globals.ts";
 
 // Import extracted modules
@@ -63,6 +63,7 @@ export class RenderPipeline {
     this.dataFetcher = new DataFetcher(config.adapter);
     this.moduleLoaderConfig = {
       projectDir: config.projectDir,
+      projectId: config.projectDir,
       adapter: config.adapter,
       mode: config.mode,
       moduleCache: createModuleCache(),
@@ -79,9 +80,12 @@ export class RenderPipeline {
     // when third-party libraries check for browser features during SSR
     setupSSRGlobals();
 
+    const projectId = options?.projectId ?? this.config.projectDir;
+    this.moduleLoaderConfig.projectId = projectId;
+
     // In development mode, clear SSR module cache to pick up file changes
     if (this.config.mode === "development") {
-      clearSSRModuleCache();
+      clearSSRModuleCacheForProject(projectId);
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -366,9 +370,12 @@ export class RenderPipeline {
     // Set up browser globals for any SSR-related checks
     setupSSRGlobals();
 
+    const projectId = options?.projectId ?? this.config.projectDir;
+    this.moduleLoaderConfig.projectId = projectId;
+
     // In development mode, clear SSR module cache
     if (this.config.mode === "development") {
-      clearSSRModuleCache();
+      clearSSRModuleCacheForProject(projectId);
     }
 
     // 1. Resolve page info

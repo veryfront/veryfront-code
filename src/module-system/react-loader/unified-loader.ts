@@ -3,7 +3,7 @@ import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import { transformToESM } from "@veryfront/transforms/esm/index.ts";
 import type { TransformOptions } from "@veryfront/transforms/esm/types.ts";
 import { rendererLogger as logger } from "@veryfront/utils";
-import { getGlobalTmpDir } from "./temp-directory.ts";
+import { getProjectTmpDir } from "./temp-directory.ts";
 import type { ComponentMap, ComponentSource, LoadComponentOptions } from "./types.ts";
 
 export async function loadComponentsUnified(
@@ -24,7 +24,7 @@ export async function loadComponentsUnified(
     transformOpts,
   );
 
-  const baseTmp = await getGlobalTmpDir();
+  const baseTmp = await getProjectTmpDir(projectId);
   const uniqueTmp = `unified-${Date.now()}-${Math.random().toString(16).slice(2)}`;
   const tmpDir = join(baseTmp, uniqueTmp);
   await adapter.fs.mkdir(tmpDir, { recursive: true });

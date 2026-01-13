@@ -7,6 +7,8 @@ export interface MDXCompilerConfig {
   projectDir: string;
   mode: "development" | "production";
   mdxCacheAdapter: MDXCacheAdapter;
+  /** Enable node position injection for Studio Navigator */
+  studioEmbed?: boolean;
 }
 
 export class MDXCompiler {
@@ -53,9 +55,8 @@ export class MDXCompiler {
 
     try {
       // Inject node positions for Studio Navigator (edit-in-place support)
-      // This adds data-node-line, data-node-column, etc. to JSX elements
-      // IMPORTANT: Must be enabled in both SSR and module-server for hydration to match
-      const contentWithPositions = filePath
+      // Only enabled when studioEmbed is true (page embedded in Studio iframe)
+      const contentWithPositions = filePath && this.config.studioEmbed
         ? injectNodePositions(content, { filePath })
         : content;
 

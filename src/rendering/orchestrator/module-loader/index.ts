@@ -19,6 +19,7 @@ export { fetchEsmModule, rewriteEsmPaths } from "./esm-rewriter.ts";
 
 export interface ModuleLoaderConfig {
   projectDir: string;
+  projectId?: string;
   adapter: RuntimeAdapter;
   mode: "development" | "production";
   moduleCache: Map<string, string>;
@@ -42,7 +43,7 @@ export async function transformModuleWithDeps(
   config: ModuleLoaderConfig,
   useLocalAdapter = false,
 ): Promise<string> {
-  const { moduleCache, esmCache, projectDir, adapter, mode } = config;
+  const { moduleCache, esmCache, projectDir, projectId, adapter, mode } = config;
 
   // Check if already transformed
   if (moduleCache.has(filePath)) {
@@ -60,7 +61,7 @@ export async function transformModuleWithDeps(
     projectDir,
     adapter,
     {
-      projectId: projectDir,
+      projectId: projectId ?? projectDir,
       dev: mode === "development",
       ssr: true,
     },
@@ -139,8 +140,8 @@ export async function loadModule(
   filePath: string,
   config: ModuleLoaderConfig,
 ): Promise<any> {
-  const { getGlobalTmpDir } = await import("@veryfront/modules/react-loader/index.ts");
-  const tmpDir = await getGlobalTmpDir();
+  const { getProjectTmpDir } = await import("@veryfront/modules/react-loader/index.ts");
+  const tmpDir = await getProjectTmpDir(config.projectId ?? config.projectDir);
   const localAdapter = await getLocalAdapter();
 
   // Transform the module and all its @/ dependencies
