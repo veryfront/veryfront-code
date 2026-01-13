@@ -4,8 +4,21 @@ import { cwd } from "@veryfront/platform/compat/process.ts";
 let globalTmpDir: string | null = null;
 const projectTmpDirs = new Map<string, string>();
 
+/**
+ * Create a safe directory name from projectId.
+ * Uses a hash because Deno decodes %2F to / in file:// URLs,
+ * making percent-encoded paths unusable for dynamic imports.
+ */
 function normalizeProjectKey(projectId: string): string {
-  return encodeURIComponent(projectId || "default");
+  if (!projectId) return "default";
+  // Simple hash to create a safe directory name
+  let hash = 0;
+  for (let i = 0; i < projectId.length; i++) {
+    const char = projectId.charCodeAt(i);
+    hash = ((hash << 5) - hash) + char;
+    hash = hash & hash;
+  }
+  return `proj-${Math.abs(hash).toString(16)}`;
 }
 
 export async function getGlobalTmpDir(): Promise<string> {
