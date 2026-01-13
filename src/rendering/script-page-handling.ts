@@ -214,8 +214,15 @@ async function resolveAppComponentPath(
   projectDir: string,
   adapter: RuntimeAdapter,
 ): Promise<string | undefined> {
-  const candidate = join(projectDir, "components/app.tsx");
-  return (await adapter.fs.exists(candidate)) ? candidate : undefined;
+  // Check for app component in order of preference
+  const extensions = [".tsx", ".jsx", ".ts", ".js", ".mdx", ".md"];
+  for (const ext of extensions) {
+    const candidate = join(projectDir, `components/app${ext}`);
+    if (await adapter.fs.exists(candidate)) {
+      return candidate;
+    }
+  }
+  return undefined;
 }
 
 /**
