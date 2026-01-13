@@ -529,8 +529,13 @@ document.head.appendChild(errorScript);
       return;
     }
 
-    // Handle JS/TSX/MDX updates
-    await updateJS(update.path);
+    // For preview mode, always do a full page reload
+    // This is more reliable than smart HMR because:
+    // 1. Server cache is already cleared (Redis + memory)
+    // 2. Full reload gets fresh SSR content
+    // 3. Browser ES module cache is bypassed
+    console.log('[Preview HMR] Triggering full page reload for:', update.path);
+    notifyStudioAndReload();
   }
 
   function updateCSS(path) {
