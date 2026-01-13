@@ -1,6 +1,13 @@
 import type { FSAdapter, FSAdapterConfig } from "./veryfront/types.ts";
 import { createError, toError } from "../../../core/errors/veryfront-error.ts";
 import { ReloadNotifier } from "../../../server/reload-notifier.ts";
+import { clearSSRModuleCache } from "../../../module-system/react-loader/ssr-module-loader/cache/index.ts";
+import { clearRouterDetectionCache } from "../../../rendering/router-detection.ts";
+import {
+  clearModulePathCache,
+  invalidateModulePaths,
+} from "../../../build/transforms/mdx/esm-module-loader/cache/index.ts";
+import { clearSnippetCache } from "../../../rendering/snippet-renderer.ts";
 
 export async function createFSAdapter(config: FSAdapterConfig): Promise<FSAdapter> {
   const type = config.type || "local";
@@ -20,13 +27,19 @@ export async function createFSAdapter(config: FSAdapterConfig): Promise<FSAdapte
   }
 
   if (type === "veryfront-api") {
-    // Inject invalidationCallbacks to wire up HMR notifications
-    // When FSAdapter receives poke from API, it calls triggerReload
-    // which notifies HMRHandler to broadcast to connected browsers
+    // Inject invalidationCallbacks to wire up cache clearing and HMR notifications
+    // When FSAdapter receives poke from API:
+    // 1. Clear all server-side caches (SSR modules, router detection, etc.)
+    // 2. Trigger browser reload via ReloadNotifier → HMRHandler → WebSocket
     const configWithCallbacks: FSAdapterConfig = {
       ...config,
       invalidationCallbacks: {
         ...config.invalidationCallbacks,
+        clearSSRModuleCache,
+        clearRouterDetectionCache,
+        clearModulePathCache,
+        invalidateModulePaths,
+        clearSnippetCache,
         triggerReload: (changedPaths) => ReloadNotifier.triggerReload(changedPaths),
       },
     };
