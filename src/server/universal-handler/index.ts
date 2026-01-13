@@ -331,7 +331,11 @@ export function createVeryfrontHandler(
               projectSlug = lookupResult.project_slug;
               projectId = lookupResult.project_id;
               releaseId = lookupResult.release_id ?? undefined;
-              proxyEnv = getEnvironmentType(lookupResult);
+              // Only use domain-based environment detection if proxy didn't provide one
+              // This respects preview proxy's x-environment header for draft content access
+              if (!proxyEnv) {
+                proxyEnv = getEnvironmentType(lookupResult);
+              }
               logger.info("[universal] Domain lookup successful", {
                 domain: host,
                 projectSlug: lookupResult.project_slug,
