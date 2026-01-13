@@ -19,6 +19,10 @@ export const getLoaderScript = () => `
     }
     window.__veryfrontClearComponentCache = clearComponentCache;
 
+    function appendQueryParam(url, key, value) {
+      return url + (url.includes('?') ? '&' : '?') + key + '=' + value;
+    }
+
     function pathToModuleUrl(path, studioEmbed) {
       const pattern = /(pages|components|app|lib|layouts|shared|features)\\/(.+)\\.(tsx|ts|jsx|mdx)$/;
 
@@ -45,7 +49,11 @@ export const getLoaderScript = () => `
       }
 
       if (studioEmbed) {
-        url += (url.includes('?') ? '&' : '?') + 'studio_embed=true';
+        url = appendQueryParam(url, 'studio_embed', 'true');
+      }
+
+      if (__hmrRefreshTimestamp) {
+        url = appendQueryParam(url, 't', __hmrRefreshTimestamp);
       }
 
       return url;
@@ -55,6 +63,12 @@ export const getLoaderScript = () => `
     let __studioEmbed = false;
     function setStudioEmbed(value) { __studioEmbed = value; }
     window.__veryfrontSetStudioEmbed = setStudioEmbed;
+
+    // HMR refresh timestamp - when set, all module URLs include this timestamp
+    // to bypass the browser's ES module cache and load fresh versions
+    let __hmrRefreshTimestamp = null;
+    function setHMRRefreshTimestamp(timestamp) { __hmrRefreshTimestamp = timestamp; }
+    window.__veryfrontSetHMRRefreshTimestamp = setHMRRefreshTimestamp;
 
     async function loadComponent(path) {
       if (!path) return null;

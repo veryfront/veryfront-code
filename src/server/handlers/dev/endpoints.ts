@@ -7,6 +7,55 @@ import { BaseHandler } from "../response/base.ts";
 import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } from "../types.ts";
 import { HTTP_OK, PRIORITY_HIGH_DEV } from "@veryfront/core/constants/index.ts";
 
+/**
+ * Shared HMR JS update logic used by both local dev and preview HMR scripts.
+ * Sets refresh timestamp, clears caches, re-renders, then cleans up.
+ */
+function getUpdateJSFunction(logPrefix: string): string {
+  return `
+  async function updateJS(path) {
+    console.log('${logPrefix} Updating JS module:', path);
+    try {
+      const timestamp = Date.now();
+
+      // Set HMR refresh timestamp to bypass browser ES module cache
+      if (window.__veryfrontSetHMRRefreshTimestamp) {
+        window.__veryfrontSetHMRRefreshTimestamp(timestamp);
+        console.log('${logPrefix} Refresh timestamp set:', timestamp);
+      }
+
+      // Clear component cache for fresh components
+      if (window.__veryfrontClearComponentCache) {
+        window.__veryfrontClearComponentCache();
+        console.log('${logPrefix} Component cache cleared');
+      }
+
+      // Re-render the page with fresh modules
+      if (window.__veryfrontRenderPage) {
+        console.log('${logPrefix} Re-rendering page with fresh modules');
+        await window.__veryfrontRenderPage(window.location.pathname);
+        console.log('${logPrefix} Page re-render complete');
+        notifyStudio();
+      } else {
+        console.log('${logPrefix} No __veryfrontRenderPage, falling back to reload');
+        notifyStudioAndReload();
+      }
+
+      // Clear timestamp after render for normal SPA caching
+      if (window.__veryfrontSetHMRRefreshTimestamp) {
+        window.__veryfrontSetHMRRefreshTimestamp(null);
+        console.log('${logPrefix} Refresh timestamp cleared');
+      }
+    } catch (error) {
+      console.error('${logPrefix} Failed to update JS module:', error);
+      if (window.__veryfrontSetHMRRefreshTimestamp) {
+        window.__veryfrontSetHMRRefreshTimestamp(null);
+      }
+      notifyStudioAndReload();
+    }
+  }`;
+}
+
 export class DevEndpointsHandler extends BaseHandler {
   metadata: HandlerMetadata = {
     name: "DevEndpointsHandler",
@@ -178,42 +227,7 @@ function updateCSS(path) {
   });
   notifyStudio();
 }
-
-function updateJS(path) {
-  console.log('[HMR] Updating JS module:', path);
-  try {
-    const cacheBusted = path + (path.includes('?') ? '&' : '?') + 't=' + Date.now();
-    const script = document.createElement('script');
-    script.type = 'module';
-    script.crossOrigin = 'anonymous';
-    script.onload = () => {
-      // Clear component cache to ensure fresh components are loaded
-      if (window.__veryfrontClearComponentCache) {
-        window.__veryfrontClearComponentCache();
-        console.log('[HMR] Component cache cleared');
-      }
-      // Re-render the page with fresh components
-      if (window.__veryfrontRenderPage) {
-        console.log('[HMR] Re-rendering page');
-        window.__veryfrontRenderPage(window.location.pathname);
-        notifyStudio();
-      } else {
-        // Fall back to full reload if re-render function not available
-        console.log('[HMR] No __veryfrontRenderPage, falling back to reload');
-        notifyStudioAndReload();
-      }
-    };
-    script.onerror = () => {
-      console.log('[HMR] Module load failed, falling back to reload');
-      notifyStudioAndReload();
-    };
-    script.src = cacheBusted;
-    document.head.appendChild(script);
-  } catch (error) {
-    console.error('[HMR] Failed to update JS module:', error);
-    notifyStudioAndReload();
-  }
-}
+${getUpdateJSFunction("[HMR]")}
 
 function notifyStudio() {
   if (window.parent !== window) {
@@ -535,52 +549,7 @@ document.head.appendChild(errorScript);
       }
     }
   }
-
-  function updateJS(path) {
-    console.log('[Preview HMR] Updating JS module:', path);
-    try {
-      // Convert source path to module URL:
-      // "components/sections/HeroSection.tsx" -> "/_vf_modules/components/sections/HeroSection.js"
-      // Handles: .ts, .tsx, .js, .jsx, .md, .mdx
-      const modulePath = '/_vf_modules/' + path.replace(/\\.(tsx?|jsx?|mdx?)$/i, '.js');
-      const cacheBusted = modulePath + '?t=' + Date.now();
-
-      const script = document.createElement('script');
-      script.type = 'module';
-      script.crossOrigin = 'anonymous';
-
-      script.onload = () => {
-        console.log('[Preview HMR] Module loaded, applying update');
-        // Clear component cache to ensure fresh components are loaded
-        if (window.__veryfrontClearComponentCache) {
-          window.__veryfrontClearComponentCache();
-          console.log('[Preview HMR] Component cache cleared');
-        }
-
-        // Re-render the page with fresh components
-        if (window.__veryfrontRenderPage) {
-          console.log('[Preview HMR] Re-rendering page');
-          window.__veryfrontRenderPage(window.location.pathname);
-          notifyStudio();
-        } else {
-          // Fall back to full reload if re-render function not available
-          console.log('[Preview HMR] No __veryfrontRenderPage, falling back to reload');
-          notifyStudioAndReload();
-        }
-      };
-
-      script.onerror = () => {
-        console.log('[Preview HMR] Module load failed, falling back to reload');
-        notifyStudioAndReload();
-      };
-
-      script.src = cacheBusted;
-      document.head.appendChild(script);
-    } catch (error) {
-      console.error('[Preview HMR] Failed to update JS module:', error);
-      notifyStudioAndReload();
-    }
-  }
+${getUpdateJSFunction("[Preview HMR]")}
 
   function notifyStudio() {
     if (window.parent !== window) {
