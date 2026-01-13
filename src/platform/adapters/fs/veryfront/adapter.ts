@@ -445,6 +445,14 @@ export class VeryfrontFSAdapter implements FSAdapter {
     // Invalidate only the changed module paths (not all modules)
     this.invalidationCallbacks.invalidateModulePaths?.(changedPaths);
 
+    // Clear SSR module cache to ensure fresh modules are loaded
+    // This is critical for HMR - without this, browser refreshes but gets stale JS
+    logger.info("[VeryfrontFSAdapter] Clearing SSR module cache for HMR", {
+      changedPaths,
+      hasCallback: !!this.invalidationCallbacks.clearSSRModuleCache,
+    });
+    this.invalidationCallbacks.clearSSRModuleCache?.();
+
     // Clear file list cache and refetch (only for branch mode)
     if (this.contentContext?.sourceType === "branch") {
       this.cache.deleteByPrefix("files:branch:");
