@@ -275,6 +275,19 @@ export class RenderPipeline {
 
     const { pageElement, pageBundle } = pageBundleResult;
 
+    // Merge frontmatter from entity (API) and pageBundle (MDX compilation)
+    // This ensures SSR PageContext has full frontmatter including MDX-parsed fields
+    const mergedFrontmatter = {
+      ...pageInfo.entity.frontmatter,
+      ...(pageBundle as MdxBundle).frontmatter,
+    };
+    logger.info("[RenderPipeline] Merged frontmatter", {
+      entityKeys: Object.keys(pageInfo.entity.frontmatter || {}),
+      bundleKeys: Object.keys((pageBundle as MdxBundle).frontmatter || {}),
+      mergedKeys: Object.keys(mergedFrontmatter),
+      hasSummary: !!(mergedFrontmatter as any)?.summary,
+    });
+
     // ─────────────────────────────────────────────────────────────────────────
     // Stage 7: Layout Application
     // ─────────────────────────────────────────────────────────────────────────
@@ -289,6 +302,7 @@ export class RenderPipeline {
           providerResult.providerItems,
           layoutDataMap,
           options?.url,
+          mergedFrontmatter,
         ),
       "render-page",
     );

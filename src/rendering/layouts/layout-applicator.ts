@@ -30,6 +30,8 @@ export interface LayoutApplicationOptions {
   moduleServerUrl?: string;
   /** Request URL for SSR - provides domain for useRouter() */
   requestUrl?: URL;
+  /** Merged frontmatter from pageBundle and entity for PageContextProvider */
+  frontmatter?: Record<string, unknown>;
 }
 
 export class LayoutApplicator {
@@ -41,6 +43,7 @@ export class LayoutApplicator {
   private mode: "development" | "production";
   private moduleServerUrl?: string;
   private requestUrl?: URL;
+  private frontmatter?: Record<string, unknown>;
 
   constructor(options: LayoutApplicationOptions) {
     this.projectDir = options.projectDir;
@@ -51,6 +54,7 @@ export class LayoutApplicator {
     this.mode = options.mode;
     this.moduleServerUrl = options.moduleServerUrl;
     this.requestUrl = options.requestUrl;
+    this.frontmatter = options.frontmatter;
   }
 
   async applyLayouts(
@@ -93,13 +97,20 @@ export class LayoutApplicator {
     const React = await getProjectReact();
 
     // Build page context with frontmatter for usePageContext() hook
+    // Use merged frontmatter (from MDX compilation + entity) when available
     const pageContext = {
       slug: pageInfo.entity.slug || "",
       path: pageFilePath,
       params: {},
       query: {},
-      frontmatter: pageInfo.entity.frontmatter || {},
+      frontmatter: this.frontmatter || pageInfo.entity.frontmatter || {},
     };
+    logger.info("[LayoutApplicator] PageContext frontmatter", {
+      hasFrontmatter: !!this.frontmatter,
+      keys: this.frontmatter ? Object.keys(this.frontmatter) : [],
+      hasSummary: !!(this.frontmatter as any)?.summary,
+      entityKeys: Object.keys(pageInfo.entity.frontmatter || {}),
+    });
 
     // Wrap with PageContextProvider so layout components can access frontmatter via usePageContext()
     wrappedElement = React.createElement(
