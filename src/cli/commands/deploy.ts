@@ -79,8 +79,8 @@ interface Release {
  */
 interface Deployment {
   id: string;
-  release_id: string;
-  environment_id: string;
+  release: string;
+  environment: string;
 }
 
 /**

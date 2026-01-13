@@ -20,7 +20,6 @@ import { LAYOUT_EXTENSIONS } from "./types.ts";
 // This ensures SSR and client use the same module instance (same React context)
 import { RouterProvider } from "veryfront/router";
 import { PageContextProvider } from "veryfront/context";
-import type { Pluggable } from "unified";
 
 export interface LayoutApplicationOptions {
   projectDir: string;
@@ -266,7 +265,7 @@ export class LayoutApplicator {
       const appSource = await this.adapter.fs.readFile(appPath);
       const isMdx = appPath.endsWith(".mdx") || appPath.endsWith(".md");
 
-      let App: React.ComponentType<{ children: React.ReactNode }> | null = null;
+      let App: React.ComponentType<Record<string, unknown>> | null = null;
 
       if (isMdx) {
         // Handle MDX files - compile and load
@@ -276,7 +275,7 @@ export class LayoutApplicator {
         const { loadComponentFromSource } = await import(
           "@veryfront/modules/react-loader/index.ts"
         );
-        App = (await loadComponentFromSource(
+        App = await loadComponentFromSource(
           appSource,
           appPath,
           this.projectDir,
@@ -286,7 +285,7 @@ export class LayoutApplicator {
             dev: this.mode === "development",
             moduleServerUrl: this.config?.dev?.moduleServerUrl,
           },
-        )) as React.ComponentType<{ children: React.ReactNode }>;
+        );
       }
 
       if (App) {
@@ -304,7 +303,7 @@ export class LayoutApplicator {
   private async loadMdxAppComponent(
     source: string,
     appPath: string,
-  ): Promise<React.ComponentType<{ children: React.ReactNode }> | null> {
+  ): Promise<React.ComponentType<Record<string, unknown>> | null> {
     try {
       const { compile } = await import("@mdx-js/mdx");
       const { extract } = await import("std/front_matter/yaml.ts");
@@ -328,8 +327,8 @@ export class LayoutApplicator {
         jsxRuntime: "automatic",
         jsxImportSource: "react",
         development: this.mode === "development",
-        remarkPlugins: remarkPlugins as Pluggable[],
-        rehypePlugins: rehypePlugins as Pluggable[],
+        remarkPlugins,
+        rehypePlugins,
       });
 
       const jsCode = String(compiled);
@@ -339,7 +338,7 @@ export class LayoutApplicator {
         "@veryfront/modules/react-loader/index.ts"
       );
 
-      return (await loadComponentFromSource(
+      return await loadComponentFromSource(
         jsCode,
         appPath.replace(/\.mdx?$/, ".jsx"),
         this.projectDir,
@@ -349,7 +348,7 @@ export class LayoutApplicator {
           dev: this.mode === "development",
           moduleServerUrl: this.config?.dev?.moduleServerUrl,
         },
-      )) as React.ComponentType<{ children: React.ReactNode }>;
+      );
     } catch (error) {
       logger.error("[LayoutApplicator] Failed to compile MDX app component:", error);
       return null;

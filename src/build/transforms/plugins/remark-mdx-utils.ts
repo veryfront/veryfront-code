@@ -1,14 +1,7 @@
 import type { Code, Paragraph, Root } from "mdast";
 import type { Data, Node, Parent } from "unist";
+import type { VFile } from "npm:vfile@6";
 import { CONTINUE, SKIP, visit } from "unist-util-visit";
-
-interface FileData {
-  imports?: string[];
-}
-
-interface VFile {
-  data?: FileData;
-}
 
 interface MDXJsxElement extends Node {
   type: "mdxJsxTextElement" | "mdxJsxFlowElement";
@@ -266,22 +259,19 @@ export function remarkMdxImports() {
   return (tree: Root, file: VFile) => {
     const imports: string[] = [];
 
-    visit(tree as unknown as Root, "mdxjsEsm", (node: MDXjsEsm) => {
+    visit(tree, "mdxjsEsm", (node: MDXjsEsm) => {
       if (node.value?.includes("import")) {
         const importMatches = node.value.matchAll(
           /import\s+(?:(?:\{[^}]*\}|\*\s+as\s+\w+|\w+)\s+from\s+)?['"]([^'"]+)['"]/g,
         );
 
         for (const match of importMatches) {
-          const path = match[1] as string | undefined;
+          const path = match[1];
           if (typeof path === "string") imports.push(path);
         }
       }
     });
 
-    if (!file.data) {
-      file.data = {};
-    }
     file.data.imports = imports;
   };
 }

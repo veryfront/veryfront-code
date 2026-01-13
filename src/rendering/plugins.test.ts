@@ -1,4 +1,5 @@
 import { assert, assertEquals, assertExists } from "jsr:@std/assert@1";
+import { VFile } from "npm:vfile@6";
 import {
   getRehypePlugins,
   getRemarkPlugins,
@@ -90,17 +91,13 @@ Deno.test("remarkMdxHeadings extracts headings", () => {
     ],
   };
 
-  const file = {
-    data: {
-      /* empty */
-    } as any,
-  };
+  const file = new VFile();
   plugin(tree as any, file);
 
-  // Check headings were extracted
-  assertExists(file.data.headings);
-  assertEquals(Array.isArray(file.data.headings), true);
-  assertEquals(file.data.headings.length, 2);
+  // Check headings were extracted - use type guard to narrow unknown to array
+  const headings = file.data.headings;
+  assert(Array.isArray(headings));
+  assertEquals(headings.length, 2);
 });
 
 Deno.test("remarkCodeBlocks basic functionality", () => {
@@ -171,7 +168,7 @@ Deno.test("remarkAddNodeId adds ids and counts", () => {
       },
     ],
   };
-  const file: any = { data: {} };
+  const file = new VFile();
   runRemark(tree, file, [() => remarkAddNodeId({ prefix: "x" })]);
   assertEquals(file.data.nodeCount, 3); // root + paragraph + text
   const para: any = tree.children[0];
@@ -189,9 +186,11 @@ Deno.test("remarkMdxHeadings extracts and injects headings export", () => {
       },
     ],
   };
-  const file: any = { data: {} };
+  const file = new VFile();
   runRemark(tree, file, [remarkMdxHeadings]);
-  assertEquals(file.data.headings?.length, 1);
+  const headings = file.data.headings;
+  assert(Array.isArray(headings));
+  assertEquals(headings.length, 1);
   assertEquals(tree.children[0].type, "mdxjsEsm");
 });
 

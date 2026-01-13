@@ -240,8 +240,8 @@ describe("createDeployment", () => {
         capturedBody = body;
         return Promise.resolve({
           id: "deploy-123",
-          release_id: "rel-456",
-          environment_id: "env-789",
+          release: "rel-456",
+          environment: "env-789",
         });
       },
     });

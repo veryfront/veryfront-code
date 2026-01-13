@@ -1,4 +1,5 @@
 import { assertEquals, assertExists } from "jsr:@std/assert@1";
+import { VFile } from "npm:vfile@6";
 import {
   remarkCodeBlocks,
   remarkMdxImports,
@@ -224,7 +225,7 @@ Deno.test("remark-mdx-utils - remarkMdxImports extracts import paths", () => {
     value: 'import Button from "./components/Button"',
   };
   const tree = createTree(importNode);
-  const file = { data: {} };
+  const file = new VFile();
 
   const plugin = remarkMdxImports();
   plugin(tree, file);
@@ -244,7 +245,7 @@ Deno.test("remark-mdx-utils - remarkMdxImports handles multiple imports", () => 
     value: 'import Card from "./Card"',
   };
   const tree = createTree(importNode1, importNode2);
-  const file = { data: {} };
+  const file = new VFile();
 
   const plugin = remarkMdxImports();
   plugin(tree, file);
@@ -260,7 +261,7 @@ Deno.test("remark-mdx-utils - remarkMdxImports handles named imports", () => {
     value: 'import { Button, Card } from "./components"',
   };
   const tree = createTree(importNode);
-  const file = { data: {} };
+  const file = new VFile();
 
   const plugin = remarkMdxImports();
   plugin(tree, file);
@@ -275,7 +276,7 @@ Deno.test("remark-mdx-utils - remarkMdxImports handles namespace imports", () =>
     value: 'import * as Components from "./components"',
   };
   const tree = createTree(importNode);
-  const file = { data: {} };
+  const file = new VFile();
 
   const plugin = remarkMdxImports();
   plugin(tree, file);
@@ -290,7 +291,7 @@ Deno.test("remark-mdx-utils - remarkMdxImports handles side-effect imports", () 
     value: 'import "./styles.css"',
   };
   const tree = createTree(importNode);
-  const file = { data: {} };
+  const file = new VFile();
 
   const plugin = remarkMdxImports();
   plugin(tree, file);
@@ -305,7 +306,7 @@ Deno.test("remark-mdx-utils - remarkMdxImports handles single quotes", () => {
     value: "import Button from './Button'",
   };
   const tree = createTree(importNode);
-  const file = { data: {} };
+  const file = new VFile();
 
   const plugin = remarkMdxImports();
   plugin(tree, file);
@@ -319,7 +320,7 @@ Deno.test("remark-mdx-utils - remarkMdxImports handles non-import mdxjsEsm nodes
     value: "export const x = 1",
   };
   const tree = createTree(exportNode);
-  const file = { data: {} };
+  const file = new VFile();
 
   const plugin = remarkMdxImports();
   plugin(tree, file);
@@ -332,7 +333,7 @@ Deno.test("remark-mdx-utils - remarkMdxImports handles empty tree", () => {
     type: "root",
     children: [],
   };
-  const file = { data: {} };
+  const file = new VFile();
 
   const plugin = remarkMdxImports();
   plugin(tree, file);
@@ -340,19 +341,19 @@ Deno.test("remark-mdx-utils - remarkMdxImports handles empty tree", () => {
   assertEquals((file.data as any).imports.length, 0);
 });
 
-Deno.test("remark-mdx-utils - remarkMdxImports initializes file data if missing", () => {
+Deno.test("remark-mdx-utils - remarkMdxImports works with fresh VFile", () => {
   const importNode = {
     type: "mdxjsEsm",
     value: 'import Button from "./Button"',
   };
   const tree = createTree(importNode);
-  const file = {} as any;
+  const file = new VFile();
 
   const plugin = remarkMdxImports();
-  plugin(tree as Root, file);
+  plugin(tree, file);
 
-  assertExists((file as any).data);
-  assertExists(((file as any).data as any).imports);
+  assertExists(file.data);
+  assertExists(file.data.imports);
 });
 
 Deno.test("remark-mdx-utils - remarkMdxImports handles multiline imports", () => {
@@ -364,7 +365,7 @@ Deno.test("remark-mdx-utils - remarkMdxImports handles multiline imports", () =>
 } from "./components"`,
   };
   const tree = createTree(importNode);
-  const file = { data: {} };
+  const file = new VFile();
 
   const plugin = remarkMdxImports();
   plugin(tree, file);

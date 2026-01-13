@@ -96,6 +96,9 @@ export async function initializeOTLP(): Promise<void> {
     const { OTLPTraceExporter } = await import("@opentelemetry/exporter-trace-otlp-http");
     const { Resource } = await import("@opentelemetry/resources");
     const { ATTR_SERVICE_NAME } = await import("@opentelemetry/semantic-conventions");
+    const { AsyncLocalStorageContextManager } = await import(
+      "@opentelemetry/context-async-hooks"
+    );
 
     // Create resource with service name
     const resource = new Resource({
@@ -114,8 +117,12 @@ export async function initializeOTLP(): Promise<void> {
     const provider = new BasicTracerProvider({ resource });
     provider.addSpanProcessor(new BatchSpanProcessor(exporter));
 
-    // Register as global tracer provider
-    provider.register();
+    // Register with AsyncLocalStorageContextManager to enable trace context propagation
+    // across async boundaries. Without this, context.active() returns root context
+    // and injectContext() fails to propagate trace IDs to outgoing requests.
+    const contextManager = new AsyncLocalStorageContextManager();
+    contextManager.enable();
+    provider.register({ contextManager });
     tracerProvider = provider;
 
     initialized = true;
