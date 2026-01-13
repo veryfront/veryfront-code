@@ -52,7 +52,17 @@ import {
 export function isProductionMode(ctx: HandlerContext, url?: URL): boolean {
   // Studio embed: ALWAYS use preview/draft mode for Studio previews
   // This allows custom domains to show draft content in Studio's iframe
-  if (url?.searchParams.get("studio_embed") === "true") {
+  const studioEmbed = url?.searchParams.get("studio_embed");
+  _logger.debug("[isProductionMode] Checking production mode", {
+    hasUrl: !!url,
+    fullUrl: url?.toString(),
+    studioEmbed,
+    isVeryfrontDomain: ctx.parsedDomain?.isVeryfrontDomain,
+    isDraft: ctx.parsedDomain?.isDraft,
+    proxyEnvironment: ctx.proxyEnvironment,
+  });
+  if (studioEmbed === "true") {
+    _logger.info("[isProductionMode] studio_embed=true detected, using preview mode");
     return false;
   }
   // Config override (PRODUCTION_MODE env var)

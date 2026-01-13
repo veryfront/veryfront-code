@@ -198,7 +198,7 @@ window.addEventListener('beforeunload', () => {
   ws.close();
 });
 
-function handleUpdate(update) {
+async function handleUpdate(update) {
   if (!update.path) {
     console.warn('[HMR] Update message missing path');
     return;
@@ -207,7 +207,7 @@ function handleUpdate(update) {
     updateCSS(update.path);
     return;
   }
-  updateJS(update.path);
+  await updateJS(update.path);
 }
 
 function updateCSS(path) {
@@ -514,7 +514,7 @@ document.head.appendChild(errorScript);
     };
   }
 
-  function handleUpdate(update) {
+  async function handleUpdate(update) {
     if (!update.path) {
       console.warn('[Preview HMR] Update message missing path');
       return;
@@ -530,7 +530,7 @@ document.head.appendChild(errorScript);
     }
 
     // Handle JS/TSX/MDX updates
-    updateJS(update.path);
+    await updateJS(update.path);
   }
 
   function updateCSS(path) {
