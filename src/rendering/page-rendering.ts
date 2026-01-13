@@ -7,8 +7,7 @@ import { mdxRenderer } from "@veryfront/transforms/mdx/index.ts";
 import { getProjectReact } from "@veryfront/react";
 import { compileMDXRuntime } from "@veryfront/transforms/mdx/compiler/index.ts";
 import { ensureError, getErrorMessage } from "../core/errors/veryfront-error.ts";
-// DISABLED: Position injection temporarily disabled to fix hydration mismatch
-// import { injectNodePositions } from "../build/transforms/plugins/babel-node-positions.ts";
+import { injectNodePositions } from "../build/transforms/plugins/babel-node-positions.ts";
 
 export interface MDXPageResult {
   pageElement: BundledReact.ReactElement;
@@ -48,14 +47,12 @@ export async function handleMDXPage(
       // Recompile MDX with browser target for client-side hydration
       // The original compilation uses server target with file:// URLs that browsers can't resolve
       //
-      // DISABLED: Position injection for Studio Navigator
-      // This was adding data-node-line, data-node-column, etc. to JSX elements.
-      // CRITICAL: Disabled to prevent hydration mismatch.
-      // Browser modules (via module server) no longer inject positions, so SSR
-      // must not inject them either for hydration to succeed.
-      // TODO(#studio-navigator): Re-enable with proper SSR/browser synchronization when Studio Navigator
-      // is implemented with edit-in-place support.
-      const contentWithPositions = pageInfo.entity.content;
+      // Inject node positions for Studio Navigator (edit-in-place support)
+      // This adds data-node-line, data-node-column, etc. to JSX elements
+      // IMPORTANT: Must be enabled in both SSR and module-server for hydration to match
+      const contentWithPositions = injectNodePositions(pageInfo.entity.content, {
+        filePath: pageInfo.entity.path,
+      });
 
       const browserBundle = await compileMDXRuntime(
         "development",

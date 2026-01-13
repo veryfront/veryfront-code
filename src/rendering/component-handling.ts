@@ -9,8 +9,7 @@ import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import type { EntityInfo, PageBundle } from "@veryfront/types";
 import { createError, getErrorMessage, toError } from "../core/errors/veryfront-error.ts";
 import { getProjectReact } from "@veryfront/react";
-// DISABLED: Position injection temporarily disabled to fix hydration mismatch
-// import { injectNodePositions } from "../build/transforms/plugins/babel-node-positions.ts";
+import { injectNodePositions } from "../build/transforms/plugins/babel-node-positions.ts";
 
 export interface ComponentPageResult {
   pageElement: BundledReact.ReactElement;
@@ -41,15 +40,10 @@ export async function handleComponentPage(
 
     const rawFileContent = await adapter.fs.readFile(pageInfo.entity.path);
 
-    // DISABLED: Position injection for Studio Navigator
-    // This was adding data-node-line, data-node-column, etc. to JSX elements.
-    // CRITICAL: Disabled to prevent hydration mismatch.
-    // Browser modules (via module server) no longer inject positions, so SSR
-    // must not inject them either for hydration to succeed.
-    //
-    // TODO(#studio-navigator): Re-enable with proper SSR/browser synchronization when Studio Navigator
-    // is implemented with edit-in-place support.
-    const fileContent = rawFileContent;
+    // Inject node positions for Studio Navigator (edit-in-place support)
+    // This adds data-node-line, data-node-column, etc. to JSX elements
+    // IMPORTANT: Must be enabled in both SSR and module-server for hydration to match
+    const fileContent = injectNodePositions(rawFileContent, { filePath: pageInfo.entity.path });
 
     // Bundle for client if not cached
     let clientModuleCode = options?.cachedClientModule;

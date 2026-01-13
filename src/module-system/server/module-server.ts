@@ -10,8 +10,7 @@ import { getContentTypeForPath } from "@veryfront/server/handlers/utils/content-
 import { createSecureFs } from "@veryfront/security";
 import { getErrorMessage } from "@veryfront/errors/veryfront-error.ts";
 import { getApiBaseUrlEnv } from "@veryfront/core/config/env.ts";
-// DISABLED: Position injection temporarily disabled to fix hydration mismatch
-// import { injectNodePositions } from "@veryfront/transforms/plugins/babel-node-positions.ts";
+import { injectNodePositions } from "@veryfront/transforms/plugins/babel-node-positions.ts";
 import { parseProjectDomain } from "@veryfront/server/utils/domain-parser.ts";
 import { applySSRImportRewrites } from "./ssr-import-rewriter.ts";
 // Note: React imports are kept as bare specifiers for SSR, resolved via deno.json to esm.sh
@@ -311,7 +310,7 @@ export async function serveModule(
       // isFrameworkFile flag is set by findSourceFile when file is from framework lib
       const readStart = performance.now();
       const platformFs = createFileSystem();
-      const source = isFrameworkFile
+      let source = isFrameworkFile
         ? await platformFs.readTextFile(sourceFile)
         : await secureFs.readFile(sourceFile);
       timings.readFile = performance.now() - readStart;
@@ -324,22 +323,15 @@ export async function serveModule(
       const hasSSRParam = url.searchParams.get("ssr") === "true";
       const isSSR = hasSSRParam || isDenoRequest;
 
-      // DISABLED: Position injection for Studio Navigator
-      // This was adding data-node-line, data-node-column, etc. to JSX elements.
-      // CRITICAL: Disabled to prevent hydration mismatch.
-      // SSR dependencies (via SSRModuleLoader) don't have positions, so browser
-      // dependencies must not have them either for hydration to succeed.
-      // Page components get positions injected separately via component-handling.ts
-      // which handles both SSR and client bundle consistently.
-      //
-      // TODO(#studio-navigator): Re-enable with proper SSR/browser synchronization when Studio Navigator
-      // is implemented with edit-in-place support.
-      // const isJsxFile = /\.(tsx|jsx)$/i.test(sourceFile);
-      // if (!isFrameworkFile && isJsxFile) {
-      //   const injectStart = performance.now();
-      //   source = injectNodePositions(source, { filePath: sourceFile });
-      //   timings.injectPositions = performance.now() - injectStart;
-      // }
+      // Inject node positions for Studio Navigator (edit-in-place support)
+      // This adds data-node-line, data-node-column, etc. to JSX elements
+      // IMPORTANT: Must be enabled in both SSR and module-server for hydration to match
+      const isJsxFile = /\.(tsx|jsx)$/i.test(sourceFile);
+      if (!isFrameworkFile && isJsxFile) {
+        const injectStart = performance.now();
+        source = injectNodePositions(source, { filePath: sourceFile });
+        timings.injectPositions = performance.now() - injectStart;
+      }
       logger.info("[ModuleServer] SSR mode check", {
         isSSR,
         isDenoRequest,
