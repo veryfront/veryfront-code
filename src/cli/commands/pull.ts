@@ -86,9 +86,9 @@ interface ProjectFile {
  */
 interface ListFilesResponse {
   data: ProjectFile[];
-  pagination?: {
-    cursor?: string;
-    has_more: boolean;
+  page_info?: {
+    next?: string;
+    prev?: string;
   };
 }
 
@@ -142,7 +142,7 @@ export async function listAllFiles(
     const response = await client.get<ListFilesResponse>(url, params);
 
     allFiles.push(...response.data);
-    cursor = response.pagination?.has_more ? response.pagination.cursor : undefined;
+    cursor = response.page_info?.next;
   } while (cursor);
 
   return allFiles;

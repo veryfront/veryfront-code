@@ -176,7 +176,7 @@ describe("listAllFiles", () => {
           data: [
             { path: "pages/index.tsx", size: 100, type: "file", created_at: "", updated_at: "" },
           ],
-          pagination: { has_more: false },
+          page_info: { next: undefined },
         });
       },
     });
@@ -198,7 +198,7 @@ describe("listAllFiles", () => {
           data: [
             { path: "pages/index.tsx", size: 100, type: "file", created_at: "", updated_at: "" },
           ],
-          pagination: { has_more: false },
+          page_info: { next: undefined },
         });
       },
     });
@@ -219,7 +219,7 @@ describe("listAllFiles", () => {
           data: [
             { path: "pages/index.tsx", size: 100, type: "file", created_at: "", updated_at: "" },
           ],
-          pagination: { has_more: false },
+          page_info: { next: undefined },
         });
       },
     });
@@ -240,7 +240,7 @@ describe("listAllFiles", () => {
           data: [
             { path: "pages/index.tsx", size: 100, type: "file", created_at: "", updated_at: "" },
           ],
-          pagination: { has_more: false },
+          page_info: { next: undefined },
         });
       },
     });
@@ -262,14 +262,14 @@ describe("listAllFiles", () => {
             data: [
               { path: "pages/index.tsx", size: 100, type: "file", created_at: "", updated_at: "" },
             ],
-            pagination: { has_more: true, cursor: "cursor1" },
+            page_info: { next: "cursor1" },
           });
         }
         return Promise.resolve({
           data: [
             { path: "pages/about.tsx", size: 50, type: "file", created_at: "", updated_at: "" },
           ],
-          pagination: { has_more: false },
+          page_info: { next: undefined },
         });
       },
     });

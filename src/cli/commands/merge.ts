@@ -81,18 +81,41 @@ interface MergePreviewDiff {
 }
 
 /**
- * Look up a branch by name
+ * List branches response from API
+ */
+interface ListBranchesResponse {
+  data: Branch[];
+  page_info?: {
+    next?: string;
+  };
+}
+
+/**
+ * Look up a branch by name (with pagination support)
  */
 export async function getBranchByName(
   client: ApiClient,
   projectSlug: string,
   name: string,
 ): Promise<Branch | null> {
-  const response = await client.get<{ data: Branch[] }>(
-    `/projects/${projectSlug}/branches`,
-    { search: name },
-  );
-  return response.data.find((b) => b.name === name) || null;
+  let cursor: string | undefined;
+
+  do {
+    const params: Record<string, string> = { search: name, limit: "100" };
+    if (cursor) params.cursor = cursor;
+
+    const response = await client.get<ListBranchesResponse>(
+      `/projects/${projectSlug}/branches`,
+      params,
+    );
+
+    const found = response.data.find((b) => b.name === name);
+    if (found) return found;
+
+    cursor = response.page_info?.next;
+  } while (cursor);
+
+  return null;
 }
 
 /**

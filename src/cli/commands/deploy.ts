@@ -84,17 +84,41 @@ interface Deployment {
 }
 
 /**
- * Get environment by name
+ * List environments response from API
+ */
+interface ListEnvironmentsResponse {
+  data: Environment[];
+  page_info?: {
+    next?: string;
+  };
+}
+
+/**
+ * Get environment by name (with pagination support)
  */
 export async function getEnvironmentByName(
   client: ApiClient,
   projectSlug: string,
   name: string,
 ): Promise<Environment | null> {
-  const response = await client.get<{ data: Environment[] }>(
-    `/projects/${projectSlug}/environments`,
-  );
-  return response.data.find((e) => e.name === name) || null;
+  let cursor: string | undefined;
+
+  do {
+    const params: Record<string, string> = { limit: "100" };
+    if (cursor) params.cursor = cursor;
+
+    const response = await client.get<ListEnvironmentsResponse>(
+      `/projects/${projectSlug}/environments`,
+      params,
+    );
+
+    const found = response.data.find((e) => e.name === name);
+    if (found) return found;
+
+    cursor = response.page_info?.next;
+  } while (cursor);
+
+  return null;
 }
 
 /**
