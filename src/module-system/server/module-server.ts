@@ -370,12 +370,15 @@ export async function serveModule(
       const hmrTimestamp = url.searchParams.get("t");
       if (hmrTimestamp && code) {
         const hmrStart = performance.now();
+        const beforeCode = code.slice(0, 500);
         code = await addHMRTimestamps(code, hmrTimestamp);
         timings.hmrTimestamps = performance.now() - hmrStart;
-        logger.debug("[ModuleServer] Added HMR timestamps to imports", {
+        logger.info("[ModuleServer] 🔥 HMR timestamp injection", {
           path: modulePath,
           timestamp: hmrTimestamp,
           durationMs: timings.hmrTimestamps?.toFixed(1),
+          beforeImports: (beforeCode.match(/from ["'][^"']+["']/g) || []).slice(0, 3),
+          afterImports: (code.slice(0, 500).match(/from ["'][^"']+["']/g) || []).slice(0, 3),
         });
       }
     }

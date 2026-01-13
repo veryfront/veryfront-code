@@ -43,8 +43,10 @@ export class HMRHandler extends BaseHandler {
     name: "HMRHandler",
     priority: PRIORITY_HMR,
     patterns: [{ pattern: "/_ws", exact: true }],
-    // Only enable in preview mode (not production)
-    enabled: (ctx) => ctx.proxyEnvironment === "preview",
+    // Enable in preview mode and development mode (not production)
+    // proxyEnvironment is "preview" for {slug}.preview.* domains
+    // mode is "development" for local dev server
+    enabled: (ctx) => ctx.proxyEnvironment === "preview" || ctx.mode === "development",
   };
 
   /**
