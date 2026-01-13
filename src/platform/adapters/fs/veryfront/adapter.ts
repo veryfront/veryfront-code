@@ -434,16 +434,24 @@ export class VeryfrontFSAdapter implements FSAdapter {
       count: changedPaths.length,
     });
 
-    // Only invalidate file content cache for changed files (all branch variants)
+    // Only invalidate file content cache for changed files (all source type variants)
+    // Cache keys are structured as: file:{sourceType}:{projectSlug}:{qualifier}:{path}
+    // e.g., file:branch:codersociety:main:components/HeroSection.tsx
     // Await Redis deletions to prevent stale data race conditions
     const deletionPromises: Promise<number>[] = [];
     for (const path of changedPaths) {
-      // Delete all branch variants by matching prefix and path suffix
-      deletionPromises.push(this.cache.deleteByPrefixAndSuffixAsync("file:content:", path));
-      deletionPromises.push(this.cache.deleteByPrefixAndSuffixAsync("file:text:", path));
-      deletionPromises.push(this.cache.deleteByPrefixAndSuffixAsync("file:stat:", path));
+      // Delete all source type variants by matching prefix and path suffix
+      // Must match actual cache key prefixes from buildFileCacheKeyPrefix()
+      deletionPromises.push(this.cache.deleteByPrefixAndSuffixAsync("file:branch:", path));
+      deletionPromises.push(this.cache.deleteByPrefixAndSuffixAsync("file:release:", path));
+      deletionPromises.push(this.cache.deleteByPrefixAndSuffixAsync("file:env:", path));
     }
     await Promise.all(deletionPromises);
+
+    logger.info("[VeryfrontFSAdapter] Cache entries deleted for changed paths", {
+      changedPaths,
+      prefixes: ["file:branch:", "file:release:", "file:env:"],
+    });
 
     // Invalidate only the changed module paths (not all modules)
     this.invalidationCallbacks.invalidateModulePaths?.(changedPaths);
