@@ -457,9 +457,17 @@ export class FileCache {
     if (redisEnabled && redisClient) {
       try {
         const redisCount = await deleteFromRedisByPattern(`${prefix}*:${suffix}`);
-        logger.debug("[FileCache] Deleted by prefix+suffix (Redis)", { prefix, suffix, redisCount });
+        logger.debug("[FileCache] Deleted by prefix+suffix (Redis)", {
+          prefix,
+          suffix,
+          redisCount,
+        });
       } catch (error) {
-        logger.warn("[FileCache] Redis deleteByPrefixAndSuffixAsync failed", { prefix, suffix, error });
+        logger.warn("[FileCache] Redis deleteByPrefixAndSuffixAsync failed", {
+          prefix,
+          suffix,
+          error,
+        });
       }
     }
 
