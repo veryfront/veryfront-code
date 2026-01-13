@@ -460,6 +460,7 @@ export function createVeryfrontHandler(
       // Skip timeout for monitoring endpoints
       const shouldApplyTimeout = !isMonitoringPath(_url.pathname);
 
+      let timeoutId: ReturnType<typeof setTimeout> | undefined;
       try {
         const executeWithContext = spanInfo?.context
           ? () => withContext(spanInfo.context, executeHandler)
@@ -468,9 +469,9 @@ export function createVeryfrontHandler(
         if (shouldApplyTimeout) {
           response = await Promise.race([
             executeWithContext(),
-            new Promise<never>((_, reject) =>
-              setTimeout(() => reject(TIMEOUT_SENTINEL), REQUEST_TIMEOUT_MS)
-            ),
+            new Promise<never>((_, reject) => {
+              timeoutId = setTimeout(() => reject(TIMEOUT_SENTINEL), REQUEST_TIMEOUT_MS);
+            }),
           ]);
         } else {
           response = await executeWithContext();
@@ -496,6 +497,11 @@ export function createVeryfrontHandler(
         } else {
           error = e instanceof Error ? e : new Error(String(e));
           response = new Response("Internal Server Error", { status: 500 });
+        }
+      } finally {
+        // Clear timeout to prevent test leaks
+        if (timeoutId !== undefined) {
+          clearTimeout(timeoutId);
         }
       }
 
