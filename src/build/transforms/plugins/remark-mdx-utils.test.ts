@@ -29,7 +29,8 @@ function createTree(...nodes: any[]): Root {
   };
 }
 
-Deno.test("remark-mdx-utils - remarkMdxRemoveParagraphs removes wrapper from JSX text element", () => {
+Deno.test("remark-mdx-utils - remarkMdxRemoveParagraphs preserves root-level paragraphs with JSX text element", () => {
+  // Root-level paragraphs are preserved - the plugin targets nested cases like <Button><p>text</p></Button>
   const jsxElement = {
     type: "mdxJsxTextElement",
     name: "Component",
@@ -42,10 +43,11 @@ Deno.test("remark-mdx-utils - remarkMdxRemoveParagraphs removes wrapper from JSX
   plugin(tree);
 
   assertEquals(tree.children.length, 1);
-  assertEquals((tree.children[0] as any).type, "mdxJsxTextElement");
+  assertEquals((tree.children[0] as any).type, "paragraph");
 });
 
-Deno.test("remark-mdx-utils - remarkMdxRemoveParagraphs removes wrapper from JSX flow element", () => {
+Deno.test("remark-mdx-utils - remarkMdxRemoveParagraphs preserves root-level paragraphs with JSX flow element", () => {
+  // Root-level paragraphs are preserved - the plugin targets nested cases like <Button><p>text</p></Button>
   const jsxElement = {
     type: "mdxJsxFlowElement",
     name: "Component",
@@ -58,7 +60,29 @@ Deno.test("remark-mdx-utils - remarkMdxRemoveParagraphs removes wrapper from JSX
   plugin(tree);
 
   assertEquals(tree.children.length, 1);
-  assertEquals((tree.children[0] as any).type, "mdxJsxFlowElement");
+  assertEquals((tree.children[0] as any).type, "paragraph");
+});
+
+Deno.test("remark-mdx-utils - remarkMdxRemoveParagraphs unwraps paragraphs inside JSX elements", () => {
+  // Main use case: <Button><p>text</p></Button> => <Button>text</Button>
+  const textNode = { type: "text", value: "Click me" };
+  const para = createParagraph(textNode);
+  const jsxParent = {
+    type: "mdxJsxFlowElement",
+    name: "Button",
+    children: [para],
+  };
+  const tree = createTree(jsxParent);
+
+  const plugin = remarkMdxRemoveParagraphs();
+  plugin(tree);
+
+  // The paragraph inside Button should be unwrapped
+  const button = tree.children[0] as any;
+  assertEquals(button.type, "mdxJsxFlowElement");
+  assertEquals(button.children.length, 1);
+  assertEquals(button.children[0].type, "text");
+  assertEquals(button.children[0].value, "Click me");
 });
 
 Deno.test("remark-mdx-utils - remarkMdxRemoveParagraphs keeps paragraph with multiple children", () => {
@@ -98,7 +122,8 @@ Deno.test("remark-mdx-utils - remarkMdxRemoveParagraphs handles empty tree", () 
   assertEquals(tree.children.length, 0);
 });
 
-Deno.test("remark-mdx-utils - remarkMdxRemoveParagraphs handles multiple paragraphs", () => {
+Deno.test("remark-mdx-utils - remarkMdxRemoveParagraphs preserves multiple root-level paragraphs", () => {
+  // Root-level paragraphs are preserved
   const jsxElement1 = { type: "mdxJsxFlowElement", name: "Comp1" };
   const jsxElement2 = { type: "mdxJsxFlowElement", name: "Comp2" };
   const para1 = createParagraph(jsxElement1);
@@ -109,8 +134,8 @@ Deno.test("remark-mdx-utils - remarkMdxRemoveParagraphs handles multiple paragra
   plugin(tree);
 
   assertEquals(tree.children.length, 2);
-  assertEquals((tree.children[0] as any).type, "mdxJsxFlowElement");
-  assertEquals((tree.children[1] as any).type, "mdxJsxFlowElement");
+  assertEquals((tree.children[0] as any).type, "paragraph");
+  assertEquals((tree.children[1] as any).type, "paragraph");
 });
 
 Deno.test("remark-mdx-utils - remarkCodeBlocks adds language class", () => {

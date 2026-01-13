@@ -66,4 +66,6 @@ export interface PageDataResponse {
   layoutProps: Record<string, Record<string, unknown>>;
   buildVersion: BuildVersion;
   appPath?: string;
+  /** Headings extracted from MDX for sidebar/TOC navigation */
+  headings?: Array<{ id: string; text: string; level: number }>;
 }

@@ -34,6 +34,8 @@ export interface HTMLGenerationOptions {
   colorScheme?: "light" | "dark";
   /** Proxy environment for cloud deployments (preview or production) */
   proxyEnvironment?: "preview" | "production";
+  /** Headings extracted from MDX for sidebar/TOC navigation */
+  headings?: Array<{ id: string; text: string; level: number }>;
 }
 
 export type { ImportMapConfig } from "@veryfront/modules/import-map/types.ts";

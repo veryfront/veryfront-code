@@ -18,7 +18,7 @@ import {
   extractRouteParams as extractRouteParamsShared,
 } from "@veryfront/core/utils/route-path-utils.ts";
 import { join } from "@veryfront/platform/compat/path-helper.ts";
-import type { MdxBundle } from "@veryfront/types";
+import type { MdxBundle, PageBundle } from "@veryfront/types";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import { isExtendedFSAdapter } from "@veryfront/platform/adapters/fs/wrapper.ts";
 import type { CacheCoordinator } from "../cache/cache-coordinator.ts";
@@ -288,6 +288,14 @@ export class RenderPipeline {
       hasSummary: !!(mergedFrontmatter as any)?.summary,
     });
 
+    // Extract headings from page bundle for sidebar/TOC navigation
+    const headings = (pageBundle as PageBundle).headings || [];
+    logger.info("[RenderPipeline] Extracted headings from pageBundle", {
+      hasHeadingsProperty: "headings" in pageBundle,
+      headingsCount: headings.length,
+      bundleKeys: Object.keys(pageBundle),
+    });
+
     // ─────────────────────────────────────────────────────────────────────────
     // Stage 7: Layout Application
     // ─────────────────────────────────────────────────────────────────────────
@@ -303,6 +311,7 @@ export class RenderPipeline {
           layoutDataMap,
           options?.url,
           mergedFrontmatter,
+          headings,
         ),
       "render-page",
     );
@@ -448,10 +457,11 @@ export class RenderPipeline {
       }
     }
 
-    // 7. Extract frontmatter
+    // 7. Extract frontmatter and headings
     let frontmatter: Record<string, unknown> = {};
+    let headings: Array<{ id: string; text: string; level: number }> = [];
     if (pageType === "mdx" && pageInfo.entity) {
-      // For MDX pages, try to get frontmatter from the bundle
+      // For MDX pages, try to get frontmatter and headings from the bundle
       try {
         const bundleResult = await this.config.pageRenderer.preparePageBundles(
           pageInfo,
@@ -464,8 +474,13 @@ export class RenderPipeline {
             (bundleResult.pageBundle as { frontmatter?: Record<string, unknown> }).frontmatter ||
             {};
         }
+        if (bundleResult.pageBundle && "headings" in bundleResult.pageBundle) {
+          headings =
+            (bundleResult.pageBundle as { headings?: Array<{ id: string; text: string; level: number }> }).headings ||
+            [];
+        }
       } catch {
-        // Frontmatter extraction failed, use empty object
+        // Frontmatter/headings extraction failed, use empty defaults
       }
     }
 
@@ -511,6 +526,7 @@ export class RenderPipeline {
       layoutCount: layouts.length,
       providerCount: providers.length,
       appPath,
+      headingsCount: headings.length,
     });
 
     return {
@@ -525,6 +541,7 @@ export class RenderPipeline {
       layoutProps,
       buildVersion: createBuildVersion(projectUpdatedAt),
       appPath,
+      headings,
     };
   }
 }

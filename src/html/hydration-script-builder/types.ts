@@ -20,4 +20,6 @@ export interface HydrationDataStructure {
    * hydration mismatches from compilation differences between SSR and client.
    */
   dev?: boolean;
+  /** Headings extracted from MDX for sidebar/TOC navigation */
+  headings?: Array<{ id: string; text: string; level: number }>;
 }

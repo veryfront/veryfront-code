@@ -53,6 +53,7 @@ export function generateHydrationData(
     // In dev mode, client uses createRoot instead of hydrateRoot to avoid
     // hydration mismatches from compilation differences between SSR and client
     dev: options.mode === "development",
+    headings: options.headings,
   };
 
   return JSON.stringify(data, null, 2);

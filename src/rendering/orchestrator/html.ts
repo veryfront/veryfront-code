@@ -285,6 +285,7 @@ export class HTMLGenerator {
       sourceHash,
       colorScheme: context.options?.colorScheme,
       proxyEnvironment: context.options?.proxyEnvironment,
+      headings: context.pageBundle.headings,
     };
   }
 }

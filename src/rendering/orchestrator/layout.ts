@@ -65,6 +65,7 @@ export class LayoutOrchestrator {
     layoutDataMap?: Map<string, Record<string, unknown>>,
     requestUrl?: URL,
     frontmatter?: Record<string, unknown>,
+    headings?: Array<{ id: string; text: string; level: number }>,
   ): Promise<React.ReactElement> {
     const defaultComponents = createDefaultMDXComponents();
     const mergedComponents = { ...defaultComponents, ...this.config.componentRegistry };
@@ -79,6 +80,7 @@ export class LayoutOrchestrator {
       moduleServerUrl: this.config.moduleServerUrl,
       requestUrl,
       frontmatter,
+      headings,
     });
 
     const pageType = pageElement?.type;
