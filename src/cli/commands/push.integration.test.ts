@@ -9,8 +9,8 @@
  */
 
 import { assertExists } from "jsr:@std/assert@1";
-import { describe, it, beforeAll, afterAll } from "jsr:@std/testing@1/bdd";
-import { createApiClient, resolveConfig, type ApiClient } from "../shared/config.ts";
+import { afterAll, beforeAll, describe, it } from "jsr:@std/testing@1/bdd";
+import { type ApiClient, createApiClient, resolveConfig } from "../shared/config.ts";
 import { createVCRClient, isRecording } from "../test-utils/vcr.ts";
 import { createBranch } from "./push.ts";
 

@@ -9,8 +9,8 @@
  */
 
 import { assertEquals, assertExists } from "jsr:@std/assert@1";
-import { describe, it, beforeAll, afterAll } from "jsr:@std/testing@1/bdd";
-import { createApiClient, resolveConfig, type ApiClient } from "../shared/config.ts";
+import { afterAll, beforeAll, describe, it } from "jsr:@std/testing@1/bdd";
+import { type ApiClient, createApiClient, resolveConfig } from "../shared/config.ts";
 import { createVCRClient, isRecording } from "../test-utils/vcr.ts";
 import { getBranchByName } from "./merge.ts";
 
@@ -42,7 +42,9 @@ describe("merge command integration", () => {
     // Create test branch (VCR replays recorded response in playback mode)
     const branchName = isRecording() ? `test-merge-${Date.now()}` : "test-merge-vcr";
     try {
-      const branch = await client.post<{ id: string }>(`/projects/${projectSlug}/branches`, { name: branchName });
+      const branch = await client.post<{ id: string }>(`/projects/${projectSlug}/branches`, {
+        name: branchName,
+      });
       testBranchId = branch.id;
       if (isRecording()) {
         console.log(`Created test branch: ${branchName} (${testBranchId})`);

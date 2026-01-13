@@ -28,8 +28,6 @@ interface VCRCassette {
   entries: VCREntry[];
 }
 
-const FIXTURES_DIR = "./src/cli/commands/fixtures";
-
 /**
  * Create a VCR-wrapped API client
  *
@@ -42,7 +40,8 @@ export async function createVCRClient(
   projectSlug?: string,
 ): Promise<{ client: ApiClient; save: () => Promise<void>; projectSlug: string }> {
   const recording = Deno.env.get("VCR") === "record";
-  const cassettePath = `${FIXTURES_DIR}/${cassetteName}.json`;
+  const fixturesDir = new URL("../commands/fixtures", import.meta.url).pathname;
+  const cassettePath = `${fixturesDir}/${cassetteName}.json`;
 
   let cassette: VCRCassette = {
     meta: { projectSlug: projectSlug || "", recordedAt: "" },
@@ -54,18 +53,21 @@ export async function createVCRClient(
   if (!recording) {
     try {
       const content = await Deno.readTextFile(cassettePath);
-      const parsed = JSON.parse(content);
+      const parsed: unknown = JSON.parse(content);
       // Handle both old (array) and new (object with meta) format
       if (Array.isArray(parsed)) {
         // Extract project slug from first URL
-        const firstUrl = parsed[0]?.url || "";
+        const firstEntry = parsed[0];
+        const firstUrl = (firstEntry && typeof firstEntry === "object" && "url" in firstEntry)
+          ? String(firstEntry.url)
+          : "";
         const match = firstUrl.match(/\/projects\/([^/]+)/);
         cassette = {
-          meta: { projectSlug: match?.[1] || "unknown", recordedAt: "" },
+          meta: { projectSlug: match?.[1] || "test-project", recordedAt: "" },
           entries: parsed,
         };
-      } else {
-        cassette = parsed;
+      } else if (parsed && typeof parsed === "object" && "entries" in parsed) {
+        cassette = parsed as VCRCassette;
       }
     } catch {
       throw new Error(
@@ -83,56 +85,71 @@ export async function createVCRClient(
   }
 
   // Find matching entry by method and url
-  const findEntry = (method: string, url: string): VCREntry | undefined => {
+  function findEntry(method: string, url: string): VCREntry | undefined {
     for (let i = 0; i < cassette.entries.length; i++) {
-      const entry = cassette.entries[i]!;
-      if (!usedIndices.has(i) && entry.method === method && entry.url === url) {
+      const entry = cassette.entries[i];
+      if (entry && !usedIndices.has(i) && entry.method === method && entry.url === url) {
         usedIndices.add(i);
         return entry;
       }
     }
     return undefined;
+  }
+
+  // Record or replay a request
+  async function recordOrReplay<T>(
+    method: string,
+    url: string,
+    body: unknown,
+    realCall: () => Promise<T>,
+  ): Promise<T> {
+    if (recording) {
+      if (!realClient) {
+        throw new Error("Real client required for VCR=record mode");
+      }
+      const response = await realCall();
+      cassette.entries.push({ method, url, body, response });
+      return response;
+    } else {
+      const entry = findEntry(method, url);
+      if (!entry) {
+        throw new Error(`No recorded response for: ${method.toUpperCase()} ${url}`);
+      }
+      // VCR responses are stored as unknown - caller expects T
+      // This is safe because the same call that recorded T will replay it
+      return entry.response as T;
+    }
+  }
+
+  // Build client with explicit method implementations
+  const client: ApiClient = {
+    get<T>(url: string, params?: Record<string, string>): Promise<T> {
+      return recordOrReplay("get", url, params, () => realClient!.get<T>(url, params));
+    },
+    post<T>(url: string, body?: unknown): Promise<T> {
+      return recordOrReplay("post", url, body, () => realClient!.post<T>(url, body));
+    },
+    put<T>(url: string, body?: unknown): Promise<T> {
+      return recordOrReplay("put", url, body, () => realClient!.put<T>(url, body));
+    },
+    patch<T>(url: string, body?: unknown): Promise<T> {
+      return recordOrReplay("patch", url, body, () => realClient!.patch<T>(url, body));
+    },
+    delete<T>(url: string): Promise<T> {
+      return recordOrReplay("delete", url, undefined, () => realClient!.delete<T>(url));
+    },
   };
 
-  // Create handler for each HTTP method
-  const handler =
-    (method: string) =>
-    async <T>(url: string, body?: unknown): Promise<T> => {
-      if (recording) {
-        if (!realClient) {
-          throw new Error("Real client required for VCR=record mode");
-        }
-        const clientAny = realClient as unknown as Record<string, (url: string, body?: unknown) => Promise<unknown>>;
-        const response = await clientAny[method]!(url, body);
-        cassette.entries.push({ method, url, body, response });
-        return response as T;
-      } else {
-        const entry = findEntry(method, url);
-        if (!entry) {
-          throw new Error(`No recorded response for: ${method.toUpperCase()} ${url}`);
-        }
-        return entry.response as T;
-      }
-    };
-
-  const client: ApiClient = {
-    get: handler("get"),
-    post: handler("post"),
-    put: handler("put"),
-    patch: handler("patch"),
-    delete: handler("delete"),
-  } as ApiClient;
-
-  const save = async () => {
+  async function save(): Promise<void> {
     if (recording && cassette.entries.length > 0) {
-      await Deno.mkdir(FIXTURES_DIR, { recursive: true });
+      await Deno.mkdir(fixturesDir, { recursive: true });
       await Deno.writeTextFile(
         cassettePath,
         JSON.stringify(cassette, null, 2) + "\n",
       );
       console.log(`Saved cassette: ${cassettePath} (${cassette.entries.length} entries)`);
     }
-  };
+  }
 
   return { client, save, projectSlug: cassette.meta.projectSlug };
 }

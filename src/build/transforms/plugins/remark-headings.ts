@@ -105,6 +105,8 @@ export function remarkMdxHeadings() {
       },
     };
 
-    tree.children.unshift(headingsExport as unknown as (typeof tree.children)[0]);
+    // Insert the headings export at the beginning of the tree
+    // The headingsExport structure is compatible with mdast-util-mdx-jsx's MdxjsEsm type
+    tree.children.unshift(headingsExport as typeof tree.children[number]);
   };
 }

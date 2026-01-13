@@ -5,12 +5,7 @@
 
 import { assertEquals, assertMatch } from "jsr:@std/assert@1";
 import { describe, it } from "jsr:@std/testing@1/bdd";
-import {
-  generateBranchName,
-  createBranch,
-  uploadFiles,
-  type UploadOp,
-} from "./push.ts";
+import { createBranch, generateBranchName, uploadFiles, type UploadOp } from "./push.ts";
 import type { ApiClient } from "../shared/config.ts";
 
 // Mock client creator - returns ApiClient-compatible mock
@@ -119,7 +114,10 @@ describe("uploadFiles", () => {
     const result = await uploadFiles(mockClient, "my-project", "branch-123", ops, false);
 
     assertEquals(capturedUrls.length, 1);
-    assertEquals(capturedUrls[0], "/projects/my-project/files/pages%2Findex.tsx?branch_id=branch-123");
+    assertEquals(
+      capturedUrls[0],
+      "/projects/my-project/files/pages%2Findex.tsx?branch_id=branch-123",
+    );
     assertEquals(capturedBodies[0], { content: "export default function Home() {}" });
     assertEquals(result.uploaded, 1);
     assertEquals(result.failed, 0);

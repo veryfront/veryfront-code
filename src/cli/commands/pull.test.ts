@@ -6,13 +6,13 @@
 import { assertEquals } from "jsr:@std/assert@1";
 import { describe, it } from "jsr:@std/testing@1/bdd";
 import {
-  resolvePullSource,
-  buildFilesListUrl,
   buildFileContentUrl,
-  listAllFiles,
+  buildFilesListUrl,
   getFileContent,
-  type PullSource,
+  listAllFiles,
   type PullOptions,
+  type PullSource,
+  resolvePullSource,
 } from "./pull.ts";
 import type { ApiClient } from "../shared/config.ts";
 
@@ -322,7 +322,10 @@ describe("getFileContent", () => {
     const source: PullSource = { type: "environment", name: "production" };
     const content = await getFileContent(mockClient, "my-project", "pages/index.tsx", source);
 
-    assertEquals(capturedUrl, "/projects/my-project/environments/production/files/pages%2Findex.tsx");
+    assertEquals(
+      capturedUrl,
+      "/projects/my-project/environments/production/files/pages%2Findex.tsx",
+    );
     assertEquals(content, "export default function Home() {}\n");
   });
 

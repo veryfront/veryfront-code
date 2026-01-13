@@ -218,7 +218,9 @@ export async function pushCommand(options: PushOptions = {}): Promise<void> {
   if (dryRun) {
     await uploadFiles(createApiClient(config), config.projectSlug, null, ops, true);
     logInfo(
-      `Dry run complete. Would upload ${ops.length} files to ${isMainBranch ? "main" : `branch "${branchName}"`}.`,
+      `Dry run complete. Would upload ${ops.length} files to ${
+        isMainBranch ? "main" : `branch "${branchName}"`
+      }.`,
     );
     return;
   }

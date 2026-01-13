@@ -1,820 +1,129 @@
-[
-  {
-    "method": "get",
-    "url": "/projects/impartial-kalam-pujjv/files",
-    "body": {
-      "limit": "100",
-      "sort_by": "updated_at",
-      "sort_order": "desc"
-    },
-    "response": {
-      "data": [
-        {
-          "id": "468b22e8-aea3-5840-9ce6-d823c8367f5a",
-          "path": "components/layout.tsx",
-          "content": "export default function Layout(props) {\n  return <div>layout{props.children}</div>\n}",
-          "size": 84,
-          "type": "component",
-          "updated_at": "2026-01-13 19:01:38.234286+00",
-          "_links": {
-            "self": {
-              "href": "/projects/impartial-kalam-pujjv/files/components/layout.tsx"
-            }
-          }
-        },
-        {
-          "id": "c863e2dc-7c21-5601-bc12-c8d3cbdb5355",
-          "path": "pages/about.mdx",
-          "content": "export default function AboutPage() {\n  return (\n    <div className=\"p-8 bg-blue-50 min-h-screen\">\n      <h1 className=\"text-4xl font-bold text-blue-900 mb-6\">About U22s - Updated!</h1>\n      <p className=\"text-xl text-blue-700 mb-4\">\n        This is the updated About page content.\n      </p>\n      <p className=\"text-lg text-gray-600\">\n        The preview should render this content when navigating to /about.\n      </p>\n    </div>\n  );\n}",
-          "size": 440,
-          "type": "page",
-          "updated_at": "2026-01-13 19:00:53.761124+00",
-          "_links": {
-            "self": {
-              "href": "/projects/impartial-kalam-pujjv/files/pages/about.mdx"
-            }
-          }
-        },
-        {
-          "id": "3165329c-0e80-538a-b9fc-c5a562764640",
-          "path": "components/Welcome.tsx",
-          "content": "export function Welcome() {\n  return (\n    <div className=\"h-dvh flex flex-col items-center justify-center text-center bg-background px-4\">\n      <h1 className=\"font-display text-3xl font-semibold tracking-tight mb-3\">\n        Ready to Create123\n      </h1>\n      <p className=\"text-base text-foreground/50 mb-6\">\n        Let's build something amazing\n      </p>\n    </div>\n  )\n}",
-          "size": 379,
-          "type": "file",
-          "updated_at": "2026-01-13 19:00:22.460274+00",
-          "_links": {
-            "self": {
-              "href": "/projects/impartial-kalam-pujjv/files/components/Welcome.tsx"
-            }
-          }
-        },
-        {
-          "id": "12bddd02-8f55-5c25-bc41-265aee9f71ac",
-          "path": ".veryfront/agents/build.md",
-          "content": "---\nname: Coding Agent\ndescription: Translate plans into enterprise-grade code with live previews\n---\n\n# Coding Agent\n\nFull-stack developer that implements issues and milestones as working code.\n\n| Aspect | Details                        |\n| ------ | ------------------------------ |\n| Input  | Issue or milestone document    |\n| Output | Working code with live preview |\n\n## Core Rules\n\n- **STOP AND ASK** - if requirements are unclear, ask before coding\n- **UPDATE CHECKLISTS** - mark items complete immediately after each step\n- **ONE ISSUE AT A TIME** - never implement multiple issues in parallel\n- **SMALLEST FIRST** - atoms → molecules → organisms (components → pages)\n\n## Issue Workflow\n\n```\nRead issue document\n       │\n       ▼\n┌──────────────┐\n│  Ambiguous?  │──Yes──► Ask clarifying question, STOP\n└──────┬───────┘\n       │ No\n       ▼\nPick first unchecked item\n       │\n       ▼\nImplement that item only\n       │\n       ▼\nUpdate issue checklist ✓\n       │\n       ▼\nRepeat until done\n       │\n       ▼\nConfirm in preview\n```\n\n## Milestone Workflow\n\n```\nRead milestone document\n       │\n       ▼\nList linked issues\n       │\n       ▼\nAsk: \"Which issue first?\"\n  OR suggest first issue\n       │\n       ▼\nWork ONE issue at a time\n       │\n       ▼\nUpdate milestone checklist ✓\n```\n\n**NEVER** attempt full milestone in one go.\n\n## Checklist Protocol\n\n🚨 **CRITICAL: CHECKLISTS ARE THE SOURCE OF TRUTH** 🚨\n\n**After EVERY completed item, you MUST:**\n\n1. Open the issue/milestone document\n2. Mark the item `[x]`\n3. Save the file\n4. Then continue to next item\n\n**NO EXCEPTIONS. NO BATCHING. NO \"I'LL UPDATE LATER.\"**\n\n| Action        | Update                                 |\n| ------------- | -------------------------------------- |\n| Start item    | Leave unchecked, mention working on it |\n| Complete item | **Mark `[x]` IMMEDIATELY**             |\n| Blocked       | Add note, ask for help                 |\n| Skip item     | Explain why, leave unchecked           |\n\nIf you complete code without updating the checklist, **you have failed**.\n\n## Side Effect Verification\n\nAfter ANY change that affects other files (rename, move, delete, export change):\n\n```\nsearch_code for usages\n        │\n        ▼\nUpdate ALL affected imports\n        │\n        ▼\nVerify no broken references\n```\n\n**Check for:**\n\n- Missing imports after file moves\n- Broken imports after renames\n- Stale references after deletions\n- Updated exports after interface changes\n\n**NEVER** assume a change is isolated. Always `search_code` to find usages.\n\n## Code Standards\n\nFrom platform instructions:\n\n- **Read before write** - always `getFile` before modifying\n- **Search before assuming** - use `search_code` to find affected files\n- **Smallest first** - components before pages\n- **All imports** - no missing imports allowed\n- **Match existing style** - consistency over preference\n- **No drive-by refactoring** - only change what's needed\n\n## Build Order\n\n```\n1. Types, constants, utils\n2. Components (smallest first)\n3. Services, hooks\n4. Pages, layouts\n5. API routes\n```\n\nEach step must work independently.\n\n**Task too big?** If implementation exceeds 100 lines or touches 5+ files, stop and use the Planning Agent to split into smaller issues first.\n\n## Communication\n\n- **BRIEF**: \"Implementing user authentication...\"\n- **PROGRESS**: \"Completed: LoginForm component. Next: AuthService.\"\n- **BLOCKERS**: \"Need clarification: Should sessions persist across tabs?\"\n- **DONE**: \"Issue complete. Preview: [https://app.preview.veryfront.com](https://app.preview.veryfront.com)\"\n\n## Anti-Patterns\n\n| Anti-Pattern             | Instead                       |\n| ------------------------ | ----------------------------- |\n| Implement full milestone | Ask which issue first         |\n| Skip checklist updates   | Update after every item       |\n| Assume requirements      | Stop and ask                  |\n| Batch multiple issues    | One issue at a time           |\n| Big bang changes         | Incremental, working steps    |\n| Forget to read file      | Always getFile before changes |",
-          "size": 4061,
-          "type": "file",
-          "updated_at": "2026-01-13 18:59:43.779227+00",
-          "_links": {
-            "self": {
-              "href": "/projects/impartial-kalam-pujjv/files/.veryfront/agents/build.md"
-            }
-          }
-        },
-        {
-          "id": "b6202431-a156-505a-87cb-ffc315930e84",
-          "path": ".veryfront/agents/deploy.md",
-          "content": "---\nname: Deploy Agent\ndescription: Deploy applications to production with automated release pipelines\n---\n\n# Deploy Agent\n\nDevOps engineer that automates release pipelines and deploys applications to production.\n\n| Aspect | Details                            |\n| ------ | ---------------------------------- |\n| Input  | Application code, project settings |\n| Output | Live website ready for production  |\n\n## Core Rules\n\n- **DEFAULT TO PRODUCTION** - never ask if only one deployable environment exists\n- **NEVER DEPLOY TO PREVIEW** - it auto-updates on save, exclude from all options\n- **WAIT FOR PIPELINE** - all three statuses must complete before deployment\n- **AUTO-NAME RELEASES** - only prompt for name if user specifies (e.g., `v1.0.5`)\n\n## Tool Call Sequence\n\n```\ncreate_release\n     │\n     ▼\nget_release (poll with sleep)\n     │\n     ├─► exportStatus: pending → completed\n     │\n     ├─► buildStatus: pending → completed\n     │\n     ├─► deployStatus: pending → completed\n     │\n     ▼ (ALL completed)\ncreate_deployment\n     │\n     ▼\nReturn live URL\n```\n\n## Pipeline Polling\n\nPoll `get_release` until **ALL THREE** pass:\n\n| Status         | Wait For  |\n| -------------- | --------- |\n| `exportStatus` | completed |\n| `buildStatus`  | completed |\n| `deployStatus` | completed |\n\n**Only then** call `create_deployment`.\n\n## Environment Rules\n\n| Environment  | Behavior                         |\n| ------------ | -------------------------------- |\n| `preview`    | Auto-updates, never deploy       |\n| `production` | Default target, requires release |\n| Custom       | User must specify if multiple    |\n\n## Download URL\n\n`get_release_download_url` only works **after** pipeline completes.\n\n## Communication\n\n- **BRIEF**: \"Deploying to production...\"\n- **RESULT**: \"Live at [https://app.veryfront.com](https://app.veryfront.com)\"\n- **ERRORS**: State issue, suggest fix\n\n## Anti-Patterns\n\n| Anti-Pattern               | Instead                  |\n| -------------------------- | ------------------------ |\n| Deploy before pipeline     | Wait for all statuses    |\n| Ask about single env       | Default to production    |\n| Include preview in options | Exclude preview entirely |\n| Skip polling               | Always verify completion |",
-          "size": 2242,
-          "type": "file",
-          "updated_at": "2026-01-13 18:59:43.779227+00",
-          "_links": {
-            "self": {
-              "href": "/projects/impartial-kalam-pujjv/files/.veryfront/agents/deploy.md"
-            }
-          }
-        },
-        {
-          "id": "9e8f3825-8bf8-550f-ae9e-1b6eddcdc7d6",
-          "path": ".veryfront/agents/plan.md",
-          "content": "---\nname: Planning Agent\ndescription: Transform ideas into plans, broken down as milestones and actionable tasks\n---\n\n# Planning Agent\n\nStrategic project planner that transforms high-level concepts into structured milestones and implementation plans.\n\n| Aspect | Details                                 |\n| ------ | --------------------------------------- |\n| Input  | Ideas, requirements, links, screenshots |\n| Output | Milestones and issues documents         |\n\n## Core Rules\n\n- **NO CODE CHANGES** during planning - iterate on plan only until approved\n- **ASK FOLLOW-UP QUESTIONS** step-by-step before finalizing anything\n- **EVALUATE ENTIRE APP** - consider all side effects and integration points\n- **USE CHECKLISTS** - every section must have actionable checkboxes\n- **INCLUDE CODE EXAMPLES** - simple examples to clarify key concepts only\n\n## Agent Behavior\n\n### Research Phase\n\nBefore writing any RFC:\n\n- [ ] Search codebase for related files and patterns\n- [ ] Identify existing abstractions that may be affected\n- [ ] Map dependencies and integration points\n- [ ] Note any technical debt that intersects with the change\n\n### Question Phase\n\nAsk clarifying questions about:\n\n- [ ] Scope boundaries - what's in, what's out\n- [ ] Priority of requirements - must-have vs nice-to-have\n- [ ] Constraints - compatibility, performance\n\nAsk questions **one at a time** or in small batches. Do not overwhelm with a wall of questions.\n\n### Analysis Phase\n\nFor each proposed change, evaluate:\n\n- [ ] Direct impacts - files that must change\n- [ ] Indirect impacts - files that may need updates\n- [ ] Breaking changes - API contracts, database schemas\n- [ ] Migration needs - data, configuration, dependencies\n\n## Milestone Structure\n\nUse the template at [`docs/MILESTONE_TEMPLATE_.md`](docs/MILESTONE_TEMPLATE_.md) for all milestones.\n\nOutput:\n\n```\ndocs/\n├── milestones/\n│   └── freelancer-task-management-app.md\n```\n\n## RFC Issue Structure\n\nUse the template at [`docs/ISSUE_TEMPLATE_.md`](docs/ISSUE_TEMPLATE_.md) for all issues.\n\nOutput:\n\n```\ndocs/\n└── issues/\n    ├── 001-project-client-management-system.md\n    ├── 002-time-tracking-timer-functionality.md\n    └── 003-invoice-generation-dashboard.md\n```\n\nKey sections every RFC must include:\n\n### 1. Problem Statement\n\nWhat problem and why it matters\n\n### 2. Proposed Solution\n\nHigh-level approach with key interfaces\n\n### 3. Current State Analysis\n\nWhat exists, what changes, what breaks\n\n### 4. Implementation Checklist\n\nAll files, dependencies, and configuration changes\n\n### 5. Side Effects & Risks\n\nPerformance, security, and compatibility impacts\n\n### 6. Testing Strategy\n\nHow to validate the implementation works\n\n### 7. Success Criteria\n\nClear definition of done\n\n## Planning Process\n\nBefore writing RFC:\n\n- [ ] Research existing codebase thoroughly\n- [ ] Ask clarifying questions about requirements and scope\n\nDuring RFC creation:\n\n- [ ] Follow the template structure exactly\n- [ ] Keep each section focused and actionable\n- [ ] Include code snippets only for key interfaces and changes\n\nBefore finalizing:\n\n- [ ] Review for completeness against template\n- [ ] Verify all side effects have been considered\n- [ ] Get stakeholder approval on approach\n\n## Quality Gates\n\nEvery RFC must pass:\n\n- [ ] Problem clearly defined\n- [ ] Solution approach justified\n- [ ] All affected files identified\n- [ ] Testing strategy covers critical paths\n- [ ] Side effects analyzed\n- [ ] Success criteria measurable\n- [ ] No ambiguous language (\"might\", \"possibly\", \"etc.\")\n\n## Anti-Patterns\n\nAvoid these common planning mistakes:\n\n| Anti-Pattern | Problem | Instead |\n|--------------|---------|---------|\n| Vague scope | \"Improve performance\" | \"Reduce API latency to <100ms p95\" |\n| Missing files | Incomplete checklist | Search codebase thoroughly |\n| No alternatives | Single solution bias | Document 2-3 options with tradeoffs |\n| Premature code | Writing implementation | Focus on interfaces and contracts |\n| Question dump | 10 questions at once | Ask 1-3 focused questions |\n\n## Iteration Protocol\n\nWhen stakeholder provides feedback:\n\n1. **Acknowledge** - confirm understanding of feedback\n2. **Assess** - determine impact on existing plan\n3. **Adjust** - update relevant sections only\n4. **Highlight** - show what changed for easy review\n\nNever rewrite entire RFC for minor feedback. Use diffs or callouts:\n\n```markdown\n> **Updated based on feedback:**\n> - Changed authentication from JWT to session-based\n> - Added rate limiting requirement to success criteria\n```\n\nRemember: Bulletproof plan that eliminates surprises during implementation.",
-          "size": 4594,
-          "type": "file",
-          "updated_at": "2026-01-13 18:59:43.779227+00",
-          "_links": {
-            "self": {
-              "href": "/projects/impartial-kalam-pujjv/files/.veryfront/agents/plan.md"
-            }
-          }
-        },
-        {
-          "id": "47f8c00b-e202-54e6-bdcc-0e3984796655",
-          "path": ".veryfront/commands/build.md",
-          "content": "---\nname: Build\ndescription: Convert plans into functional code with live previews\n---\n\n# Build Command\n\nImplement issues and milestones as working code.\n\n## Usage\n\n```\n/build @docs/issues/001-feature-name.md\n/build @docs/milestones/project-name.md\n```\n\n## Command Behavior\n\nWhen given an **issue**:\n\n1. **Read the issue** - understand requirements and checklist\n2. **Ask clarifying questions** - if anything is ambiguous, stop and ask\n3. **Implement step-by-step** - work through checklist items one at a time\n4. **Update checklist** - mark items complete as you go\n5. **Preview changes** - confirm working in preview environment\n\nWhen given a **milestone**:\n\n1. **Read the milestone** - understand scope and linked issues\n2. **Do NOT attempt everything** - ask \"Which issue should I start with?\" or suggest the first one\n3. **Work issue-by-issue** - complete one before starting another\n\n## Example\n\n**Input:**\n\n```\n/build @docs/issues/001-project-client-management-system.md\n```\n\n**Output:**\n\n```\nImplemented project client management system.\nUpdated: docs/issues/001-project-client-management-system.md\n\nPreview: https://task-management.preview.veryfront.com\n```\n\n## Rules\n\n- **STOP AND ASK** if requirements are unclear\n- **UPDATE CHECKLISTS** after every completed item\n- **ONE ISSUE AT A TIME** - never batch multiple issues\n- **SMALLEST FIRST** - components before pages, utils before services",
-          "size": 1401,
-          "type": "file",
-          "updated_at": "2026-01-13 18:59:43.779227+00",
-          "_links": {
-            "self": {
-              "href": "/projects/impartial-kalam-pujjv/files/.veryfront/commands/build.md"
-            }
-          }
-        },
-        {
-          "id": "bc02b443-aaec-5d27-ac69-49825d36be04",
-          "path": ".veryfront/commands/deploy.md",
-          "content": "---\nname: Deploy\ndescription: Deploy your app to production with a single command\n---\n\n# Deploy Command\n\nDeploy your application to production environments.\n\n## Usage\n\n```\n/deploy [environment]\n```\n\n## Command Behavior\n\nWhen invoked, this command:\n\n1. **Creates a release** - packages current code for deployment\n2. **Monitors pipeline** - waits for export → build → deploy\n3. **Deploys to environment** - pushes to production (default)\n4. **Returns live URL** - confirms deployment success\n\n## Deployment Flow\n\n```\n┌─────────────────┐\n│  create_release │\n└────────┬────────┘\n         ▼\n┌─────────────────┐\n│   get_release   │◄──┐\n│  (poll status)  │   │\n└────────┬────────┘   │\n         │            │\n    ┌────▼────┐       │\n    │ export  │───────┤ (retry until completed)\n    │ status  │       │\n    └────┬────┘       │\n         │            │\n    ┌────▼────┐       │\n    │  build  │───────┤\n    │ status  │       │\n    └────┬────┘       │\n         │            │\n    ┌────▼────┐       │\n    │ deploy  │───────┘\n    │ status  │\n    └────┬────┘\n         │\n         ▼ (all completed)\n┌─────────────────┐\n│create_deployment│\n└────────┬────────┘\n         ▼\n┌─────────────────┐\n│   Live URL 🚀   │\n└─────────────────┘\n```\n\n## Example\n\n**Input:**\n\n```\n/deploy\n```\n\n**Output:**\n\n```\nDeployed to production:\nhttps://task-management.veryfront.com\n```\n\n## Rules\n\n- **Default environment**: `production` (don't ask if only one exists)\n- **Never deploy to**: `preview` (auto-updates on save)\n- **Release naming**: Auto-generated unless user specifies (e.g., `v1.0.5`)\n- **Pipeline order**: Wait for ALL statuses to complete before deployment",
-          "size": 1632,
-          "type": "file",
-          "updated_at": "2026-01-13 18:59:43.779227+00",
-          "_links": {
-            "self": {
-              "href": "/projects/impartial-kalam-pujjv/files/.veryfront/commands/deploy.md"
-            }
-          }
-        },
-        {
-          "id": "c55732bf-8104-5ce7-9dac-60e8c8f99a98",
-          "path": ".veryfront/commands/help.md",
-          "content": "---\nname: Help\ndescription: Explain Veryfront and how to customize AI behavior\n---\n\n# Help Command\n\nThe user needs help getting to know Veryfront\n\n## What is Veryfront?\n\nVeryfront is an AI-powered development platform for building and deploying full-stack web apps through conversation.\n\n**You can:**\n\n- Turn ideas into apps — describe what you want, AI helps you plan, code, and ship\n- Build visually — edit components, preview in real-time, iterate quickly\n- Deploy instantly — one-click deployment to production\n- Collaborate in real-time — work with others simultaneously\n\n**A project consists of:**\n\n- **Pages** — Pages in your app (`/index.tsx`, `/products/[id].tsx`)\n- **API Routes** — Server-side endpoints for backend logic (`/api` folder)\n- **Components** — Reusable UI building blocks\n- **Assets** — Images, fonts, static files\n- **Environment Variables** — Secure secrets and config\n\nProjects are React-based. You get a live preview while building, and deploy as a Vite + Vike app with server-side rendering.\n\n***\n\n## Steering the AI\n\nYou can customize how the AI builds your app by adding files to `.veryfront/`:\n\n```\n.veryfront/\n├── VERYFRONT.md              # Project instructions (always included)\n├── agents/\n│   └── {agent-id}.md         # Custom AI personas\n├── commands/\n│   └── {command-id}.md       # Slash commands (like this one)\n└── guides/\n    └── {guide}.md            # Reference docs (loaded on-demand)\n```\n\n| File            | Purpose                                              |\n| --------------- | ---------------------------------------------------- |\n| `VERYFRONT.md`  | Global rules, conventions, tech stack the AI follows |\n| `agents/*.md`   | Specialized personas with optional tool restrictions |\n| `commands/*.md` | Slash commands that inject instructions              |\n| `guides/*.md`   | Reference docs the AI reads on-demand                |\n\n**Agent template:**\n\n```yaml\n---\nname: Coding Agent\ndescription: An expert full-stack developer who translates functional requirements into code with best practice\n---\n\nGive your agent instructions here.\n```\n\n**Command template:**\n\n```yaml\n---\nname: Review\ndescription: Shown in command picker\n---\n\nWrite your command here\n```\n\nKeep explanations brief. Offer to help create specific agents or commands if asked.",
-          "size": 2299,
-          "type": "file",
-          "updated_at": "2026-01-13 18:59:43.779227+00",
-          "_links": {
-            "self": {
-              "href": "/projects/impartial-kalam-pujjv/files/.veryfront/commands/help.md"
-            }
-          }
-        },
-        {
-          "id": "d2ff3224-6b7e-5e09-99a1-68819e175a66",
-          "path": ".veryfront/commands/plan.md",
-          "content": "---\nname: Plan\ndescription: 'Transform ideas into plans, broken down as milestones and actionable tasks'\n---\n\n# Plan Command\n\nThe user wants to plan changes to their project\n\n## Usage\n\n```\n/plan <idea, requirements, links, screenshots>\n```\n\n## Command Behavior\n\nWhen invoked, this command:\n\n1. **Enters planning mode** - no code changes until plan is approved\n2. **Researches codebase** - evaluates entire app for side effects\n3. **Asks clarifying questions** - gathers requirements step-by-step\n4. **Creates milestones and issues** - structured documents for implementation\n5. **Iterates on feedback** - refines plan until stakeholder approval\n\n## Example\n\n**Input:**\n\n```\n/plan\n\nBuild a task management app for freelancers, featuring:\n- Project creation and client management  \n- Time tracking with timer functionality\n- Invoice generation based on tracked hours\n- Dashboard showing earnings and project status\n```\n\n**Output:**\n\n```\ndocs/\n├── milestones/\n│   └── freelancer-task-management-app.md\n└── issues/\n    ├── 001-project-client-management-system.md\n    ├── 002-time-tracking-timer-functionality.md\n    └── 003-invoice-generation-dashboard.md\n```",
-          "size": 1155,
-          "type": "file",
-          "updated_at": "2026-01-13 18:59:43.779227+00",
-          "_links": {
-            "self": {
-              "href": "/projects/impartial-kalam-pujjv/files/.veryfront/commands/plan.md"
-            }
-          }
-        },
-        {
-          "id": "8efc68bf-4719-5624-94d8-2a7a8a820b3b",
-          "path": ".veryfront/VERYFRONT.md",
-          "content": "",
-          "size": 0,
-          "type": "file",
-          "updated_at": "2026-01-13 18:59:43.779227+00",
-          "_links": {
-            "self": {
-              "href": "/projects/impartial-kalam-pujjv/files/.veryfront/VERYFRONT.md"
-            }
-          }
-        },
-        {
-          "id": "56dd6c56-4ed9-548c-9a04-54c643f8ab70",
-          "path": "components/app.tsx",
-          "content": "import { GoogleFonts } from \"@/lib/GoogleFonts\"\nimport { ThemeProvider } from \"https://esm.sh/next-themes\"\n\nexport default function App(props) {\n  return (\n    <>\n      <GoogleFonts\n        fonts={[\n          {\n            name: \"Inter\",\n            weights: [300, 400, 500, 600, 700],\n            italics: true,\n            variable: \"--font-sans\",\n          },\n        ]}\n      />\n      <ThemeProvider>{props.children}</ThemeProvider>\n    </>\n  )\n}",
-          "size": 450,
-          "type": "component",
-          "updated_at": "2026-01-13 18:59:43.779227+00",
-          "_links": {
-            "self": {
-              "href": "/projects/impartial-kalam-pujjv/files/components/app.tsx"
-            }
-          }
-        },
-        {
-          "id": "f7c86d02-c3c9-512c-80f9-5afd0c7acae6",
-          "path": "docs/ISSUE_TEMPLATE.md",
-          "content": "# \\[Issue Title]\n\n**Milestone:** \\[Link to parent milestone]\n\n**Priority:** \\[High/Medium/Low]\n\n## Description\n\n\\[Clear, concise description of what needs to be accomplished]\n\n## Acceptance Criteria\n\n- [ ] \\[Specific requirement 1]\n- [ ] \\[Specific requirement 2]\n- [ ] \\[Specific requirement 3]\n\n## Implementation Details\n\n### File(s) to Create/Update:\n\n- `[file-path]` - \\[Brief description of file purpose]\n\n### Key Sections to Include:\n\n- \\[Section 1] - \\[What it should cover]\n- \\[Section 2] - \\[What it should cover]\n\n### Content Guidelines:\n\n- Maximum 200 lines\n- Professional and concise tone\n- Include practical examples where applicable\n- Include code examples and types\n- Link to related documentation\n\n## Dependencies\n\n**Requires:**\n\n- \\[Other issues or files that must be completed first]\n\n**Blocks:**\n\n- \\[What this issue enables]\n\n## Definition of Done\n\n- [ ] File created/updated with complete content\n- [ ] Content reviewed for accuracy and clarity\n- [ ] Links and references verified\n- [ ] Formatting and style consistent\n- [ ] Under 200 lines as required\n\n## Notes\n\n\\[Any additional context, edge cases, or considerations]",
-          "size": 1141,
-          "type": "file",
-          "updated_at": "2026-01-13 18:59:43.779227+00",
-          "_links": {
-            "self": {
-              "href": "/projects/impartial-kalam-pujjv/files/docs/ISSUE_TEMPLATE.md"
-            }
-          }
-        },
-        {
-          "id": "00fe8bb6-f097-5891-98f2-8492d2311bb3",
-          "path": "docs/MILESTONE_TEMPLATE.md",
-          "content": "# \\[Milestone Name]\n\n**Goal:** \\[North star description of what this milestone achieves]\n\n**Priority:** \\[High/Medium/Low]\n\n## Scope\n\n\\[2-3 sentences describing the overall scope and boundaries of this milestone]\n\n## Success Criteria\n\n- [ ] \\[Specific measurable outcome 1]\n- [ ] \\[Specific measurable outcome 2]\n- [ ] \\[Specific measurable outcome 3]\n\n## Issues\n\n- [ ] \\[Link to issue 1] - \\[Brief description]\n- [ ] \\[Link to issue 2] - \\[Brief description]\n- [ ] \\[Link to issue 3] - \\[Brief description]\n\n## Dependencies\n\n**Depends On:**\n\n- \\[Other milestones or external requirements this milestone needs]\n\n**Blocks:**\n\n- \\[What this milestone enables or unblocks]\n\n## Definition of Done\n\n- [ ] All issues completed and reviewed\n- [ ] Documentation updated and published\n- [ ] Testing completed (if applicable)\n- [ ] Stakeholder approval received\n\n## Notes\n\n\\[Any additional context, assumptions, or considerations]",
-          "size": 920,
-          "type": "file",
-          "updated_at": "2026-01-13 18:59:43.779227+00",
-          "_links": {
-            "self": {
-              "href": "/projects/impartial-kalam-pujjv/files/docs/MILESTONE_TEMPLATE.md"
-            }
-          }
-        },
-        {
-          "id": "6065d660-6af3-596a-94fe-6de1593c546f",
-          "path": "globals.css",
-          "content": "@tailwind base;\n@tailwind components;\n@tailwind utilities;\n\n:root {\n  --radius: 0.5rem;\n  --spacing: 0.25rem;\n\n  --background: 0 0% 100%;\n  --foreground: 0 0% 3.9%;\n  --card: 0 0% 100%;\n  --card-foreground: 0 0% 3.9%;\n  --popover: 0 0% 100%;\n  --popover-foreground: 0 0% 3.9%;\n  --primary: 0 0% 9%;\n  --primary-foreground: 0 0% 98%;\n  --secondary: 0 0% 96.1%;\n  --secondary-foreground: 0 0% 9%;\n  --muted: 0 0% 96.1%;\n  --muted-foreground: 0 0% 45.1%;\n  --accent: 0 0% 96.1%;\n  --accent-foreground: 0 0% 9%;\n  --destructive: 0 84.2% 60.2%;\n  --destructive-foreground: 0 0% 98%;\n  --border: 0 0% 89.8%;\n  --input: 0 0% 89.8%;\n  --ring: 0 0% 3.9%;\n\n  --chart-1: 12 76% 61%;\n  --chart-2: 173 58% 39%;\n  --chart-3: 197 37% 24%;\n  --chart-4: 43 74% 66%;\n  --chart-5: 27 87% 67%;\n\n  --sidebar: 0 0% 98%;\n  --sidebar-foreground: 240 5.3% 26.1%;\n  --sidebar-primary: 240 5.9% 10%;\n  --sidebar-primary-foreground: 0 0% 98%;\n  --sidebar-accent: 240 4.8% 95.9%;\n  --sidebar-accent-foreground: 240 5.9% 10%;\n  --sidebar-border: 220 13% 91%;\n  --sidebar-ring: 217.2 91.2% 59.8%;\n  --sidebar-background: 0 0% 98%;\n}\n\n.dark,\n[data-theme=\"dark\"] {\n  --background: 0 0% 3.9%;\n  --foreground: 0 0% 98%;\n  --card: 0 0% 3.9%;\n  --card-foreground: 0 0% 98%;\n  --popover: 0 0% 3.9%;\n  --popover-foreground: 0 0% 98%;\n  --primary: 0 0% 98%;\n  --primary-foreground: 0 0% 9%;\n  --secondary: 0 0% 14.9%;\n  --secondary-foreground: 0 0% 98%;\n  --muted: 0 0% 14.9%;\n  --muted-foreground: 0 0% 63.9%;\n  --accent: 0 0% 14.9%;\n  --accent-foreground: 0 0% 98%;\n  --destructive: 0 62.8% 30.6%;\n  --destructive-foreground: 0 0% 98%;\n  --border: 0 0% 14.9%;\n  --input: 0 0% 14.9%;\n  --ring: 0 0% 83.1%;\n\n  --chart-1: 220 70% 50%;\n  --chart-2: 160 60% 45%;\n  --chart-3: 30 80% 55%;\n  --chart-4: 280 65% 60%;\n  --chart-5: 340 75% 55%;\n\n  --sidebar: 0 0% 21%;\n  --sidebar-foreground: 240 4.8% 95.9%;\n  --sidebar-primary: 224.3 76.3% 48%;\n  --sidebar-primary-foreground: 0 0% 100%;\n  --sidebar-accent: 240 3.7% 15.9%;\n  --sidebar-accent-foreground: 240 4.8% 95.9%;\n  --sidebar-border: 240 3.7% 15.9%;\n  --sidebar-ring: 217.2 91.2% 59.8%;\n  --sidebar-background: 240 5.9% 10%;\n}\n\n@layer base {\n  * {\n    @apply border-border outline-ring/50;\n  }\n  body {\n    @apply bg-background text-foreground;\n  }\n  html {\n    text-rendering: optimizeLegibility;\n  }\n}",
-          "size": 2314,
-          "type": "file",
-          "updated_at": "2026-01-13 18:59:43.779227+00",
-          "_links": {
-            "self": {
-              "href": "/projects/impartial-kalam-pujjv/files/globals.css"
-            }
-          }
-        },
-        {
-          "id": "e2653c0d-800a-5a45-8998-6ff207da31e3",
-          "path": "lib/utils.ts",
-          "content": "import { clsx } from \"https://esm.sh/clsx@1.2.1\"\nimport { twMerge } from \"https://esm.sh/tailwind-merge@1.12.0\"\n\nexport function cn(...inputs) {\n  return twMerge(clsx(inputs))\n}\n\nexport { cva } from \"https://esm.sh/class-variance-authority@0.6.0\"",
-          "size": 246,
-          "type": "file",
-          "updated_at": "2026-01-13 18:59:43.779227+00",
-          "_links": {
-            "self": {
-              "href": "/projects/impartial-kalam-pujjv/files/lib/utils.ts"
-            }
-          }
-        },
-        {
-          "id": "abea5d00-688b-5601-b87c-5c96b9cd1d73",
-          "path": "pages/index.mdx",
-          "content": "import { Welcome } from \"@/components/Welcome\"\n\nexport default function Page() {\n  return <Welcome />\n}",
-          "size": 103,
-          "type": "page",
-          "updated_at": "2026-01-13 18:59:43.779227+00",
-          "_links": {
-            "self": {
-              "href": "/projects/impartial-kalam-pujjv/files/pages/index.mdx"
-            }
-          }
-        },
-        {
-          "id": "c4f648a8-12d0-54ab-8872-48f0a3e89804",
-          "path": "tailwind.config.js",
-          "content": "import animatePlugin from \"https://esm.sh/tailwindcss-animate@1.0.5\"\nimport typographyPlugin from \"https://esm.sh/@tailwindcss/typography@0.5.16\"\nimport scrollbarHide from \"https://esm.sh/tailwind-scrollbar-hide@1.1.7\"\nimport containerQueriesPlugin from \"https://esm.sh/@tailwindcss/container-queries@0.1.1\"\nimport defaultTheme from \"https://esm.sh/tailwindcss@3.4.17/defaultTheme\"\n\nexport default {\n  theme: {\n    extend: {\n      screens: {\n        xs: \"480px\",\n      },\n      colors: {\n        background: \"hsl(var(--background))\",\n        foreground: \"hsl(var(--foreground))\",\n        card: {\n          DEFAULT: \"hsl(var(--card))\",\n          foreground: \"hsl(var(--card-foreground))\",\n        },\n        popover: {\n          DEFAULT: \"hsl(var(--popover))\",\n          foreground: \"hsl(var(--popover-foreground))\",\n        },\n        primary: {\n          DEFAULT: \"hsl(var(--primary))\",\n          foreground: \"hsl(var(--primary-foreground))\",\n        },\n        secondary: {\n          DEFAULT: \"hsl(var(--secondary))\",\n          foreground: \"hsl(var(--secondary-foreground))\",\n        },\n        muted: {\n          DEFAULT: \"hsl(var(--muted))\",\n          foreground: \"hsl(var(--muted-foreground))\",\n        },\n        accent: {\n          DEFAULT: \"hsl(var(--accent))\",\n          foreground: \"hsl(var(--accent-foreground))\",\n        },\n        destructive: {\n          DEFAULT: \"hsl(var(--destructive))\",\n          foreground: \"hsl(var(--destructive-foreground))\",\n        },\n        border: \"hsl(var(--border))\",\n        input: \"hsl(var(--input))\",\n        ring: \"hsl(var(--ring))\",\n\n        chart: {\n          1: \"hsl(var(--chart-1))\",\n          2: \"hsl(var(--chart-2))\",\n          3: \"hsl(var(--chart-3))\",\n          4: \"hsl(var(--chart-4))\",\n          5: \"hsl(var(--chart-5))\",\n        },\n\n        sidebar: {\n          DEFAULT: \"hsl(var(--sidebar))\",\n          foreground: \"hsl(var(--sidebar-foreground))\",\n          primary: {\n            DEFAULT: \"hsl(var(--sidebar-primary))\",\n            foreground: \"hsl(var(--sidebar-primary-foreground))\",\n          },\n          accent: {\n            DEFAULT: \"hsl(var(--sidebar-accent))\",\n            foreground: \"hsl(var(--sidebar-accent-foreground))\",\n          },\n          border: \"hsl(var(--sidebar-border))\",\n          ring: \"hsl(var(--sidebar-ring))\",\n        },\n      },\n      borderRadius: {\n        DEFAULT: \"var(--radius)\",\n        sm: \"calc(var(--radius) - 4px)\",\n        md: \"calc(var(--radius) - 2px)\",\n        lg: \"calc(var(--radius) + 2px)\",\n        xl: \"calc(var(--radius) + 4px)\",\n      },\n      fontFamily: {\n        sans: [\"var(--font-sans)\", ...defaultTheme.fontFamily.sans],\n        serif: [\"var(--font-serif)\", ...defaultTheme.fontFamily.serif],\n        display: [\"var(--font-display)\", ...defaultTheme.fontFamily.sans],\n        mono: [\"var(--font-mono)\", ...defaultTheme.fontFamily.mono],\n      },\n      typography: {\n        DEFAULT: {\n          css: {\n            code: {\n              fontFamily:\n                \"ui-monospace, SFMono-Regular, SF Mono, Menlo, Consolas, Liberation Mono, monospace;\",\n              fontWeight: \"normal\",\n              padding: \".2em .4em\",\n              backgroundColor: \"#f7f8fa\",\n              borderRadius: \"6px\",\n            },\n            \"code::before\": {\n              content: '\"\"',\n            },\n            \"code::after\": {\n              content: '\"\"',\n            },\n            pre: {\n              color: \"var(--foreground)\",\n              backgroundColor: \"#f7f8fa\",\n              fontFamily:\n                \"ui-monospace, SFMono-Regular, SF Mono, Menlo, Consolas, Liberation Mono, monospace;\",\n            },\n          },\n        },\n        invert: {\n          css: {\n            code: {\n              backgroundColor: \"#161b22\",\n            },\n            pre: {\n              backgroundColor: \"#161b22\",\n            },\n          },\n        },\n      },\n    },\n  },\n  plugins: [\n    animatePlugin,\n    typographyPlugin,\n    scrollbarHide,\n    containerQueriesPlugin,\n  ],\n  darkMode: [\"class\", '[data-theme=\"dark\"]'],\n}",
-          "size": 4040,
-          "type": "file",
-          "updated_at": "2026-01-13 18:59:43.779227+00",
-          "_links": {
-            "self": {
-              "href": "/projects/impartial-kalam-pujjv/files/tailwind.config.js"
-            }
-          }
-        }
-      ],
-      "page_info": {
-        "self": null,
-        "first": null,
-        "next": null,
-        "prev": null
-      },
-      "_links": {
-        "self": {
-          "href": "/projects/impartial-kalam-pujjv/files"
-        },
-        "project": {
-          "href": "/projects/impartial-kalam-pujjv"
-        },
-        "branches": {
-          "href": "/projects/impartial-kalam-pujjv/branches"
-        }
-      }
-    }
+{
+  "meta": {
+    "projectSlug": "test-project",
+    "recordedAt": "2026-01-13T18:50:00.000Z"
   },
-  {
-    "method": "get",
-    "url": "/projects/impartial-kalam-pujjv/files",
-    "body": {
-      "limit": "100",
-      "sort_by": "updated_at",
-      "sort_order": "desc"
-    },
-    "response": {
-      "data": [
-        {
-          "id": "468b22e8-aea3-5840-9ce6-d823c8367f5a",
-          "path": "components/layout.tsx",
-          "content": "export default function Layout(props) {\n  return <div>layout{props.children}</div>\n}",
-          "size": 84,
-          "type": "component",
-          "updated_at": "2026-01-13 19:01:38.234286+00",
-          "_links": {
-            "self": {
-              "href": "/projects/impartial-kalam-pujjv/files/components/layout.tsx"
-            }
-          }
-        },
-        {
-          "id": "c863e2dc-7c21-5601-bc12-c8d3cbdb5355",
-          "path": "pages/about.mdx",
-          "content": "export default function AboutPage() {\n  return (\n    <div className=\"p-8 bg-blue-50 min-h-screen\">\n      <h1 className=\"text-4xl font-bold text-blue-900 mb-6\">About U22s - Updated!</h1>\n      <p className=\"text-xl text-blue-700 mb-4\">\n        This is the updated About page content.\n      </p>\n      <p className=\"text-lg text-gray-600\">\n        The preview should render this content when navigating to /about.\n      </p>\n    </div>\n  );\n}",
-          "size": 440,
-          "type": "page",
-          "updated_at": "2026-01-13 19:00:53.761124+00",
-          "_links": {
-            "self": {
-              "href": "/projects/impartial-kalam-pujjv/files/pages/about.mdx"
-            }
-          }
-        },
-        {
-          "id": "3165329c-0e80-538a-b9fc-c5a562764640",
-          "path": "components/Welcome.tsx",
-          "content": "export function Welcome() {\n  return (\n    <div className=\"h-dvh flex flex-col items-center justify-center text-center bg-background px-4\">\n      <h1 className=\"font-display text-3xl font-semibold tracking-tight mb-3\">\n        Ready to Create123\n      </h1>\n      <p className=\"text-base text-foreground/50 mb-6\">\n        Let's build something amazing\n      </p>\n    </div>\n  )\n}",
-          "size": 379,
-          "type": "file",
-          "updated_at": "2026-01-13 19:00:22.460274+00",
-          "_links": {
-            "self": {
-              "href": "/projects/impartial-kalam-pujjv/files/components/Welcome.tsx"
-            }
-          }
-        },
-        {
-          "id": "12bddd02-8f55-5c25-bc41-265aee9f71ac",
-          "path": ".veryfront/agents/build.md",
-          "content": "---\nname: Coding Agent\ndescription: Translate plans into enterprise-grade code with live previews\n---\n\n# Coding Agent\n\nFull-stack developer that implements issues and milestones as working code.\n\n| Aspect | Details                        |\n| ------ | ------------------------------ |\n| Input  | Issue or milestone document    |\n| Output | Working code with live preview |\n\n## Core Rules\n\n- **STOP AND ASK** - if requirements are unclear, ask before coding\n- **UPDATE CHECKLISTS** - mark items complete immediately after each step\n- **ONE ISSUE AT A TIME** - never implement multiple issues in parallel\n- **SMALLEST FIRST** - atoms → molecules → organisms (components → pages)\n\n## Issue Workflow\n\n```\nRead issue document\n       │\n       ▼\n┌──────────────┐\n│  Ambiguous?  │──Yes──► Ask clarifying question, STOP\n└──────┬───────┘\n       │ No\n       ▼\nPick first unchecked item\n       │\n       ▼\nImplement that item only\n       │\n       ▼\nUpdate issue checklist ✓\n       │\n       ▼\nRepeat until done\n       │\n       ▼\nConfirm in preview\n```\n\n## Milestone Workflow\n\n```\nRead milestone document\n       │\n       ▼\nList linked issues\n       │\n       ▼\nAsk: \"Which issue first?\"\n  OR suggest first issue\n       │\n       ▼\nWork ONE issue at a time\n       │\n       ▼\nUpdate milestone checklist ✓\n```\n\n**NEVER** attempt full milestone in one go.\n\n## Checklist Protocol\n\n🚨 **CRITICAL: CHECKLISTS ARE THE SOURCE OF TRUTH** 🚨\n\n**After EVERY completed item, you MUST:**\n\n1. Open the issue/milestone document\n2. Mark the item `[x]`\n3. Save the file\n4. Then continue to next item\n\n**NO EXCEPTIONS. NO BATCHING. NO \"I'LL UPDATE LATER.\"**\n\n| Action        | Update                                 |\n| ------------- | -------------------------------------- |\n| Start item    | Leave unchecked, mention working on it |\n| Complete item | **Mark `[x]` IMMEDIATELY**             |\n| Blocked       | Add note, ask for help                 |\n| Skip item     | Explain why, leave unchecked           |\n\nIf you complete code without updating the checklist, **you have failed**.\n\n## Side Effect Verification\n\nAfter ANY change that affects other files (rename, move, delete, export change):\n\n```\nsearch_code for usages\n        │\n        ▼\nUpdate ALL affected imports\n        │\n        ▼\nVerify no broken references\n```\n\n**Check for:**\n\n- Missing imports after file moves\n- Broken imports after renames\n- Stale references after deletions\n- Updated exports after interface changes\n\n**NEVER** assume a change is isolated. Always `search_code` to find usages.\n\n## Code Standards\n\nFrom platform instructions:\n\n- **Read before write** - always `getFile` before modifying\n- **Search before assuming** - use `search_code` to find affected files\n- **Smallest first** - components before pages\n- **All imports** - no missing imports allowed\n- **Match existing style** - consistency over preference\n- **No drive-by refactoring** - only change what's needed\n\n## Build Order\n\n```\n1. Types, constants, utils\n2. Components (smallest first)\n3. Services, hooks\n4. Pages, layouts\n5. API routes\n```\n\nEach step must work independently.\n\n**Task too big?** If implementation exceeds 100 lines or touches 5+ files, stop and use the Planning Agent to split into smaller issues first.\n\n## Communication\n\n- **BRIEF**: \"Implementing user authentication...\"\n- **PROGRESS**: \"Completed: LoginForm component. Next: AuthService.\"\n- **BLOCKERS**: \"Need clarification: Should sessions persist across tabs?\"\n- **DONE**: \"Issue complete. Preview: [https://app.preview.veryfront.com](https://app.preview.veryfront.com)\"\n\n## Anti-Patterns\n\n| Anti-Pattern             | Instead                       |\n| ------------------------ | ----------------------------- |\n| Implement full milestone | Ask which issue first         |\n| Skip checklist updates   | Update after every item       |\n| Assume requirements      | Stop and ask                  |\n| Batch multiple issues    | One issue at a time           |\n| Big bang changes         | Incremental, working steps    |\n| Forget to read file      | Always getFile before changes |",
-          "size": 4061,
-          "type": "file",
-          "updated_at": "2026-01-13 18:59:43.779227+00",
-          "_links": {
-            "self": {
-              "href": "/projects/impartial-kalam-pujjv/files/.veryfront/agents/build.md"
-            }
-          }
-        },
-        {
-          "id": "b6202431-a156-505a-87cb-ffc315930e84",
-          "path": ".veryfront/agents/deploy.md",
-          "content": "---\nname: Deploy Agent\ndescription: Deploy applications to production with automated release pipelines\n---\n\n# Deploy Agent\n\nDevOps engineer that automates release pipelines and deploys applications to production.\n\n| Aspect | Details                            |\n| ------ | ---------------------------------- |\n| Input  | Application code, project settings |\n| Output | Live website ready for production  |\n\n## Core Rules\n\n- **DEFAULT TO PRODUCTION** - never ask if only one deployable environment exists\n- **NEVER DEPLOY TO PREVIEW** - it auto-updates on save, exclude from all options\n- **WAIT FOR PIPELINE** - all three statuses must complete before deployment\n- **AUTO-NAME RELEASES** - only prompt for name if user specifies (e.g., `v1.0.5`)\n\n## Tool Call Sequence\n\n```\ncreate_release\n     │\n     ▼\nget_release (poll with sleep)\n     │\n     ├─► exportStatus: pending → completed\n     │\n     ├─► buildStatus: pending → completed\n     │\n     ├─► deployStatus: pending → completed\n     │\n     ▼ (ALL completed)\ncreate_deployment\n     │\n     ▼\nReturn live URL\n```\n\n## Pipeline Polling\n\nPoll `get_release` until **ALL THREE** pass:\n\n| Status         | Wait For  |\n| -------------- | --------- |\n| `exportStatus` | completed |\n| `buildStatus`  | completed |\n| `deployStatus` | completed |\n\n**Only then** call `create_deployment`.\n\n## Environment Rules\n\n| Environment  | Behavior                         |\n| ------------ | -------------------------------- |\n| `preview`    | Auto-updates, never deploy       |\n| `production` | Default target, requires release |\n| Custom       | User must specify if multiple    |\n\n## Download URL\n\n`get_release_download_url` only works **after** pipeline completes.\n\n## Communication\n\n- **BRIEF**: \"Deploying to production...\"\n- **RESULT**: \"Live at [https://app.veryfront.com](https://app.veryfront.com)\"\n- **ERRORS**: State issue, suggest fix\n\n## Anti-Patterns\n\n| Anti-Pattern               | Instead                  |\n| -------------------------- | ------------------------ |\n| Deploy before pipeline     | Wait for all statuses    |\n| Ask about single env       | Default to production    |\n| Include preview in options | Exclude preview entirely |\n| Skip polling               | Always verify completion |",
-          "size": 2242,
-          "type": "file",
-          "updated_at": "2026-01-13 18:59:43.779227+00",
-          "_links": {
-            "self": {
-              "href": "/projects/impartial-kalam-pujjv/files/.veryfront/agents/deploy.md"
-            }
-          }
-        },
-        {
-          "id": "9e8f3825-8bf8-550f-ae9e-1b6eddcdc7d6",
-          "path": ".veryfront/agents/plan.md",
-          "content": "---\nname: Planning Agent\ndescription: Transform ideas into plans, broken down as milestones and actionable tasks\n---\n\n# Planning Agent\n\nStrategic project planner that transforms high-level concepts into structured milestones and implementation plans.\n\n| Aspect | Details                                 |\n| ------ | --------------------------------------- |\n| Input  | Ideas, requirements, links, screenshots |\n| Output | Milestones and issues documents         |\n\n## Core Rules\n\n- **NO CODE CHANGES** during planning - iterate on plan only until approved\n- **ASK FOLLOW-UP QUESTIONS** step-by-step before finalizing anything\n- **EVALUATE ENTIRE APP** - consider all side effects and integration points\n- **USE CHECKLISTS** - every section must have actionable checkboxes\n- **INCLUDE CODE EXAMPLES** - simple examples to clarify key concepts only\n\n## Agent Behavior\n\n### Research Phase\n\nBefore writing any RFC:\n\n- [ ] Search codebase for related files and patterns\n- [ ] Identify existing abstractions that may be affected\n- [ ] Map dependencies and integration points\n- [ ] Note any technical debt that intersects with the change\n\n### Question Phase\n\nAsk clarifying questions about:\n\n- [ ] Scope boundaries - what's in, what's out\n- [ ] Priority of requirements - must-have vs nice-to-have\n- [ ] Constraints - compatibility, performance\n\nAsk questions **one at a time** or in small batches. Do not overwhelm with a wall of questions.\n\n### Analysis Phase\n\nFor each proposed change, evaluate:\n\n- [ ] Direct impacts - files that must change\n- [ ] Indirect impacts - files that may need updates\n- [ ] Breaking changes - API contracts, database schemas\n- [ ] Migration needs - data, configuration, dependencies\n\n## Milestone Structure\n\nUse the template at [`docs/MILESTONE_TEMPLATE_.md`](docs/MILESTONE_TEMPLATE_.md) for all milestones.\n\nOutput:\n\n```\ndocs/\n├── milestones/\n│   └── freelancer-task-management-app.md\n```\n\n## RFC Issue Structure\n\nUse the template at [`docs/ISSUE_TEMPLATE_.md`](docs/ISSUE_TEMPLATE_.md) for all issues.\n\nOutput:\n\n```\ndocs/\n└── issues/\n    ├── 001-project-client-management-system.md\n    ├── 002-time-tracking-timer-functionality.md\n    └── 003-invoice-generation-dashboard.md\n```\n\nKey sections every RFC must include:\n\n### 1. Problem Statement\n\nWhat problem and why it matters\n\n### 2. Proposed Solution\n\nHigh-level approach with key interfaces\n\n### 3. Current State Analysis\n\nWhat exists, what changes, what breaks\n\n### 4. Implementation Checklist\n\nAll files, dependencies, and configuration changes\n\n### 5. Side Effects & Risks\n\nPerformance, security, and compatibility impacts\n\n### 6. Testing Strategy\n\nHow to validate the implementation works\n\n### 7. Success Criteria\n\nClear definition of done\n\n## Planning Process\n\nBefore writing RFC:\n\n- [ ] Research existing codebase thoroughly\n- [ ] Ask clarifying questions about requirements and scope\n\nDuring RFC creation:\n\n- [ ] Follow the template structure exactly\n- [ ] Keep each section focused and actionable\n- [ ] Include code snippets only for key interfaces and changes\n\nBefore finalizing:\n\n- [ ] Review for completeness against template\n- [ ] Verify all side effects have been considered\n- [ ] Get stakeholder approval on approach\n\n## Quality Gates\n\nEvery RFC must pass:\n\n- [ ] Problem clearly defined\n- [ ] Solution approach justified\n- [ ] All affected files identified\n- [ ] Testing strategy covers critical paths\n- [ ] Side effects analyzed\n- [ ] Success criteria measurable\n- [ ] No ambiguous language (\"might\", \"possibly\", \"etc.\")\n\n## Anti-Patterns\n\nAvoid these common planning mistakes:\n\n| Anti-Pattern | Problem | Instead |\n|--------------|---------|---------|\n| Vague scope | \"Improve performance\" | \"Reduce API latency to <100ms p95\" |\n| Missing files | Incomplete checklist | Search codebase thoroughly |\n| No alternatives | Single solution bias | Document 2-3 options with tradeoffs |\n| Premature code | Writing implementation | Focus on interfaces and contracts |\n| Question dump | 10 questions at once | Ask 1-3 focused questions |\n\n## Iteration Protocol\n\nWhen stakeholder provides feedback:\n\n1. **Acknowledge** - confirm understanding of feedback\n2. **Assess** - determine impact on existing plan\n3. **Adjust** - update relevant sections only\n4. **Highlight** - show what changed for easy review\n\nNever rewrite entire RFC for minor feedback. Use diffs or callouts:\n\n```markdown\n> **Updated based on feedback:**\n> - Changed authentication from JWT to session-based\n> - Added rate limiting requirement to success criteria\n```\n\nRemember: Bulletproof plan that eliminates surprises during implementation.",
-          "size": 4594,
-          "type": "file",
-          "updated_at": "2026-01-13 18:59:43.779227+00",
-          "_links": {
-            "self": {
-              "href": "/projects/impartial-kalam-pujjv/files/.veryfront/agents/plan.md"
-            }
-          }
-        },
-        {
-          "id": "47f8c00b-e202-54e6-bdcc-0e3984796655",
-          "path": ".veryfront/commands/build.md",
-          "content": "---\nname: Build\ndescription: Convert plans into functional code with live previews\n---\n\n# Build Command\n\nImplement issues and milestones as working code.\n\n## Usage\n\n```\n/build @docs/issues/001-feature-name.md\n/build @docs/milestones/project-name.md\n```\n\n## Command Behavior\n\nWhen given an **issue**:\n\n1. **Read the issue** - understand requirements and checklist\n2. **Ask clarifying questions** - if anything is ambiguous, stop and ask\n3. **Implement step-by-step** - work through checklist items one at a time\n4. **Update checklist** - mark items complete as you go\n5. **Preview changes** - confirm working in preview environment\n\nWhen given a **milestone**:\n\n1. **Read the milestone** - understand scope and linked issues\n2. **Do NOT attempt everything** - ask \"Which issue should I start with?\" or suggest the first one\n3. **Work issue-by-issue** - complete one before starting another\n\n## Example\n\n**Input:**\n\n```\n/build @docs/issues/001-project-client-management-system.md\n```\n\n**Output:**\n\n```\nImplemented project client management system.\nUpdated: docs/issues/001-project-client-management-system.md\n\nPreview: https://task-management.preview.veryfront.com\n```\n\n## Rules\n\n- **STOP AND ASK** if requirements are unclear\n- **UPDATE CHECKLISTS** after every completed item\n- **ONE ISSUE AT A TIME** - never batch multiple issues\n- **SMALLEST FIRST** - components before pages, utils before services",
-          "size": 1401,
-          "type": "file",
-          "updated_at": "2026-01-13 18:59:43.779227+00",
-          "_links": {
-            "self": {
-              "href": "/projects/impartial-kalam-pujjv/files/.veryfront/commands/build.md"
-            }
-          }
-        },
-        {
-          "id": "bc02b443-aaec-5d27-ac69-49825d36be04",
-          "path": ".veryfront/commands/deploy.md",
-          "content": "---\nname: Deploy\ndescription: Deploy your app to production with a single command\n---\n\n# Deploy Command\n\nDeploy your application to production environments.\n\n## Usage\n\n```\n/deploy [environment]\n```\n\n## Command Behavior\n\nWhen invoked, this command:\n\n1. **Creates a release** - packages current code for deployment\n2. **Monitors pipeline** - waits for export → build → deploy\n3. **Deploys to environment** - pushes to production (default)\n4. **Returns live URL** - confirms deployment success\n\n## Deployment Flow\n\n```\n┌─────────────────┐\n│  create_release │\n└────────┬────────┘\n         ▼\n┌─────────────────┐\n│   get_release   │◄──┐\n│  (poll status)  │   │\n└────────┬────────┘   │\n         │            │\n    ┌────▼────┐       │\n    │ export  │───────┤ (retry until completed)\n    │ status  │       │\n    └────┬────┘       │\n         │            │\n    ┌────▼────┐       │\n    │  build  │───────┤\n    │ status  │       │\n    └────┬────┘       │\n         │            │\n    ┌────▼────┐       │\n    │ deploy  │───────┘\n    │ status  │\n    └────┬────┘\n         │\n         ▼ (all completed)\n┌─────────────────┐\n│create_deployment│\n└────────┬────────┘\n         ▼\n┌─────────────────┐\n│   Live URL 🚀   │\n└─────────────────┘\n```\n\n## Example\n\n**Input:**\n\n```\n/deploy\n```\n\n**Output:**\n\n```\nDeployed to production:\nhttps://task-management.veryfront.com\n```\n\n## Rules\n\n- **Default environment**: `production` (don't ask if only one exists)\n- **Never deploy to**: `preview` (auto-updates on save)\n- **Release naming**: Auto-generated unless user specifies (e.g., `v1.0.5`)\n- **Pipeline order**: Wait for ALL statuses to complete before deployment",
-          "size": 1632,
-          "type": "file",
-          "updated_at": "2026-01-13 18:59:43.779227+00",
-          "_links": {
-            "self": {
-              "href": "/projects/impartial-kalam-pujjv/files/.veryfront/commands/deploy.md"
-            }
-          }
-        },
-        {
-          "id": "c55732bf-8104-5ce7-9dac-60e8c8f99a98",
-          "path": ".veryfront/commands/help.md",
-          "content": "---\nname: Help\ndescription: Explain Veryfront and how to customize AI behavior\n---\n\n# Help Command\n\nThe user needs help getting to know Veryfront\n\n## What is Veryfront?\n\nVeryfront is an AI-powered development platform for building and deploying full-stack web apps through conversation.\n\n**You can:**\n\n- Turn ideas into apps — describe what you want, AI helps you plan, code, and ship\n- Build visually — edit components, preview in real-time, iterate quickly\n- Deploy instantly — one-click deployment to production\n- Collaborate in real-time — work with others simultaneously\n\n**A project consists of:**\n\n- **Pages** — Pages in your app (`/index.tsx`, `/products/[id].tsx`)\n- **API Routes** — Server-side endpoints for backend logic (`/api` folder)\n- **Components** — Reusable UI building blocks\n- **Assets** — Images, fonts, static files\n- **Environment Variables** — Secure secrets and config\n\nProjects are React-based. You get a live preview while building, and deploy as a Vite + Vike app with server-side rendering.\n\n***\n\n## Steering the AI\n\nYou can customize how the AI builds your app by adding files to `.veryfront/`:\n\n```\n.veryfront/\n├── VERYFRONT.md              # Project instructions (always included)\n├── agents/\n│   └── {agent-id}.md         # Custom AI personas\n├── commands/\n│   └── {command-id}.md       # Slash commands (like this one)\n└── guides/\n    └── {guide}.md            # Reference docs (loaded on-demand)\n```\n\n| File            | Purpose                                              |\n| --------------- | ---------------------------------------------------- |\n| `VERYFRONT.md`  | Global rules, conventions, tech stack the AI follows |\n| `agents/*.md`   | Specialized personas with optional tool restrictions |\n| `commands/*.md` | Slash commands that inject instructions              |\n| `guides/*.md`   | Reference docs the AI reads on-demand                |\n\n**Agent template:**\n\n```yaml\n---\nname: Coding Agent\ndescription: An expert full-stack developer who translates functional requirements into code with best practice\n---\n\nGive your agent instructions here.\n```\n\n**Command template:**\n\n```yaml\n---\nname: Review\ndescription: Shown in command picker\n---\n\nWrite your command here\n```\n\nKeep explanations brief. Offer to help create specific agents or commands if asked.",
-          "size": 2299,
-          "type": "file",
-          "updated_at": "2026-01-13 18:59:43.779227+00",
-          "_links": {
-            "self": {
-              "href": "/projects/impartial-kalam-pujjv/files/.veryfront/commands/help.md"
-            }
-          }
-        },
-        {
-          "id": "d2ff3224-6b7e-5e09-99a1-68819e175a66",
-          "path": ".veryfront/commands/plan.md",
-          "content": "---\nname: Plan\ndescription: 'Transform ideas into plans, broken down as milestones and actionable tasks'\n---\n\n# Plan Command\n\nThe user wants to plan changes to their project\n\n## Usage\n\n```\n/plan <idea, requirements, links, screenshots>\n```\n\n## Command Behavior\n\nWhen invoked, this command:\n\n1. **Enters planning mode** - no code changes until plan is approved\n2. **Researches codebase** - evaluates entire app for side effects\n3. **Asks clarifying questions** - gathers requirements step-by-step\n4. **Creates milestones and issues** - structured documents for implementation\n5. **Iterates on feedback** - refines plan until stakeholder approval\n\n## Example\n\n**Input:**\n\n```\n/plan\n\nBuild a task management app for freelancers, featuring:\n- Project creation and client management  \n- Time tracking with timer functionality\n- Invoice generation based on tracked hours\n- Dashboard showing earnings and project status\n```\n\n**Output:**\n\n```\ndocs/\n├── milestones/\n│   └── freelancer-task-management-app.md\n└── issues/\n    ├── 001-project-client-management-system.md\n    ├── 002-time-tracking-timer-functionality.md\n    └── 003-invoice-generation-dashboard.md\n```",
-          "size": 1155,
-          "type": "file",
-          "updated_at": "2026-01-13 18:59:43.779227+00",
-          "_links": {
-            "self": {
-              "href": "/projects/impartial-kalam-pujjv/files/.veryfront/commands/plan.md"
-            }
-          }
-        },
-        {
-          "id": "8efc68bf-4719-5624-94d8-2a7a8a820b3b",
-          "path": ".veryfront/VERYFRONT.md",
-          "content": "",
-          "size": 0,
-          "type": "file",
-          "updated_at": "2026-01-13 18:59:43.779227+00",
-          "_links": {
-            "self": {
-              "href": "/projects/impartial-kalam-pujjv/files/.veryfront/VERYFRONT.md"
-            }
-          }
-        },
-        {
-          "id": "56dd6c56-4ed9-548c-9a04-54c643f8ab70",
-          "path": "components/app.tsx",
-          "content": "import { GoogleFonts } from \"@/lib/GoogleFonts\"\nimport { ThemeProvider } from \"https://esm.sh/next-themes\"\n\nexport default function App(props) {\n  return (\n    <>\n      <GoogleFonts\n        fonts={[\n          {\n            name: \"Inter\",\n            weights: [300, 400, 500, 600, 700],\n            italics: true,\n            variable: \"--font-sans\",\n          },\n        ]}\n      />\n      <ThemeProvider>{props.children}</ThemeProvider>\n    </>\n  )\n}",
-          "size": 450,
-          "type": "component",
-          "updated_at": "2026-01-13 18:59:43.779227+00",
-          "_links": {
-            "self": {
-              "href": "/projects/impartial-kalam-pujjv/files/components/app.tsx"
-            }
-          }
-        },
-        {
-          "id": "f7c86d02-c3c9-512c-80f9-5afd0c7acae6",
-          "path": "docs/ISSUE_TEMPLATE.md",
-          "content": "# \\[Issue Title]\n\n**Milestone:** \\[Link to parent milestone]\n\n**Priority:** \\[High/Medium/Low]\n\n## Description\n\n\\[Clear, concise description of what needs to be accomplished]\n\n## Acceptance Criteria\n\n- [ ] \\[Specific requirement 1]\n- [ ] \\[Specific requirement 2]\n- [ ] \\[Specific requirement 3]\n\n## Implementation Details\n\n### File(s) to Create/Update:\n\n- `[file-path]` - \\[Brief description of file purpose]\n\n### Key Sections to Include:\n\n- \\[Section 1] - \\[What it should cover]\n- \\[Section 2] - \\[What it should cover]\n\n### Content Guidelines:\n\n- Maximum 200 lines\n- Professional and concise tone\n- Include practical examples where applicable\n- Include code examples and types\n- Link to related documentation\n\n## Dependencies\n\n**Requires:**\n\n- \\[Other issues or files that must be completed first]\n\n**Blocks:**\n\n- \\[What this issue enables]\n\n## Definition of Done\n\n- [ ] File created/updated with complete content\n- [ ] Content reviewed for accuracy and clarity\n- [ ] Links and references verified\n- [ ] Formatting and style consistent\n- [ ] Under 200 lines as required\n\n## Notes\n\n\\[Any additional context, edge cases, or considerations]",
-          "size": 1141,
-          "type": "file",
-          "updated_at": "2026-01-13 18:59:43.779227+00",
-          "_links": {
-            "self": {
-              "href": "/projects/impartial-kalam-pujjv/files/docs/ISSUE_TEMPLATE.md"
-            }
-          }
-        },
-        {
-          "id": "00fe8bb6-f097-5891-98f2-8492d2311bb3",
-          "path": "docs/MILESTONE_TEMPLATE.md",
-          "content": "# \\[Milestone Name]\n\n**Goal:** \\[North star description of what this milestone achieves]\n\n**Priority:** \\[High/Medium/Low]\n\n## Scope\n\n\\[2-3 sentences describing the overall scope and boundaries of this milestone]\n\n## Success Criteria\n\n- [ ] \\[Specific measurable outcome 1]\n- [ ] \\[Specific measurable outcome 2]\n- [ ] \\[Specific measurable outcome 3]\n\n## Issues\n\n- [ ] \\[Link to issue 1] - \\[Brief description]\n- [ ] \\[Link to issue 2] - \\[Brief description]\n- [ ] \\[Link to issue 3] - \\[Brief description]\n\n## Dependencies\n\n**Depends On:**\n\n- \\[Other milestones or external requirements this milestone needs]\n\n**Blocks:**\n\n- \\[What this milestone enables or unblocks]\n\n## Definition of Done\n\n- [ ] All issues completed and reviewed\n- [ ] Documentation updated and published\n- [ ] Testing completed (if applicable)\n- [ ] Stakeholder approval received\n\n## Notes\n\n\\[Any additional context, assumptions, or considerations]",
-          "size": 920,
-          "type": "file",
-          "updated_at": "2026-01-13 18:59:43.779227+00",
-          "_links": {
-            "self": {
-              "href": "/projects/impartial-kalam-pujjv/files/docs/MILESTONE_TEMPLATE.md"
-            }
-          }
-        },
-        {
-          "id": "6065d660-6af3-596a-94fe-6de1593c546f",
-          "path": "globals.css",
-          "content": "@tailwind base;\n@tailwind components;\n@tailwind utilities;\n\n:root {\n  --radius: 0.5rem;\n  --spacing: 0.25rem;\n\n  --background: 0 0% 100%;\n  --foreground: 0 0% 3.9%;\n  --card: 0 0% 100%;\n  --card-foreground: 0 0% 3.9%;\n  --popover: 0 0% 100%;\n  --popover-foreground: 0 0% 3.9%;\n  --primary: 0 0% 9%;\n  --primary-foreground: 0 0% 98%;\n  --secondary: 0 0% 96.1%;\n  --secondary-foreground: 0 0% 9%;\n  --muted: 0 0% 96.1%;\n  --muted-foreground: 0 0% 45.1%;\n  --accent: 0 0% 96.1%;\n  --accent-foreground: 0 0% 9%;\n  --destructive: 0 84.2% 60.2%;\n  --destructive-foreground: 0 0% 98%;\n  --border: 0 0% 89.8%;\n  --input: 0 0% 89.8%;\n  --ring: 0 0% 3.9%;\n\n  --chart-1: 12 76% 61%;\n  --chart-2: 173 58% 39%;\n  --chart-3: 197 37% 24%;\n  --chart-4: 43 74% 66%;\n  --chart-5: 27 87% 67%;\n\n  --sidebar: 0 0% 98%;\n  --sidebar-foreground: 240 5.3% 26.1%;\n  --sidebar-primary: 240 5.9% 10%;\n  --sidebar-primary-foreground: 0 0% 98%;\n  --sidebar-accent: 240 4.8% 95.9%;\n  --sidebar-accent-foreground: 240 5.9% 10%;\n  --sidebar-border: 220 13% 91%;\n  --sidebar-ring: 217.2 91.2% 59.8%;\n  --sidebar-background: 0 0% 98%;\n}\n\n.dark,\n[data-theme=\"dark\"] {\n  --background: 0 0% 3.9%;\n  --foreground: 0 0% 98%;\n  --card: 0 0% 3.9%;\n  --card-foreground: 0 0% 98%;\n  --popover: 0 0% 3.9%;\n  --popover-foreground: 0 0% 98%;\n  --primary: 0 0% 98%;\n  --primary-foreground: 0 0% 9%;\n  --secondary: 0 0% 14.9%;\n  --secondary-foreground: 0 0% 98%;\n  --muted: 0 0% 14.9%;\n  --muted-foreground: 0 0% 63.9%;\n  --accent: 0 0% 14.9%;\n  --accent-foreground: 0 0% 98%;\n  --destructive: 0 62.8% 30.6%;\n  --destructive-foreground: 0 0% 98%;\n  --border: 0 0% 14.9%;\n  --input: 0 0% 14.9%;\n  --ring: 0 0% 83.1%;\n\n  --chart-1: 220 70% 50%;\n  --chart-2: 160 60% 45%;\n  --chart-3: 30 80% 55%;\n  --chart-4: 280 65% 60%;\n  --chart-5: 340 75% 55%;\n\n  --sidebar: 0 0% 21%;\n  --sidebar-foreground: 240 4.8% 95.9%;\n  --sidebar-primary: 224.3 76.3% 48%;\n  --sidebar-primary-foreground: 0 0% 100%;\n  --sidebar-accent: 240 3.7% 15.9%;\n  --sidebar-accent-foreground: 240 4.8% 95.9%;\n  --sidebar-border: 240 3.7% 15.9%;\n  --sidebar-ring: 217.2 91.2% 59.8%;\n  --sidebar-background: 240 5.9% 10%;\n}\n\n@layer base {\n  * {\n    @apply border-border outline-ring/50;\n  }\n  body {\n    @apply bg-background text-foreground;\n  }\n  html {\n    text-rendering: optimizeLegibility;\n  }\n}",
-          "size": 2314,
-          "type": "file",
-          "updated_at": "2026-01-13 18:59:43.779227+00",
-          "_links": {
-            "self": {
-              "href": "/projects/impartial-kalam-pujjv/files/globals.css"
-            }
-          }
-        },
-        {
-          "id": "e2653c0d-800a-5a45-8998-6ff207da31e3",
-          "path": "lib/utils.ts",
-          "content": "import { clsx } from \"https://esm.sh/clsx@1.2.1\"\nimport { twMerge } from \"https://esm.sh/tailwind-merge@1.12.0\"\n\nexport function cn(...inputs) {\n  return twMerge(clsx(inputs))\n}\n\nexport { cva } from \"https://esm.sh/class-variance-authority@0.6.0\"",
-          "size": 246,
-          "type": "file",
-          "updated_at": "2026-01-13 18:59:43.779227+00",
-          "_links": {
-            "self": {
-              "href": "/projects/impartial-kalam-pujjv/files/lib/utils.ts"
-            }
-          }
-        },
-        {
-          "id": "abea5d00-688b-5601-b87c-5c96b9cd1d73",
-          "path": "pages/index.mdx",
-          "content": "import { Welcome } from \"@/components/Welcome\"\n\nexport default function Page() {\n  return <Welcome />\n}",
-          "size": 103,
-          "type": "page",
-          "updated_at": "2026-01-13 18:59:43.779227+00",
-          "_links": {
-            "self": {
-              "href": "/projects/impartial-kalam-pujjv/files/pages/index.mdx"
-            }
-          }
-        },
-        {
-          "id": "c4f648a8-12d0-54ab-8872-48f0a3e89804",
-          "path": "tailwind.config.js",
-          "content": "import animatePlugin from \"https://esm.sh/tailwindcss-animate@1.0.5\"\nimport typographyPlugin from \"https://esm.sh/@tailwindcss/typography@0.5.16\"\nimport scrollbarHide from \"https://esm.sh/tailwind-scrollbar-hide@1.1.7\"\nimport containerQueriesPlugin from \"https://esm.sh/@tailwindcss/container-queries@0.1.1\"\nimport defaultTheme from \"https://esm.sh/tailwindcss@3.4.17/defaultTheme\"\n\nexport default {\n  theme: {\n    extend: {\n      screens: {\n        xs: \"480px\",\n      },\n      colors: {\n        background: \"hsl(var(--background))\",\n        foreground: \"hsl(var(--foreground))\",\n        card: {\n          DEFAULT: \"hsl(var(--card))\",\n          foreground: \"hsl(var(--card-foreground))\",\n        },\n        popover: {\n          DEFAULT: \"hsl(var(--popover))\",\n          foreground: \"hsl(var(--popover-foreground))\",\n        },\n        primary: {\n          DEFAULT: \"hsl(var(--primary))\",\n          foreground: \"hsl(var(--primary-foreground))\",\n        },\n        secondary: {\n          DEFAULT: \"hsl(var(--secondary))\",\n          foreground: \"hsl(var(--secondary-foreground))\",\n        },\n        muted: {\n          DEFAULT: \"hsl(var(--muted))\",\n          foreground: \"hsl(var(--muted-foreground))\",\n        },\n        accent: {\n          DEFAULT: \"hsl(var(--accent))\",\n          foreground: \"hsl(var(--accent-foreground))\",\n        },\n        destructive: {\n          DEFAULT: \"hsl(var(--destructive))\",\n          foreground: \"hsl(var(--destructive-foreground))\",\n        },\n        border: \"hsl(var(--border))\",\n        input: \"hsl(var(--input))\",\n        ring: \"hsl(var(--ring))\",\n\n        chart: {\n          1: \"hsl(var(--chart-1))\",\n          2: \"hsl(var(--chart-2))\",\n          3: \"hsl(var(--chart-3))\",\n          4: \"hsl(var(--chart-4))\",\n          5: \"hsl(var(--chart-5))\",\n        },\n\n        sidebar: {\n          DEFAULT: \"hsl(var(--sidebar))\",\n          foreground: \"hsl(var(--sidebar-foreground))\",\n          primary: {\n            DEFAULT: \"hsl(var(--sidebar-primary))\",\n            foreground: \"hsl(var(--sidebar-primary-foreground))\",\n          },\n          accent: {\n            DEFAULT: \"hsl(var(--sidebar-accent))\",\n            foreground: \"hsl(var(--sidebar-accent-foreground))\",\n          },\n          border: \"hsl(var(--sidebar-border))\",\n          ring: \"hsl(var(--sidebar-ring))\",\n        },\n      },\n      borderRadius: {\n        DEFAULT: \"var(--radius)\",\n        sm: \"calc(var(--radius) - 4px)\",\n        md: \"calc(var(--radius) - 2px)\",\n        lg: \"calc(var(--radius) + 2px)\",\n        xl: \"calc(var(--radius) + 4px)\",\n      },\n      fontFamily: {\n        sans: [\"var(--font-sans)\", ...defaultTheme.fontFamily.sans],\n        serif: [\"var(--font-serif)\", ...defaultTheme.fontFamily.serif],\n        display: [\"var(--font-display)\", ...defaultTheme.fontFamily.sans],\n        mono: [\"var(--font-mono)\", ...defaultTheme.fontFamily.mono],\n      },\n      typography: {\n        DEFAULT: {\n          css: {\n            code: {\n              fontFamily:\n                \"ui-monospace, SFMono-Regular, SF Mono, Menlo, Consolas, Liberation Mono, monospace;\",\n              fontWeight: \"normal\",\n              padding: \".2em .4em\",\n              backgroundColor: \"#f7f8fa\",\n              borderRadius: \"6px\",\n            },\n            \"code::before\": {\n              content: '\"\"',\n            },\n            \"code::after\": {\n              content: '\"\"',\n            },\n            pre: {\n              color: \"var(--foreground)\",\n              backgroundColor: \"#f7f8fa\",\n              fontFamily:\n                \"ui-monospace, SFMono-Regular, SF Mono, Menlo, Consolas, Liberation Mono, monospace;\",\n            },\n          },\n        },\n        invert: {\n          css: {\n            code: {\n              backgroundColor: \"#161b22\",\n            },\n            pre: {\n              backgroundColor: \"#161b22\",\n            },\n          },\n        },\n      },\n    },\n  },\n  plugins: [\n    animatePlugin,\n    typographyPlugin,\n    scrollbarHide,\n    containerQueriesPlugin,\n  ],\n  darkMode: [\"class\", '[data-theme=\"dark\"]'],\n}",
-          "size": 4040,
-          "type": "file",
-          "updated_at": "2026-01-13 18:59:43.779227+00",
-          "_links": {
-            "self": {
-              "href": "/projects/impartial-kalam-pujjv/files/tailwind.config.js"
-            }
-          }
-        }
-      ],
-      "page_info": {
-        "self": null,
-        "first": null,
-        "next": null,
-        "prev": null
+  "entries": [
+    {
+      "method": "get",
+      "url": "/projects/test-project/files",
+      "body": {
+        "limit": "100",
+        "sort_by": "updated_at",
+        "sort_order": "desc"
       },
-      "_links": {
-        "self": {
-          "href": "/projects/impartial-kalam-pujjv/files"
-        },
-        "project": {
-          "href": "/projects/impartial-kalam-pujjv"
-        },
-        "branches": {
-          "href": "/projects/impartial-kalam-pujjv/branches"
+      "response": {
+        "data": [
+          {
+            "id": "file-001",
+            "path": "components/layout.tsx",
+            "content": "export default function Layout(props) {\n  return <div>layout{props.children}</div>\n}",
+            "size": 84,
+            "type": "component",
+            "updated_at": "2026-01-13 19:01:38.234286+00",
+            "_links": {
+              "self": {
+                "href": "/projects/test-project/files/components/layout.tsx"
+              }
+            }
+          },
+          {
+            "id": "file-002",
+            "path": "pages/index.tsx",
+            "content": "export default function IndexPage() {\n  return <div>Hello World</div>\n}",
+            "size": 70,
+            "type": "page",
+            "updated_at": "2026-01-13 19:00:53.761124+00",
+            "_links": {
+              "self": {
+                "href": "/projects/test-project/files/pages/index.tsx"
+              }
+            }
+          }
+        ],
+        "page_info": {
+          "self": null,
+          "first": null,
+          "next": null,
+          "prev": null
         }
       }
-    }
-  },
-  {
-    "method": "get",
-    "url": "/projects/impartial-kalam-pujjv/files",
-    "body": {
-      "limit": "100",
-      "sort_by": "updated_at",
-      "sort_order": "desc"
     },
-    "response": {
-      "data": [
-        {
-          "id": "468b22e8-aea3-5840-9ce6-d823c8367f5a",
-          "path": "components/layout.tsx",
-          "content": "export default function Layout(props) {\n  return <div>layout{props.children}</div>\n}",
-          "size": 84,
-          "type": "component",
-          "updated_at": "2026-01-13 19:01:38.234286+00",
-          "_links": {
-            "self": {
-              "href": "/projects/impartial-kalam-pujjv/files/components/layout.tsx"
-            }
-          }
-        },
-        {
-          "id": "c863e2dc-7c21-5601-bc12-c8d3cbdb5355",
-          "path": "pages/about.mdx",
-          "content": "export default function AboutPage() {\n  return (\n    <div className=\"p-8 bg-blue-50 min-h-screen\">\n      <h1 className=\"text-4xl font-bold text-blue-900 mb-6\">About U22s - Updated!</h1>\n      <p className=\"text-xl text-blue-700 mb-4\">\n        This is the updated About page content.\n      </p>\n      <p className=\"text-lg text-gray-600\">\n        The preview should render this content when navigating to /about.\n      </p>\n    </div>\n  );\n}",
-          "size": 440,
-          "type": "page",
-          "updated_at": "2026-01-13 19:00:53.761124+00",
-          "_links": {
-            "self": {
-              "href": "/projects/impartial-kalam-pujjv/files/pages/about.mdx"
-            }
-          }
-        },
-        {
-          "id": "3165329c-0e80-538a-b9fc-c5a562764640",
-          "path": "components/Welcome.tsx",
-          "content": "export function Welcome() {\n  return (\n    <div className=\"h-dvh flex flex-col items-center justify-center text-center bg-background px-4\">\n      <h1 className=\"font-display text-3xl font-semibold tracking-tight mb-3\">\n        Ready to Create123\n      </h1>\n      <p className=\"text-base text-foreground/50 mb-6\">\n        Let's build something amazing\n      </p>\n    </div>\n  )\n}",
-          "size": 379,
-          "type": "file",
-          "updated_at": "2026-01-13 19:00:22.460274+00",
-          "_links": {
-            "self": {
-              "href": "/projects/impartial-kalam-pujjv/files/components/Welcome.tsx"
-            }
-          }
-        },
-        {
-          "id": "12bddd02-8f55-5c25-bc41-265aee9f71ac",
-          "path": ".veryfront/agents/build.md",
-          "content": "---\nname: Coding Agent\ndescription: Translate plans into enterprise-grade code with live previews\n---\n\n# Coding Agent\n\nFull-stack developer that implements issues and milestones as working code.\n\n| Aspect | Details                        |\n| ------ | ------------------------------ |\n| Input  | Issue or milestone document    |\n| Output | Working code with live preview |\n\n## Core Rules\n\n- **STOP AND ASK** - if requirements are unclear, ask before coding\n- **UPDATE CHECKLISTS** - mark items complete immediately after each step\n- **ONE ISSUE AT A TIME** - never implement multiple issues in parallel\n- **SMALLEST FIRST** - atoms → molecules → organisms (components → pages)\n\n## Issue Workflow\n\n```\nRead issue document\n       │\n       ▼\n┌──────────────┐\n│  Ambiguous?  │──Yes──► Ask clarifying question, STOP\n└──────┬───────┘\n       │ No\n       ▼\nPick first unchecked item\n       │\n       ▼\nImplement that item only\n       │\n       ▼\nUpdate issue checklist ✓\n       │\n       ▼\nRepeat until done\n       │\n       ▼\nConfirm in preview\n```\n\n## Milestone Workflow\n\n```\nRead milestone document\n       │\n       ▼\nList linked issues\n       │\n       ▼\nAsk: \"Which issue first?\"\n  OR suggest first issue\n       │\n       ▼\nWork ONE issue at a time\n       │\n       ▼\nUpdate milestone checklist ✓\n```\n\n**NEVER** attempt full milestone in one go.\n\n## Checklist Protocol\n\n🚨 **CRITICAL: CHECKLISTS ARE THE SOURCE OF TRUTH** 🚨\n\n**After EVERY completed item, you MUST:**\n\n1. Open the issue/milestone document\n2. Mark the item `[x]`\n3. Save the file\n4. Then continue to next item\n\n**NO EXCEPTIONS. NO BATCHING. NO \"I'LL UPDATE LATER.\"**\n\n| Action        | Update                                 |\n| ------------- | -------------------------------------- |\n| Start item    | Leave unchecked, mention working on it |\n| Complete item | **Mark `[x]` IMMEDIATELY**             |\n| Blocked       | Add note, ask for help                 |\n| Skip item     | Explain why, leave unchecked           |\n\nIf you complete code without updating the checklist, **you have failed**.\n\n## Side Effect Verification\n\nAfter ANY change that affects other files (rename, move, delete, export change):\n\n```\nsearch_code for usages\n        │\n        ▼\nUpdate ALL affected imports\n        │\n        ▼\nVerify no broken references\n```\n\n**Check for:**\n\n- Missing imports after file moves\n- Broken imports after renames\n- Stale references after deletions\n- Updated exports after interface changes\n\n**NEVER** assume a change is isolated. Always `search_code` to find usages.\n\n## Code Standards\n\nFrom platform instructions:\n\n- **Read before write** - always `getFile` before modifying\n- **Search before assuming** - use `search_code` to find affected files\n- **Smallest first** - components before pages\n- **All imports** - no missing imports allowed\n- **Match existing style** - consistency over preference\n- **No drive-by refactoring** - only change what's needed\n\n## Build Order\n\n```\n1. Types, constants, utils\n2. Components (smallest first)\n3. Services, hooks\n4. Pages, layouts\n5. API routes\n```\n\nEach step must work independently.\n\n**Task too big?** If implementation exceeds 100 lines or touches 5+ files, stop and use the Planning Agent to split into smaller issues first.\n\n## Communication\n\n- **BRIEF**: \"Implementing user authentication...\"\n- **PROGRESS**: \"Completed: LoginForm component. Next: AuthService.\"\n- **BLOCKERS**: \"Need clarification: Should sessions persist across tabs?\"\n- **DONE**: \"Issue complete. Preview: [https://app.preview.veryfront.com](https://app.preview.veryfront.com)\"\n\n## Anti-Patterns\n\n| Anti-Pattern             | Instead                       |\n| ------------------------ | ----------------------------- |\n| Implement full milestone | Ask which issue first         |\n| Skip checklist updates   | Update after every item       |\n| Assume requirements      | Stop and ask                  |\n| Batch multiple issues    | One issue at a time           |\n| Big bang changes         | Incremental, working steps    |\n| Forget to read file      | Always getFile before changes |",
-          "size": 4061,
-          "type": "file",
-          "updated_at": "2026-01-13 18:59:43.779227+00",
-          "_links": {
-            "self": {
-              "href": "/projects/impartial-kalam-pujjv/files/.veryfront/agents/build.md"
-            }
-          }
-        },
-        {
-          "id": "b6202431-a156-505a-87cb-ffc315930e84",
-          "path": ".veryfront/agents/deploy.md",
-          "content": "---\nname: Deploy Agent\ndescription: Deploy applications to production with automated release pipelines\n---\n\n# Deploy Agent\n\nDevOps engineer that automates release pipelines and deploys applications to production.\n\n| Aspect | Details                            |\n| ------ | ---------------------------------- |\n| Input  | Application code, project settings |\n| Output | Live website ready for production  |\n\n## Core Rules\n\n- **DEFAULT TO PRODUCTION** - never ask if only one deployable environment exists\n- **NEVER DEPLOY TO PREVIEW** - it auto-updates on save, exclude from all options\n- **WAIT FOR PIPELINE** - all three statuses must complete before deployment\n- **AUTO-NAME RELEASES** - only prompt for name if user specifies (e.g., `v1.0.5`)\n\n## Tool Call Sequence\n\n```\ncreate_release\n     │\n     ▼\nget_release (poll with sleep)\n     │\n     ├─► exportStatus: pending → completed\n     │\n     ├─► buildStatus: pending → completed\n     │\n     ├─► deployStatus: pending → completed\n     │\n     ▼ (ALL completed)\ncreate_deployment\n     │\n     ▼\nReturn live URL\n```\n\n## Pipeline Polling\n\nPoll `get_release` until **ALL THREE** pass:\n\n| Status         | Wait For  |\n| -------------- | --------- |\n| `exportStatus` | completed |\n| `buildStatus`  | completed |\n| `deployStatus` | completed |\n\n**Only then** call `create_deployment`.\n\n## Environment Rules\n\n| Environment  | Behavior                         |\n| ------------ | -------------------------------- |\n| `preview`    | Auto-updates, never deploy       |\n| `production` | Default target, requires release |\n| Custom       | User must specify if multiple    |\n\n## Download URL\n\n`get_release_download_url` only works **after** pipeline completes.\n\n## Communication\n\n- **BRIEF**: \"Deploying to production...\"\n- **RESULT**: \"Live at [https://app.veryfront.com](https://app.veryfront.com)\"\n- **ERRORS**: State issue, suggest fix\n\n## Anti-Patterns\n\n| Anti-Pattern               | Instead                  |\n| -------------------------- | ------------------------ |\n| Deploy before pipeline     | Wait for all statuses    |\n| Ask about single env       | Default to production    |\n| Include preview in options | Exclude preview entirely |\n| Skip polling               | Always verify completion |",
-          "size": 2242,
-          "type": "file",
-          "updated_at": "2026-01-13 18:59:43.779227+00",
-          "_links": {
-            "self": {
-              "href": "/projects/impartial-kalam-pujjv/files/.veryfront/agents/deploy.md"
-            }
-          }
-        },
-        {
-          "id": "9e8f3825-8bf8-550f-ae9e-1b6eddcdc7d6",
-          "path": ".veryfront/agents/plan.md",
-          "content": "---\nname: Planning Agent\ndescription: Transform ideas into plans, broken down as milestones and actionable tasks\n---\n\n# Planning Agent\n\nStrategic project planner that transforms high-level concepts into structured milestones and implementation plans.\n\n| Aspect | Details                                 |\n| ------ | --------------------------------------- |\n| Input  | Ideas, requirements, links, screenshots |\n| Output | Milestones and issues documents         |\n\n## Core Rules\n\n- **NO CODE CHANGES** during planning - iterate on plan only until approved\n- **ASK FOLLOW-UP QUESTIONS** step-by-step before finalizing anything\n- **EVALUATE ENTIRE APP** - consider all side effects and integration points\n- **USE CHECKLISTS** - every section must have actionable checkboxes\n- **INCLUDE CODE EXAMPLES** - simple examples to clarify key concepts only\n\n## Agent Behavior\n\n### Research Phase\n\nBefore writing any RFC:\n\n- [ ] Search codebase for related files and patterns\n- [ ] Identify existing abstractions that may be affected\n- [ ] Map dependencies and integration points\n- [ ] Note any technical debt that intersects with the change\n\n### Question Phase\n\nAsk clarifying questions about:\n\n- [ ] Scope boundaries - what's in, what's out\n- [ ] Priority of requirements - must-have vs nice-to-have\n- [ ] Constraints - compatibility, performance\n\nAsk questions **one at a time** or in small batches. Do not overwhelm with a wall of questions.\n\n### Analysis Phase\n\nFor each proposed change, evaluate:\n\n- [ ] Direct impacts - files that must change\n- [ ] Indirect impacts - files that may need updates\n- [ ] Breaking changes - API contracts, database schemas\n- [ ] Migration needs - data, configuration, dependencies\n\n## Milestone Structure\n\nUse the template at [`docs/MILESTONE_TEMPLATE_.md`](docs/MILESTONE_TEMPLATE_.md) for all milestones.\n\nOutput:\n\n```\ndocs/\n├── milestones/\n│   └── freelancer-task-management-app.md\n```\n\n## RFC Issue Structure\n\nUse the template at [`docs/ISSUE_TEMPLATE_.md`](docs/ISSUE_TEMPLATE_.md) for all issues.\n\nOutput:\n\n```\ndocs/\n└── issues/\n    ├── 001-project-client-management-system.md\n    ├── 002-time-tracking-timer-functionality.md\n    └── 003-invoice-generation-dashboard.md\n```\n\nKey sections every RFC must include:\n\n### 1. Problem Statement\n\nWhat problem and why it matters\n\n### 2. Proposed Solution\n\nHigh-level approach with key interfaces\n\n### 3. Current State Analysis\n\nWhat exists, what changes, what breaks\n\n### 4. Implementation Checklist\n\nAll files, dependencies, and configuration changes\n\n### 5. Side Effects & Risks\n\nPerformance, security, and compatibility impacts\n\n### 6. Testing Strategy\n\nHow to validate the implementation works\n\n### 7. Success Criteria\n\nClear definition of done\n\n## Planning Process\n\nBefore writing RFC:\n\n- [ ] Research existing codebase thoroughly\n- [ ] Ask clarifying questions about requirements and scope\n\nDuring RFC creation:\n\n- [ ] Follow the template structure exactly\n- [ ] Keep each section focused and actionable\n- [ ] Include code snippets only for key interfaces and changes\n\nBefore finalizing:\n\n- [ ] Review for completeness against template\n- [ ] Verify all side effects have been considered\n- [ ] Get stakeholder approval on approach\n\n## Quality Gates\n\nEvery RFC must pass:\n\n- [ ] Problem clearly defined\n- [ ] Solution approach justified\n- [ ] All affected files identified\n- [ ] Testing strategy covers critical paths\n- [ ] Side effects analyzed\n- [ ] Success criteria measurable\n- [ ] No ambiguous language (\"might\", \"possibly\", \"etc.\")\n\n## Anti-Patterns\n\nAvoid these common planning mistakes:\n\n| Anti-Pattern | Problem | Instead |\n|--------------|---------|---------|\n| Vague scope | \"Improve performance\" | \"Reduce API latency to <100ms p95\" |\n| Missing files | Incomplete checklist | Search codebase thoroughly |\n| No alternatives | Single solution bias | Document 2-3 options with tradeoffs |\n| Premature code | Writing implementation | Focus on interfaces and contracts |\n| Question dump | 10 questions at once | Ask 1-3 focused questions |\n\n## Iteration Protocol\n\nWhen stakeholder provides feedback:\n\n1. **Acknowledge** - confirm understanding of feedback\n2. **Assess** - determine impact on existing plan\n3. **Adjust** - update relevant sections only\n4. **Highlight** - show what changed for easy review\n\nNever rewrite entire RFC for minor feedback. Use diffs or callouts:\n\n```markdown\n> **Updated based on feedback:**\n> - Changed authentication from JWT to session-based\n> - Added rate limiting requirement to success criteria\n```\n\nRemember: Bulletproof plan that eliminates surprises during implementation.",
-          "size": 4594,
-          "type": "file",
-          "updated_at": "2026-01-13 18:59:43.779227+00",
-          "_links": {
-            "self": {
-              "href": "/projects/impartial-kalam-pujjv/files/.veryfront/agents/plan.md"
-            }
-          }
-        },
-        {
-          "id": "47f8c00b-e202-54e6-bdcc-0e3984796655",
-          "path": ".veryfront/commands/build.md",
-          "content": "---\nname: Build\ndescription: Convert plans into functional code with live previews\n---\n\n# Build Command\n\nImplement issues and milestones as working code.\n\n## Usage\n\n```\n/build @docs/issues/001-feature-name.md\n/build @docs/milestones/project-name.md\n```\n\n## Command Behavior\n\nWhen given an **issue**:\n\n1. **Read the issue** - understand requirements and checklist\n2. **Ask clarifying questions** - if anything is ambiguous, stop and ask\n3. **Implement step-by-step** - work through checklist items one at a time\n4. **Update checklist** - mark items complete as you go\n5. **Preview changes** - confirm working in preview environment\n\nWhen given a **milestone**:\n\n1. **Read the milestone** - understand scope and linked issues\n2. **Do NOT attempt everything** - ask \"Which issue should I start with?\" or suggest the first one\n3. **Work issue-by-issue** - complete one before starting another\n\n## Example\n\n**Input:**\n\n```\n/build @docs/issues/001-project-client-management-system.md\n```\n\n**Output:**\n\n```\nImplemented project client management system.\nUpdated: docs/issues/001-project-client-management-system.md\n\nPreview: https://task-management.preview.veryfront.com\n```\n\n## Rules\n\n- **STOP AND ASK** if requirements are unclear\n- **UPDATE CHECKLISTS** after every completed item\n- **ONE ISSUE AT A TIME** - never batch multiple issues\n- **SMALLEST FIRST** - components before pages, utils before services",
-          "size": 1401,
-          "type": "file",
-          "updated_at": "2026-01-13 18:59:43.779227+00",
-          "_links": {
-            "self": {
-              "href": "/projects/impartial-kalam-pujjv/files/.veryfront/commands/build.md"
-            }
-          }
-        },
-        {
-          "id": "bc02b443-aaec-5d27-ac69-49825d36be04",
-          "path": ".veryfront/commands/deploy.md",
-          "content": "---\nname: Deploy\ndescription: Deploy your app to production with a single command\n---\n\n# Deploy Command\n\nDeploy your application to production environments.\n\n## Usage\n\n```\n/deploy [environment]\n```\n\n## Command Behavior\n\nWhen invoked, this command:\n\n1. **Creates a release** - packages current code for deployment\n2. **Monitors pipeline** - waits for export → build → deploy\n3. **Deploys to environment** - pushes to production (default)\n4. **Returns live URL** - confirms deployment success\n\n## Deployment Flow\n\n```\n┌─────────────────┐\n│  create_release │\n└────────┬────────┘\n         ▼\n┌─────────────────┐\n│   get_release   │◄──┐\n│  (poll status)  │   │\n└────────┬────────┘   │\n         │            │\n    ┌────▼────┐       │\n    │ export  │───────┤ (retry until completed)\n    │ status  │       │\n    └────┬────┘       │\n         │            │\n    ┌────▼────┐       │\n    │  build  │───────┤\n    │ status  │       │\n    └────┬────┘       │\n         │            │\n    ┌────▼────┐       │\n    │ deploy  │───────┘\n    │ status  │\n    └────┬────┘\n         │\n         ▼ (all completed)\n┌─────────────────┐\n│create_deployment│\n└────────┬────────┘\n         ▼\n┌─────────────────┐\n│   Live URL 🚀   │\n└─────────────────┘\n```\n\n## Example\n\n**Input:**\n\n```\n/deploy\n```\n\n**Output:**\n\n```\nDeployed to production:\nhttps://task-management.veryfront.com\n```\n\n## Rules\n\n- **Default environment**: `production` (don't ask if only one exists)\n- **Never deploy to**: `preview` (auto-updates on save)\n- **Release naming**: Auto-generated unless user specifies (e.g., `v1.0.5`)\n- **Pipeline order**: Wait for ALL statuses to complete before deployment",
-          "size": 1632,
-          "type": "file",
-          "updated_at": "2026-01-13 18:59:43.779227+00",
-          "_links": {
-            "self": {
-              "href": "/projects/impartial-kalam-pujjv/files/.veryfront/commands/deploy.md"
-            }
-          }
-        },
-        {
-          "id": "c55732bf-8104-5ce7-9dac-60e8c8f99a98",
-          "path": ".veryfront/commands/help.md",
-          "content": "---\nname: Help\ndescription: Explain Veryfront and how to customize AI behavior\n---\n\n# Help Command\n\nThe user needs help getting to know Veryfront\n\n## What is Veryfront?\n\nVeryfront is an AI-powered development platform for building and deploying full-stack web apps through conversation.\n\n**You can:**\n\n- Turn ideas into apps — describe what you want, AI helps you plan, code, and ship\n- Build visually — edit components, preview in real-time, iterate quickly\n- Deploy instantly — one-click deployment to production\n- Collaborate in real-time — work with others simultaneously\n\n**A project consists of:**\n\n- **Pages** — Pages in your app (`/index.tsx`, `/products/[id].tsx`)\n- **API Routes** — Server-side endpoints for backend logic (`/api` folder)\n- **Components** — Reusable UI building blocks\n- **Assets** — Images, fonts, static files\n- **Environment Variables** — Secure secrets and config\n\nProjects are React-based. You get a live preview while building, and deploy as a Vite + Vike app with server-side rendering.\n\n***\n\n## Steering the AI\n\nYou can customize how the AI builds your app by adding files to `.veryfront/`:\n\n```\n.veryfront/\n├── VERYFRONT.md              # Project instructions (always included)\n├── agents/\n│   └── {agent-id}.md         # Custom AI personas\n├── commands/\n│   └── {command-id}.md       # Slash commands (like this one)\n└── guides/\n    └── {guide}.md            # Reference docs (loaded on-demand)\n```\n\n| File            | Purpose                                              |\n| --------------- | ---------------------------------------------------- |\n| `VERYFRONT.md`  | Global rules, conventions, tech stack the AI follows |\n| `agents/*.md`   | Specialized personas with optional tool restrictions |\n| `commands/*.md` | Slash commands that inject instructions              |\n| `guides/*.md`   | Reference docs the AI reads on-demand                |\n\n**Agent template:**\n\n```yaml\n---\nname: Coding Agent\ndescription: An expert full-stack developer who translates functional requirements into code with best practice\n---\n\nGive your agent instructions here.\n```\n\n**Command template:**\n\n```yaml\n---\nname: Review\ndescription: Shown in command picker\n---\n\nWrite your command here\n```\n\nKeep explanations brief. Offer to help create specific agents or commands if asked.",
-          "size": 2299,
-          "type": "file",
-          "updated_at": "2026-01-13 18:59:43.779227+00",
-          "_links": {
-            "self": {
-              "href": "/projects/impartial-kalam-pujjv/files/.veryfront/commands/help.md"
-            }
-          }
-        },
-        {
-          "id": "d2ff3224-6b7e-5e09-99a1-68819e175a66",
-          "path": ".veryfront/commands/plan.md",
-          "content": "---\nname: Plan\ndescription: 'Transform ideas into plans, broken down as milestones and actionable tasks'\n---\n\n# Plan Command\n\nThe user wants to plan changes to their project\n\n## Usage\n\n```\n/plan <idea, requirements, links, screenshots>\n```\n\n## Command Behavior\n\nWhen invoked, this command:\n\n1. **Enters planning mode** - no code changes until plan is approved\n2. **Researches codebase** - evaluates entire app for side effects\n3. **Asks clarifying questions** - gathers requirements step-by-step\n4. **Creates milestones and issues** - structured documents for implementation\n5. **Iterates on feedback** - refines plan until stakeholder approval\n\n## Example\n\n**Input:**\n\n```\n/plan\n\nBuild a task management app for freelancers, featuring:\n- Project creation and client management  \n- Time tracking with timer functionality\n- Invoice generation based on tracked hours\n- Dashboard showing earnings and project status\n```\n\n**Output:**\n\n```\ndocs/\n├── milestones/\n│   └── freelancer-task-management-app.md\n└── issues/\n    ├── 001-project-client-management-system.md\n    ├── 002-time-tracking-timer-functionality.md\n    └── 003-invoice-generation-dashboard.md\n```",
-          "size": 1155,
-          "type": "file",
-          "updated_at": "2026-01-13 18:59:43.779227+00",
-          "_links": {
-            "self": {
-              "href": "/projects/impartial-kalam-pujjv/files/.veryfront/commands/plan.md"
-            }
-          }
-        },
-        {
-          "id": "8efc68bf-4719-5624-94d8-2a7a8a820b3b",
-          "path": ".veryfront/VERYFRONT.md",
-          "content": "",
-          "size": 0,
-          "type": "file",
-          "updated_at": "2026-01-13 18:59:43.779227+00",
-          "_links": {
-            "self": {
-              "href": "/projects/impartial-kalam-pujjv/files/.veryfront/VERYFRONT.md"
-            }
-          }
-        },
-        {
-          "id": "56dd6c56-4ed9-548c-9a04-54c643f8ab70",
-          "path": "components/app.tsx",
-          "content": "import { GoogleFonts } from \"@/lib/GoogleFonts\"\nimport { ThemeProvider } from \"https://esm.sh/next-themes\"\n\nexport default function App(props) {\n  return (\n    <>\n      <GoogleFonts\n        fonts={[\n          {\n            name: \"Inter\",\n            weights: [300, 400, 500, 600, 700],\n            italics: true,\n            variable: \"--font-sans\",\n          },\n        ]}\n      />\n      <ThemeProvider>{props.children}</ThemeProvider>\n    </>\n  )\n}",
-          "size": 450,
-          "type": "component",
-          "updated_at": "2026-01-13 18:59:43.779227+00",
-          "_links": {
-            "self": {
-              "href": "/projects/impartial-kalam-pujjv/files/components/app.tsx"
-            }
-          }
-        },
-        {
-          "id": "f7c86d02-c3c9-512c-80f9-5afd0c7acae6",
-          "path": "docs/ISSUE_TEMPLATE.md",
-          "content": "# \\[Issue Title]\n\n**Milestone:** \\[Link to parent milestone]\n\n**Priority:** \\[High/Medium/Low]\n\n## Description\n\n\\[Clear, concise description of what needs to be accomplished]\n\n## Acceptance Criteria\n\n- [ ] \\[Specific requirement 1]\n- [ ] \\[Specific requirement 2]\n- [ ] \\[Specific requirement 3]\n\n## Implementation Details\n\n### File(s) to Create/Update:\n\n- `[file-path]` - \\[Brief description of file purpose]\n\n### Key Sections to Include:\n\n- \\[Section 1] - \\[What it should cover]\n- \\[Section 2] - \\[What it should cover]\n\n### Content Guidelines:\n\n- Maximum 200 lines\n- Professional and concise tone\n- Include practical examples where applicable\n- Include code examples and types\n- Link to related documentation\n\n## Dependencies\n\n**Requires:**\n\n- \\[Other issues or files that must be completed first]\n\n**Blocks:**\n\n- \\[What this issue enables]\n\n## Definition of Done\n\n- [ ] File created/updated with complete content\n- [ ] Content reviewed for accuracy and clarity\n- [ ] Links and references verified\n- [ ] Formatting and style consistent\n- [ ] Under 200 lines as required\n\n## Notes\n\n\\[Any additional context, edge cases, or considerations]",
-          "size": 1141,
-          "type": "file",
-          "updated_at": "2026-01-13 18:59:43.779227+00",
-          "_links": {
-            "self": {
-              "href": "/projects/impartial-kalam-pujjv/files/docs/ISSUE_TEMPLATE.md"
-            }
-          }
-        },
-        {
-          "id": "00fe8bb6-f097-5891-98f2-8492d2311bb3",
-          "path": "docs/MILESTONE_TEMPLATE.md",
-          "content": "# \\[Milestone Name]\n\n**Goal:** \\[North star description of what this milestone achieves]\n\n**Priority:** \\[High/Medium/Low]\n\n## Scope\n\n\\[2-3 sentences describing the overall scope and boundaries of this milestone]\n\n## Success Criteria\n\n- [ ] \\[Specific measurable outcome 1]\n- [ ] \\[Specific measurable outcome 2]\n- [ ] \\[Specific measurable outcome 3]\n\n## Issues\n\n- [ ] \\[Link to issue 1] - \\[Brief description]\n- [ ] \\[Link to issue 2] - \\[Brief description]\n- [ ] \\[Link to issue 3] - \\[Brief description]\n\n## Dependencies\n\n**Depends On:**\n\n- \\[Other milestones or external requirements this milestone needs]\n\n**Blocks:**\n\n- \\[What this milestone enables or unblocks]\n\n## Definition of Done\n\n- [ ] All issues completed and reviewed\n- [ ] Documentation updated and published\n- [ ] Testing completed (if applicable)\n- [ ] Stakeholder approval received\n\n## Notes\n\n\\[Any additional context, assumptions, or considerations]",
-          "size": 920,
-          "type": "file",
-          "updated_at": "2026-01-13 18:59:43.779227+00",
-          "_links": {
-            "self": {
-              "href": "/projects/impartial-kalam-pujjv/files/docs/MILESTONE_TEMPLATE.md"
-            }
-          }
-        },
-        {
-          "id": "6065d660-6af3-596a-94fe-6de1593c546f",
-          "path": "globals.css",
-          "content": "@tailwind base;\n@tailwind components;\n@tailwind utilities;\n\n:root {\n  --radius: 0.5rem;\n  --spacing: 0.25rem;\n\n  --background: 0 0% 100%;\n  --foreground: 0 0% 3.9%;\n  --card: 0 0% 100%;\n  --card-foreground: 0 0% 3.9%;\n  --popover: 0 0% 100%;\n  --popover-foreground: 0 0% 3.9%;\n  --primary: 0 0% 9%;\n  --primary-foreground: 0 0% 98%;\n  --secondary: 0 0% 96.1%;\n  --secondary-foreground: 0 0% 9%;\n  --muted: 0 0% 96.1%;\n  --muted-foreground: 0 0% 45.1%;\n  --accent: 0 0% 96.1%;\n  --accent-foreground: 0 0% 9%;\n  --destructive: 0 84.2% 60.2%;\n  --destructive-foreground: 0 0% 98%;\n  --border: 0 0% 89.8%;\n  --input: 0 0% 89.8%;\n  --ring: 0 0% 3.9%;\n\n  --chart-1: 12 76% 61%;\n  --chart-2: 173 58% 39%;\n  --chart-3: 197 37% 24%;\n  --chart-4: 43 74% 66%;\n  --chart-5: 27 87% 67%;\n\n  --sidebar: 0 0% 98%;\n  --sidebar-foreground: 240 5.3% 26.1%;\n  --sidebar-primary: 240 5.9% 10%;\n  --sidebar-primary-foreground: 0 0% 98%;\n  --sidebar-accent: 240 4.8% 95.9%;\n  --sidebar-accent-foreground: 240 5.9% 10%;\n  --sidebar-border: 220 13% 91%;\n  --sidebar-ring: 217.2 91.2% 59.8%;\n  --sidebar-background: 0 0% 98%;\n}\n\n.dark,\n[data-theme=\"dark\"] {\n  --background: 0 0% 3.9%;\n  --foreground: 0 0% 98%;\n  --card: 0 0% 3.9%;\n  --card-foreground: 0 0% 98%;\n  --popover: 0 0% 3.9%;\n  --popover-foreground: 0 0% 98%;\n  --primary: 0 0% 98%;\n  --primary-foreground: 0 0% 9%;\n  --secondary: 0 0% 14.9%;\n  --secondary-foreground: 0 0% 98%;\n  --muted: 0 0% 14.9%;\n  --muted-foreground: 0 0% 63.9%;\n  --accent: 0 0% 14.9%;\n  --accent-foreground: 0 0% 98%;\n  --destructive: 0 62.8% 30.6%;\n  --destructive-foreground: 0 0% 98%;\n  --border: 0 0% 14.9%;\n  --input: 0 0% 14.9%;\n  --ring: 0 0% 83.1%;\n\n  --chart-1: 220 70% 50%;\n  --chart-2: 160 60% 45%;\n  --chart-3: 30 80% 55%;\n  --chart-4: 280 65% 60%;\n  --chart-5: 340 75% 55%;\n\n  --sidebar: 0 0% 21%;\n  --sidebar-foreground: 240 4.8% 95.9%;\n  --sidebar-primary: 224.3 76.3% 48%;\n  --sidebar-primary-foreground: 0 0% 100%;\n  --sidebar-accent: 240 3.7% 15.9%;\n  --sidebar-accent-foreground: 240 4.8% 95.9%;\n  --sidebar-border: 240 3.7% 15.9%;\n  --sidebar-ring: 217.2 91.2% 59.8%;\n  --sidebar-background: 240 5.9% 10%;\n}\n\n@layer base {\n  * {\n    @apply border-border outline-ring/50;\n  }\n  body {\n    @apply bg-background text-foreground;\n  }\n  html {\n    text-rendering: optimizeLegibility;\n  }\n}",
-          "size": 2314,
-          "type": "file",
-          "updated_at": "2026-01-13 18:59:43.779227+00",
-          "_links": {
-            "self": {
-              "href": "/projects/impartial-kalam-pujjv/files/globals.css"
-            }
-          }
-        },
-        {
-          "id": "e2653c0d-800a-5a45-8998-6ff207da31e3",
-          "path": "lib/utils.ts",
-          "content": "import { clsx } from \"https://esm.sh/clsx@1.2.1\"\nimport { twMerge } from \"https://esm.sh/tailwind-merge@1.12.0\"\n\nexport function cn(...inputs) {\n  return twMerge(clsx(inputs))\n}\n\nexport { cva } from \"https://esm.sh/class-variance-authority@0.6.0\"",
-          "size": 246,
-          "type": "file",
-          "updated_at": "2026-01-13 18:59:43.779227+00",
-          "_links": {
-            "self": {
-              "href": "/projects/impartial-kalam-pujjv/files/lib/utils.ts"
-            }
-          }
-        },
-        {
-          "id": "abea5d00-688b-5601-b87c-5c96b9cd1d73",
-          "path": "pages/index.mdx",
-          "content": "import { Welcome } from \"@/components/Welcome\"\n\nexport default function Page() {\n  return <Welcome />\n}",
-          "size": 103,
-          "type": "page",
-          "updated_at": "2026-01-13 18:59:43.779227+00",
-          "_links": {
-            "self": {
-              "href": "/projects/impartial-kalam-pujjv/files/pages/index.mdx"
-            }
-          }
-        },
-        {
-          "id": "c4f648a8-12d0-54ab-8872-48f0a3e89804",
-          "path": "tailwind.config.js",
-          "content": "import animatePlugin from \"https://esm.sh/tailwindcss-animate@1.0.5\"\nimport typographyPlugin from \"https://esm.sh/@tailwindcss/typography@0.5.16\"\nimport scrollbarHide from \"https://esm.sh/tailwind-scrollbar-hide@1.1.7\"\nimport containerQueriesPlugin from \"https://esm.sh/@tailwindcss/container-queries@0.1.1\"\nimport defaultTheme from \"https://esm.sh/tailwindcss@3.4.17/defaultTheme\"\n\nexport default {\n  theme: {\n    extend: {\n      screens: {\n        xs: \"480px\",\n      },\n      colors: {\n        background: \"hsl(var(--background))\",\n        foreground: \"hsl(var(--foreground))\",\n        card: {\n          DEFAULT: \"hsl(var(--card))\",\n          foreground: \"hsl(var(--card-foreground))\",\n        },\n        popover: {\n          DEFAULT: \"hsl(var(--popover))\",\n          foreground: \"hsl(var(--popover-foreground))\",\n        },\n        primary: {\n          DEFAULT: \"hsl(var(--primary))\",\n          foreground: \"hsl(var(--primary-foreground))\",\n        },\n        secondary: {\n          DEFAULT: \"hsl(var(--secondary))\",\n          foreground: \"hsl(var(--secondary-foreground))\",\n        },\n        muted: {\n          DEFAULT: \"hsl(var(--muted))\",\n          foreground: \"hsl(var(--muted-foreground))\",\n        },\n        accent: {\n          DEFAULT: \"hsl(var(--accent))\",\n          foreground: \"hsl(var(--accent-foreground))\",\n        },\n        destructive: {\n          DEFAULT: \"hsl(var(--destructive))\",\n          foreground: \"hsl(var(--destructive-foreground))\",\n        },\n        border: \"hsl(var(--border))\",\n        input: \"hsl(var(--input))\",\n        ring: \"hsl(var(--ring))\",\n\n        chart: {\n          1: \"hsl(var(--chart-1))\",\n          2: \"hsl(var(--chart-2))\",\n          3: \"hsl(var(--chart-3))\",\n          4: \"hsl(var(--chart-4))\",\n          5: \"hsl(var(--chart-5))\",\n        },\n\n        sidebar: {\n          DEFAULT: \"hsl(var(--sidebar))\",\n          foreground: \"hsl(var(--sidebar-foreground))\",\n          primary: {\n            DEFAULT: \"hsl(var(--sidebar-primary))\",\n            foreground: \"hsl(var(--sidebar-primary-foreground))\",\n          },\n          accent: {\n            DEFAULT: \"hsl(var(--sidebar-accent))\",\n            foreground: \"hsl(var(--sidebar-accent-foreground))\",\n          },\n          border: \"hsl(var(--sidebar-border))\",\n          ring: \"hsl(var(--sidebar-ring))\",\n        },\n      },\n      borderRadius: {\n        DEFAULT: \"var(--radius)\",\n        sm: \"calc(var(--radius) - 4px)\",\n        md: \"calc(var(--radius) - 2px)\",\n        lg: \"calc(var(--radius) + 2px)\",\n        xl: \"calc(var(--radius) + 4px)\",\n      },\n      fontFamily: {\n        sans: [\"var(--font-sans)\", ...defaultTheme.fontFamily.sans],\n        serif: [\"var(--font-serif)\", ...defaultTheme.fontFamily.serif],\n        display: [\"var(--font-display)\", ...defaultTheme.fontFamily.sans],\n        mono: [\"var(--font-mono)\", ...defaultTheme.fontFamily.mono],\n      },\n      typography: {\n        DEFAULT: {\n          css: {\n            code: {\n              fontFamily:\n                \"ui-monospace, SFMono-Regular, SF Mono, Menlo, Consolas, Liberation Mono, monospace;\",\n              fontWeight: \"normal\",\n              padding: \".2em .4em\",\n              backgroundColor: \"#f7f8fa\",\n              borderRadius: \"6px\",\n            },\n            \"code::before\": {\n              content: '\"\"',\n            },\n            \"code::after\": {\n              content: '\"\"',\n            },\n            pre: {\n              color: \"var(--foreground)\",\n              backgroundColor: \"#f7f8fa\",\n              fontFamily:\n                \"ui-monospace, SFMono-Regular, SF Mono, Menlo, Consolas, Liberation Mono, monospace;\",\n            },\n          },\n        },\n        invert: {\n          css: {\n            code: {\n              backgroundColor: \"#161b22\",\n            },\n            pre: {\n              backgroundColor: \"#161b22\",\n            },\n          },\n        },\n      },\n    },\n  },\n  plugins: [\n    animatePlugin,\n    typographyPlugin,\n    scrollbarHide,\n    containerQueriesPlugin,\n  ],\n  darkMode: [\"class\", '[data-theme=\"dark\"]'],\n}",
-          "size": 4040,
-          "type": "file",
-          "updated_at": "2026-01-13 18:59:43.779227+00",
-          "_links": {
-            "self": {
-              "href": "/projects/impartial-kalam-pujjv/files/tailwind.config.js"
-            }
-          }
-        }
-      ],
-      "page_info": {
-        "self": null,
-        "first": null,
-        "next": null,
-        "prev": null
+    {
+      "method": "get",
+      "url": "/projects/test-project/files",
+      "body": {
+        "limit": "100",
+        "sort_by": "updated_at",
+        "sort_order": "desc"
       },
-      "_links": {
-        "self": {
-          "href": "/projects/impartial-kalam-pujjv/files"
-        },
-        "project": {
-          "href": "/projects/impartial-kalam-pujjv"
-        },
-        "branches": {
-          "href": "/projects/impartial-kalam-pujjv/branches"
+      "response": {
+        "data": [
+          {
+            "id": "file-001",
+            "path": "components/layout.tsx",
+            "content": "export default function Layout(props) {\n  return <div>layout{props.children}</div>\n}",
+            "size": 84,
+            "type": "component",
+            "updated_at": "2026-01-13 19:01:38.234286+00",
+            "_links": {
+              "self": {
+                "href": "/projects/test-project/files/components/layout.tsx"
+              }
+            }
+          }
+        ],
+        "page_info": {
+          "self": null,
+          "first": null,
+          "next": null,
+          "prev": null
         }
       }
-    }
-  },
-  {
-    "method": "get",
-    "url": "/projects/impartial-kalam-pujjv/files/components%2Flayout.tsx",
-    "response": {
-      "id": "468b22e8-aea3-5840-9ce6-d823c8367f5a",
-      "path": "components/layout.tsx",
-      "content": "export default function Layout(props) {\n  return <div>layout{props.children}</div>\n}",
-      "size": 84,
-      "type": "component",
-      "updated_at": "2026-01-13 19:01:38.234286+00",
-      "_links": {
-        "self": {
-          "href": "/projects/impartial-kalam-pujjv/files/components/layout.tsx"
-        },
-        "list": {
-          "href": "/projects/impartial-kalam-pujjv/files"
-        },
-        "project": {
-          "href": "/projects/impartial-kalam-pujjv"
-        },
-        "versions": {
-          "href": "/projects/impartial-kalam-pujjv/files/components/layout.tsx/versions"
+    },
+    {
+      "method": "get",
+      "url": "/projects/test-project/files",
+      "body": {
+        "limit": "100",
+        "sort_by": "updated_at",
+        "sort_order": "desc"
+      },
+      "response": {
+        "data": [
+          {
+            "id": "file-001",
+            "path": "components/layout.tsx",
+            "content": "export default function Layout(props) {\n  return <div>layout{props.children}</div>\n}",
+            "size": 84,
+            "type": "component",
+            "updated_at": "2026-01-13 19:01:38.234286+00",
+            "_links": {
+              "self": {
+                "href": "/projects/test-project/files/components/layout.tsx"
+              }
+            }
+          }
+        ],
+        "page_info": {
+          "self": null,
+          "first": null,
+          "next": null,
+          "prev": null
         }
       }
+    },
+    {
+      "method": "get",
+      "url": "/projects/test-project/files/components%2Flayout.tsx",
+      "response": {
+        "id": "file-001",
+        "path": "components/layout.tsx",
+        "content": "export default function Layout(props) {\n  return <div>layout{props.children}</div>\n}",
+        "size": 84,
+        "type": "component",
+        "updated_at": "2026-01-13 19:01:38.234286+00"
+      }
     }
-  }
-]
+  ]
+}

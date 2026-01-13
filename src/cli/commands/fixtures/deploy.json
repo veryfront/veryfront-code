@@ -1,103 +1,33 @@
 {
   "meta": {
-    "projectSlug": "codersociety",
+    "projectSlug": "test-project",
     "recordedAt": "2026-01-13T22:01:53.343Z"
   },
   "entries": [
     {
       "method": "get",
-      "url": "/projects/codersociety/environments",
+      "url": "/projects/test-project/environments",
       "response": {
         "data": [
           {
-            "id": "5e932e2c-a671-45af-a043-2fa532b78afe",
+            "id": "env-preview-001",
             "name": "Preview",
-            "project": "6ba0cf13-d07b-494c-9d9d-71175e9be870",
+            "project": "proj-001",
             "protected": false,
-            "domains": [
-              "codersociety-v2.preview.veryfront.com"
-            ],
+            "domains": ["test-project.preview.veryfront.com"],
             "environment_variables": [],
             "deployment": null,
             "created_at": "2024-10-03 09:49:39.661+00",
             "updated_at": "2024-10-03 09:49:39.661+00"
           },
           {
-            "id": "deb5be81-40dd-41f6-b66c-2c4cbf1e96a0",
-            "name": "Development",
-            "project": "6ba0cf13-d07b-494c-9d9d-71175e9be870",
+            "id": "env-production-001",
+            "name": "production",
+            "project": "proj-001",
             "protected": false,
-            "domains": [
-              "codersociety-v2.development.veryfront.com"
-            ],
+            "domains": ["test-project.production.veryfront.com"],
             "environment_variables": [],
-            "deployment": {
-              "id": "28a769f7-466f-466c-b297-cabed51e70a8",
-              "created_at": "2026-01-13 18:44:28.433+00",
-              "updated_at": "2026-01-13 18:44:28.433+00",
-              "release": {
-                "id": "c0826ca6-612b-4a9f-8eae-9cea5e9e0a60",
-                "name": "2026-01-13T18:44:24.392Z by Koji Wakayama [deb5be81-40dd-41f6-b66c-2c4cbf1e96a0,c7de59ea-7c76-4cde-826d-1e252fb95f7c,bd52f663-4260-4329-9aa3-4b02df6642f1]",
-                "export_status": "deployed",
-                "build_status": "deployed",
-                "deploy_status": "deployed",
-                "created_at": "2026-01-13 18:44:24.749+00",
-                "updated_at": "2026-01-13 18:44:24.749+00"
-              }
-            },
-            "created_at": "2024-10-03 09:49:39.682+00",
-            "updated_at": "2024-10-03 09:49:39.682+00"
-          },
-          {
-            "id": "c7de59ea-7c76-4cde-826d-1e252fb95f7c",
-            "name": "Staging",
-            "project": "6ba0cf13-d07b-494c-9d9d-71175e9be870",
-            "protected": false,
-            "domains": [
-              "codersociety-v2.staging.veryfront.com"
-            ],
-            "environment_variables": [],
-            "deployment": {
-              "id": "3cb2f80e-dec3-4558-aae3-762b83d09e95",
-              "created_at": "2026-01-13 18:44:28.432+00",
-              "updated_at": "2026-01-13 18:44:28.432+00",
-              "release": {
-                "id": "c0826ca6-612b-4a9f-8eae-9cea5e9e0a60",
-                "name": "2026-01-13T18:44:24.392Z by Koji Wakayama [deb5be81-40dd-41f6-b66c-2c4cbf1e96a0,c7de59ea-7c76-4cde-826d-1e252fb95f7c,bd52f663-4260-4329-9aa3-4b02df6642f1]",
-                "export_status": "deployed",
-                "build_status": "deployed",
-                "deploy_status": "deployed",
-                "created_at": "2026-01-13 18:44:24.749+00",
-                "updated_at": "2026-01-13 18:44:24.749+00"
-              }
-            },
-            "created_at": "2024-10-03 09:49:39.691+00",
-            "updated_at": "2024-10-03 09:49:39.691+00"
-          },
-          {
-            "id": "bd52f663-4260-4329-9aa3-4b02df6642f1",
-            "name": "Production",
-            "project": "6ba0cf13-d07b-494c-9d9d-71175e9be870",
-            "protected": false,
-            "domains": [
-              "codersociety.com",
-              "codersociety-v2.production.veryfront.com"
-            ],
-            "environment_variables": [],
-            "deployment": {
-              "id": "36072959-d57f-4a6c-ad3b-47c5677ba63d",
-              "created_at": "2026-01-13 18:44:28.414+00",
-              "updated_at": "2026-01-13 18:44:28.414+00",
-              "release": {
-                "id": "c0826ca6-612b-4a9f-8eae-9cea5e9e0a60",
-                "name": "2026-01-13T18:44:24.392Z by Koji Wakayama [deb5be81-40dd-41f6-b66c-2c4cbf1e96a0,c7de59ea-7c76-4cde-826d-1e252fb95f7c,bd52f663-4260-4329-9aa3-4b02df6642f1]",
-                "export_status": "deployed",
-                "build_status": "deployed",
-                "deploy_status": "deployed",
-                "created_at": "2026-01-13 18:44:24.749+00",
-                "updated_at": "2026-01-13 18:44:24.749+00"
-              }
-            },
+            "deployment": null,
             "created_at": "2024-10-03 09:49:39.701+00",
             "updated_at": "2024-10-03 09:49:39.701+00"
           }
@@ -112,98 +42,28 @@
     },
     {
       "method": "get",
-      "url": "/projects/codersociety/environments",
+      "url": "/projects/test-project/environments",
       "response": {
         "data": [
           {
-            "id": "5e932e2c-a671-45af-a043-2fa532b78afe",
+            "id": "env-preview-001",
             "name": "Preview",
-            "project": "6ba0cf13-d07b-494c-9d9d-71175e9be870",
+            "project": "proj-001",
             "protected": false,
-            "domains": [
-              "codersociety-v2.preview.veryfront.com"
-            ],
+            "domains": ["test-project.preview.veryfront.com"],
             "environment_variables": [],
             "deployment": null,
             "created_at": "2024-10-03 09:49:39.661+00",
             "updated_at": "2024-10-03 09:49:39.661+00"
           },
           {
-            "id": "deb5be81-40dd-41f6-b66c-2c4cbf1e96a0",
-            "name": "Development",
-            "project": "6ba0cf13-d07b-494c-9d9d-71175e9be870",
+            "id": "env-production-001",
+            "name": "production",
+            "project": "proj-001",
             "protected": false,
-            "domains": [
-              "codersociety-v2.development.veryfront.com"
-            ],
+            "domains": ["test-project.production.veryfront.com"],
             "environment_variables": [],
-            "deployment": {
-              "id": "28a769f7-466f-466c-b297-cabed51e70a8",
-              "created_at": "2026-01-13 18:44:28.433+00",
-              "updated_at": "2026-01-13 18:44:28.433+00",
-              "release": {
-                "id": "c0826ca6-612b-4a9f-8eae-9cea5e9e0a60",
-                "name": "2026-01-13T18:44:24.392Z by Koji Wakayama [deb5be81-40dd-41f6-b66c-2c4cbf1e96a0,c7de59ea-7c76-4cde-826d-1e252fb95f7c,bd52f663-4260-4329-9aa3-4b02df6642f1]",
-                "export_status": "deployed",
-                "build_status": "deployed",
-                "deploy_status": "deployed",
-                "created_at": "2026-01-13 18:44:24.749+00",
-                "updated_at": "2026-01-13 18:44:24.749+00"
-              }
-            },
-            "created_at": "2024-10-03 09:49:39.682+00",
-            "updated_at": "2024-10-03 09:49:39.682+00"
-          },
-          {
-            "id": "c7de59ea-7c76-4cde-826d-1e252fb95f7c",
-            "name": "Staging",
-            "project": "6ba0cf13-d07b-494c-9d9d-71175e9be870",
-            "protected": false,
-            "domains": [
-              "codersociety-v2.staging.veryfront.com"
-            ],
-            "environment_variables": [],
-            "deployment": {
-              "id": "3cb2f80e-dec3-4558-aae3-762b83d09e95",
-              "created_at": "2026-01-13 18:44:28.432+00",
-              "updated_at": "2026-01-13 18:44:28.432+00",
-              "release": {
-                "id": "c0826ca6-612b-4a9f-8eae-9cea5e9e0a60",
-                "name": "2026-01-13T18:44:24.392Z by Koji Wakayama [deb5be81-40dd-41f6-b66c-2c4cbf1e96a0,c7de59ea-7c76-4cde-826d-1e252fb95f7c,bd52f663-4260-4329-9aa3-4b02df6642f1]",
-                "export_status": "deployed",
-                "build_status": "deployed",
-                "deploy_status": "deployed",
-                "created_at": "2026-01-13 18:44:24.749+00",
-                "updated_at": "2026-01-13 18:44:24.749+00"
-              }
-            },
-            "created_at": "2024-10-03 09:49:39.691+00",
-            "updated_at": "2024-10-03 09:49:39.691+00"
-          },
-          {
-            "id": "bd52f663-4260-4329-9aa3-4b02df6642f1",
-            "name": "Production",
-            "project": "6ba0cf13-d07b-494c-9d9d-71175e9be870",
-            "protected": false,
-            "domains": [
-              "codersociety.com",
-              "codersociety-v2.production.veryfront.com"
-            ],
-            "environment_variables": [],
-            "deployment": {
-              "id": "36072959-d57f-4a6c-ad3b-47c5677ba63d",
-              "created_at": "2026-01-13 18:44:28.414+00",
-              "updated_at": "2026-01-13 18:44:28.414+00",
-              "release": {
-                "id": "c0826ca6-612b-4a9f-8eae-9cea5e9e0a60",
-                "name": "2026-01-13T18:44:24.392Z by Koji Wakayama [deb5be81-40dd-41f6-b66c-2c4cbf1e96a0,c7de59ea-7c76-4cde-826d-1e252fb95f7c,bd52f663-4260-4329-9aa3-4b02df6642f1]",
-                "export_status": "deployed",
-                "build_status": "deployed",
-                "deploy_status": "deployed",
-                "created_at": "2026-01-13 18:44:24.749+00",
-                "updated_at": "2026-01-13 18:44:24.749+00"
-              }
-            },
+            "deployment": null,
             "created_at": "2024-10-03 09:49:39.701+00",
             "updated_at": "2024-10-03 09:49:39.701+00"
           }
@@ -218,98 +78,28 @@
     },
     {
       "method": "get",
-      "url": "/projects/codersociety/environments",
+      "url": "/projects/test-project/environments",
       "response": {
         "data": [
           {
-            "id": "5e932e2c-a671-45af-a043-2fa532b78afe",
+            "id": "env-preview-001",
             "name": "Preview",
-            "project": "6ba0cf13-d07b-494c-9d9d-71175e9be870",
+            "project": "proj-001",
             "protected": false,
-            "domains": [
-              "codersociety-v2.preview.veryfront.com"
-            ],
+            "domains": ["test-project.preview.veryfront.com"],
             "environment_variables": [],
             "deployment": null,
             "created_at": "2024-10-03 09:49:39.661+00",
             "updated_at": "2024-10-03 09:49:39.661+00"
           },
           {
-            "id": "deb5be81-40dd-41f6-b66c-2c4cbf1e96a0",
-            "name": "Development",
-            "project": "6ba0cf13-d07b-494c-9d9d-71175e9be870",
+            "id": "env-production-001",
+            "name": "production",
+            "project": "proj-001",
             "protected": false,
-            "domains": [
-              "codersociety-v2.development.veryfront.com"
-            ],
+            "domains": ["test-project.production.veryfront.com"],
             "environment_variables": [],
-            "deployment": {
-              "id": "28a769f7-466f-466c-b297-cabed51e70a8",
-              "created_at": "2026-01-13 18:44:28.433+00",
-              "updated_at": "2026-01-13 18:44:28.433+00",
-              "release": {
-                "id": "c0826ca6-612b-4a9f-8eae-9cea5e9e0a60",
-                "name": "2026-01-13T18:44:24.392Z by Koji Wakayama [deb5be81-40dd-41f6-b66c-2c4cbf1e96a0,c7de59ea-7c76-4cde-826d-1e252fb95f7c,bd52f663-4260-4329-9aa3-4b02df6642f1]",
-                "export_status": "deployed",
-                "build_status": "deployed",
-                "deploy_status": "deployed",
-                "created_at": "2026-01-13 18:44:24.749+00",
-                "updated_at": "2026-01-13 18:44:24.749+00"
-              }
-            },
-            "created_at": "2024-10-03 09:49:39.682+00",
-            "updated_at": "2024-10-03 09:49:39.682+00"
-          },
-          {
-            "id": "c7de59ea-7c76-4cde-826d-1e252fb95f7c",
-            "name": "Staging",
-            "project": "6ba0cf13-d07b-494c-9d9d-71175e9be870",
-            "protected": false,
-            "domains": [
-              "codersociety-v2.staging.veryfront.com"
-            ],
-            "environment_variables": [],
-            "deployment": {
-              "id": "3cb2f80e-dec3-4558-aae3-762b83d09e95",
-              "created_at": "2026-01-13 18:44:28.432+00",
-              "updated_at": "2026-01-13 18:44:28.432+00",
-              "release": {
-                "id": "c0826ca6-612b-4a9f-8eae-9cea5e9e0a60",
-                "name": "2026-01-13T18:44:24.392Z by Koji Wakayama [deb5be81-40dd-41f6-b66c-2c4cbf1e96a0,c7de59ea-7c76-4cde-826d-1e252fb95f7c,bd52f663-4260-4329-9aa3-4b02df6642f1]",
-                "export_status": "deployed",
-                "build_status": "deployed",
-                "deploy_status": "deployed",
-                "created_at": "2026-01-13 18:44:24.749+00",
-                "updated_at": "2026-01-13 18:44:24.749+00"
-              }
-            },
-            "created_at": "2024-10-03 09:49:39.691+00",
-            "updated_at": "2024-10-03 09:49:39.691+00"
-          },
-          {
-            "id": "bd52f663-4260-4329-9aa3-4b02df6642f1",
-            "name": "Production",
-            "project": "6ba0cf13-d07b-494c-9d9d-71175e9be870",
-            "protected": false,
-            "domains": [
-              "codersociety.com",
-              "codersociety-v2.production.veryfront.com"
-            ],
-            "environment_variables": [],
-            "deployment": {
-              "id": "36072959-d57f-4a6c-ad3b-47c5677ba63d",
-              "created_at": "2026-01-13 18:44:28.414+00",
-              "updated_at": "2026-01-13 18:44:28.414+00",
-              "release": {
-                "id": "c0826ca6-612b-4a9f-8eae-9cea5e9e0a60",
-                "name": "2026-01-13T18:44:24.392Z by Koji Wakayama [deb5be81-40dd-41f6-b66c-2c4cbf1e96a0,c7de59ea-7c76-4cde-826d-1e252fb95f7c,bd52f663-4260-4329-9aa3-4b02df6642f1]",
-                "export_status": "deployed",
-                "build_status": "deployed",
-                "deploy_status": "deployed",
-                "created_at": "2026-01-13 18:44:24.749+00",
-                "updated_at": "2026-01-13 18:44:24.749+00"
-              }
-            },
+            "deployment": null,
             "created_at": "2024-10-03 09:49:39.701+00",
             "updated_at": "2024-10-03 09:49:39.701+00"
           }
@@ -324,16 +114,16 @@
     },
     {
       "method": "post",
-      "url": "/projects/codersociety/releases",
+      "url": "/projects/test-project/releases",
       "body": {
-        "name": "test-release-1768341717354"
+        "name": "test-release-vcr"
       },
       "response": {
-        "id": "5a781cd9-c458-40bf-b300-aa6745fc0730",
-        "name": "test-release-1768341717354",
+        "id": "release-002",
+        "name": "test-release-vcr",
         "version": "0.0.182",
-        "project": "6ba0cf13-d07b-494c-9d9d-71175e9be870",
-        "user_id": "90cde1c6-c4ec-4f6d-9de9-419150075827",
+        "project": "proj-001",
+        "user_id": "user-001",
         "export_status": "completed",
         "build_status": "completed",
         "deploy_status": "completed",
@@ -343,14 +133,14 @@
     },
     {
       "method": "post",
-      "url": "/projects/codersociety/releases",
+      "url": "/projects/test-project/releases",
       "body": {},
       "response": {
-        "id": "86da85ac-de07-465c-b535-92aa8483cb3e",
-        "name": "2026-01-13T22:02:32.732Z by Kentaro Wakayama",
+        "id": "release-003",
+        "name": "2026-01-13T22:02:32.732Z by Test User",
         "version": "0.0.183",
-        "project": "6ba0cf13-d07b-494c-9d9d-71175e9be870",
-        "user_id": "90cde1c6-c4ec-4f6d-9de9-419150075827",
+        "project": "proj-001",
+        "user_id": "user-001",
         "export_status": "completed",
         "build_status": "completed",
         "deploy_status": "completed",
@@ -360,98 +150,28 @@
     },
     {
       "method": "get",
-      "url": "/projects/codersociety/environments",
+      "url": "/projects/test-project/environments",
       "response": {
         "data": [
           {
-            "id": "5e932e2c-a671-45af-a043-2fa532b78afe",
+            "id": "env-preview-001",
             "name": "Preview",
-            "project": "6ba0cf13-d07b-494c-9d9d-71175e9be870",
+            "project": "proj-001",
             "protected": false,
-            "domains": [
-              "codersociety-v2.preview.veryfront.com"
-            ],
+            "domains": ["test-project.preview.veryfront.com"],
             "environment_variables": [],
             "deployment": null,
             "created_at": "2024-10-03 09:49:39.661+00",
             "updated_at": "2024-10-03 09:49:39.661+00"
           },
           {
-            "id": "deb5be81-40dd-41f6-b66c-2c4cbf1e96a0",
-            "name": "Development",
-            "project": "6ba0cf13-d07b-494c-9d9d-71175e9be870",
+            "id": "env-production-001",
+            "name": "production",
+            "project": "proj-001",
             "protected": false,
-            "domains": [
-              "codersociety-v2.development.veryfront.com"
-            ],
+            "domains": ["test-project.production.veryfront.com"],
             "environment_variables": [],
-            "deployment": {
-              "id": "28a769f7-466f-466c-b297-cabed51e70a8",
-              "created_at": "2026-01-13 18:44:28.433+00",
-              "updated_at": "2026-01-13 18:44:28.433+00",
-              "release": {
-                "id": "c0826ca6-612b-4a9f-8eae-9cea5e9e0a60",
-                "name": "2026-01-13T18:44:24.392Z by Koji Wakayama [deb5be81-40dd-41f6-b66c-2c4cbf1e96a0,c7de59ea-7c76-4cde-826d-1e252fb95f7c,bd52f663-4260-4329-9aa3-4b02df6642f1]",
-                "export_status": "deployed",
-                "build_status": "deployed",
-                "deploy_status": "deployed",
-                "created_at": "2026-01-13 18:44:24.749+00",
-                "updated_at": "2026-01-13 18:44:24.749+00"
-              }
-            },
-            "created_at": "2024-10-03 09:49:39.682+00",
-            "updated_at": "2024-10-03 09:49:39.682+00"
-          },
-          {
-            "id": "c7de59ea-7c76-4cde-826d-1e252fb95f7c",
-            "name": "Staging",
-            "project": "6ba0cf13-d07b-494c-9d9d-71175e9be870",
-            "protected": false,
-            "domains": [
-              "codersociety-v2.staging.veryfront.com"
-            ],
-            "environment_variables": [],
-            "deployment": {
-              "id": "3cb2f80e-dec3-4558-aae3-762b83d09e95",
-              "created_at": "2026-01-13 18:44:28.432+00",
-              "updated_at": "2026-01-13 18:44:28.432+00",
-              "release": {
-                "id": "c0826ca6-612b-4a9f-8eae-9cea5e9e0a60",
-                "name": "2026-01-13T18:44:24.392Z by Koji Wakayama [deb5be81-40dd-41f6-b66c-2c4cbf1e96a0,c7de59ea-7c76-4cde-826d-1e252fb95f7c,bd52f663-4260-4329-9aa3-4b02df6642f1]",
-                "export_status": "deployed",
-                "build_status": "deployed",
-                "deploy_status": "deployed",
-                "created_at": "2026-01-13 18:44:24.749+00",
-                "updated_at": "2026-01-13 18:44:24.749+00"
-              }
-            },
-            "created_at": "2024-10-03 09:49:39.691+00",
-            "updated_at": "2024-10-03 09:49:39.691+00"
-          },
-          {
-            "id": "bd52f663-4260-4329-9aa3-4b02df6642f1",
-            "name": "Production",
-            "project": "6ba0cf13-d07b-494c-9d9d-71175e9be870",
-            "protected": false,
-            "domains": [
-              "codersociety.com",
-              "codersociety-v2.production.veryfront.com"
-            ],
-            "environment_variables": [],
-            "deployment": {
-              "id": "36072959-d57f-4a6c-ad3b-47c5677ba63d",
-              "created_at": "2026-01-13 18:44:28.414+00",
-              "updated_at": "2026-01-13 18:44:28.414+00",
-              "release": {
-                "id": "c0826ca6-612b-4a9f-8eae-9cea5e9e0a60",
-                "name": "2026-01-13T18:44:24.392Z by Koji Wakayama [deb5be81-40dd-41f6-b66c-2c4cbf1e96a0,c7de59ea-7c76-4cde-826d-1e252fb95f7c,bd52f663-4260-4329-9aa3-4b02df6642f1]",
-                "export_status": "deployed",
-                "build_status": "deployed",
-                "deploy_status": "deployed",
-                "created_at": "2026-01-13 18:44:24.749+00",
-                "updated_at": "2026-01-13 18:44:24.749+00"
-              }
-            },
+            "deployment": null,
             "created_at": "2024-10-03 09:49:39.701+00",
             "updated_at": "2024-10-03 09:49:39.701+00"
           }
@@ -462,6 +182,28 @@
           "next": null,
           "prev": null
         }
+      }
+    },
+    {
+      "method": "post",
+      "url": "/projects/test-project/deployments",
+      "body": {
+        "release_id": "release-002",
+        "environment_id": "env-production-001"
+      },
+      "response": {
+        "id": "deploy-004",
+        "release": {
+          "id": "release-002",
+          "name": "test-release-vcr",
+          "version": "0.0.182"
+        },
+        "environment": {
+          "id": "env-production-001",
+          "name": "production"
+        },
+        "created_at": "2026-01-13 22:02:35.000+00",
+        "updated_at": "2026-01-13 22:02:35.000+00"
       }
     }
   ]

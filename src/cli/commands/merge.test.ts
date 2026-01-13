@@ -5,12 +5,7 @@
 
 import { assertEquals } from "jsr:@std/assert@1";
 import { describe, it } from "jsr:@std/testing@1/bdd";
-import {
-  MergeArgsSchema,
-  parseMergeArgs,
-  getBranchByName,
-  mergeBranch,
-} from "./merge.ts";
+import { getBranchByName, MergeArgsSchema, mergeBranch, parseMergeArgs } from "./merge.ts";
 import type { ApiClient } from "../shared/config.ts";
 import type { ParsedArgs } from "../index/types.ts";
 

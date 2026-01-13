@@ -2,7 +2,6 @@ import type { Root as HastRoot } from "hast";
 import type { Root as MdastRoot } from "mdast";
 import type { Pluggable } from "npm:unified@11";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
-import { getConfig } from "@veryfront/config";
 import { serverLogger } from "@veryfront/utils";
 import { rehypeAddClasses, rehypeMdxComponents, rehypePreserveNodeIds } from "./rehype-utils.ts";
 import { remarkMdxHeadings } from "./remark-headings.ts";
@@ -11,7 +10,6 @@ import {
   remarkMdxImports,
   remarkMdxRemoveParagraphs,
 } from "./remark-mdx-utils.ts";
-import { remarkAddNodeId as _remarkAddNodeId } from "./remark-node-id.ts";
 import { rehypeMermaid } from "./rehype-mermaid.ts";
 import remarkGfm from "remark-gfm";
 import remarkFrontmatter from "remark-frontmatter";
@@ -23,22 +21,14 @@ export type PluginFunction = (
   file?: unknown,
 ) => void | Promise<void> | ((tree: MdastRoot | HastRoot, file?: unknown) => void);
 
-async function loadUserPlugins(
-  projectDir: string,
-  adapter: RuntimeAdapter,
-  pluginType: "remark" | "rehype",
-): Promise<Pluggable[]> {
-  try {
-    const _config = await getConfig(projectDir, adapter);
-
-    return [];
-  } catch (error) {
-    serverLogger.warn(
-      `Failed to load ${pluginType} plugins from config`,
-      { error: error instanceof Error ? error.message : String(error) },
-    );
-    return [];
-  }
+// Placeholder for user-defined plugins from veryfront.config.ts
+// TODO: Implement loading custom remark/rehype plugins from config
+function loadUserPlugins(
+  _projectDir: string,
+  _adapter: RuntimeAdapter,
+  _pluginType: "remark" | "rehype",
+): Pluggable[] {
+  return [];
 }
 
 export async function getRemarkPlugins(
@@ -62,15 +52,8 @@ export async function getRemarkPlugins(
   ];
 
   if (adapter) {
-    try {
-      const userPlugins = await loadUserPlugins(projectDir, adapter, "remark");
-      return [...defaultPlugins, ...userPlugins];
-    } catch (error) {
-      serverLogger.error(
-        "Error loading user remark plugins",
-        { error: error instanceof Error ? error.message : String(error) },
-      );
-    }
+    const userPlugins = loadUserPlugins(projectDir, adapter, "remark");
+    return [...defaultPlugins, ...userPlugins];
   }
 
   return defaultPlugins;
@@ -90,15 +73,8 @@ export async function getRehypePlugins(
   ];
 
   if (adapter) {
-    try {
-      const userPlugins = await loadUserPlugins(projectDir, adapter, "rehype");
-      return [...defaultPlugins, ...userPlugins];
-    } catch (error) {
-      serverLogger.error(
-        "Error loading user rehype plugins",
-        { error: error instanceof Error ? error.message : String(error) },
-      );
-    }
+    const userPlugins = loadUserPlugins(projectDir, adapter, "rehype");
+    return [...defaultPlugins, ...userPlugins];
   }
 
   return defaultPlugins;

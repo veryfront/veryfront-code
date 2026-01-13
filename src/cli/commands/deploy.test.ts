@@ -6,11 +6,11 @@
 import { assertEquals } from "jsr:@std/assert@1";
 import { describe, it } from "jsr:@std/testing@1/bdd";
 import {
-  DeployArgsSchema,
-  parseDeployArgs,
-  getEnvironmentByName,
-  createRelease,
   createDeployment,
+  createRelease,
+  DeployArgsSchema,
+  getEnvironmentByName,
+  parseDeployArgs,
 } from "./deploy.ts";
 import type { ApiClient } from "../shared/config.ts";
 import type { ParsedArgs } from "../index/types.ts";

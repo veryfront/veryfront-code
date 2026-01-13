@@ -10,17 +10,8 @@
 import { z } from "zod";
 import { cliLogger } from "@veryfront/utils";
 import { cwd } from "@veryfront/platform/compat/process.ts";
-import {
-  type ApiClient,
-  createApiClient,
-  resolveConfig,
-} from "../shared/config.ts";
-import {
-  confirmPrompt,
-  createSpinner,
-  logInfo,
-  logSuccess,
-} from "../utils/index.ts";
+import { type ApiClient, createApiClient, resolveConfig } from "../shared/config.ts";
+import { confirmPrompt, createSpinner, logInfo, logSuccess } from "../utils/index.ts";
 import type { ParsedArgs } from "../index/types.ts";
 
 /**
@@ -191,7 +182,12 @@ export async function mergeCommand(options: MergeOptions): Promise<void> {
   // Dry run: fetch merge preview
   if (dryRun) {
     spinner.update("Fetching merge preview...");
-    const diffs = await getMergePreview(client, config.projectSlug, sourceBranch.id, targetBranchId);
+    const diffs = await getMergePreview(
+      client,
+      config.projectSlug,
+      sourceBranch.id,
+      targetBranchId,
+    );
     spinner.stop();
 
     const conflicts = diffs.filter((d) => d.has_conflict);

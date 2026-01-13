@@ -9,10 +9,10 @@
  */
 
 import { assertEquals, assertExists } from "jsr:@std/assert@1";
-import { describe, it, beforeAll, afterAll } from "jsr:@std/testing@1/bdd";
-import { createApiClient, resolveConfig, type ApiClient } from "../shared/config.ts";
+import { afterAll, beforeAll, describe, it } from "jsr:@std/testing@1/bdd";
+import { type ApiClient, createApiClient, resolveConfig } from "../shared/config.ts";
 import { createVCRClient, isRecording } from "../test-utils/vcr.ts";
-import { listAllFiles, getFileContent, type PullSource } from "./pull.ts";
+import { getFileContent, listAllFiles, type PullSource } from "./pull.ts";
 
 describe("pull command integration", () => {
   let client: ApiClient;

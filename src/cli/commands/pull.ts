@@ -155,11 +155,17 @@ export function buildFileContentUrl(projectSlug: string, path: string, source: P
   const encodedPath = encodeURIComponent(path);
   switch (source.type) {
     case "environment":
-      return `/projects/${projectSlug}/environments/${encodeURIComponent(source.name)}/files/${encodedPath}`;
+      return `/projects/${projectSlug}/environments/${
+        encodeURIComponent(source.name)
+      }/files/${encodedPath}`;
     case "release":
-      return `/projects/${projectSlug}/releases/${encodeURIComponent(source.version)}/files/${encodedPath}`;
+      return `/projects/${projectSlug}/releases/${
+        encodeURIComponent(source.version)
+      }/files/${encodedPath}`;
     case "branch":
-      return `/projects/${projectSlug}/branches/${encodeURIComponent(source.name)}/files/${encodedPath}`;
+      return `/projects/${projectSlug}/branches/${
+        encodeURIComponent(source.name)
+      }/files/${encodedPath}`;
     case "main":
     default:
       return `/projects/${projectSlug}/files/${encodedPath}`;
