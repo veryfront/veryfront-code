@@ -379,6 +379,37 @@ export class FileCache {
     return count;
   }
 
+  /**
+   * Async version that awaits Redis deletion.
+   * Use this when you need to ensure Redis cache is cleared before proceeding,
+   * such as during invalidation before triggering browser reload.
+   */
+  async deleteByPrefixAsync(prefix: string): Promise<number> {
+    let count = 0;
+    for (const key of this.cache.keys()) {
+      if (key.startsWith(prefix)) {
+        this.cache.delete(key);
+        this.lruTracker.remove(key);
+        count++;
+      }
+    }
+    if (count > 0) {
+      logger.debug("[FileCache] Deleted by prefix (memory)", { prefix, count });
+    }
+
+    // Await Redis deletion to ensure cross-pod cache consistency
+    if (redisEnabled && redisClient) {
+      try {
+        const redisCount = await deleteFromRedisByPattern(`${prefix}*`);
+        logger.debug("[FileCache] Deleted by prefix (Redis)", { prefix, redisCount });
+      } catch (error) {
+        logger.warn("[FileCache] Redis deleteByPrefixAsync failed", { prefix, error });
+      }
+    }
+
+    return count;
+  }
+
   deleteByPrefixAndSuffix(prefix: string, suffix: string): number {
     let count = 0;
     for (const key of this.cache.keys()) {
@@ -398,6 +429,38 @@ export class FileCache {
       deleteFromRedisByPattern(`${prefix}*:${suffix}`).catch((error) => {
         logger.warn("[FileCache] Redis deleteByPrefixAndSuffix failed", { prefix, suffix, error });
       });
+    }
+
+    return count;
+  }
+
+  /**
+   * Async version that awaits Redis deletion.
+   * Use this when you need to ensure Redis cache is cleared before proceeding,
+   * such as during selective invalidation before triggering browser reload.
+   */
+  async deleteByPrefixAndSuffixAsync(prefix: string, suffix: string): Promise<number> {
+    let count = 0;
+    for (const key of this.cache.keys()) {
+      if (key.startsWith(prefix) && key.endsWith(`:${suffix}`)) {
+        this.cache.delete(key);
+        this.lruTracker.remove(key);
+        count++;
+      }
+    }
+    if (count > 0) {
+      logger.debug("[FileCache] Deleted by prefix+suffix (memory)", { prefix, suffix, count });
+    }
+
+    // Await Redis deletion to ensure cross-pod cache consistency
+    // Pattern: prefix*:suffix (e.g., file:content:*:components/sections/HeroSection.tsx)
+    if (redisEnabled && redisClient) {
+      try {
+        const redisCount = await deleteFromRedisByPattern(`${prefix}*:${suffix}`);
+        logger.debug("[FileCache] Deleted by prefix+suffix (Redis)", { prefix, suffix, redisCount });
+      } catch (error) {
+        logger.warn("[FileCache] Redis deleteByPrefixAndSuffixAsync failed", { prefix, suffix, error });
+      }
     }
 
     return count;
