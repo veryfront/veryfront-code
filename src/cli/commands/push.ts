@@ -43,7 +43,7 @@ export interface PushOptions {
 /**
  * File upload operation
  */
-interface UploadOp {
+export interface UploadOp {
   /** Relative path from project root (sent to API) */
   path: string;
   content: string;
@@ -52,7 +52,7 @@ interface UploadOp {
 /**
  * API response for branch creation
  */
-interface BranchResponse {
+export interface BranchResponse {
   id: string;
   name: string;
   projectId: string;
@@ -101,7 +101,7 @@ async function scanLocalFiles(projectDir: string): Promise<UploadOp[]> {
 /**
  * Generate a branch name for CLI push
  */
-function generateBranchName(): string {
+export function generateBranchName(): string {
   const timestamp = new Date().toISOString().slice(0, 19).replace(/[:-]/g, "");
   return `cli/push-${timestamp}`;
 }
@@ -109,7 +109,7 @@ function generateBranchName(): string {
 /**
  * Create a new branch for the push
  */
-async function createBranch(
+export async function createBranch(
   client: ApiClient,
   projectSlug: string,
   branchName: string,
@@ -121,11 +121,12 @@ async function createBranch(
 
 /**
  * Upload files to the API using the files endpoint
+ * When branchId is null, files are pushed directly to main
  */
-async function uploadFiles(
+export async function uploadFiles(
   client: ApiClient,
   projectSlug: string,
-  branchId: string,
+  branchId: string | null,
   ops: UploadOp[],
   dryRun: boolean,
 ): Promise<{ uploaded: number; failed: number }> {
@@ -141,7 +142,11 @@ async function uploadFiles(
 
     try {
       const encodedPath = encodeURIComponent(op.path);
-      await client.put(`/projects/${projectSlug}/files/${encodedPath}?branchId=${branchId}`, {
+      // Use branch_id query param only when pushing to a branch (not main)
+      const url = branchId
+        ? `/projects/${projectSlug}/files/${encodedPath}?branch_id=${branchId}`
+        : `/projects/${projectSlug}/files/${encodedPath}`;
+      await client.put(url, {
         content: op.content,
       });
       uploaded++;
@@ -155,7 +160,10 @@ async function uploadFiles(
 }
 
 /**
- * Push local files to a new Veryfront branch
+ * Push local files to Veryfront
+ * - By default, creates a new auto-generated branch
+ * - With --branch=<name>, creates a branch with that name
+ * - With --branch=main, pushes directly to main (no branch creation)
  */
 export async function pushCommand(options: PushOptions = {}): Promise<void> {
   const {
@@ -189,15 +197,18 @@ export async function pushCommand(options: PushOptions = {}): Promise<void> {
   spinner.stop();
 
   const branchName = branch || generateBranchName();
+  const isMainBranch = branchName === "main";
 
-  cliLogger.info(`\nFound ${ops.length} files to push to branch "${branchName}".`);
+  cliLogger.info(
+    `\nFound ${ops.length} files to push to ${isMainBranch ? "main" : `branch "${branchName}"`}.`,
+  );
 
   // Confirm if not forced and not dry run
   if (!force && !dryRun) {
-    const confirmed = await confirmPrompt(
-      `Create branch "${branchName}" and upload ${ops.length} files?`,
-      true,
-    );
+    const confirmMessage = isMainBranch
+      ? `Push ${ops.length} files directly to main?`
+      : `Create branch "${branchName}" and upload ${ops.length} files?`;
+    const confirmed = await confirmPrompt(confirmMessage, true);
     if (!confirmed) {
       cliLogger.info("Push cancelled.");
       return;
@@ -205,42 +216,48 @@ export async function pushCommand(options: PushOptions = {}): Promise<void> {
   }
 
   if (dryRun) {
-    await uploadFiles(createApiClient(config), config.projectSlug, "", ops, true);
+    await uploadFiles(createApiClient(config), config.projectSlug, null, ops, true);
     logInfo(
-      `Dry run complete. Would upload ${ops.length} files to branch "${branchName}".`,
+      `Dry run complete. Would upload ${ops.length} files to ${isMainBranch ? "main" : `branch "${branchName}"`}.`,
     );
     return;
   }
 
   const client = createApiClient(config);
 
-  // Step 1: Create branch
+  // Step 1: Create branch (skip for main)
+  let branchId: string | null = null;
   spinner.start();
-  spinner.update(`Creating branch "${branchName}"...`);
 
-  let createdBranch: BranchResponse;
-  try {
-    createdBranch = await createBranch(client, config.projectSlug, branchName);
-  } catch (error) {
-    spinner.stop();
-    const message = error instanceof Error ? error.message : String(error);
-    if (message.includes("already exists")) {
-      logError(
-        `Branch "${branchName}" already exists. Use --branch to specify a different name.`,
-      );
-    } else {
-      logError(`Failed to create branch: ${message}`);
+  if (!isMainBranch) {
+    spinner.update(`Creating branch "${branchName}"...`);
+
+    try {
+      const createdBranch = await createBranch(client, config.projectSlug, branchName);
+      branchId = createdBranch.id;
+    } catch (error) {
+      spinner.stop();
+      const message = error instanceof Error ? error.message : String(error);
+      if (message.includes("already exists")) {
+        logError(
+          `Branch "${branchName}" already exists. Use --branch to specify a different name.`,
+        );
+      } else {
+        logError(`Failed to create branch: ${message}`);
+      }
+      return;
     }
-    return;
+  } else {
+    spinner.update("Pushing to main...");
   }
 
-  // Step 2: Upload files to the branch
+  // Step 2: Upload files
   spinner.update("Uploading files...");
 
   const result = await uploadFiles(
     client,
     config.projectSlug,
-    createdBranch.id,
+    branchId,
     ops,
     false,
   );
@@ -248,16 +265,19 @@ export async function pushCommand(options: PushOptions = {}): Promise<void> {
   spinner.stop();
 
   if (result.uploaded > 0) {
-    logSuccess(`Pushed ${result.uploaded} files to branch "${branchName}".`);
+    if (isMainBranch) {
+      logSuccess(`Pushed ${result.uploaded} files to main.`);
+    } else {
+      logSuccess(`Pushed ${result.uploaded} files to branch "${branchName}".`);
+      // Show merge instructions only for branches
+      cliLogger.info("");
+      logInfo(`To merge your changes, open Studio and merge the branch:`);
+      cliLogger.info(
+        `  https://studio.veryfront.com/${config.projectSlug}/branches`,
+      );
+    }
   }
   if (result.failed > 0) {
     logWarning(`Failed to upload ${result.failed} files.`);
   }
-
-  // Show merge instructions
-  cliLogger.info("");
-  logInfo(`To merge your changes, open Studio and merge the branch:`);
-  cliLogger.info(
-    `  https://studio.veryfront.com/${config.projectSlug}/branches`,
-  );
 }

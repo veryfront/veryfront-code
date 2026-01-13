@@ -21,6 +21,15 @@ import { confirmPrompt, createSpinner, logInfo, logSuccess, logWarning } from ".
 import { getApiTokenEnv } from "@veryfront/core/config/env.ts";
 
 /**
+ * Pull source type - determines which API endpoint to use
+ */
+export type PullSource =
+  | { type: "main" }
+  | { type: "branch"; name: string }
+  | { type: "environment"; name: string }
+  | { type: "release"; version: string };
+
+/**
  * Pull command options
  */
 export interface PullOptions {
@@ -32,10 +41,31 @@ export interface PullOptions {
   projectDir?: string;
   /** Branch name to pull from (optional) */
   branch?: string;
+  /** Environment name to pull from (e.g., "production", "staging") */
+  env?: string;
+  /** Release version to pull from (e.g., "v1.2.0") */
+  release?: string;
   /** Force overwrite without confirmation */
   force?: boolean;
   /** Dry run - show what would be written without writing */
   dryRun?: boolean;
+}
+
+/**
+ * Resolve pull source from options
+ * Priority: env > release > branch > main
+ */
+export function resolvePullSource(options: PullOptions): PullSource {
+  if (options.env) {
+    return { type: "environment", name: options.env };
+  }
+  if (options.release) {
+    return { type: "release", version: options.release };
+  }
+  if (options.branch && options.branch !== "main") {
+    return { type: "branch", name: options.branch };
+  }
+  return { type: "main" };
 }
 
 /**
@@ -71,15 +101,35 @@ interface WriteOp {
 }
 
 /**
- * Fetch all files from API with pagination
+ * Build the files list URL based on pull source
  */
-async function listAllFiles(
+export function buildFilesListUrl(projectSlug: string, source: PullSource): string {
+  switch (source.type) {
+    case "environment":
+      return `/projects/${projectSlug}/environments/${encodeURIComponent(source.name)}/files`;
+    case "release":
+      return `/projects/${projectSlug}/releases/${encodeURIComponent(source.version)}/files`;
+    case "branch":
+      return `/projects/${projectSlug}/branches/${encodeURIComponent(source.name)}/files`;
+    case "main":
+    default:
+      return `/projects/${projectSlug}/files`;
+  }
+}
+
+/**
+ * Fetch all files from API with pagination
+ * Supports main, branch, environment, and release sources
+ */
+export async function listAllFiles(
   client: ReturnType<typeof createApiClient>,
   projectSlug: string,
-  branch?: string,
+  source: PullSource,
 ): Promise<ProjectFile[]> {
   const allFiles: ProjectFile[] = [];
   let cursor: string | undefined;
+
+  const url = buildFilesListUrl(projectSlug, source);
 
   do {
     const params: Record<string, string> = {
@@ -88,12 +138,8 @@ async function listAllFiles(
       sort_order: "desc",
     };
     if (cursor) params.cursor = cursor;
-    if (branch) params.branch = branch;
 
-    const response = await client.get<ListFilesResponse>(
-      `/projects/${projectSlug}/files`,
-      params,
-    );
+    const response = await client.get<ListFilesResponse>(url, params);
 
     allFiles.push(...response.data);
     cursor = response.pagination?.has_more ? response.pagination.cursor : undefined;
@@ -103,22 +149,35 @@ async function listAllFiles(
 }
 
 /**
- * Get file content from API
+ * Build the file content URL based on pull source
  */
-async function getFileContent(
+export function buildFileContentUrl(projectSlug: string, path: string, source: PullSource): string {
+  const encodedPath = encodeURIComponent(path);
+  switch (source.type) {
+    case "environment":
+      return `/projects/${projectSlug}/environments/${encodeURIComponent(source.name)}/files/${encodedPath}`;
+    case "release":
+      return `/projects/${projectSlug}/releases/${encodeURIComponent(source.version)}/files/${encodedPath}`;
+    case "branch":
+      return `/projects/${projectSlug}/branches/${encodeURIComponent(source.name)}/files/${encodedPath}`;
+    case "main":
+    default:
+      return `/projects/${projectSlug}/files/${encodedPath}`;
+  }
+}
+
+/**
+ * Get file content from API
+ * Supports main, branch, environment, and release sources
+ */
+export async function getFileContent(
   client: ReturnType<typeof createApiClient>,
   projectSlug: string,
   path: string,
-  branch?: string,
+  source: PullSource,
 ): Promise<string> {
-  const encodedPath = encodeURIComponent(path);
-  const params: Record<string, string> = {};
-  if (branch) params.branch = branch;
-
-  const response = await client.get<{ path: string; content: string; size: number }>(
-    `/projects/${projectSlug}/files/${encodedPath}`,
-    params,
-  );
+  const url = buildFileContentUrl(projectSlug, path, source);
+  const response = await client.get<{ path: string; content: string; size: number }>(url);
 
   // Ensure text files end with a trailing newline (POSIX standard)
   const content = response.content;
@@ -138,11 +197,11 @@ async function processFile(
   op: WriteOp,
   client: ReturnType<typeof createApiClient>,
   projectSlug: string,
-  branch: string | undefined,
+  source: PullSource,
   fs: ReturnType<typeof createFileSystem>,
 ): Promise<{ success: boolean; path: string; error?: Error }> {
   try {
-    const content = await getFileContent(client, projectSlug, op.relativePath, branch);
+    const content = await getFileContent(client, projectSlug, op.relativePath, source);
     const dir = dirname(op.path);
     await fs.mkdir(dir, { recursive: true });
     await fs.writeTextFile(op.path, content);
@@ -159,7 +218,7 @@ async function writeFiles(
   ops: WriteOp[],
   client: ReturnType<typeof createApiClient>,
   projectSlug: string,
-  branch: string | undefined,
+  source: PullSource,
   dryRun: boolean,
 ): Promise<{ written: number; skipped: number }> {
   const fs = createFileSystem();
@@ -179,7 +238,7 @@ async function writeFiles(
   for (let i = 0; i < ops.length; i += CONCURRENCY) {
     const batch = ops.slice(i, i + CONCURRENCY);
     const batchResults = await Promise.all(
-      batch.map((op) => processFile(op, client, projectSlug, branch, fs)),
+      batch.map((op) => processFile(op, client, projectSlug, source, fs)),
     );
     results.push(...batchResults);
   }
@@ -198,24 +257,42 @@ async function writeFiles(
 }
 
 /**
+ * Format pull source for display
+ */
+function formatPullSource(source: PullSource): string {
+  switch (source.type) {
+    case "environment":
+      return `environment: ${source.name}`;
+    case "release":
+      return `release: ${source.version}`;
+    case "branch":
+      return `branch: ${source.name}`;
+    case "main":
+    default:
+      return "main";
+  }
+}
+
+/**
  * Pull files for a single project
  */
 async function pullSingleProject(
   projectSlug: string,
   projectDir: string,
-  branch: string | undefined,
+  source: PullSource,
   force: boolean,
   dryRun: boolean,
   config: ResolvedConfig,
 ): Promise<{ written: number; skipped: number }> {
-  const spinner = createSpinner(`Fetching files from ${projectSlug}...`);
+  const sourceLabel = formatPullSource(source);
+  const spinner = createSpinner(`Fetching files from ${projectSlug} (${sourceLabel})...`);
   spinner.start();
 
   const client = createApiClient({ ...config, projectSlug });
 
   let files: ProjectFile[];
   try {
-    files = await listAllFiles(client, projectSlug, branch);
+    files = await listAllFiles(client, projectSlug, source);
   } catch (error) {
     spinner.stop();
     throw error;
@@ -254,16 +331,14 @@ async function pullSingleProject(
   spinner.start();
   spinner.update(`Writing files to ${projectDir}...`);
 
-  const result = await writeFiles(writeOps, client, projectSlug, branch, dryRun);
+  const result = await writeFiles(writeOps, client, projectSlug, source, dryRun);
 
   spinner.stop();
 
   if (dryRun) {
     logInfo(`Dry run complete for ${projectSlug}. Would write ${result.written} files.`);
   } else {
-    logSuccess(
-      `Pulled ${result.written} files from ${projectSlug}${branch ? ` (branch: ${branch})` : ""}.`,
-    );
+    logSuccess(`Pulled ${result.written} files from ${projectSlug} (${sourceLabel}).`);
     if (result.skipped > 0) {
       logWarning(`Skipped ${result.skipped} files due to errors.`);
     }
@@ -280,10 +355,12 @@ export async function pullCommand(options: PullOptions = {}): Promise<void> {
     projectSlug: slugOverride,
     projects: projectsOverride,
     projectDir = cwd(),
-    branch,
     force = false,
     dryRun = false,
   } = options;
+
+  // Resolve pull source from options (env > release > branch > main)
+  const source = resolvePullSource(options);
 
   const spinner = createSpinner("Resolving configuration...");
   spinner.start();
@@ -343,7 +420,7 @@ export async function pullCommand(options: PullOptions = {}): Promise<void> {
         const result = await pullSingleProject(
           project,
           targetDir,
-          branch,
+          source,
           force,
           dryRun,
           config,
@@ -374,7 +451,7 @@ export async function pullCommand(options: PullOptions = {}): Promise<void> {
   await pullSingleProject(
     config.projectSlug,
     projectDir,
-    branch,
+    source,
     force,
     dryRun,
     config,

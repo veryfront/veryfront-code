@@ -94,7 +94,6 @@ async function cleanDirectory(path: string): Promise<void> {
 }
 
 async function cleanCacheStore(projectDir: string): Promise<void> {
-  const fallbackCacheDir = join(projectDir, PROJECT_DIRS.ROOT, "cache");
   try {
     const adapter = await getAdapter();
     const config = await getConfig(projectDir, adapter);
@@ -119,9 +118,9 @@ async function cleanCacheStore(projectDir: string): Promise<void> {
 
     await cleanDirectory(join(projectDir, cacheDir));
   } catch (error) {
-    // Fall back to removing default cache directory on error
-    cliLogger.error("Failed to clean cache store, falling back to default cache directory:", error);
-    await cleanDirectory(fallbackCacheDir);
+    // Fail fast with clear error - no silent fallbacks
+    cliLogger.error("Failed to clean cache store:", error);
+    throw error;
   }
 }
 
