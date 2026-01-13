@@ -146,7 +146,7 @@ export function tryGetCacheKeyContext(): CacheKeyContext | null {
 function extractCacheKeyContextFromMultiProjectContext(
   reqCtx: MultiProjectRequestContextType,
 ): CacheKeyContext {
-  const projectId = reqCtx.projectSlug || reqCtx.projectId || "default";
+  const projectId = reqCtx.projectId || reqCtx.projectSlug || "default";
   const mode = reqCtx.productionMode ? "production" : "preview";
   const versionId = reqCtx.productionMode
     ? (reqCtx.releaseId || "latest")
@@ -207,7 +207,7 @@ export function getProjectScopedKeyAlways(
  * Extract CacheKeyContext from HandlerContext.
  */
 export function extractCacheKeyContext(handlerCtx: HandlerContext): CacheKeyContext {
-  const projectId = handlerCtx.projectSlug || handlerCtx.projectId || "default";
+  const projectId = handlerCtx.projectId || handlerCtx.projectSlug || "default";
 
   const isProduction = handlerCtx.proxyEnvironment === "production" ||
     (handlerCtx.parsedDomain?.isDraft === false && handlerCtx.parsedDomain?.isVeryfrontDomain);

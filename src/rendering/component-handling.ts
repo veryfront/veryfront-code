@@ -33,6 +33,8 @@ export async function handleComponentPage(
     moduleServerUrl?: string;
     /** Project ID for multi-project SSR module isolation */
     projectId?: string;
+    /** Enable node position injection for Studio Navigator */
+    studioEmbed?: boolean;
   },
 ): Promise<ComponentPageResult> {
   try {
@@ -41,9 +43,10 @@ export async function handleComponentPage(
     const rawFileContent = await adapter.fs.readFile(pageInfo.entity.path);
 
     // Inject node positions for Studio Navigator (edit-in-place support)
-    // This adds data-node-line, data-node-column, etc. to JSX elements
-    // IMPORTANT: Must be enabled in both SSR and module-server for hydration to match
-    const fileContent = injectNodePositions(rawFileContent, { filePath: pageInfo.entity.path });
+    // Only enabled when studioEmbed is true (page embedded in Studio iframe)
+    const fileContent = options?.studioEmbed
+      ? injectNodePositions(rawFileContent, { filePath: pageInfo.entity.path })
+      : rawFileContent;
 
     // Bundle for client if not cached
     let clientModuleCode = options?.cachedClientModule;

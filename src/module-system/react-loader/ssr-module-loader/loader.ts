@@ -135,7 +135,7 @@ export class SSRModuleLoader {
   }
 
   private getCacheKey(filePath: string): string {
-    return filePath;
+    return `${this.options.projectId}:${filePath}`;
   }
 
   private getRegistryBaseUrl(): string {

@@ -29,6 +29,8 @@ export async function handleMDXPage(
   options?: {
     params?: Record<string, string | string[]>;
     precompiledModule?: string;
+    /** Enable node position injection for Studio Navigator */
+    studioEmbed?: boolean;
   },
 ): Promise<MDXPageResult> {
   const fmArg = pageInfo.entity.frontmatter && Object.keys(pageInfo.entity.frontmatter).length > 0
@@ -48,11 +50,10 @@ export async function handleMDXPage(
       // The original compilation uses server target with file:// URLs that browsers can't resolve
       //
       // Inject node positions for Studio Navigator (edit-in-place support)
-      // This adds data-node-line, data-node-column, etc. to JSX elements
-      // IMPORTANT: Must be enabled in both SSR and module-server for hydration to match
-      const contentWithPositions = injectNodePositions(pageInfo.entity.content, {
-        filePath: pageInfo.entity.path,
-      });
+      // Only enabled when studioEmbed is true (page embedded in Studio iframe)
+      const contentWithPositions = options?.studioEmbed
+        ? injectNodePositions(pageInfo.entity.content, { filePath: pageInfo.entity.path })
+        : pageInfo.entity.content;
 
       const browserBundle = await compileMDXRuntime(
         "development",
