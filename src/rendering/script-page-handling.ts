@@ -20,7 +20,6 @@ import { DEFAULT_DASHBOARD_PORT } from "@veryfront/utils";
 import { getContentHash } from "./utils/index.ts";
 import { type HTMLGenerationOptions, wrapInHTMLShell } from "@veryfront/html";
 import { extractHTMLMetadata, injectHTMLContent, isFullHTMLDocument } from "@veryfront/html";
-import { detectAppRouter } from "./router-detection.ts";
 import { createFileSystem } from "../platform/compat/fs.ts";
 import { getEsbuildLoader } from "../core/utils/path-utils.ts";
 
@@ -132,14 +131,9 @@ export async function handleScriptPage(
       }));
     }
 
-    const useAppRouter = await detectAppRouter(
-      options.projectDir,
-      options.config,
-      options.adapter,
-    );
-    const appComponentPath = useAppRouter
-      ? undefined
-      : await resolveAppComponentPath(options.projectDir, options.adapter);
+    // Always check for app component regardless of router type
+    // The app component (components/app.mdx) provides providers like QueryClientProvider
+    const appComponentPath = await resolveAppComponentPath(options.projectDir, options.adapter);
 
     const mergedFrontmatter = {
       ...pageInfo.entity.frontmatter,

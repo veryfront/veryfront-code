@@ -241,10 +241,11 @@ export class LayoutApplicator {
       }
     }
 
-    // Priority 3: Default discovery - check components/app.{tsx,jsx,ts,js}
-    for (const ext of ["tsx", "jsx", "ts", "js"]) {
+    // Priority 3: Default discovery - check components/app.{tsx,jsx,ts,js,mdx,md}
+    for (const ext of ["tsx", "jsx", "ts", "js", "mdx", "md"]) {
       const appPath = join(this.projectDir, `components/app.${ext}`);
       if (await this.adapter.fs.exists(appPath)) {
+        logger.info("[LayoutApplicator] Found app component", { path: appPath });
         return appPath;
       }
     }
@@ -260,21 +261,31 @@ export class LayoutApplicator {
 
     try {
       logger.info("Loading App component from", appPath);
-      const { loadComponentFromSource } = await import(
-        "@veryfront/modules/react-loader/index.ts"
-      );
       const appSource = await this.adapter.fs.readFile(appPath);
-      const App = await loadComponentFromSource(
-        appSource,
-        appPath,
-        this.projectDir,
-        this.adapter,
-        {
-          projectId: this.projectId ?? this.projectDir,
-          dev: this.mode === "development",
-          moduleServerUrl: this.config?.dev?.moduleServerUrl,
-        },
-      );
+      const isMdx = appPath.endsWith(".mdx") || appPath.endsWith(".md");
+
+      let App: React.ComponentType<{ children: React.ReactNode }> | null = null;
+
+      if (isMdx) {
+        // Handle MDX files - compile and load
+        App = await this.loadMdxAppComponent(appSource, appPath);
+      } else {
+        // Handle regular TSX/JSX files
+        const { loadComponentFromSource } = await import(
+          "@veryfront/modules/react-loader/index.ts"
+        );
+        App = await loadComponentFromSource(
+          appSource,
+          appPath,
+          this.projectDir,
+          this.adapter,
+          {
+            projectId: this.projectId ?? this.projectDir,
+            dev: this.mode === "development",
+            moduleServerUrl: this.config?.dev?.moduleServerUrl,
+          },
+        );
+      }
 
       if (App) {
         const React = await getProjectReact();
@@ -286,6 +297,61 @@ export class LayoutApplicator {
     }
 
     return pageElement;
+  }
+
+  private async loadMdxAppComponent(
+    source: string,
+    appPath: string,
+  ): Promise<React.ComponentType<{ children: React.ReactNode }> | null> {
+    try {
+      const { compile } = await import("@mdx-js/mdx");
+      const { extract } = await import("std/front_matter/yaml.ts");
+      const { getRehypePlugins, getRemarkPlugins } = await import(
+        "@veryfront/transforms/plugins/plugin-loader.ts"
+      );
+
+      // Extract frontmatter
+      let body = source;
+      if (source.trim().startsWith("---")) {
+        const extracted = extract(source);
+        body = extracted.body;
+      }
+
+      const remarkPlugins = await getRemarkPlugins(this.projectDir);
+      const rehypePlugins = await getRehypePlugins(this.projectDir);
+
+      // Compile MDX to JavaScript
+      const compiled = await compile(body, {
+        jsx: true,
+        jsxRuntime: "automatic",
+        jsxImportSource: "react",
+        development: this.mode === "development",
+        remarkPlugins: remarkPlugins as unknown[],
+        rehypePlugins: rehypePlugins as unknown[],
+      });
+
+      const jsCode = String(compiled);
+
+      // Load the compiled module
+      const { loadComponentFromSource } = await import(
+        "@veryfront/modules/react-loader/index.ts"
+      );
+
+      return await loadComponentFromSource(
+        jsCode,
+        appPath.replace(/\.mdx?$/, ".jsx"),
+        this.projectDir,
+        this.adapter,
+        {
+          projectId: this.projectId ?? this.projectDir,
+          dev: this.mode === "development",
+          moduleServerUrl: this.config?.dev?.moduleServerUrl,
+        },
+      );
+    } catch (error) {
+      logger.error("[LayoutApplicator] Failed to compile MDX app component:", error);
+      return null;
+    }
   }
 
   private async wrapWithReservedComponents(

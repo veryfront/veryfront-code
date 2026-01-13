@@ -18,7 +18,6 @@ import type {
   PageBundle,
 } from "@veryfront/types";
 import { DEFAULT_DASHBOARD_PORT, rendererLogger as logger } from "@veryfront/utils";
-import { detectAppRouter } from "../router-detection.ts";
 import type { RenderOptions } from "./types.ts";
 import { injectElementSelectors } from "@veryfront/studio/element-selector-injector.ts";
 import { computeSourceHash } from "@veryfront/studio/hash-utils.ts";
@@ -221,18 +220,14 @@ export class HTMLGenerator {
     } as MDXFrontmatter;
   }
 
-  private async resolveAppComponentPath(
-    useAppRouter: boolean,
-  ): Promise<string | undefined> {
-    if (useAppRouter) {
-      return undefined;
-    }
-
+  private async resolveAppComponentPath(): Promise<string | undefined> {
     // Check for app component in order of preference
+    // This provider wrapper is used regardless of router type (app vs pages)
     const extensions = [".tsx", ".jsx", ".ts", ".js", ".mdx", ".md"];
     for (const ext of extensions) {
       const appPath = join(this.config.projectDir, `components/app${ext}`);
       if (await this.config.adapter.fs.exists(appPath)) {
+        logger.info(`[HTMLGenerator] Found app component: ${appPath}`);
         return appPath;
       }
     }
@@ -255,12 +250,7 @@ export class HTMLGenerator {
     context: HTMLGenerationContext,
     mergedFrontmatter: MDXFrontmatter,
   ): Promise<HTMLGenerationOptions> {
-    const useAppRouter = await detectAppRouter(
-      this.config.projectDir,
-      this.config.config,
-      this.config.adapter,
-    );
-    const appComponentPath = await this.resolveAppComponentPath(useAppRouter);
+    const appComponentPath = await this.resolveAppComponentPath();
     const globalCSS = await this.loadProjectFile("globals.css");
     const tailwindConfigJs = await this.loadProjectFile("tailwind.config.js");
 
