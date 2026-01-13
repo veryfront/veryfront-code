@@ -280,6 +280,20 @@ export function generateErrorHTML(errorInfo: ErrorInfo, suggestion?: string): st
   }
     </div>
   </div>
+  <script>
+    // Notify Studio (parent) that page has loaded with an error
+    // This hides the loading spinner in Studio's preview iframe
+    if (window.parent !== window) {
+      try {
+        window.parent.postMessage({
+          action: 'appUpdated',
+          isInitialLoad: true,
+          hasError: true,
+          url: window.location.href
+        }, '*');
+      } catch (e) { /* postMessage may fail in cross-origin iframes */ }
+    }
+  </script>
 </body>
 </html>`;
 }
