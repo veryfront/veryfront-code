@@ -10,41 +10,25 @@
 
 import { assertEquals, assertExists } from "jsr:@std/assert@1";
 import { afterAll, beforeAll, describe, it } from "jsr:@std/testing@1/bdd";
-import { type ApiClient, createApiClient, resolveConfig } from "../shared/config.ts";
-import { createVCRClient, isRecording } from "../test-utils/vcr.ts";
+import { initVCRTest, isRecording, type VCRTestContext } from "../test-utils/vcr.ts";
 import { getBranchByName } from "./merge.ts";
 
 describe("merge command integration", () => {
-  let client: ApiClient;
-  let projectSlug: string;
-  let saveVCR: () => Promise<void>;
+  let ctx: VCRTestContext;
   let testBranchId: string | null = null;
 
   beforeAll(async () => {
-    if (isRecording()) {
-      const slug = Deno.env.get("VERYFRONT_PROJECT_SLUG");
-      if (!slug) {
-        throw new Error("VCR=record requires VERYFRONT_PROJECT_SLUG");
-      }
-      const config = await resolveConfig(Deno.cwd());
-      const realClient = createApiClient(config);
-      const vcr = await createVCRClient("merge", realClient, slug);
-      client = vcr.client;
-      projectSlug = vcr.projectSlug;
-      saveVCR = vcr.save;
-    } else {
-      const vcr = await createVCRClient("merge");
-      client = vcr.client;
-      projectSlug = vcr.projectSlug;
-      saveVCR = vcr.save;
-    }
+    ctx = await initVCRTest("merge");
 
     // Create test branch (VCR replays recorded response in playback mode)
     const branchName = isRecording() ? `test-merge-${Date.now()}` : "test-merge-vcr";
     try {
-      const branch = await client.post<{ id: string }>(`/projects/${projectSlug}/branches`, {
-        name: branchName,
-      });
+      const branch = await ctx.client.post<{ id: string }>(
+        `/projects/${ctx.projectSlug}/branches`,
+        {
+          name: branchName,
+        },
+      );
       testBranchId = branch.id;
       if (isRecording()) {
         console.log(`Created test branch: ${branchName} (${testBranchId})`);
@@ -55,12 +39,12 @@ describe("merge command integration", () => {
   });
 
   afterAll(async () => {
-    await saveVCR();
+    await ctx.save();
   });
 
   describe("getBranchByName", () => {
     it("should return null for nonexistent branch", async () => {
-      const branch = await getBranchByName(client, projectSlug, "nonexistent-branch-12345");
+      const branch = await getBranchByName(ctx.client, ctx.projectSlug, "nonexistent-branch-12345");
 
       assertEquals(branch, null);
     });
@@ -73,8 +57,8 @@ describe("merge command integration", () => {
         return;
       }
 
-      const preview = await client.get<{ diffs: unknown[] }>(
-        `/projects/${projectSlug}/branches/${testBranchId}/merge-preview`,
+      const preview = await ctx.client.get<{ diffs: unknown[] }>(
+        `/projects/${ctx.projectSlug}/branches/${testBranchId}/merge-preview`,
       );
 
       assertExists(preview);
