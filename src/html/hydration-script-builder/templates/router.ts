@@ -486,12 +486,15 @@ export const getRouterScript = () => `
       }
 
       // Build page context for usePageContext() hook
+      const headingsArray = pageData.headings || [];
       const pageContext = {
         slug: pageData.slug || '',
         path: pageData.pagePath || targetPath,
         params: pageData.params || {},
         query: Object.fromEntries(new URLSearchParams(window.location.search)),
         frontmatter: pageData.frontmatter || {},
+        headings: headingsArray,
+        mdxHeadings: headingsArray, // Alias for backwards compatibility
       };
 
       // Wrap with PageContextProvider so layout components can access frontmatter

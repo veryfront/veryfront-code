@@ -11,6 +11,8 @@ export interface BundleMetadata {
     type?: "mdx" | "component" | "layout" | "provider";
     depsHash?: string;
     reactVersion?: string;
+    /** Headings extracted from MDX for sidebar/TOC navigation */
+    headings?: Array<{ id: string; text: string; level: number }>;
   };
 }
 

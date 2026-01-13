@@ -57,8 +57,12 @@ export async function compileMDXRuntime(
       jsxImportSource: "react",
     });
 
+    // Extract headings from the compiled VFile data (set by remarkMdxHeadings plugin)
+    const headings = (compiled.data?.headings as Array<{ id: string; text: string; level: number }>) || [];
+
     logger.info("MDX compiled output preview:", String(compiled).substring(0, 200));
     logger.info("Extracted frontmatter:", extractedFrontmatter);
+    logger.info("Extracted headings count:", headings.length);
 
     let compiledCode = String(compiled);
 
@@ -75,7 +79,7 @@ export async function compileMDXRuntime(
       compiledCode,
       frontmatter: extractedFrontmatter,
       globals: {},
-      headings: [],
+      headings,
       nodeMap: new Map(),
     };
   } catch (error) {

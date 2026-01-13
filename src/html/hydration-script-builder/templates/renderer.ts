@@ -83,12 +83,15 @@ export const getRendererScript = () => `
         }
 
         // Build page context for usePageContext() hook
+        const headingsArray = data.headings || [];
         const pageContext = {
           slug: data.slug || '',
           path: data.pagePath || pathname,
           params: data.params || {},
           query: Object.fromEntries(new URLSearchParams(window.location.search)),
           frontmatter: data.frontmatter || {},
+          headings: headingsArray,
+          mdxHeadings: headingsArray, // Alias for backwards compatibility
         };
 
         // Wrap with PageContextProvider so layout components can access frontmatter

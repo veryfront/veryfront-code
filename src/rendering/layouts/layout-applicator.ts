@@ -32,6 +32,8 @@ export interface LayoutApplicationOptions {
   requestUrl?: URL;
   /** Merged frontmatter from pageBundle and entity for PageContextProvider */
   frontmatter?: Record<string, unknown>;
+  /** Headings extracted from MDX content for table of contents/sidebar navigation */
+  headings?: Array<{ id: string; text: string; level: number }>;
 }
 
 export class LayoutApplicator {
@@ -44,6 +46,7 @@ export class LayoutApplicator {
   private moduleServerUrl?: string;
   private requestUrl?: URL;
   private frontmatter?: Record<string, unknown>;
+  private headings?: Array<{ id: string; text: string; level: number }>;
 
   constructor(options: LayoutApplicationOptions) {
     this.projectDir = options.projectDir;
@@ -55,6 +58,7 @@ export class LayoutApplicator {
     this.moduleServerUrl = options.moduleServerUrl;
     this.requestUrl = options.requestUrl;
     this.frontmatter = options.frontmatter;
+    this.headings = options.headings;
   }
 
   async applyLayouts(
@@ -98,18 +102,22 @@ export class LayoutApplicator {
 
     // Build page context with frontmatter for usePageContext() hook
     // Use merged frontmatter (from MDX compilation + entity) when available
+    const headingsArray = this.headings || [];
     const pageContext = {
       slug: pageInfo.entity.slug || "",
       path: pageFilePath,
       params: {},
       query: {},
       frontmatter: this.frontmatter || pageInfo.entity.frontmatter || {},
+      headings: headingsArray,
+      mdxHeadings: headingsArray, // Alias for backwards compatibility
     };
-    logger.info("[LayoutApplicator] PageContext frontmatter", {
+    logger.info("[LayoutApplicator] PageContext", {
       hasFrontmatter: !!this.frontmatter,
-      keys: this.frontmatter ? Object.keys(this.frontmatter) : [],
+      frontmatterKeys: this.frontmatter ? Object.keys(this.frontmatter) : [],
       hasSummary: !!(this.frontmatter as any)?.summary,
       entityKeys: Object.keys(pageInfo.entity.frontmatter || {}),
+      headingsCount: headingsArray.length,
     });
 
     // Wrap with PageContextProvider so layout components can access frontmatter via usePageContext()

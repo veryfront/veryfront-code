@@ -75,7 +75,8 @@ export class MDXCacheAdapter {
       return {
         compiledCode: bundleCode.code,
         frontmatter: (frontmatter || {}) as Record<string, string | number | boolean | string[]>,
-        headings: [],
+        headings: (metadata.meta?.headings as Array<{ id: string; text: string; level: number }>) ||
+          [],
         nodeMap: new Map(),
       };
     } catch (error) {
@@ -120,6 +121,7 @@ export class MDXCacheAdapter {
         meta: {
           type: "mdx",
           reactVersion: (await import("react")).version,
+          headings: bundle.headings || [],
         },
       };
 
