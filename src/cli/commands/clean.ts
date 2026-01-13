@@ -2,7 +2,7 @@ import { join } from "@veryfront/platform/compat/path/index.ts";
 import { getConfig } from "@veryfront/config";
 import { getAdapter } from "@veryfront/platform/adapters/detect.ts";
 import { cliLogger } from "@veryfront/utils";
-import { DEFAULT_CACHE_DIR, PROJECT_DIRS } from "@veryfront/utils/constants/server.ts";
+import { DEFAULT_CACHE_DIR } from "@veryfront/utils/constants/server.ts";
 import { CacheCoordinator, type CacheStore } from "@veryfront/rendering/cache/index.ts";
 import {
   FilesystemCacheStore,

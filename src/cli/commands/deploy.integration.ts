@@ -40,7 +40,7 @@ describe("deploy command integration", () => {
     projectSlug = config.projectSlug;
   });
 
-  afterAll(async () => {
+  afterAll(() => {
     // Note: Releases typically can't be deleted, so we just log for reference
     if (testReleaseId) {
       console.log(`Test release created: ${testReleaseId}`);
