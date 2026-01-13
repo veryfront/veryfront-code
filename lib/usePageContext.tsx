@@ -1,45 +1,17 @@
-import React from "react";
+/**
+ * Re-export from veryfront/context to ensure SSR and client use the same React context.
+ * This prevents hydration mismatches caused by different context instances.
+ *
+ * CRITICAL: Must use bare specifier "veryfront/context" NOT relative path "../src/exports/context.ts"
+ * - SSR resolves via deno.json import map to local src/exports/context.ts
+ * - Browser resolves via HTML import map to /_vf_modules/exports/context.js
+ * - Using relative path creates different module URLs = different React contexts = broken hooks
+ */
+export {
+  PageContextProvider,
+  usePageContext,
+  type PageContextValue as PageContext,
+} from "veryfront/context";
 
-export interface PageContext {
-  slug: string;
-  path: string;
-  params: Record<string, string>;
-  query: Record<string, string>;
-  frontmatter?: Record<string, unknown>;
-}
-
-const PageContextValue = React.createContext<PageContext | null>(null);
-
-// SSR-safe default context
-const defaultPageContext: PageContext = {
-  slug: "/",
-  path: "/",
-  params: {},
-  query: {},
-  frontmatter: {},
-};
-
-export function PageContextProvider({
-  children,
-  pageContext,
-}: {
-  children: React.ReactNode;
-  pageContext?: PageContext;
-}) {
-  return (
-    <PageContextValue.Provider value={pageContext || defaultPageContext}>
-      {children}
-    </PageContextValue.Provider>
-  );
-}
-
-export function usePageContext(): PageContext {
-  const value = React.useContext(PageContextValue);
-  if (!value) {
-    // Return default context for SSR instead of throwing
-    return defaultPageContext;
-  }
-  return value;
-}
-
-export default usePageContext;
+// Default export for compatibility
+export { usePageContext as default } from "veryfront/context";

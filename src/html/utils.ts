@@ -90,8 +90,9 @@ function getEsmShImportMap(versions: DetectedVersions): Record<string, string> {
     // This ensures hydration matches (same code on server and client)
     "veryfront/head": "/_vf_modules/exports/head.js",
     "veryfront/router": "/_vf_modules/exports/router.js",
-    "veryfront/context":
-      `https://esm.sh/veryfront@${veryfront}/context?external=react&target=es2022`,
+    // CRITICAL: veryfront/context must use local module to share React context with SSR
+    // Using esm.sh creates a separate context instance causing usePageContext to return undefined
+    "veryfront/context": "/_vf_modules/exports/context.js",
     "veryfront/fonts": `https://esm.sh/veryfront@${veryfront}/fonts?external=react&target=es2022`,
     // Context packages - MUST match SSR import map (from package-registry.ts)
     ...getContextPackageImportMap(),

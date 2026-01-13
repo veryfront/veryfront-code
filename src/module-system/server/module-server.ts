@@ -535,8 +535,13 @@ async function findSourceFile(
   }
 
   // Framework file lookup configuration: [prefix, frameworkDir, logLabel]
+  // Order matters: more specific prefixes should come first
   const frameworkLookups: [string, string, string][] = [
     ["lib/", FRAMEWORK_ROOT, "lib"],
+    // Support both "exports/" and "src/exports/" paths for context module resolution
+    // This is needed because lib/usePageContext.tsx imports "../src/exports/context.ts"
+    // which becomes "src/exports/context.js" when resolved from "lib/usePageContext.js"
+    ["src/exports/", FRAMEWORK_ROOT, "src/exports"],
     ["exports/", join(FRAMEWORK_ROOT, "src"), "exports"],
     ["react/", join(FRAMEWORK_ROOT, "src"), "react"],
   ];
