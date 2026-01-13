@@ -2,6 +2,44 @@ import { parseImports, replaceSpecifiers, rewriteImports } from "./lexer.ts";
 import { REACT_DEFAULT_VERSION, TAILWIND_VERSION } from "@veryfront/utils/constants/cdn.ts";
 import { rendererLogger as logger } from "@veryfront/utils";
 
+/**
+ * Add HMR cache-busting timestamps to all local imports.
+ *
+ * This is crucial for HMR to work correctly. ES modules are cached by full URL
+ * including query strings. Without this, nested imports like:
+ *   import HeroSection from '../components/HeroSection.js'
+ * would return cached versions even after the file changes.
+ *
+ * With timestamp injection:
+ *   import HeroSection from '../components/HeroSection.js?t=1705123456789'
+ *
+ * @param code - The JavaScript/TypeScript code to transform
+ * @param timestamp - The cache-busting timestamp to add
+ * @returns Promise resolving to code with timestamped local imports
+ */
+export function addHMRTimestamps(code: string, timestamp: string | number): Promise<string> {
+  return replaceSpecifiers(code, (specifier: string) => {
+    // Only add timestamp to local imports (relative paths and alias paths)
+    const isLocalImport =
+      specifier.startsWith("./") ||
+      specifier.startsWith("../") ||
+      specifier.startsWith("/") ||
+      specifier.startsWith("@/");
+
+    if (!isLocalImport) return null;
+
+    // Skip if already has a timestamp parameter
+    if (specifier.includes("?t=") || specifier.includes("&t=")) return null;
+
+    // Skip external URLs
+    if (specifier.startsWith("http://") || specifier.startsWith("https://")) return null;
+
+    // Add timestamp as query parameter
+    const separator = specifier.includes("?") ? "&" : "?";
+    return `${specifier}${separator}t=${timestamp}`;
+  });
+}
+
 /** Track unversioned imports to warn only once per specifier */
 const unversionedImportsWarned = new Set<string>();
 

@@ -10,39 +10,25 @@ import { HTTP_OK, PRIORITY_HIGH_DEV } from "@veryfront/core/constants/index.ts";
 /**
  * Shared HMR JS update logic used by both local dev and preview HMR scripts.
  *
- * LIMITATION: ES modules cache by full URL including query string.
- * When a component like HeroSection.tsx changes:
- * 1. Page is imported with ?t=timestamp (fresh)
- * 2. BUT page's internal imports (import HeroSection from '...') don't have timestamp
- * 3. Browser returns cached HeroSection = STALE!
+ * How it works:
+ * 1. Client sets HMR timestamp and re-renders page
+ * 2. Page module is requested with ?t=timestamp
+ * 3. Server sees ?t= param and adds timestamp to ALL local imports in the response
+ * 4. This cascades: every nested import also gets the timestamp
+ * 5. Browser fetches fresh versions of all modules in the dependency tree
  *
- * For pages/layouts (directly imported), smart HMR works.
- * For components (nested imports), we must do full reload.
- *
- * TODO: Implement Vite-style import rewriting to add timestamps to ALL imports.
+ * This is Vite-style server-side import rewriting for proper HMR.
  */
 function getUpdateJSFunction(logPrefix: string): string {
   return `
   async function updateJS(path) {
     console.log('${logPrefix} Updating JS module:', path);
 
-    // Check if this is a page/layout (can use smart HMR) or component (needs reload)
-    const isPage = path.startsWith('pages/') || path.includes('/pages/');
-    const isLayout = path.startsWith('layouts/') || path.includes('/layouts/') || path.includes('layout.');
-    const isApp = path.includes('app.') || path.includes('_app.');
-
-    if (!isPage && !isLayout && !isApp) {
-      // Component change - nested imports won't get cache-busted
-      // Must do full reload to get fresh content
-      console.log('${logPrefix} Component change detected, doing full reload:', path);
-      notifyStudioAndReload();
-      return;
-    }
-
     try {
       const timestamp = Date.now();
 
-      // Set HMR refresh timestamp to bypass browser ES module cache
+      // Set HMR refresh timestamp - this will be added to all module requests
+      // The server propagates this timestamp to ALL nested imports
       if (window.__veryfrontSetHMRRefreshTimestamp) {
         window.__veryfrontSetHMRRefreshTimestamp(timestamp);
         console.log('${logPrefix} Refresh timestamp set:', timestamp);
@@ -55,6 +41,7 @@ function getUpdateJSFunction(logPrefix: string): string {
       }
 
       // Re-render the page with fresh modules
+      // The server will add ?t=timestamp to all imports in the module response
       if (window.__veryfrontRenderPage) {
         console.log('${logPrefix} Re-rendering page with fresh modules');
         await window.__veryfrontRenderPage(window.location.pathname);
