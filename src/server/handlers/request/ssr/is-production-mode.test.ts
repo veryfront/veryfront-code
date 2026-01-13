@@ -93,4 +93,39 @@ Deno.test("isProductionMode", async (t) => {
     const ctx = createContext({});
     assertEquals(isProductionMode(ctx), false);
   });
+
+  await t.step("returns false when studio_embed=true regardless of other settings", () => {
+    const ctx = createContext({
+      config: prodConfig, // Would normally make it production
+      parsedDomain: {
+        isVeryfrontDomain: false,
+        isDraft: false,
+        slug: null,
+        branch: null,
+        environment: null,
+      },
+      proxyEnvironment: "production", // Would normally make it production
+    });
+    const url = new URL("https://example.com/?studio_embed=true");
+    assertEquals(isProductionMode(ctx, url), false);
+  });
+
+  await t.step("studio_embed=true overrides config.productionMode", () => {
+    const ctx = createContext({ config: prodConfig });
+    const url = new URL("https://example.com/?studio_embed=true");
+    assertEquals(isProductionMode(ctx, url), false);
+  });
+
+  await t.step("works without URL parameter (backward compatible)", () => {
+    const ctx = createContext({
+      parsedDomain: {
+        isVeryfrontDomain: true,
+        isDraft: false,
+        slug: "test",
+        branch: null,
+        environment: "production",
+      },
+    });
+    assertEquals(isProductionMode(ctx), true);
+  });
 });

@@ -44,9 +44,17 @@ import {
 
 /**
  * Determine if request should serve production (released) content.
- * Priority: config > veryfront domain isDraft flag > proxy environment header
+ * Priority: studio_embed override > config > veryfront domain isDraft flag > proxy environment header
+ *
+ * When studio_embed=true is in the URL, ALWAYS return false (preview mode)
+ * to serve draft content for the Studio preview iframe, regardless of the domain.
  */
-export function isProductionMode(ctx: HandlerContext): boolean {
+export function isProductionMode(ctx: HandlerContext, url?: URL): boolean {
+  // Studio embed: ALWAYS use preview/draft mode for Studio previews
+  // This allows custom domains to show draft content in Studio's iframe
+  if (url?.searchParams.get("studio_embed") === "true") {
+    return false;
+  }
   // Config override (PRODUCTION_MODE env var)
   if (ctx.config?.fs?.veryfront?.productionMode === true) {
     return true;
@@ -114,7 +122,7 @@ export class SSRHandler extends BaseHandler {
         fsAdapter.isMultiProjectMode();
 
       if (ctx.projectSlug && hasMultiProjectSupport) {
-        const prodMode = isProductionMode(ctx);
+        const prodMode = isProductionMode(ctx, url);
         const branch = ctx.parsedDomain?.branch ?? null;
 
         this.logDebug("Using multi-project context", {
@@ -144,7 +152,7 @@ export class SSRHandler extends BaseHandler {
             fsAdapter.setRequestToken(ctx.proxyToken);
           }
           fsAdapter.setRequestBranch(ctx.parsedDomain?.branch ?? null);
-          const prodMode = isProductionMode(ctx);
+          const prodMode = isProductionMode(ctx, url);
           fsAdapter.setProductionMode(prodMode, ctx.releaseId);
         } catch {
           // Some operations may not be supported, continue anyway
