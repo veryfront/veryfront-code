@@ -5,6 +5,7 @@
  */
 
 import { logger } from "@veryfront/utils";
+import { injectContext } from "@veryfront/observability/tracing/otlp-setup.ts";
 import { TokenStorageError, type VeryfrontTokenConfig } from "./types.ts";
 
 export class TokenStorageAPIClient {
@@ -211,15 +212,22 @@ export class TokenStorageAPIClient {
 
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
       try {
-        const response = await fetch(url, init);
+        const headers = new Headers(init.headers as HeadersInit);
+        injectContext(headers);
+        const response = await fetch(url, { ...init, headers });
 
         // Don't retry client errors (except 429)
-        if (response.status >= 400 && response.status < 500 && response.status !== 429) {
+        if (
+          response.status >= 400 && response.status < 500 &&
+          response.status !== 429
+        ) {
           return response;
         }
 
         // Retry server errors and rate limits
-        if (!response.ok && (response.status >= 500 || response.status === 429)) {
+        if (
+          !response.ok && (response.status >= 500 || response.status === 429)
+        ) {
           throw new Error(`Server error: ${response.status}`);
         }
 

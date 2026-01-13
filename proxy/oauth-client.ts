@@ -2,6 +2,8 @@
  * OAuth Client for Veryfront API - client credentials flow.
  */
 
+import { injectContext } from "./tracing.ts";
+
 const DEFAULT_TIMEOUT_MS = 10000;
 
 export interface TokenResponse {
@@ -18,18 +20,23 @@ export interface OAuthTokenConfig {
   timeoutMs?: number;
 }
 
-export async function fetchOAuthToken(config: OAuthTokenConfig): Promise<TokenResponse> {
+export async function fetchOAuthToken(
+  config: OAuthTokenConfig,
+): Promise<TokenResponse> {
   const url = `${config.apiBaseUrl}/oauth/token`;
   const controller = new AbortController();
   const timeoutId = setTimeout(
     () => controller.abort(),
-    config.timeoutMs ?? DEFAULT_TIMEOUT_MS
+    config.timeoutMs ?? DEFAULT_TIMEOUT_MS,
   );
 
   try {
+    const headers = new Headers({ "Content-Type": "application/json" });
+    injectContext(headers);
+
     const response = await fetch(url, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers,
       body: JSON.stringify({
         grant_type: "client_credentials",
         client_id: config.clientId,
@@ -41,13 +48,19 @@ export async function fetchOAuthToken(config: OAuthTokenConfig): Promise<TokenRe
 
     if (!response.ok) {
       const errorText = await response.text().catch(() => "Unknown error");
-      throw new Error(`OAuth token request failed: ${response.status} - ${errorText}`);
+      throw new Error(
+        `OAuth token request failed: ${response.status} - ${errorText}`,
+      );
     }
 
     return response.json();
   } catch (error) {
     if (error instanceof Error && error.name === "AbortError") {
-      throw new Error(`OAuth token request timed out after ${config.timeoutMs ?? DEFAULT_TIMEOUT_MS}ms`);
+      throw new Error(
+        `OAuth token request timed out after ${
+          config.timeoutMs ?? DEFAULT_TIMEOUT_MS
+        }ms`,
+      );
     }
     throw error;
   } finally {
