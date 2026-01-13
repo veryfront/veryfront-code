@@ -5,7 +5,7 @@
  */
 
 const PROXY_PORT = 8080;
-const RENDERER_PORT = 3003;
+const RENDERER_PORT = 3001;
 
 // Check .env.local exists
 try {

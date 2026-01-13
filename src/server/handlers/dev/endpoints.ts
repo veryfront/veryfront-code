@@ -146,12 +146,11 @@ if (window.parent !== window) {
   } catch (e) { /* postMessage may fail in cross-origin iframes - expected */ }
 }
 
-// HMR WebSocket server runs on dev server port + 1
-// Detect at runtime to handle projects with different config.dev.port values
-const devPort = parseInt(window.location.port, 10) || 3001;
-const hmrPort = devPort + 1;
-const host = window.location.hostname || 'localhost';
-const ws = new WebSocket('ws://' + host + ':' + hmrPort + '/');
+// Connect to HMR WebSocket via /_ws endpoint (works in both direct and proxy mode)
+// The server's HMRHandler handles WebSocket upgrades at this path
+const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+const wsUrl = protocol + '//' + window.location.host + '/_ws';
+const ws = new WebSocket(wsUrl);
 let wasConnected = false;
 let reconnectTimeoutId = null;
 
@@ -161,7 +160,7 @@ ws.onopen = () => {
     clearTimeout(reconnectTimeoutId);
     reconnectTimeoutId = null;
   }
-  console.log('[HMR] Connected to port ' + hmrPort);
+  console.log('[HMR] Connected to ' + wsUrl);
 };
 
 ws.onmessage = (event) => {
@@ -273,15 +272,14 @@ hydrate('${slug}', {
 // NOTE: This runtime only handles CSS updates. Full page reloads are handled
 // by the inline HMR runtime (templates.ts) to avoid duplicate reloads.
 (function() {
-  const devPort = parseInt(window.location.port, 10) || 3001;
-  const hmrPort = devPort + 1;
-  const host = window.location.hostname || 'localhost';
-  const ws = new WebSocket('ws://' + host + ':' + hmrPort + '/');
+  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const wsUrl = protocol + '//' + window.location.host + '/_ws';
+  const ws = new WebSocket(wsUrl);
   let wasConnected = false;
 
   ws.onopen = () => {
     wasConnected = true;
-    console.log('[HMR Runtime] Connected to port ' + hmrPort);
+    console.log('[HMR Runtime] Connected to ' + wsUrl);
   };
 
   ws.onmessage = (event) => {
