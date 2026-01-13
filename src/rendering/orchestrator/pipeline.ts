@@ -281,20 +281,9 @@ export class RenderPipeline {
       ...pageInfo.entity.frontmatter,
       ...(pageBundle as MdxBundle).frontmatter,
     };
-    logger.info("[RenderPipeline] Merged frontmatter", {
-      entityKeys: Object.keys(pageInfo.entity.frontmatter || {}),
-      bundleKeys: Object.keys((pageBundle as MdxBundle).frontmatter || {}),
-      mergedKeys: Object.keys(mergedFrontmatter),
-      hasSummary: !!(mergedFrontmatter as any)?.summary,
-    });
 
     // Extract headings from page bundle for sidebar/TOC navigation
     const headings = (pageBundle as PageBundle).headings || [];
-    logger.info("[RenderPipeline] Extracted headings from pageBundle", {
-      hasHeadingsProperty: "headings" in pageBundle,
-      headingsCount: headings.length,
-      bundleKeys: Object.keys(pageBundle),
-    });
 
     // ─────────────────────────────────────────────────────────────────────────
     // Stage 7: Layout Application
@@ -475,8 +464,9 @@ export class RenderPipeline {
             {};
         }
         if (bundleResult.pageBundle && "headings" in bundleResult.pageBundle) {
-          headings =
-            (bundleResult.pageBundle as { headings?: Array<{ id: string; text: string; level: number }> }).headings ||
+          headings = (bundleResult.pageBundle as {
+            headings?: Array<{ id: string; text: string; level: number }>;
+          }).headings ||
             [];
         }
       } catch {
