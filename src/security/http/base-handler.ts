@@ -139,6 +139,13 @@ export abstract class BaseHandler implements Handler {
   }
 
   /**
+   * Log info message (always logged, for observability)
+   */
+  protected logInfo(message: string, extra?: Record<string, unknown>, _ctx?: HandlerContext): void {
+    serverLogger.info(`[${this.metadata.name}] ${message}`, extra || undefined);
+  }
+
+  /**
    * Helper to extract error message safely
    */
   protected getErrorMessage(error: unknown): string {
@@ -218,10 +225,15 @@ export abstract class BaseHandler implements Handler {
         isProduction = ctx.proxyEnvironment === "production";
       }
 
-      this.logDebug("Using multi-project context", {
+      // Log detailed context for debugging HMR/preview issues
+      this.logInfo("[withProxyContext] Setting up multi-project context", {
         projectSlug: ctx.projectSlug,
         projectId: ctx.projectId,
         productionMode: isProduction,
+        proxyEnvironment: ctx.proxyEnvironment,
+        isVeryfrontDomain: ctx.parsedDomain?.isVeryfrontDomain,
+        isDraft: ctx.parsedDomain?.isDraft,
+        releaseId: ctx.releaseId,
       }, ctx);
 
       return fsWrapper.runWithContext!(

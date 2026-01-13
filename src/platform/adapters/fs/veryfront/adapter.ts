@@ -739,6 +739,20 @@ export class VeryfrontFSAdapter implements FSAdapter {
    */
   setContentContext(context: ResolvedContentContext): void {
     const oldContext = this.contentContext;
+
+    // Log incoming context for debugging HMR/preview issues
+    logger.info("[VeryfrontFSAdapter] setContentContext called", {
+      newSourceType: context.sourceType,
+      newProjectSlug: context.projectSlug,
+      newBranch: context.branch,
+      newReleaseId: context.releaseId,
+      newEnvironmentName: context.environmentName,
+      oldSourceType: oldContext?.sourceType,
+      oldBranch: oldContext?.branch,
+      oldReleaseId: oldContext?.releaseId,
+      contextWillChange: JSON.stringify(oldContext) !== JSON.stringify(context),
+    });
+
     this.contentContext = context;
 
     // Sync context to API client to ensure correct endpoint is used
@@ -769,7 +783,10 @@ export class VeryfrontFSAdapter implements FSAdapter {
       });
     }
 
-    logger.info("[VeryfrontFSAdapter] Content context set", context);
+    logger.info("[VeryfrontFSAdapter] Content context set complete", {
+      sourceType: context.sourceType,
+      projectSlug: context.projectSlug,
+    });
   }
 
   /**
