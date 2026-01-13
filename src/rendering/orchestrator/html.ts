@@ -228,9 +228,15 @@ export class HTMLGenerator {
       return undefined;
     }
 
-    const appPath = join(this.config.projectDir, "components/app.tsx");
-    const appExists = await this.config.adapter.fs.exists(appPath);
-    return appExists ? appPath : undefined;
+    // Check for app component in order of preference
+    const extensions = [".tsx", ".jsx", ".ts", ".js", ".mdx", ".md"];
+    for (const ext of extensions) {
+      const appPath = join(this.config.projectDir, `components/app${ext}`);
+      if (await this.config.adapter.fs.exists(appPath)) {
+        return appPath;
+      }
+    }
+    return undefined;
   }
 
   private async loadProjectFile(filename: string): Promise<string | undefined> {
