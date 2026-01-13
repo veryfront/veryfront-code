@@ -76,7 +76,9 @@ function handleWebSocketUpgrade(req: Request): Response {
   const url = new URL(req.url);
   const host = req.headers.get("host") || "";
   const parsed = parseProjectDomain(host);
-  const scope = getScope(parsed.environment);
+  // Use preview mode when studio_embed=true (Studio preview iframe)
+  const isStudioEmbed = url.searchParams.get("studio_embed") === "true";
+  const scope = isStudioEmbed ? "preview" : getScope(parsed.environment);
   const projectSlug = parsed.slug || undefined;
 
   proxyLogger.info("WebSocket upgrade request", {
@@ -183,7 +185,10 @@ function handleRequest(req: Request): Promise<Response> {
   const execute = async (): Promise<Response> => {
     try {
       const parsed = parseProjectDomain(host);
-      const scope = getScope(parsed.environment);
+      // Use preview mode when studio_embed=true (Studio preview iframe)
+      // This ensures custom domains use draft content in Studio preview
+      const isStudioEmbed = url.searchParams.get("studio_embed") === "true";
+      const scope = isStudioEmbed ? "preview" : getScope(parsed.environment);
       const projectSlug = parsed.slug || undefined;
 
       const reqLogger = proxyLogger.child({
@@ -191,9 +196,14 @@ function handleRequest(req: Request): Promise<Response> {
         method: req.method,
         path: url.pathname,
         environment: scope,
+        isStudioEmbed,
       });
 
-      reqLogger.info("Request received");
+      reqLogger.info("Request received", {
+        isStudioEmbed,
+        parsedEnvironment: parsed.environment,
+        effectiveScope: scope,
+      });
 
       let token = "";
 
