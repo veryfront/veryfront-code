@@ -455,8 +455,9 @@ export class SSRHandler extends BaseHandler {
       const isHead = req.method.toUpperCase() === "HEAD";
       const errorObj = error instanceof Error ? error : new Error(String(error));
 
-      // In development mode, show error overlay with full stack trace
-      if (!isHead && ctx.mode === "development") {
+      // In development or preview mode, show error overlay with full stack trace
+      // Preview is a dev environment (branch previews) so developers need detailed errors
+      if (!isHead && (ctx.mode === "development" || ctx.proxyEnvironment === "preview")) {
         const { ErrorOverlay } = await import(
           "../../../dev-server/error-overlay/index.ts"
         );
