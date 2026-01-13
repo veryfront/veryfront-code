@@ -3,7 +3,7 @@ import type * as React from "react";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import { transformToESM } from "@veryfront/transforms/esm/index.ts";
 import type { TransformOptions } from "@veryfront/transforms/esm/types.ts";
-import { getGlobalTmpDir } from "./temp-directory.ts";
+import { getProjectTmpDir } from "./temp-directory.ts";
 import { normalizeModulePath, resolveRelativePath } from "./path-resolver.ts";
 import type { LoadComponentOptions } from "./types.ts";
 import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
@@ -54,7 +54,7 @@ export async function loadComponentFromSource(
     transformOpts,
   );
 
-  const tmpDir = await getGlobalTmpDir();
+  const tmpDir = await getProjectTmpDir(projectId);
   const relativeFilePath = resolveRelativePath(filePath, projectDir);
   const componentFile = join(tmpDir, normalizeModulePath(relativeFilePath));
 

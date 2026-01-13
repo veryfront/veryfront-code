@@ -146,10 +146,12 @@ export function remarkMdxRemoveParagraphs() {
           const isAlreadySpaced = extParent.children.some((c) => !!c.isMdxTextSpacer);
 
           if (i > 0 && !isAlreadySpaced) {
-            children.push({
-              ...spacer,
-              isMdxTextSpacer: true,
-            } as Node & { isMdxTextSpacer: boolean });
+            children.push(
+              {
+                ...spacer,
+                isMdxTextSpacer: true,
+              } as Node & { isMdxTextSpacer: boolean },
+            );
           }
           children.push(child);
         });
