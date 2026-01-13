@@ -6,7 +6,6 @@ import { getConfig } from "@veryfront/config";
 import { serverLogger } from "@veryfront/utils";
 import { rehypeAddClasses, rehypeMdxComponents, rehypePreserveNodeIds } from "./rehype-utils.ts";
 import { remarkMdxHeadings } from "./remark-headings.ts";
-import { createError, toError } from "@veryfront/errors/veryfront-error.ts";
 import {
   remarkCodeBlocks,
   remarkMdxImports,
