@@ -1,9 +1,5 @@
 import type { VeryfrontConfig } from "veryfront";
 
-const config: VeryfrontConfig = {
-  client: {
-    moduleResolution: "self-hosted",
-  },
-};
+const config: VeryfrontConfig = {};
 
 export default config;
