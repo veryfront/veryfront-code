@@ -1,0 +1,48 @@
+---
+layout: "@components/layouts/DocsLayout.mdx"
+context:
+  title: Using Image Proxy in Veryfront
+  meta:
+    title: Using Image Proxy in Veryfront
+    description: >-
+      Learn how to use the image proxy feature in Veryfront to resize and
+      convert remote images. The guide includes step-by-step instructions on URL
+      construction, processing options, and integration with the Responsive
+      Image library.
+---
+
+import { H1 } from "@/shared/ui/H1"
+
+<H1>Image proxy</H1>
+
+Veryfront provides an image proxy which allows to resize and convert remote images.
+
+The root url of the image proxy is `https://images.veryfront.com/imgproxy`.
+
+### Usage
+
+To use the image proxy provided by Veryfront, you can follow these steps:
+
+1. Identify the remote image URL that you want to resize and convert. For example, let's say the remote image URL is `https://images.unsplash.com/photo-1663334484805-97e6c9e9eb1c`.
+
+2. Construct a new URL using the image proxy root URL, along with additional parameters to specify the desired resizing and conversion options. For example:
+
+```
+https://images.veryfront.com/imgproxy/q:75/w:2048/aHR0cHM6Ly9pbWFnZXMudW5zcGxhc2guY29tL3Bob3RvLTE2NjMzMzQ0ODQ4MDUtOTdlNmM5ZTllYjFj.webp
+```
+
+In this example, the parameters used are `q:75` (quality set to 75), and `w:2048` (width set to 2048 pixels). The rest of the URL is the Base64-encoded version of the original remote image URL.
+
+3. Now you can use the new URL:
+
+![](https://images.veryfront.com/imgproxy/q:75/w:2048/aHR0cHM6Ly9pbWFnZXMudW5zcGxhc2guY29tL3Bob3RvLTE2NjMzMzQ0ODQ4MDUtOTdlNmM5ZTllYjFj.webp)
+
+```markdown
+![](https://images.veryfront.com/imgproxy/q:75/w:2048/aHR0cHM6Ly9pbWFnZXMudW5zcGxhc2guY29tL3Bob3RvLTE2NjMzMzQ0ODQ4MDUtOTdlNmM5ZTllYjFj.webp)
+```
+
+You can also use the [Responsive Image](https://responsive-image.veryfront.com) library which provides the `ResponsiveImage` component. This component is using the Veryfront image proxy by default and is doing the encoding for you.
+
+### Processing options
+
+For a full list of the processing options please refer to the [imgproxy documentation](https://docs.imgproxy.net/generating_the_url?id=processing-options).

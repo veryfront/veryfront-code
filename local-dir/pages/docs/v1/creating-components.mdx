@@ -1,0 +1,253 @@
+---
+layout: "@components/layouts/DocsLayout.mdx"
+context:
+  title: Creating Components
+  meta:
+    title: "Creating Components in Veryfront"
+    description: "Learn how to create and use components in Veryfront, the powerful web development tool. This comprehensive guide also covers component renaming, path editing, and deletion."
+---
+
+import { H1 } from "@/shared/ui/H1";
+import { ResponsiveImage } from "@/shared/ui/ResponsiveImage"
+import { Alert, AlertDescription, AlertTitle } from "@/shared/ui/Alert"
+import { InfoIcon } from "@/shared/ui/icons/InfoIcon"
+import { AlertCircleIcon } from "@/shared/ui/icons/AlertCircleIcon"
+
+<H1>Creating Components</H1>
+
+### What are Components?
+
+Components are one of Veryfront’s most powerful features. They are functionally identical to React components and you can also compare them to Sketch symbols or Figma components. A component can be as simple as a button or as complex as an entire page.
+
+Components let you create reusable UI elements and significantly speed up the composition of your app. If you use similar UI elements on multiple pages, it’s time to consider creating components. This way, you only have to write your code once and can reuse it in your project as needed.
+
+When you change a component’s code, all its instances reflect those changes. However, you can customize the individual instances to suit your needs using component props.
+
+### Create a Component
+
+In Veryfront, you can create a component in two ways: from the Sidebar Component menu or existing code.
+
+### Create a Component via the Sidebar
+
+Open the Components menu in the Sidebar.
+
+<ResponsiveImage
+  src="https://storage.googleapis.com/veryfront-web/docs-v2/components-menu-menu-icon.png"
+  alt="Components Menu Menu Icon"
+  width="1601"
+  height="900"
+  sizes="(max-width: 823px) 100vw, (max-width: 1023px) 768px, 764px"
+/>
+
+Click the plus icon in the top right corner to create a new component.
+
+<ResponsiveImage
+  src="https://storage.googleapis.com/veryfront-web/docs-v2/components-menu-new-component.png"
+  alt="Components Menu New Component"
+/>
+
+Enter a component name.
+
+<Alert>
+  <InfoIcon className="h-4 w-4" />
+  <AlertTitle>Note</AlertTitle>
+  <AlertDescription>
+    Component names must be unique.
+  </AlertDescription>
+</Alert>
+
+<ResponsiveImage
+  src="https://storage.googleapis.com/veryfront-web/docs-v2/new-component-overlay.png"
+  alt="New Component Overlay"
+  width="1513"
+  height="851"
+  sizes="(max-width: 823px) 100vw, (max-width: 1023px) 768px, 764px"
+/>
+
+Veryfront opens your component in the Live Editor, where you can edit its code.
+
+Your new component is immediately available under the Insert menu in the Sidebar, from where you can add it to a page.
+
+<ResponsiveImage
+  src="https://storage.googleapis.com/veryfront-web/docs-v2/sample-page-with-components-menu.png"
+  alt="Sample Page With Components Menu"
+  width="1513"
+  height="851"
+  sizes="(max-width: 823px) 100vw, (max-width: 1023px) 768px, 764px"
+/>
+
+### Create a Component From Existing Code
+
+Select the part of your code that you want to turn into a component.
+
+<Alert>
+  <AlertCircleIcon className="h-4 w-4" />
+  <AlertTitle>Warning</AlertTitle>
+  <AlertDescription>
+    If you select an invalid code portion, Veryfront still generates a new component but may run into build errors.
+  </AlertDescription>
+</Alert>
+
+Right-click your selection and click "Create component from selection".
+
+<ResponsiveImage
+  src="https://storage.googleapis.com/veryfront-web/docs-v2/component-from-code-selection-and-menu.png"
+  alt="Component From Code Selection And Menu"
+  width="1513"
+  height="851"
+  sizes="(max-width: 823px) 100vw, (max-width: 1023px) 768px, 764px"
+/>
+
+Enter a component name.
+
+<ResponsiveImage
+  src="https://storage.googleapis.com/veryfront-web/docs-v2/new-component-overlay.png"
+  alt="New Component Overlay"
+  width="1513"
+  height="851"
+  sizes="(max-width: 823px) 100vw, (max-width: 1023px) 768px, 764px"
+/>
+
+<Alert>
+  <InfoIcon className="h-4 w-4" />
+  <AlertTitle>Note</AlertTitle>
+  <AlertDescription>
+    Component names must be unique.
+  </AlertDescription>
+</Alert>
+
+Your new component is immediately available under the Insert > Custom Components menu in the Sidebar.
+
+Veryfront automatically replaces the extracted snippet with a reference to the new component.
+
+### Add Content to a Component
+
+You can add content to a component [using MDX](/docs/mdx-content).
+
+### Use a Component in Another Component or Page
+
+Open the respective menu (Components or Pages menu) in the Sidebar.
+
+<ResponsiveImage
+  src="https://storage.googleapis.com/veryfront-web/docs-v2/components-pages-menu-menu-icon.png"
+  alt="Components Pages Menu Menu Icon"
+  width="1513"
+  height="851"
+  sizes="(max-width: 823px) 100vw, (max-width: 1023px) 768px, 764px"
+/>
+
+Select the component or page to edit it in the Live Editor.
+
+<ResponsiveImage
+  src="https://storage.googleapis.com/veryfront-web/docs-v2/pages-menu-edit-page.png"
+  alt="Pages Menu Edit Page"
+  width="1513"
+  height="851"
+  sizes="(max-width: 823px) 100vw, (max-width: 1023px) 768px, 764px"
+/>
+
+Open the Insert menu in the Sidebar to see a list of available components divided by categories.
+
+<ResponsiveImage
+  src="https://storage.googleapis.com/veryfront-web/docs-v2/sample-page-with-components-menu.png"
+  alt="Sample Page With Components Menu"
+  width="1513"
+  height="851"
+  sizes="(max-width: 823px) 100vw, (max-width: 1023px) 768px, 764px"
+/>
+
+Click a category and choose a component to insert its snippet at the current cursor position in the Live Editor. This also generates the relevant import statement if required.
+
+<ResponsiveImage
+  src="https://storage.googleapis.com/veryfront-web/docs-v2/sample-page-with-components-menu-inserted.png"
+  alt="Sample Page With Components Menu Inserted"
+/>
+
+### Rename a Component
+
+Select the Components menu in the Sidebar to see a list of your project’s custom components.
+
+<ResponsiveImage
+  src="https://storage.googleapis.com/veryfront-web/docs-v2/components-menu-menu-icon.png"
+  alt="Components Menu Menu Icon"
+  width="1513"
+  height="851"
+  sizes="(max-width: 823px) 100vw, (max-width: 1023px) 768px, 764px"
+/>
+
+Hover over the component you want to edit and click the edit icon to open the Edit Component overlay.
+
+<ResponsiveImage
+  src="https://storage.googleapis.com/veryfront-web/docs-v2/components-menu-edit-component-icon.png"
+  alt="Components Menu Edit Component Icon"
+  width="1513"
+  height="851"
+  sizes="(max-width: 823px) 100vw, (max-width: 1023px) 768px, 764px"
+/>
+
+Edit your component’s name and confirm.
+
+<Alert>
+  <InfoIcon className="h-4 w-4" />
+  <AlertTitle>Note</AlertTitle>
+  <AlertDescription>
+    The component name must be unique.
+  </AlertDescription>
+</Alert>
+
+<ResponsiveImage
+  src="https://storage.googleapis.com/veryfront-web/docs-v2/edit-component-overlay.png"
+  alt="Edit Component Overlay"
+  width="1513"
+  height="851"
+  sizes="(max-width: 823px) 100vw, (max-width: 1023px) 768px, 764px"
+/>
+
+### Edit a Component’s Path
+
+Select the Components menu in the Sidebar to see a list of your project’s custom components.
+
+<ResponsiveImage
+  src="https://storage.googleapis.com/veryfront-web/docs-v2/components-menu-menu-icon.png"
+  alt="Components Menu Menu Icon"
+  width="1513"
+  height="851"
+  sizes="(max-width: 823px) 100vw, (max-width: 1023px) 768px, 764px"
+/>
+
+Hover over the component you want to edit and lick the edit icon to open the Edit Component overlay.
+
+<ResponsiveImage
+  src="https://storage.googleapis.com/veryfront-web/docs-v2/components-menu-edit-component-icon.png"
+  alt="Components Menu Edit Component Icon"
+/>
+
+Edit your component’s path and confirm.
+
+<Alert>
+  <AlertCircleIcon className="h-4 w-4" />
+  <AlertTitle>Warning</AlertTitle>
+  <AlertDescription>
+    When you update a component’s path, you must also update the relevant import statements in your project files to prevent import errors.
+  </AlertDescription>
+</Alert>
+
+<ResponsiveImage
+  src="https://storage.googleapis.com/veryfront-web/docs-v2/edit-component-overlay.png"
+  alt="Edit Component Overlay"
+  width="1513"
+  height="851"
+  sizes="(max-width: 823px) 100vw, (max-width: 1023px) 768px, 764px"
+/>
+
+### Delete a Component
+
+You can delete a component from the Edit Component overlay which you can access from the context menu in the sidebar.
+
+<Alert>
+  <AlertCircleIcon className="h-4 w-4" />
+  <AlertTitle>Warning</AlertTitle>
+  <AlertDescription>
+    Deleting a component is irreversible!
+  </AlertDescription>
+</Alert>

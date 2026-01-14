@@ -1,0 +1,19 @@
+---
+isLayout: true
+previewProps:
+  children: <page rendered here>
+---
+
+import { Footer } from "@/shared/ui/Footer"
+import { Header } from "@/shared/ui/Header"
+import { BlurGradientTop } from "@/shared/ui/BlurGradientTop"
+import { BlurGradientBottom } from "@/shared/ui/BlurGradientBottom"
+
+<div className="flex flex-col min-h-[100dvh]">
+  <Header />
+  <BlurGradientTop />
+  <div className="flex flex-col flex-1 w-full">{props.children}</div>
+
+  <BlurGradientBottom />
+  <Footer />
+</div>

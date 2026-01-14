@@ -1,0 +1,179 @@
+import { Button } from "@/shared/ui/Button"
+import { Container } from "@/shared/ui/Container"
+import { Heading } from "@/shared/ui/Heading"
+import { Text } from "@/shared/ui/Text"
+import { ProductFeatures } from "@/features/home/ui/ProductFeatures"
+import { CTA } from "@/shared/ui/CTA"
+import * as Content from "@/shared/ui/Content"
+import { ResponsiveImage } from "@/shared/ui/ResponsiveImage"
+import { AspectRatio } from "@/shared/ui/AspectRatio"
+import { ShowcaseModule } from "@/features/showcase/ui/ShowcaseModule"
+import { Card } from "@/shared/ui/Card"
+
+const showcaseItems = [
+  {
+    title: "Inbox Assistant",
+    description:
+      "A fully automated customer support chat agent that can answer FAQs, escalate issues, and improve response time. Designed for SaaS teams looking to reduce human load while maintaining quality.",
+    projectSlug: "inbox-assistant",
+    previewUrl: "https://inbox-assistant.veryfront.com",
+    domain: "inbox-assistant.veryfront.com",
+    features: [
+      "Understands customer context",
+      "Instant responses 24/7",
+      "Escalation routing",
+      "Brand-aligned tone control",
+    ],
+  },
+  {
+    title: "AI Chatbot",
+    description:
+      "Personalizes shopping experiences by analyzing user behavior and recommending items in real time. Ideal for modern online retail brands.",
+    projectSlug: "ai-chatbot",
+    previewUrl: "https://ai-chatbot.veryfront.com",
+    domain: "ai-chatbot.veryfront.com",
+    features: [
+      "Adaptive personalization",
+      "Market-aware suggestions",
+      "Inventory & variant awareness",
+      "Plug-and-play commerce integrations",
+    ],
+  },
+]
+
+function Page() {
+  return (
+    <>
+      <div className="flex flex-col gap-16 lg:gap-20">
+        <Container className="relative z-10 py-24 md:py-32 text-center">
+          <div className="max-w-4xl mx-auto space-y-6">
+            <Heading
+              as="h1"
+              level="1"
+              className="text-4xl md:text-6xl lg:text-7xl font-bold"
+            >
+              Build and run agents{" "}
+              <span className="text-primary">super fast</span>
+            </Heading>
+
+            <div className="max-w-3xl mx-auto space-y-4">
+              <Text
+                level="lead"
+                className="text-xl md:text-2xl leading-relaxed"
+              >
+                A platform to create your next AI assistant
+              </Text>
+            </div>
+          </div>
+        </Container>
+        <Container>
+          <ShowcaseModule items={showcaseItems} />
+        </Container>
+        <Content.Root>
+          <Content.Wrapper>
+            <Content.Content>
+              <Content.ContentWrapper>
+                <Heading level="2">1. Describe what you want</Heading>
+
+                <Text>
+                  The intuitive interface simplifies the coding process,
+                  allowing developers to focus on building efficiently.
+                  Veryfront ensures a smooth and responsive experience for all
+                  your browser-based coding needs.
+                </Text>
+              </Content.ContentWrapper>
+            </Content.Content>
+
+            <Content.Aside className="px-4 md:px-0 flex justify-center flex-col">
+              <Card
+                border
+                solid
+                className="pl-8 pb-3 pr-2 flex flex-col items-center justify-center dark:bg-black"
+              >
+                <AspectRatio className="aspect-[847/681] overflow-hidden dark:invert -mt-[100px]">
+                  <ResponsiveImage
+                    src="https://cdn.veryfront.com/5b74466b-ad05-4594-82f6-8ed08ad1c37c/agents/chat-with-env-vars.png"
+                    alt="Describe what you want"
+                    width={847}
+                    height={681}
+                    fill={true}
+                  />
+                </AspectRatio>
+              </Card>
+            </Content.Aside>
+          </Content.Wrapper>
+        </Content.Root>
+
+        <Content.Root>
+          <Content.Wrapper>
+            <Content.Content layout={{ md: "end" }}>
+              <Content.ContentWrapper>
+                <Heading level="2">2. Give your agents tools</Heading>
+
+                <Text>
+                  Collaborating in real-time with Veryfront allows teams to work
+                  together seamlessly, making instant updates and feedback
+                  possible. This enhances productivity and ensures everyone
+                  stays aligned throughout the development process.
+                </Text>
+              </Content.ContentWrapper>
+            </Content.Content>
+
+            <Content.Aside
+              className="px-4 md:px-0 flex justify-center flex-col"
+              layout={{ md: "start" }}
+            >
+              <Card className="pr-4 py-1 pl-2 flex flex-col items-start justify-center dark:bg-black">
+                <AspectRatio className="aspect-[847/562] overflow-hidden dark:invert">
+                  <ResponsiveImage
+                    src="https://cdn.veryfront.com/5b74466b-ad05-4594-82f6-8ed08ad1c37c/agents/give-agents-tools.png"
+                    alt="Give your agents tools"
+                    width={847}
+                    height={562}
+                    fill={true}
+                  />
+                </AspectRatio>
+              </Card>
+            </Content.Aside>
+          </Content.Wrapper>
+        </Content.Root>
+
+        <Content.Root>
+          <Content.Wrapper>
+            <Content.Content>
+              <Content.ContentWrapper>
+                <Heading level="2">3. Create a conversational UI</Heading>
+
+                <Text>
+                  With Veryfront, sharing and previewing links is quick and
+                  straightforward, allowing teams to instantly review progress.
+                  This feature ensures everyone can easily access live updates
+                  and provide feedback in real-time.
+                </Text>
+              </Content.ContentWrapper>
+            </Content.Content>
+
+            <Content.Aside className="flex justify-center flex-col">
+              <Card className="p-4 flex flex-col items-end justify-end dark:bg-black">
+                <AspectRatio className="aspect-[1106/980] overflow-hidden dark:invert">
+                  <ResponsiveImage
+                    src="https://cdn.veryfront.com/5b74466b-ad05-4594-82f6-8ed08ad1c37c/agents/inbox-assistant-chat.png"
+                    alt="Create a conversational UI"
+                    width={1106}
+                    height={980}
+                    fill={true}
+                  />
+                </AspectRatio>
+              </Card>
+            </Content.Aside>
+          </Content.Wrapper>
+        </Content.Root>
+
+        <ProductFeatures title={null} />
+        <CTA />
+      </div>
+    </>
+  )
+}
+
+export default Page

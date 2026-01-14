@@ -1,0 +1,97 @@
+---
+layout: "@components/layouts/DocsLayout.mdx"
+context:
+  title: Understanding Layout Components in Veryfront
+  meta:
+    title: Understanding Layout Components in Veryfront
+    description: >-
+      Learn what layout components are, how to create, edit, and define a
+      default layout component, and how to overwrite the default layout.
+      Discover how layout components can help you share common UI elements
+      across pages in Veryfront.
+---
+
+import { Alert, AlertDescription, AlertTitle } from "@/shared/ui/Alert"
+import { H1 } from "@/shared/ui/H1"
+import { ResponsiveImage } from "@/shared/ui/ResponsiveImage"
+
+<H1>Layout components</H1>
+
+### What Are Layout Components?
+
+A Layout Component is a component that wraps around your pages.
+
+<ResponsiveImage
+  src="https://storage.googleapis.com/veryfront-web/docs-v2/component-hierarchy.png"
+  alt="Component Hierarchy"
+  priority
+  width="1920"
+  height="1080"
+  sizes="(max-width: 764px) 100vw, (max-width: 1023px) 764px, (max-width: 1400px) 50vw,  764px"
+/>
+You typically use Layout Components to share common UI elements across pages, such as header and footer elements. At their core, they are just regular components. However, they must include `props.children` to render the enclosed page components.
+
+Here’s a sample Layout Component:
+
+```jsx
+import Header from '@components/header'
+import Footer from '@components/footer'
+
+<Header/>
+  <div>
+    {props.children}
+  </div>
+<Footer/>
+```
+
+### Create a Layout Component
+
+Open the Components menu in the Sidebar and click the plus icon in the top right corner to create a new component.
+
+<ResponsiveImage
+  src="https://storage.googleapis.com/veryfront-web/docs-v2/components-menu-new-component.png"
+  alt="Components Menu New Component"
+  width="1920"
+  height="1080"
+  sizes="(max-width: 764px) 100vw, (max-width: 1023px) 764px, (max-width: 1400px) 50vw,  764px"
+/>
+Enter the component name and slug and confirm by clicking `Create Component`.
+
+<ResponsiveImage
+  src="https://storage.googleapis.com/veryfront-web/docs-v2/create-component-overlay.png"
+  alt="Create Component Overlay"
+  width="1920"
+  height="1080"
+  sizes="(max-width: 764px) 100vw, (max-width: 1023px) 764px, (max-width: 1400px) 50vw,  764px"
+/>
+Now you can edit your Layout Component.
+
+### Edit a Layout
+
+Layout Components must contain `props.children` to render the enclosed page components.
+
+### Define a Default Layout
+
+Every new project comes with a default Layout component listed under the Components tab.
+
+To specify a different default layout, open the Provider Settings in the Sidebar.
+
+<ResponsiveImage
+  src="https://storage.googleapis.com/veryfront-web/docs-v2/provider-settings-layout-component-selector.png"
+  alt="Provider Settings Layout Component Selector"
+/>
+In the Provider Settings, you can enter the name of the new layout to update the Default Layout and save your changes.
+
+After this change, all pages for which you do not overwrite the default layout will automatically use the new layout.
+
+### Overwrite the Default Layout
+
+If you want to use a layout other than the default layout for a page, you can overwrite it. To do this, define the layout path in the Front Matter of a page as follows:
+
+```markdown
+---
+layout: '@components/my-layout-path'
+---
+
+# My Page with a custom layout
+```

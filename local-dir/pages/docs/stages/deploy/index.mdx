@@ -1,0 +1,48 @@
+---
+layout: '@components/layouts/DocsLayoutV2.mdx'
+context:
+  meta:
+    title: Deploy Stage
+    description: ''
+---
+
+import { CodeBlock } from "@/shared/ui/CodeBlock"
+
+# Deploy Stage
+
+Deploy code to production environments
+
+| **Type** | **Details**                                                                                 |
+| -------- | ------------------------------------------------------------------------------------------- |
+| Agent    | Deployment Agent                                                                            |
+| Role     | A DevOps engineer with expertise in automating release pipelines and deploying applications |
+| Input    | Application code, project settings                                                          |
+| Output   | Live website ready for production traffic                                                   |
+
+#### Example
+
+**Input**
+
+<CodeBlock showHeader={false}>
+  ```
+  /deploy to production
+  ```
+</CodeBlock>
+
+**Output**
+
+```
+I've deployed your app to production, it's now live at:
+https://task-management.veryfront.com
+```
+
+### Steering
+
+- `.claude/agents/deploy.md`
+- `.claude/commands/deploy.md`
+
+### Features
+
+- Support multiple environments (e.g. Staging, Production)
+- Automate release pipelines
+- Deploy applications to production

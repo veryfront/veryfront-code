@@ -1,0 +1,168 @@
+---
+layout: '@components/layouts/DocsLayoutV2.mdx'
+context:
+  meta:
+    title: Getting Started
+    description: ''
+---
+
+import { Alert, AlertDescription, AlertTitle } from "@/shared/ui/Alert"
+import { InfoIcon } from "@/shared/ui/icons/InfoIcon"
+import { CodeBlock } from "@/shared/ui/CodeBlock"
+import { Lightbulb } from "https://esm.sh/lucide-react"
+
+# Getting Started
+
+This guide will enable you to launch your first Veryfront appliction in minutes.
+
+1. [Project setup](#project-setup)
+2. [Create a plan](#create-a-plan)
+3. [Start building](#start-building)
+4. [Deploy your app](#deploy-your-app)
+
+***
+
+### Project setup
+
+Begins by creating a project in our online IDE.
+
+1. [Sign in to Veryfront](https://veryfront.com/sign-in)
+2. Once logged in, you will be taken to the Dashboard
+3. Click "Create App" to start from scratch or by choosing a [template](https://veryfront.com/templates)
+
+<Alert>
+  <Lightbulb className="h-4 w-4" />
+  <AlertDescription>
+    Visit [new.veryfront.com](https://new.veryfront.com) at any time to immediately start a new project
+  </AlertDescription>
+</Alert>
+
+***
+
+### Create a plan
+
+After project creation, you will be redirected to the Studio. We will use the Chat interface to start the [Plan](/docs/stages/plan) stage.
+
+<img
+  src="https://cdn.veryfront.com/5b74466b-ad05-4594-82f6-8ed08ad1c37c/CleanShot 2025-11-18 at 00.47.51@2x.png"
+  alt="Veryfront Studio - Plan Stage"
+  className="border rounded-lg overflow-hidden"
+/>
+1. Type `/plan` and submit to let the [Planning Agent](/docs/stages/plan#agent-card) spec out your idea, or copy the example below
+
+<CodeBlock showHeader={false}>
+  ```
+  /plan
+
+  Build a task management app for freelancers, featuring:
+  - Project creation and client management  
+  - Time tracking with timer functionality
+  - Invoice generation based on tracked hours
+  - Dashboard showing earnings and project status
+  ```
+</CodeBlock>
+
+<Alert className="mt-4">
+  <Lightbulb className="h-4 w-4" />
+  <AlertDescription>
+    Upload screenshots or documents via the Chat, or by adding files in the [Uploads](/docs/features/uploads) panel and tagging them e.g. `@uploads/my-folder`
+  </AlertDescription>
+</Alert>
+
+2. The [Planning Agent](/docs/stages/plan#agent-card) will create a structured implementation plan for you
+
+3. Click the Files tab and check the `docs/` folder to see created milestones and issues
+
+```
+docs/
+├── milestones/
+│   └── 001-freelancer-mvp.md
+└── issues/
+    ├── 001-authentication-system.md
+    ├── 002-client-project-management.md
+    └── 003-time-tracking-system.md
+    └── 004-invoice-generation.md
+```
+
+***
+
+### Start building
+
+Now you have planned the first iteration of your app, let's build it.
+
+<img
+  src="https://cdn.veryfront.com/5b74466b-ad05-4594-82f6-8ed08ad1c37c/CleanShot 2025-11-18 at 22.26.21@2x.png"
+  alt="Veryfront Studio - Build Stage"
+  className="border rounded-lg overflow-hidden"
+/>
+1. Type `/build` into the Chat and tag the feature you want to work on, for example
+
+<CodeBlock showHeader={false}>
+  ```
+  /build @docs/issues/001-authentication-system.md
+  ```
+</CodeBlock>
+
+2. The [Coding Agent](/docs/stages/build#agent-card) will start building your React app by creating files
+
+3. Test your app in our [Preview Environment](/docs/features/environments) by selecting a page from the preview URL bar
+
+4. Review the planning document to check all items are complete
+
+<Alert>
+  <Lightbulb className="h-4 w-4" />
+  <AlertDescription>
+    You may be prompted to add [Environment Variables](/docs/features/environment-variables) as the agent is working
+  </AlertDescription>
+</Alert>
+
+#### Iterating Further
+
+We recommended you work one issue at a time in order to complete milestones. To refine your app, you can
+
+- Open the Files tab to navigate project files, which are fully editable in the browser
+- Create another `/plan` stage for a change in implementation
+- Trigger another `/build` stage to implement an additonal feature
+- Manually prompt the coding agent via the Chat
+- Adjust styling in the [Theme](/docs/features/theming) tab
+- Use the [Visual Editor](/docs/features/visual-editing) to change content
+
+***
+
+### Deploy your app
+
+When a version of your app is complete, deploy it and make it accessible to the public.
+
+<img
+  src="https://cdn.veryfront.com/5b74466b-ad05-4594-82f6-8ed08ad1c37c/CleanShot 2025-11-18 at 23.45.34@2x.png"
+  alt="Veryfront Studio - Deploy Stage"
+/>
+1. Click the unsaved changes marker in the header to see changed files
+
+2. Save all files that you want to deploy
+
+3. Use the Chat, and type
+
+<CodeBlock showHeader={false}>
+  ```
+  /deploy to production
+  ```
+</CodeBlock>
+
+4. The [Deployment Agent](/docs/stages/deploy#agent-card) will trigger a release of your app
+
+5. Wait for the agent response, then click to open your [Production Environment](/docs/features/environments) URL
+
+```
+I've deployed your app to production, it's now live at:
+https://task-management.veryfront.com
+```
+
+<Alert>
+  <Lightbulb className="h-4 w-4" />
+  <AlertDescription>
+    You can also use the Deploy button in the top right
+  </AlertDescription>
+</Alert>
+
+Congratulations, you launched your first Veryfront app. Keep on building!

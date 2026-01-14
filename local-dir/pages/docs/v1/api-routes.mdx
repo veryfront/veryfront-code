@@ -1,0 +1,35 @@
+---
+layout: "@components/layouts/DocsLayout.mdx"
+context:
+  title: Creating API routes
+  meta:
+    title: Guide on Creating API Routes
+    description: >-
+      Follow our step-by-step guide to creating API routes in Veryfront, from
+      opening the functions menu to setting up your new API route in the Code
+      Editor.
+---
+
+import { Alert, AlertDescription, AlertTitle } from "@/shared/ui/Alert"
+import { InfoIcon } from "@/shared/ui/icons/InfoIcon"
+import { H1 } from "@/shared/ui/H1"
+
+<H1>Creating API routes</H1>
+
+1. Open the Sidebar by clicking on the Functions menu icon.
+2. To create a new API route, plus icon in the top right corner of the menu.
+3. Enter a name and of your API route.
+4. If desired, you can customize the slug, where the API route should be accessible.
+5. Confirm by clicking "Create Function".
+6. The new API route will open in the Code Editor with a default function.
+
+![](https://cdn.veryfront.com/5b74466b-ad05-4594-82f6-8ed08ad1c37c/docs/api-routes/creating-api-route.gif)
+
+<Alert>
+  <InfoIcon className="h-4 w-4" />
+  <AlertTitle>Note</AlertTitle>
+
+  <AlertDescription>
+    The slug of API routes must be prefixed with `/api/`.
+  </AlertDescription>
+</Alert>

@@ -1,0 +1,55 @@
+---
+layout: "@components/layouts/DocsLayout.mdx"
+context:
+  title: Use color mode
+  meta:
+    title: Implementing Color Mode in Veryfront
+    description: >-
+      Learn how to implement color modes in a Veryfront project, using the
+      ThemeProvider component for light and dark themes, setup and usage
+      instructions, and next steps.
+---
+
+import { H1 } from "@/shared/ui/H1"
+
+<H1>Use color mode</H1>
+
+Veryfront provides built-in support for color modes, allowing you to easily switch between light and dark themes.
+
+### ThemeProvider
+
+The `ThemeProvider` component serves as the context holder for the theme and adds a `data-theme` attribute to the `html` tag, dynamically set to either `light` or `dark`. This seamless integration with Tailwind CSS ensures consistent theming throughout your application.
+
+### Setup
+
+To enable color mode functionality, wrap your page with the `ThemeProvider` component. You can conveniently include the following code snippet in your [App Component](/docs/app-component).
+
+```mdx
+import { ThemeProvider } from 'https://core.veryfront.com/@components/providers/ThemeProvider'
+
+<ThemeProvider>
+  {props.children}
+</ThemeProvider>
+```
+
+### Usage
+
+With the `ThemeProvider` in place, you can now access the theme and create a color mode toggle using the `UseTheme` component:
+
+```mdx
+import { UseTheme } from 'https://core.veryfront.com/@components/providers/ThemeProvider'
+
+<UseTheme>
+  {({ theme, setTheme }) => (
+    <button onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')}>
+      {theme}
+    </button>
+  )}
+</UseTheme>
+```
+
+This code snippet renders a button that toggles the theme between light and dark when clicked.
+
+### Next steps
+
+For more advanced usage and customization of the dark mode theme, we recommend referring to the official Tailwind CSS documentation on [Dark Mode](https://tailwindcss.com/docs/dark-mode). It provides comprehensive guidance on utilizing and customizing the dark mode theme to suit your specific requirements.

@@ -1,0 +1,47 @@
+---
+layout: "@components/layouts/DocsLayout.mdx"
+context:
+  title: Sharing Components in Veryfront
+  meta:
+    title: Guide on Sharing Components Across Projects in Veryfront
+    description: >-
+      Explore the process of sharing components across projects in Veryfront.
+      This guide provides step-by-step instructions on how to make components
+      publicly accessible, and how to import and utilize them in your projects.
+---
+
+import { H1 } from "@/shared/ui/H1"
+
+<H1>Sharing components</H1>
+
+To share components across projects in Veryfront, you can follow these steps:
+
+1. Go to the settings of the project containing the components you want to share.
+2. Change the "is public" flag to `true`.
+3. Save the settings to make the components publicly accessible.
+
+### Importing Components
+
+Once the components are set to be public, you can easily import and use them within and across projects.
+
+To import a component from another project, you can use the following import path:
+
+```mdx
+import Component from "https://PROJECT-SLUG.veryfront.com/@components/COMPONENT-SLUG"
+```
+
+For example, let's say you want to import a `Button` component from a project with the slug `chakra-ui`. You can use the following import statement:
+
+```mdx
+import Button from "https://chakra-ui.veryfront.com/@components/button"
+```
+
+After importing the component, you can use it in your code as follows:
+
+```mdx
+<Button>Click me</Button>
+```
+
+Make sure to replace PROJECT-SLUG with the actual slug of the project containing the component, and COMPONENT-SLUG with the specific slug of the component you want to import.
+
+Now you can easily share and use components across your Veryfront projects!

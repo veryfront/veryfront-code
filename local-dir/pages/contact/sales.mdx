@@ -1,0 +1,146 @@
+---
+context:
+  meta:
+    title: Contact Sales
+    description: >-
+      Contact our sales team to explore Veryfront's rapid web app build and
+      deploy solution. Discover the perfect plan and pricing for your needs.
+---
+
+import { Button } from "@/shared/ui/Button"
+import { Container } from "@/shared/ui/Container"
+import { FormError } from "@/shared/ui/FormError"
+import { FormFields, FormField, FormFieldCols } from "@/shared/ui/FormFields"
+import { Input } from "@/shared/ui/Input"
+import { Label } from "@/shared/ui/Label"
+import { Textarea } from "@/shared/ui/Textarea"
+import { contactForm } from "@/shared/utils/contactForm"
+import { Heading } from "@/shared/ui/Heading"
+import { Text } from "@/shared/ui/Text"
+import { useForm } from "https://esm.sh/react-hook-form@7.43.9"
+
+export default function SalesPage() {
+  const { handleSubmit, register, formState, setError, reset } = useForm()
+
+  return (
+    <Container size="sm" className="py-12 md:py-18 lg:py-24">
+      <div className="mb-4">
+        <Heading as="h1" level="1" className="mb-4">
+          Contact sales
+        </Heading>
+        <Text className="max-w-xl">
+          Get a free consultation and find the right plan for your project.
+        </Text>
+      </div>
+
+      <form
+        className="py-4"
+        onSubmit={handleSubmit((values) => {
+          return contactForm({
+            pageName: "Contact Sales",
+            values,
+          }).catch(() => {
+            setError("generic", { message: "Something went wrong" })
+          })
+        })}
+      >
+        <FormError>{formState.errors?.generic?.message}</FormError>
+
+        {formState.isSubmitSuccessful ? (
+          <FormFields className="items-center">
+            <p className="text-gray-700 dark:text-white text-sm font-medium">
+              Form was submitted!
+            </p>
+            <div>
+              <Button
+                variant="secondary"
+                type="button"
+                onClick={() => {
+                  setError("")
+                  reset()
+                }}
+              >
+                Go back
+              </Button>
+            </div>
+          </FormFields>
+        ) : (
+          <FormFields>
+            <FormFieldCols>
+              <FormField>
+                <Label htmlFor="name">Name</Label>
+                <Input
+                  {...register("name", {
+                    required: "This field is required",
+                  })}
+                  id="name"
+                  placeholder="Your name"
+                />
+                <FormError>{formState.errors?.name?.message}</FormError>
+              </FormField>
+              <FormField>
+                <Label htmlFor="email">Company email</Label>
+                <Input
+                  {...register("email", {
+                    required: "This field is required",
+                  })}
+                  id="email"
+                  type="email"
+                  placeholder="Your email"
+                />
+                <FormError>{formState.errors?.email?.message}</FormError>
+              </FormField>
+            </FormFieldCols>
+            <FormField>
+              <Label htmlFor="message">Message</Label>
+              <Textarea
+                {...register("message", {
+                  required: "This field is required",
+                })}
+                id="message"
+                rows="6"
+                placeholder="Tell us about your business, project..."
+              />
+              <FormError>{formState.errors?.message?.message}</FormError>
+            </FormField>
+
+            <p className="text-sm text-muted [&:not(:first-child)]:mt-0">
+              <span>
+                By submitting, you confirm that you have read and understood
+                our{" "}
+              </span>
+              <a
+                href="/privacy"
+                className="underline underline-offset-4 hover:no-underline focus:no-underline"
+              >
+                privacy policy
+              </a>
+              <span>.</span>
+            </p>
+
+            <div className="w-full md:w-auto">
+              <Button size="lg" asChild>
+                <button
+                  className="w-full md:w-auto"
+                  disabled={formState.isSubmitting}
+                  type="submit"
+                  onClick={() => {
+                    window.dataLayer?.push({
+                      event: "custom_event",
+                      section: "sales_contact_form",
+                      category: "link",
+                      action: "clicked",
+                      label: "Submit",
+                    })
+                  }}
+                >
+                  Submit
+                </button>
+              </Button>
+            </div>
+          </FormFields>
+        )}
+      </form>
+    </Container>
+  )
+}

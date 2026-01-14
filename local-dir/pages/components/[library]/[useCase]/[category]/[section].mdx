@@ -1,0 +1,150 @@
+---
+excludeFromSitemap: true
+layout: '@components/layouts/ComponentsLayout.mdx'
+---
+
+import {
+  Breadcrumb,
+  BreadcrumbItem,
+  BreadcrumbLink,
+} from "@/shared/ui/Breadcrumb"
+import { ComponentPreview } from "@/features/components/ui/ComponentPreview"
+import { ComponentName } from "@/features/components/ui/ComponentName"
+import { Head } from "@/lib/Head"
+import { Heading } from "@/shared/ui/Heading"
+import { useRouter } from "@/lib/Router"
+import { useComponents } from "@/features/components/hooks/useComponents"
+import {
+  librariesConfig,
+  useCasesConfig,
+} from "@/shared/utils/componentsConfig"
+
+export function ComponentsBreadcrumb() {
+  const router = useRouter()
+  const library = router.params?.library
+  const useCase = router.params?.useCase
+  const category = router.params?.category
+  const section = router.params?.section
+
+  const libraryInfo = librariesConfig.find((l) => l.id === library)
+  const libraryTitle = libraryInfo?.title
+
+  const useCaseInfo = useCasesConfig.find((u) => u.id === useCase)
+  const useCaseTitle = useCaseInfo?.title
+
+  return (
+    <>
+      <Head>
+        <title>
+          {[
+            section,
+            category,
+            useCaseTitle,
+            libraryTitle,
+            "Components",
+            "Veryfront",
+          ]
+            .filter(Boolean)
+            .join(" — ")}
+        </title>
+      </Head>
+      <Breadcrumb className="">
+        <BreadcrumbItem>
+          <BreadcrumbLink href="/">Home</BreadcrumbLink>
+        </BreadcrumbItem>
+        <BreadcrumbItem>
+          <BreadcrumbLink href="/components">Components</BreadcrumbLink>
+        </BreadcrumbItem>
+        {libraryTitle && (
+          <BreadcrumbItem>
+            <span className="whitespace-nowrap text-muted">{libraryTitle}</span>
+          </BreadcrumbItem>
+        )}
+        {useCaseTitle && (
+          <BreadcrumbItem className="bg-red-asdf">
+            <span className="whitespace-nowrap text-muted">{useCaseTitle}</span>
+          </BreadcrumbItem>
+        )}
+        <BreadcrumbItem isCurrent>{category}</BreadcrumbItem>
+      </Breadcrumb>
+    </>
+  )
+}
+
+export function PageComponent() {
+  const router = useRouter()
+  const library = router.params?.library
+  const useCase = router.params?.useCase
+  const category = router.params?.category
+  const section = router.params?.section
+  const searchTerm = router.query?.searchTerm ?? ""
+  const limit = 400
+
+  const query = useComponents({
+    useCase,
+    library,
+    category,
+    section,
+    searchTerm,
+    limit,
+  })
+
+  const currentSection = query.categories?.[0]?.sections?.[0]
+
+  if (!currentSection) {
+    return (
+      <>
+        <ComponentsBreadcrumb />
+        <div className="flex flex-col gap-2 md:gap-4 max-w-2xl lg:pt-6 mb-3 md:mb-5 bg-red-asdfasfsadf">
+          <Heading
+            as="h1"
+            level="1"
+            className="max-w-5xl text-[1.5rem] xs:text-2xl md:text-3xl lg:text-4xl !leading-[1.15]"
+          >
+            {section}
+          </Heading>
+        </div>
+        <div className="text-muted">
+          <p>No components found</p>
+        </div>
+      </>
+    )
+  }
+
+  return (
+    <>
+      <ComponentsBreadcrumb />
+      <div className="flex flex-col gap-2 md:gap-4 max-w-2xl lg:pt-6 mb-3 md:mb-5">
+        <Heading
+          as="h1"
+          level="1"
+          className="max-w-5xl text-[1.5rem] xs:text-2xl md:text-3xl lg:text-4xl !leading-[1.15]"
+        >
+          {currentSection.name}
+        </Heading>
+      </div>
+
+      <section className="flex flex-col space-y-12 lg:space-y-16 basis-full">
+        {currentSection?.components?.map((component) => {
+          return (
+            <article
+              key={component.id}
+              className="flex flex-col space-y-14 lg:space-y-20 basis-full"
+            >
+              <div className="flex flex-col gap-4">
+                <ComponentName
+                  componentName={component.name}
+                  variantName={component.frontmatter?.metadata?.snippetName}
+                  description={component.description}
+                />
+                <ComponentPreview component={component} />
+              </div>
+            </article>
+          )
+        })}
+      </section>
+    </>
+  )
+}
+
+export default PageComponent

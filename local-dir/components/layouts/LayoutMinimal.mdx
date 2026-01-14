@@ -1,0 +1,14 @@
+---
+isLayout: true
+previewProps:
+  children: <page rendered here>
+---
+
+import { Header } from "@/shared/ui/SlimHeader"
+
+<div className="flex flex-col min-h-[100dvh]">
+  <Header />
+  <div className="flex flex-col flex-1 w-full justify-center pb-10">
+    {props.children}
+  </div>
+</div>

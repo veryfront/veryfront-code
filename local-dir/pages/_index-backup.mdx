@@ -1,0 +1,88 @@
+---
+dividedHeader: false
+---
+
+import { Container } from "@/shared/ui/Container"
+import { TemplatesContainer } from "@/features/templates/containers/TemplatesContainer"
+import { ComponentsSectionContainer } from "@/features/components/containers/ComponentsSectionContainer"
+import { PromptForm } from "@/features/prompt-form/ui/PromptForm"
+import { ProductFeatures } from "@/features/home/ui/ProductFeatures"
+import { Heading } from "@/shared/ui/Heading"
+import { Text } from "@/shared/ui/Text"
+import { CTA } from "@/shared/ui/CTA"
+import { MoreLink } from "@/shared/ui/MoreLink"
+import { LibrariesContainer } from "@/features/libraries/containers/LibrariesContainer"
+import { RotatingHeroIntegrations } from "@/features/agent-builder/ui/RotatingHeroIntegrations"
+
+export function TemplatesHeader() {
+  return (
+    <Container className="flex justify-between gap-5 relative mb-5">
+      <Heading as="h2" level={2}>
+        Starter Templates
+      </Heading>
+
+      <MoreLink href="/templates">Browse all</MoreLink>
+    </Container>
+  )
+}
+
+export function LibrariesHeader() {
+  return (
+    <Container className="flex justify-between gap-5 relative mb-5">
+      <Heading as="h2" level={2}>
+        Integrated Libraries
+      </Heading>
+
+      <MoreLink href="/libraries">Browse all</MoreLink>
+    </Container>
+  )
+}
+
+export function ComponentsHeader() {
+  return (
+    <Container className="flex justify-between gap-5 relative mb-5">
+      <Heading as="h2" level={2}>
+        Ready-Made Components
+      </Heading>
+
+      <MoreLink href="/libraries/veryfront-ui">Browse all</MoreLink>
+    </Container>
+  )
+}
+
+<div className="flex items-center justify-center h-[calc(100dvh-56px)] md:h-[calc(100dvh-64px)] mb-10">
+  <RotatingHeroIntegrations />
+</div>
+
+<div className="flex flex-col gap-16 lg:gap-20">
+  <section className="pt-4 sm:pt-6 md:pt-8 lg:pt-10 xl:pt-12" id="templates">
+    <TemplatesContainer
+      limit={6}
+      sort="none"
+      FiltersComponent={TemplatesHeader}
+    />
+  </section>
+
+  <section>
+    <LibrariesHeader />
+    <Container>
+      <LibrariesContainer />
+    </Container>
+  </section>
+
+  <section>
+    <ComponentsHeader />
+    <Container>
+      <ComponentsSectionContainer
+        libraryId="veryfront-ui"
+        useCaseId="marketing"
+        categoryId="sections"
+        sectionLimit={6}
+        showBreadcrumb={false}
+      />
+    </Container>
+  </section>
+
+  <ProductFeatures isCenteredTitle={true} />
+  <CTA />
+</div>

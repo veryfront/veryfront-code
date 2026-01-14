@@ -1,0 +1,40 @@
+---
+layout: "@components/layouts/DocsLayout.mdx"
+context:
+  title: How to Upload and Serve Assets in Veryfront
+  meta:
+    title: Guide to Uploading and Serving Assets in Veryfront
+    description: >-
+      Step-by-step guide on how to upload and serve assets in Veryfront. Learn
+      how to customize destination paths, copy image URLs, and use the
+      Responsive Image library for optimized visual content.
+---
+
+import { H1 } from "@/shared/ui/H1"
+
+<H1>Upload and serve assets</H1>
+
+### Uploading assets
+
+1. Open the Sidebar by clicking on the Image menu icon.
+2. In the Asset Manager, locate the plus icon in the top right corner and click on it.
+3. A dropzone will appear. Drag and drop your files into the dropzone area.
+4. If desired, you can customize the destination path where the assets should be stored.
+5. To begin uploading the assets, click on the "Upload Files" button.
+
+![Uploading assets](https://cdn.veryfront.com/5b74466b-ad05-4594-82f6-8ed08ad1c37c/docs/uploading-assets/upload-asset.gif)
+
+### Using assets
+
+1. Open the Sidebar by clicking on the Image menu icon.
+2. Within the Asset Manager, find the specific asset you want to use.
+3. From the context menu, select the `Copy import Path` option to obtain the image URL.
+4. Now you can use the image URL by inserting an markdown image:
+
+```markdown
+![](https://cdn.veryfront.com/5b74466b-ad05-4594-82f6-8ed08ad1c37c/docs/uploading-assets/placeholder.jpg)
+```
+
+![Using assets](https://cdn.veryfront.com/5b74466b-ad05-4594-82f6-8ed08ad1c37c/docs/uploading-assets/using-assets.gif)
+
+You can also use the [Responsive Image](https://responsive-image.veryfront.com) library which provides the `ResponsiveImage` component.

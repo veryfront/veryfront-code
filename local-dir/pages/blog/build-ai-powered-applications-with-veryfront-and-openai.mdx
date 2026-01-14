@@ -1,0 +1,153 @@
+---
+isPublished: false
+layout: "@components/layouts/BlogDetailLayout.mdx"
+context:
+  title: Build AI-powered Applications with Veryfront and OpenAI
+  description: "Learn how to integrate the OpenAI API into your Veryfront application for intelligent and interactive user experiences."
+  meta:
+    title: "How to Build AI-powered Applications with Veryfront and OpenAI: A Step-by-Step Guide"
+    description: "Learn to integrate OpenAI API into Veryfront app. Create intelligent, interactive AI chatbots, elevate user experiences. Step-by-step guide for seamless integration."
+---
+
+import { Lead } from "@/shared/ui/Lead";
+import { BlogAuthor } from "@/shared/ui/BlogAuthor"
+
+# Build AI-powered Applications with Veryfront and OpenAI
+
+<Lead>
+  Learn how to integrate the OpenAI API into your Veryfront application for
+  intelligent and interactive user experiences.
+</Lead>
+
+<div className="pt-2 pb-4 md:pb-6">
+  <BlogAuthor
+    imageSrc="https://cdn.veryfront.com/5b74466b-ad05-4594-82f6-8ed08ad1c37c/images/avatar-kentaro.jpeg"
+    name="Kentaro Wakayama"
+    byline="May, 15th 2023"
+    initials="KW"
+  />
+</div>
+
+Artificial Intelligence (AI) has been an exciting technology for decades, but it's only recently become accessible to the average developer. OpenAI's [GPT-4](https://openai.com/gpt-4) model is an impressive demonstration of what AI can do, and their [API](https://platform.openai.com/docs/api-reference) makes it possible to harness this power in our own applications.
+
+[Veryfront](/) is a web application development platform that makes it easier to create and deploy modern, full-stack web applications. It allows creating pages and components using MDX (Markdown and JSX) and API Routes using Node.js. One powerful feature of Veryfront is the usage of esm.sh for remote importing of npm modules.
+
+In this post, we'll walk through creating a simple AI-powered chatbot using Veryfront and the OpenAI API.
+
+### Setting Up Your Environment
+
+Before we get started, you'll need to have an account on Veryfront and the OpenAI API key. You can get the API key by signing up on the OpenAI [website](https://openai.com/).
+
+Once you have your API key, you can start by creating a new application on Veryfront:
+
+1. In the Dashboard, click on the "Create Project" button.
+2. Provide a name for your project.
+3. Click "Create Project" to confirm.
+4. You'll then be redirected to the Builder, the main editing view.
+
+![](https://cdn.veryfront.com/5b74466b-ad05-4594-82f6-8ed08ad1c37c/docs/getting-started-with-veryfront/create-project.gif)
+
+### Creating the API Route
+
+To make sure we're not exposing our OpenAI API key on the client-side, we'll create an API route in Veryfront. This route will serve as a middleman between our application and the OpenAI API.
+
+Create a new file called `api/openai.js` and add the following code:
+
+```js
+import { IncomingMessage, ServerResponse } from "https://esm.sh/http";
+
+/**
+ * @param {IncomingMessage} req
+ * @param {ServerResponse} res
+ */
+export default async function handler(req, res) {
+  if (req.method === 'POST') {
+    const response = await fetch('https://api.openai.com/v1/engines/davinci-codex/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`
+      },
+      body: JSON.stringify({
+        prompt: req.body.prompt,
+        max_tokens: 60
+      })
+    });
+
+    const data = await response.json();
+    res.status(200).json({ message: data.choices[0].text.trim() });
+  } else {
+    res.status(400).json({ message: 'This endpoint requires a POST request.' });
+  }
+}
+```
+
+In the above function, we're using the fetch API to make a POST request to the OpenAI API. The handler receives the user's input via the req.body.prompt and forwards it to the OpenAI API. Then it sends the AI's response back to the client.
+
+Make sure to add your OpenAI API key to your environment variables in Veryfront.
+
+### Creating the Chat Component
+
+Next, let's create a simple chat interface that users can interact with.
+
+Create a new file called `components/Chat.js` and add the following code:
+
+```mdx
+import { useState } from 'react';
+
+export const Chat = () => {
+  const [messages, setMessages] = useState([]);
+  const [input, setInput] = useState('');
+
+  const handleSubmit = async (event) => {
+    event.preventDefault();
+    const userMessage = { user: 'You', text: input };
+    setMessages([...messages, userMessage]);
+
+    const response = await fetch('/api/openai', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ prompt: input }),
+    });
+    
+    const aiMessage = await response.json();
+    setMessages([...messages, userMessage, { user: 'AI', text: aiMessage.message }]);
+    setInput('');
+  };
+
+  const handleChange = (event) => {
+    setInput(event.target.value);
+  };
+
+  return (
+    <div>
+      {messages.map((message, index) => (
+        <p key={index}><b>{message.user}:</b> {message.text}</p>
+      ))}
+      <form onSubmit={handleSubmit}>
+        <input type="text" value={input} onChange={handleChange} />
+        <button type="submit">Send</button>
+      </form>
+    </div>
+  );
+};
+
+<Chat />
+
+```
+
+In the above component, we're using the useState hook to manage our state, and the Fetch API to send a POST request to our Veryfront API route. The handleSubmit function sends a user's input to the API and gets a response, which we then add to our array of messages.
+
+You can now use this chat component in your application.
+
+In the next part, we'll discuss how to customize the interaction with the OpenAI API to get more tailored results, and we will explore ways to make our chatbot more interactive and user-friendly.
+
+Happy Coding!
+
+
+
+
+
+

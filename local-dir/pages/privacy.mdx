@@ -1,0 +1,305 @@
+---
+context:
+  title: Privacy Policy
+  meta:
+    title: Privacy Policy
+    description: >-
+      Read our Privacy Policy to understand how Veryfront GmbH (Veryfront)
+      processes your personal data.
+---
+
+import { Container } from "@/shared/ui/Container"
+import { useConsentContext } from "@/shared/context/ConsentProvider"
+import { Heading } from "@/shared/ui/Heading"
+
+export function CookieBannerLink() {
+  const { context, setContext } = useConsentContext()
+
+  return (
+    <button
+      className="font-medium hover:underline focus:underline"
+      onClick={() => {
+        setContext({ ...context, showConsentOptions: true })
+      }}
+    >
+      cookie banner
+    </button>
+  )
+}
+
+<Container size="sm" className="py-12 md:py-18 lg:py-24">
+  <Heading as="h1" level="1" className="mb-8">
+    Privacy Policy
+  </Heading>
+
+  <div className="prose">
+    This Privacy Policy applies to data processing by Veryfront GmbH (“Veryfront”, “Controller”, “we” or “us”).
+
+    When you visit our website [https://veryfront.com](https://veryfront.com) (“Website”) personal data is collected and processed, which we process in compliance with the applicable data protection regulations. Personal data is any information relating to an identified or identifiable natural person, e.g. name, address, and e-mail address. When processing your personal data, we observe the applicable data protection laws, especially the provisions of the General Data Protection Regulation (“GDPR”) and applicable local data protection laws.
+
+    ### 1.	Name and Contact Details of the Controller"
+
+    Your data is processed by the following data controller:
+
+    **Veryfront GmbH**\
+    Finkenstr. 10\
+    70199 Stuttgart\
+    Germany
+
+    E-Mail: [info@veryfront.com](mailto:info@veryfront.com)
+
+    ### 2.	Collection and Storage of Personal Data as well as Method and Purpose of their Processing, relevant Legal Basis and Storage Period
+
+    #### 2.1. Informative Use of our Website
+
+    During the mere informative use of our Website, i.e. if you do not register or otherwise transmit information to us, we only collect data that your browser transmits to our server (so-called server log files), whereby logging only takes place to the technically necessary extent. The following information is collected:
+
+    - IP address of the requesting device,
+    - date and time of access,
+    - name and URL of the accessed file,
+    - website from which the access is made (referrer URL),
+    - the browser you use and, if applicable, the operating system of device as well as the name of the access provider.
+
+    The legal basis for the collection of this data is Art. 6 para. 1 lit. f) GDPR. Our legitimate interest in collecting this data results from the following purposes:
+
+    - ensuring optimal use of our Website,
+    - ensuring smooth connection establishment,
+    - evaluation of system security and stability.
+
+    #### 2.2. Use of our Services
+
+    If you want to use our Services, you need to register with us and create an account. In this case, we collect the following data from you during registration:
+
+    - Your Name and Surname
+    - Your E-Mail Address
+    - Your Language
+    - A Profile Picture
+
+    We process the aforementioned data in order to fulfil the user contract for your Veryfront account as well as the purchase contract for the products with you. The legal basis of the data processing is therefore Art. 6 para. 1 lit. b) GDPR.
+
+    #### 2.3. Log-in process via single sign-on
+
+    You can also register using the social plugin "**Google Sign-In**" of the provider Google, “**GitHub Sign-In**” of the provider Github and “**Microsoft Sign-In**” of the provider Microsoft as part of the so-called Single Sign On technology, if you have a respective profile. In this case, the service provider transmits the following data to us: your e-mail address, your name (first and last name), the profile picture (or avatar) used on the respective service and a link to your respective account.
+
+    When you call up a page of our website that contains such a plugin, your browser establishes a direct connection to the providers servers. The content of the plugin is transmitted by the provider directly to your browser and integrated into the page. Through this integration, the provider receives the information that your browser has called up the corresponding page of our website, even if you do not have a profile with the provider or are not currently logged in to the provider’s service. This information (including your IP address) is transmitted by your browser directly to the respective provider’s server stored there.
+
+    The collection of your registration data via Single Sign-In is carried out in accordance with Art. 6 para. 1 subpara. 1 lit. b GDPR to fulfill the user contract with you.
+
+    Further information on data protection at can be found here:
+
+    Google: [https://policies.google.com/privacy?hl=de\&gl=de](https://policies.google.com/privacy?hl=de\&gl=de);\
+    Github: [https://docs.github.com/en/site-policy/privacy-policies/github-privacy-statement](https://docs.github.com/en/site-policy/privacy-policies/github-privacy-statement);\
+    Microsoft: [https://privacy.microsoft.com/de-de/privacystatement](https://privacy.microsoft.com/de-de/privacystatement).
+
+    #### 2.4. Sandbox Mode
+
+    Furthermore, on our site you have the possibility to use parts of our services without registration and to start a project. Via the project url you can share this project with others.
+
+    In the course of creating the project and your work on it, no personal data will be collected beyond the data that is collected from all website users.
+
+    At any time, you have the possibility to start the registration process as described in 2.2/2.3 via a "Claim Project" button and thus assign your work to an account.
+
+    #### 2.5. Contacting us per contact form or e-mail
+
+    When you contact us by contact form or e-mail, the data you provide (e.g. your company name and your work email adress) will be processed by us in order to answer your questions.
+
+    We use your data exclusively for the purpose of answering your inquiry. The legal basis for this is Art. 6 para. 1 lit. f) GDPR (legitimate interest of processing inquiries and other requests). Your data will be deleted after processing your request unless further storage is necessary, e.g. when we have concluded a contract with you. In this case we process your data on the basis of Art. 6 para. 1 lit. b) GDPR.
+
+    #### 2.6. Website Optimisation and Website Analysis
+
+    #### (a) Functional Cookies
+
+    Our Website uses cookies. Cookies are text files that are stored in the Internet browser or by the Internet browser on your computer. The cookie contains a string of characters that allows your system to be uniquely identified when you return to the Website.
+
+    Most of the cookies we use ("Session Cookies") and the data stored and transmitted in them are automatically deleted at the end of your visit. Other cookies ("Persistent Cookies") remain stored on your end device until you delete them.
+
+    You can set your browser so that you are informed about the setting of cookies and only allow cookies in individual cases, exclude the acceptance of cookies for certain cases or generally and activate the automatic deletion of cookies when closing the browser. You can delete cookies that have already been saved at any time. If you deactivate cookies, the functionality of the Website may be limited.
+
+    Some elements of our Website require that the calling browser can be identified even after a page change. Cookies may be stored for this purpose, which enable us to recognise your browser on your next visit.
+
+    If personal data are processed by the cookies, we process them on the basis of a balancing of interests pursuant to Art. 6 para. 1 sentence 1 lit. f) GDPR, which always also takes your interests into account.
+
+    #### (b) Analysis Cookies
+
+    When you visit our Website, cookies are also set that enable an analysis of your use of the Website for reach measurement ("Analysis Cookies").
+
+    We use Analysis Cookies exclusively on the basis of your consent in accordance with § 25 para. 1 TTDSG and Art. 6 para. 1 subpara. 1 lit. a GDPR via our cookie banner. You can also access further information about the cookies we use via our <CookieBannerLink />. You can also use the cookie banner to revoke your consent to the processing of your data through Analysis Cookies at any time.
+
+    #### (c) Google Analytics and Google Tag Manager
+
+    For the analysis of your use of our Website, we use "Google Analytics" together with "Google Tag Manager" services of the Google LLC group, 1600 Amphitheatre Parkway, Mountain View, CA 94043, USA ("Google"), on the basis of a contract on commissioned data processing pursuant to Art. 28 GDPR.
+
+    Google Analytics and Google Tag Manager use cookies. The information generated by cookies about your use of our Website is usually transferred to a Google server in the USA and stored there. The storage of Google Analytics cookies and the use of this analysis tool are based on your express consent in accordance with Art. 6 para. 1 lit. a) GDPR. Your consent can be revoked at any time.
+
+    We have activated the IP anonymisation function. This means that your IP address is shortened by Google within member states of the European Union or in other contracting states of the Agreement on the European Economic Area before being transmitted to the USA. Google will use this information on our behalf for the purpose of evaluating your use of the Website, compiling reports on Website activity and providing other services relating to Website activity and Internet usage.
+
+    You have the option to prevent the storage of cookies by changing the settings of your browser software accordingly. You can also prevent the collection of data generated by the cookie and related to your use of the Website (including your IP address) by Google and the processing of this data by Google by downloading and installing the browser plugin available at the following link: [https://tools.google.com/dlpage/gaoptout?hl=en](https://tools.google.com/dlpage/gaoptout?hl=en).
+
+    For more information about the processing of user data by Google Analytics, please refer to Google's privacy policy at: [https://support.google.com/analytics/answer/6004245?hl=en](https://support.google.com/analytics/answer/6004245?hl=en).
+
+    #### (d) Facebook Pixel
+
+    In addition, we also use tracking cookies from Facebook Ireland Ltd, 4 Grand Canal Square, Grand Canal Harbour, Dublin 2 Ireland ("Facebook") to analyze your use of the Website (Facebook Pixel). Due to the marketing tools used, your browser automatically establishes a direct connection with Facebook's server. We have no influence on the scope and further use of the data collected by Facebook through the use of this tool and therefore inform you according to our state of knowledge: Through the integration of Facebook Pixel, Facebook receives the information that you have accessed the corresponding web page of our website or clicked on an ad from us. If you are registered with a Facebook service, Facebook can assign the visit to your account. Even if you are not registered with Facebook or have not logged in, it is possible that the provider will learn and store your IP address and other identifiers.
+
+    In this regard, we process your data as joint controllers with Facebook. Information about data processing by Facebook, including the legal basis on which Facebook relies and the possibilities of asserting the rights of the data subject against Facebook, can be found in Facebook's privacy notices. On processing as joint controllers, we have entered into an agreement with Facebook to determine the respective responsibilities for compliance with the obligations under the GDPR in relation to joint processing ([https://www.facebook.com/legal/controller\_addendum](https://www.facebook.com/legal/controller_addendum)), according to which Facebook Ireland, in particular, is responsible between the parties for enabling the rights of data subjects under Articles 15-20 of the GDPR in relation to the personal data stored by Facebook after joint processing.
+
+    #### (e) Amplitude
+
+    Furthermore, we use the analysis service Amplitude of Amplitude Inc, 631 Howard Street, San Francisco, CA 94105, USA. With the help of the service, your interactions with the Website are logged for analysis purposes and subsequently evaluated. To this end, we process personal data such as your name, your user behavior, your IP address and your location, as well as your e-mail address. The use of the service takes place on the basis of a contract processing agreement in accordance with Art. 28 GDPR. For more information on data protection at Amplitude, please visit: [https://amplitude.com/amplitude-security-and-privacy](https://amplitude.com/amplitude-security-and-privacy).
+
+    #### (f) LinkedIn Insight Tag
+
+    Our website uses the conversion tool "LinkedIn Insight Tag" from LinkedIn Ireland Unlimited Company. This tool creates a cookie in your web browser, which enables the collection of, among other things, the following data: IP address, device and browser properties, and page events (e.g. page views). This data is encrypted, anonymized within seven days, and the anonymized data is deleted within 90 days. LinkedIn does not share personal data with us but offers anonymized reports on website audience and ad performance. In addition, LinkedIn offers the possibility of retargeting via the Insight Tag. We can use this data to display targeted advertising outside its website without identifying you as a website visitor. For more information on data protection at LinkedIn, please refer to the LinkedIn privacy policy.
+
+    LinkedIn members can control the use of their personal data for advertising purposes in their account settings. To deactivate the Insight tag on our website ("opt-out"), click here.
+
+    #### (g) Twitter Ads
+
+    We use Twitter Ads for the purpose of conversion tracking and remarketing and thus for more efficient control of advertising campaigns on Twitter. As a result of using this tool on our website, your browser automatically establishes a connection with Twitter's server. We have no influence on the scope and further use of the data collected by Twitter through the use of this tool. We are only provided with statistical evaluations by Twitter. Based on these evaluations, we can see which of the advertising measures used are particularly effective. We do not receive any further data from the use of the advertising tools; in particular, we cannot identify users on the basis of this information. In addition to Ads conversion tracking, we use the Remarketing application. This is a procedure with which we would like to address you again. Through this application, our advertisements can be displayed to you during your further internet use after visiting our website. This is done by means of cookies stored in your browser, which are used by Twitter to record and evaluate your usage behavior when visiting various websites. In this way, Twitter can determine your previous visit to our website. Personal data collected: Cookie and usage data. Processing location: USA. Contact details of the third-party provider: Twitter, Inc. 1355 Market Street, Suite 900, San Francisco, CA 94103, USA. For further information on data protection at Twitter, please refer to the provider's privacy policy: [https://twitter.com/de/privacy](https://twitter.com/de/privacy)
+
+    #### (h) Segment
+
+    We use the software Segment of Segment.io, Inc. 101 15th St San Francisco, CA 94103 USA. It collects and stores data from which use profiles are created using pseudonyms. These use profiles are used to analyze visitor behavior and are evaluated to improve our offer. Cookies can be used for this purpose, which enable recognition when our website is visited again. The pseudonymized usage profiles are not combined with personal data about the bearer of the pseudonym without a separate, explicit consent.
+
+    For more information, please refer to Segment's privacy policy: [https://segment.com/docs/legal/privacy/](https://segment.com/docs/legal/privacy/)
+
+    ### 3.	Storage Period
+
+    We process and store your personal data only for the period necessary to achieve the aforementioned purposes or as far as this is granted or demanded by the European legislator or other legislators in laws or regulations to which we are subject to. In case we have concluded a contract with you regarding the provision of services we store your data as long as it is necessary for the processing of the existing agreement with you, i.e. until the expiry of the statutory or possible contractual warranty rights. After expiry of this period, we retain the information of the contractual relationship as long as this is required under applicable commercial and tax law.
+
+    ### 4.	Recipients or categories of recipients of your personal data
+
+    We sometimes use external service providers to process your data (e.g. IT service providers). In part these service providers process your personal data as data processors on our behalf, in accordance with our instructions and under our supervision exclusively for the purposes described in this Privacy Policy according to Art. 28 GDPR, in part they act as independent data controllers. In the last case we only forward your personal data if necessary for the fulfillment of the contract, in which case the legal basis for the transfer is Art. 6 para. 1 lit. b) GDPR.
+
+    #### 4.1. Cloudflare CDN
+
+    We use the Content Delivery Network (CDN) of Cloudflare Germany GmbH, Rosental 7, c/o Mindspace, 80331 Munich Germany (Cloudflare) to increase the security and delivery speed of our website. This corresponds to our legitimate interest (Art. 6 para. 1 lit. f GDPR) not to operate a content delivery network ourselves. A CDN is a network of distributed servers that is able to deliver optimized content to the website user. For this purpose, personal data may be processed in server log files by Cloudflare. We have concluded a data processing agreement with Cloudfare in accordance with Art. 28 GDPR. For this purpose, personal data may be processed in server log files by Cloudflare.
+
+    For more information on objection and removal options against Cloudflare, please visit: [https://www.cloudflare.com/de-de/gdpr/introduction/](https://www.cloudflare.com/de-de/gdpr/introduction/).
+
+    #### 4.2. Google Cloud Platform Hosting
+
+    We store the data that we process on servers operated by Google. We store data that you enter yourself on our website on the servers of Google (registration data such as email address) as well as data that we automatically collect from you when you visit our website (such as your IP address and your location). We have concluded a DPA with Google according to Art. 28 GDPR. Your personal data is stored on servers in Frankfurt ([europe-west3](https://cloud.google.com/compute/docs/regions-zones/?hl=de)) and is only transferred to data recipients outside the European Union to maintain data center reliability (Multi-Tenant-Hosting). For more information about data protection at Google, please visit [https://cloud.google.com/security/gdpr/resource-center/contracts-and-terms?hl=de](https://cloud.google.com/security/gdpr/resource-center/contracts-and-terms?hl=de).
+
+    #### 4.3. Hubspot
+
+    We use the service HubSpot for various purposes. HubSpot is a technology of Hubspot, 2nd Floor 30 North Wall Quay, Dublin 1, Ireland. Hubspot is an integrated software solution that we use to cover various aspects of our online marketing. The following of your information may be stored on servers of our software partner HubSpot when tracked by HubSpot or when you enter your data in the process, among other information: Contact Information, IP Address, Device Identifier, Operating System, Geographic Location. We may use this information to contact visitors to our website and to determine which of our company's services are of interest to them. We have concluded an order processing agreement with HubSpot pursuant to Art 28 GDPR. The legal basis for this is Art. 6 (1) f) GDPR for the legitimate interest to use a CRM system.
+
+    For more information on HubSpot's data protection, please visit: [https://legal.hubspot.com/de/privacy-policy](https://legal.hubspot.com/de/privacy-policy).
+
+    #### 4.4. SendGrid
+
+    For sending e-mails, we use the service SendGrid (or also "Twilio SendGrid") of the company Twilio Inc., 375 Beale Street, Suite 300, San Francisco, CA 94105, United States. During that process the following of your information may be stored on SendGrids servers: Contact Information. We have concluded a Data Processing Agreement according to Art. 28 GDPR with Twilio Inc.
+
+    For more information on SendGrid’s data protection, please visit  [https://sendgrid.com/resource/general-data-protection-regulation-2/#:\~:text=SendGrid%20believes%20the%20GDPR%20is,our%20customers'%20GDPR%20compliance%20efforts](https://sendgrid.com/resource/general-data-protection-regulation-2/#:~:text=SendGrid%20believes%20the%20GDPR%20is,our%20customers'%20GDPR%20compliance%20efforts).
+
+    #### 4.5. Stripe
+
+    When you order a paid service from us, payment processing is done through the payment service provider Stripe Payments Europe Ltd, 1 Grand Canal Street Lower, Grand Canal Dock, Dublin, Ireland, ("Stripe"). We transfer to Stripe the information you provided during the ordering process, together with information about your order (name, address, credit card information, invoice amount, currency and transaction number). The transfer of your data takes place exclusively for the purpose of payment processing with Stripe and only insofar as it is necessary for this purpose. The data entered will only be processed by Stripe and stored at Stripe. I.e., we do not receive any account or credit card related information, but only information with confirmation or negative information of the payment.
+
+    The transmission of your data to Stripe is necessary for the processing of the purchase contract with you and is therefore based on Art. 6 para. 1 lit. b) GDPR.
+
+    You can find more information about Stripe's data protection at: [https://stripe.com/de/privacy#translation](https://stripe.com/de/privacy#translation).
+
+    #### 4.7. OpenAI
+
+    We use OpenAI's models for code generation and editing features, providing our users with more efficient ways to build web applications. OpenAI LP, whose address is 3180 18th Street, San Francisco, CA 94110, United States, processes user data to facilitate these functionalities. The information that may be processed by OpenAI includes programming code and associated metadata inputted by the users. The legal basis for this is Art. 6 (1) f) GDPR for the legitimate interest to utilize AI-powered code assistance tools.
+
+    We have concluded a Data Processing Agreement with OpenAI according to Art. 28 GDPR. For more information on OpenAI's data protection, please visit: [https://openai.com/policies/api-data-usage-policies](https://openai.com/policies/api-data-usage-policies).
+
+    ### 5.	Transfer of Data to Third Party Countries
+
+    Your personal data may be transferred or disclosed to third party companies which can be located outside the European Economic Area (EEA), i.e. in third countries. This concerns the use of the following service:
+
+    - **Amplitude**: Amplitude Inc, 631 Howard Street, San Francisco, CA 94105, USA.
+    - **Datadog**: Datadog, Inc, 620 8th Ave, 45th Floor, New York, NY, 10018 USA.
+    - **Segment**: Segment Inc. 101 15th St San Francisco, CA 94103 USA
+    - **SendGrid**: Twilio Inc., 375 Beale Street, Suite 300, San Francisco, CA 94105, United States
+    - **Twitter**: Twitter Inc. 1355 Market Street, Suite 900, San Francisco, CA 94103, USA.
+    - **Google**: Google LLC, 1600 Amphitheatre Parkway, Mountain View, CA 94043, USA.
+    - **OpenAI**: OpenAI: OpenAI LP, 3180 18th Street, San Francisco, CA 94110, United States.
+
+    Insofar as data is transferred to a third country, in particular the USA, for which there is no adequacy decision by the Commission, this will take place on the basis of Standard Contractual Clauses pursuant to Art. 46 para. 2 lit. c) GDPR in conjunction with appropriate technical and organizational measures to protect your data.
+
+    A copy of the Standard Contractual Clauses or further information on the Standard Contractual Clauses used can be downloaded from the respective website of the service provide:
+
+    - [https://amplitude.com/wp-content/uploads/Amplitude-DPA-for-Terms-of-Service.pdf](https://amplitude.com/wp-content/uploads/Amplitude-DPA-for-Terms-of-Service.pdf)
+    - [https://www.datadoghq.com/legal/data-processing-addendum/](https://www.datadoghq.com/legal/data-processing-addendum/)
+    - [https://segment.com/docs/privacy/complying-with-the-gdpr/](https://segment.com/docs/privacy/complying-with-the-gdpr/)
+    - [https://www.twilio.com/legal/data-protection-addendum](https://www.twilio.com/legal/data-protection-addendum)
+    - [https://privacy.twitter.com/en/for-our-partners/global-dpa](https://privacy.twitter.com/en/for-our-partners/global-dpa)
+    - [https://privacy.google.com/businesses/processorterms/mccs/](https://privacy.google.com/businesses/processorterms/mccs/)
+    - [https://openai.com/policies/data-processing-addendum](https://openai.com/policies/data-processing-addendum)
+
+    ### 6.	Data Security
+
+    All personal data transmitted by you is transferred using the secure and proven SSL (Secure Socket Layer) standard. We also use appropriate technical and unauthorized security measures to protect stored personal data against manipulation, partial or complete loss and unauthorized access by third parties. Our security measures are continuously improved in line with technological developments. In particular, we ensure that sensitive personal data is only stored on servers hosted in the EU that are certified in accordance with DIN ISO/IEC 27001 (as amended from time to time).
+
+    In addition, we integrate the functions of the service Datadog of Datadog, Inc, 620 8th Ave, 45th Floor, New York, NY, 10018 USA, on our website. The service notifies us of possible technical complications or functionality impairments in connection with the operation of our website. For this purpose, server information as well as your IP address, the browser you are using, timestamps and the URL accessed may be transmitted to Datadog. The use of the service is based on a contract processing agreement in accordance with Art. 28 GDPR. For more information on the collection and use of data by Datadog, please visit: [www.datadoghq.com/legal/privacy/](http://www.datadoghq.com/legal/privacy/).
+
+    ### 7.	Your Rights
+
+    In relation to our processing of your personal data, you are entitled to the following rights free of charge:
+
+    #### 7.1. Right to Information pursuant to Art. 15 GDPR
+
+    You have the right to receive information from us about whether and which data we process about you. This includes information on how long and for what purpose we process the data, the source of the data and the recipients or categories of recipients to whom we pass on the data. We can also provide you with a copy of this data.
+
+    #### 7.2. Right to Rectification pursuant to Art. 16 GDPR
+
+    You have the right to request that we rectify information about you that is not or no longer accurate without delay. In addition, you can request that we complete your incomplete personal data. If required by law, we will also inform third parties of this rectification if we have disclosed your personal data to them.
+
+    #### 7.3. Right to Deletion pursuant to Art. 17 GDPR
+
+    You have the right to request that we delete your personal data without delay if one of the following cases applies:
+
+    - Your data is no longer necessary for the purposes for which it was collected or otherwise processed or the purpose has been achieved;
+    - You withdraw your consent and there is no other legal basis for the processing;
+    - You object to the processing and there are no prevailing legitimate grounds for the processing; in the case of the use of personal data for direct marketing, a mere objection by you to the processing is sufficient;
+    - Your personal data has been processed unlawfully;
+    - The deletion of your personal data is necessary to comply with a legal obligation under European Union law or the law of a member state to which we are subject.
+
+    Your right to deletion may be restricted on the basis of statutory provisions. This includes in particular the restrictions listed in Article 17 GDPR and Section 35 BDSG.
+
+    #### 7.4. Right to the Restriction of Processing pursuant to Art. 18 GDPR
+
+    - You have the right to request us to restrict the processing of your personal data if one of the following reasons applies:
+    - you dispute the correctness of your personal data for a period of time that allows us to verify the correctness of the personal data;
+    - the processing is unlawful and you object to the deletion of the personal data and request instead the restriction of the use of your personal data;
+    - we no longer need your personal data for the purposes of processing; however, you need them for the assertion, exercise or defence of legal claims, or
+    - you have objected to the processing as long as it has not yet been determined whether our legitimate reasons outweigh yours.
+
+    If you have obtained a restriction on processing under the above list, we will inform you before the restriction is withdrawn.
+
+    #### 7.5. Right to Data Portability pursuant to Art. 20 GDPR
+
+    You have the right to obtain personal data concerning you that you have provided to us in a structured, commonly used and machine-readable format and to transmit this data to others. The exercise of this right does not affect your right to deletion.
+
+    #### 7.6. Right to Object pursuant to Art. 21 GDPR
+
+    According to Art. 21 GDPR, you have in particular the right to object to the processing of your data at any time on the grounds of your particular situation, if we base this processing on legitimate interests pursuant to Art. 6 para. 1 lit. f) GDPR. If you object, we will no longer process your personal data, except in two cases:
+
+    - We can prove that there are compelling legitimate grounds for the processing which outweigh your interests, rights and freedoms; or
+    - the processing serves the assertion, exertion or defence of legal claims.
+
+    In particular, if we process your personal data for direct marketing, you have the right to object at any time to the processing of your data for the purpose of such marketing. If you object to the processing of your data for direct marketing purposes, we will no longer use your personal data for this purpose.
+
+    #### 7.7. Right of Withdrawal of Consent pursuant to Art. 7 GDPR
+
+    You can withdraw your consent given to us at any time with effect for the future. This withdrawal can be made in the form of an informal notification to the above-mentioned contact addresses. If you withdraw your consent, the legitimacy of the data processing carried out up to that point will not be affected.
+
+    #### 7.8. Right to file a Complaint with the Supervisory Authority
+
+    If you believe that the processing of your data by us violates applicable data protection law, you have the right to file a complaint with one of the competent supervisory authorities. The supervisory authority responsible for us is:
+
+    **The Berlin Commissioner for Data Security and Freedom of Information (Berliner Beauftragte für Datenschutz und Informationsfreiheit)**\
+    Address: Friedrichstrasse 219, 10969 Berlin\
+    Phone: +49 30 13889-0\
+    Fax: +49 30 2155050\
+    E-Mail: [mailbox@datenschutz-berlin.de](mailto:mailbox@datenschutz-berlin.de)
+
+    ### 8.	Automated Individual Decision-Making including Profiling pursuant to Art. 22 GDPR
+
+    We do not process your data for automated decisions in individual cases, including profiling within the meaning of Art. 22 GDPR.
+  </div>
+</Container>

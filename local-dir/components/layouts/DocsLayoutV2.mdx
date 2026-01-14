@@ -1,0 +1,401 @@
+---
+isLayout: true
+previewProps:
+  children: <page rendered here>
+---
+
+import {
+  Breadcrumb,
+  BreadcrumbItem,
+  BreadcrumbLink,
+} from "@/shared/ui/Breadcrumb"
+import { Button } from "@/shared/ui/Button"
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/shared/ui/Collapsible"
+import { Footer } from "@/shared/ui/Footer"
+import { Header } from "@/shared/ui/Header"
+import { OnPageNavigation } from "@/shared/ui/OnPageNavigation"
+import { SidebarNavigation } from "@/shared/ui/SidebarNavigation"
+import { cn, cva } from "@/shared/utils/utils"
+import {
+  BreakpointProvider,
+  useBreakpoints,
+} from "@/shared/context/BreakpointProvider"
+import { usePageContext } from "@/lib/usePageContext"
+import { useRouter } from "@/lib/Router"
+import { Head } from "@/lib/Head"
+import { ChevronDown, ChevronRight } from "https://esm.sh/lucide-react"
+import React from "react"
+
+export const sections = [
+  {
+    title: "Overview",
+    pages: [
+      {
+        title: "Introduction",
+        description: "What is Veryfront? When and why should I use it?",
+        imageSrc:
+          "https://storage.googleapis.com/veryfront-web/prototyping/image48.png",
+        href: "/docs",
+      },
+      {
+        title: "Getting Started",
+        href: "/docs/getting-started",
+      },
+    ],
+  },
+
+  /*
+  {
+    title: "Products",
+    pages: [
+      {
+        title: "Veryfront Studio",
+        href: "/docs/products/studio",
+      },
+      {
+        title: "Veryfront CLI",
+        href: "/docs/products/cli",
+      },
+      {
+        title: "Veryfront MCP",
+        href: "/docs/products/mcp",
+      },
+    ],
+  },
+  */
+  {
+    title: "Process",
+    pages: [
+      {
+        title: "1. Plan Stage",
+        href: "/docs/stages/plan",
+      },
+      {
+        title: "2. Build Stage",
+        href: "/docs/stages/build",
+      },
+      {
+        title: "3. Deploy Stage",
+        href: "/docs/stages/deploy",
+      },
+    ],
+  },
+  /*
+  {
+    title: "Architecture",
+    pages: [
+      {
+        title: "Project Structure",
+        href: "/docs/architecture/project-structure",
+      },
+      {
+        title: "Configuration",
+        href: "/docs/architecture/configuration",
+      },
+    ],
+  },
+
+  */
+]
+
+export function DocsLayout({ children }) {
+  return (
+    <div className="max-w-[1360px] mx-auto px-5 flex flex-row gap-8 xl:gap-12 relative md:pt-2 lg:pt-4 xl:pt-6">
+      {children}
+    </div>
+  )
+}
+
+export function DocsLayoutSidebar({ children, className }) {
+  return (
+    <div className="hidden w-[200px] lg:flex lg:shrink-0 xl:w-[250px] sticky top-[80px] lg:top-0 lg:max-h-[calc(100vh)] lg:flex-col lg:justify-between">
+      <div className="h-full scrollbar-hide overflow-y-auto">
+        <div className={cn("pt-5 pb-10 pr-4", className)}>{children}</div>
+      </div>
+    </div>
+  )
+}
+
+export function DocsLayoutContent({ children, className }) {
+  return (
+    <div className={cn("w-full min-w-0 pt-4 md:pt-5 lg:pt-6 pb-24", className)}>
+      {children}
+    </div>
+  )
+}
+
+export function DocsLayoutBody({ children, className }) {
+  return (
+    <div
+      className={cn("prose pt-4 md:pt-6 lg:pt-8 pb-24", className)}
+      id="markdown-body"
+    >
+      {children}
+    </div>
+  )
+}
+
+export function getPrevious(sections, currentPath) {
+  for (let i = 0; i < sections.length; i++) {
+    const section = sections[i]
+    const pages = section.pages
+
+    for (let j = 0; j < pages.length; j++) {
+      const page = pages[j]
+      if (page.href === currentPath) {
+        if (j > 0) {
+          const previousPage = pages[j - 1]
+          return {
+            title: previousPage.title,
+            href: previousPage.href,
+          }
+        } else if (i > 0) {
+          const previousSection = sections[i - 1]
+          const previousSectionPages = previousSection.pages
+          const previousPage =
+            previousSectionPages[previousSectionPages.length - 1]
+          return {
+            title: previousPage.title,
+            href: previousPage.href,
+          }
+        }
+      }
+    }
+  }
+
+  return null
+}
+
+export function getNext(sections, currentPath) {
+  for (let i = 0; i < sections.length; i++) {
+    const section = sections[i]
+    const pages = section.pages
+
+    for (let j = 0; j < pages.length; j++) {
+      const page = pages[j]
+      if (page.href === currentPath) {
+        if (j < pages.length - 1) {
+          const nextPage = pages[j + 1]
+          return {
+            title: nextPage.title,
+            href: nextPage.href,
+          }
+        } else if (i < sections.length - 1) {
+          const nextSection = sections[i + 1]
+          const nextSectionPages = nextSection.pages
+          const nextPage = nextSectionPages[0]
+          return {
+            title: nextPage.title,
+            href: nextPage.href,
+          }
+        }
+      }
+    }
+  }
+
+  return null
+}
+
+export function DocsLayoutMobileMenu({ children }) {
+  const router = useRouter()
+  const [state, setState] = React.useState({ isOpen: false })
+  const { isAboveTablet } = useBreakpoints()
+
+  React.useEffect(() => {
+    if (router.path) {
+      setState({ isOpen: false })
+    }
+  }, [router.path, setState])
+
+  React.useEffect(() => {
+    if (isAboveTablet) {
+      setState({ isOpen: false })
+    }
+  }, [isAboveTablet, setState])
+
+  return (
+    <div className="lg:hidden">
+      <div className="lg:hidden" aria-hidden={isAboveTablet}>
+        <Collapsible
+          open={state.isOpen}
+          onOpenChange={(value) => setState({ isOpen: value })}
+          className="space-y-2"
+        >
+          <div className="mb-4">
+            <CollapsibleTrigger asChild>
+              <Button
+                variant="ghost"
+                className="px-0 hover:bg-[transparent] justify-start w-fit py-2 ml-4"
+              >
+                {state.isOpen ? (
+                  <ChevronDown className="-mr-1.5 size-5" />
+                ) : (
+                  <ChevronRight className="-mr-1.5 size-5" />
+                )}
+                Menu
+              </Button>
+            </CollapsibleTrigger>
+          </div>
+          <CollapsibleContent className="overflow-auto pb-8 scrollbar-hide overscroll-contain px-5">
+            {children}
+          </CollapsibleContent>
+        </Collapsible>
+      </div>
+    </div>
+  )
+}
+
+export function DocsBreadcrumb() {
+  const pageContext = usePageContext()
+  const context = pageContext.frontmatter?.context ?? {}
+
+  return (
+    <Breadcrumb>
+      <BreadcrumbItem>
+        <BreadcrumbLink
+          href="/"
+          onClick={() => {
+            window.dataLayer?.push({
+              event: "custom_event",
+              section: "breadcrumb",
+              category: "link",
+              action: "clicked",
+              label: "Home",
+            })
+          }}
+        >
+          Home
+        </BreadcrumbLink>
+      </BreadcrumbItem>
+      {context?.title ? (
+        <>
+          <BreadcrumbItem>
+            <BreadcrumbLink
+              href="/docs"
+              onClick={() => {
+                window.dataLayer?.push({
+                  event: "custom_event",
+                  section: "breadcrumb",
+                  category: "link",
+                  action: "clicked",
+                  label: "Docs",
+                })
+              }}
+            >
+              Docs
+            </BreadcrumbLink>
+          </BreadcrumbItem>
+          <BreadcrumbItem isCurrent>{context.title}</BreadcrumbItem>
+        </>
+      ) : (
+        <BreadcrumbItem isCurrent>Docs</BreadcrumbItem>
+      )}
+    </Breadcrumb>
+  )
+}
+
+export function DocsNextPrevNavigation() {
+  const router = useRouter()
+  const next = getNext(sections, router.pathname)
+  const previous = getPrevious(sections, router.pathname)
+
+  return (
+    <div className="flex flex-col xs:flex-row gap-4 items-center justify-between">
+      {previous && (
+        <Button asChild variant="secondary" size="sm">
+          <a
+            href={previous.href}
+            className="w-full xs:w-auto"
+            onClick={() => {
+              window.dataLayer?.push({
+                event: "custom_event",
+                section: "docs",
+                category: "button",
+                action: "clicked",
+                label: `Previous - ${previous.title}`,
+              })
+            }}
+          >
+            {previous.title}
+          </a>
+        </Button>
+      )}
+      {next && (
+        <Button asChild variant="secondary" className="ml-auto" size="sm">
+          <a
+            href={next.href}
+            className="w-full xs:w-auto"
+            onClick={() => {
+              window.dataLayer?.push({
+                event: "custom_event",
+                section: "docs",
+                category: "button",
+                action: "clicked",
+                label: `Next - ${next.title}`,
+              })
+            }}
+          >
+            {next.title}
+          </a>
+        </Button>
+      )}
+    </div>
+  )
+}
+
+export function Submenu() {
+  return (
+    <BreakpointProvider
+      mediaQueries={{ isAboveTablet: "(min-width: 768px)" }}
+      ssrValues={{ isAboveTablet: false }}
+    >
+      <DocsLayoutMobileMenu>
+        <SidebarNavigation sections={sections} />
+      </DocsLayoutMobileMenu>
+    </BreakpointProvider>
+  )
+}
+
+<Head>
+  <link
+    rel="stylesheet"
+    href="https://cdn.veryfront.com/styles/mermaid.min.css"
+  />
+</Head>
+
+<Header />
+<Submenu />
+<DocsLayout>
+  <DocsLayoutSidebar>
+    <SidebarNavigation sections={sections} />
+  </DocsLayoutSidebar>
+
+  <DocsLayoutContent className="max-w-5xl">
+    <div className="mx-auto max-w-3xl pt-3 md:pt-0 md:-mt-1">
+      <DocsBreadcrumb />
+      <DocsLayoutBody>{props.children}</DocsLayoutBody>
+
+      <DocsNextPrevNavigation />
+    </div>
+  </DocsLayoutContent>
+
+  <DocsLayoutSidebar className="pr-0 pl-4">
+    <OnPageNavigation
+      onClick={(anchor) => {
+        window.dataLayer?.push({
+          event: "custom_event",
+          section: "docs",
+          category: "link",
+          action: "clicked",
+          label: anchor.text,
+        })
+      }}
+    />
+  </DocsLayoutSidebar>
+</DocsLayout>
+
+<Footer />

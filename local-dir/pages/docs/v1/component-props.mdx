@@ -1,0 +1,44 @@
+---
+layout: "@components/layouts/DocsLayout.mdx"
+context:
+  title: Component props
+  meta:
+    title: Understanding Component Props in Veryfront
+    description: >-
+      Understand how to pass data to components using custom props in Veryfront.
+      Learn about the use of `props` global, `previewProps`, and `defaultProps`.
+---
+
+import { H1 } from "@/shared/ui/H1"
+
+<H1>Component props</H1>
+
+You can pass data to components using custom props, which can be any valid JavaScript variable or literal. Component props are a [core feature of React](https://reactjs.org/docs/components-and-props.html).
+
+You can access this data within each component’s code through the `props` global.
+
+```jsx
+<h1>{props.title}</h1>
+
+<p>{props.textContent}</p>
+```
+
+You can define `defaultProps` and `previewProps` in a component’s frontmatter:
+
+- `previewProps`: use them during development to display preview values in the Live Preview while editing a component in the Live Editor.
+- `defaultProps`: use them to set default values for your component. You can overwrite them via component props when you use the component.
+
+```yaml
+---
+previewProps:
+  heading: "Placeholder Title"
+  textContent: "Placeholder text content."
+defaultProps:
+  heading: "Default Title"
+  textContent: "Default text content."
+---
+
+<h1>{props.title}</h1>
+
+<p>{props.textContent}</p>
+```

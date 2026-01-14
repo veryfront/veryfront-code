@@ -1,0 +1,105 @@
+---
+layout: '@components/layouts/DocsLayout.mdx'
+context:
+  title: Creating a Sitemap using API Routes
+  meta:
+    title: Sitemap Generation with API Routes
+    description: >-
+      Discover the process of creating a sitemap for your Veryfront web
+      application using API routes and Node.js. Learn how to serve your sitemap
+      to search engines effectively.
+---
+
+import { H1 } from "@/shared/ui/H1"
+
+<H1>Creating a Sitemap using API Routes</H1>
+
+This guide will walk you through the process of creating a Sitemap for your web app built on Veryfront. We'll use Veryfront's API routes and Node.js to accomplish this task.
+
+### Create an API route
+
+Create an API route for serving your sitemap. To learn how to create an API route checkout the [Creating API Routes](/docs/api-routes) section.
+
+### Add the Code for the Sitemap API Route
+
+1. Inside the API route you created, use the Veryfront API to query all the pages of your web app. This can be done by making a `pages` GraphQL API call to retrieve the necessary data.
+2. Once you have the list of pages, you'll need to transform it into XML format, which is the standard format for Sitemaps. This can be accomplished by iterating over the pages and generate the appropriate XML elements.
+3. Once the XML string is populated, you need to serve it to search engines and other interested parties.
+4. Make sure the API route returns the generated XML as the response body and that the appropriate HTTP headers are set.
+
+You can find the full code including comments in the next section.
+
+### Code for the Sitemap API Route
+
+This is the code fo an API Route returning a sitemap for the current Veryfront project.
+
+```javascript
+import got from "https://esm.sh/got@12.6.1?target=node";
+
+export default async function ({ req }) {
+
+  // GraphQL query to fetch pages data
+  let json = {
+    query: `query PagesListQuery($first: Int, $cacheKey: String!, $filter: FilterParams) {
+    pages(first: $first, cacheKey: $cacheKey, filter: $filter) {
+      edges {
+        cursor
+        node {
+          slug
+          isPublished
+          frontmatter
+        }
+      }
+    }
+  }`,
+    variables: {
+      first: 1000,
+      filter: {
+        sort: "name:ASC"
+      },
+      "cacheKey": process.env.VERYFRONT_PROJECT_ID
+    }
+  }
+
+  // Send a POST request to the GraphQL API
+  const { data } = await got
+    .post("https://api.veryfront.com/graphql", {
+      headers: {
+        'x-project': process.env.VERYFRONT_PROJECT_ID,
+        'Content-Type': 'application/json',
+      },
+      json,
+    })
+    .json();
+
+  const baseUrl = 'https://veryfront.com/';
+
+  let sitemap = `<?xml version="1.0" encoding="UTF-8"?>`;
+  sitemap += `<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">`;
+
+  // Generate the sitemap XML based on the fetched pages data
+  data?.pages?.edges?.forEach(edge => {
+    const page = edge?.node
+    
+    // Only add published pages to the sitemap
+    if (page?.isPublished) {
+      sitemap += `
+    <url>
+      <loc>${baseUrl + (page?.slug === '/' ? '' : page?.slug)}</loc>
+    </url>
+  `
+    }
+  })
+
+  sitemap += `</urlset>`;
+
+  // Return the sitemap XML as the response
+  return {
+    headers: {
+      'Content-Type': 'application/xml',
+      'Content-Length': Buffer.byteLength(sitemap),
+    },
+    body: sitemap,
+  }
+}
+```

@@ -1,0 +1,85 @@
+---
+layout: '@components/layouts/DocsLayoutV2.mdx'
+context:
+  meta:
+    title: Build Stage
+    description: ''
+---
+
+import { CodeBlock } from "@/shared/ui/CodeBlock"
+
+# Build Stage
+
+Convert plans into functional code with previews
+
+| **Type** | **Details**                                                                                        |
+| -------- | -------------------------------------------------------------------------------------------------- |
+| Agent    | Coding Agent                                                                                       |
+| Role     | An expert full-stack developer who translates functional requirements into code with best practice |
+| Input    | Milestones and issues                                                                              |
+| Output   | Working code with live previews                                                                    |
+
+#### Example
+
+**Input:**
+
+<CodeBlock showHeader={false}>
+  ```
+  /build @docs/issues/001-project-client-management-system.md
+  ```
+</CodeBlock>
+
+**Output:**
+
+```
+I've implemented the plan and updated the following issues:
+001-project-client-management-system.md
+
+Changes are ready for preview at:
+https://task-management.preview.veryfront.com
+```
+
+### Tools
+
+**Read**
+
+- `listFiles` - List project files with optional pattern filtering
+- `getFiles` - Read content of multiple project files
+- `getFile` - Read content of a single project file
+- `searchCode` - Search codebase for patterns, symbols, or text
+- `listUploads` - List project uploads (images, PDFs, references)
+- `fetchUrl` - Fetch content from any remote URL
+
+**Write**
+
+- `createFile` - Create a new file with content
+- `updateFile` - Edit an existing file (replace, insert, or delete content)
+- `moveFile` - Move or rename a file
+- `deleteFile` - Delete a file from the project
+
+**Configure**
+
+- `environmentVariables` - Add environment variables for environment(s)
+
+**Validate**
+
+- `lintTool` - Run TypeScript and Biome checks on files (linting, types, imports, syntax)
+
+**Progress**
+
+- `updateIssueTool` - Update issue checklist, status, and implementation notes
+- `updateMilestoneTool` - Update milestone progress based on issue completion
+
+### Steering
+
+- `.veryfront/agents/build.md`
+- `.veryfront/commands/build.md`
+- `.veryfront/steering/**`
+- `.veryfront/VERYFRONT.md`
+
+### Features
+
+- Translate functional requirements and plans into enterprise-grade code
+- Generate full-stack application code following best practices
+- Use preview environments for testing and feedback
+- Iterate on code based on feedback and testing results

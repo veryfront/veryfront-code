@@ -1,0 +1,137 @@
+---
+layout: "@components/layouts/DocsLayout.mdx"
+context:
+  title: Guide to Working with Pages in Veryfront
+  meta:
+    title: 'Managing Web Pages in Veryfront: Complete Guide'
+    description: >-
+      Discover how to create, edit, and delete pages in Veryfront. Learn about
+      unique page paths, adding page content, using dynamic page routes, and the
+      importance of MDX content.
+---
+
+import { Alert, AlertDescription, AlertTitle } from "@/shared/ui/Alert"
+import { AlertTriangleIcon } from "@/shared/ui/icons/AlertTriangleIcon"
+import { H1 } from "@/shared/ui/H1"
+
+<H1 className="mb-2">Working with Pages \[DEPRECATED]</H1>
+
+### Pages in Veryfront
+
+Every page you create in Veryfront is a page of your web app or website.
+
+### Create a New Page
+
+Click the Pages menu icon in the Sidebar.
+
+![](https://storage.googleapis.com/veryfront-web/docs-v2/pages-menu-menu-icon.png)
+
+Click the plus icon in the top right corner to open the "Create Page" overlay.
+
+![](https://storage.googleapis.com/veryfront-web/docs-v2/pages-menu-new-page-button.png)
+
+Enter a page name and path, and confirm.
+
+<Alert>
+  <InfoIcon className="h-4 w-4" />
+  <AlertTitle>Note</AlertTitle>
+
+  <AlertDescription>
+    Page paths must be unique and only contain alphanumeric characters, hyphens, underscores, and forward slashes.
+  </AlertDescription>
+</Alert>
+
+![](https://storage.googleapis.com/veryfront-web/docs-v2/create-page-overlay.png)
+
+### Add Page Content
+
+Click the Pages menu icon in the Sidebar.
+
+![](https://storage.googleapis.com/veryfront-web/docs-v2/pages-menu-menu-icon.png)
+
+Click the page you want to edit to open it in the Live Editor.
+
+![](https://storage.googleapis.com/veryfront-web/docs-v2/pages-menu-edit-page.png)
+
+You can add page content by writing the needed code in the Live Editor. But you can also insert pre-made components and customize them. To do so click the Insert menu icon in the Sidebar.
+
+![](https://storage.googleapis.com/veryfront-web/docs-v2/insert-menu-menu-icon.png)
+
+Find the needed component and click on it to insert the relevant code snippet at the current cursor position in the Live Editor.
+
+![](https://storage.googleapis.com/veryfront-web/docs-v2/insert-menu-insert-component.png)
+
+Learn more about creating content with MDX here.
+
+### Update Page Options
+
+Click the Pages menu icon in the Sidebar.
+
+![](https://storage.googleapis.com/veryfront-web/docs-v2/pages-menu-menu-icon.png)
+
+Hover over the page you want to edit to see the edit icon.
+
+![](https://storage.googleapis.com/veryfront-web/docs-v2/pages-menu-edit-page-icon.png)
+
+Click the pencil icon to open the "Edit Page" overlay.
+
+![](https://storage.googleapis.com/veryfront-web/docs-v2/edit-page-overlay.png)
+
+Update your page’s name and/or path and confirm by clicking “Update Page”.
+
+<Alert>
+  <InfoIcon className="h-4 w-4" />
+  <AlertTitle>Note</AlertTitle>
+
+  <AlertDescription>
+    Page paths must be unique and only contain alphanumeric characters, hyphens, underscores, and forward slashes.
+  </AlertDescription>
+</Alert>
+
+### Delete a Page
+
+Open the Page Options overlay as described above.
+
+Click “Delete” to delete the page.
+
+<Alert>
+  <AlertTriangleIcon className="h-4 w-4" />
+  <AlertTitle>Warning</AlertTitle>
+
+  <AlertDescription>
+    Deleting a page is irreversible!
+  </AlertDescription>
+</Alert>
+
+### Use Dynamic Page Routes
+
+You can create dynamic routes to pass dynamic URL data to a page.
+
+To define a dynamic route for a page, use the slug keyword between square brackets in the page’s path—for example, `any-path/[slug]`.
+
+![](https://storage.googleapis.com/veryfront-web/docs-v2/dynamic-page-slug.png)
+
+When first previewing the page, you're prompted for a placeholder value:
+
+![](https://storage.googleapis.com/veryfront-web/docs-v2/dynamic-page-slug-placeholder.png)
+
+Now you can access the slug variable through the UseRouter core provider component:
+
+Now you can access the slug variable through the UseRouter core provider component:
+
+```jsx
+<UseRouter>
+  {router => (
+    <Text>
+      The slug is: {router.query.slug}
+    </Text>
+  )}
+</UseRouter>
+```
+
+### Next Steps
+
+We recommend you check out our guides on components and MDX:
+
+- Creating Components
+- MDX Content

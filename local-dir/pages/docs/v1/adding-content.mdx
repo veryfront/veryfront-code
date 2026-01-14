@@ -1,0 +1,51 @@
+---
+layout: '@components/layouts/DocsLayout.mdx'
+context:
+  title: Adding page content
+  meta:
+    title: Guide on Adding Page Content
+    description: >-
+      Learn how to add page content using Veryfront's Code Editor. Explore the
+      use of MDX to create rich, interactive content, mixing Markdown and JSX
+      syntax seamlessly.
+---
+
+import { H1 } from "@/shared/ui/H1"
+
+<H1>
+  Adding page content
+</H1>
+
+Veryfront's Code Editor allows you to create content using [MDX](https://mdxjs.com) (Markdown with embedded React components). Here's an example of how to add content:
+
+```mdx
+import { Button } from "@/shared/ui/Button"
+import { Alert, AlertDescription, AlertTitle } from "@/shared/ui/Alert"
+
+# Getting Started
+
+This is an example of using MDX to create rich, interactive content. You can mix Markdown and JSX syntax seamlessly.
+
+## Markdown Features
+
+You can use all the familiar Markdown syntax to format your text:
+
+- **Bold**
+- *Italic*
+- `Code`
+- [Links](https://example.com)
+- Lists
+  - Item 1
+  - Item 2
+
+
+## JSX Components
+
+MDX allows you to embed JSX components directly in your Markdown. Here's an example:
+
+<Button onClick={() => alert('Hello')}>My Button</Button>
+```
+
+In this example, we've added markdown content and embeded a JSX component called "Button".
+
+![](https://cdn.veryfront.com/5b74466b-ad05-4594-82f6-8ed08ad1c37c/docs/getting-started-with-veryfront/add-page-content.gif)

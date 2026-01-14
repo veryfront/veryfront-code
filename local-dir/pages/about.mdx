@@ -1,0 +1,68 @@
+---
+context:
+  meta:
+    title: About
+    description: Rapid web app development and deployment platform
+---
+
+import { Container } from "@/shared/ui/Container"
+import { H1 } from "@/shared/ui/H1"
+import { Lead } from "@/shared/ui/Lead"
+import { Head } from "@/lib/Head"
+import { ResponsiveImage } from "@/shared/ui/ResponsiveImage"
+import { Logo } from "@/shared/ui/Logo"
+
+<Head>
+  <meta name="robots" content="noindex" />
+</Head>
+
+<Container size="sm" className="py-12 md:py-18 lg:py-24">
+  <div className="max-w-3xl mx-auto mb-8">
+    <H1 className="mb-4">
+      Always be shipping
+    </H1>
+
+    <Lead>We empower developers to create and publish amazing things.</Lead>
+  </div>
+
+  <ResponsiveImage
+    className="my-12 rounded-xl"
+    src="https://cdn.veryfront.com/5b74466b-ad05-4594-82f6-8ed08ad1c37c/images/about-2.png"
+    alt="Veryfront AI banner"
+    priority
+    width="3840"
+    height="2160"
+    sizes="(max-width: 823px) 100vw, 768px"
+  />
+  <div className="prose">
+    ## Meet the Team
+
+    We are a small team of builders on a mission to help web developers win in the era of frontend automation and generative AI. With decades of collective experience, our team at Veryfront is part of [Coder Society](https://codersociety.com), a forward-thinking tech company with a vast network of over 250 senior developers, designers, and product engineers.
+
+    ## Our Mission
+
+    At Veryfront, our mission is clear: empower developers and teams to build powerful web applications faster and more efficiently without compromising on quality and scalability. We believe in boosting developer productivity by providing a streamlined and intuitive development process.
+
+    ## The Problem We Solve
+
+    Traditional custom web development can be time-consuming, leading to inefficiencies and project delays. No-code solutions often lack the scalability and flexibility needed for mission-critical projects.
+
+    According to the Mulesoft Research - 2022 Connectivity Benchmark Report, only 48% of IT projects are delivered on time, while 71% of IT resources are spent on maintaining existing systems.
+
+    We recognize the need for a smarter approach to web development that accelerates project delivery while maintaining high standards.
+
+    ## The Veryfront Solution
+
+    Veryfront is the next-generation software development platform for rapid web app build and deployment. Our platform utilizes AI technology to automate the web app development process, making it seamless and hassle-free. With Veryfront, you get:
+
+    - Direct React app coding in the browser
+    - Pre-built component libraries and templates for faster development
+    - Effortless publishing of changes with a single click
+
+    ## Our Commitment
+
+    At Veryfront, our goal is to simplify web development, boost productivity, and reduce costs, enabling you to create exceptional web applications that stand out in the digital landscape.
+
+    Ready to experience the power of Veryfront in action? [Request a demo](/contact/sales) today and take the first step towards transforming your web development process or try out Veryfront today!
+  </div>
+</Container>

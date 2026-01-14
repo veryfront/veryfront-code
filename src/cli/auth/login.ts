@@ -1,11 +1,11 @@
 import { cliLogger } from "@veryfront/utils";
 import { getEnv } from "@veryfront/platform/compat/process.ts";
 import { cyan, dim, green, red, yellow } from "@veryfront/compat/console";
-import { readToken, saveToken, deleteToken, hasToken, getTokenLocation } from "./token-store.ts";
-import { startCallbackServer, getCallbackUrl } from "./callback-server.ts";
-import { openBrowser, canOpenBrowser } from "./browser.ts";
-import { createSpinner, promptUser, isTTY, getColorEnabled } from "../utils/index.ts";
-import { getApiUrl, DEFAULT_LOGIN_TIMEOUT_MS } from "./constants.ts";
+import { deleteToken, getTokenLocation, hasToken, readToken, saveToken } from "./token-store.ts";
+import { getCallbackUrl, startCallbackServer } from "./callback-server.ts";
+import { canOpenBrowser, openBrowser } from "./browser.ts";
+import { createSpinner, getColorEnabled, isTTY, promptUser } from "../utils/index.ts";
+import { DEFAULT_LOGIN_TIMEOUT_MS, getApiUrl } from "./constants.ts";
 
 export type AuthMethod = "google" | "github" | "token";
 
@@ -44,9 +44,12 @@ async function promptAuthMethod(): Promise<AuthMethod> {
 
   const response = await promptUser("Enter choice (1-3):");
   switch (response.trim()) {
-    case "1": return "google";
-    case "2": return "github";
-    default: return "token";
+    case "1":
+      return "google";
+    case "2":
+      return "github";
+    default:
+      return "token";
   }
 }
 
@@ -73,7 +76,9 @@ async function loginWithOAuth(provider: "google" | "github"): Promise<string | n
   }
 
   const callbackUrl = getCallbackUrl(server.port);
-  const authUrl = `${getApiUrl()}/auth/${provider}-login?redirect_uri=${encodeURIComponent(callbackUrl)}`;
+  const authUrl = `${getApiUrl()}/auth/${provider}-login?redirect_uri=${
+    encodeURIComponent(callbackUrl)
+  }`;
 
   spinner.stop();
   cliLogger.info("");
@@ -232,4 +237,4 @@ export async function whoami(): Promise<UserInfo | null> {
   return null;
 }
 
-export { readToken, saveToken, deleteToken, hasToken };
+export { deleteToken, hasToken, readToken, saveToken };

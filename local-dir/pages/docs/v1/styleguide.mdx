@@ -1,0 +1,80 @@
+---
+layout: '@components/layouts/DocsLayout.mdx'
+context:
+  title: Styleguide Integration
+  meta:
+    title: Veryfront Styleguide Integration Guide
+    description: >-
+      Learn how to create a bespoke styleguide for your Veryfront project.
+      Understand the step-by-step process of setting up and enhancing your
+      styleguide, along with tips to add clarity and context for users.
+---
+
+import { H1 } from "@/shared/ui/H1"
+
+<H1>
+  Styleguide
+</H1>
+
+The [Styleguide project](https://styleguide.veryfront.com/) offers a comprehensive set of tools for creating a bespoke styleguide for your project. Follow the steps below to integrate the styleguide into your project.
+
+### Setup
+
+1. Begin by creating a new page in your project. This page should be named 'Styleguide' and its slug should be @styleguide.
+2. Now, you need to define the layout in the frontmatter. Please ensure the layout adheres to the following format:
+
+```mdx
+---
+layout: https://styleguide.veryfront.com/@components/Layout
+---
+```
+
+Following this, include the Components component within the document to render it on the Styleguide page:
+
+```mdx
+---
+layout: https://styleguide.veryfront.com/@components/Layout
+---
+
+import Components from 'https://styleguide.veryfront.com/@components/pages/Components'
+
+<Components />
+```
+
+With these steps, your project now has a functioning styleguide. Navigate to the /@styleguide path to view and explore your project's components.
+
+### Enhancing Your Styleguide
+
+For additional clarity and context, consider adding a Readme file under the styleguide root path. Here's an example of how to do this:
+
+```mdx
+---
+layout: https://styleguide.veryfront.com/@components/Layout
+---
+
+import Components from 'https://styleguide.veryfront.com/@components/pages/Components'
+
+export const Readme = () => (
+  <UseProject>
+    {project => (
+      <div className="prose">
+        <h1>Welcome to {project.name}</h1>
+        <p>The Styleguide can be used to browse project components.</p>
+      </div>
+    )}
+  </UseProject>
+)
+
+<UseRouter>
+  {router => {
+    const isRoot = !router?.query.path ?? true
+    return (
+      <>
+        {isRoot ? <Readme /> : <Components />}
+      </>
+    )
+  }}
+</UseRouter>
+```
+
+After implementing the Readme information, your Styleguide is ready to be published. Simply press the 'Publish' button and your bespoke Styleguide will be deployed.
