@@ -1,25 +1,28 @@
-import { assertEquals, assertExists } from "jsr:@std/assert@1";
+import { assert, assertEquals, assertExists } from "jsr:@std/assert@1";
+import { VFile } from "npm:vfile@6";
 import { remarkMdxHeadings } from "./remark-headings.ts";
 import type { Heading, Root } from "mdast";
 
-type VFileWithData = {
-  data: {
-    headings?: Array<{
-      text: string;
-      id: string;
-      level: number;
-    }>;
-  };
-};
-
-function expectHeadings(file: Partial<VFileWithData>): Array<{
+interface HeadingEntry {
   text: string;
   id: string;
   level: number;
-}> {
-  assertExists(file.data);
+}
+
+function isHeadingEntry(value: unknown): value is HeadingEntry {
+  if (typeof value !== "object" || value === null) return false;
+  if (!("text" in value) || !("id" in value) || !("level" in value)) return false;
+  return (
+    typeof value.text === "string" &&
+    typeof value.id === "string" &&
+    typeof value.level === "number"
+  );
+}
+
+function expectHeadings(file: VFile): HeadingEntry[] {
   const headings = file.data.headings;
-  assertExists(headings);
+  assert(Array.isArray(headings), "headings should be an array");
+  assert(headings.every(isHeadingEntry), "all headings should be HeadingEntry");
   return headings;
 }
 
@@ -40,7 +43,7 @@ function createTree(...headings: Heading[]): Root {
 
 Deno.test("remark-headings - extracts single heading", () => {
   const tree = createTree(createHeading(1, "Hello World"));
-  const file: VFileWithData = { data: {} };
+  const file = new VFile();
 
   const plugin = remarkMdxHeadings();
   plugin(tree, file);
@@ -60,7 +63,7 @@ Deno.test("remark-headings - extracts multiple headings", () => {
     createHeading(2, "Second Heading"),
     createHeading(3, "Third Heading"),
   );
-  const file: VFileWithData = { data: {} };
+  const file = new VFile();
 
   const plugin = remarkMdxHeadings();
   plugin(tree, file);
@@ -84,7 +87,7 @@ Deno.test("remark-headings - generates correct slugs", () => {
     createHeading(2, "Special @#$ Characters!"),
     createHeading(3, "Numbers 123 456"),
   );
-  const file: VFileWithData = { data: {} };
+  const file = new VFile();
 
   const plugin = remarkMdxHeadings();
   plugin(tree, file);
@@ -107,7 +110,7 @@ Deno.test("remark-headings - handles duplicate headings", () => {
     createHeading(2, "Same Heading"),
     createHeading(3, "Same Heading"),
   );
-  const file: VFileWithData = { data: {} };
+  const file = new VFile();
 
   const plugin = remarkMdxHeadings();
   plugin(tree, file);
@@ -129,7 +132,7 @@ Deno.test("remark-headings - handles empty content", () => {
     type: "root",
     children: [],
   };
-  const file: VFileWithData = { data: {} };
+  const file = new VFile();
 
   const plugin = remarkMdxHeadings();
   plugin(tree, file);
@@ -142,7 +145,7 @@ Deno.test("remark-headings - adds ID to heading data", () => {
   type HeadingData = { hProperties?: { id?: string } };
   const heading = createHeading(1, "Test Heading");
   const tree = createTree(heading);
-  const file: VFileWithData = { data: {} };
+  const file = new VFile();
 
   const plugin = remarkMdxHeadings();
   plugin(tree, file);
@@ -161,7 +164,7 @@ Deno.test("remark-headings - preserves heading levels", () => {
     createHeading(5, "H5"),
     createHeading(6, "H6"),
   );
-  const file: VFileWithData = { data: {} };
+  const file = new VFile();
 
   const plugin = remarkMdxHeadings();
   plugin(tree, file);
@@ -177,7 +180,7 @@ Deno.test("remark-headings - preserves heading levels", () => {
 Deno.test("remark-headings - exports headings as MDX variable", () => {
   type MdxNode = { type: string };
   const tree = createTree(createHeading(1, "Export Test"));
-  const file: VFileWithData = { data: {} };
+  const file = new VFile();
 
   const plugin = remarkMdxHeadings();
   plugin(tree, file);
@@ -196,7 +199,7 @@ Deno.test("remark-headings - creates valid estree export", () => {
     };
   };
   const tree = createTree(createHeading(1, "Estree Test"));
-  const file: VFileWithData = { data: {} };
+  const file = new VFile();
 
   const plugin = remarkMdxHeadings();
   plugin(tree, file);
@@ -223,7 +226,7 @@ Deno.test("remark-headings - handles headings with complex text", () => {
     ],
   };
   const tree = createTree(heading);
-  const file: VFileWithData = { data: {} };
+  const file = new VFile();
 
   const plugin = remarkMdxHeadings();
   plugin(tree, file);
@@ -237,13 +240,14 @@ Deno.test("remark-headings - handles headings with complex text", () => {
 
 Deno.test("remark-headings - initializes file data if missing", () => {
   const tree = createTree(createHeading(1, "Data Init Test"));
-  const file = {} as Partial<VFileWithData>;
+  const file = new VFile();
 
   const plugin = remarkMdxHeadings();
-  plugin(tree as Root, file);
+  plugin(tree, file);
 
   assertExists(file.data);
-  assertExists(file.data.headings);
+  const headings = file.data.headings;
+  assert(Array.isArray(headings));
 });
 
 Deno.test("remark-headings - handles nested content in headings", () => {
@@ -258,7 +262,7 @@ Deno.test("remark-headings - handles nested content in headings", () => {
     ],
   };
   const tree = createTree(heading);
-  const file: VFileWithData = { data: {} };
+  const file = new VFile();
 
   const plugin = remarkMdxHeadings();
   plugin(tree, file);
@@ -272,13 +276,13 @@ Deno.test("remark-headings - handles nested content in headings", () => {
 
 Deno.test("remark-headings - resets slugger between runs", () => {
   const tree1 = createTree(createHeading(1, "Same"));
-  const file1: VFileWithData = { data: {} };
+  const file1 = new VFile();
 
   const plugin1 = remarkMdxHeadings();
   plugin1(tree1, file1);
 
   const tree2 = createTree(createHeading(1, "Same"));
-  const file2: VFileWithData = { data: {} };
+  const file2 = new VFile();
 
   const plugin2 = remarkMdxHeadings();
   plugin2(tree2, file2);
@@ -299,7 +303,7 @@ Deno.test("remark-headings - handles unicode characters", () => {
     createHeading(2, "Привет мир"),
     createHeading(3, "مرحبا بالعالم"),
   );
-  const file: VFileWithData = { data: {} };
+  const file = new VFile();
 
   const plugin = remarkMdxHeadings();
   plugin(tree, file);
@@ -323,7 +327,7 @@ Deno.test("remark-headings - preserves existing heading data", () => {
     customProp: "value",
   };
   const tree = createTree(heading);
-  const file: VFileWithData = { data: {} };
+  const file = new VFile();
 
   const plugin = remarkMdxHeadings();
   plugin(tree, file);

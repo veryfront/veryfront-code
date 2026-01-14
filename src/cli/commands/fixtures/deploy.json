@@ -1,0 +1,210 @@
+{
+  "meta": {
+    "projectSlug": "test-project",
+    "recordedAt": "2026-01-13T22:01:53.343Z"
+  },
+  "entries": [
+    {
+      "method": "get",
+      "url": "/projects/test-project/environments",
+      "response": {
+        "data": [
+          {
+            "id": "env-preview-001",
+            "name": "Preview",
+            "project": "proj-001",
+            "protected": false,
+            "domains": ["test-project.preview.veryfront.com"],
+            "environment_variables": [],
+            "deployment": null,
+            "created_at": "2024-10-03 09:49:39.661+00",
+            "updated_at": "2024-10-03 09:49:39.661+00"
+          },
+          {
+            "id": "env-production-001",
+            "name": "production",
+            "project": "proj-001",
+            "protected": false,
+            "domains": ["test-project.production.veryfront.com"],
+            "environment_variables": [],
+            "deployment": null,
+            "created_at": "2024-10-03 09:49:39.701+00",
+            "updated_at": "2024-10-03 09:49:39.701+00"
+          }
+        ],
+        "page_info": {
+          "self": null,
+          "first": null,
+          "next": null,
+          "prev": null
+        }
+      }
+    },
+    {
+      "method": "get",
+      "url": "/projects/test-project/environments",
+      "response": {
+        "data": [
+          {
+            "id": "env-preview-001",
+            "name": "Preview",
+            "project": "proj-001",
+            "protected": false,
+            "domains": ["test-project.preview.veryfront.com"],
+            "environment_variables": [],
+            "deployment": null,
+            "created_at": "2024-10-03 09:49:39.661+00",
+            "updated_at": "2024-10-03 09:49:39.661+00"
+          },
+          {
+            "id": "env-production-001",
+            "name": "production",
+            "project": "proj-001",
+            "protected": false,
+            "domains": ["test-project.production.veryfront.com"],
+            "environment_variables": [],
+            "deployment": null,
+            "created_at": "2024-10-03 09:49:39.701+00",
+            "updated_at": "2024-10-03 09:49:39.701+00"
+          }
+        ],
+        "page_info": {
+          "self": null,
+          "first": null,
+          "next": null,
+          "prev": null
+        }
+      }
+    },
+    {
+      "method": "get",
+      "url": "/projects/test-project/environments",
+      "response": {
+        "data": [
+          {
+            "id": "env-preview-001",
+            "name": "Preview",
+            "project": "proj-001",
+            "protected": false,
+            "domains": ["test-project.preview.veryfront.com"],
+            "environment_variables": [],
+            "deployment": null,
+            "created_at": "2024-10-03 09:49:39.661+00",
+            "updated_at": "2024-10-03 09:49:39.661+00"
+          },
+          {
+            "id": "env-production-001",
+            "name": "production",
+            "project": "proj-001",
+            "protected": false,
+            "domains": ["test-project.production.veryfront.com"],
+            "environment_variables": [],
+            "deployment": null,
+            "created_at": "2024-10-03 09:49:39.701+00",
+            "updated_at": "2024-10-03 09:49:39.701+00"
+          }
+        ],
+        "page_info": {
+          "self": null,
+          "first": null,
+          "next": null,
+          "prev": null
+        }
+      }
+    },
+    {
+      "method": "post",
+      "url": "/projects/test-project/releases",
+      "body": {
+        "name": "test-release-vcr"
+      },
+      "response": {
+        "id": "release-002",
+        "name": "test-release-vcr",
+        "version": "0.0.182",
+        "project": "proj-001",
+        "user_id": "user-001",
+        "export_status": "completed",
+        "build_status": "completed",
+        "deploy_status": "completed",
+        "created_at": "2026-01-13 22:02:29.337+00",
+        "updated_at": "2026-01-13 22:02:29.337+00"
+      }
+    },
+    {
+      "method": "post",
+      "url": "/projects/test-project/releases",
+      "body": {},
+      "response": {
+        "id": "release-003",
+        "name": "2026-01-13T22:02:32.732Z by Test User",
+        "version": "0.0.183",
+        "project": "proj-001",
+        "user_id": "user-001",
+        "export_status": "completed",
+        "build_status": "completed",
+        "deploy_status": "completed",
+        "created_at": "2026-01-13 22:02:32.748+00",
+        "updated_at": "2026-01-13 22:02:32.748+00"
+      }
+    },
+    {
+      "method": "get",
+      "url": "/projects/test-project/environments",
+      "response": {
+        "data": [
+          {
+            "id": "env-preview-001",
+            "name": "Preview",
+            "project": "proj-001",
+            "protected": false,
+            "domains": ["test-project.preview.veryfront.com"],
+            "environment_variables": [],
+            "deployment": null,
+            "created_at": "2024-10-03 09:49:39.661+00",
+            "updated_at": "2024-10-03 09:49:39.661+00"
+          },
+          {
+            "id": "env-production-001",
+            "name": "production",
+            "project": "proj-001",
+            "protected": false,
+            "domains": ["test-project.production.veryfront.com"],
+            "environment_variables": [],
+            "deployment": null,
+            "created_at": "2024-10-03 09:49:39.701+00",
+            "updated_at": "2024-10-03 09:49:39.701+00"
+          }
+        ],
+        "page_info": {
+          "self": null,
+          "first": null,
+          "next": null,
+          "prev": null
+        }
+      }
+    },
+    {
+      "method": "post",
+      "url": "/projects/test-project/deployments",
+      "body": {
+        "release_id": "release-002",
+        "environment_id": "env-production-001"
+      },
+      "response": {
+        "id": "deploy-004",
+        "release": {
+          "id": "release-002",
+          "name": "test-release-vcr",
+          "version": "0.0.182"
+        },
+        "environment": {
+          "id": "env-production-001",
+          "name": "production"
+        },
+        "created_at": "2026-01-13 22:02:35.000+00",
+        "updated_at": "2026-01-13 22:02:35.000+00"
+      }
+    }
+  ]
+}

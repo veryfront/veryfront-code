@@ -1,39 +1,37 @@
 import GithubSlugger from "github-slugger";
 import type { Heading, Root } from "mdast";
+import type { VFile } from "npm:vfile@6";
 import { toString } from "mdast-util-to-string";
 import { visit } from "unist-util-visit";
 
-interface FileData {
-  headings?: Array<{ text: string; id: string; level: number }>;
+interface HeadingEntry {
+  text: string;
+  id: string;
+  level: number;
 }
 
-interface VFile {
-  data?: FileData;
+// Extended heading data to support hProperties (used by mdast-util-to-hast)
+interface HeadingWithHProperties extends Heading {
+  data?: Heading["data"] & {
+    hProperties?: Record<string, unknown>;
+  };
 }
 
 export function remarkMdxHeadings() {
   const slugger = new GithubSlugger();
 
   return (tree: Root, file: VFile) => {
-    const headings: Array<{
-      text: string;
-      id: string;
-      level: number;
-    }> = [];
+    const headings: HeadingEntry[] = [];
 
     slugger.reset();
 
-    visit(tree, "heading", (node: Heading) => {
+    visit(tree, "heading", (node: HeadingWithHProperties) => {
       const text = toString(node);
       const id = slugger.slug(text);
 
-      if (!node.data) {
-        node.data = {};
-      }
-      if (!(node.data as Record<string, unknown>).hProperties) {
-        (node.data as Record<string, unknown>).hProperties = {};
-      }
-      ((node.data as Record<string, unknown>).hProperties as Record<string, unknown>).id = id;
+      node.data ??= {};
+      node.data.hProperties ??= {};
+      node.data.hProperties.id = id;
 
       headings.push({
         text,
@@ -42,9 +40,6 @@ export function remarkMdxHeadings() {
       });
     });
 
-    if (!file.data) {
-      file.data = {};
-    }
     file.data.headings = headings;
 
     const headingsExport = {
@@ -110,6 +105,8 @@ export function remarkMdxHeadings() {
       },
     };
 
-    tree.children.unshift(headingsExport as unknown as (typeof tree.children)[0]);
+    // Insert the headings export at the beginning of the tree
+    // The headingsExport structure is compatible with mdast-util-mdx-jsx's MdxjsEsm type
+    tree.children.unshift(headingsExport as typeof tree.children[number]);
   };
 }

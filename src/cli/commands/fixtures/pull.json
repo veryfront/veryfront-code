@@ -1,0 +1,129 @@
+{
+  "meta": {
+    "projectSlug": "test-project",
+    "recordedAt": "2026-01-13T18:50:00.000Z"
+  },
+  "entries": [
+    {
+      "method": "get",
+      "url": "/projects/test-project/files",
+      "body": {
+        "limit": "100",
+        "sort_by": "updated_at",
+        "sort_order": "desc"
+      },
+      "response": {
+        "data": [
+          {
+            "id": "file-001",
+            "path": "components/layout.tsx",
+            "content": "export default function Layout(props) {\n  return <div>layout{props.children}</div>\n}",
+            "size": 84,
+            "type": "component",
+            "updated_at": "2026-01-13 19:01:38.234286+00",
+            "_links": {
+              "self": {
+                "href": "/projects/test-project/files/components/layout.tsx"
+              }
+            }
+          },
+          {
+            "id": "file-002",
+            "path": "pages/index.tsx",
+            "content": "export default function IndexPage() {\n  return <div>Hello World</div>\n}",
+            "size": 70,
+            "type": "page",
+            "updated_at": "2026-01-13 19:00:53.761124+00",
+            "_links": {
+              "self": {
+                "href": "/projects/test-project/files/pages/index.tsx"
+              }
+            }
+          }
+        ],
+        "page_info": {
+          "self": null,
+          "first": null,
+          "next": null,
+          "prev": null
+        }
+      }
+    },
+    {
+      "method": "get",
+      "url": "/projects/test-project/files",
+      "body": {
+        "limit": "100",
+        "sort_by": "updated_at",
+        "sort_order": "desc"
+      },
+      "response": {
+        "data": [
+          {
+            "id": "file-001",
+            "path": "components/layout.tsx",
+            "content": "export default function Layout(props) {\n  return <div>layout{props.children}</div>\n}",
+            "size": 84,
+            "type": "component",
+            "updated_at": "2026-01-13 19:01:38.234286+00",
+            "_links": {
+              "self": {
+                "href": "/projects/test-project/files/components/layout.tsx"
+              }
+            }
+          }
+        ],
+        "page_info": {
+          "self": null,
+          "first": null,
+          "next": null,
+          "prev": null
+        }
+      }
+    },
+    {
+      "method": "get",
+      "url": "/projects/test-project/files",
+      "body": {
+        "limit": "100",
+        "sort_by": "updated_at",
+        "sort_order": "desc"
+      },
+      "response": {
+        "data": [
+          {
+            "id": "file-001",
+            "path": "components/layout.tsx",
+            "content": "export default function Layout(props) {\n  return <div>layout{props.children}</div>\n}",
+            "size": 84,
+            "type": "component",
+            "updated_at": "2026-01-13 19:01:38.234286+00",
+            "_links": {
+              "self": {
+                "href": "/projects/test-project/files/components/layout.tsx"
+              }
+            }
+          }
+        ],
+        "page_info": {
+          "self": null,
+          "first": null,
+          "next": null,
+          "prev": null
+        }
+      }
+    },
+    {
+      "method": "get",
+      "url": "/projects/test-project/files/components%2Flayout.tsx",
+      "response": {
+        "id": "file-001",
+        "path": "components/layout.tsx",
+        "content": "export default function Layout(props) {\n  return <div>layout{props.children}</div>\n}",
+        "size": 84,
+        "type": "component",
+        "updated_at": "2026-01-13 19:01:38.234286+00"
+      }
+    }
+  ]
+}

@@ -1,0 +1,54 @@
+{
+  "meta": {
+    "projectSlug": "test-project",
+    "recordedAt": "2026-01-13T21:55:30.997Z"
+  },
+  "entries": [
+    {
+      "method": "post",
+      "url": "/projects/test-project/branches",
+      "body": {
+        "name": "test-merge-1768341330997"
+      },
+      "response": {
+        "id": "branch-001",
+        "name": "test-merge-1768341330997",
+        "project_id": "proj-001",
+        "base_branch_id": null,
+        "created_at": "2026-01-13 21:56:03.285908+00",
+        "created_by": "user-001",
+        "merged_at": null,
+        "merged_by": null
+      }
+    },
+    {
+      "method": "get",
+      "url": "/projects/test-project/branches",
+      "body": {
+        "search": "nonexistent-branch-12345"
+      },
+      "response": {
+        "data": []
+      }
+    },
+    {
+      "method": "get",
+      "url": "/projects/test-project/branches/branch-001/merge-preview",
+      "response": {
+        "source_branch": {
+          "id": "branch-001",
+          "name": "test-merge-1768341330997",
+          "project_id": "proj-001",
+          "base_branch_id": null,
+          "created_at": "2026-01-13 21:56:03.285908+00",
+          "created_by": "user-001",
+          "merged_at": null,
+          "merged_by": null
+        },
+        "target_branch_id": null,
+        "target_branch_name": "main",
+        "diffs": []
+      }
+    }
+  ]
+}

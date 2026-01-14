@@ -1,0 +1,465 @@
+# Veryfront CLI Documentation Summary
+
+## Overview
+Veryfront CLI is a zero-config command-line interface for building and deploying AI-native React applications. It provides commands for project initialization, development, building, and remote synchronization with git-like workflows.
+
+## Commands Reference
+
+### init - Initialize Project
+
+```bash
+veryfront init [project-name] [options]
+```
+
+**Options:**
+- `-t, --template <name>`: Project template (ai, app, blog, docs, minimal) - default: ai
+- `--integrations <list>`: Service integrations (gmail,slack,github,calendar)
+- `-c, --config <file>`: JSON config file for programmatic scaffolding
+- `--skip-install`: Skip automatic dependency installation
+- `--skip-env-prompt`: Skip environment variable prompts
+
+**Examples:**
+```bash
+veryfront init                                    # Interactive wizard
+veryfront init my-app                             # Named project
+veryfront init my-agent --template ai             # AI template
+veryfront init my-agent --integrations gmail,slack
+veryfront init --config project.json              # From config file
+```
+
+### dev - Development Server
+
+```bash
+veryfront dev [options]
+```
+
+**Options:**
+- `-p, --port <number>`: Port to run on (default: 3000)
+- `--no-hmr`: Disable hot module replacement
+- `--open`: Open browser automatically
+
+**Examples:**
+```bash
+veryfront dev
+veryfront dev --port 8080
+veryfront dev --open
+veryfront dev --no-hmr
+```
+
+### build - Production Build
+
+```bash
+veryfront build [options]
+```
+
+**Options:**
+- `-o, --output <dir>`: Output directory (default: .veryfront/output)
+- `--no-compress`: Disable compression
+- `--no-split`: Disable code splitting
+- `--no-ssg`: Disable static generation
+- `--include <paths>`: Include specific paths in SSG
+- `--exclude <paths>`: Exclude paths from SSG
+- `--dry-run`: Preview what will be built
+- `--preset <name>`: Select build preset (e.g., embedded)
+
+**Examples:**
+```bash
+veryfront build
+veryfront build --output dist
+veryfront build --no-ssg
+veryfront build --preset embedded
+veryfront build --include /docs --exclude /api
+veryfront build --dry-run
+```
+
+### serve / preview - Production Server
+
+```bash
+veryfront serve [options]
+veryfront preview [options]
+```
+
+**Options:**
+- `-p, --port <number>`: Port to run on (default: 3000)
+- `--hostname <host>`: Hostname to bind to (default: 0.0.0.0)
+
+**Examples:**
+```bash
+veryfront serve
+veryfront serve --port 8080
+VERYFRONT_USE_REDIS_CACHE=1 veryfront serve
+```
+
+### pull - Download Project Files
+
+```bash
+veryfront pull [options]
+```
+
+**Options:**
+- `--projects <slugs>`: Comma-separated list of project slugs
+- `-d, --dir <path>`: Target directory (default: .)
+- `-b, --branch <name>`: Branch to pull from (default: main)
+- `--env <name>`: Environment to pull from (e.g., production, staging)
+- `--release <version>`: Release version to pull from (e.g., v1.2.0)
+- `-f, --force`: Force overwrite without confirmation
+- `--dry-run`: Show what would be written
+
+**Priority:** --env > --release > --branch > main
+
+**Examples:**
+```bash
+veryfront pull
+veryfront pull --dir ./my-project
+veryfront pull --branch feature-header
+veryfront pull --env production
+veryfront pull --release v1.2.0
+veryfront pull --projects project-a,project-b,project-c
+veryfront pull --dry-run
+veryfront pull --force
+```
+
+### push - Upload Local Changes
+
+```bash
+veryfront push [options]
+```
+
+**Options:**
+- `-d, --dir <path>`: Source directory (default: .)
+- `-b, --branch <name>`: Branch name (auto-generated if omitted, use 'main' for direct push)
+- `-f, --force`: Push without confirmation
+- `--dry-run`: Show what would be uploaded
+
+**Examples:**
+```bash
+veryfront push                          # Auto-generated branch
+veryfront push --dir ./my-project
+veryfront push --branch feature-header
+veryfront push --branch main            # Push directly to main
+veryfront push --dry-run
+```
+
+### merge - Merge Branches
+
+```bash
+veryfront merge <branch> [options]
+```
+
+**Options:**
+- `--into <branch>`: Target branch to merge into (default: main)
+- `-f, --force`: Merge without confirmation
+- `--dry-run`: Preview merge without executing
+
+**Examples:**
+```bash
+veryfront merge feature-login
+veryfront merge hotfix --into staging
+veryfront merge feature-header --dry-run
+```
+
+### deploy - Create Release and Deploy
+
+```bash
+veryfront deploy [options]
+```
+
+**Options:**
+- `-b, --branch <name>`: Branch to release from (default: main)
+- `--env <name>`: Environment to deploy to (default: production)
+- `--release-name <name>`: Custom release name (auto-generated if omitted)
+- `-f, --force`: Deploy without confirmation
+- `--dry-run`: Preview without executing
+
+**Examples:**
+```bash
+veryfront deploy
+veryfront deploy --env staging
+veryfront deploy --branch feature-x --env preview
+veryfront deploy --release-name v1.2.0
+veryfront deploy --dry-run
+```
+
+### doctor - Health Check
+
+```bash
+veryfront doctor [options]
+```
+
+**Options:**
+- `-s, --strict`: Treat warnings as errors
+
+**Examples:**
+```bash
+veryfront doctor
+veryfront doctor --strict
+```
+
+### clean - Clean Artifacts
+
+```bash
+veryfront clean [options]
+```
+
+**Options:**
+- `--cache`: Clean cache only
+- `--build`: Clean build output only
+- `--all`: Clean everything (node_modules, .deno, .veryfront)
+- `-f, --force`: Skip confirmation prompts
+
+**Examples:**
+```bash
+veryfront clean
+veryfront clean --cache
+veryfront clean --all
+veryfront clean --all --force
+```
+
+### routes - List Routes
+
+```bash
+veryfront routes [options]
+```
+
+**Options:**
+- `-j, --json`: Output as JSON
+
+**Examples:**
+```bash
+veryfront routes
+veryfront routes --json
+```
+
+### lock - Manage Lockfile
+
+```bash
+veryfront lock [options]
+```
+
+**Options:**
+- `-l, --list`: List all locked imports
+- `-u, --update`: Update all locked imports
+- `--verify`: Verify integrity of locked imports
+- `--clear`: Clear the lockfile
+- `-f, --force`: Skip confirmation prompts
+
+**Examples:**
+```bash
+veryfront lock               # List locked imports
+veryfront lock --list
+veryfront lock --verify      # Check integrity
+veryfront lock --update      # Refresh all entries
+veryfront lock --clear       # Remove lockfile
+```
+
+### analyze-chunks - Bundle Analysis
+
+```bash
+veryfront analyze-chunks [options]
+```
+
+**Options:**
+- `-o, --output <file>`: Output analysis to file
+
+**Examples:**
+```bash
+veryfront analyze-chunks
+veryfront analyze-chunks --output bundle-analysis.json
+```
+
+### generate - Code Scaffolding
+
+```bash
+veryfront generate <type> [name]
+veryfront g <type> [name]
+```
+
+**Types:**
+- `page`: Generate a new page
+- `layout`: Generate a new layout
+- `provider`: Generate a context provider
+- `api`: Generate an API endpoint
+- `integration`: Generate a service integration
+
+**Examples:**
+```bash
+veryfront generate page about
+veryfront generate layout admin
+veryfront generate api users/[id]
+veryfront generate provider auth
+veryfront generate integration              # Interactive wizard
+veryfront generate integration twilio       # With name preset
+```
+
+## Configuration
+
+### .veryfrontrc
+
+Project configuration for remote synchronization:
+
+```json
+{
+  "projectSlug": "my-project",
+  "apiUrl": "https://api.veryfront.com",
+  "apiToken": "vf_...",
+  "projects": ["project-a", "project-b"]
+}
+```
+
+### veryfront.config.ts
+
+Framework configuration:
+
+```typescript
+export default {
+  fs: {
+    type: "veryfront-api",
+    veryfront: {
+      baseUrl: "https://api.veryfront.com",
+      proxyMode: false,
+      cache: { enabled: true, ttl: 60000 }
+    }
+  },
+  dev: {
+    port: 3000,
+    hmr: true
+  },
+  build: {
+    compress: true,
+    split: true,
+    ssg: true
+  }
+}
+```
+
+### Environment Variables
+
+| Variable | Description |
+|----------|-------------|
+| `VERYFRONT_API_TOKEN` | API authentication token |
+| `VERYFRONT_PROJECT_SLUG` | Default project slug |
+| `PROXY_MODE` | Enable proxy mode (0 or 1) |
+| `PRODUCTION_MODE` | Use production releases (0 or 1) |
+| `NO_COLOR` | Disable colored output |
+
+## AI Application Development
+
+Veryfront provides built-in support for AI agents with MCP integration:
+
+```typescript
+import { createAgent, defineTool } from "veryfront/ai";
+
+const agent = createAgent({
+  model: "claude-3-opus",
+  tools: [searchTool, calendarTool],
+  memory: true,
+});
+
+const searchTool = defineTool({
+  name: "search",
+  description: "Search the web",
+  parameters: z.object({
+    query: z.string(),
+  }),
+  execute: async ({ query }) => {
+    // Implementation
+  },
+});
+```
+
+## Project Structure
+
+```
+my-ai-app/
+├── pages/
+│   ├── index.tsx          # Main page
+│   └── chat/
+│       └── index.tsx      # Chat interface
+├── api/
+│   ├── chat.ts            # Chat API endpoint
+│   └── webhooks/
+│       └── slack.ts       # Slack webhook handler
+├── agents/
+│   ├── assistant.ts       # Main assistant agent
+│   └── tools/
+│       ├── search.ts      # Search tool
+│       └── calendar.ts    # Calendar tool
+├── workflows/
+│   └── onboarding.ts      # Onboarding workflow
+├── providers/
+│   └── auth.tsx           # Auth provider
+├── veryfront.config.ts    # Framework config
+└── .veryfrontrc           # Remote sync config
+```
+
+## Workflow Example
+
+```bash
+# 1. Initialize project
+veryfront init my-agent --template ai --integrations gmail,slack
+
+# 2. Start development
+cd my-agent && veryfront dev
+
+# 3. Pull latest from remote
+veryfront pull
+
+# 4. Make changes locally, then push
+veryfront push --branch feature-login
+
+# 5. Merge branch into main
+veryfront merge feature-login
+
+# 6. Deploy to staging first
+veryfront deploy --env staging
+
+# 7. Verify staging, then deploy to production
+veryfront deploy
+```
+
+## Module Architecture
+
+The CLI is organized with clear module boundaries:
+
+```
+src/cli/
+├── commands/              # Individual command implementations
+│   ├── pull.ts           # Pull command + PullSource types
+│   ├── pull.test.ts      # Co-located unit tests
+│   ├── pull.integration.ts # Integration tests (real API)
+│   ├── push.ts           # Push command
+│   ├── merge.ts          # Merge command
+│   ├── deploy.ts         # Deploy command
+│   ├── clean.ts          # Clean command
+│   ├── dev.ts            # Dev server command
+│   ├── build/            # Build command modules
+│   ├── init/             # Init command modules
+│   ├── doctor/           # Doctor command modules
+│   └── generate/         # Generate command modules
+├── help/                 # Help system
+│   └── command-definitions.ts  # Central COMMANDS registry
+├── index/                # Entry points and routing
+│   ├── command-router.ts # Command dispatch
+│   ├── arg-parser.ts     # CLI argument parsing
+│   └── types.ts          # Shared types
+├── shared/               # Shared utilities
+│   └── config.ts         # API client, config resolution
+├── utils/                # CLI utilities
+│   ├── index.ts          # Spinner, prompts, logging
+│   └── terminal-select.ts
+└── templates/            # Project scaffolding templates
+```
+
+**Module Boundaries:**
+- Commands export: `Command function`, `Schema`, `parseArgs`, helper functions
+- Shared exports: `ApiClient`, `createApiClient`, `resolveConfig`
+- Utils export: `createSpinner`, `confirmPrompt`, `logSuccess/Error/Info`
+
+## CLI Development Guidelines
+
+- Use Zod schemas for CLI argument validation
+- Export parseArgs and schema from command modules for testability
+- Always provide --dry-run flag for destructive operations
+- Use central COMMANDS registry for help and usage strings
+- Fail fast with clear error messages - no silent fallbacks
+- Co-locate unit tests with implementation files

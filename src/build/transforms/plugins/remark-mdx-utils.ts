@@ -1,14 +1,7 @@
 import type { Code, Paragraph, Root } from "mdast";
 import type { Data, Node, Parent } from "unist";
+import type { VFile } from "npm:vfile@6";
 import { CONTINUE, SKIP, visit } from "unist-util-visit";
-
-interface FileData {
-  imports?: string[];
-}
-
-interface VFile {
-  data?: FileData;
-}
 
 interface MDXJsxElement extends Node {
   type: "mdxJsxTextElement" | "mdxJsxFlowElement";
@@ -39,20 +32,15 @@ const spacer = {
   },
 };
 
-const splice = [].splice;
-
-interface MergeChildrenOptions {
-  node: Record<string, Node[]>;
-  index: number;
-  children: Node[];
+interface NodeWithChildren {
+  children?: Node[];
 }
 
-function mergeChildren({ node, index, children }: MergeChildrenOptions) {
-  if (!node?.children) {
-    return;
-  }
-  // From: https://github.com/mdx-js/mdx/issues/1451#issuecomment-780428572
-  splice.apply(node.children, [index, 1, ...children] as unknown as [number, number]);
+// Replace node at index with multiple children nodes
+// Reference: https://github.com/mdx-js/mdx/issues/1451#issuecomment-780428572
+function mergeChildren(node: NodeWithChildren, index: number, children: Node[]): void {
+  if (!node?.children) return;
+  node.children.splice(index, 1, ...children);
 }
 
 const textNodeTypes = new Set([
@@ -193,14 +181,9 @@ export function remarkMdxRemoveParagraphs() {
         (child) => !textNodeTypes.has(child?.type),
       );
 
-      if (hasNonTextChild && typeof index === "number") {
+      if (hasNonTextChild && typeof index === "number" && extParent) {
         // Unwrap <p> elements when child contains other children besides text
-        mergeChildren({
-          node: extParent as unknown as Record<string, Node[]>,
-          index,
-          children: paragraphNode.children as Node[],
-        });
-
+        mergeChildren(extParent, index, paragraphNode.children as Node[]);
         return [SKIP, index];
       }
 
@@ -229,27 +212,31 @@ export function remarkMdxRemoveParagraphs() {
   };
 }
 
+// Extended Code node with hProperties for pass-through to HTML attributes
+interface CodeWithHProperties extends Code {
+  data?: Code["data"] & {
+    hProperties?: {
+      className?: string[];
+      "data-line-numbers"?: string;
+    };
+  };
+}
+
 export function remarkCodeBlocks() {
   return (tree: Root) => {
     visit(tree, "code", (node: Code) => {
-      if (!node.data) {
-        node.data = {};
-      }
-      if (!(node.data as Record<string, unknown>).hProperties) {
-        (node.data as Record<string, unknown>).hProperties = {};
+      const codeNode = node as CodeWithHProperties;
+      codeNode.data ??= {};
+      codeNode.data.hProperties ??= {};
+
+      if (codeNode.lang) {
+        codeNode.data.hProperties.className = [`language-${codeNode.lang}`];
       }
 
-      if (node.lang) {
-        ((node.data as Record<string, unknown>).hProperties as Record<string, unknown>).className =
-          [`language-${node.lang}`];
-      }
-
-      if (node.meta) {
-        const highlightMatch = node.meta.match(/\{([\d,-]+)\}/);
+      if (codeNode.meta) {
+        const highlightMatch = codeNode.meta.match(/\{([\d,-]+)\}/);
         if (highlightMatch) {
-          ((node.data as Record<string, unknown>).hProperties as Record<string, unknown>)[
-            "data-line-numbers"
-          ] = highlightMatch[1];
+          codeNode.data.hProperties["data-line-numbers"] = highlightMatch[1];
         }
       }
     });
@@ -266,22 +253,19 @@ export function remarkMdxImports() {
   return (tree: Root, file: VFile) => {
     const imports: string[] = [];
 
-    visit(tree as unknown as Root, "mdxjsEsm", (node: MDXjsEsm) => {
+    visit(tree, "mdxjsEsm", (node: MDXjsEsm) => {
       if (node.value?.includes("import")) {
         const importMatches = node.value.matchAll(
           /import\s+(?:(?:\{[^}]*\}|\*\s+as\s+\w+|\w+)\s+from\s+)?['"]([^'"]+)['"]/g,
         );
 
         for (const match of importMatches) {
-          const path = match[1] as string | undefined;
+          const path = match[1];
           if (typeof path === "string") imports.push(path);
         }
       }
     });
 
-    if (!file.data) {
-      file.data = {};
-    }
     file.data.imports = imports;
   };
 }
