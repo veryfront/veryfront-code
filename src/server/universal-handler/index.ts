@@ -278,6 +278,7 @@ export function createVeryfrontHandler(
         let projectSlug = proxySlug || parsedDomain.slug || configuredSlug;
         let projectId: string | undefined;
         let releaseId: string | undefined;
+        let environmentName: string | undefined;
 
         // Debug: Log config state for troubleshooting
         logger.debug("[universal] config state", {
@@ -331,6 +332,7 @@ export function createVeryfrontHandler(
               projectSlug = lookupResult.project_slug;
               projectId = lookupResult.project_id;
               releaseId = lookupResult.release_id ?? undefined;
+              environmentName = lookupResult.environment?.name;
               // Only use domain-based environment detection if proxy didn't provide one
               // This respects preview proxy's x-environment header for draft content access
               if (!proxyEnv) {
@@ -341,6 +343,7 @@ export function createVeryfrontHandler(
                 projectSlug: lookupResult.project_slug,
                 projectId: lookupResult.project_id,
                 environment: proxyEnv,
+                environmentName,
                 releaseId: lookupResult.release_id,
               });
             } else {
@@ -386,11 +389,13 @@ export function createVeryfrontHandler(
             if (lookupResult?.release_id) {
               releaseId = lookupResult.release_id;
               projectId = projectId || lookupResult.project_id;
+              environmentName = environmentName || lookupResult.environment?.name;
               proxyEnv = "production";
               logger.info("[universal] Veryfront domain release lookup successful", {
                 projectSlug,
                 releaseId,
                 projectId,
+                environmentName,
               });
             }
           }
@@ -437,6 +442,7 @@ export function createVeryfrontHandler(
           releaseId,
           proxyToken,
           proxyEnvironment: proxyEnv,
+          environmentName,
         };
 
         // Track metrics

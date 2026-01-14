@@ -65,7 +65,12 @@ export interface ContextualFSAdapter extends FSAdapter {
     token: string,
     fn: () => Promise<T>,
     projectId?: string,
-    options?: { productionMode?: boolean; releaseId?: string | null; branch?: string | null },
+    options?: {
+      productionMode?: boolean;
+      releaseId?: string | null;
+      branch?: string | null;
+      environmentName?: string | null;
+    },
   ): Promise<T>;
 }
 
