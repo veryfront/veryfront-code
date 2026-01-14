@@ -18,6 +18,8 @@ import { pullCommand } from "../commands/pull.ts";
 import { pushCommand } from "../commands/push.ts";
 import { mergeCommand, parseMergeArgs } from "../commands/merge.ts";
 import { deployCommand, parseDeployArgs } from "../commands/deploy.ts";
+import { upCommand, parseUpArgs } from "../commands/up.ts";
+import { login, logout, whoami } from "../auth/index.ts";
 import { COMMANDS } from "../help/command-definitions.ts";
 import {
   exitProcess,
@@ -354,15 +356,60 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
         }
         break;
 
+      case "up":
+        // The main unified command
+        {
+          const result = parseUpArgs(args);
+          if (!result.success) {
+            handleValidationError(result.error, "up");
+            exitProcess(1);
+            return;
+          }
+          await upCommand(result.data);
+        }
+        break;
+
+      case "login":
+        // Explicit login command
+        {
+          const method = args.google
+            ? "google"
+            : args.github
+            ? "github"
+            : args.token
+            ? "token"
+            : undefined;
+          await login(method as "google" | "github" | "token" | undefined);
+        }
+        break;
+
+      case "logout":
+        // Clear stored credentials
+        await logout();
+        break;
+
+      case "whoami":
+        // Show current user
+        await whoami();
+        break;
+
       case "help":
         showHelp();
         exitProcess(0);
         return;
 
       case undefined:
-        showHelp();
-        exitProcess(0);
-        return;
+        // Default: run the up command (one command does everything)
+        {
+          const result = parseUpArgs(args);
+          if (!result.success) {
+            handleValidationError(result.error, "up");
+            exitProcess(1);
+            return;
+          }
+          await upCommand(result.data);
+        }
+        break;
 
       default:
         cliLogger.error(`Unknown command: ${command}\n`);
