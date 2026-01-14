@@ -329,6 +329,11 @@ export class StaticHandler extends BaseHandler {
   }
 
   private isAssetRequest(pathname: string): boolean {
+    // Don't treat .veryfront directory paths as asset requests
+    // They should be handled by the SSR handler
+    if (pathname.includes("/.veryfront/") || pathname.startsWith("/.veryfront")) {
+      return false;
+    }
     return pathname.includes(".") || pathname.startsWith("/_veryfront/");
   }
 }

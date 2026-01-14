@@ -22,10 +22,9 @@ export async function createRendererInternal(
   projectSlug: string,
   config?: VeryfrontConfig,
 ): Promise<RendererInstance> {
-  rendererLogger.info("[RendererFactory] Creating renderer", {
+  rendererLogger.debug("[RendererFactory] Creating renderer", {
     projectSlug,
     mode: ctx.mode,
-    hasPreloadedConfig: !!config,
   });
 
   try {

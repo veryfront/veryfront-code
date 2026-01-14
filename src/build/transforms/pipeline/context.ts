@@ -103,7 +103,9 @@ export function isBrowser(ctx: TransformContext): boolean {
 }
 
 export function isMDX(ctx: TransformContext): boolean {
-  return ctx.filePath.endsWith(".mdx");
+  // MDX is a superset of Markdown - treat both .mdx and .md files as MDX
+  // This allows .md files to use frontmatter (layout, etc.) and component imports
+  return ctx.filePath.endsWith(".mdx") || ctx.filePath.endsWith(".md");
 }
 
 export function isTypeScript(ctx: TransformContext): boolean {

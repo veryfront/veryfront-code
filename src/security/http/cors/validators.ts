@@ -53,9 +53,9 @@ function validateStaticOrigin(
     const allowed = corsConfig.origin.includes(requestOrigin);
     if (!allowed) {
       recordCorsRejection();
-      serverLogger.warn("[CORS] Origin not in allowlist", {
+      // Log at debug level - this is expected in dev when CORS config doesn't match request origin
+      serverLogger.debug("[CORS] Origin not in allowlist", {
         requestOrigin,
-        allowedOrigins: corsConfig.origin,
       });
     }
     return {
@@ -69,7 +69,8 @@ function validateStaticOrigin(
     const allowed = corsConfig.origin === requestOrigin;
     if (!allowed) {
       recordCorsRejection();
-      serverLogger.warn("[CORS] Origin does not match", {
+      // Log at debug level - this is expected in dev when CORS config doesn't match request origin
+      serverLogger.debug("[CORS] Origin does not match", {
         requestOrigin,
         expectedOrigin: corsConfig.origin,
       });

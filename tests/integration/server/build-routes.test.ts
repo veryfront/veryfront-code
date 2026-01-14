@@ -141,8 +141,9 @@ describe("Route Discovery Tests", { sanitizeOps: false, sanitizeResources: false
             join(context.projectDir, "pages", "data.json"),
             '{"key": "value"}',
           );
+          // NOTE: .md is a valid page extension, use .txt for non-page file
           await Deno.writeTextFile(
-            join(context.projectDir, "pages", "README.md"),
+            join(context.projectDir, "pages", "README.txt"),
             "# README",
           );
 

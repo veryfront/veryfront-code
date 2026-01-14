@@ -1,7 +1,7 @@
 import { join } from "@veryfront/platform/compat/path-helper.ts";
 import type { PathCandidates } from "./types.ts";
 
-const SUPPORTED_EXTENSIONS = [".mdx", ".tsx", ".jsx", ".ts", ".js"];
+const SUPPORTED_EXTENSIONS = [".mdx", ".md", ".tsx", ".jsx", ".ts", ".js"];
 
 /** Generates path candidates for a base path with all supported extensions */
 function withExtensions(basePath: string, filename: string): string[] {

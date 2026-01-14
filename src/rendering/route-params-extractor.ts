@@ -91,7 +91,7 @@ export async function extractPagesRouteParams(
 
   const segments = slug ? slug.split("/").filter(Boolean) : [];
   const pagesDir = join(projectDir, "pages");
-  const routeExtensions = [".tsx", ".jsx", ".ts", ".js", ".mdx"];
+  const routeExtensions = [".tsx", ".jsx", ".ts", ".js", ".mdx", ".md"];
   const patternParts: string[] = [];
   let currentDir = pagesDir;
 

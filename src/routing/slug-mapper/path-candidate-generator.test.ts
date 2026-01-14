@@ -25,7 +25,7 @@ describe("path-candidate-generator", () => {
 
     it("should generate candidates with all supported extensions", () => {
       const candidates = generateAppRouterCandidates("/project", "test");
-      const extensions = [".mdx", ".tsx", ".jsx", ".ts", ".js"];
+      const extensions = [".mdx", ".md", ".tsx", ".jsx", ".ts", ".js"];
 
       for (const ext of extensions) {
         assertEquals(candidates.some((c) => c.endsWith(ext)), true);

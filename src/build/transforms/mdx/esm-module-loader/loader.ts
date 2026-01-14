@@ -58,7 +58,7 @@ async function initializeCacheDir(context: ESMLoaderContext): Promise<string> {
   try {
     await localFs.mkdir(persistentCacheDir, { recursive: true });
     context.esmCacheDir = persistentCacheDir;
-    logger.info(`${LOG_PREFIX_MDX_LOADER} Using persistent cache dir: ${persistentCacheDir}`);
+    logger.debug(`${LOG_PREFIX_MDX_LOADER} Using persistent cache dir: ${persistentCacheDir}`);
     return persistentCacheDir;
   } catch {
     // Fallback to temp dir if persistent cache fails
@@ -150,7 +150,7 @@ async function processVfModuleImports(
   );
 
   const fetchEnd = performance.now();
-  logger.info(`${LOG_PREFIX_MDX_LOADER} Module fetch phase completed`, {
+  logger.debug(`${LOG_PREFIX_MDX_LOADER} Module fetch phase completed`, {
     moduleCount: imports.length,
     durationMs: (fetchEnd - fetchStart).toFixed(1),
   });
@@ -212,7 +212,7 @@ async function transformJsxImports(
   }
 
   const transformStart = performance.now();
-  logger.info(
+  logger.debug(
     `${LOG_PREFIX_MDX_LOADER} Transforming ${importsToProcess.length} JSX imports in parallel`,
   );
 
@@ -273,7 +273,7 @@ async function transformJsxImports(
   const successCount = transformResults.filter((r) => r !== null).length;
   const cachedCount = transformResults.filter((r) => r?.cached).length;
 
-  logger.info(`${LOG_PREFIX_MDX_LOADER} JSX transform phase completed`, {
+  logger.debug(`${LOG_PREFIX_MDX_LOADER} JSX transform phase completed`, {
     total: importsToProcess.length,
     success: successCount,
     cached: cachedCount,
@@ -307,7 +307,7 @@ async function bundleHttpImports(
     return code;
   }
 
-  logger.info(`${LOG_PREFIX_MDX_LOADER} Bundling HTTP imports via esbuild`);
+  logger.debug(`${LOG_PREFIX_MDX_LOADER} Bundling HTTP imports via esbuild`);
   const { build } = await import("esbuild/mod.js");
 
   const tempSourcePath = join(esmCacheDir, `temp-${hashString(code)}.mjs`);
@@ -340,7 +340,7 @@ async function bundleHttpImports(
 
     const bundledCode = result.outputFiles?.[0]?.text;
     if (bundledCode) {
-      logger.info(`${LOG_PREFIX_MDX_LOADER} Successfully bundled HTTP imports`);
+      logger.debug(`${LOG_PREFIX_MDX_LOADER} Successfully bundled HTTP imports`);
       // Process esm.sh URLs to add target=es2022 and external=react,react-dom
       // This ensures all esm.sh packages use the same React instance
       const processedCode = processEsmShImports(bundledCode, esmCacheDir, hashString(bundledCode));
@@ -407,7 +407,7 @@ export async function loadModuleESM(
     }
 
     // Step 5: Bundle HTTP imports
-    logger.info(`${LOG_PREFIX_MDX_LOADER} HTTP imports check`, {
+    logger.debug(`${LOG_PREFIX_MDX_LOADER} HTTP imports check`, {
       hasHttpImports: hasHttpImports(rewritten),
       codePreview: rewritten.substring(0, 500),
     });
@@ -460,7 +460,7 @@ export async function loadModuleESM(
       await localFs.writeTextFile(filePath, rewritten);
     }
 
-    logger.info(`${LOG_PREFIX_MDX_RENDERER} Loading MDX module`, {
+    logger.debug(`${LOG_PREFIX_MDX_RENDERER} Loading MDX module`, {
       filePath,
       codePreview: rewritten.substring(0, 300),
     });
@@ -488,7 +488,7 @@ export async function loadModuleESM(
     context.moduleCache.set(compositeKey, result);
 
     const loadEnd = performance.now();
-    logger.info(`${LOG_PREFIX_MDX_LOADER} loadModuleESM completed`, {
+    logger.debug(`${LOG_PREFIX_MDX_LOADER} loadModuleESM completed`, {
       durationMs: (loadEnd - loadStart).toFixed(1),
     });
 

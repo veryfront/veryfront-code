@@ -2,88 +2,24 @@
  * Central package version and URL registry.
  *
  * Single source of truth for all package versions used in both SSR and browser transforms.
- *
- * KEY INSIGHT: SSR uses npm: specifiers (Deno resolves these locally), while browser
- * uses esm.sh URLs. This ensures each environment has consistent module instances.
- * Context packages (react-query, etc) use React context and MUST be single instances.
+ * SSR uses npm: specifiers (Deno resolves locally), browser uses esm.sh URLs.
  */
 
-// Core framework versions
 export const REACT_VERSION = "18.3.1";
 export const TAILWIND_VERSION = "4.1.8";
-
-/**
- * Context-dependent packages that require a single module instance.
- * These packages use React context and must be the SAME instance across SSR and browser.
- *
- * IMPORTANT: Both SSR and browser use esm.sh URLs to ensure identical module instances.
- * This prevents hydration errors caused by different module instances having different
- * React contexts (e.g., "No QueryClient set" error).
- *
- * The `external` field lists dependencies that should be provided by the import map,
- * ensuring all packages share the same React instance.
- */
-export const CONTEXT_PACKAGES = {
-  "@tanstack/react-query": { version: "5", external: ["react", "react-dom"] },
-  "@tanstack/query-core": { version: "5", external: [] },
-  "next-themes": { version: "0.4", external: ["react", "react-dom"] },
-  "framer-motion": { version: "11", external: ["react", "react-dom"] },
-  "react-hook-form": { version: "7", external: ["react", "react-dom"] },
-} as const;
-
-/** List of context package names for iteration */
-export const CONTEXT_PACKAGE_NAMES = Object.keys(CONTEXT_PACKAGES) as Array<
-  keyof typeof CONTEXT_PACKAGES
->;
-
-/**
- * Generate npm: specifier for SSR (Deno).
- * @deprecated Use esm.sh URLs instead for consistent module instances across SSR and browser.
- */
-export function getNpmSpecifier(pkg: string, version: string): string {
-  return `npm:${pkg}@${version}`;
-}
 
 /**
  * Generate esm.sh URL for browser.
  * Uses ?external= so browser import map provides React (ensures single instance).
  * Uses ?target=es2022 for consistent builds.
- *
- * NOTE: ?external= works in browser (import map applies to HTTP modules),
- * but NOT in Deno SSR (import map doesn't apply to HTTP modules).
- * That's why SSR uses npm: specifiers instead.
  */
 export function getEsmShUrl(pkg: string, version: string, external?: readonly string[]): string {
   const base = `https://esm.sh/${pkg}@${version}`;
   const params = [`target=es2022`];
   if (external?.length) {
-    // Use ?external= so browser import map provides these dependencies
-    // This ensures all packages use the same React from the import map
     params.push(`external=${external.join(",")}`);
   }
   return `${base}?${params.join("&")}`;
-}
-
-/**
- * Get esm.sh URL for a context package.
- * Both SSR and browser use the same URL to ensure identical module instances.
- */
-export function getContextPackageUrl(pkg: keyof typeof CONTEXT_PACKAGES): string {
-  const config = CONTEXT_PACKAGES[pkg];
-  return getEsmShUrl(pkg, config.version, config.external);
-}
-
-/** @deprecated Alias for getContextPackageUrl - SSR and browser use same URLs */
-export const getContextPackageUrlSSR = getContextPackageUrl;
-
-/** @deprecated Alias for getContextPackageUrl - SSR and browser use same URLs */
-export const getContextPackageUrlBrowser = getContextPackageUrl;
-
-/**
- * Check if a package name is a context-dependent package.
- */
-export function isContextPackage(pkg: string): pkg is keyof typeof CONTEXT_PACKAGES {
-  return pkg in CONTEXT_PACKAGES;
 }
 
 /**
@@ -116,18 +52,6 @@ export function getReactImportMap(): Record<string, string> {
     // Prefix match for any react/* subpath imports
     "react/": `https://esm.sh/react@${REACT_VERSION}/?target=es2022`,
   };
-}
-
-/**
- * Get the complete import map for context packages.
- * Returns a map of bare specifiers to esm.sh URLs.
- */
-export function getContextPackageImportMap(): Record<string, string> {
-  const map: Record<string, string> = {};
-  for (const pkg of CONTEXT_PACKAGE_NAMES) {
-    map[pkg] = getContextPackageUrl(pkg);
-  }
-  return map;
 }
 
 /**

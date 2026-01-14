@@ -161,11 +161,10 @@ export class StatOperations {
     this.directoryIndex = dirIdx;
     this.pathMapping = pathMap;
 
-    logger.info("[StatOperations] Index built", {
+    logger.debug("[StatOperations] Index built", {
       files: fileIdx.size,
       directories: dirIdx.size,
       pathMappings: pathMap.size,
-      filePaths: Array.from(fileIdx.keys()),
     });
   }
 
@@ -328,7 +327,7 @@ export class StatOperations {
     // (e.g., lib/, utils/, hooks/ directories). The search result is cached, so this only
     // incurs overhead on the first request for each missing file.
     const searchPattern = `${pathWithoutExt}.*`;
-    logger.info("[StatOperations] Searching for file via API", {
+    logger.debug("[StatOperations] Searching for file via API", {
       pattern: searchPattern,
       normalizedPath,
     });
@@ -337,7 +336,7 @@ export class StatOperations {
       const matches = await this.client.searchFiles(searchPattern);
       // Reset circuit breaker on success
       this.apiSearchFailures = 0;
-      logger.info("[StatOperations] API search result", {
+      logger.debug("[StatOperations] API search result", {
         pattern: searchPattern,
         matchCount: matches.length,
         matches: matches.map((m) => m.path).slice(0, 5),
@@ -351,7 +350,7 @@ export class StatOperations {
         });
         const first = sorted[0];
         if (first) {
-          logger.info("[StatOperations] resolveFile found via API search", { path: first.path });
+          logger.debug("[StatOperations] resolveFile found via API search", { path: first.path });
           this.cache.set(cacheKey, first.path);
           return first.path;
         }
@@ -367,7 +366,7 @@ export class StatOperations {
       logger.error("[StatOperations] API pattern search failed", { pattern: searchPattern, error });
     }
 
-    logger.info("[StatOperations] resolveFile not found after API search", {
+    logger.debug("[StatOperations] resolveFile not found after API search", {
       normalizedPath,
       pathWithoutExt,
     });

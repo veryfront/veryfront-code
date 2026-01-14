@@ -94,7 +94,7 @@ async function detectAppRouterImpl(
   return false; // If nothing is detectable, fall back to pages router to avoid false positives
 }
 
-const ROUTE_EXTENSIONS = new Set([".mdx", ".tsx", ".jsx", ".ts", ".js"]);
+const ROUTE_EXTENSIONS = new Set([".mdx", ".md", ".tsx", ".jsx", ".ts", ".js"]);
 const ROUTE_PATTERNS = ["page", "layout", "error", "loading", "not-found", "index"];
 
 /**

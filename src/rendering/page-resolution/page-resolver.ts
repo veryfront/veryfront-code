@@ -107,7 +107,7 @@ export class PageResolver {
    * Discovers all page files in the project:
    * - Checks pages/ directory
    * - Checks project root
-   * - Handles all supported file extensions (.mdx, .tsx, .jsx, .ts, .js)
+   * - Handles all supported file extensions (.mdx, .md, .tsx, .jsx, .ts, .js)
    * - Converts file names to slugs
    * - Handles index pages (converts to "/")
    * - Deduplicates pages

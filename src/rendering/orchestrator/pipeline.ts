@@ -33,6 +33,13 @@ import { clearSSRModuleCacheForProject } from "@veryfront/modules/react-loader/i
 import { setupSSRGlobals } from "../ssr-globals.ts";
 import { LAYOUT_EXTENSIONS } from "../layouts/types.ts";
 
+/** Check if a path contains dot-prefixed segments (e.g., .veryfront, .hidden) */
+function isDotPath(slug: string, filePath?: string): boolean {
+  const hasDotSegment = (path: string) =>
+    path.split("/").some((s) => s.startsWith(".") && s !== "." && s !== "..");
+  return hasDotSegment(slug) || (filePath ? hasDotSegment(filePath) : false);
+}
+
 // Import extracted modules
 import { createEsmCache, createModuleCache, loadModule } from "./module-loader/index.ts";
 import type { ModuleLoaderConfig } from "./module-loader/index.ts";
@@ -100,19 +107,31 @@ export class RenderPipeline {
 
     // ─────────────────────────────────────────────────────────────────────────
     // Stage 2: Layout & Provider Collection (parallel)
+    // Skip for dot-prefixed paths (e.g., .veryfront) - they don't use project layouts/providers
     // ─────────────────────────────────────────────────────────────────────────
-    const [layoutResult, providerResult] = await Promise.all([
-      timeAsync(
-        "collect-layouts",
-        () => this.config.layoutOrchestrator.collectLayouts(pageInfo),
-        "render-page",
-      ),
-      timeAsync(
-        "collect-providers",
-        () => this.config.layoutOrchestrator.collectProviders(slug),
-        "render-page",
-      ),
-    ]);
+    const skipLayouts = isDotPath(slug, pageInfo.entity.path);
+
+    const [layoutResult, providerResult] = skipLayouts
+      ? [
+        { layoutBundle: undefined, nestedLayouts: [] },
+        { providerBundles: [], providerItems: [], providerInfos: [] },
+      ]
+      : await Promise.all([
+        timeAsync(
+          "collect-layouts",
+          () => this.config.layoutOrchestrator.collectLayouts(pageInfo),
+          "render-page",
+        ),
+        timeAsync(
+          "collect-providers",
+          () => this.config.layoutOrchestrator.collectProviders(slug),
+          "render-page",
+        ),
+      ]);
+
+    if (skipLayouts) {
+      logger.debug("[renderPage] Skipping layouts/providers for dot-prefixed path", { slug });
+    }
 
     let dataFetchingProps: Record<string, unknown> | undefined;
     const layoutDataMap = new Map<string, Record<string, unknown>>();
@@ -185,7 +204,7 @@ export class RenderPipeline {
           }
         }
 
-        logger.info("[renderPage] Executing parallel data fetching jobs", { count: jobs.length });
+        logger.debug("[renderPage] Executing parallel data fetching jobs", { count: jobs.length });
         const results = await timeAsync(
           "data-fetching-jobs",
           () => Promise.all(jobs.map((j) => j.run())),
@@ -357,7 +376,7 @@ export class RenderPipeline {
       await this.config.cacheCoordinator.persistResult(result, slug);
     }
 
-    logger.info("[renderPage] Returning result", {
+    logger.debug("[renderPage] Returning result", {
       hasHtml: !!result.html,
       hasStream: !!result.stream,
       htmlLength: result.html?.length || 0,
@@ -387,18 +406,26 @@ export class RenderPipeline {
     );
 
     // 2. Collect layouts and providers in parallel
-    const [layoutResult, providerResult] = await Promise.all([
-      timeAsync(
-        "collect-layouts-data",
-        () => this.config.layoutOrchestrator.collectLayouts(pageInfo),
-        "resolve-page-data",
-      ),
-      timeAsync(
-        "collect-providers-data",
-        () => this.config.layoutOrchestrator.collectProviders(slug),
-        "resolve-page-data",
-      ),
-    ]);
+    // Skip for dot-prefixed paths (e.g., .veryfront) - they don't use project layouts/providers
+    const skipLayouts = isDotPath(slug, pageInfo.entity.path);
+
+    const [layoutResult, providerResult] = skipLayouts
+      ? [
+        { layoutBundle: undefined, nestedLayouts: [] },
+        { providerBundles: [], providerItems: [], providerInfos: [] },
+      ]
+      : await Promise.all([
+        timeAsync(
+          "collect-layouts-data",
+          () => this.config.layoutOrchestrator.collectLayouts(pageInfo),
+          "resolve-page-data",
+        ),
+        timeAsync(
+          "collect-providers-data",
+          () => this.config.layoutOrchestrator.collectProviders(slug),
+          "resolve-page-data",
+        ),
+      ]);
 
     // 3. Extract page path and type
     const pagePath = extractRelativePathShared(pageInfo.entity.path, this.config.projectDir);
@@ -517,7 +544,7 @@ export class RenderPipeline {
       }
     }
 
-    logger.info("[resolvePageData] Resolved page data", {
+    logger.debug("[resolvePageData] Resolved page data", {
       slug,
       pagePath,
       pageType,

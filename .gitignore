@@ -10,7 +10,7 @@ server.log
 .envrc
 .env
 .env.*
-!.env.local.example
+!.env.example
 
 # Build artifacts
 .veryfront/

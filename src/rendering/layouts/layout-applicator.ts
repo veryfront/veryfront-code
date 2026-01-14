@@ -2,12 +2,12 @@ import { dirname, join } from "@veryfront/platform/compat/path-helper.ts";
 import { rendererLogger as logger } from "@veryfront/utils";
 import * as BundledReact from "react";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
-import { isExtendedFSAdapter } from "@veryfront/platform/adapters/fs/wrapper.ts";
 import type { LayoutItem, MdxBundle, MDXComponents, ProviderItem } from "@veryfront/types";
 import type { EntityInfo } from "@veryfront/types";
 import type { VeryfrontConfig } from "@veryfront/config";
 import type { LayoutComponentCache } from "./utils/component-loader.ts";
 import { applyLayoutsESM, applyLayoutsFunctionBody } from "./utils/applicator.ts";
+import { resolveAppComponentPath } from "./utils/app-resolver.ts";
 import {
   collectAncestorDirs,
   createErrorBoundary,
@@ -15,7 +15,6 @@ import {
 } from "../app-reserved.ts";
 import { detectAppRouter } from "../router-detection.ts";
 import { getProjectReact } from "@veryfront/react";
-import { LAYOUT_EXTENSIONS } from "./types.ts";
 // Import using bare specifiers that match user code imports
 // This ensures SSR and client use the same module instance (same React context)
 import { RouterProvider } from "veryfront/router";
@@ -90,10 +89,18 @@ export class LayoutApplicator {
       !!path && (/\/components\/app\.[jt]sx?$/.test(path) || /\/app\.[jt]sx?$/.test(path));
     const hasAppProvider = providerItems.some((p) => isAppPath(p.componentPath));
 
-    if (!useAppRouter && !hasAppProvider) {
+    // Skip App component wrapping for dot-prefixed paths (e.g., .veryfront) - these are
+    // framework-level pages that should not use user-defined App component
+    const isDotPath = pageFilePath.split("/").some((s) =>
+      s.startsWith(".") && s !== "." && s !== ".."
+    );
+
+    if (!useAppRouter && !hasAppProvider && !isDotPath) {
       wrappedElement = await this.wrapWithAppComponent(wrappedElement);
     } else if (hasAppProvider) {
       logger.debug("Skipping wrapWithAppComponent - App already applied as provider");
+    } else if (isDotPath) {
+      logger.debug("Skipping wrapWithAppComponent - dot-prefixed path");
     }
 
     if (useAppRouter) {
@@ -116,11 +123,8 @@ export class LayoutApplicator {
       headings: headingsArray,
       mdxHeadings: headingsArray, // Alias for backwards compatibility
     };
-    logger.info("[LayoutApplicator] PageContext", {
-      hasFrontmatter: !!this.frontmatter,
-      frontmatterKeys: this.frontmatter ? Object.keys(this.frontmatter) : [],
-      hasSummary: !!(this.frontmatter as any)?.summary,
-      entityKeys: Object.keys(pageInfo.entity.frontmatter || {}),
+    logger.debug("[LayoutApplicator] PageContext", {
+      frontmatterKeys: Object.keys(pageContext.frontmatter),
       headingsCount: headingsArray.length,
     });
 
@@ -150,11 +154,7 @@ export class LayoutApplicator {
       RouterProvider,
       { router: ssrRouter, children: wrappedElement },
     ) as BundledReact.ReactElement;
-    logger.info("Wrapped element with RouterProvider for SSR", {
-      hasRequestUrl: !!this.requestUrl,
-      domain: ssrRouter.domain,
-      pathname: ssrRouter.pathname,
-    });
+    logger.debug("Wrapped element with RouterProvider for SSR");
 
     return wrappedElement;
   }
@@ -166,11 +166,10 @@ export class LayoutApplicator {
     providerItems: ProviderItem[],
     layoutDataMap?: Map<string, Record<string, unknown>>,
   ): Promise<BundledReact.ReactElement> {
-    logger.info("Number of nested layouts found:", nestedLayouts.length);
-    logger.info("Has layoutBundle (named layout from frontmatter):", !!layoutBundle);
-    if (layoutBundle) {
-      logger.info("layoutBundle compiledCode length:", layoutBundle.compiledCode?.length);
-    }
+    logger.debug("Applying layouts", {
+      nestedLayoutCount: nestedLayouts.length,
+      hasLayoutBundle: !!layoutBundle,
+    });
     const useESMWrap = Boolean(this.config?.experimental?.esmLayouts);
 
     if (useESMWrap) {
@@ -202,62 +201,10 @@ export class LayoutApplicator {
     );
   }
 
-  private isValidComponentPath(path: string): boolean {
-    return /\.(tsx|jsx|ts|js|mdx|md)$/.test(path);
-  }
-
-  private async resolveAppComponentPath(): Promise<string | null> {
-    // Priority 1: Check config.app from veryfront.config.ts
-    const configApp = this.config?.app;
-    if (configApp && this.isValidComponentPath(configApp)) {
-      const appPath = configApp.startsWith("/") || configApp.startsWith(this.projectDir)
-        ? configApp
-        : join(this.projectDir, configApp);
-
-      const exists = await this.adapter.fs.exists(appPath);
-      if (exists) {
-        logger.debug("[LayoutApplicator] Using config.app", { path: appPath });
-        return appPath;
-      }
-      logger.debug("[LayoutApplicator] config.app path not found", { configApp, appPath });
-    }
-
-    // Priority 2: Check API project data (for Veryfront Studio)
-    const fs = this.adapter?.fs;
-    if (fs && isExtendedFSAdapter(fs) && fs.isVeryfrontAdapter()) {
-      const wrappedAdapter = fs.getUnderlyingAdapter() as {
-        getProjectData?: () => { app?: string } | undefined;
-        exists: (path: string) => Promise<boolean>;
-      };
-      const projectData = wrappedAdapter.getProjectData?.();
-
-      if (projectData?.app && this.isValidComponentPath(projectData.app)) {
-        const appPath = join(this.projectDir, "components", projectData.app);
-        const exists = await wrappedAdapter.exists(appPath);
-
-        if (exists) {
-          logger.debug("[LayoutApplicator] Using API project app", { path: appPath });
-          return appPath;
-        }
-      }
-    }
-
-    // Priority 3: Default discovery - check components/app.{ext} for all layout extensions
-    for (const ext of LAYOUT_EXTENSIONS) {
-      const appPath = join(this.projectDir, `components/app.${ext}`);
-      if (await this.adapter.fs.exists(appPath)) {
-        logger.info("[LayoutApplicator] Found app component", { path: appPath });
-        return appPath;
-      }
-    }
-
-    return null;
-  }
-
   private async wrapWithAppComponent(
     pageElement: BundledReact.ReactElement,
   ): Promise<BundledReact.ReactElement> {
-    const appPath = await this.resolveAppComponentPath();
+    const appPath = await resolveAppComponentPath(this.projectDir, this.adapter, this.config);
     if (!appPath) return pageElement;
 
     try {

@@ -166,7 +166,7 @@ export class HMRServer {
    */
   sendUpdate(update: HMRUpdate): void {
     const message = JSON.stringify(update);
-    logger.info("[HMRServer] ✅ sendUpdate called", {
+    logger.debug("[HMRServer] sendUpdate called", {
       type: update.type,
       connectedClients: this.clients.size,
     });
@@ -177,7 +177,7 @@ export class HMRServer {
         sentCount++;
       }
     }
-    logger.info("[HMRServer] ✅ Update sent to clients", {
+    logger.debug("[HMRServer] Update sent to clients", {
       sentCount,
       totalClients: this.clients.size,
     });

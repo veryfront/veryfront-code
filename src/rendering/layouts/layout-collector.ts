@@ -59,6 +59,17 @@ export class LayoutCollector {
   }
 
   async collectLayouts(pageInfo: EntityInfo): Promise<LayoutCollectionResult> {
+    // Skip layout resolution for .veryfront paths - these are framework-level pages
+    // that should not use user-defined layouts
+    if (
+      pageInfo.entity.path.includes("/.veryfront/") || pageInfo.entity.path.includes(".veryfront/")
+    ) {
+      logger.info("[LayoutCollector] Skipping layouts for .veryfront path", {
+        pagePath: pageInfo.entity.path,
+      });
+      return { layoutBundle: undefined, nestedLayouts: [] };
+    }
+
     // Layout can be string, boolean (false to disable), or undefined
     const layoutValue = pageInfo.entity.frontmatter.layout as string | boolean | undefined;
 

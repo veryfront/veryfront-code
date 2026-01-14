@@ -198,17 +198,26 @@ export async function compileProjectMDX(
   compileOptions.components = components;
   const mdxFiles: string[] = [];
 
+  const VERYFRONT_EXCLUDED_DIRS = new Set([
+    "cache",
+    "compiled",
+    "tmp",
+    "temp",
+    "output",
+    "optimized-images",
+    "css",
+  ]);
+
   async function findMDXFiles(dir: string) {
     try {
       for await (const entry of fs.readDir(dir)) {
         const path = join(dir, entry.name);
-        if (entry.isFile && entry.name.endsWith(".mdx")) {
+        if (entry.isFile && (entry.name.endsWith(".mdx") || entry.name.endsWith(".md"))) {
           mdxFiles.push(path);
-        } else if (
-          entry.isDirectory &&
-          !entry.name.startsWith(".") &&
-          entry.name !== "node_modules"
-        ) {
+        } else if (entry.isDirectory && entry.name !== "node_modules") {
+          // Skip hidden dirs except .veryfront, and skip system subdirs within .veryfront
+          if (entry.name.startsWith(".") && entry.name !== ".veryfront") continue;
+          if (dir.includes(".veryfront") && VERYFRONT_EXCLUDED_DIRS.has(entry.name)) continue;
           await findMDXFiles(path);
         }
       }
@@ -220,6 +229,7 @@ export async function compileProjectMDX(
   await findMDXFiles(join(projectDir, "pages"));
   await findMDXFiles(join(projectDir, "layouts"));
   await findMDXFiles(join(projectDir, "providers"));
+  await findMDXFiles(join(projectDir, ".veryfront"));
 
   logger.info(`Found ${mdxFiles.length} MDX files to compile`);
 

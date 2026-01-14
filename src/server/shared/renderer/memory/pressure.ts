@@ -27,21 +27,12 @@ export async function checkAndEvictUnderMemoryPressure(
   const heap = getHeapStats();
   const { heapUsedPercent: usedPercent } = heap;
   const { size: cacheSize } = rendererCache;
-  const hasSingleProject = !!singleProjectRenderer;
 
-  // Always log the check with current state
-  rendererLogger.info("[RendererFactory] Memory pressure check", {
+  // Log check at debug level (only interesting when there's pressure)
+  rendererLogger.debug("[RendererFactory] Memory pressure check", {
     source,
-    heapUsedMB: heap.usedHeapSizeMB,
-    heapLimitMB: heap.heapSizeLimitMB,
     heapUsedPercent: usedPercent,
-    rssMB: heap.rss,
     rendererCacheSize: cacheSize,
-    hasSingleProject,
-    thresholds: {
-      warning: MEMORY_PRESSURE_WARNING,
-      critical: MEMORY_PRESSURE_CRITICAL,
-    },
   });
 
   if (usedPercent >= MEMORY_PRESSURE_CRITICAL) {
@@ -69,9 +60,7 @@ export async function checkAndEvictUnderMemoryPressure(
 
     // Log post-eviction state
     const postHeap = getHeapStats();
-    rendererLogger.info("[RendererFactory] Post-eviction state", {
-      source,
-      heapUsedMB: postHeap.usedHeapSizeMB,
+    rendererLogger.debug("[RendererFactory] Post-eviction state", {
       heapUsedPercent: postHeap.heapUsedPercent,
       rendererCacheSize: rendererCache.size,
     });
@@ -93,9 +82,7 @@ export async function checkAndEvictUnderMemoryPressure(
 
     // Log post-eviction state
     const postHeap = getHeapStats();
-    rendererLogger.info("[RendererFactory] Post-eviction state", {
-      source,
-      heapUsedMB: postHeap.usedHeapSizeMB,
+    rendererLogger.debug("[RendererFactory] Post-eviction state", {
       heapUsedPercent: postHeap.heapUsedPercent,
       rendererCacheSize: rendererCache.size,
     });
@@ -153,10 +140,8 @@ export async function clearProjectCachesAfterRender(
     return;
   }
 
-  rendererLogger.info("[RendererFactory] Post-render cache eviction", {
+  rendererLogger.debug("[RendererFactory] Post-render cache eviction", {
     projectSlug,
-    projectId,
-    heapUsedMB: heap.usedHeapSizeMB,
     heapUsedPercent: heap.heapUsedPercent,
   });
 

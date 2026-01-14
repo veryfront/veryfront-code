@@ -11,6 +11,8 @@
  * When changedPaths are provided, HMR can do smart updates instead of full reload.
  */
 
+import { serverLogger as logger } from "@veryfront/utils";
+
 type ReloadListener = (changedPaths?: string[]) => void;
 type InvalidateListener = () => void;
 
@@ -50,18 +52,13 @@ class ReloadNotifierImpl {
    * @param changedPaths - Optional array of changed file paths for smart HMR
    */
   triggerReload(changedPaths?: string[]): void {
-    const timeSinceLastTrigger = this.metrics.lastTriggerTime > 0
-      ? Date.now() - this.metrics.lastTriggerTime
-      : null;
     this.metrics.triggerCalls++;
     this.metrics.lastTriggerTime = Date.now();
 
-    console.log("[ReloadNotifier] ✅ triggerReload called", {
+    logger.debug("[ReloadNotifier] triggerReload called", {
       invalidateListeners: this.invalidateListeners.size,
       reloadListeners: this.listeners.size,
       changedPaths: changedPaths?.length ?? 0,
-      totalTriggerCalls: this.metrics.triggerCalls,
-      timeSinceLastTriggerMs: timeSinceLastTrigger,
     });
 
     // Accumulate changed paths for batching
@@ -84,7 +81,7 @@ class ReloadNotifierImpl {
         ? Array.from(this.pendingChangedPaths)
         : undefined;
       this.pendingChangedPaths.clear();
-      console.log("[ReloadNotifier] ✅ Debounce complete, notifying reload listeners", {
+      logger.debug("[ReloadNotifier] Debounce complete, notifying reload listeners", {
         listenerCount: this.listeners.size,
         changedPaths: paths?.length ?? 0,
       });
@@ -93,34 +90,31 @@ class ReloadNotifierImpl {
   }
 
   private notifyInvalidateListeners(): void {
-    console.log("[ReloadNotifier] ✅ Notifying invalidate listeners", {
+    logger.debug("[ReloadNotifier] Notifying invalidate listeners", {
       count: this.invalidateListeners.size,
     });
     for (const listener of this.invalidateListeners) {
       try {
         listener();
       } catch (error) {
-        console.error("[ReloadNotifier] Invalidate listener error:", error);
+        logger.error("[ReloadNotifier] Invalidate listener error:", error);
       }
     }
-    console.log("[ReloadNotifier] ✅ Invalidate listeners notified");
   }
 
   private notifyListeners(changedPaths?: string[]): void {
     this.metrics.broadcastsSent++;
-    console.log("[ReloadNotifier] ✅ Notifying reload listeners", {
+    logger.debug("[ReloadNotifier] Notifying reload listeners", {
       count: this.listeners.size,
       changedPaths: changedPaths?.length ?? 0,
-      totalBroadcasts: this.metrics.broadcastsSent,
     });
     for (const listener of this.listeners) {
       try {
         listener(changedPaths);
       } catch (error) {
-        console.error("[ReloadNotifier] Listener error:", error);
+        logger.error("[ReloadNotifier] Listener error:", error);
       }
     }
-    console.log("[ReloadNotifier] ✅ Reload listeners notified - browser should refresh now");
   }
 
   /**

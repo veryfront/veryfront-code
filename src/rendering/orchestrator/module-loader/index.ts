@@ -58,9 +58,64 @@ export async function transformModuleWithDeps(
 
   // Use local adapter for local lib files, project adapter for user project files
   const readAdapter = useLocalAdapter ? localAdapter : adapter;
-  const fileContent = await readAdapter.fs.readFile(filePath);
+  let fileContent = await readAdapter.fs.readFile(filePath);
+  // Ensure fileContent is a string (not Uint8Array)
+  if (typeof fileContent !== "string") {
+    fileContent = new TextDecoder().decode(fileContent as Uint8Array);
+  }
   const { transformToESM } = await import("@veryfront/transforms/esm-transform.ts");
 
+  // Find all @/ imports BEFORE transforming (transformToESM converts them to relative paths)
+  // We need to resolve these first and replace them with file:// paths
+  const aliasImports = [...fileContent.matchAll(/from\s+["'](@\/[^"']+)["']/g)]
+    .map((m) => ({ full: m[0], path: m[1]! }));
+
+  logger.debug("[ModuleLoader] Processing file:", {
+    filePath,
+    aliasImportsCount: aliasImports.length,
+    aliasImports: aliasImports.map((i) => i.path),
+  });
+
+  // Transform each @/ dependency FIRST and replace in original code
+  // This way transformToESM won't convert them to broken relative paths
+  for (const { full, path } of aliasImports) {
+    const relativePath = path.substring(2); // Remove @/ prefix
+
+    let depFilePath: string | null = null;
+
+    // Check if this is a @/lib/... import (framework utilities)
+    // These are LOCAL to veryfront-renderer, not in the user's project
+    let isLocalLib = false;
+    if (relativePath.startsWith("lib/")) {
+      depFilePath = await findLocalLibFile(relativePath, localAdapter);
+      isLocalLib = true;
+    } else {
+      // For other @/ imports (shared/, features/, components/, etc.), look in user's project
+      // Try multiple prefixes since the file could be in various locations
+      depFilePath = await findSourceFile(relativePath, projectDir, adapter);
+      if (!depFilePath) {
+        depFilePath = await findSourceFile(`components/${relativePath}`, projectDir, adapter);
+      }
+    }
+
+    if (depFilePath) {
+      logger.debug("[ModuleLoader] Found dependency:", { path, depFilePath, isLocalLib });
+      const depTempPath = await transformModuleWithDeps(
+        depFilePath,
+        tmpDir,
+        localAdapter,
+        config,
+        isLocalLib,
+      );
+      // Replace @/ import with file:// path in ORIGINAL code
+      fileContent = fileContent.replace(full, `from "file://${depTempPath}"`);
+      logger.debug("[ModuleLoader] Replaced import:", { path, depTempPath });
+    } else {
+      logger.warn("[ModuleLoader] Could not find dependency:", { path, relativePath, projectDir });
+    }
+  }
+
+  // Now transform the code (with @/ imports already replaced with file:// paths)
   let transformedCode = await transformToESM(
     fileContent,
     filePath,
@@ -72,10 +127,6 @@ export async function transformModuleWithDeps(
       ssr: true,
     },
   );
-
-  // Find all @/ imports and transform them recursively
-  const aliasImports = [...transformedCode.matchAll(/from\s+["'](@\/[^"']+)["']/g)]
-    .map((m) => ({ full: m[0], path: m[1]! }));
 
   // Find and transform esm.sh URLs - fetch them and cache locally
   // Dynamic import from file:// URLs doesn't support https:// imports
@@ -95,41 +146,27 @@ export async function transformModuleWithDeps(
     }
   }
 
-  // Transform each @/ dependency
-  for (const { full, path } of aliasImports) {
-    const relativePath = path.substring(2); // Remove @/ prefix
-
-    let depFilePath: string | null = null;
-
-    // Check if this is a @/lib/... import (framework utilities)
-    // These are LOCAL to veryfront-private, not in the user's project
-    let isLocalLib = false;
-    if (relativePath.startsWith("lib/")) {
-      depFilePath = await findLocalLibFile(relativePath, localAdapter);
-      isLocalLib = true;
-    } else {
-      // For other @/ imports (shared/, etc.), look in user's project
-      depFilePath = await findSourceFile(`components/${relativePath}`, projectDir, adapter);
-    }
-
-    if (depFilePath) {
-      const depTempPath = await transformModuleWithDeps(
-        depFilePath,
-        tmpDir,
-        localAdapter,
-        config,
-        isLocalLib,
-      );
-      transformedCode = transformedCode.replace(full, `from "file://${depTempPath}"`);
-    } else {
-      logger.warn("[ModuleLoader] Could not find dependency:", path);
-    }
-  }
-
   // Write transformed code to temp file
   const hash = await generateHash(filePath);
   const tempFilePath = `${tmpDir}/mod-${hash}.js`;
-  await localAdapter.fs.writeFile(tempFilePath, transformedCode);
+
+  // Ensure directory exists before writing
+  try {
+    await localAdapter.fs.mkdir(tmpDir, { recursive: true });
+  } catch {
+    // Directory might already exist, ignore errors
+  }
+
+  try {
+    await localAdapter.fs.writeFile(tempFilePath, transformedCode);
+  } catch (writeError) {
+    logger.error("[ModuleLoader] Failed to write module:", {
+      filePath,
+      tempFilePath,
+      error: writeError instanceof Error ? writeError.message : String(writeError),
+    });
+    throw writeError;
+  }
 
   moduleCache.set(cacheKey, tempFilePath);
   return tempFilePath;

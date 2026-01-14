@@ -112,8 +112,6 @@ export class TokenManager {
       ? this.config.previewClientSecret
       : this.config.clientSecret;
 
-    console.log(`[TokenManager] Fetching ${scope} token for project: ${projectId || "global"}`);
-
     const response = await fetchOAuthToken({
       apiBaseUrl: this.config.apiBaseUrl,
       clientId,
@@ -129,10 +127,6 @@ export class TokenManager {
       scope,
       projectId,
     });
-
-    console.log(
-      `[TokenManager] Token cached, expires in ${Math.round((expiresAt - Date.now()) / 1000)}s`,
-    );
 
     return response.access_token;
   }

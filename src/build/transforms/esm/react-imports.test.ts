@@ -144,10 +144,12 @@ import { renderToString } from "react-dom/server"`;
       );
     });
 
-    it("should convert import-map packages to bare specifiers", async () => {
+    it("should add deps to esm.sh URLs without query params", async () => {
       const code = 'import foo from "https://esm.sh/next-themes@0.4.6"';
       const result = await addDepsToEsmShUrls(code);
-      expect(result).toBe('import foo from "next-themes"');
+      expect(result).toBe(
+        'import foo from "https://esm.sh/next-themes@0.4.6?external=react,react-dom&target=es2022"',
+      );
     });
 
     it("should add deps to scoped packages", async () => {

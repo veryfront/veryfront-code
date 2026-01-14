@@ -12,6 +12,11 @@ import {
   showVersion,
 } from "./index.ts";
 
+// Strip ANSI escape codes from string
+function stripAnsi(str: string): string {
+  return str.replace(/\x1b\[[0-9;]*m/g, "");
+}
+
 // Helper to capture console output
 function captureOutput(fn: () => void | Promise<void>): { stdout: string; stderr: string } {
   const originalLog = console.log;
@@ -130,27 +135,27 @@ Deno.test("showHelp displays complete help information", () => {
 
 Deno.test("showVersion displays version", () => {
   const { stdout } = captureOutput(() => showVersion());
-  assertStringIncludes(stdout.trim(), `Veryfront v${VERSION}`);
+  assertStringIncludes(stripAnsi(stdout), `veryfront v${VERSION}`);
 });
 
-Deno.test("logSuccess adds checkmark emoji", () => {
+Deno.test("logSuccess adds checkmark", () => {
   const { stdout } = captureOutput(() => logSuccess("Operation completed"));
-  assertStringIncludes(stdout, "✅ Operation completed");
+  assertStringIncludes(stripAnsi(stdout), "✓ Operation completed");
 });
 
-Deno.test("logError adds X emoji and uses stderr", () => {
+Deno.test("logError adds X and uses stderr", () => {
   const { stderr } = captureOutput(() => logError("Something went wrong"));
-  assertStringIncludes(stderr, "❌ Something went wrong");
+  assertStringIncludes(stripAnsi(stderr), "✗ Something went wrong");
 });
 
-Deno.test("logWarning adds warning emoji and uses stderr", () => {
+Deno.test("logWarning adds warning symbol and uses stderr", () => {
   const { stderr } = captureOutput(() => logWarning("This is a warning"));
-  assertStringIncludes(stderr, "⚠️  This is a warning");
+  assertStringIncludes(stripAnsi(stderr), "! This is a warning");
 });
 
-Deno.test("logInfo adds info emoji", () => {
+Deno.test("logInfo adds info symbol", () => {
   const { stdout } = captureOutput(() => logInfo("Information message"));
-  assertStringIncludes(stdout, "ℹ️  Information message");
+  assertStringIncludes(stripAnsi(stdout), "› Information message");
 });
 
 Deno.test("formatBytes formats zero bytes", () => {

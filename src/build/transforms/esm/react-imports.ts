@@ -60,48 +60,8 @@ export async function resolveReactImports(code: string, forSSR: boolean = false)
 }
 
 /**
- * Packages that are in the import map and should be converted to bare specifiers.
- * This ensures the import map can intercept and provide consistent modules.
- */
-const IMPORT_MAP_PACKAGES = [
-  "@tanstack/react-query",
-  "@tanstack/query-core",
-  "next-themes",
-  "framer-motion",
-  "react-hook-form",
-];
-
-/**
- * Extract package name from esm.sh URL.
- * E.g., "https://esm.sh/@tanstack/react-query@5?external=react" -> "@tanstack/react-query"
- */
-function extractPackageFromEsmSh(url: string): string | null {
-  if (!url.startsWith("https://esm.sh/") && !url.startsWith("http://esm.sh/")) {
-    return null;
-  }
-
-  // Remove protocol and host
-  let path = url.replace(/^https?:\/\/esm\.sh\//, "");
-
-  // Remove version prefix like /v135/
-  path = path.replace(/^v\d+\//, "");
-
-  // Handle scoped packages like @tanstack/react-query@5?external=...
-  if (path.startsWith("@")) {
-    const match = path.match(/^(@[^/]+\/[^@/?]+)/);
-    return match?.[1] ?? null;
-  } else {
-    // Regular package: name@version or name?query
-    const match = path.match(/^([^@/?]+)/);
-    return match?.[1] ?? null;
-  }
-}
-
-/**
  * Add deps/external params to esm.sh URLs for React version consistency.
- *
- * UNIFIED APPROACH: Both SSR and browser use the same strategy now.
- * esm.sh URLs that don't already have React version pinned get ?deps added.
+ * esm.sh URLs that don't already have React version pinned get ?external added.
  */
 export function addDepsToEsmShUrls(code: string, _forSSR: boolean = false): Promise<string> {
   return Promise.resolve(replaceSpecifiers(code, (specifier) => {
@@ -109,19 +69,8 @@ export function addDepsToEsmShUrls(code: string, _forSSR: boolean = false): Prom
       specifier.startsWith("https://esm.sh/") &&
       !specifier.includes(`react@${REACT_VERSION}`)
     ) {
-      // Convert import-mapped packages to bare specifiers
-      // This allows the import map to intercept and provide consistent modules
-      const packageName = extractPackageFromEsmSh(specifier);
-      if (packageName && IMPORT_MAP_PACKAGES.includes(packageName)) {
-        return packageName; // Return bare specifier for import map to handle
-      }
-
-      // For other esm.sh URLs, add external param if not present
-      // Using ?external= so esm.sh doesn't bundle React - browser import map provides it
       const hasQuery = specifier.includes("?");
-      if (hasQuery) {
-        return null; // Already has query params
-      }
+      if (hasQuery) return null;
       return `${specifier}?external=react,react-dom&target=es2022`;
     }
     return null;

@@ -34,12 +34,17 @@ const allowedWarnings: string[] = [
   "Page not found: broken",
   "Failed to build about: VeryfrontError: Page not found: about",
   "[SERVER] ERROR: Failed to build about:",
+  "Failed to build about:",
   "[SERVER] ERROR: Failed to build error:",
+  "Failed to build error:",
   "[SERVER] ERROR: Server error for /",
+  "Server error for /",
   "IsADirectory: Is a directory",
   "readfile",
   "[RENDERER] ERROR: renderToReadableStream failed",
+  "renderToReadableStream failed",
   "[RENDERER] ERROR: SSR renderToString failed",
+  "SSR renderToString failed",
   "Expected component `UndefinedComponent` to be defined:",
   "SSR failed - no output",
   // Test cleanup messages that are safe to ignore
@@ -52,20 +57,27 @@ const allowedWarnings: string[] = [
   "React streaming error",
   // Remote import security errors (expected in security tests)
   "[SERVER] ERROR: Server error for /api/ext",
+  "Server error for /api/ext",
   "[API] fail to log load error",
   "[SERVER] ERROR: Failed to load API handler",
+  "Failed to load API handler",
   "Remote import blocked by allow-list",
   "[prod] API handler failed",
   "[API] error log failed",
   "[SERVER] ERROR: [API] handler module failed to load:",
+  "[API] handler module failed to load:",
   // API route build errors
   "[SERVER] ERROR: Failed to build api/echo:",
+  "Failed to build api/echo:",
   "Page not found: api/echo",
   "[SERVER] ERROR: Failed to build api/hello:",
+  "Failed to build api/hello:",
   "Failed to render TS/JS page: Script page must export a 'render(ctx)' function, a default function, or a string HTML",
   // RSC component errors
   "[SERVER] ERROR: [RSC] Render error:",
+  "[RSC] Render error:",
   "[RENDERER] ERROR: Failed to load MDX module",
+  "Failed to load MDX module",
   // RSC action parsing warnings (expected during validation tests)
   "[ActionParser] Zod validation failed",
   "[RSC] Failed to parse action request body",
@@ -79,16 +91,20 @@ const allowedWarnings: string[] = [
   "Warning: Each child in a list",
   // React pipeable stream errors that wrap other allowed errors
   "[RENDERER] ERROR: React pipeable stream error",
-  // String rendering fallback errors (expected when SSR fails)
+  "React pipeable stream error",
   "[RENDERER] ERROR: String rendering fallback also failed",
-  // Bootstrap initialization errors (expected during error tests)
+  "String rendering fallback also failed",
   "[Bootstrap:Prod] Initialization failed",
   "[VERYFRONT] ERROR:",
+  "VERYFRONT  ✖",
   // Pipeable stream errors
   "[RENDERER] ERROR: renderToPipeableStream failed",
+  "renderToPipeableStream failed",
   // FS integration fallback (expected when veryfront-api adapter fails)
   "[FSIntegration] Falling back to local filesystem",
   "[VERYFRONT] WARN:",
+  "VERYFRONT  ▲",
+
   // Custom domain lookup without API token (expected in local/test environments)
   "[universal] Cannot look up custom domain - no API token available",
 ];

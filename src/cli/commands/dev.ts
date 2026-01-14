@@ -188,13 +188,25 @@ export async function devCommand(options: DevOptions) {
     void shutdown(signal);
   });
 
-  // Enhanced startup message
-  cliLogger.info(`${green("✓")} Server started successfully!\n`);
+  // Clean startup banner (skip in proxy mode - dev-proxy.ts prints its own)
+  const isProxyMode = config?.fs?.veryfront?.proxyMode === true;
+  if (!isProxyMode) {
+    const localIP = await getLocalIP();
 
-  const localIP = await getLocalIP();
-  cliLogger.info(`  ${bold("Local:")}    ${cyan(`http://${LOCALHOST.HOSTNAME}:${finalPort}`)}`);
-  cliLogger.info(`  ${bold("Network:")}  ${cyan(`http://${localIP}:${finalPort}`)}`);
-  cliLogger.info(`  ${bold("HMR:")}      ${dim(`ws://${LOCALHOST.HOSTNAME}:${finalPort + 1}/`)}\n`);
-
-  cliLogger.info(dim("  Press ") + bold("Ctrl+C") + dim(" to stop the server\n"));
+    console.log();
+    console.log(dim("─".repeat(40)));
+    console.log(`  ${bold(cyan("veryfront"))} ${dim("dev")}`);
+    console.log(dim("─".repeat(40)));
+    console.log();
+    console.log(`  ${green("●")} Local     ${cyan(`http://${LOCALHOST.HOSTNAME}:${finalPort}`)}`);
+    console.log(`  ${green("●")} Network   ${cyan(`http://${localIP}:${finalPort}`)}`);
+    if (enableHMR) {
+      console.log(
+        `  ${green("●")} HMR       ${dim(`ws://${LOCALHOST.HOSTNAME}:${finalPort + 1}/`)}`,
+      );
+    }
+    console.log();
+    console.log(dim(`  Press Ctrl+C to stop`));
+    console.log();
+  }
 }

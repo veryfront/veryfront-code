@@ -140,7 +140,7 @@ async function transformImport(
     const pathDesc = imp.type === "project-alias"
       ? `@/${imp.relativePath}`
       : `/_vf_modules/${imp.relativePath}`;
-    logger.info(`${LOG_PREFIX_MDX_LOADER} Transformed ${pathDesc} -> ${transformedPath}`);
+    logger.debug(`${LOG_PREFIX_MDX_LOADER} Transformed ${pathDesc} -> ${transformedPath}`);
 
     return { original: imp.original, replacement };
   } catch (error) {
@@ -167,7 +167,7 @@ export async function transformProjectAliasImports(
     return code;
   }
 
-  logger.info(`${LOG_PREFIX_MDX_LOADER} Found ${imports.length} @/ imports to transform`);
+  logger.debug(`${LOG_PREFIX_MDX_LOADER} Found ${imports.length} @/ imports to transform`);
 
   const { transform } = await import("esbuild/mod.js");
   let result = code;
@@ -197,7 +197,7 @@ export async function transformModuleServerImports(
     return code;
   }
 
-  logger.info(
+  logger.debug(
     `${LOG_PREFIX_MDX_LOADER} Found ${imports.length} /_vf_modules/ imports to transform`,
   );
 

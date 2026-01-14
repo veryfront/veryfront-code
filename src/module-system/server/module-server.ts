@@ -83,7 +83,7 @@ export async function serveModule(
 
   // Log User-Agent for debugging SSR detection
   const debugUserAgent = req.headers.get("user-agent") || "";
-  console.log("[ModuleServer] Request", {
+  logger.debug("[ModuleServer] Request", {
     pathname: url.pathname,
     userAgent: debugUserAgent.slice(0, 50),
   });
@@ -135,7 +135,7 @@ export async function serveModule(
     const hasSSRParam = url.searchParams.get("ssr") === "true";
     const isSSR = hasSSRParam || isDenoRequest;
 
-    logger.info("[ModuleServer] Transforming snippet", {
+    logger.debug("[ModuleServer] Transforming snippet", {
       hash,
       isSSR,
       snippetProjectSlug,
@@ -159,7 +159,7 @@ export async function serveModule(
         });
       }
 
-      logger.info("[ModuleServer] Snippet transformed", {
+      logger.debug("[ModuleServer] Snippet transformed", {
         hash,
         isSSR,
         transformedLength: transformedCode.length,
@@ -366,7 +366,7 @@ export async function serveModule(
         source = injectNodePositions(source, { filePath: sourceFile });
         timings.injectPositions = performance.now() - injectStart;
       }
-      logger.info("[ModuleServer] SSR mode check", {
+      logger.debug("[ModuleServer] SSR mode check", {
         isSSR,
         isDenoRequest,
         hasSSRParam,
@@ -404,28 +404,20 @@ export async function serveModule(
       const hmrTimestamp = url.searchParams.get("t");
       if (hmrTimestamp && code) {
         const hmrStart = performance.now();
-        const beforeCode = code.slice(0, 500);
         code = await addHMRTimestamps(code, hmrTimestamp);
         timings.hmrTimestamps = performance.now() - hmrStart;
-        logger.info("[ModuleServer] 🔥 HMR timestamp injection", {
+        logger.debug("[ModuleServer] HMR timestamp injection", {
           path: modulePath,
           timestamp: hmrTimestamp,
           durationMs: timings.hmrTimestamps?.toFixed(1),
-          beforeImports: (beforeCode.match(/from ["'][^"']+["']/g) || []).slice(0, 3),
-          afterImports: (code.slice(0, 500).match(/from ["'][^"']+["']/g) || []).slice(0, 3),
         });
       }
     }
 
     const headers = getDevModuleHeaders(modulePath);
-    const endTime = performance.now();
-    logger.info("[ModuleServer] Request complete", {
+    logger.debug("[ModuleServer] Request complete", {
       path: modulePath,
-      durationMs: (endTime - startTime).toFixed(1),
-      findFileMs: timings.findFile?.toFixed(1),
-      readFileMs: timings.readFile?.toFixed(1),
-      injectPositionsMs: timings.injectPositions?.toFixed(1),
-      transformMs: timings.transform?.toFixed(1),
+      durationMs: (performance.now() - startTime).toFixed(1),
     });
     return createModuleResponse(method, code ?? "", HTTP_OK, headers);
   } catch (error) {

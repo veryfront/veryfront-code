@@ -68,14 +68,6 @@ function normalizeVersionedSpecifier(specifier: string): string {
   return specifier.replace(/@[\d^~x][\d.x^~-]*(?=\/|$)/, "");
 }
 
-/** Packages kept as bare specifiers for HTML import map to resolve */
-const HTML_IMPORT_MAP_PACKAGES = [
-  "@tanstack/react-query",
-  "@tanstack/query-core",
-  "next-themes",
-  "framer-motion",
-];
-
 /** React import map with consistent es2022 target for SSR/browser parity */
 const REACT_IMPORT_MAP: Record<string, string> = {
   "react": `https://esm.sh/react@${REACT_DEFAULT_VERSION}?target=es2022`,
@@ -99,26 +91,14 @@ function shouldSkipRewrite(specifier: string): boolean {
   );
 }
 
-function isHtmlImportMapPackage(normalized: string): boolean {
-  return HTML_IMPORT_MAP_PACKAGES.some(
-    (pkg) => normalized === pkg || normalized.startsWith(`${pkg}/`),
-  );
-}
-
 export function rewriteBareImports(code: string, _moduleServerUrl?: string): Promise<string> {
   return Promise.resolve(replaceSpecifiers(code, (specifier) => {
-    // Check known import map first
     const mapped = REACT_IMPORT_MAP[specifier];
     if (mapped) return mapped;
 
-    // Skip if already absolute URL, relative path, or local module path
     if (shouldSkipRewrite(specifier)) return null;
 
-    // Normalize: strip inline version specifiers (e.g., tailwindcss@3.4.17 -> tailwindcss)
     const normalized = normalizeVersionedSpecifier(specifier);
-
-    // Keep as bare specifier if HTML import map will resolve it
-    if (isHtmlImportMapPackage(normalized)) return null;
 
     // Pin tailwindcss to unified version to prevent multiple versions loading
     let finalSpecifier = normalized;
@@ -128,7 +108,6 @@ export function rewriteBareImports(code: string, _moduleServerUrl?: string): Pro
       warnUnversionedImport(specifier);
     }
 
-    // Convert remaining bare imports to esm.sh URLs with React externalized
     return `https://esm.sh/${finalSpecifier}?external=react,react-dom&target=es2022`;
   }));
 }

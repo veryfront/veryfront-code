@@ -3,11 +3,11 @@
  *
  * Supports two modes:
  * 1. Proxy mode: Token and project slug provided per-request via headers
- * 2. Direct mode: Token and project slug from .env.local
+ * 2. Direct mode: Token and project slug from .env
  *
  * Usage:
  *   Proxy mode: Run behind veryfront-proxy (no env vars needed)
- *   Direct mode: Set VERYFRONT_API_TOKEN and VERYFRONT_PROJECT_SLUG in .env.local
+ *   Direct mode: Set VERYFRONT_API_TOKEN and VERYFRONT_PROJECT_SLUG in .env
  */
 
 // Default URLs
@@ -22,20 +22,23 @@ class ConfigError extends Error {
   }
 }
 
-// Load .env.local manually since config is evaluated before bootstrap
-// In production, .env.local won't exist - that's fine, we use env vars
+// Load .env manually since config is evaluated before bootstrap
+// In production, .env won't exist - that's fine, we use env vars
+// IMPORTANT: Don't use export: true - it would overwrite env vars set by parent process
+// (e.g., PROXY_MODE=1 set by dev-proxy.ts would be overwritten by PROXY_MODE=0 from .env)
 let env: Record<string, string> = {};
 try {
   const { load } = await import("https://deno.land/std@0.220.0/dotenv/mod.ts");
-  env = await load({ envPath: ".env.local", export: true });
+  env = await load({ envPath: ".env" });
 } catch {
-  // .env.local doesn't exist (production) - use environment variables only
+  // .env doesn't exist (production) - use environment variables only
 }
 
 // Check if running behind proxy (PROXY_MODE=1) or direct mode
+// Read directly from process env (not .env) since proxy sets this dynamically
 const proxyMode = Deno.env.get("PROXY_MODE") === "1";
 
-// Get env var from Deno.env or .env.local
+// Get env var from Deno.env or .env
 const getEnv = (key: string, fallback = "") =>
   Deno.env.get(key) || env[key] || fallback;
 
@@ -87,7 +90,7 @@ const contentSource = buildContentSource();
 // Skip check during tests or CI
 const isTestEnv = Deno.env.get("DENO_JOBS") !== undefined || Deno.env.get("CI") !== undefined;
 if (!isTestEnv && !proxyMode && (!apiToken || !projectSlug)) {
-  throw new ConfigError(`Missing required environment variables in .env.local:
+  throw new ConfigError(`Missing required environment variables in .env:
 
    VERYFRONT_API_TOKEN=${apiToken ? "✓" : "missing"}
    VERYFRONT_PROJECT_SLUG=${projectSlug ? "✓" : "missing"}
@@ -96,14 +99,11 @@ To get started:
   Option A (Proxy mode): Set PROXY_MODE=1 and run behind veryfront-proxy
   Option B (Direct mode):
     1. Get an API key from veryfront.com settings
-    2. Copy the token to .env.local
-    3. Set your project slug in .env.local`);
+    2. Copy the token to .env
+    3. Set your project slug in .env`);
 }
 
-if (proxyMode) {
-  console.log("[Config] Running in PROXY_MODE - tokens provided per-request via headers");
-  console.log(`[Config] API Base URL: ${apiBaseUrl}`);
-}
+// Proxy mode logging handled by dev-proxy.ts startup banner
 
 // GitHub test mode: Use GITHUB_TOKEN env var to enable
 const useGitHub = !!Deno.env.get("GITHUB_TOKEN");

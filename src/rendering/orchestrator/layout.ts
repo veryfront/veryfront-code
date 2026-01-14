@@ -86,7 +86,7 @@ export class LayoutOrchestrator {
     });
 
     const pageType = pageElement?.type;
-    logger.info("[LayoutOrchestrator] Before applyLayouts", {
+    logger.debug("[LayoutOrchestrator] Before applyLayouts", {
       pageElementType: typeof pageType === "function" ? pageType.name : typeof pageType,
     });
     const result = await layoutApplicator.applyLayouts(
@@ -98,7 +98,7 @@ export class LayoutOrchestrator {
       layoutDataMap,
     );
     const resultType = result?.type;
-    logger.info("[LayoutOrchestrator] After applyLayouts", {
+    logger.debug("[LayoutOrchestrator] After applyLayouts", {
       resultType: typeof resultType === "function" ? resultType.name : typeof resultType,
       isSameElement: result === pageElement,
     });
