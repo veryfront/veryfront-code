@@ -96,6 +96,7 @@ import { NotFoundHandler } from "../handlers/response/not-found.ts";
 import { HMRHandler } from "../handlers/preview/hmr-handler.ts";
 import { OpenAPIHandler } from "../handlers/request/openapi-handler.ts";
 import { OpenAPIDocsHandler } from "../handlers/request/openapi-docs-handler.ts";
+import { DevDashboardHandler } from "../handlers/dev/dashboard/index.ts";
 
 /** Valid proxy environment values */
 const VALID_PROXY_ENVIRONMENTS = ["preview", "production"] as const;
@@ -188,6 +189,7 @@ export function createVeryfrontHandler(
     new DebugContextHandler(), // Priority: 300 (HIGH, dev only - context debugging)
     new OpenAPIHandler(), // Priority: 300 (HIGH, serves /_openapi.json)
     new OpenAPIDocsHandler(), // Priority: 300 (HIGH, serves /_docs with Scalar UI)
+    new DevDashboardHandler(), // Priority: 300 (HIGH, dev only - unified dev dashboard at /_dev)
     new StudioEndpointsHandler(), // Priority: 300 (HIGH, Studio iframe scripts)
     new DevFileHandler(), // Priority: 400 (dev only)
     new SnippetHandler(), // Priority: 450 (before static, handles @/ component previews)
@@ -447,6 +449,7 @@ export function createVeryfrontHandler(
           proxyToken,
           proxyEnvironment: proxyEnv,
           environmentName,
+          routeRegistry: registry,
         };
 
         // Track metrics

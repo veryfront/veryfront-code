@@ -51,6 +51,15 @@ export interface HandlerContext {
   proxyEnvironment?: "preview" | "production";
   /** Actual environment name from API (e.g., "Development", "Production") */
   environmentName?: string;
+  /** Route registry for handler chain inspection (dev dashboard) */
+  routeRegistry?: {
+    getHandlers(): ReadonlyArray<{ metadata: HandlerMetadata }>;
+    getStats(): {
+      totalHandlers: number;
+      handlersByPriority: Record<string, number>;
+      handlerNames: string[];
+    };
+  };
 }
 
 export interface HandlerResult {

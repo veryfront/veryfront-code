@@ -176,6 +176,14 @@ function ChatInterface() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
+  // Generate a unique ID (with fallback for environments without crypto.randomUUID)
+  const generateId = () => {
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+      return crypto.randomUUID();
+    }
+    return `${Date.now()}-${Math.random().toString(36).substring(2, 11)}`;
+  };
+
   // Initialize session ID
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -184,7 +192,7 @@ function ChatInterface() {
     if (storedSessionId) {
       setSessionId(storedSessionId);
     } else {
-      const newSessionId = crypto.randomUUID();
+      const newSessionId = generateId();
       localStorage.setItem('ai-assistant-session-id', newSessionId);
       setSessionId(newSessionId);
     }
@@ -322,12 +330,12 @@ function ChatInterface() {
         method: 'DELETE',
       });
 
-      const newSessionId = crypto.randomUUID();
+      const newSessionId = generateId();
       localStorage.setItem('ai-assistant-session-id', newSessionId);
       setSessionId(newSessionId);
       setMessages([]);
-    } catch (error) {
-      console.error('Error clearing conversation:', error);
+    } catch (err) {
+      console.error('Error clearing conversation:', err);
     }
   };
 
