@@ -4,7 +4,7 @@ category: "routing"
 level: "beginner"
 keywords: ["routing", "app-router", "pages-router", "file-based", "routes", "navigation"]
 ai_summary: "Complete overview of Veryfront's file-based routing system supporting both App Router and Pages Router patterns"
-related: ["routing/app-router", "routing/pages-router", "routing/dynamic-routes", "routing/api-routes"]
+related: ["routing/app-router", "routing/pages-router", "routing/dynamic-routes", "routing/api-routes", "routing/openapi"]
 version: "0.1.0"
 last_updated: "2025-11-22"
 ---
@@ -448,6 +448,7 @@ Before diving into routing, make sure you have:
 - [Pages Router Guide](./pages-router.md) - Simple, straightforward routing
 - [Dynamic Routes Guide](./dynamic-routes.md) - URL parameters and catch-all routes
 - [API Routes Guide](./api-routes.md) - Build RESTful APIs and webhooks
+- [OpenAPI & Docs Guide](./openapi.md) - Auto-generate API documentation and MCP tools
 
 ### Related Guides
 
