@@ -10,12 +10,31 @@ import type { ValidationOptions } from "./types.ts";
  */
 export const ValidationPresets = {
   /**
-   * Strict validation for user-provided paths
+   * Strict validation for user-provided paths.
+   * Includes common directory patterns used in React projects.
    */
   userInput: (baseDir: string): ValidationOptions => ({
     baseDir,
     level: "strict",
-    allowedDirs: ["app", "pages", "public", "components", "lib"],
+    allowedDirs: [
+      // Framework directories
+      "app",
+      "pages",
+      "public",
+      "components",
+      "lib",
+      // Common user directories
+      "src",
+      "utils",
+      "helpers",
+      "hooks",
+      "services",
+      "styles",
+      "assets",
+      "constants",
+      "types",
+      "api",
+    ],
     followSymlinks: false,
     checkExists: true,
     allowAbsolute: false,

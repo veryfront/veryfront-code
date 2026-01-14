@@ -32,6 +32,9 @@ export interface SecureFsConfig {
   /** Security context (determines validation strictness) */
   context?: SecurityContext;
 
+  /** Context-specific options (e.g., allowedImportDirs for module-loading) */
+  contextOptions?: ContextOptions;
+
   /** Custom validation options (overrides context preset) */
   validationOptions?: Partial<ValidationOptions>;
 
@@ -51,9 +54,19 @@ export interface SecurityEvent {
   timestamp: Date;
 }
 
+export interface ContextOptions {
+  /**
+   * Restrict module imports to specific directories (opt-in security).
+   * Only applies to "module-loading" context.
+   * When not set, users can import from any directory in the project.
+   */
+  allowedImportDirs?: string[];
+}
+
 function getContextValidationOptions(
   context: SecurityContext,
   baseDir: string,
+  options?: ContextOptions,
 ): ValidationOptions {
   switch (context) {
     case "user-input":
@@ -74,9 +87,9 @@ function getContextValidationOptions(
       return {
         baseDir,
         level: "normal",
-        // Allow all files within project directory (no directory restrictions)
-        // Security is ensured by baseDir containment check
-        allowedDirs: [],
+        // When allowedImportDirs is set, restrict to those directories
+        // Otherwise allow all files within project directory (max flexibility)
+        allowedDirs: options?.allowedImportDirs ?? [],
         followSymlinks: false,
         allowAbsolute: true, // Allow node_modules, etc.
       };
@@ -94,19 +107,21 @@ export class SecureFs {
   constructor(config: SecureFsConfig) {
     this.config = {
       context: "internal",
+      contextOptions: {},
       throwOnError: true,
       onSecurityEvent: () => {},
       validationOptions: {},
       ...config,
     };
 
-    const contextOptions = getContextValidationOptions(
+    const contextValidationOptions = getContextValidationOptions(
       this.config.context,
       this.config.baseDir,
+      this.config.contextOptions,
     );
 
     this.validationOptions = {
-      ...contextOptions,
+      ...contextValidationOptions,
       ...this.config.validationOptions,
       baseDir: this.config.baseDir,
       adapter: this.config.adapter,

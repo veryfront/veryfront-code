@@ -37,6 +37,11 @@ export interface BatchHandlerOptions {
   projectId?: string;
   branch?: string | null;
   dev?: boolean;
+  /**
+   * Restrict module imports to specific directories (opt-in security).
+   * When not set, users can import from any directory in the project.
+   */
+  allowedImportDirs?: string[];
 }
 
 /** Maximum number of modules that can be batched in one request */
@@ -82,7 +87,8 @@ export async function handleModuleBatch(
     });
   }
 
-  const { projectDir, adapter, projectSlug, projectId, branch, dev = false } = options;
+  const { projectDir, adapter, projectSlug, projectId, branch, dev = false, allowedImportDirs } =
+    options;
   const projectKey = projectId || projectSlug || "default";
 
   // Detect SSR mode
@@ -94,6 +100,9 @@ export async function handleModuleBatch(
     baseDir: projectDir,
     adapter,
     context: "module-loading",
+    contextOptions: {
+      allowedImportDirs, // Pass through from config (undefined = no restrictions)
+    },
     throwOnError: false,
   });
 

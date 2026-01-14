@@ -551,3 +551,108 @@ describe("Path Validation - Performance", () => {
     assertEquals(avgTime < 0.1, true, `Avg time: ${avgTime}ms`);
   });
 });
+
+describe("Path Validation - Module Loading Context", () => {
+  const baseDir = "/project";
+
+  describe("without allowedImportDirs (default - max flexibility)", () => {
+    it("should allow imports from any directory in project", () => {
+      // No allowedDirs = empty array = no restrictions
+      const result = validatePathSync("custom-folder/utils.ts", {
+        baseDir,
+        allowedDirs: [], // Simulates module-loading context default
+      });
+      assertEquals(result.valid, true);
+    });
+
+    it("should allow imports from src directory", () => {
+      const result = validatePathSync("src/components/Button.tsx", {
+        baseDir,
+        allowedDirs: [],
+      });
+      assertEquals(result.valid, true);
+    });
+
+    it("should allow imports from deeply nested paths", () => {
+      const result = validatePathSync("src/features/auth/hooks/useAuth.ts", {
+        baseDir,
+        allowedDirs: [],
+      });
+      assertEquals(result.valid, true);
+    });
+
+    it("should still block path traversal attacks", () => {
+      const result = validatePathSync("../../../etc/passwd", {
+        baseDir,
+        allowedDirs: [],
+      });
+      assertEquals(result.valid, false);
+    });
+  });
+
+  describe("with allowedImportDirs (opt-in security)", () => {
+    const restrictedDirs = ["app", "pages", "components", "lib", "src"];
+
+    it("should allow imports from allowed directories", () => {
+      const result = validatePathSync("components/Button.tsx", {
+        baseDir,
+        allowedDirs: restrictedDirs,
+      });
+      assertEquals(result.valid, true);
+    });
+
+    it("should allow imports from src directory when configured", () => {
+      const result = validatePathSync("src/utils/helpers.ts", {
+        baseDir,
+        allowedDirs: restrictedDirs,
+      });
+      assertEquals(result.valid, true);
+    });
+
+    it("should block imports from directories not in allowlist", () => {
+      const result = validatePathSync("secret/private-data.ts", {
+        baseDir,
+        allowedDirs: restrictedDirs,
+      });
+      assertEquals(result.valid, false);
+      assertEquals(result.code, PathValidationError.NOT_IN_ALLOWLIST);
+    });
+
+    it("should block imports from custom directories when restricted", () => {
+      const result = validatePathSync("custom-folder/utils.ts", {
+        baseDir,
+        allowedDirs: restrictedDirs,
+      });
+      assertEquals(result.valid, false);
+      assertEquals(result.code, PathValidationError.NOT_IN_ALLOWLIST);
+    });
+
+    it("should still block path traversal even from allowed dirs", () => {
+      const result = validatePathSync("app/../../etc/passwd", {
+        baseDir,
+        allowedDirs: restrictedDirs,
+      });
+      assertEquals(result.valid, false);
+    });
+  });
+
+  describe("userInput preset should have expanded allowlist", () => {
+    it("should include common user directories", () => {
+      const options = ValidationPresets.userInput(baseDir);
+      // Verify expanded preset includes common directories
+      assertEquals(options.allowedDirs?.includes("src"), true);
+      assertEquals(options.allowedDirs?.includes("utils"), true);
+      assertEquals(options.allowedDirs?.includes("hooks"), true);
+      assertEquals(options.allowedDirs?.includes("services"), true);
+      assertEquals(options.allowedDirs?.includes("styles"), true);
+    });
+
+    it("should still include framework directories", () => {
+      const options = ValidationPresets.userInput(baseDir);
+      assertEquals(options.allowedDirs?.includes("app"), true);
+      assertEquals(options.allowedDirs?.includes("pages"), true);
+      assertEquals(options.allowedDirs?.includes("components"), true);
+      assertEquals(options.allowedDirs?.includes("lib"), true);
+    });
+  });
+});

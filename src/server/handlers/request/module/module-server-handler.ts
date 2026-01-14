@@ -55,6 +55,8 @@ export async function handleModuleServer(
       branch: ctx.parsedDomain?.branch ?? null,
       // Pass release ID for production mode (published files)
       releaseId: ctx.releaseId ?? null,
+      // Pass security config for opt-in import restrictions
+      allowedImportDirs: ctx.config?.security?.allowedImportDirs,
     });
 
     const builder = createResponseBuilder(ctx);
