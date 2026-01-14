@@ -1,4 +1,7 @@
-import { getEnv } from "../src/platform/compat/process.ts";
+// Inline getEnv to avoid dependency on src/platform/compat (not copied in Docker)
+function getEnv(key: string): string | undefined {
+  return Deno.env.get(key);
+}
 import { getTraceContext } from "./tracing.ts";
 
 export type LogLevel = "debug" | "info" | "warn" | "error";

@@ -33,7 +33,7 @@ import { proxyLogger } from "./logger.ts";
 // Configuration from environment variables
 const config = {
   apiBaseUrl: Deno.env.get("VERYFRONT_API_BASE_URL") ||
-    "http://api.veryfront.dev:4000",
+    "http://api.lvh.me:4000",
   clientId: Deno.env.get("OAUTH_CLIENT_ID") || "",
   clientSecret: Deno.env.get("OAUTH_CLIENT_SECRET") || "",
   previewClientId: Deno.env.get("OAUTH_PREVIEW_CLIENT_ID") || "",

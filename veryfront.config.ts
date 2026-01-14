@@ -11,9 +11,9 @@
  */
 
 // Default URLs
-const DEFAULT_API_URL_LOCAL = "http://api.veryfront.dev:4000";
+const DEFAULT_API_URL_LOCAL = "http://api.lvh.me:4000";
 const DEFAULT_API_URL_PROD = "https://api.veryfront.com";
-const DEFAULT_CORS_ORIGIN_LOCAL = "http://api.veryfront.dev:4000";
+const DEFAULT_CORS_ORIGIN_LOCAL = "http://api.lvh.me:4000";
 
 class ConfigError extends Error {
   constructor(message: string) {
@@ -29,7 +29,8 @@ class ConfigError extends Error {
 let env: Record<string, string> = {};
 try {
   const { load } = await import("https://deno.land/std@0.220.0/dotenv/mod.ts");
-  env = await load({ envPath: ".env" });
+  // examplePath: null skips validation against .env.example (which requires all vars)
+  env = await load({ envPath: ".env", examplePath: null });
 } catch {
   // .env doesn't exist (production) - use environment variables only
 }
@@ -155,7 +156,7 @@ export default useGitHub ? {
   // Dev server config (ignored in production)
   dev: {
     port: 3001,
-    host: "veryfront.dev",
+    host: "lvh.me",
     hmr: contentSource.type === "branch", // Only enable HMR for branch mode
   },
 
