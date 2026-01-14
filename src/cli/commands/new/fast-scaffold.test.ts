@@ -5,20 +5,36 @@
 
 import { assertEquals, assertExists } from "jsr:@std/assert@1";
 import { describe, it } from "jsr:@std/testing@1/bdd";
+import type { ScaffoldResult } from "./fast-scaffold.ts";
 
 // Test the scaffolding result structure
 describe("fast-scaffold", () => {
   describe("ScaffoldResult type", () => {
     it("should have required properties", () => {
-      const result = {
+      const result: ScaffoldResult = {
         filesWritten: 12,
-        template: "ai" as const,
+        template: "ai",
         slug: "my-app",
+        integrations: [],
       };
 
       assertEquals(result.filesWritten, 12);
       assertEquals(result.template, "ai");
       assertEquals(result.slug, "my-app");
+      assertEquals(result.integrations.length, 0);
+    });
+
+    it("should support integrations array", () => {
+      const result: ScaffoldResult = {
+        filesWritten: 20,
+        template: "ai",
+        slug: "my-app",
+        integrations: ["github", "slack"],
+      };
+
+      assertEquals(result.integrations.length, 2);
+      assertEquals(result.integrations[0], "github");
+      assertEquals(result.integrations[1], "slack");
     });
   });
 
@@ -42,6 +58,61 @@ describe("fast-scaffold", () => {
 
       assertExists(content);
       assertEquals(content.includes("OPENAI_API_KEY"), true);
+    });
+
+    it("should create .env with integration env vars", () => {
+      const envVars: Record<string, string> = {
+        OPENAI_API_KEY: "sk-your-openai-api-key",
+        GITHUB_CLIENT_ID: "your-github-client-id",
+        GITHUB_CLIENT_SECRET: "your-github-client-secret",
+      };
+
+      const content = Object.entries(envVars)
+        .map(([key, value]) => `${key}=${value}`)
+        .join("\n");
+
+      assertExists(content);
+      assertEquals(content.includes("OPENAI_API_KEY"), true);
+      assertEquals(content.includes("GITHUB_CLIENT_ID"), true);
+      assertEquals(content.includes("GITHUB_CLIENT_SECRET"), true);
+    });
+  });
+
+  describe(".env.example generation", () => {
+    it("should create .env.example with documentation headers", () => {
+      const lines = [
+        "# Environment variables",
+        "# Copy this file to .env and fill in your values",
+        "",
+        "# OpenAI API key (https://platform.openai.com/api-keys)",
+        "OPENAI_API_KEY=sk-...",
+      ];
+
+      const content = lines.join("\n") + "\n";
+      assertExists(content);
+      assertEquals(content.includes("# Environment variables"), true);
+      assertEquals(content.includes("OPENAI_API_KEY"), true);
+    });
+
+    it("should include integration credentials section", () => {
+      const integrationEnvVars = [
+        { name: "GITHUB_CLIENT_ID", placeholder: "your-github-client-id" },
+        { name: "GITHUB_CLIENT_SECRET", placeholder: "your-github-client-secret" },
+      ];
+
+      const lines = [
+        "# Environment variables",
+        "",
+        "# Integration credentials",
+      ];
+
+      for (const { name, placeholder } of integrationEnvVars) {
+        lines.push(`${name}=${placeholder}`);
+      }
+
+      const content = lines.join("\n") + "\n";
+      assertEquals(content.includes("# Integration credentials"), true);
+      assertEquals(content.includes("GITHUB_CLIENT_ID"), true);
     });
   });
 });
