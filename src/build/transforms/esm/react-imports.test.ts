@@ -133,6 +133,78 @@ import { renderToString } from "react-dom/server"`;
       const result = await resolveReactImports(code);
       expect(result).toBe(code);
     });
+
+    describe("SSR mode (forSSR = true)", () => {
+      it("should resolve React to esm.sh URL for SSR", async () => {
+        const code = 'import React from "react"';
+        const result = await resolveReactImports(code, true);
+        expect(result).toBe('import React from "https://esm.sh/react@18.3.1?target=es2022"');
+      });
+
+      it("should resolve react/jsx-runtime to esm.sh URL for SSR", async () => {
+        const code = 'import { jsx } from "react/jsx-runtime"';
+        const result = await resolveReactImports(code, true);
+        expect(result).toBe(
+          'import { jsx } from "https://esm.sh/react@18.3.1/jsx-runtime?target=es2022"',
+        );
+      });
+
+      it("should resolve react/jsx-dev-runtime to esm.sh URL for SSR", async () => {
+        const code = 'import { jsxDEV } from "react/jsx-dev-runtime"';
+        const result = await resolveReactImports(code, true);
+        expect(result).toBe(
+          'import { jsxDEV } from "https://esm.sh/react@18.3.1/jsx-dev-runtime?target=es2022"',
+        );
+      });
+
+      it("should resolve react-dom to esm.sh URL for SSR", async () => {
+        const code = 'import ReactDOM from "react-dom"';
+        const result = await resolveReactImports(code, true);
+        expect(result).toBe('import ReactDOM from "https://esm.sh/react-dom@18.3.1?target=es2022"');
+      });
+
+      it("should resolve react-dom/server to esm.sh URL for SSR", async () => {
+        const code = 'import { renderToString } from "react-dom/server"';
+        const result = await resolveReactImports(code, true);
+        expect(result).toBe(
+          'import { renderToString } from "https://esm.sh/react-dom@18.3.1/server?target=es2022"',
+        );
+      });
+
+      it("should resolve react-dom/client to esm.sh URL for SSR", async () => {
+        const code = 'import { createRoot } from "react-dom/client"';
+        const result = await resolveReactImports(code, true);
+        expect(result).toBe(
+          'import { createRoot } from "https://esm.sh/react-dom@18.3.1/client?target=es2022"',
+        );
+      });
+
+      it("should handle all React import types for SSR", async () => {
+        const code = `import React from "react"
+import { jsx } from "react/jsx-runtime"
+import { jsxDEV } from "react/jsx-dev-runtime"
+import ReactDOM from "react-dom"
+import { createRoot } from "react-dom/client"
+import { renderToString } from "react-dom/server"`;
+        const result = await resolveReactImports(code, true);
+
+        // SSR now uses esm.sh URLs (same as browser) for dynamic import compatibility
+        expect(result).toContain('from "https://esm.sh/react@18.3.1?target=es2022"');
+        expect(result).toContain('from "https://esm.sh/react@18.3.1/jsx-runtime?target=es2022"');
+        expect(result).toContain(
+          'from "https://esm.sh/react@18.3.1/jsx-dev-runtime?target=es2022"',
+        );
+        expect(result).toContain('from "https://esm.sh/react-dom@18.3.1?target=es2022"');
+        expect(result).toContain('from "https://esm.sh/react-dom@18.3.1/client?target=es2022"');
+        expect(result).toContain('from "https://esm.sh/react-dom@18.3.1/server?target=es2022"');
+      });
+
+      it("should not modify non-React imports for SSR", async () => {
+        const code = 'import { something } from "other-package"';
+        const result = await resolveReactImports(code, true);
+        expect(result).toBe(code);
+      });
+    });
   });
 
   describe("addDepsToEsmShUrls", () => {

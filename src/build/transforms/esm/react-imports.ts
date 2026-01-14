@@ -21,24 +21,31 @@ function getVeryfrontAIReactPath(subpath: string = ""): string {
 /**
  * Resolve React imports based on target environment.
  *
- * SSR: Leave React as bare specifiers so Deno's import map (deno.json) resolves
- * them to npm: packages. This ensures user code uses the same React instance
- * as react-dom/server (which is from npm).
+ * Both SSR and Browser now use esm.sh URLs for React to ensure consistency.
+ *
+ * SSR: Transform React to esm.sh URLs. This is necessary because when SSR modules
+ * are dynamically imported from file:// URLs, Deno's import map from deno.json
+ * doesn't apply to the imported module's dependencies. Bare specifiers like "react"
+ * fail because node_modules may not exist in Docker. Using esm.sh URLs ensures
+ * Deno can fetch and cache React directly, regardless of node_modules.
  *
  * Browser: Transform to esm.sh URLs (via browser import map in HTML).
  *
- * This separation is necessary because react-dom/server from npm has its own
- * internal dependency on npm:react. Using esm.sh/react for user code while
- * react-dom/server uses npm:react creates a React instance mismatch.
+ * Both environments use the same esm.sh URLs (e.g., https://esm.sh/react@18.3.1),
+ * which ensures user code uses the same React instance as react-dom/server.
+ * The deno.json import map also resolves react-dom/server to esm.sh with
+ * external=react, so all code shares the same React instance from esm.sh.
  */
 // deno-lint-ignore require-await
 export async function resolveReactImports(code: string, forSSR: boolean = false): Promise<string> {
+  // Get esm.sh URLs for React - same for both SSR and browser
+  const reactImports = getReactImportMap();
+
   if (forSSR) {
-    // SSR: Only resolve veryfront AI imports to file:// URLs
-    // Framework exports (veryfront/head, veryfront/router, etc.) are left as bare specifiers
-    // so they get resolved by deno.json import map - this ensures the same module instance
-    // is used by both framework code and user code (avoiding React context mismatch issues)
+    // SSR: Resolve React and veryfront AI imports
     const ssrImports: Record<string, string> = {
+      // React - use esm.sh URLs for dynamic file:// import compatibility
+      ...reactImports,
       // AI modules - file:// URLs for local resolution (these don't have context issues)
       "veryfront/ai/react": getVeryfrontAIReactPath(),
       "veryfront/ai/components": getVeryfrontAIReactPath("components/index.ts"),
@@ -53,7 +60,6 @@ export async function resolveReactImports(code: string, forSSR: boolean = false)
   }
 
   // For browser, transform to esm.sh URLs
-  const reactImports = getReactImportMap();
   return replaceSpecifiers(code, (specifier) => {
     return reactImports[specifier] || null;
   });
