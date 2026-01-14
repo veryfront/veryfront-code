@@ -148,6 +148,7 @@ export class SSRHandler extends BaseHandler {
           productionMode: prodMode,
           releaseId: prodMode ? ctx.releaseId : undefined,
           branch: !prodMode ? branch : undefined,
+          environmentName: ctx.environmentName,
         }, ctx);
 
         return fsAdapter.runWithContext(
@@ -159,6 +160,7 @@ export class SSRHandler extends BaseHandler {
             productionMode: prodMode,
             releaseId: ctx.releaseId,
             branch,
+            environmentName: ctx.environmentName,
           },
         );
       }

@@ -39,13 +39,21 @@ export interface ExtendedFileSystemAdapter extends FileSystemAdapter {
   /** Set production mode for the adapter */
   setProductionMode(enabled: boolean, releaseId?: string | null): void;
 
-  /** Run a function with the specified project context */
+  /**
+   * Run a function with the specified project context.
+   * Options are mutually exclusive: use releaseId for production, branch for preview.
+   */
   runWithContext<T>(
     projectSlug: string,
     token: string,
     fn: () => Promise<T>,
     projectId?: string,
-    options?: { productionMode?: boolean; releaseId?: string | null; branch?: string | null },
+    options?: {
+      productionMode?: boolean;
+      releaseId?: string | null;
+      branch?: string | null;
+      environmentName?: string | null;
+    },
   ): Promise<T>;
 
   /** Read raw bytes when binary-safe access is required */
@@ -199,7 +207,12 @@ export class FSAdapterWrapper implements ExtendedFileSystemAdapter {
     token: string,
     fn: () => Promise<T>,
     projectId?: string,
-    options?: { productionMode?: boolean; releaseId?: string | null; branch?: string | null },
+    options?: {
+      productionMode?: boolean;
+      releaseId?: string | null;
+      branch?: string | null;
+      environmentName?: string | null;
+    },
   ): Promise<T> {
     if (!isContextualAdapter(this._fsAdapter) || !this._fsAdapter.runWithContext) {
       throw new NotSupportedError("runWithContext", this._fsAdapter.constructor.name);

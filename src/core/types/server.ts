@@ -49,6 +49,8 @@ export interface HandlerContext {
   proxyToken?: string;
   /** Environment scope from proxy (via x-environment header) */
   proxyEnvironment?: "preview" | "production";
+  /** Actual environment name from API (e.g., "Development", "Production") */
+  environmentName?: string;
 }
 
 export interface HandlerResult {

@@ -14,6 +14,8 @@ interface RequestContext {
   releaseId?: string | null;
   /** Branch name for preview mode (mutually exclusive with releaseId) */
   branch?: string | null;
+  /** Actual environment name from API (e.g., "Development", "Production") */
+  environmentName?: string | null;
 }
 
 interface RunWithContextOptions {
@@ -25,6 +27,8 @@ interface RunWithContextOptions {
   releaseId?: string | null;
   /** Branch name for preview mode (mutually exclusive with releaseId) */
   branch?: string | null;
+  /** Actual environment name from API (e.g., "Development", "Production") */
+  environmentName?: string | null;
 }
 
 const asyncLocalStorage = new AsyncLocalStorage<RequestContext>();
@@ -51,11 +55,17 @@ export class MultiProjectFSAdapter implements FSAdapter {
     token: string,
     fn: () => Promise<T>,
     projectId?: string,
-    options?: { productionMode?: boolean; releaseId?: string | null; branch?: string | null },
+    options?: {
+      productionMode?: boolean;
+      releaseId?: string | null;
+      branch?: string | null;
+      environmentName?: string | null;
+    },
   ): Promise<T> {
     const productionMode = options?.productionMode ?? false;
     const releaseId = options?.releaseId ?? null;
     const branch = options?.branch ?? null;
+    const environmentName = options?.environmentName ?? null;
 
     logger.debug("[MultiProjectFSAdapter] runWithContext called", {
       projectSlug,
@@ -63,6 +73,7 @@ export class MultiProjectFSAdapter implements FSAdapter {
       productionMode,
       releaseId: productionMode ? releaseId : undefined,
       branch: !productionMode ? branch : undefined,
+      environmentName,
     });
 
     // Store context for this request
@@ -76,6 +87,7 @@ export class MultiProjectFSAdapter implements FSAdapter {
       productionMode,
       releaseId: productionMode ? releaseId : null,
       branch: productionMode ? null : branch,
+      environmentName,
     };
 
     return asyncLocalStorage.run(context, fn);
@@ -117,12 +129,14 @@ export class MultiProjectFSAdapter implements FSAdapter {
     // Production mode is set by runWithContext() - always present in context
     const productionMode = context.productionMode ?? false;
     const releaseId = context.releaseId ?? null;
+    const environmentName = context.environmentName ?? null;
 
     logger.debug("[MultiProjectFSAdapter] getAdapter with context", {
       projectSlug: context.projectSlug,
       productionMode,
       releaseId,
       branch: context.branch,
+      environmentName,
     });
 
     return this.manager.getAdapter(
@@ -131,6 +145,7 @@ export class MultiProjectFSAdapter implements FSAdapter {
       context.projectId,
       productionMode,
       releaseId,
+      environmentName,
     );
   }
 

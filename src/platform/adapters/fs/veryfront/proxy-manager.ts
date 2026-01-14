@@ -70,10 +70,12 @@ export class ProxyFSAdapterManager {
     projectId?: string,
     productionMode?: boolean,
     releaseId?: string | null,
+    environmentName?: string | null,
   ): Promise<VeryfrontFSAdapter> {
     const effectiveToken = token || this.baseConfig.veryfront?.apiToken || "";
     const effectiveProductionMode = productionMode ?? false;
     const effectiveReleaseId = releaseId ?? null;
+    const effectiveEnvironmentName = environmentName ?? null;
 
     // Cache key includes productionMode and releaseId to prevent race conditions
     const cacheKey = buildCacheKey(projectSlug, effectiveProductionMode, effectiveReleaseId);
@@ -82,6 +84,7 @@ export class ProxyFSAdapterManager {
       projectSlug,
       productionMode: effectiveProductionMode,
       releaseId: effectiveReleaseId,
+      environmentName: effectiveEnvironmentName,
       cacheKey,
       hasExisting: this.adapters.has(cacheKey),
       totalCachedAdapters: this.adapters.size,
@@ -124,6 +127,7 @@ export class ProxyFSAdapterManager {
       projectId,
       effectiveProductionMode,
       effectiveReleaseId,
+      effectiveEnvironmentName,
     );
   }
 
@@ -134,6 +138,7 @@ export class ProxyFSAdapterManager {
     projectId: string | undefined,
     productionMode: boolean,
     releaseId: string | null,
+    environmentName: string | null,
   ): Promise<VeryfrontFSAdapter> {
     const effectiveToken = token || this.baseConfig.veryfront?.apiToken;
 
@@ -142,6 +147,7 @@ export class ProxyFSAdapterManager {
       projectSlug,
       productionMode,
       releaseId,
+      environmentName,
       totalCachedAdapters: this.adapters.size,
     });
 
@@ -170,10 +176,13 @@ export class ProxyFSAdapterManager {
     const adapter = new VeryfrontFSAdapter(config);
 
     // Set content context based on production mode before initialization
+    // Use actual environment name from API lookup instead of hardcoding "production"
+    // This fixes the issue where API has environments named "Development" but we were looking for "production"
+    const resolvedEnvironmentName = environmentName || "production";
     const context: ResolvedContentContext = productionMode
       ? releaseId
         ? { sourceType: "release", projectSlug, releaseId }
-        : { sourceType: "environment", projectSlug, environmentName: "production" }
+        : { sourceType: "environment", projectSlug, environmentName: resolvedEnvironmentName }
       : { sourceType: "branch", projectSlug, branch: "main" };
 
     logger.debug("[ProxyFSAdapterManager] Setting content context for new adapter", {
@@ -181,6 +190,8 @@ export class ProxyFSAdapterManager {
       projectSlug,
       productionMode,
       releaseId,
+      environmentName,
+      resolvedEnvironmentName,
       context,
     });
 
