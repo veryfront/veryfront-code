@@ -157,8 +157,8 @@
   },
   "tasks": {
     "setup": "deno run --allow-all scripts/setup.ts",
-    "dev": "deno run --allow-all scripts/dev-proxy.ts",
-    "dev:direct": "deno run --allow-all --unstable-net --unstable-worker-options src/cli/main.ts dev",
+    "dev": "deno run --allow-all --unstable-net --unstable-worker-options src/cli/main.ts dev",
+    "dev:multi": "deno run --allow-all scripts/dev-proxy.ts",
     "build": "deno compile --allow-all --output ../../bin/veryfront src/cli/main.ts",
     "build:npm": "deno run -A scripts/build-npm.ts",
     "release": "deno run -A scripts/release.ts",
