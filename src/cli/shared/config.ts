@@ -8,6 +8,7 @@
 import { join } from "@veryfront/platform/compat/path/index.ts";
 import { cwd, getEnv } from "@veryfront/platform/compat/process.ts";
 import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
+import { readToken } from "../auth/token-store.ts";
 
 /**
  * Configuration file structure (.veryfrontrc)
@@ -100,12 +101,20 @@ export async function resolveConfig(
   // API URL: env var > config file > default
   const apiUrl = getEnv("VERYFRONT_API_URL") || configFile?.apiUrl || DEFAULT_API_URL;
 
-  // API Token: env var > config file
-  const apiToken = getEnv("VERYFRONT_API_TOKEN") || configFile?.apiToken;
+  // API Token: env var > global token > config file
+  let apiToken = getEnv("VERYFRONT_API_TOKEN") || configFile?.apiToken;
+
+  // If no token from env or config, try global token store
+  if (!apiToken) {
+    const globalToken = await readToken();
+    if (globalToken) {
+      apiToken = globalToken;
+    }
+  }
 
   if (!apiToken) {
     throw new Error(
-      "Missing API token. Set VERYFRONT_API_TOKEN environment variable or add apiToken to .veryfrontrc",
+      "Missing API token. Run 'veryfront login' or set VERYFRONT_API_TOKEN environment variable",
     );
   }
 
