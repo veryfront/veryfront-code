@@ -544,8 +544,8 @@ export class SSRHandler extends BaseHandler {
       // Generic error fallback
       const body = isHead ? null : generateStyledErrorHtml(
         500,
-        "Server Error",
-        "An unexpected error occurred while rendering this page",
+        "Internal Server Error",
+        "Something went wrong while rendering this page",
       );
 
       const response = builder
