@@ -59,7 +59,19 @@ export class LayoutCollector {
   }
 
   async collectLayouts(pageInfo: EntityInfo): Promise<LayoutCollectionResult> {
-    const layoutValue = pageInfo.entity.frontmatter.layout;
+    // Layout can be string, boolean (false to disable), or undefined
+    const layoutValue = pageInfo.entity.frontmatter.layout as string | boolean | undefined;
+
+    // Check if layout is explicitly disabled via `layout: false` or `layout: "false"`
+    const layoutDisabled = layoutValue === false || layoutValue === "false";
+    if (layoutDisabled) {
+      logger.info("[LayoutCollector] Layout explicitly disabled via frontmatter", {
+        pagePath: pageInfo.entity.path,
+        layoutValue,
+      });
+      return { layoutBundle: undefined, nestedLayouts: [] };
+    }
+
     const hasExplicitFrontmatterLayout = typeof layoutValue === "string" && layoutValue.length > 0;
 
     // Collect the named layout (from frontmatter or config.defaultLayout)
