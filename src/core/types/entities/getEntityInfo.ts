@@ -177,12 +177,20 @@ export async function getEntityBySlug(
   slug: string,
   adapter?: RuntimeAdapter,
 ): Promise<EntityInfo | null> {
+  // Handle .veryfront routes - strip the leading .veryfront from slug for path resolution
+  const isVeryfrontRoute = slug.startsWith(".veryfront/") || slug === ".veryfront";
+
   // If adapter has resolveFile, use pattern-based resolution
   if (adapter?.fs.resolveFile) {
     const basePaths = [
       pathHelper.join(projectDir, "pages", slug),
       pathHelper.join(projectDir, slug),
     ];
+
+    // Add .veryfront paths for .veryfront routes
+    if (isVeryfrontRoute) {
+      basePaths.unshift(pathHelper.join(projectDir, slug));
+    }
 
     if (slug === "index" || slug === "") {
       basePaths.unshift(
@@ -260,6 +268,16 @@ export async function getEntityBySlug(
     pathHelper.join(projectDir, `${slug}.tsx`),
     pathHelper.join(projectDir, `${slug}.ts`),
   ];
+
+  // For .veryfront routes, add the direct path at the start
+  if (isVeryfrontRoute) {
+    possiblePaths.unshift(
+      pathHelper.join(projectDir, `${slug}.mdx`),
+      pathHelper.join(projectDir, `${slug}.md`),
+      pathHelper.join(projectDir, `${slug}.tsx`),
+      pathHelper.join(projectDir, `${slug}.ts`),
+    );
+  }
 
   if (slug === "index" || slug === "") {
     possiblePaths.unshift(

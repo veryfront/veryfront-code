@@ -94,7 +94,7 @@ export async function saveModulePathCache(cacheDir: string): Promise<void> {
 export function clearModulePathCache(): void {
   modulePathCaches.clear();
   modulePathCacheLoaded.clear();
-  logger.info(`${LOG_PREFIX_MDX_LOADER} Cleared module path cache`);
+  logger.debug(`${LOG_PREFIX_MDX_LOADER} Cleared module path cache`);
 }
 
 /**
@@ -132,7 +132,7 @@ export function invalidateModulePaths(changedPaths: string[]): void {
     }
   }
 
-  logger.info(
+  logger.debug(
     `${LOG_PREFIX_MDX_LOADER} Selective invalidation: ${invalidatedCount} modules for ${changedPaths.length} files`,
   );
 }
@@ -150,7 +150,7 @@ export async function clearESMDiskCache(): Promise<void> {
         await Deno.remove(join(cacheDir, entry.name));
       }
     }
-    logger.info(`${LOG_PREFIX_MDX_LOADER} Cleared ESM disk cache`);
+    logger.debug(`${LOG_PREFIX_MDX_LOADER} Cleared ESM disk cache`);
   } catch (error) {
     // Cache dir might not exist yet
     if (!(error instanceof Deno.errors.NotFound)) {

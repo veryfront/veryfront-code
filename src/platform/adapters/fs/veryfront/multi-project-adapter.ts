@@ -57,7 +57,7 @@ export class MultiProjectFSAdapter implements FSAdapter {
     const releaseId = options?.releaseId ?? null;
     const branch = options?.branch ?? null;
 
-    logger.info("[MultiProjectFSAdapter] runWithContext called", {
+    logger.debug("[MultiProjectFSAdapter] runWithContext called", {
       projectSlug,
       hasToken: !!token,
       productionMode,
@@ -118,7 +118,7 @@ export class MultiProjectFSAdapter implements FSAdapter {
     const productionMode = context.productionMode ?? false;
     const releaseId = context.releaseId ?? null;
 
-    logger.info("[MultiProjectFSAdapter] getAdapter with context", {
+    logger.debug("[MultiProjectFSAdapter] getAdapter with context", {
       projectSlug: context.projectSlug,
       productionMode,
       releaseId,

@@ -46,7 +46,7 @@ export class ReadOperations {
 
     const file = fileList.find((f) => f.path === normalizedPath);
     if (file?.content) {
-      logger.info("[ReadOperations] Found content in file list cache", {
+      logger.debug("[ReadOperations] Found content in file list cache", {
         path: normalizedPath,
         contentLength: file.content.length,
       });
@@ -79,8 +79,7 @@ export class ReadOperations {
     const cacheKeyPrefix = buildFileCacheKeyPrefix(ctx);
     const cacheKey = `${cacheKeyPrefix}:${normalizedPath}`;
 
-    // Log context for debugging preview issues
-    logger.info("[ReadOperations] fetchContent context", {
+    logger.debug("[ReadOperations] fetchContent context", {
       path: normalizedPath,
       hasContextProvider: !!this.contextProvider,
       hasContext: !!ctx,
@@ -108,8 +107,7 @@ export class ReadOperations {
     // Fetch based on source type
     const isPublished = ctx?.sourceType !== "branch";
 
-    // Log decision for debugging HMR/preview issues
-    logger.info("[ReadOperations] fetchContent decision", {
+    logger.debug("[ReadOperations] fetchContent decision", {
       path: normalizedPath,
       isPublished,
       willFetch: isPublished ? "published (environment)" : "draft (branch)",
@@ -198,7 +196,7 @@ export class ReadOperations {
       );
 
       if (result) {
-        logger.info("[ReadOperations] Pattern search found file", {
+        logger.debug("[ReadOperations] Pattern search found file", {
           originalPath: apiPath,
           foundPath: result.path,
           contentLength: result.content.length,
@@ -239,7 +237,7 @@ export class ReadOperations {
       try {
         const content = await this.client.getPublishedFileContent(fallbackPath);
 
-        logger.info("[ReadOperations] Sequential fallback succeeded", {
+        logger.debug("[ReadOperations] Sequential fallback succeeded", {
           originalPath: apiPath,
           fallbackPath,
           contentLength: content.length,

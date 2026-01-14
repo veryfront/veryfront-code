@@ -85,12 +85,14 @@ async function tryExactMatch(
   // Fallback for adapters without resolveFile
   const candidates = [
     `${base}/page.mdx`,
+    `${base}/page.md`,
     `${base}/page.tsx`,
     `${base}/page.jsx`,
     `${base}/page.ts`,
     `${base}/page.js`,
     // index-like shorthand
     `${base}.mdx`,
+    `${base}.md`,
     `${base}.tsx`,
     `${base}.jsx`,
     `${base}.ts`,
@@ -156,7 +158,7 @@ async function tryDynamicMatch(
     }
   }
 
-  const pageExtensions = [".mdx", ".tsx", ".jsx", ".ts", ".js"];
+  const pageExtensions = [".mdx", ".md", ".tsx", ".jsx", ".ts", ".js"];
   for (const ext of pageExtensions) {
     const pageFile = join(currentDir, `page${ext}`);
     const entity = await tryLoadPageFile(pageFile, slug, adapter);

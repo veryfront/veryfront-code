@@ -56,7 +56,6 @@ export async function initializeOTLP(): Promise<void> {
   const config = getConfig();
 
   if (!config.enabled) {
-    console.log("[otel] Tracing disabled");
     initialized = true;
     return;
   }

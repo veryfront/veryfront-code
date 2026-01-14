@@ -134,16 +134,13 @@ export async function getRendererForProject(ctx: HandlerContext): Promise<Render
     // access to the MultiProjectFSAdapter's per-request context.
     let projectConfig = ctx.config;
     if (cacheKey !== "__single__" && ctx.projectSlug) {
-      rendererLogger.info("[RendererFactory] Loading project-specific config", {
+      rendererLogger.debug("[RendererFactory] Loading project-specific config", {
         projectSlug: cacheKey,
-        projectDir: ctx.projectDir,
       });
       clearConfigCache();
       projectConfig = await getConfig(ctx.projectDir, ctx.adapter);
-      rendererLogger.info("[RendererFactory] Project config loaded", {
+      rendererLogger.debug("[RendererFactory] Project config loaded", {
         projectSlug: cacheKey,
-        hasDefaultLayout: !!projectConfig?.defaultLayout,
-        defaultLayout: projectConfig?.defaultLayout,
       });
     }
 
@@ -169,7 +166,7 @@ export async function getRendererForProject(ctx: HandlerContext): Promise<Render
       createdAt: Date.now(),
     });
 
-    rendererLogger.info("[RendererFactory] Renderer cached", {
+    rendererLogger.debug("[RendererFactory] Renderer cached", {
       projectSlug: cacheKey,
       cacheSize: rendererCache.size,
     });

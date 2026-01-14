@@ -138,7 +138,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
     const projectId = this.client.getProjectId();
     this.projectData = await this.client.getProject(projectId);
 
-    logger.info("[VeryfrontFSAdapter] Project data fetched", {
+    logger.debug("[VeryfrontFSAdapter] Project data fetched", {
       provider: this.projectData.provider,
       layout: this.projectData.layout,
     });
@@ -148,7 +148,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
       this.contentContext = await this.resolveContentSource();
     }
 
-    logger.info("[VeryfrontFSAdapter] Content context resolved", {
+    logger.debug("[VeryfrontFSAdapter] Content context resolved", {
       sourceType: this.contentContext.sourceType,
       projectSlug: this.contentContext.projectSlug,
       branch: this.contentContext.branch,
@@ -394,7 +394,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
     if (this.invalidationTimer) {
       clearTimeout(this.invalidationTimer);
     }
-    logger.info("[VeryfrontFSAdapter] Scheduling invalidation", {
+    logger.debug("[VeryfrontFSAdapter] Scheduling invalidation", {
       debounceMs: INVALIDATION_DEBOUNCE_MS,
     });
     this.invalidationTimer = setTimeout(() => {
@@ -413,7 +413,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
     if (this.selectiveInvalidationTimer) {
       clearTimeout(this.selectiveInvalidationTimer);
     }
-    logger.info("[VeryfrontFSAdapter] Scheduling selective invalidation", {
+    logger.debug("[VeryfrontFSAdapter] Scheduling selective invalidation", {
       newPaths: changedPaths.length,
       totalPending: this.pendingChangedPaths.size,
       debounceMs: INVALIDATION_DEBOUNCE_MS,
@@ -429,7 +429,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
     const changedPaths = Array.from(this.pendingChangedPaths);
     this.pendingChangedPaths.clear();
 
-    logger.info("[VeryfrontFSAdapter] Performing selective invalidation", {
+    logger.debug("[VeryfrontFSAdapter] Performing selective invalidation", {
       changedPaths,
       count: changedPaths.length,
     });
@@ -448,7 +448,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
     }
     await Promise.all(deletionPromises);
 
-    logger.info("[VeryfrontFSAdapter] Cache entries deleted for changed paths", {
+    logger.debug("[VeryfrontFSAdapter] Cache entries deleted for changed paths", {
       changedPaths,
       prefixes: ["file:branch:", "file:release:", "file:env:"],
     });
@@ -458,7 +458,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
 
     // Clear SSR module cache to ensure fresh modules are loaded
     // This is critical for HMR - without this, browser refreshes but gets stale JS
-    logger.info("[VeryfrontFSAdapter] Clearing SSR module cache for HMR", {
+    logger.debug("[VeryfrontFSAdapter] Clearing SSR module cache for HMR", {
       changedPaths,
       hasCallback: !!this.invalidationCallbacks.clearSSRModuleCache,
     });
@@ -473,7 +473,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
         // Use setAsync to ensure Redis has fresh data before browser refresh
         // This prevents race conditions where other pods read stale Redis cache
         await this.cache.setAsync(cacheKey, files);
-        logger.info("[VeryfrontFSAdapter] Fresh files cached (memory + Redis)", {
+        logger.debug("[VeryfrontFSAdapter] Fresh files cached (memory + Redis)", {
           cacheKey,
           fileCount: files.length,
         });
@@ -489,7 +489,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
     this.invalidationCallbacks.triggerReload?.(changedPaths);
 
     const durationMs = Date.now() - startTime;
-    logger.info("[VeryfrontFSAdapter] Selective invalidation complete", {
+    logger.debug("[VeryfrontFSAdapter] Selective invalidation complete", {
       changedPaths: changedPaths.length,
       durationMs,
       totalInvalidations: this.pokeMetrics.invalidationsTriggered,
@@ -499,7 +499,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
   private async performInvalidation(): Promise<void> {
     const startTime = Date.now();
 
-    logger.info("[VeryfrontFSAdapter] ✅ CACHE INVALIDATION STARTED - clearing all caches");
+    logger.debug("[VeryfrontFSAdapter] CACHE INVALIDATION STARTED - clearing all caches");
 
     // Step 1: Clear all caches and indexes (await Redis deletion to prevent stale data race)
     // Use Promise.all to run Redis deletions in parallel for better performance
@@ -517,7 +517,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
     this.invalidationCallbacks.clearModulePathCache?.();
     this.invalidationCallbacks.clearSnippetCache?.();
 
-    logger.info("[VeryfrontFSAdapter] ✅ CACHES CLEARED (memory + Redis)", {
+    logger.debug("[VeryfrontFSAdapter] CACHES CLEARED (memory + Redis)", {
       textCacheCleared: textCount,
       contentCacheCleared: contentCount,
       statCacheCleared: statCount,
@@ -534,7 +534,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
         // Use setAsync to ensure Redis has fresh data before browser refresh
         // This prevents race conditions where other pods read stale Redis cache
         await this.cache.setAsync(cacheKey, files);
-        logger.info("[VeryfrontFSAdapter] ✅ FRESH FILES FETCHED", {
+        logger.debug("[VeryfrontFSAdapter] FRESH FILES FETCHED", {
           cacheKey,
           fileCount: files.length,
         });
@@ -546,10 +546,10 @@ export class VeryfrontFSAdapter implements FSAdapter {
 
     // Step 3: Trigger reload - content is now guaranteed to be available
     this.pokeMetrics.invalidationsTriggered++;
-    logger.info("[VeryfrontFSAdapter] ✅ TRIGGERING BROWSER RELOAD via ReloadNotifier");
+    logger.debug("[VeryfrontFSAdapter] TRIGGERING BROWSER RELOAD via ReloadNotifier");
     this.invalidationCallbacks.triggerReload?.();
 
-    logger.info("[VeryfrontFSAdapter] ✅ CACHE INVALIDATION COMPLETE", {
+    logger.debug("[VeryfrontFSAdapter] CACHE INVALIDATION COMPLETE", {
       textCacheCleared: textCount,
       contentCacheCleared: contentCount,
       durationMs: Date.now() - startTime,
@@ -695,11 +695,11 @@ export class VeryfrontFSAdapter implements FSAdapter {
 
     // If not in cache, try fetching file by entity ID from API
     // This is needed for layout UUIDs that may not be in the files list
-    logger.info("[VeryfrontFSAdapter] Fetching file by entity ID from API", { entityId });
+    logger.debug("[VeryfrontFSAdapter] Fetching file by entity ID from API", { entityId });
     try {
       const file = await this.client.getFileById(entityId);
       if (file) {
-        logger.info("[VeryfrontFSAdapter] File resolved from API", {
+        logger.debug("[VeryfrontFSAdapter] File resolved from API", {
           entityId,
           path: file.path,
           contentLength: file.content.length,
@@ -770,8 +770,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
   setContentContext(context: ResolvedContentContext): void {
     const oldContext = this.contentContext;
 
-    // Log incoming context for debugging HMR/preview issues
-    logger.info("[VeryfrontFSAdapter] setContentContext called", {
+    logger.debug("[VeryfrontFSAdapter] setContentContext called", {
       newSourceType: context.sourceType,
       newProjectSlug: context.projectSlug,
       newBranch: context.branch,
@@ -807,13 +806,13 @@ export class VeryfrontFSAdapter implements FSAdapter {
     if (contextChanged) {
       this.statOps.clearIndex();
       this.dirOps.clearTree();
-      logger.info("[VeryfrontFSAdapter] Cleared index and dirTree due to context change", {
+      logger.debug("[VeryfrontFSAdapter] Cleared index and dirTree due to context change", {
         oldContext,
         newContext: context,
       });
     }
 
-    logger.info("[VeryfrontFSAdapter] Content context set complete", {
+    logger.debug("[VeryfrontFSAdapter] Content context set complete", {
       sourceType: context.sourceType,
       projectSlug: context.projectSlug,
     });

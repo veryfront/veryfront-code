@@ -24,7 +24,7 @@ import {
 export async function destroyRenderer(cached: CachedRenderer): Promise<void> {
   const { renderer, projectSlug } = cached;
 
-  rendererLogger.info("[RendererFactory] Destroying renderer", {
+  rendererLogger.debug("[RendererFactory] Destroying renderer", {
     projectSlug,
     age: Math.round((Date.now() - cached.createdAt) / 1000),
   });
@@ -113,7 +113,7 @@ export async function evictProjectRenderer(projectSlug: string): Promise<void> {
   }
 
   if (toEvict.length > 0) {
-    rendererLogger.info("[RendererFactory] Evicted project renderers", {
+    rendererLogger.debug("[RendererFactory] Evicted project renderers", {
       projectSlug,
       count: toEvict.length,
     });

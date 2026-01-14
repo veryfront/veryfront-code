@@ -29,7 +29,12 @@ export async function buildEmbeddedPreset(
   await fs.mkdir(embeddedDir, { recursive: true });
   await fs.mkdir(join(embeddedDir, "rsc"), { recursive: true });
 
-  const candidates = [join(projectDir, "app", "page.mdx"), join(projectDir, "pages", "index.mdx")];
+  const candidates = [
+    join(projectDir, "app", "page.mdx"),
+    join(projectDir, "app", "page.md"),
+    join(projectDir, "pages", "index.mdx"),
+    join(projectDir, "pages", "index.md"),
+  ];
   let entryPath = "";
   for (const c of candidates) {
     try {
@@ -103,8 +108,8 @@ export async function buildEmbeddedPreset(
         const relNext = rel ? `${rel}/${ent.name}` : ent.name;
         if (ent.isDirectory) {
           await walk(abs, relNext);
-        } else if (ent.isFile && ent.name === "page.mdx") {
-          const routePath = rel.replace(/\/page\.mdx$/, "").replace(/(^$)/, "/");
+        } else if (ent.isFile && (ent.name === "page.mdx" || ent.name === "page.md")) {
+          const routePath = rel.replace(/\/page\.(mdx|md)$/, "").replace(/(^$)/, "/");
           const norm = routePath === ""
             ? "/"
             : routePath.startsWith("/")
@@ -136,8 +141,11 @@ export async function buildEmbeddedPreset(
         const relNext = rel ? `${rel}/${ent.name}` : ent.name;
         if (ent.isDirectory) {
           await walk(abs, relNext);
-        } else if (ent.isFile && ent.name.endsWith(".mdx") && !ent.name.startsWith("_")) {
-          const withoutExt = relNext.replace(/\.mdx$/, "");
+        } else if (
+          ent.isFile && (ent.name.endsWith(".mdx") || ent.name.endsWith(".md")) &&
+          !ent.name.startsWith("_")
+        ) {
+          const withoutExt = relNext.replace(/\.(mdx|md)$/, "");
           const norm = `/${withoutExt}`;
           const routePath = norm.replace(/\/+/g, "/") ? norm.replace(/\/+/g, "/") : "/";
           const filePath = join(embeddedDir, `pages${routePath}.js`.replace(/\/+/g, "/"));

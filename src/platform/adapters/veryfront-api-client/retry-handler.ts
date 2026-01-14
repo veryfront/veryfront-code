@@ -37,7 +37,7 @@ export async function requestWithRetry(
 
       // Log API timing for performance analysis
       const urlPath = new URL(url).pathname;
-      logger.info("[API] Request completed", {
+      logger.debug("[API] Request completed", {
         path: urlPath,
         status: response.status,
         durationMs: Math.round(duration),

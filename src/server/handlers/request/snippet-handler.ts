@@ -33,10 +33,9 @@ export class SnippetHandler extends BaseHandler {
       return Promise.resolve(this.continue());
     }
 
-    logger.info("[SnippetHandler] Handling snippet request", {
+    logger.debug("[SnippetHandler] Handling snippet request", {
       pathname,
       projectSlug: ctx.projectSlug,
-      hasProxyToken: !!ctx.proxyToken,
     });
 
     // Strip the @/ or @components/ prefix to get the file path
@@ -53,21 +52,13 @@ export class SnippetHandler extends BaseHandler {
       filePath = pathname.replace("/@/", "");
     }
 
-    logger.info("[SnippetHandler] Resolved file path", { filePath });
+    logger.debug("[SnippetHandler] Resolved file path", { filePath });
 
     // Use proxy context if available
     return this.withProxyContext(ctx, async () => {
       try {
-        logger.info("[SnippetHandler] Reading file through adapter", { filePath });
-
         // Read the file content through the adapter
         const content = await ctx.adapter.fs.readFile(filePath);
-
-        logger.info("[SnippetHandler] File read result", {
-          filePath,
-          hasContent: !!content,
-          contentLength: content?.length ?? 0,
-        });
 
         if (!content) {
           logger.warn("[SnippetHandler] File not found or empty", { filePath });
@@ -94,9 +85,8 @@ export class SnippetHandler extends BaseHandler {
           pageId,
         });
 
-        logger.info("[SnippetHandler] Snippet rendered", {
+        logger.debug("[SnippetHandler] Snippet rendered", {
           htmlLength: result.html.length,
-          hasFrontmatter: Object.keys(result.frontmatter).length > 0,
         });
 
         // Return rendered HTML

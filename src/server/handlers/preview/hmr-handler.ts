@@ -83,7 +83,7 @@ export class HMRHandler extends BaseHandler {
         HMRHandler.broadcastMessage(JSON.stringify({ type: "update", path, timestamp }));
         HMRHandler.metrics.messagesForwarded++;
       }
-      logger.info("[HMRHandler] Broadcast update", {
+      logger.debug("[HMRHandler] Broadcast update", {
         changedPaths: changedPaths.length,
         totalClients: HMRHandler.clientsMap.size,
         totalBroadcasts: HMRHandler.metrics.broadcastsSent,
@@ -92,7 +92,7 @@ export class HMRHandler extends BaseHandler {
       // No specific paths - fall back to full reload
       HMRHandler.broadcastMessage(JSON.stringify({ type: "reload", timestamp }));
       HMRHandler.metrics.messagesForwarded++;
-      logger.info("[HMRHandler] Broadcast reload (no paths)", {
+      logger.debug("[HMRHandler] Broadcast reload (no paths)", {
         totalClients: HMRHandler.clientsMap.size,
         totalBroadcasts: HMRHandler.metrics.broadcastsSent,
       });
@@ -187,7 +187,7 @@ export class HMRHandler extends BaseHandler {
         const client = HMRHandler.clientsMap.get(clientId);
         if (client) {
           const connectionDurationMs = Date.now() - client.connectedAt;
-          logger.info("[HMRHandler] Client disconnected", {
+          logger.debug("[HMRHandler] Client disconnected", {
             clientId,
             projectSlug: client.projectSlug,
             connectionDurationMs,
@@ -205,7 +205,7 @@ export class HMRHandler extends BaseHandler {
         }
       });
 
-      logger.info("[HMRHandler] Client connected", {
+      logger.debug("[HMRHandler] Client connected", {
         clientId,
         projectSlug: ctx.projectSlug,
         totalClients: HMRHandler.clientsMap.size,

@@ -11,6 +11,7 @@ const EXTENSION_LOADERS: Record<string, Loader> = {
   ".jsx": "jsx",
   ".js": "js",
   ".mdx": "jsx", // MDX pre-compiled to JSX
+  ".md": "jsx", // MD files also go through MDX compiler
   ".css": "css",
   ".json": "json",
 };
@@ -21,5 +22,5 @@ export function getLoaderFromPath(filePath: string): Loader {
 }
 
 export function needsTransform(filePath: string): boolean {
-  return /\.(tsx?|jsx?|mdx)$/.test(filePath);
+  return /\.(tsx?|jsx?|mdx?|md)$/.test(filePath);
 }

@@ -1,93 +1,26 @@
 /**
- * Resolve context stage - context packages → unified URLs.
+ * Resolve context stage - placeholder for context package resolution.
  *
- * CRITICAL: This stage ensures context-dependent packages (like @tanstack/react-query)
- * resolve to consistent module instances WITHIN each environment:
- *
- * - SSR uses npm: specifiers → Deno resolves locally, shares React with app
- * - Browser uses esm.sh URLs with ?deps= → esm.sh bundles React internally
- *
- * Uses package-registry.ts as single source of truth for package URLs.
+ * Previously handled context-dependent packages (react-query, etc.) but these
+ * are now user-controlled via project import maps. This stage is kept as a
+ * no-op placeholder to preserve stage ordering for other plugins.
  */
 
-import { replaceSpecifiers } from "../../esm/lexer.ts";
-import {
-  CONTEXT_PACKAGE_NAMES,
-  getContextPackageUrlBrowser,
-  getContextPackageUrlSSR,
-  isContextPackage,
-} from "../../esm/package-registry.ts";
 import { type TransformContext, type TransformPlugin, TransformStage } from "../types.ts";
 
 /**
- * Build import map from bare specifier to resolved URL for context packages.
- * Uses different URLs for SSR (npm:) vs browser (esm.sh).
- */
-function buildContextImportMap(ssr: boolean): Record<string, string> {
-  const map: Record<string, string> = {};
-  for (const pkg of CONTEXT_PACKAGE_NAMES) {
-    map[pkg] = ssr ? getContextPackageUrlSSR(pkg) : getContextPackageUrlBrowser(pkg);
-  }
-  return map;
-}
-
-/**
- * Resolve context plugin - ensures context packages resolve consistently.
+ * Resolve context plugin - no-op placeholder.
  *
- * SSR: Uses npm: specifiers so Deno resolves locally (shares React with deno.json)
- * Browser: Uses esm.sh URLs with ?deps= to pin React version
+ * Context packages are now user-controlled via project import maps.
+ * This plugin is kept to preserve stage ordering (ssrHttpStubPlugin uses RESOLVE_CONTEXT + 1).
  */
 export const resolveContextPlugin: TransformPlugin = {
   name: "resolve-context",
   stage: TransformStage.RESOLVE_CONTEXT,
 
-  async transform(ctx: TransformContext): Promise<string> {
-    const importMap = buildContextImportMap(ctx.target === "ssr");
-
-    return await replaceSpecifiers(ctx.code, (specifier) => {
-      // Check if this is a context package that needs unified resolution
-      if (isContextPackage(specifier)) {
-        return importMap[specifier] || null;
-      }
-
-      // Check if it's an esm.sh URL for a context package (normalize it)
-      if (specifier.startsWith("https://esm.sh/")) {
-        const packageName = extractPackageFromEsmSh(specifier);
-        if (packageName && isContextPackage(packageName)) {
-          // Return the canonical URL from our registry
-          return importMap[packageName] || null;
-        }
-      }
-
-      return null;
-    });
+  transform(ctx: TransformContext): Promise<string> {
+    return Promise.resolve(ctx.code);
   },
 };
-
-/**
- * Extract package name from esm.sh URL.
- * E.g., "https://esm.sh/@tanstack/react-query@5?external=react" -> "@tanstack/react-query"
- */
-function extractPackageFromEsmSh(url: string): string | null {
-  if (!url.startsWith("https://esm.sh/") && !url.startsWith("http://esm.sh/")) {
-    return null;
-  }
-
-  // Remove protocol and host
-  let path = url.replace(/^https?:\/\/esm\.sh\//, "");
-
-  // Remove version prefix like /v135/
-  path = path.replace(/^v\d+\//, "");
-
-  // Handle scoped packages like @tanstack/react-query@5?external=...
-  if (path.startsWith("@")) {
-    const match = path.match(/^(@[^/]+\/[^@/?]+)/);
-    return match?.[1] ?? null;
-  } else {
-    // Regular package: name@version or name?query
-    const match = path.match(/^([^@/?]+)/);
-    return match?.[1] ?? null;
-  }
-}
 
 export default resolveContextPlugin;

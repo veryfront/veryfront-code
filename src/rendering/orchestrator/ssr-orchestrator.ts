@@ -40,7 +40,7 @@ export class SSROrchestrator {
         (el.type as { displayName?: string }).displayName ||
         "Component";
     };
-    logger.info("[SSROrchestrator] performSSRRendering called", {
+    logger.debug("[SSROrchestrator] performSSRRendering called", {
       elementType: getElementTypeName(pageElement),
       hasChildren: !!pageElement?.props?.children,
     });
@@ -48,7 +48,7 @@ export class SSROrchestrator {
       pageElement,
       this.config.debugMode,
     );
-    logger.info("[SSROrchestrator] Element validated", {
+    logger.debug("[SSROrchestrator] Element validated", {
       validatedType: getElementTypeName(validatedElement),
     });
 

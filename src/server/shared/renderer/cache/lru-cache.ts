@@ -30,7 +30,7 @@ export async function evictLRU(targetSize: number = MAX_RENDERER_CACHE_SIZE - 1)
     await destroyRenderer(cached);
   }
 
-  rendererLogger.info("[RendererFactory] LRU eviction complete", {
+  rendererLogger.debug("[RendererFactory] LRU eviction complete", {
     evicted: toEvict.length,
     remaining: rendererCache.size,
   });
@@ -58,7 +58,7 @@ export async function evictExpired(): Promise<void> {
   }
 
   if (expired.length > 0) {
-    rendererLogger.info("[RendererFactory] Evicted expired renderers", {
+    rendererLogger.debug("[RendererFactory] Evicted expired renderers", {
       count: expired.length,
       remaining: rendererCache.size,
     });

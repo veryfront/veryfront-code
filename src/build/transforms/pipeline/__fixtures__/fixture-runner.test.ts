@@ -3,17 +3,13 @@
  *
  * Tests transform behavior for common scenarios:
  * - React-only components
- * - React Query (context packages)
+ * - NPM packages (react-query, etc.)
  * - MDX pages
  * - Relative imports
  */
 
 import { assertEquals, assertStringIncludes } from "jsr:@std/assert@1";
 import { runPipeline } from "../index.ts";
-import {
-  getContextPackageUrlBrowser,
-  getContextPackageUrlSSR,
-} from "../../esm/package-registry.ts";
 
 const FIXTURES_DIR = new URL(".", import.meta.url).pathname;
 
@@ -79,11 +75,11 @@ Deno.test({
 });
 
 // ============================================================================
-// React Query fixture tests (context packages)
+// React Query fixture tests (npm packages)
 // ============================================================================
 
 Deno.test({
-  name: "transform: react-query resolves to esm.sh URL (browser)",
+  name: "transform: react-query converts to esm.sh URL (browser)",
   ...testOpts,
   async fn() {
     const input = await readFixture("react-query", "input.tsx");
@@ -95,14 +91,14 @@ Deno.test({
       { ...TEST_OPTIONS, ssr: false },
     );
 
-    // Should resolve @tanstack/react-query to esm.sh URL for browser
-    const expectedUrl = getContextPackageUrlBrowser("@tanstack/react-query");
-    assertStringIncludes(result.code, expectedUrl);
+    // NPM packages should be converted to esm.sh URLs with React externalized
+    assertStringIncludes(result.code, "esm.sh/@tanstack/react-query");
+    assertStringIncludes(result.code, "external=react");
   },
 });
 
 Deno.test({
-  name: "transform: react-query resolves to npm specifier (ssr)",
+  name: "transform: react-query leaves bare specifier for SSR (deno resolves)",
   ...testOpts,
   async fn() {
     const input = await readFixture("react-query", "input.tsx");
@@ -114,39 +110,10 @@ Deno.test({
       { ...TEST_OPTIONS, ssr: true },
     );
 
-    // SSR uses npm: specifiers so Deno import map resolves React properly
-    const expectedUrl = getContextPackageUrlSSR("@tanstack/react-query");
-    assertStringIncludes(result.code, expectedUrl);
-  },
-});
-
-Deno.test({
-  name: "transform: SSR and browser use different context package resolution",
-  ...testOpts,
-  async fn() {
-    const input = await readFixture("react-query", "input.tsx");
-
-    const ssrResult = await runPipeline(
-      input,
-      "/project/components/UserProfile.tsx",
-      "/project",
-      { ...TEST_OPTIONS, ssr: true },
-    );
-
-    const browserResult = await runPipeline(
-      input,
-      "/project/components/UserProfile.tsx",
-      "/project",
-      { ...TEST_OPTIONS, ssr: false },
-    );
-
-    // SSR uses npm: specifiers (Deno's import map handles React)
-    const ssrExpectedUrl = getContextPackageUrlSSR("@tanstack/react-query");
-    assertStringIncludes(ssrResult.code, ssrExpectedUrl);
-
-    // Browser uses esm.sh with ?external= (browser import map provides React)
-    const browserExpectedUrl = getContextPackageUrlBrowser("@tanstack/react-query");
-    assertStringIncludes(browserResult.code, browserExpectedUrl);
+    // SSR leaves npm packages as bare specifiers for Deno's import map to resolve
+    assertStringIncludes(result.code, '@tanstack/react-query"');
+    // Should NOT be converted to esm.sh URL (Deno resolves via its import map)
+    assertEquals(result.code.includes("esm.sh/@tanstack/react-query"), false);
   },
 });
 

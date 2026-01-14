@@ -1,10 +1,7 @@
 import { escapeHTML } from "./html-escape.ts";
 import type { VeryfrontConfig } from "@veryfront/config/types.ts";
 import { REACT_DEFAULT_VERSION, VERYFRONT_VERSION } from "@veryfront/utils/constants/cdn.ts";
-import {
-  getContextPackageImportMap,
-  getTailwindImportMap,
-} from "@veryfront/build/transforms/esm/package-registry.ts";
+import { getTailwindImportMap } from "@veryfront/build/transforms/esm/package-registry.ts";
 
 function joinAttributes(attrs: (string | false | undefined | null | "")[]): string {
   return attrs.filter(Boolean).join(" ");
@@ -94,9 +91,6 @@ function getEsmShImportMap(versions: DetectedVersions): Record<string, string> {
     // Using esm.sh creates a separate context instance causing usePageContext to return undefined
     "veryfront/context": "/_vf_modules/exports/context.js",
     "veryfront/fonts": `https://esm.sh/veryfront@${veryfront}/fonts?external=react&target=es2022`,
-    // Context packages - MUST match SSR import map (from package-registry.ts)
-    ...getContextPackageImportMap(),
-    // Tailwind CSS - unified version to prevent conflicts
     ...getTailwindImportMap(),
   };
 }
@@ -155,9 +149,6 @@ function getSelfHostedImportMap(versions: DetectedVersions): Record<string, stri
     "veryfront/router": "/_veryfront/lib/router.js",
     "veryfront/context": "/_veryfront/lib/context.js",
     "veryfront/fonts": "/_veryfront/lib/fonts.js",
-    // Context packages - MUST match SSR import map
-    ...getContextPackageImportMap(),
-    // Tailwind CSS - unified version
     ...getTailwindImportMap(),
   };
 }

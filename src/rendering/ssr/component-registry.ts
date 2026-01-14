@@ -290,7 +290,7 @@ export class ComponentRegistry {
         const fallbackComponent = createErrorFallbackComponent(componentName, errorMessage);
         this.components.set(componentName, fallbackComponent);
 
-        logger.error(`Failed to load component ${componentName}, using fallback:`, {
+        logger.debug(`Failed to load component ${componentName}, using fallback`, {
           error: errorMessage,
           filePath: info.filePath,
         });
@@ -302,7 +302,7 @@ export class ComponentRegistry {
 
     if (failCount > 0) {
       logger.warn(
-        `Component initialization complete: ${successCount} succeeded, ${failCount} failed (using fallbacks)`,
+        `Component initialization complete: ${successCount} succeeded, ${failCount} failed (using fallbacks, set LOG_LEVEL=debug for details)`,
       );
     } else {
       logger.info(`Component initialization complete: ${successCount} components loaded`);
@@ -349,10 +349,20 @@ export class ComponentRegistry {
 
     let count = 0;
 
+    let failureCount = 0;
+
     for await (const entry of this.adapter.fs.readDir(dir)) {
       const entryPath = join(dir, entry.name);
 
-      if (entry.name === "node_modules" || entry.name.startsWith(".")) {
+      // Skip node_modules and hidden dirs, but allow .veryfront (excluding system subdirs)
+      if (entry.name === "node_modules") continue;
+      if (entry.name.startsWith(".") && entry.name !== ".veryfront") continue;
+      if (
+        dir.includes(".veryfront") &&
+        ["cache", "compiled", "tmp", "temp", "output", "optimized-images", "css"].includes(
+          entry.name,
+        )
+      ) {
         continue;
       }
 
@@ -400,8 +410,23 @@ export class ComponentRegistry {
 
         count++;
       } catch (error) {
-        logger.error(`Failed to process component ${componentName} (${entryPath}):`, error);
+        failureCount++;
+        logger.debug(`Failed to process component ${componentName}`, {
+          filePath: entryPath,
+          error: error instanceof Error ? error.message : String(error),
+        });
       }
+    }
+
+    if (failureCount > 0) {
+      // Show relative path for cleaner logs
+      const relativeDir = dir.startsWith(projectRoot) ? dir.slice(projectRoot.length + 1) : dir;
+      logger.warn(
+        `Component scan: ${failureCount} failure${
+          failureCount === 1 ? "" : "s"
+        } (set LOG_LEVEL=debug for details)`,
+        { dir: relativeDir },
+      );
     }
 
     return count;

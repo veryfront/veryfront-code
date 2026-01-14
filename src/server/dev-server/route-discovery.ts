@@ -7,6 +7,36 @@ import type { RouteDirectory } from "./types.ts";
 import { withFallback } from "@veryfront/platform/adapters/index.ts";
 import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
 
+/** Directories within .veryfront that should be excluded from routing */
+const VERYFRONT_EXCLUDED_DIRS = new Set([
+  "cache",
+  "compiled",
+  "tmp",
+  "temp",
+  "output",
+  "optimized-images",
+  "css",
+]);
+
+/** Check if a directory entry should be skipped during route discovery */
+function shouldSkipEntry(name: string, parentPath?: string): boolean {
+  // Always skip underscore-prefixed entries
+  if (name.startsWith("_")) return true;
+
+  // Allow .veryfront directory itself
+  if (name === ".veryfront") return false;
+
+  // Skip other hidden directories/files
+  if (name.startsWith(".")) return true;
+
+  // If we're inside .veryfront, check against excluded subdirectories
+  if (parentPath?.includes(".veryfront") || parentPath?.includes("/.veryfront")) {
+    if (VERYFRONT_EXCLUDED_DIRS.has(name)) return true;
+  }
+
+  return false;
+}
+
 export class RouteDiscovery {
   private useRelativePaths: boolean;
 
@@ -67,6 +97,12 @@ export class RouteDiscovery {
         { type: "app", dir: "app" },
         { type: "pages", dir: "pages" },
       ];
+
+    // Always check .veryfront directory for user-defined pages (agents, commands, etc.)
+    const veryfrontDir = this.useRelativePaths ? ".veryfront" : join(this.projectDir, ".veryfront");
+    if (await this.directoryExists(veryfrontDir)) {
+      results.push({ type: "pages", path: veryfrontDir });
+    }
 
     for (const candidate of candidates) {
       // For remote FS adapters, use relative paths; for local, use absolute
@@ -144,7 +180,7 @@ export class RouteDiscovery {
     try {
       logger.debug(`[SERVER] Reading directory: ${dir}`);
       for await (const entry of this.adapter.fs.readDir(dir)) {
-        if (entry.name.startsWith("_") || entry.name.startsWith(".")) continue;
+        if (shouldSkipEntry(entry.name, dir)) continue;
 
         const fullPath = join(dir, entry.name);
         // Normalize route path: remove extension and collapse multiple slashes
@@ -183,7 +219,7 @@ export class RouteDiscovery {
     try {
       logger.debug(`[SERVER] Reading app directory: ${dir}`);
       for await (const entry of this.adapter.fs.readDir(dir)) {
-        if (entry.name.startsWith(".") || entry.name.startsWith("_")) continue;
+        if (shouldSkipEntry(entry.name, dir)) continue;
 
         const fullPath = join(dir, entry.name);
 

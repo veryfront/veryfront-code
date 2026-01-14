@@ -75,7 +75,7 @@ export function endRenderSession(sessionId: string): void {
   }
 
   const modulePaths = Array.from(session.modules);
-  logger.info(`${LOG_PREFIX_MDX_LOADER} End render session`, {
+  logger.debug(`${LOG_PREFIX_MDX_LOADER} End render session`, {
     sessionId,
     moduleCount: modulePaths.length,
     projectSlug: session.projectSlug,

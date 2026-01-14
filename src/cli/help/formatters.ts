@@ -8,7 +8,7 @@ function c<T extends (s: string) => string>(colorFn: T, text: string): string {
 }
 
 export function formatHeader(): string {
-  return c(bold, c(cyan, "\n⚡ Veryfront")) + c(dim, ` v${VERSION}\n`);
+  return c(bold, c(cyan, "\nveryfront")) + c(dim, ` v${VERSION}\n`);
 }
 
 export function formatCommandName(name: string, paddingLength: number): string {
@@ -41,15 +41,14 @@ export function formatSectionHeader(title: string): string {
 }
 
 export function formatCommandHeader(commandName: string): string {
-  return `${c(bold, c(cyan, `\n⚡ Veryfront ${commandName}`))}\n`;
+  return `${c(bold, c(cyan, `\nveryfront ${commandName}`))}\n`;
 }
 
 export function formatAsciiLogo(): string {
   return `
-${c(cyan, "╔══════════════════════════════════════╗")}
-${c(cyan, "║")}  ⚡  ${c(bold, "VERYFRONT")}                      ${c(cyan, "║")}
-${c(cyan, "║")}  ${c(dim, "Deno-First React Framework")}        ${c(cyan, "║")}
-${c(cyan, "╚══════════════════════════════════════╝")}
+${c(dim, "────────────────────────────────────────")}
+  ${c(bold, c(cyan, "veryfront"))}  ${c(dim, "React meta-framework")}
+${c(dim, "────────────────────────────────────────")}
 `;
 }
 

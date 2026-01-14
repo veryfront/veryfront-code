@@ -123,7 +123,15 @@ async function walkDirectory(
       const path = join(dir, entry.name);
 
       if (entry.isDirectory) {
-        if (entry.name.startsWith(".") || entry.name === "node_modules") {
+        // Skip node_modules and hidden dirs, but allow .veryfront (excluding system subdirs)
+        if (entry.name === "node_modules") continue;
+        if (entry.name.startsWith(".") && entry.name !== ".veryfront") continue;
+        if (
+          dir.includes(".veryfront") &&
+          ["cache", "compiled", "tmp", "temp", "output", "optimized-images", "css"].includes(
+            entry.name,
+          )
+        ) {
           continue;
         }
         await walkDirectory(path, callback, fs);

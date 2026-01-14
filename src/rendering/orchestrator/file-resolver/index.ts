@@ -14,7 +14,7 @@ import { buildCandidatePaths, findFirstExisting } from "./candidates.ts";
 export { buildCandidatePaths, findFirstExisting } from "./candidates.ts";
 
 /** Standard file extensions for source files */
-const SOURCE_EXTENSIONS = [".tsx", ".ts", ".jsx", ".js", ".mdx"];
+const SOURCE_EXTENSIONS = [".tsx", ".ts", ".jsx", ".js", ".mdx", ".md"];
 const COMPONENT_EXTENSIONS = [".tsx", ".ts", ".jsx", ".js"];
 
 /**

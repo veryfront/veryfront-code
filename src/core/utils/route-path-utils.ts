@@ -6,13 +6,13 @@
  */
 
 /** Supported page file extensions */
-export const PAGE_EXTENSIONS = [".tsx", ".jsx", ".ts", ".js", ".mdx"] as const;
+export const PAGE_EXTENSIONS = [".tsx", ".jsx", ".ts", ".js", ".mdx", ".md"] as const;
 
 /** Supported component file extensions (subset of page extensions) */
 export const COMPONENT_EXTENSIONS = [".tsx", ".jsx", ".ts", ".js"] as const;
 
 /** Regex for matching and removing file extensions */
-export const EXTENSION_REGEX = /\.(tsx|jsx|ts|js|mdx)$/;
+export const EXTENSION_REGEX = /\.(tsx|jsx|ts|js|mdx|md)$/;
 
 /** Patterns for dynamic segment detection */
 const DYNAMIC_SEGMENT_PATTERNS = {

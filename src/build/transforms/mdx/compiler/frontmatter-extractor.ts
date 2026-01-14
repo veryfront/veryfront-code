@@ -80,7 +80,7 @@ export async function extractFrontmatter(
   body = exportResult.body;
   frontmatter = { ...frontmatter, ...exportResult.exports };
 
-  logger.info("Extracted frontmatter:", frontmatter);
+  logger.debug("Extracted frontmatter:", frontmatter);
 
   return { body, frontmatter };
 }

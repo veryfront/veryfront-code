@@ -192,15 +192,12 @@ function handleRequest(req: Request): Promise<Response> {
       const projectSlug = parsed.slug || undefined;
 
       const reqLogger = proxyLogger.child({
-        projectSlug,
-        method: req.method,
-        path: url.pathname,
-        environment: scope,
-        isStudioEmbed,
+        project: projectSlug,
+        env: scope,
+        ...(isStudioEmbed && { studio: true }),
       });
 
-      reqLogger.info("Request received", {
-        isStudioEmbed,
+      reqLogger.debug("Request received", {
         parsedEnvironment: parsed.environment,
         effectiveScope: scope,
       });
@@ -246,8 +243,8 @@ function handleRequest(req: Request): Promise<Response> {
         redirect: "manual",
       });
 
-      const durationMs = Math.round(performance.now() - startTime);
-      reqLogger.info("Request completed", { status: response.status, durationMs });
+      const ms = Math.round(performance.now() - startTime);
+      reqLogger.info(`${response.status} ${req.method} ${url.pathname}`, { ms });
 
       endSpan(spanInfo?.span, response.status);
 
@@ -257,8 +254,8 @@ function handleRequest(req: Request): Promise<Response> {
         headers: response.headers,
       });
     } catch (error) {
-      const durationMs = Math.round(performance.now() - startTime);
-      proxyLogger.error("Error forwarding request", { path: url.pathname, durationMs }, error as Error);
+      const ms = Math.round(performance.now() - startTime);
+      proxyLogger.error(`502 ${req.method} ${url.pathname}`, { ms }, error as Error);
 
       endSpan(spanInfo?.span, 502, error as Error);
 
@@ -316,11 +313,11 @@ await initializeOTLPWithApis();
 validateConfig();
 
 const cacheType = Deno.env.get("CACHE_TYPE") || "memory";
-proxyLogger.info("Starting proxy server", {
+proxyLogger.debug("Starting proxy server", {
   port: PORT,
   rendererUrl: RENDERER_URL,
   apiBaseUrl: config.apiBaseUrl,
   cacheType,
 });
 
-Deno.serve({ port: PORT }, router);
+Deno.serve({ port: PORT, onListen: () => {} }, router);

@@ -1,5 +1,5 @@
 import { VERSION } from "@veryfront/utils";
-import { bold, cyan, dim, yellow } from "@veryfront/compat/console";
+import { bold, cyan, dim, green, red, yellow } from "@veryfront/compat/console";
 import { cliLogger } from "@veryfront/utils";
 import { exit } from "@veryfront/platform/compat/process.ts";
 import { isDeno } from "@veryfront/platform/compat/runtime.ts";
@@ -191,24 +191,24 @@ Version: ${VERSION}
 }
 
 export function showVersion() {
-  cliLogger.info(`Veryfront v${VERSION}`);
+  cliLogger.info(`veryfront v${VERSION}`);
 }
 
 // Logging utilities
 export function logSuccess(message: string) {
-  cliLogger.info(`✅ ${message}`);
+  cliLogger.info(`${green("✓")} ${message}`);
 }
 
 export function logError(message: string) {
-  console.error(`❌ ${message}`);
+  console.error(`${red("✗")} ${message}`);
 }
 
 export function logWarning(message: string) {
-  console.warn(`⚠️  ${message}`);
+  console.warn(`${yellow("!")} ${message}`);
 }
 
 export function logInfo(message: string) {
-  cliLogger.info(`ℹ️  ${message}`);
+  cliLogger.info(`${dim("›")} ${message}`);
 }
 
 /**

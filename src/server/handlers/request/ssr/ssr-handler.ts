@@ -45,34 +45,23 @@ import {
 /**
  * Determine if request should serve production (released) content.
  * Priority: studio_embed override > config > veryfront domain isDraft flag > proxy environment header
- *
- * When studio_embed=true is in the URL, ALWAYS return false (preview mode)
- * to serve draft content for the Studio preview iframe, regardless of the domain.
  */
 export function isProductionMode(ctx: HandlerContext, url?: URL): boolean {
-  // Studio embed: ALWAYS use preview/draft mode for Studio previews
-  // This allows custom domains to show draft content in Studio's iframe
-  const studioEmbed = url?.searchParams.get("studio_embed");
-  _logger.info("[isProductionMode] Checking production mode", {
-    hasUrl: !!url,
-    fullUrl: url?.toString(),
-    studioEmbed,
-    isVeryfrontDomain: ctx.parsedDomain?.isVeryfrontDomain,
-    isDraft: ctx.parsedDomain?.isDraft,
-    proxyEnvironment: ctx.proxyEnvironment,
-  });
-  if (studioEmbed === "true") {
-    _logger.info("[isProductionMode] studio_embed=true detected, using preview mode");
+  // Studio embed always uses preview/draft mode for Studio preview iframe
+  if (url?.searchParams.get("studio_embed") === "true") {
     return false;
   }
+
   // Config override (PRODUCTION_MODE env var)
   if (ctx.config?.fs?.veryfront?.productionMode === true) {
     return true;
   }
+
   // Veryfront domain: production if not draft
   if (ctx.parsedDomain?.isVeryfrontDomain) {
     return ctx.parsedDomain.isDraft === false;
   }
+
   // Custom domain: use proxy environment header
   return ctx.proxyEnvironment === "production";
 }
@@ -114,13 +103,32 @@ export class SSRHandler extends BaseHandler {
     const pathname = url.pathname;
 
     // Skip internal paths and file extensions (likely static files)
-    if (pathname.startsWith("/_veryfront/") || pathname.includes(".")) {
+    // Allow .veryfront paths but skip other paths with file extensions
+    if (pathname.startsWith("/_veryfront/")) {
+      return Promise.resolve(this.continue());
+    }
+    // Check for file extensions (dot followed by extension at end or before query)
+    // but allow .veryfront directory paths
+    const hasFileExtension = /\.[a-zA-Z0-9]+$/.test(pathname) &&
+      !pathname.includes("/.veryfront/") && !pathname.startsWith("/.veryfront");
+    if (hasFileExtension) {
       return Promise.resolve(this.continue());
     }
 
     const slug = pathname === "/" ? "" : pathname.replace(/^\//, "").replace(/\/$/, "");
     const requestId = `${slug || "index"}-${Date.now()}`;
     startRequest(requestId);
+
+    // Block dotfile/dotfolder routes in production (e.g., .veryfront, .env, .git)
+    // These are framework/dev-only paths that should never be served in production
+    const hasDotSegment = slug.split("/").some((segment) => segment.startsWith("."));
+    if (hasDotSegment) {
+      const prodMode = isProductionMode(ctx, url);
+      if (prodMode) {
+        this.logDebug("Dot path blocked in production", { slug }, ctx);
+        return Promise.resolve(this.continue()); // Let it 404
+      }
+    }
 
     this.logDebug("SSR attempt", { pathname, slug }, ctx);
 

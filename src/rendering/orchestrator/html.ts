@@ -22,6 +22,7 @@ import type { RenderOptions } from "./types.ts";
 import { injectElementSelectors } from "@veryfront/studio/element-selector-injector.ts";
 import { computeSourceHash } from "@veryfront/studio/hash-utils.ts";
 import { extractRelativePath } from "@veryfront/core/utils/route-path-utils.ts";
+import { resolveAppComponentPath } from "../layouts/utils/app-resolver.ts";
 
 export interface HTMLGeneratorConfig {
   projectDir: string;
@@ -73,7 +74,7 @@ export class HTMLGenerator {
     reactStream: ReadableStream,
     context: Omit<HTMLGenerationContext, "html">,
   ): Promise<ReadableStream> {
-    logger.info("[HTMLGenerator] generateHTMLStream context.options", {
+    logger.debug("[HTMLGenerator] generateHTMLStream context.options", {
       studioEmbed: context.options?.studioEmbed,
       projectId: context.options?.projectId,
       pageId: context.options?.pageId,
@@ -89,29 +90,8 @@ export class HTMLGenerator {
 
     // Buffer the React stream to extract head elements
     // This is necessary because head elements need to be moved from body to <head>
-    const decoder = new TextDecoder();
-    const chunks: Uint8Array[] = [];
-    const reader = reactStream.getReader();
-
-    try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        chunks.push(value);
-      }
-    } finally {
-      reader.releaseLock();
-    }
-
-    // Combine chunks and extract head elements
-    const totalLength = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
-    const combinedArray = new Uint8Array(totalLength);
-    let offset = 0;
-    for (const chunk of chunks) {
-      combinedArray.set(chunk, offset);
-      offset += chunk.length;
-    }
-    const reactContent = decoder.decode(combinedArray);
+    const response = new Response(reactStream);
+    const reactContent = await response.text();
 
     // Extract head elements from React content (moves <link>, <meta>, etc. from body to head)
     const { headElements, cleanedContent: rawCleanedContent } = extractHeadElements(reactContent);
@@ -167,7 +147,7 @@ export class HTMLGenerator {
       // Match 'use client' or "use client" at start of line
       isClientPage = /^\s*['"]use client['"];?\s*$/m.test(pageContent);
       if (isClientPage) {
-        logger.info(`[HTMLGenerator] Detected 'use client' page: ${pagePath}`);
+        logger.debug(`[HTMLGenerator] Detected 'use client' page: ${pagePath}`);
       }
     } catch (_e) {
       logger.debug(
@@ -192,7 +172,7 @@ export class HTMLGenerator {
     context: HTMLGenerationContext,
   ): Promise<string> {
     const mergedFrontmatter = this.mergeFrontmatter(context);
-    logger.info("Merged frontmatter for wrapInHTMLShell:", mergedFrontmatter);
+    logger.debug("Merged frontmatter for wrapInHTMLShell:", mergedFrontmatter);
 
     const htmlOptions = await this.buildHTMLOptions(context, mergedFrontmatter);
 
@@ -220,18 +200,12 @@ export class HTMLGenerator {
     } as MDXFrontmatter;
   }
 
-  private async resolveAppComponentPath(): Promise<string | undefined> {
-    // Check for app component in order of preference
-    // This provider wrapper is used regardless of router type (app vs pages)
-    const extensions = [".tsx", ".jsx", ".ts", ".js", ".mdx", ".md"];
-    for (const ext of extensions) {
-      const appPath = join(this.config.projectDir, `components/app${ext}`);
-      if (await this.config.adapter.fs.exists(appPath)) {
-        logger.info(`[HTMLGenerator] Found app component: ${appPath}`);
-        return appPath;
-      }
-    }
-    return undefined;
+  private resolveAppPath(): Promise<string | null> {
+    return resolveAppComponentPath(
+      this.config.projectDir,
+      this.config.adapter,
+      this.config.config,
+    );
   }
 
   private async loadProjectFile(filename: string): Promise<string | undefined> {
@@ -250,7 +224,13 @@ export class HTMLGenerator {
     context: HTMLGenerationContext,
     mergedFrontmatter: MDXFrontmatter,
   ): Promise<HTMLGenerationOptions> {
-    const appComponentPath = await this.resolveAppComponentPath();
+    const appComponentPath = await this.resolveAppPath() ?? undefined;
+    logger.debug("[HTMLGenerator] App component resolution", {
+      appComponentPath,
+      projectDir: this.config.projectDir,
+      hasConfig: !!this.config.config,
+      configApp: this.config.config?.app,
+    });
     const globalCSS = await this.loadProjectFile("globals.css");
     const tailwindConfigJs = await this.loadProjectFile("tailwind.config.js");
 

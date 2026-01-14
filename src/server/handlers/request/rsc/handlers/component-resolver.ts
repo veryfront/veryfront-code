@@ -5,10 +5,14 @@ import type { FileSystemAdapter } from "@veryfront/platform/adapters/base.ts";
 const fs = createFileSystem();
 
 const FILE_PATTERNS = [
+  "app/{path}/page.mdx",
+  "app/{path}/page.md",
   "app/{path}/page.tsx",
   "app/{path}/page.ts",
   "app/{path}/page.jsx",
   "app/{path}/page.js",
+  "app/{path}.mdx",
+  "app/{path}.md",
   "app/{path}.tsx",
   "app/{path}.ts",
   "app/{path}.jsx",
@@ -16,6 +20,8 @@ const FILE_PATTERNS = [
 ];
 
 const ROOT_PATTERNS = [
+  "app/page.mdx",
+  "app/page.md",
   "app/page.tsx",
   "app/page.ts",
   "app/page.jsx",

@@ -9,13 +9,13 @@ import type { AppRouteInfo, RouteInfo } from "./build-types.ts";
 import { discoverFiles } from "@veryfront/core/utils/file-discovery.ts";
 import { isDynamicSegment } from "@veryfront/core/utils/route-path-utils.ts";
 
-const PAGE_EXTENSIONS = [".mdx", ".tsx", ".jsx", ".ts"];
+const PAGE_EXTENSIONS = [".mdx", ".md", ".tsx", ".jsx", ".ts"];
 
 function convertToSlug(relativePath: string): string {
   return (
     relativePath
       .replace(/\\/g, "/")
-      .replace(/\.(mdx|tsx|jsx|ts)$/, "")
+      .replace(/\.(mdx|md|tsx|jsx|ts)$/, "")
       .replace(/\/index$/, "") || "index"
   );
 }
@@ -94,7 +94,7 @@ export async function collectAppRoutes(
   }
 }
 
-const PAGE_CANDIDATES = ["page.tsx", "page.jsx", "page.ts", "page.js"];
+const PAGE_CANDIDATES = ["page.mdx", "page.md", "page.tsx", "page.jsx", "page.ts", "page.js"];
 
 function isForceDynamic(source: string): boolean {
   return /export\s+const\s+dynamic\s*=\s*["']force-dynamic["']/.test(source);

@@ -918,10 +918,11 @@ function hello() { return 'world'; }
     });
 
     describe("getDefaultImportMap", () => {
-      // Note: React is no longer included in getDefaultImportMap() - it's resolved via deno.json (npm:react)
-      // The default import map now contains veryfront/* mappings and context packages
+      // Note: React and context packages are no longer included in getDefaultImportMap()
+      // They are resolved via deno.json (npm:react, npm:@tanstack/react-query, etc.)
+      // The default import map now only contains veryfront/* mappings
 
-      it("should return default import map with veryfront imports", () => {
+      it("should return default import map with veryfront imports only", () => {
         const importMap = getDefaultImportMap();
 
         assertExists(importMap);
@@ -933,48 +934,17 @@ function hello() { return 'world'; }
         assertExists(importMap.imports!["veryfront/fonts"]);
       });
 
-      it("should include context packages", () => {
+      it("should NOT include React or context packages (resolved via deno.json)", () => {
         const importMap = getDefaultImportMap();
 
-        // Context packages should be included with esm.sh URLs
-        assertExists(importMap.imports!["@tanstack/react-query"]);
-        assertExists(importMap.imports!["@tanstack/query-core"]);
-        assertExists(importMap.imports!["next-themes"]);
-        assertExists(importMap.imports!["framer-motion"]);
-        assertExists(importMap.imports!["react-hook-form"]);
-      });
-
-      it("should use esm.sh URLs for context packages (SSR)", () => {
-        const importMap = getDefaultImportMap();
-
-        const contextPackages = [
-          "@tanstack/react-query",
-          "@tanstack/query-core",
-          "next-themes",
-          "framer-motion",
-          "react-hook-form",
-        ];
-
-        // SSR uses esm.sh URLs (same as browser) to ensure identical module instances
-        // This prevents hydration errors from module instance mismatch
-        for (const pkg of contextPackages) {
-          const value = importMap.imports![pkg];
-          if (typeof value !== "string") continue;
-          assertEquals(
-            value.startsWith("https://esm.sh/"),
-            true,
-            `Context package ${pkg} should use esm.sh URL for SSR (got: ${value})`,
-          );
-        }
-      });
-
-      it("should NOT include React (resolved via deno.json)", () => {
-        const importMap = getDefaultImportMap();
-
-        // React is intentionally not in the default import map
-        // It's resolved via deno.json import map (npm:react)
+        // React is resolved via deno.json import map (npm:react)
         assertEquals(importMap.imports!["react"], undefined);
         assertEquals(importMap.imports!["react-dom"], undefined);
+
+        // Context packages are also resolved via deno.json
+        assertEquals(importMap.imports!["@tanstack/react-query"], undefined);
+        assertEquals(importMap.imports!["next-themes"], undefined);
+        assertEquals(importMap.imports!["framer-motion"], undefined);
       });
 
       it("should return imports object only (no scopes by default)", () => {
@@ -982,28 +952,6 @@ function hello() { return 'world'; }
 
         assertExists(importMap.imports);
         assertEquals((importMap as any).scopes, undefined);
-      });
-
-      it("should use esm.sh URLs for React-dependent context packages", () => {
-        const importMap = getDefaultImportMap();
-
-        // React-dependent packages use esm.sh URLs (same as browser)
-        // This ensures identical module instances across SSR and client
-        const reactDependentPackages = [
-          "@tanstack/react-query",
-          "next-themes",
-          "framer-motion",
-        ];
-
-        for (const pkg of reactDependentPackages) {
-          const value = importMap.imports![pkg];
-          if (typeof value !== "string") continue;
-          assertEquals(
-            value.startsWith("https://esm.sh/"),
-            true,
-            `${pkg} should use esm.sh URL for SSR (got: ${value})`,
-          );
-        }
       });
     });
 
@@ -1081,9 +1029,8 @@ function hello() { return 'world'; }
         const merged = mergeImportMaps(defaultMap, customMap);
 
         // Should have both default and custom imports
-        // Default map now contains veryfront/* and context packages (not React)
+        // Default map now contains only veryfront/* (no React or context packages)
         assertExists(merged.imports!["veryfront/head"]);
-        assertExists(merged.imports!["@tanstack/react-query"]);
         assertExists(merged.imports!["lodash"]);
       });
 

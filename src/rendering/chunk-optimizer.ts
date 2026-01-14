@@ -2,6 +2,30 @@ import { join } from "@veryfront/platform/compat/path/index.ts";
 import { bundlerLogger as logger } from "@veryfront/utils";
 import { createFileSystem } from "../platform/compat/fs.ts";
 
+/** Directories within .veryfront that should be excluded from scanning */
+const VERYFRONT_EXCLUDED_DIRS = new Set([
+  "cache",
+  "compiled",
+  "tmp",
+  "temp",
+  "output",
+  "optimized-images",
+  "css",
+]);
+
+/** Check if a directory should be skipped during scanning */
+function shouldSkipDir(name: string, parentPath?: string): boolean {
+  // Allow .veryfront directory itself
+  if (name === ".veryfront") return false;
+  // Skip other hidden directories
+  if (name.startsWith(".")) return true;
+  // If inside .veryfront, check against excluded subdirectories
+  if (parentPath?.includes(".veryfront")) {
+    if (VERYFRONT_EXCLUDED_DIRS.has(name)) return true;
+  }
+  return false;
+}
+
 const SIZE_LIMITS = {
   DEP_SIZE_ESTIMATE: 25_000,
   UI_LIB_SIZE_ESTIMATE: 150_000,
@@ -82,9 +106,9 @@ export async function analyzeProjectChunks(
       const entries = fsAdapter.readDir(dir);
       for await (const entry of entries) {
         const path = join(dir, entry.name);
-        if (entry.isFile && entry.name.endsWith(".mdx")) {
+        if (entry.isFile && (entry.name.endsWith(".mdx") || entry.name.endsWith(".md"))) {
           mdxFiles.push(path);
-        } else if (entry.isDirectory && !entry.name.startsWith(".")) {
+        } else if (entry.isDirectory && !shouldSkipDir(entry.name, dir)) {
           await findMDX(path);
         }
       }
@@ -93,7 +117,9 @@ export async function analyzeProjectChunks(
     }
   }
 
+  // Scan pages directory and .veryfront directory
   await findMDX(join(projectDir, "pages"));
+  await findMDX(join(projectDir, ".veryfront"));
 
   for (const mdxPath of mdxFiles) {
     try {

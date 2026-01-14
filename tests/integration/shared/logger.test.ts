@@ -65,7 +65,7 @@ describe("Logger", () => {
         logger.error("error msg");
 
         assertEquals(
-          messages.some((m) => m.includes("DEBUG: debug msg")),
+          messages.some((m) => m.includes("debug msg")),
           true,
         );
         assertEquals(
@@ -73,11 +73,11 @@ describe("Logger", () => {
           true,
         );
         assertEquals(
-          messages.some((m) => m.includes("WARN: warn msg")),
+          messages.some((m) => m.includes("warn msg")),
           true,
         );
         assertEquals(
-          messages.some((m) => m.includes("ERROR: error msg")),
+          messages.some((m) => m.includes("error msg")),
           true,
         );
       } finally {
@@ -158,11 +158,11 @@ describe("Logger", () => {
           false,
         );
         assertEquals(
-          messages.some((m) => m.includes("WARN: warn msg")),
+          messages.some((m) => m.includes("warn msg")),
           true,
         );
         assertEquals(
-          messages.some((m) => m.includes("ERROR: error msg")),
+          messages.some((m) => m.includes("error msg")),
           true,
         );
       } finally {
@@ -296,7 +296,7 @@ describe("Logger", () => {
         logger.debug("debug msg");
 
         assertEquals(
-          messages.some((m) => m.includes("DEBUG: debug msg")),
+          messages.some((m) => m.includes("debug msg")),
           true,
         );
       } finally {
@@ -470,7 +470,7 @@ describe("Logger", () => {
         logger.debug("test message");
 
         assertEquals(
-          messages.some((m) => m.includes("DEBUG:")),
+          messages.some((m) => m.includes("test message")),
           true,
         );
       } finally {
@@ -496,7 +496,7 @@ describe("Logger", () => {
         mod.cliLogger.info("test");
 
         assertEquals(
-          messages.some((m) => m.includes("[CLI]")),
+          messages.some((m) => m.includes("CLI") && m.includes("test")),
           true,
         );
       } finally {

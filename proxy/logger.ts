@@ -1,6 +1,146 @@
+import { getEnv } from "../src/platform/compat/process.ts";
 import { getTraceContext } from "./tracing.ts";
 
 export type LogLevel = "debug" | "info" | "warn" | "error";
+
+// Log level configuration
+const MIN_LOG_LEVEL: LogLevel = ((): LogLevel => {
+  const level = getEnv("LOG_LEVEL")?.toLowerCase();
+  if (level === "debug" || level === "info" || level === "warn" || level === "error") {
+    return level;
+  }
+  return "info"; // Default: suppress debug logs
+})();
+
+const TAG_WIDTH = 10;
+
+const LEVEL_GLYPHS: Record<LogLevel, string> = {
+  debug: "·",
+  info: "●",
+  warn: "▲",
+  error: "✖",
+};
+
+const ANSI = {
+  reset: "\u001b[0m",
+  dim: "\u001b[2m",
+  gray: "\u001b[90m",
+  red: "\u001b[31m",
+  green: "\u001b[32m",
+  yellow: "\u001b[33m",
+  cyan: "\u001b[36m",
+};
+
+const LEVEL_COLORS: Record<LogLevel, string> = {
+  debug: ANSI.gray,
+  info: ANSI.green,
+  warn: ANSI.yellow,
+  error: ANSI.red,
+};
+
+function padTag(tag: string): string {
+  if (tag.length >= TAG_WIDTH) return tag.slice(0, TAG_WIDTH);
+  return tag.padEnd(TAG_WIDTH, " ");
+}
+
+function formatTimestamp(date: Date = new Date()): string {
+  const pad = (value: number) => String(value).padStart(2, "0");
+  return `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+}
+
+function isTty(): boolean {
+  try {
+    if (typeof Deno !== "undefined" && typeof Deno.stdout?.isTerminal === "function") {
+      return Deno.stdout.isTerminal();
+    }
+  } catch {
+    // ignore
+  }
+
+  const stdout = (globalThis as { process?: { stdout?: { isTTY?: boolean } } }).process?.stdout;
+  return stdout?.isTTY ?? false;
+}
+
+function shouldUseColor(): boolean {
+  const noColor = getEnv("NO_COLOR");
+  const forceColor = getEnv("FORCE_COLOR");
+  const logColor = getEnv("LOG_COLOR");
+  if (forceColor === "0" || logColor === "0") return false;
+  if (noColor !== undefined) return false;
+  if (getEnv("CI") !== undefined) return false;
+  if (forceColor || logColor === "1" || logColor === "true") return true;
+  return isTty();
+}
+
+function colorize(text: string, color: string | undefined, enable: boolean): string {
+  if (!enable || !color) return text;
+  return `${color}${text}${ANSI.reset}`;
+}
+
+function normalizeText(value: string): string {
+  return value.replace(/\s+/g, " ");
+}
+
+function truncateText(value: string, maxLength = 80): string {
+  if (value.length <= maxLength) return value;
+  return `${value.slice(0, maxLength - 1)}…`;
+}
+
+function formatValue(value: unknown): string {
+  if (typeof value === "string") {
+    const trimmed = normalizeText(value);
+    if (/\s/.test(trimmed)) return JSON.stringify(trimmed);
+    return trimmed;
+  }
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  if (value === null) return "null";
+  let text = "";
+  try {
+    text = JSON.stringify(value);
+  } catch {
+    text = String(value);
+  }
+  return truncateText(normalizeText(text));
+}
+
+function formatErrorText(error: LogEntry["error"]): string {
+  if (!error) return "";
+  const text = `${error.name}: ${error.message}`;
+  return truncateText(normalizeText(text), 120);
+}
+
+// Prefix width: timestamp(8) + gap(2) + tag(10) + space(1) + glyph(1) + space(1) = 23
+const PREFIX_WIDTH = 23;
+
+function formatContextText(
+  context: Record<string, unknown>,
+  error: LogEntry["error"] | undefined,
+  enableColor: boolean,
+): string {
+  const entries = Object.entries(context).map(([key, value]) => `${key}=${formatValue(value)}`);
+  if (error) {
+    entries.push(`err=${formatErrorText(error)}`);
+  }
+  if (entries.length === 0) return "";
+  const text = entries.join(" ");
+  // Put context on new line, indented to align with message
+  const indent = " ".repeat(PREFIX_WIDTH);
+  return `\n${indent}${colorize(text, ANSI.dim, enableColor)}`;
+}
+
+function formatTextLine(
+  level: LogLevel,
+  message: string,
+  context: Record<string, unknown> | undefined,
+  error: LogEntry["error"] | undefined,
+): string {
+  const enableColor = shouldUseColor();
+  const timestamp = colorize(formatTimestamp(), ANSI.dim, enableColor);
+  const tag = colorize(padTag("PROXY"), ANSI.cyan, enableColor);
+  const glyph = colorize(LEVEL_GLYPHS[level], LEVEL_COLORS[level], enableColor);
+  const contextText = formatContextText(context ?? {}, error, enableColor);
+  return `${timestamp}  ${tag} ${glyph} ${message}${contextText}`;
+}
 
 interface LogEntry {
   timestamp: string;
@@ -18,14 +158,21 @@ interface LogEntry {
 }
 
 function isProduction(): boolean {
-  return Deno.env.get("NODE_ENV") === "production";
+  return getEnv("NODE_ENV") === "production";
 }
 
 function getLogFormat(): "json" | "text" {
-  const format = Deno.env.get("LOG_FORMAT");
+  const format = getEnv("LOG_FORMAT");
   if (format === "json" || format === "text") return format;
   return isProduction() ? "json" : "text";
 }
+
+const LOG_LEVEL_ORDER: Record<LogLevel, number> = {
+  debug: 0,
+  info: 1,
+  warn: 2,
+  error: 3,
+};
 
 function serializeError(err: unknown): LogEntry["error"] | undefined {
   if (err instanceof Error) {
@@ -46,6 +193,10 @@ class ProxyLogger {
     context?: Record<string, unknown>,
     error?: unknown,
   ): void {
+    // Filter by minimum log level
+    if (LOG_LEVEL_ORDER[level] < LOG_LEVEL_ORDER[MIN_LOG_LEVEL]) {
+      return;
+    }
     if (this.format === "json") {
       const traceCtx = getTraceContext();
       const entry: LogEntry = {
@@ -64,14 +215,8 @@ class ProxyLogger {
       }
       console.log(JSON.stringify(entry));
     } else {
-      const prefix = level === "info" ? "" : ` ${level.toUpperCase()}:`;
-      if (context && Object.keys(context).length > 0) {
-        console.log(`[PROXY]${prefix} ${message}`, context);
-      } else if (error) {
-        console.log(`[PROXY]${prefix} ${message}`, error);
-      } else {
-        console.log(`[PROXY]${prefix} ${message}`);
-      }
+      const serializedError = serializeError(error);
+      console.log(formatTextLine(level, message, context, serializedError));
     }
   }
 

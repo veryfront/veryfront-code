@@ -229,13 +229,9 @@ export abstract class BaseHandler implements Handler {
       const branch = ctx.parsedDomain?.branch ?? null;
 
       // Log detailed context for debugging HMR/preview issues
-      this.logInfo("[withProxyContext] Setting up multi-project context", {
+      this.logDebug("[withProxyContext] Setting up multi-project context", {
         projectSlug: ctx.projectSlug,
-        projectId: ctx.projectId,
         productionMode: isProduction,
-        proxyEnvironment: ctx.proxyEnvironment,
-        isVeryfrontDomain: ctx.parsedDomain?.isVeryfrontDomain,
-        isDraft: ctx.parsedDomain?.isDraft,
         releaseId: ctx.releaseId,
         branch,
       }, ctx);
