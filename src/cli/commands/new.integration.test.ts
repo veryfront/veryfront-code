@@ -7,7 +7,7 @@
  */
 
 import { assertEquals, assertExists } from "jsr:@std/assert@1";
-import { describe, it, beforeEach, afterEach } from "jsr:@std/testing@1/bdd";
+import { afterEach, describe, it } from "jsr:@std/testing@1/bdd";
 import { join } from "@veryfront/platform/compat/path/index.ts";
 
 const TEST_DIR = Deno.makeTempDirSync({ prefix: "veryfront-new-test-" });
@@ -43,7 +43,7 @@ describe("new command integration", () => {
         stderr: "piped",
       });
 
-      const { code, stdout, stderr } = await command.output();
+      const { stdout, stderr } = await command.output();
       const output = new TextDecoder().decode(stdout);
       const errors = new TextDecoder().decode(stderr);
 

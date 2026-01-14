@@ -8,17 +8,17 @@
 
 import { cliLogger } from "@veryfront/utils";
 import { cyan, dim, green, red } from "@veryfront/compat/console";
-import { cwd, chdir, getEnv } from "@veryfront/platform/compat/process.ts";
+import { chdir, cwd, getEnv } from "@veryfront/platform/compat/process.ts";
 import { join } from "@veryfront/platform/compat/path/index.ts";
 import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
 import { z } from "zod";
 
 import { readToken, validateToken } from "../auth/index.ts";
-import { openBrowser, canOpenBrowser } from "../auth/browser.ts";
-import { getColorEnabled, isTTY, exitProcess, createSpinner } from "../utils/index.ts";
-import { createArgParser, CommonArgs } from "../shared/args.ts";
+import { canOpenBrowser, openBrowser } from "../auth/browser.ts";
+import { exitProcess, getColorEnabled, isTTY } from "../utils/index.ts";
+import { CommonArgs, createArgParser } from "../shared/args.ts";
 import { scaffoldProjectFast, type ScaffoldResult } from "./new/fast-scaffold.ts";
-import { reserveProjectSlug, type ReserveResult } from "./new/reserve-slug.ts";
+import { reserveProjectSlug } from "./new/reserve-slug.ts";
 import type { InitTemplate } from "./init/types.ts";
 
 // ============================================================================
@@ -50,38 +50,6 @@ export const parseNewArgs = createArgParser(NewArgsSchema, {
 function useColor() {
   const enabled = getColorEnabled();
   return (fn: (s: string) => string, s: string) => (enabled ? fn(s) : s);
-}
-
-async function waitForEnter(): Promise<void> {
-  return new Promise((resolve) => {
-    const onData = (data: Uint8Array) => {
-      const char = new TextDecoder().decode(data);
-      if (char.includes("\n") || char.includes("\r")) {
-        // @ts-ignore - Deno global
-        Deno.stdin.setRaw(false);
-        resolve();
-      }
-    };
-    // @ts-ignore - Deno global
-    Deno.stdin.setRaw(true);
-    // @ts-ignore - Deno global
-    Deno.stdin.readable.getReader().read().then(({ value }) => {
-      if (value) onData(value);
-    });
-  });
-}
-
-async function readSingleKey(): Promise<string> {
-  // @ts-ignore - Deno global
-  Deno.stdin.setRaw(true);
-  const buf = new Uint8Array(8);
-  // @ts-ignore - Deno global
-  const n = await Deno.stdin.read(buf);
-  // @ts-ignore - Deno global
-  Deno.stdin.setRaw(false);
-  if (n === null) return "";
-  const decoded = new TextDecoder().decode(buf.subarray(0, n));
-  return decoded;
 }
 
 // ============================================================================
@@ -209,7 +177,7 @@ export async function newCommand(
     // Update .veryfrontrc with the actual slug
     const veryfrontrcPath = join(projectDir, ".veryfrontrc");
     const veryfrontrc = JSON.stringify({ projectSlug: actualSlug }, null, 2) + "\n";
-    await fs.writeFile(veryfrontrcPath, veryfrontrc);
+    await fs.writeFile(veryfrontrcPath, new TextEncoder().encode(veryfrontrc));
   }
 
   // -------------------------------------------------------------------------
@@ -287,7 +255,7 @@ async function startDevServer(port: number): Promise<void> {
 // Deploy
 // ============================================================================
 
-async function deployProject(slug: string, token: string): Promise<boolean> {
+async function deployProject(_slug: string, _token: string): Promise<boolean> {
   const c = useColor();
 
   try {
@@ -323,7 +291,7 @@ async function deployProject(slug: string, token: string): Promise<boolean> {
 // Input Handling
 // ============================================================================
 
-async function waitForKeypress(): Promise<void> {
+function waitForKeypress(): Promise<void> {
   return new Promise((resolve) => {
     // @ts-ignore - Deno global
     if (typeof Deno !== "undefined" && Deno.stdin) {
@@ -331,7 +299,7 @@ async function waitForKeypress(): Promise<void> {
       Deno.stdin.setRaw(true);
       const reader = Deno.stdin.readable.getReader();
 
-      reader.read().then(({ value }) => {
+      reader.read().then(({ value: _value }) => {
         // @ts-ignore - Deno global
         Deno.stdin.setRaw(false);
         reader.releaseLock();

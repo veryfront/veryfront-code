@@ -10,7 +10,7 @@
  */
 
 import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
-import { join, dirname } from "@veryfront/platform/compat/path/index.ts";
+import { dirname, join } from "@veryfront/platform/compat/path/index.ts";
 import { getTemplate } from "../../templates/index.ts";
 import type { InitTemplate } from "../init/types.ts";
 import type { TemplateFile } from "../../templates/types.ts";
