@@ -77,10 +77,7 @@ describe("deploy command integration", () => {
       if (!testReleaseId) return;
 
       const env = await getEnvironmentByName(ctx.client, ctx.projectSlug, "production");
-      if (!env) {
-        console.log("Skipping: production environment not found");
-        return;
-      }
+      if (!env) return;
 
       const deployment = await createDeployment(ctx.client, ctx.projectSlug, testReleaseId, env.id);
 

@@ -318,8 +318,8 @@ export class LayoutApplicator {
         body = extracted.body;
       }
 
-      const remarkPlugins = await getRemarkPlugins(this.projectDir);
-      const rehypePlugins = await getRehypePlugins(this.projectDir);
+      const remarkPlugins = await getRemarkPlugins();
+      const rehypePlugins = await getRehypePlugins();
 
       // Compile MDX to JavaScript
       const compiled = await compile(body, {

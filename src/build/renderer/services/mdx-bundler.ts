@@ -42,8 +42,8 @@ export async function bundleMdx(
       frontmatter = extracted.attrs as Record<string, unknown>;
     }
 
-    const remarkPlugins = await getRemarkPlugins(options.projectDir) as unknown as PluggableList;
-    const rehypePlugins = await getRehypePlugins(options.projectDir) as unknown as PluggableList;
+    const remarkPlugins = await getRemarkPlugins() as unknown as PluggableList;
+    const rehypePlugins = await getRehypePlugins() as unknown as PluggableList;
 
     const processedContent = await processImports(
       body,
@@ -157,7 +157,6 @@ export async function bundleMDXWithOptions(options: MDXBundleOptions): Promise<M
   const {
     content,
     filePath,
-    projectDir,
     mode = "production",
     globals = {},
     remarkPlugins = [],
@@ -177,8 +176,8 @@ export async function bundleMDXWithOptions(options: MDXBundleOptions): Promise<M
       frontmatter = extracted.attrs as Record<string, unknown>;
     }
 
-    const defaultRemarkPlugins = await getRemarkPlugins(projectDir) as unknown as PluggableList;
-    const defaultRehypePlugins = await getRehypePlugins(projectDir) as unknown as PluggableList;
+    const defaultRemarkPlugins = await getRemarkPlugins() as unknown as PluggableList;
+    const defaultRehypePlugins = await getRehypePlugins() as unknown as PluggableList;
     const allRemarkPlugins = [
       ...normalizePlugins(defaultRemarkPlugins),
       ...normalizePlugins(remarkPlugins as PluggableList),

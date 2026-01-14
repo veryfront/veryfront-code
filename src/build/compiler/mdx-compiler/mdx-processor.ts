@@ -11,8 +11,8 @@ export async function compileMDX(
   content: string,
   options: CompileOptions,
 ): Promise<ProcessedMDX> {
-  const remarkPlugins = (await getRemarkPlugins(options.projectDir)) as PluginList;
-  const rehypePlugins = (await getRehypePlugins(options.projectDir)) as PluginList;
+  const remarkPlugins = (await getRemarkPlugins()) as PluginList;
+  const rehypePlugins = (await getRehypePlugins()) as PluginList;
 
   const compiled = await compileMdx(content, {
     outputFormat: "program",

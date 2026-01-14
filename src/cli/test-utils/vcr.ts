@@ -8,6 +8,7 @@
  */
 
 import { load } from "jsr:@std/dotenv@0.225";
+import { cliLogger } from "@veryfront/utils";
 import type { ApiClient } from "../shared/config.ts";
 
 // Load .env.local for credentials in record mode
@@ -147,7 +148,7 @@ export async function createVCRClient(
         cassettePath,
         JSON.stringify(cassette, null, 2) + "\n",
       );
-      console.log(`Saved cassette: ${cassettePath} (${cassette.entries.length} entries)`);
+      cliLogger.info(`Saved cassette: ${cassettePath} (${cassette.entries.length} entries)`);
     }
   }
 

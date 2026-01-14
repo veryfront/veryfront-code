@@ -25,16 +25,11 @@ describe("merge command integration", () => {
     try {
       const branch = await ctx.client.post<{ id: string }>(
         `/projects/${ctx.projectSlug}/branches`,
-        {
-          name: branchName,
-        },
+        { name: branchName },
       );
       testBranchId = branch.id;
-      if (isRecording()) {
-        console.log(`Created test branch: ${branchName} (${testBranchId})`);
-      }
-    } catch (error) {
-      console.error("Failed to create test branch:", error);
+    } catch {
+      // Branch creation may fail in playback if not recorded
     }
   });
 
@@ -52,10 +47,7 @@ describe("merge command integration", () => {
 
   describe("merge preview", () => {
     it("should fetch merge preview for branch", async () => {
-      if (!testBranchId) {
-        console.log("Skipping: no test branch available");
-        return;
-      }
+      if (!testBranchId) return;
 
       const preview = await ctx.client.get<{ diffs: unknown[] }>(
         `/projects/${ctx.projectSlug}/branches/${testBranchId}/merge-preview`,

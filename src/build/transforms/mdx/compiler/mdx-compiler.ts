@@ -25,8 +25,8 @@ export async function compileMDXRuntime(
   try {
     const { compile } = await import("@mdx-js/mdx");
 
-    const remarkPlugins = (await getRemarkPlugins(projectDir)) as unknown as PluggableList;
-    const rehypePlugins = (await getRehypePlugins(projectDir)) as unknown as PluggableList;
+    const remarkPlugins = (await getRemarkPlugins()) as unknown as PluggableList;
+    const rehypePlugins = (await getRehypePlugins()) as unknown as PluggableList;
 
     const extracted = await extractFrontmatter(content, frontmatter);
     let { body } = extracted;

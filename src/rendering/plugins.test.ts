@@ -126,13 +126,13 @@ Deno.test("rehypeMdxComponents basic functionality", () => {
 });
 
 Deno.test("getRemarkPlugins returns array", async () => {
-  const plugins = await getRemarkPlugins("/test/project");
+  const plugins = await getRemarkPlugins();
   assertEquals(Array.isArray(plugins), true);
   assertEquals(plugins.length > 0, true);
 });
 
 Deno.test("getRehypePlugins returns array", async () => {
-  const plugins = await getRehypePlugins("/test/project");
+  const plugins = await getRehypePlugins();
   assertEquals(Array.isArray(plugins), true);
   assertEquals(plugins.length > 0, true);
 });

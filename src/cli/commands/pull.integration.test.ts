@@ -51,10 +51,7 @@ describe("pull command integration", () => {
       const source: PullSource = { type: "main" };
       const files = await listAllFiles(ctx.client, ctx.projectSlug, source);
 
-      if (files.length === 0) {
-        console.log("Skipping: no files in project");
-        return;
-      }
+      if (files.length === 0) return;
 
       const content = await getFileContent(ctx.client, ctx.projectSlug, files[0]!.path, source);
 
