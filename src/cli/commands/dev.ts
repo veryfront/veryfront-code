@@ -4,14 +4,12 @@
 
 import { compileAllMDX, watchMDX } from "@veryfront/build/compiler/mdx-compiler/index.ts";
 import { ErrorCode, VeryfrontError } from "@veryfront/errors/index.ts";
-import { LOCALHOST } from "@veryfront/config";
 import { bold, cyan, dim, green } from "@veryfront/compat/console";
 import { join } from "@veryfront/platform/compat/path/index.ts";
 import { getAdapter } from "@veryfront/platform/adapters/detect.ts";
 import { cliLogger } from "@veryfront/utils";
 import { getConfig } from "@veryfront/config";
 import { createDevServer } from "@veryfront/server/dev-server.ts";
-import { getNetworkInterfaces } from "@veryfront/platform/compat/process.ts";
 import { runAIConfigValidation } from "@veryfront/ai/utils/config-validator.ts";
 import { discoverAll } from "@veryfront/ai/utils/discovery.ts";
 import { exitProcess, registerTerminationSignals } from "../utils/index.ts";
@@ -24,21 +22,6 @@ export interface DevOptions {
 
 // Alias for backward compatibility
 export type DevCommandOptions = DevOptions;
-
-async function getLocalIP(): Promise<string> {
-  try {
-    const interfaces = await getNetworkInterfaces();
-    for (const iface of interfaces) {
-      if (iface.family === "IPv4" && !iface.address.startsWith("127.")) {
-        return iface.address;
-      }
-    }
-  } catch (error) {
-    // Network interface enumeration may fail due to permissions
-    cliLogger.debug("Failed to get network interfaces:", error);
-  }
-  return LOCALHOST.HOSTNAME;
-}
 
 export async function devCommand(options: DevOptions) {
   const { port, projectDir, hmr = true } = options;
@@ -191,20 +174,12 @@ export async function devCommand(options: DevOptions) {
   // Clean startup banner (skip in proxy mode - dev-proxy.ts prints its own)
   const isProxyMode = config?.fs?.veryfront?.proxyMode === true;
   if (!isProxyMode) {
-    const localIP = await getLocalIP();
-
     console.log();
     console.log(dim("─".repeat(40)));
-    console.log(`  ${bold(cyan("Veryfront"))} ${dim("Dev Mode")}`);
+    console.log(`  ${bold(cyan("Veryfront"))}`);
     console.log(dim("─".repeat(40)));
     console.log();
-    console.log(`  ${green("●")} Local     ${cyan(`http://${LOCALHOST.HOSTNAME}:${finalPort}`)}`);
-    console.log(`  ${green("●")} Network   ${cyan(`http://${localIP}:${finalPort}`)}`);
-    if (enableHMR) {
-      console.log(
-        `  ${green("●")} HMR       ${dim(`ws://${LOCALHOST.HOSTNAME}:${finalPort + 1}/`)}`,
-      );
-    }
+    console.log(`  ${green("●")} Open: ${cyan(`http://lvh.me:${finalPort}/`)}`);
     console.log();
     console.log(dim(`  Press Ctrl+C to stop`));
     console.log();

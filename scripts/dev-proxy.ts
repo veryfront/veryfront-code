@@ -80,7 +80,7 @@ await new Promise((r) => setTimeout(r, 2000));
 // Clean startup banner
 console.log();
 console.log(c(ANSI.dim, "─".repeat(40)));
-console.log(`  ${c(ANSI.bold + ANSI.cyan, "Veryfront")} ${c(ANSI.dim, "Proxy Mode")}`);
+console.log(`  ${c(ANSI.bold + ANSI.cyan, "Veryfront")} ${c(ANSI.dim, "Multi-Project Mode")}`);
 console.log(c(ANSI.dim, "─".repeat(40)));
 console.log();
 console.log(`  ${c(ANSI.green, "●")} Open: ${c(ANSI.cyan, `http://{project}.lvh.me:${PROXY_PORT}/`)}`);
