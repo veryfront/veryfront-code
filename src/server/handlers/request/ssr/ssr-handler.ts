@@ -45,11 +45,11 @@ import { VeryfrontAPIError } from "@veryfront/platform/adapters/veryfront-api-cl
 
 /**
  * Determine if request should serve production (released) content.
- * Priority: studio_embed override > config > veryfront domain isDraft flag > proxy environment header
+ * Priority: preview_mode param > config > veryfront domain isDraft flag > proxy environment header
  */
 export function isProductionMode(ctx: HandlerContext, url?: URL): boolean {
-  // Studio embed always uses preview/draft mode for Studio preview iframe
-  if (url?.searchParams.get("studio_embed") === "true") {
+  // preview_mode=true forces preview/draft mode
+  if (url?.searchParams.get("preview_mode") === "true") {
     return false;
   }
 
@@ -213,7 +213,11 @@ export class SSRHandler extends BaseHandler {
           .withCache("no-cache")
           .withContentType(
             getContentType(".html"),
-            '<!DOCTYPE html><html><head><meta charset="utf-8"><title>Service Temporarily Unavailable</title></head><body><h1>503 Service Temporarily Unavailable</h1><p>The server is under heavy load. Please try again.</p></body></html>',
+            generateStyledErrorHtml(
+              503,
+              "Service Unavailable",
+              "The server is under heavy load. Please try again.",
+            ),
             503,
           ),
       );
@@ -433,11 +437,11 @@ export class SSRHandler extends BaseHandler {
         }
 
         const isHeadRequest = req.method.toUpperCase() === "HEAD";
-        const body = isHeadRequest
-          ? null
-          : `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>404 Not Found</title></head><body><h1>404 Not Found</h1><p>The requested path ${
-            slug || "/"
-          } could not be located.</p></body></html>`;
+        const body = isHeadRequest ? null : generateStyledErrorHtml(
+          404,
+          "Not Found",
+          `The requested path "${slug || "/"}" could not be found`,
+        );
 
         const response = builder
           .withCORS(req, ctx.securityConfig?.cors)
@@ -448,24 +452,24 @@ export class SSRHandler extends BaseHandler {
         return this.respond(response);
       }
 
-      // Check for API 404 errors from environment LIST endpoint - means no release exists
-      // Important: Only match the list endpoint (/environments/{name}/files or /files?...)
-      // NOT individual file fetches (/environments/{name}/files/{path}) which are normal 404s
+      // Check for API 404 errors from file LIST endpoints - means no content exists
+      // This handles both:
+      // - /environments/{name}/files (production mode, no release)
+      // - /branches/{name}/files (preview mode with preview_mode=true, no draft content)
+      // Important: Only match list endpoints, NOT individual file fetches (/files/{path})
       if (error instanceof VeryfrontAPIError && error.status === 404) {
-        const isProductionRequest = isProductionMode(ctx, url);
         const errorDetails = error.details as { url?: string; responseText?: string } | undefined;
         const apiUrl = errorDetails?.url || "";
 
-        // Check if this is an environment list request (not a specific file fetch)
-        // List endpoint: /environments/{name}/files or /environments/{name}/files?...
-        // File endpoint: /environments/{name}/files/{path} - has path after /files/
-        const isEnvironmentListRequest = apiUrl.includes("/environments/") &&
-          apiUrl.includes("/files") &&
-          !apiUrl.includes("/files/"); // No path segment after /files/
+        // Check if this is a file list request (not a specific file fetch)
+        // List endpoints end with /files or /files?... (no path after /files/)
+        const isFileListRequest = apiUrl.includes("/files") &&
+          !apiUrl.includes("/files/") &&
+          (apiUrl.includes("/environments/") || apiUrl.includes("/branches/"));
 
-        // If this is a production request hitting the environment LIST endpoint, it means no release
-        if (isProductionRequest && isEnvironmentListRequest) {
-          this.logDebug("No release found for production environment", {
+        // Show friendly page when listing files fails (no release or no draft content)
+        if (isFileListRequest) {
+          this.logDebug("No content found for project", {
             projectSlug: ctx.projectSlug,
             apiUrl,
             error: this.getErrorMessage(error),
@@ -475,9 +479,11 @@ export class SSRHandler extends BaseHandler {
           const builder = this.createResponseBuilder(ctx, notDeployedNonce, builderOptions);
           const isHeadRequest = req.method.toUpperCase() === "HEAD";
 
-          const body = isHeadRequest
-            ? null
-            : generateNotDeployedHtml(ctx.projectSlug || "this project");
+          const body = isHeadRequest ? null : generateStyledErrorHtml(
+            404,
+            "Not Deployed",
+            "This project hasn't been deployed yet",
+          );
 
           const response = builder
             .withCORS(req, ctx.securityConfig?.cors)
@@ -536,9 +542,11 @@ export class SSRHandler extends BaseHandler {
       }
 
       // Generic error fallback
-      const body = isHead
-        ? null
-        : `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>Internal Server Error</title></head><body><h1>500 Internal Server Error</h1><p>Unexpected error rendering this page.</p></body></html>`;
+      const body = isHead ? null : generateStyledErrorHtml(
+        500,
+        "Server Error",
+        "An unexpected error occurred while rendering this page",
+      );
 
       const response = builder
         .withCORS(req, ctx.securityConfig?.cors)
@@ -552,24 +560,28 @@ export class SSRHandler extends BaseHandler {
 }
 
 /**
- * Generate a 404 page for projects that haven't been deployed yet.
+ * Generate a styled error page for any status code.
  * Styled to match the Veryfront design system.
  */
-function generateNotDeployedHtml(_projectSlug: string): string {
+function generateStyledErrorHtml(
+  statusCode: number,
+  title: string,
+  message: string,
+): string {
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width">
   <link rel="icon" type="image/png" href="https://cdn.veryfront.com/images/veryfront-favicon.png">
-  <title>Not Deployed — Veryfront</title>
+  <title>${statusCode} ${title} — Veryfront</title>
   <script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body>
   <div class="fixed z-[2147483647] inset-0 min-h-screen min-w-full flex flex-col items-center justify-center leading-[1.25] bg-[#0d0e11] text-white">
     <div class="font-sans antialiased text-center flex flex-col items-center px-8 gap-4 tracking-wide">
-      <p class="m-0 font-semibold text-5xl md:text-6xl text-[#949A9F]">Not Deployed</p>
-      <p class="text-white text-xl">This project hasn't been deployed yet</p>
+      <p class="m-0 font-semibold text-5xl md:text-6xl text-[#949A9F]">${title}</p>
+      <p class="text-white text-xl">${message}</p>
     </div>
   </div>
 </body>
