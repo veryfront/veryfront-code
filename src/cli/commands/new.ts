@@ -137,7 +137,7 @@ export async function newCommand(
   cliLogger.info(`  Creating ${c(cyan, name)}...`);
   cliLogger.info("");
   cliLogger.info(`  Local   ${c(cyan, `http://${name}.lvh.me:${port}`)}`);
-  cliLogger.info(`  Live    ${c(cyan, `https://${name}.veryfront.app`)}`);
+  cliLogger.info(`  Live    ${c(cyan, `https://${name}.veryfront.com`)}`);
   cliLogger.info("");
 
   // -------------------------------------------------------------------------
@@ -223,7 +223,7 @@ export async function newCommand(
   if (deployed) {
     cliLogger.info(`  ${c(green, "\u2713")} Done!`);
     cliLogger.info("");
-    cliLogger.info(`  ${c(cyan, `https://${actualSlug}.veryfront.app`)}`);
+    cliLogger.info(`  ${c(cyan, `https://${actualSlug}.veryfront.com`)}`);
     cliLogger.info("");
   }
 }
@@ -271,10 +271,10 @@ async function deployProject(_slug: string, _token: string): Promise<boolean> {
       dryRun: false,
     });
 
-    // Create release and deployment
+    // Create release and deployment to production
     await deployCommand({
       branch: "main",
-      env: "preview",
+      env: "production",
       force: true,
       dryRun: false,
     });

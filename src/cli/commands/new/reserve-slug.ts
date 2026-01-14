@@ -104,7 +104,7 @@ async function tryCreateProject(
         "Content-Type": "application/json",
         Accept: "application/json",
       },
-      body: JSON.stringify({ slug }),
+      body: JSON.stringify({ slug, name: slug }),
     });
 
     if (response.ok) {
