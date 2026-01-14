@@ -20,24 +20,31 @@ import { exitProcess, getColorEnabled, isTTY } from "../utils/index.ts";
 import { CommonArgs, createArgParser } from "../shared/args.ts";
 import { scaffoldProjectFast, type ScaffoldResult } from "./new/fast-scaffold.ts";
 import { reserveProjectSlug } from "./new/reserve-slug.ts";
+import { runInteractiveWizard, shouldRunWizard } from "./init/interactive-wizard.ts";
 import type { InitTemplate } from "./init/types.ts";
+import type { IntegrationName } from "../templates/types.ts";
 
 // ============================================================================
 // Types
 // ============================================================================
 
 export const NewArgsSchema = z.object({
-  template: z.enum(["ai", "app", "blog", "docs", "minimal"]).default("ai"),
+  template: z.enum(["ai", "app", "blog", "docs", "minimal"]).optional(),
+  integrations: z.string().optional(), // Comma-separated list
   port: z.number().default(3000),
   skipDeploy: z.boolean().default(false),
   open: z.boolean().default(true),
   force: z.boolean().default(false),
 });
 
-export type NewOptions = z.infer<typeof NewArgsSchema>;
+export type NewOptions = z.infer<typeof NewArgsSchema> & {
+  // Parsed integrations array
+  integrationsList?: string[];
+};
 
 export const parseNewArgs = createArgParser(NewArgsSchema, {
   template: { keys: ["template", "t"], type: "string" },
+  integrations: { keys: ["integrations", "i"], type: "string" },
   port: { keys: ["port", "p"], type: "number" },
   skipDeploy: { keys: ["skip-deploy"], type: "boolean" },
   open: { keys: ["open", "o"], type: "boolean" },
@@ -62,15 +69,38 @@ export async function newCommand(
   options: Partial<NewOptions> = {},
 ): Promise<void> {
   const c = useColor();
-  const {
-    template = "ai",
+  let {
+    template,
+    integrations: integrationsStr,
     port = 3000,
     skipDeploy = false,
     open = true,
     force = false,
   } = options;
 
+  // Parse integrations string to array
+  let integrations: IntegrationName[] = integrationsStr
+    ? integrationsStr.split(",").map((s) => s.trim()).filter(Boolean) as IntegrationName[]
+    : [];
+
   const fs = createFileSystem();
+
+  // -------------------------------------------------------------------------
+  // Step 0: Interactive wizard (if no template specified)
+  // -------------------------------------------------------------------------
+
+  if (shouldRunWizard({ template, integrations }) && isTTY()) {
+    const wizardResult = await runInteractiveWizard();
+    if (!wizardResult.skipped) {
+      template = wizardResult.template;
+      integrations = wizardResult.integrations;
+    }
+  }
+
+  // Default to "ai" template if still not set
+  if (!template) {
+    template = "ai";
+  }
   const projectDir = join(cwd(), name);
 
   // -------------------------------------------------------------------------
@@ -153,7 +183,7 @@ export async function newCommand(
 
   if (skipDeploy) {
     // Skip API call, just scaffold locally
-    scaffoldResult = await scaffoldProjectFast(projectDir, template as InitTemplate, name);
+    scaffoldResult = await scaffoldProjectFast(projectDir, template as InitTemplate, name, integrations);
     cliLogger.info(`  ${c(green, "\u2713")} Created ${scaffoldResult.filesWritten} files`);
     cliLogger.info("");
     cliLogger.info(c(dim, `  cd ${name} && deno task cli dev`));
@@ -163,7 +193,7 @@ export async function newCommand(
 
   // Run scaffold and slug reservation in parallel
   const [scaffoldRes, reserveResult] = await Promise.all([
-    scaffoldProjectFast(projectDir, template as InitTemplate, name),
+    scaffoldProjectFast(projectDir, template as InitTemplate, name, integrations),
     reserveProjectSlug(name, token),
   ]);
 

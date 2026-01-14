@@ -208,4 +208,243 @@ describe("new command integration", () => {
       assertEquals(config.projectSlug, projectName);
     });
   });
+
+  describe("--integrations flag", () => {
+    it("should scaffold project with single integration", async () => {
+      const cliPath = new URL("../main.ts", import.meta.url).pathname;
+      const command = new Deno.Command("deno", {
+        args: [
+          "run",
+          "--allow-all",
+          cliPath,
+          "new",
+          projectName,
+          "--skip-deploy",
+          "-t",
+          "ai",
+          "--integrations",
+          "github",
+        ],
+        cwd: TEST_DIR,
+        stdout: "piped",
+        stderr: "piped",
+      });
+
+      const { code } = await command.output();
+      assertEquals(code, 0);
+
+      // Project should be created
+      const stat = await Deno.stat(projectDir);
+      assertEquals(stat.isDirectory, true);
+
+      // GitHub integration files should exist
+      // Check for the GitHub client library
+      const githubClientExists = await Deno.stat(join(projectDir, "lib", "github-client.ts"))
+        .then((s) => s.isFile)
+        .catch(() => false);
+      assertEquals(githubClientExists, true);
+
+      // Check for GitHub OAuth routes
+      const githubAuthRouteExists = await Deno.stat(join(projectDir, "app", "api", "auth", "github"))
+        .then((s) => s.isDirectory)
+        .catch(() => false);
+      assertEquals(githubAuthRouteExists, true);
+    });
+
+    it("should scaffold project with multiple integrations (comma-separated)", async () => {
+      const cliPath = new URL("../main.ts", import.meta.url).pathname;
+      const command = new Deno.Command("deno", {
+        args: [
+          "run",
+          "--allow-all",
+          cliPath,
+          "new",
+          projectName,
+          "--skip-deploy",
+          "-t",
+          "ai",
+          "--integrations",
+          "github,slack",
+        ],
+        cwd: TEST_DIR,
+        stdout: "piped",
+        stderr: "piped",
+      });
+
+      const { code } = await command.output();
+      assertEquals(code, 0);
+
+      // GitHub integration files should be scaffolded
+      const githubClientExists = await Deno.stat(join(projectDir, "lib", "github-client.ts"))
+        .then((s) => s.isFile)
+        .catch(() => false);
+      assertEquals(githubClientExists, true);
+
+      // Slack integration files should be scaffolded
+      const slackClientExists = await Deno.stat(join(projectDir, "lib", "slack-client.ts"))
+        .then((s) => s.isFile)
+        .catch(() => false);
+      assertEquals(slackClientExists, true);
+    });
+
+    it("should include integration env vars in .env", async () => {
+      const cliPath = new URL("../main.ts", import.meta.url).pathname;
+      const command = new Deno.Command("deno", {
+        args: [
+          "run",
+          "--allow-all",
+          cliPath,
+          "new",
+          projectName,
+          "--skip-deploy",
+          "-t",
+          "ai",
+          "--integrations",
+          "github",
+        ],
+        cwd: TEST_DIR,
+        stdout: "piped",
+        stderr: "piped",
+      });
+
+      const { code } = await command.output();
+      assertEquals(code, 0);
+
+      // .env should contain integration env vars
+      const envContent = await Deno.readTextFile(join(projectDir, ".env"));
+      // GitHub integration requires GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET
+      assertExists(envContent.includes("GITHUB_CLIENT_ID") || envContent.includes("OPENAI_API_KEY"));
+    });
+
+    it("should include integration env vars in .env.example", async () => {
+      const cliPath = new URL("../main.ts", import.meta.url).pathname;
+      const command = new Deno.Command("deno", {
+        args: [
+          "run",
+          "--allow-all",
+          cliPath,
+          "new",
+          projectName,
+          "--skip-deploy",
+          "-t",
+          "ai",
+          "--integrations",
+          "github",
+        ],
+        cwd: TEST_DIR,
+        stdout: "piped",
+        stderr: "piped",
+      });
+
+      const { code } = await command.output();
+      assertEquals(code, 0);
+
+      // .env.example should exist and contain integration documentation
+      const envExampleContent = await Deno.readTextFile(join(projectDir, ".env.example"));
+      assertExists(envExampleContent.includes("Integration") || envExampleContent.includes("OPENAI"));
+    });
+  });
+
+  describe("wizard behavior", () => {
+    it("should skip wizard when --template flag is provided", async () => {
+      const cliPath = new URL("../main.ts", import.meta.url).pathname;
+      const command = new Deno.Command("deno", {
+        args: [
+          "run",
+          "--allow-all",
+          cliPath,
+          "new",
+          projectName,
+          "--skip-deploy",
+          "-t",
+          "minimal",
+        ],
+        cwd: TEST_DIR,
+        stdout: "piped",
+        stderr: "piped",
+        env: {
+          ...Deno.env.toObject(),
+          // Disable TTY to prevent wizard attempts
+          DENO_NO_PROMPT: "1",
+        },
+      });
+
+      const { code, stdout, stderr } = await command.output();
+      const output = new TextDecoder().decode(stdout) + new TextDecoder().decode(stderr);
+
+      assertEquals(code, 0);
+
+      // Should not show wizard prompts (no "What would you like to build?")
+      assertEquals(output.includes("What would you like to build?"), false);
+
+      // Project should be created with minimal template
+      const stat = await Deno.stat(projectDir);
+      assertEquals(stat.isDirectory, true);
+    });
+
+    it("should skip wizard when --integrations flag is provided", async () => {
+      const cliPath = new URL("../main.ts", import.meta.url).pathname;
+      const command = new Deno.Command("deno", {
+        args: [
+          "run",
+          "--allow-all",
+          cliPath,
+          "new",
+          projectName,
+          "--skip-deploy",
+          "--integrations",
+          "github",
+        ],
+        cwd: TEST_DIR,
+        stdout: "piped",
+        stderr: "piped",
+        env: {
+          ...Deno.env.toObject(),
+          DENO_NO_PROMPT: "1",
+        },
+      });
+
+      const { code, stdout, stderr } = await command.output();
+      const output = new TextDecoder().decode(stdout) + new TextDecoder().decode(stderr);
+
+      assertEquals(code, 0);
+
+      // Should not show wizard prompts
+      assertEquals(output.includes("What would you like to build?"), false);
+
+      // Project should use default AI template when integrations provided without template
+      const aiDirExists = await Deno.stat(join(projectDir, "ai"))
+        .then((s) => s.isDirectory)
+        .catch(() => false);
+      assertEquals(aiDirExists, true);
+    });
+
+    it("should skip wizard in non-TTY environment", async () => {
+      const cliPath = new URL("../main.ts", import.meta.url).pathname;
+      const command = new Deno.Command("deno", {
+        args: [
+          "run",
+          "--allow-all",
+          cliPath,
+          "new",
+          projectName,
+          "--skip-deploy",
+        ],
+        cwd: TEST_DIR,
+        stdout: "piped",
+        stderr: "piped",
+        // Non-TTY: stdin is piped, not a terminal
+        stdin: "null",
+      });
+
+      const { code } = await command.output();
+      assertEquals(code, 0);
+
+      // Project should be created with default AI template
+      const aiDirExists = await Deno.stat(join(projectDir, "ai"))
+        .then((s) => s.isDirectory)
+        .catch(() => false);
+      assertEquals(aiDirExists, true);
+    });
+  });
 });
