@@ -185,8 +185,10 @@ async function clearProjectFiles(slug: string, token: string): Promise<void> {
       const batch = files.slice(i, i + batchSize);
       await Promise.all(batch.map((f) => deleteFile(f.path)));
     }
-  } catch {
-    // Ignore errors - best effort cleanup
+  } catch (error) {
+    throw new Error(
+      `Failed to clear template files: ${error instanceof Error ? error.message : error}`,
+    );
   }
 }
 

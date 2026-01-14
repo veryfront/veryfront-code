@@ -11,6 +11,7 @@ import { cyan, dim, green, red } from "@veryfront/compat/console";
 import { chdir, cwd, getEnv } from "@veryfront/platform/compat/process.ts";
 import { join } from "@veryfront/platform/compat/path/index.ts";
 import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
+import { waitForKeypress } from "@veryfront/platform/compat/stdin.ts";
 import { z } from "zod";
 
 import { readToken, validateToken } from "../auth/index.ts";
@@ -218,7 +219,7 @@ export async function newCommand(
   cliLogger.info("");
 
   // Deploy: push + create release + create deployment
-  const deployed = await deployProject(actualSlug, token);
+  const deployed = await deployProject();
 
   if (deployed) {
     cliLogger.info(`  ${c(green, "\u2713")} Done!`);
@@ -233,29 +234,22 @@ export async function newCommand(
 // ============================================================================
 
 async function startDevServer(port: number): Promise<void> {
-  // Import dev command dynamically to avoid circular deps
   const { devCommand } = await import("./dev.ts");
 
-  // Start dev server in background (don't await - let it run)
-  // Note: devCommand will block, so we use a timeout to return early
-  const serverPromise = devCommand({
+  const { ready } = await devCommand({
     port,
     projectDir: cwd(),
     hmr: true,
   });
 
-  // Race: wait for server to potentially fail or timeout
-  await Promise.race([
-    serverPromise.catch(() => {}), // Swallow errors for now
-    new Promise((resolve) => setTimeout(resolve, 500)),
-  ]);
+  await ready;
 }
 
 // ============================================================================
 // Deploy
 // ============================================================================
 
-async function deployProject(_slug: string, _token: string): Promise<boolean> {
+async function deployProject(): Promise<boolean> {
   const c = useColor();
 
   try {
@@ -287,33 +281,3 @@ async function deployProject(_slug: string, _token: string): Promise<boolean> {
   }
 }
 
-// ============================================================================
-// Input Handling
-// ============================================================================
-
-function waitForKeypress(): Promise<void> {
-  return new Promise((resolve) => {
-    // @ts-ignore - Deno global
-    if (typeof Deno !== "undefined" && Deno.stdin) {
-      // @ts-ignore - Deno global
-      Deno.stdin.setRaw(true);
-      const reader = Deno.stdin.readable.getReader();
-
-      reader.read().then(({ value: _value }) => {
-        // @ts-ignore - Deno global
-        Deno.stdin.setRaw(false);
-        reader.releaseLock();
-        resolve();
-      });
-    } else {
-      // Node.js fallback
-      process.stdin.setRawMode?.(true);
-      process.stdin.resume();
-      process.stdin.once("data", () => {
-        process.stdin.setRawMode?.(false);
-        process.stdin.pause();
-        resolve();
-      });
-    }
-  });
-}
