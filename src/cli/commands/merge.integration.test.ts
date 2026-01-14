@@ -22,15 +22,11 @@ describe("merge command integration", () => {
 
     // Create test branch (VCR replays recorded response in playback mode)
     const branchName = isRecording() ? `test-merge-${Date.now()}` : "test-merge-vcr";
-    try {
-      const branch = await ctx.client.post<{ id: string }>(
-        `/projects/${ctx.projectSlug}/branches`,
-        { name: branchName },
-      );
-      testBranchId = branch.id;
-    } catch {
-      // Branch creation may fail in playback if not recorded
-    }
+    const branch = await ctx.client.post<{ id: string }>(
+      `/projects/${ctx.projectSlug}/branches`,
+      { name: branchName },
+    );
+    testBranchId = branch.id;
   });
 
   afterAll(async () => {
@@ -41,20 +37,20 @@ describe("merge command integration", () => {
     it("should return null for nonexistent branch", async () => {
       const branch = await getBranchByName(ctx.client, ctx.projectSlug, "nonexistent-branch-12345");
 
-      assertEquals(branch, null);
+      assertEquals(branch, null, "Nonexistent branch should return null");
     });
   });
 
   describe("merge preview", () => {
     it("should fetch merge preview for branch", async () => {
-      if (!testBranchId) return;
+      assertExists(testBranchId, "Test branch should exist from beforeAll setup");
 
       const preview = await ctx.client.get<{ diffs: unknown[] }>(
         `/projects/${ctx.projectSlug}/branches/${testBranchId}/merge-preview`,
       );
 
-      assertExists(preview);
-      assertEquals(Array.isArray(preview.diffs), true);
+      assertExists(preview, "Merge preview should exist");
+      assertEquals(Array.isArray(preview.diffs), true, "Preview should have diffs array");
     });
   });
 });

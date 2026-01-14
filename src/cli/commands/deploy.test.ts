@@ -228,6 +228,92 @@ describe("createRelease", () => {
   });
 });
 
+// Test getEnvironmentByName - error handling
+describe("getEnvironmentByName - error handling", () => {
+  it("should handle API error gracefully", async () => {
+    const mockClient = createMockClient({
+      get: () => Promise.reject(new Error("Network error")),
+    });
+
+    let error: Error | null = null;
+    try {
+      await getEnvironmentByName(mockClient, "my-project", "production");
+    } catch (e) {
+      error = e as Error;
+    }
+    assertEquals(error?.message, "Network error");
+  });
+
+  it("should handle paginated empty results", async () => {
+    let callCount = 0;
+    const mockClient = createMockClient({
+      get: () => {
+        callCount++;
+        if (callCount === 1) {
+          return Promise.resolve({
+            data: [{ id: "env-1", name: "staging", protected: false }],
+            page_info: { next: "cursor-2" },
+          });
+        }
+        return Promise.resolve({ data: [], page_info: {} });
+      },
+    });
+
+    const env = await getEnvironmentByName(mockClient, "my-project", "production");
+    assertEquals(env, null);
+    assertEquals(callCount, 2);
+  });
+});
+
+// Test DeployArgsSchema - invalid inputs
+describe("DeployArgsSchema - invalid inputs", () => {
+  it("should reject empty branch name", () => {
+    const result = DeployArgsSchema.safeParse({ branch: "" });
+    assertEquals(result.success, false);
+  });
+
+  it("should reject empty env name", () => {
+    const result = DeployArgsSchema.safeParse({ env: "" });
+    assertEquals(result.success, false);
+  });
+
+  it("should reject empty release name", () => {
+    const result = DeployArgsSchema.safeParse({ releaseName: "" });
+    assertEquals(result.success, false);
+  });
+});
+
+// Test createRelease - error handling
+describe("createRelease - error handling", () => {
+  it("should propagate API errors", async () => {
+    const mockClient = createMockClient({
+      post: () => Promise.reject(new Error("Release creation failed")),
+    });
+
+    let error: Error | null = null;
+    try {
+      await createRelease(mockClient, "my-project");
+    } catch (e) {
+      error = e as Error;
+    }
+    assertEquals(error?.message, "Release creation failed");
+  });
+
+  it("should propagate errors for invalid branch", async () => {
+    const mockClient = createMockClient({
+      post: () => Promise.reject(new Error("Branch not found")),
+    });
+
+    let error: Error | null = null;
+    try {
+      await createRelease(mockClient, "my-project", { branch: "nonexistent" });
+    } catch (e) {
+      error = e as Error;
+    }
+    assertEquals(error?.message, "Branch not found");
+  });
+});
+
 // Test createDeployment
 describe("createDeployment", () => {
   it("should create deployment with release and environment", async () => {
@@ -255,5 +341,51 @@ describe("createDeployment", () => {
     assertEquals(capturedUrl, "/projects/my-project/deployments");
     assertEquals(capturedBody, { release_id: "rel-456", environment_id: "env-789" });
     assertEquals(deployment.id, "deploy-123");
+  });
+});
+
+// Test createDeployment - error handling
+describe("createDeployment - error handling", () => {
+  it("should propagate API errors for protected environment", async () => {
+    const mockClient = createMockClient({
+      post: () =>
+        Promise.reject(new Error("Cannot deploy to protected environment without approval")),
+    });
+
+    let error: Error | null = null;
+    try {
+      await createDeployment(mockClient, "my-project", "rel-123", "protected-env");
+    } catch (e) {
+      error = e as Error;
+    }
+    assertEquals(error?.message, "Cannot deploy to protected environment without approval");
+  });
+
+  it("should propagate API errors for invalid release", async () => {
+    const mockClient = createMockClient({
+      post: () => Promise.reject(new Error("Release not found")),
+    });
+
+    let error: Error | null = null;
+    try {
+      await createDeployment(mockClient, "my-project", "invalid-rel", "env-123");
+    } catch (e) {
+      error = e as Error;
+    }
+    assertEquals(error?.message, "Release not found");
+  });
+
+  it("should propagate API errors for invalid environment", async () => {
+    const mockClient = createMockClient({
+      post: () => Promise.reject(new Error("Environment not found")),
+    });
+
+    let error: Error | null = null;
+    try {
+      await createDeployment(mockClient, "my-project", "rel-123", "invalid-env");
+    } catch (e) {
+      error = e as Error;
+    }
+    assertEquals(error?.message, "Environment not found");
   });
 });

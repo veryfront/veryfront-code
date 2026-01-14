@@ -31,60 +31,59 @@ describe("deploy command integration", () => {
         `/projects/${ctx.projectSlug}/environments`,
       );
 
-      assertExists(response);
-      assertEquals(Array.isArray(response.data), true);
+      assertExists(response, "Response should exist");
+      assertEquals(Array.isArray(response.data), true, "Response data should be an array");
     });
 
     it("should find production environment", async () => {
       const env = await getEnvironmentByName(ctx.client, ctx.projectSlug, "production");
 
-      if (env) {
-        assertExists(env.id);
-        assertEquals(env.name, "production");
-      }
+      assertExists(env, "Production environment should exist in test project");
+      assertExists(env.id, "Environment should have an id");
+      assertEquals(env.name, "production", "Environment name should be 'production'");
     });
 
     it("should return null for nonexistent environment", async () => {
       const env = await getEnvironmentByName(ctx.client, ctx.projectSlug, "nonexistent-env-12345");
 
-      assertEquals(env, null);
+      assertEquals(env, null, "Nonexistent environment should return null");
     });
   });
 
   describe("createRelease", () => {
-    it("should create a release", async () => {
+    it("should create a release with custom name", async () => {
       const releaseName = isRecording() ? `test-release-${Date.now()}` : "test-release-vcr";
       const release = await createRelease(ctx.client, ctx.projectSlug, { name: releaseName });
 
-      assertExists(release);
-      assertExists(release.id);
-      assertExists(release.version);
+      assertExists(release, "Release should be created");
+      assertExists(release.id, "Release should have an id");
+      assertExists(release.version, "Release should have a version");
 
       testReleaseId = release.id;
     });
 
-    it("should create release without custom name", async () => {
+    it("should create release without custom name (auto-generated)", async () => {
       const release = await createRelease(ctx.client, ctx.projectSlug);
 
-      assertExists(release);
-      assertExists(release.id);
-      assertExists(release.version);
+      assertExists(release, "Release should be created");
+      assertExists(release.id, "Release should have an id");
+      assertExists(release.version, "Release should have a version");
     });
   });
 
   describe("createDeployment", () => {
     it("should create deployment with valid release and environment", async () => {
-      if (!testReleaseId) return;
+      assertExists(testReleaseId, "Test release should exist from previous test");
 
       const env = await getEnvironmentByName(ctx.client, ctx.projectSlug, "production");
-      if (!env) return;
+      assertExists(env, "Production environment should exist");
 
       const deployment = await createDeployment(ctx.client, ctx.projectSlug, testReleaseId, env.id);
 
-      assertExists(deployment);
-      assertExists(deployment.id);
-      assertExists(deployment.release);
-      assertExists(deployment.environment);
+      assertExists(deployment, "Deployment should be created");
+      assertExists(deployment.id, "Deployment should have an id");
+      assertExists(deployment.release, "Deployment should reference release");
+      assertExists(deployment.environment, "Deployment should reference environment");
     });
   });
 });
