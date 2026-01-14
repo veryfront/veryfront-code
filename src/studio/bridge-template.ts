@@ -189,8 +189,8 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
     return (
       origin.includes('veryfront.org') ||
       origin.includes('veryfront.com') ||
-      origin.includes('localhost') ||
-      origin.includes('lvh.me')
+      origin.includes('veryfront.dev') ||
+      origin.includes('localhost')
     );
   }
 

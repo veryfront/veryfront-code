@@ -13,7 +13,7 @@ export function getDisableLruIntervalEnv(): boolean {
 export function getApiBaseUrlEnv(): string {
   return getEnv("VERYFRONT_API_BASE_URL") ||
     getEnv("VERYFRONT_API_URL")?.replace("/graphql", "/api") ||
-    "http://api.lvh.me:4000";
+    "http://api.veryfront.dev:4000";
 }
 
 export function getSsrMaxConcurrentTransformsEnv(defaultValue = 3): number {
