@@ -19,6 +19,7 @@ import { pushCommand } from "../commands/push.ts";
 import { mergeCommand, parseMergeArgs } from "../commands/merge.ts";
 import { deployCommand, parseDeployArgs } from "../commands/deploy.ts";
 import { parseUpArgs, upCommand } from "../commands/up.ts";
+import { newCommand, parseNewArgs } from "../commands/new.ts";
 import { login, logout, whoami } from "../auth/index.ts";
 import { COMMANDS } from "../help/command-definitions.ts";
 import {
@@ -366,6 +367,27 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
             return;
           }
           await upCommand(result.data);
+        }
+        break;
+
+      case "new":
+        // Lightning-fast project creation for pro coders
+        {
+          const name = args._[1] as string;
+          if (!name) {
+            cliLogger.error("Usage: veryfront new <project-name>");
+            cliLogger.info("");
+            cliLogger.info("Example: veryfront new my-agent");
+            exitProcess(1);
+            return;
+          }
+          const result = parseNewArgs(args);
+          if (!result.success) {
+            handleValidationError(result.error, "new");
+            exitProcess(1);
+            return;
+          }
+          await newCommand(name, result.data);
         }
         break;
 
