@@ -41,6 +41,7 @@ import {
   endRenderSession,
   startRenderSession,
 } from "@veryfront/build/transforms/mdx/esm-module-loader/module-fetcher/index.ts";
+import { VeryfrontAPIError } from "@veryfront/platform/adapters/veryfront-api-client/types.ts";
 
 /**
  * Determine if request should serve production (released) content.
@@ -447,6 +448,47 @@ export class SSRHandler extends BaseHandler {
         return this.respond(response);
       }
 
+      // Check for API 404 errors from environment LIST endpoint - means no release exists
+      // Important: Only match the list endpoint (/environments/{name}/files or /files?...)
+      // NOT individual file fetches (/environments/{name}/files/{path}) which are normal 404s
+      if (error instanceof VeryfrontAPIError && error.status === 404) {
+        const isProductionRequest = isProductionMode(ctx, url);
+        const errorDetails = error.details as { url?: string; responseText?: string } | undefined;
+        const apiUrl = errorDetails?.url || "";
+
+        // Check if this is an environment list request (not a specific file fetch)
+        // List endpoint: /environments/{name}/files or /environments/{name}/files?...
+        // File endpoint: /environments/{name}/files/{path} - has path after /files/
+        const isEnvironmentListRequest = apiUrl.includes("/environments/") &&
+          apiUrl.includes("/files") &&
+          !apiUrl.includes("/files/"); // No path segment after /files/
+
+        // If this is a production request hitting the environment LIST endpoint, it means no release
+        if (isProductionRequest && isEnvironmentListRequest) {
+          this.logDebug("No release found for production environment", {
+            projectSlug: ctx.projectSlug,
+            apiUrl,
+            error: this.getErrorMessage(error),
+          }, ctx);
+
+          const notDeployedNonce = generateNonce();
+          const builder = this.createResponseBuilder(ctx, notDeployedNonce, builderOptions);
+          const isHeadRequest = req.method.toUpperCase() === "HEAD";
+
+          const body = isHeadRequest
+            ? null
+            : generateNotDeployedHtml(ctx.projectSlug || "this project");
+
+          const response = builder
+            .withCORS(req, ctx.securityConfig?.cors)
+            .withSecurity(ctx.securityConfig ?? undefined)
+            .withCache("no-cache")
+            .withContentType(getContentType(".html"), body, HTTP_NOT_FOUND);
+
+          return this.respond(response);
+        }
+      }
+
       // Always log SSR errors for debugging (not just in debug mode)
       _logger.error("[SSR] renderPage failed", {
         slug,
@@ -507,4 +549,29 @@ export class SSRHandler extends BaseHandler {
       return this.respond(response);
     }
   }
+}
+
+/**
+ * Generate a 404 page for projects that haven't been deployed yet.
+ * Styled to match the Veryfront design system.
+ */
+function generateNotDeployedHtml(_projectSlug: string): string {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width">
+  <link rel="icon" type="image/png" href="https://cdn.veryfront.com/images/veryfront-favicon.png">
+  <title>Not Deployed — Veryfront</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body>
+  <div class="fixed z-[2147483647] inset-0 min-h-screen min-w-full flex flex-col items-center justify-center leading-[1.25] bg-[#0d0e11] text-white">
+    <div class="font-sans antialiased text-center flex flex-col items-center px-8 gap-4 tracking-wide">
+      <p class="m-0 font-semibold text-5xl md:text-6xl text-[#949A9F]">Not Deployed</p>
+      <p class="text-white text-xl">This project hasn't been deployed yet</p>
+    </div>
+  </div>
+</body>
+</html>`;
 }
