@@ -291,6 +291,14 @@ export const COMMANDS: CommandRegistry = {
         description: "Branch to pull from (default: main)",
       },
       {
+        flag: "--env <name>",
+        description: "Environment to pull from (e.g., production, staging)",
+      },
+      {
+        flag: "--release <version>",
+        description: "Release version to pull from (e.g., v1.2.0)",
+      },
+      {
         flag: "-f, --force",
         description: "Force overwrite without confirmation",
       },
@@ -303,6 +311,8 @@ export const COMMANDS: CommandRegistry = {
       "veryfront pull",
       "veryfront pull --dir ./my-project",
       "veryfront pull --branch feature-header",
+      "veryfront pull --env production",
+      "veryfront pull --release v1.2.0",
       "veryfront pull --projects project-a,project-b,project-c",
       "veryfront pull --projects my-app --dir ./apps",
       "veryfront pull --dry-run",
@@ -313,6 +323,7 @@ export const COMMANDS: CommandRegistry = {
       "Project slug is inferred from package.json name or directory",
       "With --projects, each project is pulled into a subdirectory named after the slug",
       'Projects list can also be specified in .veryfrontrc: { "projects": ["slug1", "slug2"] }',
+      "Priority order: --env > --release > --branch > main",
     ],
   },
   push: {
@@ -326,7 +337,7 @@ export const COMMANDS: CommandRegistry = {
       },
       {
         flag: "-b, --branch <name>",
-        description: "Branch name to create (default: cli/push-<timestamp>)",
+        description: "Branch name (default: cli/push-<timestamp>, use 'main' for direct push)",
       },
       {
         flag: "-f, --force",
@@ -341,12 +352,82 @@ export const COMMANDS: CommandRegistry = {
       "veryfront push",
       "veryfront push --dir ./my-project",
       "veryfront push --branch feature-header",
+      "veryfront push --branch main             # Push directly to main",
       "veryfront push --dry-run",
     ],
     notes: [
       "Requires VERYFRONT_API_TOKEN env var or .veryfrontrc config",
       "Creates a new branch for each push - merge in Studio",
+      "Use --branch=main to push directly without creating a branch",
       "Uploads all files using their relative paths",
+    ],
+  },
+  merge: {
+    name: "merge",
+    description: "Merge a branch into main (or another branch)",
+    usage: "veryfront merge <branch> [options]",
+    options: [
+      {
+        flag: "--into <branch>",
+        description: "Target branch to merge into (default: main)",
+      },
+      {
+        flag: "-f, --force",
+        description: "Merge without confirmation",
+      },
+      {
+        flag: "--dry-run",
+        description: "Preview merge without executing",
+      },
+    ],
+    examples: [
+      "veryfront merge feature-login",
+      "veryfront merge hotfix --into staging",
+      "veryfront merge feature-header --dry-run",
+    ],
+    notes: [
+      "Requires VERYFRONT_API_TOKEN env var or .veryfrontrc config",
+      "Use --dry-run to preview which files would be merged",
+      "Conflicts are reported but must be resolved in Studio",
+    ],
+  },
+  deploy: {
+    name: "deploy",
+    description: "Create a release and deploy to an environment",
+    usage: "veryfront deploy [options]",
+    options: [
+      {
+        flag: "-b, --branch <name>",
+        description: "Branch to release from (default: main)",
+      },
+      {
+        flag: "--env <name>",
+        description: "Environment to deploy to (default: production)",
+      },
+      {
+        flag: "--release-name <name>",
+        description: "Custom release name (auto-generated if omitted)",
+      },
+      {
+        flag: "-f, --force",
+        description: "Deploy without confirmation",
+      },
+      {
+        flag: "--dry-run",
+        description: "Preview without executing",
+      },
+    ],
+    examples: [
+      "veryfront deploy",
+      "veryfront deploy --env staging",
+      "veryfront deploy --branch feature-x --env preview",
+      "veryfront deploy --release-name v1.2.0",
+      "veryfront deploy --dry-run",
+    ],
+    notes: [
+      "Requires VERYFRONT_API_TOKEN env var or .veryfrontrc config",
+      "Creates a new release from the specified branch",
+      "Deploys the release to the target environment",
     ],
   },
 };

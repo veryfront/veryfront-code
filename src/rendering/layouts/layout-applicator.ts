@@ -265,7 +265,7 @@ export class LayoutApplicator {
       const appSource = await this.adapter.fs.readFile(appPath);
       const isMdx = appPath.endsWith(".mdx") || appPath.endsWith(".md");
 
-      let App: React.ComponentType<{ children: React.ReactNode }> | null = null;
+      let App: React.ComponentType<Record<string, unknown>> | null = null;
 
       if (isMdx) {
         // Handle MDX files - compile and load
@@ -285,7 +285,7 @@ export class LayoutApplicator {
             dev: this.mode === "development",
             moduleServerUrl: this.config?.dev?.moduleServerUrl,
           },
-        ) as React.ComponentType<{ children: React.ReactNode }> | null;
+        );
       }
 
       if (App) {
@@ -303,7 +303,7 @@ export class LayoutApplicator {
   private async loadMdxAppComponent(
     source: string,
     appPath: string,
-  ): Promise<React.ComponentType<{ children: React.ReactNode }> | null> {
+  ): Promise<React.ComponentType<Record<string, unknown>> | null> {
     try {
       const { compile } = await import("@mdx-js/mdx");
       const { extract } = await import("std/front_matter/yaml.ts");
@@ -318,18 +318,17 @@ export class LayoutApplicator {
         body = extracted.body;
       }
 
-      const remarkPlugins = await getRemarkPlugins(this.projectDir);
-      const rehypePlugins = await getRehypePlugins(this.projectDir);
+      const remarkPlugins = await getRemarkPlugins();
+      const rehypePlugins = await getRehypePlugins();
 
       // Compile MDX to JavaScript
-      // deno-lint-ignore no-explicit-any
       const compiled = await compile(body, {
         jsx: true,
         jsxRuntime: "automatic",
         jsxImportSource: "react",
         development: this.mode === "development",
-        remarkPlugins: remarkPlugins as any[],
-        rehypePlugins: rehypePlugins as any[],
+        remarkPlugins,
+        rehypePlugins,
       });
 
       const jsCode = String(compiled);
@@ -349,7 +348,7 @@ export class LayoutApplicator {
           dev: this.mode === "development",
           moduleServerUrl: this.config?.dev?.moduleServerUrl,
         },
-      ) as React.ComponentType<{ children: React.ReactNode }> | null;
+      );
     } catch (error) {
       logger.error("[LayoutApplicator] Failed to compile MDX app component:", error);
       return null;

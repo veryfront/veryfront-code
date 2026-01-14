@@ -7,6 +7,7 @@
 import { handleError } from "@veryfront/errors";
 import { formatUserError } from "@veryfront/errors/user-friendly/index.ts";
 import { cliLogger, DEFAULT_DEV_SERVER_PORT, VERSION } from "@veryfront/utils";
+import { z } from "zod";
 import { analyzeChunksCommand } from "../commands/analyze-chunks.ts";
 import { cleanCommand } from "../commands/clean.ts";
 import { doctorCommand } from "../commands/doctor/index.ts";
@@ -15,6 +16,9 @@ import { lockCommand } from "../commands/lock.ts";
 import { routesCommand } from "../commands/routes.ts";
 import { pullCommand } from "../commands/pull.ts";
 import { pushCommand } from "../commands/push.ts";
+import { mergeCommand, parseMergeArgs } from "../commands/merge.ts";
+import { deployCommand, parseDeployArgs } from "../commands/deploy.ts";
+import { COMMANDS } from "../help/command-definitions.ts";
 import {
   exitProcess,
   registerTerminationSignals,
@@ -33,6 +37,20 @@ import { cwd } from "@veryfront/platform/compat/process.ts";
 import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
 import { join } from "@veryfront/platform/compat/path/index.ts";
 import { showCommandHelp, showMainHelp } from "../help/index.ts";
+
+/**
+ * Handle validation errors using central COMMANDS registry for usage
+ */
+function handleValidationError(error: z.ZodError, commandName: string): void {
+  const issues = error.issues.map((i) => `  - ${i.path.join(".")}: ${i.message}`).join("\n");
+  cliLogger.error(`Invalid ${commandName} arguments:\n${issues}`);
+
+  // Get usage from central COMMANDS registry
+  const command = COMMANDS[commandName];
+  if (command?.usage) {
+    cliLogger.info(`Usage: ${command.usage}`);
+  }
+}
 
 /**
  * Show help for a specific command or main help
@@ -285,6 +303,8 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
             projects,
             projectDir,
             branch: args.branch ? String(args.branch) : args.b ? String(args.b) : undefined,
+            env: args.env ? String(args.env) : undefined,
+            release: args.release ? String(args.release) : undefined,
             force: Boolean(args.force) || Boolean(args.f),
             dryRun: Boolean(args["dry-run"]),
           });
@@ -305,6 +325,32 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
             force: Boolean(args.force) || Boolean(args.f),
             dryRun: Boolean(args["dry-run"]),
           });
+        }
+        break;
+
+      case "merge":
+        showLogo();
+        {
+          const result = parseMergeArgs(args);
+          if (!result.success) {
+            handleValidationError(result.error, "merge");
+            exitProcess(1);
+            return;
+          }
+          await mergeCommand(result.data);
+        }
+        break;
+
+      case "deploy":
+        showLogo();
+        {
+          const result = parseDeployArgs(args);
+          if (!result.success) {
+            handleValidationError(result.error, "deploy");
+            exitProcess(1);
+            return;
+          }
+          await deployCommand(result.data);
         }
         break;
 

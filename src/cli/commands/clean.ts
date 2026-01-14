@@ -2,7 +2,7 @@ import { join } from "@veryfront/platform/compat/path/index.ts";
 import { getConfig } from "@veryfront/config";
 import { getAdapter } from "@veryfront/platform/adapters/detect.ts";
 import { cliLogger } from "@veryfront/utils";
-import { DEFAULT_CACHE_DIR, PROJECT_DIRS } from "@veryfront/utils/constants/server.ts";
+import { DEFAULT_CACHE_DIR } from "@veryfront/utils/constants/server.ts";
 import { CacheCoordinator, type CacheStore } from "@veryfront/rendering/cache/index.ts";
 import {
   FilesystemCacheStore,
@@ -94,7 +94,6 @@ async function cleanDirectory(path: string): Promise<void> {
 }
 
 async function cleanCacheStore(projectDir: string): Promise<void> {
-  const fallbackCacheDir = join(projectDir, PROJECT_DIRS.ROOT, "cache");
   try {
     const adapter = await getAdapter();
     const config = await getConfig(projectDir, adapter);
@@ -119,9 +118,9 @@ async function cleanCacheStore(projectDir: string): Promise<void> {
 
     await cleanDirectory(join(projectDir, cacheDir));
   } catch (error) {
-    // Fall back to removing default cache directory on error
-    cliLogger.error("Failed to clean cache store, falling back to default cache directory:", error);
-    await cleanDirectory(fallbackCacheDir);
+    // Fail fast with clear error - no silent fallbacks
+    cliLogger.error("Failed to clean cache store:", error);
+    throw error;
   }
 }
 
