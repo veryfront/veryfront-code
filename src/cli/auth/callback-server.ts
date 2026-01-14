@@ -32,10 +32,8 @@ function renderPage(title: string, heading: string, message: string, color: stri
   return `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${title}</title><style>${baseStyle}h1{color:${color};}</style></head><body><div class="container"><h1>${heading}</h1><p>${message}</p></div></body></html>`;
 }
 
-const successHtml = () =>
-  renderPage("Login Successful", "✓ Logged in", "You can close this window.", "#22c55e");
-const errorHtml = (err: string) =>
-  renderPage("Login Failed", "✗ Login failed", escapeHtml(err), "#ef4444");
+const successHtml = () => renderPage("Login Successful", "✓ Logged in", "You can close this window.", "#22c55e");
+const errorHtml = (err: string) => renderPage("Login Failed", "✗ Login failed", escapeHtml(err), "#ef4444");
 
 async function findAvailablePort(startPort: number): Promise<number> {
   let port = startPort;
@@ -52,10 +50,7 @@ async function findAvailablePort(startPort: number): Promise<number> {
         const available = await new Promise<boolean>((resolve) => {
           const server = net.createServer();
           server.once("error", () => resolve(false));
-          server.once("listening", () => {
-            server.close();
-            resolve(true);
-          });
+          server.once("listening", () => { server.close(); resolve(true); });
           server.listen(port, "127.0.0.1");
         });
         if (available) return port;
@@ -75,17 +70,12 @@ function handleCallback(url: URL): { result: CallbackResult; html: string } {
 
   if (error) return { result: { token: "", error }, html: errorHtml(error) };
   if (token) return { result: { token }, html: successHtml() };
-  return {
-    result: { token: "", error: "No token received" },
-    html: errorHtml("No token received"),
-  };
+  return { result: { token: "", error: "No token received" }, html: errorHtml("No token received") };
 }
 
 async function startDenoServer(port: number): Promise<CallbackServer> {
   let resolveCallback: (result: CallbackResult) => void;
-  const callbackPromise = new Promise<CallbackResult>((resolve) => {
-    resolveCallback = resolve;
-  });
+  const callbackPromise = new Promise<CallbackResult>((resolve) => { resolveCallback = resolve; });
 
   // @ts-ignore - Deno global
   const server = Deno.serve(
@@ -116,9 +106,7 @@ async function startDenoServer(port: number): Promise<CallbackServer> {
 async function startNodeServer(port: number): Promise<CallbackServer> {
   const http = await import("node:http");
   let resolveCallback: (result: CallbackResult) => void;
-  const callbackPromise = new Promise<CallbackResult>((resolve) => {
-    resolveCallback = resolve;
-  });
+  const callbackPromise = new Promise<CallbackResult>((resolve) => { resolveCallback = resolve; });
 
   const server = http.createServer((req, res) => {
     const url = new URL(req.url || "/", `http://127.0.0.1:${port}`);
@@ -147,9 +135,7 @@ async function startNodeServer(port: number): Promise<CallbackServer> {
   };
 }
 
-export async function startCallbackServer(
-  preferredPort = DEFAULT_CALLBACK_PORT,
-): Promise<CallbackServer> {
+export async function startCallbackServer(preferredPort = DEFAULT_CALLBACK_PORT): Promise<CallbackServer> {
   const port = await findAvailablePort(preferredPort);
   return isDeno ? startDenoServer(port) : startNodeServer(port);
 }

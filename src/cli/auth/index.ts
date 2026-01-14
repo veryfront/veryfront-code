@@ -1,18 +1,18 @@
 export {
-  type AuthMethod,
-  deleteToken,
-  ensureAuthenticated,
-  hasToken,
   login,
   logout,
+  whoami,
+  ensureAuthenticated,
+  validateToken,
   readToken,
   saveToken,
+  deleteToken,
+  hasToken,
+  type AuthMethod,
   type UserInfo,
-  validateToken,
-  whoami,
 } from "./login.ts";
 
-export { type CallbackServer, getCallbackUrl, startCallbackServer } from "./callback-server.ts";
+export { startCallbackServer, getCallbackUrl, type CallbackServer } from "./callback-server.ts";
 export { getTokenLocation } from "./token-store.ts";
-export { canOpenBrowser, openBrowser } from "./browser.ts";
-export { DEFAULT_API_URL, getApiUrl } from "./constants.ts";
+export { openBrowser, canOpenBrowser } from "./browser.ts";
+export { getApiUrl, DEFAULT_API_URL } from "./constants.ts";

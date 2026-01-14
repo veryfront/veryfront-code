@@ -4,7 +4,7 @@
 
 import { assertEquals, assertExists } from "https://deno.land/std@0.220.0/assert/mod.ts";
 import { afterEach, describe, it } from "@std/testing/bdd.ts";
-import { type CallbackServer, getCallbackUrl, startCallbackServer } from "./callback-server.ts";
+import { getCallbackUrl, startCallbackServer, type CallbackServer } from "./callback-server.ts";
 
 describe("Callback Server", { sanitizeOps: false, sanitizeResources: false }, () => {
   let server: CallbackServer | null = null;
