@@ -14,7 +14,9 @@ import {
 
 // Strip ANSI escape codes from string
 function stripAnsi(str: string): string {
-  return str.replace(/\x1b\[[0-9;]*m/g, "");
+  const ESC = String.fromCharCode(27);
+  const ansiPattern = new RegExp(ESC + "\\[[0-9;]*m", "g");
+  return str.replace(ansiPattern, "");
 }
 
 // Helper to capture console output
