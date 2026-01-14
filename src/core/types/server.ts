@@ -2,9 +2,9 @@ import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "@veryfront/config";
 
 export interface ParsedDomain {
-  /** Project slug extracted from host (e.g., "my-project" from "my-project.preview.lvh.me") */
+  /** Project slug extracted from host (e.g., "my-project" from "my-project.preview.veryfront.dev") */
   slug: string | null;
-  /** Branch name extracted from host (e.g., "feature" from "my-project--feature.preview.lvh.me") */
+  /** Branch name extracted from host (e.g., "feature" from "my-project--feature.preview.veryfront.dev") */
   branch: string | null;
   /** Environment inferred from domain pattern */
   environment: "preview" | "development" | "staging" | "production" | null;

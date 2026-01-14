@@ -186,7 +186,8 @@
     "lint:platform": "deno run --allow-read scripts/lint-platform-agnostic.ts",
     "test:smoke": "deno run --allow-all src/platform/compat/smoke-test.ts",
     "test:cross-runtime": "deno run --allow-all src/platform/compat/cross-runtime.test.ts",
-    "check:circular": "deno run -A jsr:@cunarist/deno-circular-deps src/index.ts"
+    "check:circular": "deno run -A jsr:@cunarist/deno-circular-deps src/index.ts",
+    "cli": "deno run --allow-all src/cli/main.ts"
   },
   "lint": {
     "include": [

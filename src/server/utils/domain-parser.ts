@@ -3,9 +3,9 @@
  *
  * Extracts project slug and branch from preview/development URLs.
  * Supports patterns:
- * - {slug}.preview.lvh.me:{port}
- * - {slug}--{branch}.preview.lvh.me:{port}
- * - {slug}.lvh.me:{port}
+ * - {slug}.preview.veryfront.dev:{port}
+ * - {slug}--{branch}.preview.veryfront.dev:{port}
+ * - {slug}.veryfront.dev:{port}
  * - {slug}.preview.veryfront.com
  * - {slug}--{branch}.preview.veryfront.com
  * - {slug}.veryfront.com
@@ -54,23 +54,23 @@ export function parseProjectDomain(host: string): ParsedDomain {
   // Remove port if present
   const domain = host.replace(/:\d+$/, "");
 
-  // lvh.me local development: {slug}.preview.lvh.me or {slug}--{branch}.preview.lvh.me
-  const lvhPreviewMatch = domain.match(/^([A-Za-z0-9-]+)\.preview\.lvh\.me$/);
-  if (lvhPreviewMatch?.[1]) {
-    const { slug, branch } = parseSlugAndBranch(lvhPreviewMatch[1]);
+  // veryfront.dev local development: {slug}.preview.veryfront.dev or {slug}--{branch}.preview.veryfront.dev
+  const devPreviewMatch = domain.match(/^([A-Za-z0-9-]+)\.preview\.veryfront\.dev$/);
+  if (devPreviewMatch?.[1]) {
+    const { slug, branch } = parseSlugAndBranch(devPreviewMatch[1]);
     return createParsedDomain(slug, branch, "preview", true, true);
   }
 
-  // Local production testing: {domain}.prod.lvh.me
+  // Local production testing: {domain}.prod.veryfront.dev
   // This pattern is treated as a custom domain for JIT production rendering
-  const lvhProdMatch = domain.match(/^([A-Za-z0-9.-]+)\.prod\.lvh\.me$/);
-  if (lvhProdMatch?.[1]) {
+  const devProdMatch = domain.match(/^([A-Za-z0-9.-]+)\.prod\.veryfront\.dev$/);
+  if (devProdMatch?.[1]) {
     return createParsedDomain(null, null, "production", false, false);
   }
 
-  const lvhMatch = domain.match(/^([A-Za-z0-9-]+)\.lvh\.me$/);
-  if (lvhMatch?.[1]) {
-    const { slug, branch } = parseSlugAndBranch(lvhMatch[1]);
+  const devMatch = domain.match(/^([A-Za-z0-9-]+)\.veryfront\.dev$/);
+  if (devMatch?.[1]) {
+    const { slug, branch } = parseSlugAndBranch(devMatch[1]);
     return createParsedDomain(slug, branch, "development", true, true);
   }
 
@@ -104,8 +104,8 @@ export function parseProjectDomain(host: string): ParsedDomain {
     return createParsedDomain(vfBaseMatch[1], null, "production", true, false);
   }
 
-  // Plain lvh.me without slug (localhost:port accessed via lvh.me)
-  if (domain === "lvh.me") {
+  // Plain veryfront.dev without slug
+  if (domain === "veryfront.dev") {
     return createParsedDomain(null, null, "development", true, true);
   }
 
@@ -118,8 +118,8 @@ export function parseProjectDomain(host: string): ParsedDomain {
  */
 export function isVeryfrontDomain(host: string): boolean {
   const domain = host.replace(/:\d+$/, "");
-  const pattern = /^[a-zA-Z0-9-]+(\.[a-zA-Z0-9-]+)*\.(veryfront\.com|veryfront\.org|lvh\.me)$/;
-  return pattern.test(domain) || domain === "lvh.me";
+  const pattern = /^[a-zA-Z0-9-]+(\.[a-zA-Z0-9-]+)*\.(veryfront\.com|veryfront\.org|veryfront\.dev)$/;
+  return pattern.test(domain) || domain === "veryfront.dev";
 }
 
 /**

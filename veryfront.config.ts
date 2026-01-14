@@ -11,9 +11,9 @@
  */
 
 // Default URLs
-const DEFAULT_API_URL_LOCAL = "http://api.lvh.me:4000";
+const DEFAULT_API_URL_LOCAL = "http://api.veryfront.dev:4000";
 const DEFAULT_API_URL_PROD = "https://api.veryfront.com";
-const DEFAULT_CORS_ORIGIN_LOCAL = "http://api.lvh.me:4000";
+const DEFAULT_CORS_ORIGIN_LOCAL = "http://api.veryfront.dev:4000";
 
 class ConfigError extends Error {
   constructor(message: string) {
@@ -155,7 +155,7 @@ export default useGitHub ? {
   // Dev server config (ignored in production)
   dev: {
     port: 3001,
-    host: "lvh.me",
+    host: "veryfront.dev",
     hmr: contentSource.type === "branch", // Only enable HMR for branch mode
   },
 

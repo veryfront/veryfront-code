@@ -86,7 +86,7 @@ console.log();
 console.log(`  ${c(ANSI.green, "●")} Proxy     ${c(ANSI.cyan, `http://localhost:${PROXY_PORT}`)}`);
 console.log(`  ${c(ANSI.green, "●")} Renderer  ${c(ANSI.cyan, `http://localhost:${RENDERER_PORT}`)}`);
 console.log();
-console.log(`  ${c(ANSI.dim, "Open:")}    ${c(ANSI.cyan, `http://{project}.lvh.me:${PROXY_PORT}/`)}`);
+console.log(`  ${c(ANSI.dim, "Open:")}    ${c(ANSI.cyan, `http://{project}.veryfront.dev:${PROXY_PORT}/`)}`);
 console.log();
 console.log(c(ANSI.dim, `  Press Ctrl+C to stop`));
 console.log();
