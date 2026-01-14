@@ -23,7 +23,14 @@ export interface DevOptions {
 // Alias for backward compatibility
 export type DevCommandOptions = DevOptions;
 
-export async function devCommand(options: DevOptions) {
+export interface DevCommandResult {
+  /** Resolves when server is ready to accept requests */
+  ready: Promise<void>;
+  /** Resolves when server shuts down */
+  done: Promise<void>;
+}
+
+export async function devCommand(options: DevOptions): Promise<DevCommandResult> {
   const { port, projectDir, hmr = true } = options;
 
   // Get adapter first
@@ -184,4 +191,10 @@ export async function devCommand(options: DevOptions) {
     console.log(dim(`  Press Ctrl+C to stop`));
     console.log();
   }
+
+  // Return ready/done promises for callers that need to wait
+  return {
+    ready: devServer.ready,
+    done: new Promise<void>(() => {}), // Never resolves - server runs until killed
+  };
 }

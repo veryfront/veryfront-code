@@ -197,7 +197,7 @@ export async function deployCommand(options: DeployOptions): Promise<void> {
 
   const release = await createRelease(client, config.projectSlug, {
     name: releaseName,
-    branch: branch !== "main" ? branch : undefined,
+    branch,
   });
 
   spinner.update(`Deploying ${release.version} to ${env}...`);
