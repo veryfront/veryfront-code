@@ -470,6 +470,10 @@ export const COMMANDS: CommandRegistry = {
         description: "Login with GitHub OAuth",
       },
       {
+        flag: "--microsoft",
+        description: "Login with Microsoft OAuth",
+      },
+      {
         flag: "--token",
         description: "Enter API token manually",
       },
@@ -478,6 +482,7 @@ export const COMMANDS: CommandRegistry = {
       "veryfront login",
       "veryfront login --google",
       "veryfront login --github",
+      "veryfront login --microsoft",
       "veryfront login --token",
     ],
     notes: [
