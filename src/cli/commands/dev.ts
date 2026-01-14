@@ -195,7 +195,7 @@ export async function devCommand(options: DevOptions) {
 
     console.log();
     console.log(dim("─".repeat(40)));
-    console.log(`  ${bold(cyan("veryfront"))} ${dim("dev")}`);
+    console.log(`  ${bold(cyan("Veryfront"))} ${dim("Dev Mode")}`);
     console.log(dim("─".repeat(40)));
     console.log();
     console.log(`  ${green("●")} Local     ${cyan(`http://${LOCALHOST.HOSTNAME}:${finalPort}`)}`);

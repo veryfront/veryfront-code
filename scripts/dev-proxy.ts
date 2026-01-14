@@ -80,13 +80,12 @@ await new Promise((r) => setTimeout(r, 2000));
 // Clean startup banner
 console.log();
 console.log(c(ANSI.dim, "─".repeat(40)));
-console.log(`  ${c(ANSI.bold + ANSI.cyan, "veryfront")} ${c(ANSI.dim, "proxy mode")}`);
+console.log(`  ${c(ANSI.bold + ANSI.cyan, "Veryfront")} ${c(ANSI.dim, "Proxy Mode")}`);
 console.log(c(ANSI.dim, "─".repeat(40)));
 console.log();
-console.log(`  ${c(ANSI.green, "●")} Proxy     ${c(ANSI.cyan, `http://localhost:${PROXY_PORT}`)}`);
-console.log(`  ${c(ANSI.green, "●")} Renderer  ${c(ANSI.cyan, `http://localhost:${RENDERER_PORT}`)}`);
+console.log(`  ${c(ANSI.green, "●")} Open: ${c(ANSI.cyan, `http://{project}.lvh.me:${PROXY_PORT}/`)}`);
 console.log();
-console.log(`  ${c(ANSI.dim, "Open:")}    ${c(ANSI.cyan, `http://{project}.veryfront.dev:${PROXY_PORT}/`)}`);
+console.log(`  ${c(ANSI.dim, "Example:")} ${c(ANSI.cyan, `http://blank.lvh.me:${PROXY_PORT}/`)}`);
 console.log();
 console.log(c(ANSI.dim, `  Press Ctrl+C to stop`));
 console.log();
