@@ -55,10 +55,10 @@ export const ProjectSchema = z.object({
   description: z.string().optional(),
   created_at: z.string().optional(),
   updated_at: z.string().optional(),
-  provider: z.string().optional(),
-  provider_id: z.string().optional(),
-  layout: z.string().optional(),
-  layout_id: z.string().optional(),
+  provider: z.string().nullish(),
+  provider_id: z.string().nullish(),
+  layout: z.string().nullish(),
+  layout_id: z.string().nullish(),
   config: z.union([z.string(), z.record(z.unknown())]).optional(),
 });
 
