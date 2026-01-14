@@ -95,9 +95,9 @@ export function applySecurityHeaders(
   const contentTypeOptions = getHeaderOverride("x-content-type-options") ?? "nosniff";
   headers.set("X-Content-Type-Options", contentTypeOptions);
 
-  // Skip X-Frame-Options in development mode or when embedded in Studio
-  // This allows Studio iframe embedding for preview functionality
-  // In production (non-studio), default to DENY for security
+  // X-Frame-Options: Block iframe embedding by default for security
+  // Skip when studio_embed=true to allow embedding (e.g., in Veryfront Studio)
+  // Projects can customize via config.headers["x-frame-options"]
   if (!isDev && !studioEmbed) {
     const frameOptions = getHeaderOverride("x-frame-options") ?? "DENY";
     headers.set("X-Frame-Options", frameOptions);
