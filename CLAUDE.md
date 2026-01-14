@@ -74,8 +74,8 @@ Client → Renderer → API
 
 ### Renderer (Deno)
 ```bash
-deno task dev              # Start dev server (HMR) - direct mode
-deno task proxy            # Start proxy + renderer together (proxy mode)
+deno task dev              # Start dev server (single project)
+deno task dev:multi        # Multi-project mode (Veryfront staff)
 deno task build            # Production build
 deno task test             # Run all tests
 deno task test:unit        # Run unit tests only
@@ -168,9 +168,9 @@ cp .env.local.example .env.local
 
 # 2. Fill in OAuth credentials (from 1Password: "Veryfront OAuth Credentials")
 
-# 3. Run in either mode:
-deno task dev    # Direct mode (single project)
-deno task proxy  # Proxy mode (multi-project)
+# 3. Run:
+deno task dev          # Single project mode
+deno task dev:multi    # Multi-project (Veryfront staff)
 ```
 
 ### Debug Endpoints
@@ -212,7 +212,7 @@ logcli query '{namespace="veryfront-production", container="renderer"} |= "error
 | File | Purpose |
 |------|---------|
 | `.env.local.example` | Template for local development config |
-| `scripts/dev-proxy.ts` | Launcher for `deno task proxy` |
+| `scripts/dev-proxy.ts` | Launcher for `deno task dev:multi` |
 | `proxy/main.ts` | Proxy entry point |
 | `proxy/token-manager.ts` | OAuth token lifecycle |
 | `src/server/production-server.ts` | Production server |
