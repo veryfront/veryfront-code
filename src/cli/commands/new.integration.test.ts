@@ -11,9 +11,10 @@ import { afterEach, describe, it } from "jsr:@std/testing@1/bdd";
 import { join } from "@veryfront/platform/compat/path/index.ts";
 
 const TEST_DIR = Deno.makeTempDirSync({ prefix: "veryfront-new-test-" });
+const randomSuffix = () => Math.random().toString(36).substring(2, 8);
 
 describe("new command integration", () => {
-  const projectName = "test-demo-app";
+  const projectName = `test-demo-${randomSuffix()}`;
   const projectDir = join(TEST_DIR, projectName);
 
   afterEach(async () => {
