@@ -129,7 +129,7 @@ async function processRoute(
 
   // Process each HTTP method
   for (const method of HTTP_METHODS) {
-    const handler = module[method] as (WrappedHandler & Function) | undefined;
+    const handler = module[method] as WrappedHandler | undefined;
 
     if (handler && typeof handler === "function") {
       const metadata = handler[OPENAPI_METADATA] as OpenAPIRouteMetadata | undefined;
@@ -148,7 +148,7 @@ async function processRoute(
 
   // Handle default export (responds to all methods not explicitly defined)
   if (module.default && typeof module.default === "function") {
-    const handler = module.default as WrappedHandler & Function;
+    const handler = module.default as WrappedHandler;
     const metadata = handler[OPENAPI_METADATA] as OpenAPIRouteMetadata | undefined;
 
     for (const method of HTTP_METHODS) {

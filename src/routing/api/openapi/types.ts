@@ -8,7 +8,7 @@
 
 import type { z } from "zod";
 import type { JsonSchema } from "@veryfront/ai/types/json-schema.ts";
-import type { AppRouteContext, AppRouteHandler } from "../module-loader/types.ts";
+import type { AppRouteHandler } from "../module-loader/types.ts";
 
 /**
  * Symbol for storing OpenAPI metadata on handler functions.
