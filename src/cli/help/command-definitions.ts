@@ -430,4 +430,82 @@ export const COMMANDS: CommandRegistry = {
       "Deploys the release to the target environment",
     ],
   },
+  up: {
+    name: "up",
+    description: "Deploy your app with one command (login, create, push, deploy)",
+    usage: "veryfront up [options]",
+    options: [
+      {
+        flag: "-f, --force",
+        description: "Skip interactive prompts",
+      },
+      {
+        flag: "--dry-run",
+        description: "Preview without executing",
+      },
+    ],
+    examples: [
+      "veryfront up",
+      "veryfront up --dry-run",
+      "veryfront up --force",
+    ],
+    notes: [
+      "This is the default command when running 'veryfront' without arguments",
+      "Automatically handles: authentication, project creation, push, and deploy",
+      "Opens browser for login if not authenticated",
+      "Creates a new project if code exists but no .veryfrontrc",
+    ],
+  },
+  login: {
+    name: "login",
+    description: "Authenticate with Veryfront",
+    usage: "veryfront login [options]",
+    options: [
+      {
+        flag: "--google",
+        description: "Login with Google OAuth",
+      },
+      {
+        flag: "--github",
+        description: "Login with GitHub OAuth",
+      },
+      {
+        flag: "--token",
+        description: "Enter API token manually",
+      },
+    ],
+    examples: [
+      "veryfront login",
+      "veryfront login --google",
+      "veryfront login --github",
+      "veryfront login --token",
+    ],
+    notes: [
+      "Without options, prompts for authentication method",
+      "OAuth methods open browser for authentication",
+      "Token is stored in ~/.config/veryfront/token",
+    ],
+  },
+  logout: {
+    name: "logout",
+    description: "Clear stored authentication credentials",
+    usage: "veryfront logout",
+    options: [],
+    examples: ["veryfront logout"],
+    notes: [
+      "Removes token from ~/.config/veryfront/token",
+      "Does not affect VERYFRONT_API_TOKEN environment variable",
+    ],
+  },
+  whoami: {
+    name: "whoami",
+    description: "Show current authenticated user",
+    usage: "veryfront whoami",
+    options: [],
+    examples: ["veryfront whoami"],
+    notes: [
+      "Shows email and name of authenticated user",
+      "Checks both environment variable and stored token",
+    ],
+  },
 };

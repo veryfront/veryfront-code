@@ -12,12 +12,12 @@
 
 import { z } from "zod";
 import { cliLogger } from "@veryfront/utils";
-import { cwd } from "@veryfront/platform/compat/process.ts";
+import { cwd, getEnv } from "@veryfront/platform/compat/process.ts";
 import { join } from "@veryfront/platform/compat/path/index.ts";
 import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
 import { cyan, dim, green, red, yellow } from "@veryfront/compat/console";
-import { ensureAuthenticated, type UserInfo } from "../auth/index.ts";
-import { createSpinner, getColorEnabled, logSuccess, promptUser, isTTY } from "../utils/index.ts";
+import { ensureAuthenticated, readToken } from "../auth/index.ts";
+import { createSpinner, getColorEnabled, promptUser, isTTY } from "../utils/index.ts";
 import { CommonArgs, createArgParser } from "../shared/args.ts";
 import { readConfigFile, type VeryfrontConfig } from "../shared/config.ts";
 import { pushCommand } from "./push.ts";
@@ -197,15 +197,15 @@ export async function upCommand(options: Partial<UpOptions> = {}): Promise<void>
 
       if (dryRun) {
         cliLogger.info(c(dim, `Would create project: ${slug}`));
-        projectSlug = slug;
       } else {
         const projectSpinner = createSpinner(`Creating project "${slug}"...`);
         projectSpinner.start();
 
         try {
-          const apiUrl = "https://api.veryfront.com";
-          const token = (await import("../auth/index.ts")).readToken();
-          const resolvedToken = await token;
+          // Use configured API URL (env var or default)
+          const apiUrl = getEnv("VERYFRONT_API_URL") || "https://api.veryfront.com";
+          // Check env var first (for CI), then stored token
+          const resolvedToken = getEnv("VERYFRONT_API_TOKEN") || await readToken();
 
           if (!resolvedToken) {
             projectSpinner.stop();

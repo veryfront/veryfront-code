@@ -10,6 +10,18 @@
 import { isDeno } from "@veryfront/platform/compat/runtime.ts";
 
 /**
+ * Escape HTML special characters to prevent XSS
+ */
+function escapeHtml(str: string): string {
+  return str
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+/**
  * Result from the callback server
  */
 export interface CallbackResult {
@@ -88,7 +100,7 @@ const ERROR_HTML = (error: string) => `<!DOCTYPE html>
 <body>
   <div class="container">
     <h1>✗ Login failed</h1>
-    <p>${error}</p>
+    <p>${escapeHtml(error)}</p>
   </div>
 </body>
 </html>`;
