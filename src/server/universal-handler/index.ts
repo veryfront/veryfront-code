@@ -94,6 +94,8 @@ import { ApiHandlerWrapper } from "../handlers/request/api/index.ts";
 import { SSRHandler } from "../handlers/request/ssr/index.ts";
 import { NotFoundHandler } from "../handlers/response/not-found.ts";
 import { HMRHandler } from "../handlers/preview/hmr-handler.ts";
+import { OpenAPIHandler } from "../handlers/request/openapi-handler.ts";
+import { OpenAPIDocsHandler } from "../handlers/request/openapi-docs-handler.ts";
 
 /** Valid proxy environment values */
 const VALID_PROXY_ENVIRONMENTS = ["preview", "production"] as const;
@@ -184,6 +186,8 @@ export function createVeryfrontHandler(
     new ClientLogHandler(), // Priority: 200 (HIGH, dev only)
     new DevEndpointsHandler(), // Priority: 300 (HIGH, dev only)
     new DebugContextHandler(), // Priority: 300 (HIGH, dev only - context debugging)
+    new OpenAPIHandler(), // Priority: 300 (HIGH, serves /_openapi.json)
+    new OpenAPIDocsHandler(), // Priority: 300 (HIGH, serves /_docs with Scalar UI)
     new StudioEndpointsHandler(), // Priority: 300 (HIGH, Studio iframe scripts)
     new DevFileHandler(), // Priority: 400 (dev only)
     new SnippetHandler(), // Priority: 450 (before static, handles @/ component previews)

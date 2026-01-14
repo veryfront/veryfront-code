@@ -242,4 +242,35 @@ export interface VeryfrontConfig {
     /** Custom CSS content to add (for @layer, @apply directives, etc.) */
     customCSS?: string;
   };
+  /** OpenAPI documentation configuration */
+  openapi?: {
+    /** Enable OpenAPI endpoint (default: true) */
+    enabled?: boolean;
+    /** Enable interactive docs page using Scalar (default: true) */
+    docs?: boolean;
+    /** API title for OpenAPI info section */
+    title?: string;
+    /** API version (default: "1.0.0") */
+    version?: string;
+    /** API description */
+    description?: string;
+    /** Custom path configuration */
+    paths?: {
+      /** Path for JSON spec (default: "/_openapi.json") */
+      json?: string;
+      /** Path for YAML spec (default: "/_openapi.yaml") */
+      yaml?: string;
+      /** Path for interactive docs (default: "/_docs") */
+      docs?: string;
+    };
+    /** MCP integration configuration */
+    mcp?: {
+      /** Expose OpenAPI spec as MCP resource at openapi://spec (default: true) */
+      resource?: boolean;
+      /** Auto-generate MCP tools from API routes (default: true) */
+      tools?: boolean;
+      /** Tool naming prefix (default: "api") - tools named as prefix:operationId */
+      toolPrefix?: string;
+    };
+  };
 }

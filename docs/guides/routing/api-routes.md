@@ -1079,6 +1079,7 @@ Deno.test('POST /api/users creates user', async () => {
 
 ## Related Documentation
 
+- [OpenAPI & API Docs](./openapi.md) - Auto-generate OpenAPI specs and interactive docs
 - [App Router](./app-router.md) - Modern routing system
 - [Pages Router](./pages-router.md) - Traditional routing
 - [Dynamic Routes](./dynamic-routes.md) - URL parameters
