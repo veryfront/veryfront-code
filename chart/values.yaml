@@ -34,6 +34,9 @@ proxy:
   env:
     PORT: "20000"
     RENDERER_URL: "http://veryfront-renderer:80"
+    # API URL for OAuth token exchange
+    # Use internal K8s service for performance (no public internet roundtrip)
+    VERYFRONT_API_BASE_URL: "http://veryfront-api:80"
     # Token cache configuration (Redis for distributed caching)
     # REDIS_URL is provided via veryfront-proxy-secret
     CACHE_TYPE: "redis"
@@ -156,7 +159,8 @@ renderer:
     PORT: "20000"
     PROXY_MODE: "1"
     # API URL for domain lookups and other internal API calls
-    VERYFRONT_API_BASE_URL: "https://api.veryfront.com"
+    # Use internal K8s service for performance (no public internet roundtrip)
+    VERYFRONT_API_BASE_URL: "http://veryfront-api:80"
     # V8 heap size: 2.5GB with container limit 3Gi
     # Actual usage is ~165Mi but allow headroom for large projects
     DENO_V8_FLAGS: "--max-old-space-size=2560"
