@@ -10,7 +10,7 @@ Deno.test("createRoute", async (t) => {
   await t.step("should attach metadata to handler", () => {
     const handler = createRoute({
       summary: "Get user",
-      handler: async () => new Response("ok"),
+      handler: () => new Response("ok"),
     });
 
     const metadata = handler[OPENAPI_METADATA] as OpenAPIRouteMetadata;
@@ -23,7 +23,7 @@ Deno.test("createRoute", async (t) => {
       params: z.object({
         id: z.string().uuid(),
       }),
-      handler: async () => new Response("ok"),
+      handler: () => new Response("ok"),
     });
 
     const metadata = handler[OPENAPI_METADATA] as OpenAPIRouteMetadata;
@@ -38,7 +38,7 @@ Deno.test("createRoute", async (t) => {
         page: z.coerce.number().optional(),
         limit: z.coerce.number().default(10),
       }),
-      handler: async () => new Response("ok"),
+      handler: () => new Response("ok"),
     });
 
     const metadata = handler[OPENAPI_METADATA] as OpenAPIRouteMetadata;
@@ -54,7 +54,7 @@ Deno.test("createRoute", async (t) => {
         name: z.string(),
         email: z.string().email(),
       }),
-      handler: async () => new Response("ok"),
+      handler: () => new Response("ok"),
     });
 
     const metadata = handler[OPENAPI_METADATA] as OpenAPIRouteMetadata;
@@ -69,7 +69,7 @@ Deno.test("createRoute", async (t) => {
       response: {
         200: z.object({ id: z.string() }),
       },
-      handler: async () => new Response("ok"),
+      handler: () => new Response("ok"),
     });
 
     const metadata = handler[OPENAPI_METADATA] as OpenAPIRouteMetadata;
@@ -90,7 +90,7 @@ Deno.test("createRoute", async (t) => {
           description: "User not found",
         },
       },
-      handler: async () => new Response("ok"),
+      handler: () => new Response("ok"),
     });
 
     const metadata = handler[OPENAPI_METADATA] as OpenAPIRouteMetadata;
@@ -105,7 +105,7 @@ Deno.test("createRoute", async (t) => {
     const handler = createRoute({
       tags: ["Users", "Admin"],
       deprecated: true,
-      handler: async () => new Response("ok"),
+      handler: () => new Response("ok"),
     });
 
     const metadata = handler[OPENAPI_METADATA] as OpenAPIRouteMetadata;
@@ -115,7 +115,7 @@ Deno.test("createRoute", async (t) => {
 
   await t.step("should return callable handler", async () => {
     const handler = createRoute({
-      handler: async () => new Response("success"),
+      handler: () => new Response("success"),
     });
 
     const mockContext = {

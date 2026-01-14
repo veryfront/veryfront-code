@@ -34,9 +34,9 @@ export class OpenAPIDocsHandler extends BaseHandler {
     return url.pathname === docsPath;
   }
 
-  async handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
+  handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
     if (!this.shouldHandle(req, ctx)) {
-      return this.continue();
+      return Promise.resolve(this.continue());
     }
 
     const html = this.generateDocsPage(ctx);
@@ -45,7 +45,7 @@ export class OpenAPIDocsHandler extends BaseHandler {
       .withCache(ctx.mode === "production" ? { maxAge: 3600, public: true } : "no-cache")
       .withContentType("text/html; charset=utf-8", html, HTTP_OK);
 
-    return this.respond(response);
+    return Promise.resolve(this.respond(response));
   }
 
   /**

@@ -78,7 +78,7 @@ export function generateMCPToolsFromSpec(
         id: toolId,
         description: buildToolDescription(operation, method, path),
         inputSchema,
-        execute: async (input) => {
+        execute: (input) => {
           return executeAPICall(config, method, path, input as Record<string, unknown>, operation);
         },
         mcp: { enabled: true },
