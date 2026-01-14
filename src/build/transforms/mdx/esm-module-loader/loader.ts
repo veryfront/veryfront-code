@@ -341,7 +341,7 @@ async function bundleHttpImports(
     const bundledCode = result.outputFiles?.[0]?.text;
     if (bundledCode) {
       logger.debug(`${LOG_PREFIX_MDX_LOADER} Successfully bundled HTTP imports`);
-      // Process esm.sh URLs to add target=es2022 and external=react,react-dom
+      // Process esm.sh URLs to add target=es2022 and external=react
       // This ensures all esm.sh packages use the same React instance
       const processedCode = processEsmShImports(bundledCode, esmCacheDir, hashString(bundledCode));
       return typeof processedCode === "string" ? processedCode : await processedCode;

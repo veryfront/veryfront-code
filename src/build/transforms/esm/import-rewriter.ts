@@ -108,7 +108,7 @@ export function rewriteBareImports(code: string, _moduleServerUrl?: string): Pro
       warnUnversionedImport(specifier);
     }
 
-    return `https://esm.sh/${finalSpecifier}?external=react,react-dom&target=es2022`;
+    return `https://esm.sh/${finalSpecifier}?external=react&target=es2022`;
   }));
 }
 

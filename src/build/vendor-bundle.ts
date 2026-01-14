@@ -59,7 +59,7 @@ export async function buildVendorBundle(
   const thirdPartyImports: Record<string, string> = {};
   for (const [pkg, version] of Object.entries(dependencies)) {
     // Use ESM.sh with ?external=react to prevent bundling React inside third-party packages
-    thirdPartyImports[pkg] = `https://esm.sh/${pkg}@${version}?external=react,react-dom&pin=v135`;
+    thirdPartyImports[pkg] = `https://esm.sh/${pkg}@${version}?external=react&pin=v135`;
   }
 
   // Create virtual entry point

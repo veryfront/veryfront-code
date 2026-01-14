@@ -1,7 +1,7 @@
 /**
  * HTTP Import Handler for SSR.
  *
- * Ensures esm.sh URLs use ?external=react,react-dom so they all share
+ * Ensures esm.sh URLs use ?external=react so they all share
  * the same React instance from deno.json import map.
  */
 
@@ -42,7 +42,7 @@ export function createHTTPPlugin(): { name: string; setup: () => void } {
 }
 
 /**
- * Ensure esm.sh URLs have ?external=react,react-dom for SSR.
+ * Ensure esm.sh URLs have ?external=react for SSR.
  * This makes them import React as a bare specifier, which deno.json resolves.
  */
 export function bundleHttpImports(
@@ -64,6 +64,11 @@ export function bundleHttpImports(
       return null;
     }
 
+    // Check if this is a React package - never add external=react to React itself
+    // Matches: react@, react/, react-dom@, react-dom/
+    const isReactPackage = /\/react(@|\/|$)/.test(specifier) ||
+      /\/react-dom(@|\/|$)/.test(specifier);
+
     // Skip if already has both external and target params
     if (specifier.includes("external=react") && specifier.includes("target=es2022")) {
       return null;
@@ -74,8 +79,9 @@ export function bundleHttpImports(
     if (!specifier.includes("target=")) {
       params.push("target=es2022");
     }
-    if (!specifier.includes("external=react")) {
-      params.push("external=react,react-dom");
+    // Only add external=react to non-React packages
+    if (!isReactPackage && !specifier.includes("external=react")) {
+      params.push("external=react");
     }
     if (params.length === 0) {
       return null;
