@@ -1,11 +1,3 @@
-/**
- * CLI Authentication Module
- *
- * Provides OAuth and API token authentication for the Veryfront CLI.
- *
- * @module cli/auth
- */
-
 export {
   login,
   logout,
@@ -23,3 +15,4 @@ export {
 export { startCallbackServer, getCallbackUrl, type CallbackServer } from "./callback-server.ts";
 export { getTokenLocation } from "./token-store.ts";
 export { openBrowser, canOpenBrowser } from "./browser.ts";
+export { getApiUrl, DEFAULT_API_URL } from "./constants.ts";

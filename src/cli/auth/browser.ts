@@ -1,22 +1,17 @@
-/**
- * Cross-platform browser opening utility
- *
- * Opens URLs in the user's default browser across
- * macOS, Linux, and Windows.
- *
- * @module cli/auth/browser
- */
-
 import { isDeno } from "@veryfront/platform/compat/runtime.ts";
 
-/**
- * Get the command to open a URL in the default browser
- */
+function getPlatform(): string {
+  // @ts-ignore - Deno global
+  return isDeno ? Deno.build.os : process.platform;
+}
+
+function getEnvVar(name: string): string | undefined {
+  // @ts-ignore - Deno global
+  return isDeno ? Deno.env.get(name) : process.env[name];
+}
+
 function getOpenCommand(): { cmd: string; args: string[] } {
-  const platform = isDeno
-    // @ts-ignore - Deno global
-    ? Deno.build.os
-    : process.platform;
+  const platform = getPlatform();
 
   switch (platform) {
     case "darwin":
@@ -24,18 +19,11 @@ function getOpenCommand(): { cmd: string; args: string[] } {
     case "win32":
     case "windows":
       return { cmd: "cmd", args: ["/c", "start", ""] };
-    case "linux":
     default:
       return { cmd: "xdg-open", args: [] };
   }
 }
 
-/**
- * Open a URL in the user's default browser
- *
- * @param url - The URL to open
- * @returns Promise that resolves when the browser is opened
- */
 export async function openBrowser(url: string): Promise<void> {
   const { cmd, args } = getOpenCommand();
 
@@ -46,9 +34,8 @@ export async function openBrowser(url: string): Promise<void> {
       stdout: "null",
       stderr: "null",
     });
-    const process = command.spawn();
-    // Don't wait for the browser to close
-    process.unref();
+    const proc = command.spawn();
+    proc.unref();
   } else {
     const { spawn } = await import("node:child_process");
     const child = spawn(cmd, [...args, url], {
@@ -59,40 +46,12 @@ export async function openBrowser(url: string): Promise<void> {
   }
 }
 
-/**
- * Check if a browser can likely be opened
- * (Not 100% reliable, but helps detect headless environments)
- */
 export function canOpenBrowser(): boolean {
-  // Check for common headless indicators
-  const isCI = Boolean(
-    isDeno
-      // @ts-ignore - Deno global
-      ? Deno.env.get("CI") || Deno.env.get("CONTINUOUS_INTEGRATION")
-      : process.env.CI || process.env.CONTINUOUS_INTEGRATION,
-  );
+  const isCI = Boolean(getEnvVar("CI") || getEnvVar("CONTINUOUS_INTEGRATION"));
+  const isSSH = Boolean(getEnvVar("SSH_CLIENT") || getEnvVar("SSH_TTY"));
 
-  // SSH sessions typically don't have a display
-  const isSSH = Boolean(
-    isDeno
-      // @ts-ignore - Deno global
-      ? Deno.env.get("SSH_CLIENT") || Deno.env.get("SSH_TTY")
-      : process.env.SSH_CLIENT || process.env.SSH_TTY,
-  );
-
-  // Check for display on Linux
-  const platform = isDeno
-    // @ts-ignore - Deno global
-    ? Deno.build.os
-    : process.platform;
-
-  if (platform === "linux") {
-    const hasDisplay = Boolean(
-      isDeno
-        // @ts-ignore - Deno global
-        ? Deno.env.get("DISPLAY") || Deno.env.get("WAYLAND_DISPLAY")
-        : process.env.DISPLAY || process.env.WAYLAND_DISPLAY,
-    );
+  if (getPlatform() === "linux") {
+    const hasDisplay = Boolean(getEnvVar("DISPLAY") || getEnvVar("WAYLAND_DISPLAY"));
     if (!hasDisplay) return false;
   }
 
