@@ -10,7 +10,6 @@ import { rendererLogger as logger } from "@veryfront/utils";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import { getLocalAdapter } from "@veryfront/platform/adapters/registry.ts";
 import { generateHash } from "./cache.ts";
-import { fetchEsmModule } from "./esm-rewriter.ts";
 import { findLocalLibFile, findSourceFile } from "../file-resolver/index.ts";
 
 // Re-export utilities
@@ -48,7 +47,7 @@ export async function transformModuleWithDeps(
   config: ModuleLoaderConfig,
   useLocalAdapter = false,
 ): Promise<string> {
-  const { moduleCache, esmCache, projectDir, projectId, adapter, mode } = config;
+  const { moduleCache, projectDir, projectId, adapter, mode } = config;
   const cacheKey = getModuleCacheKey(filePath, projectId, projectDir);
 
   // Check if already transformed
@@ -116,7 +115,7 @@ export async function transformModuleWithDeps(
   }
 
   // Now transform the code (with @/ imports already replaced with file:// paths)
-  let transformedCode = await transformToESM(
+  const transformedCode = await transformToESM(
     fileContent,
     filePath,
     projectDir,
@@ -128,23 +127,10 @@ export async function transformModuleWithDeps(
     },
   );
 
-  // Find and transform esm.sh URLs - fetch them and cache locally
-  // Dynamic import from file:// URLs doesn't support https:// imports
-  const esmImports = [...transformedCode.matchAll(/from\s+(["'])(https:\/\/esm\.sh\/[^"']+)\1/g)]
-    .map((m) => ({ full: m[0], url: m[2]! }));
-
-  // Fetch and cache all esm.sh dependencies in parallel
-  if (esmImports.length > 0) {
-    const cachedPaths = await Promise.all(
-      esmImports.map(({ url }) => fetchEsmModule(url, tmpDir, localAdapter, esmCache)),
-    );
-    for (let i = 0; i < esmImports.length; i++) {
-      transformedCode = transformedCode.replace(
-        esmImports[i]!.full,
-        `from "file://${cachedPaths[i]}"`,
-      );
-    }
-  }
+  // Note: esm.sh URLs (like https://esm.sh/react@18.3.1/...) are kept as-is.
+  // Deno natively supports HTTP imports and will fetch/cache them automatically.
+  // Previous code tried to fetch and cache esm.sh locally, but this broke because
+  // esm.sh modules have relative paths that only work when loaded from esm.sh.
 
   // Write transformed code to temp file
   const hash = await generateHash(filePath);

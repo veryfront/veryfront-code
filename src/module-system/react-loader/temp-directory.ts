@@ -24,9 +24,12 @@ function normalizeProjectKey(projectId: string): string {
 export async function getGlobalTmpDir(): Promise<string> {
   if (!globalTmpDir) {
     const fs = await import("node:fs/promises");
-    // Use node_modules/.cache so bare imports can resolve to parent node_modules
+    // Use .cache outside node_modules to avoid triggering Node.js module resolution
+    // When modules are in node_modules, Deno uses Node.js resolution which doesn't
+    // support https:// imports (esm.sh URLs). Using .cache at project root ensures
+    // Deno uses its native resolution which supports HTTP imports.
     const projectDir = cwd();
-    globalTmpDir = join(projectDir, "node_modules", ".cache", "veryfront-modules");
+    globalTmpDir = join(projectDir, ".cache", "veryfront-modules");
     await fs.mkdir(globalTmpDir, { recursive: true });
   }
   return globalTmpDir;

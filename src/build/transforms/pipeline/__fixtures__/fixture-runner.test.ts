@@ -71,6 +71,13 @@ Deno.test({
 
     // Should transform JSX
     assertStringIncludes(result.code, "jsx");
+
+    // SSR now uses esm.sh URLs (same as browser) for dynamic file:// import compatibility
+    // This ensures imports work in Docker without needing node_modules
+    assertStringIncludes(result.code, "esm.sh/react@18.3.1");
+
+    // Should NOT have bare "react" import (would fail in Docker)
+    assertEquals(result.code.includes('from "react"'), false);
   },
 });
 
