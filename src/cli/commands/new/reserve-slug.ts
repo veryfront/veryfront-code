@@ -56,9 +56,6 @@ export async function reserveProjectSlug(
     const result = await tryCreateProject(currentSlug, token);
 
     if (result.success) {
-      // Delete template files that API auto-creates
-      await clearProjectFiles(currentSlug, token);
-
       return {
         slug: currentSlug,
         projectId: result.projectId!,
@@ -137,58 +134,6 @@ async function tryCreateProject(
       success: false,
       error: error instanceof Error ? error.message : String(error),
     };
-  }
-}
-
-// ============================================================================
-// File Management
-// ============================================================================
-
-/**
- * Clear all files from a project's main branch.
- * Used to remove auto-created template files after project creation.
- */
-async function clearProjectFiles(slug: string, token: string): Promise<void> {
-  try {
-    // Get list of files on main branch
-    const listResponse = await fetch(
-      `${getApiUrl()}/projects/${slug}/files?branch=main`,
-      {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          Accept: "application/json",
-        },
-      },
-    );
-
-    if (!listResponse.ok) return;
-
-    const data = (await listResponse.json()) as { data: Array<{ path: string }> };
-    const files = data.data || [];
-
-    // Delete each file (in parallel, max 10 at a time)
-    const deleteFile = async (path: string) => {
-      await fetch(
-        `${getApiUrl()}/projects/${slug}/files/${encodeURIComponent(path)}?branch=main`,
-        {
-          method: "DELETE",
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        },
-      );
-    };
-
-    // Process in batches to avoid overwhelming the API
-    const batchSize = 10;
-    for (let i = 0; i < files.length; i += batchSize) {
-      const batch = files.slice(i, i + batchSize);
-      await Promise.all(batch.map((f) => deleteFile(f.path)));
-    }
-  } catch (error) {
-    throw new Error(
-      `Failed to clear template files: ${error instanceof Error ? error.message : error}`,
-    );
   }
 }
 
