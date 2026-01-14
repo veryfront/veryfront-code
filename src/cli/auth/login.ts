@@ -7,7 +7,7 @@ import { canOpenBrowser, openBrowser } from "./browser.ts";
 import { createSpinner, getColorEnabled, isTTY, promptUser } from "../utils/index.ts";
 import { DEFAULT_LOGIN_TIMEOUT_MS, getApiUrl } from "./constants.ts";
 
-export type AuthMethod = "google" | "github" | "token";
+export type AuthMethod = "google" | "github" | "microsoft" | "token";
 
 export interface UserInfo {
   id: string;
@@ -39,21 +39,24 @@ async function promptAuthMethod(): Promise<AuthMethod> {
   cliLogger.info("");
   cliLogger.info(`  ${c(cyan, "1.")} Login with Google ${c(dim, "(opens browser)")}`);
   cliLogger.info(`  ${c(cyan, "2.")} Login with GitHub ${c(dim, "(opens browser)")}`);
-  cliLogger.info(`  ${c(cyan, "3.")} Enter API token manually`);
+  cliLogger.info(`  ${c(cyan, "3.")} Login with Microsoft ${c(dim, "(opens browser)")}`);
+  cliLogger.info(`  ${c(cyan, "4.")} Enter API token manually`);
   cliLogger.info("");
 
-  const response = await promptUser("Enter choice (1-3):");
+  const response = await promptUser("Enter choice (1-4):");
   switch (response.trim()) {
     case "1":
       return "google";
     case "2":
       return "github";
+    case "3":
+      return "microsoft";
     default:
       return "token";
   }
 }
 
-async function loginWithOAuth(provider: "google" | "github"): Promise<string | null> {
+async function loginWithOAuth(provider: "google" | "github" | "microsoft"): Promise<string | null> {
   const c = useColor();
 
   if (!canOpenBrowser()) {
@@ -150,6 +153,7 @@ export async function login(method?: AuthMethod): Promise<UserInfo | null> {
   switch (authMethod) {
     case "google":
     case "github":
+    case "microsoft":
       token = await loginWithOAuth(authMethod);
       break;
     case "token":

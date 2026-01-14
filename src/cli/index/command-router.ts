@@ -376,10 +376,12 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
             ? "google"
             : args.github
             ? "github"
+            : args.microsoft
+            ? "microsoft"
             : args.token
             ? "token"
             : undefined;
-          await login(method as "google" | "github" | "token" | undefined);
+          await login(method as "google" | "github" | "microsoft" | "token" | undefined);
         }
         break;
 
