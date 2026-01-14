@@ -71,6 +71,13 @@ export interface VeryfrontConfig {
     coop?: "same-origin" | "same-origin-allow-popups" | "unsafe-none";
     corp?: "same-origin" | "same-site" | "cross-origin";
     coep?: "require-corp" | "unsafe-none";
+    /**
+     * Restrict module imports to specific directories (opt-in security).
+     * When not set, users can import from any directory in the project.
+     * When set, only imports from these directories are allowed.
+     * @example ["app", "pages", "components", "lib", "src", "utils"]
+     */
+    allowedImportDirs?: string[];
   };
   middleware?: {
     custom?: Array<

@@ -42,6 +42,8 @@ export async function handleBatchModuleEndpoint(
     projectId: ctx.projectId,
     branch: ctx.parsedDomain?.branch ?? null,
     dev: ctx.mode === "development",
+    // Pass security config for opt-in import restrictions
+    allowedImportDirs: ctx.config?.security?.allowedImportDirs,
   });
 
   return respond(response);

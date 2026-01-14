@@ -41,6 +41,11 @@ export interface ModuleServerOptions {
   branch?: string | null;
   /** Release ID for production mode (published files) */
   releaseId?: string | null;
+  /**
+   * Restrict module imports to specific directories (opt-in security).
+   * When not set, users can import from any directory in the project.
+   */
+  allowedImportDirs?: string[];
 }
 
 /** Serve transformed module at /_vf_modules/* path */
@@ -58,6 +63,7 @@ export async function serveModule(
     dev = true,
     projectUUID,
     releaseId: _releaseId,
+    allowedImportDirs,
   } = options;
   const effectiveProjectId = projectUUID ?? projectId;
   const url = new URL(req.url);
@@ -69,6 +75,9 @@ export async function serveModule(
     baseDir: projectDir,
     adapter,
     context: "module-loading",
+    contextOptions: {
+      allowedImportDirs, // Pass through from config (undefined = no restrictions)
+    },
     throwOnError: false, // Don't throw, return appropriate HTTP error
     onSecurityEvent: (event) => {
       if (event.type === "validation-failed") {
