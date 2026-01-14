@@ -81,7 +81,7 @@ function handleCallback(url: URL): { result: CallbackResult; html: string } {
   };
 }
 
-async function startDenoServer(port: number): Promise<CallbackServer> {
+function startDenoServer(port: number): CallbackServer {
   let resolveCallback: (result: CallbackResult) => void;
   const callbackPromise = new Promise<CallbackResult>((resolve) => {
     resolveCallback = resolve;
@@ -103,7 +103,7 @@ async function startDenoServer(port: number): Promise<CallbackServer> {
 
   return {
     port,
-    waitForCallback: async (timeoutMs = DEFAULT_LOGIN_TIMEOUT_MS) => {
+    waitForCallback: (timeoutMs = DEFAULT_LOGIN_TIMEOUT_MS) => {
       const timeout = new Promise<CallbackResult>((_, reject) => {
         setTimeout(() => reject(new Error("Login timed out. Please try again.")), timeoutMs);
       });
@@ -137,7 +137,7 @@ async function startNodeServer(port: number): Promise<CallbackServer> {
 
   return {
     port,
-    waitForCallback: async (timeoutMs = DEFAULT_LOGIN_TIMEOUT_MS) => {
+    waitForCallback: (timeoutMs = DEFAULT_LOGIN_TIMEOUT_MS) => {
       const timeout = new Promise<CallbackResult>((_, reject) => {
         setTimeout(() => reject(new Error("Login timed out. Please try again.")), timeoutMs);
       });

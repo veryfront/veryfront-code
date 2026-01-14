@@ -18,7 +18,7 @@ import { pullCommand } from "../commands/pull.ts";
 import { pushCommand } from "../commands/push.ts";
 import { mergeCommand, parseMergeArgs } from "../commands/merge.ts";
 import { deployCommand, parseDeployArgs } from "../commands/deploy.ts";
-import { upCommand, parseUpArgs } from "../commands/up.ts";
+import { parseUpArgs, upCommand } from "../commands/up.ts";
 import { login, logout, whoami } from "../auth/index.ts";
 import { COMMANDS } from "../help/command-definitions.ts";
 import {
