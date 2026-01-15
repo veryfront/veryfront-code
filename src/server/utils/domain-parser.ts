@@ -3,8 +3,9 @@
  *
  * Extracts project slug and branch from preview/development URLs.
  * Supports patterns:
- * - {slug}.lvh.me:{port} (local development - recommended)
- * - {slug}.preview.lvh.me:{port}
+ * - {slug}.veryfront.me:{port} (local development - recommended, HTTP works)
+ * - {slug}.lvh.me:{port} (local development alternative)
+ * - {slug}.preview.veryfront.me:{port}
  * - {slug}.preview.veryfront.dev:{port}
  * - {slug}--{branch}.preview.veryfront.dev:{port}
  * - {slug}.veryfront.dev:{port}
@@ -12,7 +13,7 @@
  * - {slug}--{branch}.preview.veryfront.com
  * - {slug}.veryfront.com
  *
- * Note: lvh.me is preferred for local dev because .dev TLD forces HTTPS in browsers.
+ * Note: veryfront.me is preferred for local dev because .dev TLD forces HTTPS in browsers.
  */
 
 export interface ParsedDomain {
@@ -25,8 +26,8 @@ export interface ParsedDomain {
 
 type Environment = ParsedDomain["environment"];
 
-// Local development domains (lvh.me resolves to 127.0.0.1, veryfront.dev for HTTPS testing)
-const LOCAL_DEV_DOMAINS = "lvh\\.me|veryfront\\.dev";
+// Local development domains (veryfront.me preferred, lvh.me alternative, veryfront.dev for HTTPS testing)
+const LOCAL_DEV_DOMAINS = "veryfront\\.me|lvh\\.me|veryfront\\.dev";
 // Production domains
 const PROD_DOMAINS = "veryfront\\.com|veryfront\\.org";
 
@@ -89,7 +90,7 @@ export function parseProjectDomain(host: string): ParsedDomain {
   }
 
   // Plain local dev domains without slug
-  if (domain === "veryfront.dev" || domain === "lvh.me") {
+  if (domain === "veryfront.me" || domain === "veryfront.dev" || domain === "lvh.me") {
     return createParsedDomain(null, null, "development", true, true);
   }
 
@@ -141,12 +142,12 @@ export function parseProjectDomain(host: string): ParsedDomain {
 const ALL_DOMAINS = `${LOCAL_DEV_DOMAINS}|${PROD_DOMAINS}`;
 
 /**
- * Check if a domain is a valid veryfront domain (includes lvh.me for local dev)
+ * Check if a domain is a valid veryfront domain (includes veryfront.me and lvh.me for local dev)
  */
 export function isVeryfrontDomain(host: string): boolean {
   const domain = host.replace(/:\d+$/, "");
   const pattern = new RegExp(`^[a-zA-Z0-9-]+(\\.[a-zA-Z0-9-]+)*\\.(${ALL_DOMAINS})$`);
-  return pattern.test(domain) || domain === "veryfront.dev" || domain === "lvh.me";
+  return pattern.test(domain) || domain === "veryfront.me" || domain === "veryfront.dev" || domain === "lvh.me";
 }
 
 /**

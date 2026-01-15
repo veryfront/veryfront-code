@@ -101,7 +101,7 @@ export default {
   fs: {
     type: "veryfront-api",
     veryfront: {
-      baseUrl: "http://api.lvh.me:4000",
+      baseUrl: "http://api.veryfront.me:4000",
       proxyMode: true,      // Use proxy headers
       cache: { enabled: true, ttl: 60000 },
     }
@@ -180,10 +180,10 @@ curl http://localhost:8080/_proxy/health
 curl http://localhost:8080/_proxy/stats
 
 # Renderer context (dev only) - shows token propagation
-curl http://codersociety.lvh.me:8080/_vf_debug/context
+curl http://codersociety.veryfront.me:8080/_vf_debug/context
 
 # Test module serving
-curl http://codersociety.lvh.me:8080/_vf_modules/pages/index.js
+curl http://codersociety.veryfront.me:8080/_vf_modules/pages/index.js
 ```
 
 ### Debugging Token Issues
