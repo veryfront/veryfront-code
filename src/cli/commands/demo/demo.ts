@@ -425,7 +425,6 @@ async function executeStepAction(
           port: 3000,
           projectDir,
           hmr: true,
-          tui: false,
           demoMode: true,
         });
 

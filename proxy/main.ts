@@ -192,7 +192,7 @@ function handleRequest(req: Request): Promise<Response> {
       const projectSlug = parsed.slug || undefined;
 
       const reqLogger = proxyLogger.child({
-        project: projectSlug,
+        ...(projectSlug && { project: projectSlug }),
         env: scope,
         ...(isPreviewMode && { preview: true }),
       });

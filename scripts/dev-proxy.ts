@@ -1,7 +1,9 @@
 #!/usr/bin/env -S deno run --allow-all
 /**
  * Local Proxy + Renderer launcher
- * Usage: deno task proxy [--project path/to/project]
+ * Usage: deno task dev [--single] [--project path/to/project]
+ *
+ * --single: Run in single-project mode (uses env vars for project)
  */
 
 const PROXY_PORT = 8080;
@@ -34,7 +36,27 @@ function c(color: string, text: string): string {
   return shouldUseColor() ? `${color}${text}${ANSI.reset}` : text;
 }
 
-// Check .env exists
+// Check for --single flag
+const args = Deno.args.filter(arg => arg !== "--single");
+const isSingleMode = Deno.args.includes("--single");
+
+if (isSingleMode) {
+  // Run single-project mode directly
+  const proc = new Deno.Command("deno", {
+    args: ["run", "--allow-all", "--unstable-net", "--unstable-worker-options", "src/cli/main.ts", "dev", ...args],
+    stdout: "inherit",
+    stderr: "inherit",
+    env: {
+      ...Deno.env.toObject(),
+      LOG_LEVEL: "error", // Suppress startup noise
+    },
+  }).spawn();
+
+  const status = await proc.status;
+  Deno.exit(status.code);
+}
+
+// Check .env exists for multi-project mode
 try {
   await Deno.stat(".env");
 } catch {
@@ -62,7 +84,7 @@ await new Promise((r) => setTimeout(r, 1000));
 
 // Start renderer (warn level to reduce noise)
 const renderer = new Deno.Command("deno", {
-  args: ["run", "--allow-all", "--unstable-net", "--unstable-worker-options", "src/cli/main.ts", "dev", ...Deno.args],
+  args: ["run", "--allow-all", "--unstable-net", "--unstable-worker-options", "src/cli/main.ts", "dev", ...args],
   stdout: "inherit",
   stderr: "inherit",
   env: {
@@ -77,17 +99,11 @@ const renderer = new Deno.Command("deno", {
 // Wait for services to initialize
 await new Promise((r) => setTimeout(r, 2000));
 
-// Clean startup banner
+// Startup banner
 console.log();
-console.log(c(ANSI.dim, "─".repeat(40)));
-console.log(`  ${c(ANSI.bold + ANSI.cyan, "Veryfront")} ${c(ANSI.dim, "Multi-Project Mode")}`);
-console.log(c(ANSI.dim, "─".repeat(40)));
+console.log(`  ${c(ANSI.bold + ANSI.cyan, "Veryfront")} ${c(ANSI.dim, "is now running")}`);
 console.log();
-console.log(`  ${c(ANSI.green, "●")} Open: ${c(ANSI.cyan, `http://{project}.veryfront.me:${PROXY_PORT}/`)}`);
-console.log();
-console.log(`  ${c(ANSI.dim, "Example:")} ${c(ANSI.cyan, `http://blank.veryfront.me:${PROXY_PORT}/`)}`);
-console.log();
-console.log(c(ANSI.dim, `  Press Ctrl+C to stop`));
+console.log(`     ${c(ANSI.dim, "URL")}  ${c(ANSI.cyan, `http://lvh.me:${PROXY_PORT}`)}`);
 console.log();
 
 // Shutdown handler
