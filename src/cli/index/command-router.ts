@@ -12,7 +12,7 @@ import { analyzeChunksCommand } from "../commands/analyze-chunks.ts";
 import { cleanCommand } from "../commands/clean.ts";
 import { doctorCommand } from "../commands/doctor/index.ts";
 import { initCommand } from "../commands/init/index.ts";
-import { installCommand } from "../commands/install/index.ts";
+import { installCommand, uninstallCommand } from "../commands/install/index.ts";
 import { lockCommand } from "../commands/lock.ts";
 import { routesCommand } from "../commands/routes.ts";
 import { pullCommand } from "../commands/pull.ts";
@@ -426,6 +426,15 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
       case "install":
         showLogo();
         await installCommand({
+          target: args.target ? String(args.target) : undefined,
+          global: Boolean(args.global),
+          force: Boolean(args.force) || Boolean(args.f),
+        });
+        break;
+
+      case "uninstall":
+        showLogo();
+        await uninstallCommand({
           target: args.target ? String(args.target) : undefined,
           global: Boolean(args.global),
           force: Boolean(args.force) || Boolean(args.f),

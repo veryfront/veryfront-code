@@ -3,6 +3,7 @@
  */
 
 export { installCommand, installTargets, parseTargetFlag } from "./install.ts";
+export { findInstalledTools, uninstallCommand, uninstallTargets } from "./uninstall.ts";
 export { detectAITools, formatDetectionHint } from "./detect.ts";
 export {
   AI_TOOLS,
@@ -16,6 +17,7 @@ export {
   AIToolSchema,
   DetectOptionsSchema,
   InstallOptionsSchema,
+  UninstallOptionsSchema,
 } from "./types.ts";
 export type {
   AITool,
@@ -23,4 +25,5 @@ export type {
   DetectOptions,
   InstallOptions,
   MultiSelectOption,
+  UninstallOptions,
 } from "./types.ts";

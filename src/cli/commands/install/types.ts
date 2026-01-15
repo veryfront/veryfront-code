@@ -40,6 +40,15 @@ export const DetectOptionsSchema = z.object({
 
 export type DetectOptions = z.infer<typeof DetectOptionsSchema>;
 
+export const UninstallOptionsSchema = z.object({
+  target: z.string().optional(),
+  global: z.boolean().optional(),
+  force: z.boolean().optional(),
+  cwd: z.string().optional(),
+});
+
+export type UninstallOptions = z.infer<typeof UninstallOptionsSchema>;
+
 export interface MultiSelectOption {
   label: string;
   value: string;

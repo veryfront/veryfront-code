@@ -586,4 +586,30 @@ export const COMMANDS: CommandRegistry = {
       "SKILL.md follows the open standard from agentskills.io",
     ],
   },
+  uninstall: {
+    name: "uninstall",
+    description: "Remove AI assistant integrations",
+    usage: "veryfront uninstall [options]",
+    options: [
+      {
+        flag: "--target <tools>",
+        description:
+          "Comma-separated list of tools (cursor,claude-code,skill,copilot,windsurf,agents,all)",
+      },
+      {
+        flag: "--global",
+        description: "Remove from home directory instead of project",
+      },
+    ],
+    examples: [
+      "veryfront uninstall                            # Interactive multi-select",
+      "veryfront uninstall --target cursor",
+      "veryfront uninstall --target all",
+      "veryfront uninstall --global",
+    ],
+    notes: [
+      "Only shows files that exist in the project",
+      "Removes empty parent directories (.claude, .github) after removal",
+    ],
+  },
 };
