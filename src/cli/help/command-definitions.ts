@@ -554,4 +554,36 @@ export const COMMANDS: CommandRegistry = {
       "Checks both environment variable and stored token",
     ],
   },
+  install: {
+    name: "install",
+    description: "Install AI assistant integrations (Cursor, Claude Code, etc.)",
+    usage: "veryfront install [options]",
+    options: [
+      {
+        flag: "--target <tools>",
+        description:
+          "Comma-separated list of tools (cursor,claude-code,skill,copilot,windsurf,agents,all)",
+      },
+      {
+        flag: "--global",
+        description: "Install to home directory instead of project",
+      },
+      {
+        flag: "-f, --force",
+        description: "Overwrite existing files",
+      },
+    ],
+    examples: [
+      "veryfront install                              # Interactive multi-select",
+      "veryfront install --target cursor",
+      "veryfront install --target all",
+      "veryfront install --target cursor,claude-code --force",
+      "veryfront install --global                     # Install to ~/.cursorrules, etc.",
+    ],
+    notes: [
+      "Auto-detects which AI tools are in use and pre-selects them",
+      "Supports: Cursor, Claude Code, Agent Skills, GitHub Copilot, Windsurf, Codex/Gemini",
+      "SKILL.md follows the open standard from agentskills.io",
+    ],
+  },
 };
