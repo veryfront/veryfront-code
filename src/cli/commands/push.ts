@@ -38,6 +38,8 @@ export interface PushOptions {
   force?: boolean;
   /** Dry run - show what would be uploaded without uploading */
   dryRun?: boolean;
+  /** Quiet mode - suppress spinner/progress output */
+  quiet?: boolean;
 }
 
 /**
@@ -171,9 +173,13 @@ export async function pushCommand(options: PushOptions = {}): Promise<void> {
     branch,
     force = false,
     dryRun = false,
+    quiet = false,
   } = options;
 
-  const spinner = createSpinner("Resolving configuration...");
+  // Create a no-op spinner for quiet mode
+  const spinner = quiet
+    ? { start: () => {}, stop: () => {}, update: (_msg: string) => {} }
+    : createSpinner("Resolving configuration...");
   spinner.start();
 
   let config: ResolvedConfig;
@@ -190,7 +196,7 @@ export async function pushCommand(options: PushOptions = {}): Promise<void> {
 
   if (ops.length === 0) {
     spinner.stop();
-    logInfo("No files to push.");
+    if (!quiet) logInfo("No files to push.");
     return;
   }
 
@@ -199,9 +205,11 @@ export async function pushCommand(options: PushOptions = {}): Promise<void> {
   const branchName = branch || generateBranchName();
   const isMainBranch = branchName === "main";
 
-  cliLogger.info(
-    `\nFound ${ops.length} files to push to ${isMainBranch ? "main" : `branch "${branchName}"`}.`,
-  );
+  if (!quiet) {
+    cliLogger.info(
+      `\nFound ${ops.length} files to push to ${isMainBranch ? "main" : `branch "${branchName}"`}.`,
+    );
+  }
 
   // Confirm if not forced and not dry run
   if (!force && !dryRun) {
@@ -217,11 +225,13 @@ export async function pushCommand(options: PushOptions = {}): Promise<void> {
 
   if (dryRun) {
     await uploadFiles(createApiClient(config), config.projectSlug, null, ops, true);
-    logInfo(
-      `Dry run complete. Would upload ${ops.length} files to ${
-        isMainBranch ? "main" : `branch "${branchName}"`
-      }.`,
-    );
+    if (!quiet) {
+      logInfo(
+        `Dry run complete. Would upload ${ops.length} files to ${
+          isMainBranch ? "main" : `branch "${branchName}"`
+        }.`,
+      );
+    }
     return;
   }
 
@@ -266,20 +276,22 @@ export async function pushCommand(options: PushOptions = {}): Promise<void> {
 
   spinner.stop();
 
-  if (result.uploaded > 0) {
-    if (isMainBranch) {
-      logSuccess(`Pushed ${result.uploaded} files to main.`);
-    } else {
-      logSuccess(`Pushed ${result.uploaded} files to branch "${branchName}".`);
-      // Show merge instructions only for branches
-      cliLogger.info("");
-      logInfo(`To merge your changes, open Studio and merge the branch:`);
-      cliLogger.info(
-        `  https://studio.veryfront.com/${config.projectSlug}/branches`,
-      );
+  if (!quiet) {
+    if (result.uploaded > 0) {
+      if (isMainBranch) {
+        logSuccess(`Pushed ${result.uploaded} files to main.`);
+      } else {
+        logSuccess(`Pushed ${result.uploaded} files to branch "${branchName}".`);
+        // Show merge instructions only for branches
+        cliLogger.info("");
+        logInfo(`To merge your changes, open Studio and merge the branch:`);
+        cliLogger.info(
+          `  https://studio.veryfront.com/${config.projectSlug}/branches`,
+        );
+      }
     }
-  }
-  if (result.failed > 0) {
-    logWarning(`Failed to upload ${result.failed} files.`);
+    if (result.failed > 0) {
+      logWarning(`Failed to upload ${result.failed} files.`);
+    }
   }
 }

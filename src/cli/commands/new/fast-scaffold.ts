@@ -12,7 +12,10 @@
 import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
 import { dirname, join } from "@veryfront/platform/compat/path/index.ts";
 import { getTemplate } from "../../templates/index.ts";
-import { loadIntegrations, loadIntegrationBaseFilesFromDirectory } from "../../templates/integration-loader.ts";
+import {
+  loadIntegrationBaseFilesFromDirectory,
+  loadIntegrations,
+} from "../../templates/integration-loader.ts";
 import type { InitTemplate } from "../init/types.ts";
 import type { IntegrationName, TemplateFile } from "../../templates/types.ts";
 
@@ -68,7 +71,8 @@ export async function scaffoldProjectFast(
         for (const envVar of integration.config.envVars) {
           integrationEnvVars.push({
             name: envVar.name,
-            placeholder: envVar.description || `your-${envVar.name.toLowerCase().replace(/_/g, "-")}`,
+            placeholder: envVar.description ||
+              `your-${envVar.name.toLowerCase().replace(/_/g, "-")}`,
           });
         }
       }
@@ -79,7 +83,7 @@ export async function scaffoldProjectFast(
   const allFiles: TemplateFile[] = [
     ...templateFiles,
     ...integrationFiles,
-    createVeryfrontRc(slug),
+    createVeryfrontConfig(slug, template),
     createEnvFile(template, integrationEnvVars),
     createEnvExampleFile(template, integrationEnvVars),
   ];
@@ -118,12 +122,42 @@ export async function scaffoldProjectFast(
 // ============================================================================
 
 /**
- * Create .veryfrontrc config file
+ * Create veryfront.config.ts with projectSlug
  */
-function createVeryfrontRc(slug: string): TemplateFile {
+function createVeryfrontConfig(slug: string, template: InitTemplate): TemplateFile {
+  // Template-specific config additions
+  let extras = "";
+  if (template === "app") {
+    extras = `
+  // Theme
+  theme: {
+    colors: {
+      primary: "#6366F1",
+      secondary: "#EC4899",
+      success: "#10B981",
+      danger: "#EF4444",
+    },
+  },
+`;
+  }
+
+  const content = `import type { VeryfrontConfig } from "veryfront";
+
+const config: VeryfrontConfig = {
+  projectSlug: "${slug}",
+${extras}
+  // Development
+  dev: {
+    open: true,
+  },
+};
+
+export default config;
+`;
+
   return {
-    path: ".veryfrontrc",
-    content: JSON.stringify({ projectSlug: slug }, null, 2) + "\n",
+    path: "veryfront.config.ts",
+    content,
   };
 }
 

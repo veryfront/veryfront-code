@@ -7,7 +7,6 @@
 import { isAbsolute, join } from "@veryfront/platform/compat/path/index.ts";
 import { cliLogger, DEFAULT_DEV_SERVER_PORT } from "@veryfront/utils";
 import { devCommand } from "../commands/dev.ts";
-import { showLogo } from "../utils/index.ts";
 import type { ParsedArgs } from "./types.ts";
 import { cwd } from "@veryfront/platform/compat/process.ts";
 import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
@@ -49,14 +48,15 @@ async function resolveProjectDir(args: ParsedArgs): Promise<string> {
  * @param args - Parsed CLI arguments
  */
 export async function handleDevCommand(args: ParsedArgs): Promise<void> {
-  showLogo();
-
   const projectDir = await resolveProjectDir(args);
 
   const port = typeof args.port === "number" ? args.port : DEFAULT_DEV_SERVER_PORT;
+  const useTui = args.tui !== false; // Enable TUI by default
+
   await devCommand({
     port,
     projectDir,
     hmr: args.hmr !== false,
+    tui: useTui,
   });
 }

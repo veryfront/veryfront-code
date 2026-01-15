@@ -245,7 +245,9 @@ describe("new command integration", () => {
       assertEquals(githubClientExists, true);
 
       // Check for GitHub OAuth routes
-      const githubAuthRouteExists = await Deno.stat(join(projectDir, "app", "api", "auth", "github"))
+      const githubAuthRouteExists = await Deno.stat(
+        join(projectDir, "app", "api", "auth", "github"),
+      )
         .then((s) => s.isDirectory)
         .catch(() => false);
       assertEquals(githubAuthRouteExists, true);
@@ -313,7 +315,9 @@ describe("new command integration", () => {
       // .env should contain integration env vars
       const envContent = await Deno.readTextFile(join(projectDir, ".env"));
       // GitHub integration requires GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET
-      assertExists(envContent.includes("GITHUB_CLIENT_ID") || envContent.includes("OPENAI_API_KEY"));
+      assertExists(
+        envContent.includes("GITHUB_CLIENT_ID") || envContent.includes("OPENAI_API_KEY"),
+      );
     });
 
     it("should include integration env vars in .env.example", async () => {
@@ -341,7 +345,9 @@ describe("new command integration", () => {
 
       // .env.example should exist and contain integration documentation
       const envExampleContent = await Deno.readTextFile(join(projectDir, ".env.example"));
-      assertExists(envExampleContent.includes("Integration") || envExampleContent.includes("OPENAI"));
+      assertExists(
+        envExampleContent.includes("Integration") || envExampleContent.includes("OPENAI"),
+      );
     });
   });
 

@@ -6,6 +6,7 @@ const corsSchema = z.union([z.boolean(), z.object({ origin: z.string().optional(
 
 export const veryfrontConfigSchema = z
   .object({
+    projectSlug: z.string().optional(),
     title: z.string().optional(),
     description: z.string().optional(),
     experimental: z.object({
