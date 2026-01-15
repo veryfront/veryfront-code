@@ -6,8 +6,26 @@
  * --single: Run in single-project mode (uses env vars for project)
  */
 
-const PROXY_PORT = 8080;
-const RENDERER_PORT = 3001;
+import { getAgentFaceWithText } from "../src/cli/ui/dot-matrix.ts";
+
+// Parse port from args (-p or --port)
+function parsePort(): number {
+  const args = Deno.args;
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === "-p" || args[i] === "--port") {
+      const port = parseInt(args[i + 1] || "", 10);
+      if (!isNaN(port)) return port;
+    }
+    if (args[i]?.startsWith("-p=") || args[i]?.startsWith("--port=")) {
+      const port = parseInt(args[i].split("=")[1] || "", 10);
+      if (!isNaN(port)) return port;
+    }
+  }
+  return 8080; // default
+}
+
+const PROXY_PORT = parsePort();
+const RENDERER_PORT = PROXY_PORT + 1; // renderer runs on port+1
 
 const ANSI = {
   reset: "\u001b[0m",
@@ -16,6 +34,7 @@ const ANSI = {
   green: "\u001b[32m",
   cyan: "\u001b[36m",
   gray: "\u001b[90m",
+  brandBlue: "\x1b[38;2;0;163;244m",
 };
 
 function isTty(): boolean {
@@ -115,11 +134,16 @@ const renderer = new Deno.Command("deno", {
 // Wait for services to initialize
 await new Promise((r) => setTimeout(r, 2000));
 
-// Startup banner
+// Startup banner with dot matrix logo
 console.log();
-console.log(`  ${c(ANSI.bold + ANSI.cyan, "Veryfront")} ${c(ANSI.dim, "is now running")}`);
-console.log();
-console.log(`     ${c(ANSI.dim, "URL")}  ${c(ANSI.cyan, `http://lvh.me:${PROXY_PORT}`)}`);
+console.log(getAgentFaceWithText(
+  [
+    `${c(ANSI.bold + ANSI.cyan, "Veryfront")} ${c(ANSI.dim, "is now running")}`,
+    "",
+    `${c(ANSI.dim, "URL")}  ${c(ANSI.cyan, `http://lvh.me:${PROXY_PORT}`)}`,
+  ],
+  { litColor: ANSI.brandBlue }
+));
 console.log();
 
 // Shutdown handler
