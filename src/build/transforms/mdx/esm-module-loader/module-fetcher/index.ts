@@ -11,6 +11,7 @@ import { join, posix } from "https://deno.land/std@0.220.0/path/mod.ts";
 import { rendererLogger as logger } from "@veryfront/utils";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import { transformToESM } from "../../../esm-transform.ts";
+import { TRANSFORM_CACHE_VERSION } from "../../../esm/package-registry.ts";
 import {
   LOG_PREFIX_MDX_LOADER,
   RELATIVE_IMPORT_PATTERN,
@@ -228,8 +229,9 @@ async function cacheModule(
   }
 
   // Use content-based cache key so unchanged files stay cached
+  // Include transform version to invalidate on transform logic changes
   const contentHash = hashString(normalizedPath + moduleCode);
-  const cachePath = join(esmCacheDir, `vfmod-${contentHash}.mjs`);
+  const cachePath = join(esmCacheDir, `vfmod-v${TRANSFORM_CACHE_VERSION}-${contentHash}.mjs`);
 
   // Check if this exact content is already cached
   const localFs = getLocalFs();

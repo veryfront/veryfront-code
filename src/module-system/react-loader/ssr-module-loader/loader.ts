@@ -10,6 +10,7 @@ import { join } from "@veryfront/platform/compat/path/index.ts";
 import type * as React from "react";
 import { transformToESM } from "@veryfront/transforms/esm/index.ts";
 import type { TransformOptions } from "@veryfront/transforms/esm/types.ts";
+import { TRANSFORM_CACHE_VERSION } from "@veryfront/transforms/esm/package-registry.ts";
 import {
   type CrossProjectImport,
   type MissingImport,
@@ -142,7 +143,7 @@ export class SSRModuleLoader {
   }
 
   private getCacheKey(filePath: string): string {
-    return `${this.options.projectId}:${filePath}`;
+    return `v${TRANSFORM_CACHE_VERSION}:${this.options.projectId}:${filePath}`;
   }
 
   private getRegistryBaseUrl(): string {
