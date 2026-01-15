@@ -34,6 +34,10 @@ function getPathCacheKey(projectId: string, normalizedPath: string): string {
   return `${encodeURIComponent(projectId)}:${normalizedPath}`;
 }
 
+function getVersionedPathCacheKey(normalizedPath: string): string {
+  return `v${TRANSFORM_CACHE_VERSION}:${normalizedPath}`;
+}
+
 /**
  * Track modules loaded during current render for manifest recording.
  * Key: renderSessionId, Value: Set of normalized module paths
@@ -238,7 +242,7 @@ async function cacheModule(
   try {
     const stat = await localFs.stat(cachePath);
     if (stat?.isFile) {
-      pathCache.set(normalizedPath, cachePath);
+      pathCache.set(getVersionedPathCacheKey(normalizedPath), cachePath);
       logger.debug(`${LOG_PREFIX_MDX_LOADER} Content cache hit: ${normalizedPath}`);
       return cachePath;
     }
@@ -249,7 +253,7 @@ async function cacheModule(
   // Ensure cache directory exists before writing
   await localFs.mkdir(esmCacheDir, { recursive: true });
   await localFs.writeTextFile(cachePath, moduleCode);
-  pathCache.set(normalizedPath, cachePath);
+  pathCache.set(getVersionedPathCacheKey(normalizedPath), cachePath);
   await saveModulePathCache(esmCacheDir);
   logger.debug(`${LOG_PREFIX_MDX_LOADER} Cached vf_module: ${normalizedPath} -> ${cachePath}`);
 
@@ -364,7 +368,8 @@ export async function fetchAndCacheModule(
 
     // Check persistent module path cache first
     const pathCache = await getModulePathCache(esmCacheDir);
-    const cachedPath = pathCache.get(normalizedPath);
+    const versionedKey = getVersionedPathCacheKey(normalizedPath);
+    const cachedPath = pathCache.get(versionedKey);
     if (cachedPath) {
       // Verify the file still exists
       try {
@@ -384,7 +389,7 @@ export async function fetchAndCacheModule(
         }
       } catch {
         // Cache entry is stale, remove it
-        pathCache.delete(normalizedPath);
+        pathCache.delete(versionedKey);
       }
     }
 
