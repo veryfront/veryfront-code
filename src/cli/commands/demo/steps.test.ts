@@ -1,6 +1,6 @@
 import { assertEquals, assertExists } from "jsr:@std/assert@1";
 import { describe, it } from "jsr:@std/testing@1/bdd";
-import { DEMO_STEPS, type DemoStep } from "./steps.ts";
+import { DEMO_STEPS } from "./steps.ts";
 
 describe("DEMO_STEPS", () => {
   it("should have at least 3 steps", () => {

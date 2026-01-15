@@ -1,4 +1,4 @@
-import { assertEquals, assertStringIncludes } from "jsr:@std/assert@1";
+import { assertStringIncludes } from "jsr:@std/assert@1";
 import { describe, it } from "jsr:@std/testing@1/bdd";
 
 describe("demo command integration", () => {

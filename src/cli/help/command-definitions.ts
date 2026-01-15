@@ -618,7 +618,10 @@ export const COMMANDS: CommandRegistry = {
     usage: "veryfront demo [project-name] [options]",
     options: [
       { flag: "--auto", description: "Auto-advance through steps after 3 seconds" },
-      { flag: "--login <method>", description: "Pre-select login method (google, github, microsoft, token)" },
+      {
+        flag: "--login <method>",
+        description: "Pre-select login method (google, github, microsoft, token)",
+      },
     ],
     examples: [
       "veryfront demo                                 # Uses unique 'demo-{random}' name",
