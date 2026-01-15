@@ -79,7 +79,7 @@ export async function scaffoldProjectFast(
   const allFiles: TemplateFile[] = [
     ...templateFiles,
     ...integrationFiles,
-    createVeryfrontRc(slug),
+    createVeryfrontConfig(slug, template),
     createEnvFile(template, integrationEnvVars),
     createEnvExampleFile(template, integrationEnvVars),
   ];
@@ -118,12 +118,42 @@ export async function scaffoldProjectFast(
 // ============================================================================
 
 /**
- * Create .veryfrontrc config file
+ * Create veryfront.config.ts with projectSlug
  */
-function createVeryfrontRc(slug: string): TemplateFile {
+function createVeryfrontConfig(slug: string, template: InitTemplate): TemplateFile {
+  // Template-specific config additions
+  let extras = "";
+  if (template === "app") {
+    extras = `
+  // Theme
+  theme: {
+    colors: {
+      primary: "#6366F1",
+      secondary: "#EC4899",
+      success: "#10B981",
+      danger: "#EF4444",
+    },
+  },
+`;
+  }
+
+  const content = `import type { VeryfrontConfig } from "veryfront";
+
+const config: VeryfrontConfig = {
+  projectSlug: "${slug}",
+${extras}
+  // Development
+  dev: {
+    open: true,
+  },
+};
+
+export default config;
+`;
+
   return {
-    path: ".veryfrontrc",
-    content: JSON.stringify({ projectSlug: slug }, null, 2) + "\n",
+    path: "veryfront.config.ts",
+    content,
   };
 }
 

@@ -1,4 +1,5 @@
 export interface VeryfrontConfig {
+  projectSlug?: string;
   title?: string;
   description?: string;
   directories?: {

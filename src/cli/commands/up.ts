@@ -259,6 +259,7 @@ export async function upCommand(options: Partial<UpOptions> = {}): Promise<void>
         env: "preview",
         force: true,
         dryRun,
+        quiet: false,
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

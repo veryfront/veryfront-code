@@ -20,6 +20,7 @@ import { mergeCommand, parseMergeArgs } from "../commands/merge.ts";
 import { deployCommand, parseDeployArgs } from "../commands/deploy.ts";
 import { parseUpArgs, upCommand } from "../commands/up.ts";
 import { newCommand, parseNewArgs } from "../commands/new.ts";
+import { showMainMenu, promptProjectName } from "../commands/main-menu.ts";
 import { login, logout, whoami } from "../auth/index.ts";
 import { COMMANDS } from "../help/command-definitions.ts";
 import {
@@ -373,13 +374,17 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
       case "new":
         // Lightning-fast project creation for pro coders
         {
-          const name = args._[1] as string;
+          let name = args._[1] as string;
           if (!name) {
-            cliLogger.error("Usage: veryfront new <project-name>");
-            cliLogger.info("");
-            cliLogger.info("Example: veryfront new my-agent");
-            exitProcess(1);
-            return;
+            // Prompt for name interactively (returns null in non-TTY or on Ctrl+C)
+            const prompted = await promptProjectName();
+            if (prompted) {
+              name = prompted;
+            } else {
+              // Non-TTY or user cancelled
+              exitProcess(0);
+              return;
+            }
           }
           const result = parseNewArgs(args);
           if (!result.success) {
@@ -423,15 +428,40 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
         return;
 
       case undefined:
-        // Default: run the up command (one command does everything)
+        // Interactive main menu
         {
-          const result = parseUpArgs(args);
-          if (!result.success) {
-            handleValidationError(result.error, "up");
-            exitProcess(1);
-            return;
+          const action = await showMainMenu();
+
+          switch (action) {
+            case "new": {
+              // Prompt for project name
+              const name = await promptProjectName();
+              if (name) {
+                await newCommand(name, {});
+              }
+              break;
+            }
+            case "dev":
+              await handleDevCommand(args);
+              break;
+            case "deploy": {
+              const result = parseDeployArgs(args);
+              if (result.success) {
+                await deployCommand(result.data);
+              }
+              break;
+            }
+            case "login":
+              await login();
+              break;
+            case "help":
+              showHelp();
+              break;
+            case "exit":
+            case null:
+              exitProcess(0);
+              break;
           }
-          await upCommand(result.data);
         }
         break;
 

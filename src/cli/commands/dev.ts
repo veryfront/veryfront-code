@@ -1,124 +1,112 @@
 /**
- * Dev Command - Development server with HMR and Client-Side Features
+ * Dev Command - Development server with HMR
  */
 
 import { compileAllMDX, watchMDX } from "@veryfront/build/compiler/mdx-compiler/index.ts";
 import { ErrorCode, VeryfrontError } from "@veryfront/errors/index.ts";
-import { bold, cyan, dim, green } from "@veryfront/compat/console";
 import { join } from "@veryfront/platform/compat/path/index.ts";
 import { getAdapter } from "@veryfront/platform/adapters/detect.ts";
-import { cliLogger } from "@veryfront/utils";
 import { getConfig } from "@veryfront/config";
 import { createDevServer } from "@veryfront/server/dev-server.ts";
 import { runAIConfigValidation } from "@veryfront/ai/utils/config-validator.ts";
 import { discoverAll } from "@veryfront/ai/utils/discovery.ts";
-import { exitProcess, registerTerminationSignals } from "../utils/index.ts";
+import { exitProcess, registerTerminationSignals, isTTY } from "../utils/index.ts";
+import { createTui, interceptConsole, handleInput, brand, dim, success } from "../ui/index.ts";
 
 export interface DevOptions {
   port: number;
   projectDir: string;
   hmr?: boolean;
+  /** Use TUI mode (default: true when TTY, false when called programmatically) */
+  tui?: boolean;
 }
 
-// Alias for backward compatibility
 export type DevCommandOptions = DevOptions;
 
 export interface DevCommandResult {
-  /** Resolves when server is ready to accept requests */
   ready: Promise<void>;
-  /** Resolves when server shuts down */
   done: Promise<void>;
 }
 
 export async function devCommand(options: DevOptions): Promise<DevCommandResult> {
-  const { port, projectDir, hmr = true } = options;
+  const { port, projectDir, hmr = true, tui: useTui } = options;
 
-  // Get adapter first
+  // Determine if we should use TUI
+  const shouldUseTui = useTui ?? false; // Default to false for programmatic use
+
   const adapter = await getAdapter();
 
-  // Load config with better error handling
+  // Load config
   let config;
   try {
     config = await getConfig(projectDir, adapter);
   } catch (error) {
     if (error instanceof Error && error.message.includes("not found")) {
-      throw new VeryfrontError(
-        "No veryfront.config.js found in project directory",
-        ErrorCode.CONFIG_ERROR,
-        { projectDir },
-      );
+      throw new VeryfrontError("No veryfront.config.js found", ErrorCode.CONFIG_ERROR, { projectDir });
     }
     throw error;
   }
 
-  // CLI port takes precedence over config port
-  // Only use config port if CLI didn't specify one (port equals default)
   const DEFAULT_DEV_PORT = 3000;
   const finalPort = port !== DEFAULT_DEV_PORT ? port : (config?.dev?.port || port);
   const enableHMR = config?.dev?.hmr !== false && hmr;
+  const isProxyMode = config?.fs?.veryfront?.proxyMode === true;
+
+  // Setup TUI or simple logging
+  let tui: ReturnType<typeof createTui> | null = null;
+  let restoreConsole: (() => void) | null = null;
+
+  if (shouldUseTui && isTTY() && !isProxyMode) {
+    tui = createTui({ title: "Veryfront Dev" });
+    restoreConsole = interceptConsole(tui);
+
+    tui.setInfo({
+      "Local": `http://lvh.me:${finalPort}`,
+      "HMR": enableHMR ? "enabled" : "disabled",
+    });
+
+    tui.setSteps(["Config", "AI", "Server"]);
+    tui.setStatus("Starting...", "loading");
+  }
+
+  const log = (msg: string) => {
+    if (tui) tui.addLog(msg);
+  };
 
   // Validate AI configuration
   if (config) {
     runAIConfigValidation(config);
   }
+  tui?.completeStep();
 
-  // Auto-discover AI components (agents, tools, prompts, resources)
+  // Auto-discover AI components
   try {
-    const aiResult = await discoverAll({
-      baseDir: projectDir,
-      verbose: false,
-    });
-
-    const totalDiscovered = aiResult.agents.size +
-      aiResult.tools.size +
-      aiResult.prompts.size +
-      aiResult.resources.size;
-
-    if (totalDiscovered > 0) {
-      cliLogger.info(
-        `${green("✓")} AI Discovery: ${aiResult.agents.size} agents, ` +
-          `${aiResult.tools.size} tools, ${aiResult.prompts.size} prompts, ` +
-          `${aiResult.resources.size} resources`,
-      );
+    const aiResult = await discoverAll({ baseDir: projectDir, verbose: false });
+    const total = aiResult.agents.size + aiResult.tools.size + aiResult.prompts.size + aiResult.resources.size;
+    if (total > 0) {
+      log(`AI: ${aiResult.agents.size} agents, ${aiResult.tools.size} tools, ${aiResult.prompts.size} prompts`);
     }
-
-    if (aiResult.errors.length > 0) {
-      for (const err of aiResult.errors) {
-        cliLogger.warn(`AI discovery error in ${err.file}: ${err.error.message}`);
-      }
-    }
-  } catch (error) {
-    cliLogger.debug("AI discovery skipped (no ai/ directory or error):", error);
+  } catch {
+    log("AI discovery skipped");
   }
+  tui?.completeStep();
 
-  // Pre-compile MDX files if enabled
-  const usePrecompiledMDX = config?.experimental?.precompileMDX === true;
-  if (usePrecompiledMDX) {
+  // Pre-compile MDX if enabled
+  if (config?.experimental?.precompileMDX) {
     const outputDir = join(projectDir, ".veryfront", "compiled");
-
     try {
-      // Compile all MDX files
-      await compileAllMDX({
-        projectDir,
-        outputDir,
-        mode: "development",
-      });
-
-      // Start watching for changes
-      void watchMDX({
-        projectDir,
-        outputDir,
-        mode: "development",
-      });
-    } catch (error) {
-      // MDX compilation is non-critical, log but continue
-      cliLogger.warn("MDX pre-compilation failed, continuing without it:", error);
+      await compileAllMDX({ projectDir, outputDir, mode: "development" });
+      void watchMDX({ projectDir, outputDir, mode: "development" });
+      log("MDX pre-compilation enabled");
+    } catch {
+      log("MDX pre-compilation failed");
     }
   }
 
-  // Start dev server with new features
+  // Start dev server
   const shutdownController = new AbortController();
   let devServer: Awaited<ReturnType<typeof createDevServer>> | null = null;
+
   try {
     devServer = await createDevServer({
       port: finalPort,
@@ -130,71 +118,71 @@ export async function devCommand(options: DevOptions): Promise<DevCommandResult>
     });
   } catch (error) {
     if (error instanceof Error) {
-      // Check for common errors
-      const message = error.message.toLowerCase();
-      if (message.includes("eaddrinuse") || message.includes("address already in use")) {
-        throw new VeryfrontError(
-          `Port ${finalPort} is already in use`,
-          ErrorCode.INITIALIZATION_ERROR,
-          {
-            port: finalPort,
-          },
-        );
+      const msg = error.message.toLowerCase();
+      if (msg.includes("eaddrinuse") || msg.includes("address already in use")) {
+        if (tui) {
+          tui.setStatus(`Port ${finalPort} is already in use`, "error");
+          await new Promise(r => setTimeout(r, 2000));
+          tui.cleanup();
+          restoreConsole?.();
+        }
+        throw new VeryfrontError(`Port ${finalPort} is already in use`, ErrorCode.INITIALIZATION_ERROR, { port: finalPort });
       }
     }
     throw error;
   }
 
-  // Graceful shutdown on termination signals
+  tui?.completeStep();
+  tui?.setStatus("Running - Press Ctrl+C to stop", "success");
+
+  // Graceful shutdown
   let shuttingDown = false;
-  const shutdown = async (signal: "SIGINT" | "SIGTERM") => {
+  const shutdown = async () => {
     if (shuttingDown) {
-      // Second signal - force exit immediately
-      cliLogger.info("Force exiting...");
       exitProcess(0);
       return;
     }
     shuttingDown = true;
-    cliLogger.info(`Received ${signal}, shutting down dev server...`);
 
-    // Force exit after 3 seconds if graceful shutdown hangs
-    const forceExitTimeout = setTimeout(() => {
-      cliLogger.warn("Graceful shutdown timed out, forcing exit...");
-      exitProcess(0);
-    }, 3000);
+    if (tui) {
+      tui.setStatus("Shutting down...", "loading");
+    }
 
+    const timeout = setTimeout(() => exitProcess(0), 3000);
     try {
       shutdownController.abort();
       await devServer?.stop();
-    } catch (error) {
-      cliLogger.warn("Error while shutting down dev server:", error);
-    } finally {
-      clearTimeout(forceExitTimeout);
-      exitProcess(0);
+    } catch { /* ignore */ }
+    clearTimeout(timeout);
+
+    if (tui) {
+      tui.cleanup();
+      restoreConsole?.();
     }
+    exitProcess(0);
   };
 
-  registerTerminationSignals((signal) => {
-    void shutdown(signal);
-  });
+  registerTerminationSignals(() => void shutdown());
 
-  // Clean startup banner (skip in proxy mode - dev-proxy.ts prints its own)
-  const isProxyMode = config?.fs?.veryfront?.proxyMode === true;
-  if (!isProxyMode) {
+  // Handle TUI input
+  if (tui) {
+    // Run input handler in background (don't await)
+    handleInput(tui, {
+      onExit: () => void shutdown(),
+    }).catch(() => {});
+  }
+
+  // Simple banner for non-TUI mode
+  if (!tui && !isProxyMode) {
     console.log();
-    console.log(dim("─".repeat(40)));
-    console.log(`  ${bold(cyan("Veryfront"))}`);
-    console.log(dim("─".repeat(40)));
+    console.log(`  ${success("●")} ${brand(`http://lvh.me:${finalPort}/`)}`);
     console.log();
-    console.log(`  ${green("●")} Open: ${cyan(`http://lvh.me:${finalPort}/`)}`);
-    console.log();
-    console.log(dim(`  Press Ctrl+C to stop`));
+    console.log(dim(`  ctrl+c to stop`));
     console.log();
   }
 
-  // Return ready/done promises for callers that need to wait
   return {
     ready: devServer.ready,
-    done: new Promise<void>(() => {}), // Never resolves - server runs until killed
+    done: new Promise<void>(() => {}),
   };
 }
