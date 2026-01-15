@@ -6,7 +6,7 @@
  * --single: Run in single-project mode (uses env vars for project)
  */
 
-import { getAgentFaceWithText } from "../src/cli/ui/dot-matrix.ts";
+import { banner } from "../src/cli/ui/components/banner.ts";
 
 // Parse port from args (-p or --port)
 function parsePort(): number {
@@ -136,14 +136,13 @@ await new Promise((r) => setTimeout(r, 2000));
 
 // Startup banner with dot matrix logo
 console.log();
-console.log(getAgentFaceWithText(
-  [
-    `${c(ANSI.bold + ANSI.cyan, "Veryfront")} ${c(ANSI.dim, "is now running")}`,
-    "",
-    `${c(ANSI.dim, "URL")}  ${c(ANSI.cyan, `http://lvh.me:${PROXY_PORT}`)}`,
-  ],
-  { litColor: ANSI.brandBlue }
-));
+console.log(banner({
+  title: "Veryfront",
+  subtitle: "is now running",
+  info: {
+    url: `http://lvh.me:${PROXY_PORT}`,
+  },
+}));
 console.log();
 
 // Shutdown handler

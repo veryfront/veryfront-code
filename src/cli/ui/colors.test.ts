@@ -3,10 +3,35 @@
  */
 
 import { assertEquals, assertStringIncludes } from "jsr:@std/assert@1";
-import { describe, it } from "jsr:@std/testing@1/bdd";
-import { bold, brand, dim, error, muted, reset, success, warning } from "./colors.ts";
+import { afterAll, beforeAll, describe, it } from "jsr:@std/testing@1/bdd";
+import {
+  bold,
+  brand,
+  dim,
+  error,
+  muted,
+  reset,
+  resetColorCache,
+  success,
+  warning,
+} from "./colors.ts";
 
 describe("colors", () => {
+  // Force TrueColor mode for testing
+  let originalForceColor: string | undefined;
+  beforeAll(() => {
+    originalForceColor = Deno.env.get("FORCE_COLOR");
+    Deno.env.set("FORCE_COLOR", "3");
+    resetColorCache(); // Clear cache so new setting takes effect
+  });
+  afterAll(() => {
+    if (originalForceColor !== undefined) {
+      Deno.env.set("FORCE_COLOR", originalForceColor);
+    } else {
+      Deno.env.delete("FORCE_COLOR");
+    }
+    resetColorCache(); // Clear cache after tests
+  });
   describe("brand color", () => {
     it("wraps text with ANSI escape codes", () => {
       const result = brand("test");
