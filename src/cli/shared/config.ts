@@ -36,24 +36,41 @@ export interface ResolvedConfig {
 const DEFAULT_API_URL = "https://api.veryfront.com";
 
 /**
- * Read .veryfrontrc configuration file from the project directory
+ * Read configuration from veryfront.config.ts or .veryfrontrc
  */
 export async function readConfigFile(
   projectDir: string,
 ): Promise<VeryfrontConfig | null> {
   const fs = createFileSystem();
-  const configPath = join(projectDir, ".veryfrontrc");
 
-  try {
-    if (!(await fs.exists(configPath))) {
-      return null;
+  // Try veryfront.config.ts first (new format)
+  for (const ext of [".ts", ".js"]) {
+    const configPath = join(projectDir, `veryfront.config${ext}`);
+    try {
+      if (await fs.exists(configPath)) {
+        const module = await import(`file://${configPath}`);
+        const config = module.default || module;
+        if (config?.projectSlug) {
+          return { projectSlug: config.projectSlug } as VeryfrontConfig;
+        }
+      }
+    } catch {
+      // Ignore import errors, try next format
     }
-
-    const content = await fs.readTextFile(configPath);
-    return JSON.parse(content) as VeryfrontConfig;
-  } catch {
-    return null;
   }
+
+  // Fall back to .veryfrontrc (legacy JSON format)
+  const rcPath = join(projectDir, ".veryfrontrc");
+  try {
+    if (await fs.exists(rcPath)) {
+      const content = await fs.readTextFile(rcPath);
+      return JSON.parse(content) as VeryfrontConfig;
+    }
+  } catch {
+    // Ignore errors
+  }
+
+  return null;
 }
 
 /**
@@ -128,7 +145,7 @@ export async function resolveConfig(
 
   if (!projectSlug) {
     throw new Error(
-      "Could not determine project slug. Set VERYFRONT_PROJECT_SLUG environment variable or add projectSlug to .veryfrontrc",
+      "Could not determine project slug. Set VERYFRONT_PROJECT_SLUG environment variable or add projectSlug to veryfront.config.ts",
     );
   }
 

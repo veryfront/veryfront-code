@@ -1,0 +1,280 @@
+/**
+ * Main Menu - Interactive CLI launcher
+ */
+
+import { isTTY } from "../utils/index.ts";
+import { bold, brand, muted } from "../ui/colors.ts";
+
+// ============================================================================
+// Terminal Control
+// ============================================================================
+
+const ESC = "\x1b";
+const HIDE_CURSOR = `${ESC}[?25l`;
+const SHOW_CURSOR = `${ESC}[?25h`;
+const CLEAR_LINE = `${ESC}[2K`;
+const COL_1 = `${ESC}[1G`;
+const moveUp = (n = 1) => `${ESC}[${n}A`;
+
+function write(s: string): void {
+  Deno.stdout.writeSync(new TextEncoder().encode(s));
+}
+
+function clearLines(n: number): void {
+  for (let i = 0; i < n; i++) write(moveUp() + CLEAR_LINE);
+  write(COL_1);
+}
+
+// ============================================================================
+// Random Name Generator
+// ============================================================================
+
+const ADJECTIVES = [
+  "swift",
+  "bold",
+  "calm",
+  "dark",
+  "epic",
+  "fast",
+  "glad",
+  "hazy",
+  "keen",
+  "lite",
+  "mint",
+  "neat",
+  "pale",
+  "pure",
+  "rare",
+  "safe",
+  "slim",
+  "soft",
+  "warm",
+  "wild",
+];
+
+const NOUNS = [
+  "app",
+  "api",
+  "bot",
+  "box",
+  "hub",
+  "lab",
+  "kit",
+  "pod",
+  "web",
+  "dev",
+  "dash",
+  "flow",
+  "link",
+  "node",
+  "port",
+  "sync",
+  "task",
+  "tool",
+  "view",
+  "zone",
+];
+
+function generateRandomName(): string {
+  const adj = ADJECTIVES[Math.floor(Math.random() * ADJECTIVES.length)];
+  const noun = NOUNS[Math.floor(Math.random() * NOUNS.length)];
+  const suffix = Math.random().toString(36).slice(2, 6);
+  return `${adj}-${noun}-${suffix}`;
+}
+
+// ============================================================================
+// Menu Options
+// ============================================================================
+
+export type MenuAction = "new" | "dev" | "deploy" | "login" | "help" | "exit";
+
+const MENU_OPTIONS: { id: MenuAction; label: string; desc: string }[] = [
+  { id: "new", label: "New Project", desc: "Create a new Veryfront project" },
+  { id: "dev", label: "Start Dev", desc: "Start the development server" },
+  { id: "deploy", label: "Deploy", desc: "Deploy to production" },
+  { id: "login", label: "Login", desc: "Sign in to Veryfront" },
+  { id: "help", label: "Help", desc: "Show available commands" },
+  { id: "exit", label: "Exit", desc: "Exit the CLI" },
+];
+
+// ============================================================================
+// Menu UI
+// ============================================================================
+
+/**
+ * Prompt for project name with inline text input
+ * Shows a random default name that can be accepted by pressing Enter
+ */
+export async function promptProjectName(): Promise<string | null> {
+  if (!isTTY()) return null;
+
+  const defaultName = generateRandomName();
+  let input = "";
+  let lines = 0;
+
+  function draw() {
+    if (lines > 0) clearLines(lines);
+    console.log();
+    console.log("  " + bold("Project name") + " " + muted("(Enter to accept default)"));
+    if (input.length === 0) {
+      // Show default as placeholder
+      console.log("  " + brand("❯") + " " + muted(defaultName) + brand("█"));
+    } else {
+      console.log("  " + brand("❯") + " " + input + brand("█"));
+    }
+    lines = 3;
+  }
+
+  write(HIDE_CURSOR);
+  draw();
+
+  Deno.stdin.setRaw(true);
+  const reader = Deno.stdin.readable.getReader();
+  const dec = new TextDecoder();
+
+  let result: string | null = null;
+
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      const key = dec.decode(value);
+
+      // Ctrl+C to cancel
+      if (key === "\x03") {
+        result = null;
+        break;
+      }
+
+      // Enter to submit (use default if empty)
+      if (key === "\r" || key === "\n") {
+        result = input.length > 0 ? input : defaultName;
+        break;
+      }
+
+      // Backspace
+      if (key === "\x7f" || key === "\b") {
+        if (input.length > 0) {
+          input = input.slice(0, -1);
+          draw();
+        }
+        continue;
+      }
+
+      // Only allow valid project name characters
+      if (/^[a-z0-9-]$/.test(key)) {
+        input += key;
+        draw();
+      }
+    }
+  } finally {
+    reader.releaseLock();
+    Deno.stdin.setRaw(false);
+  }
+
+  write(SHOW_CURSOR);
+  clearLines(lines);
+
+  if (result) {
+    console.log();
+    console.log("  " + bold("Project name") + " " + brand(result));
+    console.log();
+  }
+
+  return result;
+}
+
+export async function showMainMenu(): Promise<MenuAction | null> {
+  if (!isTTY()) {
+    return null;
+  }
+
+  let idx = 0;
+  let lines = 0;
+
+  function draw() {
+    if (lines > 0) clearLines(lines);
+
+    // Header
+    console.log();
+    console.log("  " + bold(brand("Veryfront")));
+    console.log();
+    lines = 3;
+
+    // Options
+    for (let i = 0; i < MENU_OPTIONS.length; i++) {
+      const opt = MENU_OPTIONS[i];
+      if (!opt) continue;
+      const sel = i === idx;
+      const pointer = sel ? brand("❯") : " ";
+      const label = sel ? brand(opt.label) : opt.label;
+      const desc = muted(opt.desc);
+      console.log(`  ${pointer} ${label}  ${desc}`);
+      lines++;
+    }
+
+    console.log();
+    console.log("  " + muted("↑↓ navigate  ⏎ select  q quit"));
+    lines += 2;
+  }
+
+  write(HIDE_CURSOR);
+  draw();
+
+  Deno.stdin.setRaw(true);
+  const reader = Deno.stdin.readable.getReader();
+  const dec = new TextDecoder();
+
+  let result: MenuAction | null = null;
+
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      const key = dec.decode(value);
+
+      // Ctrl+C or q to exit
+      if (key === "\x03" || key === "q" || key === "Q") {
+        result = "exit";
+        break;
+      }
+
+      // Enter to select
+      if (key === "\r" || key === "\n") {
+        const selected = MENU_OPTIONS[idx];
+        result = selected?.id ?? null;
+        break;
+      }
+
+      // Arrow up or k
+      if (key === "\x1b[A" || key === "k") {
+        idx = idx > 0 ? idx - 1 : MENU_OPTIONS.length - 1;
+        draw();
+      }
+
+      // Arrow down or j
+      if (key === "\x1b[B" || key === "j") {
+        idx = idx < MENU_OPTIONS.length - 1 ? idx + 1 : 0;
+        draw();
+      }
+    }
+  } finally {
+    reader.releaseLock();
+    Deno.stdin.setRaw(false);
+  }
+
+  write(SHOW_CURSOR);
+  clearLines(lines);
+
+  // Show selection
+  if (result && result !== "exit") {
+    const selected = MENU_OPTIONS.find((o) => o.id === result);
+    if (selected) {
+      console.log();
+      console.log("  " + bold(brand("Veryfront")) + "  " + brand(selected.label));
+      console.log();
+    }
+  }
+
+  return result;
+}

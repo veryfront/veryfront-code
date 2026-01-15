@@ -23,6 +23,8 @@ export const DeployArgsSchema = z.object({
   releaseName: z.string().min(1).optional(),
   dryRun: z.boolean().default(false),
   force: z.boolean().default(false),
+  /** Quiet mode - suppress spinner/progress output */
+  quiet: z.boolean().default(false),
 });
 
 /**
@@ -154,9 +156,13 @@ export async function deployCommand(options: DeployOptions): Promise<void> {
     releaseName,
     dryRun = false,
     force = false,
+    quiet = false,
   } = options;
 
-  const spinner = createSpinner("Resolving configuration...");
+  // Create a no-op spinner for quiet mode
+  const spinner = quiet
+    ? { start: () => {}, stop: () => {}, update: (_msg: string) => {} }
+    : createSpinner("Resolving configuration...");
   spinner.start();
 
   const config = await resolveConfig(cwd());
@@ -175,7 +181,7 @@ export async function deployCommand(options: DeployOptions): Promise<void> {
 
   // Dry run
   if (dryRun) {
-    logInfo(`Would create release from "${branch}" and deploy to "${env}"`);
+    if (!quiet) logInfo(`Would create release from "${branch}" and deploy to "${env}"`);
     return;
   }
 
@@ -212,7 +218,9 @@ export async function deployCommand(options: DeployOptions): Promise<void> {
 
   spinner.stop();
 
-  logSuccess(`Deployed ${release.version} to ${env}`);
-  logInfo(`  Release: ${release.name} (${release.version})`);
-  logInfo(`  Environment: ${env}`);
+  if (!quiet) {
+    logSuccess(`Deployed ${release.version} to ${env}`);
+    logInfo(`  Release: ${release.name} (${release.version})`);
+    logInfo(`  Environment: ${env}`);
+  }
 }
