@@ -140,6 +140,65 @@ describe("ProxyFSAdapterManager", () => {
       assertEquals(manager.hasAdapter("non-existent-project"), false);
       manager.dispose();
     });
+
+    it("should differentiate adapters by branch in preview mode", () => {
+      const manager = new ProxyFSAdapterManager({
+        baseConfig: {
+          veryfront: {
+            baseUrl: "https://api.example.com",
+            apiToken: "test-token",
+            projectSlug: "test-project",
+            cache: { enabled: false },
+          },
+        },
+      });
+      // Different branches should be treated as different adapters
+      assertEquals(manager.hasAdapter("project", false, null, "main"), false);
+      assertEquals(manager.hasAdapter("project", false, null, "feature-x"), false);
+      assertEquals(manager.hasAdapter("project", false, null, null), false);
+      manager.dispose();
+    });
+
+    it("should treat null branch as main branch", () => {
+      const manager = new ProxyFSAdapterManager({
+        baseConfig: {
+          veryfront: {
+            baseUrl: "https://api.example.com",
+            apiToken: "test-token",
+            projectSlug: "test-project",
+            cache: { enabled: false },
+          },
+        },
+      });
+      // Both null and "main" should produce the same cache key for preview mode
+      // hasAdapter("project", false, null, null) checks for "project:preview:main"
+      // hasAdapter("project", false, null, "main") also checks for "project:preview:main"
+      assertEquals(
+        manager.hasAdapter("project", false, null, null),
+        manager.hasAdapter("project", false, null, "main"),
+      );
+      manager.dispose();
+    });
+
+    it("should ignore branch for production mode", () => {
+      const manager = new ProxyFSAdapterManager({
+        baseConfig: {
+          veryfront: {
+            baseUrl: "https://api.example.com",
+            apiToken: "test-token",
+            projectSlug: "test-project",
+            cache: { enabled: false },
+          },
+        },
+      });
+      // In production mode, branch should not affect cache key
+      // Both should use "project:production:latest"
+      assertEquals(
+        manager.hasAdapter("project", true, null, "main"),
+        manager.hasAdapter("project", true, null, "feature-x"),
+      );
+      manager.dispose();
+    });
   });
 
   describe("getStats", () => {
