@@ -8,7 +8,7 @@ import { chdir, cwd } from "@veryfront/platform/compat/process.ts";
 import { join } from "@veryfront/platform/compat/path/index.ts";
 import { bold, brand, dim, error, muted, success } from "../../ui/colors.ts";
 import { HIDE_CURSOR, SHOW_CURSOR, typeCommand, typeLine } from "../../ui/animated-text.ts";
-import { isTTY } from "../../utils/index.ts";
+import { exitProcess, isTTY } from "../../utils/index.ts";
 import { readToken, saveToken, validateToken } from "../../auth/index.ts";
 import { canOpenBrowser, openBrowser } from "../../auth/browser.ts";
 import { getCallbackUrl, startCallbackServer } from "../../auth/callback-server.ts";
@@ -609,4 +609,7 @@ export async function demoCommand(options: DemoOptions = {}): Promise<void> {
   } finally {
     write(SHOW_CURSOR);
   }
+
+  // Exit cleanly
+  exitProcess(0);
 }
