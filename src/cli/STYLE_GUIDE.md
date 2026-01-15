@@ -29,7 +29,9 @@ If the implementation is hard to explain, it's a bad idea.
 console.log("  " + success("✓") + " Deployed to " + brand("myapp.veryfront.com"));
 
 // DON'T: Noisy, verbose
-console.log("[SUCCESS] Deployment completed successfully to https://myapp.veryfront.com at 2024-01-15T10:30:00Z");
+console.log(
+  "[SUCCESS] Deployment completed successfully to https://myapp.veryfront.com at 2024-01-15T10:30:00Z",
+);
 ```
 
 ### Progress & Status
@@ -70,12 +72,12 @@ console.log(success("✓") + " Done");
 **Use blank lines to separate logical sections:**
 
 ```typescript
-console.log();                    // Space before
+console.log(); // Space before
 console.log("  " + bold("Title"));
-console.log();                    // Space after title
+console.log(); // Space after title
 console.log("  " + dim("Description line 1"));
 console.log("  " + dim("Description line 2"));
-console.log();                    // Space after section
+console.log(); // Space after section
 ```
 
 ---
@@ -125,12 +127,12 @@ catch (e) {
 ### Brand Palette
 
 ```typescript
-brand()   // #00A3F4 - Blue, primary actions and links
-success() // #22C55E - Green, completed states
-error()   // #EF4444 - Red, failures only
-warning() // #EAB308 - Yellow, caution
-muted()   // #71717A - Gray, secondary text
-dim()     // ANSI dim, de-emphasized text
+brand(); // #00A3F4 - Blue, primary actions and links
+success(); // #22C55E - Green, completed states
+error(); // #EF4444 - Red, failures only
+warning(); // #EAB308 - Yellow, caution
+muted(); // #71717A - Gray, secondary text
+dim(); // ANSI dim, de-emphasized text
 ```
 
 ### Usage Rules
@@ -153,16 +155,16 @@ if (!isTTY()) {
 
 ## Icons & Symbols
 
-| Symbol | Meaning | Function |
-|--------|---------|----------|
-| `✓` | Success/Complete | `success("✓")` |
-| `✗` | Error/Failed | `error("✗")` |
-| `●` | Active/Current | `brand("●")` |
-| `○` | Inactive/Pending | `muted("○")` |
-| `⠋⠙⠹⠸` | Loading spinner | Animated |
-| `❯` | Selection cursor | `brand("❯")` |
-| `▶` | Collapsed | `dim("▶")` |
-| `▼` | Expanded | `dim("▼")` |
+| Symbol | Meaning          | Function       |
+| ------ | ---------------- | -------------- |
+| `✓`    | Success/Complete | `success("✓")` |
+| `✗`    | Error/Failed     | `error("✗")`   |
+| `●`    | Active/Current   | `brand("●")`   |
+| `○`    | Inactive/Pending | `muted("○")`   |
+| `⠋⠙⠹⠸` | Loading spinner  | Animated       |
+| `❯`    | Selection cursor | `brand("❯")`   |
+| `▶`    | Collapsed        | `dim("▶")`     |
+| `▼`    | Expanded         | `dim("▼")`     |
 
 **No emoji in standard output** - use unicode symbols only.
 
@@ -213,15 +215,15 @@ Show when command is run without required arguments:
 
 ### Conventions
 
-| Flag | Meaning |
-|------|---------|
-| `-h, --help` | Show help |
-| `-v, --version` | Show version |
-| `-f, --force` | Skip confirmations |
-| `-n, --dry-run` | Preview without action |
-| `-q, --quiet` | Minimal output |
-| `--json` | Machine-readable output |
-| `--no-color` | Disable colors |
+| Flag            | Meaning                 |
+| --------------- | ----------------------- |
+| `-h, --help`    | Show help               |
+| `-v, --version` | Show version            |
+| `-f, --force`   | Skip confirmations      |
+| `-n, --dry-run` | Preview without action  |
+| `-q, --quiet`   | Minimal output          |
+| `--json`        | Machine-readable output |
+| `--no-color`    | Disable colors          |
 
 ---
 
@@ -283,13 +285,13 @@ console.log("  " + brand("⠋") + " Building project...");
 
 ### Keyboard Shortcuts
 
-| Key | Action |
-|-----|--------|
-| `Enter` | Confirm/Submit |
-| `Ctrl+C` | Cancel/Exit |
-| `↑/↓` or `j/k` | Navigate |
-| `l` | Toggle logs |
-| `q` | Quit |
+| Key            | Action         |
+| -------------- | -------------- |
+| `Enter`        | Confirm/Submit |
+| `Ctrl+C`       | Cancel/Exit    |
+| `↑/↓` or `j/k` | Navigate       |
+| `l`            | Toggle logs    |
+| `q`            | Quit           |
 
 ---
 
@@ -301,7 +303,7 @@ console.log("  " + brand("⠋") + " Building project...");
 if (options.json) {
   console.log(JSON.stringify({
     success: true,
-    url: "https://app.veryfront.com"
+    url: "https://app.veryfront.com",
   }));
   return;
 }
@@ -309,11 +311,11 @@ if (options.json) {
 
 ### Exit Codes
 
-| Code | Meaning |
-|------|---------|
-| `0` | Success |
-| `1` | General error |
-| `2` | Invalid usage |
+| Code  | Meaning              |
+| ----- | -------------------- |
+| `0`   | Success              |
+| `1`   | General error        |
+| `2`   | Invalid usage        |
 | `130` | Interrupted (Ctrl+C) |
 
 ---

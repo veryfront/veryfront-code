@@ -121,13 +121,7 @@ export async function newCommand(
     }
   } catch { /* ok */ }
 
-  if (!token) {
-    console.log("\n" + error("  Please log in: ") + dim("deno task cli login") + "\n");
-    exitProcess(1);
-    return;
-  }
-
-  // Skip deploy mode - simple output
+  // Skip deploy mode - simple output (no auth required)
   if (skipDeploy) {
     console.log();
     console.log(`  Creating ${brand(slug)}...`);
@@ -142,6 +136,13 @@ export async function newCommand(
     console.log();
     console.log(dim(`  cd ${name} && deno task cli dev`));
     console.log();
+    return;
+  }
+
+  // Full deploy mode requires authentication
+  if (!token) {
+    console.log("\n" + error("  Please log in: ") + dim("deno task cli login") + "\n");
+    exitProcess(1);
     return;
   }
 

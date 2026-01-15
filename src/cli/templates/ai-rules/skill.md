@@ -14,13 +14,13 @@ Zero-config React meta-framework for AI-native applications.
 
 ## Commands
 
-| Command | Purpose |
-|---------|---------|
-| `veryfront dev` | Start development server with HMR |
-| `veryfront build` | Build for production |
-| `veryfront deploy` | Deploy to Veryfront cloud |
-| `veryfront generate page <name>` | Generate a new page |
-| `veryfront generate api <name>` | Generate an API route |
+| Command                          | Purpose                           |
+| -------------------------------- | --------------------------------- |
+| `veryfront dev`                  | Start development server with HMR |
+| `veryfront build`                | Build for production              |
+| `veryfront deploy`               | Deploy to Veryfront cloud         |
+| `veryfront generate page <name>` | Generate a new page               |
+| `veryfront generate api <name>`  | Generate an API route             |
 
 ## Project Structure
 

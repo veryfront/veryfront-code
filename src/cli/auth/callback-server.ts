@@ -21,21 +21,133 @@ function escapeHtml(str: string): string {
     .replace(/'/g, "&#39;");
 }
 
-const baseStyle = `
-  body { font-family: system-ui, sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; background: #fafafa; }
-  .container { text-align: center; }
-  h1 { font-size: 20px; margin: 0 0 8px; }
-  p { color: #666; margin: 0; font-size: 14px; }
-`;
-
-function renderPage(title: string, heading: string, message: string, color: string): string {
-  return `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${title}</title><style>${baseStyle}h1{color:${color};}</style></head><body><div class="container"><h1>${heading}</h1><p>${message}</p></div></body></html>`;
+function renderSuccessPage(): string {
+  return `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Logged in</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+      background: #fff;
+      color: #111;
+    }
+    .container {
+      text-align: center;
+      padding: 48px;
+    }
+    .icon {
+      width: 48px;
+      height: 48px;
+      margin: 0 auto 24px;
+      border-radius: 50%;
+      background: #f0fdf4;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .icon svg {
+      width: 24px;
+      height: 24px;
+      color: #16a34a;
+    }
+    h1 {
+      font-size: 18px;
+      font-weight: 500;
+      letter-spacing: -0.01em;
+      margin-bottom: 8px;
+    }
+    p {
+      font-size: 14px;
+      color: #6b7280;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="icon">
+      <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
+      </svg>
+    </div>
+    <h1>Logged in</h1>
+    <p>You can close this window</p>
+  </div>
+</body>
+</html>`;
 }
 
-const successHtml = () =>
-  renderPage("Login Successful", "✓ Logged in", "You can close this window.", "#22c55e");
-const errorHtml = (err: string) =>
-  renderPage("Login Failed", "✗ Login failed", escapeHtml(err), "#ef4444");
+function renderErrorPage(error: string): string {
+  return `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Login failed</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+      background: #fff;
+      color: #111;
+    }
+    .container {
+      text-align: center;
+      padding: 48px;
+    }
+    .icon {
+      width: 48px;
+      height: 48px;
+      margin: 0 auto 24px;
+      border-radius: 50%;
+      background: #fef2f2;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .icon svg {
+      width: 24px;
+      height: 24px;
+      color: #dc2626;
+    }
+    h1 {
+      font-size: 18px;
+      font-weight: 500;
+      letter-spacing: -0.01em;
+      margin-bottom: 8px;
+    }
+    p {
+      font-size: 14px;
+      color: #6b7280;
+      max-width: 280px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="icon">
+      <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+      </svg>
+    </div>
+    <h1>Login failed</h1>
+    <p>${escapeHtml(error)}</p>
+  </div>
+</body>
+</html>`;
+}
+
+const successHtml = () => renderSuccessPage();
+const errorHtml = (err: string) => renderErrorPage(err);
 
 async function findAvailablePort(startPort: number): Promise<number> {
   let port = startPort;

@@ -125,6 +125,10 @@ export async function scaffoldProjectFast(
  * Create veryfront.config.ts with projectSlug
  */
 function createVeryfrontConfig(slug: string, template: InitTemplate): TemplateFile {
+  // Templates that use app router
+  const appRouterTemplates = ["ai", "minimal", "app", "blog", "docs"];
+  const usesAppRouter = appRouterTemplates.includes(template);
+
   // Template-specific config additions
   let extras = "";
   if (template === "app") {
@@ -141,10 +145,12 @@ function createVeryfrontConfig(slug: string, template: InitTemplate): TemplateFi
 `;
   }
 
+  const routerConfig = usesAppRouter ? `\n  router: "app",` : "";
+
   const content = `import type { VeryfrontConfig } from "veryfront";
 
 const config: VeryfrontConfig = {
-  projectSlug: "${slug}",
+  projectSlug: "${slug}",${routerConfig}
 ${extras}
   // Development
   dev: {

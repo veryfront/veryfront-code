@@ -56,10 +56,10 @@ describe("new command integration", () => {
       const stat = await Deno.stat(projectDir);
       assertEquals(stat.isDirectory, true);
 
-      // Check .veryfrontrc exists with correct content
-      const veryfrontrc = await Deno.readTextFile(join(projectDir, ".veryfrontrc"));
-      const config = JSON.parse(veryfrontrc);
-      assertEquals(config.projectSlug, projectName);
+      // Check veryfront.config.ts exists with correct content
+      const configContent = await Deno.readTextFile(join(projectDir, "veryfront.config.ts"));
+      // The slug includes a random suffix, so just check it starts with the project name
+      assertExists(configContent.includes(`projectSlug: "${projectName}-`));
 
       // Check .env exists
       const envExists = await Deno.stat(join(projectDir, ".env"))
@@ -127,10 +127,9 @@ describe("new command integration", () => {
       const stat = await Deno.stat(projectDir);
       assertEquals(stat.isDirectory, true);
 
-      // .veryfrontrc should exist
-      const veryfrontrc = await Deno.readTextFile(join(projectDir, ".veryfrontrc"));
-      const config = JSON.parse(veryfrontrc);
-      assertEquals(config.projectSlug, projectName);
+      // veryfront.config.ts should exist with project slug
+      const configContent = await Deno.readTextFile(join(projectDir, "veryfront.config.ts"));
+      assertExists(configContent.includes(`projectSlug: "${projectName}-`));
     });
   });
 
@@ -202,10 +201,9 @@ describe("new command integration", () => {
       const { code } = await command.output();
       assertEquals(code, 0); // Should succeed with --force
 
-      // .veryfrontrc should exist (project was scaffolded)
-      const veryfrontrc = await Deno.readTextFile(join(projectDir, ".veryfrontrc"));
-      const config = JSON.parse(veryfrontrc);
-      assertEquals(config.projectSlug, projectName);
+      // veryfront.config.ts should exist (project was scaffolded)
+      const configContent = await Deno.readTextFile(join(projectDir, "veryfront.config.ts"));
+      assertExists(configContent.includes(`projectSlug: "${projectName}-`));
     });
   });
 
