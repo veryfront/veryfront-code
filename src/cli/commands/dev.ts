@@ -10,15 +10,13 @@ import { getConfig } from "@veryfront/config";
 import { createDevServer } from "@veryfront/server/dev-server.ts";
 import { runAIConfigValidation } from "@veryfront/ai/utils/config-validator.ts";
 import { discoverAll } from "@veryfront/ai/utils/discovery.ts";
-import { exitProcess, isTTY, registerTerminationSignals } from "../utils/index.ts";
-import { brand, createTui, dim, handleInput, interceptConsole, success } from "../ui/index.ts";
+import { exitProcess, registerTerminationSignals } from "../utils/index.ts";
+import { brand, dim } from "../ui/index.ts";
 
 export interface DevOptions {
   port: number;
   projectDir: string;
   hmr?: boolean;
-  /** Use TUI mode (default: true when TTY, false when called programmatically) */
-  tui?: boolean;
   /** Demo mode: don't exit process on shutdown, resolve done promise instead */
   demoMode?: boolean;
 }
@@ -33,16 +31,13 @@ export interface DevCommandResult {
 }
 
 export async function devCommand(options: DevOptions): Promise<DevCommandResult> {
-  const { port, projectDir, hmr = true, tui: useTui, demoMode = false } = options;
+  const { port, projectDir, hmr = true, demoMode = false } = options;
 
   // Create resolvable done promise for demo mode
   let doneResolve: (() => void) | null = null;
   const donePromise = new Promise<void>((resolve) => {
     doneResolve = resolve;
   });
-
-  // Determine if we should use TUI
-  const shouldUseTui = useTui ?? false; // Default to false for programmatic use
 
   const adapter = await getAdapter();
 
@@ -63,48 +58,19 @@ export async function devCommand(options: DevOptions): Promise<DevCommandResult>
   const finalPort = port !== DEFAULT_DEV_PORT ? port : (config?.dev?.port || port);
   const enableHMR = config?.dev?.hmr !== false && hmr;
   const isProxyMode = config?.fs?.veryfront?.proxyMode === true;
-
-  // Setup TUI or simple logging
-  let tui: ReturnType<typeof createTui> | null = null;
-  let restoreConsole: (() => void) | null = null;
-
-  if (shouldUseTui && isTTY() && !isProxyMode) {
-    tui = createTui({ title: "Veryfront Dev" });
-    restoreConsole = interceptConsole(tui);
-
-    tui.setInfo({
-      "Local": `http://lvh.me:${finalPort}`,
-      "HMR": enableHMR ? "enabled" : "disabled",
-    });
-
-    tui.setSteps(["Config", "AI", "Server"]);
-    tui.setStatus("Starting...", "loading");
-  }
-
-  const log = (msg: string) => {
-    if (tui) tui.addLog(msg);
-  };
+  const projectSlug = config?.fs?.veryfront?.projectSlug || Deno.env.get("VERYFRONT_PROJECT_SLUG");
 
   // Validate AI configuration
   if (config) {
     runAIConfigValidation(config);
   }
-  tui?.completeStep();
 
   // Auto-discover AI components
   try {
-    const aiResult = await discoverAll({ baseDir: projectDir, verbose: false });
-    const total = aiResult.agents.size + aiResult.tools.size + aiResult.prompts.size +
-      aiResult.resources.size;
-    if (total > 0) {
-      log(
-        `AI: ${aiResult.agents.size} agents, ${aiResult.tools.size} tools, ${aiResult.prompts.size} prompts`,
-      );
-    }
+    await discoverAll({ baseDir: projectDir, verbose: false });
   } catch {
-    log("AI discovery skipped");
+    // AI discovery skipped
   }
-  tui?.completeStep();
 
   // Pre-compile MDX if enabled
   if (config?.experimental?.precompileMDX) {
@@ -112,9 +78,8 @@ export async function devCommand(options: DevOptions): Promise<DevCommandResult>
     try {
       await compileAllMDX({ projectDir, outputDir, mode: "development" });
       void watchMDX({ projectDir, outputDir, mode: "development" });
-      log("MDX pre-compilation enabled");
     } catch {
-      log("MDX pre-compilation failed");
+      // MDX pre-compilation failed
     }
   }
 
@@ -135,12 +100,6 @@ export async function devCommand(options: DevOptions): Promise<DevCommandResult>
     if (error instanceof Error) {
       const msg = error.message.toLowerCase();
       if (msg.includes("eaddrinuse") || msg.includes("address already in use")) {
-        if (tui) {
-          tui.setStatus(`Port ${finalPort} is already in use`, "error");
-          await new Promise((r) => setTimeout(r, 2000));
-          tui.cleanup();
-          restoreConsole?.();
-        }
         throw new VeryfrontError(
           `Port ${finalPort} is already in use`,
           ErrorCode.INITIALIZATION_ERROR,
@@ -151,9 +110,6 @@ export async function devCommand(options: DevOptions): Promise<DevCommandResult>
     throw error;
   }
 
-  tui?.completeStep();
-  tui?.setStatus("Running - Press Ctrl+C to stop", "success");
-
   // Graceful shutdown
   let shuttingDown = false;
   const shutdown = async () => {
@@ -163,21 +119,12 @@ export async function devCommand(options: DevOptions): Promise<DevCommandResult>
     }
     shuttingDown = true;
 
-    if (tui) {
-      tui.setStatus("Shutting down...", "loading");
-    }
-
     const timeout = demoMode ? null : setTimeout(() => exitProcess(0), 3000);
     try {
       shutdownController.abort();
       await devServer?.stop();
     } catch { /* ignore */ }
     if (timeout) clearTimeout(timeout);
-
-    if (tui) {
-      tui.cleanup();
-      restoreConsole?.();
-    }
 
     // In demo mode, resolve the done promise instead of exiting
     if (demoMode) {
@@ -189,20 +136,15 @@ export async function devCommand(options: DevOptions): Promise<DevCommandResult>
 
   registerTerminationSignals(() => void shutdown());
 
-  // Handle TUI input
-  if (tui) {
-    // Run input handler in background (don't await)
-    handleInput(tui, {
-      onExit: () => void shutdown(),
-    }).catch(() => {});
-  }
-
-  // Simple banner for non-TUI mode
-  if (!tui && !isProxyMode) {
+  // Startup banner (skip in proxy mode - proxy handles banner)
+  if (!isProxyMode) {
     console.log();
-    console.log(`  ${success("●")} ${brand(`http://lvh.me:${finalPort}/`)}`);
+    console.log(`  ${brand("Veryfront")} ${dim("is now running")}`);
     console.log();
-    console.log(dim(`  ctrl+c to stop`));
+    console.log(`     ${dim("URL")}  ${brand(`http://lvh.me:${finalPort}`)}`);
+    if (projectSlug) {
+      console.log(` ${dim("Project")}  ${projectSlug}`);
+    }
     console.log();
   }
 

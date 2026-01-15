@@ -51,12 +51,10 @@ export async function handleDevCommand(args: ParsedArgs): Promise<void> {
   const projectDir = await resolveProjectDir(args);
 
   const port = typeof args.port === "number" ? args.port : DEFAULT_DEV_SERVER_PORT;
-  const useTui = args.tui !== false; // Enable TUI by default
 
   await devCommand({
     port,
     projectDir,
     hmr: args.hmr !== false,
-    tui: useTui,
   });
 }
