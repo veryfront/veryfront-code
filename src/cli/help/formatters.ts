@@ -1,9 +1,52 @@
 import { VERSION } from "@veryfront/utils";
 import type { CommandHelp, CommandOption } from "./types.ts";
-import { bold, brand, dim, muted } from "../ui/colors.ts";
+import { bold, brand, dim, muted, shouldUseColor } from "../ui/colors.ts";
+import { AGENT_FACE } from "../ui/dot-matrix.ts";
+
+const RESET = "\x1b[0m";
+
+/**
+ * Render a small inline logo for help header
+ */
+function renderMiniLogo(): string[] {
+  const litColor = shouldUseColor() ? "\x1b[38;2;0;163;244m" : "";
+  const offColor = shouldUseColor() ? "\x1b[38;5;240m" : "";
+
+  const result: string[] = [];
+  for (const row of AGENT_FACE) {
+    const dots = row.map((dot) => {
+      if (dot === 1) {
+        return `${litColor}●${RESET}`;
+      }
+      return `${offColor}○${RESET}`;
+    });
+    result.push(dots.join(" "));
+  }
+  return result;
+}
 
 export function formatHeader(): string {
-  return "\n  " + bold(brand("veryfront")) + " " + dim(`v${VERSION}`);
+  const logoLines = renderMiniLogo();
+  const textLines = [
+    "",
+    bold(brand("veryfront")) + " " + dim(`v${VERSION}`),
+    dim("A Deno-first React framework"),
+    "",
+    "",
+    "",
+    "",
+  ];
+
+  // Combine logo and text horizontally
+  const output: string[] = [""];
+  const maxHeight = Math.max(logoLines.length, textLines.length);
+  for (let i = 0; i < maxHeight; i++) {
+    const logoLine = logoLines[i] || "             "; // Logo width ~13 chars
+    const textLine = textLines[i] || "";
+    output.push(`  ${logoLine}   ${textLine}`);
+  }
+
+  return output.join("\n");
 }
 
 export function formatCommandName(name: string, paddingLength: number): string {

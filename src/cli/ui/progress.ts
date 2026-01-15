@@ -3,10 +3,20 @@
  *
  * Provides spinners, step indicators, and progress bars
  * following CLI UX best practices.
+ * Runtime-agnostic: works on Deno, Node.js, and Bun.
  */
 
+import { getStdout } from "@veryfront/platform/compat/process.ts";
 import { brand, dim, error, muted, success } from "./colors.ts";
 import { isTTY } from "./layout.ts";
+
+/** Cross-runtime stdout write helper */
+function write(s: string): void {
+  const stdout = getStdout();
+  if (stdout) {
+    stdout.write(s);
+  }
+}
 
 /**
  * Spinner character frames (Braille dots pattern)
@@ -138,7 +148,6 @@ export function createSpinner(text: string): SpinnerController {
   let frame = 0;
   let running = true;
 
-  const write = (s: string) => Deno.stdout.writeSync(new TextEncoder().encode(s));
   const clearLine = "\x1b[2K\r";
 
   // Render current frame

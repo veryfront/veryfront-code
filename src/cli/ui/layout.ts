@@ -2,41 +2,30 @@
  * Layout utilities for CLI
  *
  * Provides terminal-aware layout primitives for responsive CLI design.
+ * Runtime-agnostic: works on Deno, Node.js, and Bun.
  */
+
+import { getTerminalSize as getSize, isStdoutTTY } from "@veryfront/platform/compat/process.ts";
 
 /**
  * Get terminal width, with fallback for non-TTY environments
  */
 export function getTerminalWidth(): number {
-  try {
-    const { columns } = Deno.consoleSize();
-    return columns;
-  } catch {
-    return 80; // Default fallback
-  }
+  return getSize().columns;
 }
 
 /**
  * Get terminal height, with fallback for non-TTY environments
  */
 export function getTerminalHeight(): number {
-  try {
-    const { rows } = Deno.consoleSize();
-    return rows;
-  } catch {
-    return 24; // Default fallback
-  }
+  return getSize().rows;
 }
 
 /**
  * Check if output is a TTY (interactive terminal)
  */
 export function isTTY(): boolean {
-  try {
-    return Deno.stdout.isTerminal();
-  } catch {
-    return false;
-  }
+  return isStdoutTTY();
 }
 
 /**

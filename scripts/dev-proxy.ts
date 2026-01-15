@@ -7,6 +7,8 @@
  */
 
 import { banner } from "../src/cli/ui/components/banner.ts";
+import { brand, dim, success, error } from "../src/cli/ui/colors.ts";
+import { createKeyboardHandler } from "../src/cli/ui/keyboard.ts";
 
 // Parse port from args (-p or --port)
 function parsePort(): number {
@@ -26,34 +28,6 @@ function parsePort(): number {
 
 const PROXY_PORT = parsePort();
 const RENDERER_PORT = PROXY_PORT + 1; // renderer runs on port+1
-
-const ANSI = {
-  reset: "\u001b[0m",
-  bold: "\u001b[1m",
-  dim: "\u001b[2m",
-  green: "\u001b[32m",
-  cyan: "\u001b[36m",
-  gray: "\u001b[90m",
-  brandBlue: "\x1b[38;2;0;163;244m",
-};
-
-function isTty(): boolean {
-  try {
-    return Deno.stdout.isTerminal();
-  } catch {
-    return false;
-  }
-}
-
-function shouldUseColor(): boolean {
-  const env = Deno.env.toObject();
-  if (env.FORCE_COLOR === "0" || env.NO_COLOR !== undefined) return false;
-  return isTty();
-}
-
-function c(color: string, text: string): string {
-  return shouldUseColor() ? `${color}${text}${ANSI.reset}` : text;
-}
 
 // Clear module caches on startup to prevent stale transform issues
 // See: https://github.com/veryfront/veryfront-renderer/issues/79
@@ -92,7 +66,7 @@ if (isSingleMode) {
 try {
   await Deno.stat(".env");
 } catch {
-  console.error(c(ANSI.dim, "error:"), "Missing .env - copy from .env.example");
+  console.error(error("error:"), "Missing .env - copy from .env.example");
   Deno.exit(1);
 }
 
@@ -134,25 +108,57 @@ const renderer = new Deno.Command("deno", {
 // Wait for services to initialize
 await new Promise((r) => setTimeout(r, 2000));
 
+// Open browser helper
+const openBrowser = async (url: string) => {
+  try {
+    const cmd = Deno.build.os === "darwin"
+      ? ["open", url]
+      : Deno.build.os === "windows"
+        ? ["cmd", "/c", "start", url]
+        : ["xdg-open", url];
+    await new Deno.Command(cmd[0], { args: cmd.slice(1) }).spawn().status;
+  } catch {
+    // Failed to open browser
+  }
+};
+
+const serverUrl = `http://lvh.me:${PROXY_PORT}`;
+
 // Startup banner with dot matrix logo
 console.log();
 console.log(banner({
   title: "Veryfront",
   subtitle: "is now running",
   info: {
-    url: `http://lvh.me:${PROXY_PORT}`,
+    url: serverUrl,
   },
 }));
+console.log();
+console.log(`  ${success("✓")} Server ready`);
+console.log();
+console.log(`  ${dim("Shortcuts:")}`);
+console.log(`    ${brand("o")}  ${dim("open in browser")}`);
+console.log(`    ${brand("c")}  ${dim("clear console")}`);
+console.log(`    ${brand("q")}  ${dim("quit")}`);
 console.log();
 
 // Shutdown handler
 const shutdown = () => {
+  keyboardHandler.stop();
   console.log();
-  console.log(c(ANSI.dim, "  Shutting down..."));
+  console.log(dim("  Shutting down..."));
   try { proxy.kill("SIGTERM"); } catch { /* ignore */ }
   try { renderer.kill("SIGTERM"); } catch { /* ignore */ }
   Deno.exit(0);
 };
+
+// Set up keyboard shortcuts
+const keyboardHandler = createKeyboardHandler({
+  onOpen: () => void openBrowser(serverUrl),
+  onClear: () => console.clear(),
+  onQuit: shutdown,
+});
+keyboardHandler.start();
 
 Deno.addSignalListener("SIGINT", shutdown);
 Deno.addSignalListener("SIGTERM", shutdown);

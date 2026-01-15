@@ -7,13 +7,11 @@ import {
   formatHeader,
   formatSectionHeader,
 } from "./formatters.ts";
-import { bold, dim, muted } from "../ui/colors.ts";
+import { bold, dim } from "../ui/colors.ts";
 
 export function showMainHelp(): void {
   console.log(formatHeader());
-  console.log("  " + muted("A Deno-first React framework with RSC support"));
   console.log();
-
   console.log("  " + bold("Usage:") + " veryfront <command> [options]");
   console.log();
 
