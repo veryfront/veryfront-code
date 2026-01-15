@@ -286,6 +286,61 @@ describe("Cache Invalidation - FileCache Operations", () => {
     // Other files should remain
     assertEquals(cache.get("file:branch:project:main:pages/index.mdx"), "other file");
   });
+
+  it("selective invalidation clears root directory cache for root-level file changes", () => {
+    const cache = new FileCache({ maxSize: 100, ttl: 60000 });
+    const rootFile = "logo.png"; // No "/" in path - root level file
+
+    // Root directory cache key uses empty string suffix (normalized path)
+    // Cache key: dir:branch:project:main: (ends with empty string, not "/")
+    cache.set(`file:branch:project:main:${rootFile}`, "image content");
+    cache.set(`stat:branch:project:main:${rootFile}`, { size: 5000 });
+    cache.set("dir:branch:project:main:", ["logo.png", "README.md"]); // Root dir cache
+    cache.set("file:branch:project:main:components/Button.tsx", "other file");
+
+    // Calculate parent dir as the code does:
+    // For "logo.png", lastIndexOf("/") = -1, so parentDir should be "" (empty string)
+    const slashIndex = rootFile.lastIndexOf("/");
+    const parentDir = slashIndex > 0 ? rootFile.substring(0, slashIndex) : "";
+    assertEquals(parentDir, ""); // Verify empty string for root
+
+    // Simulate selective invalidation
+    let deleted = 0;
+    // File content
+    deleted += cache.deleteByPrefixAndSuffix("file:branch:", rootFile);
+    // Stat cache
+    deleted += cache.deleteByPrefixAndSuffix("stat:branch:", rootFile);
+    // Parent directory (empty string for root)
+    deleted += cache.deleteByPrefixAndSuffix("dir:branch:", parentDir);
+
+    assertEquals(deleted, 3); // file, stat, root dir
+    assertEquals(cache.get(`file:branch:project:main:${rootFile}`), undefined);
+    assertEquals(cache.get(`stat:branch:project:main:${rootFile}`), undefined);
+    assertEquals(cache.get("dir:branch:project:main:"), undefined); // Root dir cleared
+    // Other files should remain
+    assertEquals(cache.get("file:branch:project:main:components/Button.tsx"), "other file");
+  });
+
+  it("root directory parent calculation uses empty string not slash", () => {
+    // Test various path scenarios to verify parent dir calculation
+    const testCases = [
+      { path: "logo.png", expectedParent: "" },           // Root level
+      { path: "README.md", expectedParent: "" },          // Root level
+      { path: "components/Button.tsx", expectedParent: "components" },
+      { path: "pages/api/health.ts", expectedParent: "pages/api" },
+      { path: "a/b/c/d.ts", expectedParent: "a/b/c" },
+    ];
+
+    for (const { path, expectedParent } of testCases) {
+      const slashIndex = path.lastIndexOf("/");
+      const parentDir = slashIndex > 0 ? path.substring(0, slashIndex) : "";
+      assertEquals(
+        parentDir,
+        expectedParent,
+        `Path "${path}" should have parent "${expectedParent}", got "${parentDir}"`
+      );
+    }
+  });
 });
 
 describe("Cache Invalidation - Invalid Prefix Detection", () => {

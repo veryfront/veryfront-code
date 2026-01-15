@@ -451,7 +451,9 @@ export class VeryfrontFSAdapter implements FSAdapter {
       deletionPromises.push(this.cache.deleteByPrefixAndSuffixAsync("stat:release:", path));
       deletionPromises.push(this.cache.deleteByPrefixAndSuffixAsync("stat:env:", path));
       // Track parent directories for directory cache invalidation
-      const parentDir = path.substring(0, path.lastIndexOf("/")) || "/";
+      // Root-level files (no "/") have empty string as parent dir to match normalized cache keys
+      const slashIndex = path.lastIndexOf("/");
+      const parentDir = slashIndex > 0 ? path.substring(0, slashIndex) : "";
       parentDirs.add(parentDir);
     }
 
