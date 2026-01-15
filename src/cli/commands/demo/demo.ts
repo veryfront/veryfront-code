@@ -7,6 +7,7 @@
 import { chdir, cwd } from "@veryfront/platform/compat/process.ts";
 import { join } from "@veryfront/platform/compat/path/index.ts";
 import { bold, brand, dim, error, muted, success } from "../../ui/colors.ts";
+import { AnimatedDotMatrix, getAgentFaceWithText } from "../../ui/dot-matrix.ts";
 import { HIDE_CURSOR, SHOW_CURSOR, typeCommand, typeLine } from "../../ui/animated-text.ts";
 import { exitProcess, isTTY } from "../../utils/index.ts";
 import { readToken, saveToken, validateToken } from "../../auth/index.ts";
@@ -533,11 +534,27 @@ export async function demoCommand(options: DemoOptions = {}): Promise<void> {
   write(HIDE_CURSOR);
 
   try {
-    // Welcome screen
+    // Welcome screen - horizontal layout like Claude Code with spinner animation
     write(CLEAR_SCREEN + MOVE_HOME);
     console.log();
-    console.log("  " + bold(brand("Veryfront")));
-    console.log("  " + muted("Interactive Demo" + (autoMode ? " (Auto Mode)" : "")));
+
+    // Create animated dot matrix for spinner
+    const matrix = new AnimatedDotMatrix({ litColor: "\x1b[38;2;0;163;244m" });
+    const textLines = [
+      bold(brand("Veryfront")),
+      muted("Interactive Demo" + (autoMode ? " (Auto Mode)" : "")),
+    ];
+
+    // Print initial frame (will be overwritten by animation)
+    console.log(matrix.renderWithText(textLines));
+
+    // Spin for 2 rounds, updating in place
+    await matrix.spinRoundsWithText(2, textLines, (frame) => {
+      // Move cursor up 7 lines (height of matrix) and redraw
+      write(`${ESC}[7A`);
+      console.log(frame);
+    }, 60);
+
     console.log();
 
     // Animated welcome text
@@ -584,16 +601,25 @@ export async function demoCommand(options: DemoOptions = {}): Promise<void> {
       }
     }
 
-    // Completion screen
+    // Completion screen - horizontal layout
     write(CLEAR_SCREEN + MOVE_HOME);
     const finalUrl = actualProjectSlug
       ? `https://${actualProjectSlug}.veryfront.com`
       : `https://${projectName}.veryfront.com`;
     console.log();
-    console.log("  " + success("✓") + " " + bold("Demo Complete!"));
-    console.log();
-    console.log("  Your app is live at:");
-    console.log("  " + brand(finalUrl));
+
+    // Agent face with success message next to it (horizontal layout)
+    console.log(
+      getAgentFaceWithText(
+        [
+          success("✓") + " " + bold("Demo Complete!"),
+          "Your app is live at:",
+          brand(finalUrl),
+        ],
+        { litColor: "\x1b[32m" },
+      ),
+    );
+
     console.log();
     console.log("  " + bold("Next steps:"));
     console.log();
