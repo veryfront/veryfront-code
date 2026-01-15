@@ -1,12 +1,12 @@
 /**
- * Tests for main-menu.ts
+ * Tests for main.ts
  */
 
 import { assertEquals, assertMatch } from "jsr:@std/assert@1";
 import { describe, it } from "jsr:@std/testing@1/bdd";
 
 // Test the random name generation pattern
-describe("main-menu", () => {
+describe("main", () => {
   describe("generateRandomName pattern", () => {
     // We can't directly test the private function, but we can test the pattern
     const ADJECTIVES = [

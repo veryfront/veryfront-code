@@ -20,7 +20,7 @@ import { mergeCommand, parseMergeArgs } from "../commands/merge.ts";
 import { deployCommand, parseDeployArgs } from "../commands/deploy.ts";
 import { parseUpArgs, upCommand } from "../commands/up.ts";
 import { newCommand, parseNewArgs } from "../commands/new.ts";
-import { promptProjectName, showMainMenu } from "../commands/main-menu.ts";
+import { promptProjectName, showMainMenu } from "../commands/main.ts";
 import { login, logout, whoami } from "../auth/index.ts";
 import { COMMANDS } from "../help/command-definitions.ts";
 import {
