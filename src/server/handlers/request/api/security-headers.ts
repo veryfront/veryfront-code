@@ -62,5 +62,6 @@ export function applySecurityHeaders(
     ctx.cspUserHeader ?? null,
     ctx.securityConfig,
     ctx.adapter,
+    ctx.parsedDomain?.allowIframeEmbed ?? false,
   );
 }

@@ -112,12 +112,12 @@ export abstract class BaseHandler implements Handler {
    * Create a response builder with context
    * @param ctx - Handler context
    * @param nonce - Optional pre-generated nonce for CSP consistency
-   * @param options - Additional options for the builder
+   * @param _options - Additional options (reserved for future use)
    */
   protected createResponseBuilder(
     ctx: HandlerContext,
     nonce?: string,
-    options?: { studioEmbed?: boolean },
+    _options?: Record<string, unknown>,
   ): ResponseBuilder {
     return new ResponseBuilder({
       securityConfig: ctx.securityConfig ?? undefined,
@@ -125,7 +125,7 @@ export abstract class BaseHandler implements Handler {
       cspUserHeader: ctx.cspUserHeader,
       adapter: ctx.adapter,
       nonce,
-      studioEmbed: options?.studioEmbed,
+      isVeryfrontDomain: ctx.parsedDomain?.allowIframeEmbed ?? false,
     });
   }
 

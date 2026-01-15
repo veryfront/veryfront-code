@@ -77,7 +77,7 @@ export function applySecurityHeaders(
   cspUserHeader: string | null,
   config?: SecurityConfig | null,
   adapter?: RuntimeAdapter,
-  studioEmbed?: boolean,
+  isVeryfrontDomain?: boolean,
 ): void {
   const getHeaderOverride = (name: string): string | undefined => {
     const overrides = config?.headers;
@@ -96,9 +96,9 @@ export function applySecurityHeaders(
   headers.set("X-Content-Type-Options", contentTypeOptions);
 
   // X-Frame-Options: Block iframe embedding by default for security
-  // Skip when studio_embed=true to allow embedding (e.g., in Veryfront Studio)
+  // Allow embedding on veryfront domains (for Studio) and in development
   // Projects can customize via config.headers["x-frame-options"]
-  if (!isDev && !studioEmbed) {
+  if (!isDev && !isVeryfrontDomain) {
     const frameOptions = getHeaderOverride("x-frame-options") ?? "DENY";
     headers.set("X-Frame-Options", frameOptions);
   }

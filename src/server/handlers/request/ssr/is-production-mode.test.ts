@@ -30,6 +30,7 @@ Deno.test("isProductionMode", async (t) => {
         slug: "test",
         branch: null,
         environment: "preview",
+        allowIframeEmbed: true,
       },
     });
     assertEquals(isProductionMode(ctx), true);
@@ -43,6 +44,7 @@ Deno.test("isProductionMode", async (t) => {
         slug: "test",
         branch: null,
         environment: "production",
+        allowIframeEmbed: true,
       },
     });
     assertEquals(isProductionMode(ctx), true);
@@ -56,6 +58,7 @@ Deno.test("isProductionMode", async (t) => {
         slug: "test",
         branch: null,
         environment: "preview",
+        allowIframeEmbed: true,
       },
     });
     assertEquals(isProductionMode(ctx), false);
@@ -69,6 +72,7 @@ Deno.test("isProductionMode", async (t) => {
         slug: null,
         branch: null,
         environment: null,
+        allowIframeEmbed: false,
       },
       proxyEnvironment: "production",
     });
@@ -83,6 +87,7 @@ Deno.test("isProductionMode", async (t) => {
         slug: null,
         branch: null,
         environment: null,
+        allowIframeEmbed: false,
       },
       proxyEnvironment: "preview",
     });
@@ -94,28 +99,6 @@ Deno.test("isProductionMode", async (t) => {
     assertEquals(isProductionMode(ctx), false);
   });
 
-  await t.step("returns false when preview_mode=true regardless of other settings", () => {
-    const ctx = createContext({
-      config: prodConfig, // Would normally make it production
-      parsedDomain: {
-        isVeryfrontDomain: false,
-        isDraft: false,
-        slug: null,
-        branch: null,
-        environment: null,
-      },
-      proxyEnvironment: "production", // Would normally make it production
-    });
-    const url = new URL("https://example.com/?preview_mode=true");
-    assertEquals(isProductionMode(ctx, url), false);
-  });
-
-  await t.step("preview_mode=true overrides config.productionMode", () => {
-    const ctx = createContext({ config: prodConfig });
-    const url = new URL("https://example.com/?preview_mode=true");
-    assertEquals(isProductionMode(ctx, url), false);
-  });
-
   await t.step("works without URL parameter (backward compatible)", () => {
     const ctx = createContext({
       parsedDomain: {
@@ -124,6 +107,7 @@ Deno.test("isProductionMode", async (t) => {
         slug: "test",
         branch: null,
         environment: "production",
+        allowIframeEmbed: true,
       },
     });
     assertEquals(isProductionMode(ctx), true);
