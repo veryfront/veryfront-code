@@ -12,11 +12,26 @@ Deno.test("parseProjectDomain", async (t) => {
     assertEquals(result.isDraft, true);
   });
 
+  await t.step("veryfront.me preview with branch", () => {
+    const result = parseProjectDomain("myproject--feature-x.preview.veryfront.me");
+    assertEquals(result.slug, "myproject");
+    assertEquals(result.branch, "feature-x");
+    assertEquals(result.environment, "preview");
+  });
+
   await t.step("veryfront.me development", () => {
     const result = parseProjectDomain("myproject.veryfront.me:8080");
     assertEquals(result.slug, "myproject");
     assertEquals(result.environment, "development");
+    assertEquals(result.isVeryfrontDomain, true);
     assertEquals(result.isDraft, true);
+  });
+
+  await t.step("veryfront.me prod (custom domain simulation)", () => {
+    const result = parseProjectDomain("example.com.prod.veryfront.me");
+    assertEquals(result.slug, null);
+    assertEquals(result.environment, "production");
+    assertEquals(result.isVeryfrontDomain, false);
   });
 
   await t.step("plain veryfront.me", () => {
@@ -24,6 +39,7 @@ Deno.test("parseProjectDomain", async (t) => {
     assertEquals(result.slug, null);
     assertEquals(result.environment, "development");
     assertEquals(result.isVeryfrontDomain, true);
+    assertEquals(result.isDraft, true);
   });
 
   // Local development (lvh.me - alternative)
