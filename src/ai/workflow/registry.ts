@@ -65,16 +65,26 @@ function extractMetadata(definition: WorkflowDefinition): WorkflowMetadata {
     // Try calling with dummy input to extract static structure
     // This works for workflows that only use input for data values, not control flow
     try {
-      // Create a proxy that returns placeholder values for any property access
-      const dummyInput = new Proxy({}, {
-        get: (_target, prop) => {
-          if (typeof prop === "string") {
-            return `__placeholder_${prop}__`;
-          }
-          return undefined;
-        },
-      });
-      workflowNodes = definition.steps({ input: dummyInput });
+      // Create proxies that return placeholder values for any property access
+      const createProxy = (): unknown =>
+        new Proxy({}, {
+          get: (_target, prop) => {
+            if (typeof prop === "string") {
+              return createProxy(); // Return nested proxy for chained access
+            }
+            return undefined;
+          },
+        });
+
+      const dummyInput = createProxy();
+      const dummyContext = { input: createProxy() } as Record<string, unknown>;
+
+      workflowNodes = definition.steps(
+        {
+          input: dummyInput,
+          context: dummyContext,
+        } as Parameters<typeof definition.steps>[0],
+      );
     } catch {
       // If it fails (e.g., requires specific input structure), treat as dynamic
       workflowNodes = [];

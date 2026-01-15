@@ -6,7 +6,7 @@ import type { Tool } from "../types/tool.ts";
 import type { Prompt, Resource } from "../types/mcp.ts";
 import type { Agent } from "../types/agent.ts";
 import { registerAgent } from "../agent/composition.ts";
-import { registerWorkflow, type WorkflowMetadata } from "../workflow/registry.ts";
+import { registerWorkflow } from "../workflow/registry.ts";
 import type { Workflow } from "../workflow/dsl/workflow.ts";
 import { agentLogger } from "@veryfront/utils/logger/logger.ts";
 import { getConfig } from "@veryfront/config/loader.ts";

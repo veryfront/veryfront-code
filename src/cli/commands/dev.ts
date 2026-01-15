@@ -19,6 +19,8 @@ export interface DevOptions {
   hmr?: boolean;
   /** Use TUI mode (default: true when TTY, false when called programmatically) */
   tui?: boolean;
+  /** Demo mode: don't exit process on shutdown, resolve done promise instead */
+  demoMode?: boolean;
 }
 
 export type DevCommandOptions = DevOptions;
@@ -26,10 +28,18 @@ export type DevCommandOptions = DevOptions;
 export interface DevCommandResult {
   ready: Promise<void>;
   done: Promise<void>;
+  /** Stop the dev server programmatically (for demo mode) */
+  stop: () => Promise<void>;
 }
 
 export async function devCommand(options: DevOptions): Promise<DevCommandResult> {
-  const { port, projectDir, hmr = true, tui: useTui } = options;
+  const { port, projectDir, hmr = true, tui: useTui, demoMode = false } = options;
+
+  // Create resolvable done promise for demo mode
+  let doneResolve: (() => void) | null = null;
+  const donePromise = new Promise<void>((resolve) => {
+    doneResolve = resolve;
+  });
 
   // Determine if we should use TUI
   const shouldUseTui = useTui ?? false; // Default to false for programmatic use
@@ -148,7 +158,7 @@ export async function devCommand(options: DevOptions): Promise<DevCommandResult>
   let shuttingDown = false;
   const shutdown = async () => {
     if (shuttingDown) {
-      exitProcess(0);
+      if (!demoMode) exitProcess(0);
       return;
     }
     shuttingDown = true;
@@ -157,18 +167,24 @@ export async function devCommand(options: DevOptions): Promise<DevCommandResult>
       tui.setStatus("Shutting down...", "loading");
     }
 
-    const timeout = setTimeout(() => exitProcess(0), 3000);
+    const timeout = demoMode ? null : setTimeout(() => exitProcess(0), 3000);
     try {
       shutdownController.abort();
       await devServer?.stop();
     } catch { /* ignore */ }
-    clearTimeout(timeout);
+    if (timeout) clearTimeout(timeout);
 
     if (tui) {
       tui.cleanup();
       restoreConsole?.();
     }
-    exitProcess(0);
+
+    // In demo mode, resolve the done promise instead of exiting
+    if (demoMode) {
+      doneResolve?.();
+    } else {
+      exitProcess(0);
+    }
   };
 
   registerTerminationSignals(() => void shutdown());
@@ -192,6 +208,7 @@ export async function devCommand(options: DevOptions): Promise<DevCommandResult>
 
   return {
     ready: devServer.ready,
-    done: new Promise<void>(() => {}),
+    done: donePromise,
+    stop: shutdown,
   };
 }

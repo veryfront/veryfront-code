@@ -6,7 +6,6 @@
 
 import { chdir, cwd } from "@veryfront/platform/compat/process.ts";
 import { join } from "@veryfront/platform/compat/path/index.ts";
-import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
 import { bold, brand, dim, error, muted, success } from "../../ui/colors.ts";
 import { HIDE_CURSOR, SHOW_CURSOR, typeCommand, typeLine } from "../../ui/animated-text.ts";
 import { isTTY } from "../../utils/index.ts";
@@ -17,9 +16,9 @@ import { DEFAULT_LOGIN_TIMEOUT_MS, getApiUrl } from "../../auth/constants.ts";
 import { newCommand } from "../new.ts";
 import { deployCommand } from "../deploy.ts";
 import { pushCommand } from "../push.ts";
+import { devCommand } from "../dev.ts";
 import { reserveProjectSlug } from "../new/reserve-slug.ts";
 import { readConfigFile } from "../../shared/config.ts";
-import { handleDevCommand } from "../../index/dev-handler.ts";
 import { DEMO_STEPS, type DemoStep } from "./steps.ts";
 
 // ANSI escape codes
@@ -404,12 +403,9 @@ async function executeStepAction(
     }
 
     case "dev": {
-      // Change to project directory for dev server
-      const projectDir = join(cwd(), projectName);
-      const fs = createFileSystem();
-      if (await fs.exists(projectDir)) {
-        chdir(projectDir);
-      }
+      // We're already in the project directory after the create step
+      // Use cwd() directly instead of joining with projectName again
+      const projectDir = cwd();
 
       // In auto mode, skip the dev server (it requires manual Ctrl+C)
       if (autoMode) {
@@ -420,15 +416,48 @@ async function executeStepAction(
         break;
       }
 
-      // Dev server will run and block - user can Ctrl+C to exit
+      // Start dev server in demo mode (won't exit process on Ctrl+C)
       console.log();
-      console.log("  " + dim("Press Ctrl+C to stop the dev server and continue..."));
-      console.log();
+      console.log("  " + dim("Starting dev server..."));
+
       try {
-        await handleDevCommand({ _: ["dev"], port: 3000 });
-      } catch {
-        // User likely Ctrl+C'd out of dev server
+        const result = await devCommand({
+          port: 3000,
+          projectDir,
+          hmr: true,
+          tui: false,
+          demoMode: true,
+        });
+
+        // Wait for server to be ready
+        await result.ready;
+
+        console.log("  " + success("●") + " " + brand("http://localhost:3000/"));
+        console.log();
+
+        // Auto-open browser
+        console.log("  " + dim("Opening browser..."));
+        try {
+          await openBrowser("http://localhost:3000");
+        } catch {
+          // Ignore if browser can't be opened
+        }
+
+        console.log();
+        console.log("  " + dim("Press Enter to stop the dev server and continue..."));
+
+        // Wait for Enter key press
+        await waitForEnter();
+
+        // Stop the dev server gracefully
+        console.log();
+        console.log("  " + dim("Stopping dev server..."));
+        await result.stop();
+        await result.done;
+      } catch (err) {
+        console.log("  " + error("✗") + " " + (err instanceof Error ? err.message : String(err)));
       }
+
       // Small delay to ensure terminal is ready for next step
       await delay(500);
       console.log();

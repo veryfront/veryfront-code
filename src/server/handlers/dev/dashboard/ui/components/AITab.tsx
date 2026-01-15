@@ -149,7 +149,7 @@ export function AITab({ tools, resources, prompts, agents }: AITabProps) {
               workflows={workflows}
               agents={agents}
               tools={tools}
-              onNavigateToAgent={(agentId) => {
+              onNavigateToAgent={(_agentId) => {
                 setSubTab("agents");
                 // AgentsTab will need to handle this
               }}

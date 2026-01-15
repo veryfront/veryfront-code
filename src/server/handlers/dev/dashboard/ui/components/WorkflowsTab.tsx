@@ -588,7 +588,7 @@ function WorkflowDAG({ nodes }: { nodes: NodeInfo[] }) {
 
   while (queue.length > 0) {
     const current = queue.shift()!;
-    const currentLevel = levels.get(current)!;
+    const _currentLevel = levels.get(current)!;
 
     for (const dependent of dependentsMap.get(current) || []) {
       const deps = dependsOnMap.get(dependent) || [];
