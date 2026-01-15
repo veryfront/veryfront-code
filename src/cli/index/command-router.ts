@@ -424,7 +424,6 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
         break;
 
       case "install":
-        showLogo();
         await installCommand({
           target: args.target ? String(args.target) : undefined,
           global: Boolean(args.global),
@@ -433,12 +432,22 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
         break;
 
       case "uninstall":
-        showLogo();
         await uninstallCommand({
           target: args.target ? String(args.target) : undefined,
           global: Boolean(args.global),
           force: Boolean(args.force) || Boolean(args.f),
         });
+        break;
+
+      case "demo":
+        {
+          const { demoCommand } = await import("../commands/demo/index.ts");
+          await demoCommand({
+            projectName: args._[1] ? String(args._[1]) : undefined,
+            auto: Boolean(args.auto),
+            loginMethod: args.login ? String(args.login) as "google" | "github" | "microsoft" | "token" : undefined,
+          });
+        }
         break;
 
       case "help":

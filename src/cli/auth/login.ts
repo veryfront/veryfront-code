@@ -1,11 +1,15 @@
 import { cliLogger } from "@veryfront/utils";
 import { getEnv } from "@veryfront/platform/compat/process.ts";
-import { cyan, dim, green, red, yellow } from "@veryfront/compat/console";
 import { deleteToken, getTokenLocation, hasToken, readToken, saveToken } from "./token-store.ts";
 import { getCallbackUrl, startCallbackServer } from "./callback-server.ts";
 import { canOpenBrowser, openBrowser } from "./browser.ts";
-import { createSpinner, getColorEnabled, isTTY, promptUser } from "../utils/index.ts";
+import { isTTY, promptUser } from "../utils/index.ts";
+import { brand, dim, error, muted, success, warning } from "../ui/colors.ts";
 import { DEFAULT_LOGIN_TIMEOUT_MS, getApiUrl } from "./constants.ts";
+
+function write(s: string): void {
+  Deno.stdout.writeSync(new TextEncoder().encode(s));
+}
 
 export type AuthMethod = "google" | "github" | "microsoft" | "token";
 
@@ -15,10 +19,12 @@ export interface UserInfo {
   name?: string;
 }
 
-function useColor() {
-  const enabled = getColorEnabled();
-  return (fn: (s: string) => string, s: string) => (enabled ? fn(s) : s);
-}
+const AUTH_OPTIONS: { id: AuthMethod; label: string }[] = [
+  { id: "google", label: "Google" },
+  { id: "github", label: "GitHub" },
+  { id: "microsoft", label: "Microsoft" },
+  { id: "token", label: "API Token" },
+];
 
 export async function validateToken(token: string): Promise<UserInfo | null> {
   try {
@@ -33,48 +39,85 @@ export async function validateToken(token: string): Promise<UserInfo | null> {
 }
 
 async function promptAuthMethod(): Promise<AuthMethod> {
-  const c = useColor();
-  cliLogger.info("");
-  cliLogger.info(c(cyan, "How would you like to authenticate?"));
-  cliLogger.info("");
-  cliLogger.info(`  ${c(cyan, "1.")} Login with Google ${c(dim, "(opens browser)")}`);
-  cliLogger.info(`  ${c(cyan, "2.")} Login with GitHub ${c(dim, "(opens browser)")}`);
-  cliLogger.info(`  ${c(cyan, "3.")} Login with Microsoft ${c(dim, "(opens browser)")}`);
-  cliLogger.info(`  ${c(cyan, "4.")} Enter API token manually`);
-  cliLogger.info("");
+  console.log();
+  console.log("  " + dim("Choose authentication method:"));
+  console.log();
 
-  const response = await promptUser("Enter choice (1-4):");
-  switch (response.trim()) {
-    case "1":
-      return "google";
-    case "2":
-      return "github";
-    case "3":
-      return "microsoft";
-    default:
-      return "token";
+  let selectedIndex = 0;
+
+  function drawOptions() {
+    for (let i = 0; i < AUTH_OPTIONS.length; i++) {
+      const opt = AUTH_OPTIONS[i]!;
+      if (i === selectedIndex) {
+        console.log("  " + brand("❯") + " " + opt.label);
+      } else {
+        console.log("    " + muted(opt.label));
+      }
+    }
   }
+
+  drawOptions();
+
+  Deno.stdin.setRaw(true);
+  const reader = Deno.stdin.readable.getReader();
+  const dec = new TextDecoder();
+  let result: AuthMethod = "google";
+
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+
+      const key = dec.decode(value);
+
+      if (key === "\x03") {
+        // Ctrl+C - default to token (will prompt)
+        result = "token";
+        break;
+      } else if (key === "\r" || key === "\n") {
+        result = AUTH_OPTIONS[selectedIndex]?.id ?? "token";
+        break;
+      } else if (key === "\x1b[A" || key === "k") {
+        selectedIndex = Math.max(0, selectedIndex - 1);
+      } else if (key === "\x1b[B" || key === "j") {
+        selectedIndex = Math.min(AUTH_OPTIONS.length - 1, selectedIndex + 1);
+      } else if (key >= "1" && key <= "4") {
+        result = AUTH_OPTIONS[parseInt(key) - 1]?.id ?? "token";
+        break;
+      }
+
+      // Redraw options
+      write(`\x1b[${AUTH_OPTIONS.length}A`);
+      for (let i = 0; i < AUTH_OPTIONS.length; i++) {
+        write("\x1b[2K\x1b[1B");
+      }
+      write(`\x1b[${AUTH_OPTIONS.length}A`);
+      drawOptions();
+    }
+  } finally {
+    reader.releaseLock();
+    Deno.stdin.setRaw(false);
+  }
+
+  return result;
 }
 
 async function loginWithOAuth(provider: "google" | "github" | "microsoft"): Promise<string | null> {
-  const c = useColor();
+  console.log();
 
   if (!canOpenBrowser()) {
-    cliLogger.info("");
-    cliLogger.info(c(yellow, "Browser login not available in this environment."));
-    cliLogger.info("Please use the API token option instead.");
+    console.log("  " + warning("Browser login not available in this environment."));
+    console.log("  " + dim("Please use the API token option instead."));
     return null;
   }
 
-  const spinner = createSpinner("Starting authentication server...");
-  spinner.start();
+  console.log("  " + dim("Starting authentication server..."));
 
   let server;
   try {
     server = await startCallbackServer();
-  } catch (error) {
-    spinner.stop();
-    cliLogger.error(`Failed to start authentication server: ${error}`);
+  } catch (err) {
+    console.log("  " + error(`Failed to start server: ${err}`));
     return null;
   }
 
@@ -83,46 +126,39 @@ async function loginWithOAuth(provider: "google" | "github" | "microsoft"): Prom
     encodeURIComponent(callbackUrl)
   }`;
 
-  spinner.stop();
-  cliLogger.info("");
-  cliLogger.info(c(cyan, "Opening browser to log in..."));
-  cliLogger.info(c(dim, `If the browser doesn't open, visit:`));
-  cliLogger.info(c(dim, authUrl));
-  cliLogger.info("");
+  console.log("  " + brand("Opening browser to log in..."));
+  console.log();
+  console.log("  " + dim("If the browser doesn't open, visit:"));
+  console.log("  " + dim(authUrl));
+  console.log();
 
   try {
     await openBrowser(authUrl);
   } catch {
-    cliLogger.info(c(yellow, "Could not open browser automatically."));
-    cliLogger.info("Please open the URL above manually.");
+    console.log("  " + dim("Could not open browser automatically."));
   }
 
-  const waitSpinner = createSpinner("Waiting for login...");
-  waitSpinner.start();
+  console.log("  " + muted("Waiting for login..."));
 
   try {
     const result = await server.waitForCallback(DEFAULT_LOGIN_TIMEOUT_MS);
 
     if (result.error) {
-      waitSpinner.stop();
-      cliLogger.info("");
-      cliLogger.info(`${c(red, "✗")} Login failed: ${result.error}`);
+      console.log();
+      console.log("  " + error("✗") + " Login failed: " + result.error);
       return null;
     }
 
     if (!result.token) {
-      waitSpinner.stop();
-      cliLogger.info("");
-      cliLogger.info(`${c(red, "✗")} No token received`);
+      console.log();
+      console.log("  " + error("✗") + " No token received");
       return null;
     }
 
-    waitSpinner.stop();
     return result.token;
-  } catch (error) {
-    waitSpinner.stop();
-    cliLogger.info("");
-    cliLogger.info(`${c(red, "✗")} ${error instanceof Error ? error.message : String(error)}`);
+  } catch (err) {
+    console.log();
+    console.log("  " + error("✗") + " " + (err instanceof Error ? err.message : String(err)));
     return null;
   } finally {
     await server.stop();
@@ -130,23 +166,21 @@ async function loginWithOAuth(provider: "google" | "github" | "microsoft"): Prom
 }
 
 async function loginWithToken(): Promise<string | null> {
-  const c = useColor();
-  cliLogger.info("");
-  cliLogger.info(c(cyan, "Enter your API token"));
-  cliLogger.info(c(dim, "You can get a token from veryfront.com/settings/api-keys"));
-  cliLogger.info("");
+  console.log();
+  console.log("  " + brand("Enter your API token"));
+  console.log("  " + dim("You can get a token from veryfront.com/settings/api-keys"));
+  console.log();
 
-  const token = await promptUser("API token:");
+  const token = await promptUser("  API token: ");
   if (!token.trim()) {
-    cliLogger.info("");
-    cliLogger.info(`${c(red, "✗")} No token entered`);
+    console.log();
+    console.log("  " + error("✗") + " No token entered");
     return null;
   }
   return token.trim();
 }
 
 export async function login(method?: AuthMethod): Promise<UserInfo | null> {
-  const c = useColor();
   const authMethod = method ?? (isTTY() ? await promptAuthMethod() : "token");
 
   let token: string | null = null;
@@ -163,32 +197,27 @@ export async function login(method?: AuthMethod): Promise<UserInfo | null> {
 
   if (!token) return null;
 
-  const spinner = createSpinner("Validating token...");
-  spinner.start();
+  console.log("  " + dim("Validating token..."));
 
   const userInfo = await validateToken(token);
   if (!userInfo) {
-    spinner.stop();
-    cliLogger.info("");
-    cliLogger.info(`${c(red, "✗")} Invalid token`);
+    console.log();
+    console.log("  " + error("✗") + " Invalid token");
     return null;
   }
 
   await saveToken(token);
-  spinner.stop();
-  cliLogger.info("");
-  cliLogger.info(`${c(green, "✓")} Logged in as ${c(cyan, userInfo.email)}`);
+  console.log();
+  console.log("  " + success("✓") + " Logged in as " + brand(userInfo.email));
   return userInfo;
 }
 
 export async function ensureAuthenticated(): Promise<UserInfo | null> {
-  const c = useColor();
-
   const envToken = getEnv("VERYFRONT_API_TOKEN");
   if (envToken) {
     const userInfo = await validateToken(envToken);
     if (userInfo) return userInfo;
-    cliLogger.info(c(yellow, "Warning: VERYFRONT_API_TOKEN is invalid"));
+    console.log("  " + warning("Warning: VERYFRONT_API_TOKEN is invalid"));
   }
 
   const storedToken = await readToken();
@@ -196,7 +225,7 @@ export async function ensureAuthenticated(): Promise<UserInfo | null> {
     const userInfo = await validateToken(storedToken);
     if (userInfo) return userInfo;
     await deleteToken();
-    cliLogger.info(c(yellow, "Session expired. Please log in again."));
+    console.log("  " + warning("Session expired. Please log in again."));
   }
 
   if (!isTTY()) {
@@ -208,20 +237,19 @@ export async function ensureAuthenticated(): Promise<UserInfo | null> {
 }
 
 export async function logout(): Promise<void> {
-  const c = useColor();
   await deleteToken();
-  cliLogger.info(`${c(green, "✓")} Logged out`);
+  console.log();
+  console.log("  " + success("✓") + " Logged out");
 }
 
 export async function whoami(): Promise<UserInfo | null> {
-  const c = useColor();
-
   const envToken = getEnv("VERYFRONT_API_TOKEN");
   if (envToken) {
     const userInfo = await validateToken(envToken);
     if (userInfo) {
-      cliLogger.info(`${c(green, "✓")} Logged in as ${c(cyan, userInfo.email)}`);
-      cliLogger.info(c(dim, "  (via VERYFRONT_API_TOKEN)"));
+      console.log();
+      console.log("  " + success("✓") + " Logged in as " + brand(userInfo.email));
+      console.log("  " + dim("(via VERYFRONT_API_TOKEN)"));
       return userInfo;
     }
   }
@@ -230,14 +258,16 @@ export async function whoami(): Promise<UserInfo | null> {
   if (storedToken) {
     const userInfo = await validateToken(storedToken);
     if (userInfo) {
-      cliLogger.info(`${c(green, "✓")} Logged in as ${c(cyan, userInfo.email)}`);
-      cliLogger.info(c(dim, `  Token stored at: ${getTokenLocation()}`));
+      console.log();
+      console.log("  " + success("✓") + " Logged in as " + brand(userInfo.email));
+      console.log("  " + dim(`Token stored at: ${getTokenLocation()}`));
       return userInfo;
     }
   }
 
-  cliLogger.info(`${c(yellow, "✗")} Not logged in`);
-  cliLogger.info(c(dim, "  Run 'veryfront login' to authenticate"));
+  console.log();
+  console.log("  " + warning("✗") + " Not logged in");
+  console.log("  " + dim("Run 'veryfront login' to authenticate"));
   return null;
 }
 

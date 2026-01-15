@@ -50,10 +50,10 @@ async function multiSelect(
 
     console.log();
     console.log(
-      "  " + bold(brand("Select AI Coding Tools")) + " " +
-        muted("(space to toggle, enter to confirm)"),
+      "  " + bold("Select AI Coding Tools") + " " +
+        dim("(space to toggle, enter to confirm)"),
     );
-    console.log("  " + muted("Install integrations for your AI assistants."));
+    console.log("  " + dim("Install integrations for your AI assistants."));
     console.log();
     lines = 4;
 
@@ -62,9 +62,9 @@ async function multiSelect(
       const isCurrent = i === idx;
       const isSelected = selected.has(opt.value);
       const pointer = isCurrent ? brand("❯") : " ";
-      const checkbox = isSelected ? success("[✓]") : dim("[ ]");
-      const label = isCurrent ? brand(opt.label) : opt.label;
-      console.log(`  ${pointer} ${checkbox} ${label.padEnd(24)} ${muted(opt.description)}`);
+      const checkbox = isSelected ? brand("[✓]") : dim("[ ]");
+      const label = isCurrent ? opt.label : muted(opt.label);
+      console.log(`  ${pointer} ${checkbox} ${label.padEnd(24)} ${dim(opt.description)}`);
       lines++;
     }
 
@@ -75,7 +75,7 @@ async function multiSelect(
     }
 
     console.log();
-    console.log("  " + muted("↑↓ navigate · space toggle · enter confirm · a all · n none"));
+    console.log("  " + dim("↑↓ navigate · space toggle · enter confirm · a all · n none"));
     lines += 2;
   }
 

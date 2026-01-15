@@ -1,54 +1,49 @@
-import { bold, cyan, dim, green, yellow } from "@veryfront/compat/console";
 import { VERSION } from "@veryfront/utils";
 import type { CommandHelp, CommandOption } from "./types.ts";
-import { getColorEnabled } from "../utils/index.ts";
-
-function c<T extends (s: string) => string>(colorFn: T, text: string): string {
-  return getColorEnabled() ? colorFn(text) : text;
-}
+import { bold, brand, dim, muted } from "../ui/colors.ts";
 
 export function formatHeader(): string {
-  return c(bold, c(cyan, "\nveryfront")) + c(dim, ` v${VERSION}\n`);
+  return "\n  " + bold(brand("veryfront")) + " " + dim(`v${VERSION}`);
 }
 
 export function formatCommandName(name: string, paddingLength: number): string {
-  return c(green, name.padEnd(paddingLength + 2));
+  return brand(name.padEnd(paddingLength + 2));
 }
 
 export function formatDescription(description: string): string {
-  return c(dim, description);
+  return muted(description);
 }
 
 export function formatUsage(usage: string): string {
-  return `${c(yellow, "Usage:")} ${usage}\n`;
+  return `  ${bold("Usage:")} ${usage}`;
 }
 
 export function formatOptionFlag(flag: string, paddingLength: number): string {
-  return c(green, flag.padEnd(paddingLength + 2));
+  return flag.padEnd(paddingLength + 2);
 }
 
 export function formatOption(option: CommandOption, paddingLength: number): string {
-  const defaultStr = option.default ? c(dim, ` (default: ${option.default})`) : "";
-  return `  ${formatOptionFlag(option.flag, paddingLength)} ${option.description}${defaultStr}`;
+  const defaultStr = option.default ? dim(` (default: ${option.default})`) : "";
+  return `    ${formatOptionFlag(option.flag, paddingLength)} ${muted(option.description)}${defaultStr}`;
 }
 
 export function formatExample(example: string): string {
-  return `  ${c(dim, "$")} ${c(cyan, example)}`;
+  return `    ${dim("$")} ${example}`;
 }
 
 export function formatSectionHeader(title: string): string {
-  return c(yellow, title + ":");
+  return bold(title + ":");
 }
 
 export function formatCommandHeader(commandName: string): string {
-  return `${c(bold, c(cyan, `\nveryfront ${commandName}`))}\n`;
+  return `\n  ${bold(brand(`veryfront ${commandName}`))}`;
 }
 
 export function formatAsciiLogo(): string {
   return `
-${c(dim, "────────────────────────────────────────")}
-  ${c(bold, c(cyan, "veryfront"))}  ${c(dim, "React meta-framework")}
-${c(dim, "────────────────────────────────────────")}
+${dim("────────────────────────────────────────")}
+  ${bold(brand("veryfront"))}  ${dim("React meta-framework")}
+${dim("────────────────────────────────────────")}
 `;
 }
 
@@ -59,6 +54,6 @@ export function calculateMaxLength(items: Array<{ length: number }>): number {
 export function formatCommandList(commands: CommandHelp[]): string[] {
   const maxLength = calculateMaxLength(commands.map((c) => ({ length: c.name.length })));
   return commands.map((cmd) =>
-    `  ${formatCommandName(cmd.name, maxLength)} ${formatDescription(cmd.description)}`
+    `    ${formatCommandName(cmd.name, maxLength)} ${formatDescription(cmd.description)}`
   );
 }

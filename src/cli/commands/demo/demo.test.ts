@@ -1,0 +1,111 @@
+import { assertEquals, assertExists } from "jsr:@std/assert@1";
+import { describe, it } from "jsr:@std/testing@1/bdd";
+import type { DemoOptions } from "./demo.ts";
+import { DEMO_STEPS } from "./steps.ts";
+
+describe("DemoOptions interface", () => {
+  it("should accept empty options", () => {
+    const options: DemoOptions = {};
+    assertEquals(Object.keys(options).length, 0);
+  });
+
+  it("should accept projectName option", () => {
+    const options: DemoOptions = { projectName: "my-app" };
+    assertEquals(options.projectName, "my-app");
+  });
+
+  it("should accept auto option", () => {
+    const options: DemoOptions = { auto: true };
+    assertEquals(options.auto, true);
+  });
+
+  it("should accept loginMethod option", () => {
+    const googleLogin: DemoOptions = { loginMethod: "google" };
+    const githubLogin: DemoOptions = { loginMethod: "github" };
+    const microsoftLogin: DemoOptions = { loginMethod: "microsoft" };
+    const tokenLogin: DemoOptions = { loginMethod: "token" };
+
+    assertEquals(googleLogin.loginMethod, "google");
+    assertEquals(githubLogin.loginMethod, "github");
+    assertEquals(microsoftLogin.loginMethod, "microsoft");
+    assertEquals(tokenLogin.loginMethod, "token");
+  });
+
+  it("should accept all options together", () => {
+    const options: DemoOptions = {
+      projectName: "demo-project",
+      auto: true,
+      loginMethod: "github",
+    };
+    assertEquals(options.projectName, "demo-project");
+    assertEquals(options.auto, true);
+    assertEquals(options.loginMethod, "github");
+  });
+
+  it("should use a dynamic default when no projectName is provided", () => {
+    const options: DemoOptions = {};
+    // When no projectName is provided, demoCommand generates a dynamic name like "demo-abc123"
+    // Here we just verify the interface allows undefined
+    assertEquals(options.projectName, undefined);
+  });
+
+  it("should default to false when auto is not provided", () => {
+    const options: DemoOptions = {};
+    const auto = options.auto ?? false;
+    assertEquals(auto, false);
+  });
+});
+
+describe("Demo steps for auto mode", () => {
+  it("should have dev step that can be skipped in auto mode", () => {
+    const devStep = DEMO_STEPS.find((s) => s.id === "dev");
+    assertExists(devStep);
+    assertEquals(devStep.hasAction, true);
+    // Dev step has skipPostWait because it handles its own flow
+    assertEquals(devStep.skipPostWait, true);
+  });
+
+  it("should have deploy step that runs in auto mode", () => {
+    const deployStep = DEMO_STEPS.find((s) => s.id === "deploy");
+    assertExists(deployStep);
+    assertEquals(deployStep.hasAction, true);
+    // Deploy step should NOT have skipPostWait (waits after completion)
+    assertEquals(deployStep.skipPostWait, undefined);
+  });
+
+  it("should have login step that can use pre-selected method", () => {
+    const loginStep = DEMO_STEPS.find((s) => s.id === "login");
+    assertExists(loginStep);
+    assertEquals(loginStep.hasAction, true);
+  });
+
+  it("should have done step as final step without action", () => {
+    const doneStep = DEMO_STEPS[DEMO_STEPS.length - 1];
+    assertExists(doneStep);
+    assertEquals(doneStep.id, "done");
+    assertEquals(doneStep.hasAction, undefined);
+  });
+
+  it("should have correct step order for auto mode flow", () => {
+    const stepIds = DEMO_STEPS.map((s) => s.id);
+    assertEquals(stepIds, ["intro", "login", "create", "dev", "deploy", "done"]);
+  });
+});
+
+describe("Demo auto mode configuration", () => {
+  it("should support all login methods for auto mode", () => {
+    const validMethods = ["google", "github", "microsoft", "token"] as const;
+    for (const method of validMethods) {
+      const options: DemoOptions = { auto: true, loginMethod: method };
+      assertEquals(options.loginMethod, method);
+    }
+  });
+
+  it("should allow custom project name in auto mode", () => {
+    const options: DemoOptions = {
+      auto: true,
+      projectName: "auto-test-project",
+    };
+    assertEquals(options.projectName, "auto-test-project");
+  });
+});

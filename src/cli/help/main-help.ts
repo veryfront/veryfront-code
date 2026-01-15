@@ -1,5 +1,3 @@
-import { cyan, dim, yellow } from "@veryfront/compat/console";
-import { cliLogger } from "@veryfront/utils";
 import { COMMANDS } from "./command-definitions.ts";
 import {
   calculateMaxLength,
@@ -9,37 +7,38 @@ import {
   formatHeader,
   formatSectionHeader,
 } from "./formatters.ts";
+import { bold, dim, muted } from "../ui/colors.ts";
 
 export function showMainHelp(): void {
-  cliLogger.info(formatHeader());
-  cliLogger.info("A Deno-first React framework with RSC support\n");
+  console.log(formatHeader());
+  console.log("  " + muted("A Deno-first React framework with RSC support"));
+  console.log();
 
-  cliLogger.info(`${yellow("Usage:")} veryfront <command> [options]\n`);
+  console.log("  " + bold("Usage:") + " veryfront <command> [options]");
+  console.log();
 
-  cliLogger.info(formatSectionHeader("Commands"));
+  console.log("  " + formatSectionHeader("Commands"));
   const commands = Object.values(COMMANDS);
   const formattedCommands = formatCommandList(commands);
   for (const line of formattedCommands) {
-    cliLogger.info(line);
+    console.log(line);
   }
 
   const maxLength = calculateMaxLength(commands.map((c) => ({ length: c.name.length })));
-  cliLogger.info(
-    `\n${formatSectionHeader("Global Options")}\n` +
-      `  ${formatCommandName("-h, --help", maxLength)} ${formatDescription("Show help")}\n` +
-      `  ${formatCommandName("-v, --version", maxLength)} ${formatDescription("Show version")}\n`,
-  );
+  console.log();
+  console.log("  " + formatSectionHeader("Global Options"));
+  console.log(`    ${formatCommandName("-h, --help", maxLength)} ${formatDescription("Show help")}`);
+  console.log(`    ${formatCommandName("-v, --version", maxLength)} ${formatDescription("Show version")}`);
 
-  cliLogger.info(
-    `\n${formatSectionHeader("Quick Start")}\n` +
-      `  ${dim("$")} ${cyan("veryfront init my-app")}\n` +
-      `  ${dim("$")} ${cyan("cd my-app")}\n` +
-      `  ${dim("$")} ${cyan("veryfront dev")}\n`,
-  );
+  console.log();
+  console.log("  " + formatSectionHeader("Quick Start"));
+  console.log(`    ${dim("$")} veryfront init my-app`);
+  console.log(`    ${dim("$")} cd my-app`);
+  console.log(`    ${dim("$")} veryfront dev`);
 
-  cliLogger.info(
-    `\n${formatSectionHeader("Learn More")}\n` +
-      `  ${dim("Docs:")}  https://github.com/veryfront/veryfront\n` +
-      `  ${dim("Tips:")}  veryfront <command> --help\n`,
-  );
+  console.log();
+  console.log("  " + formatSectionHeader("Learn More"));
+  console.log(`    ${dim("Docs:")}  https://github.com/veryfront/veryfront`);
+  console.log(`    ${dim("Tips:")}  veryfront <command> --help`);
+  console.log();
 }
