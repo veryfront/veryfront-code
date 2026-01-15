@@ -2,7 +2,7 @@ import type { ParsedArgs } from "./types.ts";
 import { studioCommand } from "../commands/studio.ts";
 import { cliLogger } from "@veryfront/utils";
 import { formatUserError } from "@veryfront/errors/user-friendly/index.ts";
-import { exitProcess } from "../exit.ts";
+import { exitProcess } from "../utils/index.ts";
 
 export async function handleStudioCommand(args: ParsedArgs): Promise<void> {
   // Project is optional - will be auto-detected if not provided
@@ -17,7 +17,7 @@ export async function handleStudioCommand(args: ParsedArgs): Promise<void> {
       file,
     });
   } catch (error) {
-    const formattedError = formatUserError(error);
+    const formattedError = error instanceof Error ? formatUserError(error) : String(error);
     cliLogger.error(formattedError);
     exitProcess(1);
   }
