@@ -1,0 +1,210 @@
+/**
+ * Install Command - AI assistant integration installer
+ */
+
+import { dirname, join } from "@veryfront/platform/compat/path/index.ts";
+import { cwd as getCwd } from "@veryfront/platform/compat/process.ts";
+import { z } from "zod";
+import { bold, brand, dim, muted, success, warning } from "../../ui/colors.ts";
+import { isTTY } from "../../utils/index.ts";
+import { detectAITools, formatDetectionHint } from "./detect.ts";
+import { AI_TOOLS, getTemplateContent, getToolById, isValidToolId } from "./registry.ts";
+import {
+  type AIToolId,
+  AIToolIdSchema,
+  type InstallOptions,
+  InstallOptionsSchema,
+  type MultiSelectOption,
+} from "./types.ts";
+
+const ESC = "\x1b";
+const HIDE_CURSOR = `${ESC}[?25l`;
+const SHOW_CURSOR = `${ESC}[?25h`;
+const CLEAR_LINE = `${ESC}[2K`;
+const COL_1 = `${ESC}[1G`;
+const moveUp = (n = 1) => `${ESC}[${n}A`;
+
+function write(s: string): void {
+  Deno.stdout.writeSync(new TextEncoder().encode(s));
+}
+
+function clearLines(n: number): void {
+  for (let i = 0; i < n; i++) write(moveUp() + CLEAR_LINE);
+  write(COL_1);
+}
+
+async function multiSelect(
+  options: MultiSelectOption[],
+  hint?: string,
+): Promise<AIToolId[] | null> {
+  if (!isTTY()) {
+    return options.filter((o) => o.selected).map((o) => o.value) as AIToolId[];
+  }
+
+  let idx = 0;
+  let lines = 0;
+  const selected = new Set(options.filter((o) => o.selected).map((o) => o.value));
+
+  function draw() {
+    if (lines > 0) clearLines(lines);
+
+    console.log();
+    console.log(
+      "  " + bold(brand("Select AI Coding Tools")) + " " +
+        muted("(space to toggle, enter to confirm)"),
+    );
+    console.log("  " + muted("Install integrations for your AI assistants."));
+    console.log();
+    lines = 4;
+
+    for (let i = 0; i < options.length; i++) {
+      const opt = options[i]!;
+      const isCurrent = i === idx;
+      const isSelected = selected.has(opt.value);
+      const pointer = isCurrent ? brand("❯") : " ";
+      const checkbox = isSelected ? success("[✓]") : dim("[ ]");
+      const label = isCurrent ? brand(opt.label) : opt.label;
+      console.log(`  ${pointer} ${checkbox} ${label.padEnd(24)} ${muted(opt.description)}`);
+      lines++;
+    }
+
+    if (hint) {
+      console.log();
+      console.log("  " + dim("Tip: " + hint));
+      lines += 2;
+    }
+
+    console.log();
+    console.log("  " + muted("↑↓ navigate · space toggle · enter confirm · a all · n none"));
+    lines += 2;
+  }
+
+  write(HIDE_CURSOR);
+  draw();
+
+  Deno.stdin.setRaw(true);
+  const reader = Deno.stdin.readable.getReader();
+  const dec = new TextDecoder();
+  let result: AIToolId[] | null = null;
+
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      const key = dec.decode(value);
+
+      if (key === "\x03" || key === "q" || key === "Q") {
+        result = null;
+        break;
+      }
+      if (key === "\r" || key === "\n") {
+        result = Array.from(selected) as AIToolId[];
+        break;
+      }
+      if (key === " ") {
+        const opt = options[idx]!;
+        selected.has(opt.value) ? selected.delete(opt.value) : selected.add(opt.value);
+        draw();
+      }
+      if (key === "\x1b[A" || key === "k") {
+        idx = idx > 0 ? idx - 1 : options.length - 1;
+        draw();
+      }
+      if (key === "\x1b[B" || key === "j") {
+        idx = idx < options.length - 1 ? idx + 1 : 0;
+        draw();
+      }
+      if (key === "a" || key === "A") {
+        options.forEach((o) => selected.add(o.value));
+        draw();
+      }
+      if (key === "n" || key === "N") {
+        selected.clear();
+        draw();
+      }
+    }
+  } finally {
+    reader.releaseLock();
+    Deno.stdin.setRaw(false);
+  }
+
+  write(SHOW_CURSOR);
+  clearLines(lines);
+  return result;
+}
+
+const TargetFlagSchema = z.string().transform((val) => {
+  if (val === "all") return AI_TOOLS.map((t) => t.id);
+  return val.split(",").map((t) => t.trim()).filter(isValidToolId);
+}).refine((arr) => arr.length > 0, { message: "No valid targets specified" });
+
+export function parseTargetFlag(target: string): AIToolId[] {
+  return TargetFlagSchema.parse(target);
+}
+
+export async function installTargets(
+  targets: AIToolId[],
+  options: Pick<InstallOptions, "cwd" | "force" | "global">,
+): Promise<void> {
+  z.array(AIToolIdSchema).min(1).parse(targets);
+
+  const cwd = options.cwd ?? getCwd();
+  const homeDir = Deno.env.get("HOME") ?? Deno.env.get("USERPROFILE")!;
+
+  console.log();
+  console.log("  " + bold("Installing AI integrations..."));
+  console.log();
+
+  for (const toolId of targets) {
+    const tool = getToolById(toolId);
+    const content = await getTemplateContent(toolId);
+    const dest = options.global ? join(homeDir, tool.file) : join(cwd, tool.file);
+
+    await Deno.mkdir(dirname(dest), { recursive: true });
+
+    const fileExists = await Deno.stat(dest).then(() => true).catch(() => false);
+    if (!options.force && fileExists) {
+      console.log(`  ${warning("!")} ${tool.file} ${muted("exists (use --force to overwrite)")}`);
+      continue;
+    }
+
+    await Deno.writeTextFile(dest, content);
+    console.log(`  ${success("✓")} ${tool.file}`);
+  }
+
+  console.log();
+  console.log("  " + success("Your AI assistants now know Veryfront!"));
+  console.log("  " + dim('Try: "Add a contact form with email validation"'));
+  console.log();
+}
+
+export async function installCommand(options: InstallOptions = {}): Promise<void> {
+  const validated = InstallOptionsSchema.parse(options);
+  const cwd = validated.cwd ?? getCwd();
+
+  if (validated.target) {
+    const targets = parseTargetFlag(validated.target);
+    await installTargets(targets, { ...validated, cwd });
+    return;
+  }
+
+  const detected = await detectAITools({ cwd });
+  const hint = formatDetectionHint(detected);
+
+  const selectOptions: MultiSelectOption[] = AI_TOOLS.map((tool) => ({
+    label: tool.label,
+    value: tool.id,
+    description: tool.description,
+    selected: detected.includes(tool.id),
+  }));
+
+  const selected = await multiSelect(selectOptions, hint);
+  if (!selected || selected.length === 0) {
+    console.log();
+    console.log("  " + muted("No tools selected."));
+    console.log();
+    return;
+  }
+
+  await installTargets(selected, { ...validated, cwd });
+}
