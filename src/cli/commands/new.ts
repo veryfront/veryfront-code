@@ -6,12 +6,12 @@
  * @module cli/commands/new
  */
 
-import { cliLogger } from "@veryfront/utils";
+// Use console.log for clean demo output (no timestamp/prefix)
 import { cyan, dim, green, red } from "@veryfront/compat/console";
 import { chdir, cwd, getEnv } from "@veryfront/platform/compat/process.ts";
 import { join } from "@veryfront/platform/compat/path/index.ts";
 import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
-import { waitForKeypress } from "@veryfront/platform/compat/stdin.ts";
+import { waitForEnterOrExit } from "@veryfront/platform/compat/stdin.ts";
 import { z } from "zod";
 
 import { readToken, validateToken } from "../auth/index.ts";
@@ -60,6 +60,18 @@ function useColor() {
   return (fn: (s: string) => string, s: string) => (enabled ? fn(s) : s);
 }
 
+/**
+ * Generate a random suffix for unique slugs (e.g., "x7k2m9")
+ */
+function generateRandomSuffix(length = 6): string {
+  const chars = "abcdefghijklmnopqrstuvwxyz0123456789";
+  let result = "";
+  for (let i = 0; i < length; i++) {
+    result += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return result;
+}
+
 // ============================================================================
 // Main Command
 // ============================================================================
@@ -103,6 +115,9 @@ export async function newCommand(
   }
   const projectDir = join(cwd(), name);
 
+  // Generate unique slug with random suffix to avoid conflicts
+  const slug = `${name}-${generateRandomSuffix()}`;
+
   // -------------------------------------------------------------------------
   // Step 1: Validate inputs
   // -------------------------------------------------------------------------
@@ -110,8 +125,8 @@ export async function newCommand(
   // Check name is valid
   const slugRegex = /^[a-z0-9][a-z0-9-]*[a-z0-9]$|^[a-z0-9]$/;
   if (!slugRegex.test(name)) {
-    cliLogger.error(`Invalid project name: "${name}"`);
-    cliLogger.info(c(dim, "Use lowercase letters, numbers, and hyphens only."));
+    console.error(`Invalid project name: "${name}"`);
+    console.log(c(dim, "Use lowercase letters, numbers, and hyphens only."));
     exitProcess(1);
     return;
   }
@@ -120,8 +135,8 @@ export async function newCommand(
   try {
     const stat = await fs.stat(projectDir);
     if (stat.isDirectory && !force) {
-      cliLogger.error(`Directory "${name}" already exists.`);
-      cliLogger.info(c(dim, "Use --force to overwrite."));
+      console.error(`Directory "${name}" already exists.`);
+      console.log(c(dim, "Use --force to overwrite."));
       exitProcess(1);
       return;
     }
@@ -138,11 +153,11 @@ export async function newCommand(
   const token = envToken || storedToken;
 
   if (!token) {
-    cliLogger.info("");
-    cliLogger.info(c(red, "  Please log in first:"));
-    cliLogger.info("");
-    cliLogger.info(c(dim, "    deno task cli login"));
-    cliLogger.info("");
+    console.log("");
+    console.log(c(red, "  Please log in first:"));
+    console.log("");
+    console.log(c(dim, "    deno task cli login"));
+    console.log("");
     exitProcess(1);
     return;
   }
@@ -154,22 +169,22 @@ export async function newCommand(
   // Step 3: Show header with optimistic URLs
   // -------------------------------------------------------------------------
 
-  cliLogger.info("");
-  cliLogger.info(`  ${c(cyan, "\u26A1")} ${c(cyan, "Veryfront")}`);
-  cliLogger.info("");
+  console.log("");
+  console.log(`  ${c(cyan, "\u26A1")} ${c(cyan, "Veryfront")}`);
+  console.log("");
 
   // Show user email when available
   const userInfo = await userInfoPromise;
   if (userInfo) {
-    cliLogger.info(`  ${c(dim, userInfo.email)}`);
-    cliLogger.info("");
+    console.log(`  ${c(dim, userInfo.email)}`);
+    console.log("");
   }
 
-  cliLogger.info(`  Creating ${c(cyan, name)}...`);
-  cliLogger.info("");
-  cliLogger.info(`  Local   ${c(cyan, `http://${name}.lvh.me:${port}`)}`);
-  cliLogger.info(`  Live    ${c(cyan, `https://${name}.veryfront.com`)}`);
-  cliLogger.info("");
+  console.log(`  Creating ${c(cyan, slug)}...`);
+  console.log("");
+  console.log(`  Local   ${c(cyan, `http://${name}.lvh.me:${port}`)}`);
+  console.log(`  Live    ${c(cyan, `https://${slug}.veryfront.com`)}`);
+  console.log("");
 
   // -------------------------------------------------------------------------
   // Step 4: Parallel operations - scaffold + reserve slug
@@ -179,37 +194,26 @@ export async function newCommand(
   await fs.mkdir(projectDir, { recursive: true });
 
   let scaffoldResult: ScaffoldResult;
-  let actualSlug = name;
+  let actualSlug = slug;
 
   if (skipDeploy) {
     // Skip API call, just scaffold locally
-    scaffoldResult = await scaffoldProjectFast(projectDir, template as InitTemplate, name, integrations);
-    cliLogger.info(`  ${c(green, "\u2713")} Created ${scaffoldResult.filesWritten} files`);
-    cliLogger.info("");
-    cliLogger.info(c(dim, `  cd ${name} && deno task cli dev`));
-    cliLogger.info("");
+    scaffoldResult = await scaffoldProjectFast(projectDir, template as InitTemplate, slug, integrations);
+    console.log(`  ${c(green, "\u2713")} Created ${scaffoldResult.filesWritten} files`);
+    console.log("");
+    console.log(c(dim, `  cd ${name} && deno task cli dev`));
+    console.log("");
     return;
   }
 
   // Run scaffold and slug reservation in parallel
   const [scaffoldRes, reserveResult] = await Promise.all([
-    scaffoldProjectFast(projectDir, template as InitTemplate, name, integrations),
-    reserveProjectSlug(name, token),
+    scaffoldProjectFast(projectDir, template as InitTemplate, slug, integrations),
+    reserveProjectSlug(slug, token),
   ]);
 
   scaffoldResult = scaffoldRes;
-
-  // Handle slug conflict
-  if (reserveResult.slug !== name) {
-    cliLogger.info(c(dim, `  "${name}" is taken, using "${reserveResult.slug}"`));
-    cliLogger.info("");
-    actualSlug = reserveResult.slug;
-
-    // Update .veryfrontrc with the actual slug
-    const veryfrontrcPath = join(projectDir, ".veryfrontrc");
-    const veryfrontrc = JSON.stringify({ projectSlug: actualSlug }, null, 2) + "\n";
-    await fs.writeFile(veryfrontrcPath, new TextEncoder().encode(veryfrontrc));
-  }
+  actualSlug = reserveResult.slug;
 
   // -------------------------------------------------------------------------
   // Step 5: Start dev server
@@ -218,21 +222,18 @@ export async function newCommand(
   // Change to project directory
   chdir(projectDir);
 
-  // Start dev server in background
-  const devServerPromise = startDevServer(port);
+  // Start dev server and wait for it to be ready
+  await startDevServer(port);
 
-  // Open browser
+  // Open browser AFTER server is ready
   if (open && canOpenBrowser()) {
     await openBrowser(`http://${name}.lvh.me:${port}`);
   }
 
-  // Wait for server to be ready
-  await devServerPromise;
-
-  cliLogger.info(`  ${c(green, "\u2713")} Ready`);
-  cliLogger.info("");
-  cliLogger.info(`  Press ${c(cyan, "Enter")} to deploy, ${c(dim, "Ctrl+C")} to exit`);
-  cliLogger.info("");
+  console.log(`  ${c(green, "\u2713")} Ready`);
+  console.log("");
+  console.log(`  Press ${c(cyan, "Enter")} to deploy, ${c(dim, "Ctrl+C")} to exit`);
+  console.log("");
 
   // -------------------------------------------------------------------------
   // Step 6: Wait for Enter, then deploy
@@ -243,19 +244,26 @@ export async function newCommand(
     return;
   }
 
-  await waitForKeypress();
+  const shouldDeploy = await waitForEnterOrExit();
 
-  cliLogger.info(`  Deploying...`);
-  cliLogger.info("");
+  if (!shouldDeploy) {
+    // User pressed Ctrl+C - exit without deploying
+    console.log("");
+    exitProcess(0);
+    return;
+  }
+
+  console.log(`  Deploying...`);
+  console.log("");
 
   // Deploy: push + create release + create deployment
   const deployed = await deployProject();
 
   if (deployed) {
-    cliLogger.info(`  ${c(green, "\u2713")} Done!`);
-    cliLogger.info("");
-    cliLogger.info(`  ${c(cyan, `https://${actualSlug}.veryfront.com`)}`);
-    cliLogger.info("");
+    console.log(`  ${c(green, "\u2713")} Done!`);
+    console.log("");
+    console.log(`  ${c(cyan, `https://${actualSlug}.veryfront.com`)}`);
+    console.log("");
   }
 }
 
@@ -306,7 +314,7 @@ async function deployProject(): Promise<boolean> {
     return true;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    cliLogger.info(`  ${c(red, "\u2717")} Deploy failed: ${message}`);
+    console.log(`  ${c(red, "\u2717")} Deploy failed: ${message}`);
     return false;
   }
 }
