@@ -12,6 +12,7 @@ import { runAIConfigValidation } from "@veryfront/ai/utils/config-validator.ts";
 import { discoverAll } from "@veryfront/ai/utils/discovery.ts";
 import { exitProcess, registerTerminationSignals } from "../utils/index.ts";
 import { brand, dim } from "../ui/index.ts";
+import { getAgentFaceWithText } from "../ui/dot-matrix.ts";
 
 export interface DevOptions {
   port: number;
@@ -139,12 +140,16 @@ export async function devCommand(options: DevOptions): Promise<DevCommandResult>
   // Startup banner (skip in proxy mode - proxy handles banner)
   if (!isProxyMode) {
     console.log();
-    console.log(`  ${brand("Veryfront")} ${dim("is now running")}`);
-    console.log();
-    console.log(`     ${dim("URL")}  ${brand(`http://lvh.me:${finalPort}`)}`);
+    // Build text lines for the banner
+    const textLines = [
+      `${brand("Veryfront")} ${dim("is now running")}`,
+      "",
+      `${dim("URL")}  ${brand(`http://lvh.me:${finalPort}`)}`,
+    ];
     if (projectSlug) {
-      console.log(` ${dim("Project")}  ${projectSlug}`);
+      textLines.push(`${dim("Project")}  ${projectSlug}`);
     }
+    console.log(getAgentFaceWithText(textLines, { litColor: "\x1b[38;2;0;163;244m" }));
     console.log();
   }
 
