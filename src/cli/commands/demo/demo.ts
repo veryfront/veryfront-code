@@ -7,8 +7,9 @@
 import { chdir, cwd } from "@veryfront/platform/compat/process.ts";
 import { join } from "@veryfront/platform/compat/path/index.ts";
 import { bold, brand, dim, error, muted, success } from "../../ui/colors.ts";
-import { AnimatedDotMatrix, getAgentFaceWithText } from "../../ui/dot-matrix.ts";
+import { AnimatedDotMatrix } from "../../ui/dot-matrix.ts";
 import { HIDE_CURSOR, SHOW_CURSOR, typeCommand, typeLine } from "../../ui/animated-text.ts";
+import { successBanner } from "../../ui/components/banner.ts";
 import { exitProcess, isTTY } from "../../utils/index.ts";
 import { readToken, saveToken, validateToken } from "../../auth/index.ts";
 import { canOpenBrowser, openBrowser } from "../../auth/browser.ts";
@@ -601,24 +602,18 @@ export async function demoCommand(options: DemoOptions = {}): Promise<void> {
       }
     }
 
-    // Completion screen - horizontal layout
+    // Completion screen - polished success banner
     write(CLEAR_SCREEN + MOVE_HOME);
     const finalUrl = actualProjectSlug
       ? `https://${actualProjectSlug}.veryfront.com`
       : `https://${projectName}.veryfront.com`;
     console.log();
 
-    // Agent face with success message next to it (horizontal layout, brand blue)
-    console.log(
-      getAgentFaceWithText(
-        [
-          success("✓") + " " + bold("Demo Complete!"),
-          "Your app is live at:",
-          brand(finalUrl),
-        ],
-        { litColor: "\x1b[38;2;0;163;244m" },
-      ),
-    );
+    // Success banner with info
+    console.log(successBanner("Demo Complete! Your app is live.", {
+      url: finalUrl,
+      project: actualProjectSlug || projectName,
+    }));
 
     console.log();
     console.log("  " + bold("Next steps:"));
