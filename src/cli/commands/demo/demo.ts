@@ -608,7 +608,7 @@ export async function demoCommand(options: DemoOptions = {}): Promise<void> {
       : `https://${projectName}.veryfront.com`;
     console.log();
 
-    // Agent face with success message next to it (horizontal layout)
+    // Agent face with success message next to it (horizontal layout, brand blue)
     console.log(
       getAgentFaceWithText(
         [
@@ -616,7 +616,7 @@ export async function demoCommand(options: DemoOptions = {}): Promise<void> {
           "Your app is live at:",
           brand(finalUrl),
         ],
-        { litColor: "\x1b[32m" },
+        { litColor: "\x1b[38;2;0;163;244m" },
       ),
     );
 
