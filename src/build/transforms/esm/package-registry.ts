@@ -9,6 +9,13 @@ export const REACT_VERSION = "18.3.1";
 export const TAILWIND_VERSION = "4.1.8";
 
 /**
+ * Transform cache version - bump when transform logic changes.
+ * This invalidates all cached modules (local + Redis) to prevent stale transform issues.
+ * See: https://github.com/veryfront/veryfront-renderer/issues/79
+ */
+export const TRANSFORM_CACHE_VERSION = 1;
+
+/**
  * Generate esm.sh URL for browser.
  * Uses ?external= so browser import map provides React (ensures single instance).
  * Uses ?target=es2022 for consistent builds.
