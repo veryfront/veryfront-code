@@ -82,6 +82,7 @@ export function parseMouseEvent(data: Uint8Array | string): MouseEvent | null {
   const str = typeof data === "string" ? data : new TextDecoder().decode(data);
 
   // Match SGR1006 format: \x1b[<button;x;y[Mm]
+  // deno-lint-ignore no-control-regex
   const match = str.match(/\x1b\[<(\d+);(\d+);(\d+)([Mm])/);
   if (!match) {
     return null;
@@ -111,11 +112,23 @@ export function parseMouseEvent(data: Uint8Array | string): MouseEvent | null {
   } else if (baseButton >= 32) {
     // Motion with button held (drag)
     const dragButton = baseButton - 32;
-    button = dragButton === 0 ? "left" : dragButton === 1 ? "middle" : dragButton === 2 ? "right" : "none";
+    button = dragButton === 0
+      ? "left"
+      : dragButton === 1
+      ? "middle"
+      : dragButton === 2
+      ? "right"
+      : "none";
     type = "drag";
   } else {
     // Regular click
-    button = baseButton === 0 ? "left" : baseButton === 1 ? "middle" : baseButton === 2 ? "right" : "none";
+    button = baseButton === 0
+      ? "left"
+      : baseButton === 1
+      ? "middle"
+      : baseButton === 2
+      ? "right"
+      : "none";
     type = isRelease ? "release" : "press";
   }
 
@@ -226,7 +239,7 @@ export function createMouseHandler(): MouseInputHandler {
     }
   };
 
-  const onMouse = (callback: (event: MouseEvent) => void): (() => void) => {
+  const onMouse = (callback: (event: MouseEvent) => void): () => void => {
     callbacks.add(callback);
     return () => callbacks.delete(callback);
   };

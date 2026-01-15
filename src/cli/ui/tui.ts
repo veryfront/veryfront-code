@@ -3,7 +3,7 @@
  * Shared UI for new/dev commands with collapsible logs
  */
 
-import { brand, bold, dim, success, error, muted } from "./colors.ts";
+import { brand, dim, error, muted, success } from "./colors.ts";
 
 const ESC = "\x1b";
 const CSI = `${ESC}[`;
@@ -68,7 +68,7 @@ function render() {
   // Info section
   const infoKeys = Object.keys(state.info);
   if (infoKeys.length > 0) {
-    const maxKeyLen = Math.max(...infoKeys.map(k => k.length));
+    const maxKeyLen = Math.max(...infoKeys.map((k) => k.length));
     for (const key of infoKeys) {
       const padding = " ".repeat(maxKeyLen - key.length);
       // Info values can include pre-styled content (e.g., green dots)
@@ -188,7 +188,7 @@ export function createTui(cfg: TuiConfig = {}) {
     },
 
     setSteps(steps: string[]) {
-      state.steps = steps.map(label => ({ label, done: false }));
+      state.steps = steps.map((label) => ({ label, done: false }));
       state.currentStep = 0;
       render();
     },
@@ -211,6 +211,7 @@ export function createTui(cfg: TuiConfig = {}) {
     },
 
     addLog(msg: string) {
+      // deno-lint-ignore no-control-regex
       const clean = msg.replace(/\x1b\[[0-9;]*m/g, "").trim();
       if (clean) {
         state.logs.push(clean);
@@ -246,7 +247,7 @@ export type Tui = ReturnType<typeof createTui>;
 export function interceptConsole(tui: Tui) {
   const orig = { log: console.log, error: console.error, warn: console.warn, info: console.info };
   const capture = (...args: unknown[]) => {
-    tui.addLog(args.map(a => typeof a === "string" ? a : JSON.stringify(a)).join(" "));
+    tui.addLog(args.map((a) => typeof a === "string" ? a : JSON.stringify(a)).join(" "));
   };
   console.log = capture;
   console.error = capture;
@@ -270,8 +271,14 @@ export async function handleInput(tui: Tui, opts: {
       if (done) break;
       const key = dec.decode(value);
 
-      if (key === "\x03") { opts.onExit?.(); break; }
-      if (key === "\r" || key === "\n") { opts.onEnter?.(); break; }
+      if (key === "\x03") {
+        opts.onExit?.();
+        break;
+      }
+      if (key === "\r" || key === "\n") {
+        opts.onEnter?.();
+        break;
+      }
       if (key === "l" || key === "L") tui.toggleLogs();
       if (key === "\x1b[A" || key === "k") tui.scrollLogs("up");
       if (key === "\x1b[B" || key === "j") tui.scrollLogs("down");

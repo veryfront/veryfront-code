@@ -190,7 +190,14 @@ export function renderSelectGrid(
         for (let i = 1; i < itemWidth - 1; i++) {
           setCell(buffer, itemX + i, itemY + rowIdx, " ", textColor, bgColor);
         }
-        setCell(buffer, itemX + itemWidth - 1, itemY + rowIdx, chars.vertical, borderColor, bgColor);
+        setCell(
+          buffer,
+          itemX + itemWidth - 1,
+          itemY + rowIdx,
+          chars.vertical,
+          borderColor,
+          bgColor,
+        );
       }
 
       // Bottom border
@@ -198,7 +205,14 @@ export function renderSelectGrid(
       for (let i = 1; i < itemWidth - 1; i++) {
         setCell(buffer, itemX + i, itemY + itemHeight - 1, chars.horizontal, borderColor, bgColor);
       }
-      setCell(buffer, itemX + itemWidth - 1, itemY + itemHeight - 1, chars.bottomRight, borderColor, bgColor);
+      setCell(
+        buffer,
+        itemX + itemWidth - 1,
+        itemY + itemHeight - 1,
+        chars.bottomRight,
+        borderColor,
+        bgColor,
+      );
 
       // Content (centered in middle row)
       const contentY = itemY + Math.floor(itemHeight / 2);

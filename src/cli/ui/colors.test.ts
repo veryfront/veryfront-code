@@ -4,7 +4,7 @@
 
 import { assertEquals, assertStringIncludes } from "jsr:@std/assert@1";
 import { describe, it } from "jsr:@std/testing@1/bdd";
-import { brand, success, error, warning, muted, bold, dim, reset } from "./colors.ts";
+import { bold, brand, dim, error, muted, reset, success, warning } from "./colors.ts";
 
 describe("colors", () => {
   describe("brand color", () => {

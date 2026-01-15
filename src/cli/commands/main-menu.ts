@@ -36,13 +36,49 @@ function clear(n: number) {
 // ============================================================================
 
 const ADJECTIVES = [
-  "swift", "bold", "calm", "dark", "epic", "fast", "glad", "hazy", "keen", "lite",
-  "mint", "neat", "pale", "pure", "rare", "safe", "slim", "soft", "warm", "wild",
+  "swift",
+  "bold",
+  "calm",
+  "dark",
+  "epic",
+  "fast",
+  "glad",
+  "hazy",
+  "keen",
+  "lite",
+  "mint",
+  "neat",
+  "pale",
+  "pure",
+  "rare",
+  "safe",
+  "slim",
+  "soft",
+  "warm",
+  "wild",
 ];
 
 const NOUNS = [
-  "app", "api", "bot", "box", "hub", "lab", "kit", "pod", "web", "dev",
-  "dash", "flow", "link", "node", "port", "sync", "task", "tool", "view", "zone",
+  "app",
+  "api",
+  "bot",
+  "box",
+  "hub",
+  "lab",
+  "kit",
+  "pod",
+  "web",
+  "dev",
+  "dash",
+  "flow",
+  "link",
+  "node",
+  "port",
+  "sync",
+  "task",
+  "tool",
+  "view",
+  "zone",
 ];
 
 function generateRandomName(): string {

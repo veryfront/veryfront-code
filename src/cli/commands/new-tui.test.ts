@@ -54,7 +54,14 @@ describe("new-tui", () => {
 
     it("supports all integration types", () => {
       const integrations: NewTuiResult["integrations"] = [
-        "gmail", "slack", "notion", "github", "calendar", "drive", "jira", "linear"
+        "gmail",
+        "slack",
+        "notion",
+        "github",
+        "calendar",
+        "drive",
+        "jira",
+        "linear",
       ];
       assertEquals(integrations.length, 8);
     });

@@ -12,7 +12,10 @@
 import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
 import { dirname, join } from "@veryfront/platform/compat/path/index.ts";
 import { getTemplate } from "../../templates/index.ts";
-import { loadIntegrations, loadIntegrationBaseFilesFromDirectory } from "../../templates/integration-loader.ts";
+import {
+  loadIntegrationBaseFilesFromDirectory,
+  loadIntegrations,
+} from "../../templates/integration-loader.ts";
 import type { InitTemplate } from "../init/types.ts";
 import type { IntegrationName, TemplateFile } from "../../templates/types.ts";
 
@@ -68,7 +71,8 @@ export async function scaffoldProjectFast(
         for (const envVar of integration.config.envVars) {
           integrationEnvVars.push({
             name: envVar.name,
-            placeholder: envVar.description || `your-${envVar.name.toLowerCase().replace(/_/g, "-")}`,
+            placeholder: envVar.description ||
+              `your-${envVar.name.toLowerCase().replace(/_/g, "-")}`,
           });
         }
       }

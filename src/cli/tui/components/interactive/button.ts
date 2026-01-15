@@ -72,10 +72,6 @@ function setCell(
   }
 }
 
-function colorToString(color: string | undefined): string | undefined {
-  return color;
-}
-
 // ============================================================================
 // Rendering
 // ============================================================================

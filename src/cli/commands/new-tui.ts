@@ -24,7 +24,7 @@ const ESC = "\x1b";
 const rgb = (r: number, g: number, b: number) => (t: string) =>
   `${ESC}[38;2;${r};${g};${b}m${t}${ESC}[0m`;
 
-const BRAND = rgb(0, 163, 244);  // #00A3F4
+const BRAND = rgb(0, 163, 244); // #00A3F4
 const GREEN = rgb(34, 197, 94);
 const DIM = rgb(113, 113, 122);
 const BOLD = (t: string) => `${ESC}[1m${t}${ESC}[0m`;
@@ -204,7 +204,7 @@ async function multiSelect<T extends string>(
       }
       if (key === "a") {
         if (picked.size === options.length) picked.clear();
-        else options.forEach(o => picked.add(o.id));
+        else options.forEach((o) => picked.add(o.id));
         draw();
       }
     }
@@ -215,8 +215,10 @@ async function multiSelect<T extends string>(
 
   write(show);
   clear(lines);
-  const labels = options.filter(o => picked.has(o.id)).map(o => o.label);
-  console.log(DIM("?") + " " + BOLD(label) + " " + (labels.length ? BRAND(labels.join(", ")) : DIM("none")));
+  const labels = options.filter((o) => picked.has(o.id)).map((o) => o.label);
+  console.log(
+    DIM("?") + " " + BOLD(label) + " " + (labels.length ? BRAND(labels.join(", ")) : DIM("none")),
+  );
   return Array.from(picked);
 }
 

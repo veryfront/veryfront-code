@@ -14,7 +14,15 @@ import { CommonArgs, createArgParser } from "../shared/args.ts";
 import { scaffoldProjectFast } from "./new/fast-scaffold.ts";
 import { reserveProjectSlug } from "./new/reserve-slug.ts";
 import { runNewTui } from "./new-tui.ts";
-import { createTui, interceptConsole, handleInput, brand, dim, success, error } from "../ui/index.ts";
+import {
+  brand,
+  createTui,
+  dim,
+  error,
+  handleInput,
+  interceptConsole,
+  success,
+} from "../ui/index.ts";
 import type { InitTemplate } from "./init/types.ts";
 import type { IntegrationName } from "../templates/types.ts";
 
@@ -50,7 +58,9 @@ export const parseNewArgs = createArgParser(NewArgsSchema, {
 
 function randomSuffix(len = 6): string {
   const chars = "abcdefghijklmnopqrstuvwxyz0123456789";
-  return Array.from({ length: len }, () => chars[Math.floor(Math.random() * chars.length)]).join("");
+  return Array.from({ length: len }, () => chars[Math.floor(Math.random() * chars.length)]).join(
+    "",
+  );
 }
 
 // ============================================================================
@@ -71,7 +81,7 @@ export async function newCommand(
   } = options;
 
   let integrations: IntegrationName[] = integrationsStr
-    ? integrationsStr.split(",").map(s => s.trim()).filter(Boolean) as IntegrationName[]
+    ? integrationsStr.split(",").map((s) => s.trim()).filter(Boolean) as IntegrationName[]
     : [];
 
   const fs = createFileSystem();
@@ -83,7 +93,10 @@ export async function newCommand(
   // Wizard (if no template)
   if (!template && isTTY()) {
     const result = await runNewTui(name, userInfo?.email);
-    if (result.cancelled) { exitProcess(0); return; }
+    if (result.cancelled) {
+      exitProcess(0);
+      return;
+    }
     template = result.template;
     integrations = result.integrations;
   }
@@ -119,7 +132,12 @@ export async function newCommand(
     console.log();
     console.log(`  Creating ${brand(slug)}...`);
     await fs.mkdir(projectDir, { recursive: true });
-    const result = await scaffoldProjectFast(projectDir, template as InitTemplate, slug, integrations);
+    const result = await scaffoldProjectFast(
+      projectDir,
+      template as InitTemplate,
+      slug,
+      integrations,
+    );
     console.log(`  ${success("●")} Created ${result.filesWritten} files`);
     console.log();
     console.log(dim(`  cd ${name} && deno task cli dev`));
@@ -145,7 +163,6 @@ export async function newCommand(
   tui.setStatus("Creating...", "loading");
 
   let shouldExit = false;
-  let shouldDeploy = false;
   let actualSlug = slug;
 
   try {
@@ -177,8 +194,12 @@ export async function newCommand(
 
     // Wait for input
     await handleInput(tui, {
-      onEnter: () => { shouldDeploy = true; },
-      onExit: () => { shouldExit = true; },
+      onEnter: () => {
+        // Continue to deploy
+      },
+      onExit: () => {
+        shouldExit = true;
+      },
     });
 
     if (shouldExit) {
@@ -192,7 +213,13 @@ export async function newCommand(
     tui.setStatus("Deploying...", "loading");
 
     const { pushCommand } = await import("./push.ts");
-    await pushCommand({ projectDir: cwd(), branch: "main", force: true, dryRun: false, quiet: true });
+    await pushCommand({
+      projectDir: cwd(),
+      branch: "main",
+      force: true,
+      dryRun: false,
+      quiet: true,
+    });
 
     const { deployCommand: deploy } = await import("./deploy.ts");
     await deploy({ branch: "main", env: "production", force: true, dryRun: false, quiet: true });
@@ -213,10 +240,9 @@ export async function newCommand(
     // Clean exit - don't restore console to avoid showing shutdown logs
     tui.cleanup();
     exitProcess(0);
-
   } catch (err) {
     tui.setStatus(err instanceof Error ? err.message : String(err), "error");
-    await new Promise(r => setTimeout(r, 2000));
+    await new Promise((r) => setTimeout(r, 2000));
     tui.cleanup();
     restore();
     exitProcess(1);

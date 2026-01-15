@@ -13,14 +13,14 @@ const bgRgb = (r: number, g: number, b: number) => (text: string) =>
   `${ESC}[48;2;${r};${g};${b}m${text}${ESC}[0m`;
 
 // Brand colors
-export const brand = rgb(0, 163, 244);      // #00A3F4
+export const brand = rgb(0, 163, 244); // #00A3F4
 export const brandBg = bgRgb(0, 163, 244);
 
 // Semantic colors
-export const success = rgb(34, 197, 94);    // Green
-export const error = rgb(239, 68, 68);      // Red
-export const warning = rgb(234, 179, 8);    // Yellow
-export const muted = rgb(113, 113, 122);    // Gray
+export const success = rgb(34, 197, 94); // Green
+export const error = rgb(239, 68, 68); // Red
+export const warning = rgb(234, 179, 8); // Yellow
+export const muted = rgb(113, 113, 122); // Gray
 
 // Text styles
 export const bold = (text: string) => `${ESC}[1m${text}${ESC}[0m`;

@@ -10,8 +10,8 @@ import { getConfig } from "@veryfront/config";
 import { createDevServer } from "@veryfront/server/dev-server.ts";
 import { runAIConfigValidation } from "@veryfront/ai/utils/config-validator.ts";
 import { discoverAll } from "@veryfront/ai/utils/discovery.ts";
-import { exitProcess, registerTerminationSignals, isTTY } from "../utils/index.ts";
-import { createTui, interceptConsole, handleInput, brand, dim, success } from "../ui/index.ts";
+import { exitProcess, isTTY, registerTerminationSignals } from "../utils/index.ts";
+import { brand, createTui, dim, handleInput, interceptConsole, success } from "../ui/index.ts";
 
 export interface DevOptions {
   port: number;
@@ -42,7 +42,9 @@ export async function devCommand(options: DevOptions): Promise<DevCommandResult>
     config = await getConfig(projectDir, adapter);
   } catch (error) {
     if (error instanceof Error && error.message.includes("not found")) {
-      throw new VeryfrontError("No veryfront.config.js found", ErrorCode.CONFIG_ERROR, { projectDir });
+      throw new VeryfrontError("No veryfront.config.js found", ErrorCode.CONFIG_ERROR, {
+        projectDir,
+      });
     }
     throw error;
   }
@@ -82,9 +84,12 @@ export async function devCommand(options: DevOptions): Promise<DevCommandResult>
   // Auto-discover AI components
   try {
     const aiResult = await discoverAll({ baseDir: projectDir, verbose: false });
-    const total = aiResult.agents.size + aiResult.tools.size + aiResult.prompts.size + aiResult.resources.size;
+    const total = aiResult.agents.size + aiResult.tools.size + aiResult.prompts.size +
+      aiResult.resources.size;
     if (total > 0) {
-      log(`AI: ${aiResult.agents.size} agents, ${aiResult.tools.size} tools, ${aiResult.prompts.size} prompts`);
+      log(
+        `AI: ${aiResult.agents.size} agents, ${aiResult.tools.size} tools, ${aiResult.prompts.size} prompts`,
+      );
     }
   } catch {
     log("AI discovery skipped");
@@ -122,11 +127,15 @@ export async function devCommand(options: DevOptions): Promise<DevCommandResult>
       if (msg.includes("eaddrinuse") || msg.includes("address already in use")) {
         if (tui) {
           tui.setStatus(`Port ${finalPort} is already in use`, "error");
-          await new Promise(r => setTimeout(r, 2000));
+          await new Promise((r) => setTimeout(r, 2000));
           tui.cleanup();
           restoreConsole?.();
         }
-        throw new VeryfrontError(`Port ${finalPort} is already in use`, ErrorCode.INITIALIZATION_ERROR, { port: finalPort });
+        throw new VeryfrontError(
+          `Port ${finalPort} is already in use`,
+          ErrorCode.INITIALIZATION_ERROR,
+          { port: finalPort },
+        );
       }
     }
     throw error;
