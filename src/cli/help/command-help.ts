@@ -1,4 +1,3 @@
-import { cliLogger } from "@veryfront/utils";
 import { COMMANDS } from "./command-definitions.ts";
 import {
   calculateMaxLength,
@@ -10,39 +9,43 @@ import {
 } from "./formatters.ts";
 import { getCommandTips } from "./tips.ts";
 import { showMainHelp } from "./main-help.ts";
+import { error, muted } from "../ui/colors.ts";
 
 export function showCommandHelp(command: string): void {
   const cmd = COMMANDS[command];
   if (!cmd) {
-    cliLogger.error(`Unknown command: ${command}`);
+    console.log();
+    console.log("  " + error("✗") + ` Unknown command: ${command}`);
+    console.log();
     showMainHelp();
     return;
   }
 
-  cliLogger.info(formatCommandHeader(cmd.name));
-  cliLogger.info(`${cmd.description}\n`);
-  cliLogger.info(formatUsage(cmd.usage));
+  console.log(formatCommandHeader(cmd.name));
+  console.log("  " + muted(cmd.description));
+  console.log();
+  console.log(formatUsage(cmd.usage));
 
   if (cmd.options && cmd.options.length > 0) {
-    cliLogger.info(formatSectionHeader("Options"));
+    console.log("  " + formatSectionHeader("Options"));
     const maxLength = calculateMaxLength(cmd.options.map((o) => ({ length: o.flag.length })));
 
     for (const opt of cmd.options) {
-      cliLogger.info(formatOption(opt, maxLength));
+      console.log(formatOption(opt, maxLength));
     }
-    cliLogger.info("");
+    console.log();
   }
 
   if (cmd.examples && cmd.examples.length > 0) {
-    cliLogger.info(formatSectionHeader("Examples"));
+    console.log("  " + formatSectionHeader("Examples"));
     for (const example of cmd.examples) {
-      cliLogger.info(formatExample(example));
+      console.log(formatExample(example));
     }
-    cliLogger.info("");
+    console.log();
   }
 
   const tips = getCommandTips(command);
   if (tips) {
-    cliLogger.info(tips);
+    console.log(tips);
   }
 }

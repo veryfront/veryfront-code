@@ -191,24 +191,24 @@ Version: ${VERSION}
 }
 
 export function showVersion() {
-  cliLogger.info(`veryfront v${VERSION}`);
+  console.log(`  veryfront v${VERSION}`);
 }
 
-// Logging utilities
+// Logging utilities using new clean style
 export function logSuccess(message: string) {
-  cliLogger.info(`${green("✓")} ${message}`);
+  console.log(`  ${green("✓")} ${message}`);
 }
 
 export function logError(message: string) {
-  console.error(`${red("✗")} ${message}`);
+  console.error(`  ${red("✗")} ${message}`);
 }
 
 export function logWarning(message: string) {
-  console.warn(`${yellow("!")} ${message}`);
+  console.warn(`  ${yellow("!")} ${message}`);
 }
 
 export function logInfo(message: string) {
-  cliLogger.info(`${dim("›")} ${message}`);
+  console.log(`  ${dim("›")} ${message}`);
 }
 
 /**
