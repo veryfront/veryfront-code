@@ -10,6 +10,7 @@ import { bold, brand, dim, error, muted, success } from "../../ui/colors.ts";
 import { AnimatedDotMatrix } from "../../ui/dot-matrix.ts";
 import { HIDE_CURSOR, SHOW_CURSOR, typeCommand, typeLine } from "../../ui/animated-text.ts";
 import { successBanner } from "../../ui/components/banner.ts";
+import { formatDuration } from "../../ui/progress.ts";
 import { exitProcess, isTTY } from "../../utils/index.ts";
 import { readToken, saveToken, validateToken } from "../../auth/index.ts";
 import { canOpenBrowser, openBrowser } from "../../auth/browser.ts";
@@ -508,6 +509,64 @@ let autoMode = false;
 // Store actual slug after project creation (includes random suffix from newCommand)
 let actualProjectSlug: string | null = null;
 
+// Step timing tracking
+interface StepTiming {
+  startTime?: number;
+  endTime?: number;
+  duration?: number;
+}
+const stepTimings: Map<string, StepTiming> = new Map();
+
+function startStepTiming(stepId: string): void {
+  stepTimings.set(stepId, { startTime: Date.now() });
+}
+
+function endStepTiming(stepId: string): void {
+  const timing = stepTimings.get(stepId);
+  if (timing?.startTime) {
+    timing.endTime = Date.now();
+    timing.duration = timing.endTime - timing.startTime;
+  }
+}
+
+function getStepDuration(stepId: string): number | undefined {
+  return stepTimings.get(stepId)?.duration;
+}
+
+/**
+ * Render a progress indicator showing all steps
+ */
+function renderProgress(currentStepIndex: number, steps: DemoStep[]): string {
+  const lines: string[] = [];
+
+  for (let i = 0; i < steps.length; i++) {
+    const step = steps[i]!;
+    const duration = getStepDuration(step.id);
+
+    let icon: string;
+    let label: string;
+
+    if (i < currentStepIndex) {
+      // Completed
+      icon = success("✓");
+      const durationText = duration ? dim(` (${formatDuration(duration)})`) : "";
+      label = dim(step.title) + durationText;
+    } else if (i === currentStepIndex) {
+      // Current
+      icon = brand("●");
+      label = step.title;
+    } else {
+      // Pending
+      icon = muted("○");
+      label = muted(step.title);
+    }
+
+    lines.push(`  ${icon} ${label}`);
+  }
+
+  return lines.join("\n");
+}
+
 /**
  * Run the guided demo
  */
@@ -568,13 +627,26 @@ export async function demoCommand(options: DemoOptions = {}): Promise<void> {
       return;
     }
 
+    // Clear step timings for fresh run
+    stepTimings.clear();
+
     // Run through steps
     const total = DEMO_STEPS.length;
     for (let i = 0; i < DEMO_STEPS.length; i++) {
       const step = DEMO_STEPS[i]!;
 
-      // Display step
+      // Start timing this step
+      startStepTiming(step.id);
+
+      // Display step with progress indicator
       await displayStep(step, i + 1, total, projectName);
+
+      // Show progress indicator after step header
+      console.log();
+      console.log(dim("  ─────────────────────────────"));
+      console.log();
+      console.log(renderProgress(i, DEMO_STEPS));
+      console.log();
 
       if (step.hasAction) {
         // Wait for Enter before executing
@@ -586,6 +658,9 @@ export async function demoCommand(options: DemoOptions = {}): Promise<void> {
         console.log();
         await executeStepAction(step, projectName, loginMethod);
 
+        // End timing after action
+        endStepTiming(step.id);
+
         // Wait for Enter after action (unless skipPostWait)
         if (!step.skipPostWait && i < DEMO_STEPS.length - 1) {
           if (!(await waitForEnter("Press Enter to continue..."))) {
@@ -593,6 +668,9 @@ export async function demoCommand(options: DemoOptions = {}): Promise<void> {
           }
         }
       } else {
+        // End timing for non-action steps
+        endStepTiming(step.id);
+
         // No action - just wait for Enter to continue
         if (i < DEMO_STEPS.length - 1) {
           if (!(await waitForEnter("Press Enter to continue..."))) {

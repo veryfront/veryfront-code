@@ -164,6 +164,46 @@ export function isInteractive(): boolean {
 }
 
 /**
+ * Check if stdout is a TTY (terminal)
+ */
+export function isStdoutTTY(): boolean {
+  if (IS_DENO) {
+    return Deno.stdout.isTerminal();
+  }
+  if (hasNodeProcess) {
+    return nodeProcess!.stdout.isTTY ?? false;
+  }
+  return false;
+}
+
+/**
+ * Get terminal size (columns and rows)
+ * Returns default fallback values if terminal size cannot be determined
+ */
+export function getTerminalSize(): { columns: number; rows: number } {
+  const defaultSize = { columns: 80, rows: 24 };
+
+  if (IS_DENO) {
+    try {
+      const size = Deno.consoleSize();
+      return { columns: size.columns, rows: size.rows };
+    } catch {
+      return defaultSize;
+    }
+  }
+
+  if (hasNodeProcess && nodeProcess!.stdout) {
+    const cols = nodeProcess!.stdout.columns;
+    const rows = nodeProcess!.stdout.rows;
+    if (cols && rows) {
+      return { columns: cols, rows };
+    }
+  }
+
+  return defaultSize;
+}
+
+/**
  * Get network interfaces
  */
 export async function getNetworkInterfaces(): Promise<

@@ -6,7 +6,10 @@
  * - TrueColor (24-bit) support with graceful fallback
  * - Respects NO_COLOR environment variable
  * - Auto-detects terminal color capability
+ * - Runtime-agnostic: works on Deno, Node.js, and Bun
  */
+
+import { env as getEnvObject, isStdoutTTY } from "@veryfront/platform/compat/process.ts";
 
 const ESC = "\x1b";
 
@@ -20,16 +23,16 @@ export type ColorLevel = "truecolor" | "256" | "16" | "none";
  */
 export function getColorLevel(): ColorLevel {
   // Check NO_COLOR first (https://no-color.org/)
-  const env = Deno.env.toObject();
-  if (env.NO_COLOR !== undefined) return "none";
-  if (env.FORCE_COLOR === "0") return "none";
+  const envObj = getEnvObject();
+  if (envObj.NO_COLOR !== undefined) return "none";
+  if (envObj.FORCE_COLOR === "0") return "none";
 
   // Check TERM for dumb terminal
-  const term = env.TERM || "";
+  const term = envObj.TERM || "";
   if (term === "dumb") return "none";
 
   // FORCE_COLOR=1 or higher enables colors even in non-TTY
-  const forceColor = parseInt(env.FORCE_COLOR || "", 10);
+  const forceColor = parseInt(envObj.FORCE_COLOR || "", 10);
   if (forceColor >= 1) {
     if (forceColor >= 3) return "truecolor";
     if (forceColor >= 2) return "256";
@@ -37,21 +40,17 @@ export function getColorLevel(): ColorLevel {
   }
 
   // Check if not a TTY
-  try {
-    if (!Deno.stdout.isTerminal()) return "none";
-  } catch {
-    return "none";
-  }
+  if (!isStdoutTTY()) return "none";
 
   // Check for TrueColor support
-  const colorTerm = env.COLORTERM || "";
+  const colorTerm = envObj.COLORTERM || "";
   if (colorTerm === "truecolor" || colorTerm === "24bit") return "truecolor";
 
   // Check TERM for 256-color support
   if (term.includes("256color") || term.includes("256")) return "256";
 
   // Check for common terminals that support TrueColor
-  const termProgram = env.TERM_PROGRAM || "";
+  const termProgram = envObj.TERM_PROGRAM || "";
   if (
     termProgram === "iTerm.app" ||
     termProgram === "Apple_Terminal" ||

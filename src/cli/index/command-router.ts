@@ -5,7 +5,7 @@
  */
 
 import { handleError } from "@veryfront/errors";
-import { formatUserError } from "@veryfront/errors/user-friendly/index.ts";
+import { formatErrorBox } from "@veryfront/errors/user-friendly/index.ts";
 import { cliLogger, DEFAULT_DEV_SERVER_PORT, VERSION } from "@veryfront/utils";
 import { z } from "zod";
 import { analyzeChunksCommand } from "../commands/analyze-chunks.ts";
@@ -507,8 +507,11 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
         return;
     }
   } catch (error) {
-    const formattedError = error instanceof Error ? formatUserError(error) : String(error);
-    cliLogger.error(formattedError);
+    // Display polished error box
+    const formattedError = error instanceof Error ? formatErrorBox(error) : String(error);
+    console.log(); // Add spacing
+    console.log(formattedError);
+    console.log();
     if (!(error instanceof Error)) {
       handleError(new Error(String(error)));
     }
