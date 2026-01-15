@@ -234,6 +234,7 @@ describe(
             environment: "production" as const,
             isVeryfrontDomain: true,
             isDraft: false,
+            allowIframeEmbed: true,
           },
           releaseId: "release-456",
         };
@@ -253,6 +254,7 @@ describe(
             environment: "preview" as const,
             isVeryfrontDomain: true,
             isDraft: true,
+            allowIframeEmbed: true,
           },
           proxyEnvironment: "production" as const, // Even with production env, isDraft wins
           releaseId: "release-789",

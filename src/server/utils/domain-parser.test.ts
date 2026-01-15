@@ -171,3 +171,70 @@ Deno.test("getEffectiveProjectSlug", async (t) => {
     assertEquals(result.fromHost, false);
   });
 });
+
+Deno.test("branch extraction for preview URLs", async (t) => {
+  await t.step("extracts branch from veryfront.com preview URL", () => {
+    const result = parseProjectDomain("patient-rosalind-hltxd--foo.preview.veryfront.com");
+    assertEquals(result.slug, "patient-rosalind-hltxd");
+    assertEquals(result.branch, "foo");
+    assertEquals(result.environment, "preview");
+    assertEquals(result.isDraft, true);
+    assertEquals(result.isVeryfrontDomain, true);
+  });
+
+  await t.step("extracts branch from lvh.me preview URL", () => {
+    const result = parseProjectDomain("myproject--feature-branch.preview.lvh.me:8080");
+    assertEquals(result.slug, "myproject");
+    assertEquals(result.branch, "feature-branch");
+    assertEquals(result.environment, "preview");
+    assertEquals(result.isDraft, true);
+  });
+
+  await t.step("returns null branch when no double-dash separator", () => {
+    const result = parseProjectDomain("myproject.preview.veryfront.com");
+    assertEquals(result.slug, "myproject");
+    assertEquals(result.branch, null);
+    assertEquals(result.environment, "preview");
+  });
+
+  await t.step("handles branch with hyphens", () => {
+    const result = parseProjectDomain("project--fix-bug-123.preview.veryfront.com");
+    assertEquals(result.slug, "project");
+    assertEquals(result.branch, "fix-bug-123");
+  });
+
+  await t.step("handles branch from development base domain", () => {
+    const result = parseProjectDomain("myproject--experiment.lvh.me:3001");
+    assertEquals(result.slug, "myproject");
+    assertEquals(result.branch, "experiment");
+    assertEquals(result.environment, "development");
+  });
+});
+
+Deno.test("allowIframeEmbed", async (t) => {
+  await t.step("allows embed for veryfront domains", () => {
+    assertEquals(parseProjectDomain("myproject.veryfront.com").allowIframeEmbed, true);
+    assertEquals(parseProjectDomain("myproject.preview.veryfront.com").allowIframeEmbed, true);
+    assertEquals(parseProjectDomain("myproject.lvh.me").allowIframeEmbed, true);
+    assertEquals(parseProjectDomain("myproject.veryfront.me").allowIframeEmbed, true);
+  });
+
+  await t.step("allows embed for localhost", () => {
+    assertEquals(parseProjectDomain("localhost").allowIframeEmbed, true);
+    assertEquals(parseProjectDomain("localhost:3000").allowIframeEmbed, true);
+  });
+
+  await t.step("allows embed for xip.io and zip.io", () => {
+    assertEquals(parseProjectDomain("192.168.1.1.xip.io").allowIframeEmbed, true);
+    assertEquals(parseProjectDomain("myproject.zip.io").allowIframeEmbed, true);
+  });
+
+  await t.step("disallows embed for custom domains", () => {
+    assertEquals(parseProjectDomain("example.com").allowIframeEmbed, false);
+    assertEquals(parseProjectDomain("mysite.org").allowIframeEmbed, false);
+  });
+
+  await t.step("disallows embed for prod custom domain simulation", () => {
+    assertEquals(parseProjectDomain("example.com.prod.lvh.me").allowIframeEmbed, false);
+  });
+});

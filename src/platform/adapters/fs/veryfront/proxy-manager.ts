@@ -25,18 +25,20 @@ interface ProxyFSAdapterManagerConfig {
 
 /**
  * Generate cache key for adapter lookup.
- * Includes productionMode and releaseId to prevent race conditions between
- * concurrent requests with different modes/releases.
+ * Includes productionMode, releaseId, and branch to prevent race conditions between
+ * concurrent requests with different modes/releases/branches.
  */
 function buildCacheKey(
   projectSlug: string,
   productionMode: boolean,
   releaseId: string | null,
+  branch: string | null,
 ): string {
   if (productionMode) {
     return `${projectSlug}:production:${releaseId ?? "latest"}`;
   }
-  return `${projectSlug}:preview`;
+  // Include branch in preview cache key to support branch-specific previews
+  return `${projectSlug}:preview:${branch ?? "main"}`;
 }
 
 export class ProxyFSAdapterManager {
@@ -71,20 +73,28 @@ export class ProxyFSAdapterManager {
     productionMode?: boolean,
     releaseId?: string | null,
     environmentName?: string | null,
+    branch?: string | null,
   ): Promise<VeryfrontFSAdapter> {
     const effectiveToken = token || this.baseConfig.veryfront?.apiToken || "";
     const effectiveProductionMode = productionMode ?? false;
     const effectiveReleaseId = releaseId ?? null;
     const effectiveEnvironmentName = environmentName ?? null;
+    const effectiveBranch = branch ?? null;
 
-    // Cache key includes productionMode and releaseId to prevent race conditions
-    const cacheKey = buildCacheKey(projectSlug, effectiveProductionMode, effectiveReleaseId);
+    // Cache key includes productionMode, releaseId, and branch to prevent race conditions
+    const cacheKey = buildCacheKey(
+      projectSlug,
+      effectiveProductionMode,
+      effectiveReleaseId,
+      effectiveBranch,
+    );
 
     logger.debug("[ProxyFSAdapterManager] getAdapter called", {
       projectSlug,
       productionMode: effectiveProductionMode,
       releaseId: effectiveReleaseId,
       environmentName: effectiveEnvironmentName,
+      branch: effectiveBranch,
       cacheKey,
       hasExisting: this.adapters.has(cacheKey),
       totalCachedAdapters: this.adapters.size,
@@ -128,6 +138,7 @@ export class ProxyFSAdapterManager {
       effectiveProductionMode,
       effectiveReleaseId,
       effectiveEnvironmentName,
+      effectiveBranch,
     );
   }
 
@@ -139,6 +150,7 @@ export class ProxyFSAdapterManager {
     productionMode: boolean,
     releaseId: string | null,
     environmentName: string | null,
+    branch: string | null,
   ): Promise<VeryfrontFSAdapter> {
     const effectiveToken = token || this.baseConfig.veryfront?.apiToken;
 
@@ -148,6 +160,7 @@ export class ProxyFSAdapterManager {
       productionMode,
       releaseId,
       environmentName,
+      branch,
       totalCachedAdapters: this.adapters.size,
     });
 
@@ -179,11 +192,13 @@ export class ProxyFSAdapterManager {
     // Use actual environment name from API lookup instead of hardcoding "production"
     // This fixes the issue where API has environments named "Development" but we were looking for "production"
     const resolvedEnvironmentName = environmentName || "production";
+    // Use branch from URL or fall back to "main"
+    const resolvedBranch = branch ?? "main";
     const context: ResolvedContentContext = productionMode
       ? releaseId
         ? { sourceType: "release", projectSlug, releaseId }
         : { sourceType: "environment", projectSlug, environmentName: resolvedEnvironmentName }
-      : { sourceType: "branch", projectSlug, branch: "main" };
+      : { sourceType: "branch", projectSlug, branch: resolvedBranch };
 
     logger.debug("[ProxyFSAdapterManager] Setting content context for new adapter", {
       cacheKey,
@@ -267,8 +282,18 @@ export class ProxyFSAdapterManager {
     }
   }
 
-  hasAdapter(projectSlug: string, productionMode?: boolean, releaseId?: string | null): boolean {
-    const cacheKey = buildCacheKey(projectSlug, productionMode ?? false, releaseId ?? null);
+  hasAdapter(
+    projectSlug: string,
+    productionMode?: boolean,
+    releaseId?: string | null,
+    branch?: string | null,
+  ): boolean {
+    const cacheKey = buildCacheKey(
+      projectSlug,
+      productionMode ?? false,
+      releaseId ?? null,
+      branch ?? null,
+    );
     return this.adapters.has(cacheKey);
   }
 

@@ -45,14 +45,9 @@ import { VeryfrontAPIError } from "@veryfront/platform/adapters/veryfront-api-cl
 
 /**
  * Determine if request should serve production (released) content.
- * Priority: preview_mode param > config > veryfront domain isDraft flag > proxy environment header
+ * Priority: config > veryfront domain isDraft flag > proxy environment header
  */
-export function isProductionMode(ctx: HandlerContext, url?: URL): boolean {
-  // preview_mode=true forces preview/draft mode
-  if (url?.searchParams.get("preview_mode") === "true") {
-    return false;
-  }
-
+export function isProductionMode(ctx: HandlerContext, _url?: URL): boolean {
   // Config override (PRODUCTION_MODE env var)
   if (ctx.config?.fs?.veryfront?.productionMode === true) {
     return true;
@@ -197,14 +192,13 @@ export class SSRHandler extends BaseHandler {
     requestId: string,
     url: URL,
   ): Promise<HandlerResult> {
-    // Extract builder options before try block so they're available in catch handlers
+    // Extract studio_embed for Studio-specific features (bridge script, element selectors)
     const studioEmbed = url.searchParams.get("studio_embed") === "true";
-    const builderOptions = { studioEmbed };
 
     // Pre-render memory check - reject if memory is critically high to prevent OOM
     if (shouldRejectDueToMemory()) {
       const nonce = generateNonce();
-      const builder = this.createResponseBuilder(ctx, nonce, builderOptions);
+      const builder = this.createResponseBuilder(ctx, nonce);
       this.logDebug("Rejecting request due to memory pressure", { slug }, ctx);
 
       return this.respond(
@@ -341,7 +335,7 @@ export class SSRHandler extends BaseHandler {
       // (cached HTML has old nonces, but each request generates a fresh nonce for CSP)
       const cacheStrategy = ctx.mode === "development" ? "no-cache" : "short";
       const isHeadRequest = req.method.toUpperCase() === "HEAD";
-      const builder = this.createResponseBuilder(ctx, nonce, builderOptions);
+      const builder = this.createResponseBuilder(ctx, nonce);
 
       // For true streaming, skip ETag and return stream immediately for fast TTFB
       if (isTrueStreaming) {
@@ -419,7 +413,7 @@ export class SSRHandler extends BaseHandler {
 
         // Generate nonce for 404 response HTML
         const notFoundNonce = generateNonce();
-        const builder = this.createResponseBuilder(ctx, notFoundNonce, builderOptions);
+        const builder = this.createResponseBuilder(ctx, notFoundNonce);
 
         // Try App Router not-found.tsx first
         const notFoundResponse = await tryNotFoundFallback(req, slug, ctx, builder);
@@ -455,7 +449,7 @@ export class SSRHandler extends BaseHandler {
       // Check for API 404 errors from file LIST endpoints - means no content exists
       // This handles both:
       // - /environments/{name}/files (production mode, no release)
-      // - /branches/{name}/files (preview mode with preview_mode=true, no draft content)
+      // - /branches/{name}/files (preview mode, no draft content)
       // Important: Only match list endpoints, NOT individual file fetches (/files/{path})
       if (error instanceof VeryfrontAPIError && error.status === 404) {
         const errorDetails = error.details as { url?: string; responseText?: string } | undefined;
@@ -476,7 +470,7 @@ export class SSRHandler extends BaseHandler {
           }, ctx);
 
           const notDeployedNonce = generateNonce();
-          const builder = this.createResponseBuilder(ctx, notDeployedNonce, builderOptions);
+          const builder = this.createResponseBuilder(ctx, notDeployedNonce);
           const isHeadRequest = req.method.toUpperCase() === "HEAD";
 
           const body = isHeadRequest ? null : generateStyledErrorHtml(
@@ -509,7 +503,7 @@ export class SSRHandler extends BaseHandler {
 
       // Generate nonce for error response HTML
       const errorNonce = generateNonce();
-      const builder = this.createResponseBuilder(ctx, errorNonce, builderOptions);
+      const builder = this.createResponseBuilder(ctx, errorNonce);
       const isHead = req.method.toUpperCase() === "HEAD";
       const errorObj = error instanceof Error ? error : new Error(String(error));
 
