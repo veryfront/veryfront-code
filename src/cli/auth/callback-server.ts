@@ -95,9 +95,12 @@ function startDenoServer(port: number): CallbackServer {
       if (url.pathname === "/callback") {
         const { result, html } = handleCallback(url);
         resolveCallback!(result);
-        return new Response(html, { headers: { "Content-Type": "text/html; charset=utf-8" } });
+        // Close connection immediately to allow clean server shutdown
+        return new Response(html, {
+          headers: { "Content-Type": "text/html; charset=utf-8", Connection: "close" },
+        });
       }
-      return new Response("Not Found", { status: 404 });
+      return new Response("Not Found", { status: 404, headers: { Connection: "close" } });
     },
   );
 
@@ -109,7 +112,9 @@ function startDenoServer(port: number): CallbackServer {
       });
       return Promise.race([callbackPromise, timeout]);
     },
-    stop: () => server.shutdown(),
+    stop: async () => {
+      await server.shutdown();
+    },
   };
 }
 
