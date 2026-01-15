@@ -434,23 +434,40 @@ export class VeryfrontFSAdapter implements FSAdapter {
       count: changedPaths.length,
     });
 
-    // Only invalidate file content cache for changed files (all source type variants)
-    // Cache keys are structured as: file:{sourceType}:{projectSlug}:{qualifier}:{path}
+    // Invalidate file content, stat, and directory caches for changed files (all source type variants)
+    // Cache keys are structured as: {type}:{sourceType}:{projectSlug}:{qualifier}:{path}
     // e.g., file:branch:codersociety:main:components/HeroSection.tsx
     // Await Redis deletions to prevent stale data race conditions
     const deletionPromises: Promise<number>[] = [];
+    const parentDirs = new Set<string>();
+
     for (const path of changedPaths) {
-      // Delete all source type variants by matching prefix and path suffix
-      // Must match actual cache key prefixes from buildFileCacheKeyPrefix()
+      // Delete file content cache - all source type variants
       deletionPromises.push(this.cache.deleteByPrefixAndSuffixAsync("file:branch:", path));
       deletionPromises.push(this.cache.deleteByPrefixAndSuffixAsync("file:release:", path));
       deletionPromises.push(this.cache.deleteByPrefixAndSuffixAsync("file:env:", path));
+      // Delete stat cache - all source type variants
+      deletionPromises.push(this.cache.deleteByPrefixAndSuffixAsync("stat:branch:", path));
+      deletionPromises.push(this.cache.deleteByPrefixAndSuffixAsync("stat:release:", path));
+      deletionPromises.push(this.cache.deleteByPrefixAndSuffixAsync("stat:env:", path));
+      // Track parent directories for directory cache invalidation
+      const parentDir = path.substring(0, path.lastIndexOf("/")) || "/";
+      parentDirs.add(parentDir);
     }
+
+    // Invalidate parent directory caches (for new/deleted files)
+    for (const parentDir of parentDirs) {
+      deletionPromises.push(this.cache.deleteByPrefixAndSuffixAsync("dir:branch:", parentDir));
+      deletionPromises.push(this.cache.deleteByPrefixAndSuffixAsync("dir:release:", parentDir));
+      deletionPromises.push(this.cache.deleteByPrefixAndSuffixAsync("dir:env:", parentDir));
+    }
+
     await Promise.all(deletionPromises);
 
     logger.debug("[VeryfrontFSAdapter] Cache entries deleted for changed paths", {
       changedPaths,
-      prefixes: ["file:branch:", "file:release:", "file:env:"],
+      parentDirs: Array.from(parentDirs),
+      prefixes: ["file:", "stat:", "dir:"],
     });
 
     // Invalidate only the changed module paths (not all modules)
@@ -503,12 +520,37 @@ export class VeryfrontFSAdapter implements FSAdapter {
 
     // Step 1: Clear all caches and indexes (await Redis deletion to prevent stale data race)
     // Use Promise.all to run Redis deletions in parallel for better performance
-    const [textCount, contentCount, statCount, dirCount, filesListCount] = await Promise.all([
-      this.cache.deleteByPrefixAsync("file:text:"),
-      this.cache.deleteByPrefixAsync("file:content:"),
-      this.cache.deleteByPrefixAsync("file:stat:"),
-      this.cache.deleteByPrefixAsync("dir:entries:"),
-      this.cache.deleteByPrefixAsync("files:"),
+    // Cache key prefixes must match those in cache-keys.ts: file:{sourceType}:, stat:{sourceType}:, etc.
+    const [
+      fileBranchCount,
+      fileReleaseCount,
+      fileEnvCount,
+      statBranchCount,
+      statReleaseCount,
+      statEnvCount,
+      dirBranchCount,
+      dirReleaseCount,
+      dirEnvCount,
+      filesBranchCount,
+      filesReleaseCount,
+      filesEnvCount,
+    ] = await Promise.all([
+      // File content cache - all source types
+      this.cache.deleteByPrefixAsync("file:branch:"),
+      this.cache.deleteByPrefixAsync("file:release:"),
+      this.cache.deleteByPrefixAsync("file:env:"),
+      // Stat cache - all source types
+      this.cache.deleteByPrefixAsync("stat:branch:"),
+      this.cache.deleteByPrefixAsync("stat:release:"),
+      this.cache.deleteByPrefixAsync("stat:env:"),
+      // Directory cache - all source types
+      this.cache.deleteByPrefixAsync("dir:branch:"),
+      this.cache.deleteByPrefixAsync("dir:release:"),
+      this.cache.deleteByPrefixAsync("dir:env:"),
+      // File list cache - all source types
+      this.cache.deleteByPrefixAsync("files:branch:"),
+      this.cache.deleteByPrefixAsync("files:release:"),
+      this.cache.deleteByPrefixAsync("files:env:"),
     ]);
     this.statOps.clearIndex();
     this.dirOps.clearTree();
@@ -517,12 +559,16 @@ export class VeryfrontFSAdapter implements FSAdapter {
     this.invalidationCallbacks.clearModulePathCache?.();
     this.invalidationCallbacks.clearSnippetCache?.();
 
+    const totalFileCount = fileBranchCount + fileReleaseCount + fileEnvCount;
+    const totalStatCount = statBranchCount + statReleaseCount + statEnvCount;
+    const totalDirCount = dirBranchCount + dirReleaseCount + dirEnvCount;
+    const totalFilesListCount = filesBranchCount + filesReleaseCount + filesEnvCount;
+
     logger.debug("[VeryfrontFSAdapter] CACHES CLEARED (memory + Redis)", {
-      textCacheCleared: textCount,
-      contentCacheCleared: contentCount,
-      statCacheCleared: statCount,
-      dirCacheCleared: dirCount,
-      filesListCacheCleared: filesListCount,
+      fileCacheCleared: totalFileCount,
+      statCacheCleared: totalStatCount,
+      dirCacheCleared: totalDirCount,
+      filesListCacheCleared: totalFilesListCount,
     });
 
     // Step 2: Fetch fresh file list from API - this blocks until API has committed changes
@@ -550,8 +596,10 @@ export class VeryfrontFSAdapter implements FSAdapter {
     this.invalidationCallbacks.triggerReload?.();
 
     logger.debug("[VeryfrontFSAdapter] CACHE INVALIDATION COMPLETE", {
-      textCacheCleared: textCount,
-      contentCacheCleared: contentCount,
+      fileCacheCleared: totalFileCount,
+      statCacheCleared: totalStatCount,
+      dirCacheCleared: totalDirCount,
+      filesListCacheCleared: totalFilesListCount,
       durationMs: Date.now() - startTime,
       totalInvalidations: this.pokeMetrics.invalidationsTriggered,
     });
