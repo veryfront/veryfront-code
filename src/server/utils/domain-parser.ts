@@ -147,7 +147,8 @@ const ALL_DOMAINS = `${LOCAL_DEV_DOMAINS}|${PROD_DOMAINS}`;
 export function isVeryfrontDomain(host: string): boolean {
   const domain = host.replace(/:\d+$/, "");
   const pattern = new RegExp(`^[a-zA-Z0-9-]+(\\.[a-zA-Z0-9-]+)*\\.(${ALL_DOMAINS})$`);
-  return pattern.test(domain) || domain === "veryfront.me" || domain === "veryfront.dev" || domain === "lvh.me";
+  return pattern.test(domain) || domain === "veryfront.me" || domain === "veryfront.dev" ||
+    domain === "lvh.me";
 }
 
 /**
