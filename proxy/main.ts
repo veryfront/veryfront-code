@@ -276,6 +276,72 @@ async function handleStats(): Promise<Response> {
   });
 }
 
+/**
+ * Proxy API requests directly to Veryfront API (BFF pattern).
+ * Routes: /_vf/api/* -> api.veryfront.com/*
+ */
+async function handleApiProxy(req: Request): Promise<Response> {
+  const url = new URL(req.url);
+  const host = req.headers.get("host") || "";
+  const parsed = parseProjectDomain(host);
+  const scope = getScope(parsed.environment);
+
+  // Get token
+  let token = "";
+  if (scope === "preview") {
+    const cookieHeader = req.headers.get("cookie") || "";
+    const authTokenMatch = cookieHeader.match(/(?:^|;\s*)authToken=([^;]+)/);
+    if (authTokenMatch?.[1]) {
+      token = decodeURIComponent(authTokenMatch[1]);
+    }
+  }
+  if (!token && config.clientId && config.clientSecret) {
+    try {
+      token = await tokenManager.getToken(scope);
+    } catch (error) {
+      proxyLogger.error("Token fetch failed for API proxy", error as Error);
+    }
+  }
+
+  if (!token) {
+    return new Response(JSON.stringify({ error: "No authentication token" }), {
+      status: 401,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
+  // Strip /_vf/api prefix and forward to API
+  const apiPath = url.pathname.replace(/^\/_vf\/api/, "");
+  const apiUrl = `${config.apiBaseUrl}${apiPath}${url.search}`;
+
+  try {
+    const response = await fetch(apiUrl, {
+      method: req.method,
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: "application/json",
+        "Content-Type": req.headers.get("Content-Type") || "application/json",
+      },
+      body: req.method !== "GET" && req.method !== "HEAD" ? req.body : undefined,
+    });
+
+    return new Response(response.body, {
+      status: response.status,
+      statusText: response.statusText,
+      headers: {
+        "Content-Type": response.headers.get("Content-Type") || "application/json",
+        "Cache-Control": "no-cache",
+      },
+    });
+  } catch (error) {
+    proxyLogger.error("API proxy error", error as Error);
+    return new Response(
+      JSON.stringify({ error: error instanceof Error ? error.message : "API request failed" }),
+      { status: 502, headers: { "Content-Type": "application/json" } },
+    );
+  }
+}
+
 function router(req: Request): Promise<Response> {
   const url = new URL(req.url);
 
@@ -285,6 +351,11 @@ function router(req: Request): Promise<Response> {
 
   if (url.pathname === "/_proxy/health") {
     return Promise.resolve(new Response("OK", { status: 200 }));
+  }
+
+  // BFF: Proxy API requests directly to Veryfront API
+  if (url.pathname.startsWith("/_vf/api/")) {
+    return handleApiProxy(req);
   }
 
   return handleRequest(req);

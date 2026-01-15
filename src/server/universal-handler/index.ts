@@ -97,7 +97,7 @@ import { HMRHandler } from "../handlers/preview/hmr-handler.ts";
 import { OpenAPIHandler } from "../handlers/request/openapi-handler.ts";
 import { OpenAPIDocsHandler } from "../handlers/request/openapi-docs-handler.ts";
 import { DevDashboardHandler } from "../handlers/dev/dashboard/index.ts";
-import { MultiProjectLandingHandler } from "../handlers/dev/multi-project-landing.ts";
+import { ProjectsHandler } from "../handlers/dev/projects/index.ts";
 
 /** Valid proxy environment values */
 const VALID_PROXY_ENVIRONMENTS = ["preview", "production"] as const;
@@ -191,7 +191,7 @@ export function createVeryfrontHandler(
     new OpenAPIHandler(), // Priority: 300 (HIGH, serves /_openapi.json)
     new OpenAPIDocsHandler(), // Priority: 300 (HIGH, serves /_docs with Scalar UI)
     new DevDashboardHandler(), // Priority: 300 (HIGH, dev only - unified dev dashboard at /_dev)
-    new MultiProjectLandingHandler(), // Priority: HIGH (multi-project mode landing page)
+    new ProjectsHandler(), // Priority: HIGH (multi-project mode landing page with React UI)
     new StudioEndpointsHandler(), // Priority: 300 (HIGH, Studio iframe scripts)
     new DevFileHandler(), // Priority: 400 (dev only)
     new SnippetHandler(), // Priority: 450 (before static, handles @/ component previews)
