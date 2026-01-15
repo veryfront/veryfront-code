@@ -34,8 +34,8 @@ export async function openBrowser(url: string): Promise<void> {
       stdout: "null",
       stderr: "null",
     });
-    const proc = command.spawn();
-    proc.unref();
+    // Wait for the command to complete (open returns quickly after launching browser)
+    await command.output();
   } else {
     const { spawn } = await import("node:child_process");
     const child = spawn(cmd, [...args, url], {
