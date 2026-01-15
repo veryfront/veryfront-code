@@ -1,13 +1,13 @@
 import { useEffect, useState } from "react";
 import { Header } from "./components/Header.tsx";
 import { TabNav } from "./components/TabNav.tsx";
-import { MCPTab } from "./components/MCPTab.tsx";
-import { AgentsTab } from "./components/AgentsTab.tsx";
+import { AITab } from "./components/AITab.tsx";
+import { ServerTab } from "./components/ServerTab.tsx";
+import { RuntimeTab } from "./components/RuntimeTab.tsx";
 import { FilesTab } from "./components/FilesTab.tsx";
-import { HandlersTab } from "./components/HandlersTab.tsx";
-import { MetricsTab } from "./components/MetricsTab.tsx";
+import { ErrorsTab } from "./components/ErrorsTab.tsx";
+import { ConfigTab } from "./components/ConfigTab.tsx";
 import { APITab } from "./components/APITab.tsx";
-import { DebugTab } from "./components/DebugTab.tsx";
 
 export interface Tool {
   id: string;
@@ -33,9 +33,8 @@ export interface Agent {
   id: string;
   description: string;
   model: string;
+  system: string | null;
   tools: Record<string, boolean>;
-  prompts: Record<string, boolean>;
-  resources: Record<string, boolean>;
   memory: { type: string; maxTokens: number } | null;
   streaming: boolean;
   maxSteps: number | null;
@@ -54,45 +53,28 @@ export interface Handler {
   enabled: string;
 }
 
-export interface Stats {
-  mcp: { tools: number; resources: number; prompts: number; total: number };
-  agents: number;
-}
-
-export type TabId = "mcp" | "agents" | "files" | "handlers" | "metrics" | "api" | "debug";
+export type TabId = "ai" | "server" | "runtime" | "files" | "errors" | "config" | "api";
 
 const TABS: { id: TabId; label: string }[] = [
-  { id: "mcp", label: "MCP" },
-  { id: "agents", label: "Agents" },
+  { id: "ai", label: "AI" },
+  { id: "server", label: "Server" },
+  { id: "runtime", label: "Runtime" },
   { id: "files", label: "Files" },
-  { id: "handlers", label: "Handlers" },
-  { id: "metrics", label: "Metrics" },
+  { id: "errors", label: "Errors" },
+  { id: "config", label: "Config" },
   { id: "api", label: "API" },
-  { id: "debug", label: "Debug" },
 ];
 
 export function App() {
-  const [currentTab, setCurrentTab] = useState<TabId>("mcp");
-  const [stats, setStats] = useState<Stats | null>(null);
+  const [currentTab, setCurrentTab] = useState<TabId>("ai");
   const [tools, setTools] = useState<Tool[]>([]);
   const [resources, setResources] = useState<Resource[]>([]);
   const [prompts, setPrompts] = useState<Prompt[]>([]);
   const [agents, setAgents] = useState<Agent[]>([]);
 
   useEffect(() => {
-    fetchStats();
     fetchData();
   }, []);
-
-  async function fetchStats() {
-    try {
-      const res = await fetch("/_dev/api/stats");
-      const data = await res.json();
-      setStats(data);
-    } catch (e) {
-      console.error("Failed to fetch stats:", e);
-    }
-  }
 
   async function fetchData() {
     try {
@@ -111,33 +93,21 @@ export function App() {
     }
   }
 
-  function navigateToMCP(subTab: "tools" | "resources" | "prompts", itemId: string) {
-    setCurrentTab("mcp");
-    // Pass down to MCP tab via key change to trigger selection
-    globalThis.dispatchEvent(new CustomEvent("mcp-navigate", { detail: { subTab, itemId } }));
-  }
-
   return (
     <div className="min-h-screen bg-gray-50">
-      <Header stats={stats} />
+      <Header />
       <TabNav tabs={TABS} currentTab={currentTab} onTabChange={setCurrentTab} />
 
       <div className="tab-content">
-        {currentTab === "mcp" && <MCPTab tools={tools} resources={resources} prompts={prompts} />}
-        {currentTab === "agents" && (
-          <AgentsTab
-            agents={agents}
-            tools={tools}
-            resources={resources}
-            prompts={prompts}
-            onNavigateToMCP={navigateToMCP}
-          />
+        {currentTab === "ai" && (
+          <AITab tools={tools} resources={resources} prompts={prompts} agents={agents} />
         )}
+        {currentTab === "server" && <ServerTab />}
+        {currentTab === "runtime" && <RuntimeTab />}
         {currentTab === "files" && <FilesTab />}
-        {currentTab === "handlers" && <HandlersTab />}
-        {currentTab === "metrics" && <MetricsTab />}
+        {currentTab === "errors" && <ErrorsTab />}
+        {currentTab === "config" && <ConfigTab />}
         {currentTab === "api" && <APITab />}
-        {currentTab === "debug" && <DebugTab />}
       </div>
     </div>
   );

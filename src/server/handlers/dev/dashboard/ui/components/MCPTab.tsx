@@ -71,12 +71,76 @@ export function MCPTab({ tools, resources, prompts }: MCPTabProps) {
   return <TwoColumnLayout sidebar={sidebar}>{renderDetail()}</TwoColumnLayout>;
 }
 
+/**
+ * Generate example values from a JSON schema
+ */
+function generateExampleFromSchema(schema: Tool["schema"]): Record<string, unknown> {
+  if (!schema?.properties) return {};
+
+  const example: Record<string, unknown> = {};
+
+  for (const [name, prop] of Object.entries(schema.properties)) {
+    const propDef = prop as {
+      type?: string;
+      default?: unknown;
+      enum?: unknown[];
+      description?: string;
+    };
+
+    // Use default value if available
+    if (propDef.default !== undefined) {
+      example[name] = propDef.default;
+      continue;
+    }
+
+    // Use first enum value if available
+    if (propDef.enum && propDef.enum.length > 0) {
+      example[name] = propDef.enum[0];
+      continue;
+    }
+
+    // Generate example based on type
+    switch (propDef.type) {
+      case "string":
+        example[name] = `example-${name}`;
+        break;
+      case "number":
+      case "integer":
+        example[name] = 1;
+        break;
+      case "boolean":
+        example[name] = true;
+        break;
+      case "array":
+        example[name] = [];
+        break;
+      case "object":
+        example[name] = {};
+        break;
+      default:
+        example[name] = null;
+    }
+  }
+
+  return example;
+}
+
 function ToolDetail({ tool }: { tool: Tool }) {
-  const [args, setArgs] = useState("{}");
+  const [args, setArgs] = useState(() => {
+    const example = generateExampleFromSchema(tool.schema);
+    return JSON.stringify(example, null, 2);
+  });
   const [result, setResult] = useState<
     { success: boolean; data: string; duration?: number } | null
   >(null);
   const [loading, setLoading] = useState(false);
+
+  // Update args when tool changes
+  useEffect(() => {
+    const example = generateExampleFromSchema(tool.schema);
+    setArgs(JSON.stringify(example, null, 2));
+    setResult(null);
+  }, [tool.id]);
 
   async function execute() {
     let parsed;

@@ -17,20 +17,26 @@ import {
   waitForApproval,
   workflow,
 } from "veryfront/ai/workflow";
+import { z } from "zod";
 
 /**
- * Input for the content pipeline
+ * Input schema for the content pipeline
  */
-export interface ContentPipelineInput {
+const contentPipelineInputSchema = z.object({
   /** Topic to create content about */
-  topic: string;
+  topic: z.string().describe("Topic to create content about"),
   /** Target audience */
-  audience?: string;
+  audience: z.string().optional().describe("Target audience"),
   /** Whether approval is required before publishing */
-  requiresApproval: boolean;
+  requiresApproval: z.boolean().default(true).describe("Whether approval is required"),
   /** Content format */
-  format?: "blog" | "social" | "newsletter";
-}
+  format: z.enum(["blog", "social", "newsletter"]).optional().default("blog").describe("Content format"),
+});
+
+/**
+ * Input type (inferred from schema)
+ */
+export type ContentPipelineInput = z.infer<typeof contentPipelineInputSchema>;
 
 /**
  * Output from the content pipeline
@@ -61,6 +67,7 @@ export const contentPipeline = workflow<ContentPipelineInput, ContentPipelineOut
   id: "content-pipeline",
   description: "Multi-step content generation with human approval",
   version: "1.0.0",
+  inputSchema: contentPipelineInputSchema,
 
   steps: ({ input }) => [
     // Step 1: Research the topic

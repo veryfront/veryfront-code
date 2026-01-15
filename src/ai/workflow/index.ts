@@ -193,6 +193,13 @@ export { createWorkflowClient, WorkflowClient } from "./api/index.ts";
 export type { WorkflowClientConfig } from "./api/index.ts";
 
 // =============================================================================
+// Workflow Registry (for discovery/dev tools)
+// =============================================================================
+export { getAllWorkflowIds, getWorkflow, registerWorkflow, workflowRegistry } from "./registry.ts";
+
+export type { WorkflowMetadata } from "./registry.ts";
+
+// =============================================================================
 // Adapter Backends (for external workflow engines)
 // =============================================================================
 export { TemporalAdapter } from "./backends/temporal.ts";

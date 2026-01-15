@@ -6,6 +6,8 @@ import type { Tool } from "../types/tool.ts";
 import type { Prompt, Resource } from "../types/mcp.ts";
 import type { Agent } from "../types/agent.ts";
 import { registerAgent } from "../agent/composition.ts";
+import { registerWorkflow, type WorkflowMetadata } from "../workflow/registry.ts";
+import type { Workflow } from "../workflow/dsl/workflow.ts";
 import { agentLogger } from "@veryfront/utils/logger/logger.ts";
 import { getConfig } from "@veryfront/config/loader.ts";
 import { createMockAdapter } from "@veryfront/platform/adapters/mock.ts";
@@ -385,6 +387,7 @@ export interface DiscoveryConfig {
   agentDirs?: string[];
   resourceDirs?: string[];
   promptDirs?: string[];
+  workflowDirs?: string[];
   verbose?: boolean;
   fsAdapter?: FileSystemAdapter;
 }
@@ -394,6 +397,7 @@ export interface DiscoveryResult {
   agents: Map<string, Agent>;
   resources: Map<string, Resource>;
   prompts: Map<string, Prompt>;
+  workflows: Map<string, Workflow>;
   errors: Array<{ file: string; error: Error }>;
 }
 
@@ -424,6 +428,7 @@ export async function discoverAll(
     agents: new Map(),
     resources: new Map(),
     prompts: new Map(),
+    workflows: new Map(),
     errors: [],
   };
 
@@ -445,6 +450,11 @@ export async function discoverAll(
   const promptDirs = config.promptDirs || [`${aiDir}/prompts`];
   for (const dir of promptDirs) {
     await discoverPrompts(`${baseDir}/${dir}`, result, context, config.verbose);
+  }
+
+  const workflowDirs = config.workflowDirs || [`${aiDir}/workflows`];
+  for (const dir of workflowDirs) {
+    await discoverWorkflows(`${baseDir}/${dir}`, result, context, config.verbose);
   }
 
   return result;
@@ -553,6 +563,23 @@ const promptHandler: DiscoveryHandler<Prompt> = {
   getResultMap: (result) => result.prompts,
 };
 
+const workflowHandler: DiscoveryHandler<Workflow> = {
+  typeName: "workflow",
+  validate: (item): item is Workflow =>
+    item !== null &&
+    typeof item === "object" &&
+    "definition" in item &&
+    "id" in item &&
+    typeof (item as Workflow).id === "string",
+  getId: (workflow) => workflow.id,
+  register: (_id, workflow) => {
+    // workflow() DSL already auto-registers, but ensure it's registered
+    registerWorkflow(workflow);
+    return workflow;
+  },
+  getResultMap: (result) => result.workflows,
+};
+
 function discoverTools(
   dir: string,
   result: DiscoveryResult,
@@ -587,6 +614,15 @@ function discoverPrompts(
   verbose?: boolean,
 ): Promise<void> {
   return discoverItems(dir, result, context, promptHandler, verbose);
+}
+
+function discoverWorkflows(
+  dir: string,
+  result: DiscoveryResult,
+  context: FileDiscoveryContext,
+  verbose?: boolean,
+): Promise<void> {
+  return discoverItems(dir, result, context, workflowHandler, verbose);
 }
 
 async function findTypeScriptFiles(
