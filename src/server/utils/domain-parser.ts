@@ -22,6 +22,8 @@ export interface ParsedDomain {
   environment: "preview" | "development" | "staging" | "production" | null;
   isVeryfrontDomain: boolean;
   isDraft: boolean;
+  /** Whether this domain allows iframe embedding (veryfront, localhost, xip.io, zip.io) */
+  allowIframeEmbed: boolean;
 }
 
 type Environment = ParsedDomain["environment"];
@@ -53,9 +55,21 @@ function createParsedDomain(
   environment: Environment,
   isVeryfrontDomain: boolean,
   isDraft: boolean,
+  allowIframeEmbed?: boolean,
 ): ParsedDomain {
-  return { slug, branch, environment, isVeryfrontDomain, isDraft };
+  return {
+    slug,
+    branch,
+    environment,
+    isVeryfrontDomain,
+    isDraft,
+    // Default to isVeryfrontDomain if not explicitly set
+    allowIframeEmbed: allowIframeEmbed ?? isVeryfrontDomain,
+  };
 }
+
+// Domains that allow iframe embedding but aren't veryfront domains
+const IFRAME_EMBED_DOMAINS = /^(localhost|.*\.xip\.io|.*\.zip\.io)$/i;
 
 /**
  * Extract project slug and branch from domain/host header
@@ -63,6 +77,12 @@ function createParsedDomain(
 export function parseProjectDomain(host: string): ParsedDomain {
   // Remove port if present
   const domain = host.replace(/:\d+$/, "");
+
+  // Check for localhost and wildcard DNS services (xip.io, zip.io)
+  // These allow iframe embedding but aren't veryfront domains
+  if (IFRAME_EMBED_DOMAINS.test(domain)) {
+    return createParsedDomain(null, null, "development", false, true, true);
+  }
 
   // Local development preview: {slug}.preview.{lvh.me|veryfront.dev}
   const localPreviewMatch = domain.match(

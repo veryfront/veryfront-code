@@ -15,7 +15,7 @@ export interface FluentMethodsContext {
   nonce: string;
   cspUserHeader: string | null;
   adapter: import("@veryfront/platform/adapters/base.ts").RuntimeAdapter | undefined;
-  studioEmbed: boolean;
+  isVeryfrontDomain: boolean;
 }
 
 /** Apply CORS headers based on configuration */
@@ -58,7 +58,7 @@ export function withSecurity<T extends FluentMethodsContext>(
     this.cspUserHeader,
     cfg,
     this.adapter,
-    this.studioEmbed,
+    this.isVeryfrontDomain,
   );
   return this;
 }

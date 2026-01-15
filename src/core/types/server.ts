@@ -12,6 +12,8 @@ export interface ParsedDomain {
   isVeryfrontDomain: boolean;
   /** Whether this is a draft (preview) environment */
   isDraft: boolean;
+  /** Whether this domain allows iframe embedding (veryfront, localhost, xip.io, zip.io) */
+  allowIframeEmbed: boolean;
 }
 
 export interface SecurityConfig {

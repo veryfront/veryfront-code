@@ -146,6 +146,7 @@ export class MultiProjectFSAdapter implements FSAdapter {
       productionMode,
       releaseId,
       environmentName,
+      context.branch,
     );
   }
 

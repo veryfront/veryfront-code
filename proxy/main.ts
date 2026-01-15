@@ -76,9 +76,7 @@ function handleWebSocketUpgrade(req: Request): Response {
   const url = new URL(req.url);
   const host = req.headers.get("host") || "";
   const parsed = parseProjectDomain(host);
-  // Use preview mode when preview_mode=true
-  const isPreviewMode = url.searchParams.get("preview_mode") === "true";
-  const scope = isPreviewMode ? "preview" : getScope(parsed.environment);
+  const scope = getScope(parsed.environment);
   const projectSlug = parsed.slug || undefined;
 
   proxyLogger.info("WebSocket upgrade request", {
@@ -185,16 +183,12 @@ function handleRequest(req: Request): Promise<Response> {
   const execute = async (): Promise<Response> => {
     try {
       const parsed = parseProjectDomain(host);
-      // Use preview mode when preview_mode=true
-      // This ensures custom domains use draft content when requested
-      const isPreviewMode = url.searchParams.get("preview_mode") === "true";
-      const scope = isPreviewMode ? "preview" : getScope(parsed.environment);
+      const scope = getScope(parsed.environment);
       const projectSlug = parsed.slug || undefined;
 
       const reqLogger = proxyLogger.child({
         project: projectSlug,
         env: scope,
-        ...(isPreviewMode && { preview: true }),
       });
 
       reqLogger.debug("Request received", {
