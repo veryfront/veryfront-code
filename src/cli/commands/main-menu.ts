@@ -3,32 +3,26 @@
  */
 
 import { isTTY } from "../utils/index.ts";
+import { bold, brand, muted } from "../ui/colors.ts";
 
 // ============================================================================
-// ANSI Helpers
+// Terminal Control
 // ============================================================================
 
 const ESC = "\x1b";
-const rgb = (r: number, g: number, b: number) => (t: string) =>
-  `${ESC}[38;2;${r};${g};${b}m${t}${ESC}[0m`;
+const HIDE_CURSOR = `${ESC}[?25l`;
+const SHOW_CURSOR = `${ESC}[?25h`;
+const CLEAR_LINE = `${ESC}[2K`;
+const COL_1 = `${ESC}[1G`;
+const moveUp = (n = 1) => `${ESC}[${n}A`;
 
-const BRAND = rgb(0, 163, 244);
-const DIM = rgb(113, 113, 122);
-const BOLD = (t: string) => `${ESC}[1m${t}${ESC}[0m`;
-
-const hide = `${ESC}[?25l`;
-const show = `${ESC}[?25h`;
-const up = (n = 1) => `${ESC}[${n}A`;
-const clearLine = `${ESC}[2K`;
-const col1 = `${ESC}[1G`;
-
-function write(s: string) {
+function write(s: string): void {
   Deno.stdout.writeSync(new TextEncoder().encode(s));
 }
 
-function clear(n: number) {
-  for (let i = 0; i < n; i++) write(up() + clearLine);
-  write(col1);
+function clearLines(n: number): void {
+  for (let i = 0; i < n; i++) write(moveUp() + CLEAR_LINE);
+  write(COL_1);
 }
 
 // ============================================================================
@@ -119,19 +113,19 @@ export async function promptProjectName(): Promise<string | null> {
   let lines = 0;
 
   function draw() {
-    if (lines > 0) clear(lines);
+    if (lines > 0) clearLines(lines);
     console.log();
-    console.log("  " + BOLD("Project name") + " " + DIM("(Enter to accept default)"));
+    console.log("  " + bold("Project name") + " " + muted("(Enter to accept default)"));
     if (input.length === 0) {
       // Show default as placeholder
-      console.log("  " + BRAND("❯") + " " + DIM(defaultName) + BRAND("█"));
+      console.log("  " + brand("❯") + " " + muted(defaultName) + brand("█"));
     } else {
-      console.log("  " + BRAND("❯") + " " + input + BRAND("█"));
+      console.log("  " + brand("❯") + " " + input + brand("█"));
     }
     lines = 3;
   }
 
-  write(hide);
+  write(HIDE_CURSOR);
   draw();
 
   Deno.stdin.setRaw(true);
@@ -178,12 +172,12 @@ export async function promptProjectName(): Promise<string | null> {
     Deno.stdin.setRaw(false);
   }
 
-  write(show);
-  clear(lines);
+  write(SHOW_CURSOR);
+  clearLines(lines);
 
   if (result) {
     console.log();
-    console.log("  " + BOLD("Project name") + " " + BRAND(result));
+    console.log("  " + bold("Project name") + " " + brand(result));
     console.log();
   }
 
@@ -199,11 +193,11 @@ export async function showMainMenu(): Promise<MenuAction | null> {
   let lines = 0;
 
   function draw() {
-    if (lines > 0) clear(lines);
+    if (lines > 0) clearLines(lines);
 
     // Header
     console.log();
-    console.log("  " + BOLD(BRAND("Veryfront")));
+    console.log("  " + bold(brand("Veryfront")));
     console.log();
     lines = 3;
 
@@ -212,19 +206,19 @@ export async function showMainMenu(): Promise<MenuAction | null> {
       const opt = MENU_OPTIONS[i];
       if (!opt) continue;
       const sel = i === idx;
-      const pointer = sel ? BRAND("❯") : " ";
-      const label = sel ? BRAND(opt.label) : opt.label;
-      const desc = DIM(opt.desc);
+      const pointer = sel ? brand("❯") : " ";
+      const label = sel ? brand(opt.label) : opt.label;
+      const desc = muted(opt.desc);
       console.log(`  ${pointer} ${label}  ${desc}`);
       lines++;
     }
 
     console.log();
-    console.log("  " + DIM("↑↓ navigate  ⏎ select  q quit"));
+    console.log("  " + muted("↑↓ navigate  ⏎ select  q quit"));
     lines += 2;
   }
 
-  write(hide);
+  write(HIDE_CURSOR);
   draw();
 
   Deno.stdin.setRaw(true);
@@ -269,15 +263,15 @@ export async function showMainMenu(): Promise<MenuAction | null> {
     Deno.stdin.setRaw(false);
   }
 
-  write(show);
-  clear(lines);
+  write(SHOW_CURSOR);
+  clearLines(lines);
 
   // Show selection
   if (result && result !== "exit") {
     const selected = MENU_OPTIONS.find((o) => o.id === result);
     if (selected) {
       console.log();
-      console.log("  " + BOLD(BRAND("Veryfront")) + "  " + BRAND(selected.label));
+      console.log("  " + bold(brand("Veryfront")) + "  " + brand(selected.label));
       console.log();
     }
   }
