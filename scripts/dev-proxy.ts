@@ -36,6 +36,19 @@ function c(color: string, text: string): string {
   return shouldUseColor() ? `${color}${text}${ANSI.reset}` : text;
 }
 
+// Clear module caches on startup to prevent stale transform issues
+// See: https://github.com/veryfront/veryfront-renderer/issues/79
+async function clearModuleCaches(): Promise<void> {
+  const cacheDirs = [".cache/veryfront-mdx-esm", ".cache/veryfront-modules"];
+  for (const dir of cacheDirs) {
+    try {
+      await Deno.remove(dir, { recursive: true });
+    } catch {
+      // Directory doesn't exist, ignore
+    }
+  }
+}
+
 // Check for --single flag
 const args = Deno.args.filter(arg => arg !== "--single");
 const isSingleMode = Deno.args.includes("--single");
@@ -63,6 +76,9 @@ try {
   console.error(c(ANSI.dim, "error:"), "Missing .env - copy from .env.example");
   Deno.exit(1);
 }
+
+// Clear stale module caches on startup
+await clearModuleCaches();
 
 // Start proxy (info level to show request logs)
 const proxyEnv = {

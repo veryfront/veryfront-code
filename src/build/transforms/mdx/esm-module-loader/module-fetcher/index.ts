@@ -11,6 +11,7 @@ import { join, posix } from "https://deno.land/std@0.220.0/path/mod.ts";
 import { rendererLogger as logger } from "@veryfront/utils";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import { transformToESM } from "../../../esm-transform.ts";
+import { TRANSFORM_CACHE_VERSION } from "../../../esm/package-registry.ts";
 import {
   LOG_PREFIX_MDX_LOADER,
   RELATIVE_IMPORT_PATTERN,
@@ -31,6 +32,10 @@ const inFlight = new Map<string, Promise<string | null>>();
 
 function getPathCacheKey(projectId: string, normalizedPath: string): string {
   return `${encodeURIComponent(projectId)}:${normalizedPath}`;
+}
+
+function getVersionedPathCacheKey(normalizedPath: string): string {
+  return `v${TRANSFORM_CACHE_VERSION}:${normalizedPath}`;
 }
 
 /**
@@ -228,15 +233,16 @@ async function cacheModule(
   }
 
   // Use content-based cache key so unchanged files stay cached
+  // Include transform version to invalidate on transform logic changes
   const contentHash = hashString(normalizedPath + moduleCode);
-  const cachePath = join(esmCacheDir, `vfmod-${contentHash}.mjs`);
+  const cachePath = join(esmCacheDir, `vfmod-v${TRANSFORM_CACHE_VERSION}-${contentHash}.mjs`);
 
   // Check if this exact content is already cached
   const localFs = getLocalFs();
   try {
     const stat = await localFs.stat(cachePath);
     if (stat?.isFile) {
-      pathCache.set(normalizedPath, cachePath);
+      pathCache.set(getVersionedPathCacheKey(normalizedPath), cachePath);
       logger.debug(`${LOG_PREFIX_MDX_LOADER} Content cache hit: ${normalizedPath}`);
       return cachePath;
     }
@@ -247,7 +253,7 @@ async function cacheModule(
   // Ensure cache directory exists before writing
   await localFs.mkdir(esmCacheDir, { recursive: true });
   await localFs.writeTextFile(cachePath, moduleCode);
-  pathCache.set(normalizedPath, cachePath);
+  pathCache.set(getVersionedPathCacheKey(normalizedPath), cachePath);
   await saveModulePathCache(esmCacheDir);
   logger.debug(`${LOG_PREFIX_MDX_LOADER} Cached vf_module: ${normalizedPath} -> ${cachePath}`);
 
@@ -362,7 +368,8 @@ export async function fetchAndCacheModule(
 
     // Check persistent module path cache first
     const pathCache = await getModulePathCache(esmCacheDir);
-    const cachedPath = pathCache.get(normalizedPath);
+    const versionedKey = getVersionedPathCacheKey(normalizedPath);
+    const cachedPath = pathCache.get(versionedKey);
     if (cachedPath) {
       // Verify the file still exists
       try {
@@ -382,7 +389,7 @@ export async function fetchAndCacheModule(
         }
       } catch {
         // Cache entry is stale, remove it
-        pathCache.delete(normalizedPath);
+        pathCache.delete(versionedKey);
       }
     }
 
