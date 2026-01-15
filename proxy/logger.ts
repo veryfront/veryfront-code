@@ -97,9 +97,10 @@ function formatValue(value: unknown): string {
   }
   if (typeof value === "number" || typeof value === "boolean") return String(value);
   if (value === null) return "null";
+  if (value === undefined) return "undefined";
   let text = "";
   try {
-    text = JSON.stringify(value);
+    text = JSON.stringify(value) ?? String(value);
   } catch {
     text = String(value);
   }
