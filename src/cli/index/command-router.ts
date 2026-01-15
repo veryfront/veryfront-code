@@ -445,7 +445,9 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
           await demoCommand({
             projectName: args._[1] ? String(args._[1]) : undefined,
             auto: Boolean(args.auto),
-            loginMethod: args.login ? String(args.login) as "google" | "github" | "microsoft" | "token" : undefined,
+            loginMethod: args.login
+              ? String(args.login) as "google" | "github" | "microsoft" | "token"
+              : undefined,
           });
         }
         break;

@@ -27,8 +27,12 @@ export function showMainHelp(): void {
   const maxLength = calculateMaxLength(commands.map((c) => ({ length: c.name.length })));
   console.log();
   console.log("  " + formatSectionHeader("Global Options"));
-  console.log(`    ${formatCommandName("-h, --help", maxLength)} ${formatDescription("Show help")}`);
-  console.log(`    ${formatCommandName("-v, --version", maxLength)} ${formatDescription("Show version")}`);
+  console.log(
+    `    ${formatCommandName("-h, --help", maxLength)} ${formatDescription("Show help")}`,
+  );
+  console.log(
+    `    ${formatCommandName("-v, --version", maxLength)} ${formatDescription("Show version")}`,
+  );
 
   console.log();
   console.log("  " + formatSectionHeader("Quick Start"));

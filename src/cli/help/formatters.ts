@@ -24,7 +24,9 @@ export function formatOptionFlag(flag: string, paddingLength: number): string {
 
 export function formatOption(option: CommandOption, paddingLength: number): string {
   const defaultStr = option.default ? dim(` (default: ${option.default})`) : "";
-  return `    ${formatOptionFlag(option.flag, paddingLength)} ${muted(option.description)}${defaultStr}`;
+  return `    ${formatOptionFlag(option.flag, paddingLength)} ${
+    muted(option.description)
+  }${defaultStr}`;
 }
 
 export function formatExample(example: string): string {

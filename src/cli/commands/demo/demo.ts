@@ -44,9 +44,6 @@ const AUTH_OPTIONS: { id: AuthMethod; label: string }[] = [
   { id: "token", label: "API Token" },
 ];
 
-// Store selected login method for use in demo
-let selectedLoginMethod: AuthMethod = "google";
-
 /**
  * Demo-specific login with clean output styling
  */
@@ -54,9 +51,7 @@ async function demoLogin(preselectedMethod?: AuthMethod): Promise<boolean> {
   let method: AuthMethod | null = preselectedMethod ?? null;
 
   // Determine selected index based on preselected method or default to first
-  const selectedIndex = method
-    ? AUTH_OPTIONS.findIndex((o) => o.id === method)
-    : 0;
+  const selectedIndex = method ? AUTH_OPTIONS.findIndex((o) => o.id === method) : 0;
 
   // In auto mode, show list with countdown then auto-select
   if (autoMode) {
@@ -94,7 +89,7 @@ async function demoLogin(preselectedMethod?: AuthMethod): Promise<boolean> {
 
     let currentIndex = 0;
 
-    function drawOptions() {
+    const drawOptions = () => {
       for (let i = 0; i < AUTH_OPTIONS.length; i++) {
         const opt = AUTH_OPTIONS[i]!;
         if (i === currentIndex) {
@@ -103,7 +98,7 @@ async function demoLogin(preselectedMethod?: AuthMethod): Promise<boolean> {
           console.log("    " + muted(opt.label));
         }
       }
-    }
+    };
 
     drawOptions();
 
@@ -155,9 +150,6 @@ async function demoLogin(preselectedMethod?: AuthMethod): Promise<boolean> {
   }
 
   if (!method) return false;
-
-  // Store selected method for reference
-  selectedLoginMethod = method;
 
   console.log();
 
@@ -402,7 +394,9 @@ async function executeStepAction(
             });
             console.log("  " + success("✓") + " Code pushed");
           } catch (err) {
-            console.log("  " + error("✗") + " " + (err instanceof Error ? err.message : String(err)));
+            console.log(
+              "  " + error("✗") + " " + (err instanceof Error ? err.message : String(err)),
+            );
           }
         }
       }
@@ -459,7 +453,10 @@ async function executeStepAction(
           : `https://${projectName}.veryfront.com`;
         console.log("  " + success("✓") + " Deployed to " + brand(deployedUrl));
       } catch (err) {
-        console.log("  " + error("✗") + " Deploy failed: " + (err instanceof Error ? err.message : String(err)));
+        console.log(
+          "  " + error("✗") + " Deploy failed: " +
+            (err instanceof Error ? err.message : String(err)),
+        );
       }
       break;
     }
