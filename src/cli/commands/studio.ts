@@ -3,7 +3,7 @@
  * @module cli/commands/studio
  */
 
-import { openBrowser, canOpenBrowser } from "../auth/browser.ts";
+import { canOpenBrowser, openBrowser } from "../auth/browser.ts";
 import { readConfigFile } from "../shared/config.ts";
 import { cwd, getEnv } from "@veryfront/platform/compat/process.ts";
 import { join } from "@veryfront/platform/compat/path/index.ts";
