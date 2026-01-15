@@ -5,7 +5,35 @@ This example demonstrates Veryfront's durable workflow system with:
 - **DAG-based execution** - Complex dependency graphs with parallel execution
 - **Human-in-the-loop** - Approval gates that pause workflows
 - **Checkpointing** - Automatic state persistence for recovery
-- **Multiple backends** - In-memory for dev, Redis for production
+- **Auto-discovery** - Workflows, agents, and tools are auto-registered from `ai/` directory
+
+## Directory Structure
+
+```
+examples/durable-workflows/
+├── ai/
+│   ├── agents/
+│   │   ├── researcher.ts    # Research assistant agent
+│   │   ├── writer.ts        # Content writer agent
+│   │   └── publisher.ts     # Content publisher agent
+│   ├── tools/
+│   │   ├── image-generator.ts
+│   │   ├── auto-approver.ts
+│   │   ├── data-fetcher.ts
+│   │   ├── data-validator.ts
+│   │   ├── data-transformer.ts
+│   │   ├── data-aggregator.ts
+│   │   ├── data-enricher.ts
+│   │   ├── data-merger.ts
+│   │   └── data-exporter.ts
+│   └── workflows/
+│       ├── content-pipeline.ts
+│       └── data-processing.ts
+├── pages/
+│   └── index.tsx
+├── veryfront.config.ts
+└── README.md
+```
 
 ## Workflows Included
 
@@ -28,46 +56,56 @@ fetch → validate → [transform, aggregate, enrich] → merge → export
 ## Quick Start
 
 ```bash
-# Start API server
+# From the renderer root directory
+cd examples/durable-workflows
 deno task dev
 ```
 
-## API Endpoints
+This starts the dev server at `http://localhost:3002`.
 
-### Start a Workflow
+## Dev Dashboard
 
-```bash
-curl -X POST http://localhost:3000/api/workflows/content-pipeline/start \
-  -H "Content-Type: application/json" \
-  -d '{
-    "input": {
-      "topic": "AI Safety",
-      "audience": "developers",
-      "requiresApproval": true,
-      "format": "blog"
-    }
-  }'
-```
+Access the dev dashboard at `http://localhost:3002/_dev` to:
 
-### Get Workflow Status
+- **AI Tab**: View and test registered tools, agents, resources, prompts, and workflows
+- **Server Tab**: Inspect handlers and middleware
+- **Files Tab**: Browse project files
+- **Debug Tab**: View runtime context
 
-```bash
-curl http://localhost:3000/api/workflows/runs/<runId>
-```
+### Testing Tools
 
-### List Workflow Runs
+1. Navigate to `/_dev` → AI → Tools
+2. Select a tool from the sidebar
+3. The input schema is auto-populated with example values
+4. Click "Run" to execute the tool
 
-```bash
-curl http://localhost:3000/api/workflows/runs
-```
+### Viewing Workflows
 
-### Handle Approvals
+1. Navigate to `/_dev` → AI → Workflows
+2. View workflow definitions and DAG structure
 
-```bash
-# Approve
-curl -X POST http://localhost:3000/api/workflows/runs/<runId>/approvals/<approvalId> \
-  -H "Content-Type: application/json" \
-  -d '{"approved": true, "approver": "admin", "comment": "LGTM!"}'
+## Workflow DSL
+
+```typescript
+import {
+  workflow, step, parallel, branch, waitForApproval
+} from 'veryfront/ai/workflow';
+
+const myWorkflow = workflow({
+  id: 'my-workflow',
+  steps: ({ input }) => [
+    step('research', { agent: 'researcher', input: input.topic }),
+    parallel('generate', [
+      step('write', { agent: 'writer' }),
+      step('images', { tool: 'imageGen' }),
+    ]),
+    branch('review', {
+      condition: () => input.needsApproval,
+      then: [waitForApproval('human-review', { timeout: '24h' })],
+    }),
+    step('publish', { agent: 'publisher' }),
+  ],
+});
 ```
 
 ## React Hooks
@@ -92,26 +130,14 @@ const { status, progress, pendingApprovals } = useWorkflow({ runId });
 const { approve, reject } = useApproval({ runId, approvalId });
 ```
 
-## Workflow DSL
+## Configuration
+
+The example uses local filesystem mode:
 
 ```typescript
-import {
-  workflow, step, parallel, branch, waitForApproval, dependsOn
-} from 'veryfront/ai/workflow';
-
-const myWorkflow = workflow({
-  id: 'my-workflow',
-  steps: ({ input }) => [
-    step('research', { agent: 'researcher', input: input.topic }),
-    parallel('generate', [
-      step('write', { agent: 'writer' }),
-      step('images', { tool: 'imageGen' }),
-    ]),
-    branch('review', {
-      condition: () => input.needsApproval,
-      then: [waitForApproval('human-review', { timeout: '24h' })],
-    }),
-    step('publish', { agent: 'publisher' }),
-  ],
-});
+// veryfront.config.ts
+export default {
+  fs: { type: "local" },
+  dev: { port: 3002, host: "localhost", hmr: true },
+};
 ```

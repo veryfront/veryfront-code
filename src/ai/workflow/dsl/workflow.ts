@@ -12,6 +12,7 @@ import type {
   WorkflowDefinition,
   WorkflowNode,
 } from "../types.ts";
+import { workflowRegistry } from "../registry.ts";
 
 /**
  * Options for creating a workflow
@@ -143,11 +144,17 @@ export function workflow<TInput = unknown, TOutput = unknown>(
     onComplete: options.onComplete,
   };
 
-  return {
+  const workflow: Workflow<TInput, TOutput> = {
     definition,
     id: options.id,
     version: options.version,
   };
+
+  // Auto-register for discovery in dev tools
+  // Use type assertion since registry only stores metadata, not the full generic type
+  workflowRegistry.register(workflow as unknown as Workflow);
+
+  return workflow;
 }
 
 /**

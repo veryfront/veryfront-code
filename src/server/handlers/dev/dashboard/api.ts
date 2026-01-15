@@ -3,7 +3,18 @@ import { executeTool, toolRegistry } from "@veryfront/ai/utils/tool.ts";
 import { resourceRegistry } from "@veryfront/ai/mcp/resource.ts";
 import { promptRegistry } from "@veryfront/ai/mcp/prompt.ts";
 import { agentRegistry } from "@veryfront/ai/agent/composition.ts";
+import { providerRegistry } from "@veryfront/ai/providers/factory.ts";
+import { workflowRegistry } from "@veryfront/ai/workflow/registry.ts";
+import { WorkflowClient } from "@veryfront/ai/workflow/api/workflow-client.ts";
 import { metrics } from "@veryfront/observability/simple-metrics/index.ts";
+import {
+  checkMemoryPressure,
+  getCacheStats,
+  getHeapStats,
+} from "@veryfront/core/memory/profiler.ts";
+import { ERROR_CATALOG } from "@veryfront/errors/catalog/index.ts";
+import { TransformStage } from "@veryfront/build/transforms/pipeline/types.ts";
+import { isRSCEnabled } from "@veryfront/core/utils/feature-flags.ts";
 import type { HandlerContext } from "../../types.ts";
 
 const JSON_HEADERS = { "Content-Type": "application/json", "Cache-Control": "no-cache" };
@@ -35,6 +46,8 @@ export function handleDashboardAPI(
         return handleListPrompts();
       case "/_dev/api/agents":
         return handleListAgents();
+      case "/_dev/api/workflows":
+        return handleListWorkflows();
       case "/_dev/api/handlers":
         return handleListHandlers(ctx);
       case "/_dev/api/metrics":
@@ -43,6 +56,16 @@ export function handleDashboardAPI(
         return handleListFiles(req, ctx);
       case "/_dev/api/file-content":
         return handleReadFileContent(req, ctx);
+      case "/_dev/api/infrastructure":
+        return handleGetInfrastructure(ctx);
+      case "/_dev/api/memory":
+        return handleGetMemory();
+      case "/_dev/api/build":
+        return handleGetBuild();
+      case "/_dev/api/errors":
+        return handleGetErrors();
+      case "/_dev/api/config":
+        return handleGetConfig(ctx);
     }
   }
 
@@ -54,6 +77,8 @@ export function handleDashboardAPI(
         return handleReadResource(req);
       case "/_dev/api/render-prompt":
         return handleRenderPrompt(req);
+      case "/_dev/api/start-workflow":
+        return handleStartWorkflow(req);
     }
   }
 
@@ -70,6 +95,7 @@ function handleStats(): Response {
       total: mcpStats.total,
     },
     agents: agentRegistry.getAll().size,
+    workflows: workflowRegistry.getAll().size,
     timestamp: new Date().toISOString(),
   });
 }
@@ -104,21 +130,48 @@ function handleListPrompts(): Response {
 }
 
 function handleListAgents(): Response {
+  // Get all tool IDs for expanding tools: true
+  const allToolIds = Array.from(toolRegistry.getAll().keys());
+
   const list = Array.from(agentRegistry.getAll().entries()).map(([id, agent]) => {
     const cfg = agent.config as unknown as Record<string, unknown>;
+    // Get system prompt - could be string or function
+    let system: string | null = null;
+    if (typeof cfg.system === "string") {
+      system = cfg.system;
+    } else if (typeof cfg.system === "function") {
+      system = "(dynamic)";
+    }
+    // Expand tools: true to all tool IDs
+    let tools: Record<string, boolean> = {};
+    if (cfg.tools === true) {
+      tools = Object.fromEntries(allToolIds.map((tid) => [tid, true]));
+    } else if (typeof cfg.tools === "object" && cfg.tools !== null) {
+      tools = cfg.tools as Record<string, boolean>;
+    }
     return {
       id,
       description: (cfg.description as string) || `Model: ${agent.config.model}`,
       model: agent.config.model,
-      tools: cfg.tools || {},
-      prompts: cfg.prompts || {},
-      resources: cfg.resources || {},
+      system,
+      tools,
       memory: cfg.memory || null,
       streaming: cfg.streaming || false,
       maxSteps: cfg.maxSteps || null,
     };
   });
   return jsonResponse({ agents: list, count: list.length });
+}
+
+function handleListWorkflows(): Response {
+  const workflows = workflowRegistry.getAllAsArray();
+  const stats = workflowRegistry.getStats();
+  return jsonResponse({
+    workflows,
+    count: workflows.length,
+    stats,
+    timestamp: new Date().toISOString(),
+  });
 }
 
 async function handleExecuteTool(req: Request): Promise<Response> {
@@ -169,6 +222,82 @@ async function handleRenderPrompt(req: Request): Promise<Response> {
     return jsonResponse({ success: true, promptId, content, variablesUsed: variables || {} });
   } catch (error) {
     return errorResponse(error instanceof Error ? error.message : String(error));
+  }
+}
+
+// Singleton workflow client for dev tools
+let devWorkflowClient: WorkflowClient | null = null;
+
+function getDevWorkflowClient(): WorkflowClient {
+  if (!devWorkflowClient) {
+    devWorkflowClient = new WorkflowClient({
+      debug: true,
+      executor: {
+        stepExecutor: {
+          // Provide registries so workflows can resolve agents and tools
+          toolRegistry: toolRegistry,
+          agentRegistry: agentRegistry,
+        },
+      },
+    });
+    // Register all workflows from the global registry
+    for (const id of workflowRegistry.getAllIds()) {
+      const definition = workflowRegistry.getDefinition(id);
+      if (definition) {
+        devWorkflowClient.register(definition);
+      }
+    }
+  }
+  return devWorkflowClient;
+}
+
+async function handleStartWorkflow(req: Request): Promise<Response> {
+  try {
+    const { workflowId, input } = await req.json();
+    if (!workflowId) return errorResponse("workflowId is required", 400);
+
+    // Check if workflow exists
+    if (!workflowRegistry.has(workflowId)) {
+      return errorResponse(`Workflow not found: ${workflowId}`, 404);
+    }
+
+    const client = getDevWorkflowClient();
+    const startTime = Date.now();
+
+    // Start the workflow and wait for completion (with timeout)
+    const handle = await client.start(workflowId, input || {});
+
+    // Wait for result with a timeout
+    const timeoutMs = 30000; // 30 seconds timeout for dev testing
+    const result = await Promise.race([
+      handle.result(),
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error("Workflow execution timed out (30s)")), timeoutMs)
+      ),
+    ]);
+
+    const run = await client.getRun(handle.runId);
+
+    return jsonResponse({
+      success: true,
+      workflowId,
+      runId: handle.runId,
+      status: run?.status || "completed",
+      result,
+      duration: Date.now() - startTime,
+      nodeStates: run?.nodeStates || {},
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    // Check if it's a timeout or actual error
+    if (message.includes("timed out")) {
+      return jsonResponse({
+        success: false,
+        error: message,
+        hint: "Workflow is still running. Check logs or use a shorter workflow for testing.",
+      }, 408);
+    }
+    return errorResponse(message);
   }
 }
 
@@ -280,4 +409,170 @@ async function handleReadFileContent(req: Request, ctx: HandlerContext): Promise
   } catch (e) {
     return jsonResponse({ path: relativePath, error: e instanceof Error ? e.message : String(e) });
   }
+}
+
+// ============================================================================
+// Infrastructure Tab APIs
+// ============================================================================
+
+function handleGetInfrastructure(_ctx: HandlerContext): Response {
+  const providers = providerRegistry.getAvailableProviders().map((name) => ({
+    name,
+    configured: providerRegistry.hasProvider(name),
+  }));
+
+  const allProviders = ["openai", "anthropic", "google"].map((name) => ({
+    name,
+    configured: providers.some((p) => p.name === name),
+  }));
+
+  const workflowNodeTypes = ["step", "parallel", "branch", "wait"];
+
+  return jsonResponse({
+    providers: allProviders,
+    workflowNodeTypes,
+    timestamp: new Date().toISOString(),
+  });
+}
+
+// ============================================================================
+// Memory Tab APIs
+// ============================================================================
+
+function handleGetMemory(): Response {
+  const heap = getHeapStats();
+  const caches = getCacheStats();
+  const pressure = checkMemoryPressure();
+
+  return jsonResponse({
+    heap,
+    caches,
+    pressure,
+    timestamp: new Date().toISOString(),
+  });
+}
+
+// ============================================================================
+// Build Tab APIs
+// ============================================================================
+
+function handleGetBuild(): Response {
+  const transformStages = Object.entries(TransformStage)
+    .filter(([key]) => isNaN(Number(key)))
+    .map(([name, value]) => ({
+      stage: value as number,
+      name,
+      description: getStageDescription(name),
+    }))
+    .sort((a, b) => a.stage - b.stage);
+
+  const remarkPlugins = [
+    { name: "remarkGfm", description: "GitHub Flavored Markdown support" },
+    { name: "remarkFrontmatter", description: "YAML frontmatter parsing" },
+    { name: "remarkMdxFrontmatter", description: "Expose frontmatter as export" },
+    { name: "remarkMdxHeadings", description: "Extract heading metadata" },
+    { name: "remarkCodeBlocks", description: "Code block processing" },
+    { name: "remarkDirective", description: "Custom directive support" },
+  ];
+
+  const rehypePlugins = [
+    { name: "rehypeMermaid", description: "Mermaid diagram rendering" },
+    { name: "rehypeShiki", description: "Syntax highlighting with Shiki" },
+    { name: "rehypeSlug", description: "Add IDs to headings" },
+    { name: "rehypeAutolinkHeadings", description: "Add links to headings" },
+    { name: "rehypeAddClasses", description: "Add classes to elements" },
+    { name: "rehypeExternalLinks", description: "Process external links" },
+  ];
+
+  return jsonResponse({
+    transformStages,
+    remarkPlugins,
+    rehypePlugins,
+    timestamp: new Date().toISOString(),
+  });
+}
+
+function getStageDescription(name: string): string {
+  const descriptions: Record<string, string> = {
+    PARSE: "MDX → JSX compilation",
+    COMPILE: "esbuild JSX → JS",
+    RESOLVE_ALIASES: "@/ alias resolution",
+    RESOLVE_REACT: "react → esm.sh URLs",
+    RESOLVE_CONTEXT: "Context packages",
+    RESOLVE_RELATIVE: "./imports → full paths",
+    RESOLVE_BARE: "npm → esm.sh URLs",
+    FINALIZE: "Final cleanup",
+  };
+  return descriptions[name] || name;
+}
+
+// ============================================================================
+// Errors Tab APIs
+// ============================================================================
+
+function getCategoryFromCode(code: string): string {
+  const num = parseInt(code.replace("VF", ""), 10);
+  if (num < 100) return "config";
+  if (num < 200) return "build";
+  if (num < 300) return "runtime";
+  if (num < 400) return "route";
+  if (num < 500) return "module";
+  if (num < 600) return "server";
+  if (num < 700) return "rsc";
+  if (num < 800) return "dev";
+  if (num < 900) return "deployment";
+  return "general";
+}
+
+function handleGetErrors(): Response {
+  const errors = Object.entries(ERROR_CATALOG).map(([code, solution]) => ({
+    code,
+    title: solution.title,
+    category: getCategoryFromCode(code),
+    message: solution.message,
+    steps: solution.steps,
+    docsUrl: solution.docs,
+  }));
+
+  const categories = errors.reduce<Record<string, number>>((acc, err) => {
+    acc[err.category] = (acc[err.category] || 0) + 1;
+    return acc;
+  }, {});
+
+  return jsonResponse({
+    errors,
+    categories,
+    count: errors.length,
+    timestamp: new Date().toISOString(),
+  });
+}
+
+// ============================================================================
+// Config Tab APIs
+// ============================================================================
+
+function handleGetConfig(ctx: HandlerContext): Response {
+  const featureFlags = [
+    {
+      name: "RSC_ENABLED",
+      value: isRSCEnabled(),
+      source: "VERYFRONT_EXPERIMENTAL_RSC",
+    },
+  ];
+
+  const safeEnvVars: Record<string, string | boolean> = {
+    NODE_ENV: Deno.env.get("NODE_ENV") || "development",
+    VERYFRONT_MODE: Deno.env.get("VERYFRONT_MODE") || "development",
+    OPENAI_API_KEY: Deno.env.get("OPENAI_API_KEY") ? "(set)" : "(not set)",
+    ANTHROPIC_API_KEY: Deno.env.get("ANTHROPIC_API_KEY") ? "(set)" : "(not set)",
+    GOOGLE_AI_API_KEY: Deno.env.get("GOOGLE_AI_API_KEY") ? "(set)" : "(not set)",
+  };
+
+  return jsonResponse({
+    featureFlags,
+    environment: safeEnvVars,
+    projectDir: ctx.projectDir || "(unknown)",
+    mode: ctx.mode,
+    timestamp: new Date().toISOString(),
+  });
 }

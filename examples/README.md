@@ -126,9 +126,23 @@ Complete AI feature showcase (CLI):
 
 ---
 
+### 10. Durable Workflows (`durable-workflows/`)
+
+DAG-based durable workflow system:
+- Complex dependency graphs with parallel execution
+- Human-in-the-loop approval gates
+- Automatic checkpointing and recovery
+- Auto-discovery of workflows, agents, and tools
+
+**Run:** `cd examples/durable-workflows && deno task dev`
+
+[Full README](./durable-workflows/README.md)
+
+---
+
 ## Core Framework Examples
 
-### 10. Minimal App Router (`minimal-app-router/`)
+### 11. Minimal App Router (`minimal-app-router/`)
 
 **Recommended starting point** - Comprehensive App Router demonstration:
 - Root and nested pages (`/`, `/docs`)
@@ -142,7 +156,7 @@ Complete AI feature showcase (CLI):
 
 ---
 
-### 11. Authentication App (`auth-app/`)
+### 12. Authentication App (`auth-app/`)
 
 Complete authentication flow:
 - Login and signup pages
@@ -156,7 +170,7 @@ Complete authentication flow:
 
 ---
 
-### 12. Data Fetching Demo (`data-fetching-demo/`)
+### 13. Data Fetching Demo (`data-fetching-demo/`)
 
 Server-side data fetching patterns:
 - `getServerData` for SSR
@@ -170,7 +184,7 @@ Server-side data fetching patterns:
 
 ---
 
-### 13. Basic MDX Site (`basic-mdx/`)
+### 14. Basic MDX Site (`basic-mdx/`)
 
 MDX pages for content-focused websites:
 - Markdown with JSX components
@@ -184,7 +198,7 @@ MDX pages for content-focused websites:
 
 ---
 
-### 14. Minimal Pages Router (`minimal-pages/`)
+### 15. Minimal Pages Router (`minimal-pages/`)
 
 Traditional page-based routing:
 - Simple file structure
@@ -198,7 +212,7 @@ Traditional page-based routing:
 
 ---
 
-### 15. RSC Demo (`rsc-demo/`)
+### 16. RSC Demo (`rsc-demo/`)
 
 **⚠️ Experimental**: React Server Components (RSC):
 - Requires `VERYFRONT_EXPERIMENTAL_RSC=true`
@@ -212,7 +226,7 @@ Traditional page-based routing:
 
 ---
 
-### 16. Form Handling (`form-handling/`)
+### 17. Form Handling (`form-handling/`)
 
 Interactive data submission:
 - Client-side forms
@@ -225,7 +239,7 @@ Interactive data submission:
 
 ---
 
-### 17. Middleware Demo (`middleware-demo/`)
+### 18. Middleware Demo (`middleware-demo/`)
 
 Custom request pipeline:
 - Request logging
@@ -240,7 +254,7 @@ Custom request pipeline:
 
 ## Infrastructure & Scaling
 
-### 18. Async Worker with Redis (`async-worker-redis/`)
+### 19. Async Worker with Redis (`async-worker-redis/`)
 
 Scalable background job processing:
 - Redis Streams for job queue
@@ -272,6 +286,7 @@ Scalable background job processing:
 - `ai-code-assistant` - Production-ready assistant
 - `full-demo` - Complete showcase
 - `knowledge-base` - RAG / Chat with docs
+- `durable-workflows` - DAG workflows with approvals
 
 **Data & Rendering:**
 - `data-fetching-demo` - SSR, SSG patterns
@@ -377,7 +392,8 @@ veryfront dev
 **Then explore:**
 4. **`ai-dev-tools`** - Testing & debugging
 5. **`ai-sdk-integration`** - Integration patterns
-6. **`full-demo`** - Complete showcase
+6. **`durable-workflows`** - DAG-based workflows
+7. **`full-demo`** - Complete showcase
 
 ---
 

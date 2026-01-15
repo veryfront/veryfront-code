@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { Agent, Prompt, Resource, Tool } from "../App.tsx";
+import type { Agent, Tool } from "../App.tsx";
 import { Sidebar } from "./Sidebar.tsx";
 import { Card } from "./Card.tsx";
 import { DetailHeader, EmptyState, TwoColumnLayout } from "./shared.tsx";
@@ -7,12 +7,10 @@ import { DetailHeader, EmptyState, TwoColumnLayout } from "./shared.tsx";
 interface AgentsTabProps {
   agents: Agent[];
   tools: Tool[];
-  resources: Resource[];
-  prompts: Prompt[];
   onNavigateToMCP: (subTab: "tools" | "resources" | "prompts", itemId: string) => void;
 }
 
-export function AgentsTab({ agents, tools, resources, prompts, onNavigateToMCP }: AgentsTabProps) {
+export function AgentsTab({ agents, tools, onNavigateToMCP }: AgentsTabProps) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
 
@@ -37,8 +35,6 @@ export function AgentsTab({ agents, tools, resources, prompts, onNavigateToMCP }
           <AgentDetail
             agent={selectedAgent}
             tools={tools}
-            resources={resources}
-            prompts={prompts}
             onNavigateToMCP={onNavigateToMCP}
           />
         )
@@ -50,15 +46,11 @@ export function AgentsTab({ agents, tools, resources, prompts, onNavigateToMCP }
 interface AgentDetailProps {
   agent: Agent;
   tools: Tool[];
-  resources: Resource[];
-  prompts: Prompt[];
   onNavigateToMCP: (subTab: "tools" | "resources" | "prompts", itemId: string) => void;
 }
 
-function AgentDetail({ agent, tools, resources, prompts, onNavigateToMCP }: AgentDetailProps) {
+function AgentDetail({ agent, tools, onNavigateToMCP }: AgentDetailProps) {
   const toolIds = Object.keys(agent.tools || {}).filter((k) => agent.tools[k]);
-  const promptIds = Object.keys(agent.prompts || {}).filter((k) => agent.prompts[k]);
-  const resourceIds = Object.keys(agent.resources || {}).filter((k) => agent.resources[k]);
 
   return (
     <div>
@@ -73,6 +65,16 @@ function AgentDetail({ agent, tools, resources, prompts, onNavigateToMCP }: Agen
           </tbody>
         </table>
       </Card>
+
+      {agent.system && (
+        <Card title="System Prompt" className="mb-6">
+          <div className="p-4">
+            <pre className="text-sm text-gray-700 whitespace-pre-wrap font-mono bg-gray-50 p-3 rounded-lg max-h-64 overflow-auto">
+              {agent.system}
+            </pre>
+          </div>
+        </Card>
+      )}
 
       <Card title={`Tools (${toolIds.length})`} className="mb-6">
         <div className="p-3">
@@ -95,42 +97,6 @@ function AgentDetail({ agent, tools, resources, prompts, onNavigateToMCP }: Agen
             )}
         </div>
       </Card>
-
-      {promptIds.length > 0 && (
-        <Card title={`Prompts (${promptIds.length})`} className="mb-6">
-          <div className="p-3 flex flex-wrap gap-1.5">
-            {promptIds.map((id) => {
-              const exists = prompts.some((p) => p.id === id);
-              return (
-                <Badge
-                  key={id}
-                  label={id}
-                  exists={exists}
-                  onClick={exists ? () => onNavigateToMCP("prompts", id) : undefined}
-                />
-              );
-            })}
-          </div>
-        </Card>
-      )}
-
-      {resourceIds.length > 0 && (
-        <Card title={`Resources (${resourceIds.length})`} className="mb-6">
-          <div className="p-3 flex flex-wrap gap-1.5">
-            {resourceIds.map((id) => {
-              const exists = resources.some((r) => r.id === id || r.pattern === id);
-              return (
-                <Badge
-                  key={id}
-                  label={id}
-                  exists={exists}
-                  onClick={exists ? () => onNavigateToMCP("resources", id) : undefined}
-                />
-              );
-            })}
-          </div>
-        </Card>
-      )}
 
       {agent.memory && (
         <Card title="Memory">
