@@ -115,8 +115,21 @@ export class VeryfrontAPIOperations {
   // Project Operations
   // =============================================================================
 
-  async listProjects(): Promise<Project[]> {
-    const raw = await this.request("/projects");
+  async listProjects(options?: {
+    search?: string;
+    limit?: number;
+    sortBy?: string;
+    sortOrder?: "asc" | "desc";
+  }): Promise<Project[]> {
+    const params = new URLSearchParams();
+    if (options?.search) params.set("search", options.search);
+    if (options?.limit) params.set("limit", String(options.limit));
+    if (options?.sortBy) params.set("sort_by", options.sortBy);
+    if (options?.sortOrder) params.set("sort_order", options.sortOrder);
+
+    const query = params.toString();
+    const path = query ? `/projects?${query}` : "/projects";
+    const raw = await this.request(path);
     const response = ListProjectsResponseSchema.parse(raw);
     return response.data;
   }
