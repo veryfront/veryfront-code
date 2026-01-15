@@ -2,7 +2,47 @@ import { assertEquals } from "https://deno.land/std@0.220.0/assert/mod.ts";
 import { getEffectiveProjectSlug, isVeryfrontDomain, parseProjectDomain } from "./domain-parser.ts";
 
 Deno.test("parseProjectDomain", async (t) => {
-  // Local development (lvh.me)
+  // Local development (veryfront.me - preferred)
+  await t.step("veryfront.me preview", () => {
+    const result = parseProjectDomain("myproject.preview.veryfront.me:8080");
+    assertEquals(result.slug, "myproject");
+    assertEquals(result.branch, null);
+    assertEquals(result.environment, "preview");
+    assertEquals(result.isVeryfrontDomain, true);
+    assertEquals(result.isDraft, true);
+  });
+
+  await t.step("veryfront.me preview with branch", () => {
+    const result = parseProjectDomain("myproject--feature-x.preview.veryfront.me");
+    assertEquals(result.slug, "myproject");
+    assertEquals(result.branch, "feature-x");
+    assertEquals(result.environment, "preview");
+  });
+
+  await t.step("veryfront.me development", () => {
+    const result = parseProjectDomain("myproject.veryfront.me:8080");
+    assertEquals(result.slug, "myproject");
+    assertEquals(result.environment, "development");
+    assertEquals(result.isVeryfrontDomain, true);
+    assertEquals(result.isDraft, true);
+  });
+
+  await t.step("veryfront.me prod (custom domain simulation)", () => {
+    const result = parseProjectDomain("example.com.prod.veryfront.me");
+    assertEquals(result.slug, null);
+    assertEquals(result.environment, "production");
+    assertEquals(result.isVeryfrontDomain, false);
+  });
+
+  await t.step("plain veryfront.me", () => {
+    const result = parseProjectDomain("veryfront.me");
+    assertEquals(result.slug, null);
+    assertEquals(result.environment, "development");
+    assertEquals(result.isVeryfrontDomain, true);
+    assertEquals(result.isDraft, true);
+  });
+
+  // Local development (lvh.me - alternative)
   await t.step("lvh.me preview", () => {
     const result = parseProjectDomain("myproject.preview.lvh.me:3001");
     assertEquals(result.slug, "myproject");
@@ -101,6 +141,11 @@ Deno.test("isVeryfrontDomain", async (t) => {
   await t.step("recognizes veryfront.com", () => {
     assertEquals(isVeryfrontDomain("myproject.veryfront.com"), true);
     assertEquals(isVeryfrontDomain("myproject.preview.veryfront.com"), true);
+  });
+
+  await t.step("recognizes veryfront.me", () => {
+    assertEquals(isVeryfrontDomain("myproject.veryfront.me:8080"), true);
+    assertEquals(isVeryfrontDomain("veryfront.me"), true);
   });
 
   await t.step("recognizes lvh.me", () => {

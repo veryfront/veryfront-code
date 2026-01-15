@@ -4,10 +4,10 @@ Zero-config React meta-framework with AI-native capabilities. Contains both the 
 
 ## Quick Reference
 
-| Component | Container | Port | Runtime |
-|-----------|-----------|------|---------|
-| Proxy | `proxy` | 20000 | Deno |
-| Renderer | `renderer` | 20000 | Deno |
+| Component | Container  | Port  | Runtime |
+| --------- | ---------- | ----- | ------- |
+| Proxy     | `proxy`    | 20000 | Deno    |
+| Renderer  | `renderer` | 20000 | Deno    |
 
 ## Tech Stack
 
@@ -51,21 +51,25 @@ veryfront-renderer/
 ## Two Operation Modes
 
 ### Proxy Mode (Production)
+
 ```
 Client → Proxy → Renderer → API
          ↓
    Token cache (Redis)
 ```
+
 - Proxy handles OAuth tokens per-request
 - Renderer receives token via `x-token` header
 - Enable with `PROXY_MODE=1`
 
 ### Direct Mode (Local Dev)
+
 ```
 Client → Renderer → API
               ↓
          Token from env
 ```
+
 - Token from `VERYFRONT_API_TOKEN` env var
 - Single project from `VERYFRONT_PROJECT_SLUG`
 - Enable with `PROXY_MODE=0`
@@ -73,6 +77,7 @@ Client → Renderer → API
 ## Development Commands
 
 ### Renderer (Deno)
+
 ```bash
 deno task dev              # Start dev server (single project)
 deno task dev:multi        # Multi-project mode (Veryfront staff)
@@ -86,6 +91,7 @@ deno task typecheck        # Type check
 ```
 
 ### Proxy (Deno)
+
 ```bash
 cd proxy
 deno task start            # Production run
@@ -96,23 +102,25 @@ deno check main.ts         # Type check proxy only
 ## Configuration
 
 ### veryfront.config.ts
+
 ```typescript
 export default {
   fs: {
     type: "veryfront-api",
     veryfront: {
-      baseUrl: "http://api.lvh.me:4000",
-      proxyMode: true,      // Use proxy headers
+      baseUrl: "http://api.veryfront.me:4000",
+      proxyMode: true, // Use proxy headers
       cache: { enabled: true, ttl: 60000 },
-    }
+    },
   },
-  dev: { port: 3001, hmr: true }
-}
+  dev: { port: 3001, hmr: true },
+};
 ```
 
 ### Environment Variables
 
 **Renderer:**
+
 ```bash
 PROXY_MODE=0                              # 0=direct, 1=proxy
 VERYFRONT_API_TOKEN=vf_...               # API token (direct mode)
@@ -121,6 +129,7 @@ PRODUCTION_MODE=1                         # Use releases (not draft)
 ```
 
 **Proxy:**
+
 ```bash
 OAUTH_CLIENT_ID=...                       # Production OAuth
 OAUTH_CLIENT_SECRET=...
@@ -162,6 +171,7 @@ renderer:
 ## Debugging
 
 ### Local Setup
+
 ```bash
 # 1. Copy config template
 cp .env.local.example .env.local
@@ -174,25 +184,29 @@ deno task dev:multi    # Multi-project (Veryfront staff)
 ```
 
 ### Debug Endpoints
+
 ```bash
 # Proxy health & stats
 curl http://localhost:8080/_proxy/health
 curl http://localhost:8080/_proxy/stats
 
 # Renderer context (dev only) - shows token propagation
-curl http://codersociety.lvh.me:8080/_vf_debug/context
+curl http://codersociety.veryfront.me:8080/_vf_debug/context
 
 # Test module serving
-curl http://codersociety.lvh.me:8080/_vf_modules/pages/index.js
+curl http://codersociety.veryfront.me:8080/_vf_modules/pages/index.js
 ```
 
 ### Debugging Token Issues
+
 If modules return 404 or API calls fail:
+
 1. Check `/_proxy/stats` - is token being fetched?
 2. Check `/_vf_debug/context` - did token reach renderer?
 3. Compare token lengths to isolate where it's lost
 
 ### View Logs
+
 ```bash
 deno task dev 2>&1 | tee dev.log
 ```
@@ -209,17 +223,17 @@ logcli query '{namespace="veryfront-production", container="renderer"} |= "error
 
 ## Key Files
 
-| File | Purpose |
-|------|---------|
-| `.env.local.example` | Template for local development config |
-| `scripts/dev-proxy.ts` | Launcher for `deno task dev:multi` |
-| `proxy/main.ts` | Proxy entry point |
-| `proxy/token-manager.ts` | OAuth token lifecycle |
-| `src/server/production-server.ts` | Production server |
-| `src/server/dev-server.ts` | Development server with HMR |
-| `src/cli/main.ts` | CLI entry point |
-| `src/rendering/` | SSR/RSC rendering engine |
-| `src/routing/` | File-based routing |
-| `src/ai/` | AI agent runtime and MCP |
-| `veryfront.config.ts` | Framework configuration |
-| `chart/values.yaml` | Kubernetes deployment config |
+| File                              | Purpose                               |
+| --------------------------------- | ------------------------------------- |
+| `.env.local.example`              | Template for local development config |
+| `scripts/dev-proxy.ts`            | Launcher for `deno task dev:multi`    |
+| `proxy/main.ts`                   | Proxy entry point                     |
+| `proxy/token-manager.ts`          | OAuth token lifecycle                 |
+| `src/server/production-server.ts` | Production server                     |
+| `src/server/dev-server.ts`        | Development server with HMR           |
+| `src/cli/main.ts`                 | CLI entry point                       |
+| `src/rendering/`                  | SSR/RSC rendering engine              |
+| `src/routing/`                    | File-based routing                    |
+| `src/ai/`                         | AI agent runtime and MCP              |
+| `veryfront.config.ts`             | Framework configuration               |
+| `chart/values.yaml`               | Kubernetes deployment config          |
