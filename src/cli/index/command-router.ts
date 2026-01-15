@@ -35,6 +35,7 @@ import {
 import { handleBuildCommand } from "./build-handler.ts";
 import { handleDevCommand } from "./dev-handler.ts";
 import { handleGenerateCommand } from "./generate-handler.ts";
+import { handleStudioCommand } from "./studio-handler.ts";
 import type { ParsedArgs } from "./types.ts";
 import type { InitTemplate } from "../commands/init/types.ts";
 import type { IntegrationName } from "../templates/types.ts";
@@ -262,6 +263,10 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
         await routesCommand(cwd(), {
           json: Boolean(args.json) || Boolean(args.j),
         });
+        break;
+
+      case "studio":
+        await handleStudioCommand(args);
         break;
 
       case "lock":
