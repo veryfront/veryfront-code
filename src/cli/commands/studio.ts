@@ -8,7 +8,7 @@ import { readConfigFile } from "../shared/config.ts";
 import { cwd, getEnv } from "@veryfront/platform/compat/process.ts";
 import { join } from "@veryfront/platform/compat/path/index.ts";
 import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
-import { cliLogger } from "@veryfront/utils";
+import { brand, dim, muted, success } from "../ui/colors.ts";
 
 /**
  * Build Studio URL with optional query params
@@ -75,12 +75,19 @@ export async function studioCommand(options: {
 
   // Open browser or print URL
   const opened = canOpenBrowser();
+
+  console.log();
   if (opened) {
     await openBrowser(url);
-    cliLogger.info(`Opening Studio: ${url}`);
+    console.log("  " + success("✓") + " Opening " + brand(project) + " in Studio");
+    console.log();
+    console.log("  " + dim(url));
   } else {
-    cliLogger.info(`Open in browser:\n${url}`);
+    console.log("  " + muted("Open in browser:"));
+    console.log();
+    console.log("  " + brand(url));
   }
+  console.log();
 
   return { url, opened };
 }
