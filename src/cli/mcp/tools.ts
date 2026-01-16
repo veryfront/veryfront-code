@@ -5,7 +5,8 @@
  * Veryfront projects. Tools are organized into categories:
  *
  * - Project Understanding: vf_get_project_context, vf_list_routes, vf_get_conventions
- * - File Operations: vf_read_file, vf_write_file, vf_edit_file, vf_search_files
+ * - Local File Operations: vf_read_file, vf_write_file, vf_edit_file, vf_search_files
+ * - Remote File Operations: vf_remote_list_files, vf_remote_get_file, vf_remote_update_file, etc.
  * - Code Generation: vf_scaffold
  * - Dev Server: vf_get_errors, vf_get_logs, vf_clear_cache, vf_get_status
  */
@@ -16,6 +17,7 @@ import { getLogBuffer, type LogEntry, type LogLevel } from "./log-buffer.ts";
 import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
 import { getEnv } from "@veryfront/platform/compat/process.ts";
 import { advancedTools } from "./advanced-tools.ts";
+import { remoteFileTools } from "./remote-file-tools.ts";
 
 // ============================================================================
 // Types
@@ -250,6 +252,8 @@ export const vfClearErrors: MCPTool<ClearErrorsInput, ClearErrorsOutput> = {
 export const allTools: MCPTool[] = [
   // Advanced tools for coding agents (most used)
   ...advancedTools,
+  // Remote file tools for editing remote project files via REST API
+  ...remoteFileTools,
   // Dev server tools
   vfGetErrors,
   vfGetLogs,

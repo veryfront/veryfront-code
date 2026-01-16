@@ -1,4 +1,4 @@
-import { rendererLogger as logger } from "@veryfront/utils";
+import { parallelMap, rendererLogger as logger } from "@veryfront/utils";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import { isExtendedFSAdapter } from "@veryfront/platform/adapters/fs/wrapper.ts";
 import type { MdxBundle, ProviderItem } from "@veryfront/types";
@@ -287,43 +287,63 @@ export class ProviderManager {
   private async compileProviders(
     providerInfos: EntityInfo[],
   ): Promise<{ providerBundles: MdxBundle[]; providerItems: ProviderItem[] }> {
-    const providerBundles: MdxBundle[] = [];
-    const providerItems: ProviderItem[] = [];
+    // Separate MDX and TSX providers
+    const mdxProviders = providerInfos.filter((p) => (p.entity.kind || "mdx") === "mdx");
+    const tsxProviders = providerInfos.filter((p) => p.entity.kind === "tsx");
 
-    for (const providerInfo of providerInfos) {
+    // Log TSX providers being skipped
+    for (const providerInfo of tsxProviders) {
+      logger.debug("[ProviderManager] Skipping MDX compilation for TSX provider", {
+        providerPath: providerInfo.entity.path,
+      });
+    }
+
+    // Compile all MDX providers in parallel with concurrency control
+    const compiledMdx = await parallelMap(mdxProviders, async (providerInfo) => {
       try {
-        const kind = providerInfo.entity.kind || "mdx";
-
-        if (kind === "mdx") {
-          const bundle = await this.compileProvider(providerInfo);
-          providerBundles.push(bundle);
-
-          providerItems.push({
-            kind: "mdx",
-            bundle,
-            componentPath: providerInfo.entity.path,
-            path: providerInfo.entity.path,
-            entityInfo: providerInfo,
-          });
-        } else {
-          logger.debug("[ProviderManager] Skipping MDX compilation for TSX provider", {
-            providerPath: providerInfo.entity.path,
-          });
-
-          providerItems.push({
-            kind: "tsx",
-            componentPath: providerInfo.entity.path,
-            path: providerInfo.entity.path,
-            entityInfo: providerInfo,
-          });
-        }
+        const bundle = await this.compileProvider(providerInfo);
+        return { providerInfo, bundle, error: null };
       } catch (error) {
         logger.error("[ProviderManager] Failed to compile provider", {
           providerPath: providerInfo.entity.path,
           error,
         });
-        throw error;
+        return { providerInfo, bundle: null, error };
       }
+    });
+
+    // Check for any errors and throw the first one
+    const firstError = compiledMdx.find((r) => r.error);
+    if (firstError) {
+      throw firstError.error;
+    }
+
+    // Build results
+    const providerBundles: MdxBundle[] = [];
+    const providerItems: ProviderItem[] = [];
+
+    // Add MDX providers
+    for (const { providerInfo, bundle } of compiledMdx) {
+      if (bundle) {
+        providerBundles.push(bundle);
+        providerItems.push({
+          kind: "mdx",
+          bundle,
+          componentPath: providerInfo.entity.path,
+          path: providerInfo.entity.path,
+          entityInfo: providerInfo,
+        });
+      }
+    }
+
+    // Add TSX providers
+    for (const providerInfo of tsxProviders) {
+      providerItems.push({
+        kind: "tsx",
+        componentPath: providerInfo.entity.path,
+        path: providerInfo.entity.path,
+        entityInfo: providerInfo,
+      });
     }
 
     return { providerBundles, providerItems };

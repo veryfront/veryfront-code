@@ -12,6 +12,7 @@
 import { rendererLogger as logger } from "@veryfront/utils";
 import { timeAsync } from "@veryfront/utils";
 import { createBuildVersion } from "@veryfront/utils/version.ts";
+import { withSpan } from "@veryfront/observability/tracing/otlp-setup.ts";
 import { ErrorCode, VeryfrontError } from "@veryfront/errors/index.ts";
 import {
   extractRelativePath as extractRelativePathShared,
@@ -96,294 +97,342 @@ export class RenderPipeline {
       clearSSRModuleCacheForProject(projectId);
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // Stage 1: Page Resolution
-    // ─────────────────────────────────────────────────────────────────────────
-    const pageInfo = await timeAsync(
-      "resolve-page",
-      () => this.config.pageResolver.resolvePage(slug),
-      "render-page",
-    );
+    // Wrap entire render in a span for distributed tracing
+    return await withSpan(
+      "render.page",
+      async () => {
+        // ─────────────────────────────────────────────────────────────────────────
+        // Stage 1: Page Resolution
+        // ─────────────────────────────────────────────────────────────────────────
+        const pageInfo = await withSpan(
+          "render.resolve_page",
+          () =>
+            timeAsync(
+              "resolve-page",
+              () => this.config.pageResolver.resolvePage(slug),
+              "render-page",
+            ),
+          { "render.slug": slug },
+        );
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // Stage 2: Layout & Provider Collection (parallel)
-    // Skip for dot-prefixed paths (e.g., .veryfront) - they don't use project layouts/providers
-    // ─────────────────────────────────────────────────────────────────────────
-    const skipLayouts = isDotPath(slug, pageInfo.entity.path);
+        // ─────────────────────────────────────────────────────────────────────────
+        // Stage 2: Layout & Provider Collection (parallel)
+        // Skip for dot-prefixed paths (e.g., .veryfront) - they don't use project layouts/providers
+        // ─────────────────────────────────────────────────────────────────────────
+        const skipLayouts = isDotPath(slug, pageInfo.entity.path);
 
-    const [layoutResult, providerResult] = skipLayouts
-      ? [
-        { layoutBundle: undefined, nestedLayouts: [] },
-        { providerBundles: [], providerItems: [], providerInfos: [] },
-      ]
-      : await Promise.all([
-        timeAsync(
-          "collect-layouts",
-          () => this.config.layoutOrchestrator.collectLayouts(pageInfo),
-          "render-page",
-        ),
-        timeAsync(
-          "collect-providers",
-          () => this.config.layoutOrchestrator.collectProviders(slug),
-          "render-page",
-        ),
-      ]);
+        const [layoutResult, providerResult] = skipLayouts
+          ? [
+            { layoutBundle: undefined, nestedLayouts: [] },
+            { providerBundles: [], providerItems: [], providerInfos: [] },
+          ]
+          : await withSpan(
+            "render.collect_layouts_providers",
+            () =>
+              Promise.all([
+                timeAsync(
+                  "collect-layouts",
+                  () => this.config.layoutOrchestrator.collectLayouts(pageInfo),
+                  "render-page",
+                ),
+                timeAsync(
+                  "collect-providers",
+                  () => this.config.layoutOrchestrator.collectProviders(slug),
+                  "render-page",
+                ),
+              ]),
+            { "render.slug": slug },
+          );
 
-    if (skipLayouts) {
-      logger.debug("[renderPage] Skipping layouts/providers for dot-prefixed path", { slug });
-    }
-
-    let dataFetchingProps: Record<string, unknown> | undefined;
-    const layoutDataMap = new Map<string, Record<string, unknown>>();
-
-    const fileExtension = pageInfo.entity.path.split(".").pop()!.toLowerCase();
-    const isComponentPage = ["tsx", "jsx", "ts", "js"].includes(fileExtension);
-    const isInPagesDir = pageInfo.entity.path.includes("/pages/");
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // Stage 3: Route Params Extraction
-    // Stage 4: Data Fetching (parallel jobs for page + layouts)
-    // ─────────────────────────────────────────────────────────────────────────
-    if (options?.request && options?.url) {
-      try {
-        if (!options.params || Object.keys(options.params).length === 0) {
-          logger.debug("[renderPage] Extracting route params", {
-            slug,
-            pagePath: pageInfo.entity.path,
-          });
-
-          const extracted = extractRouteParamsShared(pageInfo.entity.path, slug);
-          if (extracted.matched) {
-            options.params = extracted.params;
-            logger.debug("[renderPage] Extracted route params", {
-              slug,
-              params: extracted.params,
-            });
-          }
+        if (skipLayouts) {
+          logger.debug("[renderPage] Skipping layouts/providers for dot-prefixed path", { slug });
         }
 
-        // Parallel Data Fetching
-        const jobs: Array<{ type: "page" | "layout"; id: string; run: () => Promise<any> }> = [];
+        let dataFetchingProps: Record<string, unknown> | undefined;
+        const layoutDataMap = new Map<string, Record<string, unknown>>();
 
-        const dataContext: DataContext = {
-          params: options.params || {},
-          query: options.url.searchParams,
-          request: options.request,
-          url: options.url,
-        };
+        const fileExtension = pageInfo.entity.path.split(".").pop()!.toLowerCase();
+        const isComponentPage = ["tsx", "jsx", "ts", "js"].includes(fileExtension);
+        const isInPagesDir = pageInfo.entity.path.includes("/pages/");
 
-        // Page Job
-        if (isComponentPage && isInPagesDir) {
-          jobs.push({
-            type: "page",
-            id: pageInfo.entity.path,
-            run: async () => {
-              const mod = await this.loadModule(pageInfo.entity.path);
-              if (mod && (mod.getServerData || mod.getStaticData)) {
-                return this.dataFetcher.fetchData(mod, dataContext, this.config.mode);
-              }
-              return null;
-            },
-          });
-        }
+        // ─────────────────────────────────────────────────────────────────────────
+        // Stage 3: Route Params Extraction
+        // Stage 4: Data Fetching (parallel jobs for page + layouts)
+        // ─────────────────────────────────────────────────────────────────────────
+        if (options?.request && options?.url) {
+          await withSpan(
+            "render.data_fetching",
+            async () => {
+              try {
+                if (!options.params || Object.keys(options.params).length === 0) {
+                  logger.debug("[renderPage] Extracting route params", {
+                    slug,
+                    pagePath: pageInfo.entity.path,
+                  });
 
-        // Layout Jobs
-        for (const layout of layoutResult.nestedLayouts) {
-          if (layout.kind === "tsx" && layout.componentPath) {
-            jobs.push({
-              type: "layout",
-              id: layout.componentPath,
-              run: async () => {
-                const mod = await this.loadModule(layout.componentPath!);
-                if (mod && (mod.getServerData || mod.getStaticData)) {
-                  return this.dataFetcher.fetchData(mod, dataContext, this.config.mode);
+                  const extracted = extractRouteParamsShared(pageInfo.entity.path, slug);
+                  if (extracted.matched) {
+                    options.params = extracted.params;
+                    logger.debug("[renderPage] Extracted route params", {
+                      slug,
+                      params: extracted.params,
+                    });
+                  }
                 }
-                return null;
-              },
-            });
-          }
+
+                // Parallel Data Fetching
+                const jobs: Array<
+                  { type: "page" | "layout"; id: string; run: () => Promise<any> }
+                > = [];
+
+                const dataContext: DataContext = {
+                  params: options.params || {},
+                  query: options.url!.searchParams,
+                  request: options.request!,
+                  url: options.url!,
+                };
+
+                // Page Job
+                if (isComponentPage && isInPagesDir) {
+                  jobs.push({
+                    type: "page",
+                    id: pageInfo.entity.path,
+                    run: async () => {
+                      const mod = await this.loadModule(pageInfo.entity.path);
+                      if (mod && (mod.getServerData || mod.getStaticData)) {
+                        return this.dataFetcher.fetchData(mod, dataContext, this.config.mode);
+                      }
+                      return null;
+                    },
+                  });
+                }
+
+                // Layout Jobs
+                for (const layout of layoutResult.nestedLayouts) {
+                  if (layout.kind === "tsx" && layout.componentPath) {
+                    jobs.push({
+                      type: "layout",
+                      id: layout.componentPath,
+                      run: async () => {
+                        const mod = await this.loadModule(layout.componentPath!);
+                        if (mod && (mod.getServerData || mod.getStaticData)) {
+                          return this.dataFetcher.fetchData(mod, dataContext, this.config.mode);
+                        }
+                        return null;
+                      },
+                    });
+                  }
+                }
+
+                logger.debug("[renderPage] Executing parallel data fetching jobs", {
+                  count: jobs.length,
+                });
+                const results = await timeAsync(
+                  "data-fetching-jobs",
+                  () => Promise.all(jobs.map((j) => j.run())),
+                  "render-page",
+                );
+
+                for (let i = 0; i < jobs.length; i++) {
+                  const job = jobs[i];
+                  if (!job) continue;
+                  const result = results[i];
+                  if (result) {
+                    if (result.notFound) {
+                      throw new VeryfrontError(
+                        "Page/Layout returned notFound",
+                        ErrorCode.FILE_NOT_FOUND,
+                        { slug, component: job.id },
+                      );
+                    }
+
+                    if (result.redirect) {
+                      throw new VeryfrontError(
+                        `Redirect to ${result.redirect.destination}`,
+                        ErrorCode.RENDER_ERROR,
+                        {
+                          slug,
+                          redirect: result.redirect,
+                        },
+                      );
+                    }
+
+                    if (result.props) {
+                      if (job.type === "page") {
+                        dataFetchingProps = result.props as Record<string, unknown>;
+                      } else {
+                        layoutDataMap.set(job.id, result.props as Record<string, unknown>);
+                      }
+                    }
+                  }
+                }
+              } catch (error) {
+                if (error instanceof VeryfrontError) {
+                  throw error;
+                }
+
+                logger.error("[renderPage] Data fetching error", {
+                  slug,
+                  error: error instanceof Error ? error.message : String(error),
+                });
+                throw error;
+              }
+            },
+            { "render.slug": slug, "render.job_count": 0 },
+          );
         }
 
-        logger.debug("[renderPage] Executing parallel data fetching jobs", { count: jobs.length });
-        const results = await timeAsync(
-          "data-fetching-jobs",
-          () => Promise.all(jobs.map((j) => j.run())),
+        // ─────────────────────────────────────────────────────────────────────────
+        // Stage 5: Cache Check
+        // ─────────────────────────────────────────────────────────────────────────
+        const cacheResult = await timeAsync(
+          "check-cache",
+          () => this.config.cacheCoordinator.checkCache(slug),
           "render-page",
         );
 
-        for (let i = 0; i < jobs.length; i++) {
-          const job = jobs[i];
-          if (!job) continue;
-          const result = results[i];
-          if (result) {
-            if (result.notFound) {
-              throw new VeryfrontError(
-                "Page/Layout returned notFound",
-                ErrorCode.FILE_NOT_FOUND,
-                { slug, component: job.id },
-              );
-            }
+        if (cacheResult?.cachedResult) {
+          return cacheResult.cachedResult;
+        }
 
-            if (result.redirect) {
-              throw new VeryfrontError(
-                `Redirect to ${result.redirect.destination}`,
-                ErrorCode.RENDER_ERROR,
-                {
+        const mergedOptions = dataFetchingProps
+          ? { ...options, props: { ...options?.props, ...dataFetchingProps } }
+          : options;
+
+        // ─────────────────────────────────────────────────────────────────────────
+        // Stage 6: Page Bundle Preparation
+        // ─────────────────────────────────────────────────────────────────────────
+        const pageBundleResult = await withSpan(
+          "render.prepare_bundles",
+          () =>
+            timeAsync(
+              "prepare-page-bundles",
+              () =>
+                this.config.pageRenderer.preparePageBundles(
+                  pageInfo,
                   slug,
-                  redirect: result.redirect,
-                },
-              );
-            }
+                  cacheResult?.cachedModule,
+                  mergedOptions,
+                ),
+              "render-page",
+            ),
+          { "render.slug": slug },
+        );
 
-            if (result.props) {
-              if (job.type === "page") {
-                dataFetchingProps = result.props as Record<string, unknown>;
-              } else {
-                layoutDataMap.set(job.id, result.props as Record<string, unknown>);
-              }
-            }
-          }
-        }
-      } catch (error) {
-        if (error instanceof VeryfrontError) {
-          throw error;
+        if (pageBundleResult.scriptResult) {
+          return pageBundleResult.scriptResult;
         }
 
-        logger.error("[renderPage] Data fetching error", {
-          slug,
-          error: error instanceof Error ? error.message : String(error),
-        });
-        throw error;
-      }
-    }
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // Stage 5: Cache Check
-    // ─────────────────────────────────────────────────────────────────────────
-    const cacheResult = await timeAsync(
-      "check-cache",
-      () => this.config.cacheCoordinator.checkCache(slug),
-      "render-page",
-    );
-
-    if (cacheResult?.cachedResult) {
-      return cacheResult.cachedResult;
-    }
-
-    const mergedOptions = dataFetchingProps
-      ? { ...options, props: { ...options?.props, ...dataFetchingProps } }
-      : options;
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // Stage 6: Page Bundle Preparation
-    // ─────────────────────────────────────────────────────────────────────────
-    const pageBundleResult = await timeAsync(
-      "prepare-page-bundles",
-      () =>
-        this.config.pageRenderer.preparePageBundles(
-          pageInfo,
-          slug,
-          cacheResult?.cachedModule,
-          mergedOptions,
-        ),
-      "render-page",
-    );
-
-    if (pageBundleResult.scriptResult) {
-      return pageBundleResult.scriptResult;
-    }
-
-    if (!pageBundleResult.pageElement || !pageBundleResult.pageBundle) {
-      throw new VeryfrontError("Failed to prepare page bundle", ErrorCode.RENDER_ERROR, { slug });
-    }
-
-    const { pageElement, pageBundle } = pageBundleResult;
-
-    // Merge frontmatter from entity (API) and pageBundle (MDX compilation)
-    // This ensures SSR PageContext has full frontmatter including MDX-parsed fields
-    const mergedFrontmatter = {
-      ...pageInfo.entity.frontmatter,
-      ...(pageBundle as MdxBundle).frontmatter,
-    };
-
-    // Extract headings from page bundle for sidebar/TOC navigation
-    const headings = (pageBundle as PageBundle).headings || [];
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // Stage 7: Layout Application
-    // ─────────────────────────────────────────────────────────────────────────
-    const wrappedElement = await timeAsync(
-      "apply-layouts",
-      () =>
-        this.config.layoutOrchestrator.applyLayoutsAndWrappers(
-          pageElement,
-          pageInfo,
-          layoutResult.layoutBundle,
-          layoutResult.nestedLayouts,
-          providerResult.providerItems,
-          layoutDataMap,
-          options?.url,
-          mergedFrontmatter,
-          headings,
-          options?.projectSlug,
-        ),
-      "render-page",
-    );
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // Stage 8: SSR Rendering
-    // ─────────────────────────────────────────────────────────────────────────
-    const ssrResult = await timeAsync(
-      "ssr-rendering",
-      () =>
-        this.config.ssrOrchestrator.performSSRRendering(
-          wrappedElement,
-          {
-            pageInfo,
-            pageBundle,
-            layoutBundle: layoutResult.layoutBundle,
-            nestedLayouts: layoutResult.nestedLayouts,
-            providerInfos: providerResult.providerInfos,
-            collectedMetadata: pageBundleResult.collectedMetadata,
+        if (!pageBundleResult.pageElement || !pageBundleResult.pageBundle) {
+          throw new VeryfrontError("Failed to prepare page bundle", ErrorCode.RENDER_ERROR, {
             slug,
-          },
-          mergedOptions,
-        ),
-      "render-page",
+          });
+        }
+
+        const { pageElement, pageBundle } = pageBundleResult;
+
+        // Merge frontmatter from entity (API) and pageBundle (MDX compilation)
+        // This ensures SSR PageContext has full frontmatter including MDX-parsed fields
+        const mergedFrontmatter = {
+          ...pageInfo.entity.frontmatter,
+          ...(pageBundle as MdxBundle).frontmatter,
+        };
+
+        // Extract headings from page bundle for sidebar/TOC navigation
+        const headings = (pageBundle as PageBundle).headings || [];
+
+        // ─────────────────────────────────────────────────────────────────────────
+        // Stage 7: Layout Application
+        // ─────────────────────────────────────────────────────────────────────────
+        const wrappedElement = await withSpan(
+          "render.apply_layouts",
+          () =>
+            timeAsync(
+              "apply-layouts",
+              () =>
+                this.config.layoutOrchestrator.applyLayoutsAndWrappers(
+                  pageElement,
+                  pageInfo,
+                  layoutResult.layoutBundle,
+                  layoutResult.nestedLayouts,
+                  providerResult.providerItems,
+                  layoutDataMap,
+                  options?.url,
+                  mergedFrontmatter,
+                  headings,
+                  options?.projectSlug,
+                ),
+              "render-page",
+            ),
+          { "render.slug": slug, "render.layout_count": layoutResult.nestedLayouts.length },
+        );
+
+        // ─────────────────────────────────────────────────────────────────────────
+        // Stage 8: SSR Rendering
+        // ─────────────────────────────────────────────────────────────────────────
+        const ssrResult = await withSpan(
+          "render.ssr",
+          () =>
+            timeAsync(
+              "ssr-rendering",
+              () =>
+                this.config.ssrOrchestrator.performSSRRendering(
+                  wrappedElement,
+                  {
+                    pageInfo,
+                    pageBundle,
+                    layoutBundle: layoutResult.layoutBundle,
+                    nestedLayouts: layoutResult.nestedLayouts,
+                    providerInfos: providerResult.providerInfos,
+                    collectedMetadata: pageBundleResult.collectedMetadata,
+                    slug,
+                  },
+                  mergedOptions,
+                ),
+              "render-page",
+            ),
+          { "render.slug": slug, "render.delivery": mergedOptions?.delivery || "full" },
+        );
+
+        // ─────────────────────────────────────────────────────────────────────────
+        // Stage 9: Result Assembly
+        // ─────────────────────────────────────────────────────────────────────────
+        const pageModule = pageBundleResult.clientModuleCode && pageBundleResult.pageModuleType
+          ? {
+            slug,
+            code: pageBundleResult.clientModuleCode,
+            type: pageBundleResult.pageModuleType,
+          }
+          : undefined;
+
+        const result: RenderResult = {
+          html: ssrResult.fullHtml,
+          frontmatter: (pageBundleResult.pageBundle as MdxBundle).frontmatter || {},
+          headings: pageBundleResult.pageBundle.headings || [],
+          nodeMap: pageBundleResult.pageBundle.nodeMap,
+          stream: ssrResult.finalStream,
+          ssrHash: ssrResult.ssrHash,
+          ...(pageModule ? { pageModule } : {}),
+        };
+
+        if (cacheResult) {
+          await this.config.cacheCoordinator.persistResult(result, slug);
+        }
+
+        logger.debug("[renderPage] Returning result", {
+          hasHtml: !!result.html,
+          hasStream: !!result.stream,
+          htmlLength: result.html?.length || 0,
+        });
+
+        return result;
+      },
+      {
+        "render.slug": slug,
+        "render.project_id": options?.projectId || this.config.projectDir,
+        "render.mode": this.config.mode,
+      },
     );
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // Stage 9: Result Assembly
-    // ─────────────────────────────────────────────────────────────────────────
-    const pageModule = pageBundleResult.clientModuleCode && pageBundleResult.pageModuleType
-      ? {
-        slug,
-        code: pageBundleResult.clientModuleCode,
-        type: pageBundleResult.pageModuleType,
-      }
-      : undefined;
-
-    const result: RenderResult = {
-      html: ssrResult.fullHtml,
-      frontmatter: (pageBundleResult.pageBundle as MdxBundle).frontmatter || {},
-      headings: pageBundleResult.pageBundle.headings || [],
-      nodeMap: pageBundleResult.pageBundle.nodeMap,
-      stream: ssrResult.finalStream,
-      ssrHash: ssrResult.ssrHash,
-      ...(pageModule ? { pageModule } : {}),
-    };
-
-    if (cacheResult) {
-      await this.config.cacheCoordinator.persistResult(result, slug);
-    }
-
-    logger.debug("[renderPage] Returning result", {
-      hasHtml: !!result.html,
-      hasStream: !!result.stream,
-      htmlLength: result.html?.length || 0,
-    });
-
-    return result;
   }
 
   /** Resolve page data for SPA client-side navigation without rendering HTML. */
