@@ -9,6 +9,7 @@
 import { banner } from "../src/cli/ui/components/banner.ts";
 import { brand, dim, success, error } from "../src/cli/ui/colors.ts";
 import { createKeyboardHandler } from "../src/cli/ui/keyboard.ts";
+import { openBrowser } from "../src/cli/auth/browser.ts";
 
 // Parse port from args (-p or --port)
 function parsePort(): number {
@@ -107,20 +108,6 @@ const renderer = new Deno.Command("deno", {
 
 // Wait for services to initialize
 await new Promise((r) => setTimeout(r, 2000));
-
-// Open browser helper
-const openBrowser = async (url: string) => {
-  try {
-    const cmd = Deno.build.os === "darwin"
-      ? ["open", url]
-      : Deno.build.os === "windows"
-        ? ["cmd", "/c", "start", url]
-        : ["xdg-open", url];
-    await new Deno.Command(cmd[0], { args: cmd.slice(1) }).spawn().status;
-  } catch {
-    // Failed to open browser
-  }
-};
 
 const serverUrl = `http://lvh.me:${PROXY_PORT}`;
 

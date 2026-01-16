@@ -6,6 +6,7 @@
  */
 
 import { getTerminalSize as getSize, isStdoutTTY } from "@veryfront/platform/compat/process.ts";
+import { ANSI_REGEX, RESET } from "./ansi.ts";
 
 /**
  * Get terminal width, with fallback for non-TTY environments
@@ -32,9 +33,7 @@ export function isTTY(): boolean {
  * Get visible length of a string (excluding ANSI escape codes)
  */
 export function visibleLength(text: string): number {
-  // Remove ANSI escape sequences
-  // deno-lint-ignore no-control-regex
-  return text.replace(/\x1b\[[0-9;]*m/g, "").length;
+  return text.replace(ANSI_REGEX, "").length;
 }
 
 /**
@@ -48,8 +47,8 @@ export function truncate(text: string, maxWidth: number, ellipsis = "…"): stri
   let visibleCount = 0;
   let cutIndex = 0;
 
-  // deno-lint-ignore no-control-regex
-  const ansiRegex = /\x1b\[[0-9;]*m/g;
+  // Create a new regex instance to avoid state issues with global flag
+  const ansiRegex = new RegExp(ANSI_REGEX.source, "g");
   let lastIndex = 0;
   let match;
 
@@ -76,7 +75,7 @@ export function truncate(text: string, maxWidth: number, ellipsis = "…"): stri
     }
   }
 
-  return text.slice(0, cutIndex) + ellipsis + "\x1b[0m";
+  return text.slice(0, cutIndex) + ellipsis + RESET;
 }
 
 /**
@@ -150,8 +149,7 @@ export function repeat(char: string, count: number): string {
  * Strip ANSI escape codes from text
  */
 export function stripAnsi(text: string): string {
-  // deno-lint-ignore no-control-regex
-  return text.replace(/\x1b\[[0-9;]*m/g, "");
+  return text.replace(ANSI_REGEX, "");
 }
 
 /**

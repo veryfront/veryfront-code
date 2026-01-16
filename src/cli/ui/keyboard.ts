@@ -21,31 +21,29 @@ export interface KeyboardOptions {
   onClear?: () => void;
   /** Handler for 'q' key - quit */
   onQuit?: () => void;
-  /** Handler for 'r' key - restart */
-  onRestart?: () => void;
+}
+
+/**
+ * Shared key press handler for all runtimes
+ */
+function handleKeyPress(key: string, options: KeyboardOptions): void {
+  switch (key.toLowerCase()) {
+    case "o":
+      options.onOpen?.();
+      break;
+    case "c":
+      options.onClear?.();
+      break;
+    case "q":
+      options.onQuit?.();
+      break;
+  }
 }
 
 // Deno-specific implementation
 function createDenoHandler(options: KeyboardOptions): KeyboardHandler {
   let running = false;
   let originalMode: boolean | null = null;
-
-  const handleKey = (key: string) => {
-    switch (key.toLowerCase()) {
-      case "o":
-        options.onOpen?.();
-        break;
-      case "c":
-        options.onClear?.();
-        break;
-      case "q":
-        options.onQuit?.();
-        break;
-      case "r":
-        options.onRestart?.();
-        break;
-    }
-  };
 
   const readLoop = async () => {
     const buf = new Uint8Array(1);
@@ -61,7 +59,7 @@ function createDenoHandler(options: KeyboardOptions): KeyboardHandler {
           break;
         }
         const char = String.fromCharCode(byte);
-        handleKey(char);
+        handleKeyPress(char, options);
       } catch {
         // stdin closed or error, exit loop
         break;
@@ -120,20 +118,7 @@ function createNodeHandler(options: KeyboardOptions): KeyboardHandler {
             options.onQuit?.();
             return;
           }
-          switch (key.toLowerCase()) {
-            case "o":
-              options.onOpen?.();
-              break;
-            case "c":
-              options.onClear?.();
-              break;
-            case "q":
-              options.onQuit?.();
-              break;
-            case "r":
-              options.onRestart?.();
-              break;
-          }
+          handleKeyPress(key, options);
         };
 
         process.stdin.on("data", handler);

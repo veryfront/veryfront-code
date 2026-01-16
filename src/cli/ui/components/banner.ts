@@ -4,12 +4,11 @@
  * Polished startup banner with dot matrix logo and info.
  */
 
+import { RESET } from "../ansi.ts";
 import { BORDER_STYLES, box } from "../box.ts";
 import { brand, dim, shouldUseColor } from "../colors.ts";
 import { AGENT_FACE } from "../dot-matrix.ts";
 import { maxLineWidth, pad, repeat } from "../layout.ts";
-
-const RESET = "\x1b[0m";
 
 export interface BannerInfo {
   url?: string;
@@ -31,6 +30,26 @@ export interface BannerOptions {
   minWidth?: number;
   /** Show the dot matrix logo */
   showLogo?: boolean;
+}
+
+/**
+ * Format info key-value pairs as styled lines
+ * @param info - Key-value pairs to format
+ * @param styleValue - Whether to apply brand color to values (default: true)
+ */
+function formatInfoLines(
+  info: BannerInfo,
+  styleValue = true,
+): string[] {
+  const entries = Object.entries(info).filter(([_, v]) => v !== undefined);
+  if (entries.length === 0) return [];
+
+  const maxKeyLen = Math.max(...entries.map(([k]) => k.length));
+  return entries.map(([key, value]) => {
+    const keyPadded = pad(key.charAt(0).toUpperCase() + key.slice(1), maxKeyLen, "right");
+    const formattedValue = styleValue ? brand(String(value)) : String(value);
+    return `${dim(keyPadded)}  ${formattedValue}`;
+  });
 }
 
 /**
@@ -67,21 +86,11 @@ export function banner(options: BannerOptions = {}): string {
   } = options;
 
   // Build info lines
-  const infoLines: string[] = [];
-
-  // Title line
-  infoLines.push(brand(title) + (subtitle ? ` ${dim(subtitle)}` : ""));
-  infoLines.push(""); // Spacing
-
-  // Info key-value pairs
-  const infoEntries = Object.entries(info).filter(([_, v]) => v !== undefined);
-  if (infoEntries.length > 0) {
-    const maxKeyLen = Math.max(...infoEntries.map(([k]) => k.length));
-    for (const [key, value] of infoEntries) {
-      const keyPadded = pad(key.charAt(0).toUpperCase() + key.slice(1), maxKeyLen, "right");
-      infoLines.push(`${dim(keyPadded)}  ${brand(String(value))}`);
-    }
-  }
+  const infoLines: string[] = [
+    brand(title) + (subtitle ? ` ${dim(subtitle)}` : ""),
+    "", // Spacing
+    ...formatInfoLines(info),
+  ];
 
   // Get logo if showing
   const logoLines = showLogo ? renderLogo() : [];
@@ -155,18 +164,11 @@ export function inlineBanner(options: BannerOptions = {}): string {
   const result: string[] = [];
 
   // Build info text
-  const textLines: string[] = [];
-  textLines.push(brand(title) + (subtitle ? ` ${dim(subtitle)}` : ""));
-  textLines.push("");
-
-  const infoEntries = Object.entries(info).filter(([_, v]) => v !== undefined);
-  if (infoEntries.length > 0) {
-    const maxKeyLen = Math.max(...infoEntries.map(([k]) => k.length));
-    for (const [key, value] of infoEntries) {
-      const keyPadded = pad(key.charAt(0).toUpperCase() + key.slice(1), maxKeyLen, "right");
-      textLines.push(`${dim(keyPadded)}  ${brand(String(value))}`);
-    }
-  }
+  const textLines: string[] = [
+    brand(title) + (subtitle ? ` ${dim(subtitle)}` : ""),
+    "",
+    ...formatInfoLines(info),
+  ];
 
   if (showLogo) {
     // Use the existing getAgentFaceWithText function style
@@ -227,18 +229,10 @@ export function successBanner(
   info?: BannerInfo,
 ): string {
   const successColor = "\x1b[38;2;34;197;94m"; // Green
-  const content: string[] = [];
-
-  content.push(message);
+  const content: string[] = [message];
 
   if (info) {
-    content.push("");
-    const infoEntries = Object.entries(info).filter(([_, v]) => v !== undefined);
-    const maxKeyLen = Math.max(...infoEntries.map(([k]) => k.length));
-    for (const [key, value] of infoEntries) {
-      const keyPadded = pad(key.charAt(0).toUpperCase() + key.slice(1), maxKeyLen, "right");
-      content.push(`${dim(keyPadded)}  ${String(value)}`);
-    }
+    content.push("", ...formatInfoLines(info, false));
   }
 
   return box(content.join("\n"), {

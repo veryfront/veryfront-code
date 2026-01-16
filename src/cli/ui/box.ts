@@ -6,6 +6,7 @@
  */
 
 import { lines, maxLineWidth, pad, repeat, visibleLength } from "./layout.ts";
+import { RESET } from "./ansi.ts";
 
 /**
  * Box border styles using Unicode box-drawing characters
@@ -75,8 +76,6 @@ export interface BoxOptions {
   /** Title color (ANSI escape code) */
   titleColor?: string;
 }
-
-const RESET = "\x1b[0m";
 
 /**
  * Create a bordered box around content
