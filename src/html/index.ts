@@ -9,6 +9,7 @@ export {
   generateHTMLShellParts,
   wrapInHTMLShell,
 } from "./html-shell-generator.ts";
+export type { ExtractedHeadMetadata } from "./html-shell-generator.ts";
 export {
   generateHydrationData,
   getDevScripts,
