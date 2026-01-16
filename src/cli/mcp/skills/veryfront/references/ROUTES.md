@@ -21,6 +21,7 @@ export default function AboutPage() {
 ```
 
 **Rules:**
+
 - Must export a default React component
 - Component receives no props (use hooks for data)
 - Can be async for server-side data fetching
@@ -46,6 +47,7 @@ export default function DashboardLayout({
 ```
 
 **Rules:**
+
 - Must accept `children` prop
 - State is preserved during navigation between child routes
 - Layouts nest automatically (root → segment → segment)
@@ -87,7 +89,7 @@ Handles errors in the route segment.
 
 ```tsx
 // app/dashboard/error.tsx
-'use client';
+"use client";
 
 export default function Error({
   error,
@@ -170,7 +172,7 @@ export default function Docs({
   params: { slug: string[] };
 }) {
   // slug = ['a', 'b', 'c']
-  return <div>Path: {params.slug.join('/')}</div>;
+  return <div>Path: {params.slug.join("/")}</div>;
 }
 ```
 
@@ -198,6 +200,7 @@ app/
 ```
 
 **Use cases:**
+
 - Organize routes by feature/team
 - Apply different layouts to route groups
 - Separate public/authenticated sections
@@ -249,6 +252,7 @@ app/
 ```
 
 **Conventions:**
+
 - `(.)` - Same level
 - `(..)` - One level up
 - `(..)(..)` - Two levels up
@@ -265,10 +269,10 @@ export async function GET(request: Request) {
   const searchParams = url.searchParams;
 
   // Headers
-  const authHeader = request.headers.get('Authorization');
+  const authHeader = request.headers.get("Authorization");
 
   // Cookies
-  const cookies = request.headers.get('Cookie');
+  const cookies = request.headers.get("Cookie");
 
   return Response.json({ ok: true });
 }
@@ -281,23 +285,23 @@ export async function GET(request: Request) {
 return Response.json({ data });
 
 // With status
-return Response.json({ error: 'Not found' }, { status: 404 });
+return Response.json({ error: "Not found" }, { status: 404 });
 
 // With headers
 return new Response(body, {
   status: 200,
   headers: {
-    'Content-Type': 'application/json',
-    'Cache-Control': 'max-age=3600',
+    "Content-Type": "application/json",
+    "Cache-Control": "max-age=3600",
   },
 });
 
 // Redirect
-return Response.redirect(new URL('/login', request.url));
+return Response.redirect(new URL("/login", request.url));
 
 // Stream
 return new Response(stream, {
-  headers: { 'Content-Type': 'text/event-stream' },
+  headers: { "Content-Type": "text/event-stream" },
 });
 ```
 
@@ -307,11 +311,11 @@ return new Response(stream, {
 // app/api/users/[id]/route.ts
 export async function GET(
   request: Request,
-  { params }: { params: { id: string } }
+  { params }: { params: { id: string } },
 ) {
   const user = await db.users.findById(params.id);
   if (!user) {
-    return Response.json({ error: 'Not found' }, { status: 404 });
+    return Response.json({ error: "Not found" }, { status: 404 });
   }
   return Response.json(user);
 }
@@ -323,21 +327,21 @@ Create `middleware.ts` at project root:
 
 ```ts
 // middleware.ts
-import { NextResponse } from 'next/server';
-import type { NextRequest } from 'next/server';
+import { NextResponse } from "next/server";
+import type { NextRequest } from "next/server";
 
 export function middleware(request: NextRequest) {
   // Check auth
-  const token = request.cookies.get('token');
-  if (!token && request.nextUrl.pathname.startsWith('/dashboard')) {
-    return NextResponse.redirect(new URL('/login', request.url));
+  const token = request.cookies.get("token");
+  if (!token && request.nextUrl.pathname.startsWith("/dashboard")) {
+    return NextResponse.redirect(new URL("/login", request.url));
   }
 
   return NextResponse.next();
 }
 
 export const config = {
-  matcher: ['/dashboard/:path*', '/api/:path*'],
+  matcher: ["/dashboard/:path*", "/api/:path*"],
 };
 ```
 
@@ -348,8 +352,8 @@ export const config = {
 ```tsx
 // app/about/page.tsx
 export const metadata = {
-  title: 'About Us',
-  description: 'Learn about our company',
+  title: "About Us",
+  description: "Learn about our company",
 };
 ```
 

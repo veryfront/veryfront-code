@@ -17,32 +17,36 @@ React meta-framework with App Router and AI-native capabilities.
 You already have Read/Write/Edit/Bash. The MCP tools give you:
 
 ### Project Discovery
-| Tool | What it does |
-|------|--------------|
+
+| Tool                     | What it does                          |
+| ------------------------ | ------------------------------------- |
 | `vf_list_local_projects` | Find Veryfront projects on filesystem |
-| `vf_list_examples` | Browse example projects with features |
+| `vf_list_examples`       | Browse example projects with features |
 
 ### Project Creation
-| Tool | What it does |
-|------|--------------|
-| `vf_list_templates` | Available templates (ai, app, blog, docs, minimal) |
-| `vf_list_integrations` | Service integrations (Gmail, Slack, GitHub, 50+) |
-| `vf_list_usecases` | Pre-configured use-case bundles |
-| `vf_create_project` | Create new project from template |
+
+| Tool                   | What it does                                       |
+| ---------------------- | -------------------------------------------------- |
+| `vf_list_templates`    | Available templates (ai, app, blog, docs, minimal) |
+| `vf_list_integrations` | Service integrations (Gmail, Slack, GitHub, 50+)   |
+| `vf_list_usecases`     | Pre-configured use-case bundles                    |
+| `vf_create_project`    | Create new project from template                   |
 
 ### Development
-| Tool | What it does |
-|------|--------------|
-| `vf_get_errors` | Real-time compile/runtime errors from dev server |
-| `vf_preview_route` | HTTP response without opening browser |
-| `vf_trigger_hmr` | Force browser refresh after edits |
-| `vf_list_routes` | Structured route manifest |
-| `vf_scaffold` | Generate correct boilerplate |
-| `vf_get_project_context` | Project structure at a glance |
+
+| Tool                     | What it does                                     |
+| ------------------------ | ------------------------------------------------ |
+| `vf_get_errors`          | Real-time compile/runtime errors from dev server |
+| `vf_preview_route`       | HTTP response without opening browser            |
+| `vf_trigger_hmr`         | Force browser refresh after edits                |
+| `vf_list_routes`         | Structured route manifest                        |
+| `vf_scaffold`            | Generate correct boilerplate                     |
+| `vf_get_project_context` | Project structure at a glance                    |
 
 ## Workflow
 
 ### New Project
+
 ```
 1. vf_list_templates() → see what's available
 2. vf_list_integrations() → browse integrations
@@ -51,6 +55,7 @@ You already have Read/Write/Edit/Bash. The MCP tools give you:
 ```
 
 ### Development Loop
+
 ```
 1. Edit file (use your Edit tool)
 2. vf_get_errors() → check if it compiles
@@ -92,6 +97,7 @@ vf_scaffold({ type: "agent", name: "Support Bot" })
 ## Templates
 
 ### Page
+
 ```tsx
 export default function PageName() {
   return <div>Content</div>;
@@ -99,6 +105,7 @@ export default function PageName() {
 ```
 
 ### Layout
+
 ```tsx
 export default function LayoutName({ children }: { children: React.ReactNode }) {
   return <div>{children}</div>;
@@ -106,6 +113,7 @@ export default function LayoutName({ children }: { children: React.ReactNode }) 
 ```
 
 ### API Route
+
 ```ts
 export function GET(req: Request) {
   return Response.json({ ok: true });
@@ -118,6 +126,7 @@ export async function POST(req: Request) {
 ```
 
 ### AI Tool
+
 ```ts
 import { z } from "zod";
 

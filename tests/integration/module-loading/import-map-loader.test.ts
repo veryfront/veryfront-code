@@ -918,9 +918,10 @@ function hello() { return 'world'; }
     });
 
     describe("getDefaultImportMap", () => {
-      // Note: React and context packages are no longer included in getDefaultImportMap()
-      // They are resolved via deno.json (npm:react, npm:@tanstack/react-query, etc.)
-      // The default import map now only contains veryfront/* mappings
+      // IMPORTANT: React is NOT included in getDefaultImportMap() intentionally.
+      // The ESM loader keeps React as bare specifiers (externalized in bundleHttpImports),
+      // so Deno resolves them via deno.json's import map. This ensures all React code
+      // uses the same instance, preventing Symbol mismatches (React error #31).
 
       it("should return default import map with veryfront imports only", () => {
         const importMap = getDefaultImportMap();
@@ -934,17 +935,18 @@ function hello() { return 'world'; }
         assertExists(importMap.imports!["veryfront/fonts"]);
       });
 
-      it("should NOT include React or context packages (resolved via deno.json)", () => {
+      it("should NOT include React (resolved via deno.json for single instance)", () => {
         const importMap = getDefaultImportMap();
 
-        // React is resolved via deno.json import map (npm:react)
+        // React is NOT included - bare specifiers stay bare so bundleHttpImports
+        // can externalize them, then Deno resolves via deno.json
         assertEquals(importMap.imports!["react"], undefined);
         assertEquals(importMap.imports!["react-dom"], undefined);
+        assertEquals(importMap.imports!["react/jsx-runtime"], undefined);
 
-        // Context packages are also resolved via deno.json
+        // Context packages are also NOT included - they are app-specific
         assertEquals(importMap.imports!["@tanstack/react-query"], undefined);
         assertEquals(importMap.imports!["next-themes"], undefined);
-        assertEquals(importMap.imports!["framer-motion"], undefined);
       });
 
       it("should return imports object only (no scopes by default)", () => {

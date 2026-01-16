@@ -69,7 +69,7 @@ describe("html-generation/utils", () => {
   });
 
   describe("getDefaultImportMap", () => {
-    it("should return veryfront exports for SSR", () => {
+    it("should return veryfront exports only (no React)", () => {
       const config = getDefaultImportMap();
       const map = config.imports;
 
@@ -81,15 +81,19 @@ describe("html-generation/utils", () => {
       assert(map["veryfront/fonts"] !== undefined);
     });
 
-    it("should NOT include React or context packages (resolved via deno.json)", () => {
+    it("should NOT include React (resolved via deno.json for single instance)", () => {
       const config = getDefaultImportMap();
       const map = config.imports;
 
       assert(map !== undefined);
-      // React is NOT in getDefaultImportMap - it's resolved via deno.json import map
-      // This ensures SSR user code uses the same React instance as react-dom/server
+      // React is NOT included - bare specifiers stay bare so bundleHttpImports
+      // can externalize them, then Deno resolves via deno.json
       assertEquals(map.react, undefined);
       assertEquals(map["react-dom"], undefined);
+      assertEquals(map["react/jsx-runtime"], undefined);
+      // Context packages are also NOT included - they are app-specific
+      assertEquals(map["@tanstack/react-query"], undefined);
+      assertEquals(map["next-themes"], undefined);
     });
   });
 

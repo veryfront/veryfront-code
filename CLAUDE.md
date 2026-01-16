@@ -229,3 +229,54 @@ logcli query '{namespace="veryfront-production", container="renderer"} |= "error
 | `src/routing/`            | File-based routing             |
 | `veryfront.config.ts`     | Framework configuration        |
 | `chart/values.yaml`       | Kubernetes deployment config   |
+
+## MCP Skills
+
+| Skill | Purpose |
+| ----- | ------- |
+| `veryfront` | Build apps - conventions, patterns, scaffolding |
+| `flywheel` | Development flywheel - run/observe/fix/verify cycle |
+
+## Development Flywheel
+
+Autonomous development loop with browser automation:
+
+```
+┌─────────┐         ┌─────────┐         ┌─────────┐
+│   RUN   │────────▶│ OBSERVE │────────▶│   FIX   │
+└─────────┘         └─────────┘         └─────────┘
+     ▲                                       │
+     │              ┌─────────┐              │
+     └──────────────│ VERIFY  │◀─────────────┘
+                    └─────────┘
+```
+
+### Flywheel Tools
+
+| Tool | Purpose |
+| ---- | ------- |
+| `vf_wait_for_ready` | Poll until server accepts requests |
+| `vf_get_flywheel_status` | Aggregated view: server + errors + logs + HMR |
+| `vf_trigger_hmr` | Force browser refresh after code changes |
+| `vf_get_errors` | Compile, runtime, bundle errors |
+| `vf_get_logs` | Server logs with filtering |
+
+### Example Workflow
+
+```bash
+# 1. Start server
+deno task start &
+
+# 2. Wait for ready
+vf_wait_for_ready({ port: 8080 })
+
+# 3. Open browser (Chrome MCP)
+tabs_create_mcp() → navigate({ url: "http://localhost:8080" })
+
+# 4. Observe loop
+vf_get_flywheel_status()      # Server errors + logs
+read_console_messages()        # Browser console
+computer({ action: "screenshot" })
+
+# 5. Fix → vf_trigger_hmr → verify
+```

@@ -244,13 +244,15 @@ export function createVeryfrontHandler(
       try {
         const stat = await adapter.fs.stat(projectPath);
         if (stat?.isDirectory) {
-          // Verify it looks like a veryfront project (has pages/ or components/)
+          // Verify it looks like a veryfront project (has app/, pages/, or components/)
+          const hasApp = await adapter.fs.stat(`${projectPath}/app`).then((s) => s?.isDirectory)
+            .catch(() => false);
           const hasPages = await adapter.fs.stat(`${projectPath}/pages`).then((s) => s?.isDirectory)
             .catch(() => false);
           const hasComponents = await adapter.fs.stat(`${projectPath}/components`).then((s) =>
             s?.isDirectory
           ).catch(() => false);
-          if (hasPages || hasComponents) {
+          if (hasApp || hasPages || hasComponents) {
             const absolutePath = projectPath.startsWith("/")
               ? projectPath
               : `${Deno.cwd()}/${projectPath}`;
