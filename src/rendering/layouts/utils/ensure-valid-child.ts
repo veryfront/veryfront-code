@@ -3,14 +3,21 @@ import * as BundledReact from "react";
 import {
   getElementDebugInfo,
   getElementTypeName,
+  isReactElement,
 } from "../../element-validator/primitive-checks.ts";
 
-/** Returns the child unchanged if valid, or null if invalid */
+/**
+ * Returns the child unchanged if valid, or null if invalid.
+ *
+ * Uses cross-instance React element detection to handle elements created
+ * by different React instances (bundled vs project React).
+ */
 export function ensureValidChild(
   child: BundledReact.ReactNode,
-  React: typeof BundledReact,
+  _React: typeof BundledReact,
 ): BundledReact.ReactNode {
-  if (React.isValidElement(child)) {
+  // Use cross-instance check that handles elements from different React versions
+  if (isReactElement(child)) {
     logger.debug("[ensureValidChild] Valid React element", {
       type: getElementTypeName(child as BundledReact.ReactElement),
       isValidElement: true,

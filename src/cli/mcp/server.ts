@@ -67,7 +67,7 @@ export class MCPDevServer {
   /**
    * Start the MCP server
    */
-  async start(): Promise<void> {
+  start(): void {
     if (this.running) return;
     this.running = true;
 
@@ -76,7 +76,7 @@ export class MCPDevServer {
     }
 
     if (this.config.httpPort) {
-      await this.startHTTP(this.config.httpPort);
+      this.startHTTP(this.config.httpPort);
     }
   }
 
@@ -242,25 +242,25 @@ export class MCPDevServer {
   /**
    * Dispatch a method call
    */
-  private dispatchMethod(method: string, params: unknown): unknown {
+  private dispatchMethod(method: string, params: unknown): Promise<unknown> {
     // MCP protocol methods
     switch (method) {
       case "initialize":
-        return this.handleInitialize(params);
+        return Promise.resolve(this.handleInitialize(params));
       case "tools/list":
-        return this.handleToolsList();
+        return Promise.resolve(this.handleToolsList());
       case "tools/call":
         return this.handleToolsCall(params);
       case "resources/list":
-        return this.handleResourcesList();
+        return Promise.resolve(this.handleResourcesList());
       case "resources/read":
         return this.handleResourcesRead(params);
       case "prompts/list":
-        return this.handlePromptsList();
+        return Promise.resolve(this.handlePromptsList());
       case "prompts/get":
         return this.handlePromptsGet(params);
       default:
-        throw new Error(`Unknown method: ${method}`);
+        return Promise.reject(new Error(`Unknown method: ${method}`));
     }
   }
 
@@ -434,6 +434,12 @@ export class MCPDevServer {
           description: "Component patterns and best practices for Veryfront",
           arguments: [],
         },
+        {
+          name: "flywheel",
+          description:
+            "Development flywheel - autonomous run/observe/fix/verify cycle with browser automation",
+          arguments: [],
+        },
       ],
     };
   }
@@ -450,6 +456,7 @@ export class MCPDevServer {
       "veryfront-routing": "./skills/veryfront/references/ROUTES.md",
       "veryfront-ai-tools": "./skills/veryfront/references/AI-TOOLS.md",
       "veryfront-components": "./skills/veryfront/references/COMPONENTS.md",
+      "flywheel": "./skills/flywheel/SKILL.md",
     };
 
     const filePath = promptFiles[name];
@@ -583,9 +590,9 @@ export class MCPDevServer {
 /**
  * Create and start an MCP dev server
  */
-export async function createMCPServer(config: MCPServerConfig): Promise<MCPDevServer> {
+export function createMCPServer(config: MCPServerConfig): MCPDevServer {
   const server = new MCPDevServer(config);
-  await server.start();
+  server.start();
   return server;
 }
 

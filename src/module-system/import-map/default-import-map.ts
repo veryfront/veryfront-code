@@ -15,7 +15,13 @@ function getVeryfrontSsrImportMap(): Record<string, string> {
 
 /**
  * Get the default import map for SSR transforms.
- * React is NOT included here - it's resolved via deno.json import map.
+ *
+ * IMPORTANT: React is NOT included here intentionally.
+ * The ESM loader keeps React as bare specifiers (externalized in bundleHttpImports),
+ * so Deno resolves them via deno.json's import map. This ensures all React code
+ * uses the same instance, preventing Symbol mismatches (React error #31).
+ *
+ * Projects can provide their own React version via their import map or veryfront.config.ts.
  */
 export function getDefaultImportMap(): ImportMapConfig {
   return {

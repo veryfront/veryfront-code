@@ -18,7 +18,14 @@ import { ensureValidChild } from "./ensure-valid-child.ts";
 
 const IS_DENO = typeof (globalThis as { Deno?: unknown }).Deno !== "undefined";
 
-/** Transform bare npm imports to npm: specifiers for Deno SSR */
+/**
+ * Transform bare npm imports to npm: specifiers for Deno SSR.
+ *
+ * IMPORTANT: React packages are NOT transformed to npm: specifiers.
+ * They stay as bare specifiers so Deno resolves them via deno.json's import map.
+ * This ensures all React code (page, providers, layouts) uses the same React instance,
+ * preventing Symbol mismatches (React error #31).
+ */
 function transformBareImportsToNpm(code: string): string {
   if (!IS_DENO) return code;
 
@@ -35,6 +42,16 @@ function transformBareImportsToNpm(code: string): string {
         return `from "${specifier}"`;
       }
       if (specifier.startsWith("@/")) {
+        return `from "${specifier}"`;
+      }
+      // Don't transform React packages - let Deno resolve via import map
+      // This ensures a single React instance across all modules
+      if (
+        specifier === "react" ||
+        specifier.startsWith("react/") ||
+        specifier === "react-dom" ||
+        specifier.startsWith("react-dom/")
+      ) {
         return `from "${specifier}"`;
       }
       logger.debug("[applicator] Transforming bare import to npm:", { specifier });

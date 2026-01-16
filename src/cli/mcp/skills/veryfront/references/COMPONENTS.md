@@ -29,35 +29,35 @@ components/
 // components/ui/button.tsx
 
 // 1. Imports
-import { forwardRef, type ButtonHTMLAttributes } from 'react';
-import { cn } from '@/lib/utils';
+import { type ButtonHTMLAttributes, forwardRef } from "react";
+import { cn } from "@/lib/utils";
 
 // 2. Types
 export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
-  variant?: 'primary' | 'secondary' | 'ghost';
-  size?: 'sm' | 'md' | 'lg';
+  variant?: "primary" | "secondary" | "ghost";
+  size?: "sm" | "md" | "lg";
   loading?: boolean;
 }
 
 // 3. Component
 export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
-  ({ className, variant = 'primary', size = 'md', loading, children, ...props }, ref) => {
+  ({ className, variant = "primary", size = "md", loading, children, ...props }, ref) => {
     return (
       <button
         ref={ref}
         className={cn(
-          'inline-flex items-center justify-center rounded font-medium',
+          "inline-flex items-center justify-center rounded font-medium",
           // Variant styles
-          variant === 'primary' && 'bg-blue-600 text-white hover:bg-blue-700',
-          variant === 'secondary' && 'bg-gray-200 text-gray-900 hover:bg-gray-300',
-          variant === 'ghost' && 'bg-transparent hover:bg-gray-100',
+          variant === "primary" && "bg-blue-600 text-white hover:bg-blue-700",
+          variant === "secondary" && "bg-gray-200 text-gray-900 hover:bg-gray-300",
+          variant === "ghost" && "bg-transparent hover:bg-gray-100",
           // Size styles
-          size === 'sm' && 'h-8 px-3 text-sm',
-          size === 'md' && 'h-10 px-4',
-          size === 'lg' && 'h-12 px-6 text-lg',
+          size === "sm" && "h-8 px-3 text-sm",
+          size === "md" && "h-10 px-4",
+          size === "lg" && "h-12 px-6 text-lg",
           // State styles
-          loading && 'opacity-50 cursor-not-allowed',
-          className
+          loading && "opacity-50 cursor-not-allowed",
+          className,
         )}
         disabled={loading || props.disabled}
         {...props}
@@ -66,10 +66,10 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
         {children}
       </button>
     );
-  }
+  },
 );
 
-Button.displayName = 'Button';
+Button.displayName = "Button";
 ```
 
 ## Server vs Client Components
@@ -99,6 +99,7 @@ export default async function UsersPage() {
 ```
 
 **When to use:**
+
 - Data fetching
 - Accessing backend resources
 - Keeping sensitive data on server
@@ -108,9 +109,9 @@ export default async function UsersPage() {
 
 ```tsx
 // components/counter.tsx
-'use client';
+"use client";
 
-import { useState } from 'react';
+import { useState } from "react";
 
 export function Counter() {
   const [count, setCount] = useState(0);
@@ -118,7 +119,7 @@ export function Counter() {
   return (
     <div>
       <p>Count: {count}</p>
-      <button onClick={() => setCount(c => c + 1)}>
+      <button onClick={() => setCount((c) => c + 1)}>
         Increment
       </button>
     </div>
@@ -127,6 +128,7 @@ export function Counter() {
 ```
 
 **When to use:**
+
 - useState, useEffect, useContext
 - Event handlers (onClick, onChange)
 - Browser APIs (localStorage, window)
@@ -136,8 +138,8 @@ export function Counter() {
 
 ```tsx
 // app/dashboard/page.tsx (Server Component)
-import { DashboardStats } from './dashboard-stats';  // Server
-import { DashboardChart } from './dashboard-chart';  // Client
+import { DashboardStats } from "./dashboard-stats"; // Server
+import { DashboardChart } from "./dashboard-chart"; // Client
 
 export default async function Dashboard() {
   const stats = await getStats();
@@ -165,15 +167,15 @@ interface CardProps {
   children: React.ReactNode;
 
   // Optional with defaults
-  variant?: 'default' | 'outlined';
-  padding?: 'none' | 'sm' | 'md' | 'lg';
+  variant?: "default" | "outlined";
+  padding?: "none" | "sm" | "md" | "lg";
 }
 
 export function Card({
   title,
   children,
-  variant = 'default',
-  padding = 'md',
+  variant = "default",
+  padding = "md",
 }: CardProps) {
   // ...
 }
@@ -209,7 +211,7 @@ export function Tab({ value, children }: TabProps) {
 
   return (
     <button
-      className={cn('tab', activeTab === value && 'active')}
+      className={cn("tab", activeTab === value && "active")}
       onClick={() => setActiveTab(value)}
     >
       {children}
@@ -231,7 +233,7 @@ export function TabPanel({ value, children }: TabPanelProps) {
   </TabList>
   <TabPanel value="overview">Overview content</TabPanel>
   <TabPanel value="settings">Settings content</TabPanel>
-</Tabs>
+</Tabs>;
 ```
 
 ### Polymorphic Components
@@ -268,12 +270,12 @@ export function Text<E extends React.ElementType = 'p'>({
 ### Local State
 
 ```tsx
-'use client';
+"use client";
 
-import { useState } from 'react';
+import { useState } from "react";
 
 export function SearchInput({ onSearch }: { onSearch: (q: string) => void }) {
-  const [query, setQuery] = useState('');
+  const [query, setQuery] = useState("");
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -296,22 +298,20 @@ export function SearchInput({ onSearch }: { onSearch: (q: string) => void }) {
 ### Derived State
 
 ```tsx
-'use client';
+"use client";
 
-import { useMemo } from 'react';
+import { useMemo } from "react";
 
 export function FilteredList({ items, filter }: Props) {
   // Derive filtered list - don't store in state
   const filteredItems = useMemo(
-    () => items.filter(item => item.name.includes(filter)),
-    [items, filter]
+    () => items.filter((item) => item.name.includes(filter)),
+    [items, filter],
   );
 
   return (
     <ul>
-      {filteredItems.map(item => (
-        <li key={item.id}>{item.name}</li>
-      ))}
+      {filteredItems.map((item) => <li key={item.id}>{item.name}</li>)}
     </ul>
   );
 }
@@ -320,19 +320,19 @@ export function FilteredList({ items, filter }: Props) {
 ### URL State
 
 ```tsx
-'use client';
+"use client";
 
-import { useSearchParams, useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from "next/navigation";
 
 export function Filters() {
   const searchParams = useSearchParams();
   const router = useRouter();
 
-  const category = searchParams.get('category') || 'all';
+  const category = searchParams.get("category") || "all";
 
   const setCategory = (newCategory: string) => {
     const params = new URLSearchParams(searchParams);
-    params.set('category', newCategory);
+    params.set("category", newCategory);
     router.push(`?${params.toString()}`);
   };
 
@@ -353,7 +353,7 @@ export function Filters() {
 ```tsx
 // app/products/page.tsx
 async function getProducts() {
-  const res = await fetch('https://api.example.com/products', {
+  const res = await fetch("https://api.example.com/products", {
     next: { revalidate: 60 }, // Cache for 60 seconds
   });
   return res.json();
@@ -368,16 +368,16 @@ export default async function ProductsPage() {
 ### Client-side Fetch with SWR
 
 ```tsx
-'use client';
+"use client";
 
-import useSWR from 'swr';
+import useSWR from "swr";
 
-const fetcher = (url: string) => fetch(url).then(r => r.json());
+const fetcher = (url: string) => fetch(url).then((r) => r.json());
 
 export function UserProfile({ userId }: { userId: string }) {
   const { data, error, isLoading } = useSWR(
     `/api/users/${userId}`,
-    fetcher
+    fetcher,
   );
 
   if (isLoading) return <Skeleton />;
@@ -396,22 +396,22 @@ export function UserProfile({ userId }: { userId: string }) {
 
 ```tsx
 // app/actions.ts
-'use server';
+"use server";
 
 export async function createPost(formData: FormData) {
-  const title = formData.get('title') as string;
-  const content = formData.get('content') as string;
+  const title = formData.get("title") as string;
+  const content = formData.get("content") as string;
 
   const post = await db.posts.create({ title, content });
-  revalidatePath('/posts');
+  revalidatePath("/posts");
 
   return { success: true, id: post.id };
 }
 
 // components/post-form.tsx
-'use client';
+"use client";
 
-import { createPost } from '../app/actions';
+import { createPost } from "../app/actions";
 
 export function PostForm() {
   return (
@@ -430,7 +430,7 @@ export function PostForm() {
 
 ```tsx
 // app/dashboard/error.tsx
-'use client';
+"use client";
 
 export default function DashboardError({
   error,
@@ -452,9 +452,9 @@ export default function DashboardError({
 ### Component-level Error Handling
 
 ```tsx
-'use client';
+"use client";
 
-import { useState } from 'react';
+import { useState } from "react";
 
 export function Form({ onSubmit }: Props) {
   const [error, setError] = useState<string | null>(null);
@@ -468,7 +468,7 @@ export function Form({ onSubmit }: Props) {
     try {
       await onSubmit(formData);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Something went wrong');
+      setError(err instanceof Error ? err.message : "Something went wrong");
     } finally {
       setLoading(false);
     }
@@ -479,7 +479,7 @@ export function Form({ onSubmit }: Props) {
       {error && <div className="error">{error}</div>}
       {/* form fields */}
       <button type="submit" disabled={loading}>
-        {loading ? 'Submitting...' : 'Submit'}
+        {loading ? "Submitting..." : "Submit"}
       </button>
     </form>
   );
@@ -492,7 +492,7 @@ export function Form({ onSubmit }: Props) {
 
 ```tsx
 // app/dashboard/page.tsx
-import { Suspense } from 'react';
+import { Suspense } from "react";
 
 export default function Dashboard() {
   return (
@@ -518,9 +518,7 @@ export default function Loading() {
     <div className="space-y-4">
       <div className="h-8 w-48 bg-gray-200 animate-pulse rounded" />
       <div className="grid grid-cols-3 gap-4">
-        {[1, 2, 3].map(i => (
-          <div key={i} className="h-32 bg-gray-200 animate-pulse rounded" />
-        ))}
+        {[1, 2, 3].map((i) => <div key={i} className="h-32 bg-gray-200 animate-pulse rounded" />)}
       </div>
     </div>
   );
@@ -536,9 +534,15 @@ export function Navigation() {
   return (
     <nav aria-label="Main navigation">
       <ul>
-        <li><a href="/">Home</a></li>
-        <li><a href="/products">Products</a></li>
-        <li><a href="/about">About</a></li>
+        <li>
+          <a href="/">Home</a>
+        </li>
+        <li>
+          <a href="/products">Products</a>
+        </li>
+        <li>
+          <a href="/about">About</a>
+        </li>
       </ul>
     </nav>
   );
@@ -569,24 +573,24 @@ export function Modal({ isOpen, onClose, title, children }: ModalProps) {
 ### Keyboard Navigation
 
 ```tsx
-'use client';
+"use client";
 
-import { useRef, useEffect } from 'react';
+import { useEffect, useRef } from "react";
 
 export function Dropdown({ items, onSelect }: DropdownProps) {
   const [activeIndex, setActiveIndex] = useState(0);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     switch (e.key) {
-      case 'ArrowDown':
+      case "ArrowDown":
         e.preventDefault();
-        setActiveIndex(i => Math.min(i + 1, items.length - 1));
+        setActiveIndex((i) => Math.min(i + 1, items.length - 1));
         break;
-      case 'ArrowUp':
+      case "ArrowUp":
         e.preventDefault();
-        setActiveIndex(i => Math.max(i - 1, 0));
+        setActiveIndex((i) => Math.max(i - 1, 0));
         break;
-      case 'Enter':
+      case "Enter":
         e.preventDefault();
         onSelect(items[activeIndex]);
         break;
@@ -615,28 +619,26 @@ export function Dropdown({ items, onSelect }: DropdownProps) {
 ### Memoization
 
 ```tsx
-'use client';
+"use client";
 
-import { memo, useMemo, useCallback } from 'react';
+import { memo, useCallback, useMemo } from "react";
 
 // Memoize component
 export const ExpensiveList = memo(function ExpensiveList({ items }: Props) {
   return (
     <ul>
-      {items.map(item => (
-        <li key={item.id}>{item.name}</li>
-      ))}
+      {items.map((item) => <li key={item.id}>{item.name}</li>)}
     </ul>
   );
 });
 
 // Memoize values and callbacks
 export function Parent() {
-  const [filter, setFilter] = useState('');
+  const [filter, setFilter] = useState("");
 
   const filteredItems = useMemo(
-    () => items.filter(i => i.name.includes(filter)),
-    [items, filter]
+    () => items.filter((i) => i.name.includes(filter)),
+    [items, filter],
   );
 
   const handleSelect = useCallback((item: Item) => {
@@ -650,12 +652,12 @@ export function Parent() {
 ### Code Splitting
 
 ```tsx
-'use client';
+"use client";
 
-import dynamic from 'next/dynamic';
+import dynamic from "next/dynamic";
 
 // Lazy load heavy components
-const HeavyChart = dynamic(() => import('./heavy-chart'), {
+const HeavyChart = dynamic(() => import("./heavy-chart"), {
   loading: () => <ChartSkeleton />,
   ssr: false, // Client-only
 });

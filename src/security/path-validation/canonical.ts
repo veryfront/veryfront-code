@@ -55,8 +55,9 @@ export function validateAllowedDirs(
   baseDir: string,
   allowedDirs: string[],
 ): ValidationResult {
-  const normalizedBase = normalizeSeparators(baseDir).replace(/\/$/, "");
-  const normalizedPath = normalizeSeparators(canonicalPath).replace(/\/$/, "");
+  // Resolve path segments (. and ..) in both paths for consistent comparison
+  const normalizedBase = resolvePathSegments(normalizeSeparators(baseDir)).replace(/\/$/, "");
+  const normalizedPath = resolvePathSegments(normalizeSeparators(canonicalPath)).replace(/\/$/, "");
 
   // Path must be within base directory
   if (!isWithinDirectory(normalizedBase, normalizedPath)) {

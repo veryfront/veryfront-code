@@ -8,8 +8,11 @@
 import { z } from "https://deno.land/x/zod@v3.22.4/mod.ts";
 import { createFileSystem, type FileSystem } from "@veryfront/platform/compat/fs.ts";
 import { join } from "@veryfront/platform/compat/path/index.ts";
-import { cwd } from "@veryfront/platform/compat/process.ts";
+import { cwd, getEnv } from "@veryfront/platform/compat/process.ts";
 import type { MCPTool } from "./tools.ts";
+import { ReloadNotifier } from "../../server/reload-notifier.ts";
+import { getErrorCollector } from "./error-collector.ts";
+import { getLogBuffer } from "./log-buffer.ts";
 
 // ============================================================================
 // Types
@@ -892,11 +895,23 @@ export const vfTriggerHmr: MCPTool<TriggerHmrInput, TriggerHmrResult> = {
     "Trigger Hot Module Replacement for a specific file. The browser will update without a full reload.",
   inputSchema: triggerHmrInput,
   execute: (input) => {
-    // Note: In a real implementation, this would connect to the HMR WebSocket
-    // and send an update message. For now, we return a success message.
+    const metrics = ReloadNotifier.getMetrics();
+    const hasListeners = metrics.activeReloadListeners > 0;
+
+    if (!hasListeners) {
+      return Promise.resolve({
+        success: false,
+        message: "No HMR listeners registered. Is the server running with HMR enabled?",
+      });
+    }
+
+    // Trigger reload via ReloadNotifier - this invalidates caches and
+    // sends reload messages to connected browsers
+    ReloadNotifier.triggerReload([input.path]);
+
     return Promise.resolve({
       success: true,
-      message: `HMR triggered for ${input.path}. Browser should update automatically.`,
+      message: `HMR triggered for ${input.path}. Browser will refresh after debounce (300ms).`,
     });
   },
 };
@@ -1897,6 +1912,190 @@ export const vfCreateProject: MCPTool<CreateProjectInput, CreateProjectResult> =
 };
 
 // ============================================================================
+// Tool: vf_wait_for_ready
+// ============================================================================
+
+const waitForReadyInput = z.object({
+  port: z.number().optional().default(8080)
+    .describe("Server port to check (defaults to 8080)"),
+  timeout: z.number().optional().default(30000)
+    .describe("Maximum time to wait in milliseconds (defaults to 30000)"),
+  interval: z.number().optional().default(500)
+    .describe("Polling interval in milliseconds (defaults to 500)"),
+});
+
+type WaitForReadyInput = z.infer<typeof waitForReadyInput>;
+
+interface WaitForReadyResult {
+  success: boolean;
+  message: string;
+  elapsed?: number;
+}
+
+export const vfWaitForReady: MCPTool<WaitForReadyInput, WaitForReadyResult> = {
+  name: "vf_wait_for_ready",
+  description:
+    "Wait for the server to be ready by polling the health endpoint. Use this after starting the server to ensure it's accepting requests.",
+  inputSchema: waitForReadyInput,
+  execute: async (input) => {
+    const startTime = Date.now();
+    const deadline = startTime + input.timeout;
+    const url = `http://localhost:${input.port}/`;
+
+    while (Date.now() < deadline) {
+      try {
+        const response = await fetch(url, {
+          method: "HEAD",
+          signal: AbortSignal.timeout(2000),
+        });
+
+        if (response.ok || response.status < 500) {
+          const elapsed = Date.now() - startTime;
+          return {
+            success: true,
+            message: `Server ready on port ${input.port}`,
+            elapsed,
+          };
+        }
+      } catch {
+        // Server not ready yet, continue polling
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, input.interval));
+    }
+
+    return {
+      success: false,
+      message: `Timeout waiting for server on port ${input.port} after ${input.timeout}ms`,
+      elapsed: input.timeout,
+    };
+  },
+};
+
+// ============================================================================
+// Tool: vf_get_flywheel_status
+// ============================================================================
+
+const getFlywheelStatusInput = z.object({
+  port: z.number().optional().default(8080)
+    .describe("Server port (defaults to 8080)"),
+});
+
+type GetFlywheelStatusInput = z.infer<typeof getFlywheelStatusInput>;
+
+interface FlywheelStatus {
+  server: {
+    running: boolean;
+    port: number;
+    url: string;
+    uptime?: number;
+  };
+  errors: {
+    total: number;
+    compile: number;
+    runtime: number;
+    bundle: number;
+    hmr: number;
+    module: number;
+    latest?: {
+      type: string;
+      message: string;
+      file?: string;
+      timestamp: number;
+    };
+  };
+  logs: {
+    total: number;
+    errors: number;
+    warnings: number;
+  };
+  hmr: {
+    enabled: boolean;
+    reloadListeners: number;
+    invalidateListeners: number;
+    triggerCalls: number;
+    broadcastsSent: number;
+  };
+}
+
+export const vfGetFlywheelStatus: MCPTool<GetFlywheelStatusInput, FlywheelStatus> = {
+  name: "vf_get_flywheel_status",
+  description:
+    "Get aggregated status for the development flywheel. Shows server state, error counts, log summary, and HMR status in one view.",
+  inputSchema: getFlywheelStatusInput,
+  execute: async (input) => {
+    const port = input.port;
+    const errorCollector = getErrorCollector();
+    const logBuffer = getLogBuffer();
+    const hmrMetrics = ReloadNotifier.getMetrics();
+
+    // Check if server is running
+    let serverRunning = false;
+    let uptime: number | undefined;
+    try {
+      const response = await fetch(`http://localhost:${port}/`, {
+        method: "HEAD",
+        signal: AbortSignal.timeout(2000),
+      });
+      serverRunning = response.ok || response.status < 500;
+    } catch {
+      serverRunning = false;
+    }
+
+    // Get error counts
+    const errorCounts = errorCollector.countByType();
+    const allErrors = errorCollector.getAll();
+    const latestError = allErrors.length > 0 ? allErrors[allErrors.length - 1] : undefined;
+
+    // Get log counts
+    const logCounts = logBuffer.countByLevel();
+
+    // Calculate uptime if we have a start time in env
+    const startTimeStr = getEnv("VERYFRONT_SERVER_START_TIME");
+    if (startTimeStr) {
+      uptime = Date.now() - parseInt(startTimeStr, 10);
+    }
+
+    return {
+      server: {
+        running: serverRunning,
+        port,
+        url: `http://localhost:${port}`,
+        uptime,
+      },
+      errors: {
+        total: allErrors.length,
+        compile: errorCounts.compile,
+        runtime: errorCounts.runtime,
+        bundle: errorCounts.bundle,
+        hmr: errorCounts.hmr,
+        module: errorCounts.module,
+        latest: latestError
+          ? {
+            type: latestError.type,
+            message: latestError.message,
+            file: latestError.file,
+            timestamp: latestError.timestamp,
+          }
+          : undefined,
+      },
+      logs: {
+        total: logBuffer.count,
+        errors: logCounts.error,
+        warnings: logCounts.warn,
+      },
+      hmr: {
+        enabled: hmrMetrics.activeReloadListeners > 0,
+        reloadListeners: hmrMetrics.activeReloadListeners,
+        invalidateListeners: hmrMetrics.activeInvalidateListeners,
+        triggerCalls: hmrMetrics.triggerCalls,
+        broadcastsSent: hmrMetrics.broadcastsSent,
+      },
+    };
+  },
+};
+
+// ============================================================================
 // All Tools
 // ============================================================================
 
@@ -1925,4 +2124,7 @@ export const advancedTools: MCPTool[] = [
   // Dev server control
   vfHotReload,
   vfTriggerHmr,
+  // Development flywheel
+  vfWaitForReady,
+  vfGetFlywheelStatus,
 ];
