@@ -167,12 +167,14 @@ async function discoverLocalProjects(projectPath: string | null): Promise<LocalP
 // Main
 async function main(): Promise<void> {
   const args = parseArgs();
+
+  // Suppress noisy server logs
+  // Note: PROXY_MODE is auto-detected by veryfront.config.ts based on OAuth credentials
+  Deno.env.set("LOG_LEVEL", "warn");
+
   const { createApp, showStartup } = await import("../src/cli/app/index.ts");
 
   await clearModuleCaches();
-
-  // Suppress noisy server logs
-  Deno.env.set("LOG_LEVEL", "warn");
 
   // Show startup animation (skip in headless mode)
   if (!args.headless) {

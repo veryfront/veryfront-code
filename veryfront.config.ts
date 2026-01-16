@@ -35,10 +35,6 @@ try {
   // .env doesn't exist (production) - use environment variables only
 }
 
-// Check if running behind proxy (PROXY_MODE=1) or direct mode
-// Read directly from process env (not .env) since proxy sets this dynamically
-const proxyMode = Deno.env.get("PROXY_MODE") === "1";
-
 // Get env var from Deno.env or .env
 const getEnv = (key: string, fallback = "") =>
   Deno.env.get(key) || env[key] || fallback;
@@ -46,6 +42,18 @@ const getEnv = (key: string, fallback = "") =>
 const apiBaseUrl = getEnv("VERYFRONT_API_BASE_URL", DEFAULT_API_URL_LOCAL);
 const apiToken = getEnv("VERYFRONT_API_TOKEN");
 const projectSlug = getEnv("VERYFRONT_PROJECT_SLUG");
+
+// Check for OAuth credentials (multi-project mode)
+const hasOAuthCredentials = !!(getEnv("OAUTH_CLIENT_ID") && getEnv("OAUTH_CLIENT_SECRET"));
+
+// Proxy mode configuration:
+// - Default: true if OAuth credentials present (multi-project), false otherwise (single-project)
+// - Can be explicitly set via PROXY_MODE env var to override default
+// - PROXY_MODE=1 forces proxy mode on, PROXY_MODE=0 forces it off
+const proxyModeEnv = Deno.env.get("PROXY_MODE");
+const proxyMode = proxyModeEnv !== undefined
+  ? proxyModeEnv === "1"
+  : hasOAuthCredentials; // Default based on OAuth credentials
 const projectId = getEnv("VERYFRONT_PROJECT_ID");
 
 // Content source configuration
