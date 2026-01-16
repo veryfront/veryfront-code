@@ -45,6 +45,8 @@ export interface RenderOptions {
   projectId?: string;
   pageId?: string;
   colorScheme?: "light" | "dark";
+  /** Whether colorScheme was set via color_mode URL param (needs localStorage persistence) */
+  colorSchemeFromParam?: boolean;
   proxyEnvironment?: "preview" | "production";
   /** Project slug for HTTP fallback in multi-project mode */
   projectSlug?: string;

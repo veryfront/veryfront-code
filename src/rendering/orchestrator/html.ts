@@ -260,6 +260,7 @@ export class HTMLGenerator {
       pageId: context.options?.pageId,
       sourceHash,
       colorScheme: context.options?.colorScheme,
+      colorSchemeFromParam: context.options?.colorSchemeFromParam,
       proxyEnvironment: context.options?.proxyEnvironment,
       headings: context.pageBundle.headings,
     };

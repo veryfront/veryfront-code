@@ -268,8 +268,11 @@ export class SSRHandler extends BaseHandler {
         undefined;
       const pageId = url.searchParams.get("page_id") || undefined;
 
-      // Extract color scheme from client hints (Sec-CH-Prefers-Color-Scheme header)
-      const colorScheme = getColorSchemeFromRequest(req);
+      // Extract color scheme from client hints or color_mode query parameter
+      const { scheme: colorScheme, fromParam: colorSchemeFromParam } = getColorSchemeFromRequest(
+        req,
+        url,
+      );
 
       // Memory profiling: log heap before render for debugging large projects
       const preRenderHeap = getHeapStats();
@@ -298,6 +301,7 @@ export class SSRHandler extends BaseHandler {
           projectId,
           pageId,
           colorScheme,
+          colorSchemeFromParam,
           proxyEnvironment: ctx.proxyEnvironment,
           projectSlug: ctx.projectSlug,
         }));
