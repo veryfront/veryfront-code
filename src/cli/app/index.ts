@@ -47,6 +47,8 @@ export interface AppConfig {
   examples?: Map<string, string>;
   defaultProject?: string;
   mcpPort?: number;
+  /** Force headless mode (no TUI) for coding agents */
+  headless?: boolean;
 }
 
 export interface App {
@@ -82,6 +84,10 @@ export function createApp(config: AppConfig): App {
   let running = false;
   let spinnerFrame = 0;
   let spinnerInterval: number | null = null;
+
+  // Check if running in interactive TTY mode (must be defined early for closures)
+  // Force non-interactive if headless flag is set (for coding agents)
+  const isInteractive = !config.headless && Deno.stdin.isTerminal() && Deno.stdout.isTerminal();
 
   // Initialize state with config
   state = setProjects(
@@ -266,17 +272,21 @@ export function createApp(config: AppConfig): App {
       parts.push(renderInput(state.input));
     }
 
-    // Clear and render
-    write(cursor.moveTo(1, 1) + screen.clearDown);
-    write(parts.join("\n"));
-    // Cursor is rendered visually as inverse video in the input component,
-    // so we keep the terminal cursor hidden
+    // Clear and render (only in interactive mode)
+    if (isInteractive) {
+      write(cursor.moveTo(1, 1) + screen.clearDown);
+      write(parts.join("\n"));
+      // Cursor is rendered visually as inverse video in the input component,
+      // so we keep the terminal cursor hidden
+    }
   }
 
   // Update state and re-render
   function update(updater: StateUpdater) {
     state = updater(state);
-    render();
+    if (isInteractive) {
+      render();
+    }
   }
 
   // Start spinner for loading state
@@ -577,9 +587,6 @@ export function createApp(config: AppConfig): App {
       promptForProjectName("minimal", () => render());
     }
   }
-
-  // Check if running in interactive TTY mode
-  const isInteractive = Deno.stdin.isTerminal() && Deno.stdout.isTerminal();
 
   // Start the app
   function start() {

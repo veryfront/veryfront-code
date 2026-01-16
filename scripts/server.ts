@@ -5,9 +5,10 @@
  * Starts proxy + renderer in a single process.
  *
  * Usage:
- *   deno task start                     # Start server
+ *   deno task start                     # Start server with interactive TUI
  *   deno task start --project <path>    # Set default project
  *   deno task start -p 8080             # Custom port
+ *   deno task start --headless          # No TUI (for coding agents)
  *
  * Access:
  *   http://localhost:8080               # Default project (if --project specified)
@@ -29,6 +30,7 @@ interface Args {
   port: number;
   projectPath: string | null;
   mcpPort: number;
+  headless: boolean;
 }
 
 interface LocalProjects {
@@ -43,6 +45,7 @@ function parseArgs(): Args {
   let port = 8080;
   let projectPath: string | null = null;
   let mcpPort = 9999; // MCP HTTP enabled by default
+  let headless = false;
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
@@ -68,9 +71,14 @@ function parseArgs(): Args {
     } else if (arg.startsWith("--mcp-port=")) {
       mcpPort = parseInt(arg.split("=")[1] || "", 10) || 9999;
     }
+
+    // Headless mode (no TUI)
+    if (arg === "--headless" || arg === "--no-tui") {
+      headless = true;
+    }
   }
 
-  return { port, projectPath, mcpPort };
+  return { port, projectPath, mcpPort, headless };
 }
 
 // Check if a directory exists
@@ -166,12 +174,14 @@ async function main(): Promise<void> {
   // Suppress noisy server logs
   Deno.env.set("LOG_LEVEL", "warn");
 
-  // Show startup animation
-  await showStartup([
-    "Loading configuration",
-    "Discovering projects",
-    "Starting server",
-  ]);
+  // Show startup animation (skip in headless mode)
+  if (!args.headless) {
+    await showStartup([
+      "Loading configuration",
+      "Discovering projects",
+      "Starting server",
+    ]);
+  }
 
   const localProjects = await discoverLocalProjects(args.projectPath);
   const hasCredentials = await hasEnvFile();
@@ -234,6 +244,7 @@ async function main(): Promise<void> {
     examples: localProjects.examples,
     defaultProject: localProjects.default ?? undefined,
     mcpPort: args.mcpPort,
+    headless: args.headless,
   });
 
   // Mark server as ready
