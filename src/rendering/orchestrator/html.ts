@@ -236,15 +236,18 @@ export class HTMLGenerator {
     context: HTMLGenerationContext,
     mergedFrontmatter: MDXFrontmatter,
   ): Promise<HTMLGenerationOptions> {
-    const appComponentPath = await this.resolveAppPath() ?? undefined;
+    // Load app path, global CSS, and tailwind config in parallel
+    const [appComponentPath, globalCSS, tailwindConfigJs] = await Promise.all([
+      this.resolveAppPath().then((p) => p ?? undefined),
+      this.loadProjectFile("globals.css"),
+      this.loadProjectFile("tailwind.config.js"),
+    ]);
     logger.debug("[HTMLGenerator] App component resolution", {
       appComponentPath,
       projectDir: this.config.projectDir,
       hasConfig: !!this.config.config,
       configApp: this.config.config?.app,
     });
-    const globalCSS = await this.loadProjectFile("globals.css");
-    const tailwindConfigJs = await this.loadProjectFile("tailwind.config.js");
 
     const pagePath = extractRelativePath(context.pageInfo.entity.path, this.config.projectDir);
     const sourceHash = context.options?.studioEmbed && context.pageInfo.entity.content

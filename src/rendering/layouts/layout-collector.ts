@@ -1,5 +1,6 @@
 import { join } from "@veryfront/platform/compat/path-helper.ts";
 import { rendererLogger as logger, timeAsync } from "@veryfront/utils";
+import { parallelFind } from "@veryfront/utils/parallel.ts";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import { isExtendedFSAdapter } from "@veryfront/platform/adapters/fs/wrapper.ts";
 import type { EntityInfo } from "@veryfront/types";
@@ -287,27 +288,27 @@ export class LayoutCollector {
 
     // Priority 2: Convention fallback - auto-discover layout.* in components folder
     // This provides a fallback when layout is not explicitly configured
+    // Check all extensions in parallel, use first match by extension priority order
     if (nestedLayouts.length === 0) {
-      for (const ext of LAYOUT_EXTENSIONS) {
-        const defaultLayoutPath = join(this.projectDir, "components", `layout.${ext}`);
-        const defaultLayoutExists =
-          await (wrappedAdapter as { exists: (path: string) => Promise<boolean> })
-            .exists(defaultLayoutPath);
+      const existsFn = (wrappedAdapter as { exists: (path: string) => Promise<boolean> }).exists;
+      const foundExt = await parallelFind([...LAYOUT_EXTENSIONS], async (ext) => {
+        const layoutPath = join(this.projectDir, "components", `layout.${ext}`);
+        return await existsFn.call(wrappedAdapter, layoutPath);
+      });
 
-        if (defaultLayoutExists) {
-          const kind = getLayoutKind(defaultLayoutPath);
-          nestedLayouts.push({
-            kind,
-            component: undefined,
-            componentPath: defaultLayoutPath,
-            path: defaultLayoutPath,
-          });
+      if (foundExt) {
+        const defaultLayoutPath = join(this.projectDir, "components", `layout.${foundExt}`);
+        const kind = getLayoutKind(defaultLayoutPath);
+        nestedLayouts.push({
+          kind,
+          component: undefined,
+          componentPath: defaultLayoutPath,
+          path: defaultLayoutPath,
+        });
 
-          logger.debug(`[LayoutCollector] Added default components/layout.${ext}`, {
-            layoutPath: defaultLayoutPath,
-          });
-          break; // Use first found
-        }
+        logger.debug(`[LayoutCollector] Added default components/layout.${foundExt}`, {
+          layoutPath: defaultLayoutPath,
+        });
       }
     }
 
