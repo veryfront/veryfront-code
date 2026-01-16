@@ -43,6 +43,8 @@ export class MDXRenderer {
     compiledProgramCode: string,
     adapter?: import("@veryfront/platform/adapters/base.ts").RuntimeAdapter,
     projectId?: string,
+    projectDir?: string,
+    projectSlug?: string,
   ): Promise<MDXModule> {
     // Don't pass esmCacheDir - let loadModuleESM get it fresh from getMdxEsmCacheDir()
     // which respects AsyncLocalStorage for proper test isolation
@@ -51,6 +53,8 @@ export class MDXRenderer {
       moduleCache: this.moduleCache,
       adapter,
       projectId,
+      projectDir,
+      projectSlug,
     };
     const result = await loadModuleESM(compiledProgramCode, context);
     // Don't cache context.esmCacheDir - it may be for a different AsyncLocalStorage context

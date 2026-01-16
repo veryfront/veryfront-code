@@ -21,12 +21,20 @@ export interface KeyboardOptions {
   onClear?: () => void;
   /** Handler for 'q' key - quit */
   onQuit?: () => void;
+  /** Handler for number keys 1-9 */
+  onNumber?: (n: number) => void;
 }
 
 /**
  * Shared key press handler for all runtimes
  */
 function handleKeyPress(key: string, options: KeyboardOptions): void {
+  // Check for number keys 1-9
+  if (key >= "1" && key <= "9") {
+    options.onNumber?.(parseInt(key, 10));
+    return;
+  }
+
   switch (key.toLowerCase()) {
     case "o":
       options.onOpen?.();

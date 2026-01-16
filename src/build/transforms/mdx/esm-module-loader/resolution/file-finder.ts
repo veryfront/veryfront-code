@@ -57,11 +57,13 @@ async function tryReadFile(
  *
  * @param normalizedPath - The normalized module path (e.g., "_vf_modules/components/Button")
  * @param adapter - The runtime adapter for file operations
+ * @param projectDir - The project root directory (needed for local filesystem adapters)
  * @returns The file content and actual path, or null if not found
  */
 export async function resolveModuleFile(
   normalizedPath: string,
   adapter: RuntimeAdapter,
+  projectDir?: string,
 ): Promise<FileResolutionResult | null> {
   // Extract file path from module path (remove _vf_modules/ prefix)
   const filePathWithoutJs = normalizedPath
@@ -106,27 +108,31 @@ export async function resolveModuleFile(
       normalizedPath,
       filePathWithoutExt,
     });
-  } else {
+  } else if (projectDir) {
     // Fallback for adapters without resolveFile (e.g., local filesystem)
-    // Try direct readFile for each extension
-    const readFile = adapter.fs.readFile.bind(adapter.fs);
+    // Use local filesystem with absolute paths (projectDir + relative path)
+    const localFs = getLocalFs();
+    const normalizedProjectDir = projectDir.replace(/\/+$/, ""); // Remove trailing slashes
 
     for (const prefix of DIRECTORY_PREFIXES) {
       // If path has extension, try it directly first
       if (hasKnownExt) {
-        const result = await tryReadFile(prefix + filePathWithoutJs, readFile);
+        const absolutePath = join(normalizedProjectDir, prefix + filePathWithoutJs);
+        const result = await tryReadFile(absolutePath, (p) => localFs.readTextFile(p));
         if (result) return result;
       }
 
       // Try each extension
       for (const ext of MODULE_EXTENSIONS) {
-        const result = await tryReadFile(prefix + filePathWithoutExt + ext, readFile);
+        const absolutePath = join(normalizedProjectDir, prefix + filePathWithoutExt + ext);
+        const result = await tryReadFile(absolutePath, (p) => localFs.readTextFile(p));
         if (result) return result;
       }
 
       // Try index file
       for (const ext of MODULE_EXTENSIONS) {
-        const result = await tryReadFile(`${prefix}${filePathWithoutExt}/index${ext}`, readFile);
+        const absolutePath = join(normalizedProjectDir, prefix, filePathWithoutExt, `index${ext}`);
+        const result = await tryReadFile(absolutePath, (p) => localFs.readTextFile(p));
         if (result) return result;
       }
     }
@@ -134,6 +140,7 @@ export async function resolveModuleFile(
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Extension resolution failed (no resolveFile)`, {
       normalizedPath,
       filePathWithoutExt,
+      projectDir: normalizedProjectDir,
     });
   }
 

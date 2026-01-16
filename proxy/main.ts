@@ -1,23 +1,21 @@
 /**
- * Veryfront Deno Proxy
+ * Veryfront Proxy Server (Split Mode)
  *
- * Lightweight proxy that handles OAuth token management and forwards requests
- * to the Deno renderer with authentication headers.
+ * Standalone proxy server that forwards requests to a separate renderer process.
+ * Used in production for security isolation of OAuth credentials.
  *
- * Security: OAuth credentials are isolated in this proxy, not in the renderer.
- * If the renderer is compromised, only the current short-lived token is exposed.
+ * For combined mode (single process), use the renderer with --proxy flag instead.
  *
  * Environment Variables:
  * - OAUTH_CLIENT_ID, OAUTH_CLIENT_SECRET: Production OAuth credentials
  * - OAUTH_PREVIEW_CLIENT_ID, OAUTH_PREVIEW_CLIENT_SECRET: Preview OAuth credentials
+ * - RENDERER_URL: URL of the renderer service
+ * - LOCAL_PROJECTS: JSON map of slug → filesystem path (for dev)
  * - CACHE_TYPE: "memory" (default) or "redis"
  * - REDIS_URL: Redis connection URL (required if CACHE_TYPE=redis)
- * - REDIS_PREFIX: Key prefix for Redis (default: "vf:token:")
- * - LOG_FORMAT: "json" (default in production) or "text"
  */
 
-import { TokenManager, type TokenScope } from "./token-manager.ts";
-import { parseProjectDomain } from "../src/server/utils/domain-parser.ts";
+import { createProxyHandler, type ProxyConfig } from "./handler.ts";
 import { createCacheFromEnv } from "./cache/index.ts";
 import {
   endSpan,
@@ -31,52 +29,59 @@ import {
 import { proxyLogger } from "./logger.ts";
 
 // Configuration from environment variables
-const config = {
-  apiBaseUrl: Deno.env.get("VERYFRONT_API_BASE_URL") ||
-    "http://api.lvh.me:4000",
+const config: ProxyConfig = {
+  apiBaseUrl: Deno.env.get("VERYFRONT_API_BASE_URL") || "http://api.lvh.me:4000",
   clientId: Deno.env.get("OAUTH_CLIENT_ID") || "",
   clientSecret: Deno.env.get("OAUTH_CLIENT_SECRET") || "",
   previewClientId: Deno.env.get("OAUTH_PREVIEW_CLIENT_ID") || "",
   previewClientSecret: Deno.env.get("OAUTH_PREVIEW_CLIENT_SECRET") || "",
+  localProjects: Deno.env.get("LOCAL_PROJECTS")
+    ? JSON.parse(Deno.env.get("LOCAL_PROJECTS")!)
+    : {},
 };
 
 const RENDERER_URL = Deno.env.get("RENDERER_URL") || "http://localhost:3001";
 const PORT = parseInt(Deno.env.get("PORT") || "8080");
 const WS_CONNECT_TIMEOUT_MS = 30000;
 
-// Validate required configuration
-function validateConfig(): void {
-  const missing: string[] = [];
+// Initialize cache and proxy handler
+const cache = createCacheFromEnv();
+const proxyHandler = createProxyHandler({
+  config,
+  cache,
+  logger: {
+    debug: (msg, extra) => proxyLogger.debug(msg, extra),
+    info: (msg, extra) => proxyLogger.info(msg, extra),
+    warn: (msg, extra) => proxyLogger.warn(msg, extra),
+    error: (msg, error, extra) => proxyLogger.error(msg, extra ?? {}, error),
+  },
+});
 
-  if (!config.clientId) missing.push("OAUTH_CLIENT_ID");
-  if (!config.clientSecret) missing.push("OAUTH_CLIENT_SECRET");
-  if (!config.previewClientId) missing.push("OAUTH_PREVIEW_CLIENT_ID");
-  if (!config.previewClientSecret) missing.push("OAUTH_PREVIEW_CLIENT_SECRET");
-
-  if (missing.length > 0) {
-    proxyLogger.warn("Missing OAuth credentials", {
-      missingCredentials: missing,
-    });
-    proxyLogger.warn("Proxy will forward requests without authentication");
-  }
+// Validate configuration on startup
+const missingCredentials = proxyHandler.validateConfig();
+if (missingCredentials.length > 0) {
+  proxyLogger.warn("Missing OAuth credentials", { missingCredentials });
+  proxyLogger.warn("Proxy will forward requests without authentication");
 }
 
-// Initialize cache and token manager
-const cache = createCacheFromEnv();
-const tokenManager = new TokenManager(config, { cache });
+// Log local projects if configured
+if (Object.keys(proxyHandler.localProjects).length > 0) {
+  proxyLogger.info("Local projects configured", {
+    projects: Object.keys(proxyHandler.localProjects),
+  });
+}
 
 /**
- * Determine the OAuth scope based on the parsed domain environment.
+ * Handle WebSocket upgrade requests.
  */
-function getScope(environment: string | null): TokenScope {
-  return environment === "preview" ? "preview" : "production";
-}
-
 function handleWebSocketUpgrade(req: Request): Response {
   const url = new URL(req.url);
   const host = req.headers.get("host") || "";
+
+  // We can't use async processRequest for WebSocket, so parse domain directly
+  const { parseProjectDomain } = require("../src/server/utils/domain-parser.ts");
   const parsed = parseProjectDomain(host);
-  const scope = getScope(parsed.environment);
+  const scope = parsed.environment === "preview" ? "preview" : "production";
   const projectSlug = parsed.slug || undefined;
 
   proxyLogger.info("WebSocket upgrade request", {
@@ -168,67 +173,38 @@ function handleWebSocketUpgrade(req: Request): Response {
   return response;
 }
 
-function handleRequest(req: Request): Promise<Response> {
+/**
+ * Forward request to renderer with proxy context as headers.
+ */
+async function forwardToRenderer(req: Request): Promise<Response> {
   const startTime = performance.now();
-  const host = req.headers.get("host") || "";
   const url = new URL(req.url);
-
-  if (req.headers.get("upgrade")?.toLowerCase() === "websocket") {
-    return Promise.resolve(handleWebSocketUpgrade(req));
-  }
 
   const parentContext = extractContext(req.headers);
   const spanInfo = startServerSpan(req.method, url.pathname, parentContext);
 
   const execute = async (): Promise<Response> => {
     try {
-      const parsed = parseProjectDomain(host);
-      const scope = getScope(parsed.environment);
-      const projectSlug = parsed.slug || undefined;
+      // Process request through proxy handler
+      const ctx = await proxyHandler.processRequest(req);
 
       const reqLogger = proxyLogger.child({
-        ...(projectSlug && { project: projectSlug }),
-        env: scope,
+        ...(ctx.projectSlug && { project: ctx.projectSlug }),
+        env: ctx.environment,
       });
 
-      reqLogger.debug("Request received", {
-        parsedEnvironment: parsed.environment,
-        effectiveScope: scope,
-      });
-
-      let token = "";
-
-      // For preview requests, try to use user's auth token from cookie first.
-      // This allows previewing user-owned projects that aren't accessible via OAuth client credentials.
-      if (scope === "preview") {
-        const cookieHeader = req.headers.get("cookie") || "";
-        const authTokenMatch = cookieHeader.match(/(?:^|;\s*)authToken=([^;]+)/);
-        if (authTokenMatch?.[1]) {
-          token = decodeURIComponent(authTokenMatch[1]);
-          reqLogger.info("Using user auth token for preview");
-        }
-      }
-
-      // Fall back to OAuth client credentials if no user token or for production requests
-      if (!token && config.clientId && config.clientSecret) {
-        try {
-          // Don't pass projectSlug as projectId - the API expects a UUID, not a slug.
-          // The token works globally for all projects under the OAuth client credentials.
-          token = await tokenManager.getToken(scope);
-        } catch (error) {
-          reqLogger.error("Token fetch failed", error as Error);
-        }
-      }
-
+      // Build headers for renderer
       const newHeaders = new Headers(req.headers);
-      if (token) newHeaders.set("x-token", token);
-      newHeaders.set("x-project-slug", projectSlug || "");
-      newHeaders.set("x-environment", scope);
-      newHeaders.set("x-forwarded-host", host);
+      if (ctx.token) newHeaders.set("x-token", ctx.token);
+      newHeaders.set("x-project-slug", ctx.projectSlug || "");
+      newHeaders.set("x-environment", ctx.environment);
+      newHeaders.set("x-forwarded-host", ctx.host);
+      if (ctx.localPath) newHeaders.set("x-project-path", ctx.localPath);
       newHeaders.delete("host");
 
       injectContext(newHeaders);
 
+      // Forward to renderer
       const rendererUrl = new URL(url.pathname + url.search, RENDERER_URL);
       const response = await fetch(rendererUrl.toString(), {
         method: req.method,
@@ -270,7 +246,7 @@ function handleRequest(req: Request): Promise<Response> {
  * Handle stats endpoint for monitoring.
  */
 async function handleStats(): Promise<Response> {
-  const stats = await tokenManager.getStats();
+  const stats = await proxyHandler.getStats();
   return new Response(JSON.stringify(stats, null, 2), {
     headers: { "Content-Type": "application/json" },
   });
@@ -282,27 +258,8 @@ async function handleStats(): Promise<Response> {
  */
 async function handleApiProxy(req: Request): Promise<Response> {
   const url = new URL(req.url);
-  const host = req.headers.get("host") || "";
-  const parsed = parseProjectDomain(host);
-  const scope = getScope(parsed.environment);
 
-  // Get token
-  let token = "";
-  if (scope === "preview") {
-    const cookieHeader = req.headers.get("cookie") || "";
-    const authTokenMatch = cookieHeader.match(/(?:^|;\s*)authToken=([^;]+)/);
-    if (authTokenMatch?.[1]) {
-      token = decodeURIComponent(authTokenMatch[1]);
-    }
-  }
-  if (!token && config.clientId && config.clientSecret) {
-    try {
-      token = await tokenManager.getToken(scope);
-    } catch (error) {
-      proxyLogger.error("Token fetch failed for API proxy", error as Error);
-    }
-  }
-
+  const token = await proxyHandler.getTokenForApi(req);
   if (!token) {
     return new Response(JSON.stringify({ error: "No authentication token" }), {
       status: 401,
@@ -342,9 +299,18 @@ async function handleApiProxy(req: Request): Promise<Response> {
   }
 }
 
+/**
+ * Main router.
+ */
 function router(req: Request): Promise<Response> {
   const url = new URL(req.url);
 
+  // WebSocket upgrade
+  if (req.headers.get("upgrade")?.toLowerCase() === "websocket") {
+    return Promise.resolve(handleWebSocketUpgrade(req));
+  }
+
+  // Proxy endpoints
   if (url.pathname === "/_proxy/stats") {
     return handleStats();
   }
@@ -358,15 +324,16 @@ function router(req: Request): Promise<Response> {
     return handleApiProxy(req);
   }
 
-  return handleRequest(req);
+  // Forward all other requests to renderer
+  return forwardToRenderer(req);
 }
 
 // Graceful shutdown
 async function shutdown(): Promise<void> {
   proxyLogger.info("Shutting down");
-  await tokenManager.close();
+  await proxyHandler.close();
   await shutdownOTLP();
-  proxyLogger.info("Closed cache connections");
+  proxyLogger.info("Closed connections");
   Deno.exit(0);
 }
 
@@ -375,10 +342,9 @@ Deno.addSignalListener("SIGTERM", shutdown);
 
 // Initialize tracing and start server
 await initializeOTLPWithApis();
-validateConfig();
 
 const cacheType = Deno.env.get("CACHE_TYPE") || "memory";
-proxyLogger.debug("Starting proxy server", {
+proxyLogger.debug("Starting proxy server (split mode)", {
   port: PORT,
   rendererUrl: RENDERER_URL,
   apiBaseUrl: config.apiBaseUrl,

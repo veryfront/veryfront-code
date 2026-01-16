@@ -23,6 +23,8 @@ import { PageContextProvider } from "veryfront/context";
 export interface LayoutApplicationOptions {
   projectDir: string;
   projectId?: string;
+  /** Project slug for HTTP fallback in multi-project mode */
+  projectSlug?: string;
   adapter: RuntimeAdapter;
   config: VeryfrontConfig;
   layoutCache: LayoutComponentCache;
@@ -49,10 +51,12 @@ export class LayoutApplicator {
   private frontmatter?: Record<string, unknown>;
   private headings?: Array<{ id: string; text: string; level: number }>;
   private projectId?: string;
+  private projectSlug?: string;
 
   constructor(options: LayoutApplicationOptions) {
     this.projectDir = options.projectDir;
     this.projectId = options.projectId;
+    this.projectSlug = options.projectSlug;
     this.adapter = options.adapter;
     this.config = options.config;
     this.layoutCache = options.layoutCache;
@@ -184,6 +188,7 @@ export class LayoutApplicator {
         this.adapter,
         layoutDataMap,
         this.projectId,
+        this.projectSlug,
       );
     }
 
@@ -198,6 +203,7 @@ export class LayoutApplicator {
       this.adapter,
       layoutDataMap,
       this.projectId,
+      this.projectSlug,
     );
   }
 

@@ -28,6 +28,8 @@ export interface PageRenderOptions {
   projectId?: string;
   /** Enable node position injection for Studio Navigator */
   studioEmbed?: boolean;
+  /** Project slug for HTTP fallback in multi-project mode */
+  projectSlug?: string;
 }
 
 export interface PageBundleResult {
@@ -217,6 +219,7 @@ export class PageRenderer {
             precompiledModule: cachedModule?.type === "mdx" ? cachedModule.code : undefined,
             projectId: options?.projectId,
             studioEmbed: options?.studioEmbed,
+            projectSlug: options?.projectSlug,
           },
         );
 

@@ -89,6 +89,7 @@ export async function applyLayoutsESM(
   adapter: RuntimeAdapter,
   layoutDataMap?: Map<string, Record<string, unknown>>,
   projectId?: string,
+  projectSlug?: string,
 ): Promise<BundledReact.ReactElement> {
   let element = pageElement;
 
@@ -105,6 +106,7 @@ export async function applyLayoutsESM(
             mergedComponents,
             adapter,
             projectId,
+            projectSlug,
           );
         } else if (item.kind === "tsx") {
           const props = item.componentPath ? layoutDataMap?.get(item.componentPath) : undefined;
@@ -134,6 +136,7 @@ export async function applyLayoutsESM(
       mergedComponents,
       adapter,
       projectId,
+      projectSlug,
     );
     logger.info("[applyLayoutsESM] Named layoutBundle applied successfully");
   } else {
@@ -149,6 +152,7 @@ export async function applyLayoutsESM(
       tsxLayoutModuleCache,
       adapter,
       projectId,
+      projectSlug,
     );
   }
 
@@ -166,6 +170,7 @@ export async function applyLayoutsFunctionBody(
   adapter: RuntimeAdapter,
   layoutDataMap?: Map<string, Record<string, unknown>>,
   projectId?: string,
+  _projectSlug?: string,
 ): Promise<BundledReact.ReactElement> {
   const React = await getProjectReact();
   let element = pageElement;
@@ -280,6 +285,7 @@ async function applyProviders(
   tsxLayoutModuleCache: LayoutComponentCache,
   adapter: RuntimeAdapter,
   projectId?: string,
+  projectSlug?: string,
 ): Promise<BundledReact.ReactElement> {
   const React = await getProjectReact();
   let result = element;
@@ -297,6 +303,8 @@ async function applyProviders(
           providerCode,
           adapter,
           projectId,
+          projectDir,
+          projectSlug,
         );
         const providerMod = providerModule as MDXModule;
         const ProviderFn = providerMod.MDXLayout || providerMod.default;
