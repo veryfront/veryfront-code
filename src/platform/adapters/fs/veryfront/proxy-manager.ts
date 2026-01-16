@@ -60,7 +60,7 @@ export class ProxyFSAdapterManager {
       }, config.cleanupIntervalMs);
     }
 
-    logger.info("[ProxyFSAdapterManager] Created", {
+    logger.debug("[ProxyFSAdapterManager] Created", {
       maxAdapters: this.maxAdapters,
       maxIdleMs: this.maxIdleMs,
     });
@@ -246,7 +246,7 @@ export class ProxyFSAdapterManager {
     }
 
     if (oldest) {
-      logger.info("[ProxyFSAdapterManager] Evicting LRU adapter", { cacheKey: oldest.cacheKey });
+      logger.debug("[ProxyFSAdapterManager] Evicting LRU adapter", { cacheKey: oldest.cacheKey });
       const adapter = this.adapters.get(oldest.cacheKey);
       if (adapter) {
         adapter.adapter.dispose();
@@ -266,7 +266,7 @@ export class ProxyFSAdapterManager {
     }
 
     for (const cacheKey of toRemove) {
-      logger.info("[ProxyFSAdapterManager] Removing idle adapter", { cacheKey });
+      logger.debug("[ProxyFSAdapterManager] Removing idle adapter", { cacheKey });
       const adapter = this.adapters.get(cacheKey);
       if (adapter) {
         adapter.adapter.dispose();
@@ -317,11 +317,11 @@ export class ProxyFSAdapterManager {
     }
 
     for (const [cacheKey, adapter] of this.adapters) {
-      logger.info("[ProxyFSAdapterManager] Disposing adapter", { cacheKey });
+      logger.debug("[ProxyFSAdapterManager] Disposing adapter", { cacheKey });
       adapter.adapter.dispose();
     }
 
     this.adapters.clear();
-    logger.info("[ProxyFSAdapterManager] Disposed");
+    logger.debug("[ProxyFSAdapterManager] Disposed");
   }
 }

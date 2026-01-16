@@ -98,7 +98,7 @@ export async function renderSnippet(
   mdxContent: string,
   options: SnippetRenderOptions,
 ): Promise<SnippetRenderResult> {
-  logger.info("[SnippetRenderer] Starting render", {
+  logger.debug("[SnippetRenderer] Starting render", {
     contentLength: mdxContent.length,
     filePath: options.filePath,
   });
@@ -117,7 +117,7 @@ export async function renderSnippet(
       options.filePath,
     );
 
-    logger.info("[SnippetRenderer] MDX compiled", {
+    logger.debug("[SnippetRenderer] MDX compiled", {
       codeLength: bundle.compiledCode.length,
       hasFrontmatter: !!bundle.frontmatter,
     });
@@ -131,7 +131,7 @@ export async function renderSnippet(
       frontmatter: bundle.frontmatter || {},
     });
 
-    logger.info("[SnippetRenderer] Snippet cached", {
+    logger.debug("[SnippetRenderer] Snippet cached", {
       hash,
       projectSlug: options.projectSlug,
       codePreview: bundle.compiledCode.substring(0, 300),
@@ -148,7 +148,7 @@ export async function renderSnippet(
     const snippetUrl =
       `${moduleServerBase}/_vf_modules/_snippets/${hash}.js?ssr=true&v=${cacheBuster}`;
 
-    logger.info("[SnippetRenderer] Loading snippet module", {
+    logger.debug("[SnippetRenderer] Loading snippet module", {
       snippetUrl,
       moduleServerBase,
       providedUrl: options.moduleServerUrl,
@@ -170,7 +170,7 @@ export async function renderSnippet(
     });
     const bodyHtml = renderToString(element);
 
-    logger.info("[SnippetRenderer] SSR complete", {
+    logger.debug("[SnippetRenderer] SSR complete", {
       bodyHtmlLength: bodyHtml.length,
     });
 

@@ -37,7 +37,12 @@ export class ClientLogHandler extends BaseHandler {
         : undefined;
 
       const prefix = this.getLogPrefix(level);
-      serverLogger.info(`${prefix} ${message}`, details);
+      // Use appropriate log level: client errors/warns show as info, client info shows as debug
+      if (level === "error" || level === "warn") {
+        serverLogger.info(`${prefix} ${message}`, details);
+      } else {
+        serverLogger.debug(`${prefix} ${message}`, details);
+      }
 
       return this.respond(
         ResponseBuilder.json({ ok: true }, req, {
@@ -58,9 +63,9 @@ export class ClientLogHandler extends BaseHandler {
   }
 
   private static readonly LOG_PREFIXES: Record<string, string> = {
-    error: "❌ [CLIENT]",
-    warn: "⚠️  [CLIENT]",
-    info: "ℹ️  [CLIENT]",
+    error: "[CLIENT ERROR]",
+    warn: "[CLIENT WARN]",
+    info: "[CLIENT]",
   } as const;
 
   private getLogPrefix(level: string): string {

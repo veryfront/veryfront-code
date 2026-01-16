@@ -22,7 +22,7 @@ export class VeryfrontTokenAdapter implements TokenStorageAdapter {
 
     this.client = new TokenStorageAPIClient(tokenConfig);
 
-    logger.info("[VeryfrontTokenAdapter] Created", {
+    logger.debug("[VeryfrontTokenAdapter] Created", {
       apiBaseUrl: tokenConfig.apiBaseUrl,
       projectSlug: tokenConfig.projectSlug,
     });
@@ -31,7 +31,7 @@ export class VeryfrontTokenAdapter implements TokenStorageAdapter {
   async initialize(): Promise<void> {
     if (this.initialized) return;
 
-    logger.info("[VeryfrontTokenAdapter] Initializing...");
+    logger.debug("[VeryfrontTokenAdapter] Initializing...");
 
     const connected = await this.client.ping();
     if (!connected) {
@@ -39,7 +39,7 @@ export class VeryfrontTokenAdapter implements TokenStorageAdapter {
     }
 
     this.initialized = true;
-    logger.info("[VeryfrontTokenAdapter] Initialized successfully");
+    logger.debug("[VeryfrontTokenAdapter] Initialized successfully");
   }
 
   async get(key: string): Promise<string | null> {
@@ -72,7 +72,7 @@ export class VeryfrontTokenAdapter implements TokenStorageAdapter {
 
   dispose(): void {
     this.initialized = false;
-    logger.info("[VeryfrontTokenAdapter] Disposed");
+    logger.debug("[VeryfrontTokenAdapter] Disposed");
   }
 
   private async ensureInitialized(): Promise<void> {

@@ -274,7 +274,7 @@ export class SSRHandler extends BaseHandler {
       // Memory profiling: log heap before render for debugging large projects
       const preRenderHeap = getHeapStats();
       if (preRenderHeap.heapUsedPercent > 30) {
-        _logger.info("[SSR] Pre-render memory", {
+        _logger.debug("[SSR] Pre-render memory", {
           projectSlug: ctx.projectSlug,
           slug,
           heapUsedMB: preRenderHeap.usedHeapSizeMB,
@@ -312,7 +312,7 @@ export class SSRHandler extends BaseHandler {
       const postRenderHeap = getHeapStats();
       const heapGrowthMB = postRenderHeap.usedHeapSizeMB - preRenderHeap.usedHeapSizeMB;
       if (heapGrowthMB > 50 || postRenderHeap.heapUsedPercent > 50) {
-        _logger.info("[SSR] Post-render memory", {
+        _logger.debug("[SSR] Post-render memory", {
           projectSlug: ctx.projectSlug,
           slug,
           heapUsedMB: postRenderHeap.usedHeapSizeMB,

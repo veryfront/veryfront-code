@@ -128,7 +128,7 @@ export async function applyLayoutsESM(
   }
 
   if (layoutBundle) {
-    logger.info("[applyLayoutsESM] Applying named layoutBundle (frontmatter layout)");
+    logger.debug("[applyLayoutsESM] Applying named layoutBundle (frontmatter layout)");
     element = await applyMDXLayout(
       element,
       layoutBundle,
@@ -138,9 +138,9 @@ export async function applyLayoutsESM(
       projectId,
       projectSlug,
     );
-    logger.info("[applyLayoutsESM] Named layoutBundle applied successfully");
+    logger.debug("[applyLayoutsESM] Named layoutBundle applied successfully");
   } else {
-    logger.info("[applyLayoutsESM] No layoutBundle to apply");
+    logger.debug("[applyLayoutsESM] No layoutBundle to apply");
   }
 
   if (providerItems.length > 0) {
@@ -176,7 +176,7 @@ export async function applyLayoutsFunctionBody(
   let element = pageElement;
 
   logger.debug("Using function-body wrapping for layouts");
-  logger.info("Nested layouts to apply:", {
+  logger.debug("Nested layouts to apply:", {
     count: nestedLayouts.length,
     layouts: nestedLayouts.map((l) => ({
       kind: l.kind,
@@ -188,7 +188,7 @@ export async function applyLayoutsFunctionBody(
     for (let i = nestedLayouts.length - 1; i >= 0; i--) {
       const item = nestedLayouts[i];
       if (!item) continue;
-      logger.info(`Applying layout ${i}:`, {
+      logger.debug(`Applying layout ${i}:`, {
         kind: item.kind,
         path: item.componentPath,
       });
@@ -208,7 +208,7 @@ export async function applyLayoutsFunctionBody(
             projectId,
           );
           const child = ensureValidChild(element, React);
-          logger.info("Applying TSX layout:", {
+          logger.debug("Applying TSX layout:", {
             layoutName: LayoutComponent.name || "Anonymous",
             childType: React.isValidElement(child)
               ? getElementTypeName(child as BundledReact.ReactElement)
@@ -216,7 +216,7 @@ export async function applyLayoutsFunctionBody(
           });
           const props = item.componentPath ? layoutDataMap?.get(item.componentPath) : undefined;
           element = React.createElement(LayoutComponent, props, child) as BundledReact.ReactElement;
-          logger.info("After TSX layout applied:", {
+          logger.debug("After TSX layout applied:", {
             pageElementType: React.isValidElement(element)
               ? getElementTypeName(element)
               : typeof element,
@@ -255,7 +255,7 @@ export async function applyLayoutsFunctionBody(
             projectId,
           );
           const child = ensureValidChild(element, React);
-          logger.info("Applying TSX provider:", {
+          logger.debug("Applying TSX provider:", {
             providerName: ProviderComponent.name || "Anonymous",
             childType: React.isValidElement(child)
               ? getElementTypeName(child as BundledReact.ReactElement)
@@ -310,7 +310,7 @@ async function applyProviders(
         const ProviderFn = providerMod.MDXLayout || providerMod.default;
         if (ProviderFn) {
           const child = ensureValidChild(result, React);
-          logger.info("Applying MDX provider", {
+          logger.debug("Applying MDX provider", {
             childIsElement: React.isValidElement(child),
           });
           result = React.createElement(
@@ -328,7 +328,7 @@ async function applyProviders(
           projectId,
         );
         const child = ensureValidChild(result, React);
-        logger.info("Applying TSX provider", {
+        logger.debug("Applying TSX provider", {
           providerName: ProviderComponent.name || "Anonymous",
           childIsElement: React.isValidElement(child),
         });

@@ -35,7 +35,7 @@ export class ConfigurationManager {
   }
 
   async initialize(): Promise<void> {
-    logger.info("Loading configuration", {
+    logger.debug("Loading configuration", {
       projectDir: this.projectDir,
       mode: this.mode,
     });
@@ -53,7 +53,7 @@ export class ConfigurationManager {
       logger,
     );
 
-    logger.info("Configuration loaded successfully", {
+    logger.debug("Configuration loaded successfully", {
       hasConfig: !!this.config,
       projectCacheKey: this.projectCacheKey,
     });

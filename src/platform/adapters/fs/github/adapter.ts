@@ -79,7 +79,7 @@ export class GitHubFSAdapter implements FSAdapter {
       this.projectDir,
     );
 
-    logger.info(`${LOG_PREFIX} Created adapter`, {
+    logger.debug(`${LOG_PREFIX} Created adapter`, {
       repo: this.client.repoId,
       ref: this.config.ref,
     });
@@ -93,7 +93,7 @@ export class GitHubFSAdapter implements FSAdapter {
       return;
     }
 
-    logger.info(`${LOG_PREFIX} Initializing`, {
+    logger.debug(`${LOG_PREFIX} Initializing`, {
       repo: this.client.repoId,
       ref: this.config.ref,
     });
@@ -103,7 +103,7 @@ export class GitHubFSAdapter implements FSAdapter {
 
     this.initialized = true;
 
-    logger.info(`${LOG_PREFIX} Initialized successfully`);
+    logger.debug(`${LOG_PREFIX} Initialized successfully`);
   }
 
   /**
@@ -205,7 +205,7 @@ export class GitHubFSAdapter implements FSAdapter {
     this.statOps.clearIndex();
     this.initialized = false;
 
-    logger.info(`${LOG_PREFIX} Disposed`);
+    logger.debug(`${LOG_PREFIX} Disposed`);
   }
 
   /**

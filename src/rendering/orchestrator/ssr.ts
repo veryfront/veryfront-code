@@ -43,7 +43,7 @@ export class VeryfrontRenderer {
   }
 
   async initialize(): Promise<void> {
-    logger.info("Initializing VeryfrontRenderer");
+    logger.debug("Initializing VeryfrontRenderer");
 
     if (!this.adapter) {
       const { getAdapter } = await import("@veryfront/platform/adapters/detect.ts");
@@ -69,7 +69,7 @@ export class VeryfrontRenderer {
     this.initializeModules();
     this.lifecycle.updateCompileMDX(this.mdxCompiler.compileMDX.bind(this.mdxCompiler));
 
-    logger.info("VeryfrontRenderer initialized successfully");
+    logger.debug("VeryfrontRenderer initialized successfully");
   }
 
   private initializeModules(): void {

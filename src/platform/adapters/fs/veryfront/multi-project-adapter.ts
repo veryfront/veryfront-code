@@ -45,7 +45,7 @@ export class MultiProjectFSAdapter implements FSAdapter {
       maxIdleMs: 30 * 60 * 1000,
     });
 
-    logger.info("[MultiProjectFSAdapter] Created", {
+    logger.debug("[MultiProjectFSAdapter] Created", {
       proxyMode: config.veryfront?.proxyMode,
     });
   }
@@ -155,7 +155,7 @@ export class MultiProjectFSAdapter implements FSAdapter {
   }
 
   initialize(): Promise<void> {
-    logger.info("[MultiProjectFSAdapter] Initialized (lazy per-project initialization)");
+    logger.debug("[MultiProjectFSAdapter] Initialized (lazy per-project initialization)");
     return Promise.resolve();
   }
 
@@ -193,7 +193,7 @@ export class MultiProjectFSAdapter implements FSAdapter {
     this.manager.dispose();
     this.defaultAdapter?.dispose();
     this.defaultAdapter = undefined;
-    logger.info("[MultiProjectFSAdapter] Disposed");
+    logger.debug("[MultiProjectFSAdapter] Disposed");
   }
 
   getManagerStats(): ReturnType<ProxyFSAdapterManager["getStats"]> {

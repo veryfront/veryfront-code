@@ -241,7 +241,7 @@ export function recordSSRModules(
 
   manifestStore.set(key, manifest);
 
-  logger.info("[RouteModuleManifest] Recorded SSR modules", {
+  logger.debug("[RouteModuleManifest] Recorded SSR modules", {
     key,
     inputModules: modules.length,
     newModulesAdded: addedCount,
@@ -311,7 +311,7 @@ export function clearProjectManifests(projectSlug: string): void {
       manifestStore.delete(key);
     }
   }
-  logger.info("[RouteModuleManifest] Cleared manifests for project", { projectSlug });
+  logger.debug("[RouteModuleManifest] Cleared manifests for project", { projectSlug });
 }
 
 /**
@@ -320,5 +320,5 @@ export function clearProjectManifests(projectSlug: string): void {
 export function clearAllManifests(): void {
   manifestStore.clear();
   pendingCollections.clear();
-  logger.info("[RouteModuleManifest] Cleared all manifests");
+  logger.debug("[RouteModuleManifest] Cleared all manifests");
 }

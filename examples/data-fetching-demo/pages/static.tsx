@@ -29,7 +29,10 @@ export default function StaticPage({ data, buildTime }: StaticProps) {
       <div className="bg-neutral-50 dark:bg-neutral-800 p-5 rounded-2xl border border-neutral-200 dark:border-neutral-700 mb-6">
         <p className="text-neutral-900 dark:text-white mb-2">{data.content}</p>
         <p className="text-neutral-500 dark:text-neutral-400 text-sm mb-2">
-          Built at: {new Date(buildTime).toLocaleString()}
+          Built at:{" "}
+          <time dateTime={buildTime} suppressHydrationWarning>
+            {new Date(buildTime).toLocaleString()}
+          </time>
         </p>
         <p className="text-neutral-500 dark:text-neutral-400 text-sm">
           This page uses ISR and will revalidate every 60 seconds.

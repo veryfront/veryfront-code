@@ -38,13 +38,13 @@ function performDeepInspection(
   element: React.ReactNode,
   inspectionOptions: InspectionOptions,
 ): void {
-  logger.info(
+  logger.debug(
     "[VALIDATOR] Starting deep React element tree inspection before SSR",
   );
 
   try {
     deepInspectElement(element, "root", 0, inspectionOptions);
-    logger.info(
+    logger.debug(
       "[VALIDATOR] Deep element tree inspection completed - no invalid objects found in props/children",
     );
   } catch (error) {
@@ -70,7 +70,7 @@ function logFinalElementCheck(
   const isElement = isReactElement(finalChild);
   const type = isElement ? getElementTypeName(finalChild as React.ReactElement) : typeof finalChild;
 
-  logger.info("Final element check before SSR", {
+  logger.debug("Final element check before SSR", {
     finalIsElement,
     hasChildrenKey,
     type,

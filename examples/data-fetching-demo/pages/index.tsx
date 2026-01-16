@@ -22,7 +22,10 @@ export default function Home({ message, timestamp }: HomeProps) {
       <div className="bg-neutral-50 dark:bg-neutral-800 p-5 rounded-2xl border border-neutral-200 dark:border-neutral-700 mb-6">
         <p className="text-neutral-900 dark:text-white mb-2">{message}</p>
         <p className="text-neutral-500 dark:text-neutral-400 text-sm">
-          Rendered at: {new Date(timestamp).toLocaleString()}
+          Rendered at:{" "}
+          <time dateTime={new Date(timestamp).toISOString()} suppressHydrationWarning>
+            {new Date(timestamp).toLocaleString()}
+          </time>
         </p>
       </div>
 

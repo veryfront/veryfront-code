@@ -106,7 +106,7 @@ export async function handleModuleBatch(
     throwOnError: false,
   });
 
-  logger.info("[ModuleBatch] Processing batch request", {
+  logger.debug("[ModuleBatch] Processing batch request", {
     moduleCount: paths.length,
     isSSR,
     projectSlug,
@@ -382,10 +382,10 @@ export function clearBatchCache(projectSlug?: string): void {
         transformCache.delete(key);
       }
     }
-    logger.info("[ModuleBatch] Cleared cache for project", { projectSlug });
+    logger.debug("[ModuleBatch] Cleared cache for project", { projectSlug });
   } else {
     transformCache.clear();
-    logger.info("[ModuleBatch] Cleared all cache");
+    logger.debug("[ModuleBatch] Cleared all cache");
   }
 }
 

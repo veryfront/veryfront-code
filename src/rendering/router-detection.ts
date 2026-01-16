@@ -82,16 +82,13 @@ async function detectAppRouterImpl(
   if (hasPagesRoutes) return false;
 
   // If neither has routes, check which directory exists
-  // Prefer app router for new projects, but allow pages router for legacy
   const hasAppDir = Boolean(appStat?.isDirectory);
   const hasPagesDir = Boolean(pagesStat?.isDirectory);
 
-  // If both exist but neither has routes, prefer app router (modern default)
-  // If only one exists, use that one
-  // If neither exists, default to app router
-  if (hasAppDir) return true; // Prefer app router when it exists
-  if (hasPagesDir) return false;
-  return false; // If nothing is detectable, fall back to pages router to avoid false positives
+  // If pages dir exists (even without routes), use pages router for legacy support
+  // Otherwise default to app router (modern default)
+  if (hasPagesDir && !hasAppDir) return false;
+  return true; // Default to app router
 }
 
 const ROUTE_EXTENSIONS = new Set([".mdx", ".md", ".tsx", ".jsx", ".ts", ".js"]);

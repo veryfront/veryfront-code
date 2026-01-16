@@ -143,7 +143,7 @@ export class VeryfrontAPIClient {
     }
 
     if (this.config.projectId) {
-      logger.info("[VeryfrontAPIClient] Initializing with known projectId", {
+      logger.debug("[VeryfrontAPIClient] Initializing with known projectId", {
         slug,
         projectId: this.config.projectId,
       });
@@ -159,7 +159,7 @@ export class VeryfrontAPIClient {
 
     this.operations.setProjectId(project.id);
     this.initialized = true;
-    logger.info("[VeryfrontAPIClient] Initialized", {
+    logger.debug("[VeryfrontAPIClient] Initialized", {
       projectId: project.id,
       projectName: project.name,
     });

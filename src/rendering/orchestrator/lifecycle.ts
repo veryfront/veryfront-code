@@ -63,7 +63,7 @@ export class RendererLifecycle {
   }
 
   async initialize(): Promise<RendererServices> {
-    logger.info("Initializing renderer services", {
+    logger.debug("Initializing renderer services", {
       projectDir: this.configManager.getProjectDir(),
       mode: this.configManager.getMode(),
     });
@@ -206,7 +206,7 @@ export class RendererLifecycle {
     // Components will be loaded lazily on-demand instead
     const isVeryFrontAPI = config.fs?.type === "veryfront-api";
     if (!isCompiledBinary() && !isVeryFrontAPI) {
-      logger.info("Loading components eagerly for MDX import mapping");
+      logger.debug("Loading components eagerly for MDX import mapping");
 
       const componentDirs = config.directories?.components || ["components"];
 
@@ -217,13 +217,13 @@ export class RendererLifecycle {
         );
       }
     } else {
-      logger.info(
+      logger.debug(
         "Skipping eager component loading (will load lazily on-demand)",
         { isCompiledBinary: isCompiledBinary(), isVeryFrontAPI },
       );
     }
 
-    logger.info("Renderer services initialized successfully");
+    logger.debug("Renderer services initialized successfully");
 
     return this.services;
   }

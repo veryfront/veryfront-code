@@ -118,7 +118,7 @@ export class FileWatchSetup {
       .join(", ");
 
     const duration = (performance.now() - startTime).toFixed(0);
-    logger.info(`[HMR] Batch processed ${changes.length} file changes in ${duration}ms`, {
+    logger.debug(`[HMR] Batch processed ${changes.length} file changes in ${duration}ms`, {
       files: display,
     });
 
@@ -132,7 +132,7 @@ export class FileWatchSetup {
     this.batchCount++;
     if (this.optimizedWatcher && this.batchCount % METRICS_LOG_INTERVAL === 0) {
       const metrics = this.optimizedWatcher.getMetrics();
-      logger.info("[HMR] Performance metrics", metrics);
+      logger.debug("[HMR] Performance metrics", metrics);
     }
   }
 
@@ -147,7 +147,7 @@ export class FileWatchSetup {
     const display = Array.isArray(paths)
       ? paths.map((p) => p.replace(this.projectDir, ".")).join(", ")
       : "(unknown)";
-    logger.info(`[HMR] file change`, { files: display });
+    logger.debug(`[HMR] file change`, { files: display });
 
     this.hmrServer.sendUpdate({ type: "reload", timestamp: Date.now() });
 

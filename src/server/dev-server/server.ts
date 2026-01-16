@@ -54,7 +54,7 @@ export class DevServer {
       const { isRSCEnabled } = await import("@veryfront/utils/feature-flags.ts");
       const rsc = isRSCEnabled(this.appConfig);
       const stub = this.adapter.env.get("VERYFRONT_FORCE_FLIGHT_STUB") === "1" ? " (stub)" : "";
-      logger.info(`[RSC] ${rsc ? "enabled" : "disabled"}${rsc ? stub : ""}`);
+      logger.debug(`[RSC] ${rsc ? "enabled" : "disabled"}${rsc ? stub : ""}`);
     } catch {
       /* optional */
     }
@@ -119,18 +119,18 @@ export class DevServer {
 
       // Subscribe to immediate invalidation for cache clearing (fires immediately)
       this.invalidateUnsubscribe = ReloadNotifier.subscribeInvalidate(() => {
-        logger.info("[DevServer] ✅ INVALIDATE callback triggered - clearing universal handler");
+        logger.debug("[DevServer] INVALIDATE callback triggered - clearing universal handler");
         // Invalidate universal handler immediately to clear cached API handlers
         this.requestHandler?.invalidateUniversalHandler();
       });
 
       // Subscribe to debounced reload for browser refresh (batches rapid changes)
       this.reloadUnsubscribe = ReloadNotifier.subscribe(() => {
-        logger.info("[DevServer] ✅ RELOAD callback triggered - sending HMR reload to browser");
+        logger.debug("[DevServer] RELOAD callback triggered - sending HMR reload to browser");
         this.hmrServer?.sendUpdate({ type: "reload", timestamp: Date.now() });
       });
 
-      logger.info("[DevServer] ✅ ReloadNotifier subscriptions registered", {
+      logger.debug("[DevServer] ReloadNotifier subscriptions registered", {
         hasHmrServer: !!this.hmrServer,
       });
     }
@@ -161,7 +161,7 @@ export class DevServer {
         routeDiscovery.discoverRoutes(),
       ]);
     } else {
-      logger.info("[DevServer] Skipping component/route discovery in proxy mode");
+      logger.debug("[DevServer] Skipping component/route discovery in proxy mode");
     }
 
     const requestHandler = new RequestHandler(
@@ -217,7 +217,7 @@ export class DevServer {
     // and file watching doesn't work with the veryfront-api remote adapter
     const isProxyMode = this.appConfig?.fs?.veryfront?.proxyMode === true;
     if (isProxyMode) {
-      logger.info("[DevServer] Skipping file watchers in proxy mode");
+      logger.debug("[DevServer] Skipping file watchers in proxy mode");
       return;
     }
 
@@ -255,7 +255,7 @@ export class DevServer {
     if (this.fileWatchSetup) {
       const metrics = this.fileWatchSetup.getMetrics();
       if (metrics) {
-        logger.info("[HMR] Final performance metrics", metrics);
+        logger.debug("[HMR] Final performance metrics", metrics);
       }
       this.fileWatchSetup.cleanup();
     }

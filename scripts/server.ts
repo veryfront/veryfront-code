@@ -23,19 +23,17 @@
  */
 
 import { join, resolve } from "https://deno.land/std@0.220.0/path/mod.ts";
-import { banner } from "../src/cli/ui/components/banner.ts";
-import { brand, dim } from "../src/cli/ui/colors.ts";
-import { createKeyboardHandler } from "../src/cli/ui/keyboard.ts";
-import { openBrowser } from "../src/cli/auth/browser.ts";
 
 // Types
 interface Args {
   port: number;
   projectPath: string | null;
+  mcpPort: number;
 }
 
 interface LocalProjects {
-  map: Map<string, string>;
+  projects: Map<string, string>;
+  examples: Map<string, string>;
   default: string | null;
 }
 
@@ -44,6 +42,7 @@ function parseArgs(): Args {
   const args = Deno.args;
   let port = 8080;
   let projectPath: string | null = null;
+  let mcpPort = 9999; // MCP HTTP enabled by default
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
@@ -61,9 +60,17 @@ function parseArgs(): Args {
     } else if (arg.startsWith("--project=")) {
       projectPath = arg.split("=")[1] || null;
     }
+
+    // Custom MCP port
+    if (arg === "--mcp-port") {
+      mcpPort = parseInt(args[i + 1] || "", 10) || 9999;
+      i++;
+    } else if (arg.startsWith("--mcp-port=")) {
+      mcpPort = parseInt(arg.split("=")[1] || "", 10) || 9999;
+    }
   }
 
-  return { port, projectPath };
+  return { port, projectPath, mcpPort };
 }
 
 // Check if a directory exists
@@ -92,9 +99,10 @@ async function findLocalProjects(baseDirs: string[]): Promise<Map<string, string
     for await (const entry of Deno.readDir(baseDir)) {
       if (entry.isDirectory && !entry.name.startsWith(".")) {
         const projectPath = join(baseDir, entry.name);
+        const hasApp = await directoryExists(join(projectPath, "app"));
         const hasPages = await directoryExists(join(projectPath, "pages"));
         const hasComponents = await directoryExists(join(projectPath, "components"));
-        if (hasPages || hasComponents) {
+        if (hasApp || hasPages || hasComponents) {
           // Convert to absolute path for consistent path resolution across the system
           const absolutePath = resolve(projectPath);
           projects.set(entry.name, absolutePath);
@@ -128,69 +136,47 @@ async function hasEnvFile(): Promise<boolean> {
   }
 }
 
-// Discover local projects
+// Discover local projects and examples separately
 async function discoverLocalProjects(projectPath: string | null): Promise<LocalProjects> {
-  const localProjectDirs = ["data/projects", "projects", "examples"];
-  const map = await findLocalProjects(localProjectDirs);
+  // Projects from data/projects and projects directories
+  const projects = await findLocalProjects(["data/projects", "projects"]);
+
+  // Examples from examples directory
+  const examples = await findLocalProjects(["examples"]);
+
   let defaultProject: string | null = null;
 
   if (projectPath && await directoryExists(projectPath)) {
     const slug = getProjectSlug(projectPath);
     // Convert to absolute path for consistent path resolution
-    map.set(slug, resolve(projectPath));
+    projects.set(slug, resolve(projectPath));
     defaultProject = slug;
   }
 
-  return { map, default: defaultProject };
-}
-
-// Print startup banner
-function printBanner(port: number, localProjects: LocalProjects, hasCredentials: boolean): void {
-  const serverUrl = `http://lvh.me:${port}`;
-
-  console.log();
-  console.log(banner({
-    title: "Veryfront",
-    subtitle: "is now running",
-    info: {
-      url: serverUrl,
-      ...(localProjects.default && { project: localProjects.default }),
-    },
-  }));
-
-  if (localProjects.map.size > 0) {
-    console.log();
-    console.log(`  ${dim("Local projects:")}`);
-    let i = 1;
-    for (const [slug, path] of localProjects.map) {
-      const num = i <= 9 ? brand(String(i)) : " ";
-      console.log(`    ${num} ${slug} ${dim(path)}`);
-      i++;
-    }
-  }
-
-  if (hasCredentials) {
-    console.log();
-    console.log(`  ${dim("API access enabled")}`);
-  }
-
-  console.log();
-  console.log(`  ${dim("Press")} ${brand("1-9")} ${dim("to open project,")} ${brand("q")} ${dim("to quit")}`);
-  console.log();
+  return { projects, examples, default: defaultProject };
 }
 
 // Main
 async function main(): Promise<void> {
   const args = parseArgs();
+  const { createApp, showStartup } = await import("../src/cli/app/index.ts");
+
   await clearModuleCaches();
 
-  // Suppress noisy server logs (we print our own banner)
+  // Suppress noisy server logs
   Deno.env.set("LOG_LEVEL", "warn");
+
+  // Show startup animation
+  await showStartup([
+    "Loading configuration",
+    "Discovering projects",
+    "Starting server",
+  ]);
 
   const localProjects = await discoverLocalProjects(args.projectPath);
   const hasCredentials = await hasEnvFile();
 
-  // Import dependencies (after setting LOG_LEVEL)
+  // Import dependencies
   const { createProxyHandler, injectContextHeaders } = await import("../proxy/handler.ts");
   const { createCacheFromEnv } = await import("../proxy/cache/index.ts");
   const { createDevServer } = await import("../src/server/dev-server.ts");
@@ -201,23 +187,19 @@ async function main(): Promise<void> {
     await load({ envPath: ".env", examplePath: null, export: true });
   }
 
-  // Create proxy handler
+  // Create proxy handler - combine projects and examples for routing
+  const allProjects = new Map([...localProjects.projects, ...localProjects.examples]);
   const proxyConfig = {
     apiBaseUrl: Deno.env.get("VERYFRONT_API_BASE_URL") || "http://api.lvh.me:4000",
     clientId: Deno.env.get("OAUTH_CLIENT_ID") || "",
     clientSecret: Deno.env.get("OAUTH_CLIENT_SECRET") || "",
     previewClientId: Deno.env.get("OAUTH_PREVIEW_CLIENT_ID") || "",
     previewClientSecret: Deno.env.get("OAUTH_PREVIEW_CLIENT_SECRET") || "",
-    localProjects: Object.fromEntries(localProjects.map),
+    localProjects: Object.fromEntries(allProjects),
   };
 
   const cache = createCacheFromEnv();
   const proxyHandler = createProxyHandler({ config: proxyConfig, cache });
-
-  const missing = proxyHandler.validateConfig();
-  if (missing.length > 0) {
-    console.log(dim(`  Missing OAuth credentials: ${missing.join(", ")}`));
-  }
 
   // Request interceptor applies proxy logic to each request
   const requestInterceptor = async (req: Request): Promise<Request> => {
@@ -238,35 +220,43 @@ async function main(): Promise<void> {
   });
 
   await devServer.ready;
-  printBanner(args.port, localProjects, hasCredentials);
+
+  // Start MCP server
+  const { createMCPServer } = await import("../src/cli/mcp/index.ts");
+  const mcpServer = await createMCPServer({
+    httpPort: args.mcpPort,
+  });
+
+  // Create and start the app
+  const app = createApp({
+    port: args.port,
+    projects: localProjects.projects,
+    examples: localProjects.examples,
+    defaultProject: localProjects.default ?? undefined,
+    mcpPort: args.mcpPort,
+  });
+
+  // Mark server as ready
+  app.setServerReady();
 
   // Shutdown handler
   const shutdown = async () => {
-    keyboardHandler.stop();
-    console.log();
-    console.log(dim("  Shutting down..."));
+    app.stop();
+    await mcpServer.stop();
     shutdownController.abort();
     await devServer.stop();
     await proxyHandler.close();
-    Deno.exit(0);
   };
 
-  // Keyboard shortcuts
-  const projectSlugs = Array.from(localProjects.map.keys());
-  const keyboardHandler = createKeyboardHandler({
-    onNumber: (n) => {
-      const slug = projectSlugs[n - 1];
-      if (slug) {
-        void openBrowser(`http://${slug}.lvh.me:${args.port}`);
-      }
-    },
-    onClear: () => console.clear(),
-    onQuit: () => void shutdown(),
+  Deno.addSignalListener("SIGINT", () => {
+    void shutdown().then(() => Deno.exit(0));
   });
-  keyboardHandler.start();
+  Deno.addSignalListener("SIGTERM", () => {
+    void shutdown().then(() => Deno.exit(0));
+  });
 
-  Deno.addSignalListener("SIGINT", () => void shutdown());
-  Deno.addSignalListener("SIGTERM", () => void shutdown());
+  // Start the app
+  app.start();
 }
 
 main();

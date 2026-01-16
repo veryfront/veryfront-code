@@ -279,7 +279,7 @@ export function createVeryfrontHandler(
   });
 
   if (isProxyMode) {
-    logger.info("[universal] Running in proxy mode - lazy initialization enabled");
+    logger.debug("[universal] Running in proxy mode - lazy initialization enabled");
   }
 
   const handler = async (req: Request): Promise<Response> => {
@@ -386,7 +386,7 @@ export function createVeryfrontHandler(
           const lookupHost = forwardedHost || host;
 
           if (apiConfig.apiToken) {
-            logger.info("[universal] Custom domain detected, looking up project", {
+            logger.debug("[universal] Custom domain detected, looking up project", {
               host: lookupHost,
               originalHost: host,
               forwardedHost,
@@ -408,7 +408,7 @@ export function createVeryfrontHandler(
               if (!proxyEnv) {
                 proxyEnv = getEnvironmentType(lookupResult);
               }
-              logger.info("[universal] Domain lookup successful", {
+              logger.debug("[universal] Domain lookup successful", {
                 domain: host,
                 projectSlug: lookupResult.project_slug,
                 projectId: lookupResult.project_id,
@@ -461,7 +461,7 @@ export function createVeryfrontHandler(
               projectId = projectId || lookupResult.project_id;
               environmentName = environmentName || lookupResult.environment?.name;
               proxyEnv = "production";
-              logger.info("[universal] Veryfront domain release lookup successful", {
+              logger.debug("[universal] Veryfront domain release lookup successful", {
                 projectSlug,
                 releaseId,
                 projectId,

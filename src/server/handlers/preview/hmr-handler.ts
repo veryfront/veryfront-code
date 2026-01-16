@@ -63,7 +63,7 @@ export class HMRHandler extends BaseHandler {
       HMRHandler.broadcastUpdate(changedPaths);
     });
 
-    logger.info("[HMRHandler] Initialized - listening for reload events");
+    logger.debug("[HMRHandler] Initialized - listening for reload events");
   }
 
   /**
@@ -261,6 +261,6 @@ export class HMRHandler extends BaseHandler {
     HMRHandler.clients.clear();
     HMRHandler.initialized = false;
 
-    logger.info("[HMRHandler] Shutdown complete");
+    logger.debug("[HMRHandler] Shutdown complete");
   }
 }

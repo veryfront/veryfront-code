@@ -164,13 +164,13 @@ export class ProviderManager {
 
     // Stale-while-revalidate: if we have stale cache, return it and refresh in background
     if (cachedEntry && !this.refreshing.has(cacheKey)) {
-      logger.info("[ProviderManager] Stale cache, refreshing in background", logCtx);
+      logger.debug("[ProviderManager] Stale cache, refreshing in background", logCtx);
       this.refreshInBackground(cacheKey, projectData, route);
       return cachedEntry.result;
     }
 
     // No cache or already refreshing - fetch synchronously
-    logger.info("[ProviderManager] Cache miss", logCtx);
+    logger.debug("[ProviderManager] Cache miss", logCtx);
     return this.fetchProviders(cacheKey, projectData, route);
   }
 
@@ -207,7 +207,7 @@ export class ProviderManager {
       providerItems.push(configProviderItem);
       const result = { providerBundles, providerItems, providerInfos };
       this.cache.set(cacheKey, { result, timestamp: Date.now() });
-      logger.info("[ProviderManager] Fetched provider (config)", {
+      logger.debug("[ProviderManager] Fetched provider (config)", {
         ...logCtx,
         providerPath: configProviderItem.componentPath,
         durationMs: Date.now() - startTime,
@@ -227,12 +227,12 @@ export class ProviderManager {
     this.cache.set(cacheKey, { result, timestamp: Date.now() });
 
     if (discoveredInfos.length === 0) {
-      logger.info("[ProviderManager] No providers found", {
+      logger.debug("[ProviderManager] No providers found", {
         ...logCtx,
         durationMs: Date.now() - startTime,
       });
     } else {
-      logger.info("[ProviderManager] Fetched providers (discovery)", {
+      logger.debug("[ProviderManager] Fetched providers (discovery)", {
         ...logCtx,
         count: discoveredInfos.length,
         durationMs: Date.now() - startTime,

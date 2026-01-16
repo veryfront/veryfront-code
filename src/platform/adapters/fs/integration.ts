@@ -23,7 +23,7 @@ export async function enhanceAdapterWithFS(
   }
 
   try {
-    logger.info("[FSIntegration] Initializing FSAdapter", {
+    logger.debug("[FSIntegration] Initializing FSAdapter", {
       type: config.fs.type,
       projectSlug: config.fs.veryfront?.projectSlug,
     });
@@ -49,7 +49,7 @@ export async function enhanceAdapterWithFS(
       },
     });
 
-    logger.info("[FSIntegration] FSAdapter initialized successfully", {
+    logger.debug("[FSIntegration] FSAdapter initialized successfully", {
       type: config.fs.type,
     });
 

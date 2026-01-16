@@ -157,8 +157,13 @@ export async function GET(_req: Request) {
  * ```
  */
 export async function initCommand(options: InitOptions): Promise<void> {
-  const { name, features = [] } = options;
+  const { name, features = [], quiet = false } = options;
   let { integrations = [] } = options;
+
+  // Conditional logging helper
+  const log = (msg: string) => {
+    if (!quiet) logger.info(msg);
+  };
 
   // Run interactive wizard if no template/integrations specified
   let template: InitTemplate;
@@ -211,7 +216,7 @@ export async function initCommand(options: InitOptions): Promise<void> {
   const integrationsStr = integrations.length > 0
     ? ` with integrations: ${integrations.join(", ")}`
     : "";
-  logger.info(
+  log(
     `Creating new Veryfront project${
       name ? ` in ${name}` : ""
     } with template: ${template}${featuresStr}${integrationsStr}`,
@@ -357,7 +362,10 @@ export async function initCommand(options: InitOptions): Promise<void> {
   }
 
   // Create package.json with ES module support
-  await createPackageJson(projectDir, name);
+  // Skip in quiet/TUI mode since local dev uses CDN and package.json can cause hydration issues
+  if (!options.quiet) {
+    await createPackageJson(projectDir, name);
+  }
 
   // Handle environment variables from both template and features
   if (allEnvVars.length > 0) {
@@ -400,61 +408,63 @@ export async function initCommand(options: InitOptions): Promise<void> {
   // Store feature tips for later display
   (options as InitOptions & { _featureTips?: string[] })._featureTips = featureTips;
 
-  logger.info(`${green("✅")} Created Veryfront project${name ? ` at ${name}` : ""}`);
+  log(`Created Veryfront project${name ? ` at ${name}` : ""}`);
 
   // Auto-install dependencies unless skipInstall is true
   if (!options.skipInstall) {
-    logger.info("");
+    log("");
     const installSuccess = await installDependencies(projectDir);
 
     if (!installSuccess) {
       const pm = await detectPackageManager(projectDir);
-      logger.warn(
-        `${yellow("⚠")} Dependency installation failed. Run '${getInstallCommand(pm)}' manually.`,
-      );
+      if (!quiet) {
+        logger.warn(
+          `Dependency installation failed. Run '${getInstallCommand(pm)}' manually.`,
+        );
+      }
     }
   }
 
-  logger.info(`\n${cyan("Next steps:")}`);
+  log(`\n${cyan("Next steps:")}`);
   if (name) {
-    logger.info(`  cd ${name}`);
+    log(`  cd ${name}`);
   }
   if (options.skipInstall) {
     const pm = await detectPackageManager(projectDir);
-    logger.info(`  ${getInstallCommand(pm)}`);
+    log(`  ${getInstallCommand(pm)}`);
   }
-  logger.info(`  veryfront dev`);
+  log(`  veryfront dev`);
 
   // Add template-specific instructions
   if (template === "blog") {
-    logger.info(`\n${cyan("Blog tips:")}`);
-    logger.info(`  - Add posts to content/posts/`);
-    logger.info(`  - Customize layout in app/layout.tsx`);
-    logger.info(`  - Configure blog settings in veryfront.config.js`);
+    log(`\n${cyan("Blog tips:")}`);
+    log(`  - Add posts to content/posts/`);
+    log(`  - Customize layout in app/layout.tsx`);
+    log(`  - Configure blog settings in veryfront.config.js`);
   } else if (template === "docs") {
-    logger.info(`\n${cyan("Documentation tips:")}`);
-    logger.info(`  - Add docs to app/docs/`);
-    logger.info(`  - Update navigation in components/Sidebar.tsx`);
-    logger.info(`  - Enable search in veryfront.config.js`);
+    log(`\n${cyan("Documentation tips:")}`);
+    log(`  - Add docs to app/docs/`);
+    log(`  - Update navigation in components/Sidebar.tsx`);
+    log(`  - Enable search in veryfront.config.js`);
   } else if (template === "app") {
-    logger.info(`\n${cyan("App tips:")}`);
-    logger.info(`  - Default login: demo@example.com / password`);
-    logger.info(`  - Add API routes in app/api/`);
-    logger.info(`  - Configure auth in lib/auth.ts`);
+    log(`\n${cyan("App tips:")}`);
+    log(`  - Default login: demo@example.com / password`);
+    log(`  - Add API routes in app/api/`);
+    log(`  - Configure auth in lib/auth.ts`);
   } else if (template === "ai") {
-    logger.info(`\n${cyan("AI Starter tips:")}`);
-    logger.info(`  - Add your OPENAI_API_KEY to .env`);
-    logger.info(`  - Add tools in ai/tools/ (auto-discovered)`);
-    logger.info(`  - Add agents in ai/agents/ (auto-discovered)`);
-    logger.info(`  - Add prompts in ai/prompts/ (auto-discovered)`);
+    log(`\n${cyan("AI Starter tips:")}`);
+    log(`  - Add your OPENAI_API_KEY to .env`);
+    log(`  - Add tools in ai/tools/ (auto-discovered)`);
+    log(`  - Add agents in ai/agents/ (auto-discovered)`);
+    log(`  - Add prompts in ai/prompts/ (auto-discovered)`);
   }
 
   // Display feature tips if any
   const displayFeatureTips = (options as InitOptions & { _featureTips?: string[] })._featureTips;
   if (displayFeatureTips && displayFeatureTips.length > 0) {
-    logger.info(`\n${cyan("Feature tips:")}`);
+    log(`\n${cyan("Feature tips:")}`);
     for (const tip of displayFeatureTips) {
-      logger.info(`  - ${tip}`);
+      log(`  - ${tip}`);
     }
   }
 }

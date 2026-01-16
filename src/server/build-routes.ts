@@ -86,7 +86,7 @@ export async function collectAppRoutes(
       return true;
     });
 
-    logger.info(`Found ${collected.length} App Router static routes`);
+    logger.debug(`Found ${collected.length} App Router static routes`);
     return filtered;
   } catch (e) {
     logger.debug("No app directory found for SSG", e);
