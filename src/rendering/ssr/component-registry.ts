@@ -161,7 +161,7 @@ export class ComponentRegistry {
 
     try {
       const processed = await this.collectComponents(dir, actualProjectRoot, deferLoading);
-      logger.info(`Loaded ${processed} component${processed === 1 ? "" : "s"} from ${dir}`);
+      logger.debug(`Loaded ${processed} component${processed === 1 ? "" : "s"} from ${dir}`);
     } catch (error) {
       logger.debug(`Components directory not found: ${dir}`, error);
     }
@@ -254,7 +254,7 @@ export class ComponentRegistry {
       return;
     }
 
-    logger.info(`Initializing ${this.componentSources.size} deferred components`);
+    logger.debug(`Initializing ${this.componentSources.size} deferred components`);
 
     let successCount = 0;
     let failCount = 0;
@@ -305,7 +305,7 @@ export class ComponentRegistry {
         `Component initialization complete: ${successCount} succeeded, ${failCount} failed (using fallbacks, set LOG_LEVEL=debug for details)`,
       );
     } else {
-      logger.info(`Component initialization complete: ${successCount} components loaded`);
+      logger.debug(`Component initialization complete: ${successCount} components loaded`);
     }
   }
 

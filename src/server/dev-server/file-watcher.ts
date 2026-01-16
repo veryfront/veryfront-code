@@ -57,7 +57,7 @@ export class OptimizedFileWatcher {
 
     const reductionPercent =
       ((1 - (this.metrics.batchedOperations / this.metrics.totalEvents)) * 100).toFixed(1);
-    logger.info(
+    logger.debug(
       `[HMR] Processing batch of ${batchSize} file changes (${reductionPercent}% reduction in FS operations)`,
     );
 

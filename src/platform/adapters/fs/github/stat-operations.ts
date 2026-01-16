@@ -81,7 +81,7 @@ export class GitHubStatOperations {
     }
 
     // Fetch from API
-    logger.info(`${LOG_PREFIX} Fetching repository tree`, {
+    logger.debug(`${LOG_PREFIX} Fetching repository tree`, {
       repo: this.client.repoId,
       ref: this.config.ref,
     });
@@ -94,7 +94,7 @@ export class GitHubStatOperations {
     this.buildIndexFromEntries(tree.tree);
     this.indexBuilt = true;
 
-    logger.info(`${LOG_PREFIX} Index built`, {
+    logger.debug(`${LOG_PREFIX} Index built`, {
       files: this.fileIndex.size,
       directories: this.directoryIndex.size,
     });

@@ -14,4 +14,6 @@ export interface InitOptions {
   features?: FeatureName[];
   integrations?: IntegrationName[];
   env?: EnvValues;
+  /** Suppress output messages */
+  quiet?: boolean;
 }

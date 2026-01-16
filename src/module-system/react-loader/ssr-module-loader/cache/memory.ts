@@ -89,7 +89,7 @@ registerCache("ssr-transform-semaphore", () => ({
 export function clearSSRModuleCache(): void {
   globalModuleCache.clear();
   failedComponents.clear();
-  logger.info("[SSR-MODULE-LOADER] Cache cleared");
+  logger.debug("[SSR-MODULE-LOADER] Cache cleared");
 }
 
 /**
@@ -129,7 +129,7 @@ export function clearSSRModuleCacheForProject(projectId: string): void {
   }
 
   if (cleared > 0) {
-    logger.info("[SSR-MODULE-LOADER] Project cache cleared", {
+    logger.debug("[SSR-MODULE-LOADER] Project cache cleared", {
       projectId,
       entriesCleared: cleared,
     });

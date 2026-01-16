@@ -15,6 +15,9 @@
 import { TokenManager, type TokenScope } from "./token-manager.ts";
 import { parseProjectDomain, type ParsedDomain } from "../src/server/utils/domain-parser.ts";
 import type { TokenCache } from "./cache/types.ts";
+import { createFileSystem } from "../src/platform/compat/fs.ts";
+import { cwd } from "../src/platform/compat/process.ts";
+import { join } from "../src/platform/compat/path/index.ts";
 
 export interface ProxyConfig {
   apiBaseUrl: string;
@@ -72,6 +75,40 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
   const { config, cache, logger } = options;
   const localProjects = config.localProjects ?? {};
 
+  // Dynamic project discovery - check if project exists in common directories
+  const fs = createFileSystem();
+  async function findLocalProject(slug: string): Promise<string | undefined> {
+    // First check the static map
+    if (localProjects[slug]) {
+      return localProjects[slug];
+    }
+
+    // Dynamically check common project directories
+    const projectDirs = ["projects", "data/projects", "examples"];
+    const basePath = cwd();
+    for (const dir of projectDirs) {
+      const projectPath = join(basePath, dir, slug);
+      try {
+        const exists = await fs.exists(projectPath);
+        if (exists) {
+          // Verify it has app/ or pages/ or components/
+          const hasApp = await fs.exists(join(projectPath, "app"));
+          const hasPages = await fs.exists(join(projectPath, "pages"));
+          const hasComponents = await fs.exists(join(projectPath, "components"));
+          if (hasApp || hasPages || hasComponents) {
+            // Cache for future requests
+            localProjects[slug] = projectPath;
+            logger?.debug("Dynamically discovered local project", { slug, projectPath });
+            return projectPath;
+          }
+        }
+      } catch {
+        // Directory doesn't exist, continue
+      }
+    }
+    return undefined;
+  }
+
   // Create token manager
   const tokenManager = new TokenManager(
     {
@@ -106,8 +143,8 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
     const scope = getScope(parsedDomain.environment);
     const projectSlug = parsedDomain.slug || undefined;
 
-    // Check if this is a local project
-    const localPath = projectSlug ? localProjects[projectSlug] : undefined;
+    // Check if this is a local project (with dynamic discovery)
+    const localPath = projectSlug ? await findLocalProject(projectSlug) : undefined;
     const isLocalProject = !!localPath;
 
     logger?.debug("Processing request", {

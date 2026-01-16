@@ -37,7 +37,7 @@ async function discoverNestedLayoutsImpl(
 
     const existing = await resolveExistingFiles(candidates.reverse(), adapter);
 
-    logger.info("Found layout files:", existing);
+    logger.debug("Found layout files:", existing);
     addLayoutsFromFiles(existing, nestedLayouts);
 
     await addMissedAncestorLayouts(
@@ -88,7 +88,7 @@ function addLayoutsFromFiles(files: string[], nestedLayouts: LayoutItem[]): void
     if (ext === ".mdx" || ext === ".md") {
       nestedLayouts.push({ kind: "mdx", path: file });
     } else if (ext === ".tsx" || ext === ".jsx" || ext === ".ts" || ext === ".js") {
-      logger.info("Adding TSX layout:", file);
+      logger.debug("Adding TSX layout:", file);
       nestedLayouts.push({
         kind: "tsx",
         component: undefined,

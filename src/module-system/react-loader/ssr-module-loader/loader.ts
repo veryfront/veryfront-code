@@ -170,7 +170,7 @@ export class SSRModuleLoader {
     const projectRef = `${projectSlug}@${version}`;
     const registryUrl = `${registryBaseUrl}/${projectRef}/@/${path}`;
 
-    logger.info("[SSR-MODULE-LOADER] Fetching cross-project import", {
+    logger.debug("[SSR-MODULE-LOADER] Fetching cross-project import", {
       specifier,
       registryUrl,
     });
@@ -232,7 +232,7 @@ export class SSRModuleLoader {
         const entry: ModuleCacheEntry = { tempPath, contentHash };
         globalCrossProjectCache.set(cacheKey, entry);
 
-        logger.info("[SSR-MODULE-LOADER] Cross-project import transformed", {
+        logger.debug("[SSR-MODULE-LOADER] Cross-project import transformed", {
           specifier,
           tempPath,
         });

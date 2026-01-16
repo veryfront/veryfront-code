@@ -214,7 +214,7 @@ export class LayoutApplicator {
     if (!appPath) return pageElement;
 
     try {
-      logger.info("Loading App component from", appPath);
+      logger.debug("Loading App component from", appPath);
       const appSource = await this.adapter.fs.readFile(appPath);
       const isMdx = appPath.endsWith(".mdx") || appPath.endsWith(".md");
 
@@ -243,7 +243,7 @@ export class LayoutApplicator {
 
       if (App) {
         const React = await getProjectReact();
-        logger.info("Wrapped page with App component");
+        logger.debug("Wrapped page with App component");
         return React.createElement(App, { children: pageElement }) as BundledReact.ReactElement;
       }
     } catch (error) {

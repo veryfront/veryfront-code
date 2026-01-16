@@ -112,7 +112,7 @@ export class VeryfrontRouter {
   }
 
   init() {
-    logger.info("Initializing client-side router");
+    logger.debug("Initializing client-side router");
 
     const rootElement = document.getElementById("root");
     if (!rootElement) {
@@ -139,7 +139,7 @@ export class VeryfrontRouter {
   }
 
   async navigate(url: string, pushState = true): Promise<void> {
-    logger.info(`Navigating to ${url} (SPA mode: ${this.spaMode})`);
+    logger.debug(`Navigating to ${url} (SPA mode: ${this.spaMode})`);
 
     this.navigationHandlers.saveScrollPosition(this.currentPath);
     this.options.onStart?.(url);

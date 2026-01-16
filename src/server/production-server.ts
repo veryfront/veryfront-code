@@ -51,7 +51,7 @@ export async function startUniversalServer(
   const adapter = bootstrap.adapter;
 
   if (bootstrap.usingFSAdapter) {
-    logger.info("FSAdapter initialized", { type: bootstrap.fsAdapterType });
+    logger.debug("FSAdapter initialized", { type: bootstrap.fsAdapterType });
   }
 
   // Enable SSR fetch interception to handle relative URLs during SSR
@@ -147,11 +147,11 @@ if (import.meta.main) {
 
     if (enableMemoryMonitoring) {
       startMemoryMonitoring(monitoringIntervalMs);
-      logger.info("Memory monitoring enabled", { intervalMs: monitoringIntervalMs });
+      logger.debug("Memory monitoring enabled", { intervalMs: monitoringIntervalMs });
 
       // Log initial memory state
       const initialSnapshot = getMemorySnapshot();
-      logger.info("Initial memory state", {
+      logger.debug("Initial memory state", {
         heapUsedMB: initialSnapshot.heap.usedHeapSizeMB,
         heapLimitMB: initialSnapshot.heap.heapSizeLimitMB,
         cacheCount: initialSnapshot.caches.length,
@@ -161,7 +161,7 @@ if (import.meta.main) {
     // Start periodic memory pressure check for renderer cache eviction
     // This catches slow memory growth even when no new renderers are being created
     startPeriodicMemoryCheck();
-    logger.info("Periodic renderer memory check enabled");
+    logger.debug("Periodic renderer memory check enabled");
 
     const shutdownController = new AbortController();
     const projectDir = cwd();

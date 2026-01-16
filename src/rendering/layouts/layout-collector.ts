@@ -64,7 +64,7 @@ export class LayoutCollector {
     if (
       pageInfo.entity.path.includes("/.veryfront/") || pageInfo.entity.path.includes(".veryfront/")
     ) {
-      logger.info("[LayoutCollector] Skipping layouts for .veryfront path", {
+      logger.debug("[LayoutCollector] Skipping layouts for .veryfront path", {
         pagePath: pageInfo.entity.path,
       });
       return { layoutBundle: undefined, nestedLayouts: [] };
@@ -76,7 +76,7 @@ export class LayoutCollector {
     // Check if layout is explicitly disabled via `layout: false` or `layout: "false"`
     const layoutDisabled = layoutValue === false || layoutValue === "false";
     if (layoutDisabled) {
-      logger.info("[LayoutCollector] Layout explicitly disabled via frontmatter", {
+      logger.debug("[LayoutCollector] Layout explicitly disabled via frontmatter", {
         pagePath: pageInfo.entity.path,
         layoutValue,
       });
@@ -108,7 +108,7 @@ export class LayoutCollector {
       }];
       // Return undefined layoutBundle since we're using nestedLayouts for this layout
       // This ensures SSR and client hydration apply the same layout
-      logger.info("[LayoutCollector] Using frontmatter layout as nestedLayout", {
+      logger.debug("[LayoutCollector] Using frontmatter layout as nestedLayout", {
         layoutPath,
         layoutName,
         kind,
@@ -136,11 +136,14 @@ export class LayoutCollector {
           path: layoutPath,
         }, ...nestedLayouts];
 
-        logger.info("[LayoutCollector] Added defaultLayout to nestedLayouts for client hydration", {
-          layoutPath,
-          kind,
-          totalNestedLayouts: nestedLayouts.length,
-        });
+        logger.debug(
+          "[LayoutCollector] Added defaultLayout to nestedLayouts for client hydration",
+          {
+            layoutPath,
+            kind,
+            totalNestedLayouts: nestedLayouts.length,
+          },
+        );
 
         // Return undefined layoutBundle since we're now using nestedLayouts
         // This ensures SSR and client hydration apply layouts the same way
@@ -168,7 +171,7 @@ export class LayoutCollector {
   > {
     const layoutValue = pageInfo.entity.frontmatter.layout;
 
-    logger.info("[LayoutCollector] collectNamedLayoutWithPath called", {
+    logger.debug("[LayoutCollector] collectNamedLayoutWithPath called", {
       pagePath: pageInfo.entity.path,
       layoutValue,
       frontmatterKeys: Object.keys(pageInfo.entity.frontmatter),
@@ -181,14 +184,14 @@ export class LayoutCollector {
         this.config?.defaultLayout ||
         null;
 
-    logger.info("[LayoutCollector] Resolved layoutName:", { layoutName });
+    logger.debug("[LayoutCollector] Resolved layoutName:", { layoutName });
 
     if (!layoutName) {
       return { layoutBundle: undefined, layoutPath: undefined, layoutName: undefined };
     }
 
     const layoutInfo = await getLayoutEntity(this.projectDir, layoutName, this.adapter);
-    logger.info("[LayoutCollector] Layout entity found:", { found: !!layoutInfo, layoutName });
+    logger.debug("[LayoutCollector] Layout entity found:", { found: !!layoutInfo, layoutName });
 
     if (!layoutInfo) {
       return { layoutBundle: undefined, layoutPath: undefined, layoutName: undefined };
@@ -220,7 +223,7 @@ export class LayoutCollector {
     const fs = this.adapter?.fs;
     const isVeryfrontAPI = fs && isExtendedFSAdapter(fs) && fs.isVeryfrontAdapter();
 
-    logger.info("[LayoutCollector] Checking FS adapter type", {
+    logger.debug("[LayoutCollector] Checking FS adapter type", {
       hasAdapter: !!this.adapter,
       hasFs: !!fs,
       wrapperName: fs?.constructor?.name,

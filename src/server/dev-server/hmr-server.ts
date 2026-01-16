@@ -153,7 +153,7 @@ export class HMRServer {
         await this.server.stop();
       }
 
-      logger.info("HMR server stopped");
+      logger.debug("HMR server stopped");
     } catch (error) {
       // Server already stopped or shutdown failed - safe to ignore
       logger.debug("[HMRServer] Server shutdown failed", { error });

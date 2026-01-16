@@ -41,7 +41,7 @@ export async function handleScriptPage(
   },
 ): Promise<RenderResult> {
   try {
-    logger.info(`[Script] Loading TS/JS page module: ${pageInfo.entity.path}`);
+    logger.debug(`[Script] Loading TS/JS page module: ${pageInfo.entity.path}`);
 
     // Load the module - check if file exists locally first
     const mod = await loadScriptModule(pageInfo.entity.path, options.projectDir, options.adapter);
@@ -258,7 +258,7 @@ async function loadScriptModule(
   }
 
   // File is remote (proxy mode) - read via adapter and transpile
-  logger.info(`[Script] File not local, using adapter-based loading: ${modulePath}`);
+  logger.debug(`[Script] File not local, using adapter-based loading: ${modulePath}`);
 
   // Read file content via adapter (which handles API calls in proxy mode)
   let source: string;
@@ -320,7 +320,7 @@ async function loadScriptModule(
     }));
   }
 
-  logger.info(`[Script] Transpiled ${modulePath}`);
+  logger.debug(`[Script] Transpiled ${modulePath}`);
   const js = result.outputFiles?.[0]?.text ?? "export {}";
 
   // Write to temp file and import

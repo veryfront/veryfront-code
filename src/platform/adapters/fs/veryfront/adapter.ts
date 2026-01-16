@@ -119,7 +119,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
       contentContextGetter,
     );
 
-    logger.info("[VeryfrontFSAdapter] Created", {
+    logger.debug("[VeryfrontFSAdapter] Created", {
       apiBaseUrl: veryfrontConfig.apiBaseUrl,
       projectSlug: veryfrontConfig.projectSlug,
       projectDir: config.projectDir,
@@ -171,14 +171,14 @@ export class VeryfrontFSAdapter implements FSAdapter {
     // Connect to WebSocket for real-time cache invalidation (branch mode only)
     // Environment/release/domain modes serve immutable published content
     if (this.contentContext.sourceType === "branch") {
-      logger.info("[VeryfrontFSAdapter] Initialized (branch mode)", {
+      logger.debug("[VeryfrontFSAdapter] Initialized (branch mode)", {
         projectId: this.client.getProjectId(),
         files: files.length,
         branch: this.contentContext.branch,
       });
       this.connectWebSocket(projectId);
     } else {
-      logger.info("[VeryfrontFSAdapter] Initialized (published mode)", {
+      logger.debug("[VeryfrontFSAdapter] Initialized (published mode)", {
         projectId: this.client.getProjectId(),
         files: files.length,
         sourceType: this.contentContext.sourceType,
@@ -268,7 +268,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
       .replace(/\/api$/, "");
     const url = `${wsUrl}/ws/${projectId}/events?token=${this.apiToken}`;
 
-    logger.info("[VeryfrontFSAdapter] Connecting to WebSocket", {
+    logger.debug("[VeryfrontFSAdapter] Connecting to WebSocket", {
       url: url.replace(this.apiToken, "***"),
     });
 
@@ -278,7 +278,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
       this.wsConnectionId = crypto.randomUUID().slice(0, 8);
 
       this.ws.onopen = () => {
-        logger.info("[VeryfrontFSAdapter] WebSocket connected to events channel", {
+        logger.debug("[VeryfrontFSAdapter] WebSocket connected to events channel", {
           projectId,
           connectionId: this.wsConnectionId,
           contentSource: this.contentSource,
@@ -304,7 +304,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
             this.pokeMetrics.received++;
             this.pokeMetrics.lastPokeTime = Date.now();
 
-            logger.info("[VeryfrontFSAdapter] 🔄 POKE RECEIVED - triggering cache invalidation", {
+            logger.debug("[VeryfrontFSAdapter] POKE RECEIVED - triggering cache invalidation", {
               type: data.type,
               source: data.data?.source,
               entityId: data.data?.entityId,
@@ -321,8 +321,8 @@ export class VeryfrontFSAdapter implements FSAdapter {
               this.scheduleSelectiveInvalidation(changedPaths);
             } else {
               // Fallback to full invalidation
-              logger.info(
-                "[VeryfrontFSAdapter] 🔄 No changedPaths provided - using full invalidation",
+              logger.debug(
+                "[VeryfrontFSAdapter] No changedPaths provided - using full invalidation",
               );
               this.scheduleInvalidation();
             }
@@ -333,7 +333,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
       };
 
       this.ws.onclose = () => {
-        logger.info("[VeryfrontFSAdapter] WebSocket closed, reconnecting", {
+        logger.debug("[VeryfrontFSAdapter] WebSocket closed, reconnecting", {
           delayMs: WS_RECONNECT_DELAY_MS,
           connectionId: this.wsConnectionId,
           totalPokesReceived: this.pokeMetrics.received,
@@ -676,7 +676,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
     this.statOps.clearIndex();
     this.dirOps.clearTree();
     this.initialized = false;
-    logger.info("[VeryfrontFSAdapter] Disposed");
+    logger.debug("[VeryfrontFSAdapter] Disposed");
   }
 
   getCacheStats(): CacheStats {

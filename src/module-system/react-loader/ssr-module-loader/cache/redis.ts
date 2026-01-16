@@ -52,7 +52,7 @@ export async function initializeSSRRedisCache(): Promise<boolean> {
       redisClient = await getRedisClient();
       redisEnabled = true;
       redisInitialized = true;
-      logger.info("[SSR-MODULE-LOADER] Redis cache enabled");
+      logger.debug("[SSR-MODULE-LOADER] Redis cache enabled");
     } catch (error) {
       logger.warn("[SSR-MODULE-LOADER] Redis unavailable, falling back to memory cache", { error });
       redisEnabled = false;

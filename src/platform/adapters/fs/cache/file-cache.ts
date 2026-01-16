@@ -52,7 +52,7 @@ export async function initializeFileCacheRedis(): Promise<boolean> {
       redisClient = await getRedisClient();
       redisEnabled = true;
       redisInitialized = true;
-      logger.info("[FileCache] Redis cache enabled");
+      logger.debug("[FileCache] Redis cache enabled");
     } catch (error) {
       logger.warn("[FileCache] Redis unavailable, falling back to memory cache", { error });
       redisEnabled = false;
