@@ -12,7 +12,6 @@
 
 import { rendererLogger } from "@veryfront/utils";
 import { clearConfigCache, getConfig } from "@veryfront/config";
-import { withSpan } from "@veryfront/observability/tracing/otlp-setup.ts";
 import type { HandlerContext } from "../../handlers/types.ts";
 import type { RendererInstance, RendererPromise } from "./types.ts";
 import { MAX_RENDERER_CACHE_SIZE } from "./constants.ts";
@@ -86,25 +85,17 @@ export async function getRendererForProject(ctx: HandlerContext): Promise<Render
 
     // Create and register the in-flight promise SYNCHRONOUSLY before any await
     // This prevents race conditions where concurrent calls all pass the in-flight check
-    const creationPromise = withSpan(
-      "renderer.init",
-      async () => {
-        const renderer = await withSpan(
-          "renderer.create",
-          () => createRendererInternal(ctx, "__single__"),
-          { "renderer.project_slug": "__single__" },
-        );
-        setSingleProjectRenderer({
-          renderer,
-          promise: Promise.resolve(renderer),
-          projectSlug: "__single__",
-          lastAccess: Date.now(),
-          createdAt: Date.now(),
-        });
-        return renderer;
-      },
-      { "renderer.project_slug": "__single__", "renderer.cache_hit": false },
-    );
+    const creationPromise = (async () => {
+      const renderer = await createRendererInternal(ctx, "__single__");
+      setSingleProjectRenderer({
+        renderer,
+        promise: Promise.resolve(renderer),
+        projectSlug: "__single__",
+        lastAccess: Date.now(),
+        createdAt: Date.now(),
+      });
+      return renderer;
+    })();
 
     // Register immediately (synchronously) so concurrent calls see it
     setInFlightCreation("__single__", creationPromise);
@@ -136,64 +127,52 @@ export async function getRendererForProject(ctx: HandlerContext): Promise<Render
 
   // Create and register the in-flight promise SYNCHRONOUSLY before any await
   // This prevents race conditions where concurrent calls all pass the in-flight check
-  const creationPromise = withSpan(
-    "renderer.init",
-    async () => {
-      // CRITICAL: Load config FIRST while AsyncLocalStorage context is still valid.
-      // The AsyncLocalStorage context may be lost after async boundaries in the IIFE.
-      // By loading config as the first await, we ensure it happens while we still have
-      // access to the MultiProjectFSAdapter's per-request context.
-      let projectConfig = ctx.config;
-      if (cacheKey !== "__single__" && ctx.projectSlug) {
-        rendererLogger.debug("[RendererFactory] Loading project-specific config", {
-          projectSlug: cacheKey,
-        });
-        clearConfigCache();
-        projectConfig = await withSpan(
-          "renderer.load_config",
-          () => getConfig(ctx.projectDir, ctx.adapter),
-          { "renderer.project_slug": cacheKey },
-        );
-        rendererLogger.debug("[RendererFactory] Project config loaded", {
-          projectSlug: cacheKey,
-        });
-      }
-
-      // After config is loaded, we can do memory management (context doesn't matter here)
-      await checkAndEvictUnderMemoryPressure();
-
-      // Evict expired entries first
-      await evictExpired();
-
-      // Evict LRU if at capacity
-      if (rendererCache.size >= MAX_RENDERER_CACHE_SIZE) {
-        await evictLRU();
-      }
-
-      // Create new renderer with pre-loaded config
-      const renderer = await withSpan(
-        "renderer.create",
-        () => createRendererInternal(ctx, cacheKey, projectConfig),
-        { "renderer.project_slug": cacheKey },
-      );
-
-      rendererCache.set(cacheKey, {
-        renderer,
-        promise: Promise.resolve(renderer),
+  const creationPromise = (async () => {
+    // CRITICAL: Load config FIRST while AsyncLocalStorage context is still valid.
+    // The AsyncLocalStorage context may be lost after async boundaries in the IIFE.
+    // By loading config as the first await, we ensure it happens while we still have
+    // access to the MultiProjectFSAdapter's per-request context.
+    let projectConfig = ctx.config;
+    if (cacheKey !== "__single__" && ctx.projectSlug) {
+      rendererLogger.debug("[RendererFactory] Loading project-specific config", {
         projectSlug: cacheKey,
-        lastAccess: Date.now(),
-        createdAt: Date.now(),
       });
-
-      rendererLogger.debug("[RendererFactory] Renderer cached", {
+      clearConfigCache();
+      projectConfig = await getConfig(ctx.projectDir, ctx.adapter);
+      rendererLogger.debug("[RendererFactory] Project config loaded", {
         projectSlug: cacheKey,
-        cacheSize: rendererCache.size,
       });
+    }
 
-      return renderer;
-    },
-    { "renderer.project_slug": cacheKey, "renderer.cache_hit": false },
-  );
+    // After config is loaded, we can do memory management (context doesn't matter here)
+    await checkAndEvictUnderMemoryPressure();
+
+    // Evict expired entries first
+    await evictExpired();
+
+    // Evict LRU if at capacity
+    if (rendererCache.size >= MAX_RENDERER_CACHE_SIZE) {
+      await evictLRU();
+    }
+
+    // Create new renderer with pre-loaded config
+    const renderer = await createRendererInternal(ctx, cacheKey, projectConfig);
+
+    rendererCache.set(cacheKey, {
+      renderer,
+      promise: Promise.resolve(renderer),
+      projectSlug: cacheKey,
+      lastAccess: Date.now(),
+      createdAt: Date.now(),
+    });
+
+    rendererLogger.debug("[RendererFactory] Renderer cached", {
+      projectSlug: cacheKey,
+      cacheSize: rendererCache.size,
+    });
+
+    return renderer;
+  })();
 
   // Register immediately (synchronously) so concurrent calls see it
   setInFlightCreation(cacheKey, creationPromise);
