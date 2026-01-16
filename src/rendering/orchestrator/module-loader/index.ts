@@ -6,7 +6,7 @@
  * @module rendering/orchestrator/module-loader
  */
 
-import { rendererLogger as logger } from "@veryfront/utils";
+import { parallelMap, rendererLogger as logger } from "@veryfront/utils";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import { getLocalAdapter } from "@veryfront/platform/adapters/registry.ts";
 import { generateHash } from "./cache.ts";
@@ -75,16 +75,18 @@ export async function transformModuleWithDeps(
     aliasImports: aliasImports.map((i) => i.path),
   });
 
-  // Transform each @/ dependency FIRST and replace in original code
+  // Transform each @/ dependency in PARALLEL and replace in original code
   // This way transformToESM won't convert them to broken relative paths
-  for (const { full, path } of aliasImports) {
+
+  // Step 1: Resolve all dependency paths in parallel
+  const resolvedDeps = await parallelMap(aliasImports, async ({ full, path }) => {
     const relativePath = path.substring(2); // Remove @/ prefix
 
     let depFilePath: string | null = null;
+    let isLocalLib = false;
 
     // Check if this is a @/lib/... import (framework utilities)
     // These are LOCAL to veryfront-renderer, not in the user's project
-    let isLocalLib = false;
     if (relativePath.startsWith("lib/")) {
       depFilePath = await findLocalLibFile(relativePath, localAdapter);
       isLocalLib = true;
@@ -97,21 +99,45 @@ export async function transformModuleWithDeps(
       }
     }
 
-    if (depFilePath) {
-      logger.debug("[ModuleLoader] Found dependency:", { path, depFilePath, isLocalLib });
+    return { full, path, relativePath, depFilePath, isLocalLib };
+  });
+
+  // Step 2: Transform all found dependencies in parallel
+  const transformedDeps = await parallelMap(
+    resolvedDeps.filter((d) => d.depFilePath !== null),
+    async (dep) => {
+      logger.debug("[ModuleLoader] Found dependency:", {
+        path: dep.path,
+        depFilePath: dep.depFilePath,
+        isLocalLib: dep.isLocalLib,
+      });
       const depTempPath = await transformModuleWithDeps(
-        depFilePath,
+        dep.depFilePath!,
         tmpDir,
         localAdapter,
         config,
-        isLocalLib,
+        dep.isLocalLib,
       );
-      // Replace @/ import with file:// path in ORIGINAL code
-      fileContent = fileContent.replace(full, `from "file://${depTempPath}"`);
-      logger.debug("[ModuleLoader] Replaced import:", { path, depTempPath });
-    } else {
-      logger.warn("[ModuleLoader] Could not find dependency:", { path, relativePath, projectDir });
-    }
+      return { ...dep, depTempPath };
+    },
+  );
+
+  // Step 3: Apply all replacements to original code
+  for (const dep of transformedDeps) {
+    fileContent = fileContent.replace(dep.full, `from "file://${dep.depTempPath}"`);
+    logger.debug("[ModuleLoader] Replaced import:", {
+      path: dep.path,
+      depTempPath: dep.depTempPath,
+    });
+  }
+
+  // Log warnings for unresolved dependencies
+  for (const dep of resolvedDeps.filter((d) => d.depFilePath === null)) {
+    logger.warn("[ModuleLoader] Could not find dependency:", {
+      path: dep.path,
+      relativePath: dep.relativePath,
+      projectDir,
+    });
   }
 
   // Now transform the code (with @/ imports already replaced with file:// paths)

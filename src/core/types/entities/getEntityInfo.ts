@@ -44,6 +44,7 @@ import type { Entity, EntityInfo, Frontmatter } from "../entities.ts";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 // Import directly from source to avoid circular dependency through barrel
 import { withFallback } from "@veryfront/platform/adapters/fallback-wrapper.ts";
+import { parallelFind, parallelMap } from "@veryfront/utils/parallel.ts";
 
 const entityInfoScope = createErrorScope("getEntityInfo");
 
@@ -389,9 +390,14 @@ export async function getLayoutEntity(
     pathHelper.join(projectDir, "components", "Layout.tsx"),
   ];
 
-  for (const p of possiblePaths) {
+  // Check all paths in parallel and return first matching layout
+  const result = await parallelFind(possiblePaths, async (p) => {
     const info = await getEntityInfo(p, adapter);
-    if (info?.entity.isLayout) return info;
+    return info?.entity.isLayout ?? false;
+  });
+
+  if (result) {
+    return await getEntityInfo(result, adapter);
   }
   return null;
 }
@@ -400,14 +406,13 @@ export async function getProviderEntities(
   projectDir: string,
   adapter?: RuntimeAdapter,
 ): Promise<EntityInfo[]> {
-  const providers: EntityInfo[] = [];
   const providerDirs = [
     pathHelper.join(projectDir, "providers"),
     pathHelper.join(projectDir, "components"),
   ];
 
-  for (const dir of providerDirs) {
-    // Check directory existence using adapter with fallback
+  // Check directory existence in parallel
+  const dirChecks = await parallelMap(providerDirs, async (dir) => {
     let dirExists = false;
     if (adapter) {
       try {
@@ -423,27 +428,34 @@ export async function getProviderEntities(
     } else {
       dirExists = await fs.exists(dir);
     }
+    return { dir, dirExists };
+  });
 
+  // Collect all file entries from existing directories
+  const allFilePaths: string[] = [];
+  for (const { dir, dirExists } of dirChecks) {
     if (dirExists) {
       const entries: { name: string; isFile: boolean; isDirectory: boolean }[] = [];
-      // Use adapter's readDir if available, otherwise fall back to local fs
       const dirIterator = adapter?.fs.readDir ? adapter.fs.readDir(dir) : fs.readDir(dir);
       for await (const entry of dirIterator) {
         entries.push(entry);
       }
-
       for (const entry of entries) {
         if (entry.isFile) {
-          const filePath = pathHelper.join(dir, entry.name);
-          const info = await getEntityInfo(filePath, adapter);
-          if (info?.entity.isProvider) {
-            providers.push(info);
-          }
+          allFilePaths.push(pathHelper.join(dir, entry.name));
         }
       }
     }
   }
 
+  // Process all files in parallel to check if they are providers
+  const entityInfos = await parallelMap(allFilePaths, async (filePath) => {
+    const info = await getEntityInfo(filePath, adapter);
+    return info?.entity.isProvider ? info : null;
+  });
+
+  // Filter out nulls and sort by priority
+  const providers = entityInfos.filter((info): info is EntityInfo => info !== null);
   const getPriority = (e: EntityInfo): number =>
     typeof e.entity.frontmatter.priority === "number" ? e.entity.frontmatter.priority : 0;
   return providers.sort((a, b) => getPriority(a) - getPriority(b));

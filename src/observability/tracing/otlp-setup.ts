@@ -167,6 +167,90 @@ async function ensureApis(): Promise<void> {
 }
 
 /**
+ * Execute an async function within a new span.
+ * Creates a child span of the current active span.
+ * If tracing is disabled, just executes the function.
+ */
+export async function withSpan<T>(
+  name: string,
+  fn: () => Promise<T>,
+  attributes?: Record<string, string | number | boolean>,
+): Promise<T> {
+  if (!traceApi || !isOTLPEnabled()) {
+    return await fn();
+  }
+
+  const tracingConfig = getOtelTracingConfig();
+  const serviceName = tracingConfig.serviceName || "veryfront-renderer";
+  const tracer = traceApi.trace.getTracer(serviceName);
+  const parentContext = traceApi.context.active();
+
+  const span = tracer.startSpan(name, {
+    kind: traceApi.SpanKind.INTERNAL,
+    attributes,
+  }, parentContext);
+
+  const spanContext = traceApi.trace.setSpan(parentContext, span);
+
+  try {
+    const result = await traceApi.context.with(spanContext, fn);
+    span.setStatus({ code: traceApi.SpanStatusCode.OK });
+    return result;
+  } catch (error) {
+    span.setStatus({
+      code: traceApi.SpanStatusCode.ERROR,
+      message: error instanceof Error ? error.message : String(error),
+    });
+    if (error instanceof Error) {
+      span.recordException(error);
+    }
+    throw error;
+  } finally {
+    span.end();
+  }
+}
+
+/**
+ * Execute a sync function within a new span.
+ */
+export function withSpanSync<T>(
+  name: string,
+  fn: () => T,
+  attributes?: Record<string, string | number | boolean>,
+): T {
+  if (!traceApi || !isOTLPEnabled()) {
+    return fn();
+  }
+
+  const tracingConfig = getOtelTracingConfig();
+  const serviceName = tracingConfig.serviceName || "veryfront-renderer";
+  const tracer = traceApi.trace.getTracer(serviceName);
+  const parentContext = traceApi.context.active();
+
+  const span = tracer.startSpan(name, {
+    kind: traceApi.SpanKind.INTERNAL,
+    attributes,
+  }, parentContext);
+
+  try {
+    const result = fn();
+    span.setStatus({ code: traceApi.SpanStatusCode.OK });
+    return result;
+  } catch (error) {
+    span.setStatus({
+      code: traceApi.SpanStatusCode.ERROR,
+      message: error instanceof Error ? error.message : String(error),
+    });
+    if (error instanceof Error) {
+      span.recordException(error);
+    }
+    throw error;
+  } finally {
+    span.end();
+  }
+}
+
+/**
  * Extract trace context from incoming request headers
  */
 export function extractContext(headers: Headers): unknown {

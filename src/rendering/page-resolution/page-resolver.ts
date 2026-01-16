@@ -14,6 +14,7 @@
 import { join } from "@veryfront/platform/compat/path-helper.ts";
 import { rendererLogger as logger } from "@veryfront/utils";
 import { ErrorCode, VeryfrontError } from "@veryfront/errors/index.ts";
+import { withSpan } from "@veryfront/observability/tracing/otlp-setup.ts";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "@veryfront/config";
 import type { EntityInfo } from "@veryfront/types";
@@ -68,37 +69,46 @@ export class PageResolver {
    * @throws VeryfrontError if page not found
    */
   async resolvePage(slug: string): Promise<EntityInfo> {
-    // Detect which router mode to use
-    const useAppRouter = await detectAppRouter(
-      this.projectDir,
-      this.config,
-      this.adapter,
+    return await withSpan(
+      "routing.resolve_page",
+      async () => {
+        // Detect which router mode to use
+        const useAppRouter = await detectAppRouter(
+          this.projectDir,
+          this.config,
+          this.adapter,
+        );
+
+        const appDirName = this.config?.directories?.app || "app";
+
+        // Try App Router resolution first if enabled
+        let pageInfo = useAppRouter
+          ? await getAppRouteEntity(this.projectDir, slug, this.adapter, appDirName)
+          : await getEntityBySlug(this.projectDir, slug, this.adapter);
+
+        // Fallback to Pages Router if App Router didn't find the page
+        // This allows mixed routing modes during migration
+        if (!pageInfo && useAppRouter) {
+          logger.debug("App Router resolution failed, falling back to Pages Router", { slug });
+          pageInfo = await getEntityBySlug(this.projectDir, slug, this.adapter);
+        }
+
+        // Page not found in either mode
+        if (!pageInfo) {
+          throw new VeryfrontError(
+            `Page not found: ${slug}`,
+            ErrorCode.FILE_NOT_FOUND,
+            { slug, useAppRouter },
+          );
+        }
+
+        return pageInfo;
+      },
+      {
+        "routing.slug": slug,
+        "routing.project_dir": this.projectDir,
+      },
     );
-
-    const appDirName = this.config?.directories?.app || "app";
-
-    // Try App Router resolution first if enabled
-    let pageInfo = useAppRouter
-      ? await getAppRouteEntity(this.projectDir, slug, this.adapter, appDirName)
-      : await getEntityBySlug(this.projectDir, slug, this.adapter);
-
-    // Fallback to Pages Router if App Router didn't find the page
-    // This allows mixed routing modes during migration
-    if (!pageInfo && useAppRouter) {
-      logger.debug("App Router resolution failed, falling back to Pages Router", { slug });
-      pageInfo = await getEntityBySlug(this.projectDir, slug, this.adapter);
-    }
-
-    // Page not found in either mode
-    if (!pageInfo) {
-      throw new VeryfrontError(
-        `Page not found: ${slug}`,
-        ErrorCode.FILE_NOT_FOUND,
-        { slug, useAppRouter },
-      );
-    }
-
-    return pageInfo;
   }
 
   /**

@@ -12,6 +12,7 @@ import {
 } from "../esm/transform-cache.ts";
 import { rendererLogger as logger } from "@veryfront/utils";
 import { createTransformContext, formatTimingLog, recordStageTiming } from "./context.ts";
+import { withSpan } from "@veryfront/observability/tracing/otlp-setup.ts";
 import type {
   PipelineConfig,
   TransformOptions,
@@ -78,79 +79,97 @@ export async function runPipeline(
   options: TransformOptions,
   config?: PipelineConfig,
 ): Promise<TransformResult> {
-  const transformStart = performance.now();
+  // Extract filename for span attributes
+  const fileName = filePath.split("/").pop() || filePath;
 
-  // Create transform context
-  const ctx = await createTransformContext(source, filePath, projectDir, options);
-  ctx.debug = config?.debug ?? false;
+  return await withSpan(
+    "transform.pipeline",
+    async () => {
+      const transformStart = performance.now();
 
-  // Generate cache key and check cache (content-addressable)
-  const cacheKey = generateCacheKey(
-    filePath,
-    ctx.contentHash,
-    options.ssr ?? false,
-    options.studioEmbed ?? false,
+      // Create transform context
+      const ctx = await createTransformContext(source, filePath, projectDir, options);
+      ctx.debug = config?.debug ?? false;
+
+      // Generate cache key and check cache (content-addressable)
+      const cacheKey = generateCacheKey(
+        filePath,
+        ctx.contentHash,
+        options.ssr ?? false,
+        options.studioEmbed ?? false,
+      );
+      const cached = getCachedTransform(cacheKey);
+
+      if (cached) {
+        return {
+          code: cached.code,
+          contentHash: ctx.contentHash,
+          timing: new Map(),
+          totalMs: performance.now() - transformStart,
+          cached: true,
+        };
+      }
+
+      // Select pipeline based on target
+      const basePipeline = options.ssr ? SSR_PIPELINE : BROWSER_PIPELINE;
+
+      // Merge with custom plugins if provided
+      const pipeline = config?.plugins
+        ? [...basePipeline, ...config.plugins].sort((a, b) => a.stage - b.stage)
+        : basePipeline;
+
+      // Execute pipeline stages
+      for (const plugin of pipeline) {
+        // Check condition if present
+        if (plugin.condition && !plugin.condition(ctx)) {
+          continue;
+        }
+
+        const stageStart = performance.now();
+
+        try {
+          // Wrap each stage in its own span
+          ctx.code = await withSpan(
+            `transform.stage.${plugin.name}`,
+            async () => await plugin.transform(ctx),
+            { "transform.stage": plugin.name, "transform.stage_order": plugin.stage },
+          );
+        } catch (error) {
+          logger.error(`[PIPELINE:${plugin.name}] Stage failed`, {
+            file: filePath.slice(-60),
+            stage: plugin.name,
+            error: error instanceof Error ? error.message : String(error),
+          });
+          throw error;
+        }
+
+        recordStageTiming(ctx, plugin.stage, stageStart);
+      }
+
+      // Cache the result
+      setCachedTransform(cacheKey, ctx.code, ctx.contentHash);
+
+      const totalMs = performance.now() - transformStart;
+
+      // Log timing in debug mode
+      if (ctx.debug) {
+        logger.debug("[PIPELINE] Transform complete", formatTimingLog(ctx));
+      }
+
+      return {
+        code: ctx.code,
+        contentHash: ctx.contentHash,
+        timing: ctx.timing,
+        totalMs,
+        cached: false,
+      };
+    },
+    {
+      "transform.file": fileName,
+      "transform.target": options.ssr ? "ssr" : "browser",
+      "transform.studio_embed": options.studioEmbed ?? false,
+    },
   );
-  const cached = getCachedTransform(cacheKey);
-
-  if (cached) {
-    return {
-      code: cached.code,
-      contentHash: ctx.contentHash,
-      timing: new Map(),
-      totalMs: performance.now() - transformStart,
-      cached: true,
-    };
-  }
-
-  // Select pipeline based on target
-  const basePipeline = options.ssr ? SSR_PIPELINE : BROWSER_PIPELINE;
-
-  // Merge with custom plugins if provided
-  const pipeline = config?.plugins
-    ? [...basePipeline, ...config.plugins].sort((a, b) => a.stage - b.stage)
-    : basePipeline;
-
-  // Execute pipeline stages
-  for (const plugin of pipeline) {
-    // Check condition if present
-    if (plugin.condition && !plugin.condition(ctx)) {
-      continue;
-    }
-
-    const stageStart = performance.now();
-
-    try {
-      ctx.code = await plugin.transform(ctx);
-    } catch (error) {
-      logger.error(`[PIPELINE:${plugin.name}] Stage failed`, {
-        file: filePath.slice(-60),
-        stage: plugin.name,
-        error: error instanceof Error ? error.message : String(error),
-      });
-      throw error;
-    }
-
-    recordStageTiming(ctx, plugin.stage, stageStart);
-  }
-
-  // Cache the result
-  setCachedTransform(cacheKey, ctx.code, ctx.contentHash);
-
-  const totalMs = performance.now() - transformStart;
-
-  // Log timing in debug mode
-  if (ctx.debug) {
-    logger.debug("[PIPELINE] Transform complete", formatTimingLog(ctx));
-  }
-
-  return {
-    code: ctx.code,
-    contentHash: ctx.contentHash,
-    timing: ctx.timing,
-    totalMs,
-    cached: false,
-  };
 }
 
 /**

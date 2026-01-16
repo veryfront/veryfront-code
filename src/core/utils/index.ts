@@ -47,3 +47,5 @@ export * from "./perf-timer.ts";
 export * from "./cookie-utils.ts";
 
 export * from "./base64url.ts";
+
+export * from "./parallel.ts";
