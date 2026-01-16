@@ -221,17 +221,28 @@ async function main(): Promise<void> {
 
   // Start server
   const shutdownController = new AbortController();
-  const devServer = await createDevServer({
-    port: args.port,
-    projectDir: Deno.cwd(),
-    hmrPort: args.port + 1,
-    enableHMR: true,
-    enableFastRefresh: true,
-    signal: shutdownController.signal,
-    requestInterceptor,
-  });
-
-  await devServer.ready;
+  let devServer;
+  try {
+    devServer = await createDevServer({
+      port: args.port,
+      projectDir: Deno.cwd(),
+      hmrPort: args.port + 1,
+      enableHMR: true,
+      enableFastRefresh: true,
+      signal: shutdownController.signal,
+      requestInterceptor,
+    });
+    await devServer.ready;
+  } catch (error) {
+    if (error instanceof Deno.errors.AddrInUse) {
+      console.error(`\n\x1b[31mError: Port ${args.port} or ${args.port + 1} is already in use.\x1b[0m`);
+      console.error(`\nTo fix this, either:`);
+      console.error(`  1. Kill the existing process: \x1b[36mlsof -ti:${args.port} | xargs kill -9\x1b[0m`);
+      console.error(`  2. Use a different port: \x1b[36mdeno task start -p ${args.port + 100}\x1b[0m\n`);
+      Deno.exit(1);
+    }
+    throw error;
+  }
 
   // Start MCP server
   const { createMCPServer } = await import("../src/cli/mcp/index.ts");
