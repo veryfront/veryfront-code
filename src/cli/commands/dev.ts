@@ -15,6 +15,7 @@ import { exitProcess, registerTerminationSignals } from "../utils/index.ts";
 import { banner } from "../ui/components/banner.ts";
 import { brand, dim, success } from "../ui/colors.ts";
 import { createKeyboardHandler, type KeyboardHandler } from "../ui/keyboard.ts";
+import { openBrowser } from "../auth/browser.ts";
 
 export interface DevOptions {
   port: number;
@@ -142,33 +143,6 @@ export async function devCommand(options: DevOptions): Promise<DevCommandResult>
 
   // Keyboard handler for shortcuts
   let keyboardHandler: KeyboardHandler | null = null;
-
-  // Open browser helper
-  const openBrowser = async (url: string) => {
-    try {
-      if (typeof Deno !== "undefined") {
-        const [command, ...args] = Deno.build.os === "darwin"
-          ? ["open", url]
-          : Deno.build.os === "windows"
-          ? ["cmd", "/c", "start", url]
-          : ["xdg-open", url];
-        if (command) {
-          await new Deno.Command(command, { args }).spawn().status;
-        }
-      } else if (typeof globalThis.process !== "undefined") {
-        const { exec } = await import("node:child_process");
-        const platform = globalThis.process.platform;
-        const cmd = platform === "darwin"
-          ? `open "${url}"`
-          : platform === "win32"
-          ? `start "${url}"`
-          : `xdg-open "${url}"`;
-        exec(cmd);
-      }
-    } catch {
-      // Failed to open browser
-    }
-  };
 
   // Startup banner (skip in proxy mode - proxy handles banner)
   if (!isProxyMode) {

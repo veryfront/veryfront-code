@@ -6,22 +6,19 @@
  * Runtime-agnostic: works on Deno, Node.js, and Bun.
  */
 
-import { getStdout } from "@veryfront/platform/compat/process.ts";
+import { writeStdout } from "@veryfront/platform/compat/process.ts";
 import { brand, dim, error, muted, success } from "./colors.ts";
 import { isTTY } from "./layout.ts";
+import { getSpinnerFrame, screen } from "./ansi.ts";
+import {
+  DEFAULT_PROGRESS_BAR_WIDTH,
+  DURATION_MINUTES_THRESHOLD_MS,
+  DURATION_SECONDS_THRESHOLD_MS,
+  SPINNER_INTERVAL_MS,
+} from "./constants.ts";
 
-/** Cross-runtime stdout write helper */
-function write(s: string): void {
-  const stdout = getStdout();
-  if (stdout) {
-    stdout.write(s);
-  }
-}
-
-/**
- * Spinner character frames (Braille dots pattern)
- */
-const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+/** Write to stdout (alias for consistency with existing code) */
+const write = writeStdout;
 
 /**
  * Step states
@@ -38,7 +35,7 @@ export interface Step {
  * Format a step line with appropriate icon and styling
  */
 export function formatStep(step: Step, spinnerFrame = 0): string {
-  const spinner = SPINNER_FRAMES[spinnerFrame % SPINNER_FRAMES.length] ?? "⠋";
+  const spinner = getSpinnerFrame(spinnerFrame);
 
   switch (step.status) {
     case "completed": {
@@ -68,10 +65,12 @@ export function renderSteps(steps: Step[], spinnerFrame = 0): string {
  * Format duration in human-readable form
  */
 export function formatDuration(ms: number): string {
-  if (ms < 1000) return `${ms}ms`;
-  if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`;
-  const mins = Math.floor(ms / 60000);
-  const secs = Math.round((ms % 60000) / 1000);
+  if (ms < DURATION_SECONDS_THRESHOLD_MS) return `${ms}ms`;
+  if (ms < DURATION_MINUTES_THRESHOLD_MS) {
+    return `${(ms / DURATION_SECONDS_THRESHOLD_MS).toFixed(1)}s`;
+  }
+  const mins = Math.floor(ms / DURATION_MINUTES_THRESHOLD_MS);
+  const secs = Math.round((ms % DURATION_MINUTES_THRESHOLD_MS) / DURATION_SECONDS_THRESHOLD_MS);
   return `${mins}m ${secs}s`;
 }
 
@@ -87,7 +86,7 @@ export function progressBar(
     showPercent?: boolean;
   } = {},
 ): string {
-  const { width = 20, label, showPercent = true } = options;
+  const { width = DEFAULT_PROGRESS_BAR_WIDTH, label, showPercent = true } = options;
 
   const percent = Math.round((current / total) * 100);
   const filled = Math.round((current / total) * width);
@@ -148,12 +147,10 @@ export function createSpinner(text: string): SpinnerController {
   let frame = 0;
   let running = true;
 
-  const clearLine = "\x1b[2K\r";
-
   // Render current frame
   const render = () => {
-    const spinner = SPINNER_FRAMES[frame % SPINNER_FRAMES.length] ?? "⠋";
-    write(`${clearLine}  ${brand(spinner)} ${currentText}`);
+    const spinner = getSpinnerFrame(frame);
+    write(`${screen.clearLineReturn}  ${brand(spinner)} ${currentText}`);
   };
 
   // Start animation
@@ -162,7 +159,7 @@ export function createSpinner(text: string): SpinnerController {
     if (!running) return;
     frame++;
     render();
-  }, 80);
+  }, SPINNER_INTERVAL_MS);
 
   return {
     update(newText: string) {
@@ -172,17 +169,17 @@ export function createSpinner(text: string): SpinnerController {
     success(finalText?: string) {
       running = false;
       clearInterval(interval);
-      write(`${clearLine}  ${success("✓")} ${finalText || currentText}\n`);
+      write(`${screen.clearLineReturn}  ${success("✓")} ${finalText || currentText}\n`);
     },
     error(finalText?: string) {
       running = false;
       clearInterval(interval);
-      write(`${clearLine}  ${error("✗")} ${finalText || currentText}\n`);
+      write(`${screen.clearLineReturn}  ${error("✗")} ${finalText || currentText}\n`);
     },
     stop() {
       running = false;
       clearInterval(interval);
-      write(`${clearLine}`);
+      write(`${screen.clearLineReturn}`);
     },
   };
 }
@@ -191,7 +188,7 @@ export function createSpinner(text: string): SpinnerController {
  * Simple inline spinner (non-animated, for logs)
  */
 export function inlineSpinner(text: string, frame = 0): string {
-  const spinner = SPINNER_FRAMES[frame % SPINNER_FRAMES.length] ?? "⠋";
+  const spinner = getSpinnerFrame(frame);
   return `${brand(spinner)} ${text}`;
 }
 
@@ -244,7 +241,7 @@ export class TaskList {
     this.interval = setInterval(() => {
       this.frame++;
       onFrame(this.render());
-    }, 80);
+    }, SPINNER_INTERVAL_MS);
   }
 
   stopAnimation(): void {

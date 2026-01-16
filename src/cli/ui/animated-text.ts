@@ -4,16 +4,13 @@
  * @module cli/ui/animated-text
  */
 
+import { writeStdout } from "@veryfront/platform/compat/process.ts";
 import { brand } from "./colors.ts";
+import { cursor } from "./ansi.ts";
+import { TYPEWRITER_CHAR_DELAY_MS, TYPEWRITER_WORD_DELAY_MS } from "./constants.ts";
 
-// ANSI escape codes
-const ESC = "\x1b";
-const HIDE_CURSOR = `${ESC}[?25l`;
-const SHOW_CURSOR = `${ESC}[?25h`;
-
-function write(s: string): void {
-  Deno.stdout.writeSync(new TextEncoder().encode(s));
-}
+/** Write to stdout (alias for consistency with existing code) */
+const write = writeStdout;
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -38,13 +35,13 @@ export async function typeText(
   options: TypewriterOptions = {},
 ): Promise<void> {
   const {
-    charDelay = 30,
-    wordDelay = 100,
+    charDelay = TYPEWRITER_CHAR_DELAY_MS,
+    wordDelay = TYPEWRITER_WORD_DELAY_MS,
     mode = "char",
     hideCursor = true,
   } = options;
 
-  if (hideCursor) write(HIDE_CURSOR);
+  if (hideCursor) write(cursor.hide);
 
   try {
     if (mode === "word") {
@@ -60,7 +57,7 @@ export async function typeText(
       }
     }
   } finally {
-    if (hideCursor) write(SHOW_CURSOR);
+    if (hideCursor) write(cursor.show);
   }
 }
 
@@ -87,4 +84,6 @@ export async function typeCommand(
   write("\n");
 }
 
-export { HIDE_CURSOR, SHOW_CURSOR };
+// Re-export cursor controls for backwards compatibility
+export const HIDE_CURSOR = cursor.hide;
+export const SHOW_CURSOR = cursor.show;

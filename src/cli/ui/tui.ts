@@ -3,22 +3,14 @@
  * Shared UI for new/dev commands with collapsible logs
  */
 
+import { writeStdout } from "@veryfront/platform/compat/process.ts";
 import { brand, dim, error, muted, success } from "./colors.ts";
-
-const ESC = "\x1b";
-const CSI = `${ESC}[`;
-
-// ANSI codes
-const hide = `${CSI}?25l`;
-const show = `${CSI}?25h`;
-const altOn = `${CSI}?1049h`;
-const altOff = `${CSI}?1049l`;
-const moveTo = (r: number, c: number) => `${CSI}${r};${c}H`;
-const clearLine = `${CSI}2K`;
-const clearDown = `${CSI}J`;
-
-// Spinner frames
-const SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+import { ANSI_REGEX, cursor, getSpinnerFrame, screen, SPINNER_FRAMES } from "./ansi.ts";
+import {
+  DEFAULT_TERMINAL_HEIGHT,
+  DEFAULT_TERMINAL_WIDTH,
+  SPINNER_INTERVAL_MS,
+} from "./constants.ts";
 
 // No static logo - using animated matrix instead
 
@@ -43,12 +35,11 @@ let state: TuiState;
 let config: TuiConfig;
 let spinnerFrame = 0;
 let spinnerInterval: number | null = null;
-let termH = 24;
-let termW = 80;
+let termH = DEFAULT_TERMINAL_HEIGHT;
+let termW = DEFAULT_TERMINAL_WIDTH;
 
-function write(s: string) {
-  Deno.stdout.writeSync(new TextEncoder().encode(s));
-}
+/** Write to stdout (alias for consistency with existing code) */
+const write = writeStdout;
 
 function getSize() {
   try {
@@ -79,7 +70,7 @@ function render() {
 
   // Steps (if any)
   if (state.steps.length > 0) {
-    const spinner = SPINNER[spinnerFrame] ?? "⠋";
+    const spinner = getSpinnerFrame(spinnerFrame);
     const stepLine = state.steps.map((s, i) => {
       const icon = s.done ? success("✓") : (i === state.currentStep ? brand(spinner) : dim("○"));
       const text = s.done ? dim(s.label) : s.label;
@@ -91,7 +82,7 @@ function render() {
 
   // Status
   let statusIcon: string;
-  const spinnerChar = SPINNER[spinnerFrame] ?? "⠋";
+  const spinnerChar = getSpinnerFrame(spinnerFrame);
   switch (state.statusType) {
     case "loading":
       statusIcon = brand(spinnerChar);
@@ -143,18 +134,18 @@ function render() {
   }
 
   // Render to screen
-  write(moveTo(1, 1) + clearDown);
+  write(cursor.moveTo(1, 1) + screen.clearDown);
   for (let i = 0; i < lines.length; i++) {
-    write(moveTo(i + 1, 1) + clearLine + lines[i]);
+    write(cursor.moveTo(i + 1, 1) + screen.clearLine + lines[i]);
   }
 }
 
 function startSpinner() {
   if (spinnerInterval) return;
   spinnerInterval = setInterval(() => {
-    spinnerFrame = (spinnerFrame + 1) % SPINNER.length;
+    spinnerFrame = (spinnerFrame + 1) % SPINNER_FRAMES.length;
     render();
-  }, 80);
+  }, SPINNER_INTERVAL_MS);
 }
 
 function stopSpinner() {
@@ -177,7 +168,7 @@ export function createTui(cfg: TuiConfig = {}) {
     logScroll: 0,
   };
 
-  write(altOn + hide);
+  write(screen.altOn + cursor.hide);
   startSpinner();
   render();
 
@@ -211,8 +202,7 @@ export function createTui(cfg: TuiConfig = {}) {
     },
 
     addLog(msg: string) {
-      // deno-lint-ignore no-control-regex
-      const clean = msg.replace(/\x1b\[[0-9;]*m/g, "").trim();
+      const clean = msg.replace(ANSI_REGEX, "").trim();
       if (clean) {
         state.logs.push(clean);
         if (state.logsExpanded) render();
@@ -234,7 +224,7 @@ export function createTui(cfg: TuiConfig = {}) {
 
     cleanup() {
       stopSpinner();
-      write(show + altOff);
+      write(cursor.show + screen.altOff);
     },
 
     render,

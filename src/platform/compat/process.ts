@@ -373,6 +373,17 @@ export function getStdout(): { write: (data: string) => void } | null {
   return null;
 }
 
+/**
+ * Write text directly to stdout
+ * No-op if stdout is not available
+ */
+export function writeStdout(text: string): void {
+  const stdout = getStdout();
+  if (stdout) {
+    stdout.write(text);
+  }
+}
+
 // Cached Node.js modules for synchronous prompt
 let cachedNodeFs: typeof import("node:fs") | null = null;
 

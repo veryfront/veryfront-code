@@ -10,8 +10,7 @@
  */
 
 import { env as getEnvObject, isStdoutTTY } from "@veryfront/platform/compat/process.ts";
-
-const ESC = "\x1b";
+import { ESC, RESET } from "./ansi.ts";
 
 /**
  * Color capability levels
@@ -156,11 +155,11 @@ export function color(text: string, hex: string): string {
 
   switch (level) {
     case "truecolor":
-      return `${ESC}[38;2;${r};${g};${b}m${text}${ESC}[0m`;
+      return `${ESC}[38;2;${r};${g};${b}m${text}${RESET}`;
     case "256":
-      return `${ESC}[38;5;${rgbTo256(r, g, b)}m${text}${ESC}[0m`;
+      return `${ESC}[38;5;${rgbTo256(r, g, b)}m${text}${RESET}`;
     case "16":
-      return `${ESC}[${30 + rgbTo16(r, g, b)}m${text}${ESC}[0m`;
+      return `${ESC}[${30 + rgbTo16(r, g, b)}m${text}${RESET}`;
     default:
       return text;
   }
@@ -177,11 +176,11 @@ export function bgColor(text: string, hex: string): string {
 
   switch (level) {
     case "truecolor":
-      return `${ESC}[48;2;${r};${g};${b}m${text}${ESC}[0m`;
+      return `${ESC}[48;2;${r};${g};${b}m${text}${RESET}`;
     case "256":
-      return `${ESC}[48;5;${rgbTo256(r, g, b)}m${text}${ESC}[0m`;
+      return `${ESC}[48;5;${rgbTo256(r, g, b)}m${text}${RESET}`;
     case "16":
-      return `${ESC}[${40 + rgbTo16(r, g, b)}m${text}${ESC}[0m`;
+      return `${ESC}[${40 + rgbTo16(r, g, b)}m${text}${RESET}`;
     default:
       return text;
   }
@@ -191,17 +190,17 @@ export function bgColor(text: string, hex: string): string {
 const rgb = (r: number, g: number, b: number) => (text: string) => {
   const level = getCachedColorLevel();
   if (level === "none") return text;
-  if (level === "truecolor") return `${ESC}[38;2;${r};${g};${b}m${text}${ESC}[0m`;
-  if (level === "256") return `${ESC}[38;5;${rgbTo256(r, g, b)}m${text}${ESC}[0m`;
-  return `${ESC}[${30 + rgbTo16(r, g, b)}m${text}${ESC}[0m`;
+  if (level === "truecolor") return `${ESC}[38;2;${r};${g};${b}m${text}${RESET}`;
+  if (level === "256") return `${ESC}[38;5;${rgbTo256(r, g, b)}m${text}${RESET}`;
+  return `${ESC}[${30 + rgbTo16(r, g, b)}m${text}${RESET}`;
 };
 
 const bgRgb = (r: number, g: number, b: number) => (text: string) => {
   const level = getCachedColorLevel();
   if (level === "none") return text;
-  if (level === "truecolor") return `${ESC}[48;2;${r};${g};${b}m${text}${ESC}[0m`;
-  if (level === "256") return `${ESC}[48;5;${rgbTo256(r, g, b)}m${text}${ESC}[0m`;
-  return `${ESC}[${40 + rgbTo16(r, g, b)}m${text}${ESC}[0m`;
+  if (level === "truecolor") return `${ESC}[48;2;${r};${g};${b}m${text}${RESET}`;
+  if (level === "256") return `${ESC}[48;5;${rgbTo256(r, g, b)}m${text}${RESET}`;
+  return `${ESC}[${40 + rgbTo16(r, g, b)}m${text}${RESET}`;
 };
 
 // Brand colors
@@ -215,18 +214,18 @@ export const warning = rgb(234, 179, 8); // Yellow
 export const muted = rgb(113, 113, 122); // Gray
 
 // Text styles
-export const bold = (text: string) => `${ESC}[1m${text}${ESC}[0m`;
-export const dim = (text: string) => `${ESC}[2m${text}${ESC}[0m`;
-export const italic = (text: string) => `${ESC}[3m${text}${ESC}[0m`;
-export const underline = (text: string) => `${ESC}[4m${text}${ESC}[0m`;
+export const bold = (text: string) => `${ESC}[1m${text}${RESET}`;
+export const dim = (text: string) => `${ESC}[2m${text}${RESET}`;
+export const italic = (text: string) => `${ESC}[3m${text}${RESET}`;
+export const underline = (text: string) => `${ESC}[4m${text}${RESET}`;
 
 // Compound styles
 export const brandBold = (text: string) => bold(brand(text));
 export const successBold = (text: string) => bold(success(text));
 export const errorBold = (text: string) => bold(error(text));
 
-// Reset
-export const reset = `${ESC}[0m`;
+// Re-export RESET for backwards compatibility
+export { RESET as reset };
 
 // Matrix dot states for animation
 const MATRIX_STATES = [
