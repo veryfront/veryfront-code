@@ -8,6 +8,7 @@ COPY deno.json deno.lock* ./
 COPY proxy/ ./proxy/
 COPY src/server/utils/ ./src/server/utils/
 COPY src/core/utils/ ./src/core/utils/
+COPY src/platform/compat/ ./src/platform/compat/
 
 # Cache dependencies
 RUN deno cache proxy/main.ts
