@@ -8,8 +8,8 @@ COPY deno.json deno.lock* ./
 COPY proxy/ ./proxy/
 COPY src/ ./src/
 
-# Cache dependencies
-RUN deno cache proxy/main.ts
+# Cache dependencies (use --config to ensure deno.json imports are resolved)
+RUN deno cache --config deno.json proxy/main.ts
 
 EXPOSE 20000
 
