@@ -182,7 +182,8 @@ export async function getEntityBySlug(
   const isVeryfrontRoute = slug.startsWith(".veryfront/") || slug === ".veryfront";
 
   // If adapter has resolveFile, use pattern-based resolution
-  if (adapter?.fs.resolveFile) {
+  const resolveFile = adapter?.fs.resolveFile;
+  if (resolveFile) {
     const basePaths = [
       pathHelper.join(projectDir, "pages", slug),
       pathHelper.join(projectDir, slug),
@@ -200,11 +201,20 @@ export async function getEntityBySlug(
       );
     }
 
-    for (const basePath of basePaths) {
-      const resolvedPath = await adapter.fs.resolveFile(basePath);
+    // Check all base paths in parallel, return first match by priority order
+    const resolvedBasePath = await parallelFind(basePaths, async (basePath) => {
+      const resolvedPath = await resolveFile.call(adapter.fs, basePath);
       if (resolvedPath) {
         const info = await getEntityInfo(resolvedPath, adapter);
-        if (info?.entity.isPage) return info;
+        return info?.entity.isPage ?? false;
+      }
+      return false;
+    });
+
+    if (resolvedBasePath) {
+      const resolvedPath = await resolveFile.call(adapter.fs, resolvedBasePath);
+      if (resolvedPath) {
+        return await getEntityInfo(resolvedPath, adapter);
       }
     }
 
@@ -236,12 +246,18 @@ export async function getEntityBySlug(
             entries.push(entry);
           }
 
-          for (const entry of entries) {
-            if (entry.isFile && /\[.+\]\.(mdx|md|tsx|jsx|ts|js)$/.test(entry.name)) {
-              const dynamicPath = pathHelper.join(pagesDir, entry.name);
-              const info = await getEntityInfo(dynamicPath, adapter);
-              if (info?.entity.isPage) return info;
-            }
+          // Filter to dynamic route files and check in parallel
+          const dynamicEntries = entries.filter(
+            (entry) => entry.isFile && /\[.+\]\.(mdx|md|tsx|jsx|ts|js)$/.test(entry.name),
+          );
+          const matchedEntry = await parallelFind(dynamicEntries, async (entry) => {
+            const dynamicPath = pathHelper.join(pagesDir, entry.name);
+            const info = await getEntityInfo(dynamicPath, adapter);
+            return info?.entity.isPage ?? false;
+          });
+          if (matchedEntry) {
+            const dynamicPath = pathHelper.join(pagesDir, matchedEntry.name);
+            return await getEntityInfo(dynamicPath, adapter);
           }
         }
       } catch {
@@ -293,10 +309,14 @@ export async function getEntityBySlug(
     );
   }
 
-  // First try exact matches
-  for (const p of possiblePaths) {
+  // Check all possible paths in parallel, return first match by priority order
+  const matchedPath = await parallelFind(possiblePaths, async (p) => {
     const info = await getEntityInfo(p, adapter);
-    if (info?.entity.isPage) return info;
+    return info?.entity.isPage ?? false;
+  });
+
+  if (matchedPath) {
+    return await getEntityInfo(matchedPath, adapter);
   }
 
   // If no exact match found, try dynamic routes with [param] notation
@@ -338,13 +358,18 @@ export async function getEntityBySlug(
           entries.push(entry);
         }
 
-        for (const entry of entries) {
-          if (entry.isFile && /\[.+\]\.(mdx|md|tsx|jsx|ts|js)$/.test(entry.name)) {
-            // Found a dynamic route file like [slug].tsx
-            const dynamicPath = pathHelper.join(pagesDir, entry.name);
-            const info = await getEntityInfo(dynamicPath, adapter);
-            if (info?.entity.isPage) return info;
-          }
+        // Filter to dynamic route files and check in parallel
+        const dynamicEntries = entries.filter(
+          (entry) => entry.isFile && /\[.+\]\.(mdx|md|tsx|jsx|ts|js)$/.test(entry.name),
+        );
+        const matchedEntry = await parallelFind(dynamicEntries, async (entry) => {
+          const dynamicPath = pathHelper.join(pagesDir, entry.name);
+          const info = await getEntityInfo(dynamicPath, adapter);
+          return info?.entity.isPage ?? false;
+        });
+        if (matchedEntry) {
+          const dynamicPath = pathHelper.join(pagesDir, matchedEntry.name);
+          return await getEntityInfo(dynamicPath, adapter);
         }
       }
     } catch {
