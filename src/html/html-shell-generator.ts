@@ -297,10 +297,19 @@ ${tailwindConfig.customCSS}
     "suppressHydrationWarning",
   ].join(" ");
 
+  // Theme persistence script - only needed when color_mode was set via URL param
+  // This ensures next-themes picks up the SSR theme and doesn't flash/revert
+  const themePersistenceScript = options.colorSchemeFromParam
+    ? `<script${nonce ? ` nonce="${nonce}"` : ""}>
+(function(){try{localStorage.setItem('theme','${colorScheme}')}catch(e){}})();
+</script>`
+    : "";
+
   const start = `<!DOCTYPE html>
 <html ${htmlAttrs}>
 <head>
   ${hydrationErrorSuppression}
+  ${themePersistenceScript}
   ${metaTags}
   <title>${escapeHTML(effectiveTitle)}</title>
 
