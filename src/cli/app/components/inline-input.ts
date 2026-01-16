@@ -20,7 +20,7 @@ export function renderInput(input: InputState, options: InlineInputOptions = {})
     return "";
   }
 
-  const { maxWidth = 80 } = options;
+  const { maxWidth: _maxWidth = 80 } = options;
 
   // Build the input line with cursor
   const prompt = `  ${brand(">")} ${input.prompt}: `;

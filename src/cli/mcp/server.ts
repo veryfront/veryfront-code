@@ -6,7 +6,7 @@
  * and HTTP transport (for remote access).
  */
 
-import { allTools, getTool, listTools, setServerStartTime } from "./tools.ts";
+import { allTools, getTool, setServerStartTime } from "./tools.ts";
 import { getErrorCollector } from "./error-collector.ts";
 import { getLogBuffer } from "./log-buffer.ts";
 
@@ -155,7 +155,7 @@ export class MCPDevServer {
   /**
    * Start HTTP transport
    */
-  private async startHTTP(port: number): Promise<void> {
+  private startHTTP(port: number): void {
     this.httpServer = Deno.serve(
       { port, onListen: () => {} },
       async (req) => {
@@ -242,7 +242,7 @@ export class MCPDevServer {
   /**
    * Dispatch a method call
    */
-  private async dispatchMethod(method: string, params: unknown): Promise<unknown> {
+  private dispatchMethod(method: string, params: unknown): unknown {
     // MCP protocol methods
     switch (method) {
       case "initialize":
