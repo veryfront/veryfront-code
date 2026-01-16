@@ -111,6 +111,12 @@ export class SSRHandler extends BaseHandler {
       return Promise.resolve(this.continue());
     }
 
+    // Skip snippet paths - these are handled by SnippetHandler
+    // If they reach SSR handler, the snippet file doesn't exist - let it 404
+    if (pathname.startsWith("/@/") || pathname.startsWith("/@components/")) {
+      return Promise.resolve(this.continue());
+    }
+
     const slug = pathname === "/" ? "" : pathname.replace(/^\//, "").replace(/\/$/, "");
     const requestId = `${slug || "index"}-${Date.now()}`;
     startRequest(requestId);
