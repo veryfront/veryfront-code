@@ -131,12 +131,14 @@ export function applySecurityHeaders(
     headers.set("Strict-Transport-Security", hstsOverride ?? hstsValue);
   }
 
-  // Set COOP, CORP, COEP
-  const coop = getSecurityHeader("COOP", "same-origin", config, adapter);
+  // Set COOP, CORP, COEP (skip COOP in dev - browsers ignore it for non-trustworthy origins)
+  const coop = isDev ? "" : getSecurityHeader("COOP", "same-origin", config, adapter);
   const corp = getSecurityHeader("CORP", "same-origin", config, adapter);
   const coep = getSecurityHeader("COEP", "", config, adapter);
 
-  headers.set("Cross-Origin-Opener-Policy", coop);
+  if (coop) {
+    headers.set("Cross-Origin-Opener-Policy", coop);
+  }
   headers.set("Cross-Origin-Resource-Policy", corp);
   if (coep) {
     headers.set("Cross-Origin-Embedder-Policy", coep);
