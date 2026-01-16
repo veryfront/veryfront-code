@@ -30,8 +30,10 @@ export interface HTMLGenerationOptions {
   pageId?: string;
   /** Hash of source code for Navigator tree sync detection */
   sourceHash?: string;
-  /** User's preferred color scheme from Sec-CH-Prefers-Color-Scheme header */
+  /** User's preferred color scheme from Sec-CH-Prefers-Color-Scheme header or URL param */
   colorScheme?: "light" | "dark";
+  /** Whether colorScheme was set via color_mode URL param (needs localStorage persistence) */
+  colorSchemeFromParam?: boolean;
   /** Proxy environment for cloud deployments (preview or production) */
   proxyEnvironment?: "preview" | "production";
   /** Headings extracted from MDX for sidebar/TOC navigation */
