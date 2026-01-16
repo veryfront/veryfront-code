@@ -6,21 +6,28 @@ const isServer = typeof window === "undefined";
 /**
  * Head component for declaring head elements (title, meta, link, etc.)
  *
- * HYDRATION FIX: This component uses environment-aware rendering:
+ * Works with React 19's native document metadata support.
  *
- * SSR Phase:
- * 1. Renders hidden div with children: <div data-veryfront-head><link>...</div>
- * 2. extractHeadElements() moves children to actual <head>
- * 3. Leaves empty wrapper: <div data-veryfront-head></div>
+ * SSR PHASE:
+ * 1. Renders hidden div with children: <div data-veryfront-head><title>...</title></div>
+ * 2. extractHeadElements() parses title/description and passes to shell generator
+ * 3. Shell generator uses extracted title (overrides frontmatter default)
+ * 4. Remaining elements injected before </head>
+ * 5. Wrapper left empty: <div data-veryfront-head></div>
  *
- * Client Phase:
+ * HEAD RECONCILIATION:
+ * - Title from <Head> overrides frontmatter title (no duplicates)
+ * - Description from <Head> overrides frontmatter description
+ * - Other meta tags (og:*, twitter:*) are injected alongside frontmatter meta
+ *
+ * CLIENT PHASE:
  * 1. Initial render: empty wrapper (matches SSR cleaned output) - no hydration mismatch
  * 2. After mount: useEffect adds elements directly to document.head
+ * 3. React 19 handles subsequent updates to title/meta natively
  *
- * This ensures:
- * - Head elements are in <head> during SSR (SEO, preloading)
- * - Hydration succeeds (empty wrapper matches both sides)
- * - Client-side navigation works via applyHeadDirectives() in dom-utils.ts
+ * CSR NAVIGATION:
+ * - Server-rendered HTML includes children in wrapper
+ * - applyHeadDirectives() (dom-utils.ts) extracts and applies to document.head
  */
 export function Head({ children }: { children: React.ReactNode }) {
   const mountedRef = useRef(false);
