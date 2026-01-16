@@ -12,6 +12,7 @@ const PRIORITY_SNIPPET = 450;
 import { serverLogger as logger } from "@veryfront/utils";
 import { renderSnippet } from "@veryfront/rendering/snippet-renderer.ts";
 import { getErrorMessage } from "@veryfront/errors/veryfront-error.ts";
+import { VeryfrontAPIError } from "@veryfront/platform/adapters/veryfront-api-client/types.ts";
 
 /**
  * SnippetHandler handles @/ and @components/ prefixed paths.
@@ -61,8 +62,17 @@ export class SnippetHandler extends BaseHandler {
         const content = await ctx.adapter.fs.readFile(filePath);
 
         if (!content) {
-          logger.warn("[SnippetHandler] File not found or empty", { filePath });
-          return this.continue();
+          logger.debug("[SnippetHandler] File not found or empty", { filePath });
+          const builder = this.createResponseBuilder(ctx);
+          return this.respond(
+            builder
+              .withCache("no-cache")
+              .withContentType(
+                "application/json",
+                JSON.stringify({ error: "Snippet not found", path: filePath }),
+                404,
+              ),
+          );
         }
 
         // Get module server URL from context or request
@@ -109,12 +119,30 @@ export class SnippetHandler extends BaseHandler {
             .withContentType("text/html; charset=utf-8", result.html, 200),
         );
       } catch (error) {
-        logger.error("[SnippetHandler] Error rendering snippet", {
-          filePath,
-          error: getErrorMessage(error),
-          stack: error instanceof Error ? error.stack : undefined,
-        });
-        return this.continue();
+        // Return 404 directly for file-not-found errors instead of falling through to SSR handler
+        // This prevents 30s timeouts when snippet files don't exist
+        const is404 = error instanceof VeryfrontAPIError && error.status === 404;
+
+        if (is404) {
+          logger.debug("[SnippetHandler] Snippet file not found", { filePath });
+        } else {
+          logger.error("[SnippetHandler] Error rendering snippet", {
+            filePath,
+            error: getErrorMessage(error),
+            stack: error instanceof Error ? error.stack : undefined,
+          });
+        }
+
+        const builder = this.createResponseBuilder(ctx);
+        return this.respond(
+          builder
+            .withCache("no-cache")
+            .withContentType(
+              "application/json",
+              JSON.stringify({ error: "Snippet not found", path: filePath }),
+              404,
+            ),
+        );
       }
     });
   }
