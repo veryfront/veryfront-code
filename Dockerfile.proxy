@@ -3,14 +3,10 @@ FROM denoland/deno:2.6.1
 
 WORKDIR /app
 
-# Copy only proxy files and shared dependencies
+# Copy proxy files and framework source (proxy has transitive deps on src/)
 COPY deno.json deno.lock* ./
 COPY proxy/ ./proxy/
-COPY src/server/utils/ ./src/server/utils/
-COPY src/core/utils/ ./src/core/utils/
-COPY src/core/errors/ ./src/core/errors/
-COPY src/platform/compat/ ./src/platform/compat/
-COPY src/platform/adapters/base.ts ./src/platform/adapters/
+COPY src/ ./src/
 
 # Cache dependencies
 RUN deno cache proxy/main.ts
