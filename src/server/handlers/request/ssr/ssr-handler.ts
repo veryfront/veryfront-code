@@ -576,12 +576,18 @@ function generateStyledErrorHtml(
       --title: #374151;
       --message: #9ca3af;
     }
+    /* Dark mode: system preference, .dark class, or data-theme="dark" */
     @media (prefers-color-scheme: dark) {
-      :root {
+      :root:not(.light):not([data-theme="light"]) {
         --bg: #0d0e11;
         --title: #949A9F;
         --message: #6b7280;
       }
+    }
+    :root.dark, :root[data-theme="dark"] {
+      --bg: #0d0e11;
+      --title: #949A9F;
+      --message: #6b7280;
     }
     body {
       margin: 0;
