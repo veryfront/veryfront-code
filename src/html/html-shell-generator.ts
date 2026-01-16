@@ -30,6 +30,16 @@ import {
 } from "../module-system/manifest/route-module-manifest.ts";
 
 /**
+ * Metadata extracted from Head component for reconciliation with shell defaults.
+ * These values override frontmatter/default metadata when present.
+ */
+export interface ExtractedHeadMetadata {
+  title?: string;
+  description?: string;
+  metas: Array<{ name?: string; property?: string; content: string }>;
+}
+
+/**
  * Extract head elements from React SSR content and return them separately.
  *
  * React's Head component renders a hidden div with data-veryfront-head attribute.
@@ -37,24 +47,73 @@ import {
  * causing hydration mismatch. This function extracts those elements to inject
  * into the actual <head>, and removes them from the body content.
  *
+ * HEAD RECONCILIATION: This function also parses the extracted content to identify
+ * title, description, and other meta tags. These are returned separately so the
+ * shell generator can use them to REPLACE defaults (not duplicate them).
+ *
  * @param content - The React SSR rendered HTML content
- * @returns Object with extracted head elements HTML and cleaned content
+ * @returns Object with extracted head elements, cleaned content, and parsed metadata
  */
 export function extractHeadElements(
   content: string,
-): { headElements: string; cleanedContent: string } {
+): { headElements: string; cleanedContent: string; metadata: ExtractedHeadMetadata } {
   // Match data-veryfront-head wrappers and extract their inner content
   // Pattern: <div data-veryfront-head="1" style="display:none">...</div>
   // Also handles <template data-veryfront-head="1">...</template>
   const headPattern = /<(div|template)(\s+data-veryfront-head="1"[^>]*)>([\s\S]*?)<\/\1>/gi;
 
   const headElements: string[] = [];
+  const metadata: ExtractedHeadMetadata = { metas: [] };
+
   const cleanedContent = content.replace(headPattern, (_match, tagName, attrs, innerContent) => {
     // Extract valid head elements from the inner content
     // Filter out <body> elements which are invalid in head
     const validHeadContent = innerContent.replace(/<body[^>]*>.*?<\/body>/gi, "");
+
     if (validHeadContent.trim()) {
-      headElements.push(validHeadContent.trim());
+      // Parse title - extract and remove from head elements (shell will render it)
+      const titleMatch = validHeadContent.match(/<title[^>]*>([^<]*)<\/title>/i);
+      if (titleMatch) {
+        metadata.title = titleMatch[1].trim();
+      }
+
+      // Parse meta tags for deduplication
+      const metaPattern = /<meta\s+([^>]*)>/gi;
+      let metaMatch;
+      while ((metaMatch = metaPattern.exec(validHeadContent)) !== null) {
+        const attrsStr = metaMatch[1] ?? "";
+        const nameMatch = attrsStr.match(/name=["']([^"']+)["']/i);
+        const propertyMatch = attrsStr.match(/property=["']([^"']+)["']/i);
+        const contentMatch = attrsStr.match(/content=["']([^"']+)["']/i);
+
+        if (contentMatch?.[1]) {
+          const name = nameMatch?.[1];
+          const property = propertyMatch?.[1];
+          const content = contentMatch[1];
+
+          // Extract description for shell generator
+          if (name === "description") {
+            metadata.description = content;
+          }
+
+          metadata.metas.push({
+            name,
+            property,
+            content,
+          });
+        }
+      }
+
+      // Remove title and description meta from head elements (shell handles these)
+      // Keep other elements (og:*, twitter:*, link, script, style, etc.)
+      const filteredContent = validHeadContent
+        .replace(/<title[^>]*>[^<]*<\/title>/gi, "")
+        .replace(/<meta\s+[^>]*name=["']description["'][^>]*>/gi, "")
+        .trim();
+
+      if (filteredContent) {
+        headElements.push(filteredContent);
+      }
     }
     // Return EMPTY wrapper (not removed) so hydration matches client initial render
     return `<${tagName}${attrs}></${tagName}>`;
@@ -63,6 +122,7 @@ export function extractHeadElements(
   return {
     headElements: headElements.join("\n  "),
     cleanedContent,
+    metadata,
   };
 }
 
@@ -401,13 +461,29 @@ export async function wrapInHTMLShell(
 ): Promise<string> {
   // Extract head elements from React content to inject into actual <head>
   // This fixes hydration mismatch caused by browser hoisting <link>/<meta> out of <div>
-  const { headElements, cleanedContent: rawCleanedContent } = extractHeadElements(content);
+  const { headElements, cleanedContent: rawCleanedContent, metadata } = extractHeadElements(
+    content,
+  );
   // Trim leading/trailing whitespace to prevent hydration mismatch
   // React's virtual DOM doesn't include whitespace at container boundaries
   const cleanedContent = rawCleanedContent.trim();
 
+  // HEAD RECONCILIATION: Use extracted metadata to override frontmatter defaults
+  // This ensures <Head> component values take precedence and avoids duplicate titles
+  const enrichedMeta: RenderMetadata = {
+    ...meta,
+    // If Head component provided a title, use it (overrides frontmatter default)
+    title: metadata.title || meta.title,
+    frontmatter: {
+      ...meta.frontmatter,
+      // Override frontmatter title/description with Head component values
+      ...(metadata.title && { title: metadata.title }),
+      ...(metadata.description && { description: metadata.description }),
+    },
+  };
+
   const { start, end } = await generateHTMLShellParts(
-    meta,
+    enrichedMeta,
     options,
     params,
     props,
@@ -415,6 +491,7 @@ export async function wrapInHTMLShell(
   );
 
   // Inject extracted head elements into the <head> section (before </head>)
+  // Note: title and description are already handled by shell via enrichedMeta
   const startWithHeadElements = headElements
     ? start.replace("</head>", `  ${headElements}\n</head>`)
     : start;

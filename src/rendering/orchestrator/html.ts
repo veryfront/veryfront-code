@@ -94,17 +94,29 @@ export class HTMLGenerator {
     const reactContent = await response.text();
 
     // Extract head elements from React content (moves <link>, <meta>, etc. from body to head)
-    const { headElements, cleanedContent: rawCleanedContent } = extractHeadElements(reactContent);
+    const { headElements, cleanedContent: rawCleanedContent, metadata } = extractHeadElements(
+      reactContent,
+    );
     // Trim leading/trailing whitespace to prevent hydration mismatch
     // React's virtual DOM doesn't include whitespace at container boundaries
     const cleanedContent = rawCleanedContent.trim();
 
+    // HEAD RECONCILIATION: Use extracted metadata to override frontmatter defaults
+    // This ensures <Head> component values take precedence and avoids duplicate titles
+    const effectiveTitle = metadata.title || mergedFrontmatter.title || "Veryfront App";
+    const effectiveDescription = metadata.description || mergedFrontmatter.description || "";
+    const enrichedFrontmatter = {
+      ...mergedFrontmatter,
+      ...(metadata.title && { title: metadata.title }),
+      ...(metadata.description && { description: metadata.description }),
+    };
+
     const { start, end } = await generateHTMLShellParts(
       {
-        title: mergedFrontmatter.title || "Veryfront App",
-        description: mergedFrontmatter.description || "",
+        title: effectiveTitle,
+        description: effectiveDescription,
         slug: context.slug,
-        frontmatter: mergedFrontmatter,
+        frontmatter: enrichedFrontmatter,
         layoutFrontmatter: context.layoutBundle?.frontmatter,
         ssrHash: context.ssrHash,
       },
