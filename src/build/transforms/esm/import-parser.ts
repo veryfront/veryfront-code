@@ -43,7 +43,7 @@ const EXTENSIONS = [".tsx", ".ts", ".jsx", ".js", ".mdx"];
 export async function parseLocalImports(
   code: string,
   filePath: string,
-  _projectDir: string,
+  projectDir: string,
   adapter?: RuntimeAdapter,
 ): Promise<ParseLocalImportsResult> {
   // CSS and JSON files don't have JS imports - skip parsing
@@ -87,7 +87,7 @@ export async function parseLocalImports(
       // In virtual filesystem mode (API-backed), paths are relative like "components/Welcome.tsx"
       // The @/ alias maps to the project root, so we just remove the @/ prefix
       const aliasPath = imp.n.substring(2); // Remove '@/' prefix
-      const resolved = await resolveAliasImportPath(aliasPath, adapter);
+      const resolved = await resolveAliasImportPath(aliasPath, projectDir, adapter);
       if (resolved) {
         localImports.push({ specifier: imp.n, absolutePath: resolved });
       } else {
@@ -181,9 +181,11 @@ async function resolveLocalImportPath(
  * Resolve an alias import path (e.g., @/components) to a file path.
  * The basePath should already have @/ prefix removed.
  * In virtual filesystem mode, paths are relative like "components/Welcome".
+ * In local filesystem mode, paths need to be resolved relative to projectDir.
  */
 async function resolveAliasImportPath(
   basePath: string,
+  projectDir: string,
   adapter?: RuntimeAdapter,
 ): Promise<string | null> {
   // Normalize the path - remove any leading slashes for consistency
@@ -222,61 +224,65 @@ async function resolveAliasImportPath(
     }
   }
 
-  // Manual resolution fallback (for adapters without resolveFile)
-  // Note: This section runs even when adapter.fs.resolveFile returns null
-  console.debug("[import-parser] Manual resolution for", { normalizedPath, hasAdapter: !!adapter });
+  // Manual resolution fallback (for adapters without resolveFile, e.g., local filesystem)
+  // For local development, we need to prepend the projectDir to resolve paths correctly
+  const localFs = createFileSystem();
+  const projectNormalizedDir = projectDir.replace(/\/+$/, ""); // Remove trailing slashes
 
   // Check if path already has extension
   if (/\.(tsx?|jsx?|mjs|cjs|mdx)$/.test(normalizedPath)) {
-    if (await checkFileExists(normalizedPath, adapter)) {
-      return normalizedPath;
+    const absolutePath = join(projectNormalizedDir, normalizedPath);
+    try {
+      const stat = await localFs.stat(absolutePath);
+      if (stat.isFile) {
+        return absolutePath;
+      }
+    } catch {
+      // File not found
     }
     return null;
   }
 
   // Try common extensions
   for (const ext of EXTENSIONS) {
-    const fullPath = normalizedPath + ext;
-    if (await checkFileExists(fullPath, adapter)) {
-      return fullPath;
+    const absolutePath = join(projectNormalizedDir, normalizedPath + ext);
+    try {
+      const stat = await localFs.stat(absolutePath);
+      if (stat.isFile) {
+        return absolutePath;
+      }
+    } catch {
+      // Continue trying other extensions
     }
   }
 
   // Try index files
   for (const ext of EXTENSIONS) {
-    const indexPath = normalizedPath + "/index" + ext;
-    if (await checkFileExists(indexPath, adapter)) {
-      return indexPath;
+    const absolutePath = join(projectNormalizedDir, normalizedPath, "index" + ext);
+    try {
+      const stat = await localFs.stat(absolutePath);
+      if (stat.isFile) {
+        return absolutePath;
+      }
+    } catch {
+      // Continue trying other extensions
     }
   }
 
   // Legacy fallback: For lib/* imports not found in project, check framework lib directory
   // This provides framework utilities like lib/Head, lib/Router, lib/usePageContext
   if (normalizedPath.startsWith("lib/")) {
-    console.info("[import-parser] Framework lib fallback triggered", {
-      normalizedPath,
-      FRAMEWORK_ROOT,
-    });
-    const fs = createFileSystem();
     for (const ext of EXTENSIONS) {
       const frameworkPath = join(FRAMEWORK_ROOT, normalizedPath + ext);
       try {
-        const stat = await fs.stat(frameworkPath);
+        const stat = await localFs.stat(frameworkPath);
         if (stat.isFile) {
-          console.info("[import-parser] Found framework lib file", {
-            normalizedPath,
-            frameworkPath,
-          });
           return frameworkPath;
         }
       } catch {
         // Continue trying other paths
       }
     }
-    console.warn("[import-parser] Framework lib file NOT found", {
-      normalizedPath,
-      triedPaths: EXTENSIONS.map((ext) => join(FRAMEWORK_ROOT, normalizedPath + ext)),
-    });
   }
 
   return null;

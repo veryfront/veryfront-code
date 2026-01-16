@@ -25,7 +25,7 @@ class ConfigError extends Error {
 // Load .env manually since config is evaluated before bootstrap
 // In production, .env won't exist - that's fine, we use env vars
 // IMPORTANT: Don't use export: true - it would overwrite env vars set by parent process
-// (e.g., PROXY_MODE=1 set by dev-proxy.ts would be overwritten by PROXY_MODE=0 from .env)
+// (e.g., PROXY_MODE=1 set by server.ts would be overwritten by PROXY_MODE=0 from .env)
 let env: Record<string, string> = {};
 try {
   const { load } = await import("https://deno.land/std@0.220.0/dotenv/mod.ts");
@@ -104,7 +104,7 @@ To get started:
     3. Set your project slug in .env`);
 }
 
-// Proxy mode logging handled by dev-proxy.ts startup banner
+// Proxy mode logging handled by server.ts startup banner
 
 // GitHub test mode: Use GITHUB_TOKEN env var to enable
 const useGitHub = !!Deno.env.get("GITHUB_TOKEN");

@@ -325,6 +325,7 @@ export class RenderPipeline {
           options?.url,
           mergedFrontmatter,
           headings,
+          options?.projectSlug,
         ),
       "render-page",
     );

@@ -299,6 +299,7 @@ export class SSRHandler extends BaseHandler {
           pageId,
           colorScheme,
           proxyEnvironment: ctx.proxyEnvironment,
+          projectSlug: ctx.projectSlug,
         }));
 
       // End tracking and record to manifest for future requests

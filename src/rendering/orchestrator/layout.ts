@@ -13,6 +13,8 @@ import { rendererLogger as logger } from "@veryfront/utils";
 export interface LayoutOrchestratorConfig {
   projectDir: string;
   projectId?: string;
+  /** Project slug for HTTP fallback in multi-project mode */
+  projectSlug?: string;
   adapter: RuntimeAdapter;
   config: VeryfrontConfig;
   mode: "development" | "production";
@@ -67,6 +69,7 @@ export class LayoutOrchestrator {
     requestUrl?: URL,
     frontmatter?: Record<string, unknown>,
     headings?: Array<{ id: string; text: string; level: number }>,
+    projectSlug?: string,
   ): Promise<React.ReactElement> {
     const defaultComponents = createDefaultMDXComponents();
     const mergedComponents = { ...defaultComponents, ...this.config.componentRegistry };
@@ -74,6 +77,7 @@ export class LayoutOrchestrator {
     const layoutApplicator = new LayoutApplicator({
       projectDir: this.config.projectDir,
       projectId: this.config.projectId,
+      projectSlug: projectSlug ?? this.config.projectSlug,
       adapter: this.config.adapter,
       config: this.config.config,
       layoutCache: this.config.layoutCache,

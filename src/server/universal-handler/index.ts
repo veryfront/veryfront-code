@@ -28,6 +28,7 @@ import type { HandlerContext } from "../handlers/types.ts";
 import { parseProjectDomain } from "../utils/domain-parser.ts";
 import { getEnvironmentType, lookupProjectByDomain } from "../utils/domain-lookup.ts";
 import { getErrorMessage } from "@veryfront/errors/veryfront-error.ts";
+import { getAdapter } from "@veryfront/platform/adapters/detect.ts";
 
 /** Check if host is a private/internal IP address */
 function isInternalHost(host: string): boolean {
@@ -121,6 +122,8 @@ export interface UniversalHandlerOptions {
   moduleServerUrl?: string;
   /** Pre-loaded config (avoids re-loading via FSAdapter) */
   config?: VeryfrontConfig;
+  /** Map of local project slugs to their filesystem paths (for unified dev server) */
+  localProjects?: Record<string, string>;
 }
 
 /**
@@ -207,6 +210,63 @@ export function createVeryfrontHandler(
   // Check if running in proxy mode (multi-project per-request handling)
   const isProxyMode = opts.config?.fs?.veryfront?.proxyMode === true;
 
+  // Cache for per-request local adapters (keyed by projectDir)
+  const localAdapterCache = new Map<string, RuntimeAdapter>();
+
+  // Standard directories to auto-discover local projects (filesystem-first)
+  const standardProjectDirs = ["data/projects", "projects", "examples"];
+
+  // Cache for discovered local project paths (slug → absolute path)
+  const localProjectCache = new Map<string, string>();
+
+  /**
+   * Check if a project exists locally (filesystem-first).
+   * First checks x-project-path header (from proxy), then scans standard directories.
+   */
+  async function findLocalProjectPath(
+    slug: string,
+    headerPath?: string,
+  ): Promise<string | undefined> {
+    // If proxy provided explicit path via header, use it directly
+    if (headerPath) {
+      localProjectCache.set(slug, headerPath);
+      return headerPath;
+    }
+
+    // Check cache
+    if (localProjectCache.has(slug)) {
+      return localProjectCache.get(slug);
+    }
+
+    // Auto-discover from standard directories
+    for (const dir of standardProjectDirs) {
+      const projectPath = `${dir}/${slug}`;
+      try {
+        const stat = await adapter.fs.stat(projectPath);
+        if (stat?.isDirectory) {
+          // Verify it looks like a veryfront project (has pages/ or components/)
+          const hasPages = await adapter.fs.stat(`${projectPath}/pages`).then((s) => s?.isDirectory)
+            .catch(() => false);
+          const hasComponents = await adapter.fs.stat(`${projectPath}/components`).then((s) =>
+            s?.isDirectory
+          ).catch(() => false);
+          if (hasPages || hasComponents) {
+            const absolutePath = projectPath.startsWith("/")
+              ? projectPath
+              : `${Deno.cwd()}/${projectPath}`;
+            localProjectCache.set(slug, absolutePath);
+            logger.debug("[universal] Discovered local project", { slug, path: absolutePath });
+            return absolutePath;
+          }
+        }
+      } catch {
+        // Directory doesn't exist, continue
+      }
+    }
+
+    return undefined;
+  }
+
   // Pre-initialize API handler to discover routes before any requests
   // In proxy mode, skip eager initialization since there's no request context at startup
   const readyPromise = isProxyMode ? Promise.resolve() : apiHandler.initialize().catch((err) => {
@@ -271,6 +331,8 @@ export function createVeryfrontHandler(
         const proxyToken = req.headers.get("x-token") || undefined;
         const proxySlug = req.headers.get("x-project-slug") ||
           _url.searchParams.get("x-project-slug") || undefined;
+        // x-project-path: explicit local filesystem path for this project (from proxy)
+        const proxyProjectPath = req.headers.get("x-project-path") || undefined;
         let proxyEnv = parseProxyEnvironment(
           req.headers.get("x-environment") || _url.searchParams.get("x-environment"),
         );
@@ -434,10 +496,41 @@ export function createVeryfrontHandler(
           });
         }
 
+        // Filesystem-first: check if this project exists locally
+        // 1. Use x-project-path header if provided (explicit from proxy)
+        // 2. Otherwise auto-discover from standard directories
+        // Local projects are served from filesystem, API is fallback
+        let effectiveProjectDir = projectDir;
+        let effectiveAdapter = adapter;
+        const localProjectPath = projectSlug
+          ? await findLocalProjectPath(projectSlug, proxyProjectPath)
+          : undefined;
+        const isLocalProject = !!localProjectPath;
+
+        if (isLocalProject && localProjectPath) {
+          effectiveProjectDir = localProjectPath;
+          logger.debug("[universal] Using local project (filesystem-first)", {
+            projectSlug,
+            projectDir: effectiveProjectDir,
+          });
+
+          // Get or create a cached adapter for this local project
+          if (!localAdapterCache.has(effectiveProjectDir)) {
+            // Create a base adapter for local filesystem operations
+            const baseAdapter = await getAdapter();
+            localAdapterCache.set(effectiveProjectDir, baseAdapter);
+            logger.debug("[universal] Created local adapter for project", {
+              projectSlug,
+              projectDir: effectiveProjectDir,
+            });
+          }
+          effectiveAdapter = localAdapterCache.get(effectiveProjectDir)!;
+        }
+
         // Create handler context
         const ctx: HandlerContext = {
-          projectDir,
-          adapter,
+          projectDir: effectiveProjectDir,
+          adapter: effectiveAdapter,
           mode: opts.mode ?? "production",
           moduleServerUrl: opts.moduleServerUrl,
           securityConfig: securityLoader.getSecurityConfig(),
@@ -448,8 +541,8 @@ export function createVeryfrontHandler(
           projectSlug,
           projectId,
           releaseId,
-          proxyToken,
-          proxyEnvironment: proxyEnv,
+          proxyToken: isLocalProject ? undefined : proxyToken, // Don't pass token for local projects
+          proxyEnvironment: isLocalProject ? "preview" : proxyEnv, // Local projects are always preview
           environmentName,
           routeRegistry: registry,
         };

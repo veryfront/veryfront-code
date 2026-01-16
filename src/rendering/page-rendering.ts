@@ -30,6 +30,8 @@ export async function handleMDXPage(
     precompiledModule?: string;
     /** Project ID for cache isolation */
     projectId?: string;
+    /** Project slug for HTTP fallback in multi-project mode */
+    projectSlug?: string;
     /** Enable node position injection for Studio Navigator */
     studioEmbed?: boolean;
   },
@@ -83,6 +85,8 @@ export async function handleMDXPage(
       clientModuleCode,
       adapter,
       options?.projectId,
+      projectDir,
+      options?.projectSlug,
     )) as MDXModule;
     const MDXComp = mod.MDXContent || mod.default;
     if (!MDXComp) {

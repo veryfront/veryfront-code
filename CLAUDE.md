@@ -48,9 +48,24 @@ veryfront-renderer/
 └── veryfront.config.ts   # Framework config
 ```
 
-## Two Operation Modes
+## Architecture
 
-### Proxy Mode (Production)
+Two logical components:
+- **Proxy**: Token management, project routing
+- **Renderer**: SSR/RSC rendering
+
+### Combined Mode (Local Dev)
+
+```
+Client → [Proxy Logic → Renderer] → API
+         (single process)
+```
+
+- `deno task start` runs both in one process
+- Simpler, faster startup
+- Auto-discovers local projects
+
+### Split Mode (Production)
 
 ```
 Client → Proxy → Renderer → API
@@ -58,45 +73,26 @@ Client → Proxy → Renderer → API
    Token cache (Redis)
 ```
 
-- Proxy handles OAuth tokens per-request
-- Renderer receives token via `x-token` header
-- Enable with `PROXY_MODE=1`
-
-### Direct Mode (Local Dev)
-
-```
-Client → Renderer → API
-              ↓
-         Token from env
-```
-
-- Token from `VERYFRONT_API_TOKEN` env var
-- Single project from `VERYFRONT_PROJECT_SLUG`
-- Enable with `PROXY_MODE=0`
+- Separate containers for security isolation
+- OAuth credentials only in proxy
 
 ## Development Commands
 
-### Renderer (Deno)
-
 ```bash
-deno task dev              # Start dev server (single project)
-deno task dev:multi        # Multi-project mode (Veryfront staff)
+# Combined mode (recommended)
+deno task start            # Proxy + renderer together
+deno task start -p 8080    # Custom port
+deno task start --project . # Set default project
+
+# Split mode (separate processes)
+deno task proxy            # Proxy only
+deno task renderer         # Renderer only
+
+# Other
 deno task build            # Production build
 deno task test             # Run all tests
-deno task test:unit        # Run unit tests only
-deno task test:integration # Run integration tests only
 deno task lint             # Lint code
-deno task fmt              # Format code
 deno task typecheck        # Type check
-```
-
-### Proxy (Deno)
-
-```bash
-cd proxy
-deno task start            # Production run
-deno task dev              # With file watching
-deno check main.ts         # Type check proxy only
 ```
 
 ## Configuration
@@ -179,8 +175,7 @@ cp .env.local.example .env.local
 # 2. Fill in OAuth credentials (from 1Password: "Veryfront OAuth Credentials")
 
 # 3. Run:
-deno task dev          # Single project mode
-deno task dev:multi    # Multi-project (Veryfront staff)
+deno task start        # Starts server (auto-discovers local projects)
 ```
 
 ### Debug Endpoints
@@ -208,7 +203,7 @@ If modules return 404 or API calls fail:
 ### View Logs
 
 ```bash
-deno task dev 2>&1 | tee dev.log
+deno task start 2>&1 | tee server.log
 ```
 
 ## Remote Logs
@@ -223,17 +218,14 @@ logcli query '{namespace="veryfront-production", container="renderer"} |= "error
 
 ## Key Files
 
-| File                              | Purpose                               |
-| --------------------------------- | ------------------------------------- |
-| `.env.local.example`              | Template for local development config |
-| `scripts/dev-proxy.ts`            | Launcher for `deno task dev:multi`    |
-| `proxy/main.ts`                   | Proxy entry point                     |
-| `proxy/token-manager.ts`          | OAuth token lifecycle                 |
-| `src/server/production-server.ts` | Production server                     |
-| `src/server/dev-server.ts`        | Development server with HMR           |
-| `src/cli/main.ts`                 | CLI entry point                       |
-| `src/rendering/`                  | SSR/RSC rendering engine              |
-| `src/routing/`                    | File-based routing                    |
-| `src/ai/`                         | AI agent runtime and MCP              |
-| `veryfront.config.ts`             | Framework configuration               |
-| `chart/values.yaml`               | Kubernetes deployment config          |
+| File                      | Purpose                        |
+| ------------------------- | ------------------------------ |
+| `scripts/server.ts`       | Combined mode launcher         |
+| `proxy/main.ts`           | Proxy server (split mode)      |
+| `proxy/handler.ts`        | Core proxy logic               |
+| `src/cli/main.ts`         | CLI entry point                |
+| `src/server/`             | Server implementations         |
+| `src/rendering/`          | SSR/RSC rendering engine       |
+| `src/routing/`            | File-based routing             |
+| `veryfront.config.ts`     | Framework configuration        |
+| `chart/values.yaml`       | Kubernetes deployment config   |

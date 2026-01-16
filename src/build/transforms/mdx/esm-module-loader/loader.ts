@@ -395,7 +395,7 @@ export async function loadModuleESM(
 
     // Step 3: Find and process /_vf_modules/ imports
     const vfModuleImports = findVfModuleImports(rewritten);
-    const projectDir = cwd();
+    const projectDir = context.projectDir || cwd();
     rewritten = await processVfModuleImports(rewritten, vfModuleImports, context, projectDir);
 
     // Step 4: Transform JSX imports

@@ -277,6 +277,7 @@ async function fetchModuleViaHTTP(
   normalizedPath: string,
   adapter: RuntimeAdapter,
   fetchAndCacheModuleFn: (path: string, parent?: string) => Promise<string | null>,
+  projectSlug?: string,
 ): Promise<string | null> {
   // In proxy mode, HTTP fallback to localhost won't work (self-referential request)
   const isProxyMode = adapter.env.get("PROXY_MODE") === "1";
@@ -292,7 +293,9 @@ async function fetchModuleViaHTTP(
   );
 
   const port = adapter.env.get("VERYFRONT_DEV_PORT") || adapter.env.get("PORT") || "3001";
-  const moduleUrl = `http://localhost:${port}/${normalizedPath}?ssr=true`;
+  // In multi-project mode, use project subdomain; otherwise use localhost
+  const host = projectSlug ? `${projectSlug}.lvh.me` : "localhost";
+  const moduleUrl = `http://${host}:${port}/${normalizedPath}?ssr=true`;
 
   const response = await fetch(moduleUrl);
   if (!response.ok) {
@@ -364,7 +367,7 @@ export async function fetchAndCacheModule(
 
   // Now do the actual fetch
   const result = await (async (): Promise<string | null> => {
-    const { esmCacheDir, adapter, projectDir, projectId } = context;
+    const { esmCacheDir, adapter, projectDir, projectId, projectSlug } = context;
 
     // Check persistent module path cache first
     const pathCache = await getModulePathCache(esmCacheDir);
@@ -395,11 +398,16 @@ export async function fetchAndCacheModule(
 
     // Try to find and read the source file directly
     try {
-      const resolved = await resolveModuleFile(normalizedPath, adapter);
+      const resolved = await resolveModuleFile(normalizedPath, adapter, projectDir);
 
       if (!resolved) {
         // Fallback to HTTP fetch if direct file read fails
-        const moduleCode = await fetchModuleViaHTTP(normalizedPath, adapter, fetchAndCacheModuleFn);
+        const moduleCode = await fetchModuleViaHTTP(
+          normalizedPath,
+          adapter,
+          fetchAndCacheModuleFn,
+          projectSlug,
+        );
         if (moduleCode) {
           return await cacheModule(normalizedPath, moduleCode, esmCacheDir, pathCache);
         }

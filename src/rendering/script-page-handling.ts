@@ -4,6 +4,7 @@
 
 import { rendererLogger as logger } from "@veryfront/utils";
 import { dirname, join } from "@veryfront/platform/compat/path/index.ts";
+import { cwd } from "@veryfront/platform/compat/process.ts";
 import { ErrorCode, VeryfrontError } from "@veryfront/errors/index.ts";
 import { createError, toError } from "../core/errors/veryfront-error.ts";
 import type {
@@ -231,10 +232,14 @@ async function loadScriptModule(
 ): Promise<ScriptPageModule> {
   const fs = createFileSystem();
 
-  // Normalize path - handle both absolute and relative paths
+  // Normalize path - ensure absolute path for file:// URLs
   let normalizedPath = modulePath;
   if (!modulePath.startsWith("/") && projectDir) {
     normalizedPath = join(projectDir, modulePath);
+  }
+  // Ensure absolute path (file:// URLs require absolute paths)
+  if (!normalizedPath.startsWith("/")) {
+    normalizedPath = join(cwd(), normalizedPath);
   }
 
   logger.debug(`[Script] Checking if file exists locally: ${normalizedPath}`);

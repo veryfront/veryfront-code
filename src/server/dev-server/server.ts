@@ -182,25 +182,31 @@ export class DevServer {
       this.adapter,
     );
 
-    this.server = await this.adapter.serve(
-      (req: Request) => this.pipeline.execute(req, this.adapter.env.toObject()),
-      {
-        port: this.options.port,
-        hostname: LOCALHOST.IPV4,
-        signal: this.options.signal,
-        onListen: ({ hostname: _hostname, port }: { hostname: string; port: number }) => {
-          const url = buildLocalhostUrl(port);
-          logger.info(`Dev server running at ${url}`);
+    // Create handler with optional request interceptor (for combined proxy mode)
+    const baseHandler = (req: Request) => this.pipeline.execute(req, this.adapter.env.toObject());
+    const handler = this.options.requestInterceptor
+      ? async (req: Request) => {
+        const interceptedReq = await this.options.requestInterceptor!(req);
+        return baseHandler(interceptedReq);
+      }
+      : baseHandler;
 
-          try {
-            this._isReady = true;
-            this._resolveReady?.();
-          } catch (error) {
-            logger.debug("[dev] mark ready failed", error);
-          }
-        },
+    this.server = await this.adapter.serve(handler, {
+      port: this.options.port,
+      hostname: LOCALHOST.IPV4,
+      signal: this.options.signal,
+      onListen: ({ hostname: _hostname, port }: { hostname: string; port: number }) => {
+        const url = buildLocalhostUrl(port);
+        logger.info(`Dev server running at ${url}`);
+
+        try {
+          this._isReady = true;
+          this._resolveReady?.();
+        } catch (error) {
+          logger.debug("[dev] mark ready failed", error);
+        }
       },
-    );
+    });
     this._isReady = true;
   }
 

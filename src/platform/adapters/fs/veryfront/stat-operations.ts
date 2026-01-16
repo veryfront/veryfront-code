@@ -14,7 +14,9 @@ const NOT_FOUND_SENTINEL = "__NOT_FOUND__";
 
 // Framework prefixes that should not trigger API searches
 // These files are resolved by import-parser.ts from FRAMEWORK_ROOT (/app/)
-const FRAMEWORK_PREFIXES = ["lib/", "exports/", "react/", "veryfront/"];
+// Note: "lib/" is NOT included here because projects commonly have their own lib/ directories
+// Framework-specific lib imports (lib/Head, lib/Router) are handled by import-parser.ts fallback
+const FRAMEWORK_PREFIXES = ["exports/", "react/", "veryfront/"];
 
 export class StatOperations {
   private fileIndex: Map<string, ProjectFile> | null = null;

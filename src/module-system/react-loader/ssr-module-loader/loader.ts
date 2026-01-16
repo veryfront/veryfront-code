@@ -7,6 +7,7 @@
  */
 
 import { join } from "@veryfront/platform/compat/path/index.ts";
+import { cwd } from "@veryfront/platform/compat/process.ts";
 import type * as React from "react";
 import { transformToESM } from "@veryfront/transforms/esm/index.ts";
 import type { TransformOptions } from "@veryfront/transforms/esm/types.ts";
@@ -510,8 +511,13 @@ export class SSRModuleLoader {
   }
 
   private async ensureTmpDir(): Promise<string> {
-    const projectDir = this.options.projectDir;
+    let projectDir = this.options.projectDir;
     const projectId = this.options.projectId;
+
+    // Ensure absolute path for file:// URLs
+    if (!projectDir.startsWith("/")) {
+      projectDir = join(cwd(), projectDir);
+    }
 
     const cacheKey = `${projectDir}:${projectId}`;
 

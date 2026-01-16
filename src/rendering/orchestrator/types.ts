@@ -46,6 +46,8 @@ export interface RenderOptions {
   pageId?: string;
   colorScheme?: "light" | "dark";
   proxyEnvironment?: "preview" | "production";
+  /** Project slug for HTTP fallback in multi-project mode */
+  projectSlug?: string;
 }
 
 export interface RenderContext {

@@ -22,6 +22,10 @@ export interface ESMLoaderContext {
   adapter?: RuntimeAdapter;
   /** Project identifier for cache isolation */
   projectId?: string;
+  /** Project directory for file resolution (required for multi-project mode) */
+  projectDir?: string;
+  /** Project slug for HTTP fallback URLs (multi-project mode) */
+  projectSlug?: string;
 }
 
 /**
@@ -84,6 +88,8 @@ export interface ModuleFetcherContext {
   projectDir: string;
   /** Project identifier */
   projectId: string;
+  /** Project slug for HTTP fallback URLs (multi-project mode) */
+  projectSlug?: string;
 }
 
 /**
