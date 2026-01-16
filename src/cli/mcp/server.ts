@@ -159,20 +159,39 @@ export class MCPDevServer {
     this.httpServer = Deno.serve(
       { port, onListen: () => {} },
       async (req) => {
-        // CORS headers
-        const headers = {
+        const url = new URL(req.url);
+
+        // CORS headers - restrict to localhost origins for security
+        const origin = req.headers.get("Origin") || "";
+        const isLocalhost = origin === "" ||
+          origin.startsWith("http://localhost") ||
+          origin.startsWith("http://127.0.0.1") ||
+          origin.startsWith("http://lvh.me");
+
+        const headers: Record<string, string> = {
           "Content-Type": "application/json",
-          "Access-Control-Allow-Origin": "*",
           "Access-Control-Allow-Methods": "POST, OPTIONS",
           "Access-Control-Allow-Headers": "Content-Type",
         };
+
+        // Only set CORS header for localhost origins
+        if (isLocalhost && origin) {
+          headers["Access-Control-Allow-Origin"] = origin;
+        }
 
         // Handle OPTIONS (CORS preflight)
         if (req.method === "OPTIONS") {
           return new Response(null, { status: 204, headers });
         }
 
-        // Only accept POST
+        // Only accept POST requests to /mcp endpoint
+        if (url.pathname !== "/mcp") {
+          return new Response(
+            JSON.stringify({ error: "Not found. MCP endpoint is at /mcp" }),
+            { status: 404, headers },
+          );
+        }
+
         if (req.method !== "POST") {
           return new Response(
             JSON.stringify({ error: "Method not allowed" }),
@@ -236,6 +255,10 @@ export class MCPDevServer {
         return this.handleResourcesList();
       case "resources/read":
         return this.handleResourcesRead(params);
+      case "prompts/list":
+        return this.handlePromptsList();
+      case "prompts/get":
+        return this.handlePromptsGet(params);
       default:
         throw new Error(`Unknown method: ${method}`);
     }
@@ -243,6 +266,7 @@ export class MCPDevServer {
 
   /**
    * Handle initialize request
+   * Returns capabilities (tools, resources, prompts)
    */
   private handleInitialize(_params: unknown): unknown {
     return {
@@ -250,6 +274,7 @@ export class MCPDevServer {
       capabilities: {
         tools: {},
         resources: {},
+        prompts: {},
       },
       serverInfo: {
         name: this.config.serverName,
@@ -308,6 +333,12 @@ export class MCPDevServer {
     return {
       resources: [
         {
+          uri: "veryfront://skill",
+          name: "Veryfront Skill",
+          description: "How to build Veryfront apps - conventions, patterns, workflows",
+          mimeType: "text/markdown",
+        },
+        {
           uri: "veryfront://errors",
           name: "Dev Server Errors",
           description: "Current compilation and runtime errors",
@@ -326,8 +357,26 @@ export class MCPDevServer {
   /**
    * Handle resources/read request
    */
-  private handleResourcesRead(params: unknown): unknown {
+  private async handleResourcesRead(params: unknown): Promise<unknown> {
     const { uri } = params as { uri: string };
+
+    if (uri === "veryfront://skill") {
+      try {
+        const skillPath = new URL("./skills/veryfront/SKILL.md", import.meta.url).pathname;
+        const content = await Deno.readTextFile(skillPath);
+        return {
+          contents: [
+            {
+              uri,
+              mimeType: "text/markdown",
+              text: content,
+            },
+          ],
+        };
+      } catch {
+        throw new Error("Skill file not found");
+      }
+    }
 
     if (uri === "veryfront://errors") {
       const errors = getErrorCollector().getAll();
@@ -359,15 +408,171 @@ export class MCPDevServer {
   }
 
   /**
-   * Convert Zod schema to JSON Schema (simplified)
+   * Handle prompts/list request
+   * Returns available prompts (skills) that agents can use
+   */
+  private handlePromptsList(): unknown {
+    return {
+      prompts: [
+        {
+          name: "veryfront",
+          description: "Build Veryfront apps - conventions, patterns, workflows, scaffolding",
+          arguments: [],
+        },
+        {
+          name: "veryfront-routing",
+          description: "Veryfront routing conventions and file-based routing patterns",
+          arguments: [],
+        },
+        {
+          name: "veryfront-ai-tools",
+          description: "AI tool patterns for Veryfront agents",
+          arguments: [],
+        },
+        {
+          name: "veryfront-components",
+          description: "Component patterns and best practices for Veryfront",
+          arguments: [],
+        },
+      ],
+    };
+  }
+
+  /**
+   * Handle prompts/get request
+   * Returns the content of a specific prompt (skill)
+   */
+  private async handlePromptsGet(params: unknown): Promise<unknown> {
+    const { name } = params as { name: string };
+
+    const promptFiles: Record<string, string> = {
+      "veryfront": "./skills/veryfront/SKILL.md",
+      "veryfront-routing": "./skills/veryfront/references/ROUTES.md",
+      "veryfront-ai-tools": "./skills/veryfront/references/AI-TOOLS.md",
+      "veryfront-components": "./skills/veryfront/references/COMPONENTS.md",
+    };
+
+    const filePath = promptFiles[name];
+    if (!filePath) {
+      throw new Error(`Unknown prompt: ${name}`);
+    }
+
+    try {
+      const fullPath = new URL(filePath, import.meta.url).pathname;
+      const content = await Deno.readTextFile(fullPath);
+
+      return {
+        description: `Veryfront skill: ${name}`,
+        messages: [
+          {
+            role: "user",
+            content: {
+              type: "text",
+              text: content,
+            },
+          },
+        ],
+      };
+    } catch {
+      throw new Error(`Failed to read prompt: ${name}`);
+    }
+  }
+
+  /**
+   * Convert Zod schema to JSON Schema
    */
   private zodToJsonSchema(schema: unknown): unknown {
-    // This is a simplified conversion - in production, use zod-to-json-schema
-    // For now, return a generic object schema
-    return {
-      type: "object",
-      properties: {},
-    };
+    // deno-lint-ignore no-explicit-any
+    const zodSchema = schema as any;
+
+    // Check if it has a _def (Zod internal structure)
+    if (!zodSchema?._def) {
+      return { type: "object", properties: {} };
+    }
+
+    const def = zodSchema._def;
+    const typeName = def.typeName;
+
+    // Handle ZodObject
+    if (typeName === "ZodObject") {
+      const shape = def.shape?.() || {};
+      const properties: Record<string, unknown> = {};
+      const required: string[] = [];
+
+      for (const [key, value] of Object.entries(shape)) {
+        // deno-lint-ignore no-explicit-any
+        const fieldDef = (value as any)?._def;
+        const fieldSchema = this.zodToJsonSchema(value);
+
+        // Get description from field
+        if (fieldDef?.description) {
+          // deno-lint-ignore no-explicit-any
+          (fieldSchema as any).description = fieldDef.description;
+        }
+
+        properties[key] = fieldSchema;
+
+        // Check if required (not optional, not nullable with default)
+        if (fieldDef?.typeName !== "ZodOptional" && fieldDef?.typeName !== "ZodDefault") {
+          required.push(key);
+        }
+      }
+
+      return {
+        type: "object",
+        properties,
+        ...(required.length > 0 ? { required } : {}),
+      };
+    }
+
+    // Handle ZodString
+    if (typeName === "ZodString") {
+      return { type: "string", ...(def.description ? { description: def.description } : {}) };
+    }
+
+    // Handle ZodNumber
+    if (typeName === "ZodNumber") {
+      return { type: "number", ...(def.description ? { description: def.description } : {}) };
+    }
+
+    // Handle ZodBoolean
+    if (typeName === "ZodBoolean") {
+      return { type: "boolean", ...(def.description ? { description: def.description } : {}) };
+    }
+
+    // Handle ZodArray
+    if (typeName === "ZodArray") {
+      return {
+        type: "array",
+        items: this.zodToJsonSchema(def.type),
+        ...(def.description ? { description: def.description } : {}),
+      };
+    }
+
+    // Handle ZodEnum
+    if (typeName === "ZodEnum") {
+      return {
+        type: "string",
+        enum: def.values,
+        ...(def.description ? { description: def.description } : {}),
+      };
+    }
+
+    // Handle ZodOptional
+    if (typeName === "ZodOptional") {
+      return this.zodToJsonSchema(def.innerType);
+    }
+
+    // Handle ZodDefault
+    if (typeName === "ZodDefault") {
+      const innerSchema = this.zodToJsonSchema(def.innerType);
+      // deno-lint-ignore no-explicit-any
+      (innerSchema as any).default = def.defaultValue?.();
+      return innerSchema;
+    }
+
+    // Fallback
+    return { type: "object" };
   }
 }
 

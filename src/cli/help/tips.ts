@@ -5,6 +5,7 @@ export function getDevTips(): string {
     yellow("Tips:") +
     "\n" +
     `  • HMR is enabled by default - saves reload the browser\n` +
+    `  • MCP server runs on port 9999 for coding agents (Claude Code, Cursor)\n` +
     `  • Press ${cyan("Ctrl+C")} to stop the server\n`
   );
 }
@@ -23,9 +24,10 @@ export function getInitTemplates(): string {
   return (
     yellow("Available Templates:") +
     "\n" +
+    `  • ${green("ai")}       - AI agent with chat UI and tool calling (recommended)\n` +
+    `  • ${green("app")}      - Full-stack app with auth & API\n` +
     `  • ${green("blog")}     - Blog with MDX, tags, and RSS\n` +
     `  • ${green("docs")}     - Documentation site with search\n` +
-    `  • ${green("app")}      - Full-stack app with auth & API\n` +
     `  • ${green("minimal")}  - Bare-bones starter\n`
   );
 }

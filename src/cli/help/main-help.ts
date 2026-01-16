@@ -39,6 +39,12 @@ export function showMainHelp(): void {
   console.log(`    ${dim("$")} veryfront dev`);
 
   console.log();
+  console.log("  " + formatSectionHeader("Coding Agents (MCP)"));
+  console.log(`    ${dim("HTTP:")}   MCP auto-starts on port 9999 with dev server`);
+  console.log(`    ${dim("stdio:")}  veryfront mcp`);
+  console.log(`    ${dim("Tools:")}  vf_list_templates, vf_create_project, vf_scaffold, ...`);
+
+  console.log();
   console.log("  " + formatSectionHeader("Learn More"));
   console.log(`    ${dim("Docs:")}  https://github.com/veryfront/veryfront`);
   console.log(`    ${dim("Tips:")}  veryfront <command> --help`);

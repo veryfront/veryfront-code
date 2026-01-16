@@ -1,13 +1,21 @@
 /**
- * MCP Tools for Dev Server
+ * MCP Tools for Veryfront Dev Server
  *
- * Exposes dev server functionality to coding agents via MCP.
- * Tools: vf_get_errors, vf_get_logs, vf_list_routes, vf_clear_cache, vf_restart
+ * A comprehensive toolkit for coding agents to understand, navigate, and modify
+ * Veryfront projects. Tools are organized into categories:
+ *
+ * - Project Understanding: vf_get_project_context, vf_list_routes, vf_get_conventions
+ * - File Operations: vf_read_file, vf_write_file, vf_edit_file, vf_search_files
+ * - Code Generation: vf_scaffold
+ * - Dev Server: vf_get_errors, vf_get_logs, vf_clear_cache, vf_get_status
  */
 
 import { z } from "https://deno.land/x/zod@v3.22.4/mod.ts";
 import { type DevError, type ErrorType, getErrorCollector } from "./error-collector.ts";
 import { getLogBuffer, type LogEntry, type LogLevel } from "./log-buffer.ts";
+import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
+import { getEnv } from "@veryfront/platform/compat/process.ts";
+import { advancedTools } from "./advanced-tools.ts";
 
 // ============================================================================
 // Types
@@ -20,6 +28,30 @@ export interface MCPTool<TInput = any, TOutput = any> {
   // deno-lint-ignore no-explicit-any
   inputSchema: z.ZodType<any, any, any>;
   execute: (input: TInput) => Promise<TOutput>;
+}
+
+// ============================================================================
+// Constants
+// ============================================================================
+
+/** Cache directories that can be cleared */
+const CACHE_DIRS: Record<string, string[]> = {
+  all: [".cache/veryfront-modules", ".cache/veryfront-mdx-esm"],
+  modules: [".cache/veryfront-modules"],
+  mdx: [".cache/veryfront-mdx-esm"],
+};
+
+/** Default server port */
+const DEFAULT_PORT = "8080";
+
+// ============================================================================
+// State
+// ============================================================================
+
+let serverStartTime = Date.now();
+
+export function setServerStartTime(time: number): void {
+  serverStartTime = time;
 }
 
 // ============================================================================
@@ -42,18 +74,18 @@ export const vfGetErrors: MCPTool<GetErrorsInput, DevError[]> = {
   description:
     "Get compilation, runtime, and build errors from the dev server. Use this to debug issues with your code.",
   inputSchema: getErrorsInput,
-  execute: async (input) => {
+  execute: (input) => {
     const collector = getErrorCollector();
-    let errors = collector.getAll({
+    const errors = collector.getAll({
       type: input.type as ErrorType | undefined,
       file: input.file,
     });
 
     if (input.limit && errors.length > input.limit) {
-      errors = errors.slice(-input.limit);
+      return Promise.resolve(errors.slice(-input.limit));
     }
 
-    return errors;
+    return Promise.resolve(errors);
   },
 };
 
@@ -81,15 +113,15 @@ export const vfGetLogs: MCPTool<GetLogsInput, LogEntry[]> = {
   description:
     "Get recent server logs. Use this to understand what the server is doing and debug runtime issues.",
   inputSchema: getLogsInput,
-  execute: async (input) => {
+  execute: (input) => {
     const buffer = getLogBuffer();
-    return buffer.query({
+    return Promise.resolve(buffer.query({
       level: input.level as LogLevel | undefined,
       source: input.source,
       pattern: input.pattern,
       limit: input.limit,
       since: input.since,
-    });
+    }));
   },
 };
 
@@ -115,28 +147,20 @@ export const vfClearCache: MCPTool<ClearCacheInput, ClearCacheOutput> = {
     "Clear module and build caches. Use this when changes aren't being reflected or to force a rebuild.",
   inputSchema: clearCacheInput,
   execute: async (input) => {
+    const fs = createFileSystem();
     const cleared: string[] = [];
-    const cacheDirs: string[] = [];
-
-    if (input.type === "all" || input.type === "modules") {
-      cacheDirs.push(".cache/veryfront-modules");
-    }
-    if (input.type === "all" || input.type === "mdx") {
-      cacheDirs.push(".cache/veryfront-mdx-esm");
-    }
+    const cacheDirs = CACHE_DIRS[input.type] || [];
 
     for (const dir of cacheDirs) {
       try {
-        await Deno.remove(dir, { recursive: true });
+        await fs.remove(dir, { recursive: true });
         cleared.push(dir);
       } catch {
-        // Directory doesn't exist, that's fine
+        // Directory doesn't exist
       }
     }
 
-    // Clear error collector since errors may be stale
     getErrorCollector().clear();
-
     return { success: true, cleared };
   },
 };
@@ -159,31 +183,25 @@ interface ServerStatus {
   uptime: number;
 }
 
-// Track server start time
-let serverStartTime = Date.now();
-
-export function setServerStartTime(time: number): void {
-  serverStartTime = time;
-}
-
 export const vfGetStatus: MCPTool<GetStatusInput, ServerStatus> = {
   name: "vf_get_status",
   description: "Get the current status of the dev server including error counts and uptime.",
   inputSchema: getStatusInput,
-  execute: async () => {
+  execute: () => {
     const errors = getErrorCollector();
     const logs = getLogBuffer();
     const counts = errors.countByType();
+    const port = getEnv("PORT") || DEFAULT_PORT;
 
-    return {
+    return Promise.resolve({
       running: true,
-      url: `http://lvh.me:${Deno.env.get("PORT") || 8080}`,
-      port: parseInt(Deno.env.get("PORT") || "8080", 10),
+      url: `http://lvh.me:${port}`,
+      port: parseInt(port, 10),
       errorCount: counts.compile + counts.runtime + counts.bundle,
       warningCount: logs.query({ level: "warn" }).length,
       logCount: logs.count,
       uptime: Date.now() - serverStartTime,
-    };
+    });
   },
 };
 
@@ -208,30 +226,31 @@ export const vfClearErrors: MCPTool<ClearErrorsInput, ClearErrorsOutput> = {
   name: "vf_clear_errors",
   description: "Clear errors from the error collector. Useful after fixing issues.",
   inputSchema: clearErrorsInput,
-  execute: async (input) => {
+  execute: (input) => {
     const collector = getErrorCollector();
 
     if (input.file) {
-      const cleared = collector.clearFile(input.file);
-      return { cleared };
+      return Promise.resolve({ cleared: collector.clearFile(input.file) });
     }
 
     if (input.type) {
-      const cleared = collector.clearType(input.type as ErrorType);
-      return { cleared };
+      return Promise.resolve({ cleared: collector.clearType(input.type as ErrorType) });
     }
 
     const count = collector.count;
     collector.clear();
-    return { cleared: count };
+    return Promise.resolve({ cleared: count });
   },
 };
 
 // ============================================================================
-// All Tools
+// Tool Registry
 // ============================================================================
 
 export const allTools: MCPTool[] = [
+  // Advanced tools for coding agents (most used)
+  ...advancedTools,
+  // Dev server tools
   vfGetErrors,
   vfGetLogs,
   vfClearCache,
@@ -240,18 +259,18 @@ export const allTools: MCPTool[] = [
 ];
 
 /**
- * Get tool by name
+ * Get a tool by name
  */
 export function getTool(name: string): MCPTool | undefined {
-  return allTools.find((t) => t.name === name);
+  return allTools.find((tool) => tool.name === name);
 }
 
 /**
- * List all available tools
+ * List all available tools with their descriptions
  */
 export function listTools(): Array<{ name: string; description: string }> {
-  return allTools.map((t) => ({
-    name: t.name,
-    description: t.description,
+  return allTools.map((tool) => ({
+    name: tool.name,
+    description: tool.description,
   }));
 }

@@ -16,6 +16,7 @@ import { banner } from "../ui/components/banner.ts";
 import { brand, dim, success } from "../ui/colors.ts";
 import { createKeyboardHandler, type KeyboardHandler } from "../ui/keyboard.ts";
 import { openBrowser } from "../auth/browser.ts";
+import { createMCPServer, type MCPDevServer } from "../mcp/server.ts";
 
 export interface DevOptions {
   port: number;
@@ -91,6 +92,7 @@ export async function devCommand(options: DevOptions): Promise<DevCommandResult>
   // Start dev server
   const shutdownController = new AbortController();
   let devServer: Awaited<ReturnType<typeof createDevServer>> | null = null;
+  let mcpServer: MCPDevServer | null = null;
 
   try {
     devServer = await createDevServer({
@@ -115,6 +117,14 @@ export async function devCommand(options: DevOptions): Promise<DevCommandResult>
     throw error;
   }
 
+  // Auto-start MCP server for coding agents (HTTP on port+2)
+  const mcpPort = finalPort + 2;
+  try {
+    mcpServer = await createMCPServer({ httpPort: mcpPort });
+  } catch {
+    // MCP server failed to start - non-fatal, continue without it
+  }
+
   // Graceful shutdown
   let shuttingDown = false;
   const shutdown = async () => {
@@ -127,6 +137,7 @@ export async function devCommand(options: DevOptions): Promise<DevCommandResult>
     const timeout = demoMode ? null : setTimeout(() => exitProcess(0), 3000);
     try {
       shutdownController.abort();
+      await mcpServer?.stop();
       await devServer?.stop();
     } catch { /* ignore */ }
     if (timeout) clearTimeout(timeout);
@@ -155,10 +166,16 @@ export async function devCommand(options: DevOptions): Promise<DevCommandResult>
       info: {
         url: serverUrl,
         ...(projectSlug ? { project: projectSlug } : {}),
+        ...(mcpServer ? { mcp: `http://localhost:${mcpPort}` } : {}),
       },
     }));
     console.log();
     console.log(`  ${success("✓")} Server ready`);
+    if (mcpServer) {
+      console.log(
+        `  ${success("✓")} MCP ready ${dim(`(coding agents can connect to port ${mcpPort})`)}`,
+      );
+    }
     console.log();
     console.log(`  ${dim("Shortcuts:")}`);
     console.log(`    ${brand("o")}  ${dim("open in browser")}`);
