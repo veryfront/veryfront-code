@@ -44,7 +44,7 @@ import type { Entity, EntityInfo, Frontmatter } from "../entities.ts";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 // Import directly from source to avoid circular dependency through barrel
 import { withFallback } from "@veryfront/platform/adapters/fallback-wrapper.ts";
-import { parallelFind, parallelMap } from "@veryfront/utils/parallel.ts";
+import { parallelMap } from "@veryfront/utils/parallel.ts";
 
 const entityInfoScope = createErrorScope("getEntityInfo");
 
@@ -201,20 +201,21 @@ export async function getEntityBySlug(
       );
     }
 
-    // Check all base paths in parallel, return first match by priority order
-    const resolvedBasePath = await parallelFind(basePaths, async (basePath) => {
+    // Resolve all base paths in parallel and cache EntityInfo results
+    // This avoids duplicate fetches - we resolve once and reuse the cached result
+    const pathResults = await parallelMap(basePaths, async (basePath) => {
       const resolvedPath = await resolveFile.call(adapter.fs, basePath);
       if (resolvedPath) {
         const info = await getEntityInfo(resolvedPath, adapter);
-        return info?.entity.isPage ?? false;
+        return { basePath, info };
       }
-      return false;
+      return { basePath, info: null };
     });
 
-    if (resolvedBasePath) {
-      const resolvedPath = await resolveFile.call(adapter.fs, resolvedBasePath);
-      if (resolvedPath) {
-        return await getEntityInfo(resolvedPath, adapter);
+    // Find first match by priority order (basePaths array order)
+    for (const { info } of pathResults) {
+      if (info?.entity.isPage) {
+        return info;
       }
     }
 
@@ -246,18 +247,20 @@ export async function getEntityBySlug(
             entries.push(entry);
           }
 
-          // Filter to dynamic route files and check in parallel
+          // Filter to dynamic route files and resolve in parallel
           const dynamicEntries = entries.filter(
             (entry) => entry.isFile && /\[.+\]\.(mdx|md|tsx|jsx|ts|js)$/.test(entry.name),
           );
-          const matchedEntry = await parallelFind(dynamicEntries, async (entry) => {
+          const dynamicResults = await parallelMap(dynamicEntries, async (entry) => {
             const dynamicPath = pathHelper.join(pagesDir, entry.name);
             const info = await getEntityInfo(dynamicPath, adapter);
-            return info?.entity.isPage ?? false;
+            return info;
           });
-          if (matchedEntry) {
-            const dynamicPath = pathHelper.join(pagesDir, matchedEntry.name);
-            return await getEntityInfo(dynamicPath, adapter);
+          // Return first page match
+          for (const info of dynamicResults) {
+            if (info?.entity.isPage) {
+              return info;
+            }
           }
         }
       } catch {
@@ -309,14 +312,17 @@ export async function getEntityBySlug(
     );
   }
 
-  // Check all possible paths in parallel, return first match by priority order
-  const matchedPath = await parallelFind(possiblePaths, async (p) => {
+  // Resolve all possible paths in parallel and cache results
+  const pathResults = await parallelMap(possiblePaths, async (p) => {
     const info = await getEntityInfo(p, adapter);
-    return info?.entity.isPage ?? false;
+    return info;
   });
 
-  if (matchedPath) {
-    return await getEntityInfo(matchedPath, adapter);
+  // Return first page match by priority order
+  for (const info of pathResults) {
+    if (info?.entity.isPage) {
+      return info;
+    }
   }
 
   // If no exact match found, try dynamic routes with [param] notation
@@ -358,18 +364,20 @@ export async function getEntityBySlug(
           entries.push(entry);
         }
 
-        // Filter to dynamic route files and check in parallel
+        // Filter to dynamic route files and resolve in parallel
         const dynamicEntries = entries.filter(
           (entry) => entry.isFile && /\[.+\]\.(mdx|md|tsx|jsx|ts|js)$/.test(entry.name),
         );
-        const matchedEntry = await parallelFind(dynamicEntries, async (entry) => {
+        const dynamicResults = await parallelMap(dynamicEntries, async (entry) => {
           const dynamicPath = pathHelper.join(pagesDir, entry.name);
           const info = await getEntityInfo(dynamicPath, adapter);
-          return info?.entity.isPage ?? false;
+          return info;
         });
-        if (matchedEntry) {
-          const dynamicPath = pathHelper.join(pagesDir, matchedEntry.name);
-          return await getEntityInfo(dynamicPath, adapter);
+        // Return first page match
+        for (const info of dynamicResults) {
+          if (info?.entity.isPage) {
+            return info;
+          }
         }
       }
     } catch {
@@ -415,14 +423,17 @@ export async function getLayoutEntity(
     pathHelper.join(projectDir, "components", "Layout.tsx"),
   ];
 
-  // Check all paths in parallel and return first matching layout
-  const result = await parallelFind(possiblePaths, async (p) => {
+  // Resolve all paths in parallel and cache results
+  const pathResults = await parallelMap(possiblePaths, async (p) => {
     const info = await getEntityInfo(p, adapter);
-    return info?.entity.isLayout ?? false;
+    return info;
   });
 
-  if (result) {
-    return await getEntityInfo(result, adapter);
+  // Return first layout match
+  for (const info of pathResults) {
+    if (info?.entity.isLayout) {
+      return info;
+    }
   }
   return null;
 }
