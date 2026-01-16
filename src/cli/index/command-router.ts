@@ -43,6 +43,7 @@ import { cwd } from "@veryfront/platform/compat/process.ts";
 import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
 import { join } from "@veryfront/platform/compat/path/index.ts";
 import { showCommandHelp, showMainHelp } from "../help/index.ts";
+import { createMCPServer } from "../mcp/server.ts";
 
 /**
  * Handle validation errors using central COMMANDS registry for usage
@@ -454,6 +455,18 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
               ? String(args.login) as "google" | "github" | "microsoft" | "token"
               : undefined,
           });
+        }
+        break;
+
+      case "mcp":
+        // MCP server for coding agents (stdio transport)
+        {
+          const server = await createMCPServer({ stdio: true });
+          // Keep process alive - MCP server handles stdin/stdout
+          await new Promise(() => {
+            /* never resolve - stdio loop runs until stdin closes */
+          });
+          await server.stop();
         }
         break;
 

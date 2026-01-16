@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "veryfront": {
+      "type": "http",
+      "url": "http://localhost:${MCP_PORT:-9999}/mcp",
+      "description": "Veryfront server tools for real-time errors, route preview, HMR control, and scaffolding"
+    }
+  }
+}

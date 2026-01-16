@@ -2,9 +2,17 @@
  * CLI App Actions
  *
  * Handlers for opening projects in browser, Studio, and IDE.
+ *
+ * Note: This module uses Deno-specific APIs (Deno.Command, Deno.remove) for subprocess
+ * execution and file removal. This is acceptable for CLI tools that run exclusively in Deno.
+ * If cross-runtime support is needed in the future, these should be abstracted into the
+ * platform/compat layer.
  */
 
 import { openBrowser } from "../auth/browser.ts";
+import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
+import { getEnv } from "@veryfront/platform/compat/process.ts";
+import { join } from "@veryfront/platform/compat/path/index.ts";
 import type { ProjectInfo } from "./state.ts";
 
 // ============================================================================
@@ -16,6 +24,82 @@ export type IDE = "cursor" | "code" | "zed" | "idea" | "webstorm";
 export interface ActionResult {
   success: boolean;
   message?: string;
+}
+
+// ============================================================================
+// Constants
+// ============================================================================
+
+/** IDE command-line executables */
+const IDE_COMMANDS: Record<IDE, string> = {
+  cursor: "cursor",
+  code: "code",
+  zed: "zed",
+  idea: "idea",
+  webstorm: "webstorm",
+};
+
+/** IDE display names */
+const IDE_NAMES: Record<IDE, string> = {
+  cursor: "Cursor",
+  code: "VS Code",
+  zed: "Zed",
+  idea: "IntelliJ IDEA",
+  webstorm: "WebStorm",
+};
+
+/** IDE detection order (preferred first) */
+const IDE_DETECTION_ORDER: IDE[] = ["cursor", "code", "zed", "idea", "webstorm"];
+
+/** Cache directories to clear relative to project path */
+const PROJECT_CACHE_DIRS = [".cache", "node_modules/.cache"];
+
+// ============================================================================
+// Helpers
+// ============================================================================
+
+/**
+ * Format an error for display in action results
+ */
+function formatError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * Check if a command exists on the system
+ * Uses Deno.Command which is Deno-specific but acceptable for CLI tools
+ */
+async function commandExists(cmd: string): Promise<boolean> {
+  try {
+    const whichCmd = Deno.build.os === "windows" ? "where" : "which";
+    const command = new Deno.Command(whichCmd, {
+      args: [cmd],
+      stdout: "null",
+      stderr: "null",
+    });
+    const { success } = await command.output();
+    return success;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Run a command and return success status
+ * Uses Deno.Command which is Deno-specific but acceptable for CLI tools
+ */
+async function runCommand(cmd: string, args: string[]): Promise<boolean> {
+  try {
+    const command = new Deno.Command(cmd, {
+      args,
+      stdout: "null",
+      stderr: "null",
+    });
+    const { success } = await command.output();
+    return success;
+  } catch {
+    return false;
+  }
 }
 
 // ============================================================================
@@ -34,10 +118,7 @@ export async function openInBrowser(
     await openBrowser(url);
     return { success: true, message: `Opened ${url}` };
   } catch (error) {
-    return {
-      success: false,
-      message: `Failed to open browser: ${error instanceof Error ? error.message : String(error)}`,
-    };
+    return { success: false, message: `Failed to open browser: ${formatError(error)}` };
   }
 }
 
@@ -50,10 +131,7 @@ export async function openInStudio(project: ProjectInfo): Promise<ActionResult> 
     await openBrowser(url);
     return { success: true, message: `Opened Studio for ${project.slug}` };
   } catch (error) {
-    return {
-      success: false,
-      message: `Failed to open Studio: ${error instanceof Error ? error.message : String(error)}`,
-    };
+    return { success: false, message: `Failed to open Studio: ${formatError(error)}` };
   }
 }
 
@@ -62,52 +140,12 @@ export async function openInStudio(project: ProjectInfo): Promise<ActionResult> 
 // ============================================================================
 
 /**
- * Check if a command exists on the system
- */
-async function commandExists(cmd: string): Promise<boolean> {
-  try {
-    const command = new Deno.Command(
-      Deno.build.os === "windows" ? "where" : "which",
-      {
-        args: [cmd],
-        stdout: "null",
-        stderr: "null",
-      },
-    );
-    const { success } = await command.output();
-    return success;
-  } catch {
-    return false;
-  }
-}
-
-/**
- * IDE detection order (preferred first)
- */
-const IDE_COMMANDS: Record<IDE, string> = {
-  cursor: "cursor",
-  code: "code",
-  zed: "zed",
-  idea: "idea",
-  webstorm: "webstorm",
-};
-
-const IDE_NAMES: Record<IDE, string> = {
-  cursor: "Cursor",
-  code: "VS Code",
-  zed: "Zed",
-  idea: "IntelliJ IDEA",
-  webstorm: "WebStorm",
-};
-
-/**
- * Detect available IDEs
+ * Detect available IDEs on the system
  */
 export async function detectIDEs(): Promise<IDE[]> {
   const available: IDE[] = [];
-  const order: IDE[] = ["cursor", "code", "zed", "idea", "webstorm"];
 
-  for (const ide of order) {
+  for (const ide of IDE_DETECTION_ORDER) {
     if (await commandExists(IDE_COMMANDS[ide])) {
       available.push(ide);
     }
@@ -117,7 +155,7 @@ export async function detectIDEs(): Promise<IDE[]> {
 }
 
 /**
- * Get the preferred IDE (first available)
+ * Get the preferred IDE (first available in detection order)
  */
 export async function getPreferredIDE(): Promise<IDE | null> {
   const ides = await detectIDEs();
@@ -125,13 +163,9 @@ export async function getPreferredIDE(): Promise<IDE | null> {
 }
 
 /**
- * Open project in IDE
+ * Open a path (project directory or file) in an IDE
  */
-export async function openInIDE(
-  project: ProjectInfo,
-  ide?: IDE,
-): Promise<ActionResult> {
-  // Use specified IDE or detect preferred
+async function openPathInIDE(path: string, ide?: IDE): Promise<ActionResult> {
   const targetIDE = ide || (await getPreferredIDE());
 
   if (!targetIDE) {
@@ -144,25 +178,33 @@ export async function openInIDE(
   const cmd = IDE_COMMANDS[targetIDE];
   const name = IDE_NAMES[targetIDE];
 
-  try {
-    const command = new Deno.Command(cmd, {
-      args: [project.path],
-      stdout: "null",
-      stderr: "null",
-    });
-    const { success } = await command.output();
+  const success = await runCommand(cmd, [path]);
 
-    if (success) {
-      return { success: true, message: `Opened ${project.slug} in ${name}` };
-    } else {
-      return { success: false, message: `Failed to open ${name}` };
-    }
-  } catch (error) {
+  if (success) {
+    return { success: true, message: `Opened in ${name}` };
+  }
+  return { success: false, message: `Failed to open ${name}` };
+}
+
+/**
+ * Open project in IDE
+ */
+export async function openInIDE(project: ProjectInfo, ide?: IDE): Promise<ActionResult> {
+  const result = await openPathInIDE(project.path, ide);
+  if (result.success) {
     return {
-      success: false,
-      message: `Failed to open ${name}: ${error instanceof Error ? error.message : String(error)}`,
+      success: true,
+      message: `Opened ${project.slug} in ${result.message?.split(" in ")[1]}`,
     };
   }
+  return result;
+}
+
+/**
+ * Open a file in IDE
+ */
+export function openFileInIDE(filePath: string, ide?: IDE): Promise<ActionResult> {
+  return openPathInIDE(filePath, ide);
 }
 
 // ============================================================================
@@ -171,49 +213,70 @@ export async function openInIDE(
 
 /**
  * Clear caches for a project
+ * Uses Deno.remove which is Deno-specific but acceptable for CLI tools
  */
 export async function clearProjectCache(project: ProjectInfo): Promise<ActionResult> {
-  const cacheDirs = [
-    `${project.path}/.cache`,
-    `${project.path}/node_modules/.cache`,
-  ];
-
   let cleared = 0;
-  for (const dir of cacheDirs) {
+
+  for (const relativeDir of PROJECT_CACHE_DIRS) {
+    const dir = join(project.path, relativeDir);
     try {
       await Deno.remove(dir, { recursive: true });
       cleared++;
     } catch {
-      // Directory doesn't exist, skip
+      // Directory doesn't exist
     }
   }
 
-  return {
-    success: true,
-    message: cleared > 0 ? `Cleared ${cleared} cache directories` : "No caches to clear",
-  };
+  const message = cleared > 0 ? `Cleared ${cleared} cache directories` : "No caches to clear";
+  return { success: true, message };
 }
 
 // ============================================================================
-// Quick Actions (by number)
+// File Actions
 // ============================================================================
 
 /**
- * Execute quick action by number key
+ * Open Claude Code settings.json in IDE
  */
-export async function quickOpen(
+export async function openMCPSettings(): Promise<ActionResult> {
+  const home = getEnv("HOME") || getEnv("USERPROFILE") || "";
+  const claudeDir = join(home, ".claude");
+  const settingsPath = join(claudeDir, "settings.json");
+  const fs = createFileSystem();
+
+  try {
+    await fs.mkdir(claudeDir, { recursive: true });
+  } catch {
+    // Already exists
+  }
+
+  const exists = await fs.exists(settingsPath);
+  if (!exists) {
+    const defaultSettings = { mcpServers: {} };
+    await fs.writeTextFile(settingsPath, JSON.stringify(defaultSettings, null, 2));
+  }
+
+  return openFileInIDE(settingsPath);
+}
+
+// ============================================================================
+// Quick Actions
+// ============================================================================
+
+/**
+ * Execute quick action by number key (opens project in browser)
+ */
+export function quickOpen(
   projects: Array<{ slug: string; path: string }>,
   num: number,
   port: number,
 ): Promise<ActionResult> {
   const index = num - 1;
   if (index < 0 || index >= projects.length) {
-    return { success: false, message: `No project at position ${num}` };
+    return Promise.resolve({ success: false, message: `No project at position ${num}` });
   }
 
   const project = projects[index]!;
-  return openInBrowser(
-    { slug: project.slug, path: project.path, type: "local" },
-    port,
-  );
+  return openInBrowser({ slug: project.slug, path: project.path, type: "local" }, port);
 }

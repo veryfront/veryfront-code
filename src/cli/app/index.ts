@@ -3,16 +3,17 @@
  *
  * Interactive app-like CLI experience with dashboard, project navigation,
  * and MCP integration for coding agents.
+ *
+ * Note: This module uses Deno-specific APIs (Deno.stdin, Deno.cwd) for terminal I/O.
+ * This is acceptable for CLI tools that run exclusively in Deno.
  */
 
-import { writeStdout } from "@veryfront/platform/compat/process.ts";
-import { cursor, screen } from "../ui/ansi.ts";
-import { SPINNER_FRAMES } from "../ui/ansi.ts";
+import { cwd, writeStdout } from "@veryfront/platform/compat/process.ts";
+import { cursor, screen, SPINNER_FRAMES } from "../ui/ansi.ts";
 import { brand, dim, success } from "../ui/colors.ts";
-import { openBrowser } from "../auth/browser.ts";
-import { getSelectedItem, moveDown, moveUp, selectByNumber } from "./components/list-select.ts";
+import { moveDown, moveUp, selectByNumber } from "./components/list-select.ts";
 import { renderDashboard, renderEmptyState } from "./views/dashboard.ts";
-import { openInBrowser, openInIDE, openInStudio } from "./actions.ts";
+import { openInBrowser, openInIDE, openInStudio, openMCPSettings } from "./actions.ts";
 import { initCommand } from "../commands/init/init-command.ts";
 import type { InitTemplate } from "../commands/init/types.ts";
 import {
@@ -35,7 +36,6 @@ import {
   updateServer,
 } from "./state.ts";
 import { handleInputKey, renderInput, renderLogs } from "./components/inline-input.ts";
-import { getTerminalHeight } from "../ui/layout.ts";
 
 // ============================================================================
 // Types
@@ -171,15 +171,34 @@ export function createApp(config: AppConfig): App {
       "",
       `  ${dim("Views")}`,
       `    ${brand("n")}           New project`,
-      `    ${brand("t")}           Templates`,
       `    ${brand("?")}           Help (this screen)`,
       "",
       `  ${dim("Other")}`,
       `    ${brand("q")}           Quit`,
       "",
-      `  ${dim("Press")} ${brand("Esc")} ${dim("to go back")}`,
-      "",
     ];
+
+    // Add MCP info if enabled
+    if (state.mcp.enabled) {
+      lines.push(`  ${brand("MCP Server")}`);
+      lines.push("");
+      lines.push(`    ${dim("Add to your")} ${brand("~/.claude/settings.json")}${dim(":")}`);
+      lines.push("");
+      lines.push(`    ${dim('"mcpServers": {')}`);
+      lines.push(`    ${dim('  "veryfront": {')}`);
+      lines.push(`    ${dim('    "type": "url",')}`);
+      lines.push(`    ${dim(`    "url": "http://localhost:${state.mcp.httpPort}/mcp"`)}`);
+      lines.push(`    ${dim("  }")}`);
+      lines.push(`    ${dim("}")}`);
+      lines.push("");
+      lines.push(`    ${brand("m")}  ${dim("Open settings.json in IDE")}`);
+      lines.push("");
+      lines.push(`    ${dim("Tools:")} vf_list_routes, vf_scaffold, vf_get_errors, vf_get_logs`);
+      lines.push("");
+    }
+
+    lines.push(`  ${dim("Press")} ${brand("Esc")} ${dim("to go back")}`);
+    lines.push("");
 
     return lines.join("\n");
   }
@@ -230,7 +249,6 @@ export function createApp(config: AppConfig): App {
     }
 
     // Build the full screen layout
-    const termHeight = getTerminalHeight();
     const parts: string[] = [content];
 
     // Add logs area if there are logs
@@ -280,6 +298,11 @@ export function createApp(config: AppConfig): App {
 
   // Handle keyboard input
   async function handleInput() {
+    // Skip interactive input if not a TTY (e.g., running in background or CI)
+    if (!Deno.stdin.isTerminal()) {
+      return;
+    }
+
     Deno.stdin.setRaw(true);
     const reader = Deno.stdin.readable.getReader();
     const decoder = new TextDecoder();
@@ -454,161 +477,134 @@ export function createApp(config: AppConfig): App {
       update(navigateTo("help"));
       return;
     }
-  }
 
-  // Handle templates view keys
-  async function handleTemplatesKey(key: string) {
-    // Up/down navigation
-    if (key === "\x1b[A" || key === "k") {
-      state = {
-        ...state,
-        templates: moveUp(state.templates),
-      };
-      render();
-      return;
-    }
-
-    if (key === "\x1b[B" || key === "j") {
-      state = {
-        ...state,
-        templates: moveDown(state.templates, state.templates.items.length),
-      };
-      render();
-      return;
-    }
-
-    // Enter to create project from template
-    if (key === "\r" || key === "\n") {
-      const selected = state.templates.items[state.templates.selectedIndex];
-      if (selected) {
-        // Start inline input for project name
-        state = startInput(
-          "Project name",
-          async (name: string) => {
-            if (name.trim()) {
-              const projectName = name.trim();
-              // Create in projects/ directory so it's auto-discovered by the server
-              const projectPath = `${Deno.cwd()}/projects/${projectName}`;
-
-              try {
-                state = addLog("info", `Creating project "${projectName}"...`)(state);
-                render();
-
-                await initCommand({
-                  name: `projects/${projectName}`,
-                  template: selected.id as InitTemplate,
-                  skipInstall: true,
-                  skipEnvPrompt: true,
-                  quiet: true,
-                });
-
-                // Add new project to state
-                const currentProjects = state.projects.items.map((item) => ({
-                  slug: item.data!.slug,
-                  path: item.data!.path,
-                }));
-                currentProjects.push({ slug: projectName, path: projectPath });
-                state = setProjects(currentProjects.map((p) => ({ slug: p.slug, path: p.path })))(
-                  state,
-                );
-                state = addLog("info", `Project "${projectName}" created`)(state);
-              } catch (error) {
-                state = addLog("error", `Failed to create project: ${error}`)(state);
-              }
-            }
-            state = navigateTo("dashboard")(state);
-            render();
-          },
-          () => {
-            // On cancel, stay on templates view
-            render();
-          },
-        )(state);
-        render();
+    // m - Open MCP settings
+    if (key === "m" && state.mcp.enabled) {
+      const result = await openMCPSettings();
+      if (result.success) {
+        update(addLog("info", result.message || "Opened MCP settings"));
+      } else {
+        update(addLog("error", result.message || "Failed to open MCP settings"));
       }
       return;
     }
   }
 
+  /**
+   * Create a new project from a template
+   */
+  async function createProject(projectName: string, template: InitTemplate): Promise<void> {
+    const projectPath = `${cwd()}/projects/${projectName}`;
+
+    try {
+      state = addLog("info", `Creating project "${projectName}"...`)(state);
+      render();
+
+      await initCommand({
+        name: `projects/${projectName}`,
+        template,
+        skipInstall: true,
+        skipEnvPrompt: true,
+        quiet: true,
+      });
+
+      const currentProjects = state.projects.items.map((item) => ({
+        slug: item.data!.slug,
+        path: item.data!.path,
+      }));
+      currentProjects.push({ slug: projectName, path: projectPath });
+      state = setProjects(currentProjects.map((p) => ({ slug: p.slug, path: p.path })))(state);
+      state = addLog("info", `Project "${projectName}" created`)(state);
+    } catch (error) {
+      state = addLog("error", `Failed to create project: ${error}`)(state);
+    }
+  }
+
+  /**
+   * Start project name input prompt
+   */
+  function promptForProjectName(template: InitTemplate, onCancel: () => void): void {
+    state = startInput(
+      "Project name",
+      async (name: string) => {
+        if (name.trim()) {
+          await createProject(name.trim(), template);
+        }
+        state = navigateTo("dashboard")(state);
+        render();
+      },
+      onCancel,
+    )(state);
+    render();
+  }
+
+  // Handle templates view keys
+  function handleTemplatesKey(key: string): void {
+    if (key === "\x1b[A" || key === "k") {
+      state = { ...state, templates: moveUp(state.templates) };
+      render();
+      return;
+    }
+
+    if (key === "\x1b[B" || key === "j") {
+      state = { ...state, templates: moveDown(state.templates, state.templates.items.length) };
+      render();
+      return;
+    }
+
+    if (key === "\r" || key === "\n") {
+      const selected = state.templates.items[state.templates.selectedIndex];
+      if (selected) {
+        promptForProjectName(selected.id as InitTemplate, () => render());
+      }
+    }
+  }
+
   // Handle new-project view keys
-  async function handleNewProjectKey(key: string) {
+  function handleNewProjectKey(key: string): void {
     if (key === "1") {
-      // From template
       update(navigateTo("templates"));
       return;
     }
 
     if (key === "2") {
-      // From example - show examples on dashboard
       update(setActiveList("examples"));
       update(navigateTo("dashboard"));
       return;
     }
 
     if (key === "3") {
-      // From scratch - run init with minimal template using inline input
-      state = startInput(
-        "Project name",
-        async (name: string) => {
-          if (name.trim()) {
-            const projectName = name.trim();
-            // Create in projects/ directory so it's auto-discovered by the server
-            const projectPath = `${Deno.cwd()}/projects/${projectName}`;
-
-            try {
-              state = addLog("info", `Creating project "${projectName}"...`)(state);
-              render();
-
-              await initCommand({
-                name: `projects/${projectName}`,
-                template: "minimal",
-                skipInstall: true,
-                skipEnvPrompt: true,
-                quiet: true,
-              });
-
-              // Add new project to state
-              const currentProjects = state.projects.items.map((item) => ({
-                slug: item.data!.slug,
-                path: item.data!.path,
-              }));
-              currentProjects.push({ slug: projectName, path: projectPath });
-              state = setProjects(currentProjects.map((p) => ({ slug: p.slug, path: p.path })))(
-                state,
-              );
-              state = addLog("info", `Project "${projectName}" created`)(state);
-            } catch (error) {
-              state = addLog("error", `Failed to create project: ${error}`)(state);
-            }
-          }
-          state = navigateTo("dashboard")(state);
-          render();
-        },
-        () => {
-          // On cancel, stay on new-project view
-          render();
-        },
-      )(state);
-      render();
+      promptForProjectName("minimal", () => render());
     }
   }
+
+  // Check if running in interactive TTY mode
+  const isInteractive = Deno.stdin.isTerminal() && Deno.stdout.isTerminal();
 
   // Start the app
   function start() {
     running = true;
 
-    // Enter alternate screen and hide cursor
-    write(screen.altOn + cursor.hide);
+    if (isInteractive) {
+      // Enter alternate screen and hide cursor
+      write(screen.altOn + cursor.hide);
 
-    // Initial render
-    render();
+      // Initial render
+      render();
 
-    // Start keyboard input handler
-    handleInput();
+      // Start keyboard input handler
+      handleInput();
 
-    // Start spinner if not ready
-    if (!state.server.running) {
-      startSpinner();
+      // Start spinner if not ready
+      if (!state.server.running) {
+        startSpinner();
+      }
+    } else {
+      // Non-interactive mode: just log that server is running
+      console.log(`Server running on http://lvh.me:${config.port}`);
+      if (config.mcpPort) {
+        console.log(`MCP available at http://localhost:${config.mcpPort}/mcp`);
+      }
     }
   }
 
@@ -617,8 +613,10 @@ export function createApp(config: AppConfig): App {
     running = false;
     stopSpinner();
 
-    // Restore terminal
-    write(cursor.show + screen.altOff);
+    if (isInteractive) {
+      // Restore terminal
+      write(cursor.show + screen.altOff);
+    }
   }
 
   return {
