@@ -473,19 +473,35 @@ document.head.appendChild(errorScript);
 
   let ws = null;
   let reconnectAttempts = 0;
-  const maxReconnectAttempts = 10;
-  const reconnectDelay = 2000;
+  const maxReconnectAttempts = 20;
+  const baseDelay = 1000; // Start with 1s
+  const maxDelay = 30000; // Cap at 30s
+
+  // Exponential backoff with jitter
+  function getReconnectDelay() {
+    const delay = Math.min(baseDelay * Math.pow(1.5, reconnectAttempts), maxDelay);
+    const jitter = delay * 0.2 * Math.random(); // Add up to 20% jitter
+    return Math.round(delay + jitter);
+  }
 
   function connect() {
     if (reconnectAttempts >= maxReconnectAttempts) {
-      console.log('[Preview HMR] Max reconnection attempts reached');
+      console.warn('[Preview HMR] Max reconnection attempts (' + maxReconnectAttempts + ') reached. Live updates disabled.');
+      console.warn('[Preview HMR] Refresh the page to re-enable live updates.');
       return;
+    }
+
+    if (reconnectAttempts > 0) {
+      console.log('[Preview HMR] Reconnecting... (attempt ' + (reconnectAttempts + 1) + '/' + maxReconnectAttempts + ')');
     }
 
     ws = new WebSocket(wsUrl);
 
     ws.onopen = () => {
       console.log('[Preview HMR] Connected to', wsUrl);
+      if (reconnectAttempts > 0) {
+        console.log('[Preview HMR] Reconnected successfully after ' + reconnectAttempts + ' attempts');
+      }
       reconnectAttempts = 0;
     };
 
@@ -512,14 +528,21 @@ document.head.appendChild(errorScript);
       }
     };
 
-    ws.onerror = (error) => {
-      console.error('[Preview HMR] WebSocket error', error);
+    ws.onerror = (event) => {
+      // Log more details about the error
+      console.error('[Preview HMR] WebSocket error:', {
+        url: wsUrl,
+        readyState: ws ? ws.readyState : 'N/A',
+        attempt: reconnectAttempts + 1
+      });
     };
 
-    ws.onclose = () => {
-      console.log('[Preview HMR] Connection closed, reconnecting...');
+    ws.onclose = (event) => {
       reconnectAttempts++;
-      setTimeout(connect, reconnectDelay);
+      const delay = getReconnectDelay();
+      console.log('[Preview HMR] Connection closed (code: ' + event.code + ', reason: ' + (event.reason || 'none') + ')');
+      console.log('[Preview HMR] Reconnecting in ' + Math.round(delay / 1000) + 's...');
+      setTimeout(connect, delay);
     };
   }
 

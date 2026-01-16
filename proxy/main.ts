@@ -27,6 +27,7 @@ import {
   withContext,
 } from "./tracing.ts";
 import { proxyLogger } from "./logger.ts";
+import { parseProjectDomain } from "../src/server/utils/domain-parser.ts";
 
 // Configuration from environment variables
 const config: ProxyConfig = {
@@ -73,29 +74,33 @@ if (Object.keys(proxyHandler.localProjects).length > 0) {
 
 /**
  * Handle WebSocket upgrade requests.
+ * Bridges browser WebSocket to renderer's HMR WebSocket endpoint.
  */
 function handleWebSocketUpgrade(req: Request): Response {
   const url = new URL(req.url);
   const host = req.headers.get("host") || "";
 
-  // We can't use async processRequest for WebSocket, so parse domain directly
-  const { parseProjectDomain } = require("../src/server/utils/domain-parser.ts");
+  // Parse domain to extract project slug and environment
   const parsed = parseProjectDomain(host);
   const scope = parsed.environment === "preview" ? "preview" : "production";
   const projectSlug = parsed.slug || undefined;
 
-  proxyLogger.info("WebSocket upgrade request", {
-    path: url.pathname,
-    projectSlug,
-    environment: scope,
-  });
-
-  const { socket: clientSocket, response } = Deno.upgradeWebSocket(req);
-
+  // Build renderer WebSocket URL
   const rendererWsUrl = RENDERER_URL.replace(/^http/, "ws");
   const targetUrl = new URL(`${rendererWsUrl}${url.pathname}${url.search}`);
   targetUrl.searchParams.set("x-project-slug", projectSlug || "");
   targetUrl.searchParams.set("x-environment", scope);
+
+  proxyLogger.info("[WebSocket] Upgrade request received", {
+    host,
+    path: url.pathname,
+    projectSlug,
+    environment: scope,
+    parsedEnvironment: parsed.environment,
+    targetUrl: targetUrl.toString(),
+  });
+
+  const { socket: clientSocket, response } = Deno.upgradeWebSocket(req);
 
   let rendererSocket: WebSocket | null = null;
   let connectTimeoutId: ReturnType<typeof setTimeout> | null = null;
@@ -109,13 +114,27 @@ function handleWebSocketUpgrade(req: Request): Response {
   };
 
   clientSocket.onopen = () => {
-    proxyLogger.debug("Client WebSocket opened, connecting to renderer");
+    proxyLogger.info("[WebSocket] Client connected, bridging to renderer", {
+      targetUrl: targetUrl.toString(),
+    });
 
-    rendererSocket = new WebSocket(targetUrl.toString());
+    try {
+      rendererSocket = new WebSocket(targetUrl.toString());
+    } catch (error) {
+      proxyLogger.error("[WebSocket] Failed to create renderer WebSocket", {
+        error: error instanceof Error ? error.message : String(error),
+        targetUrl: targetUrl.toString(),
+      });
+      clientSocket.close(1011, "Failed to connect to renderer");
+      return;
+    }
 
     connectTimeoutId = setTimeout(() => {
       timedOut = true;
-      proxyLogger.error("Renderer WebSocket connection timeout");
+      proxyLogger.error("[WebSocket] Renderer connection timeout", {
+        targetUrl: targetUrl.toString(),
+        timeoutMs: WS_CONNECT_TIMEOUT_MS,
+      });
       rendererSocket?.close();
       if (clientSocket.readyState === WebSocket.OPEN) {
         clientSocket.close(1001, "Renderer connection timeout");
@@ -128,7 +147,10 @@ function handleWebSocketUpgrade(req: Request): Response {
         rendererSocket?.close();
         return;
       }
-      proxyLogger.debug("Renderer WebSocket connected");
+      proxyLogger.info("[WebSocket] Renderer connected, bridge established", {
+        projectSlug,
+        environment: scope,
+      });
     };
 
     rendererSocket.onmessage = (event) => {
@@ -137,16 +159,25 @@ function handleWebSocketUpgrade(req: Request): Response {
       }
     };
 
-    rendererSocket.onerror = (error) => {
+    rendererSocket.onerror = (event) => {
       clearConnectTimeout();
-      proxyLogger.error("Renderer WebSocket error", { error });
+      proxyLogger.error("[WebSocket] Renderer connection error", {
+        projectSlug,
+        environment: scope,
+        targetUrl: targetUrl.toString(),
+        error: event instanceof ErrorEvent ? event.message : "Unknown error",
+      });
     };
 
-    rendererSocket.onclose = () => {
+    rendererSocket.onclose = (event) => {
       clearConnectTimeout();
-      proxyLogger.debug("Renderer WebSocket closed");
+      proxyLogger.info("[WebSocket] Renderer connection closed", {
+        code: event.code,
+        reason: event.reason,
+        wasClean: event.wasClean,
+      });
       if (clientSocket.readyState === WebSocket.OPEN) {
-        clientSocket.close();
+        clientSocket.close(event.code, event.reason);
       }
     };
   };
@@ -157,14 +188,20 @@ function handleWebSocketUpgrade(req: Request): Response {
     }
   };
 
-  clientSocket.onerror = (error) => {
+  clientSocket.onerror = (event) => {
     clearConnectTimeout();
-    proxyLogger.error("Client WebSocket error", { error });
+    proxyLogger.error("[WebSocket] Client connection error", {
+      error: event instanceof ErrorEvent ? event.message : "Unknown error",
+    });
   };
 
-  clientSocket.onclose = () => {
+  clientSocket.onclose = (event) => {
     clearConnectTimeout();
-    proxyLogger.debug("Client WebSocket closed");
+    proxyLogger.info("[WebSocket] Client connection closed", {
+      code: event.code,
+      reason: event.reason,
+      wasClean: event.wasClean,
+    });
     if (rendererSocket?.readyState === WebSocket.OPEN) {
       rendererSocket.close();
     }

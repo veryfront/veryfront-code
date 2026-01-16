@@ -1,7 +1,33 @@
 import { assertEquals } from "std/assert/mod.ts";
 import { describe, it } from "std/testing/bdd.ts";
+import { parseProjectDomain } from "../src/server/utils/domain-parser.ts";
 
 describe("Proxy WebSocket Handler Tests", () => {
+  describe("parseProjectDomain Import", () => {
+    // This test verifies the ES module import works correctly
+    // Previously used require() which fails in Deno (ReferenceError: require is not defined)
+    it("parseProjectDomain is available as ES module import", () => {
+      assertEquals(typeof parseProjectDomain, "function");
+    });
+
+    it("parses preview domain correctly for WebSocket context", () => {
+      const host = "reliable-fermat-clkqh.preview.veryfront.com";
+      const parsed = parseProjectDomain(host);
+
+      assertEquals(parsed.slug, "reliable-fermat-clkqh");
+      assertEquals(parsed.environment, "preview");
+      assertEquals(parsed.isVeryfrontDomain, true);
+    });
+
+    it("parses production domain correctly for WebSocket context", () => {
+      const host = "myproject.veryfront.com";
+      const parsed = parseProjectDomain(host);
+
+      assertEquals(parsed.slug, "myproject");
+      assertEquals(parsed.environment, "production");
+    });
+  });
+
   describe("WebSocket Upgrade Detection", () => {
     it("detects WebSocket upgrade request", () => {
       const req = new Request("http://localhost:8080/_ws", {
