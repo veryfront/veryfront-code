@@ -476,8 +476,8 @@ export class SSRHandler extends BaseHandler {
 
           const body = isHeadRequest ? null : generateStyledErrorHtml(
             404,
-            "Not Deployed",
-            "This project hasn't been deployed yet",
+            "Nothing here yet",
+            "This project hasn't been deployed",
           );
 
           const response = builder
@@ -570,14 +570,50 @@ function generateStyledErrorHtml(
   <meta name="viewport" content="width=device-width">
   <link rel="icon" type="image/png" href="https://cdn.veryfront.com/images/veryfront-favicon.png">
   <title>${statusCode} ${title} — Veryfront</title>
-  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    :root {
+      --bg: #ffffff;
+      --title: #374151;
+      --message: #9ca3af;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #0d0e11;
+        --title: #949A9F;
+        --message: #6b7280;
+      }
+    }
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      min-height: 100dvh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .container {
+      text-align: center;
+      padding: 2rem;
+    }
+    .title {
+      margin: 0 0 0.75rem;
+      font-size: 1.875rem;
+      font-weight: 500;
+      color: var(--title);
+      letter-spacing: -0.025em;
+    }
+    .message {
+      margin: 0;
+      font-size: 1rem;
+      color: var(--message);
+    }
+  </style>
 </head>
 <body>
-  <div class="fixed z-[2147483647] inset-0 min-h-screen min-w-full flex flex-col items-center justify-center leading-[1.25] bg-[#0d0e11] text-white">
-    <div class="font-sans antialiased text-center flex flex-col items-center px-8 gap-4 tracking-wide">
-      <p class="m-0 font-semibold text-5xl md:text-6xl text-[#949A9F]">${title}</p>
-      <p class="text-white text-xl">${message}</p>
-    </div>
+  <div class="container">
+    <h1 class="title">${title}</h1>
+    <p class="message">${message}</p>
   </div>
 </body>
 </html>`;
