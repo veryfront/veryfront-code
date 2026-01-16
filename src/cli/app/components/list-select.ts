@@ -5,8 +5,8 @@
  * Supports arrow keys, j/k vim bindings, and number shortcuts.
  */
 
-import { brand, dim, muted } from "../../ui/colors.ts";
-import { pad, truncate, visibleLength } from "../../ui/layout.ts";
+import { brand, dim } from "../../ui/colors.ts";
+import { truncate, visibleLength } from "../../ui/layout.ts";
 
 export interface ListItem<T = unknown> {
   /** Unique identifier */
