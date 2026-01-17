@@ -11,7 +11,11 @@
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "@veryfront/config";
 import type { HandlerContext } from "../../server/handlers/types.ts";
-import { VERSION } from "@veryfront/utils/version.ts";
+import {
+  buildRenderCacheKey,
+  buildRenderCachePrefix,
+  parseRenderCacheKey,
+} from "../../core/cache/keys.ts";
 
 /**
  * Environment type for rendering context
@@ -122,11 +126,10 @@ export function createRenderContext(
   const projectId = ctx.projectId ?? ctx.projectSlug ?? "__single__";
   const projectSlug = ctx.projectSlug ?? ctx.projectId ?? "__single__";
 
-  // Compute cache prefix for tenant isolation
+  // Compute cache prefix for tenant isolation using centralized builder
   // Format: "{projectId}:{environment}:{releaseId|'draft'}:{frameworkVersion}"
-  // Including framework version ensures cache invalidation on deployments
   const releaseKey = ctx.releaseId ?? "draft";
-  const cachePrefix = `${projectId}:${environment}:${releaseKey}:${VERSION}`;
+  const cachePrefix = buildRenderCachePrefix(projectId, environment, releaseKey);
 
   return {
     projectId,
@@ -153,7 +156,7 @@ export function createRenderContext(
  * @returns Fully qualified cache key with tenant prefix
  */
 export function createCacheKey(ctx: RenderContext, contentKey: string): string {
-  return `${ctx.cachePrefix}:${contentKey}`;
+  return buildRenderCacheKey(ctx.cachePrefix, contentKey);
 }
 
 /**
@@ -162,31 +165,7 @@ export function createCacheKey(ctx: RenderContext, contentKey: string): string {
  * @param cacheKey - Full cache key
  * @returns Parsed components or null if invalid format
  */
-export function parseCacheKey(
-  cacheKey: string,
-): {
-  projectId: string;
-  environment: string;
-  releaseKey: string;
-  version: string;
-  contentKey: string;
-} | null {
-  const parts = cacheKey.split(":");
-  if (parts.length < 5) return null;
-
-  const [projectId, environment, releaseKey, version, ...contentParts] = parts;
-  // Ensure all required parts are present
-  if (!projectId || !environment || !releaseKey || !version) {
-    return null;
-  }
-  return {
-    projectId,
-    environment,
-    releaseKey,
-    version,
-    contentKey: contentParts.join(":"),
-  };
-}
+export const parseCacheKey = parseRenderCacheKey;
 
 /**
  * Check if two render contexts belong to the same tenant

@@ -6,7 +6,7 @@ import { isExtendedFSAdapter } from "@veryfront/platform/adapters/fs/wrapper.ts"
 import { serverLogger } from "@veryfront/utils/logger/logger.ts";
 import { getReactImportMap, REACT_DEFAULT_VERSION } from "@veryfront/utils/constants/cdn.ts";
 import { DEFAULT_CACHE_DIR } from "@veryfront/utils/constants/server.ts";
-import { VERSION } from "@veryfront/utils/version.ts";
+import { buildConfigCacheKey } from "../cache/keys.ts";
 import { DEFAULT_PORT } from "./defaults.ts";
 import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
 import { getEsbuildLoader } from "../utils/path-utils.ts";
@@ -328,12 +328,14 @@ export async function getConfig(
   return await withSpan(
     SpanNames.CONFIG_LOAD,
     async () => {
-      // For virtual filesystem, use provided cacheKey (projectId/projectSlug)
-      // For local filesystem, use projectDir
-      // Include framework VERSION for automatic invalidation on deployments
+      // Build cache key using centralized builder
+      // For virtual filesystem: vf:{projectId}:{version}
+      // For local filesystem: {projectDir}:{version}
       const isVirtualFS = isVirtualFilesystem(adapter);
-      const baseKey = isVirtualFS && options?.cacheKey ? `vf:${options.cacheKey}` : projectDir;
-      const effectiveCacheKey = `${baseKey}:${VERSION}`;
+      const effectiveCacheKey = buildConfigCacheKey(
+        isVirtualFS && options?.cacheKey ? options.cacheKey : projectDir,
+        isVirtualFS && !!options?.cacheKey,
+      );
 
       const cached = configCacheByProject.get(effectiveCacheKey);
       if (cached && cached.revision === cacheRevision) {
