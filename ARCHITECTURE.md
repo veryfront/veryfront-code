@@ -6,7 +6,7 @@
 
 Veryfront's architecture is built on four core principles:
 
-1. **Modular by Design** - 16 focused modules, each with a single responsibility
+1. **Modular by Design** - Focused modules with clear boundaries and single responsibilities
 2. **Runtime Agnostic** - Works across Deno, Node, Bun, and Cloudflare Workers
 3. **Progressive Complexity** - Simple by default, powerful when needed
 4. **AI-Native** - First-class AI agent integration via MCP protocol
@@ -245,5 +245,5 @@ Veryfront includes first-class AI agent support via dedicated modules:
 ## Learn More
 
 - **Module Reference**: See `src/README.md` for detailed module documentation
-- **API Documentation**: See `docs/` for usage guides
 - **Contributing**: See `CONTRIBUTING.md` for development guidelines
+- **Examples**: See `examples/` for working code examples

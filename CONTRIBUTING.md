@@ -16,7 +16,7 @@ Thank you for your interest in contributing to Veryfront! This document provides
 
 ### Module Structure
 
-Veryfront is organized into **16 core modules**. See [src/README.md](./src/README.md) for detailed module descriptions and [ARCHITECTURE.md](./ARCHITECTURE.md) for design philosophy and system architecture.
+Veryfront is organized into focused modules with clear boundaries. See [src/README.md](./src/README.md) for detailed module descriptions and [ARCHITECTURE.md](./ARCHITECTURE.md) for design philosophy and system architecture.
 
 ### Utils Pattern Guidelines
 
