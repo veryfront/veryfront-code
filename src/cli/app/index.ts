@@ -417,27 +417,39 @@ export function createApp(config: AppConfig): App {
       return;
     }
 
-    // Number keys for quick select (works across projects and examples)
-    if (key >= "1" && key <= "9") {
-      const num = parseInt(key, 10);
-      const projectCount = state.projects.items.length;
+    // Number keys (1-9) and letter keys (a-z for 10+) for quick select
+    const projectCount = state.projects.items.length;
+    const totalCount = projectCount + state.examples.items.length;
+    let itemNum = 0;
 
-      if (num <= projectCount) {
+    if (key >= "1" && key <= "9") {
+      itemNum = parseInt(key, 10);
+    } else if (key >= "a" && key <= "z") {
+      // a=10, b=11, etc. - but skip letters used for actions
+      const letterNum = key.charCodeAt(0) - 96 + 9; // a=10, b=11, ...
+      // Only use as item shortcut if it's a valid index
+      if (letterNum <= totalCount) {
+        itemNum = letterNum;
+      }
+    }
+
+    if (itemNum > 0 && itemNum <= totalCount) {
+      if (itemNum <= projectCount) {
         // Select from projects
         state = setActiveList("projects")(state);
         state = {
           ...state,
-          projects: selectByNumber(state.projects, num),
+          projects: selectByNumber(state.projects, itemNum),
         };
         render();
-        const selected = state.projects.items[num - 1];
+        const selected = state.projects.items[itemNum - 1];
         if (selected?.data) {
           await openInBrowser(selected.data, state.server.port);
         }
-      } else if (num <= projectCount + state.examples.items.length) {
-        // Select from examples (num - projectCount gives the example index)
+      } else {
+        // Select from examples
         state = setActiveList("examples")(state);
-        const exampleNum = num - projectCount;
+        const exampleNum = itemNum - projectCount;
         state = {
           ...state,
           examples: selectByNumber(state.examples, exampleNum),
