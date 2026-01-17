@@ -5,7 +5,7 @@ import {
   type Message,
   type MessagePart,
   type ToolCallPart,
-} from "../../src/ai/types/agent.ts";
+} from "../../src/agent/types.ts";
 
 type Provider = {
   name: string;
@@ -122,9 +122,9 @@ describe("AgentRuntime streaming JSON buffering", () => {
     assert(response.text.includes("Hello"), "should include streamed content");
     // No tool execution because finishReason=stop, but assistant message should carry parsed tool-call parts
     // AI SDK v5 uses tool-${toolName} pattern (e.g., "tool-testTool")
-    const assistant = response.messages.find((m) => m.role === "assistant");
+    const assistant = response.messages.find((m: Message) => m.role === "assistant");
     const toolCallParts = assistant?.parts.filter(
-      (p): p is ToolCallPart => p.type.startsWith("tool-") && p.type !== "tool-result",
+      (p: MessagePart): p is ToolCallPart => p.type.startsWith("tool-") && p.type !== "tool-result",
     );
     assert(toolCallParts && toolCallParts.length === 1, "assistant tool-call parts captured");
     const tc = toolCallParts![0]!;

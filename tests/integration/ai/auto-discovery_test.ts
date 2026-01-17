@@ -4,12 +4,9 @@
 
 import { assertEquals, assertExists } from "https://deno.land/std@0.220.0/assert/mod.ts";
 import { beforeEach, describe, it } from "@std/testing/bdd.ts";
-import {
-  discoverAll,
-  promptRegistry,
-  resourceRegistry,
-  toolRegistry,
-} from "../../../src/ai/index.ts";
+import { discoverAll } from "../../../src/cli/discovery/index.ts";
+import { toolRegistry } from "@veryfront/tool";
+import { promptRegistry, resourceRegistry } from "@veryfront/mcp";
 
 describe("Auto-Discovery Integration", { sanitizeOps: false, sanitizeResources: false }, () => {
   beforeEach(() => {

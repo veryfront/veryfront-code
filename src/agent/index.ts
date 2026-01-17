@@ -66,7 +66,6 @@ export {
   type WorkflowStep,
 } from "./composition/index.ts";
 
-// Re-export agent factory from old location for now
-// Will be updated once the full runtime is migrated
-export { agent } from "../ai/agent/factory.ts";
-export { AgentRuntime } from "../ai/agent/runtime/index.ts";
+// Agent factory and runtime
+export { agent } from "./factory.ts";
+export { AgentRuntime } from "./runtime/index.ts";
