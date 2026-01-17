@@ -10,7 +10,7 @@ Veryfront is a **zero-config React framework** for building **agentic applicatio
 ```
 my-ai-app/
 ├── .env
-├── app/                         # App Router (pages & API routes)
+├── app/                     # App Router (pages & APIs)
 │   ├── chat/page.tsx
 │   └── api/chat/route.ts
 ├── agents/
@@ -40,7 +40,7 @@ deno add npm:veryfront npm:ai npm:zod
 
 `agents/assistant.ts`:
 ```typescript
-import { agent } from 'veryfront/agent';
+import { agent } from 'veryfront';
 
 export default agent({
   model: 'openai/gpt-4',
@@ -53,7 +53,7 @@ export default agent({
 
 `tools/calculator.ts`:
 ```typescript
-import { tool } from 'veryfront/tool';
+import { tool } from 'veryfront';
 import { z } from 'zod';
 
 export default tool({
@@ -125,7 +125,7 @@ MCP exposes your tools and resources to external AI applications. Enabled by def
 
 `resources/users/profile.ts`:
 ```typescript
-import { resource } from 'veryfront/resource';
+import { resource } from 'veryfront';
 import { z } from 'zod';
 
 export default resource({
