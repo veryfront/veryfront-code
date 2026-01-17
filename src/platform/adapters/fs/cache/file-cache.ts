@@ -1,25 +1,32 @@
 /**
- * File Cache - Redis-First Architecture
+ * File Cache - Backend-Abstracted Architecture
  *
- * Optimized for ephemeral pods with limited memory.
+ * Caches file content with secure multi-tenant support.
  *
  * Strategy:
- * - Redis: Primary storage for file content (shared across pods)
- * - Memory: Small fallback for local development without Redis
+ * - Uses CacheBackend abstraction for backend selection
+ * - API Mode (production): Uses veryfront-api for centralized cache
+ * - Redis Mode (local dev/open source): Direct Redis access
+ * - Memory Mode (fallback): In-memory cache
+ *
+ * Security: In production, renderer has no Redis credentials.
+ * All cache access goes through the API which enforces tenant isolation.
  */
 
 import { logger } from "@veryfront/utils";
 import type { CacheEntry, CacheStats, FileCacheOptions } from "./types.ts";
 import { estimateSize } from "./size-estimator.ts";
 import {
-  getRedisClient,
-  isRedisConfigured,
-  type RedisClient,
-} from "../../../../core/utils/redis-client.ts";
-import { buildRedisFileCacheKey } from "../../../../core/cache/keys.ts";
+  type CacheBackend,
+  CacheBackends,
+  MemoryCacheBackend,
+} from "../../../../core/cache/backend.ts";
 
 /** Default TTL for cache entries (1 minute) */
 const DEFAULT_CACHE_TTL_MS = 60_000;
+
+/** TTL for backend cache (5 minutes) */
+const BACKEND_TTL_SECONDS = 300;
 
 /** Fallback cache max entries (small, for local dev) */
 const FALLBACK_MAX_ENTRIES = 200;
@@ -27,138 +34,60 @@ const FALLBACK_MAX_ENTRIES = 200;
 /** Fallback cache max memory (10 MB, for local dev) */
 const FALLBACK_MAX_MEMORY_BYTES = 10 * 1024 * 1024;
 
-const REDIS_TTL_SECONDS = 300; // 5 minutes
-
-// Shared Redis state across all FileCache instances
-let redisEnabled = false;
-let redisClient: RedisClient | null = null;
-let redisInitialized = false;
-let redisInitPromise: Promise<void> | null = null;
+// Shared backend state across all FileCache instances
+let cacheBackend: CacheBackend | null = null;
+let backendInitialized = false;
+let backendInitPromise: Promise<void> | null = null;
 
 /**
- * Initialize Redis for file cache.
- * Call this at startup if you want to enable Redis caching.
+ * Initialize file cache backend.
+ * Call this at startup if you want to enable distributed caching.
  */
-export async function initializeFileCacheRedis(): Promise<boolean> {
-  if (redisInitialized) {
-    return redisEnabled;
+export async function initializeFileCacheBackend(): Promise<boolean> {
+  if (backendInitialized) {
+    return cacheBackend?.type !== "memory";
   }
 
-  if (redisInitPromise) {
-    await redisInitPromise;
-    return redisEnabled;
+  if (backendInitPromise) {
+    await backendInitPromise;
+    return cacheBackend?.type !== "memory";
   }
 
-  redisInitPromise = (async () => {
-    if (!isRedisConfigured()) {
-      logger.debug("[FileCache] Redis not configured, using memory cache");
-      redisInitialized = true;
-      return;
-    }
-
+  backendInitPromise = (async () => {
     try {
-      redisClient = await getRedisClient();
-      redisEnabled = true;
-      redisInitialized = true;
-      logger.debug("[FileCache] Redis cache enabled");
+      cacheBackend = await CacheBackends.file();
+      backendInitialized = true;
+      logger.debug("[FileCache] Backend initialized", { type: cacheBackend.type });
     } catch (error) {
-      logger.warn("[FileCache] Redis unavailable, falling back to memory cache", { error });
-      redisEnabled = false;
-      redisInitialized = true;
+      logger.warn("[FileCache] Backend init failed, using memory fallback", { error });
+      cacheBackend = new MemoryCacheBackend(FALLBACK_MAX_ENTRIES);
+      backendInitialized = true;
     }
   })();
 
-  await redisInitPromise;
-  redisInitPromise = null;
-  return redisEnabled;
+  await backendInitPromise;
+  backendInitPromise = null;
+  return cacheBackend?.type !== "memory";
 }
 
 /**
- * Check if Redis caching is enabled for file cache.
+ * Check if distributed caching is enabled for file cache.
  */
-export function isFileCacheRedisEnabled(): boolean {
-  return redisEnabled && redisClient !== null;
+export function isFileCacheDistributedEnabled(): boolean {
+  return cacheBackend !== null && cacheBackend.type !== "memory";
 }
 
-function redisKey(key: string): string {
-  return buildRedisFileCacheKey(key);
-}
+/** @deprecated Use initializeFileCacheBackend instead */
+export const initializeFileCacheRedis = initializeFileCacheBackend;
+
+/** @deprecated Use isFileCacheDistributedEnabled instead */
+export const isFileCacheRedisEnabled = isFileCacheDistributedEnabled;
 
 /**
- * Get cached entry from Redis.
- */
-async function getFromRedis<T>(key: string): Promise<CacheEntry<T> | null> {
-  if (!redisEnabled || !redisClient) return null;
-
-  try {
-    const raw = await redisClient.get(redisKey(key));
-    if (raw) {
-      return JSON.parse(raw) as CacheEntry<T>;
-    }
-    return null;
-  } catch (error) {
-    logger.debug("[FileCache] Redis get failed", { key, error });
-    return null;
-  }
-}
-
-/**
- * Store cached entry in Redis.
- */
-async function setInRedis<T>(key: string, entry: CacheEntry<T>): Promise<void> {
-  if (!redisEnabled || !redisClient) return;
-
-  try {
-    await redisClient.set(redisKey(key), JSON.stringify(entry), { EX: REDIS_TTL_SECONDS });
-  } catch (error) {
-    logger.debug("[FileCache] Redis set failed", { key, error });
-  }
-}
-
-/**
- * Delete keys matching a pattern from Redis using SCAN.
- * Uses SCAN to avoid blocking Redis with KEYS command on large datasets.
- */
-async function deleteFromRedisByPattern(pattern: string): Promise<number> {
-  if (!redisEnabled || !redisClient) return 0;
-
-  try {
-    const fullPattern = redisKey(pattern);
-    let cursor = 0;
-    let deletedCount = 0;
-    const keysToDelete: string[] = [];
-
-    // Use SCAN to find matching keys (non-blocking)
-    do {
-      const result = await redisClient.scan(cursor, { MATCH: fullPattern, COUNT: 100 });
-      cursor = result.cursor;
-      if (result.keys.length > 0) {
-        keysToDelete.push(...result.keys);
-      }
-    } while (cursor !== 0);
-
-    // Delete found keys in batches
-    if (keysToDelete.length > 0) {
-      await redisClient.del(keysToDelete);
-      deletedCount = keysToDelete.length;
-      logger.debug("[FileCache] Deleted keys from Redis by pattern", {
-        pattern: fullPattern,
-        count: deletedCount,
-      });
-    }
-
-    return deletedCount;
-  } catch (error) {
-    logger.warn("[FileCache] Redis delete by pattern failed", { pattern, error });
-    return 0;
-  }
-}
-
-/**
- * FileCache - Redis-First with Small Fallback
+ * FileCache - Backend-First with Local Fallback
  *
- * When Redis is available: Redis-only (no memory duplication)
- * When Redis unavailable: Small memory fallback for local dev
+ * When backend is available: Uses backend (API/Redis)
+ * When backend unavailable: Small memory fallback for local dev
  */
 export class FileCache {
   private fallbackCache: Map<string, CacheEntry<unknown>>;
@@ -176,16 +105,16 @@ export class FileCache {
       ...options,
     };
 
-    // Fallback cache only used when Redis is unavailable
+    // Fallback cache only used when backend is unavailable
     this.fallbackCache = new Map();
 
-    const mode = redisEnabled ? "redis-only" : "fallback-memory";
+    const mode = cacheBackend?.type ?? "memory";
     logger.debug("[FileCache] Initialized", { ...this.options, mode });
   }
 
   /**
-   * Synchronous get - only checks fallback cache (for local dev without Redis).
-   * In production with Redis, use getAsync instead.
+   * Synchronous get - only checks fallback cache (for local dev without backend).
+   * In production with backend, use getAsync instead.
    */
   get<T>(key: string): T | undefined {
     if (!this.options.enabled) {
@@ -193,8 +122,8 @@ export class FileCache {
       return undefined;
     }
 
-    // In Redis mode, sync get always misses - use getAsync
-    if (redisEnabled) {
+    // In distributed mode, sync get always misses - use getAsync
+    if (cacheBackend && cacheBackend.type !== "memory") {
       this.misses++;
       return undefined;
     }
@@ -217,7 +146,7 @@ export class FileCache {
   }
 
   /**
-   * Async get - checks Redis (primary) or fallback memory cache.
+   * Async get - checks backend (primary) or fallback memory cache.
    */
   async getAsync<T>(key: string): Promise<T | undefined> {
     if (!this.options.enabled) {
@@ -225,15 +154,20 @@ export class FileCache {
       return undefined;
     }
 
-    // Redis-only mode: only check Redis
-    if (redisEnabled && redisClient) {
-      const redisEntry = await getFromRedis<T>(key);
-      if (redisEntry) {
-        const now = Date.now();
-        if (now - redisEntry.timestamp < this.options.ttl) {
-          this.hits++;
-          return redisEntry.value;
+    // Try backend first
+    if (cacheBackend && cacheBackend.type !== "memory") {
+      try {
+        const raw = await cacheBackend.get(`file:${key}`);
+        if (raw) {
+          const entry = JSON.parse(raw) as CacheEntry<T>;
+          const now = Date.now();
+          if (now - entry.timestamp < this.options.ttl) {
+            this.hits++;
+            return entry.value;
+          }
         }
+      } catch (error) {
+        logger.debug("[FileCache] Backend get failed", { key, error });
       }
       this.misses++;
       return undefined;
@@ -244,8 +178,8 @@ export class FileCache {
   }
 
   /**
-   * Synchronous set - only writes to fallback cache (for local dev without Redis).
-   * In production with Redis, use setAsync instead.
+   * Synchronous set - only writes to fallback cache (for local dev without backend).
+   * In production with backend, use setAsync instead.
    */
   set<T>(key: string, value: T): void {
     if (!this.options.enabled) {
@@ -254,10 +188,10 @@ export class FileCache {
 
     const size = estimateSize(value);
 
-    // In Redis mode, fire-and-forget to Redis
-    if (redisEnabled && redisClient) {
+    // In distributed mode, fire-and-forget to backend
+    if (cacheBackend && cacheBackend.type !== "memory") {
       const entry: CacheEntry<T> = { value, timestamp: Date.now(), size };
-      setInRedis(key, entry).catch(() => {});
+      cacheBackend.set(`file:${key}`, JSON.stringify(entry), BACKEND_TTL_SECONDS).catch(() => {});
       return;
     }
 
@@ -275,7 +209,7 @@ export class FileCache {
   }
 
   /**
-   * Async set - writes to Redis (primary) or fallback memory cache.
+   * Async set - writes to backend (primary) or fallback memory cache.
    */
   async setAsync<T>(key: string, value: T): Promise<void> {
     if (!this.options.enabled) {
@@ -285,10 +219,14 @@ export class FileCache {
     const size = estimateSize(value);
     const entry: CacheEntry<T> = { value, timestamp: Date.now(), size };
 
-    // Redis-only mode: write to Redis
-    if (redisEnabled && redisClient) {
-      await setInRedis(key, entry);
-      return;
+    // Try backend first
+    if (cacheBackend && cacheBackend.type !== "memory") {
+      try {
+        await cacheBackend.set(`file:${key}`, JSON.stringify(entry), BACKEND_TTL_SECONDS);
+        return;
+      } catch (error) {
+        logger.debug("[FileCache] Backend set failed", { key, error });
+      }
     }
 
     // Fallback mode: write to memory cache
@@ -304,7 +242,7 @@ export class FileCache {
 
   has(key: string): boolean {
     if (!this.options.enabled) return false;
-    if (redisEnabled) return false; // Use hasAsync for Redis mode
+    if (cacheBackend && cacheBackend.type !== "memory") return false; // Use hasAsync for distributed mode
 
     const entry = this.fallbackCache.get(key);
     if (!entry) return false;
@@ -334,9 +272,9 @@ export class FileCache {
       }
     }
 
-    // Fire-and-forget Redis deletion
-    if (redisEnabled && redisClient) {
-      deleteFromRedisByPattern(`${prefix}*`).catch(() => {});
+    // Fire-and-forget backend deletion
+    if (cacheBackend?.delByPattern) {
+      cacheBackend.delByPattern(`file:${prefix}*`).catch(() => {});
     }
 
     return count;
@@ -345,9 +283,9 @@ export class FileCache {
   async deleteByPrefixAsync(prefix: string): Promise<number> {
     const count = this.deleteByPrefix(prefix);
 
-    // Await Redis deletion for cross-pod consistency
-    if (redisEnabled && redisClient) {
-      await deleteFromRedisByPattern(`${prefix}*`);
+    // Await backend deletion for cross-pod consistency
+    if (cacheBackend?.delByPattern) {
+      await cacheBackend.delByPattern(`file:${prefix}*`);
     }
 
     return count;
@@ -364,9 +302,9 @@ export class FileCache {
       }
     }
 
-    // Fire-and-forget Redis deletion
-    if (redisEnabled && redisClient) {
-      deleteFromRedisByPattern(`${prefix}*:${suffix}`).catch(() => {});
+    // Fire-and-forget backend deletion
+    if (cacheBackend?.delByPattern) {
+      cacheBackend.delByPattern(`file:${prefix}*:${suffix}`).catch(() => {});
     }
 
     return count;
@@ -375,9 +313,9 @@ export class FileCache {
   async deleteByPrefixAndSuffixAsync(prefix: string, suffix: string): Promise<number> {
     const count = this.deleteByPrefixAndSuffix(prefix, suffix);
 
-    // Await Redis deletion for cross-pod consistency
-    if (redisEnabled && redisClient) {
-      await deleteFromRedisByPattern(`${prefix}*:${suffix}`);
+    // Await backend deletion for cross-pod consistency
+    if (cacheBackend?.delByPattern) {
+      await cacheBackend.delByPattern(`file:${prefix}*:${suffix}`);
     }
 
     return count;
@@ -390,7 +328,7 @@ export class FileCache {
     this.misses = 0;
   }
 
-  stats(): CacheStats & { redisEnabled: boolean; mode: string } {
+  stats(): CacheStats & { backend: string } {
     const total = this.hits + this.misses;
     const hitRate = total > 0 ? this.hits / total : 0;
 
@@ -400,8 +338,7 @@ export class FileCache {
       hits: this.hits,
       misses: this.misses,
       hitRate,
-      redisEnabled,
-      mode: redisEnabled ? "redis-only" : "fallback-memory",
+      backend: cacheBackend?.type ?? "uninitialized",
     };
   }
 

@@ -129,7 +129,7 @@ describe("FileCache", () => {
       assertEquals(stats.misses, 1);
       assertEquals(stats.hitRate, 0.5);
       assertEquals(typeof stats.memoryUsed, "number");
-      assertEquals(typeof stats.redisEnabled, "boolean");
+      assertEquals(typeof stats.backend, "string");
     });
   });
 

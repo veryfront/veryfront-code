@@ -31,7 +31,8 @@ import { parseProjectDomain } from "../src/server/utils/domain-parser.ts";
 
 // Configuration from environment variables
 const config: ProxyConfig = {
-  apiBaseUrl: Deno.env.get("VERYFRONT_API_BASE_URL") || "http://api.lvh.me:4000",
+  apiBaseUrl: Deno.env.get("VERYFRONT_API_BASE_URL") ||
+    "http://api.lvh.me:4000",
   clientId: Deno.env.get("OAUTH_CLIENT_ID") || "",
   clientSecret: Deno.env.get("OAUTH_CLIENT_SECRET") || "",
   previewClientId: Deno.env.get("OAUTH_PREVIEW_CLIENT_ID") || "",
@@ -251,7 +252,9 @@ async function forwardToRenderer(req: Request): Promise<Response> {
       });
 
       const ms = Math.round(performance.now() - startTime);
-      reqLogger.info(`${response.status} ${req.method} ${url.pathname}`, { ms });
+      reqLogger.info(`${response.status} ${req.method} ${url.pathname}`, {
+        ms,
+      });
 
       endSpan(spanInfo?.span, response.status);
 
@@ -262,7 +265,11 @@ async function forwardToRenderer(req: Request): Promise<Response> {
       });
     } catch (error) {
       const ms = Math.round(performance.now() - startTime);
-      proxyLogger.error(`502 ${req.method} ${url.pathname}`, { ms }, error as Error);
+      proxyLogger.error(
+        `502 ${req.method} ${url.pathname}`,
+        { ms },
+        error as Error,
+      );
 
       endSpan(spanInfo?.span, 502, error as Error);
 
@@ -316,21 +323,26 @@ async function handleApiProxy(req: Request): Promise<Response> {
         Accept: "application/json",
         "Content-Type": req.headers.get("Content-Type") || "application/json",
       },
-      body: req.method !== "GET" && req.method !== "HEAD" ? req.body : undefined,
+      body: req.method !== "GET" && req.method !== "HEAD"
+        ? req.body
+        : undefined,
     });
 
     return new Response(response.body, {
       status: response.status,
       statusText: response.statusText,
       headers: {
-        "Content-Type": response.headers.get("Content-Type") || "application/json",
+        "Content-Type": response.headers.get("Content-Type") ||
+          "application/json",
         "Cache-Control": "no-cache",
       },
     });
   } catch (error) {
     proxyLogger.error("API proxy error", error as Error);
     return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : "API request failed" }),
+      JSON.stringify({
+        error: error instanceof Error ? error.message : "API request failed",
+      }),
       { status: 502, headers: { "Content-Type": "application/json" } },
     );
   }
@@ -380,12 +392,10 @@ Deno.addSignalListener("SIGTERM", shutdown);
 // Initialize tracing and start server
 await initializeOTLPWithApis();
 
-const cacheType = Deno.env.get("CACHE_TYPE") || "memory";
 proxyLogger.debug("Starting proxy server (split mode)", {
   port: PORT,
   rendererUrl: RENDERER_URL,
   apiBaseUrl: config.apiBaseUrl,
-  cacheType,
 });
 
 Deno.serve({ port: PORT, onListen: () => {} }, router);
