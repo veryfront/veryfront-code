@@ -7,7 +7,6 @@
 import { serverLogger as logger } from "@veryfront/utils";
 import { cwd as getCwd, getEnv, setEnv } from "@veryfront/platform/compat/process.ts";
 import { createFileSystem, type FileSystem } from "@veryfront/platform/compat/fs.ts";
-import { isDeno } from "@veryfront/platform/compat/runtime.ts";
 
 // Lazy-initialized filesystem for cross-platform support
 let _fs: FileSystem | null = null;
@@ -22,14 +21,17 @@ function getFs(): FileSystem {
  * Check if an error is a "file not found" error across platforms
  */
 async function isNotFoundError(error: unknown, path: string): Promise<boolean> {
-  // Node.js error codes
-  if ((error as NodeJS.ErrnoException)?.code === "ENOENT") {
+  // Check Node.js/Bun error codes
+  const nodeError = error as NodeJS.ErrnoException | undefined;
+  if (nodeError?.code === "ENOENT") {
     return true;
   }
-  // Deno error type
-  if (isDeno && error instanceof Deno.errors.NotFound) {
+
+  // Check Deno NotFound error by name (avoids accessing Deno.errors directly)
+  if (error instanceof Error && error.name === "NotFound") {
     return true;
   }
+
   // Fallback: check if the file actually exists using the filesystem API
   // This handles cases where the error object might not be standard
   return !(await getFs().exists(path));

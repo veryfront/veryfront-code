@@ -1,7 +1,6 @@
 import { join } from "@veryfront/platform/compat/path/index.ts";
 import { getEnv } from "@veryfront/platform/compat/process.ts";
 import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
-import { isDeno } from "@veryfront/platform/compat/runtime.ts";
 import { CONFIG_DIR_NAME, TOKEN_FILE_NAME, TOKEN_FILE_PERMISSIONS } from "./constants.ts";
 
 function getConfigDir(): string {
@@ -41,15 +40,7 @@ export async function saveToken(token: string): Promise<void> {
   }
 
   await fs.writeTextFile(tokenPath, token + "\n");
-
-  if (isDeno) {
-    try {
-      // @ts-ignore - Deno global
-      await Deno.chmod(tokenPath, TOKEN_FILE_PERMISSIONS);
-    } catch {
-      // Ignore permission errors on Windows
-    }
-  }
+  await fs.chmod(tokenPath, TOKEN_FILE_PERMISSIONS);
 }
 
 export async function deleteToken(): Promise<void> {

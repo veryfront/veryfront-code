@@ -4,7 +4,7 @@
 [![CI/CD](https://github.com/veryfront/veryfront-renderer/actions/workflows/ci.yml/badge.svg)](https://github.com/veryfront/veryfront-renderer/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 
-Veryfront is a full-stack React framework for building AI apps and agents with zero configuration.
+The all-in-one React framework for building AI-powered applications and agents.
 
 ## Features
 

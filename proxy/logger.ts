@@ -1,6 +1,12 @@
-// Inline getEnv to avoid dependency on src/platform/compat (not copied in Docker)
+// Inline cross-runtime getEnv to avoid dependency on src/platform/compat (not copied in Docker)
 function getEnv(key: string): string | undefined {
-  return Deno.env.get(key);
+  // Deno
+  if (typeof Deno !== "undefined" && Deno.env?.get) {
+    return Deno.env.get(key);
+  }
+  // Node.js / Bun
+  const nodeProcess = (globalThis as { process?: { env?: Record<string, string> } }).process;
+  return nodeProcess?.env?.[key];
 }
 import { getTraceContext } from "./tracing.ts";
 

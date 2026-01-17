@@ -40,6 +40,7 @@ export interface FileSystem {
   readDir(path: string): AsyncIterable<{ name: string; isFile: boolean; isDirectory: boolean }>;
   remove(path: string, options?: { recursive?: boolean }): Promise<void>;
   makeTempDir(options?: { prefix?: string }): Promise<string>; // New for temp dirs
+  chmod(path: string, mode: number): Promise<void>; // File permissions (Unix octal mode)
 }
 
 // ============================================================================
@@ -74,6 +75,7 @@ interface NodeFsPromises {
     }>
   >;
   rm(path: string, options?: { recursive?: boolean; force?: boolean }): Promise<void>;
+  chmod(path: string, mode: number): Promise<void>;
 }
 
 class NodeFileSystem implements FileSystem {
@@ -189,6 +191,15 @@ class NodeFileSystem implements FileSystem {
     await this.fs!.mkdir(tempDir, { recursive: true });
     return tempDir;
   }
+
+  async chmod(path: string, mode: number): Promise<void> {
+    await this.ensureInitialized();
+    try {
+      await this.fs!.chmod(path, mode);
+    } catch {
+      // Ignore errors on Windows where chmod is not fully supported
+    }
+  }
 }
 
 // ============================================================================
@@ -268,6 +279,15 @@ class DenoFileSystem implements FileSystem {
   async makeTempDir(options?: { prefix?: string }): Promise<string> {
     // @ts-ignore - Deno global
     return await Deno.makeTempDir({ prefix: options?.prefix });
+  }
+
+  async chmod(path: string, mode: number): Promise<void> {
+    try {
+      // @ts-ignore - Deno global
+      await Deno.chmod(path, mode);
+    } catch {
+      // Ignore errors on Windows where chmod is not fully supported
+    }
   }
 }
 
@@ -375,4 +395,12 @@ export function readDir(
  */
 export function makeTempDir(options?: { prefix?: string }): Promise<string> {
   return getFs().makeTempDir(options);
+}
+
+/**
+ * Change file permissions (Unix octal mode)
+ * Note: This is a no-op on Windows where permissions work differently
+ */
+export function chmod(path: string, mode: number): Promise<void> {
+  return getFs().chmod(path, mode);
 }

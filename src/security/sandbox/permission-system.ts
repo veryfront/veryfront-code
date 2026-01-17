@@ -13,26 +13,33 @@ export interface PermissionResult {
   state: "granted" | "denied" | "prompt";
 }
 
+// Cross-runtime permission descriptor type (matches Deno's structure)
+interface PermissionDescriptor {
+  name: string;
+  host?: string;
+  path?: string;
+}
+
 /**
- * Create a Deno permission descriptor from our generic request.
- * Only used when running on Deno.
+ * Create a permission descriptor from our generic request.
+ * Returns a descriptor compatible with Deno's permission system.
  */
-function createDenoDescriptor(
+function createPermissionDescriptor(
   request: PermissionRequest,
-): Deno.PermissionDescriptor | null {
+): PermissionDescriptor | null {
   switch (request.name) {
     case "net": {
-      const descriptor: Deno.NetPermissionDescriptor = { name: "net" };
+      const descriptor: PermissionDescriptor = { name: "net" };
       if (request.host) descriptor.host = request.host;
       return descriptor;
     }
     case "read": {
-      const descriptor: Deno.ReadPermissionDescriptor = { name: "read" };
+      const descriptor: PermissionDescriptor = { name: "read" };
       if (request.path) descriptor.path = request.path;
       return descriptor;
     }
     case "write": {
-      const descriptor: Deno.WritePermissionDescriptor = { name: "write" };
+      const descriptor: PermissionDescriptor = { name: "write" };
       if (request.path) descriptor.path = request.path;
       return descriptor;
     }
@@ -54,33 +61,35 @@ function createDenoDescriptor(
 async function requestDenoPermission(
   request: PermissionRequest,
 ): Promise<PermissionResult> {
-  if (!("permissions" in Deno) || typeof Deno.permissions.request !== "function") {
+  // Check if Deno permissions API is available
+  if (
+    typeof Deno === "undefined" ||
+    !("permissions" in Deno) ||
+    typeof Deno.permissions?.request !== "function"
+  ) {
     return { state: "denied" };
   }
 
   if (request.name === "fs") {
     const path = request.path;
-    const readStatus = await Deno.permissions.request({
-      name: "read",
-      path,
-    } as Deno.ReadPermissionDescriptor);
+    // @ts-ignore - Deno permissions API
+    const readStatus = await Deno.permissions.request({ name: "read", path });
     if (readStatus.state !== "granted") {
       return { state: readStatus.state };
     }
 
-    const writeStatus = await Deno.permissions.request({
-      name: "write",
-      path,
-    } as Deno.WritePermissionDescriptor);
+    // @ts-ignore - Deno permissions API
+    const writeStatus = await Deno.permissions.request({ name: "write", path });
     return { state: writeStatus.state };
   }
 
-  const descriptor = createDenoDescriptor(request);
+  const descriptor = createPermissionDescriptor(request);
   if (!descriptor) {
     serverLogger.warn("[permissions] Unsupported permission request", request);
     return { state: "denied" };
   }
 
+  // @ts-ignore - Deno permissions API
   const status = await Deno.permissions.request(descriptor);
   return { state: status.state };
 }
