@@ -175,7 +175,7 @@ console.log('Option 1: AI SDK Providers (Recommended)');
 console.log('  ✅ 30+ providers (OpenAI, Anthropic, Google, Mistral, etc.)');
 console.log('  ✅ Battle-tested in production');
 console.log('  ✅ Actively maintained by Vercel');
-console.log('  ✅ Use: import { openai } from "veryfront/ai"\n');
+console.log('  ✅ Use: import { openai } from "veryfront/provider"\n');
 
 console.log('Option 2: Custom Providers (Advanced)');
 console.log('  ✅ Full control (internal APIs, custom auth)');

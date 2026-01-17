@@ -228,7 +228,7 @@ const calculatorTool = discoveryResult.tools.get('calculate');
 if (calculatorTool) {
   console.log('Testing calculator tool...');
 
-  const { testTool, printToolTestResults } = await import('veryfront/ai/dev');
+  const { testTool, printToolTestResults } = await import('veryfront/agent/testing');
 
   const toolResults = await testTool(calculatorTool, [
     {

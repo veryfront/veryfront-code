@@ -217,7 +217,7 @@ ATLASSIAN_CLIENT_SECRET=your-client-secret
 Tools are auto-discovered from the `ai/tools/` directory. Assign them to agents using glob patterns:
 
 ```typescript
-import { agent } from "veryfront/ai";
+import { agent } from 'veryfront/agent';
 
 const assistant = agent({
   model: "openai/gpt-4",
@@ -261,7 +261,7 @@ export const tokenStore = new TokenStore({
 ### Access Tokens in Tools
 
 ```typescript
-import { tool } from "veryfront/ai";
+import { tool } from 'veryfront/tool';
 import { z } from "zod";
 import { tokenStore } from "@/lib/token-store";
 

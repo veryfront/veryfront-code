@@ -617,7 +617,7 @@ export const config = {
 ### Agent System
 
 ```typescript
-import { agent } from 'veryfront/ai';
+import { agent } from 'veryfront/agent';
 
 const assistant = agent({
   model: 'openai/gpt-4',
@@ -652,7 +652,7 @@ veryfront init my-project --integrations gmail,slack,notion
 ### Tool Definition
 
 ```typescript
-import { defineTool } from 'veryfront/ai';
+import { tool } from 'veryfront/tool';
 
 export const calculator = defineTool({
   name: 'calculator',

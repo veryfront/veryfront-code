@@ -107,7 +107,7 @@ createWorkflow({ steps: [...] })
 
 **Usage:**
 ```tsx
-import { useChat } from 'veryfront/ai/react';
+import { useChat } from 'veryfront/agent/react';
 
 const { messages, input, append } = useChat({ api: '/api/chat' });
 // Build any UI you want!
@@ -162,8 +162,8 @@ const { messages, input, append } = useChat({ api: '/api/chat' });
 
 **Usage:**
 ```tsx
-import { Chat } from 'veryfront/ai/components';
-import { useChat } from 'veryfront/ai/react';
+import { Chat } from 'veryfront/react';
+import { useChat } from 'veryfront/agent/react';
 
 export default function App() {
   const chat = useChat({ api: '/api/chat' });
@@ -293,7 +293,7 @@ Drop a file, it's auto-discovered:
 
 ```typescript
 // ai/tools/my-tool.ts
-import { tool } from 'veryfront/ai';
+import { tool } from 'veryfront/tool';
 import { z } from 'zod';
 
 export default tool({
@@ -308,7 +308,7 @@ export default tool({
 
 ```typescript
 // ai/agents/support.ts
-import { agent } from 'veryfront/ai';
+import { agent } from 'veryfront/agent';
 
 export default agent({
   model: 'openai/gpt-4',
@@ -328,7 +328,8 @@ export default agent({
 ### 3. Multi-Agent Workflows
 
 ```typescript
-import { createWorkflow, agentAsTool } from 'veryfront/ai';
+import { workflow } from 'veryfront/workflow';
+import { agentAsTool } from 'veryfront/agent';
 
 const workflow = createWorkflow({
   steps: [
@@ -345,7 +346,7 @@ const result = await workflow.execute('Create an article about AI');
 
 **Layer 1: Total Control (Hooks)**
 ```tsx
-import { useChat } from 'veryfront/ai/react';
+import { useChat } from 'veryfront/agent/react';
 
 const { messages, input, append } = useChat({ api: '/api/chat' });
 return <YourCompletelyCustomUI />;
@@ -353,8 +354,8 @@ return <YourCompletelyCustomUI />;
 
 **Layer 2: UI Flexibility (Primitives)**
 ```tsx
-import { ChatContainer, MessageList, MessageItem } from 'veryfront/ai/primitives';
-import { useChat } from 'veryfront/ai/react';
+import { ChatContainer, MessageList, MessageItem } from 'veryfront/react/primitives';
+import { useChat } from 'veryfront/agent/react';
 
 <ChatContainer className="your-styles">
   <MessageList>
@@ -367,8 +368,8 @@ import { useChat } from 'veryfront/ai/react';
 
 **Layer 3: Instant Results (Styled)**
 ```tsx
-import { Chat } from 'veryfront/ai/components';
-import { useChat } from 'veryfront/ai/react';
+import { Chat } from 'veryfront/react';
+import { useChat } from 'veryfront/agent/react';
 
 <Chat {...useChat({ api: '/api/chat' })} />
 // 🎉 Production-ready chat in 1 line!
@@ -377,7 +378,8 @@ import { useChat } from 'veryfront/ai/react';
 ### 5. MCP Server
 
 ```typescript
-import { discoverAll, createMCPServer } from 'veryfront/ai';
+import { discoverAll } from 'veryfront/cli';
+import { createMCPServer } from 'veryfront/mcp';
 
 // Auto-discover components
 await discoverAll({ baseDir: '.' });
@@ -519,33 +521,22 @@ ai/prompts/system.ts       → system prompt
 
 ### Core Functions
 ```typescript
-import {
-  // Factories
-  agent,
-  tool,
-  resource,
-  prompt,
+// First-class AI modules
+import { agent, agentAsTool, createMemory } from 'veryfront/agent';
+import { tool } from 'veryfront/tool';
+import { resource } from 'veryfront/resource';
+import { prompt } from 'veryfront/prompt';
+import { workflow } from 'veryfront/workflow';
 
-  // Providers
-  initializeProviders,
+// Providers
+import { initializeProviders } from 'veryfront/provider';
 
-  // Platform
-  detectPlatform,
-  getPlatformCapabilities,
+// Platform
+import { detectPlatform, getPlatformCapabilities } from 'veryfront/platform';
 
-  // Discovery
-  discoverAll,
-
-  // MCP Server
-  createMCPServer,
-
-  // Composition
-  agentAsTool,
-  createWorkflow,
-
-  // Memory
-  createMemory,
-} from 'veryfront/ai';
+// Discovery & MCP
+import { discoverAll } from 'veryfront/cli';
+import { createMCPServer } from 'veryfront/mcp';
 ```
 
 ### React Hooks (Layer 1)
@@ -555,7 +546,7 @@ import {
   useAgent,
   useCompletion,
   useStreaming,
-} from 'veryfront/ai/react';
+} from 'veryfront/agent/react';
 ```
 
 ### Primitives (Layer 2)
@@ -570,7 +561,7 @@ import {
   AgentStatus,
   ToolInvocation,
   ToolResult,
-} from 'veryfront/ai/primitives';
+} from 'veryfront/react/primitives';
 ```
 
 ### Styled Components (Layer 3)
@@ -580,7 +571,7 @@ import {
   AgentCard,
   Message,
   StreamingMessage,
-} from 'veryfront/ai/components';
+} from 'veryfront/react';
 ```
 
 ---
@@ -590,8 +581,8 @@ import {
 ### 1. Simple Chat (5 lines)
 
 ```tsx
-import { Chat } from 'veryfront/ai/components';
-import { useChat } from 'veryfront/ai/react';
+import { Chat } from 'veryfront/react';
+import { useChat } from 'veryfront/agent/react';
 
 export default function App() {
   const chat = useChat({ api: '/api/chat' });
@@ -633,8 +624,8 @@ const result = await workflow.execute('Topic');
 ### 4. Custom UI with Primitives
 
 ```tsx
-import { ChatContainer, MessageList, MessageItem } from 'veryfront/ai/primitives';
-import { useChat } from 'veryfront/ai/react';
+import { ChatContainer, MessageList, MessageItem } from 'veryfront/react/primitives';
+import { useChat } from 'veryfront/agent/react';
 
 <ChatContainer className="your-design-system">
   <MessageList>

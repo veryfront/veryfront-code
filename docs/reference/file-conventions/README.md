@@ -1087,7 +1087,7 @@ Special files for AI features.
 
 ```typescript
 // ai/tools/search.ts
-import { tool } from 'veryfront/ai';
+import { tool } from 'veryfront/tool';
 import { z } from 'zod';
 
 export default tool({
@@ -1120,7 +1120,7 @@ export default tool({
 
 ```typescript
 // ai/agents/assistant.ts
-import { agent } from 'veryfront/ai';
+import { agent } from 'veryfront/agent';
 
 export default agent({
   model: 'openai/gpt-4',

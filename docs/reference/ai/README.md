@@ -14,7 +14,7 @@ Build AI-powered applications with agents, tools, and service integrations.
 ## Quick Example
 
 ```typescript
-import { agent } from "veryfront/ai";
+import { agent } from 'veryfront/agent';
 
 const assistant = agent({
   model: "openai/gpt-4",

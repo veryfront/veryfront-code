@@ -1,7 +1,7 @@
 # Veryfront AI Primitives
 
 **Status**: Phase 5 Complete (Unstyled Primitives)
-**Module**: `veryfront/ai/primitives`
+**Module**: `veryfront/react/primitives`
 **Layer**: 2 (Unstyled - Maximum flexibility)
 
 ## Overview
@@ -206,8 +206,8 @@ import {
   MessageItem,
   MessageList,
   SubmitButton,
-} from "veryfront/ai/primitives";
-import { useChat } from "veryfront/ai/react";
+} from "veryfront/react/primitives";
+import { useChat } from "veryfront/agent/react";
 
 export function DesignSystemChat() {
   const chat = useChat({ api: "/api/chat" });
@@ -307,7 +307,7 @@ const StyledMessage = styled(MessageItem)`
 
 ```tsx
 import { Card } from "@/components/ui/card";
-import { ChatContainer, MessageList } from "veryfront/ai/primitives";
+import { ChatContainer, MessageList } from "veryfront/react/primitives";
 
 <Card>
   <ChatContainer>

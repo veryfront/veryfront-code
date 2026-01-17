@@ -6,7 +6,13 @@ Complete module reference for working with Veryfront's source code.
 
 | Module               | Export Alias                                                                     | Purpose                                   |
 | -------------------- | -------------------------------------------------------------------------------- | ----------------------------------------- |
-| **`ai/`**            | `veryfront/ai`                                                                   | AI agent runtime, MCP integration         |
+| **`agent/`**         | `veryfront/agent`                                                                | AI agent runtime, memory, composition     |
+| **`tool/`**          | `veryfront/tool`                                                                 | Tool definitions and registry             |
+| **`workflow/`**      | `veryfront/workflow`                                                             | Durable workflow engine                   |
+| **`prompt/`**        | `veryfront/prompt`                                                               | Prompt templates and registry             |
+| **`resource/`**      | `veryfront/resource`                                                             | Resource definitions and registry         |
+| **`mcp/`**           | `veryfront/mcp`                                                                  | Model Context Protocol server             |
+| **`provider/`**      | `veryfront/provider`                                                             | AI model providers (OpenAI, Anthropic)    |
 | **`build/`**         | `@veryfront/build`                                                               | Build system, bundler, asset optimization |
 | **`cli/`**           | `veryfront/cli`                                                                  | Command-line interface                    |
 | **`core/`**          | `@veryfront/types`, `@veryfront/config`, `@veryfront/utils`, `@veryfront/errors` | Foundation types, config, utilities       |
@@ -384,30 +390,49 @@ Complete module reference for working with Veryfront's source code.
 
 ---
 
-### `ai/` - AI Integration
+### AI Modules - First-Class Citizens
 
-**Purpose**: AI agent runtime, MCP server, provider integrations
+AI capabilities are organized into 7 first-class modules:
 
-**Exports**: `veryfront/ai`
+#### `agent/` - Agent Runtime
+**Exports**: `veryfront/agent`
+- Agent factory and runtime execution
+- Memory management (conversation, buffer, summary)
+- Agent composition (`agentAsTool`)
+- React hooks (`useChat`, `useAgent`)
+- Middleware (rate limiting, caching, cost tracking)
 
-**Dependencies**: `@veryfront/types`, `@veryfront/utils`
+#### `tool/` - Tool System
+**Exports**: `veryfront/tool`
+- Tool factory and registry
+- Tool execution engine
+- Zod schema to JSON schema conversion
 
-**Key Features**:
+#### `workflow/` - Workflow Engine
+**Exports**: `veryfront/workflow`
+- Durable DAG-based workflow execution
+- Step, parallel, and branch primitives
+- React hooks (`useWorkflow`)
 
-- Agent runtime with tool execution
-- MCP (Model Context Protocol) server
+#### `prompt/` - Prompt Templates
+**Exports**: `veryfront/prompt`
+- Prompt factory and registry
+- Template rendering
+
+#### `resource/` - Resources
+**Exports**: `veryfront/resource`
+- Resource factory and registry
+- MCP resource protocol
+
+#### `mcp/` - MCP Server
+**Exports**: `veryfront/mcp`
+- Model Context Protocol server
+- Aggregates tools, prompts, resources
+
+#### `provider/` - AI Providers
+**Exports**: `veryfront/provider`
 - Provider adapters (OpenAI, Anthropic, Google)
-- Memory management
-- Production features (rate limiting, caching, cost tracking, security)
-- React hooks for streaming responses
-
-**Directories**:
-
-- `agent/` - Agent factory and runtime
-- `mcp/` - MCP server implementation
-- `providers/` - AI provider integrations
-- `production/` - Rate limiting, caching, security
-- `react/` - React hooks and components
+- Provider initialization and management
 
 ---
 
@@ -468,13 +493,16 @@ import { serverLogger } from "@veryfront/utils/logger/logger.ts";
 
 ```
 Foundation (0 deps)
-└─ core/, platform/
+└─ core/, platform/, provider/
 
 Infrastructure (foundation only)
 └─ security/, routing/, middleware/, module-system/
 
+AI Modules (foundation + tool)
+└─ tool/, agent/, workflow/, prompt/, resource/, mcp/
+
 Features (foundation + infrastructure)
-└─ data/, html/, react/, rendering/, build/, observability/, ai/
+└─ data/, html/, react/, rendering/, build/, observability/
 
 Orchestrators (most modules)
 └─ server/, cli/

@@ -34,7 +34,7 @@ deno add npm:veryfront npm:ai npm:zod
 
 `ai/agents/assistant.ts`:
 ```typescript
-import { agent } from 'veryfront/ai';
+import { agent } from 'veryfront/agent';
 
 export default agent({
   model: 'openai/gpt-4',
@@ -47,7 +47,7 @@ export default agent({
 
 `ai/tools/calculator.ts`:
 ```typescript
-import { tool } from 'veryfront/ai';
+import { tool } from 'veryfront/tool';
 import { z } from 'zod';
 
 export default tool({
@@ -73,8 +73,8 @@ export async function POST(req: Request) {
 `app/chat/page.tsx`:
 ```tsx
 'use client';
-import { Chat } from 'veryfront/ai/components';
-import { useChat } from 'veryfront/ai/react';
+import { Chat } from 'veryfront/react';
+import { useChat } from 'veryfront/agent/react';
 
 export default function ChatPage() {
   return <Chat {...useChat({ api: '/api/chat' })} />;
@@ -95,17 +95,17 @@ Visit `localhost:3000/chat` - your agent can now use the calculator tool.
 
 **Styled components** (production-ready):
 ```tsx
-import { Chat } from 'veryfront/ai/components';
+import { Chat } from 'veryfront/react';
 ```
 
 **Primitives** (bring your own styles):
 ```tsx
-import { ChatContainer, MessageList, MessageItem } from 'veryfront/ai/primitives';
+import { ChatContainer, MessageList, MessageItem } from 'veryfront/react/primitives';
 ```
 
 **Headless hooks** (total control):
 ```tsx
-import { useChat } from 'veryfront/ai/react';
+import { useChat } from 'veryfront/agent/react';
 ```
 
 ---
@@ -118,7 +118,7 @@ MCP exposes your tools and resources to external AI applications. Enabled by def
 
 `ai/resources/users/profile.ts`:
 ```typescript
-import { resource } from 'veryfront/ai';
+import { resource } from 'veryfront/resource';
 import { z } from 'zod';
 
 export default resource({

@@ -26,7 +26,7 @@ We've successfully built a **complete AI Native App Framework** for Veryfront wi
 
 #### Agents with Multi-Step Reasoning
 ```typescript
-import { agent } from 'veryfront/ai';
+import { agent } from 'veryfront/agent';
 
 const myAgent = agent({
   model: 'openai/gpt-4',
@@ -42,7 +42,7 @@ const response = await myAgent.generate({ input: 'Hello!' });
 #### Convention-Driven Tool Creation
 ```typescript
 // ai/tools/search-web.ts → Auto-registered as "searchWeb"!
-import { tool } from 'veryfront/ai';
+import { tool } from 'veryfront/tool';
 import { z } from 'zod';
 
 export default tool({
@@ -54,7 +54,7 @@ export default tool({
 
 #### Multi-Agent Workflows
 ```typescript
-import { createWorkflow } from 'veryfront/ai';
+import { workflow } from 'veryfront/workflow';
 
 const workflow = createWorkflow({
   steps: [
@@ -68,7 +68,8 @@ const result = await workflow.execute('Topic');
 
 #### MCP Server
 ```typescript
-import { discoverAll, createMCPServer } from 'veryfront/ai';
+import { discoverAll } from 'veryfront/cli';
+import { createMCPServer } from 'veryfront/mcp';
 
 // Auto-discover all tools/resources/prompts
 await discoverAll({ baseDir: '.' });
@@ -84,7 +85,7 @@ const server = createMCPServer({
 
 #### Layer 1: Headless Hooks (Total Control)
 ```tsx
-import { useChat } from 'veryfront/ai/react';
+import { useChat } from 'veryfront/agent/react';
 
 function MyChat() {
   const { messages, input, append } = useChat({ api: '/api/chat' });
@@ -101,8 +102,8 @@ function MyChat() {
 
 #### Layer 2: Unstyled Primitives (UI Flexibility)
 ```tsx
-import { ChatContainer, MessageList, MessageItem } from 'veryfront/ai/primitives';
-import { useChat } from 'veryfront/ai/react';
+import { ChatContainer, MessageList, MessageItem } from 'veryfront/react/primitives';
+import { useChat } from 'veryfront/agent/react';
 
 function MyChat() {
   const chat = useChat({ api: '/api/chat' });
@@ -121,8 +122,8 @@ function MyChat() {
 
 #### Layer 3: Styled Components (Instant Results)
 ```tsx
-import { Chat } from 'veryfront/ai/components';
-import { useChat } from 'veryfront/ai/react';
+import { Chat } from 'veryfront/react';
+import { useChat } from 'veryfront/agent/react';
 
 export default function App() {
   const chat = useChat({ api: '/api/chat' });
@@ -134,7 +135,7 @@ export default function App() {
 
 #### Test Agents
 ```typescript
-import { testAgent, printTestResults } from 'veryfront/ai/dev';
+import { testAgent, printTestResults } from 'veryfront/agent/testing';
 
 const results = await testAgent(myAgent, [
   {
@@ -154,7 +155,7 @@ printTestResults(results);
 
 #### Test Tools
 ```typescript
-import { testTool, printToolTestResults } from 'veryfront/ai/dev';
+import { testTool, printToolTestResults } from 'veryfront/agent/testing';
 
 const results = await testTool(calculatorTool, [
   {
@@ -169,7 +170,7 @@ printToolTestResults('calculator', results);
 
 #### Inspect Execution
 ```typescript
-import { inspectAgent, printInspectionReport } from 'veryfront/ai/dev';
+import { inspectAgent, printInspectionReport } from 'veryfront/agent/testing';
 
 const report = await inspectAgent(agent, 'Test input');
 printInspectionReport(report);
@@ -185,15 +186,15 @@ printInspectionReport(report);
 The headless-first architecture solves the customization problem:
 
 ```
-Layer 3: Styled Components (veryfront/ai/components)
+Layer 3: Styled Components (veryfront/react)
 └─→ Chat, AgentCard, Message
     └─→ Built on Layer 2
 
-Layer 2: Unstyled Primitives (veryfront/ai/primitives)
+Layer 2: Unstyled Primitives (veryfront/react/primitives)
 └─→ 12 Radix UI primitives
     └─→ Uses Layer 1
 
-Layer 1: Headless Hooks (veryfront/ai/react)
+Layer 1: Headless Hooks (veryfront/agent/react)
 └─→ useChat, useAgent, useCompletion, useStreaming
     └─→ Complete logic control
 ```
@@ -204,7 +205,7 @@ Layer 1: Headless Hooks (veryfront/ai/react)
 
 **Platform Detection:**
 ```typescript
-import { detectPlatform, getPlatformCapabilities } from 'veryfront/ai';
+import { detectPlatform, getPlatformCapabilities } from 'veryfront/platform';
 
 const platform = detectPlatform();
 // Returns: 'deno' | 'node' | 'bun' | 'cloudflare-workers'
@@ -250,33 +251,22 @@ Drop files, they just work!
 
 ### Core Functions
 ```typescript
-import {
-  // Factories
-  agent,           // Create agents
-  tool,            // Create tools
-  resource,        // Create MCP resources
-  prompt,          // Create prompt templates
+// Factories - First-class modules
+import { agent, agentAsTool, createMemory } from 'veryfront/agent';
+import { tool } from 'veryfront/tool';
+import { resource } from 'veryfront/resource';
+import { prompt } from 'veryfront/prompt';
+import { workflow } from 'veryfront/workflow';
 
-  // Providers
-  initializeProviders,
+// Providers
+import { initializeProviders } from 'veryfront/provider';
 
-  // Platform
-  detectPlatform,
-  getPlatformCapabilities,
+// Platform
+import { detectPlatform, getPlatformCapabilities } from 'veryfront/platform';
 
-  // Discovery
-  discoverAll,
-
-  // MCP Server
-  createMCPServer,
-
-  // Composition
-  agentAsTool,
-  createWorkflow,
-
-  // Memory
-  createMemory,  // 3 strategies: conversation, buffer, summary
-} from 'veryfront/ai';
+// Discovery & MCP
+import { discoverAll } from 'veryfront/cli';
+import { createMCPServer } from 'veryfront/mcp';
 ```
 
 ### React Hooks (Layer 1)
@@ -286,7 +276,7 @@ import {
   useAgent,       // Agent orchestration
   useCompletion,  // Text completion
   useStreaming,   // Low-level streaming
-} from 'veryfront/ai/react';
+} from 'veryfront/agent/react';
 ```
 
 ### Primitives (Layer 2)
@@ -313,7 +303,7 @@ import {
   ToolInvocation,
   ToolResult,
   ToolList,
-} from 'veryfront/ai/primitives';
+} from 'veryfront/react/primitives';
 ```
 
 ### Styled Components (Layer 3)
@@ -323,7 +313,7 @@ import {
   AgentCard,         // Agent visualization
   Message,           // Standalone message
   StreamingMessage,  // Streaming text
-} from 'veryfront/ai/components';
+} from 'veryfront/react';
 ```
 
 ### Developer Tools
@@ -340,7 +330,7 @@ import {
   printInspectionReport,
   getRegistryOverview,
   printRegistryOverview,
-} from 'veryfront/ai/dev';
+} from 'veryfront/agent/testing';
 ```
 
 ---
@@ -351,8 +341,8 @@ import {
 
 ```tsx
 // app/chat/page.tsx
-import { Chat } from 'veryfront/ai/components';
-import { useChat } from 'veryfront/ai/react';
+import { Chat } from 'veryfront/react';
+import { useChat } from 'veryfront/agent/react';
 
 export default function ChatPage() {
   const chat = useChat({ api: '/api/chat' });
@@ -364,7 +354,7 @@ export default function ChatPage() {
 
 ```typescript
 // ai/agents/support.ts
-import { agent } from 'veryfront/ai';
+import { agent } from 'veryfront/agent';
 
 export default agent({
   model: 'openai/gpt-4',
@@ -378,7 +368,7 @@ export default agent({
 
 ```typescript
 // ai/tools/search.ts
-import { tool } from 'veryfront/ai';
+import { tool } from 'veryfront/tool';
 import { z } from 'zod';
 
 export default tool({
@@ -395,7 +385,8 @@ export default tool({
 ### 4. Auto-Discover & Run
 
 ```typescript
-import { discoverAll, initializeProviders } from 'veryfront/ai';
+import { discoverAll } from 'veryfront/cli';
+import { initializeProviders } from 'veryfront/provider';
 
 // Initialize providers
 initializeProviders({
@@ -462,7 +453,7 @@ deno run --allow-net --allow-env examples/ai-dev-tools/example.ts
 ### Test Your Agents
 
 ```typescript
-import { testAgent } from 'veryfront/ai/dev';
+import { testAgent } from 'veryfront/agent/testing';
 
 const results = await testAgent(myAgent, [
   { name: 'Test 1', input: 'Hello', expected: /hi/i },

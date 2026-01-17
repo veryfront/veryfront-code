@@ -16,7 +16,7 @@ React hooks for building AI-powered interfaces.
 ## Import
 
 ```typescript
-import { useChat, useAgent, useCompletion } from "veryfront/ai/react";
+import { useChat, useAgent, useCompletion } from 'veryfront/agent/react';
 ```
 
 ## useChat
@@ -58,8 +58,8 @@ const chat = useChat(options?: ChatOptions);
 ```tsx
 "use client";
 
-import { useChat } from "veryfront/ai/react";
-import { getTextFromParts } from "veryfront/ai";
+import { useChat } from 'veryfront/agent/react';
+import { getTextFromParts } from "veryfront/agent";
 
 export default function Chat() {
   const { messages, input, handleInputChange, handleSubmit, isLoading } = useChat();
@@ -147,7 +147,7 @@ const agent = useAgent(agentId: string, options?: AgentOptions);
 ```tsx
 "use client";
 
-import { useAgent } from "veryfront/ai/react";
+import { useAgent } from 'veryfront/agent/react';
 
 export default function Calculator() {
   const { result, isLoading, execute, error } = useAgent("math-agent");
@@ -232,7 +232,7 @@ const completion = useCompletion(options?: CompletionOptions);
 ```tsx
 "use client";
 
-import { useCompletion } from "veryfront/ai/react";
+import { useCompletion } from 'veryfront/agent/react';
 
 export default function TextGenerator() {
   const { completion, input, handleInputChange, handleSubmit, isLoading } =
@@ -287,7 +287,7 @@ interface Message {
 Use `getTextFromParts()` to extract text content:
 
 ```typescript
-import { getTextFromParts } from "veryfront/ai";
+import { getTextFromParts } from "veryfront/agent";
 
 const text = getTextFromParts(message.parts);
 ```
