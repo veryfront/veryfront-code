@@ -20,7 +20,9 @@ import {
   setSpanAttributes,
   startServerSpan,
   withContext,
+  withSpan,
 } from "@veryfront/observability/tracing/otlp-setup.ts";
+import { SpanNames } from "@veryfront/observability/tracing/span-names.ts";
 import { getTimeoutFromEnv } from "../../middleware/builtin/timeout.ts";
 
 // Import handler system (from new location)
@@ -395,9 +397,10 @@ export function createVeryfrontHandler(
               hasProxyToken: !!proxyToken,
               hasConfigToken: !!config.fs.veryfront.apiToken,
             });
-            const lookupResult = await timeAsync(
-              "domain:lookup",
+            const lookupResult = await withSpan(
+              SpanNames.DOMAIN_LOOKUP,
               () => lookupProjectByDomain(lookupHost, apiConfig),
+              { "domain.host": lookupHost, "domain.original_host": host },
             );
 
             if (lookupResult) {
@@ -449,13 +452,14 @@ export function createVeryfrontHandler(
 
           if (effectiveToken) {
             // Use the domain lookup API with the Veryfront domain
-            const lookupResult = await timeAsync(
-              "domain:release-lookup",
+            const lookupResult = await withSpan(
+              SpanNames.DOMAIN_RELEASE_LOOKUP,
               () =>
                 lookupProjectByDomain(host, {
                   apiBaseUrl: baseUrl,
                   apiToken: effectiveToken,
                 }),
+              { "domain.host": host, "domain.project_slug": projectSlug },
             );
 
             if (lookupResult?.release_id) {
@@ -587,7 +591,15 @@ export function createVeryfrontHandler(
         await timeAsync("metrics:inc-request", () => metrics.incRequest());
 
         // Execute handler chain
-        const response = await timeAsync("handler:execute", () => registry.execute(req, ctx));
+        const response = await withSpan(
+          SpanNames.HANDLER_EXECUTE,
+          () => registry.execute(req, ctx),
+          {
+            "handler.project_slug": projectSlug || "unknown",
+            "handler.path": _url.pathname,
+            "handler.method": req.method,
+          },
+        );
 
         // If no handler produced a response, this should not happen
         // as NotFoundHandler is the fallback

@@ -10,6 +10,8 @@ import { DEFAULT_PORT } from "./defaults.ts";
 import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
 import { getEsbuildLoader } from "../utils/path-utils.ts";
 import { getErrorMessage } from "../errors/veryfront-error.ts";
+import { withSpan } from "@veryfront/observability/tracing/otlp-setup.ts";
+import { SpanNames } from "@veryfront/observability/tracing/span-names.ts";
 
 export type { VeryfrontConfig } from "./types.ts";
 
@@ -195,53 +197,64 @@ async function loadConfigFromVirtualFS(
   projectDir: string,
   adapter: RuntimeAdapter,
 ): Promise<VeryfrontConfig | null> {
-  const fs = createFileSystem();
+  return withSpan(
+    SpanNames.CONFIG_LOAD_PROJECT,
+    async () => {
+      const fs = createFileSystem();
 
-  // Read config content via adapter
-  const content = await adapter.fs.readFile(configPath);
-  const source = typeof content === "string" ? content : new TextDecoder().decode(content);
+      // Read config content via adapter
+      const content = await adapter.fs.readFile(configPath);
+      const source = typeof content === "string" ? content : new TextDecoder().decode(content);
 
-  serverLogger.debug(`[CONFIG] Loading config from virtual FS: ${configPath}`);
+      serverLogger.debug(`[CONFIG] Loading config from virtual FS: ${configPath}`);
 
-  const loader = getEsbuildLoader(configPath);
+      const loader = getEsbuildLoader(configPath);
 
-  // Transpile TypeScript to JavaScript using esbuild
-  const { build } = await import("esbuild");
+      // Transpile TypeScript to JavaScript using esbuild
+      const transpileResult = await withSpan(
+        SpanNames.CONFIG_TRANSPILE,
+        async () => {
+          const { build } = await import("esbuild");
+          return build({
+            bundle: false, // Config files shouldn't need bundling
+            write: false,
+            format: "esm",
+            platform: "neutral",
+            target: "es2022",
+            stdin: {
+              contents: source,
+              loader,
+              resolveDir: dirname(configPath),
+              sourcefile: configPath,
+            },
+          });
+        },
+        { "config.path": configPath, "config.loader": loader },
+      );
 
-  const result = await build({
-    bundle: false, // Config files shouldn't need bundling
-    write: false,
-    format: "esm",
-    platform: "neutral",
-    target: "es2022",
-    stdin: {
-      contents: source,
-      loader,
-      resolveDir: dirname(configPath),
-      sourcefile: configPath,
+      if (transpileResult.errors && transpileResult.errors.length > 0) {
+        const first = transpileResult.errors[0]?.text || "unknown error";
+        throw new ConfigValidationError(`Failed to transpile config: ${first}`);
+      }
+
+      const js = transpileResult.outputFiles?.[0]?.text ?? "export default {}";
+
+      // Write to temp file and import
+      const tempDir = await fs.makeTempDir({ prefix: "vf-config-" });
+      const tempFile = join(tempDir, "config.mjs");
+
+      try {
+        await fs.writeTextFile(tempFile, js);
+        const configModule = await import(`file://${tempFile}?v=${Date.now()}`);
+        const userConfig = configModule.default || configModule;
+
+        return validateAndCacheConfig(userConfig, projectDir);
+      } finally {
+        await fs.remove(tempDir, { recursive: true });
+      }
     },
-  });
-
-  if (result.errors && result.errors.length > 0) {
-    const first = result.errors[0]?.text || "unknown error";
-    throw new ConfigValidationError(`Failed to transpile config: ${first}`);
-  }
-
-  const js = result.outputFiles?.[0]?.text ?? "export default {}";
-
-  // Write to temp file and import
-  const tempDir = await fs.makeTempDir({ prefix: "vf-config-" });
-  const tempFile = join(tempDir, "config.mjs");
-
-  try {
-    await fs.writeTextFile(tempFile, js);
-    const configModule = await import(`file://${tempFile}?v=${Date.now()}`);
-    const userConfig = configModule.default || configModule;
-
-    return validateAndCacheConfig(userConfig, projectDir);
-  } finally {
-    await fs.remove(tempDir, { recursive: true });
-  }
+    { "config.path": configPath, "config.project_dir": projectDir, "config.source": "virtual_fs" },
+  );
 }
 
 function validateAndCacheConfig(
@@ -289,35 +302,41 @@ export async function getConfig(
   projectDir: string,
   adapter: RuntimeAdapter,
 ): Promise<VeryfrontConfig> {
-  const cached = configCacheByProject.get(projectDir);
-  if (cached && cached.revision === cacheRevision) {
-    return cached.config;
-  }
+  return withSpan(
+    SpanNames.CONFIG_LOAD,
+    async () => {
+      const cached = configCacheByProject.get(projectDir);
+      if (cached && cached.revision === cacheRevision) {
+        return cached.config;
+      }
 
-  const configFiles = ["veryfront.config.js", "veryfront.config.ts", "veryfront.config.mjs"];
+      const configFiles = ["veryfront.config.js", "veryfront.config.ts", "veryfront.config.mjs"];
 
-  for (const configFile of configFiles) {
-    const configPath = join(projectDir, configFile);
+      for (const configFile of configFiles) {
+        const configPath = join(projectDir, configFile);
 
-    const exists = await adapter.fs.exists(configPath);
-    if (!exists) continue;
+        const exists = await adapter.fs.exists(configPath);
+        if (!exists) continue;
 
-    try {
-      const merged = await loadAndMergeConfig(configPath, projectDir, adapter);
-      if (merged) return merged;
-    } catch (error) {
-      if (isConfigError(error)) throw error;
+        try {
+          const merged = await loadAndMergeConfig(configPath, projectDir, adapter);
+          if (merged) return merged;
+        } catch (error) {
+          if (isConfigError(error)) throw error;
 
-      // Expected when .ts exists but .js is tried first
-      serverLogger.debug(`[CONFIG] Failed to load ${configFile}, trying next:`, {
-        error: getErrorMessage(error),
-      });
-    }
-  }
+          // Expected when .ts exists but .js is tried first
+          serverLogger.debug(`[CONFIG] Failed to load ${configFile}, trying next:`, {
+            error: getErrorMessage(error),
+          });
+        }
+      }
 
-  const defaultConfig = DEFAULT_CONFIG as VeryfrontConfig;
-  configCacheByProject.set(projectDir, { revision: cacheRevision, config: defaultConfig });
-  return defaultConfig;
+      const defaultConfig = DEFAULT_CONFIG as VeryfrontConfig;
+      configCacheByProject.set(projectDir, { revision: cacheRevision, config: defaultConfig });
+      return defaultConfig;
+    },
+    { "config.project_dir": projectDir },
+  );
 }
 
 export function clearConfigCache() {
