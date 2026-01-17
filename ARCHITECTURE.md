@@ -79,9 +79,17 @@ Veryfront supports multiple rendering strategies that can be mixed within the sa
 ┌────────────────▼────────────────────────────┐
 │          Foundation Layer                   │
 │  ┌──────────┬──────────┬─────────────┐     │
-│  │   Core   │ Platform │      AI     │     │
-│  │ (Types,  │ Adapters │   Runtime   │     │
-│  │  Config) │ (Deno+)  │    (MCP)    │     │
+│  │   Core   │ Platform │   Provider  │     │
+│  │ (Types,  │ Adapters │  (OpenAI,   │     │
+│  │  Config) │ (Deno+)  │  Anthropic) │     │
+│  └──────────┴──────────┴─────────────┘     │
+│  ┌──────────┬──────────┬─────────────┐     │
+│  │  Agent   │   Tool   │  Workflow   │     │
+│  │ Runtime  │ Registry │   Engine    │     │
+│  └──────────┴──────────┴─────────────┘     │
+│  ┌──────────┬──────────┬─────────────┐     │
+│  │  Prompt  │ Resource │     MCP     │     │
+│  │ Registry │ Registry │   Server    │     │
 │  └──────────┴──────────┴─────────────┘     │
 └─────────────────────────────────────────────┘
 ```
@@ -201,13 +209,22 @@ import { createRenderer } from "../../../../rendering/index.ts";
 
 ## AI Integration
 
-Veryfront includes first-class AI agent support via the Model Context Protocol (MCP):
+Veryfront includes first-class AI agent support via dedicated modules:
 
-- **Agent Runtime**: Execute AI agents with tool calling
-- **MCP Server**: Standard protocol for AI context
-- **Provider Adapters**: OpenAI, Anthropic, Google
-- **Production Features**: Rate limiting, caching, cost tracking
-- **React Integration**: Hooks for streaming responses
+| Module | Import | Purpose |
+|--------|--------|---------|
+| **Agent** | `veryfront/agent` | Agent runtime, memory, composition |
+| **Tool** | `veryfront/tool` | Tool definitions, registry, execution |
+| **Workflow** | `veryfront/workflow` | Durable DAG-based workflow engine |
+| **Prompt** | `veryfront/prompt` | Prompt templates and registry |
+| **Resource** | `veryfront/resource` | Resource definitions and registry |
+| **MCP** | `veryfront/mcp` | Model Context Protocol server |
+| **Provider** | `veryfront/provider` | OpenAI, Anthropic, Google adapters |
+
+**Features:**
+- Production middleware: rate limiting, caching, cost tracking
+- React hooks for streaming responses (`useChat`, `useAgent`)
+- Auto-discovery of tools, prompts, and resources
 
 ## Performance Strategy
 
