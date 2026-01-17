@@ -1,7 +1,7 @@
 import { bold, cyan, dim, red, yellow } from "@veryfront/compat/console";
 import { ERROR_SOLUTIONS } from "./error-catalog.ts";
 import { identifyError } from "./error-identifier.ts";
-import { type BorderStyle, box } from "../../../cli/ui/box.ts";
+import { type BorderStyle, box } from "@veryfront/cli/ui";
 
 const errorColor = "\x1b[38;2;239;68;68m"; // Red
 
