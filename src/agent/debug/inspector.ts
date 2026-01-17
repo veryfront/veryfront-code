@@ -7,8 +7,7 @@
  */
 
 import type { Agent, Message } from "../types.ts";
-// Note: getMCPRegistry will be updated to import from veryfront/mcp once MCP module is moved
-import { getMCPRegistry, getMCPStats } from "@veryfront/ai/mcp/registry.ts";
+import { getMCPRegistry, getMCPStats } from "@veryfront/mcp";
 import { agentLogger } from "@veryfront/utils/logger/logger.ts";
 
 export interface InspectionReport {
