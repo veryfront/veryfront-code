@@ -53,8 +53,8 @@ function captureOutput(fn: () => void | Promise<void>): { stdout: string; stderr
   return { stdout, stderr };
 }
 
-// Helper for async capture
-async function captureAsyncOutput(
+// Helper for async capture (available for future tests)
+async function _captureAsyncOutput(
   fn: () => Promise<void>,
 ): Promise<{ stdout: string; stderr: string }> {
   const originalLog = console.log;
@@ -63,15 +63,15 @@ async function captureAsyncOutput(
   let stdout = "";
   let stderr = "";
 
-  console.log = (...args: any[]) => {
+  console.log = (...args: unknown[]) => {
     stdout += `${args.join(" ")}\n`;
   };
 
-  console.error = (...args: any[]) => {
+  console.error = (...args: unknown[]) => {
     stderr += `${args.join(" ")}\n`;
   };
 
-  console.warn = (...args: any[]) => {
+  console.warn = (...args: unknown[]) => {
     stderr += `${args.join(" ")}\n`;
   };
 
@@ -85,6 +85,7 @@ async function captureAsyncOutput(
 
   return { stdout, stderr };
 }
+void _captureAsyncOutput; // Prevent unused warning
 
 Deno.test("showLogo outputs Veryfront in cyan", () => {
   const { stdout } = captureOutput(() => showLogo());

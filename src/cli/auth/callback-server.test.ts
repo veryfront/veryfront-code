@@ -2,7 +2,7 @@
  * Callback Server Tests
  */
 
-import { assertEquals, assertExists } from "https://deno.land/std@0.220.0/assert/mod.ts";
+import { assertEquals, assertExists } from "jsr:@std/assert@1";
 import { afterEach, describe, it } from "@std/testing/bdd.ts";
 import { type CallbackServer, getCallbackUrl, startCallbackServer } from "./callback-server.ts";
 

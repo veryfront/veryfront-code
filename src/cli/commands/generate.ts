@@ -2,7 +2,11 @@ import { join } from "@std/path";
 import { getConfig } from "@veryfront/config";
 import { cliLogger } from "@veryfront/utils";
 import { createError, toError } from "@veryfront/errors/veryfront-error.ts";
-import { createFileSystem, type FileSystem } from "@veryfront/platform/compat/fs.ts";
+import {
+  createFileSystem,
+  type FileSystem,
+  isAlreadyExistsError,
+} from "@veryfront/platform/compat/fs.ts";
 import { generateIntegration } from "./generate/integration-generator.ts";
 
 let fs: FileSystem;
@@ -13,11 +17,7 @@ async function ensureDir(path: string) {
     await fs.mkdir(path, { recursive: true });
   } catch (error) {
     // Directory might already exist, which is fine
-    // Check for EEXIST/AlreadyExists errors cross-platform
-    const code = (error as { code?: string })?.code;
-    const isAlreadyExists = code === "EEXIST" ||
-      (typeof Deno !== "undefined" && error instanceof Deno.errors.AlreadyExists);
-    if (!isAlreadyExists) {
+    if (!isAlreadyExistsError(error)) {
       throw error;
     }
   }

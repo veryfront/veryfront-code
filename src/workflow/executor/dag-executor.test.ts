@@ -2,8 +2,8 @@
  * DAG Executor Tests
  */
 
-import { assertEquals } from "https://deno.land/std@0.220.0/assert/mod.ts";
-import { beforeEach, describe, it } from "https://deno.land/std@0.220.0/testing/bdd.ts";
+import { assertEquals } from "@std/assert";
+import { beforeEach, describe, it } from "@std/testing/bdd.ts";
 import { DAGExecutor } from "./dag-executor.ts";
 import { StepExecutor } from "./step-executor.ts";
 import { step } from "../dsl/step.ts";

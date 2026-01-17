@@ -2,7 +2,7 @@
  * Token Store Tests
  */
 
-import { assertEquals, assertExists } from "https://deno.land/std@0.220.0/assert/mod.ts";
+import { assertEquals, assertExists } from "jsr:@std/assert@1";
 import { afterEach, beforeEach, describe, it } from "@std/testing/bdd.ts";
 import { deleteToken, getTokenLocation, readToken, saveToken } from "./token-store.ts";
 

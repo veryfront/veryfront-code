@@ -3,12 +3,17 @@
  *
  * Interactive app-like CLI experience with dashboard, project navigation,
  * and MCP integration for coding agents.
- *
- * Note: This module uses Deno-specific APIs (Deno.stdin, Deno.cwd) for terminal I/O.
- * This is acceptable for CLI tools that run exclusively in Deno.
+ * Uses cross-runtime platform abstractions for terminal I/O.
  */
 
-import { cwd, writeStdout } from "@veryfront/platform/compat/process.ts";
+import {
+  cwd,
+  exit,
+  isInteractive,
+  isStdoutTTY,
+  writeStdout,
+} from "@veryfront/platform/compat/process.ts";
+import { getStdinReader, setRawMode } from "@veryfront/platform/compat/stdin.ts";
 import { cursor, screen, SPINNER_FRAMES } from "../ui/ansi.ts";
 import { brand, dim, success } from "../ui/colors.ts";
 import { moveDown, moveUp, selectByNumber } from "./components/list-select.ts";
@@ -87,7 +92,7 @@ export function createApp(config: AppConfig): App {
 
   // Check if running in interactive TTY mode (must be defined early for closures)
   // Force non-interactive if headless flag is set (for coding agents)
-  const isInteractive = !config.headless && Deno.stdin.isTerminal() && Deno.stdout.isTerminal();
+  const isInteractiveMode = !config.headless && isInteractive() && isStdoutTTY();
 
   // Initialize state with config
   state = setProjects(
@@ -273,7 +278,7 @@ export function createApp(config: AppConfig): App {
     }
 
     // Clear and render (only in interactive mode)
-    if (isInteractive) {
+    if (isInteractiveMode) {
       write(cursor.moveTo(1, 1) + screen.clearDown);
       write(parts.join("\n"));
       // Cursor is rendered visually as inverse video in the input component,
@@ -284,7 +289,7 @@ export function createApp(config: AppConfig): App {
   // Update state and re-render
   function update(updater: StateUpdater) {
     state = updater(state);
-    if (isInteractive) {
+    if (isInteractiveMode) {
       render();
     }
   }
@@ -309,12 +314,12 @@ export function createApp(config: AppConfig): App {
   // Handle keyboard input
   async function handleInput() {
     // Skip interactive input if not a TTY (e.g., running in background or CI)
-    if (!Deno.stdin.isTerminal()) {
+    if (!isInteractive()) {
       return;
     }
 
-    Deno.stdin.setRaw(true);
-    const reader = Deno.stdin.readable.getReader();
+    setRawMode(true);
+    const reader = getStdinReader();
     const decoder = new TextDecoder();
 
     try {
@@ -328,7 +333,7 @@ export function createApp(config: AppConfig): App {
     } finally {
       reader.releaseLock();
       try {
-        Deno.stdin.setRaw(false);
+        setRawMode(false);
       } catch {
         // Ignore if stdin is already closed
       }
@@ -365,7 +370,7 @@ export function createApp(config: AppConfig): App {
     // Ctrl+C or q to quit (q only on dashboard and not in input mode)
     if (key === "\x03" || (key === "q" && state.view === "dashboard")) {
       stop();
-      Deno.exit(0);
+      exit(0);
     }
 
     // Escape - Go back from any view
@@ -615,7 +620,7 @@ export function createApp(config: AppConfig): App {
   function start() {
     running = true;
 
-    if (isInteractive) {
+    if (isInteractiveMode) {
       // Enter alternate screen and hide cursor
       write(screen.altOn + cursor.hide);
 
@@ -643,7 +648,7 @@ export function createApp(config: AppConfig): App {
     running = false;
     stopSpinner();
 
-    if (isInteractive) {
+    if (isInteractiveMode) {
       // Restore terminal
       write(cursor.show + screen.altOff);
     }

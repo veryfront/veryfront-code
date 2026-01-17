@@ -2,8 +2,8 @@
  * Workflow Types Tests
  */
 
-import { assertEquals, assertThrows } from "https://deno.land/std@0.220.0/assert/mod.ts";
-import { describe, it } from "https://deno.land/std@0.220.0/testing/bdd.ts";
+import { assertEquals, assertThrows } from "@std/assert";
+import { describe, it } from "@std/testing/bdd.ts";
 import { generateId, parseDuration, validateRetryConfig } from "./types.ts";
 
 describe("parseDuration", () => {

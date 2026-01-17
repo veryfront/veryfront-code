@@ -4,7 +4,7 @@
  * These tests verify the cross-runtime filesystem abstractions work correctly.
  */
 
-import { assertEquals, assertExists, assertRejects } from "https://deno.land/std@0.220.0/assert/mod.ts";
+import { assertEquals, assertExists } from "@std/assert";
 import { afterAll, beforeAll, describe, it } from "@std/testing/bdd.ts";
 import {
   chmod,

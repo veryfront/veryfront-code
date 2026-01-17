@@ -7,7 +7,7 @@
  * @module build/transforms/mdx/esm-module-loader/loader
  */
 
-import { join } from "https://deno.land/std@0.220.0/path/mod.ts";
+import { join } from "@std/path";
 import React from "react";
 import { rendererLogger as logger } from "@veryfront/utils";
 import { getCacheNamespace } from "@veryfront/utils/cache/keys/namespace.ts";

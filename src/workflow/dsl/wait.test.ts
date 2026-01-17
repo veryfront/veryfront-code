@@ -2,8 +2,8 @@
  * Wait DSL Tests
  */
 
-import { assertEquals } from "https://deno.land/std@0.220.0/assert/mod.ts";
-import { describe, it } from "https://deno.land/std@0.220.0/testing/bdd.ts";
+import { assertEquals } from "@std/assert";
+import { describe, it } from "@std/testing/bdd.ts";
 import { delay, waitForApproval, waitForEvent } from "./wait.ts";
 import type { WaitNodeConfig } from "../types.ts";
 

@@ -2,7 +2,7 @@
  * Tests for Stream Utilities
  */
 
-import { assertEquals } from "https://deno.land/std@0.220.0/assert/mod.ts";
+import { assertEquals } from "@std/assert";
 import { streamToString } from "./stream-utils.ts";
 
 Deno.test("streamToString - converts simple stream to string", async () => {

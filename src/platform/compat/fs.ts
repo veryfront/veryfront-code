@@ -404,3 +404,39 @@ export function makeTempDir(options?: { prefix?: string }): Promise<string> {
 export function chmod(path: string, mode: number): Promise<void> {
   return getFs().chmod(path, mode);
 }
+
+// ============================================================================
+// Error Type Checking Helpers
+// ============================================================================
+
+/**
+ * Check if an error is a "not found" error (file/directory doesn't exist).
+ * Works across Deno (Deno.errors.NotFound) and Node.js/Bun (ENOENT).
+ */
+export function isNotFoundError(error: unknown): boolean {
+  // Deno NotFound error
+  if (isDeno && error instanceof (globalThis as any).Deno.errors.NotFound) {
+    return true;
+  }
+  // Node.js/Bun ENOENT
+  if ((error as NodeJS.ErrnoException)?.code === "ENOENT") {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Check if an error is an "already exists" error (file/directory already exists).
+ * Works across Deno (Deno.errors.AlreadyExists) and Node.js/Bun (EEXIST).
+ */
+export function isAlreadyExistsError(error: unknown): boolean {
+  // Deno AlreadyExists error
+  if (isDeno && error instanceof (globalThis as any).Deno.errors.AlreadyExists) {
+    return true;
+  }
+  // Node.js/Bun EEXIST
+  if ((error as NodeJS.ErrnoException)?.code === "EEXIST") {
+    return true;
+  }
+  return false;
+}

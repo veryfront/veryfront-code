@@ -7,7 +7,7 @@
  * @module build/transforms/mdx/esm-module-loader/module-fetcher
  */
 
-import { join, posix } from "https://deno.land/std@0.220.0/path/mod.ts";
+import { join, posix } from "@std/path";
 import { rendererLogger as logger } from "@veryfront/utils";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import { transformToESM } from "../../../esm-transform.ts";

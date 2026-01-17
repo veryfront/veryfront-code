@@ -5,7 +5,7 @@
  * and powerful scaffolding capabilities with guardrails.
  */
 
-import { z } from "https://deno.land/x/zod@v3.22.4/mod.ts";
+import { z } from "zod";
 import { createFileSystem, type FileSystem } from "@veryfront/platform/compat/fs.ts";
 import { join } from "@veryfront/platform/compat/path/index.ts";
 import { cwd, getEnv } from "@veryfront/platform/compat/process.ts";

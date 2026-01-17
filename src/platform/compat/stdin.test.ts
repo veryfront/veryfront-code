@@ -6,7 +6,7 @@
  * tests focus on the API surface and non-interactive behavior.
  */
 
-import { assertEquals, assertExists } from "https://deno.land/std@0.220.0/assert/mod.ts";
+import { assertEquals, assertExists } from "@std/assert";
 import { describe, it } from "@std/testing/bdd.ts";
 import { getStdinReader, setRawMode, type StdinReader } from "./stdin.ts";
 

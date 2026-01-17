@@ -2,10 +2,11 @@
  * Keyboard input handler for CLI
  *
  * Provides cross-runtime keyboard input handling for interactive CLI features.
- * Supports Deno, Node.js, and Bun runtimes.
+ * Uses platform abstractions for Deno, Node.js, and Bun runtimes.
  */
 
 import { isStdoutTTY } from "@veryfront/platform/compat/process.ts";
+import { getStdinReader, setRawMode } from "@veryfront/platform/compat/stdin.ts";
 
 export interface KeyboardHandler {
   /** Start listening for keyboard input */
@@ -48,18 +49,18 @@ function handleKeyPress(key: string, options: KeyboardOptions): void {
   }
 }
 
-// Deno-specific implementation
-function createDenoHandler(options: KeyboardOptions): KeyboardHandler {
+// Cross-runtime implementation using platform abstractions
+function createPlatformHandler(options: KeyboardOptions): KeyboardHandler {
   let running = false;
-  let originalMode: boolean | null = null;
+  let reader: ReturnType<typeof getStdinReader> | null = null;
 
   const readLoop = async () => {
-    const buf = new Uint8Array(1);
+    if (!reader) return;
     while (running) {
       try {
-        const n = await Deno.stdin.read(buf);
-        if (n === null) break;
-        const byte = buf[0];
+        const { value, done } = await reader.read();
+        if (done || !value) break;
+        const byte = value[0];
         if (byte === undefined) continue;
         // Handle Ctrl+C (0x03)
         if (byte === 0x03) {
@@ -79,11 +80,8 @@ function createDenoHandler(options: KeyboardOptions): KeyboardHandler {
     start() {
       if (!isStdoutTTY()) return;
       try {
-        // Save original mode and enable raw mode
-        originalMode = Deno.stdin.isTerminal();
-        if (originalMode) {
-          Deno.stdin.setRaw(true);
-        }
+        setRawMode(true);
+        reader = getStdinReader();
         running = true;
         // Start reading in background (don't await)
         readLoop();
@@ -94,9 +92,11 @@ function createDenoHandler(options: KeyboardOptions): KeyboardHandler {
     stop() {
       running = false;
       try {
-        if (originalMode !== null) {
-          Deno.stdin.setRaw(false);
+        if (reader) {
+          reader.releaseLock();
+          reader = null;
         }
+        setRawMode(false);
       } catch {
         // Ignore errors restoring terminal
       }
@@ -104,65 +104,19 @@ function createDenoHandler(options: KeyboardOptions): KeyboardHandler {
   };
 }
 
-// Node.js/Bun implementation
-function createNodeHandler(options: KeyboardOptions): KeyboardHandler {
-  let cleanup: (() => void) | null = null;
-
-  return {
-    start() {
-      if (!isStdoutTTY()) return;
-      try {
-        // Dynamic import to avoid issues in Deno
-        const process = globalThis.process;
-        if (!process?.stdin?.setRawMode) return;
-
-        process.stdin.setRawMode(true);
-        process.stdin.resume();
-        process.stdin.setEncoding("utf8");
-
-        const handler = (key: string) => {
-          // Ctrl+C
-          if (key === "\u0003") {
-            options.onQuit?.();
-            return;
-          }
-          handleKeyPress(key, options);
-        };
-
-        process.stdin.on("data", handler);
-        cleanup = () => {
-          process.stdin.off("data", handler);
-          process.stdin.setRawMode(false);
-          process.stdin.pause();
-        };
-      } catch {
-        // Failed to set up keyboard handler
-      }
-    },
-    stop() {
-      cleanup?.();
-      cleanup = null;
-    },
-  };
-}
-
 /**
  * Create a keyboard handler for the current runtime
+ * Uses platform abstractions that work across Deno, Node.js, and Bun
  */
 export function createKeyboardHandler(options: KeyboardOptions): KeyboardHandler {
-  // Check if we're in Deno
-  if (typeof Deno !== "undefined" && Deno.stdin) {
-    return createDenoHandler(options);
+  // Check if we have a TTY - if not, return no-op handler
+  if (!isStdoutTTY()) {
+    return {
+      start() {},
+      stop() {},
+    };
   }
 
-  // Node.js or Bun
-  if (typeof globalThis.process !== "undefined") {
-    return createNodeHandler(options);
-  }
-
-  // Fallback: no-op handler
-  return {
-    start() {},
-    stop() {},
-  };
+  // Use platform abstractions which handle all runtimes
+  return createPlatformHandler(options);
 }
