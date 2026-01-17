@@ -9,8 +9,6 @@ import { registerAgent } from "@veryfront/agent";
 import { registerWorkflow } from "@veryfront/workflow";
 import type { Workflow } from "@veryfront/workflow";
 import { agentLogger } from "@veryfront/utils/logger/logger.ts";
-import { getConfig } from "@veryfront/config/loader.ts";
-import { createMockAdapter } from "@veryfront/platform/adapters/mock.ts";
 import type { FileSystemAdapter } from "@veryfront/platform/adapters/base.ts";
 import { isDeno } from "@veryfront/platform/compat/runtime.ts";
 import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
@@ -382,7 +380,6 @@ async function rewriteDiscoveryImports(
 
 export interface DiscoveryConfig {
   baseDir: string;
-  aiDir?: string;
   toolDirs?: string[];
   agentDirs?: string[];
   resourceDirs?: string[];
@@ -404,18 +401,7 @@ export interface DiscoveryResult {
 export async function discoverAll(
   config: DiscoveryConfig,
 ): Promise<DiscoveryResult> {
-  let aiDir = config.aiDir;
   const baseDir = config.baseDir;
-
-  if (!aiDir) {
-    try {
-      const adapter = createMockAdapter();
-      const projectConfig = await getConfig(baseDir, adapter);
-      aiDir = projectConfig.directories?.ai || "ai";
-    } catch {
-      aiDir = "ai";
-    }
-  }
 
   const context: FileDiscoveryContext = {
     platform: detectPlatform(),
@@ -432,27 +418,28 @@ export async function discoverAll(
     errors: [],
   };
 
-  const toolDirs = config.toolDirs || [`${aiDir}/tools`];
+  // Flat directory structure at project root
+  const toolDirs = config.toolDirs || ["tools"];
   for (const dir of toolDirs) {
     await discoverTools(`${baseDir}/${dir}`, result, context, config.verbose);
   }
 
-  const agentDirs = config.agentDirs || [`${aiDir}/agents`];
+  const agentDirs = config.agentDirs || ["agents"];
   for (const dir of agentDirs) {
     await discoverAgents(`${baseDir}/${dir}`, result, context, config.verbose);
   }
 
-  const resourceDirs = config.resourceDirs || [`${aiDir}/resources`];
+  const resourceDirs = config.resourceDirs || ["resources"];
   for (const dir of resourceDirs) {
     await discoverResources(`${baseDir}/${dir}`, result, context, config.verbose);
   }
 
-  const promptDirs = config.promptDirs || [`${aiDir}/prompts`];
+  const promptDirs = config.promptDirs || ["prompts"];
   for (const dir of promptDirs) {
     await discoverPrompts(`${baseDir}/${dir}`, result, context, config.verbose);
   }
 
-  const workflowDirs = config.workflowDirs || [`${aiDir}/workflows`];
+  const workflowDirs = config.workflowDirs || ["workflows"];
   for (const dir of workflowDirs) {
     await discoverWorkflows(`${baseDir}/${dir}`, result, context, config.verbose);
   }
@@ -731,9 +718,8 @@ const discoveredAgentPaths = new Map<string, string>();
 
 export async function generateAgentIndex(
   baseDir: string,
-  aiDir: string = "ai",
 ): Promise<void> {
-  const generatedDir = `${baseDir}/${aiDir}/.generated`;
+  const generatedDir = `${baseDir}/.generated`;
   const indexPath = `${generatedDir}/agents.ts`;
 
   // Ensure the .generated directory exists

@@ -13,13 +13,19 @@ my-ai-app/
 ├── app/
 │   ├── chat/page.tsx
 │   └── api/chat/route.ts
-└── ai/
-    ├── agents/assistant.ts         # Auto-registered
-    ├── tools/calculator.ts         # Auto-discovered
-    └── resources/users/profile.ts  # MCP resources
+├── agents/
+│   └── assistant.ts         # AI agents
+├── tools/
+│   └── calculator.ts        # MCP tools
+├── workflows/
+│   └── onboarding.ts        # Durable workflows
+├── prompts/
+│   └── system.ts            # Prompt templates
+└── resources/
+    └── users/profile.ts     # MCP resources
 ```
 
-The `ai/` directory auto-enables AI features. No config required.
+All directories are auto-discovered. No config required.
 
 ---
 
@@ -32,7 +38,7 @@ deno add npm:veryfront npm:ai npm:zod
 
 **2. Create an agent**
 
-`ai/agents/assistant.ts`:
+`agents/assistant.ts`:
 ```typescript
 import { agent } from 'veryfront/agent';
 
@@ -45,7 +51,7 @@ export default agent({
 
 **3. Add a tool**
 
-`ai/tools/calculator.ts`:
+`tools/calculator.ts`:
 ```typescript
 import { tool } from 'veryfront/tool';
 import { z } from 'zod';
@@ -113,11 +119,11 @@ import { useChat } from 'veryfront/agent/react';
 
 ## Model Context Protocol
 
-MCP exposes your tools and resources to external AI applications. Enabled by default when `ai/` directory exists.
+MCP exposes your tools and resources to external AI applications. Enabled by default.
 
 **Add a resource:**
 
-`ai/resources/users/profile.ts`:
+`resources/users/profile.ts`:
 ```typescript
 import { resource } from 'veryfront/resource';
 import { z } from 'zod';

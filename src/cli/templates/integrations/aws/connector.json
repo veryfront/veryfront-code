@@ -39,27 +39,27 @@
     {
       "name": "list-s3-buckets",
       "description": "List all S3 buckets in your AWS account",
-      "file": "ai/tools/list-s3-buckets.ts"
+      "file": "tools/list-s3-buckets.ts"
     },
     {
       "name": "list-s3-objects",
       "description": "List objects in a specific S3 bucket",
-      "file": "ai/tools/list-s3-objects.ts"
+      "file": "tools/list-s3-objects.ts"
     },
     {
       "name": "get-s3-object",
       "description": "Get the contents of an object from S3",
-      "file": "ai/tools/get-s3-object.ts"
+      "file": "tools/get-s3-object.ts"
     },
     {
       "name": "list-ec2-instances",
       "description": "List EC2 instances in your AWS account",
-      "file": "ai/tools/list-ec2-instances.ts"
+      "file": "tools/list-ec2-instances.ts"
     },
     {
       "name": "list-lambda-functions",
       "description": "List Lambda functions in your AWS account",
-      "file": "ai/tools/list-lambda-functions.ts"
+      "file": "tools/list-lambda-functions.ts"
     }
   ],
   "dependencies": {

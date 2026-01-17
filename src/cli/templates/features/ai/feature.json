@@ -23,7 +23,7 @@
   "tips": [
     "Get your OpenAI API key at https://platform.openai.com/api-keys",
     "The chat API is available at /api/chat",
-    "Customize agents in ai/agents/ directory",
-    "Add new tools in ai/tools/ directory"
+    "Customize agents in agents/ directory",
+    "Add new tools in tools/ directory"
   ]
 }

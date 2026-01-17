@@ -17,15 +17,15 @@ Zero-config React meta-framework for AI-native applications.
 - `src/pages/*.tsx` → Routes (file-based routing)
 - `src/api/*.ts` → API endpoints (`/api/*`)
 - `src/components/` → Shared components
-- `src/ai/agents/` → AI agents
-- `src/ai/tools/` → MCP tools
+- `agents/` → AI agents
+- `tools/` → MCP tools
 
 ## When Asked to Add Features
 
 1. **Pages**: Create in `src/pages/` (e.g., `about.tsx` → `/about`)
 2. **APIs**: Create in `src/api/` (e.g., `users.ts` → `/api/users`)
 3. **Components**: Create in `src/components/`
-4. **AI Agents**: Create in `src/ai/agents/`
+4. **AI Agents**: Create in `agents/`
 
 ## Code Patterns
 

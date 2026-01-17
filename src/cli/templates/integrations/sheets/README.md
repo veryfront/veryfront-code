@@ -24,7 +24,7 @@ sheets/
     ├── app/api/auth/sheets/
     │   ├── route.ts                        # OAuth initiation endpoint
     │   └── callback/route.ts               # OAuth callback handler
-    └── ai/tools/
+    └── tools/
         ├── list-spreadsheets.ts            # List recent spreadsheets
         ├── get-spreadsheet.ts              # Get spreadsheet metadata
         ├── read-range.ts                   # Read cell data from range
