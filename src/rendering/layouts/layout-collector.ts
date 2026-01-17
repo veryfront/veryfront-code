@@ -97,8 +97,8 @@ export class LayoutCollector {
           return { layoutBundle: undefined, nestedLayouts: [] };
         }
 
-        const hasExplicitFrontmatterLayout =
-          typeof layoutValue === "string" && layoutValue.length > 0;
+        const hasExplicitFrontmatterLayout = typeof layoutValue === "string" &&
+          layoutValue.length > 0;
 
         // Collect the named layout (from frontmatter or config.defaultLayout)
         const { layoutBundle, layoutPath, layoutName } = await withSpan(
