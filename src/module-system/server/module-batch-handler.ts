@@ -24,6 +24,7 @@ import { transformToESM } from "@veryfront/transforms/esm-transform.ts";
 import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
 import { join } from "@veryfront/platform/compat/path/index.ts";
 import { applySSRImportRewrites } from "./ssr-import-rewriter.ts";
+import { buildModuleTransformCacheKey } from "../../core/cache/keys.ts";
 
 /** Slow request threshold in milliseconds */
 const SLOW_REQUEST_THRESHOLD_MS = 500;
@@ -116,7 +117,7 @@ export async function handleModuleBatch(
   const results = await Promise.all(
     paths.map(async (modulePath) => {
       const moduleStart = performance.now();
-      const cacheKey = `${projectKey}:${modulePath}:${isSSR}`;
+      const cacheKey = buildModuleTransformCacheKey(projectKey, modulePath, isSSR);
 
       // Check cache first
       if (transformCache.has(cacheKey)) {

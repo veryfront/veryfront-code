@@ -175,6 +175,14 @@ export interface FileOperationContext {
 }
 
 /**
+ * Map sourceType to abbreviated key for cache keys.
+ * "environment" is abbreviated to "env" to keep keys shorter.
+ */
+function getSourceTypeKey(sourceType: FileSourceType): string {
+  return sourceType === "environment" ? "env" : sourceType;
+}
+
+/**
  * Build a qualifier string based on source type.
  */
 function buildSourceQualifier(ctx: FileOperationContext): string {
@@ -190,42 +198,46 @@ function buildSourceQualifier(ctx: FileOperationContext): string {
 
 /**
  * Build a file content cache key prefix.
- * Format: file:{sourceType}:{projectSlug}:{qualifier}
+ * Format: file:{sourceTypeKey}:{projectSlug}:{qualifier}
  */
 export function buildFileCacheKeyPrefix(ctx: FileOperationContext | null | undefined): string {
   if (!ctx) return "file:unknown";
+  const sourceTypeKey = getSourceTypeKey(ctx.sourceType);
   const qualifier = buildSourceQualifier(ctx);
-  return `${CacheKeyPrefix.FILE}:${ctx.sourceType}:${ctx.projectSlug}:${qualifier}`;
+  return `${CacheKeyPrefix.FILE}:${sourceTypeKey}:${ctx.projectSlug}:${qualifier}`;
 }
 
 /**
  * Build a file stat cache key prefix.
- * Format: stat:{sourceType}:{projectSlug}:{qualifier}
+ * Format: stat:{sourceTypeKey}:{projectSlug}:{qualifier}
  */
 export function buildStatCacheKeyPrefix(ctx: FileOperationContext | null | undefined): string {
   if (!ctx) return "stat:unknown";
+  const sourceTypeKey = getSourceTypeKey(ctx.sourceType);
   const qualifier = buildSourceQualifier(ctx);
-  return `${CacheKeyPrefix.STAT}:${ctx.sourceType}:${ctx.projectSlug}:${qualifier}`;
+  return `${CacheKeyPrefix.STAT}:${sourceTypeKey}:${ctx.projectSlug}:${qualifier}`;
 }
 
 /**
  * Build a directory cache key prefix.
- * Format: dir:{sourceType}:{projectSlug}:{qualifier}
+ * Format: dir:{sourceTypeKey}:{projectSlug}:{qualifier}
  */
 export function buildDirCacheKeyPrefix(ctx: FileOperationContext | null | undefined): string {
   if (!ctx) return "dir:unknown";
+  const sourceTypeKey = getSourceTypeKey(ctx.sourceType);
   const qualifier = buildSourceQualifier(ctx);
-  return `${CacheKeyPrefix.DIR}:${ctx.sourceType}:${ctx.projectSlug}:${qualifier}`;
+  return `${CacheKeyPrefix.DIR}:${sourceTypeKey}:${ctx.projectSlug}:${qualifier}`;
 }
 
 /**
  * Build a file list cache key.
- * Format: files:{sourceType}:{projectSlug}:{qualifier}
+ * Format: files:{sourceTypeKey}:{projectSlug}:{qualifier}
  */
 export function buildFileListCacheKey(ctx: FileOperationContext | null | undefined): string {
   if (!ctx) return "files:unknown";
+  const sourceTypeKey = getSourceTypeKey(ctx.sourceType);
   const qualifier = buildSourceQualifier(ctx);
-  return `${CacheKeyPrefix.FILES}:${ctx.sourceType}:${ctx.projectSlug}:${qualifier}`;
+  return `${CacheKeyPrefix.FILES}:${sourceTypeKey}:${ctx.projectSlug}:${qualifier}`;
 }
 
 /**
@@ -269,6 +281,18 @@ export function buildModuleResolveCacheKey(specifier: string, referrer?: string)
 }
 
 /**
+ * Build an SSR module cache key.
+ * Format: v{version}:{projectId}:{filePath}
+ */
+export function buildSSRModuleCacheKey(
+  version: string | number,
+  projectId: string,
+  filePath: string,
+): string {
+  return `v${version}:${projectId}:${filePath}`;
+}
+
+/**
  * Build a Redis SSR module cache key.
  * Format: veryfront:ssr-module:{key}
  */
@@ -290,6 +314,21 @@ export function buildRedisFileCacheKey(key: string): string {
  */
 export function buildRedisTransformKey(key: string): string {
   return `${CacheKeyPrefix.TRANSFORM}${key}`;
+}
+
+/**
+ * Build a transform cache key.
+ * Format: {filePath}:{contentHash}:{ssr|browser}[:studio]
+ */
+export function buildTransformCacheKey(
+  filePath: string,
+  contentHash: string,
+  ssr: boolean = false,
+  studioEmbed: boolean = false,
+): string {
+  const ssrKey = ssr ? "ssr" : "browser";
+  const studioKey = studioEmbed ? ":studio" : "";
+  return `${filePath}:${contentHash}:${ssrKey}${studioKey}`;
 }
 
 // ============================================================================

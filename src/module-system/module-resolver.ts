@@ -7,6 +7,7 @@ import {
   relative,
 } from "@veryfront/platform/compat/path/index.ts";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
+import { buildModuleResolveCacheKey } from "../core/cache/keys.ts";
 
 export interface ResolvedModule {
   path: string;
@@ -42,7 +43,7 @@ export class ModuleResolver {
   }
 
   async resolve(specifier: string, referrer?: string): Promise<ResolvedModule | null> {
-    const cacheKey = `${specifier}::${referrer || "root"}`;
+    const cacheKey = buildModuleResolveCacheKey(specifier, referrer);
     const cached = this.cache.get(cacheKey);
     if (cached) {
       return cached;

@@ -4,6 +4,10 @@ import type { FileCache } from "../cache/file-cache.ts";
 import type { GitHubAPIClient } from "./github-api-client.ts";
 import type { GitHubStatOperations } from "./stat-operations.ts";
 import type { GitHubContentItem, ResolvedGitHubConfig } from "./types.ts";
+import {
+  buildGitHubBytesCacheKey,
+  buildGitHubContentCacheKey,
+} from "../../../../core/cache/keys.ts";
 
 const LOG_PREFIX = "[GitHubReadOperations]";
 
@@ -41,7 +45,7 @@ export class GitHubReadOperations {
     const normalizedPath = this.normalizePath(path);
 
     // Check cache
-    const cacheKey = `github:content:${this.config.ref}:${normalizedPath}`;
+    const cacheKey = buildGitHubContentCacheKey(this.config.ref, normalizedPath);
     const cached = this.cache.get<string>(cacheKey);
     if (cached !== undefined) {
       return cached;
@@ -75,7 +79,7 @@ export class GitHubReadOperations {
     const normalizedPath = this.normalizePath(path);
 
     // Check cache for bytes
-    const cacheKey = `github:bytes:${this.config.ref}:${normalizedPath}`;
+    const cacheKey = buildGitHubBytesCacheKey(this.config.ref, normalizedPath);
     const cached = this.cache.get<Uint8Array>(cacheKey);
     if (cached !== undefined) {
       return cached;

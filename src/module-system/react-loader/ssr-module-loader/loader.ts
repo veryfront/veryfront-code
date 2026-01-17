@@ -12,6 +12,7 @@ import type * as React from "react";
 import { transformToESM } from "@veryfront/transforms/esm/index.ts";
 import type { TransformOptions } from "@veryfront/transforms/esm/types.ts";
 import { TRANSFORM_CACHE_VERSION } from "@veryfront/transforms/esm/package-registry.ts";
+import { buildSSRModuleCacheKey, buildSSRModuleProjectKey } from "../../../core/cache/keys.ts";
 import {
   type CrossProjectImport,
   type MissingImport,
@@ -144,7 +145,7 @@ export class SSRModuleLoader {
   }
 
   private getCacheKey(filePath: string): string {
-    return `v${TRANSFORM_CACHE_VERSION}:${this.options.projectId}:${filePath}`;
+    return buildSSRModuleCacheKey(TRANSFORM_CACHE_VERSION, this.options.projectId, filePath);
   }
 
   private getRegistryBaseUrl(): string {
@@ -519,7 +520,7 @@ export class SSRModuleLoader {
       projectDir = join(cwd(), projectDir);
     }
 
-    const cacheKey = `${projectDir}:${projectId}`;
+    const cacheKey = buildSSRModuleProjectKey(projectDir, projectId);
 
     const existingDir = globalTmpDirs.get(cacheKey);
     if (existingDir) {

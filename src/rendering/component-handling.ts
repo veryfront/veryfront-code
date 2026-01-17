@@ -10,6 +10,7 @@ import type { EntityInfo, PageBundle } from "@veryfront/types";
 import { createError, getErrorMessage, toError } from "../core/errors/veryfront-error.ts";
 import { getProjectReact } from "@veryfront/react";
 import { injectNodePositions } from "../build/transforms/plugins/babel-node-positions.ts";
+import { buildComponentCacheKey } from "../core/cache/keys.ts";
 
 export interface ComponentPageResult {
   pageElement: BundledReact.ReactElement;
@@ -136,7 +137,8 @@ async function bundleComponentForClient(
   projectId?: string,
 ): Promise<string | null> {
   try {
-    const cacheKey = `${projectId ?? projectDir}:${filePath}:${await generateContentHash(source)}`;
+    const contentHash = await generateContentHash(source);
+    const cacheKey = buildComponentCacheKey(projectId ?? projectDir, filePath, contentHash);
     const cached = componentHydrationCache.get(cacheKey);
     if (cached) {
       return cached;

@@ -3,6 +3,11 @@ import { logger } from "@veryfront/utils";
 import type { FileCache } from "../cache/file-cache.ts";
 import type { GitHubAPIClient } from "./github-api-client.ts";
 import type { FileIndexEntry, FileInfo, GitHubTreeEntry, ResolvedGitHubConfig } from "./types.ts";
+import {
+  buildGitHubResolveCacheKey,
+  buildGitHubStatCacheKey,
+  buildGitHubTreeCacheKey,
+} from "../../../../core/cache/keys.ts";
 
 const LOG_PREFIX = "[GitHubStatOperations]";
 
@@ -69,7 +74,7 @@ export class GitHubStatOperations {
    * Internal index building logic
    */
   private async doBuildIndex(): Promise<void> {
-    const cacheKey = `github:tree:${this.client.repoId}:${this.config.ref}`;
+    const cacheKey = buildGitHubTreeCacheKey(this.client.repoId, this.config.ref);
 
     // Try cache first
     const cached = this.cache.get<GitHubTreeEntry[]>(cacheKey);
@@ -161,7 +166,7 @@ export class GitHubStatOperations {
     });
 
     // Check cache
-    const cacheKey = `github:stat:${this.config.ref}:${normalizedPath}`;
+    const cacheKey = buildGitHubStatCacheKey(this.config.ref, normalizedPath);
     const cached = this.cache.get<FileInfo>(cacheKey);
     if (cached) {
       return cached;
@@ -233,7 +238,7 @@ export class GitHubStatOperations {
     const normalizedPath = this.normalizePath(basePath);
 
     // Check cache
-    const cacheKey = `github:resolve:${this.config.ref}:${normalizedPath}`;
+    const cacheKey = buildGitHubResolveCacheKey(this.config.ref, normalizedPath);
     const cached = this.cache.get<string | null>(cacheKey);
     if (cached !== undefined) {
       return cached;

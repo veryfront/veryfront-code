@@ -9,6 +9,7 @@ import { mdxRenderer } from "@veryfront/transforms/mdx/index.ts";
 import { loadComponentFromSource } from "@veryfront/modules/react-loader/component-loader.ts";
 import { getProjectReact } from "@veryfront/react";
 import { ensureValidChild } from "./ensure-valid-child.ts";
+import { buildLayoutComponentCacheKey } from "../../../core/cache/keys.ts";
 
 export interface LayoutComponentCache {
   get(key: string): BundledReact.ComponentType | undefined;
@@ -67,7 +68,7 @@ export async function loadTSXComponent(
 ): Promise<BundledReact.ComponentType> {
   const source = await adapter.fs.readFile(componentPath);
   const hash = await getContentHash(source);
-  const cacheKey = `${componentPath}:${hash}`;
+  const cacheKey = buildLayoutComponentCacheKey(componentPath, hash);
   let component = cache.get(cacheKey);
 
   if (!component) {

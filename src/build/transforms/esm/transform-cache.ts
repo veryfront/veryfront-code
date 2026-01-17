@@ -15,12 +15,12 @@ import {
 } from "@veryfront/utils/redis-client.ts";
 import { unrefTimer } from "@veryfront/platform/compat/process.ts";
 import { getDisableLruIntervalEnv } from "@veryfront/core/config/env.ts";
+import { buildRedisTransformKey, buildTransformCacheKey } from "../../../core/cache/keys.ts";
 
 const DEFAULT_TTL_MS = 5 * 60 * 1000; // 5 minutes
 const DEFAULT_TTL_SECONDS = 300; // 5 minutes for Redis
 const MAX_ENTRIES = 2_000;
 const CLEANUP_INTERVAL_MS = 60000; // 1 minute
-const REDIS_KEY_PREFIX = "veryfront:transform:";
 
 export interface TransformCacheEntry {
   code: string;
@@ -142,13 +142,11 @@ export function generateCacheKey(
   ssr: boolean = false,
   studioEmbed: boolean = false,
 ): string {
-  const ssrKey = ssr ? "ssr" : "browser";
-  const studioKey = studioEmbed ? ":studio" : "";
-  return `${filePath}:${contentHash}:${ssrKey}${studioKey}`;
+  return buildTransformCacheKey(filePath, contentHash, ssr, studioEmbed);
 }
 
 function redisKey(key: string): string {
-  return `${REDIS_KEY_PREFIX}${key}`;
+  return buildRedisTransformKey(key);
 }
 
 /**
