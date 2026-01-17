@@ -103,19 +103,6 @@ function renderSection(title: string, count: number, isActive = true): string {
 }
 
 /**
- * Render quick action buttons
- */
-function renderQuickActions(): string {
-  const actions = [
-    { key: "n", label: "New Project" },
-    { key: "?", label: "Help" },
-  ];
-
-  const parts = actions.map((a) => `${brand(`[${a.key}]`)} ${dim(a.label)}`);
-  return `  ${parts.join("   ")}`;
-}
-
-/**
  * Render the help bar at the bottom
  */
 function renderHelpBar(state: AppState): string {
