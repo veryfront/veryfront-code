@@ -279,7 +279,7 @@ async function loadAndTranspileModule(
     // Veryfront packages - should use runtime resolution, not bundled
     "veryfront",
     "veryfront/*",
-    // OpenTelemetry packages used by veryfront/ai
+    // OpenTelemetry packages used by veryfront modules
     "@opentelemetry/*",
     // Path module - Node.js built-in
     "path",
@@ -448,7 +448,7 @@ async function rewriteExternalImports(
         logger.debug(`[API] Could not read veryfront package.json: ${err}`);
       }
 
-      // Resolve veryfront subpath imports (e.g., veryfront/ai)
+      // Resolve veryfront subpath imports (e.g., veryfront modules)
       transformed = transformed.replace(
         /from\s+["'](veryfront\/[^"']+)["']/g,
         (_match, fullSpecifier: string) => {

@@ -3,7 +3,7 @@
  */
 
 import { z } from "zod";
-import { defineTool } from "veryfront/ai";
+import { tool } from "veryfront/tool";
 import { getServiceNowClient } from "../../lib/servicenow-client.ts";
 import { isServiceNowConnected } from "../../lib/token-store.ts";
 

@@ -24,7 +24,7 @@
  */
 
 import type { z } from "zod";
-import { zodToJsonSchema } from "@veryfront/ai/utils/zod-json-schema.ts";
+import { zodToJsonSchema } from "@veryfront/tool/schema";
 import {
   OPENAPI_METADATA,
   type OpenAPIRouteConfig,

@@ -15,7 +15,7 @@ import type { AgentRegistry, ToolRegistry } from "../executor/step-executor.ts";
  *
  * @example
  * ```typescript
- * import { DefaultAgentRegistry } from 'veryfront/ai/workflow/runtime/agent-registry';
+ * import { DefaultAgentRegistry } from 'veryfront/workflow/runtime/agent-registry';
  *
  * const registry = new DefaultAgentRegistry();
  *

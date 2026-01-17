@@ -52,7 +52,7 @@ function getTextFromParts(parts: UIMessagePart[]): string {
  *
  * @example
  * ```tsx
- * import { Message } from 'veryfront/ai/components';
+ * import { Message } from 'veryfront/components/ai';
  *
  * <Message
  *   message={msg}
@@ -178,7 +178,7 @@ export interface StreamingMessageProps {
  *
  * @example
  * ```tsx
- * import { StreamingMessage } from 'veryfront/ai/components';
+ * import { StreamingMessage } from 'veryfront/components/ai';
  *
  * {isStreaming && (
  *   <StreamingMessage parts={streamingParts} showCursor={true} />

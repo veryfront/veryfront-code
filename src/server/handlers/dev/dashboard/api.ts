@@ -1,11 +1,10 @@
-import { getMCPRegistry, getMCPStats } from "@veryfront/ai/mcp/registry.ts";
-import { executeTool, toolRegistry } from "@veryfront/ai/utils/tool.ts";
-import { resourceRegistry } from "@veryfront/ai/mcp/resource.ts";
-import { promptRegistry } from "@veryfront/ai/mcp/prompt.ts";
-import { agentRegistry } from "@veryfront/ai/agent/composition.ts";
-import { providerRegistry } from "@veryfront/ai/providers/factory.ts";
-import { workflowRegistry } from "@veryfront/ai/workflow/registry.ts";
-import { WorkflowClient } from "@veryfront/ai/workflow/api/workflow-client.ts";
+import { getMCPRegistry, getMCPStats } from "@veryfront/mcp";
+import { executeTool, toolRegistry } from "@veryfront/tool";
+import { resourceRegistry } from "@veryfront/resource";
+import { promptRegistry } from "@veryfront/prompt";
+import { agentRegistry } from "@veryfront/agent";
+import { providerRegistry } from "@veryfront/provider";
+import { workflowRegistry, WorkflowClient } from "@veryfront/workflow";
 import { metrics } from "@veryfront/observability/simple-metrics/index.ts";
 import {
   checkMemoryPressure,

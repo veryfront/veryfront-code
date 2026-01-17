@@ -10,12 +10,25 @@ function getSrcDir(): string {
 }
 
 /**
- * Get the absolute path to the veryfront AI React module for SSR.
+ * Get the absolute path to the veryfront Agent React module for SSR.
  * This resolves relative to this file's location in the veryfront source tree.
  */
-function getVeryfrontAIReactPath(subpath: string = ""): string {
-  const modulePath = subpath || "index.ts";
-  return `file://${getSrcDir()}/ai/react/${modulePath}`;
+function getVeryfrontAgentReactPath(): string {
+  return `file://${getSrcDir()}/agent/react/index.ts`;
+}
+
+/**
+ * Get the absolute path to the veryfront AI components module for SSR.
+ */
+function getVeryfrontComponentsPath(): string {
+  return `file://${getSrcDir()}/react/components/ai/index.ts`;
+}
+
+/**
+ * Get the absolute path to the veryfront primitives module for SSR.
+ */
+function getVeryfrontPrimitivesPath(): string {
+  return `file://${getSrcDir()}/react/primitives/index.ts`;
 }
 
 /**
@@ -42,14 +55,14 @@ export async function resolveReactImports(code: string, forSSR: boolean = false)
   const reactImports = getReactImportMap();
 
   if (forSSR) {
-    // SSR: Resolve React and veryfront AI imports
+    // SSR: Resolve React and veryfront module imports
     const ssrImports: Record<string, string> = {
       // React - use esm.sh URLs for dynamic file:// import compatibility
       ...reactImports,
-      // AI modules - file:// URLs for local resolution (these don't have context issues)
-      "veryfront/ai/react": getVeryfrontAIReactPath(),
-      "veryfront/ai/components": getVeryfrontAIReactPath("components/index.ts"),
-      "veryfront/ai/primitives": getVeryfrontAIReactPath("primitives/index.ts"),
+      // Agent/Component modules - file:// URLs for local resolution (these don't have context issues)
+      "veryfront/agent/react": getVeryfrontAgentReactPath(),
+      "veryfront/components/ai": getVeryfrontComponentsPath(),
+      "veryfront/primitives": getVeryfrontPrimitivesPath(),
       // Framework exports are NOT transformed here - they stay as bare specifiers
       // and get resolved by deno.json import map to ensure single module instance
     };

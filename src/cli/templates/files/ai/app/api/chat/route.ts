@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { getAgent } from "veryfront/ai";
+import { getAgent } from "veryfront/agent";
 
 // AI SDK v5 UIMessage format with parts array
 // Supports text, tool-call, tool-result, and dynamic tool-* parts

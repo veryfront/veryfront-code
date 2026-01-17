@@ -66,7 +66,7 @@ export interface Workflow<TInput = unknown, TOutput = unknown> {
  *
  * @example
  * ```typescript
- * import { workflow, step, parallel, branch, waitForApproval } from 'veryfront/ai/workflow';
+ * import { workflow, step, parallel, branch, waitForApproval } from 'veryfront/workflow';
  * import { z } from 'zod';
  *
  * export default workflow({
@@ -181,7 +181,7 @@ export function sequence(...nodes: WorkflowNode[]): WorkflowNode[] {
  *
  * @example
  * ```typescript
- * import { dag, workflow } from 'veryfront/ai/workflow';
+ * import { dag, workflow } from 'veryfront/workflow';
  *
  * export default workflow({
  *   id: 'data-pipeline',

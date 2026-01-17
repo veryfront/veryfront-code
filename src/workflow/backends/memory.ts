@@ -31,7 +31,7 @@ const DEFAULT_MAX_QUEUE_SIZE = 10000;
  *
  * @example
  * ```typescript
- * import { MemoryBackend } from 'veryfront/ai/workflow/backends/memory';
+ * import { MemoryBackend } from 'veryfront/workflow/backends/memory';
  *
  * const backend = new MemoryBackend();
  * ```

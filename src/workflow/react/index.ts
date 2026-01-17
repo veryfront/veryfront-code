@@ -10,7 +10,7 @@
  *   useWorkflowList,
  *   useWorkflowStart,
  *   useApproval,
- * } from 'veryfront/ai/workflow/react';
+ * } from 'veryfront/workflow/react';
  *
  * // Track a specific workflow run
  * const { run, status, progress, pendingApprovals } = useWorkflow({

@@ -150,8 +150,8 @@ export interface ChatProps {
  *
  * @example
  * ```tsx
- * import { Chat } from 'veryfront/ai/components';
- * import { useChat } from 'veryfront/ai/react';
+ * import { Chat } from 'veryfront/components/ai';
+ * import { useChat } from 'veryfront/agent/react';
  *
  * export default function ChatPage() {
  *   const chat = useChat({ api: '/api/chat' });
