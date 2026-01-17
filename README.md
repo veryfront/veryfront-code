@@ -17,7 +17,7 @@ Veryfront is a full-stack React framework for building AI apps and agents with z
 ## Quick Start
 
 ```bash
-npx veryfront
+npx veryfront demo
 ```
 
 ## Project Structure
