@@ -61,10 +61,11 @@ export default tool({
 
 `app/api/chat/route.ts`:
 ```typescript
-import { agents } from '../../../ai/agents';
+import { agentRegistry } from 'veryfront/agent';
 
 export async function POST(req: Request) {
-  return agents.assistant.respond(req);
+  const assistant = agentRegistry.get('assistant');
+  return assistant.respond(req);
 }
 ```
 
@@ -73,7 +74,7 @@ export async function POST(req: Request) {
 `app/chat/page.tsx`:
 ```tsx
 'use client';
-import { Chat } from 'veryfront/react';
+import { Chat } from 'veryfront/components/ai';
 import { useChat } from 'veryfront/agent/react';
 
 export default function ChatPage() {
@@ -95,12 +96,12 @@ Visit `localhost:3000/chat` - your agent can now use the calculator tool.
 
 **Styled components** (production-ready):
 ```tsx
-import { Chat } from 'veryfront/react';
+import { Chat } from 'veryfront/components/ai';
 ```
 
 **Primitives** (bring your own styles):
 ```tsx
-import { ChatContainer, MessageList, MessageItem } from 'veryfront/react/primitives';
+import { ChatContainer, MessageList, MessageItem } from 'veryfront/primitives';
 ```
 
 **Headless hooks** (total control):
@@ -158,7 +159,7 @@ See [veryfront.com/docs](https://veryfront.com/docs/framework) for complete docu
 
 ```bash
 cd examples/agent-basic
-deno run --allow-all demo.ts
+deno run --allow-net --allow-env --allow-read example.ts
 ```
 
 See [examples/](./examples/) for more.
